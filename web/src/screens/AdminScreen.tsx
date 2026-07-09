@@ -1,4 +1,5 @@
-import { Link, NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes } from "react-router-dom";
+import AppHeader from "../browse/AppHeader";
 import AdminLibrariesScreen from "../admin/AdminLibrariesScreen";
 import AdminAttentionScreen from "../admin/AdminAttentionScreen";
 import AdminDevicesScreen from "../admin/AdminDevicesScreen";
@@ -14,26 +15,14 @@ import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen"
 //   /admin/devices   the signed-in user's devices, with revoke
 //   /admin/users     manage Users — list + create Member + delete
 //                    (access-control-admin-ui issue 01)
-// All gated by RequireAdmin (App.tsx) and still server-enforced. The header's
-// admin-link reaches it; the existing admin-screen / nav-libraries testids and
-// the libraries view are preserved so issues 01–06 don't regress.
+// All gated by RequireAdmin (App.tsx) and still server-enforced. This screen
+// shares the site-wide AppHeader so the top chrome is identical everywhere; the
+// admin-tabs nav below provides the sub-navigation.
 
 export default function AdminScreen() {
   return (
     <div className="app-shell" data-testid="admin-screen">
-      <header className="app-header">
-        <Link className="app-title app-title-link" to="/">
-          Juice Box
-        </Link>
-        <nav className="app-nav">
-          <Link className="nav-link" to="/libraries" data-testid="nav-libraries">
-            Libraries
-          </Link>
-          <Link className="nav-link" to="/" data-testid="home-link">
-            Back to Home
-          </Link>
-        </nav>
-      </header>
+      <AppHeader />
       <main className="app-main app-main-wide">
         <h1 className="app-title admin-page-title">Admin</h1>
 
