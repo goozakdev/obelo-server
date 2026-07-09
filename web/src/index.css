@@ -1,0 +1,3097 @@
+:root {
+  --bg: #0f1115;
+  --surface: #181b22;
+  --surface-2: #20242d;
+  --border: #2a2f3a;
+  --text: #e7eaf0;
+  --text-dim: #9aa3b2;
+  --accent: #5b8cff;
+  --ok: #4ade80;
+  --error: #f87171;
+  --radius: 12px;
+  /* Shared layout metrics so the sticky header and the fixed Now Playing bar can be
+     cleared exactly by overlays (e.g. the queue drawer sits between the two). */
+  --app-header-height: 4.5rem;
+  --now-playing-bar-height: 5.5rem;
+
+  color-scheme: dark light;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* App shell: header / main / footer stacked, main centered and fluid so it
+   reads well on phone, tablet, and desktop (PRD user story 33). */
+.app-shell {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Locked to the top of the viewport so it stays visible while a screen scrolls.
+   Three columns — title (left) / main nav (centered) / user + Sign out (right) —
+   with the nav centered in the header regardless of the side columns' widths. */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.6rem;
+  /* A fixed height (single-line content) so overlays like the queue drawer can clear
+     the header exactly with `top: var(--app-header-height)`. */
+  height: var(--app-header-height);
+  padding: 0 clamp(1rem, 4vw, 2.5rem);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.app-title {
+  margin: 0;
+  font-size: clamp(1.2rem, 3.5vw, 1.6rem);
+  font-weight: 650;
+}
+
+.app-tagline {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.app-main {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: clamp(1rem, 4vw, 2.5rem);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: clamp(1rem, 3vw, 1.75rem);
+}
+
+.card-title {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  font-weight: 550;
+}
+
+.status-loading {
+  color: var(--text-dim);
+}
+.status-ok {
+  color: var(--ok);
+}
+.status-error {
+  color: var(--error);
+}
+
+.dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  flex: none;
+}
+.dot-ok {
+  background: var(--ok);
+}
+.dot-error {
+  background: var(--error);
+}
+
+.meta {
+  margin: 0 0 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.meta-row dt {
+  color: var(--text-dim);
+}
+.meta-row dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.notice {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.features {
+  margin-top: 1.25rem;
+}
+
+.features-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: var(--text-dim);
+}
+
+.features-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: 0.5rem;
+}
+
+.feature {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.feature-on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
+.feature-off {
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.app-footer {
+  padding: 1rem clamp(1rem, 4vw, 2.5rem);
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+/* --- Auth screens (setup / login): a centered card form. ------------------ */
+.auth-shell {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1rem, 5vw, 3rem);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 26rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: clamp(1.25rem, 4vw, 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.auth-title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 650;
+}
+
+.auth-subtitle {
+  margin: 0 0 0.4rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field-label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.field-input {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* "Also apply to children" cascade checkbox (item-editing/05): a horizontal
+   label+checkbox row in the Fix-info / Wrong-item pickers. */
+.field-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.field-checkbox input {
+  width: auto;
+  margin: 0;
+}
+
+.auth-error {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error) 18%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border));
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.auth-submit {
+  margin-top: 0.3rem;
+  padding: 0.65rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-submit:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* --- Authed nav (Home/Admin header). -------------------------------------- */
+/* Center column: the main nav, centered under the grid's `auto` track. */
+.app-nav {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+/* Right column: the current user + Sign out (and the enriching indicator),
+   pinned to the far right. */
+.app-user {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.nav-link {
+  color: #cbd2de;
+  text-decoration: none;
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.nav-link:hover {
+  text-decoration: underline;
+}
+
+/* Nav links that pair an icon with their label. */
+.nav-icon-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.nav-icon {
+  flex: none;
+  width: 1.5em;
+  height: 1.5em;
+}
+
+.nav-user {
+  color: var(--text-dim);
+}
+
+.nav-logout {
+  color: var(--text-dim);
+}
+
+/* Realtime Enrichment indicator (external-metadata-enrichment issue 02): an
+   unobtrusive chip shown while a pass is running. */
+.enriching-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.enriching-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: enriching-pulse 1s ease-in-out infinite;
+}
+
+@keyframes enriching-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.nav-logout:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* Media-kind dropdown (a kind with more than one Library): a nav-link toggle
+   with a popout menu of that kind's Libraries. */
+.nav-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.nav-dropdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.nav-dropdown-caret {
+  font-size: 0.7em;
+  line-height: 1;
+}
+
+.nav-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 11rem;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  display: grid;
+  gap: 0.15rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 200;
+}
+
+.nav-dropdown-item {
+  display: block;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nav-dropdown-item:hover {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+/* A menu anchored to the right edge (the user menu) rather than centered, so it
+   never overflows the viewport at the far-right of the header. */
+.nav-dropdown-menu-end {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* The Sign out button styled to match the link menu items. */
+.nav-dropdown-item-button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nav-dropdown-item-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* The username toggle reads as muted text with its caret; hovering hints it's
+   interactive without the underline the link toggles use. */
+.user-menu-toggle {
+  color: var(--text-dim);
+}
+
+.user-menu-toggle:hover {
+  text-decoration: none;
+  color: var(--text);
+}
+
+.meta-role {
+  margin: 0.5rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+/* --- Browse: shared ------------------------------------------------------- */
+.app-title-link {
+  color: var(--text);
+  text-decoration: none;
+}
+.app-title-link:hover {
+  color: var(--accent);
+}
+
+/* Browse screens are wider than the auth/landing cards. */
+.app-main-wide {
+  max-width: 1100px;
+}
+
+.section-title {
+  margin: 0 0 1rem;
+  font-size: 1.2rem;
+  font-weight: 650;
+}
+
+.home-browse-link {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+}
+
+.back-link {
+  /* inline-block so the bottom margin applies (an inline <a> would ignore it,
+     letting the content below crowd the link). */
+  display: inline-block;
+  margin-bottom: 2rem;
+}
+
+/* --- Library list --------------------------------------------------------- */
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.library-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: var(--text);
+}
+.library-card:hover {
+  border-color: var(--accent);
+}
+.library-name {
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+.library-kind {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+.library-roots {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+/* --- Grid toolbar + poster grid ------------------------------------------- */
+.grid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sort-select {
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.poster-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: clamp(0.75rem, 2vw, 1.25rem);
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+}
+
+.poster-tile {
+  min-width: 0;
+}
+
+.poster-link {
+  display: block;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.poster-frame {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.poster {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.poster-img {
+  object-fit: cover;
+}
+
+.poster-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  color: var(--text-dim);
+}
+
+.poster-initials {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.poster-caption {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.45rem 0.1rem 0;
+}
+
+.poster-title {
+  font-size: 0.85rem;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.poster-year {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* The Show/Season/episode parent-context line on a Home-row Episode card
+   ("The Bear · S01E03"), shown above the episode title (issue tv-music/02). */
+.poster-context {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid-footer {
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
+/* --- Home rows (issue 05) ------------------------------------------------- */
+/* A Home row reuses the grid's poster cards but lays them out as a single
+   horizontal strip that scrolls sideways rather than a wrapping grid. */
+.home-row {
+  margin-bottom: clamp(1.5rem, 4vw, 2.5rem);
+}
+
+.poster-row {
+  display: flex;
+  grid-template-columns: none;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.poster-row > .poster-tile {
+  flex: 0 0 clamp(8.5rem, 18vw, 11rem);
+  width: clamp(8.5rem, 18vw, 11rem);
+}
+
+.home-browse {
+  margin-top: 1rem;
+}
+
+/* --- Badges (watch state, missing) ---------------------------------------- */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.poster-frame .badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+}
+
+.badge-watched {
+  background: var(--ok);
+  color: #06210f;
+}
+.badge-resume {
+  background: var(--accent);
+  color: #fff;
+}
+.badge-unwatched {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+/* Unwatched-episode count on a Show poster (the TV watched affordance): top-RIGHT
+   so it never collides with the top-left needs-review badge. */
+.badge-unwatched-count {
+  background: var(--accent);
+  color: #fff;
+}
+.poster-frame .badge-unwatched-count {
+  left: auto;
+  right: 0.5rem;
+}
+.badge-missing {
+  background: color-mix(in srgb, var(--error) 25%, var(--surface-2));
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border));
+}
+
+/* --- Title detail --------------------------------------------------------- */
+.detail-hero {
+  display: flex;
+  gap: clamp(1rem, 4vw, 2rem);
+  flex-wrap: wrap;
+}
+
+.detail-poster {
+  width: clamp(10rem, 28vw, 16rem);
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  flex: none;
+  align-self: flex-start;
+}
+
+/* Show the whole poster (no crop) within the detail hero frame. */
+.detail-poster .poster-img {
+  object-fit: contain;
+}
+
+.detail-info {
+  flex: 1;
+  min-width: 14rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.detail-title {
+  margin: 0;
+  font-size: clamp(1.4rem, 4vw, 2rem);
+}
+
+.detail-meta {
+  display: flex;
+  gap: 1rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  flex-wrap: wrap;
+}
+
+.detail-watchstate {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Enrichment (external-metadata-enrichment): tagline, overview, genre chips,
+   cast list, and the content-rating badge on the detail page. */
+.badge-rating {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.detail-tagline {
+  margin: 0;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.detail-overview {
+  margin: 0;
+  max-width: 48rem;
+  line-height: 1.5;
+}
+
+/* Season picker: a dropdown that selects the one Season whose Episodes show. */
+.season-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 3.25rem;
+}
+.season-picker-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.season-select {
+  padding: 0.4rem 0.7rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.season-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The Show detail episode list: each row is a three-column grid —
+   [thumbnail] [flexible text block] [hover-revealed actions menu]. */
+.episode-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.episode-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.5rem;
+  border-radius: 10px;
+}
+.episode-row:hover {
+  background: var(--surface);
+}
+
+/* Column 1: the thumbnail, a play affordance. */
+.episode-thumb {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+.episode-still {
+  width: 11rem;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.episode-still-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+/* Column 2: the flexible text block — code + title over the synopsis. */
+.episode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.episode-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.episode-code {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.episode-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+.episode-text:hover .episode-title {
+  color: var(--accent);
+}
+.episode-overview {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Column 3: the per-row three-dots actions menu (hidden until row hover/focus).
+   Mirrors the music .track-menu styles, un-scoped from the music theme. */
+.row-menu {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.row-menu-toggle {
+  padding: 0.25rem 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.episode-row:hover .row-menu-toggle,
+.episode-row:focus-within .row-menu-toggle,
+.row-menu-toggle[aria-expanded="true"] {
+  opacity: 1;
+}
+.row-menu-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.row-menu-list {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  min-width: 11rem;
+  margin: 0.2rem 0 0;
+  padding: 0.3rem;
+  list-style: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.row-menu-item {
+  position: relative;
+}
+.row-menu-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+.row-menu-button:hover {
+  background: var(--surface);
+}
+
+.detail-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.genre-chip {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* Full-width Cast section, sitting below the poster+info hero (spans the whole
+   width rather than the info column). Matches the Editions section's top rhythm. */
+.detail-cast {
+  margin-top: 2rem;
+}
+
+/* Cast strip: a horizontally-scrolling row of fixed-width cast cards in billing
+   order (cast-photos/01). overflow-x lets a large cast scroll sideways instead of
+   wrapping into a wall or pushing the page down. */
+.cast-strip {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0 0 0.5rem;
+  display: flex;
+  flex-direction: row;
+  gap: 0.75rem;
+  overflow-x: auto;
+}
+
+.cast-member {
+  flex: 0 0 auto;
+  width: 6.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/* The headshot (or its placeholder) sits on top of each card at a stable aspect. */
+.cast-photo {
+  width: 6.5rem;
+  height: 8.5rem;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.cast-photo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cast-initials {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.cast-person {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.cast-character {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.play-button {
+  align-self: flex-start;
+  margin-top: 0.25rem;
+}
+
+.detail-editions {
+  margin-top: 2rem;
+}
+
+.edition {
+  margin-bottom: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.edition-name {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.file-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.file-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.file-primary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.file-container {
+  font-weight: 600;
+}
+.file-quality {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.file-secondary {
+  display: flex;
+  gap: 1rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+
+/* Subtitle summary (subtitles): the title-level list of available Subtitle tracks
+   under the Editions & files section — one chip per track, with a muted tag for an
+   image (burn-in) or online-fetched track. */
+.edition-subtitles {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.subtitle-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.subtitle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.subtitle-chip-tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+}
+
+/* Audio Stream chips (audio-streams/01): the per-File list of embedded audio
+   Streams under its row — one chip per Stream, showing the menu label (language +
+   layout, or a title tag like "Director's Commentary"), the codec, and a muted
+   tag for the default/commentary Streams. Mirrors the Subtitle chips. */
+.file-audio {
+  margin-top: 0.15rem;
+}
+
+.audio-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.audio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.audio-chip-codec {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.audio-chip-tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+}
+
+/* Video Stream chips mirror the audio chips: a File's selectable video Streams
+   (selectable-video, ADR-0025), shown only when there are ≥2. */
+.file-video {
+  margin-top: 0.15rem;
+}
+
+.video-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.video-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.video-chip-codec {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.video-chip-tag {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+}
+
+/* Title detail action toolbar (watchlist 01): the Play button and the icon
+   affordances (add-to-watchlist, watched toggle, Edit, ⋯ overflow) on one row. */
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.detail-actions .play-button {
+  /* In the flex row the Play button no longer needs its own top margin. */
+  margin-top: 0;
+}
+/* The Edit affordance is an EditItemDialog whose wrapper carries a top margin for
+   its old inline placement; inside the toolbar it's just an icon, so reset it. */
+.detail-actions .edit-item {
+  margin-top: 0;
+  display: inline-flex;
+}
+
+/* A square, icon-only action button. Inherits currentColor into the SVG, so the
+   hover/active states are just color changes. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  font-size: 1.15rem; /* drives the 1em SVG size */
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.icon-button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.icon-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* Active (e.g. watched) icon button reads as "on" in the accent color. */
+.icon-button.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Overflow (⋯) menu: an anchored popover of secondary actions. */
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+}
+.overflow-menu-list {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 20;
+  min-width: 12rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.overflow-menu-item {
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.overflow-menu-item:hover {
+  background: var(--surface-2);
+}
+
+/* The Add-to-collection panel opened from the overflow menu. */
+.add-to-collection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.add-to-collection-title {
+  font-weight: 600;
+}
+
+/* Player view (issue 04). */
+.player {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.player-stage {
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.player-video {
+  display: block;
+  width: 100%;
+  max-height: 80vh;
+  background: #000;
+}
+
+.player-controls {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.player-unsupported,
+.player-busy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 48rem;
+}
+
+/* The Now Playing bar (now-playing-bar/01): the persistent, shell-owned player
+   pinned to the bottom, with a spacer reserving its height so page content never
+   hides behind it. */
+.now-playing-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 0.5rem clamp(0.75rem, 3vw, 1.5rem);
+}
+.now-playing-spacer {
+  height: var(--now-playing-bar-height);
+}
+
+.now-playing-inner {
+  display: flex;
+  align-items: stretch;
+  gap: 1rem;
+}
+.now-playing-left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.now-playing-thumb {
+  width: 3rem;
+  height: 3rem;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.now-playing-thumb .poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.now-playing-labels {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.now-playing-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.now-playing-context {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The labels double as navigation (song → album, artist → artist, show/movie →
+   detail). They keep the label's own color — not the accent link color — so the
+   bar reads unchanged; the underline appears on hover to signal they're links.
+   display:block preserves the ellipsis clipping the label classes set. */
+.now-playing-label-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.now-playing-label-link:hover {
+  text-decoration: underline;
+}
+/* The centre is now a vertical stack: the transport controls row on top, the
+   seekable progress bar beneath — so the progress spans only the controls'
+   width rather than the whole bar. */
+.now-playing-center {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.3rem;
+  flex: none;
+  min-width: min(26rem, 100%);
+}
+.now-playing-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+}
+.now-playing-play {
+  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.now-playing-play-icon {
+  width: 1.6em;
+  height: 1.6em;
+  display: block;
+}
+/* Transport glyphs rendered as inline SVG (prev / next / shuffle / repeat):
+   sized to the font and tinted via currentColor, so they inherit the button's
+   color — including the accent tint the is-active toggles apply. */
+.now-playing-icon {
+  width: 1.15em;
+  height: 1.15em;
+  display: block;
+}
+/* Fullscreen / captions / queue: bumped up a notch so they're easier to see and hit.
+   Raising the button font-size scales both the em-sized SVG icons and the ⛶ glyph,
+   and the inline-flex box gives a slightly larger, centered click target. */
+.now-playing-lg-icon {
+  font-size: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+}
+/* Shuffle / Repeat toggles (music only). Dim when off; the accent tint + a full
+   opacity signal the active state (Shuffle on, or Repeat all/one). */
+.now-playing-shuffle,
+.now-playing-repeat {
+  opacity: 0.55;
+}
+.now-playing-shuffle.is-active,
+.now-playing-repeat.is-active {
+  opacity: 1;
+  color: var(--accent);
+}
+/* Repeat needs to anchor the "1" badge that marks the repeat-ONE state (the
+   single icon can't distinguish one vs all on its own). */
+.now-playing-repeat {
+  position: relative;
+}
+.now-playing-repeat-one {
+  position: absolute;
+  right: 0.05em;
+  bottom: 0.05em;
+  font-size: 0.62em;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+.now-playing-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex: 1 1 0;
+}
+.now-playing-volume {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.now-playing-mute {
+  font-size: 1rem;
+}
+.now-playing-volume-slider {
+  width: 5rem;
+  accent-color: #cbd2de;
+}
+
+/* Captions menu: a button that pops a small radio list above it (Off + tracks).
+   The container sits above the immersive video stage (z-index 55, a sibling in
+   the bar's stacking context) so the menu — which pops UP into the stage's
+   region — stays clickable while a video is staged. */
+.now-playing-captions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  z-index: 60;
+}
+.now-playing-cc.is-active {
+  color: var(--accent);
+}
+.now-playing-captions-menu {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 60;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  min-width: 9rem;
+  background: var(--surface, #1c1c1e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.now-playing-captions-item {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+.now-playing-captions-item:hover,
+.now-playing-captions-item[aria-checked="true"] {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+}
+
+/* Audio menu (audio-streams/04): same dropdown shape as the captions menu, so it
+   reuses the item styling; only the positioning container + popup need declaring. */
+.now-playing-audio {
+  position: relative;
+  display: flex;
+  align-items: center;
+  z-index: 60;
+}
+.now-playing-audio-menu {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 60;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  min-width: 9rem;
+  background: var(--surface, #1c1c1e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Video menu (selectable-video/03) — the video Streams picker, positioned and
+   styled exactly like the Audio menu; the switch is a re-negotiation, not an
+   in-band flip, but the affordance is the same. */
+.now-playing-video-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  z-index: 60;
+}
+.now-playing-video-menu {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 60;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  min-width: 9rem;
+  background: var(--surface, #1c1c1e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* The seekable progress bar sits under the transport controls (inside the
+   centre): elapsed | seek | remaining, spanning only the controls' width. */
+.now-playing-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.now-playing-time {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  min-width: 3.5rem;
+}
+.now-playing-time:last-child {
+  text-align: right;
+}
+.now-playing-seek {
+  flex: 1 1 auto;
+  accent-color: #cbd2de;
+}
+
+/* The ONE video surface (slice 03): a single stable wrapper repositioned by its
+   data-surface attribute only — stage ↔ pip ↔ bar-only — so the <video> inside is
+   never re-mounted and the Playback session is never re-negotiated/re-buffered. */
+.now-playing-surface {
+  background: #000;
+  overflow: hidden;
+}
+.now-playing-surface-media {
+  display: block;
+}
+
+/* Immersive stage: a full-viewport black overlay, the video centered and scaled to
+   fill it. It covers the whole screen (inset:0) — the docked bar and app header slide
+   OVER it on demand (see the np-immersive rules) rather than the stage reserving space
+   for them — so nothing but video (and black letterbox/pillarbox) shows behind. */
+.now-playing-surface[data-surface="stage"] {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+/* The media wrapper fills the stage and centers the video, so the picture sits in the
+   middle of the screen regardless of its aspect ratio. */
+.now-playing-surface[data-surface="stage"] .now-playing-surface-media {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Persistent stage backdrop (owned by the bar, NOT the per-entry player core): a
+   full-viewport black fill rendered whenever the surface is `stage`, sitting just
+   BELOW the real stage (z 55). It bridges the brief gap when a Queue advance
+   unmounts the core to negotiate the next entry — the screen stays black instead of
+   flashing the page behind, until the next video paints over it. In fullscreen the
+   bar's own black background covers the same gap; this handles the windowed stage. */
+.now-playing-stage-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 54;
+  background: #000;
+}
+/* Fill both axes and let object-fit:contain scale the picture to its largest fit
+   without stretching or cropping. max-height:100% overrides .player-video's 80vh cap
+   (a PlayerScreen leftover) that otherwise pinned the video to the top, uncentered. */
+.now-playing-surface[data-surface="stage"] .now-playing-video {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* Fullscreen targets the BAR (see toggleFullscreen), not this wrapper. The bar's UA
+   :fullscreen sizing fills the screen; the stage is a fixed inset:0 child, so it fills
+   the fullscreen viewport and centers the video via the rules above — no extra sizing
+   needed here. The bar's control row (the fullscreen transport) docks over it below. */
+.now-playing-bar:fullscreen {
+  background: #000;
+}
+/* The queue drawer renders outside the fullscreened bar, so it can't open in
+   fullscreen — hide its trigger there to avoid a dead button. */
+.now-playing-bar:fullscreen .now-playing-queue {
+  display: none;
+}
+
+/* ── Immersive chrome auto-hide ────────────────────────────────────────────────
+   While a video is on the stage, `body.np-immersive` is set; when the pointer goes
+   idle `body.np-controls-hidden` is added too (removed again on any activity). The
+   AppHeader (rendered per-screen, sticky top) and the Now Playing bar slide out of
+   view when idle and back in when active, so the immersive view is uninterrupted
+   video until the user reaches for a control. The bar is lifted above the stage so
+   it reads as an overlay ON the video rather than hiding behind its black backdrop. */
+.app-header {
+  transition: transform 0.35s ease;
+}
+/* The immersive stage <div> is a fixed-position CHILD of .now-playing-bar. Two
+   consequences drive this whole block: at inset:0 the stage's black backdrop paints
+   OVER the bar (its z-index:55 sits above the bar's own content), and any transform
+   on the bar would drag the stage with it (a transformed ancestor also becomes the
+   stage's containing block). So in immersive mode the BAR stays put and goes
+   transparent, and its inner control row takes on the bar's chrome, stacks above the
+   stage, and is what slides away when the chrome hides — the stage never moves. */
+body.np-immersive .now-playing-bar {
+  background: transparent;
+  border-top: 0;
+  padding: 0;
+}
+/* Pin the control row to the viewport bottom (not just to the bar's flow box): this
+   docks it identically whether the bar is normally at bottom:0 OR is the fullscreen
+   element filling the whole screen — so the same bar is the control surface in both
+   the windowed stage and fullscreen. z-index lifts it above the stage's backdrop. */
+body.np-immersive .now-playing-inner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  padding: 0.5rem clamp(0.75rem, 3vw, 1.5rem);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  transition: transform 0.35s ease;
+}
+body.np-immersive.np-controls-hidden .app-header {
+  transform: translateY(-100%);
+}
+body.np-immersive.np-controls-hidden .now-playing-inner {
+  transform: translateY(100%);
+}
+/* Hide the cursor over the stage once the chrome has hidden, so the idle view is
+   pure video. */
+body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
+  cursor: none;
+}
+
+/* Custom picture-in-picture: a movable corner box that keeps playing while the user
+   browses (the whole box is a drag handle; a drag offset is applied inline). */
+.now-playing-surface[data-surface="pip"] {
+  position: fixed;
+  right: clamp(0.75rem, 3vw, 1.5rem);
+  bottom: 6rem;
+  z-index: 49;
+  width: min(20rem, 60vw);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: move;
+  touch-action: none;
+}
+.now-playing-surface[data-surface="pip"] .now-playing-video {
+  width: 100%;
+  max-height: 40vh;
+  display: block;
+}
+
+/* bar-only: the element stays mounted (still streaming + reporting progress) but
+   is visually hidden — audio, or a video with no surface shown (restored paused). */
+.now-playing-surface[data-surface="bar-only"],
+.now-playing-surface-audio {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Overlay controls docked at the bottom of the PiP window (the stage has no overlay
+   controls — the Now Playing bar is its control surface in both windowed and
+   fullscreen). */
+.now-playing-pip-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
+}
+
+/* End-of-episode "Up Next" card: a small overlay pinned to the bottom-right, ABOVE
+   the transport, previewing the next Queue entry in the last 30s. Rendered inside
+   .now-playing-bar so it survives fullscreen (which targets the bar). z-index lifts
+   it above the stage backdrop (54/55) and the immersive control row (60) so it stays
+   visible even after the chrome auto-hides. The whole card is a button — a click
+   plays the next entry now. Its preview (thumb + title + series) reuses the bar's own
+   now-playing-thumb / -labels / -title / -context classes so it reads identically. */
+.now-playing-upnext {
+  position: fixed;
+  right: clamp(0.75rem, 3vw, 1.5rem);
+  bottom: calc(var(--now-playing-bar-height) + 1rem);
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  max-width: min(24rem, 90vw);
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  animation: now-playing-upnext-in 0.25s ease;
+}
+.now-playing-upnext:hover {
+  border-color: var(--text-dim);
+}
+@keyframes now-playing-upnext-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* "Up Next:" heading with the countdown stacked under it, to the LEFT of the preview. */
+.now-playing-upnext-lead {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.now-playing-upnext-heading {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.now-playing-upnext-countdown {
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* The card's own copy of the bar's poster box — kept as a modifier hook in case the
+   preview thumb ever needs to diverge from the docked bar's. */
+.now-playing-upnext-thumb {
+  flex: none;
+}
+
+/* The queue drawer: a panel docked to the right edge, sitting BETWEEN the sticky
+   app header and the fixed Now Playing bar so it never covers either (both stay
+   visible and usable while the queue is open). A dim backdrop over the content area
+   to its left closes the drawer on click. */
+.now-playing-drawer-backdrop {
+  position: fixed;
+  top: var(--app-header-height);
+  bottom: var(--now-playing-bar-height);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: flex-end;
+}
+.now-playing-drawer {
+  width: min(24rem, 90vw);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+}
+
+/* The panel fills the drawer as a flex column: a fixed header, then a body whose
+   Up Next list is the only scroller. */
+.queue-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.queue-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem clamp(0.75rem, 2vw, 1.25rem);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.queue-panel-heading {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+.queue-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.queue-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+.queue-panel-close:hover {
+  color: var(--text);
+}
+.queue-panel-close-icon {
+  width: 1.3rem;
+  height: 1.3rem;
+  display: block;
+}
+
+/* Body: Now Playing card (fixed) above the scrollable Up Next section. */
+.queue-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem clamp(0.75rem, 2vw, 1.25rem) 0;
+}
+.queue-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.queue-section-now {
+  flex: none;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.queue-section-upnext {
+  flex: 1 1 auto;
+  padding-bottom: 0.75rem;
+}
+.queue-section-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.queue-section-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+/* Only the Up Next list scrolls when the queue is long. */
+.queue-upnext-list {
+  overflow-y: auto;
+  max-height: 100%;
+}
+.queue-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.queue-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+/* The Now Playing card reads as more prominent than the up-next rows. */
+.queue-entry-current {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+/* Drag affordances: the six-dot grip signals an up-next row is draggable; the row
+   dims while it's the drag source and shows an insertion line while hovered over. */
+.queue-entry-grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  cursor: grab;
+}
+.queue-entry-grip-icon {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+}
+.queue-entry[draggable="true"] {
+  cursor: grab;
+}
+.queue-entry-dragging {
+  opacity: 0.45;
+}
+.queue-entry-drag-over {
+  border-top-color: var(--accent);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.queue-entry-poster {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.queue-entry-poster .poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.queue-entry-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 0;
+}
+.queue-entry-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-entry-kind {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+/* Per-entry remove: a trash-can icon button (replaces the old "Remove" link). */
+.queue-entry-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  padding: 0.25rem;
+  border-radius: 6px;
+}
+.queue-entry-remove:hover {
+  color: var(--error);
+}
+.queue-entry-remove-icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+/* --- Admin: libraries & scanning (issue 06) -------------------------------- */
+
+.dot-loading {
+  background: var(--accent);
+}
+
+.admin-page-title {
+  margin: 0 0 1.25rem;
+  font-size: 1.5rem;
+}
+
+.admin-libraries {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 52rem;
+}
+
+.create-library-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.root-folders {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.root-folder-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.root-folder-row .field-input {
+  flex: 1;
+}
+
+.add-root-button {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.admin-library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-library-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-library-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.admin-library-roots {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.admin-library-root {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.scan-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-weight: 550;
+}
+.scan-state-error {
+  color: var(--error);
+}
+.scan-counts {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.admin-library-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.admin-library-actions button {
+  cursor: pointer;
+}
+
+/* --- Admin: users (access-control-admin-ui issue 01) ---------------------- */
+
+.admin-user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-user-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-user-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.user-username {
+  font-weight: 600;
+}
+.user-role {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.admin-user-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.admin-user-actions button {
+  cursor: pointer;
+}
+.admin-user-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.admin-user-confirm .confirm-prompt {
+  color: var(--text-dim);
+}
+
+.admin-user-access {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.admin-user-access-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.user-access-label {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.user-access-summary {
+  font-weight: 550;
+}
+.library-access-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.library-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.library-checklist-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+/* --- Admin: attention surfaces & devices (issue 07) ----------------------- */
+
+.status-empty {
+  color: var(--text-dim);
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0 0 1.5rem;
+  flex-wrap: wrap;
+}
+.admin-tab {
+  padding: 0.4rem 0.85rem;
+  border-radius: 0.5rem;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.admin-tab.active {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.subsection-title {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.admin-attention,
+.admin-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 60rem;
+}
+
+.attention-library-picker {
+  max-width: 24rem;
+}
+
+.attention-lists {
+  display: flex;
+  flex-direction: column;
+}
+
+.needs-review-list,
+.unmatched-list,
+.overrides-list,
+.devices-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.needs-review-item,
+.unmatched-item,
+.override-item,
+.device-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+}
+
+.needs-review-flag {
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.unmatched-path,
+.override-folder,
+.fix-match-folder {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.unmatched-reason {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.override-item-orphaned {
+  border-color: var(--error);
+}
+.override-orphaned-badge {
+  color: var(--error);
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.override-ids,
+.override-created {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.fix-match-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.fix-match-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.device-platform,
+.device-last-seen {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.device-revoke {
+  margin-left: auto;
+  cursor: pointer;
+}
+
+/* --- Metadata Providers admin (metadata-providers 02). -------------------- */
+/* Provider-specific layout previously had no CSS, so the whole screen
+   collapsed into one unreadable stack of raw text. These rules give it the
+   card / group / row structure the markup already implies. */
+.admin-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 52rem;
+}
+
+.admin-providers-intro {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  max-width: 44rem;
+}
+
+/* A media-kind group (Video / Music) is a .card; stack its heading + list. */
+.provider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.provider-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.provider-group-head .section-title {
+  margin: 0;
+}
+
+/* Enrichment on/off pill for the whole kind. */
+.provider-kind-status {
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.provider-kind-status[data-enabled="true"] {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Each provider is its own inset card so rows never bleed together. */
+.provider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem clamp(0.85rem, 2vw, 1.25rem);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.provider-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.provider-name {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+/* Authoritative vs. Supplement role pill. */
+.provider-role-badge {
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.provider-role-badge[data-role="authoritative"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.provider-kinds {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Enable checkbox pinned to the far right of the row header. */
+.provider-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.provider-toggle input {
+  cursor: pointer;
+}
+
+.provider-description {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+.provider-description a {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.provider-key-field {
+  gap: 0.4rem;
+}
+
+/* Advanced (base/image URL overrides) collapses by default. */
+.provider-advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+.provider-advanced > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  list-style-position: inside;
+  user-select: none;
+}
+.provider-advanced > summary:hover {
+  color: var(--text);
+}
+.provider-advanced[open] > summary {
+  margin-bottom: 0.75rem;
+}
+.provider-advanced .field + .field {
+  margin-top: 0.75rem;
+}
+
+.provider-test {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+/* The shared .status has bottom margin meant for stacked blocks; the test row
+   lays its status out inline, so drop it here. */
+.provider-test .status {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+/* Masked API-key input row: field grows, controls sit inline after it. */
+.masked-key {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.masked-key-input {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+}
+.masked-key-reveal,
+.masked-key-clear {
+  font-size: 0.85rem;
+}
+.masked-key-status {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text-dim);
+}
+.masked-key-status[data-configured="true"] {
+  color: var(--ok);
+}
+.masked-key-cleared {
+  font-size: 0.78rem;
+  color: var(--error);
+}
+
+/* Standalone setting cards (language, enrichment behavior). */
+.provider-language.card,
+.provider-behavior.card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.provider-behavior .section-title {
+  margin: 0;
+}
+.provider-language .field-input {
+  max-width: 16rem;
+}
+.provider-behavior .field-input[type="number"] {
+  max-width: 12rem;
+}
+
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Save bar sticks to the bottom of the viewport so Save is always reachable
+   on a long form. */
+.provider-save-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 0;
+  margin-top: -0.5rem;
+  background: linear-gradient(
+    to top,
+    var(--bg) 60%,
+    color-mix(in srgb, var(--bg) 0%, transparent)
+  );
+}
+.provider-save-bar .auth-submit {
+  margin-top: 0;
+}
+.provider-save-bar .status {
+  margin: 0;
+}
+
+/* Edit-item "Fix info" search picker (item-editing/01, ADR-0019). Reuses the
+   shared .card/.field/.status classes; these rules only lay out the candidate
+   list so a result reads as title + hint + Apply, with an optional thumbnail. */
+.enrichment-override-picker {
+  margin-top: 1rem;
+}
+/* Danger styling shared by the destructive "Replace" (identity correction) button
+   and its consequence hint inside the unified Search tab (item-editing/unified-
+   search): red, visibly distinct from the safe primary "Update", so an Admin never
+   mistakes a re-identification (resets watch state + clears locks) for a label edit. */
+.section-title-danger {
+  color: var(--danger, #b3261e);
+}
+.detail-hint-danger {
+  color: var(--danger, #b3261e);
+  opacity: 0.95;
+}
+.nav-link-danger {
+  color: #fff;
+  background: var(--danger, #b3261e);
+  border-color: var(--danger, #b3261e);
+}
+.nav-link-danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.enrichment-override-picker .field {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.enrichment-override-picker .field-input {
+  flex: 1 1 12rem;
+}
+
+/* Edit-item dialog (ADR-0019): the three correction actions (Fix info / Fix label
+   / Wrong item) collapse behind one "Edit item" button that opens a native
+   <dialog> with a tab per action, keeping the detail page clean. The panel is a
+   centered modal card that scrolls internally if a form is tall; the native
+   ::backdrop dims (and blocks) the page behind it. */
+.edit-item {
+  margin-top: 1rem;
+}
+.edit-item-button {
+  font-weight: 600;
+}
+.edit-item-dialog {
+  /* Reset the UA dialog chrome; we paint our own card panel inside. */
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  max-width: min(680px, 94vw);
+  width: 94vw;
+  max-height: 90vh;
+  overflow: visible;
+}
+.edit-item-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+.edit-item-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.edit-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 3vw, 1.5rem);
+  border-bottom: 1px solid var(--border);
+}
+.edit-item-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.edit-item-close {
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+}
+.edit-item-tablist {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem clamp(1rem, 3vw, 1.5rem) 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+/* A single-action item (Track → Fix info) has nothing to switch between; hide the
+   tab row (the tab button still renders for testability). */
+.edit-item-tablist-single {
+  display: none;
+}
+.edit-item-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 600;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: -1px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+.edit-item-tab:hover:not(.is-active) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.edit-item-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+/* The destructive "Wrong item" tab reads as a danger zone even before it's opened. */
+.edit-item-tab-danger {
+  color: var(--danger, #b3261e);
+}
+.edit-item-tab-danger.is-active {
+  border-bottom-color: var(--danger, #b3261e);
+}
+.edit-item-body {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow-y: auto;
+}
+/* Inside the dialog the action forms no longer need their own top margin/card
+   separation — the panel already frames them. */
+.edit-item-body > .metadata-editor,
+.edit-item-body > .enrichment-override-picker,
+.edit-item-body > .fix-label-editor {
+  margin-top: 0;
+}
+.enrichment-candidate-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.enrichment-candidate {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+/* Unified-search redesign (item-editing/unified-search): candidate rows are now
+   SELECTABLE (click to select, then Update/Replace at the bottom) instead of
+   carrying a per-row Apply button. The selected row reads with an accent ring. */
+.enrichment-candidate[role="button"] {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.enrichment-candidate[role="button"]:hover {
+  border-color: var(--accent);
+}
+.enrichment-candidate.is-selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.enrichment-candidate[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Apply bar at the bottom of the Search tab: the primary "Update" (safe Fix info)
+   over its hint, and — only for a Movie/Show — the danger "Replace" (destructive
+   Wrong item) over its hint. The red Replace styling + hint are the guardrail
+   (single-click, no confirm — ADR-0019). */
+.edit-apply-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin-top: 1rem;
+}
+.edit-apply-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+.edit-apply-hint-danger {
+  color: var(--danger, #b3261e);
+  opacity: 0.95;
+}
+.enrichment-candidate-thumb {
+  width: 40px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+.enrichment-candidate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.enrichment-candidate-title {
+  font-weight: 600;
+}
+.enrichment-candidate-hint {
+  font-size: 0.85em;
+  opacity: 0.75;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* Album candidate tracklist preview (item-editing/02): the expandable positional
+   map an Admin confirms before applying. */
+.enrichment-tracklist-toggle {
+  align-self: flex-start;
+  font-size: 0.8em;
+  padding: 0.1rem 0;
+}
+.enrichment-tracklist {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.82em;
+  opacity: 0.85;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.enrichment-tracklist li {
+  list-style: none;
+}
+/* Record-type badge that disambiguates same-titled hits ("Album · Soundtrack",
+   "Group") — item-editing/search-improvements. */
+.enrichment-candidate-type {
+  align-self: flex-start;
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  border: 1px solid currentColor;
+  border-radius: 0.3rem;
+  padding: 0.02rem 0.35rem;
+}
+/* Edit-item "Details" tab (item-editing/03): the descriptive-field edit form. The
+   markup used metadata-* classes that had no rules, so the tab rendered as raw,
+   unspaced browser controls — these style it as a real form, mirroring the auth
+   .field-input conventions. Scoped to the editor so it never leaks to the browse
+   surface. */
+.metadata-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+/* The section heading + intro hint sit flush; the editor's flex gap spaces them. */
+.metadata-editor .section-title {
+  margin: 0;
+}
+.detail-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.metadata-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.metadata-label {
+  display: flex;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.metadata-input {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+textarea.metadata-input {
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.5;
+}
+.metadata-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.metadata-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.metadata-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+/* Edit-item "Fix label" (item-editing/03): the manual-edit form's Locked badge +
+   Release control and the provider image picker grid. Scoped to the admin editor
+   so it never touches the read-only browse surface. */
+.fixlabel-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+}
+.fixlabel-release {
+  font-size: 0.8em;
+}
+.fixlabel-artwork {
+  margin-top: 0.75rem;
+}
+.fixlabel-artwork-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.fixlabel-artwork-panel {
+  margin-top: 0.5rem;
+}
+.fixlabel-artwork-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 0.5rem;
+}
+.fixlabel-artwork-choice {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+.fixlabel-artwork-choice:hover {
+  border-color: currentColor;
+}
+.fixlabel-artwork-choice img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.fixlabel-artwork-applying {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 0.8em;
+}
+/* Source dimensions overlaid on each candidate so a higher-res image is easy to
+   prefer (artwork-management/01). */
+.fixlabel-artwork-dims {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 0.1rem 0.3rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.7em;
+  border-top-right-radius: 4px;
+}
+/* The currently-applied candidate reads with a highlighted border + an "Applied"
+   ribbon so an Admin sees what's in effect. */
+.fixlabel-artwork-choice.is-applied {
+  border-color: var(--accent, #4ea1ff);
+}
+.fixlabel-artwork-applied {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.1rem 0.3rem;
+  background: var(--accent, #4ea1ff);
+  color: #fff;
+  font-size: 0.7em;
+  border-bottom-left-radius: 4px;
+}
+
+/* Upload your own (artwork-management/03, ADR-0026): a drag-drop zone + Browse
+   button, always available (upload needs no provider). */
+.fixlabel-artwork-upload {
+  margin-top: 0.75rem;
+  padding: 0.9rem;
+  border: 1px dashed var(--border, #3a3a3a);
+  border-radius: 6px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: center;
+}
+.fixlabel-artwork-upload.is-dragover {
+  border-color: var(--accent, #4ea1ff);
+  background: rgba(78, 161, 255, 0.08);
+}
+.fixlabel-artwork-upload-hint {
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--text-muted, #9a9a9a);
+}
+.fixlabel-artwork-upload-note {
+  margin: 0;
+  font-size: 0.75em;
+  color: var(--text-muted, #9a9a9a);
+}
+
+/* Screen-reader-only / visually hidden — used to keep a real <input type="file">
+   in the DOM (for its dialog + a11y) while the styled Browse button drives it. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

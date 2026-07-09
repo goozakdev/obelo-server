@@ -1,0 +1,38 @@
+# Build context is the repo root; keep it small and reproducible.
+# Docker looks for `.dockerignore` next to the Dockerfile when building with
+# `docker build -f docker/Dockerfile .` on BuildKit; this file governs that.
+
+# Local build outputs and binaries — rebuilt inside the image.
+/bin/
+*.test
+*.out
+
+# Runtime data (SQLite DB + caches) — never bake into the image.
+/data/
+/var/
+
+# Frontend toolchain state — reinstalled/rebuilt in the web stage.
+/web/node_modules/
+node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/
+/web/.playwright/
+*.tsbuildinfo
+
+# Real Vite build output under the embed dir. The committed placeholder
+# index.html is kept (the web stage overwrites it with a fresh build).
+/internal/webui/dist/assets/
+
+# Vendor / VCS / editor / OS cruft.
+/vendor/
+.git/
+.gitignore
+.DS_Store
+*.swp
+
+# Project scratch space and local tooling — not needed to build.
+/.scratch/
+/.claude/
+/test-results/

@@ -1,0 +1,13 @@
+-- 0015_rating_ceiling: per-User Rating ceiling (access-control 04).
+--
+-- A Member with a ceiling never sees a Title whose Content rating is above it
+-- (api-contract.md "Rating ceiling"); an above-ceiling Title is hidden as 404,
+-- exactly like an ungranted Library. The ceiling is stored as a canonical rating
+-- label (e.g. 'PG-13'); the access package maps both the movie (MPAA) and US TV
+-- systems onto one maturity ladder, so a single ceiling caps a Movie and a TV
+-- Library alike.
+--
+-- Nullable, default NULL = uncapped. Existing Users migrate cleanly to "no
+-- ceiling" (unchanged behavior). An Admin's ceiling is never consulted (Admins
+-- are all-access by role), so this column is only ever set for Members.
+ALTER TABLE users ADD COLUMN rating_ceiling TEXT;

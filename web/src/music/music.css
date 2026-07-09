@@ -1,0 +1,269 @@
+/*
+ * Music theme — the scoped stylesheet for the music experience.
+ *
+ * EVERY rule here is nested under `.music-theme` (the class MusicShell puts on the
+ * music section's root). Because all music screens render inside MusicShell and
+ * the rest of the app never carries `.music-theme`, anything you write here
+ * affects ONLY music — restyle the music side freely without touching TV/Movies.
+ *
+ * The base look is inherited from index.css; this file is intentionally a thin
+ * starting point. Override the design tokens below (they shadow the :root values
+ * from index.css for music's subtree) or add music-only selectors as the music
+ * UI diverges. For example, change --accent here and only music links/buttons
+ * change colour; the TV/Movie side keeps the global accent.
+ */
+
+.music-theme {
+  /* Design tokens — currently mirror the global palette (index.css :root). Tweak
+     these to give music its own identity; only the music subtree is affected. */
+  --accent: #5b8cff;
+  --surface: #181b22;
+  --surface-2: #20242d;
+}
+
+/* Music art is square, not 2:3 like movie/TV posters. Override the shared
+   `.detail-poster` frame so the full artwork shows without cropping. Scoped to
+   `.music-theme`, so album/track/artist detail posters are square while TV/Movies
+   keep their 2:3 ratio. */
+.music-theme .detail-poster {
+  aspect-ratio: 1 / 1;
+}
+
+/* Artist grid tiles are circular, not rectangular posters. A round frame reads
+   instantly as "an Artist" versus an Album's square art (ArtistList `artist-tile`).
+   Square the 2:3 poster frame to 1:1, clip it to a circle, and center the name
+   below it so the caption sits under the circle rather than flush-left. */
+.music-theme .artist-tile .poster-frame {
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+}
+
+.music-theme .artist-tile .poster-caption {
+  text-align: center;
+  align-items: center;
+}
+
+/* Album grid tiles are square, not 2:3 posters. Album cover art is square, so a
+   poster frame would crop its top/bottom edges (ArtistDetailScreen `album-tile`).
+   Square the frame to 1:1 so the full cover shows uncropped. */
+.music-theme .album-tile .poster-frame {
+  aspect-ratio: 1 / 1;
+}
+
+/* Artist detail header image is a circle, matching the round artist tiles on the
+   library page (ArtistDetailScreen `artist-avatar`). The shared `.detail-poster`
+   is already squared to 1:1 above, so clipping to 50% gives a clean circle. */
+.music-theme .artist-avatar {
+  border-radius: 50%;
+}
+
+/* Breathe some space between the artist header and the album grid below it. */
+.music-theme [data-testid="artist-detail"] .detail-hero {
+  margin-bottom: clamp(1.5rem, 4vw, 2.5rem);
+}
+
+/* Album header: make the title read unmistakably as THE title — much larger than
+   the shared `.detail-title` — with the artist link and year in normal-size text
+   below it (their default sizing comes from `.detail-context` / `.detail-meta`). */
+.music-theme .album-title {
+  font-size: clamp(2.25rem, 6vw, 3.5rem);
+  line-height: 1.1;
+}
+
+/* ── Album track list ──────────────────────────────────────────────────────
+   Each row is a 4-column grid: [number/play] [title+artist] [length] [actions],
+   vertically centered. The number cell becomes a play/pause control on hover (or
+   always, for the now-playing track); the title/artist column takes the slack. */
+.music-theme .track-listing {
+  margin-top: 2rem;
+}
+
+.music-theme .track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.music-theme .track-row {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto 2.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+}
+.music-theme .track-row:hover {
+  background: var(--surface-2);
+}
+
+/* Col 1 — number ↔ play/pause. The number shows by default; the control overlays
+   it, revealed on row hover/focus or when this is the now-playing track. */
+.music-theme .track-num-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.music-theme .track-toggle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 0;
+}
+.music-theme .track-row:hover .track-toggle,
+.music-theme .track-row:focus-within .track-toggle,
+.music-theme .track-row.is-current .track-toggle {
+  opacity: 1;
+}
+.music-theme .track-row:hover .track-number,
+.music-theme .track-row:focus-within .track-number,
+.music-theme .track-row.is-current .track-number {
+  opacity: 0;
+}
+.music-theme .track-row.is-current .track-toggle {
+  color: var(--accent);
+}
+
+/* Col 2 — title over artist, both links, left aligned, vertically centered. */
+.music-theme .track-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.music-theme .track-title {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-theme .track-title:hover {
+  text-decoration: underline;
+}
+.music-theme .track-row.is-current .track-title {
+  color: var(--accent);
+}
+.music-theme .track-artist {
+  width: fit-content;
+  max-width: 100%;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-theme .track-artist:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* Col 3 — length. */
+.music-theme .track-length {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Col 4 — the "three dots" actions menu (dropdown + a playlists submenu). */
+.music-theme .track-menu {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.music-theme .track-menu-toggle {
+  padding: 0.25rem 0.4rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.music-theme .track-row:hover .track-menu-toggle,
+.music-theme .track-row:focus-within .track-menu-toggle,
+.music-theme .track-menu-toggle[aria-expanded="true"] {
+  opacity: 1;
+}
+.music-theme .track-menu-toggle:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.music-theme .track-menu-list,
+.music-theme .track-submenu {
+  position: absolute;
+  z-index: 20;
+  min-width: 12rem;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.music-theme .track-menu-list {
+  top: 100%;
+  right: 0;
+}
+.music-theme .track-menu-item {
+  position: relative;
+}
+.music-theme .track-menu-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+.music-theme .track-menu-button:hover {
+  background: var(--surface);
+}
+.music-theme .track-menu-caret {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+.music-theme .track-submenu {
+  top: 0;
+  right: 100%;
+  margin-right: 0.2rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.music-theme .track-menu-empty {
+  display: block;
+  padding: 0.45rem 0.6rem;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+/* Transient action confirmation shown above the list. */
+.music-theme .track-notice {
+  margin: 0 0 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}

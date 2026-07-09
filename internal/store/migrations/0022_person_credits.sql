@@ -1,0 +1,17 @@
+-- 0022_person_credits: give a leaf Title's cast credit a link to the PERSON whose
+-- headshot it shows (cast-photos/01). Enrichment already captures each Movie cast
+-- member's name + character in title_credits (0010); this adds the provider-
+-- namespaced person ref ("tmdb:<id>") that keys their headshot. The headshot
+-- itself is a fetched image in the EXISTING generic entity_artwork table (0011)
+-- under a new `person` entity type — one row per person (entity_type='person',
+-- entity_id=<person ref>, role='profile', source='fetched') — so one actor's
+-- photo is stored + cached ONCE across every Title they appear in (dedupe). No new
+-- image table is introduced; the person headshot rides the same path/source/
+-- added_at shape and serve route the poster fetches already use (ADR-0007).
+--
+-- Purely additive (a single ADD COLUMN with a constant default), never touches
+-- identity (identity_key / watch state), and leaves every existing credit row
+-- byte-for-byte intact — an un-enriched or pre-cast-photos credit simply carries
+-- an empty person_ref (no headshot). title_credits is rebuilt wholesale on each
+-- unlocked enrich (WriteTitleEnrichment), so no backfill is needed.
+ALTER TABLE title_credits ADD COLUMN person_ref TEXT NOT NULL DEFAULT '';

@@ -1,0 +1,22 @@
+-- 0012_needs_review_resolution: make the scanner's `needs_review` flag
+-- Admin-resolvable. Until now `needs_review` was purely scan-computed (set when a
+-- folder parsed without a year, or a TV episode used non-SxxExx numbering) and
+-- had no way to be cleared — the Admin attention surface listed flagged items but
+-- offered no action, and a rescan recomputed the flag every time. This adds a
+-- sticky `reviewed` bit the Admin sets to dismiss a flag the parse got right.
+--
+-- Semantics:
+--   - `reviewed = 1` means an Admin confirmed the item is fine as filed. Marking
+--     reviewed also clears `needs_review` immediately, so every reader (browse
+--     badges, the attention list) reflects it at once.
+--   - The scanner OWNS `needs_review` (recomputes it from the parse on each scan)
+--     but NEVER writes `reviewed`. To keep a dismissal sticky across rescans, the
+--     title/show upsert preserves `needs_review = 0` whenever `reviewed = 1`
+--     (see writeTitleRow / upsertShow). A genuinely new identity (rename adding a
+--     year) inserts a fresh row with reviewed = 0, which is correct: it is a
+--     different work, freshly parsed.
+--
+-- Additive and constant-default, so a plain ADD COLUMN suffices (no table rebuild);
+-- Movie, TV, and Music rows are all untouched on existing databases.
+ALTER TABLE titles ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE shows ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0;

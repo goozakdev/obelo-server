@@ -1,0 +1,37 @@
+# Build output
+/bin/
+*.test
+*.out
+
+# Local data directory (SQLite DB + caches live here at runtime)
+/data/
+/var/
+
+# Go workspace / vendor
+/vendor/
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+
+# Frontend (web/) — Node + Vite + Playwright
+/web/node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/
+/web/.playwright/
+node_modules/
+# TypeScript incremental-build cache (local build state only).
+*.tsbuildinfo
+
+# Embedded SPA build output: the Vite build writes hashed assets here, but the
+# committed placeholder index.html MUST stay tracked so `go:embed` and
+# `go build ./...` work without a Node toolchain. Ignore everything in the dir
+# except that placeholder.
+/internal/webui/dist/*
+!/internal/webui/dist/index.html
+juicebox
+
+.claude
+.scratch
