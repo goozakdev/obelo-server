@@ -2100,35 +2100,29 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   max-width: 52rem;
 }
 
-.create-library-form {
+/* Top bar: the "N libraries" count on the left, actions pinned right. */
+.admin-libraries-bar {
   display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.root-folders {
-  border: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.root-folder-row {
-  display: flex;
-  gap: 0.5rem;
   align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
-.root-folder-row .field-input {
-  flex: 1;
+.admin-libraries-count {
+  font-size: 1.1rem;
+  font-weight: 650;
 }
-
-.add-root-button {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  cursor: pointer;
+.admin-libraries-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+/* The primary "Add Library" button borrows the accent submit look but sits inline
+   in the bar (no top margin, tighter padding than a form submit). */
+.admin-libraries-add {
+  margin-top: 0;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.9rem;
 }
 
 .admin-library-list {
@@ -2137,33 +2131,44 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.6rem;
 }
 
+/* A row is a single horizontal band: identity on the left, the status + action
+   cluster on the right. The action cluster is dimmed until the row is hovered or
+   holds focus (keyboard reach), then fades in. */
 .admin-library-row {
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
 }
-
-.admin-library-head {
+.admin-library-identity {
   display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
 }
-
-.admin-library-roots {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.admin-library-root {
+.admin-library-icon {
+  display: inline-flex;
   color: var(--text-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.85rem;
+}
+.admin-library-kind-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.admin-library-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-library-aside {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
 .scan-status {
@@ -2172,6 +2177,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   gap: 0.5rem;
   flex-wrap: wrap;
   font-weight: 550;
+  font-size: 0.85rem;
 }
 .scan-state-error {
   color: var(--error);
@@ -2183,11 +2189,188 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 
 .admin-library-actions {
   display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  /* Reveal on hover / focus-within; keep laid out (visibility, not display) so the
+     row height never jumps. */
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.admin-library-row:hover .admin-library-actions,
+.admin-library-row:focus-within .admin-library-actions {
+  opacity: 1;
 }
 .admin-library-actions button {
   cursor: pointer;
+}
+/* The Edit pencil is a compact icon button (reuses .icon-button sizing). */
+.admin-library-edit {
+  width: 2rem;
+  height: 2rem;
+  font-size: 1rem;
+}
+
+/* --- Add / Edit Library dialogs (issue: admin-libraries-ui) --------------- */
+/* Both dialogs share the modal chrome (mirrors .edit-item-dialog): a transparent
+   native <dialog> with a painted card panel inside, a blurred backdrop, and a
+   header / body / footer stack. */
+.library-dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  max-width: min(520px, 94vw);
+  width: 94vw;
+  max-height: 90vh;
+  overflow: visible;
+}
+.library-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+.library-dialog-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.library-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 3vw, 1.5rem);
+  border-bottom: 1px solid var(--border);
+}
+.library-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1.15rem;
+}
+.library-dialog-kind {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.library-dialog-close {
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+}
+.library-dialog-body {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.library-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem clamp(1rem, 3vw, 1.5rem);
+  border-top: 1px solid var(--border);
+}
+.library-dialog-footer-end {
+  justify-content: flex-end;
+}
+
+/* Add-wizard: one page at a time. */
+.wizard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 8rem;
+}
+.wizard-prompt {
+  margin: 0;
+  font-weight: 550;
+}
+.kind-picker {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.kind-option {
+  flex: 1 1 6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.kind-option:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.kind-option.is-selected {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.kind-option-icon {
+  width: 2rem;
+  height: 2rem;
+}
+.kind-option-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* Edit dialog: name row, roots list, add-folder row, danger zone. */
+.edit-library-name-row,
+.edit-library-add-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.edit-library-name-row .field-input,
+.edit-library-add-row .field-input {
+  flex: 1;
+}
+.edit-library-roots {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.edit-library-root {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+.edit-library-danger {
+  margin-top: 0.25rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.edit-library-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.edit-library-confirm .confirm-prompt {
+  color: var(--text-dim);
+  font-size: 0.9rem;
 }
 
 /* --- Admin: users (access-control-admin-ui issue 01) ---------------------- */

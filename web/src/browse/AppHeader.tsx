@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/session";
 import { useEnrichmentActivity } from "../events/enrichEvents";
 import { useLibraries } from "./librariesContext";
+import { MusicIcon, FilmIcon, TvIcon } from "./kindIcons";
 import type { Library } from "../api/types";
 
 // The shared authed header: app title (links to the landing) on the left, the
@@ -41,75 +42,9 @@ function HomeIcon() {
   );
 }
 
-function MusicIcon() {
-  return (
-    <svg
-      className="nav-icon"
-      xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M9 18V5l12-2v13" />
-      <circle cx="6" cy="18" r="3" />
-      <circle cx="18" cy="16" r="3" />
-    </svg>
-  );
-}
-
-function FilmIcon() {
-  return (
-    <svg
-      className="nav-icon"
-      xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M7 3v18" />
-      <path d="M3 7.5h4" />
-      <path d="M3 12h18" />
-      <path d="M3 16.5h4" />
-      <path d="M17 3v18" />
-      <path d="M17 7.5h4" />
-      <path d="M17 16.5h4" />
-    </svg>
-  );
-}
-
-function TvIcon() {
-  return (
-    <svg
-      className="nav-icon"
-      xmlns="http://www.w3.org/2000/svg"
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m17 2-5 5-5-5" />
-      <rect width="20" height="15" x="2" y="7" rx="2" />
-    </svg>
-  );
-}
+// The media-kind glyphs (MusicIcon / FilmIcon / TvIcon) now live in ./kindIcons
+// so the admin Libraries hub reuses the exact same icons; HomeIcon stays local
+// because it's nav-only.
 
 // The media kinds, in nav order. `kind` matches the backend Library.kind
 // vocabulary (library.service.go: movie | tv | music).
@@ -117,7 +52,7 @@ const LIBRARY_KINDS: ReadonlyArray<{
   kind: string;
   label: string;
   testid: string;
-  Icon: () => JSX.Element;
+  Icon: (props: { className?: string }) => JSX.Element;
 }> = [
   { kind: "music", label: "Music", testid: "nav-music", Icon: MusicIcon },
   { kind: "movie", label: "Movies", testid: "nav-movies", Icon: FilmIcon },
@@ -339,7 +274,7 @@ function LibraryDropdown({
 }: {
   label: string;
   testid: string;
-  Icon: () => JSX.Element;
+  Icon: (props: { className?: string }) => JSX.Element;
   libraries: Library[];
 }) {
   const [open, setOpen] = useState(false);

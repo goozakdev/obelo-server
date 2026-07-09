@@ -85,6 +85,52 @@ func (db *DB) CreateLibrary(id, name, kind string, roots []LibraryRootInput) (Li
 	return db.LibraryByID(id)
 }
 
+// UpdateLibrary renames a Library and/or appends root folders, in one
+// transaction. A nil name leaves the name unchanged; an empty addRoots adds
+// nothing. The caller supplies pre-normalized paths and pre-generated root IDs,
+// having already validated the name and rejected folder overlap. Returns
+// ErrNotFound if no such Library exists (checked up front so a no-op update on a
+// missing Library still reports it), and re-reads the Library so the returned
+// value reflects the merged roots.
+func (db *DB) UpdateLibrary(id string, name *string, addRoots []LibraryRootInput) (Library, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return Library{}, fmt.Errorf("store: begin update library: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Confirm the Library exists before mutating (a rename with no rows, or an
+	// add of zero roots, would otherwise silently succeed on a missing id).
+	var exists string
+	err = tx.QueryRow(`SELECT id FROM libraries WHERE id = ?`, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Library{}, ErrNotFound
+	}
+	if err != nil {
+		return Library{}, fmt.Errorf("store: loading library for update: %w", err)
+	}
+
+	if name != nil {
+		if _, err := tx.Exec(
+			`UPDATE libraries SET name = ? WHERE id = ?`, *name, id,
+		); err != nil {
+			return Library{}, fmt.Errorf("store: renaming library: %w", err)
+		}
+	}
+	for _, r := range addRoots {
+		if _, err := tx.Exec(
+			`INSERT INTO library_roots (id, library_id, path) VALUES (?, ?, ?)`,
+			r.ID, id, r.Path,
+		); err != nil {
+			return Library{}, fmt.Errorf("store: adding library root %q: %w", r.Path, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Library{}, fmt.Errorf("store: commit update library: %w", err)
+	}
+	return db.LibraryByID(id)
+}
+
 // Libraries lists all Libraries with their root folders, most-recently-created
 // first.
 func (db *DB) Libraries() ([]Library, error) {

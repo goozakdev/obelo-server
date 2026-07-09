@@ -150,9 +150,14 @@ test.describe.serial("admin: attention surfaces & devices", () => {
     await page.goto("/admin");
     await expect(page.getByTestId("admin-libraries")).toBeVisible();
     const name = `Attention E2E ${Date.now()}`;
-    await page.getByTestId("library-name-input").fill(name);
-    await page.getByTestId("root-folder-input").first().fill(fixturesDir);
-    await page.getByTestId("create-library-submit").click();
+    // Add via the wizard: pick the Movie kind, name it, give it the root path.
+    await page.getByTestId("add-library-button").click();
+    await page.getByTestId("add-library-kind-movie").click();
+    await page.getByTestId("add-library-next").click();
+    await page.getByTestId("add-library-name-input").fill(name);
+    await page.getByTestId("add-library-next").click();
+    await page.getByTestId("add-library-path-input").fill(fixturesDir);
+    await page.getByTestId("add-library-submit").click();
 
     const row = page
       .getByTestId("admin-library-row")

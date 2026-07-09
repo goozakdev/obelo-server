@@ -5,22 +5,25 @@ import { renderWithAuth } from "../test/renderWithAuth";
 import { ApiError } from "../api/errors";
 import type { Library, ScanStatus } from "../api/types";
 
-// AdminLibrariesScreen end-to-end through the faked API client (the one seam):
-// the list renders existing libraries; create succeeds and the new library
-// appears; a FOLDER_OVERLAP create shows a readable inline error (no crash);
-// delete removes a library; a scan trigger seeds "running" and polling reflects
-// idle + counts; incremental vs full hit the right endpoint. apiClient is faked
-// at the module boundary; scan polling uses fake timers.
+// AdminLibrariesScreen (redesigned UI) end-to-end through the faked API client
+// (the one seam): the top bar shows the library count + Add/Scan-All actions; the
+// list renders each Library with its kind icon, name, and per-row controls; the
+// Add-Library wizard walks kind → name → path and creates; the Edit dialog
+// renames, adds a folder, and deletes; Scan-All triggers every row's scan; and
+// scan polling reflects running → idle + counts. apiClient is faked at the module
+// boundary; scan polling uses fake timers.
 
 const {
   listLibraries,
   createLibrary,
+  updateLibrary,
   deleteLibrary,
   scanLibrary,
   getScanStatus,
 } = vi.hoisted(() => ({
   listLibraries: vi.fn(),
   createLibrary: vi.fn(),
+  updateLibrary: vi.fn(),
   deleteLibrary: vi.fn(),
   scanLibrary: vi.fn(),
   getScanStatus: vi.fn(),
@@ -33,6 +36,7 @@ vi.mock("../api/client", async () => {
     apiClient: {
       listLibraries: (...a: unknown[]) => listLibraries(...a),
       createLibrary: (...a: unknown[]) => createLibrary(...a),
+      updateLibrary: (...a: unknown[]) => updateLibrary(...a),
       deleteLibrary: (...a: unknown[]) => deleteLibrary(...a),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
       getScanStatus: (...a: unknown[]) => getScanStatus(...a),
@@ -55,9 +59,20 @@ function status(over: Partial<ScanStatus>): ScanStatus {
   return { libraryId: "lib1", state: "idle", titlesFound: 0, filesFound: 0, ...over };
 }
 
+// HTMLDialogElement has no jsdom implementation for showModal/close; stub them so
+// the dialogs mount without throwing.
 beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+    this.open = true;
+  });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+    this.open = false;
+    this.dispatchEvent(new Event("close"));
+  });
+
   listLibraries.mockReset();
   createLibrary.mockReset();
+  updateLibrary.mockReset();
   deleteLibrary.mockReset();
   scanLibrary.mockReset();
   getScanStatus.mockReset();
@@ -67,62 +82,43 @@ beforeEach(() => {
 });
 
 describe("AdminLibrariesScreen", () => {
-  it("renders existing libraries with their roots", async () => {
+  it("renders the count and existing libraries with a kind icon + name", async () => {
     listLibraries.mockResolvedValue([
-      lib({ id: "lib1", name: "Movies", rootFolders: [{ id: "r1", path: "/media/movies" }] }),
+      lib({ id: "lib1", name: "Movies", kind: "movie" }),
     ]);
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
 
     await waitFor(() =>
       expect(screen.getByTestId("admin-library-list")).toBeInTheDocument(),
     );
+    expect(screen.getByTestId("admin-libraries-count")).toHaveTextContent("1 library");
     const row = screen.getByTestId("admin-library-row");
     expect(within(row).getByTestId("admin-library-name")).toHaveTextContent("Movies");
-    expect(within(row).getByTestId("admin-library-roots")).toHaveTextContent(
-      "/media/movies",
-    );
+    // The kind icon renders inside the row's identity cluster.
+    expect(row.querySelector(".admin-library-kind-icon")).toBeTruthy();
   });
 
-  it("shows a clean empty state with no libraries", async () => {
+  it("shows the call-to-action empty state with no libraries", async () => {
     listLibraries.mockResolvedValue([]);
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
     await waitFor(() =>
       expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
     );
+    expect(screen.getByTestId("admin-libraries-empty")).toHaveTextContent(
+      /No libraries configured/i,
+    );
+    expect(screen.getByTestId("admin-libraries-count")).toHaveTextContent("0 libraries");
+    // Scan-All is disabled with nothing to scan.
+    expect(screen.getByTestId("scan-all-button")).toBeDisabled();
   });
 
-  it("creates a library and shows it after reload", async () => {
-    const user = userEvent.setup();
-    // First load: empty. After create: the new library is present.
-    listLibraries
-      .mockResolvedValueOnce([])
-      .mockResolvedValue([lib({ id: "lib9", name: "Films", rootFolders: [{ id: "r9", path: "/films" }] })]);
-    createLibrary.mockResolvedValue(lib({ id: "lib9", name: "Films" }));
-
-    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
-    await waitFor(() =>
-      expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
-    );
-
-    await user.type(screen.getByTestId("library-name-input"), "Films");
-    await user.type(screen.getByTestId("root-folder-input"), "/films");
-    await user.click(screen.getByTestId("create-library-submit"));
-
-    await waitFor(() =>
-      expect(createLibrary).toHaveBeenCalledWith({
-        name: "Films",
-        kind: "movie",
-        rootFolders: ["/films"],
-      }),
-    );
-    await waitFor(() => expect(screen.getByText("Films")).toBeInTheDocument());
-  });
-
-  it("creates a TV library when the kind is selected", async () => {
+  it("adds a library through the wizard (kind → name → path → Add)", async () => {
     const user = userEvent.setup();
     listLibraries
       .mockResolvedValueOnce([])
-      .mockResolvedValue([lib({ id: "libtv", name: "Shows", kind: "tv" })]);
+      .mockResolvedValue([
+        lib({ id: "libtv", name: "Shows", kind: "tv", rootFolders: [{ id: "r9", path: "/tv" }] }),
+      ]);
     createLibrary.mockResolvedValue(lib({ id: "libtv", name: "Shows", kind: "tv" }));
 
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
@@ -130,10 +126,16 @@ describe("AdminLibrariesScreen", () => {
       expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
     );
 
-    await user.type(screen.getByTestId("library-name-input"), "Shows");
-    await user.selectOptions(screen.getByTestId("library-kind-select"), "tv");
-    await user.type(screen.getByTestId("root-folder-input"), "/tv");
-    await user.click(screen.getByTestId("create-library-submit"));
+    await user.click(screen.getByTestId("add-library-button"));
+    // Page 1: pick a kind, then Next.
+    await user.click(screen.getByTestId("add-library-kind-tv"));
+    await user.click(screen.getByTestId("add-library-next"));
+    // Page 2: name, then Next.
+    await user.type(screen.getByTestId("add-library-name-input"), "Shows");
+    await user.click(screen.getByTestId("add-library-next"));
+    // Page 3: path, then Add.
+    await user.type(screen.getByTestId("add-library-path-input"), "/tv");
+    await user.click(screen.getByTestId("add-library-submit"));
 
     await waitFor(() =>
       expect(createLibrary).toHaveBeenCalledWith({
@@ -142,15 +144,36 @@ describe("AdminLibrariesScreen", () => {
         rootFolders: ["/tv"],
       }),
     );
+    // Dialog closes and the new library appears after reload.
+    await waitFor(() =>
+      expect(screen.queryByTestId("add-library-dialog")).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByText("Shows")).toBeInTheDocument());
   });
 
-  it("renders a readable inline error on FOLDER_OVERLAP (no crash)", async () => {
+  it("Next is gated until each wizard page is valid", async () => {
     const user = userEvent.setup();
     listLibraries.mockResolvedValue([]);
-    createLibrary.mockImplementation(() =>
-      Promise.reject(
-        new ApiError(409, "FOLDER_OVERLAP", "root /films overlaps library Movies"),
-      ),
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("add-library-button"));
+    // No kind chosen yet → Next disabled.
+    expect(screen.getByTestId("add-library-next")).toBeDisabled();
+    await user.click(screen.getByTestId("add-library-kind-movie"));
+    expect(screen.getByTestId("add-library-next")).toBeEnabled();
+    await user.click(screen.getByTestId("add-library-next"));
+    // Empty name → Next disabled.
+    expect(screen.getByTestId("add-library-next")).toBeDisabled();
+  });
+
+  it("renders a readable inline overlap error in the wizard (no crash)", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([]);
+    createLibrary.mockRejectedValue(
+      new ApiError(409, "FOLDER_OVERLAP", "root /films overlaps library Movies"),
     );
 
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
@@ -158,45 +181,76 @@ describe("AdminLibrariesScreen", () => {
       expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
     );
 
-    await user.type(screen.getByTestId("library-name-input"), "Films");
-    await user.type(screen.getByTestId("root-folder-input"), "/films");
-    await user.click(screen.getByTestId("create-library-submit"));
+    await user.click(screen.getByTestId("add-library-button"));
+    await user.click(screen.getByTestId("add-library-kind-movie"));
+    await user.click(screen.getByTestId("add-library-next"));
+    await user.type(screen.getByTestId("add-library-name-input"), "Films");
+    await user.click(screen.getByTestId("add-library-next"));
+    await user.type(screen.getByTestId("add-library-path-input"), "/films");
+    await user.click(screen.getByTestId("add-library-submit"));
 
-    const err = await screen.findByTestId("create-library-error");
+    const err = await screen.findByTestId("add-library-error");
     expect(err).toHaveTextContent(/overlaps/i);
     expect(err).toHaveAttribute("data-overlap", "true");
-    // Still on the form, not crashed.
-    expect(screen.getByTestId("create-library-form")).toBeInTheDocument();
+    // Dialog stays open (not crashed).
+    expect(screen.getByTestId("add-library-dialog")).toBeInTheDocument();
   });
 
-  it("supports adding and removing root-folder inputs and submits all roots", async () => {
+  it("edits a library: rename and add a folder both PATCH", async () => {
     const user = userEvent.setup();
-    listLibraries.mockResolvedValueOnce([]).mockResolvedValue([lib({})]);
-    createLibrary.mockResolvedValue(lib({}));
+    listLibraries.mockResolvedValue([
+      lib({ id: "lib1", name: "Movies", rootFolders: [{ id: "r1", path: "/media/movies" }] }),
+    ]);
+    updateLibrary
+      .mockResolvedValueOnce(lib({ id: "lib1", name: "Films" }))
+      .mockResolvedValue(
+        lib({
+          id: "lib1",
+          name: "Films",
+          rootFolders: [
+            { id: "r1", path: "/media/movies" },
+            { id: "r2", path: "/media/films" },
+          ],
+        }),
+      );
 
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
     await waitFor(() =>
-      expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
     );
 
-    await user.type(screen.getByTestId("library-name-input"), "Movies");
-    await user.click(screen.getByTestId("add-root-button"));
-    const inputs = screen.getAllByTestId("root-folder-input");
-    expect(inputs).toHaveLength(2);
-    await user.type(inputs[0], "/a");
-    await user.type(inputs[1], "/b");
-    await user.click(screen.getByTestId("create-library-submit"));
+    await user.click(screen.getByTestId("edit-library-button"));
+    const dialog = await screen.findByTestId("edit-library-dialog");
 
+    // Rename.
+    const nameInput = within(dialog).getByTestId("edit-library-name-input");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Films");
+    await user.click(within(dialog).getByTestId("edit-library-save-name"));
     await waitFor(() =>
-      expect(createLibrary).toHaveBeenCalledWith({
-        name: "Movies",
-        kind: "movie",
-        rootFolders: ["/a", "/b"],
+      expect(updateLibrary).toHaveBeenCalledWith("lib1", { name: "Films" }),
+    );
+
+    // Add a folder.
+    await user.type(
+      within(dialog).getByTestId("edit-library-add-folder-input"),
+      "/media/films",
+    );
+    await user.click(within(dialog).getByTestId("edit-library-add-folder"));
+    await waitFor(() =>
+      expect(updateLibrary).toHaveBeenCalledWith("lib1", {
+        addRootFolders: ["/media/films"],
       }),
+    );
+    // The new folder shows in the dialog's roots list.
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("edit-library-roots")).toHaveTextContent(
+        "/media/films",
+      ),
     );
   });
 
-  it("deletes a library and removes it from the list", async () => {
+  it("deletes a library from the edit dialog (confirm) and removes it", async () => {
     const user = userEvent.setup();
     listLibraries
       .mockResolvedValueOnce([lib({ id: "lib1", name: "Movies" })])
@@ -208,7 +262,12 @@ describe("AdminLibrariesScreen", () => {
       expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
     );
 
-    await user.click(screen.getByTestId("delete-library-button"));
+    await user.click(screen.getByTestId("edit-library-button"));
+    const dialog = await screen.findByTestId("edit-library-dialog");
+    // Two-click danger: reveal confirm, then confirm.
+    await user.click(within(dialog).getByTestId("edit-library-delete"));
+    await user.click(within(dialog).getByTestId("edit-library-delete-confirm"));
+
     await waitFor(() => expect(deleteLibrary).toHaveBeenCalledWith("lib1"));
     await waitFor(() =>
       expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
@@ -232,8 +291,6 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
 
   it("incremental scan trigger sets running, then polling reflects idle + counts", async () => {
     listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
-    // Mount read settles idle (no polling); the trigger returns running; the
-    // poll then returns idle with counts.
     getScanStatus
       .mockResolvedValueOnce(status({ state: "idle" }))
       .mockResolvedValue(status({ state: "idle", titlesFound: 4, filesFound: 6 }));
@@ -246,14 +303,10 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     fireEvent.click(screen.getByTestId("scan-button"));
     await flush();
     expect(scanLibrary).toHaveBeenCalledWith("lib1", { mode: "incremental" });
-    // begin(running) flips the indicator to running.
     expect(screen.getByTestId("scan-status")).toHaveAttribute("data-state", "running");
-    // The async trigger returns immediately, so the controls must stay disabled
-    // for the whole running scan — a second click can't start a concurrent scan.
     expect(screen.getByTestId("scan-button")).toBeDisabled();
     expect(screen.getByTestId("full-scan-button")).toBeDisabled();
 
-    // Advance one poll interval → idle + counts.
     await act(async () => {
       vi.advanceTimersByTime(1500);
     });
@@ -261,7 +314,6 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     expect(screen.getByTestId("scan-status")).toHaveAttribute("data-state", "idle");
     expect(screen.getByTestId("scan-titles-found")).toHaveTextContent("4");
     expect(screen.getByTestId("scan-files-found")).toHaveTextContent("6");
-    // Settled → controls re-enabled.
     expect(screen.getByTestId("scan-button")).toBeEnabled();
     expect(screen.getByTestId("full-scan-button")).toBeEnabled();
   });
@@ -278,5 +330,23 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     fireEvent.click(screen.getByTestId("full-scan-button"));
     await flush();
     expect(scanLibrary).toHaveBeenCalledWith("lib1", { mode: "full" });
+  });
+
+  it("Scan All Libraries triggers an incremental scan on every row", async () => {
+    listLibraries.mockResolvedValue([
+      lib({ id: "lib1", name: "Movies" }),
+      lib({ id: "lib2", name: "Shows", kind: "tv", rootFolders: [{ id: "r2", path: "/tv" }] }),
+    ]);
+    getScanStatus.mockResolvedValue(status({ state: "idle" }));
+    scanLibrary.mockResolvedValue(status({ state: "running" }));
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await flush();
+    expect(screen.getAllByTestId("admin-library-row")).toHaveLength(2);
+
+    fireEvent.click(screen.getByTestId("scan-all-button"));
+    await flush();
+    expect(scanLibrary).toHaveBeenCalledWith("lib1", { mode: "incremental" });
+    expect(scanLibrary).toHaveBeenCalledWith("lib2", { mode: "incremental" });
   });
 });

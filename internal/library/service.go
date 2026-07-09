@@ -50,6 +50,7 @@ var (
 type Store interface {
 	AllLibraryRoots() ([]store.LibraryRoot, error)
 	CreateLibrary(id, name, kind string, roots []store.LibraryRootInput) (store.Library, error)
+	UpdateLibrary(id string, name *string, addRoots []store.LibraryRootInput) (store.Library, error)
 	Libraries() ([]store.Library, error)
 	LibraryByID(id string) (store.Library, error)
 	DeleteLibrary(id string) error
@@ -92,19 +93,71 @@ func (s *Service) Create(in CreateInput) (store.Library, error) {
 		return store.Library{}, fmt.Errorf("%w: at least one root folder is required", ErrValidation)
 	}
 
+	roots, err := s.prepareRoots(in.RootFolders)
+	if err != nil {
+		return store.Library{}, err
+	}
+	return s.store.CreateLibrary(uuid.NewString(), name, in.Kind, roots)
+}
+
+// UpdateInput is a partial edit of an existing Library. A nil Name leaves the
+// name unchanged; an empty AddRootFolders adds no folders. The kind is fixed at
+// creation (a Library holds exactly one media kind, CONTEXT.md) and is not
+// editable here.
+type UpdateInput struct {
+	Name           *string
+	AddRootFolders []string
+}
+
+// Update applies a partial edit to a Library: rename it and/or append root
+// folders. It validates a supplied name (non-empty after trimming) and, for
+// added folders, normalizes them and rejects any overlap — with each other,
+// with the Library's own existing roots, or with another Library's roots
+// (ADR-0002). A missing Library is ErrNotFound. Returns the updated Library.
+func (s *Service) Update(id string, in UpdateInput) (store.Library, error) {
+	var name *string
+	if in.Name != nil {
+		trimmed := strings.TrimSpace(*in.Name)
+		if trimmed == "" {
+			return store.Library{}, fmt.Errorf("%w: name must not be empty", ErrValidation)
+		}
+		name = &trimmed
+	}
+
+	roots, err := s.prepareRoots(in.AddRootFolders)
+	if err != nil {
+		return store.Library{}, err
+	}
+
+	updated, err := s.store.UpdateLibrary(id, name, roots)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Library{}, ErrNotFound
+	}
+	if err != nil {
+		return store.Library{}, err
+	}
+	return updated, nil
+}
+
+// prepareRoots normalizes a set of requested root-folder paths and rejects
+// overlap: duplicates/ancestry within the request, and overlap with any folder
+// already owned by a Library (ADR-0002). It returns a persistable
+// LibraryRootInput per unique folder (with a fresh id). An empty input is a
+// valid no-op (used by Update when only the name changes).
+func (s *Service) prepareRoots(rawFolders []string) ([]store.LibraryRootInput, error) {
 	// Normalize and de-duplicate within the request itself.
-	normalized := make([]string, 0, len(in.RootFolders))
+	normalized := make([]string, 0, len(rawFolders))
 	seen := make(map[string]bool)
-	for _, raw := range in.RootFolders {
+	for _, raw := range rawFolders {
 		p, err := normalizePath(raw)
 		if err != nil {
-			return store.Library{}, fmt.Errorf("%w: %v", ErrValidation, err)
+			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 		// A root that overlaps another root in the SAME request is also
 		// ambiguous (e.g. /movies and /movies/4k), so check intra-request too.
 		for _, other := range normalized {
 			if pathsOverlap(p, other) {
-				return store.Library{}, fmt.Errorf("%w: root folders %q and %q overlap within the request",
+				return nil, fmt.Errorf("%w: root folders %q and %q overlap within the request",
 					ErrFolderOverlap, p, other)
 			}
 		}
@@ -113,16 +166,21 @@ func (s *Service) Create(in CreateInput) (store.Library, error) {
 			normalized = append(normalized, p)
 		}
 	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
 
-	// Reject overlap with any folder already owned by another Library.
+	// Reject overlap with any folder already owned by a Library (including, on an
+	// Update, the target Library's own roots — a nested/duplicate add is equally
+	// ambiguous).
 	existing, err := s.store.AllLibraryRoots()
 	if err != nil {
-		return store.Library{}, err
+		return nil, err
 	}
 	for _, want := range normalized {
 		for _, have := range existing {
 			if pathsOverlap(want, have.Path) {
-				return store.Library{}, fmt.Errorf("%w: %q overlaps existing root %q",
+				return nil, fmt.Errorf("%w: %q overlaps existing root %q",
 					ErrFolderOverlap, want, have.Path)
 			}
 		}
@@ -132,7 +190,7 @@ func (s *Service) Create(in CreateInput) (store.Library, error) {
 	for _, p := range normalized {
 		roots = append(roots, store.LibraryRootInput{ID: uuid.NewString(), Path: p})
 	}
-	return s.store.CreateLibrary(uuid.NewString(), name, in.Kind, roots)
+	return roots, nil
 }
 
 // List returns the Libraries the caller may see (with their root folders),

@@ -74,6 +74,50 @@ func handleCreateLibrary(svc *library.Service) http.HandlerFunc {
 	}
 }
 
+// --- PATCH /libraries/{id} (Admin) -----------------------------------------
+
+// updateLibraryRequest is the partial edit body: a nil name leaves the name
+// unchanged; addRootFolders (absent/empty) appends nothing. The kind is fixed at
+// creation and cannot be changed here.
+type updateLibraryRequest struct {
+	Name           *string  `json:"name"`
+	AddRootFolders []string `json:"addRootFolders"`
+}
+
+func handleUpdateLibrary(svc *library.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/libraries/")
+		if id == "" || strings.Contains(id, "/") {
+			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		var req updateLibraryRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		lib, err := svc.Update(id, library.UpdateInput{
+			Name:           req.Name,
+			AddRootFolders: req.AddRootFolders,
+		})
+		switch {
+		case errors.Is(err, library.ErrNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
+			return
+		case errors.Is(err, library.ErrFolderOverlap):
+			writeError(w, http.StatusConflict, codeFolderOverlap, err.Error(), nil)
+			return
+		case errors.Is(err, library.ErrValidation):
+			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error(), nil)
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to update library", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, toLibraryJSON(lib))
+	}
+}
+
 // --- GET /libraries (Admin) ------------------------------------------------
 
 type librariesResponse struct {

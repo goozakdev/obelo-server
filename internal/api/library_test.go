@@ -335,3 +335,139 @@ func TestLibraryManagementAdminOnly(t *testing.T) {
 		t.Errorf("unauthenticated status = %d, want 401", status)
 	}
 }
+
+// TestUpdateLibraryRenames: PATCH with a new name renames the Library and leaves
+// its roots untouched.
+func TestUpdateLibraryRenames(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	_, created, _ := createLibrary(t, srv, token, map[string]any{
+		"name":        "Movies",
+		"kind":        "movie",
+		"rootFolders": []string{"/data/movies"},
+	})
+
+	var updated libraryResp
+	status, body := srv.JSON(http.MethodPatch, "/api/v1/libraries/"+created.ID, token,
+		map[string]any{"name": "Films"}, &updated)
+	if status != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body: %s", status, body)
+	}
+	if updated.Name != "Films" {
+		t.Errorf("name = %q, want Films", updated.Name)
+	}
+	if len(updated.RootFolders) != 1 || updated.RootFolders[0].Path != "/data/movies" {
+		t.Errorf("roots = %+v, want unchanged [/data/movies]", updated.RootFolders)
+	}
+}
+
+// TestUpdateLibraryAddsRoots: PATCH with addRootFolders appends folders, merged
+// into the returned Library alongside the originals.
+func TestUpdateLibraryAddsRoots(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	_, created, _ := createLibrary(t, srv, token, map[string]any{
+		"name":        "Movies",
+		"kind":        "movie",
+		"rootFolders": []string{"/data/movies"},
+	})
+
+	var updated libraryResp
+	status, body := srv.JSON(http.MethodPatch, "/api/v1/libraries/"+created.ID, token,
+		map[string]any{"addRootFolders": []string{"/mnt/films/"}}, &updated)
+	if status != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body: %s", status, body)
+	}
+	if len(updated.RootFolders) != 2 {
+		t.Fatalf("roots count = %d, want 2; body: %s", len(updated.RootFolders), body)
+	}
+	paths := map[string]bool{}
+	for _, r := range updated.RootFolders {
+		paths[r.Path] = true
+	}
+	// The added root is normalized (trailing slash collapsed).
+	if !paths["/data/movies"] || !paths["/mnt/films"] {
+		t.Errorf("roots = %+v, want /data/movies and /mnt/films", updated.RootFolders)
+	}
+}
+
+// TestUpdateLibraryRejectsOverlap: an added root overlapping ANY existing root —
+// the Library's own or another Library's — is a 409 FOLDER_OVERLAP; a bad name is
+// 400; a missing Library is 404.
+func TestUpdateLibraryRejectsOverlap(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	_, a, _ := createLibrary(t, srv, token, map[string]any{
+		"name":        "Movies",
+		"kind":        "movie",
+		"rootFolders": []string{"/data/movies"},
+	})
+	if _, _, body := createLibrary(t, srv, token, map[string]any{
+		"name":        "Shows",
+		"kind":        "tv",
+		"rootFolders": []string{"/data/tv"},
+	}); body == nil {
+		t.Fatal("seed second library failed")
+	}
+
+	// Adding a root that nests inside the Library's own existing root is ambiguous.
+	var env errorEnvelope
+	status, body := srv.JSON(http.MethodPatch, "/api/v1/libraries/"+a.ID, token,
+		map[string]any{"addRootFolders": []string{"/data/movies/4k"}}, &env)
+	if status != http.StatusConflict || env.Error.Code != "FOLDER_OVERLAP" {
+		t.Errorf("own-root overlap: status=%d code=%q, want 409 FOLDER_OVERLAP; body: %s",
+			status, env.Error.Code, body)
+	}
+
+	// Adding a root owned by another Library is likewise rejected.
+	env = errorEnvelope{}
+	status, body = srv.JSON(http.MethodPatch, "/api/v1/libraries/"+a.ID, token,
+		map[string]any{"addRootFolders": []string{"/data/tv"}}, &env)
+	if status != http.StatusConflict || env.Error.Code != "FOLDER_OVERLAP" {
+		t.Errorf("cross-library overlap: status=%d code=%q, want 409 FOLDER_OVERLAP; body: %s",
+			status, env.Error.Code, body)
+	}
+
+	// An empty name is a validation error.
+	env = errorEnvelope{}
+	status, body = srv.JSON(http.MethodPatch, "/api/v1/libraries/"+a.ID, token,
+		map[string]any{"name": "   "}, &env)
+	if status != http.StatusBadRequest || env.Error.Code != "BAD_REQUEST" {
+		t.Errorf("empty name: status=%d code=%q, want 400 BAD_REQUEST; body: %s",
+			status, env.Error.Code, body)
+	}
+
+	// A missing Library is 404.
+	env = errorEnvelope{}
+	status, body = srv.JSON(http.MethodPatch, "/api/v1/libraries/no-such-id", token,
+		map[string]any{"name": "X"}, &env)
+	if status != http.StatusNotFound || env.Error.Code != "NOT_FOUND" {
+		t.Errorf("missing library: status=%d code=%q, want 404 NOT_FOUND; body: %s",
+			status, env.Error.Code, body)
+	}
+}
+
+// TestUpdateLibraryAdminOnly: PATCH is Admin-only (a Member is 403).
+func TestUpdateLibraryAdminOnly(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	srv.CreateMember("member", "memberpass123")
+	memberToken := login(t, srv, "member", "memberpass123", "Phone", "ios", "member-client").Token
+
+	_, created, _ := createLibrary(t, srv, token, map[string]any{
+		"name":        "Movies",
+		"kind":        "movie",
+		"rootFolders": []string{"/data/movies"},
+	})
+
+	var env errorEnvelope
+	status, body := srv.JSON(http.MethodPatch, "/api/v1/libraries/"+created.ID, memberToken,
+		map[string]any{"name": "Hacked"}, &env)
+	if status != http.StatusForbidden || env.Error.Code != "FORBIDDEN" {
+		t.Errorf("member PATCH: status=%d code=%q, want 403 FORBIDDEN; body: %s",
+			status, env.Error.Code, body)
+	}
+}

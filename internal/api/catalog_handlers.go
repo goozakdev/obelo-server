@@ -1105,7 +1105,8 @@ func handleTitleArtwork(svc *catalog.Service, scope access.Scope, titleID, role 
 //   - {id}/titles  GET            → browse (any authenticated User)
 //   - {id}/scan    POST           → trigger scan (Admin)
 //   - {id}/scan    GET            → scan status (any authenticated User)
-//   - {id}         GET / DELETE   → single-Library admin ops (Admin)
+//   - {id}         GET            → single Library (scoped)
+//   - {id}         PATCH / DELETE → single-Library admin ops (Admin)
 //
 // Sub-resources are matched first so they aren't shadowed by the single-Library
 // handler (which rejects any path containing a "/").
@@ -1163,10 +1164,12 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			switch r.Method {
 			case http.MethodGet:
 				requireScope(deps.Access, handleGetLibrary(deps.Library))(w, r)
+			case http.MethodPatch:
+				requireAdmin(handleUpdateLibrary(deps.Library))(w, r)
 			case http.MethodDelete:
 				requireAdmin(handleDeleteLibrary(deps.Library))(w, r)
 			default:
-				w.Header().Set("Allow", "GET, DELETE")
+				w.Header().Set("Allow", "GET, PATCH, DELETE")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
 					"method not allowed", nil)
 			}

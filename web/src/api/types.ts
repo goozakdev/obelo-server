@@ -411,6 +411,15 @@ export interface CreateLibraryInput {
   rootFolders: string[];
 }
 
+/** Request body for `PATCH /api/v1/libraries/{id}` (Admin) — a partial edit. An
+ * absent `name` leaves the name unchanged; `addRootFolders` (absent/empty)
+ * appends nothing. The kind is fixed at creation and cannot be changed. An added
+ * folder overlapping any existing root is rejected with a 409 FOLDER_OVERLAP. */
+export interface UpdateLibraryInput {
+  name?: string;
+  addRootFolders?: string[];
+}
+
 /** Options for {@link ApiClient.scanLibrary}: `mode` "full" forces a full
  * re-derivation; absent/"incremental" is the server default (ADR-0008). */
 export type ScanMode = "incremental" | "full";

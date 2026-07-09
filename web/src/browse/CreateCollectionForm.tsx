@@ -12,7 +12,7 @@ import { errorMessage } from "../screens/errorMessage";
 // Only an Admin ever renders this (the parent gates it on useAuth().isAdmin; the
 // server enforces the scope regardless). A blank name is caught client-side; a
 // server 400 BAD_REQUEST (and any other failure) surfaces inline without crashing
-// the form, exactly as CreateLibraryForm branches on FOLDER_OVERLAP.
+// the form, exactly as the library create/edit flow branches on FOLDER_OVERLAP.
 
 export default function CreateCollectionForm({
   onCreated,

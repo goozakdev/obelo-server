@@ -43,6 +43,7 @@ import type {
   CollectionsResponseRaw,
   CreateCollectionInput,
   CreateLibraryInput,
+  UpdateLibraryInput,
   UpdateCollectionInput,
   CreateUserInput,
   Device,
@@ -306,6 +307,24 @@ export class ApiClient {
       body: input,
       signal,
     });
+    return normalizeLibrary(res);
+  }
+
+  /** `PATCH /api/v1/libraries/{id}` (Admin) — a partial edit: rename the Library
+   * and/or append root folders. An absent `name` leaves the name unchanged; an
+   * added folder overlapping any existing root is rejected with a 409
+   * `FOLDER_OVERLAP` ApiError (deliberately NOT swallowed, exactly as
+   * createLibrary). Returns the updated Library (normalized, with its merged
+   * roots). */
+  async updateLibrary(
+    id: string,
+    input: UpdateLibraryInput,
+    signal?: AbortSignal,
+  ): Promise<Library> {
+    const res = await this.request<Library>(
+      `/libraries/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: input, signal },
+    );
     return normalizeLibrary(res);
   }
 
@@ -1656,6 +1675,7 @@ export type {
   CollectionSummary,
   CreateCollectionInput,
   CreateLibraryInput,
+  UpdateLibraryInput,
   CreateUserInput,
   UpdateCollectionInput,
   DecisionStream,

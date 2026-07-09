@@ -59,6 +59,25 @@ async function ensureAdmin(request: APIRequestContext): Promise<void> {
   }
 }
 
+// addLibrary drives the Add-Library wizard end-to-end: open it, pick the kind,
+// name the library, give it a root path, and click Add. Leaves the (reloaded)
+// list showing the new row.
+async function addLibrary(
+  page: Page,
+  kind: "movie" | "tv" | "music",
+  name: string,
+  path: string,
+): Promise<void> {
+  await page.getByTestId("add-library-button").click();
+  await expect(page.getByTestId("add-library-dialog")).toBeVisible();
+  await page.getByTestId(`add-library-kind-${kind}`).click();
+  await page.getByTestId("add-library-next").click();
+  await page.getByTestId("add-library-name-input").fill(name);
+  await page.getByTestId("add-library-next").click();
+  await page.getByTestId("add-library-path-input").fill(path);
+  await page.getByTestId("add-library-submit").click();
+}
+
 // Browser login through the real UI, landing on Home.
 async function uiLogin(page: Page): Promise<void> {
   await page.goto("/login");
@@ -110,26 +129,24 @@ test.describe.serial("admin: libraries & scanning", () => {
     await page.getByTestId("admin-link").click();
     await expect(page.getByTestId("admin-screen")).toBeVisible();
     await expect(page.getByTestId("admin-libraries")).toBeVisible();
-    await expect(page.getByTestId("create-library-form")).toBeVisible();
+    // The redesigned hub opens with the top-bar "Add Library" action.
+    await expect(page.getByTestId("add-library-button")).toBeVisible();
   });
 
-  test("create → scan → status idle with titles → browsable → delete", async ({ page }) => {
+  test("add → scan → status idle with titles → browsable → edit-delete", async ({ page }) => {
     await uiLogin(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-libraries")).toBeVisible();
 
-    // Create a Movie library at the unique temp fixtures dir.
+    // Add a Movie library at the unique temp fixtures dir via the wizard.
     const name = `Admin E2E ${Date.now()}`;
-    await page.getByTestId("library-name-input").fill(name);
-    await page.getByTestId("root-folder-input").first().fill(fixturesDir);
-    await page.getByTestId("create-library-submit").click();
+    await addLibrary(page, "movie", name, fixturesDir);
 
-    // The new row appears (the hub reloads the list after a create).
+    // The new row appears (the hub reloads the list after Add).
     const row = page
       .getByTestId("admin-library-row")
       .filter({ has: page.getByTestId("admin-library-name").filter({ hasText: name }) });
     await expect(row).toBeVisible();
-    await expect(row.getByTestId("admin-library-roots")).toContainText(fixturesDir);
 
     // Trigger an incremental scan and poll the status to idle with titles found.
     await row.getByTestId("scan-button").click();
@@ -154,47 +171,60 @@ test.describe.serial("admin: libraries & scanning", () => {
     await expect(tiles.first()).toBeVisible();
     expect(await tiles.count()).toBeGreaterThan(0);
 
-    // Back to the admin hub and DELETE the library (cleanliness + assert gone).
+    // Back to the admin hub, open the Edit dialog (which lists the root folder),
+    // then DELETE the library (cleanliness + assert gone).
     await page.goto("/admin");
     const sameRow = page
       .getByTestId("admin-library-row")
       .filter({ has: page.getByTestId("admin-library-name").filter({ hasText: name }) });
     await expect(sameRow).toBeVisible();
-    await sameRow.getByTestId("delete-library-button").click();
+    await sameRow.getByTestId("edit-library-button").click();
+    const dialog = page.getByTestId("edit-library-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("edit-library-roots")).toContainText(fixturesDir);
+    await dialog.getByTestId("edit-library-delete").click();
+    await dialog.getByTestId("edit-library-delete-confirm").click();
     await expect(sameRow).toHaveCount(0);
   });
 
-  test("folder-overlap create renders a readable inline error (no crash)", async ({ page }) => {
+  test("folder-overlap add renders a readable inline error (no crash)", async ({ page }) => {
     await uiLogin(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-libraries")).toBeVisible();
 
-    // Create one library at the temp fixtures dir, then attempt a SECOND library
-    // at the SAME root — guaranteed FOLDER_OVERLAP, self-contained (no dependence
-    // on another spec having created a library first).
+    // Add one library at the temp fixtures dir, then attempt a SECOND library at
+    // the SAME root — guaranteed FOLDER_OVERLAP, self-contained (no dependence on
+    // another spec having created a library first).
     const baseName = `Overlap Base ${Date.now()}`;
-    await page.getByTestId("library-name-input").fill(baseName);
-    await page.getByTestId("root-folder-input").first().fill(fixturesDir);
-    await page.getByTestId("create-library-submit").click();
+    await addLibrary(page, "movie", baseName, fixturesDir);
 
     const baseRow = page
       .getByTestId("admin-library-row")
       .filter({ has: page.getByTestId("admin-library-name").filter({ hasText: baseName }) });
     await expect(baseRow).toBeVisible();
 
-    // Now the conflicting create.
-    await page.getByTestId("library-name-input").fill(`Overlap Dup ${Date.now()}`);
-    await page.getByTestId("root-folder-input").first().fill(fixturesDir);
-    await page.getByTestId("create-library-submit").click();
+    // Now the conflicting add — the wizard should surface the overlap inline on
+    // the path page and stay open (no crash, no dup row).
+    await page.getByTestId("add-library-button").click();
+    await page.getByTestId("add-library-kind-movie").click();
+    await page.getByTestId("add-library-next").click();
+    await page.getByTestId("add-library-name-input").fill(`Overlap Dup ${Date.now()}`);
+    await page.getByTestId("add-library-next").click();
+    await page.getByTestId("add-library-path-input").fill(fixturesDir);
+    await page.getByTestId("add-library-submit").click();
 
-    const err = page.getByTestId("create-library-error");
+    const err = page.getByTestId("add-library-error");
     await expect(err).toBeVisible();
     await expect(err).toHaveAttribute("data-overlap", "true");
-    // The form is still standing (no crash) and no dup row was added.
-    await expect(page.getByTestId("create-library-form")).toBeVisible();
-
-    // Cleanup: delete the base library so the run stays collision-free.
-    await baseRow.getByTestId("delete-library-button").click();
+    // The wizard is still standing (no crash).
+    await expect(page.getByTestId("add-library-dialog")).toBeVisible();
+    // Close it (ESC) and clean up the base library via its Edit dialog.
+    await page.keyboard.press("Escape");
+    await baseRow.getByTestId("edit-library-button").click();
+    const dialog = page.getByTestId("edit-library-dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId("edit-library-delete").click();
+    await dialog.getByTestId("edit-library-delete-confirm").click();
     await expect(baseRow).toHaveCount(0);
   });
 });
