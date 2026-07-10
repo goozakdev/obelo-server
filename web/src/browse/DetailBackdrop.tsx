@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
 // DetailBackdrop pins an entity's Background artwork (the fetched TMDB backdrop)
-// to the viewport behind a detail screen, so the page content scrolls over a
-// stationary image. A black veil on top deepens as the user scrolls — from a
+// to the top-right of the viewport behind a detail screen, so the page content
+// scrolls over a stationary image. A black veil on top deepens as the user scrolls — from a
 // slight at-rest dim (so the hero text stays legible over a bright image) up to
 // a hard cap of 50%, so the artwork always shows through. Renders nothing when
 // the entity has no Background artwork or the image fails to load.

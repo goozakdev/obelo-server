@@ -79,7 +79,7 @@ export default function TitleDetailScreen() {
   return (
     <div className="app-shell" data-testid="title-detail-screen">
       <AppHeader />
-      <main className="app-main app-main-wide">
+      <main className="app-main app-main-wide app-main-left">
         <BackLink to={parent.to} label={parent.label} />
 
         {state.status === "loading" && (

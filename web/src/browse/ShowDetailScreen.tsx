@@ -175,7 +175,7 @@ export default function ShowDetailScreen() {
           scrolls over it and it fades toward black (capped at 50%). */}
       <DetailBackdrop src={show?.backgroundUrl} />
       <AppHeader />
-      <main className="app-main app-main-wide">
+      <main className="app-main app-main-wide app-main-left">
         <BackLink to={parent.to} label={parent.label} />
 
         {state.status === "loading" && (

@@ -511,6 +511,14 @@ body {
   max-width: 1100px;
 }
 
+/* Detail screens with a backdrop: content hugs the left edge instead of
+   centering, keeping the text clear of the top-right image. Left padding is
+   double .app-main's so the text doesn't sit hard against the window edge. */
+.app-main-left {
+  margin: 0;
+  padding-left: clamp(2rem, 8vw, 5rem);
+}
+
 /* Section headings recede — small uppercase labels so the artwork below them is
    what draws the eye. */
 .section-title {
@@ -764,25 +772,32 @@ body {
 /* --- Title detail --------------------------------------------------------- */
 
 /* The detail screen's Background artwork (TMDB backdrop), pinned to the
-   viewport so the page scrolls over a stationary image. Top-anchored at full
-   width with natural height — the whole image always shows, never cropped at
-   the sides — and the layer's bottom edge (image AND veil together, so no
-   seam) fades into the page background over its last few rems, covering
-   whatever the image can't reach. Negative z-index puts it above the body
-   background but behind ALL content — no restacking needed elsewhere; the
-   sticky header (solid --bg) simply sits on top. The -fade veil is
-   scroll-driven via --backdrop-fade (set in DetailBackdrop.tsx): ~15% black at
-   the top of the page, capped at 50% once scrolled, so the artwork always
-   shows through. */
+   viewport so the page scrolls over a stationary image. Anchored to the
+   top-right at three-quarters of the viewport width (natural height), keeping
+   the left of the screen image-free so the detail text sits over the flat
+   page background. The layer's bottom and left edges (image AND veil together,
+   so no seam) fade into the page background — two gradient masks composited
+   with intersect. Negative z-index puts it above the body background but
+   behind ALL content — no restacking needed elsewhere; the sticky header
+   (solid --bg) simply sits on top. The -fade veil is scroll-driven via
+   --backdrop-fade (set in DetailBackdrop.tsx): ~15% black at the top of the
+   page, capped at 50% once scrolled, so the artwork always shows through. */
 .detail-backdrop {
   position: fixed;
   /* Below the sticky header (not behind it), so the header never cuts off the
      top of the image; height = the image's rendered height. */
-  inset: var(--app-header-height) 0 auto 0;
+  inset: var(--app-header-height) 0 auto auto;
+  width: 80vw;
   z-index: -1;
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 10rem), transparent);
-  mask-image: linear-gradient(to bottom, black calc(100% - 10rem), transparent);
+  -webkit-mask-image:
+    linear-gradient(to bottom, black calc(100% - 25rem), transparent),
+    linear-gradient(to right, transparent, black 50rem);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to bottom, black calc(100% - 25rem), transparent),
+    linear-gradient(to right, transparent, black 50rem);
+  mask-composite: intersect;
 }
 .detail-backdrop-img {
   display: block;
@@ -806,6 +821,11 @@ body {
   display: flex;
   gap: clamp(1rem, 4vw, 2rem);
   flex-wrap: wrap;
+  /* The 80vw backdrop at 16:9 runs ~45vw tall. Keeping the hero at least most
+     of that height pushes the sections below (cast, seasons) down into the
+     image's bottom fade instead of over the middle of the artwork. Negative on
+     narrow screens, where it's clamped to 0 — i.e. no effect. */
+  min-height: calc(45vw - 25rem);
 }
 
 .detail-poster {
