@@ -74,7 +74,7 @@ The state of a File (or a Title with all Files absent) that is no longer on disk
 _Avoid_: Deleted, Removed, Orphaned.
 
 **Enrichment**:
-The separate, optional step that fetches descriptive metadata (artwork, descriptions, cast) from external public sources to decorate a Title. Never affects identity; degrades gracefully when offline.
+The separate, optional step that fetches descriptive metadata (artwork, descriptions, cast) from external Metadata providers to decorate a Title. Never affects identity; degrades gracefully when offline. Provider selection is server-wide by default but overridable per Library through its Enrichment policy ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)).
 _Avoid_: Matching (that's identity), Agent.
 
 **Needs-review**:
@@ -94,8 +94,8 @@ An Admin's identity correction — fix-match, merge, or split — that overrules
 _Avoid_: Remap, Manual match.
 
 **Enrichment override**:
-An Admin's correction of *which external provider record* an entity is enriched from, overruling enrichment's automatic match — without changing identity or watch state. The common "edit item" correction: the item is filed correctly but was decorated from the wrong record (wrong poster, wrong overview), so the Admin re-points it at the right one and it re-enriches. The identity sibling of Match override; the two are distinct operations with different blast radii (see [ADR-0002](./docs/adr/0002-naming-convention-is-identity-authority.md), [ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)).
-_Avoid_: Match (reserved for identity), enrichment match (the old code name).
+An Admin's correction of *which external provider record* an entity is enriched from, overruling enrichment's automatic match — without changing identity or watch state. The common "edit item" correction: the item is filed correctly but was decorated from the wrong record (wrong poster, wrong overview), so the Admin re-points it at the right one and it re-enriches. The identity sibling of Match override; the two are distinct operations with different blast radii (see [ADR-0002](./docs/adr/0002-naming-convention-is-identity-authority.md), [ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)). Operates on one entity's matched record; contrast the per-Library Enrichment policy, which selects *providers*, not records.
+_Avoid_: Match (reserved for identity), enrichment match (the old code name), Enrichment policy (that's the per-Library provider layer).
 
 **Edit item**:
 The Admin affordance for correcting a browsable item, exposing three separated actions ([ADR-0019](./docs/adr/0019-item-editing-preserves-local-identity.md)): **Fix info** (search a provider for the right record → Enrichment override; the common case), **Wrong item** (the file is a genuinely different work → Match override, Movie/Show only, resets watch state and clears Locked fields), and **Fix label** (hand-edit fields or pick an image → Locked field, per-item). The admin's choice of action, not inference, decides whether identity changes.
@@ -104,6 +104,32 @@ _Avoid_: Match editor, Metadata editor (too narrow — it also corrects identity
 **Cascade**:
 Applying a Fix-info or Wrong-item correction to a parent's children as well ("apply to children" — opt-in). Album→tracks and Show→episodes map positionally; Artist→albums map by title, then recurse into tracks. Best-effort: a child's own Enrichment override or Locked field wins, and children that don't line up are surfaced in the Admin attention list, never silently changed.
 _Avoid_: Propagate, Recurse.
+
+## Metadata providers
+
+**Metadata provider**:
+An external public source of descriptive metadata (artwork, descriptions, cast) used by Enrichment — never identity. Each is registered for one or more media kinds and is either a Full provider or an Artwork-only provider. Enabled and credentialed server-wide.
+_Avoid_: Agent (Plex/Kodi's term), Source (reserved for Artwork source), Scraper.
+
+**Full provider**:
+A Metadata provider that supplies complete descriptive records — titles, overviews, cast, dates, artwork — and is therefore eligible to lead a Library's Enrichment as its Authoritative provider (TMDB, OMDb, TheTVDB, MusicBrainz, AniDB).
+_Avoid_: Full source (collides with Artwork source).
+
+**Artwork-only provider**:
+A Metadata provider that supplies only images, so it can never lead — only ever act as a Supplement (fanart.tv, Cover Art Archive, TheAudioDB).
+_Avoid_: Art source, Image provider.
+
+**Authoritative provider**:
+The single Full provider that leads a Library's Enrichment, supplying the canonical record the Supplements fill around. A per-Library choice that inherits a global default per media kind (TMDB for video, MusicBrainz for music) and can be repointed through the Library's Enrichment policy. When enrichment is on it always runs — even if that provider is disabled for general use — as long as it is usable (credentialed). Constrained to Full providers of the Library's kind ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)).
+_Avoid_: Primary, Master, Agent.
+
+**Supplement**:
+A Metadata provider that only fills descriptive fields the Authoritative provider left empty, never overriding it — every enabled provider that isn't the Authoritative provider, Artwork-only providers included. Runs fill-only.
+_Avoid_: Fallback, Secondary, Scraper.
+
+**Enrichment policy**:
+A Library's sparse set of overrides to the server-wide enrichment configuration — whether to enrich at all, the metadata language, the Library's Authoritative provider, and per-provider enable/disable. Empty by default: unset keys inherit the global configuration live, and each override is an independent, surviving delta ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)). Distinct from the per-item Enrichment override, which repoints a single entity's matched record.
+_Avoid_: Provider override (too narrow — it also carries language and on/off), Provider profile, Enrichment override (that's the per-item record correction).
 
 ## Artwork
 
