@@ -16,9 +16,9 @@
 .music-theme {
   /* Design tokens — currently mirror the global palette (index.css :root). Tweak
      these to give music its own identity; only the music subtree is affected. */
-  --accent: #5b8cff;
-  --surface: #181b22;
-  --surface-2: #20242d;
+  --accent: #b8e04d;
+  --surface: #12141a;
+  --surface-2: #1a1d25;
 }
 
 /* Music art is square, not 2:3 like movie/TV posters. Override the shared
@@ -93,7 +93,7 @@
   border-radius: 8px;
 }
 .music-theme .track-row:hover {
-  background: var(--surface-2);
+  background: var(--surface-hover);
 }
 
 /* Col 1 — number ↔ play/pause. The number shows by default; the control overlays
@@ -202,7 +202,7 @@
   opacity: 1;
 }
 .music-theme .track-menu-toggle:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
   color: var(--text);
 }
 .music-theme .track-menu-list,
@@ -213,10 +213,9 @@
   margin: 0;
   padding: 0.3rem;
   list-style: none;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
 .music-theme .track-menu-list {
   top: 100%;
@@ -241,7 +240,7 @@
   cursor: pointer;
 }
 .music-theme .track-menu-button:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
 }
 .music-theme .track-menu-caret {
   color: var(--text-dim);

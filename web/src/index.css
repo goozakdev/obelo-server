@@ -1,21 +1,34 @@
 :root {
-  --bg: #0f1115;
-  --surface: #181b22;
-  --surface-2: #20242d;
-  --border: #2a2f3a;
-  --text: #e7eaf0;
-  --text-dim: #9aa3b2;
-  --accent: #5b8cff;
-  --ok: #4ade80;
-  --error: #f87171;
-  --radius: 12px;
+  /* Juice Box palette — a flat, near-black canvas so artwork carries the color;
+     separation comes from hairline "wireframe" borders, not fills or shadows.
+     The citrus-lime accent is the brand mark (and deliberately not Plex amber). */
+  --bg: #0c0d10;
+  --surface: #12141a;
+  --surface-2: #1a1d25;
+  --surface-hover: #1d212a;
+  --border: #23272f;
+  --border-strong: #333947;
+  --text: #e9ecf2;
+  --text-dim: #8f97a6;
+  --accent: #b8e04d;
+  --accent-ink: #161f08; /* text/icon color on accent-filled elements */
+  --ok: #3ecf8e;
+  --error: #f47174;
+  --danger: #e5484d;
+  --radius: 6px;
+  --radius-sm: 4px;
   /* Shared layout metrics so the sticky header and the fixed Now Playing bar can be
      cleared exactly by overlays (e.g. the queue drawer sits between the two). */
   --app-header-height: 4.5rem;
   --now-playing-bar-height: 5.5rem;
 
   color-scheme: dark light;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
   line-height: 1.5;
 }
 
@@ -59,7 +72,7 @@ body {
   height: var(--app-header-height);
   padding: 0 clamp(1rem, 4vw, 2.5rem);
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--bg);
 }
 
 .app-title {
@@ -82,7 +95,7 @@ body {
 }
 
 .card {
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: clamp(1rem, 3vw, 1.75rem);
@@ -134,8 +147,7 @@ body {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0;
 }
 
 .meta-row dt {
@@ -148,9 +160,9 @@ body {
 }
 
 .notice {
-  background: var(--surface-2);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 0.75rem 1rem;
   color: var(--text-dim);
   font-size: 0.9rem;
@@ -178,9 +190,9 @@ body {
 .feature {
   font-size: 0.85rem;
   padding: 0.4rem 0.6rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: transparent;
 }
 
 .feature-on {
@@ -212,7 +224,7 @@ body {
 .auth-card {
   width: 100%;
   max-width: 26rem;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: clamp(1.25rem, 4vw, 2rem);
@@ -247,9 +259,9 @@ body {
 .field-input {
   width: 100%;
   padding: 0.6rem 0.75rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: transparent;
   color: var(--text);
   font-size: 1rem;
 }
@@ -280,7 +292,7 @@ body {
 .auth-error {
   margin: 0;
   padding: 0.6rem 0.75rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--error) 18%, var(--surface-2));
   border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border));
   color: var(--text);
@@ -291,12 +303,15 @@ body {
   margin-top: 0.3rem;
   padding: 0.65rem 1rem;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   font-size: 1rem;
-  font-weight: 600;
+  font-weight: 650;
   cursor: pointer;
+}
+.auth-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 .auth-submit:disabled {
@@ -325,17 +340,18 @@ body {
 }
 
 .nav-link {
-  color: #cbd2de;
+  color: var(--text-dim);
   text-decoration: none;
   background: none;
   border: none;
   font: inherit;
   cursor: pointer;
   padding: 0;
+  transition: color 0.12s ease;
 }
 
 .nav-link:hover {
-  text-decoration: underline;
+  color: var(--text);
 }
 
 /* Nav links that pair an icon with their label. */
@@ -421,10 +437,9 @@ body {
   list-style: none;
   display: grid;
   gap: 0.15rem;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
   z-index: 200;
 }
 
@@ -438,7 +453,7 @@ body {
 }
 
 .nav-dropdown-item:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
   color: var(--accent);
 }
 
@@ -496,10 +511,15 @@ body {
   max-width: 1100px;
 }
 
+/* Section headings recede — small uppercase labels so the artwork below them is
+   what draws the eye. */
 .section-title {
   margin: 0 0 1rem;
-  font-size: 1.2rem;
+  font-size: 0.85rem;
   font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
 }
 
 .home-browse-link {
@@ -530,7 +550,7 @@ body {
   flex-direction: column;
   gap: 0.25rem;
   padding: 1rem 1.25rem;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   text-decoration: none;
@@ -571,9 +591,9 @@ body {
 
 .sort-select {
   padding: 0.45rem 0.6rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: transparent;
   color: var(--text);
   font: inherit;
 }
@@ -600,10 +620,18 @@ body {
 .poster-frame {
   position: relative;
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--surface);
   border: 1px solid var(--border);
+  transition: border-color 0.12s ease;
+}
+
+/* Media-first hover: the artwork answers with an accent ring instead of the
+   chrome moving or glowing. */
+.poster-link:hover .poster-frame,
+.poster-link:focus-visible .poster-frame {
+  border-color: var(--accent);
 }
 
 .poster {
@@ -620,7 +648,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  background: var(--surface);
   color: var(--text-dim);
 }
 
@@ -693,7 +721,7 @@ body {
 .badge {
   display: inline-block;
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 0.72rem;
   font-weight: 600;
 }
@@ -710,18 +738,18 @@ body {
 }
 .badge-resume {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 .badge-unwatched {
-  background: var(--surface-2);
+  background: var(--bg);
   color: var(--text-dim);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
 }
 /* Unwatched-episode count on a Show poster (the TV watched affordance): top-RIGHT
    so it never collides with the top-left needs-review badge. */
 .badge-unwatched-count {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 .poster-frame .badge-unwatched-count {
   left: auto;
@@ -743,7 +771,7 @@ body {
 .detail-poster {
   width: clamp(10rem, 28vw, 16rem);
   aspect-ratio: 2 / 3;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -819,10 +847,10 @@ body {
 }
 .season-select {
   padding: 0.4rem 0.7rem;
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 0.95rem;
   cursor: pointer;
 }
@@ -847,10 +875,10 @@ body {
   align-items: center;
   gap: 0.9rem;
   padding: 0.5rem;
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 .episode-row:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
 }
 
 /* Column 1: the thumbnail, a play affordance. */
@@ -943,7 +971,7 @@ body {
   opacity: 1;
 }
 .row-menu-toggle:hover {
-  background: var(--surface-2);
+  background: var(--surface-hover);
   color: var(--text);
 }
 .row-menu-list {
@@ -955,10 +983,9 @@ body {
   margin: 0.2rem 0 0;
   padding: 0.3rem;
   list-style: none;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
 .row-menu-item {
   position: relative;
@@ -977,7 +1004,7 @@ body {
   cursor: pointer;
 }
 .row-menu-button:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
 }
 
 .detail-genres {
@@ -991,8 +1018,8 @@ body {
 
 .genre-chip {
   padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: transparent;
   border: 1px solid var(--border);
   font-size: 0.85rem;
   color: var(--text-dim);
@@ -1068,7 +1095,7 @@ body {
 
 .edition {
   margin-bottom: 1.25rem;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1rem 1.25rem;
@@ -1087,16 +1114,12 @@ body {
   gap: 0.6rem;
 }
 
+/* Bare rows: the list gap plus the bold container name is enough separation —
+   no rule lines between files. */
 .file-row {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  padding-bottom: 0.6rem;
-  border-bottom: 1px solid var(--border);
-}
-.file-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
 }
 
 .file-primary {
@@ -1126,7 +1149,7 @@ body {
    under the Editions & files section — one chip per track, with a muted tag for an
    image (burn-in) or online-fetched track. */
 .edition-subtitles {
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1rem 1.25rem;
@@ -1147,7 +1170,7 @@ body {
   gap: 0.4rem;
   padding: 0.25rem 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--text);
 }
@@ -1185,7 +1208,7 @@ body {
   gap: 0.4rem;
   padding: 0.2rem 0.55rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
   color: var(--text);
 }
@@ -1226,7 +1249,7 @@ body {
   gap: 0.4rem;
   padding: 0.2rem 0.55rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
   color: var(--text);
 }
@@ -1277,11 +1300,14 @@ body {
   padding: 0;
   font-size: 1.15rem; /* drives the 1em SVG size */
   color: var(--text-dim);
-  background: var(--surface-2);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 .icon-button:hover:not(:disabled) {
   color: var(--text);
@@ -1311,10 +1337,9 @@ body {
   display: flex;
   flex-direction: column;
   padding: 0.35rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
 .overflow-menu-item {
   text-align: left;
@@ -1327,7 +1352,7 @@ body {
   cursor: pointer;
 }
 .overflow-menu-item:hover {
-  background: var(--surface-2);
+  background: var(--surface-hover);
 }
 
 /* The Add-to-collection panel opened from the overflow menu. */
@@ -1386,7 +1411,7 @@ body {
   right: 0;
   bottom: 0;
   z-index: 50;
-  background: var(--surface);
+  background: var(--bg);
   border-top: 1px solid var(--border);
   padding: 0.5rem clamp(0.75rem, 3vw, 1.5rem);
 }
@@ -1535,7 +1560,7 @@ body {
 }
 .now-playing-volume-slider {
   width: 5rem;
-  accent-color: #cbd2de;
+  accent-color: var(--accent);
 }
 
 /* Captions menu: a button that pops a small radio list above it (Off + tracks).
@@ -1560,10 +1585,9 @@ body {
   padding: 0.25rem;
   list-style: none;
   min-width: 9rem;
-  background: var(--surface, #1c1c1e);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 0.5rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
 .now-playing-captions-item {
   display: block;
@@ -1599,10 +1623,9 @@ body {
   padding: 0.25rem;
   list-style: none;
   min-width: 9rem;
-  background: var(--surface, #1c1c1e);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 0.5rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
 
 /* Video menu (selectable-video/03) — the video Streams picker, positioned and
@@ -1623,10 +1646,9 @@ body {
   padding: 0.25rem;
   list-style: none;
   min-width: 9rem;
-  background: var(--surface, #1c1c1e);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 0.5rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
 
 /* The seekable progress bar sits under the transport controls (inside the
@@ -1648,7 +1670,7 @@ body {
 }
 .now-playing-seek {
   flex: 1 1 auto;
-  accent-color: #cbd2de;
+  accent-color: var(--accent);
 }
 
 /* The ONE video surface (slice 03): a single stable wrapper repositioned by its
@@ -1751,7 +1773,7 @@ body.np-immersive .now-playing-inner {
   bottom: 0;
   z-index: 60;
   padding: 0.5rem clamp(0.75rem, 3vw, 1.5rem);
-  background: var(--surface);
+  background: var(--bg);
   border-top: 1px solid var(--border);
   transition: transform 0.35s ease;
 }
@@ -1833,17 +1855,16 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   gap: 1rem;
   max-width: min(24rem, 90vw);
   padding: 0.6rem 0.85rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  background: var(--bg);
   cursor: pointer;
   text-align: left;
   color: inherit;
   animation: now-playing-upnext-in 0.25s ease;
 }
 .now-playing-upnext:hover {
-  border-color: var(--text-dim);
+  border-color: var(--accent);
 }
 @keyframes now-playing-upnext-in {
   from {
@@ -1901,9 +1922,8 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  background: var(--bg);
+  border-left: 1px solid var(--border-strong);
 }
 
 /* The panel fills the drawer as a flex column: a fixed header, then a body whose
@@ -1998,19 +2018,24 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-size: 0.85rem;
 }
 
+/* Bare queue rows: no boxes — the hover wash and spacing separate entries. */
 .queue-entry {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   padding: 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
 }
-/* The Now Playing card reads as more prominent than the up-next rows. */
+.queue-entry:hover {
+  background: var(--surface-hover);
+}
+/* The Now Playing card reads as more prominent than the up-next rows: a hairline
+   accent frame, wireframe-style, with the faintest tint. */
 .queue-entry-current {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 /* Drag affordances: the six-dot grip signals an up-next row is draggable; the row
    dims while it's the drag source and shows an insertion line while hovered over. */
@@ -2225,17 +2250,15 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   overflow: visible;
 }
 .library-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.72);
 }
 .library-dialog-panel {
   display: flex;
   flex-direction: column;
   max-height: 90vh;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
 .library-dialog-header {
@@ -2307,12 +2330,14 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   align-items: center;
   gap: 0.5rem;
   padding: 1rem 0.5rem;
-  background: var(--surface-2);
+  background: transparent;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 .kind-option:hover {
   color: var(--text);
@@ -2469,23 +2494,66 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   color: var(--text-dim);
 }
 
+/* Admin sub-navigation: a vertical rail down the left side on desktop, with the
+   active tab marked by an accent edge. Collapses to a horizontally-scrolling row
+   on narrow viewports. */
+.admin-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: clamp(1.5rem, 4vw, 3rem);
+}
 .admin-tabs {
   display: flex;
-  gap: 0.75rem;
-  margin: 0 0 1.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: none;
+  width: 12rem;
+  position: sticky;
+  top: calc(var(--app-header-height) + 1.5rem);
 }
 .admin-tab {
-  padding: 0.4rem 0.85rem;
-  border-radius: 0.5rem;
+  padding: 0.45rem 0.85rem;
   color: var(--text-dim);
   text-decoration: none;
   font-weight: 600;
-  border: 1px solid transparent;
+  font-size: 0.9rem;
+  border-left: 2px solid var(--border);
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.admin-tab:hover {
+  color: var(--text);
 }
 .admin-tab.active {
   color: var(--text);
-  border-color: var(--accent);
+  border-left-color: var(--accent);
+}
+.admin-content {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .admin-layout {
+    flex-direction: column;
+  }
+  .admin-tabs {
+    position: static;
+    flex-direction: row;
+    width: 100%;
+    gap: 0.25rem;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+  }
+  .admin-tab {
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    white-space: nowrap;
+  }
+  .admin-tab.active {
+    border-bottom-color: var(--accent);
+  }
 }
 
 .subsection-title {
@@ -2534,6 +2602,30 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   padding: 0.85rem 1rem;
 }
 
+/* Bare admin rows: these row-shaped items carry the .card class in markup, but
+   read as list rows, not boxes — strip the wireframe frame and separate them with
+   spacing plus a hover wash instead. */
+.admin-library-row.card,
+.admin-user-row.card,
+.device-item.card,
+.needs-review-item.card,
+.unmatched-item.card,
+.override-item.card,
+.enrichment-attention-item.card {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+}
+.admin-library-row.card:hover,
+.admin-user-row.card:hover,
+.device-item.card:hover,
+.needs-review-item.card:hover,
+.unmatched-item.card:hover,
+.override-item.card:hover,
+.enrichment-attention-item.card:hover {
+  background: var(--surface-hover);
+}
+
 .needs-review-flag {
   color: var(--accent);
   font-size: 0.8rem;
@@ -2553,8 +2645,11 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-size: 0.85rem;
 }
 
-.override-item-orphaned {
-  border-color: var(--error);
+/* An orphaned override keeps a visible error frame even though normal override
+   rows are bare. */
+.override-item-orphaned,
+.override-item-orphaned.card {
+  border: 1px solid var(--error);
 }
 .override-orphaned-badge {
   color: var(--error);
@@ -2634,7 +2729,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   color: var(--text-dim);
   white-space: nowrap;
@@ -2660,9 +2755,9 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem clamp(0.85rem, 2vw, 1.25rem);
-  border-radius: 10px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: transparent;
 }
 
 .provider-head {
@@ -2684,7 +2779,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   color: var(--text-dim);
 }
@@ -2793,6 +2888,58 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   color: var(--error);
 }
 
+/* --- Subtitle Providers admin (subtitles). --------------------------------- */
+/* This screen's own classes previously had no rules; style them to match the
+   metadata-providers wireframe cards. */
+.admin-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 52rem;
+}
+.admin-section-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+.admin-section-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  max-width: 44rem;
+}
+.provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem clamp(0.85rem, 2vw, 1.25rem);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.provider-enable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+.provider-docs {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 0.85rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.provider-docs:hover {
+  text-decoration: underline;
+}
+.provider-desc {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
 /* Standalone setting cards (language, enrichment behavior). */
 .provider-language.card,
 .provider-behavior.card {
@@ -2897,17 +3044,15 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   overflow: visible;
 }
 .edit-item-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.72);
 }
 .edit-item-panel {
   display: flex;
   flex-direction: column;
   max-height: 90vh;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
 .edit-item-header {
@@ -2954,7 +3099,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 }
 .edit-item-tab:hover:not(.is-active) {
   color: var(--text);
-  background: var(--surface-2);
+  background: var(--surface-hover);
 }
 .edit-item-tab.is-active {
   color: var(--text);
@@ -3120,9 +3265,9 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 .metadata-input {
   width: 100%;
   padding: 0.6rem 0.75rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 0.95rem;

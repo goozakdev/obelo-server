@@ -26,60 +26,69 @@ export default function AdminScreen() {
       <main className="app-main app-main-wide">
         <h1 className="app-title admin-page-title">Admin</h1>
 
-        <nav className="admin-tabs" data-testid="admin-tabs">
-          <NavLink
-            to="/admin"
-            end
-            className="admin-tab"
-            data-testid="admin-tab-libraries"
-          >
-            Libraries
-          </NavLink>
-          <NavLink
-            to="/admin/attention"
-            className="admin-tab"
-            data-testid="admin-tab-attention"
-          >
-            Attention
-          </NavLink>
-          <NavLink
-            to="/admin/devices"
-            className="admin-tab"
-            data-testid="admin-tab-devices"
-          >
-            Devices
-          </NavLink>
-          <NavLink
-            to="/admin/users"
-            className="admin-tab"
-            data-testid="admin-tab-users"
-          >
-            Users
-          </NavLink>
-          <NavLink
-            to="/admin/providers"
-            className="admin-tab"
-            data-testid="admin-tab-providers"
-          >
-            Metadata Providers
-          </NavLink>
-          <NavLink
-            to="/admin/subtitles"
-            className="admin-tab"
-            data-testid="admin-tab-subtitles"
-          >
-            Subtitle Providers
-          </NavLink>
-        </nav>
+        {/* Side-rail layout: the tab nav is a vertical rail on the left, the
+            active sub-screen fills the remaining width (admin-layout CSS). */}
+        <div className="admin-layout">
+          <nav className="admin-tabs" data-testid="admin-tabs">
+            <NavLink
+              to="/admin"
+              end
+              className="admin-tab"
+              data-testid="admin-tab-libraries"
+            >
+              Libraries
+            </NavLink>
+            <NavLink
+              to="/admin/attention"
+              className="admin-tab"
+              data-testid="admin-tab-attention"
+            >
+              Attention
+            </NavLink>
+            <NavLink
+              to="/admin/devices"
+              className="admin-tab"
+              data-testid="admin-tab-devices"
+            >
+              Devices
+            </NavLink>
+            <NavLink
+              to="/admin/users"
+              className="admin-tab"
+              data-testid="admin-tab-users"
+            >
+              Users
+            </NavLink>
+            <NavLink
+              to="/admin/providers"
+              className="admin-tab"
+              data-testid="admin-tab-providers"
+            >
+              Metadata Providers
+            </NavLink>
+            <NavLink
+              to="/admin/subtitles"
+              className="admin-tab"
+              data-testid="admin-tab-subtitles"
+            >
+              Subtitle Providers
+            </NavLink>
+          </nav>
 
-        <Routes>
-          <Route index element={<AdminLibrariesScreen />} />
-          <Route path="attention" element={<AdminAttentionScreen />} />
-          <Route path="devices" element={<AdminDevicesScreen />} />
-          <Route path="users" element={<AdminUsersScreen />} />
-          <Route path="providers" element={<AdminProvidersScreen />} />
-          <Route path="subtitles" element={<AdminSubtitleProvidersScreen />} />
-        </Routes>
+          <div className="admin-content">
+            <Routes>
+              <Route index element={<AdminLibrariesScreen />} />
+              <Route path="attention" element={<AdminAttentionScreen />} />
+              <Route path="devices" element={<AdminDevicesScreen />} />
+              <Route path="users" element={<AdminUsersScreen />} />
+              <Route path="providers" element={<AdminProvidersScreen />} />
+              <Route
+                path="subtitles"
+                element={<AdminSubtitleProvidersScreen />}
+              />
+            </Routes>
+          </div>
+        </div>
       </main>
     </div>
   );
