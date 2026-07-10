@@ -20,6 +20,7 @@ import BackLink, { useLibraryName } from "./BackLink";
 import EpisodeActionsMenu from "./EpisodeActionsMenu";
 import Poster from "./Poster";
 import CastStrip from "./CastStrip";
+import DetailBackdrop from "./DetailBackdrop";
 import { EditIcon, MoreIcon } from "./ActionIcons";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
@@ -170,6 +171,9 @@ export default function ShowDetailScreen() {
 
   return (
     <div className="app-shell" data-testid="show-detail-screen">
+      {/* The Show's TMDB Background pinned behind the whole screen; content
+          scrolls over it and it fades toward black (capped at 50%). */}
+      <DetailBackdrop src={show?.backgroundUrl} />
       <AppHeader />
       <main className="app-main app-main-wide">
         <BackLink to={parent.to} label={parent.label} />

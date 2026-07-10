@@ -762,6 +762,46 @@ body {
 }
 
 /* --- Title detail --------------------------------------------------------- */
+
+/* The detail screen's Background artwork (TMDB backdrop), pinned to the
+   viewport so the page scrolls over a stationary image. Top-anchored at full
+   width with natural height — the whole image always shows, never cropped at
+   the sides — and the layer's bottom edge (image AND veil together, so no
+   seam) fades into the page background over its last few rems, covering
+   whatever the image can't reach. Negative z-index puts it above the body
+   background but behind ALL content — no restacking needed elsewhere; the
+   sticky header (solid --bg) simply sits on top. The -fade veil is
+   scroll-driven via --backdrop-fade (set in DetailBackdrop.tsx): ~15% black at
+   the top of the page, capped at 50% once scrolled, so the artwork always
+   shows through. */
+.detail-backdrop {
+  position: fixed;
+  /* Below the sticky header (not behind it), so the header never cuts off the
+     top of the image; height = the image's rendered height. */
+  inset: var(--app-header-height) 0 auto 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 10rem), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - 10rem), transparent);
+}
+.detail-backdrop-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Fade the image in on load instead of popping over the flat canvas. */
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.detail-backdrop-loaded .detail-backdrop-img {
+  opacity: 1;
+}
+.detail-backdrop-fade {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: var(--backdrop-fade, 0.15);
+}
+
 .detail-hero {
   display: flex;
   gap: clamp(1rem, 4vw, 2rem);
