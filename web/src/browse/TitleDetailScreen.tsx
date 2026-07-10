@@ -23,6 +23,7 @@ import { errorMessage } from "../screens/errorMessage";
 import { posterUrl } from "./Poster";
 import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
+import DetailBackdrop from "./DetailBackdrop";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
 import {
@@ -353,8 +354,17 @@ function Detail({ title: initialTitle }: { title: TitleDetail }) {
   const logoArt = title.artwork.find((a) => a.role === "logo");
   const logoSrc = logoArt ? posterUrl(title.id, "logo", logoArt.path) : undefined;
 
+  // The Title's fetched Background pinned behind the whole screen (the same
+  // fixed, scroll-fading backdrop the Show detail uses — position: fixed, so
+  // mounting inside the article still spans the viewport). Rendered from the
+  // locally-held title and cache-busted on the row's path, so picking a new
+  // Background in the Edit-item dialog swaps it without a page refresh.
+  const backgroundArt = title.artwork.find((a) => a.role === "background");
+  const backdropSrc = backgroundArt ? posterUrl(title.id, "background", backgroundArt.path) : undefined;
+
   return (
     <article className="detail" data-testid="detail">
+      <DetailBackdrop src={backdropSrc} />
       <div className="detail-hero">
         <div className="detail-info">
           {/* Episode parent context (tv-music issue 01): "The Bear · S01E03" so

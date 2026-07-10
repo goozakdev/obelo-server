@@ -590,6 +590,15 @@ type TitleEnrichment struct {
 	// Artwork is the set of fetched images already written to the artwork cache;
 	// each carries Role + Path. Source is forced to 'fetched' on write.
 	Artwork []Artwork
+	// ExternalIDs carries the id(s) of the provider record this result was
+	// resolved FROM, persisted onto the Title's external-id columns FILL-ONLY: a
+	// column that already has an id keeps it — a {tmdb-…} token is identity
+	// authority (ADR-0002) and a Fix-info pin is an Admin's durable override, and
+	// neither may be rewritten by whatever a provider response reports. The leaf
+	// analogue of EntityEnrichmentWrite.ExternalID: without it a search-resolved
+	// Title has no stored id for the LIVE artwork-candidate lookup to key on, and
+	// every Edit-item image tab comes back empty.
+	ExternalIDs ExternalMatch
 }
 
 // WriteTitleEnrichment persists a matched enrichment result for a Title in one
@@ -642,9 +651,17 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	if _, err := tx.Exec(
 		`UPDATE titles SET overview = ?, tagline = ?, content_rating = ?, release_date = ?,
 		     runtime_minutes = ?, studio = ?, enriched_title = ?, enrichment_status = 'matched',
-		     enriched_at = ?, enrichment_source = ? WHERE id = ?`,
+		     enriched_at = ?, enrichment_source = ?,
+		     tmdb_id        = CASE WHEN ? <> '' AND IFNULL(tmdb_id, '') = '' THEN ? ELSE tmdb_id END,
+		     imdb_id        = CASE WHEN ? <> '' AND IFNULL(imdb_id, '') = '' THEN ? ELSE imdb_id END,
+		     musicbrainz_id = CASE WHEN ? <> '' AND IFNULL(musicbrainz_id, '') = '' THEN ? ELSE musicbrainz_id END
+		   WHERE id = ?`,
 		overview, tagline, contentRating, releaseDate, runtime, studio, enrichedTitle,
-		time.Now().UTC().Format(time.RFC3339), e.Source, titleID,
+		time.Now().UTC().Format(time.RFC3339), e.Source,
+		e.ExternalIDs.TMDBID, e.ExternalIDs.TMDBID,
+		e.ExternalIDs.IMDBID, e.ExternalIDs.IMDBID,
+		e.ExternalIDs.MusicbrainzID, e.ExternalIDs.MusicbrainzID,
+		titleID,
 	); err != nil {
 		return fmt.Errorf("store: updating enriched title: %w", err)
 	}

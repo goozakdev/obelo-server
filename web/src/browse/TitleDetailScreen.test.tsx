@@ -770,6 +770,77 @@ describe("TitleDetailScreen — logo hero", () => {
   });
 });
 
+// Background backdrop: the detail pins the Title's fetched Background artwork
+// behind the page (the same fixed, scroll-fading backdrop the Show detail uses);
+// a Title with no Background row renders no backdrop at all. Picking a new
+// Background in the Edit-item dialog reloads it without a page refresh
+// (cache-busted on the picked row's path, exactly like the logo hero).
+describe("TitleDetailScreen — background backdrop", () => {
+  it("pins the Background artwork behind the detail when the Title has one", async () => {
+    getTitle.mockResolvedValue({
+      ...detail,
+      artwork: [
+        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: "/cache/b1.jpg", source: "fetched" },
+      ],
+    });
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
+
+    const backdrop = screen.getByTestId("detail-backdrop");
+    expect(backdrop.querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("/titles/t1/artwork/background"),
+    );
+  });
+
+  it("renders no backdrop when the Title has no Background artwork", async () => {
+    getTitle.mockResolvedValue(detail); // artwork: []
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
+
+    expect(screen.queryByTestId("detail-backdrop")).not.toBeInTheDocument();
+  });
+
+  it("reloads the backdrop when the Admin picks a new Background (cache-bust on path)", async () => {
+    const user = userEvent.setup();
+    getTitle.mockResolvedValue({
+      ...detail,
+      artwork: [
+        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: "/cache/orig.jpg", source: "fetched" },
+      ],
+    });
+    searchTitleArtworkCandidates.mockResolvedValue([
+      { url: "https://prov/new-bg.jpg", width: 3840, height: 2160, source: "tmdb" },
+    ]);
+    pickTitleArtwork.mockResolvedValue({
+      ...detail,
+      lockedFields: ["background"],
+      artwork: [
+        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: "/cache/new.jpg", source: "fetched" },
+      ],
+    });
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
+    expect(screen.getByTestId("detail-backdrop").querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("orig.jpg"),
+    );
+
+    await user.click(screen.getByTestId("edit-item-button"));
+    await user.click(screen.getByTestId("edit-item-tab-background"));
+    await waitFor(() => expect(screen.getByTestId("artwork-grid-background")).toBeInTheDocument());
+    await user.click(screen.getByTestId("artwork-choice"));
+
+    expect(pickTitleArtwork).toHaveBeenCalledWith("t1", "background", "https://prov/new-bg.jpg");
+    await waitFor(() =>
+      expect(screen.getByTestId("detail-backdrop").querySelector("img")).toHaveAttribute(
+        "src",
+        expect.stringContaining("new.jpg"),
+      ),
+    );
+  });
+});
+
 // "Open in VLC" now lives in the ⋯ overflow menu (targeting the primary playable
 // File) rather than on each file row: present when the Title has a playable File,
 // absent when it has none.

@@ -881,6 +881,13 @@ func (s *Service) processLeaf(ctx context.Context, lw leafWork, res *Result) err
 		Genres:         meta.Genres,
 		Cast:           toStoreCredits(meta.Cast),
 		Artwork:        fetched,
+		// Persist the resolved record id so the live artwork-candidate lookup has
+		// an anchor (refFor) — a search-matched Movie/Track otherwise offers no
+		// images in the Edit-item tabs. Fill-only in the store: an id already
+		// pinned by a {tmdb-…} token or a Fix-info override is never rewritten by
+		// a provider response. An Episode lookup reports no ExternalID (its
+		// anchor is the Show id, pinned separately in collectTVLeaves).
+		ExternalIDs: ExternalMatchForKind(t.Kind, meta.ExternalID),
 	}, locks); err != nil {
 		return err
 	}
