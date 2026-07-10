@@ -35,8 +35,8 @@ const KIND_CONFIG: Record<EntityKind, { fields: EntityFieldKey[] }> = {
 type EntityFieldKey = "title" | "overview" | "contentRating" | "network" | "genres";
 
 /** The per-role artwork tabs for a browse PARENT's Edit-item dialog
- * (artwork-management/01, ADR-0026): Show → Poster + Background; Artist → Artist
- * Photo; Album → Album Cover. Each tab's body is an ArtworkPicker wired to the
+ * (artwork-management/01, ADR-0026): Show → Poster + Background + Logo; Artist →
+ * Artist Photo; Album → Album Cover. Each tab's body is an ArtworkPicker wired to the
  * entity artwork endpoints — it auto-searches on open (the dialog mounts only the
  * active tab) and applies + Locks on click. `onChanged` refetches the detail so the
  * served parent artwork reloads (its URL carries its own version) and the Locked
@@ -75,6 +75,7 @@ export function entityArtworkTabs(
       return [
         { key: "poster", label: "Poster", node: picker("poster", "Poster") },
         { key: "background", label: "Background", node: picker("background", "Background") },
+        { key: "logo", label: "Logo", node: picker("logo", "Logo") },
       ];
     case "artists":
       return [{ key: "artist-photo", label: "Artist Photo", node: picker("poster", "Artist Photo") }];

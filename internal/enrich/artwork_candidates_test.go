@@ -20,6 +20,9 @@ const tmdbMovieImagesJSON = `{
   ],
   "backdrops": [
     {"file_path": "/back-a.jpg", "width": 3840, "height": 2160}
+  ],
+  "logos": [
+    {"file_path": "/logo-a.png", "width": 800, "height": 310}
   ]
 }`
 
@@ -64,6 +67,15 @@ func TestTMDBArtworkCandidatesMoviePosters(t *testing.T) {
 	}
 	if len(bg) != 1 || bg[0].URL != "https://img//back-a.jpg" {
 		t.Errorf("background candidates = %+v", bg)
+	}
+
+	// The logo role selects logos[] (the Edit-item Logo tab).
+	logos, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "movie", TMDBID: "438631"}, "logo")
+	if err != nil {
+		t.Fatalf("ArtworkCandidates(logo): %v", err)
+	}
+	if len(logos) != 1 || logos[0].URL != "https://img//logo-a.png" || logos[0].Width != 800 {
+		t.Errorf("logo candidates = %+v", logos)
 	}
 }
 

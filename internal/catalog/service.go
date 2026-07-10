@@ -391,11 +391,11 @@ func (s *Service) ReleaseLock(titleID, field string) (store.TitleDetail, error) 
 }
 
 // isArtworkRole reports whether a Locked field is an artwork role (poster /
-// background / cover) rather than a descriptive field, so release can take the
-// upload-aware path (ADR-0026). The set matches the pickable artwork roles.
+// background / cover / logo) rather than a descriptive field, so release can take
+// the upload-aware path (ADR-0026). The set matches the pickable artwork roles.
 func isArtworkRole(field string) bool {
 	switch field {
-	case "poster", "background", "cover":
+	case "poster", "background", "cover", "logo":
 		return true
 	default:
 		return false

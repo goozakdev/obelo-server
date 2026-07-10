@@ -30,6 +30,10 @@ const movieDetailsJSON = `{
   "release_dates": {"results": [
      {"iso_3166_1": "GB", "release_dates": [{"certification": "12A"}]},
      {"iso_3166_1": "US", "release_dates": [{"certification": "PG-13"}]}
+  ]},
+  "images": {"logos": [
+     {"file_path": "/logo.png", "width": 800, "height": 310},
+     {"file_path": "/logo-alt.png", "width": 400, "height": 155}
   ]}
 }`
 
@@ -90,13 +94,17 @@ func TestTMDBLookupByID(t *testing.T) {
 	if len(meta.Cast) != 2 || meta.Cast[0].Character != "Paul Atreides" {
 		t.Errorf("cast wrong: %+v", meta.Cast)
 	}
-	// Artwork URLs are the image base + path; poster + backdrop both present.
+	// Artwork URLs are the image base + path; poster + backdrop both present, and
+	// the FIRST appended-images logo rides along as the auto-applied logo.
 	roles := map[string]string{}
 	for _, a := range meta.Artwork {
 		roles[a.Role] = a.URL
 	}
 	if roles["poster"] != "https://img//poster.jpg" || roles["background"] != "https://img//backdrop.jpg" {
 		t.Errorf("artwork urls wrong: %+v", meta.Artwork)
+	}
+	if roles["logo"] != "https://img//logo.png" {
+		t.Errorf("logo url = %q, want https://img//logo.png", roles["logo"])
 	}
 	// By-id: it went straight to /movie/{id}, never searched.
 	for _, path := range *seen {

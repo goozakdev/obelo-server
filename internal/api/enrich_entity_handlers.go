@@ -285,7 +285,7 @@ func handleEntityArtworkCandidates(enrichSvc *enrich.Service, cat *catalog.Servi
 		}
 		role := strings.TrimSpace(r.URL.Query().Get("role"))
 		if !validArtworkRole(role) {
-			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover) is required", nil)
+			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover, logo) is required", nil)
 			return
 		}
 		cands, err := enrichSvc.ListEntityArtworkCandidates(r.Context(), entityType, entityID, role)
@@ -354,7 +354,7 @@ func handleUploadEntityArtwork(enrichSvc *enrich.Service, cat *catalog.Service, 
 		}
 		role := strings.TrimSpace(r.URL.Query().Get("role"))
 		if !validArtworkRole(role) {
-			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover) is required", nil)
+			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover, logo) is required", nil)
 			return
 		}
 		data, contentType, ok := readUploadedImage(w, r)

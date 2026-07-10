@@ -46,6 +46,7 @@ const stubMovie = JSON.stringify({
   production_companies: [{ name: "Legendary" }],
   poster_path: "/img/poster.png",
   backdrop_path: "/img/backdrop.png",
+  images: { logos: [{ file_path: "/img/logo.png", width: 800, height: 310 }] },
   credits: { cast: [{ name: "Timothée Chalamet", character: "Paul Atreides" }] },
   release_dates: { results: [{ iso_3166_1: "US", release_dates: [{ certification: "PG-13" }] }] },
 });
@@ -58,6 +59,7 @@ const stubTV = JSON.stringify({
   networks: [{ name: "HBO" }],
   poster_path: "/img/tv-poster.png",
   backdrop_path: "/img/tv-bg.png",
+  images: { logos: [{ file_path: "/img/tv-logo.png", width: 800, height: 310 }] },
   content_ratings: { results: [{ iso_3166_1: "US", rating: "TV-MA" }] },
 });
 const stubSeason = JSON.stringify({ poster_path: "/img/season.png", overview: "Season one." });
@@ -71,6 +73,7 @@ const stubImages = JSON.stringify({
   ],
   backdrops: [{ file_path: "/img/back-a.png", width: 3840, height: 2160 }],
   stills: [{ file_path: "/img/still.png", width: 1920, height: 1080 }],
+  logos: [{ file_path: "/img/logo-a.png", width: 800, height: 310 }],
 });
 const stubEpisode = JSON.stringify({
   name: "The Suitcase",

@@ -617,11 +617,11 @@ type pickArtworkRequest struct {
 }
 
 // validArtworkRole reports whether role is a pickable artwork role. Leaves + video
-// parents carry poster/background; an Album carries a cover. The set is closed so a
-// pick can't lock an arbitrary field.
+// parents carry poster/background/logo; an Album carries a cover. The set is closed
+// so a pick can't lock an arbitrary field.
 func validArtworkRole(role string) bool {
 	switch role {
-	case "poster", "background", "cover":
+	case "poster", "background", "cover", "logo":
 		return true
 	default:
 		return false
@@ -652,7 +652,7 @@ func handleTitleArtworkCandidates(enrichSvc *enrich.Service) http.HandlerFunc {
 		}
 		role := strings.TrimSpace(r.URL.Query().Get("role"))
 		if !validArtworkRole(role) {
-			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover) is required", nil)
+			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover, logo) is required", nil)
 			return
 		}
 		cands, err := enrichSvc.ListTitleArtworkCandidates(r.Context(), titleID, role)
@@ -796,7 +796,7 @@ func handleUploadTitleArtwork(enrichSvc *enrich.Service, cat *catalog.Service, b
 		}
 		role := strings.TrimSpace(r.URL.Query().Get("role"))
 		if !validArtworkRole(role) {
-			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover) is required", nil)
+			writeError(w, http.StatusBadRequest, codeBadRequest, "a valid role (poster, background, cover, logo) is required", nil)
 			return
 		}
 		data, contentType, ok := readUploadedImage(w, r)

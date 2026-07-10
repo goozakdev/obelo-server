@@ -174,6 +174,7 @@ describe("Show detail", () => {
     expect(screen.getByTestId("edit-item-tab-search")).toBeInTheDocument();
     expect(screen.getByTestId("edit-item-tab-poster")).toHaveTextContent("Poster");
     expect(screen.getByTestId("edit-item-tab-background")).toHaveTextContent("Background");
+    expect(screen.getByTestId("edit-item-tab-logo")).toHaveTextContent("Logo");
     expect(screen.getByTestId("edit-item-tab-fix-label")).toBeInTheDocument();
   });
 

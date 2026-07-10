@@ -55,8 +55,8 @@ type showSummaryJSON struct {
 	UnwatchedEpisodeCount int `json:"unwatchedEpisodeCount,omitempty"`
 	// Enrichment (issue 03): the descriptive fields + fetched artwork the optional
 	// Enrichment step decorates a Show with. All omitempty so an un-enriched Show
-	// is unchanged. PosterURL/BackgroundURL point at the Show artwork endpoint and
-	// are set only when a fetched image exists.
+	// is unchanged. PosterURL/BackgroundURL/LogoURL point at the Show artwork
+	// endpoint and are set only when a fetched image exists.
 	Overview         string   `json:"overview,omitempty"`
 	Genres           []string `json:"genres,omitempty"`
 	ContentRating    string   `json:"contentRating,omitempty"`
@@ -64,6 +64,7 @@ type showSummaryJSON struct {
 	EnrichmentStatus string   `json:"enrichmentStatus,omitempty"`
 	PosterURL        string   `json:"posterUrl,omitempty"`
 	BackgroundURL    string   `json:"backgroundUrl,omitempty"`
+	LogoURL          string   `json:"logoUrl,omitempty"`
 	// Edit-item surface (item-editing/02): on the Show DETAIL only, which fields are
 	// Locked and which Enrichment override is in effect, so an Admin can see/undo a
 	// prior correction. Omitted on the lean grid.
@@ -94,6 +95,9 @@ func decorateShow(js *showSummaryJSON, e store.EntityEnrichment, roles map[strin
 	}
 	if roles["background"] {
 		js.BackgroundURL = withArtworkVersion(APIPrefix+"/shows/"+js.ID+"/artwork/background", version)
+	}
+	if roles["logo"] {
+		js.LogoURL = withArtworkVersion(APIPrefix+"/shows/"+js.ID+"/artwork/logo", version)
 	}
 }
 

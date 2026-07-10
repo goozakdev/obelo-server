@@ -22,6 +22,7 @@ export type EditItemTabKey =
   | "fix-label"
   | "poster"
   | "background"
+  | "logo"
   | "artist-photo"
   | "album-cover";
 

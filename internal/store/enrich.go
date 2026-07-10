@@ -285,8 +285,8 @@ type MetadataEdit struct {
 	Genres *[]string
 	Cast   *[]Credit
 	// LockArtwork names artwork roles to pin against a refresh ('poster' /
-	// 'background'). The currently-chosen image is kept; the role is just locked so
-	// the next pass skips fetching it (the hand-chosen poster sticks).
+	// 'background' / 'logo'). The currently-chosen image is kept; the role is just
+	// locked so the next pass skips fetching it (the hand-chosen poster sticks).
 	LockArtwork []string
 }
 

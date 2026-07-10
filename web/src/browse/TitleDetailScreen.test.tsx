@@ -653,11 +653,12 @@ describe("TitleDetailScreen — Add to watchlist (any User)", () => {
   });
 });
 
-// Per-role artwork tabs (artwork-management/01): a Movie manages Poster + Background
-// from dedicated Edit-item tabs that auto-search on open and apply + Lock on click;
-// an Episode leaf gets none. Picking bumps the hero image so it reloads.
+// Per-role artwork tabs (artwork-management/01): a Movie manages Poster +
+// Background + Logo from dedicated Edit-item tabs that auto-search on open and
+// apply + Lock on click; an Episode leaf gets none. Picking bumps the hero image
+// so it reloads.
 describe("TitleDetailScreen — artwork tabs (Admin)", () => {
-  it("shows distinct Poster and Background tabs on a Movie (beside Search and Fix label)", async () => {
+  it("shows distinct Poster, Background, and Logo tabs on a Movie (beside Search and Fix label)", async () => {
     const user = userEvent.setup();
     getTitle.mockResolvedValue(detail); // kind: "movie"
     renderDetail();
@@ -667,6 +668,7 @@ describe("TitleDetailScreen — artwork tabs (Admin)", () => {
     expect(screen.getByTestId("edit-item-tab-search")).toBeInTheDocument();
     expect(screen.getByTestId("edit-item-tab-poster")).toBeInTheDocument();
     expect(screen.getByTestId("edit-item-tab-background")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-item-tab-logo")).toBeInTheDocument();
     expect(screen.getByTestId("edit-item-tab-fix-label")).toBeInTheDocument();
   });
 
@@ -680,6 +682,7 @@ describe("TitleDetailScreen — artwork tabs (Admin)", () => {
     expect(screen.getByTestId("edit-item-tab-search")).toBeInTheDocument();
     expect(screen.queryByTestId("edit-item-tab-poster")).not.toBeInTheDocument();
     expect(screen.queryByTestId("edit-item-tab-background")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("edit-item-tab-logo")).not.toBeInTheDocument();
   });
 
   it("auto-searches the Poster tab on open (no pre-click) and applies on click, reloading the hero", async () => {

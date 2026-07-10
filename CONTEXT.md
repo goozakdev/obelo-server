@@ -134,8 +134,8 @@ _Avoid_: Provider override (too narrow — it also carries language and on/off),
 ## Artwork
 
 **Artwork role**:
-The slot an image fills for an entity: **Poster** and **Background** for a Movie or Show, **Artist photo** for an Artist, **Album cover** for an Album. An entity has one image per role at a time (the one shown). The role is the axis the Edit-item artwork tabs and the provider candidate lists are keyed on.
-_Avoid_: Backdrop (use Background), Fanart, Thumb.
+The slot an image fills for an entity: **Poster**, **Background**, and **Logo** (the transparent title-treatment/wordmark art TMDB serves) for a Movie or Show, **Artist photo** for an Artist, **Album cover** for an Album. An entity has one image per role at a time (the one shown). The role is the axis the Edit-item artwork tabs and the provider candidate lists are keyed on.
+_Avoid_: Backdrop (use Background), Fanart, Thumb, Clearlogo (use Logo).
 
 **Artwork source**:
 The provenance of the image filling a role — one of three: **Local** (a file in the library folder, discovered by the Scanner), **Fetched** (auto-downloaded during Enrichment, including a provider image an Admin picks — stored Fetched-and-Locked), or **Uploaded** (see below). When a role has images from more than one source, serve precedence is **Uploaded > Local > Fetched** ([ADR-0026](./docs/adr/0026-user-uploaded-artwork-upload-is-select-top-precedence.md)): an Admin's Upload is the deliberate "show exactly this" choice and outranks even Local folder art, while a picked provider image is Fetched and so still loses to Local like any fetched image.

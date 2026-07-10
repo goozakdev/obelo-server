@@ -301,17 +301,23 @@ function Detail({ title: initialTitle }: { title: TitleDetail }) {
           ),
         },
         // Per-role artwork tabs (artwork-management/01, ADR-0026): a Movie manages
-        // Poster + Background from dedicated tabs that auto-search on open and
-        // apply + Lock on click. An Episode leaf gets no artwork tab (Episode stills
-        // are out of scope), so gate on the Movie kind.
+        // Poster + Background + Logo from dedicated tabs that auto-search on open
+        // and apply + Lock on click. An Episode leaf gets no artwork tab (Episode
+        // stills are out of scope), so gate on the Movie kind.
         ...(title.kind === "movie"
-          ? (["poster", "background"] as const).map((role) => ({
+          ? (
+              [
+                ["poster", "Poster"],
+                ["background", "Background"],
+                ["logo", "Logo"],
+              ] as const
+            ).map(([role, label]) => ({
               key: role,
-              label: role === "poster" ? "Poster" : "Background",
+              label,
               node: (
                 <ArtworkPicker
                   role={role}
-                  label={role === "poster" ? "Poster" : "Background"}
+                  label={label}
                   locked={title.lockedFields.includes(role)}
                   listCandidates={(r) => apiClient.searchTitleArtworkCandidates(title.id, r)}
                   pick={async (r, url) => {

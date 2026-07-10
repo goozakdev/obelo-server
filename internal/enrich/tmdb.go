@@ -216,10 +216,11 @@ func (p *TMDBProvider) Search(ctx context.Context, kind, query string, opts Sear
 // ArtworkCandidates lists the images TMDB offers for a role on the record ref
 // points at, so the Edit-item image picker can show them all (Fix label,
 // ADR-0019). It dispatches by kind to the right /images endpoint and role: a
-// Movie/Show poster → posters[], a background → backdrops[]; an Episode's
-// poster role is its still[] under the show id + season/episode numbers. A ref
-// with no resolved TMDB id, an unsupported kind, or a record with no images for
-// the role yields no candidates (never a fatal error). Read-only.
+// Movie/Show poster → posters[], a background → backdrops[], a logo → logos[];
+// an Episode's poster role is its still[] under the show id + season/episode
+// numbers. A ref with no resolved TMDB id, an unsupported kind, or a record
+// with no images for the role yields no candidates (never a fatal error).
+// Read-only.
 func (p *TMDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, role string) ([]ArtworkCandidate, error) {
 	if ref.TMDBID == "" {
 		return nil, nil // no resolved record → nothing to list
@@ -249,6 +250,7 @@ func (p *TMDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, role
 		Posters   []tmdbImage `json:"posters"`
 		Backdrops []tmdbImage `json:"backdrops"`
 		Stills    []tmdbImage `json:"stills"`
+		Logos     []tmdbImage `json:"logos"`
 	}
 	if err := p.getJSON(ctx, path, q, &out); err != nil {
 		return nil, err
@@ -259,6 +261,8 @@ func (p *TMDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, role
 	switch role {
 	case "background":
 		imgs = out.Backdrops
+	case "logo":
+		imgs = out.Logos
 	default: // "poster"
 		if ref.Kind == "episode" {
 			imgs = out.Stills
@@ -318,7 +322,7 @@ func (p *TMDBProvider) searchMovie(ctx context.Context, title string, year int) 
 }
 
 // tmdbMovie is the subset of the TMDB movie-details payload we consume
-// (append_to_response=credits,release_dates).
+// (append_to_response=credits,release_dates,images).
 type tmdbMovie struct {
 	ID                  int     `json:"id"`
 	Title               string  `json:"title"`
@@ -346,6 +350,11 @@ type tmdbMovie struct {
 			} `json:"release_dates"`
 		} `json:"results"`
 	} `json:"release_dates"`
+	// Logos are only exposed via the appended images block (there is no top-level
+	// logo_path the way poster_path/backdrop_path are).
+	Images struct {
+		Logos []tmdbImage `json:"logos"`
+	} `json:"images"`
 }
 
 type tName struct {
@@ -356,7 +365,11 @@ func (p *TMDBProvider) movieDetails(ctx context.Context, id string) (TitleMetada
 	q := url.Values{}
 	q.Set("api_key", p.APIKey)
 	q.Set("language", p.Language)
-	q.Set("append_to_response", "credits,release_dates")
+	q.Set("append_to_response", "credits,release_dates,images")
+	// The appended images block is filtered by `language`; widen it to
+	// language-less images too so a logo set isn't empty just because none is
+	// tagged for the UI language (same widening ArtworkCandidates applies).
+	q.Set("include_image_language", p.Language+",null")
 
 	var m tmdbMovie
 	if err := p.getJSON(ctx, "/movie/"+id, q, &m); err != nil {
@@ -400,7 +413,22 @@ func (p *TMDBProvider) movieDetails(ctx context.Context, id string) (TitleMetada
 	if m.BackdropPath != "" {
 		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "background", URL: p.ImageBaseURL + m.BackdropPath})
 	}
+	if logo := firstImagePath(m.Images.Logos); logo != "" {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "logo", URL: p.ImageBaseURL + logo})
+	}
 	return meta, nil
+}
+
+// firstImagePath returns the first usable file_path in an appended images set —
+// the default the details fetch auto-applies (TMDB orders images by rating, so
+// the first is the one TMDB itself would show).
+func firstImagePath(imgs []tmdbImage) string {
+	for _, im := range imgs {
+		if im.FilePath != "" {
+			return im.FilePath
+		}
+	}
+	return ""
 }
 
 func (p *TMDBProvider) searchTV(ctx context.Context, title string, year int) (string, error) {
@@ -426,7 +454,7 @@ func (p *TMDBProvider) searchTV(ctx context.Context, title string, year int) (st
 }
 
 // tmdbTV is the subset of the TMDB tv-details payload we consume
-// (append_to_response=content_ratings,credits). The series-level `credits` block
+// (append_to_response=content_ratings,credits,images). The series-level `credits` block
 // carries the show's main cast (cast-photos/02) — the same id + profile_path per
 // member a movie's credits do, decoded into the same normalized Credit shape.
 type tmdbTV struct {
@@ -452,13 +480,21 @@ type tmdbTV struct {
 			Rating  string `json:"rating"`
 		} `json:"results"`
 	} `json:"content_ratings"`
+	// Logos are only exposed via the appended images block (there is no top-level
+	// logo_path the way poster_path/backdrop_path are).
+	Images struct {
+		Logos []tmdbImage `json:"logos"`
+	} `json:"images"`
 }
 
 func (p *TMDBProvider) tvDetails(ctx context.Context, id string) (TitleMetadata, error) {
 	q := url.Values{}
 	q.Set("api_key", p.APIKey)
 	q.Set("language", p.Language)
-	q.Set("append_to_response", "content_ratings,credits")
+	q.Set("append_to_response", "content_ratings,credits,images")
+	// Same language widening as movieDetails: appended images honor
+	// include_image_language, without which a logo set could come back empty.
+	q.Set("include_image_language", p.Language+",null")
 
 	var m tmdbTV
 	if err := p.getJSON(ctx, "/tv/"+id, q, &m); err != nil {
@@ -497,6 +533,9 @@ func (p *TMDBProvider) tvDetails(ctx context.Context, id string) (TitleMetadata,
 	}
 	if m.BackdropPath != "" {
 		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "background", URL: p.ImageBaseURL + m.BackdropPath})
+	}
+	if logo := firstImagePath(m.Images.Logos); logo != "" {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "logo", URL: p.ImageBaseURL + logo})
 	}
 	return meta, nil
 }

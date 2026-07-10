@@ -328,6 +328,7 @@ export function normalizeShowSummary(raw: ShowSummaryRaw): ShowSummary {
     enrichmentStatus: raw.enrichmentStatus,
     posterUrl: raw.posterUrl,
     backgroundUrl: raw.backgroundUrl,
+    logoUrl: raw.logoUrl,
     lockedFields: raw.lockedFields,
     enrichmentOverride: raw.enrichmentOverride,
     cast: raw.cast ?? [],

@@ -807,6 +807,7 @@ export interface ShowSummaryRaw {
   enrichmentStatus?: EnrichmentStatus;
   posterUrl?: string;
   backgroundUrl?: string;
+  logoUrl?: string;
   // Edit-item surface (item-editing/02): on the Show DETAIL only — which fields are
   // Locked and which Enrichment override is in effect (absent on the lean grid).
   lockedFields?: string[];
@@ -840,10 +841,11 @@ export interface ShowSummary {
   contentRating?: string;
   network?: string;
   enrichmentStatus?: EnrichmentStatus;
-  /** Fetched poster/backdrop URLs (same-origin, media-cookie authed), undefined
-   * when Enrichment fetched none. */
+  /** Fetched poster/backdrop/logo URLs (same-origin, media-cookie authed),
+   * undefined when Enrichment fetched none. */
   posterUrl?: string;
   backgroundUrl?: string;
+  logoUrl?: string;
   /** Locked fields + active Enrichment override (item-editing/02), on the detail. */
   lockedFields?: string[];
   enrichmentOverride?: EntityEnrichmentOverride;
