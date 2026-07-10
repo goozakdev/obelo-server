@@ -81,12 +81,19 @@ async function seedLibrary(
   ).toBeTruthy();
   const libId = (await create.json()).id as string;
 
-  // Synchronous scan: the POST returns the resulting status (state "idle").
+  // The scan runs ASYNCHRONOUSLY (202 → "running"), so poll until it settles
+  // (same pattern as enrich-tv-music.spec.ts).
   const scan = await request.post(`/api/v1/libraries/${libId}/scan`, {
     headers: auth,
   });
   expect(scan.ok(), `scan failed: ${scan.status()} ${await scan.text()}`).toBeTruthy();
-  const status = await scan.json();
+  let status = (await scan.json()) as { state: string; titlesFound: number };
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline && status.state === "running") {
+    await new Promise((r) => setTimeout(r, 100));
+    const s = await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth });
+    if (s.ok()) status = (await s.json()) as typeof status;
+  }
   expect(status.state).toBe("idle");
   expect(status.titlesFound).toBeGreaterThan(1);
   return libId;

@@ -9,6 +9,12 @@ import { fileURLToPath } from "node:url";
 // token to create the Admin (closing setup permanently for that process), then
 // later tests log that Admin in and out. Token/media-cookie wiring on the server
 // side is covered by the Go tests; here we focus on the browser auth flows.
+//
+// The filename's 00- prefix is load-bearing: specs run alphabetically (one
+// worker), and every OTHER spec's beforeAll creates the first Admin via the API
+// (ensureAdmin), which closes setup permanently. This spec must run FIRST or
+// the setup screen never appears. On a REUSED dev server that is already set
+// up (reuseExistingServer), the first test skips instead of failing.
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLAIM_TOKEN_FILE = join(here, ".claim-token");
@@ -32,7 +38,12 @@ function readClaimToken(): string {
 }
 
 test.describe.serial("first-run, login, logout, and the 401 path", () => {
-  test("fresh server: setup creates the first Admin, lands logged in, and survives reload", async ({ page }) => {
+  test("fresh server: setup creates the first Admin, lands logged in, and survives reload", async ({ page, request }) => {
+    // A reused (already-set-up) dev server can't show the one-time setup flow —
+    // skip rather than fail; a fresh boot always runs this.
+    const info = await (await request.get("/api/v1/server")).json();
+    test.skip(!info.setupRequired, "server already set up (reused dev server)");
+
     await page.goto("/");
 
     // The boot gate read setupRequired=true and routed to setup.

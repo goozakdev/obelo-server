@@ -157,7 +157,9 @@ test.describe.serial("edit-item: Fix label — manual edit + image picker", () =
 
     const editor = page.getByTestId("fix-label-editor");
     await expect(editor).toBeVisible();
-    await expect(editor).toContainText("Fix label");
+    // The tab/editor is presented as "Details" (the fix-label ACTION name stays
+    // in code/testids; the visible label was renamed in the flat-UI redesign).
+    await expect(editor).toContainText("Details");
 
     // (AC) Hand-edit the overview → save → the field becomes Locked (a badge shows).
     await editor.getByTestId("edit-overview").fill("My hand-written overview.");

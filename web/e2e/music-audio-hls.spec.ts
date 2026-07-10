@@ -120,7 +120,6 @@ test("FLAC track plays audio-only HLS in the browser (currentTime advances)", as
   const tracks = (await (await request.get(`/api/v1/albums/${lossless.id}/tracks`, { headers: auth })).json())
     .tracks as { id: string }[];
   const flacId = tracks[0].id;
-  await request.dispose();
 
   await uiLogin(page);
   // Play the way a user does: the old /titles/{id}/play route was retired with
@@ -150,4 +149,21 @@ test("FLAC track plays audio-only HLS in the browser (currentTime advances)", as
     el.error ? el.error.code : null,
   );
   expect(mediaError, "no media decode error").toBeNull();
+
+  // DETERMINISTICALLY free the transcode cap slot this session holds (ADR-0009):
+  // the persistent Now Playing bar keeps the session alive across routes and a
+  // closed Playwright context fires no reliable unload DELETE, so without this
+  // the NEXT cap-governed test in the suite (play.spec's matroska HLS transcode)
+  // hits 503 SERVER_BUSY. Ending it via the API frees the slot synchronously
+  // under End()'s lock (same pattern as play.spec.ts). Best-effort.
+  const streamUrl = await video.getAttribute("data-stream-url");
+  const sessionId = streamUrl?.match(/\/sessions\/([^/]+)\//)?.[1] ?? "";
+  if (sessionId) {
+    try {
+      await request.delete(`/api/v1/sessions/${sessionId}`, { headers: auth });
+    } catch {
+      /* best-effort teardown */
+    }
+  }
+  await request.dispose();
 });

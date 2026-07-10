@@ -116,9 +116,19 @@ async function seedMovies(
     throw new Error(`create library failed: ${create.status()} ${await create.text()}`);
   }
 
+  // The scan runs ASYNCHRONOUSLY (202 → "running"), so poll until it settles
+  // (same pattern as enrich-tv-music.spec.ts) — the titles page below needs the
+  // scanned Titles to exist.
   const scan = await request.post(`/api/v1/libraries/${libId}/scan`, { headers: auth });
   expect(scan.ok(), `scan failed: ${scan.status()} ${await scan.text()}`).toBeTruthy();
-  expect((await scan.json()).state).toBe("idle");
+  let status = (await scan.json()) as { state: string };
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline && status.state === "running") {
+    await new Promise((r) => setTimeout(r, 100));
+    const s = await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth });
+    if (s.ok()) status = (await s.json()) as typeof status;
+  }
+  expect(status.state).toBe("idle");
 
   const pageRes = await request.get(`/api/v1/libraries/${libId}/titles?limit=100`, {
     headers: auth,

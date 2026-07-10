@@ -141,8 +141,12 @@ test.describe.serial("music: artist list, albums, tracks, play", () => {
 
   test("Music library renders an Artist list linking to Artist detail", async ({ page }) => {
     await uiLogin(page);
+    // A music library belongs to the dedicated music experience: the shared
+    // /libraries/{id} URL redirects to /music/libraries/{id} (old links keep
+    // working) and renders the Artist list inside the music shell.
     await page.goto(`/libraries/${libId}`);
-    await expect(page.getByTestId("library-grid-screen")).toHaveAttribute("data-kind", "music");
+    await expect(page).toHaveURL(/\/music\/libraries\//);
+    await expect(page.getByTestId("music-library-screen")).toBeVisible();
     await expect(page.getByTestId("poster-grid")).toBeVisible();
 
     const radio = page.getByTestId("poster-tile").filter({ hasText: "Radiohead" });

@@ -99,6 +99,17 @@ test.describe.serial("enrichment match: attention surface + correct a no-match",
 
     const scan = await request.post(`/api/v1/libraries/${libId}/scan`, { headers: auth });
     expect(scan.ok(), `scan: ${scan.status()}`).toBeTruthy();
+    // The scan runs ASYNCHRONOUSLY (202 → "running"); enrichment only matches the
+    // Titles that exist when it runs, so wait for the scan to settle first (same
+    // pattern as enrich-tv-music.spec.ts).
+    let status = (await scan.json()) as { state: string };
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && status.state === "running") {
+      await new Promise((r) => setTimeout(r, 100));
+      const s = await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth });
+      if (s.ok()) status = (await s.json()) as typeof status;
+    }
+    expect(status.state).toBe("idle");
 
     // Enrich the library: "Nomatch Movie" no-matches → enrichmentStatus unmatched.
     const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });

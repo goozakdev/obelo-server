@@ -101,6 +101,15 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
 
     const scan = await request.post(`/api/v1/libraries/${libId}/scan`, { headers: auth });
     expect(scan.ok(), `scan: ${scan.status()}`).toBeTruthy();
+    // The scan runs ASYNCHRONOUSLY (202 → "running"); enrichment only matches
+    // Titles that exist when it runs, so wait for the scan to settle first.
+    for (let i = 0; i < 100; i++) {
+      const st = await (
+        await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth })
+      ).json();
+      if (st.state && st.state !== "running") break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
     const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
     expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
 
@@ -126,15 +135,31 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
       await expect(page.getByTestId("title-detail-screen")).toBeVisible();
     };
 
-    await openExtrasMovie();
-    // Starts with the stub's enriched overview, no lock.
-    await expect(page.getByTestId("detail-overview")).toContainText(STUB_OVERVIEW);
-    await expect(page.getByTestId("lock-badge-overview")).toHaveCount(0);
+    // The hand-edit form lives in the Edit-item dialog's "Details" tab
+    // (fix-label): open it, and close it again to read the detail underneath.
+    const openDetailsTab = async () => {
+      await page.getByTestId("edit-item-button").click();
+      await expect(page.getByTestId("edit-item-dialog")).toBeVisible();
+      await page.getByTestId("edit-item-tab-fix-label").click();
+      await expect(page.getByTestId("fix-label-editor")).toBeVisible();
+    };
+    const closeDialog = async () => {
+      await page.getByTestId("edit-item-close").click();
+      await expect(page.getByTestId("edit-item-dialog")).not.toBeVisible();
+    };
 
-    // 1. Hand-edit the overview and save → it locks.
+    await openExtrasMovie();
+    // Starts with the stub's enriched overview.
+    await expect(page.getByTestId("detail-overview")).toContainText(STUB_OVERVIEW);
+
+    // 1. Hand-edit the overview and save → it locks (badge inside the editor),
+    //    and the detail behind the dialog reflects the edit.
+    await openDetailsTab();
+    await expect(page.getByTestId("lock-badge-overview")).toHaveCount(0);
     await page.getByTestId("edit-overview").fill(HAND_EDIT);
-    await page.getByTestId("save-overview").click();
+    await page.getByTestId("save-metadata").click();
     await expect(page.getByTestId("lock-badge-overview")).toBeVisible();
+    await closeDialog();
     await expect(page.getByTestId("detail-overview")).toContainText(HAND_EDIT);
 
     // 2. A full re-enrich (which would otherwise rewrite the overview to the stub
@@ -142,17 +167,18 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
     await reEnrichFull();
     await openExtrasMovie();
     await expect(page.getByTestId("detail-overview")).toContainText(HAND_EDIT);
-    await expect(page.getByTestId("lock-badge-overview")).toBeVisible();
 
-    // 3. Release the lock; the field is no longer pinned.
+    // 3. Release the lock (in the Details tab); the field is no longer pinned.
+    await openDetailsTab();
+    await expect(page.getByTestId("lock-badge-overview")).toBeVisible();
     await page.getByTestId("release-overview").click();
     await expect(page.getByTestId("lock-badge-overview")).toHaveCount(0);
+    await closeDialog();
 
     // 4. The next full pass refreshes the now-unlocked overview back to the stub.
     await reEnrichFull();
     await openExtrasMovie();
     await expect(page.getByTestId("detail-overview")).toContainText(STUB_OVERVIEW);
-    await expect(page.getByTestId("lock-badge-overview")).toHaveCount(0);
 
     await request.dispose();
   });
