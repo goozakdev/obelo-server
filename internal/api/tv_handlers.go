@@ -360,7 +360,7 @@ func handleEntityArtwork(svc *catalog.Service, entityType, entityID, role string
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to get artwork", nil)
 			return
 		}
-		http.ServeFile(w, r, art.Path)
+		http.ServeFile(w, r, svc.ResolveArtworkPath(art.Path))
 	}
 }
 
@@ -406,7 +406,7 @@ func handlePersonArtwork(svc *catalog.Service, personRef, role string) http.Hand
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to get artwork", nil)
 			return
 		}
-		http.ServeFile(w, r, art.Path)
+		http.ServeFile(w, r, svc.ResolveArtworkPath(art.Path))
 	}
 }
 

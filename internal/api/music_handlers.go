@@ -437,6 +437,6 @@ func handleAlbumArtwork(svc *catalog.Service, albumID string) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to get artwork", nil)
 			return
 		}
-		http.ServeFile(w, r, art.Path)
+		http.ServeFile(w, r, svc.ResolveArtworkPath(art.Path))
 	}
 }

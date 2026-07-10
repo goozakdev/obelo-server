@@ -8,6 +8,7 @@ package catalog
 import (
 	"errors"
 	"os"
+	"path/filepath"
 
 	"github.com/marioquake/juicebox/internal/access"
 	"github.com/marioquake/juicebox/internal/store"
@@ -156,11 +157,30 @@ type Store interface {
 // Service implements the browse operations.
 type Service struct {
 	store Store
+	// artworkDir is the on-disk root of the app's own artwork cache
+	// (config.ArtworkCacheDir). Fetched/uploaded artwork rows store a path
+	// RELATIVE to this dir so the DB survives a data-dir move/rename; ResolveArtworkPath
+	// re-roots them at serve time. Local (media-adjacent) artwork stays absolute.
+	artworkDir string
 }
 
-// NewService builds the catalog service over the given store.
-func NewService(s Store) *Service {
-	return &Service{store: s}
+// NewService builds the catalog service over the given store. artworkDir is the
+// artwork cache root used to re-root relative artwork paths at serve time (see
+// ResolveArtworkPath).
+func NewService(s Store, artworkDir string) *Service {
+	return &Service{store: s, artworkDir: artworkDir}
+}
+
+// ResolveArtworkPath turns a stored artwork path into an absolute on-disk path to
+// serve. Fetched/uploaded artwork is stored relative to the artwork cache dir (so
+// the DB is portable across data-dir moves); such a relative path is joined onto
+// artworkDir. An already-absolute path — local media-adjacent artwork, or a legacy
+// pre-relativization row — is returned unchanged. An empty path stays empty.
+func (s *Service) ResolveArtworkPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(s.artworkDir, p)
 }
 
 // Sort is the requested ordering for a title listing, parsed from the API
@@ -363,7 +383,7 @@ func (s *Service) ReleaseLock(titleID, field string) (store.TitleDetail, error) 
 		if err != nil {
 			return store.TitleDetail{}, err
 		}
-		removeArtworkFile(removed)
+		removeArtworkFile(s.ResolveArtworkPath(removed))
 	} else if err := s.store.ReleaseFieldLock(titleID, field); err != nil {
 		return store.TitleDetail{}, err
 	}
@@ -443,7 +463,7 @@ func (s *Service) ReleaseEntityLock(entityType, entityID, field string) error {
 		if err != nil {
 			return err
 		}
-		removeArtworkFile(removed)
+		removeArtworkFile(s.ResolveArtworkPath(removed))
 		return nil
 	}
 	return s.store.ReleaseEntityFieldLock(entityType, entityID, field)

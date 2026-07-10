@@ -757,32 +757,42 @@ func (s *Service) UploadEntityArtwork(entityType, entityID, role string, data []
 }
 
 // writeUploadedArtwork writes uploaded bytes to the artwork cache under a
-// source-qualified name (key-role-uploaded.ext), returning the absolute path. The
-// "-uploaded" qualifier keeps it distinct from cacheArtwork's fetched file
-// (key-role.ext) for the same role, so an upload and a fetch coexist on disk.
+// source-qualified name (key-role-uploaded.ext), returning the cache-relative name
+// (the file lives directly under cacheDir) so the stored DB path survives a
+// data-dir move. The "-uploaded" qualifier keeps it distinct from cacheArtwork's
+// fetched file (key-role.ext) for the same role, so an upload and a fetch coexist
+// on disk.
 func (s *Service) writeUploadedArtwork(key, role string, data []byte, contentType string) (string, error) {
 	name := key + "-" + role + "-uploaded" + extensionFor(contentType)
-	path := filepath.Join(s.cacheDir, name)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(s.cacheDir, name), data, 0o644); err != nil {
 		return "", fmt.Errorf("enrich: writing uploaded artwork %q: %w", role, err)
 	}
-	if abs, err := filepath.Abs(path); err == nil {
-		return abs, nil
-	}
-	return path, nil
+	return name, nil
 }
 
 // removeReplacedUpload deletes the file of a prior upload that a re-upload
 // replaced, but only when the new upload landed at a different path (a changed
-// extension) — a same-path re-upload overwrote it in place. Best-effort: a
-// dangling cache file is harmless (the DB row points at the new one).
+// extension) — a same-path re-upload overwrote it in place. The stored paths are
+// cache-relative, so re-root each onto cacheDir before touching disk (a legacy
+// absolute path is left as-is by cacheAbs). Best-effort: a dangling cache file is
+// harmless (the DB row points at the new one).
 func (s *Service) removeReplacedUpload(replacedPath, newPath string) {
 	if replacedPath == "" || replacedPath == newPath {
 		return
 	}
-	if err := os.Remove(replacedPath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(s.cacheAbs(replacedPath)); err != nil && !os.IsNotExist(err) {
 		log.Printf("juicebox: enrich artwork: removing replaced upload %q: %v", replacedPath, err)
 	}
+}
+
+// cacheAbs re-roots a cache-relative artwork path onto cacheDir for a filesystem
+// op. An already-absolute path (a legacy pre-relativization row) is returned
+// unchanged. Mirrors catalog.Service.ResolveArtworkPath on the serve side.
+func (s *Service) cacheAbs(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(s.cacheDir, p)
 }
 
 // leafWork is one playable Title to enrich plus its provider lookup ref. For a
@@ -1120,7 +1130,9 @@ func personCacheKey(personRef string) string {
 // cacheArtwork downloads one artwork reference and writes it to the cache under a
 // deterministic name (key-role.ext, key being a Title id or an entityType-id), so
 // re-enrichment overwrites in place (idempotent — no duplicate files). Returns the
-// absolute path and ok=false on any error (logged, non-fatal).
+// cache-relative name (just the filename; the file lives directly under cacheDir)
+// so the stored DB path survives a data-dir move, and ok=false on any error
+// (logged, non-fatal). The serve layer re-roots it via catalog.ResolveArtworkPath.
 func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (string, bool) {
 	data, contentType, err := s.fetcher.Fetch(ctx, ar.URL)
 	if err != nil {
@@ -1132,16 +1144,11 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 		return "", false
 	}
 	name := key + "-" + ar.Role + extensionFor(contentType)
-	path := filepath.Join(s.cacheDir, name)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(s.cacheDir, name), data, 0o644); err != nil {
 		log.Printf("juicebox: enrich artwork %q (%s): write failed: %v", ar.Role, key, err)
 		return "", false
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return path, true
-	}
-	return abs, true
+	return name, true
 }
 
 // refFor builds the provider lookup reference from a stored Title. External ids

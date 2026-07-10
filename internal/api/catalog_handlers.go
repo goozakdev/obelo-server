@@ -1092,9 +1092,10 @@ func handleTitleArtwork(svc *catalog.Service, scope access.Scope, titleID, role 
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to get artwork", nil)
 			return
 		}
-		// ServeFile streams the local image with correct content-type/caching and
-		// handles range requests. The path is the scanner-recorded on-disk file.
-		http.ServeFile(w, r, art.Path)
+		// ServeFile streams the image with correct content-type/caching and handles
+		// range requests. ResolveArtworkPath re-roots a cache-relative (fetched/
+		// uploaded) path onto the artwork dir; a local path passes through absolute.
+		http.ServeFile(w, r, svc.ResolveArtworkPath(art.Path))
 	}
 }
 

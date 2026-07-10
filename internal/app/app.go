@@ -181,7 +181,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// real Prober shells out to the ffprobe binary on PATH. Catalog is the
 	// browse/read side over what the scanner persists.
 	scannerSvc := scanner.NewService(db, scanner.FFprobe{})
-	catalogSvc := catalog.NewService(db)
+	catalogSvc := catalog.NewService(db, cfg.ArtworkCacheDir())
 	matchSvc := match.NewService(db)
 	// Organize is the authored-grouping domain (Collections now; Playlists later),
 	// over the same store. Its resolved member Titles are decorated by the api
