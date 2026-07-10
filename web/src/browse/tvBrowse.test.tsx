@@ -128,6 +128,29 @@ describe("TV library browse", () => {
 });
 
 describe("Show detail", () => {
+  // Logo-hero: an enriched Show with a logo shows it in place of BOTH the
+  // poster and the title text (the logo names the series); the bare fixture
+  // below has no logoUrl, so other tests keep asserting the text heading.
+  it("shows the logo artwork instead of the title text when the Show has one", async () => {
+    getShowSeasons.mockResolvedValue({
+      ...bearSeasons,
+      show: { ...bearSeasons.show, logoUrl: "/api/v1/shows/sh1/artwork/logo?v=7" },
+    });
+    renderWithAuth(
+      <Routes>
+        <Route path="/shows/:showId" element={<ShowDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/shows/sh1"] },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("show-detail")).toBeInTheDocument());
+    const logo = screen.getByTestId("detail-logo");
+    expect(logo).toHaveAttribute("src", "/api/v1/shows/sh1/artwork/logo?v=7");
+    // The name stays available to screen readers via the alt text.
+    expect(logo).toHaveAttribute("alt", "The Bear");
+    expect(screen.queryByTestId("show-title")).not.toBeInTheDocument();
+  });
+
   it("offers a Season picker (Specials labeled) and shows the selected Season's Episodes", async () => {
     renderWithAuth(
       <Routes>

@@ -18,7 +18,7 @@ import { useAsync } from "./useAsync";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
 import EpisodeActionsMenu from "./EpisodeActionsMenu";
-import Poster from "./Poster";
+import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
 import DetailBackdrop from "./DetailBackdrop";
 import { EditIcon, MoreIcon } from "./ActionIcons";
@@ -194,17 +194,17 @@ export default function ShowDetailScreen() {
         {state.status === "ready" && (
           <article className="detail" data-testid="show-detail">
             <div className="detail-hero">
-              <div className="detail-poster">
-                <Poster
-                  titleId={state.data.show.id}
-                  title={state.data.show.title}
-                  src={state.data.show.posterUrl}
-                />
-              </div>
               <div className="detail-info">
-                <h1 className="detail-title" data-testid="show-title">
-                  {state.data.show.title}
-                </h1>
+                {/* The hero leads with the Show's logo artwork rather than a
+                    poster: the logo names the series in its own lettering, so it
+                    replaces both the poster and the text heading (TitleLogo falls
+                    back to the heading when Enrichment fetched no logo). logoUrl
+                    already carries the server's artwork-version cache-bust. */}
+                <TitleLogo
+                  title={state.data.show.title}
+                  src={state.data.show.logoUrl}
+                  testId="show-title"
+                />
                 <div className="detail-meta">
                   {state.data.show.year > 0 && (
                     <span data-testid="show-year">{state.data.show.year}</span>

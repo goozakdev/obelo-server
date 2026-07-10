@@ -254,6 +254,41 @@ func TestFixLabelLeafImagePickAndLock(t *testing.T) {
 	}
 }
 
+// TestFixLabelLeafImagePickRefusesSVG: a picked image that downloads as SVG is
+// refused — the artwork pipeline is raster-only (ADR-0026). An SVG cached under
+// a raster extension would serve with the wrong content-type and render nowhere
+// (the logo-hero would silently fall back to the text title), so the pick fails
+// loudly instead, and the role is neither set nor Locked.
+func TestFixLabelLeafImagePickRefusesSVG(t *testing.T) {
+	requireNamingFixtures(t)
+	prov := &fakeProvider{
+		fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil },
+	}
+	srv := testharness.New(t,
+		testharness.WithEnrichmentKey("test-key"),
+		testharness.WithMetadataProvider(prov),
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("<svg/>"), contentType: "image/svg+xml"}),
+	)
+	token := adminToken(t, srv)
+	libID := createMovieLibrary(t, srv, token, namingRoot(t))
+	scanLib(t, srv, token, libID, "")
+
+	dune := titleIDByName(t, srv, token, libID, "Pinned Movie")
+	st, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+dune+"/artwork", token,
+		map[string]any{"role": "logo", "url": "https://img.example/logo.svg"}, nil)
+	if st != http.StatusInternalServerError {
+		t.Fatalf("PUT artwork (svg) = %d; body: %s; want 500 (pick refused)", st, body)
+	}
+	after := getLabelDetail(t, srv, token, dune)
+	if contains(after.LockedFields, "logo") {
+		t.Errorf("logo role Locked after a refused SVG pick: %+v", after.LockedFields)
+	}
+	st, _ = authBytes(t, srv, token, "/api/v1/titles/"+dune+"/artwork/logo")
+	if st != http.StatusNotFound {
+		t.Errorf("served logo after a refused SVG pick = %d, want 404", st)
+	}
+}
+
 // --- Parent: rename (display name) changes only the label -------------------
 
 // TestFixLabelParentRenameLeavesIdentityAndOverride: renaming an Album's display

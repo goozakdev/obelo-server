@@ -685,24 +685,15 @@ describe("TitleDetailScreen — artwork tabs (Admin)", () => {
     expect(screen.queryByTestId("edit-item-tab-logo")).not.toBeInTheDocument();
   });
 
-  it("auto-searches the Poster tab on open (no pre-click) and applies on click, reloading the hero", async () => {
+  it("auto-searches the Poster tab on open (no pre-click) and applies on click", async () => {
     const user = userEvent.setup();
-    getTitle.mockResolvedValue({
-      ...detail,
-      artwork: [{ role: "poster", url: "https://prov/orig.jpg", path: "", source: "fetched" }],
-    });
+    getTitle.mockResolvedValue(detail);
     searchTitleArtworkCandidates.mockResolvedValue([
       { url: "https://prov/new.jpg", width: 1000, height: 1500, source: "tmdb" },
     ]);
-    pickTitleArtwork.mockResolvedValue({
-      ...detail,
-      lockedFields: ["poster"],
-      artwork: [{ role: "poster", url: "https://prov/new.jpg", path: "", source: "fetched" }],
-    });
+    pickTitleArtwork.mockResolvedValue({ ...detail, lockedFields: ["poster"] });
     renderDetail();
     await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
-    // The hero image is cache-busted on the current poster artwork.
-    expect(screen.getByTestId("poster-img")).toHaveAttribute("src", expect.stringContaining("orig.jpg"));
 
     await user.click(screen.getByTestId("edit-item-button"));
     await user.click(screen.getByTestId("edit-item-tab-poster"));
@@ -716,9 +707,65 @@ describe("TitleDetailScreen — artwork tabs (Admin)", () => {
     await user.click(screen.getByTestId("artwork-choice"));
 
     expect(pickTitleArtwork).toHaveBeenCalledWith("t1", "poster", "https://prov/new.jpg");
-    // The hero reloads without a page refresh: its cache-bust version changed.
+  });
+});
+
+// Logo-hero: the detail hero leads with the logo artwork in place of BOTH the
+// poster and the title text (the logo names the work in its own lettering); a
+// Title without a logo keeps the large-text heading. Picking a new Logo in the
+// Edit-item dialog reloads the hero without a page refresh (cache-busted on the
+// picked row's path).
+describe("TitleDetailScreen — logo hero", () => {
+  it("shows the logo artwork instead of the title text when the Title has one", async () => {
+    getTitle.mockResolvedValue({
+      ...detail,
+      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: "/cache/l1.png", source: "fetched" }],
+    });
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
+
+    const logo = screen.getByTestId("detail-logo");
+    expect(logo).toHaveAttribute("src", expect.stringContaining("/titles/t1/artwork/logo"));
+    // The name stays available to screen readers via the alt text.
+    expect(logo).toHaveAttribute("alt", "Dune");
+    expect(screen.queryByTestId("detail-title")).not.toBeInTheDocument();
+  });
+
+  it("keeps the large-text title when the Title has no logo (fixture default)", async () => {
+    getTitle.mockResolvedValue(detail); // artwork: []
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
+
+    expect(screen.getByTestId("detail-title")).toHaveTextContent("Dune");
+    expect(screen.queryByTestId("detail-logo")).not.toBeInTheDocument();
+  });
+
+  it("reloads the hero logo when the Admin picks a new Logo (cache-bust on path)", async () => {
+    const user = userEvent.setup();
+    getTitle.mockResolvedValue({
+      ...detail,
+      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: "/cache/orig.png", source: "fetched" }],
+    });
+    searchTitleArtworkCandidates.mockResolvedValue([
+      { url: "https://prov/new-logo.png", width: 800, height: 310, source: "tmdb" },
+    ]);
+    pickTitleArtwork.mockResolvedValue({
+      ...detail,
+      lockedFields: ["logo"],
+      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: "/cache/new.png", source: "fetched" }],
+    });
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
+    expect(screen.getByTestId("detail-logo")).toHaveAttribute("src", expect.stringContaining("orig.png"));
+
+    await user.click(screen.getByTestId("edit-item-button"));
+    await user.click(screen.getByTestId("edit-item-tab-logo"));
+    await waitFor(() => expect(screen.getByTestId("artwork-grid-logo")).toBeInTheDocument());
+    await user.click(screen.getByTestId("artwork-choice"));
+
+    expect(pickTitleArtwork).toHaveBeenCalledWith("t1", "logo", "https://prov/new-logo.png");
     await waitFor(() =>
-      expect(screen.getByTestId("poster-img")).toHaveAttribute("src", expect.stringContaining("new.jpg")),
+      expect(screen.getByTestId("detail-logo")).toHaveAttribute("src", expect.stringContaining("new.png")),
     );
   });
 });

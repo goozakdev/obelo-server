@@ -1143,6 +1143,14 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 		}
 		return "", false
 	}
+	// Raster only (ADR-0026, same rule as uploads): an SVG cached here would fall
+	// through extensionFor to a raster extension and then be served with a wrong
+	// content-type no browser will decode. Candidate listing already filters SVG
+	// paths; this guards the mislabeled/other-provider cases.
+	if strings.HasPrefix(contentType, "image/svg") {
+		log.Printf("juicebox: enrich artwork %q (%s): skipping SVG %s (raster images only)", ar.Role, key, ar.URL)
+		return "", false
+	}
 	name := key + "-" + ar.Role + extensionFor(contentType)
 	if err := os.WriteFile(filepath.Join(s.cacheDir, name), data, 0o644); err != nil {
 		log.Printf("juicebox: enrich artwork %q (%s): write failed: %v", ar.Role, key, err)

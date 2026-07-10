@@ -170,10 +170,13 @@ test.describe.serial("edit-item: Wrong item re-identifies a Movie", () => {
     await expect(replace).toBeVisible();
     await replace.click();
 
-    // The detail RE-IDENTIFIES to the picked work — the title itself changes (only
-    // Wrong item does this; Fix info would leave the title) and the picked record's
-    // overview now decorates it — without a page reload.
-    await expect(page.getByTestId("detail-title")).toHaveText("Dune");
+    // The detail RE-IDENTIFIES to the picked work — the hero now names "Dune"
+    // (only Wrong item does this; Fix info would leave the title) and the picked
+    // record's overview now decorates it — without a page reload. Re-enrichment
+    // fetched the picked work's logo, which stands in for the title text
+    // (logo-hero), so the name lands in the logo's alt text.
+    await expect(page.getByTestId("detail-logo")).toHaveAttribute("alt", "Dune");
+    await expect(page.getByTestId("detail-title")).toHaveCount(0);
     await expect(page.getByTestId("detail-overview")).toContainText("dunes and destiny");
   });
 });

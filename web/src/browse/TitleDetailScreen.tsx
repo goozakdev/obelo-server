@@ -20,7 +20,8 @@ import {
 import { entryFromTitle } from "../player/queue/model";
 import { useAsync } from "./useAsync";
 import { errorMessage } from "../screens/errorMessage";
-import Poster from "./Poster";
+import { posterUrl } from "./Poster";
+import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
@@ -343,20 +344,18 @@ function Detail({ title: initialTitle }: { title: TitleDetail }) {
     />
   ) : null;
 
+  // The hero leads with the logo artwork rather than a poster: the logo names
+  // the title in the artist's own lettering, so it replaces BOTH the poster and
+  // the text heading (TitleLogo falls back to the heading when there's none —
+  // always the case for an Episode, which has no logo role). Cache-bust on the
+  // row's path (the cached file changes when an Admin picks a new Logo in the
+  // Edit-item dialog) so the hero reloads without a page refresh.
+  const logoArt = title.artwork.find((a) => a.role === "logo");
+  const logoSrc = logoArt ? posterUrl(title.id, "logo", logoArt.path) : undefined;
+
   return (
     <article className="detail" data-testid="detail">
       <div className="detail-hero">
-        <div className="detail-poster">
-          {/* Cache-bust the hero on the poster artwork's identity so picking a new
-              Poster in the Edit-item dialog reloads it without a page refresh
-              (artwork-management/01) — TitleDetail carries the artwork rows, not a
-              summary-style artworkVersion, so the picked row's url is the token. */}
-          <Poster
-            titleId={title.id}
-            title={title.title}
-            version={title.artwork.find((a) => a.role === "poster")?.url}
-          />
-        </div>
         <div className="detail-info">
           {/* Episode parent context (tv-music issue 01): "The Bear · S01E03" so
               an Episode reads in its Show/Season position. Absent for a Movie. */}
@@ -365,9 +364,7 @@ function Detail({ title: initialTitle }: { title: TitleDetail }) {
               {title.episode.showTitle} · {episodeContextCode(title.episode)}
             </p>
           )}
-          <h1 className="detail-title" data-testid="detail-title">
-            {title.title}
-          </h1>
+          <TitleLogo title={title.title} src={logoSrc} />
           <div className="detail-meta">
             {title.year > 0 && (
               <span data-testid="detail-year">{title.year}</span>

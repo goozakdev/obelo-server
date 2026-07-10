@@ -22,6 +22,7 @@ const tmdbMovieImagesJSON = `{
     {"file_path": "/back-a.jpg", "width": 3840, "height": 2160}
   ],
   "logos": [
+    {"file_path": "/logo-svg.svg", "width": 1600, "height": 620},
     {"file_path": "/logo-a.png", "width": 800, "height": 310}
   ]
 }`
@@ -69,7 +70,9 @@ func TestTMDBArtworkCandidatesMoviePosters(t *testing.T) {
 		t.Errorf("background candidates = %+v", bg)
 	}
 
-	// The logo role selects logos[] (the Edit-item Logo tab).
+	// The logo role selects logos[] (the Edit-item Logo tab). The SVG rendition is
+	// never offered — the artwork pipeline is raster-only, and a picked SVG would
+	// be cached under a raster extension and render nowhere.
 	logos, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "movie", TMDBID: "438631"}, "logo")
 	if err != nil {
 		t.Fatalf("ArtworkCandidates(logo): %v", err)

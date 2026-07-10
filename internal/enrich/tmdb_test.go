@@ -32,6 +32,7 @@ const movieDetailsJSON = `{
      {"iso_3166_1": "US", "release_dates": [{"certification": "PG-13"}]}
   ]},
   "images": {"logos": [
+     {"file_path": "/logo.svg", "width": 800, "height": 310},
      {"file_path": "/logo.png", "width": 800, "height": 310},
      {"file_path": "/logo-alt.png", "width": 400, "height": 155}
   ]}
@@ -95,7 +96,8 @@ func TestTMDBLookupByID(t *testing.T) {
 		t.Errorf("cast wrong: %+v", meta.Cast)
 	}
 	// Artwork URLs are the image base + path; poster + backdrop both present, and
-	// the FIRST appended-images logo rides along as the auto-applied logo.
+	// the first NON-SVG appended-images logo rides along as the auto-applied logo
+	// (TMDB mixes SVG and PNG renditions; the pipeline is raster-only).
 	roles := map[string]string{}
 	for _, a := range meta.Artwork {
 		roles[a.Role] = a.URL

@@ -272,7 +272,8 @@ func (p *TMDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, role
 	}
 	cands := make([]ArtworkCandidate, 0, len(imgs))
 	for _, im := range imgs {
-		if im.FilePath == "" {
+		// SVG logos are never offered: the pipeline stores raster images only.
+		if im.FilePath == "" || isSVGImagePath(im.FilePath) {
 			continue
 		}
 		cands = append(cands, ArtworkCandidate{
@@ -421,14 +422,26 @@ func (p *TMDBProvider) movieDetails(ctx context.Context, id string) (TitleMetada
 
 // firstImagePath returns the first usable file_path in an appended images set —
 // the default the details fetch auto-applies (TMDB orders images by rating, so
-// the first is the one TMDB itself would show).
+// the first is the one TMDB itself would show). SVG entries are skipped: the
+// artwork pipeline is raster-only (see isSVGImagePath), and TMDB logo sets mix
+// SVG and PNG renditions of the same art.
 func firstImagePath(imgs []tmdbImage) string {
 	for _, im := range imgs {
-		if im.FilePath != "" {
+		if im.FilePath != "" && !isSVGImagePath(im.FilePath) {
 			return im.FilePath
 		}
 	}
 	return ""
+}
+
+// isSVGImagePath reports whether a TMDB image file_path is an SVG. TMDB serves
+// logos as PNG or SVG (posters/backdrops are always raster); SVG is excluded
+// from auto-picks and candidate lists because catalog artwork is raster-only
+// (ADR-0026: a format that won't render everywhere never becomes catalog art —
+// and an SVG cached under a raster extension serves with the wrong content-type
+// and renders nowhere).
+func isSVGImagePath(p string) bool {
+	return strings.HasSuffix(strings.ToLower(p), ".svg")
 }
 
 func (p *TMDBProvider) searchTV(ctx context.Context, title string, year int) (string, error) {

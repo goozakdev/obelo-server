@@ -103,7 +103,7 @@ test.describe.serial("enrichment: decorate movies + render enriched detail", () 
     await request.dispose();
   });
 
-  test("title detail renders enriched overview, genres, cast, content rating + a real poster", async ({
+  test("title detail renders enriched overview, genres, cast, content rating + a real logo hero", async ({
     page,
   }) => {
     await uiLogin(page);
@@ -124,11 +124,14 @@ test.describe.serial("enrichment: decorate movies + render enriched detail", () 
     await expect(page.getByTestId("detail-genres")).toContainText("Science Fiction");
     await expect(page.getByTestId("detail-cast")).toContainText("Timothée Chalamet");
 
-    // The fetched poster <img> actually decodes (the stub served a real PNG).
-    const img = page.getByTestId("poster-img");
-    await expect(img.first()).toBeVisible();
+    // Logo-hero: the fetched logo stands in for the title text (and the hero
+    // shows no poster), and the <img> actually decodes (the stub served a real
+    // PNG). The text heading only renders when a title has no logo.
+    const img = page.getByTestId("detail-logo");
+    await expect(img).toBeVisible();
     await expect
-      .poll(async () => img.first().evaluate((el: HTMLImageElement) => el.naturalWidth))
+      .poll(async () => img.evaluate((el: HTMLImageElement) => el.naturalWidth))
       .toBeGreaterThan(0);
+    await expect(page.getByTestId("detail-title")).toHaveCount(0);
   });
 });

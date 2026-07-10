@@ -155,7 +155,7 @@ test.describe.serial("enrichment: TV & Music decorated detail", () => {
     await request.dispose();
   });
 
-  test("Show detail renders enriched overview, genres, content rating + a real poster", async ({
+  test("Show detail renders enriched overview, genres, content rating + a real logo hero", async ({
     page,
   }) => {
     await uiLogin(page);
@@ -170,8 +170,11 @@ test.describe.serial("enrichment: TV & Music decorated detail", () => {
     await expect(page.getByTestId("show-content-rating")).toContainText("TV-MA");
     await expect(page.getByTestId("show-network")).toContainText("HBO");
 
-    // The fetched Show poster actually decodes (the stub served a real PNG).
-    await imageDecodes(page.getByTestId("poster-img"));
+    // Logo-hero: the fetched Show logo stands in for the title text (and the
+    // hero shows no poster), and it actually decodes (the stub served a real
+    // PNG). The text heading only renders when a show has no logo.
+    await imageDecodes(page.getByTestId("detail-logo"));
+    await expect(page.getByTestId("show-title")).toHaveCount(0);
 
     // An episode shows its canonical name + still.
     await expect(page.getByTestId("episode-title").first()).toContainText("The Suitcase");
