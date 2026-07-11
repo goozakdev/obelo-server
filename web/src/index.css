@@ -508,7 +508,7 @@ body {
 
 /* Browse screens are wider than the auth/landing cards. */
 .app-main-wide {
-  max-width: 1100px;
+  max-width: 1500px;
 }
 
 /* The Show detail is uncapped: its episode grid fills the window all the way
@@ -691,6 +691,17 @@ body {
 .poster-year {
   font-size: 0.75rem;
   color: var(--text-dim);
+}
+
+/* Library grid (Movies + TV) only: bigger posters and no caption. The poster
+   card is shared with Home rows / Collections / Playlists, so these tweaks are
+   scoped to the library-grid screen and leave the card untouched elsewhere. */
+[data-testid="library-grid-screen"] .poster-grid {
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+}
+
+[data-testid="library-grid-screen"] .poster-caption {
+  display: none;
 }
 
 /* The Show/Season/episode parent-context line on a Home-row Episode card
