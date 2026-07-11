@@ -1703,6 +1703,26 @@ export interface TestProviderResult {
   detail: string;
 }
 
+/** A Library's Enrichment policy view (ADR-0027): the SPARSE overrides plus the
+ * derived enablement for display. This slice carries the enrich-on/off key.
+ * `enrichEnabled` is the STORED override — `null` means inherit (the key tracks
+ * the global config live), so `null`-vs-value reads as inherited-vs-overridden.
+ * `inheritedEnrichEnabled` is what "inherit" currently resolves to (the server
+ * enriches at least one kind), for labeling the inherit option. `effective` is the
+ * per-kind enablement the Library will actually enrich under this policy. */
+export interface EnrichmentPolicy {
+  enrichEnabled: boolean | null;
+  inheritedEnrichEnabled: boolean;
+  effective: { video: boolean; music: boolean };
+}
+
+/** The `PUT /libraries/{id}/enrichment-policy` body: a partial update. Each key is
+ * OPTIONAL — omitted = unchanged. Sending `enrichEnabled: null` clears it back to
+ * inherit; a boolean sets a deliberate override. */
+export interface UpdateEnrichmentPolicyInput {
+  enrichEnabled?: boolean | null;
+}
+
 /** One subtitle provider in the settings view (subtitles/05, ADR-0021): registry
  * facts joined with current settings. The key is never returned — only `hasKey`. */
 export interface SubtitleProvider {

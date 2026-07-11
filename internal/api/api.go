@@ -79,6 +79,16 @@ type Deps struct {
 	// unit test without the app wiring simply skips the wake.
 	SettingsChanged func()
 
+	// Per-Library Enrichment policy (ADR-0027, Admin-scope
+	// /libraries/{id}/enrichment-policy). EnrichmentPolicy persists the sparse
+	// policy; PolicyResolver derives the effective/inherited enablement for display
+	// (*enrich.Manager satisfies it); ReEnrichLibrary invalidates the Library's
+	// cached effective provider and kicks an immediate re-enrich. Each may be nil in
+	// narrow unit tests that don't exercise the policy surface.
+	EnrichmentPolicy EnrichmentPolicyStore
+	PolicyResolver   EnrichmentPolicyResolver
+	ReEnrichLibrary  func(libraryID string)
+
 	// SubFetch is the external subtitle-fetch domain (ADR-0021, subtitles slice 05):
 	// the "search online → pick → track appears" flow behind the captions menu. Nil
 	// in narrow unit tests that don't exercise fetching.

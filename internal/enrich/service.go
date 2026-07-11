@@ -115,12 +115,23 @@ type Service struct {
 	store   Store
 	fetcher ArtworkFetcher
 
-	// current holds the live provider + enablement snapshot, swapped atomically by
-	// SetProvider and read (never mutated in place) at pass time. Every provider
-	// lookup and enablement check reads the CURRENT snapshot, so a runtime swap
-	// takes effect on the next read — and, because provider + enablement travel
-	// together in one pointer, never half-applied.
+	// current holds the live GLOBAL provider + enablement snapshot, swapped
+	// atomically by SetProvider and read (never mutated in place) at pass time.
+	// Every provider lookup and enablement check reads the CURRENT snapshot, so a
+	// runtime swap takes effect on the next read — and, because provider +
+	// enablement travel together in one pointer, never half-applied. When a
+	// per-Library resolver is installed (resolveLibrary below) this is the base the
+	// resolver layers each Library's Enrichment policy over.
 	current atomic.Pointer[providerSnapshot]
+
+	// resolveLibrary, when installed, returns a Library's EFFECTIVE provider +
+	// enablement — its Enrichment policy (ADR-0027) layered over the global config,
+	// cached per Library. nil means no per-Library policy layer: every Library uses
+	// the global snapshot (the pre-policy behavior, and the state of a Service
+	// constructed directly in a test or given a fixed injected provider). The
+	// Manager installs it via EnablePerLibraryResolution once the global config is
+	// known (after its first Reload).
+	resolveLibrary func(ctx context.Context, libraryID string) (providerSnapshot, error)
 
 	cacheDir string
 
@@ -168,9 +179,38 @@ func (s *Service) SetProvider(provider MetadataProvider, enablement Enablement) 
 	s.current.Store(&providerSnapshot{provider: provider, enablement: enablement})
 }
 
-// snapshot returns the current provider + enablement snapshot. Callers read it
-// once per use so a concurrent SetProvider swap is picked up on the next read.
+// snapshot returns the current GLOBAL provider + enablement snapshot. Callers read
+// it once per use so a concurrent SetProvider swap is picked up on the next read.
 func (s *Service) snapshot() providerSnapshot { return *s.current.Load() }
+
+// snapshotFor returns the EFFECTIVE provider + enablement snapshot for a Library:
+// its Enrichment policy (ADR-0027) resolved over the global config when a
+// per-Library resolver is installed, else the global snapshot (identical to the
+// pre-policy behavior — an empty policy resolves byte-for-byte to the global one).
+// A Library-scoped pass resolves once at its start and threads the result through,
+// so a mid-pass global/policy change never half-applies to an in-flight pass.
+func (s *Service) snapshotFor(ctx context.Context, libraryID string) (providerSnapshot, error) {
+	if s.resolveLibrary != nil {
+		return s.resolveLibrary(ctx, libraryID)
+	}
+	return s.snapshot(), nil
+}
+
+// EnrichmentEnabledForLibrary reports whether ANY kind currently enriches for the
+// given Library, honoring its Enrichment policy — so a Library switched off
+// (enrich_enabled=false) reports false even while the server is globally enabled,
+// and (a later slice) a Library leading with a globally-disabled-but-keyed
+// provider reports true. The background triggers gate on it so a switched-off
+// Library does no background work (ADR-0001). A resolution error falls back to the
+// global snapshot so a transient DB hiccup degrades to the server-wide answer
+// rather than silently disabling enrichment.
+func (s *Service) EnrichmentEnabledForLibrary(ctx context.Context, libraryID string) bool {
+	snap, err := s.snapshotFor(ctx, libraryID)
+	if err != nil {
+		return s.EnrichmentEnabled()
+	}
+	return snap.enablement.Video || snap.enablement.Music
+}
 
 // EnrichmentEnabled reports whether ANY kind is currently enriching in the live
 // snapshot. The app's background triggers (auto-after-scan, the scheduled sweep)
@@ -181,14 +221,6 @@ func (s *Service) snapshot() providerSnapshot { return *s.current.Load() }
 func (s *Service) EnrichmentEnabled() bool {
 	e := s.snapshot().enablement
 	return e.Video || e.Music
-}
-
-// enabled reports whether the given media kind is on in the CURRENT snapshot.
-// Music kinds (artist/album/track) gate on Music; the video kinds (movie/show/
-// season/episode, and any default) gate on Video. A disabled kind is a no-op
-// recorded 'disabled' (ADR-0001).
-func (s *Service) enabled(kind string) bool {
-	return s.snapshot().enablement.enabledFor(kind)
 }
 
 // libLock returns the per-Library mutex, creating it on first use.
@@ -253,6 +285,15 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 	lock.Lock()
 	defer lock.Unlock()
 
+	// Resolve the Library's EFFECTIVE provider + enablement ONCE (its Enrichment
+	// policy layered over the global config, ADR-0027) and thread it through the
+	// whole pass, so every leaf/parent sees one consistent snapshot even if the
+	// global config or the Library's policy changes mid-pass.
+	snap, err := s.snapshotFor(ctx, libraryID)
+	if err != nil {
+		return Result{}, err
+	}
+
 	// Phase A — gather the playable leaf Titles to enrich, processing the browse
 	// parents (Show/Season, Artist/Album) as a side effect along the way. For a
 	// Movie Library there are no parents; the leaves are the Movies themselves.
@@ -263,9 +304,9 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 	)
 	switch lib.Kind {
 	case "tv":
-		leaves, err = s.collectTVLeaves(ctx, libraryID, mode)
+		leaves, err = s.collectTVLeaves(ctx, snap, libraryID, mode)
 	case "music":
-		leaves, err = s.collectMusicLeaves(ctx, libraryID, mode)
+		leaves, err = s.collectMusicLeaves(ctx, snap, libraryID, mode)
 	default:
 		sel := store.EnrichPending
 		if mode == ModeFull {
@@ -297,7 +338,7 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if err := s.processLeaf(ctx, lw, &res); err != nil {
+		if err := s.processLeaf(ctx, snap, lw, &res); err != nil {
 			return res, err
 		}
 		emit(i + 1)
@@ -353,13 +394,20 @@ func (s *Service) MatchTitle(ctx context.Context, titleID string, m store.Extern
 	lock.Lock()
 	defer lock.Unlock()
 
+	// Resolve the Title's Library policy so a switched-off Library records the
+	// re-enrich 'disabled' (no call), consistent with a full pass over it.
+	snap, err := s.snapshotFor(ctx, t.LibraryID)
+	if err != nil {
+		return err
+	}
+
 	// A Music leaf (Track) carries sparseTitle so a provider's canonical recording
 	// name only fills a MISSING tag title — embedded tags are the Music display/
 	// identity authority (ADR-0002), exactly as the album full-pass treats tracks.
 	// Without this, applying a Track override would overwrite the tag title with
 	// MusicBrainz's canonical name. A Movie/Episode display title is unaffected.
 	var res Result
-	return s.processLeaf(ctx, leafWork{title: t, ref: refFor(t), sparseTitle: t.Kind == "track"}, &res)
+	return s.processLeaf(ctx, snap, leafWork{title: t, ref: refFor(t), sparseTitle: t.Kind == "track"}, &res)
 }
 
 // SearchCandidateLimit caps a provider search result page so a broad query stays
@@ -607,8 +655,12 @@ func (s *Service) ApplyEntityOverride(ctx context.Context, entityType, entityID,
 	lock.Lock()
 	defer lock.Unlock()
 
+	snap, err := s.snapshotFor(ctx, libraryID)
+	if err != nil {
+		return err
+	}
 	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, externalID)
-	_, err = s.enrichParent(ctx, ModeFull, entityType, entityID, ref)
+	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref)
 	return err
 }
 
@@ -805,12 +857,12 @@ type leafWork struct {
 	sparseTitle bool
 }
 
-// processLeaf enriches one leaf Title into res, honoring Locked fields and the
+// processLeaf enriches one leaf Title into res using the caller-resolved snapshot
+// (the Library's effective provider + enablement), honoring Locked fields and the
 // graceful-degradation rules (disabled → no call; no-match → unmatched; provider
 // error → failed, pass continues). Identity is never touched (ADR-0002).
-func (s *Service) processLeaf(ctx context.Context, lw leafWork, res *Result) error {
+func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw leafWork, res *Result) error {
 	t := lw.title
-	snap := s.snapshot()
 	if !snap.enablement.enabledFor(t.Kind) {
 		if err := s.store.SetTitleEnrichmentStatus(t.ID, "disabled"); err != nil {
 			return err
@@ -900,7 +952,7 @@ func (s *Service) processLeaf(ctx context.Context, lw leafWork, res *Result) err
 // leaves to enrich in phase B. The resolved Show external id is threaded down to
 // the Season/Episode refs so they resolve under the right show. In ModeNew only
 // pending parents/episodes are touched; ModeFull re-does all.
-func (s *Service) collectTVLeaves(ctx context.Context, libraryID string, mode Mode) ([]leafWork, error) {
+func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, libraryID string, mode Mode) ([]leafWork, error) {
 	shows, err := s.store.ListAllShows(libraryID)
 	if err != nil {
 		return nil, err
@@ -908,7 +960,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, libraryID string, mode Mo
 	var leaves []leafWork
 	for _, sh := range shows {
 		showExtID := sh.TMDBID // embedded {tmdb-…} fallback
-		extID, err := s.enrichParent(ctx, mode, store.EntityShow, sh.ID,
+		extID, err := s.enrichParent(ctx, snap, mode, store.EntityShow, sh.ID,
 			TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year, TMDBID: sh.TMDBID})
 		if err != nil {
 			return nil, err
@@ -922,7 +974,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, libraryID string, mode Mo
 			return nil, err
 		}
 		for _, se := range seasons {
-			if _, err := s.enrichParent(ctx, mode, store.EntitySeason, se.ID,
+			if _, err := s.enrichParent(ctx, snap, mode, store.EntitySeason, se.ID,
 				TitleRef{Kind: "season", TMDBID: showExtID, SeasonNumber: se.SeasonNumber}); err != nil {
 				return nil, err
 			}
@@ -931,7 +983,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, libraryID string, mode Mo
 				return nil, err
 			}
 			for _, ep := range eps {
-				if !s.shouldProcessLeaf(mode, ep.Kind, ep.EnrichmentStatus) {
+				if !s.shouldProcessLeaf(snap, mode, ep.Kind, ep.EnrichmentStatus) {
 					continue
 				}
 				// Episode durability (ADR-0019, closing the gap deferred from slice 01):
@@ -956,14 +1008,14 @@ func (s *Service) collectTVLeaves(ctx context.Context, libraryID string, mode Mo
 // collectMusicLeaves walks a Music Library's Artists → Albums → Tracks: it
 // enriches the Artist and Album parents and returns the Track leaves. Tracks
 // carry sparseTitle so a canonical title only fills a missing tag title.
-func (s *Service) collectMusicLeaves(ctx context.Context, libraryID string, mode Mode) ([]leafWork, error) {
+func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot, libraryID string, mode Mode) ([]leafWork, error) {
 	artists, err := s.store.ListAllArtists(libraryID)
 	if err != nil {
 		return nil, err
 	}
 	var leaves []leafWork
 	for _, ar := range artists {
-		if _, err := s.enrichParent(ctx, mode, store.EntityArtist, ar.ID,
+		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
 			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name}); err != nil {
 			return nil, err
 		}
@@ -972,7 +1024,7 @@ func (s *Service) collectMusicLeaves(ctx context.Context, libraryID string, mode
 			return nil, err
 		}
 		for _, al := range albums {
-			if _, err := s.enrichParent(ctx, mode, store.EntityAlbum, al.ID,
+			if _, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
 				TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name}); err != nil {
 				return nil, err
 			}
@@ -981,7 +1033,7 @@ func (s *Service) collectMusicLeaves(ctx context.Context, libraryID string, mode
 				return nil, err
 			}
 			for _, tr := range tracks {
-				if !s.shouldProcessLeaf(mode, tr.Kind, tr.EnrichmentStatus) {
+				if !s.shouldProcessLeaf(snap, mode, tr.Kind, tr.EnrichmentStatus) {
 					continue
 				}
 				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, ref: TitleRef{
@@ -996,10 +1048,11 @@ func (s *Service) collectMusicLeaves(ctx context.Context, libraryID string, mode
 
 // shouldProcessLeaf reports whether a leaf Title of the given kind + enrichment_
 // status is in scope for this pass: every leaf in ModeFull (or when its kind is
-// disabled, so it still gets marked 'disabled'); only never-enriched ('pending')
-// leaves in ModeNew.
-func (s *Service) shouldProcessLeaf(mode Mode, kind, status string) bool {
-	if mode == ModeFull || !s.enabled(kind) {
+// disabled in the resolved snapshot, so it still gets marked 'disabled'); only
+// never-enriched ('pending') leaves in ModeNew. Enablement is read from the pass's
+// resolved snapshot (the Library's effective policy), not the global one.
+func (s *Service) shouldProcessLeaf(snap providerSnapshot, mode Mode, kind, status string) bool {
+	if mode == ModeFull || !snap.enablement.enabledFor(kind) {
 		return true
 	}
 	return status == "pending"
@@ -1010,8 +1063,7 @@ func (s *Service) shouldProcessLeaf(mode Mode, kind, status string) bool {
 // child can resolve under it). It honors the same disabled / no-match / failed
 // degradation as a leaf, and skips an already-matched parent in ModeNew (reusing
 // its stored external id). Parent enrichment is not counted in the pass Result.
-func (s *Service) enrichParent(ctx context.Context, mode Mode, entityType, entityID string, ref TitleRef) (string, error) {
-	snap := s.snapshot()
+func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef) (string, error) {
 	if !snap.enablement.enabledFor(ref.Kind) {
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "disabled")
 	}

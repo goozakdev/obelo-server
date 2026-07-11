@@ -1147,6 +1147,19 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			// Admin: trigger an Enrichment pass over the Library (manual/re-enrich).
 			requireMethod(http.MethodPost, requireAdmin(handleEnrich(deps.Enrich, deps.Events)))(w, r)
 			return
+		case strings.HasSuffix(rest, "/enrichment-policy"):
+			// Admin: read / partially-update the Library's Enrichment policy (ADR-0027).
+			switch r.Method {
+			case http.MethodGet:
+				requireAdmin(handleGetEnrichmentPolicy(deps))(w, r)
+			case http.MethodPut:
+				requireAdmin(handleUpdateEnrichmentPolicy(deps))(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+					"method not allowed", nil)
+			}
+			return
 		case strings.HasSuffix(rest, "/scan"):
 			switch r.Method {
 			case http.MethodPost:

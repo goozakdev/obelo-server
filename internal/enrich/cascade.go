@@ -136,12 +136,19 @@ func (s *Service) reenrichEpisode(ctx context.Context, ep store.Title, showExter
 	lock.Lock()
 	defer lock.Unlock()
 
+	// Resolve the Episode's Library policy so a switched-off Library records the
+	// re-enrich 'disabled' rather than calling out (as the leaf MatchTitle path does).
+	snap, err := s.snapshotFor(ctx, ep.LibraryID)
+	if err != nil {
+		return false, err
+	}
+
 	var res Result
 	ref := TitleRef{
 		Kind: "episode", Title: ep.Title, TMDBID: showExternalID,
 		SeasonNumber: ep.SeasonNumber, EpisodeNumber: ep.EpisodeNumber, EpisodeLabel: ep.EpisodeLabel,
 	}
-	if err := s.processLeaf(ctx, leafWork{title: ep, ref: ref}, &res); err != nil {
+	if err := s.processLeaf(ctx, snap, leafWork{title: ep, ref: ref}, &res); err != nil {
 		return false, err
 	}
 	return res.Matched > 0, nil

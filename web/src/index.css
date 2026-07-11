@@ -3132,6 +3132,62 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   color: var(--text-dim);
 }
 
+/* Per-Library Enrichment policy (ADR-0027): the inherited-vs-overridden badge and
+   the tri-state (Inherit / On / Off) segmented control. Wireframe style — hairline
+   borders, the active segment marked by the lime accent, no fills or shadows. */
+.policy-control-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.policy-override-badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.05rem 0.35rem;
+}
+
+.policy-override-badge[data-overridden="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.tri-state {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 0.35rem 0;
+}
+
+.tri-state-option {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-left: 1px solid var(--border);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.tri-state-option:first-child {
+  border-left: none;
+}
+
+.tri-state-option[data-active="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tri-state-option:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Save bar sticks to the bottom of the viewport so Save is always reachable
    on a long form. */
 .provider-save-bar {

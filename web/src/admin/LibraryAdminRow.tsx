@@ -5,6 +5,7 @@ import type { Library, ScanMode } from "../api/types";
 import { LibraryKindIcon } from "../browse/kindIcons";
 import { EditIcon } from "../browse/ActionIcons";
 import { useScanStatus } from "./useScanStatus";
+import EnrichmentPolicyDialog from "./EnrichmentPolicyDialog";
 
 // One Library row in the redesigned admin hub: its kind icon + name on the left,
 // and a right-hand action cluster — the Edit affordance (a pencil that reveals on
@@ -32,6 +33,7 @@ export default function LibraryAdminRow({
   const scan = useScanStatus(library.id);
   const [scanning, setScanning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [policyOpen, setPolicyOpen] = useState(false);
 
   const status = scan.status;
   const state = status?.state ?? "idle";
@@ -123,6 +125,15 @@ export default function LibraryAdminRow({
           <button
             className="nav-link"
             type="button"
+            data-testid="enrichment-policy-button"
+            title="Enrichment policy"
+            onClick={() => setPolicyOpen(true)}
+          >
+            Enrichment
+          </button>
+          <button
+            className="nav-link"
+            type="button"
             data-testid="scan-button"
             onClick={() => onScan("incremental")}
             disabled={scanRunning}
@@ -146,6 +157,10 @@ export default function LibraryAdminRow({
           <span className="dot dot-error" aria-hidden="true" />
           {actionError ?? scan.error}
         </p>
+      )}
+
+      {policyOpen && (
+        <EnrichmentPolicyDialog library={library} onClose={() => setPolicyOpen(false)} />
       )}
     </li>
   );

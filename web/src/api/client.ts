@@ -72,6 +72,8 @@ import type {
   UpdateMetadataProvidersInput,
   UpdateSubtitleProvidersInput,
   TestProviderResult,
+  EnrichmentPolicy,
+  UpdateEnrichmentPolicyInput,
   Playlist,
   PlaylistDetail,
   PlaylistDetailRaw,
@@ -1391,6 +1393,34 @@ export class ApiClient {
     return this.request<TestProviderResult>(
       `/settings/metadata-providers/${encodeURIComponent(slug)}/test`,
       { method: "POST", body: creds, signal },
+    );
+  }
+
+  // --- Admin: per-Library Enrichment policy (ADR-0027) -------------------
+
+  /** `GET /api/v1/libraries/{id}/enrichment-policy` (Admin) — the Library's sparse
+   * Enrichment-policy overrides plus the derived effective/inherited enablement.
+   * `enrichEnabled` null = inherit (tracks the global config live). A Member gets a
+   * 403; an unknown Library is 404. */
+  getEnrichmentPolicy(libraryId: string, signal?: AbortSignal): Promise<EnrichmentPolicy> {
+    return this.request<EnrichmentPolicy>(
+      `/libraries/${encodeURIComponent(libraryId)}/enrichment-policy`,
+      { signal },
+    );
+  }
+
+  /** `PUT /api/v1/libraries/{id}/enrichment-policy` (Admin) — a PARTIAL update.
+   * `enrichEnabled` omitted = unchanged, `null` = clear back to inherit, boolean =
+   * a deliberate override. The server persists the change and re-enriches the
+   * Library immediately, then returns the fresh view. */
+  updateEnrichmentPolicy(
+    libraryId: string,
+    input: UpdateEnrichmentPolicyInput,
+    signal?: AbortSignal,
+  ): Promise<EnrichmentPolicy> {
+    return this.request<EnrichmentPolicy>(
+      `/libraries/${encodeURIComponent(libraryId)}/enrichment-policy`,
+      { method: "PUT", body: input, signal },
     );
   }
 

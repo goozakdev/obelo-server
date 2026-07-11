@@ -13,6 +13,8 @@ type fakeManagerStore struct {
 	rows        []store.MetadataProviderRow
 	lang        string
 	rateLimitMs int
+	// policies maps libraryID → its sparse Enrichment policy (absent = empty).
+	policies map[string]store.LibraryEnrichmentPolicy
 }
 
 func (f *fakeManagerStore) MetadataProviders() ([]store.MetadataProviderRow, error) {
@@ -22,6 +24,9 @@ func (f *fakeManagerStore) MetadataLanguage() (string, error) { return f.lang, n
 func (f *fakeManagerStore) EnrichmentBehavior() (store.EnrichmentBehavior, error) {
 	ms := f.rateLimitMs
 	return store.EnrichmentBehavior{MusicBrainzRateLimitMs: &ms}, nil
+}
+func (f *fakeManagerStore) LibraryEnrichmentPolicy(libraryID string) (store.LibraryEnrichmentPolicy, error) {
+	return f.policies[libraryID], nil
 }
 
 // TestSettingsToProviderConfig covers the settings → ProviderConfig mapping: an
@@ -164,6 +169,106 @@ func TestManagerReloadRateLimit(t *testing.T) {
 	}
 	if got := builtCfgs[2].MusicBrainzRateLimit; got != 0 {
 		t.Errorf("third rebuild rate = %v, want 0 (throttling disabled)", got)
+	}
+}
+
+// TestManagerPerLibraryResolution proves the installed per-Library resolver
+// layers each Library's Enrichment policy over the global config (ADR-0027): an
+// un-overriding Library resolves byte-for-byte to the global enablement, and a
+// Library with enrich_enabled=false resolves to all-off — the two spine rules,
+// observed through the Service the resolver feeds.
+func TestManagerPerLibraryResolution(t *testing.T) {
+	off := false
+	st := &fakeManagerStore{
+		rows: []store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}},
+		lang: "en-US",
+		policies: map[string]store.LibraryEnrichmentPolicy{
+			"lib-off": {EnrichEnabled: &off},
+			// "lib-inherit" has no entry → empty policy → inherit global.
+		},
+	}
+	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
+	mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+		return CompositeProvider{}, DeriveEnablement(cfg)
+	}))
+	if err := mgr.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	mgr.EnablePerLibraryResolution()
+
+	// An un-overriding Library inherits the global enablement (video+music on).
+	if en, err := mgr.EffectiveEnablement(context.Background(), "lib-inherit"); err != nil || !en.Video || !en.Music {
+		t.Errorf("inherit library enablement = %+v (err %v), want video+music on", en, err)
+	}
+	if !svc.EnrichmentEnabledForLibrary(context.Background(), "lib-inherit") {
+		t.Errorf("EnrichmentEnabledForLibrary(inherit) = false, want true")
+	}
+
+	// A switched-off Library resolves to all-off even though the server is enabled.
+	if en, err := mgr.EffectiveEnablement(context.Background(), "lib-off"); err != nil || en.Video || en.Music {
+		t.Errorf("off library enablement = %+v (err %v), want all off", en, err)
+	}
+	if svc.EnrichmentEnabledForLibrary(context.Background(), "lib-off") {
+		t.Errorf("EnrichmentEnabledForLibrary(off) = true, want false (enrich_enabled=false)")
+	}
+	// The global snapshot is untouched — other server surfaces still see it enabled.
+	if !svc.EnrichmentEnabled() {
+		t.Errorf("global EnrichmentEnabled = false, want true (per-Library off must not disable the server)")
+	}
+}
+
+// TestManagerLibraryCacheInvalidation proves the effective snapshot is cached and
+// invalidated: a policy change is not seen until InvalidateLibrary (or a global
+// Reload) drops the cached entry, matching the metadata-providers Reload contract.
+func TestManagerLibraryCacheInvalidation(t *testing.T) {
+	st := &fakeManagerStore{
+		rows:     []store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}},
+		lang:     "en-US",
+		policies: map[string]store.LibraryEnrichmentPolicy{}, // lib starts on inherit
+	}
+	var built int
+	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
+	mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+		built++
+		return CompositeProvider{}, DeriveEnablement(cfg)
+	}))
+	if err := mgr.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	mgr.EnablePerLibraryResolution()
+
+	// First resolution builds + caches; a second resolution reuses the cache.
+	snap1, _ := svc.snapshotFor(context.Background(), "lib")
+	builtAfterFirst := built
+	snap2, _ := svc.snapshotFor(context.Background(), "lib")
+	if built != builtAfterFirst {
+		t.Errorf("second resolution rebuilt (built %d→%d), want a cache hit", builtAfterFirst, built)
+	}
+	if !snap1.enablement.Video || !snap2.enablement.Video {
+		t.Errorf("resolved enablement = %+v/%+v, want video on (inherited)", snap1.enablement, snap2.enablement)
+	}
+
+	// Change the policy to off, but WITHOUT invalidating: the cache still serves on.
+	off := false
+	st.policies["lib"] = store.LibraryEnrichmentPolicy{EnrichEnabled: &off}
+	if snap, _ := svc.snapshotFor(context.Background(), "lib"); !snap.enablement.Video {
+		t.Errorf("stale cache not served: enablement = %+v, want the cached video-on", snap.enablement)
+	}
+
+	// Invalidate → the next resolution rebuilds from the new policy (now off).
+	mgr.InvalidateLibrary("lib")
+	if snap, _ := svc.snapshotFor(context.Background(), "lib"); snap.enablement.Video || snap.enablement.Music {
+		t.Errorf("after invalidation enablement = %+v, want all off (policy applied)", snap.enablement)
+	}
+
+	// A global Reload clears every cached entry (Model A: un-overriding Libraries
+	// track global live).
+	delete(st.policies, "lib") // back to inherit
+	if err := mgr.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload after policy churn: %v", err)
+	}
+	if snap, _ := svc.snapshotFor(context.Background(), "lib"); !snap.enablement.Video {
+		t.Errorf("after global Reload enablement = %+v, want video on (rebuilt from cleared cache)", snap.enablement)
 	}
 }
 

@@ -48,9 +48,16 @@ type App struct {
 	Events   *events.Broker
 	Handler  http.Handler
 
-	// enrichQueue feeds the enrich worker; the scan auto-trigger and the scheduled
-	// enrich both enqueue Library ids onto it (nil when no enrich worker runs).
-	enrichQueue chan string
+	// providerManager rebuilds + hot-swaps the running Enrichment provider and owns
+	// the per-Library effective-provider cache (ADR-0027). Held here so a policy
+	// change can invalidate the affected Library's cache before its re-enrich.
+	providerManager *enrich.Manager
+
+	// enrichQueue feeds the enrich worker; the scan auto-trigger, the scheduled
+	// enrich, and a policy change enqueue (Library id + Mode) onto it. A policy
+	// change enqueues ModeFull (re-enrich every Title so the change is visible); the
+	// scan/sweep triggers enqueue ModeNew. Nil when no enrich worker runs.
+	enrichQueue chan enrichRequest
 	// enrichReschedule wakes the scheduled-enrich goroutine so a saved
 	// EnrichInterval change applies promptly (enabling from 0, or shrinking a long
 	// interval, takes effect immediately rather than on the next tick). Buffered
@@ -290,6 +297,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			_ = db.Close()
 			return nil, fmt.Errorf("app: applying metadata provider settings: %w", err)
 		}
+		// Per-Library Enrichment policy (ADR-0027): now that the global config is
+		// loaded, install the per-Library resolver so each pass layers a Library's
+		// policy over it. Only on this settings-driven path — a fixed injected
+		// provider (WithMetadataProvider) keeps using the global snapshot unchanged.
+		providerManager.EnablePerLibraryResolution()
 	}
 
 	// External subtitle fetching (ADR-0021), mirroring the enrichment wiring above:
@@ -375,9 +387,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Organize:         organizeSvc,
 		SubFetch:         subFetchSvc,
 		Events:           broker,
+		providerManager:  providerManager,
 		enrichReschedule: make(chan struct{}, 1),
 	}
-	app.enrichQueue = make(chan string, 64)
+	app.enrichQueue = make(chan enrichRequest, 64)
 
 	// The scan handler's auto-after-scan hook, wired unconditionally: it enqueues a
 	// non-blocking background pass only when AutoEnrichAfterScan is CURRENTLY on
@@ -403,6 +416,12 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Providers:       db,
 		ProviderManager: providerManager,
 		SettingsChanged: app.notifyEnrichReschedule,
+
+		// Per-Library Enrichment policy (ADR-0027): persistence + the derived-
+		// enablement resolver + the immediate-re-enrich trigger.
+		EnrichmentPolicy: db,
+		PolicyResolver:   providerManager,
+		ReEnrichLibrary:  app.reEnrichLibraryForPolicy,
 
 		SubFetch:                subFetchSvc,
 		SubtitleProviders:       db,
@@ -548,16 +567,33 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 }
 
 // enqueueEnrichIfEnabled enqueues a background pass only when enrichment is
-// currently enabled in the live snapshot, so a disabled/unconfigured server does
-// NO background work — its Titles stay 'pending' rather than being marked
-// 'disabled' by a pointless pass (ADR-0001 offline-first). The manual pass
-// (POST .../enrich) is unaffected; it goes straight through the Service, which
-// records 'disabled' when off. Enablement changes at runtime via Manager.Reload.
+// currently enabled FOR THIS LIBRARY (its Enrichment policy resolved over the
+// global config, ADR-0027), so a disabled/unconfigured server — or a Library
+// switched off via enrich_enabled=false — does NO background work; its Titles stay
+// 'pending' rather than being marked 'disabled' by a pointless pass (ADR-0001
+// offline-first). A Library on "inherit" resolves to the global enablement, so an
+// untouched Library behaves exactly as before. The manual pass (POST .../enrich)
+// and the policy-change re-enrich are unaffected; they go straight through the
+// Service, which records 'disabled' when off.
 func (a *App) enqueueEnrichIfEnabled(libraryID string) {
-	if !a.Enrich.EnrichmentEnabled() {
+	if !a.Enrich.EnrichmentEnabledForLibrary(context.Background(), libraryID) {
 		return
 	}
 	a.enqueueEnrich(libraryID)
+}
+
+// reEnrichLibraryForPolicy is the immediate-re-enrich trigger fired when an Admin
+// changes a Library's Enrichment policy (ADR-0027): it invalidates the Library's
+// cached effective provider (so the pass resolves the NEW policy) and enqueues a
+// background FULL pass (every Title re-enriches — needed because the change may
+// turn the Library off, which must re-mark its Titles 'disabled', or change what
+// leads/fills). Unconditional (not gated on enablement): turning enrichment OFF
+// must still run a pass to apply the new 'disabled' state. Non-blocking.
+func (a *App) reEnrichLibraryForPolicy(libraryID string) {
+	if a.providerManager != nil {
+		a.providerManager.InvalidateLibrary(libraryID)
+	}
+	a.enqueueEnrichFull(libraryID)
 }
 
 // enqueueEnrichAfterScan is the auto-after-scan trigger (manual + scheduled scans).
@@ -588,18 +624,36 @@ func (a *App) notifyEnrichReschedule() {
 	}
 }
 
-// enqueueEnrich requests a background Enrichment pass for a Library. It is
-// non-blocking: if no worker is running (enrichment off) it is a no-op, and a
-// full queue drops the request (the scheduled sweep / a later scan will catch
-// it) rather than stalling the scan path.
+// enrichRequest is one queued background pass: a Library and how much to re-enrich
+// (ModeNew for the scan/sweep triggers; ModeFull for a policy change).
+type enrichRequest struct {
+	libraryID string
+	mode      enrich.Mode
+}
+
+// enqueueEnrich requests a background ModeNew Enrichment pass for a Library (the
+// scan/sweep triggers — only never-enriched Titles).
 func (a *App) enqueueEnrich(libraryID string) {
+	a.enqueue(enrichRequest{libraryID: libraryID, mode: enrich.ModeNew})
+}
+
+// enqueueEnrichFull requests a background ModeFull re-enrich (every Title) — the
+// policy-change path, which must re-apply the new policy across the whole Library.
+func (a *App) enqueueEnrichFull(libraryID string) {
+	a.enqueue(enrichRequest{libraryID: libraryID, mode: enrich.ModeFull})
+}
+
+// enqueue is the shared non-blocking enqueue: if no worker is running (enrichment
+// off) it is a no-op, and a full queue drops the request (the scheduled sweep / a
+// later scan will catch it) rather than stalling the caller.
+func (a *App) enqueue(req enrichRequest) {
 	if a.enrichQueue == nil {
 		return
 	}
 	select {
-	case a.enrichQueue <- libraryID:
+	case a.enrichQueue <- req:
 	default:
-		log.Printf("juicebox: enrich queue full, dropping %q", libraryID)
+		log.Printf("juicebox: enrich queue full, dropping %q", req.libraryID)
 	}
 }
 
@@ -612,23 +666,23 @@ func (a *App) runEnrichWorker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case libID := <-a.enrichQueue:
-			a.runEnrichPass(ctx, libID)
+		case req := <-a.enrichQueue:
+			a.runEnrichPass(ctx, req.libraryID, req.mode)
 		}
 	}
 }
 
-// runEnrichPass runs one pass and publishes enrichProgress (per-Title) plus a
-// terminal Complete event. Errors are logged, never fatal — enrichment is the
-// optional decorator step (ADR-0001/0002).
-func (a *App) runEnrichPass(ctx context.Context, libID string) {
+// runEnrichPass runs one pass (in the given mode) and publishes enrichProgress
+// (per-Title) plus a terminal Complete event. Errors are logged, never fatal —
+// enrichment is the optional decorator step (ADR-0001/0002).
+func (a *App) runEnrichPass(ctx context.Context, libID string, mode enrich.Mode) {
 	cb := func(p enrich.Progress) {
 		a.Events.PublishEnrichProgress(events.EnrichProgress{
 			LibraryID: p.LibraryID, Total: p.Total, Done: p.Done,
 			Matched: p.Matched, Unmatched: p.Unmatched, Failed: p.Failed, Disabled: p.Disabled,
 		})
 	}
-	res, err := a.Enrich.EnrichLibraryProgress(ctx, libID, enrich.ModeNew, cb)
+	res, err := a.Enrich.EnrichLibraryProgress(ctx, libID, mode, cb)
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Printf("juicebox: enrich pass of %q: %v", libID, err)

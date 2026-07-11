@@ -19,6 +19,10 @@ type ManagerStore interface {
 	MetadataProviders() ([]store.MetadataProviderRow, error)
 	MetadataLanguage() (string, error)
 	EnrichmentBehavior() (store.EnrichmentBehavior, error)
+	// LibraryEnrichmentPolicy reads a Library's SPARSE Enrichment policy (ADR-0027)
+	// — the deltas the per-Library resolver layers over the global config. An
+	// absent policy is the zero value (inherit everything).
+	LibraryEnrichmentPolicy(libraryID string) (store.LibraryEnrichmentPolicy, error)
 }
 
 // BuildFunc composes a MetadataProvider + its per-kind Enablement from a
@@ -39,16 +43,33 @@ type Manager struct {
 	build BuildFunc
 
 	// mu serializes concurrent Reloads (e.g. two Admin saves racing) so the last
-	// writer's snapshot is the one that stays live.
+	// writer's snapshot is the one that stays live, and guards the per-Library
+	// resolution state below (globalCfg + libCache).
 	mu sync.Mutex
+
+	// globalCfg is the server-wide ProviderConfig from the last Reload — the base
+	// the per-Library resolver (ADR-0027) layers each Library's Enrichment policy
+	// over. Its zero value is the fully-unconfigured config; the resolver is only
+	// installed after the first Reload (EnablePerLibraryResolution), so it is always
+	// populated before any per-Library resolution runs.
+	globalCfg ProviderConfig
+
+	// libCache memoizes each Library's EFFECTIVE provider + enablement snapshot so a
+	// pass doesn't rebuild it per run. It is INVALIDATED wholesale on a global
+	// settings Reload (globalCfg changed) and per-Library on a policy change
+	// (InvalidateLibrary), so it never serves a stale effective config.
+	libCache map[string]providerSnapshot
 }
 
 // NewManager wires a Manager over the settings store, the running Service, and the
 // composition function (BuildProvider in production, a fake in tests). The
 // MusicBrainz throttle is read from the store on each Reload (not captured at
 // construction), so a saved rate-limit change hot-swaps into the rebuilt provider.
+// Per-Library policy resolution is OFF until EnablePerLibraryResolution is called
+// (after the first Reload), so a Service given a fixed injected provider keeps
+// using the global snapshot.
 func NewManager(store ManagerStore, svc *Service, build BuildFunc) *Manager {
-	return &Manager{store: store, svc: svc, build: build}
+	return &Manager{store: store, svc: svc, build: build, libCache: map[string]providerSnapshot{}}
 }
 
 // Reload reads the current settings, composes the provider + enablement, and
@@ -82,7 +103,81 @@ func (m *Manager) Reload(ctx context.Context) error {
 	cfg := SettingsToProviderConfig(rows, lang, fixed)
 	provider, enablement := m.build(cfg)
 	m.svc.SetProvider(provider, enablement)
+
+	// A global settings change invalidates every Library's effective snapshot: an
+	// un-overriding Library must pick the change up LIVE (Model A, ADR-0027), and
+	// an overriding one is re-layered over the new base on its next resolution.
+	m.globalCfg = cfg
+	m.libCache = map[string]providerSnapshot{}
 	return nil
+}
+
+// EnablePerLibraryResolution installs the per-Library resolver on the Service, so
+// every Library-scoped pass resolves its effective provider through this Manager
+// (its Enrichment policy layered over globalCfg, ADR-0027) instead of using the
+// global snapshot. Call it AFTER the first Reload (globalCfg populated). It is a
+// no-op to leave uninstalled — the Service then uses the global snapshot for every
+// Library (the pre-policy behavior), which is what a fixed injected provider wants.
+func (m *Manager) EnablePerLibraryResolution() {
+	m.svc.resolveLibrary = m.resolveLibrary
+}
+
+// GlobalEnablement returns the server-wide per-kind Enablement (the base a
+// Library inherits when its enrich-on/off key is unset). The API reports it so the
+// Admin sees what "inherit" currently resolves to next to the override control.
+func (m *Manager) GlobalEnablement() Enablement {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return DeriveEnablement(m.globalCfg)
+}
+
+// resolveLibrary returns a Library's EFFECTIVE provider + enablement, memoized in
+// libCache. On a miss it reads the Library's policy, resolves it over globalCfg
+// (ResolveLibraryEnrichment), and builds the effective provider through the same
+// BuildProvider seam the global path uses — pairing it with the resolved
+// enablement (which encodes the policy's rules, e.g. enrich_enabled=false ⇒ off).
+// It is the closure the Service calls via snapshotFor.
+func (m *Manager) resolveLibrary(ctx context.Context, libraryID string) (providerSnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if snap, ok := m.libCache[libraryID]; ok {
+		return snap, nil
+	}
+	policy, err := m.store.LibraryEnrichmentPolicy(libraryID)
+	if err != nil {
+		return providerSnapshot{}, fmt.Errorf("enrich: resolving library %q policy: %w", libraryID, err)
+	}
+	cfg, enablement := ResolveLibraryEnrichment(m.globalCfg, policy)
+	provider, _ := m.build(cfg) // effective enablement comes from the resolver, not the build
+	snap := providerSnapshot{provider: provider, enablement: enablement}
+	m.libCache[libraryID] = snap
+	return snap, nil
+}
+
+// InvalidateLibrary drops one Library's cached effective snapshot, so its next
+// resolution rebuilds from the current policy. The policy-change path calls it
+// before re-enriching that Library, so the re-enrich pass sees the new policy.
+func (m *Manager) InvalidateLibrary(libraryID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.libCache, libraryID)
+}
+
+// EffectiveEnablement returns a Library's effective per-kind Enablement for
+// DISPLAY (the API reports it so the Admin sees what a Library will enrich under
+// its policy). It reads the Library's policy FRESH each call and resolves over the
+// current globalCfg — independent of the pass cache, so it never depends on
+// invalidation ordering. Cheap: no provider is built.
+func (m *Manager) EffectiveEnablement(ctx context.Context, libraryID string) (Enablement, error) {
+	m.mu.Lock()
+	globalCfg := m.globalCfg
+	m.mu.Unlock()
+	policy, err := m.store.LibraryEnrichmentPolicy(libraryID)
+	if err != nil {
+		return Enablement{}, fmt.Errorf("enrich: effective enablement for %q: %w", libraryID, err)
+	}
+	_, enablement := ResolveLibraryEnrichment(globalCfg, policy)
+	return enablement, nil
 }
 
 // SeedInput is the first-boot seed source, decoupled from config.Config (ADR-0006
