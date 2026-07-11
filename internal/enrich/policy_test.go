@@ -113,12 +113,12 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotCfg, gotEnab := ResolveLibraryEnrichment(tc.global, tc.policy)
-			if gotCfg != tc.wantCfg {
-				t.Errorf("cfg = %+v, want %+v", gotCfg, tc.wantCfg)
+			res := ResolveLibraryEnrichment(GlobalEnrichment{Config: tc.global}, tc.policy)
+			if res.Config != tc.wantCfg {
+				t.Errorf("cfg = %+v, want %+v", res.Config, tc.wantCfg)
 			}
-			if gotEnab != tc.wantEnab {
-				t.Errorf("enablement = %+v, want %+v", gotEnab, tc.wantEnab)
+			if res.Enablement != tc.wantEnab {
+				t.Errorf("enablement = %+v, want %+v", res.Enablement, tc.wantEnab)
 			}
 		})
 	}
@@ -130,12 +130,117 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 // derivation) produces, so an untouched Library enriches exactly as before.
 func TestResolveLibraryEnrichmentMatchesGlobalForEmptyPolicy(t *testing.T) {
 	global := ProviderConfig{TMDBAPIKey: "tk", MusicBrainzEnabled: true, MetadataLanguage: "en-GB"}
-	cfg, enab := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{})
+	res := ResolveLibraryEnrichment(GlobalEnrichment{Config: global}, store.LibraryEnrichmentPolicy{})
 
-	if cfg != global {
-		t.Errorf("effective cfg = %+v, want the global cfg unchanged", cfg)
+	if res.Config != global {
+		t.Errorf("effective cfg = %+v, want the global cfg unchanged", res.Config)
 	}
-	if want := DeriveEnablement(global); enab != want {
-		t.Errorf("effective enablement = %+v, want the global derivation %+v", enab, want)
+	if want := DeriveEnablement(global); res.Enablement != want {
+		t.Errorf("effective enablement = %+v, want the global derivation %+v", res.Enablement, want)
+	}
+	if res.AuthoritativeFallback != "" {
+		t.Errorf("empty policy fallback = %q, want none", res.AuthoritativeFallback)
+	}
+}
+
+// TestResolveAuthoritativePointer table-drives the Authoritative-provider pointer
+// rules (ADR-0027, issue 03): kind-constrained, always-active-if-keyed (leads even
+// when globally disabled), and unreachable-after-selection → fallback to the kind
+// default + attention flag. Asserted on the resolved effective config + fallback.
+func TestResolveAuthoritativePointer(t *testing.T) {
+	// A global where TMDB is enabled+keyed and OMDb is present but GLOBALLY DISABLED
+	// yet KEYED (so it is selectable as an always-active authoritative).
+	global := GlobalEnrichment{
+		Config: ProviderConfig{TMDBAPIKey: "tk", MetadataLanguage: "en-US"},
+		Providers: map[string]ProviderState{
+			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
+			SlugOMDb:    {Enabled: false, Keyed: true, APIKey: "ok"}, // disabled but keyed
+			SlugTheTVDB: {Enabled: false, Keyed: false},              // disabled + unkeyed
+		},
+	}
+
+	t.Run("keyed Full provider leads even when globally disabled", func(t *testing.T) {
+		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+			AuthoritativeProvider: strPtr(SlugOMDb),
+		})
+		if res.Config.videoAuthoritativeSlug() != SlugOMDb {
+			t.Errorf("authoritative = %q, want omdb (always-active-if-keyed)", res.Config.videoAuthoritativeSlug())
+		}
+		if res.Config.OMDbAPIKey != "ok" {
+			t.Errorf("OMDb key = %q, want it injected so BuildProvider composes the lead", res.Config.OMDbAPIKey)
+		}
+		if !res.Enablement.Video {
+			t.Errorf("video = %+v, want on (the authoritative is keyed)", res.Enablement)
+		}
+		if res.AuthoritativeFallback != "" {
+			t.Errorf("fallback = %q, want none (OMDb reachable)", res.AuthoritativeFallback)
+		}
+	})
+
+	t.Run("unkeyed authoritative falls back to the kind default + flags attention", func(t *testing.T) {
+		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+			AuthoritativeProvider: strPtr(SlugTheTVDB), // disabled + unkeyed
+		})
+		// Fell back to the video default (TMDB), which is keyed → video still on.
+		if res.Config.videoAuthoritativeSlug() != SlugTMDB {
+			t.Errorf("authoritative = %q, want the default tmdb fallback", res.Config.videoAuthoritativeSlug())
+		}
+		if res.AuthoritativeFallback != SlugTheTVDB {
+			t.Errorf("fallback = %q, want thetvdb flagged for attention", res.AuthoritativeFallback)
+		}
+		if !res.Enablement.Video {
+			t.Errorf("video = %+v, want on (fell back to keyed TMDB, never stalls)", res.Enablement)
+		}
+	})
+
+	t.Run("a non-Full / wrong-kind slug is ignored (inherit the default)", func(t *testing.T) {
+		// fanart.tv is Artwork-only → can never lead; the pointer is ignored.
+		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+			AuthoritativeProvider: strPtr(SlugFanartTV),
+		})
+		if res.Config.videoAuthoritativeSlug() != SlugTMDB {
+			t.Errorf("authoritative = %q, want tmdb (artwork-only pointer ignored)", res.Config.videoAuthoritativeSlug())
+		}
+		if res.AuthoritativeFallback != "" {
+			t.Errorf("fallback = %q, want none (ignored, not a fallback)", res.AuthoritativeFallback)
+		}
+	})
+}
+
+// TestResolveSupplementOverrideAuthoritativeNoOp locks in the ADR-0027 invariant
+// that force-OFF of the CURRENT Authoritative provider is a no-op — its off-switch
+// is enrich_enabled=false, not a per-provider toggle. (Issue 05 owns the tri-state
+// surface; the invariant is asserted here.)
+func TestResolveSupplementOverrideAuthoritativeNoOp(t *testing.T) {
+	global := GlobalEnrichment{
+		Config: ProviderConfig{TMDBAPIKey: "tk", OMDbAPIKey: "ok", MetadataLanguage: "en-US"},
+		Providers: map[string]ProviderState{
+			SlugTMDB: {Enabled: true, Keyed: true, APIKey: "tk"},
+			SlugOMDb: {Enabled: true, Keyed: true, APIKey: "ok"},
+		},
+	}
+
+	// TMDB is the (default) authoritative; forcing it OFF must not disable it.
+	res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+		SupplementOverrides: map[string]bool{SlugTMDB: false},
+	})
+	if res.Config.TMDBAPIKey != "tk" {
+		t.Errorf("TMDB key = %q, want kept (force-off of the leader is a no-op)", res.Config.TMDBAPIKey)
+	}
+	if !res.Enablement.Video {
+		t.Errorf("video = %+v, want still on (leader can't be force-off'd)", res.Enablement)
+	}
+
+	// A repointed authoritative (OMDb) is likewise protected from its own force-off,
+	// while a genuine supplement (TMDB, now demoted) can still be muted.
+	res = ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+		AuthoritativeProvider: strPtr(SlugOMDb),
+		SupplementOverrides:   map[string]bool{SlugOMDb: false, SlugTMDB: false},
+	})
+	if res.Config.OMDbAPIKey != "ok" {
+		t.Errorf("OMDb key = %q, want kept (force-off of the current leader is a no-op)", res.Config.OMDbAPIKey)
+	}
+	if res.Config.TMDBAPIKey != "" {
+		t.Errorf("TMDB key = %q, want cleared (a genuine supplement CAN be muted)", res.Config.TMDBAPIKey)
 	}
 }

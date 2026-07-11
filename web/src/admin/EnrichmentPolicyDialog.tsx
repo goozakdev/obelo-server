@@ -99,9 +99,18 @@ export default function EnrichmentPolicyDialog({
     await save({ metadataLanguage: next });
   }
 
+  // selectAuthoritative saves the chosen authoritative ("inherit" clears the key).
+  async function selectAuthoritative(value: string) {
+    if (!policy) return;
+    const next = value === "inherit" ? null : value;
+    if (next === policy.authoritativeProvider) return;
+    await save({ authoritativeProvider: next });
+  }
+
   const current = policy ? choiceOf(policy) : null;
   const overridden = policy ? policy.enrichEnabled !== null : false;
   const languageOverridden = policy ? policy.metadataLanguage !== null : false;
+  const authoritativeOverridden = policy ? policy.authoritativeProvider !== null : false;
 
   return (
     <dialog
@@ -244,6 +253,62 @@ export default function EnrichmentPolicyDialog({
                   A language/region code (e.g. <code>en-US</code>, <code>ja-JP</code>).
                   Leave blank to inherit the server-wide language.
                 </p>
+              </div>
+
+              <div className="field" data-testid="authoritative-control">
+                <div className="policy-control-label">
+                  <span className="field-label">Authoritative provider</span>
+                  <span
+                    className="policy-override-badge"
+                    data-overridden={authoritativeOverridden ? "true" : "false"}
+                  >
+                    {authoritativeOverridden ? "Overridden" : "Inherited"}
+                  </span>
+                </div>
+                <div className="policy-language-row">
+                  <select
+                    className="field-input"
+                    data-testid="authoritative-select"
+                    aria-label="Authoritative provider"
+                    value={policy.authoritativeProvider ?? "inherit"}
+                    disabled={saving}
+                    onChange={(e) => void selectAuthoritative(e.target.value)}
+                  >
+                    <option value="inherit">
+                      Inherit (default: {policy.inheritedAuthoritative.name || "—"})
+                    </option>
+                    {policy.authoritativeCandidates.map((c) => (
+                      <option key={c.slug} value={c.slug}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  {authoritativeOverridden && (
+                    <button
+                      type="button"
+                      className="nav-link"
+                      data-testid="authoritative-reset"
+                      disabled={saving}
+                      onClick={() => void save({ authoritativeProvider: null })}
+                    >
+                      Reset to inherit
+                    </button>
+                  )}
+                </div>
+                {policy.authoritativeUnreachable ? (
+                  <p className="status status-error" data-testid="authoritative-unreachable" role="alert">
+                    <span className="dot dot-error" aria-hidden="true" />
+                    The chosen provider ({policy.authoritativeUnreachable}) is no longer
+                    usable — enrichment fell back to{" "}
+                    <strong>{policy.effectiveAuthoritative.name}</strong>. Re-key or
+                    re-enable it, or pick another.
+                  </p>
+                ) : (
+                  <p className="field-hint" data-testid="authoritative-effective">
+                    Leads with <strong>{policy.effectiveAuthoritative.name || "—"}</strong>;
+                    the remaining enabled providers fill the gaps.
+                  </p>
+                )}
               </div>
 
               {saveError && (

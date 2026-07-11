@@ -34,6 +34,15 @@ type ProviderConfig struct {
 	// MetadataLanguage is the preferred language/region for every source.
 	MetadataLanguage string
 
+	// AuthoritativeVideo is the registry slug of the Full video provider that LEADS
+	// the video chain (ADR-0027). Empty means the global default (TMDB). A Library's
+	// Enrichment policy can repoint it at another keyed Full video provider (OMDb,
+	// TheTVDB, AniDB), which then leads while the remaining keyed video providers run
+	// as fill-only Supplements in registry order. The pointed-at provider's key must
+	// be present in this config (the resolver injects it — always-active-if-keyed —
+	// even when the provider is globally disabled).
+	AuthoritativeVideo string
+
 	// Music (MusicBrainz + Cover Art Archive) — these hosts need no key, so Music
 	// enrichment turns on via the explicit MusicBrainzEnabled opt-in (or alongside
 	// a TMDB key, which enables every kind). MusicBrainzRateLimit throttles the
@@ -52,10 +61,62 @@ type ProviderConfig struct {
 	TheAudioDBBaseURL string
 }
 
-// videoEnabled reports whether the Movie/TV kinds enrich: TMDB is the video
-// provider and requires an API key, so video is on exactly when a key is set
-// (mirrors config.VideoEnrichmentEnabled).
-func (c ProviderConfig) videoEnabled() bool { return c.TMDBAPIKey != "" }
+// videoAuthoritativeSlug is the slug of the Full provider that leads the video
+// chain: the configured AuthoritativeVideo, or the registry default (TMDB) when
+// unset. It is the single place the "which video source leads" decision reads.
+func (c ProviderConfig) videoAuthoritativeSlug() string {
+	if c.AuthoritativeVideo != "" {
+		return c.AuthoritativeVideo
+	}
+	return SlugTMDB
+}
+
+// videoProviderKey returns the API key configured for a video-serving provider in
+// this config (empty ⇒ not active). It is how BuildProvider decides which video
+// sources to compose: fanart.tv rides its single key across both the video and
+// music chains.
+func (c ProviderConfig) videoProviderKey(slug string) string {
+	switch slug {
+	case SlugTMDB:
+		return c.TMDBAPIKey
+	case SlugOMDb:
+		return c.OMDbAPIKey
+	case SlugTheTVDB:
+		return c.TheTVDBAPIKey
+	case SlugFanartTV:
+		return c.FanartTVAPIKey
+	default:
+		return ""
+	}
+}
+
+// newVideoProvider constructs the video-serving provider for a slug from this
+// config, or nil for a slug that serves no video kind. It is the one place a video
+// source is built, so both the authoritative lead and the fill-only supplements go
+// through it (the difference is only their POSITION in the chain, ADR-0027).
+func (c ProviderConfig) newVideoProvider(slug string) MetadataProvider {
+	switch slug {
+	case SlugTMDB:
+		return NewTMDBProvider(c.TMDBAPIKey, c.MetadataLanguage, c.TMDBBaseURL, c.TMDBImageBaseURL)
+	case SlugOMDb:
+		return NewOMDbProvider(c.OMDbAPIKey, c.OMDbBaseURL)
+	case SlugTheTVDB:
+		return NewTheTVDBProvider(c.TheTVDBAPIKey, c.TheTVDBBaseURL)
+	case SlugFanartTV:
+		return NewFanartTVProvider(c.FanartTVAPIKey, c.FanartTVBaseURL)
+	default:
+		return nil
+	}
+}
+
+// videoEnabled reports whether the Movie/TV kinds enrich: video is on exactly when
+// the Library's AUTHORITATIVE video provider is keyed (mirrors the old "TMDB has a
+// key" rule when the authoritative is the default TMDB). A repointed authoritative
+// that is keyed turns video on even if TMDB itself is unkeyed; a supplement never
+// turns video on by itself.
+func (c ProviderConfig) videoEnabled() bool {
+	return c.videoProviderKey(c.videoAuthoritativeSlug()) != ""
+}
 
 // musicEnabled reports whether the Music kind enriches: MusicBrainz + Cover Art
 // Archive need no key, so Music turns on via its own opt-in — or alongside a TMDB
@@ -68,13 +129,26 @@ func (c ProviderConfig) musicImageEnabled() bool {
 	return c.FanartTVAPIKey != "" || c.TheAudioDBAPIKey != ""
 }
 
-// videoSupplementEnabled reports whether any fill-only video supplement is
-// configured (OMDb for movies, TheTVDB for TV, fanart.tv for movie/show artwork).
-// Like musicImageEnabled it only wraps the chain — a supplement never turns the
-// video kinds on by itself (that stays TMDB's job). fanart.tv's single key feeds
-// both the music and video chains.
-func (c ProviderConfig) videoSupplementEnabled() bool {
-	return c.OMDbAPIKey != "" || c.TheTVDBAPIKey != "" || c.FanartTVAPIKey != ""
+// videoSupplements returns the fill-only video supplements to compose behind the
+// authoritative lead: every OTHER keyed video-serving provider, in registry order
+// (ADR-0027 keeps the global order — there is no per-Library reordering). The
+// authoritative slug is excluded (it leads, it doesn't also fill), so repointing
+// the authoritative at OMDb makes TMDB a supplement and vice versa. A supplement
+// never turns the video kinds on by itself — that stays the authoritative's job.
+func (c ProviderConfig) videoSupplements(authoritative string) []MetadataProvider {
+	var out []MetadataProvider
+	for _, e := range registry {
+		if e.Slug == authoritative || !e.serves(KindVideo) {
+			continue
+		}
+		if c.videoProviderKey(e.Slug) == "" {
+			continue // not keyed → inactive (zero calls to it, ADR-0001)
+		}
+		if p := c.newVideoProvider(e.Slug); p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Enablement is the derived per-kind on/off snapshot BuildProvider produces
@@ -142,25 +216,22 @@ func BuildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		music = NewMusicChainProvider(music, fanart, audioDB)
 	}
 
-	var video MetadataProvider = NewTMDBProvider(cfg.TMDBAPIKey, cfg.MetadataLanguage, cfg.TMDBBaseURL, cfg.TMDBImageBaseURL)
-	if cfg.videoEnabled() && cfg.videoSupplementEnabled() {
-		// A video supplement is configured: wrap TMDB in the fill-only chain,
-		// composing whichever supplements have a key — OMDb (movies) and/or TheTVDB
-		// (TV). A supplement never turns video on by itself, so this only wraps when
-		// TMDB is already the active authoritative source (with all supplements off
-		// there are zero calls to them).
-		var supplements []MetadataProvider
-		if cfg.OMDbAPIKey != "" {
-			supplements = append(supplements, NewOMDbProvider(cfg.OMDbAPIKey, cfg.OMDbBaseURL))
-		}
-		if cfg.TheTVDBAPIKey != "" {
-			supplements = append(supplements, NewTheTVDBProvider(cfg.TheTVDBAPIKey, cfg.TheTVDBBaseURL))
-		}
-		if cfg.FanartTVAPIKey != "" {
-			// The same fanart.tv key/base feeds both chains: the music chain uses it for
-			// artist images, and here it supplies movie/show posters + backgrounds.
-			supplements = append(supplements, NewFanartTVProvider(cfg.FanartTVAPIKey, cfg.FanartTVBaseURL))
-		}
+	// Video composes the Library's Authoritative provider (TMDB by default, or a
+	// repointed Full provider — ADR-0027) as the lead, wrapping it in the fill-only
+	// chain when at least one other keyed video source is active. The lead is always
+	// built (an unconfigured lead simply makes no calls when video is off); the chain
+	// wrap is added only when video is on AND a supplement is active, so an
+	// all-supplements-off Library is plain lead with zero calls to the others.
+	authSlug := cfg.videoAuthoritativeSlug()
+	var video MetadataProvider = cfg.newVideoProvider(authSlug)
+	if video == nil {
+		// A pointer at a non-video slug can't lead the video chain; fall back to the
+		// default TMDB lead so the composite is always well-formed (the resolver
+		// never sets such a pointer, but BuildProvider stays total).
+		video = NewTMDBProvider(cfg.TMDBAPIKey, cfg.MetadataLanguage, cfg.TMDBBaseURL, cfg.TMDBImageBaseURL)
+		authSlug = SlugTMDB
+	}
+	if supplements := cfg.videoSupplements(authSlug); cfg.videoEnabled() && len(supplements) > 0 {
 		video = NewVideoChainProvider(video, supplements...)
 	}
 

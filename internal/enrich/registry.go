@@ -47,6 +47,20 @@ const (
 	RoleSupplement    ProviderRole = "supplement"
 )
 
+// ProviderClass is the capability distinction the per-Library Authoritative-
+// provider pointer constrains against (ADR-0027): a Full provider supplies
+// complete descriptive records and is therefore eligible to LEAD a Library's
+// Enrichment (be its Authoritative provider), whereas an Artwork-only provider
+// only fills images/fields the authoritative left empty and can only ever be a
+// Supplement. It is orthogonal to Role: Role is the provider's DEFAULT position in
+// the global chain; Class is what a per-Library pointer may repoint to.
+type ProviderClass string
+
+const (
+	ClassFull        ProviderClass = "full"
+	ClassArtworkOnly ProviderClass = "artwork"
+)
+
 // Registry default base URLs — the public endpoints each provider talks to when
 // the operator sets no override. They mirror config's Default*BaseURL constants
 // (config keeps its own for env defaulting; the registry is the runtime catalog).
@@ -70,6 +84,10 @@ type RegistryEntry struct {
 	Kinds []string
 	// Role is authoritative vs. fill-only supplement for the kinds it serves.
 	Role ProviderRole
+	// Class is the Full vs. Artwork-only capability (ADR-0027): only a Full provider
+	// may be pointed at as a Library's Authoritative provider. Artwork-only providers
+	// (fanart.tv, Cover Art Archive, TheAudioDB) can only ever be Supplements.
+	Class ProviderClass
 	// RequiresKey reports whether the source needs an API key to be enabled. A
 	// key-requiring provider can't be turned on with no key on file (the API
 	// validates this).
@@ -94,6 +112,7 @@ var registry = []RegistryEntry{
 		Name:                "The Movie Database (TMDB)",
 		Kinds:               []string{KindVideo},
 		Role:                RoleAuthoritative,
+		Class:               ClassFull,
 		RequiresKey:         true,
 		DefaultBaseURL:      registryTMDBBaseURL,
 		DefaultImageBaseURL: registryTMDBImageBaseURL,
@@ -105,6 +124,7 @@ var registry = []RegistryEntry{
 		Name:           "OMDb API",
 		Kinds:          []string{KindVideo},
 		Role:           RoleSupplement,
+		Class:          ClassFull,
 		RequiresKey:    true,
 		DefaultBaseURL: registryOMDbBaseURL,
 		Description:    "Fills a movie's plot, content rating, and genres from the Open Movie Database. Fill-only supplement; requires an API key.",
@@ -115,6 +135,7 @@ var registry = []RegistryEntry{
 		Name:           "TheTVDB",
 		Kinds:          []string{KindVideo},
 		Role:           RoleSupplement,
+		Class:          ClassFull,
 		RequiresKey:    true,
 		DefaultBaseURL: registryTheTVDBBaseURL,
 		Description:    "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
@@ -125,6 +146,7 @@ var registry = []RegistryEntry{
 		Name:           "MusicBrainz",
 		Kinds:          []string{KindMusic},
 		Role:           RoleAuthoritative,
+		Class:          ClassFull,
 		RequiresKey:    false,
 		DefaultBaseURL: registryMusicBrainzBaseURL,
 		Description:    "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
@@ -135,6 +157,7 @@ var registry = []RegistryEntry{
 		Name:           "Cover Art Archive",
 		Kinds:          []string{KindMusic},
 		Role:           RoleSupplement,
+		Class:          ClassArtworkOnly,
 		RequiresKey:    false,
 		DefaultBaseURL: registryCoverArtBaseURL,
 		Description:    "Album cover artwork keyed to MusicBrainz releases. No API key required; used alongside MusicBrainz.",
@@ -145,6 +168,7 @@ var registry = []RegistryEntry{
 		Name:           "fanart.tv",
 		Kinds:          []string{KindVideo, KindMusic},
 		Role:           RoleSupplement,
+		Class:          ClassArtworkOnly,
 		RequiresKey:    true,
 		DefaultBaseURL: registryFanartTVBaseURL,
 		Description:    "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
@@ -155,6 +179,7 @@ var registry = []RegistryEntry{
 		Name:           "TheAudioDB",
 		Kinds:          []string{KindMusic},
 		Role:           RoleSupplement,
+		Class:          ClassArtworkOnly,
 		RequiresKey:    true,
 		DefaultBaseURL: registryTheAudioDBBaseURL,
 		Description:    "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
@@ -179,6 +204,84 @@ func RegistryEntryFor(slug string) (RegistryEntry, bool) {
 		}
 	}
 	return RegistryEntry{}, false
+}
+
+// serves reports whether a registry entry serves the given coarse media kind.
+func (e RegistryEntry) serves(kind string) bool {
+	for _, k := range e.Kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// FullProvidersForKind returns the Full providers that serve the given coarse
+// media kind (KindVideo / KindMusic), in registry order — the STATIC candidate set
+// for a Library's Authoritative-provider pointer (ADR-0027). It is capability-only:
+// the caller intersects it with runtime reachability (a Full provider is
+// SELECTABLE only once it is keyed) to get the usable candidates. Artwork-only
+// providers are never returned; they can only ever be Supplements.
+func FullProvidersForKind(kind string) []RegistryEntry {
+	var out []RegistryEntry
+	for _, e := range registry {
+		if e.Class == ClassFull && e.serves(kind) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// DefaultAuthoritativeForKind returns the slug of the global default Authoritative
+// provider for a coarse media kind — the Full provider a Library inherits when its
+// authoritative pointer is unset, and the fallback target when a chosen
+// authoritative becomes unreachable (ADR-0027): TMDB for video, MusicBrainz for
+// music. It is the FIRST authoritative-role Full provider registered for the kind,
+// so the registry order is the single source of truth.
+func DefaultAuthoritativeForKind(kind string) string {
+	for _, e := range registry {
+		if e.Class == ClassFull && e.Role == RoleAuthoritative && e.serves(kind) {
+			return e.Slug
+		}
+	}
+	return ""
+}
+
+// ProviderState is the server-global mutable state of one provider that the
+// per-Library resolver needs BEYOND the composed global ProviderConfig (ADR-0027):
+// whether it is globally enabled, whether it is keyed (a key on file, or none
+// required), and the key itself — so the resolver can honor the always-active-if-
+// keyed Authoritative provider (which runs even when globally disabled) and the
+// per-provider Supplement tri-state (which can force a globally-disabled-but-keyed
+// source on). The composed ProviderConfig carries a key only for ENABLED providers,
+// so it alone can't answer "keyed but globally disabled"; this fills that gap.
+type ProviderState struct {
+	Enabled bool
+	Keyed   bool
+	APIKey  string
+}
+
+// ProviderStatesFromRows derives the per-slug ProviderState map the resolver reads,
+// for every registered provider (a provider with no row is disabled + unkeyed,
+// unless it requires no key). Sibling to SettingsToProviderConfig — both are pure
+// derivations over the same rows, read together on each Manager Reload.
+func ProviderStatesFromRows(rows []store.MetadataProviderRow) map[string]ProviderState {
+	byslug := make(map[string]store.MetadataProviderRow, len(rows))
+	for _, r := range rows {
+		byslug[r.Slug] = r
+	}
+	out := make(map[string]ProviderState, len(registry))
+	for _, e := range registry {
+		r, ok := byslug[e.Slug]
+		out[e.Slug] = ProviderState{
+			Enabled: ok && r.Enabled,
+			// A key-requiring provider is keyed only with a key on file; a keyless one
+			// (MusicBrainz, Cover Art Archive) is always keyed (nothing to configure).
+			Keyed:  !e.RequiresKey || (ok && r.APIKey != ""),
+			APIKey: r.APIKey,
+		}
+	}
+	return out
 }
 
 // FixedProviderInputs carries the non-per-provider Enrichment inputs threaded into

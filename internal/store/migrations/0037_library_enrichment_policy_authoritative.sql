@@ -1,0 +1,14 @@
+-- 0037_library_enrichment_policy_authoritative: the Authoritative-provider pointer
+-- key of the per-Library Enrichment policy (ADR-0027, feature slice 03).
+--
+-- A Library may repoint the single Full provider that LEADS its Enrichment (an
+-- anime library leading with AniDB instead of TMDB). The value is a registry slug;
+-- like the other policy keys the column is NULLABLE and that is load-bearing: NULL
+-- (or an absent row) means "inherit the kind's global default authoritative LIVE"
+-- (TMDB for video, MusicBrainz for music); a stored slug is a DELIBERATE override.
+-- Inheritance is NULL/row-absence only — no column ever stores a value meaning
+-- "inherit" (the Model A invariant, ADR-0027).
+--
+-- Additive column on the existing one-row-per-Library table; existing rows read
+-- back NULL (inherit the global default), so no Library's behavior changes.
+ALTER TABLE library_enrichment_policy ADD COLUMN authoritative_provider TEXT;  -- NULL = inherit the kind default

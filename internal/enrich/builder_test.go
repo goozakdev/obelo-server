@@ -199,6 +199,61 @@ func TestBuildProviderComposition(t *testing.T) {
 		}
 	})
 
+	t.Run("authoritative repointed to OMDb => OMDb leads, TMDB is a supplement", func(t *testing.T) {
+		// A Library led by a keyed OMDb: OMDb is the chain's authoritative, and the
+		// remaining keyed video providers (TMDB, TheTVDB) run as fill-only supplements
+		// in registry order — the anime-swap mechanism, demoable without AniDB.
+		provider, en := BuildProvider(ProviderConfig{
+			AuthoritativeVideo: SlugOMDb,
+			TMDBAPIKey:         "tmdb-key",
+			OMDbAPIKey:         "omdb-key",
+			TheTVDBAPIKey:      "tvdb-key",
+		})
+		if !en.Video {
+			t.Errorf("enablement = %+v, want video on (OMDb keyed)", en)
+		}
+		comp := provider.(CompositeProvider)
+		chain, ok := comp.Video.(*VideoChainProvider)
+		if !ok {
+			t.Fatalf("video = %T, want *VideoChainProvider", comp.Video)
+		}
+		if _, ok := chain.Authoritative.(*OMDbProvider); !ok {
+			t.Errorf("authoritative = %T, want *OMDbProvider (repointed lead)", chain.Authoritative)
+		}
+		// TMDB and TheTVDB are the supplements; OMDb is NOT among them (it leads).
+		var haveTMDB, haveTVDB, haveOMDb bool
+		for _, s := range chain.Supplements {
+			switch s.(type) {
+			case *TMDBProvider:
+				haveTMDB = true
+			case *TheTVDBProvider:
+				haveTVDB = true
+			case *OMDbProvider:
+				haveOMDb = true
+			}
+		}
+		if !haveTMDB || !haveTVDB || haveOMDb {
+			t.Errorf("supplements wrong: tmdb=%v tvdb=%v omdb=%v (want tmdb+tvdb, not omdb)", haveTMDB, haveTVDB, haveOMDb)
+		}
+	})
+
+	t.Run("authoritative OMDb keyed but TMDB unkeyed => video on, OMDb leads alone", func(t *testing.T) {
+		// A globally-disabled-but-keyed authoritative leads even when TMDB is unkeyed:
+		// video is on because the AUTHORITATIVE is keyed, not because TMDB is. With no
+		// other keyed source it is a plain OMDb lead (no chain wrap).
+		provider, en := BuildProvider(ProviderConfig{
+			AuthoritativeVideo: SlugOMDb,
+			OMDbAPIKey:         "omdb-key",
+		})
+		if !en.Video {
+			t.Errorf("enablement = %+v, want video on (authoritative OMDb keyed)", en)
+		}
+		comp := provider.(CompositeProvider)
+		if _, ok := comp.Video.(*OMDbProvider); !ok {
+			t.Errorf("video = %T, want a plain *OMDbProvider lead (no other keyed source)", comp.Video)
+		}
+	})
+
 	t.Run("nothing configured => both kinds disabled", func(t *testing.T) {
 		provider, en := BuildProvider(ProviderConfig{})
 		if en != (Enablement{Video: false, Music: false}) {

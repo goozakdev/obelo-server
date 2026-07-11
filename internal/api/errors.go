@@ -94,6 +94,10 @@ const (
 	codeProviderInvalidBaseURL  = "PROVIDER_INVALID_BASE_URL"
 	codeProviderInvalidLanguage = "PROVIDER_INVALID_LANGUAGE"
 	codeProviderInvalidSetting  = "PROVIDER_INVALID_SETTING"
+	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
+	// its Authoritative provider at a slug that is not a USABLE Full provider of the
+	// Library's kind — unknown, artwork-only, wrong-kind, or not yet keyed (ADR-0027).
+	codeProviderNotAuthoritative = "PROVIDER_NOT_AUTHORITATIVE"
 
 	// codeSearchUnavailable: an Edit-item provider search (Enrichment override,
 	// ADR-0019) could not run — the authoritative provider for the item's kind is

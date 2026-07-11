@@ -47,12 +47,14 @@ type Manager struct {
 	// resolution state below (globalCfg + libCache).
 	mu sync.Mutex
 
-	// globalCfg is the server-wide ProviderConfig from the last Reload — the base
-	// the per-Library resolver (ADR-0027) layers each Library's Enrichment policy
-	// over. Its zero value is the fully-unconfigured config; the resolver is only
-	// installed after the first Reload (EnablePerLibraryResolution), so it is always
-	// populated before any per-Library resolution runs.
-	globalCfg ProviderConfig
+	// global is the server-wide Enrichment configuration from the last Reload — the
+	// base the per-Library resolver (ADR-0027) layers each Library's Enrichment policy
+	// over. It bundles the composed ProviderConfig with the per-slug ProviderState the
+	// resolver needs (enabled + keyed + key). Its zero value is the fully-unconfigured
+	// config; the resolver is only installed after the first Reload
+	// (EnablePerLibraryResolution), so it is always populated before any per-Library
+	// resolution runs.
+	global GlobalEnrichment
 
 	// libCache memoizes each Library's EFFECTIVE provider + enablement snapshot so a
 	// pass doesn't rebuild it per run. It is INVALIDATED wholesale on a global
@@ -106,8 +108,10 @@ func (m *Manager) Reload(ctx context.Context) error {
 
 	// A global settings change invalidates every Library's effective snapshot: an
 	// un-overriding Library must pick the change up LIVE (Model A, ADR-0027), and
-	// an overriding one is re-layered over the new base on its next resolution.
-	m.globalCfg = cfg
+	// an overriding one is re-layered over the new base on its next resolution. The
+	// per-slug ProviderState is derived from the same rows so the resolver can honor
+	// the always-active-if-keyed authoritative and the supplement tri-state.
+	m.global = GlobalEnrichment{Config: cfg, Providers: ProviderStatesFromRows(rows)}
 	m.libCache = map[string]providerSnapshot{}
 	return nil
 }
@@ -128,7 +132,7 @@ func (m *Manager) EnablePerLibraryResolution() {
 func (m *Manager) GlobalEnablement() Enablement {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return DeriveEnablement(m.globalCfg)
+	return DeriveEnablement(m.global.Config)
 }
 
 // GlobalMetadataLanguage returns the server-wide preferred metadata language (the
@@ -137,7 +141,64 @@ func (m *Manager) GlobalEnablement() Enablement {
 func (m *Manager) GlobalMetadataLanguage() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.globalCfg.MetadataLanguage
+	return m.global.Config.MetadataLanguage
+}
+
+// UsableFullProviders lists the Full providers of a Library's coarse media kind
+// that are currently USABLE as an Authoritative provider — the candidate set for
+// the per-Library authoritative dropdown (ADR-0027). A Full provider is usable when
+// it is KEYED (a key on file, or none required); it need NOT be globally enabled,
+// because a pointed-at Full provider runs even when disabled for general use
+// (always-active-if-keyed). Returned in registry order with the display name.
+func (m *Manager) UsableFullProviders(kind string) []ProviderRef {
+	m.mu.Lock()
+	providers := m.global.Providers
+	m.mu.Unlock()
+	var out []ProviderRef
+	for _, e := range FullProvidersForKind(kind) {
+		if providers[e.Slug].Keyed {
+			out = append(out, ProviderRef{Slug: e.Slug, Name: e.Name})
+		}
+	}
+	return out
+}
+
+// ProviderRef is a provider's stable slug + display name, for the API's
+// authoritative-candidate list (the UI renders a dropdown of these).
+type ProviderRef struct {
+	Slug string
+	Name string
+}
+
+// EffectiveAuthoritative reports the slug of the Full provider currently LEADING a
+// Library's Enrichment for its coarse media kind (resolving its policy over the
+// current global config), plus any fallback: fallbackFrom names a chosen
+// authoritative that is unreachable (so the Library fell back to the kind default),
+// "" when the authoritative resolved normally. Read fresh each call (independent of
+// the pass cache), so it never depends on invalidation ordering.
+func (m *Manager) EffectiveAuthoritative(ctx context.Context, libraryID, kind string) (slug, fallbackFrom string, err error) {
+	res, err := m.resolvePolicy(libraryID)
+	if err != nil {
+		return "", "", err
+	}
+	if kind == KindMusic {
+		return DefaultAuthoritativeForKind(KindMusic), res.AuthoritativeFallback, nil
+	}
+	return res.Config.videoAuthoritativeSlug(), res.AuthoritativeFallback, nil
+}
+
+// resolvePolicy reads a Library's policy fresh and resolves it over the current
+// global config — the shared read used by the display accessors (enablement,
+// authoritative). It never touches the pass cache.
+func (m *Manager) resolvePolicy(libraryID string) (Resolution, error) {
+	m.mu.Lock()
+	global := m.global
+	m.mu.Unlock()
+	policy, err := m.store.LibraryEnrichmentPolicy(libraryID)
+	if err != nil {
+		return Resolution{}, fmt.Errorf("enrich: resolving library %q policy: %w", libraryID, err)
+	}
+	return ResolveLibraryEnrichment(global, policy), nil
 }
 
 // resolveLibrary returns a Library's EFFECTIVE provider + enablement, memoized in
@@ -156,9 +217,9 @@ func (m *Manager) resolveLibrary(ctx context.Context, libraryID string) (provide
 	if err != nil {
 		return providerSnapshot{}, fmt.Errorf("enrich: resolving library %q policy: %w", libraryID, err)
 	}
-	cfg, enablement := ResolveLibraryEnrichment(m.globalCfg, policy)
-	provider, _ := m.build(cfg) // effective enablement comes from the resolver, not the build
-	snap := providerSnapshot{provider: provider, enablement: enablement}
+	res := ResolveLibraryEnrichment(m.global, policy)
+	provider, _ := m.build(res.Config) // effective enablement comes from the resolver, not the build
+	snap := providerSnapshot{provider: provider, enablement: res.Enablement}
 	m.libCache[libraryID] = snap
 	return snap, nil
 }
@@ -178,15 +239,11 @@ func (m *Manager) InvalidateLibrary(libraryID string) {
 // current globalCfg — independent of the pass cache, so it never depends on
 // invalidation ordering. Cheap: no provider is built.
 func (m *Manager) EffectiveEnablement(ctx context.Context, libraryID string) (Enablement, error) {
-	m.mu.Lock()
-	globalCfg := m.globalCfg
-	m.mu.Unlock()
-	policy, err := m.store.LibraryEnrichmentPolicy(libraryID)
+	res, err := m.resolvePolicy(libraryID)
 	if err != nil {
-		return Enablement{}, fmt.Errorf("enrich: effective enablement for %q: %w", libraryID, err)
+		return Enablement{}, err
 	}
-	_, enablement := ResolveLibraryEnrichment(globalCfg, policy)
-	return enablement, nil
+	return res.Enablement, nil
 }
 
 // SeedInput is the first-boot seed source, decoupled from config.Config (ADR-0006

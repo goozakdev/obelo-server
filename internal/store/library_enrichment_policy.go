@@ -29,6 +29,22 @@ type LibraryEnrichmentPolicy struct {
 	// just this Library (issue 02). nil = inherit the global language live; a
 	// non-empty value localizes this Library's Enrichment (a foreign-film library).
 	MetadataLanguage *string
+
+	// AuthoritativeProvider is the registry slug of the Full provider that LEADS this
+	// Library's Enrichment (issue 03). nil = inherit the kind's global default (TMDB
+	// for video, MusicBrainz for music); a slug repoints the leader (an anime library
+	// leading with AniDB). The resolver enforces the kind constraint and the
+	// always-active-if-keyed / unreachable-fallback rules (ADR-0027).
+	AuthoritativeProvider *string
+
+	// SupplementOverrides is the per-provider Supplement tri-state (issue 05): a slug
+	// present maps to a forced on(true)/off(false) override; a slug ABSENT inherits
+	// the provider's global enabled state. nil (the common case) = inherit every
+	// provider. Populated by the store from the per-(Library, provider) override table
+	// in issue 05; the resolver already honors it (force-on a globally-disabled-but-
+	// keyed source, force-off a noisy one — with force-off of the current
+	// Authoritative provider a no-op, ADR-0027).
+	SupplementOverrides map[string]bool
 }
 
 // LibraryEnrichmentPolicy reads a Library's stored policy. A Library with no row
@@ -39,10 +55,12 @@ func (db *DB) LibraryEnrichmentPolicy(libraryID string) (LibraryEnrichmentPolicy
 	var (
 		enrichEnabled    sql.NullBool
 		metadataLanguage sql.NullString
+		authoritative    sql.NullString
 	)
 	err := db.QueryRow(
-		`SELECT enrich_enabled, metadata_language FROM library_enrichment_policy WHERE library_id = ?`,
-		libraryID).Scan(&enrichEnabled, &metadataLanguage)
+		`SELECT enrich_enabled, metadata_language, authoritative_provider
+		   FROM library_enrichment_policy WHERE library_id = ?`,
+		libraryID).Scan(&enrichEnabled, &metadataLanguage, &authoritative)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LibraryEnrichmentPolicy{}, nil // no row = empty policy = inherit all
 	}
@@ -58,6 +76,12 @@ func (db *DB) LibraryEnrichmentPolicy(libraryID string) (LibraryEnrichmentPolicy
 		v := metadataLanguage.String
 		out.MetadataLanguage = &v
 	}
+	if authoritative.Valid {
+		v := authoritative.String
+		out.AuthoritativeProvider = &v
+	}
+	// SupplementOverrides is populated from the per-(Library, provider) override
+	// table in issue 05; until then it stays nil (inherit every provider).
 	return out, nil
 }
 
@@ -106,6 +130,32 @@ func (db *DB) SetLibraryMetadataLanguage(libraryID string, language *string) err
 		libraryID, val)
 	if err != nil {
 		return fmt.Errorf("store: setting library metadata language: %w", err)
+	}
+	return nil
+}
+
+// SetLibraryAuthoritativeProvider sets (or clears) the Library's Authoritative-
+// provider pointer (issue 03). A nil slug clears the key back to inherit the kind's
+// global default (stored as NULL); a non-nil slug is a deliberate override. Upserts
+// the policy row, touching ONLY the authoritative_provider column so the coexisting
+// enrich_enabled / metadata_language overrides on the same row are left intact.
+// Inheritance is NULL, never a sentinel — so clearing is distinguishable from a set
+// value on read. The caller (API) validates the slug is a usable Full provider of
+// the Library's kind before calling.
+func (db *DB) SetLibraryAuthoritativeProvider(libraryID string, slug *string) error {
+	var val any // nil → SQL NULL (inherit the kind default); *string → the slug
+	if slug != nil {
+		val = *slug
+	}
+	_, err := db.Exec(
+		`INSERT INTO library_enrichment_policy (library_id, authoritative_provider, updated_at)
+		      VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(library_id) DO UPDATE SET
+		      authoritative_provider = excluded.authoritative_provider,
+		      updated_at             = datetime('now')`,
+		libraryID, val)
+	if err != nil {
+		return fmt.Errorf("store: setting library authoritative provider: %w", err)
 	}
 	return nil
 }

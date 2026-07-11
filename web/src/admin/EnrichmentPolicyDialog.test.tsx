@@ -43,6 +43,14 @@ function policy(over: Partial<EnrichmentPolicy> = {}): EnrichmentPolicy {
     effective: { video: true, music: true },
     metadataLanguage: null,
     inheritedMetadataLanguage: "en-US",
+    authoritativeProvider: null,
+    inheritedAuthoritative: { slug: "tmdb", name: "The Movie Database (TMDB)" },
+    effectiveAuthoritative: { slug: "tmdb", name: "The Movie Database (TMDB)" },
+    authoritativeUnreachable: null,
+    authoritativeCandidates: [
+      { slug: "tmdb", name: "The Movie Database (TMDB)" },
+      { slug: "omdb", name: "OMDb API" },
+    ],
     ...over,
   };
 }
@@ -160,6 +168,80 @@ describe("EnrichmentPolicyDialog", () => {
     await user.click(input);
     await user.tab();
     expect(updateEnrichmentPolicy).not.toHaveBeenCalled();
+  });
+
+  it("lists the authoritative candidates and inherits by default", async () => {
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const control = await screen.findByTestId("authoritative-control");
+    expect(control).toHaveTextContent("Inherited");
+    const select = within(control).getByTestId("authoritative-select") as HTMLSelectElement;
+    expect(select.value).toBe("inherit");
+    // The inherit option plus each candidate.
+    expect(within(select).getByText(/Inherit \(default: The Movie Database/)).toBeInTheDocument();
+    expect(within(select).getByRole("option", { name: "OMDb API" })).toBeInTheDocument();
+    expect(screen.queryByTestId("authoritative-reset")).toBeNull();
+  });
+
+  it("picking an authoritative PUTs the slug and shows Overridden + reset", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    updateEnrichmentPolicy.mockResolvedValue(
+      policy({
+        authoritativeProvider: "omdb",
+        effectiveAuthoritative: { slug: "omdb", name: "OMDb API" },
+      }),
+    );
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const select = await screen.findByTestId("authoritative-select");
+    await user.selectOptions(select, "omdb");
+
+    await waitFor(() =>
+      expect(updateEnrichmentPolicy).toHaveBeenCalledWith("lib1", { authoritativeProvider: "omdb" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("authoritative-control")).toHaveTextContent("Overridden"),
+    );
+    expect(screen.getByTestId("authoritative-reset")).toBeInTheDocument();
+    expect(screen.getByTestId("authoritative-effective")).toHaveTextContent(/Leads with.*OMDb API/);
+  });
+
+  it("resetting the authoritative clears it (authoritativeProvider=null)", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(
+      policy({ authoritativeProvider: "omdb", effectiveAuthoritative: { slug: "omdb", name: "OMDb API" } }),
+    );
+    updateEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("authoritative-control")).toHaveTextContent("Overridden"),
+    );
+    await user.click(screen.getByTestId("authoritative-reset"));
+
+    await waitFor(() =>
+      expect(updateEnrichmentPolicy).toHaveBeenCalledWith("lib1", { authoritativeProvider: null }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("authoritative-control")).toHaveTextContent("Inherited"),
+    );
+  });
+
+  it("surfaces an unreachable chosen authoritative", async () => {
+    getEnrichmentPolicy.mockResolvedValue(
+      policy({
+        authoritativeProvider: "omdb",
+        authoritativeUnreachable: "omdb",
+        effectiveAuthoritative: { slug: "tmdb", name: "The Movie Database (TMDB)" },
+      }),
+    );
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const warn = await screen.findByTestId("authoritative-unreachable");
+    expect(warn).toHaveTextContent(/no longer\s+usable/);
+    expect(warn).toHaveTextContent(/The Movie Database/);
   });
 
   it("Inherit clears the override (enrichEnabled=null) from an overridden state", async () => {

@@ -120,6 +120,55 @@ func TestLibraryEnrichmentPolicyLanguageRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLibraryEnrichmentPolicyAuthoritativeRoundTrip proves the authoritative-
+// provider pointer (issue 03) round-trips sparsely and coexists with the other keys
+// on the same row: NULL = inherit the kind default, a slug is a deliberate override,
+// and clearing is distinguishable from a set value.
+func TestLibraryEnrichmentPolicyAuthoritativeRoundTrip(t *testing.T) {
+	db := openTemp(t)
+	lib := makeLibrary(t, db, "lib-auth", "Anime", "tv")
+
+	// Empty: authoritative inherits (nil).
+	pol, err := db.LibraryEnrichmentPolicy(lib)
+	if err != nil {
+		t.Fatalf("read empty policy: %v", err)
+	}
+	if pol.AuthoritativeProvider != nil {
+		t.Errorf("empty AuthoritativeProvider = %q, want nil (inherit)", *pol.AuthoritativeProvider)
+	}
+
+	// Point it at a slug.
+	if err := db.SetLibraryAuthoritativeProvider(lib, strPtr("anidb")); err != nil {
+		t.Fatalf("set authoritative: %v", err)
+	}
+	// Set the other keys too — they must coexist on the one row.
+	if err := db.SetLibraryEnrichEnabled(lib, boolPtr(true)); err != nil {
+		t.Fatalf("set enrich_enabled: %v", err)
+	}
+	if err := db.SetLibraryMetadataLanguage(lib, strPtr("ja-JP")); err != nil {
+		t.Fatalf("set language: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if pol.AuthoritativeProvider == nil || *pol.AuthoritativeProvider != "anidb" {
+		t.Errorf("AuthoritativeProvider = %v, want anidb", pol.AuthoritativeProvider)
+	}
+	if pol.EnrichEnabled == nil || !*pol.EnrichEnabled || pol.MetadataLanguage == nil || *pol.MetadataLanguage != "ja-JP" {
+		t.Errorf("coexisting keys clobbered: enrich=%v lang=%v", pol.EnrichEnabled, pol.MetadataLanguage)
+	}
+
+	// Clear back to inherit: NULL, other keys untouched.
+	if err := db.SetLibraryAuthoritativeProvider(lib, nil); err != nil {
+		t.Fatalf("clear authoritative: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if pol.AuthoritativeProvider != nil {
+		t.Errorf("after clear AuthoritativeProvider = %v, want nil (inherit)", pol.AuthoritativeProvider)
+	}
+	if pol.MetadataLanguage == nil || *pol.MetadataLanguage != "ja-JP" {
+		t.Errorf("clearing authoritative disturbed language: %v", pol.MetadataLanguage)
+	}
+}
+
 // TestLibraryEnrichmentPolicyIsolation proves a policy on one Library never leaks
 // into another (other Libraries stay on inherit).
 func TestLibraryEnrichmentPolicyIsolation(t *testing.T) {

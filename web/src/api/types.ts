@@ -1710,6 +1710,12 @@ export interface TestProviderResult {
  * `inheritedEnrichEnabled` is what "inherit" currently resolves to (the server
  * enriches at least one kind), for labeling the inherit option. `effective` is the
  * per-kind enablement the Library will actually enrich under this policy. */
+/** A provider's stable slug + display name (the authoritative dropdown entries). */
+export interface ProviderRef {
+  slug: string;
+  name: string;
+}
+
 export interface EnrichmentPolicy {
   enrichEnabled: boolean | null;
   inheritedEnrichEnabled: boolean;
@@ -1720,6 +1726,19 @@ export interface EnrichmentPolicy {
   /** The global metadata language the unset key tracks live (for labeling the
    * inherit option and prefilling the field). "" when the server has none set. */
   inheritedMetadataLanguage: string;
+  /** The STORED Authoritative-provider override slug — `null` means inherit the
+   * kind's global default. */
+  authoritativeProvider: string | null;
+  /** The kind's global default authoritative (what "inherit" resolves to). */
+  inheritedAuthoritative: ProviderRef;
+  /** The provider actually LEADING under this policy (the stored override, or the
+   * default when inheriting, or the fallback when the chosen one is unreachable). */
+  effectiveAuthoritative: ProviderRef;
+  /** Set (to the chosen-but-unreachable slug) when the pointer fell back to the
+   * default because its provider lost its key / was disabled; `null` otherwise. */
+  authoritativeUnreachable: string | null;
+  /** The dropdown candidates: usable Full providers of the Library's kind (keyed). */
+  authoritativeCandidates: ProviderRef[];
 }
 
 /** The `PUT /libraries/{id}/enrichment-policy` body: a partial update. Each key is
@@ -1728,6 +1747,7 @@ export interface EnrichmentPolicy {
 export interface UpdateEnrichmentPolicyInput {
   enrichEnabled?: boolean | null;
   metadataLanguage?: string | null;
+  authoritativeProvider?: string | null;
 }
 
 /** One subtitle provider in the settings view (subtitles/05, ADR-0021): registry

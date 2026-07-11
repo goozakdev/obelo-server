@@ -26,6 +26,20 @@ type enrichmentPolicyView struct {
 	} `json:"effective"`
 	MetadataLanguage          *string `json:"metadataLanguage"`
 	InheritedMetadataLanguage string  `json:"inheritedMetadataLanguage"`
+	AuthoritativeProvider     *string `json:"authoritativeProvider"`
+	InheritedAuthoritative    struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"inheritedAuthoritative"`
+	EffectiveAuthoritative struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"effectiveAuthoritative"`
+	AuthoritativeUnreachable *string `json:"authoritativeUnreachable"`
+	AuthoritativeCandidates  []struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"authoritativeCandidates"`
 }
 
 func policyPath(libID string) string { return "/api/v1/libraries/" + libID + "/enrichment-policy" }
@@ -213,6 +227,84 @@ func TestEnrichmentPolicyLanguageOverride(t *testing.T) {
 	if cleared.InheritedMetadataLanguage != "en-US" {
 		t.Errorf("inheritedMetadataLanguage after clear = %q, want en-US", cleared.InheritedMetadataLanguage)
 	}
+}
+
+// TestEnrichmentPolicyAuthoritativePointer: the authoritative dropdown lists usable
+// Full providers of the Library's kind, a Library can repoint its authoritative at a
+// keyed OMDb (effective reflects it), an unusable slug is rejected 422, and a chosen
+// authoritative that later becomes unreachable falls back to the default and is
+// surfaced (never silently dropped) — ADR-0027.
+func TestEnrichmentPolicyAuthoritativePointer(t *testing.T) {
+	requireFixtures(t)
+	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
+	srv := testharness.New(t,
+		testharness.WithProviderBuilder(countingBuilder(prov)),
+		testharness.WithEnrichmentKey("tmdb-key"), // TMDB keyed globally
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	// Make OMDb a usable Full video provider (globally enabled + keyed). TheTVDB stays
+	// unconfigured (unkeyed) so it must NOT appear in the candidate list.
+	putProviders(t, srv, token, map[string]any{"providers": []map[string]any{{"slug": "omdb", "enabled": true, "apiKey": "omdb-key"}}}, http.StatusOK)
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+
+	// Default view: inherits the kind default (TMDB); candidates are the keyed Full
+	// video providers (TMDB + OMDb), NOT the unkeyed TheTVDB nor artwork-only sources.
+	v := getPolicy(t, srv, token, libID)
+	if v.AuthoritativeProvider != nil {
+		t.Errorf("default authoritativeProvider = %q, want null (inherit)", *v.AuthoritativeProvider)
+	}
+	if v.InheritedAuthoritative.Slug != "tmdb" || v.EffectiveAuthoritative.Slug != "tmdb" {
+		t.Errorf("default authoritative = inherited %q / effective %q, want tmdb/tmdb", v.InheritedAuthoritative.Slug, v.EffectiveAuthoritative.Slug)
+	}
+	if !hasCandidate(v.AuthoritativeCandidates, "tmdb") || !hasCandidate(v.AuthoritativeCandidates, "omdb") {
+		t.Errorf("candidates = %+v, want tmdb + omdb", v.AuthoritativeCandidates)
+	}
+	if hasCandidate(v.AuthoritativeCandidates, "thetvdb") || hasCandidate(v.AuthoritativeCandidates, "fanarttv") {
+		t.Errorf("candidates = %+v, want no unkeyed/artwork-only sources", v.AuthoritativeCandidates)
+	}
+
+	// Repoint the authoritative at OMDb: stored + effective reflect it.
+	v = putPolicy(t, srv, token, libID, map[string]any{"authoritativeProvider": "omdb"}, http.StatusOK)
+	if v.AuthoritativeProvider == nil || *v.AuthoritativeProvider != "omdb" {
+		t.Errorf("stored authoritative = %v, want omdb", v.AuthoritativeProvider)
+	}
+	if v.EffectiveAuthoritative.Slug != "omdb" {
+		t.Errorf("effective authoritative = %q, want omdb (leads now)", v.EffectiveAuthoritative.Slug)
+	}
+	if v.AuthoritativeUnreachable != nil {
+		t.Errorf("unreachable = %v, want none (OMDb keyed)", *v.AuthoritativeUnreachable)
+	}
+
+	// An artwork-only source can never lead → 422; an unkeyed Full provider likewise.
+	putPolicy(t, srv, token, libID, map[string]any{"authoritativeProvider": "fanarttv"}, http.StatusUnprocessableEntity)
+	putPolicy(t, srv, token, libID, map[string]any{"authoritativeProvider": "thetvdb"}, http.StatusUnprocessableEntity)
+
+	// OMDb becomes unreachable AFTER selection (its key is cleared globally): the
+	// Library falls back to the default authoritative and surfaces the degradation.
+	putProviders(t, srv, token, map[string]any{"providers": []map[string]any{{"slug": "omdb", "enabled": false, "apiKey": ""}}}, http.StatusOK)
+	v = getPolicy(t, srv, token, libID)
+	if v.AuthoritativeProvider == nil || *v.AuthoritativeProvider != "omdb" {
+		t.Errorf("stored pointer = %v, want it PRESERVED as omdb (a surviving delta)", v.AuthoritativeProvider)
+	}
+	if v.EffectiveAuthoritative.Slug != "tmdb" {
+		t.Errorf("effective authoritative = %q, want tmdb (fell back, never stalls)", v.EffectiveAuthoritative.Slug)
+	}
+	if v.AuthoritativeUnreachable == nil || *v.AuthoritativeUnreachable != "omdb" {
+		t.Errorf("unreachable = %v, want omdb surfaced (never silently dropped)", v.AuthoritativeUnreachable)
+	}
+}
+
+func hasCandidate(cands []struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}, slug string) bool {
+	for _, c := range cands {
+		if c.Slug == slug {
+			return true
+		}
+	}
+	return false
 }
 
 // TestEnrichmentPolicyAdminOnly: the whole surface is Admin-only (Member → 403 on
