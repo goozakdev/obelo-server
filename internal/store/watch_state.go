@@ -56,7 +56,14 @@ func (db *DB) WatchStateFor(userID, titleID string) (WatchState, error) {
 // Devices reporting progress simply overwrite each other (no locking/merge),
 // the concurrency model the issue specifies. updated_at doubles as the
 // "most-recently-played" sort key for Continue Watching.
-func (db *DB) SaveWatchState(userID, titleID string, resumeMs int64, watched bool) error {
+//
+// played distinguishes the two callers behind this one upsert (ADR-0028): the
+// PLAYBACK progress path passes played=true, so the write STAMPS played_at (the
+// recency signal the Up Next resume point anchors on); the MANUAL mark-watched
+// toggle passes played=false, leaving any existing played_at untouched so a
+// bookkeeping mark never moves the anchor. played_at is only ever set forward, so
+// a not-played write COALESCEs it back to the stored value (never NULLs it).
+func (db *DB) SaveWatchState(userID, titleID string, resumeMs int64, watched, played bool) error {
 	if resumeMs < 0 {
 		resumeMs = 0
 	}
@@ -64,34 +71,39 @@ func (db *DB) SaveWatchState(userID, titleID string, resumeMs int64, watched boo
 	// most-recently-played ordering is stable even for two writes in the same
 	// second — datetime('now') is only second-granular, which would tie.
 	_, err := db.Exec(
-		`INSERT INTO watch_state (id, user_id, title_id, resume_position_ms, watched, updated_at)
-		 VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		`INSERT INTO watch_state (id, user_id, title_id, resume_position_ms, watched, played_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?,
+		         CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END,
+		         strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		 ON CONFLICT (user_id, title_id) DO UPDATE SET
 		   resume_position_ms = excluded.resume_position_ms,
 		   watched            = excluded.watched,
+		   played_at          = COALESCE(excluded.played_at, watch_state.played_at),
 		   updated_at         = excluded.updated_at`,
-		uuid.NewString(), userID, titleID, resumeMs, boolToInt(watched),
+		uuid.NewString(), userID, titleID, resumeMs, boolToInt(watched), boolToInt(played),
 	)
 	if err != nil {
 		return fmt.Errorf("store: saving watch state: %w", err)
 	}
 	// Multi-episode file (S01E05-E06): one File maps to TWO Episode Titles
 	// (naming-convention.md). It plays once, so a progress/watched write against
-	// one Episode propagates the SAME resume + watched to its co-File sibling(s),
-	// so "watching it marks both". A Movie / single Episode has no co-File
-	// sibling, so this is a no-op for them.
-	if err := db.propagateToSiblingEpisodes(userID, titleID, resumeMs, watched); err != nil {
+	// one Episode propagates the SAME resume + watched + played_at to its co-File
+	// sibling(s), so "watching it marks both" and both share the anchor's recency.
+	// A Movie / single Episode has no co-File sibling, so this is a no-op for them.
+	if err := db.propagateToSiblingEpisodes(userID, titleID, resumeMs, watched, played); err != nil {
 		return err
 	}
 	return nil
 }
 
-// propagateToSiblingEpisodes copies (resume, watched) to every OTHER Episode
-// Title that shares a File path with titleID — the two Titles of a multi-episode
-// file. The shared-File join is the authority: the scanner gives both Episodes
-// the same physical File (different edition rows, same path). Movies and
-// single-file Episodes have no such sibling, so nothing is written.
-func (db *DB) propagateToSiblingEpisodes(userID, titleID string, resumeMs int64, watched bool) error {
+// propagateToSiblingEpisodes copies (resume, watched, played_at) to every OTHER
+// Episode Title that shares a File path with titleID — the two Titles of a
+// multi-episode file. The shared-File join is the authority: the scanner gives
+// both Episodes the same physical File (different edition rows, same path).
+// Movies and single-file Episodes have no such sibling, so nothing is written.
+// played carries through unchanged so a playback write stamps the siblings'
+// played_at too (a manual mark leaves it), mirroring SaveWatchState.
+func (db *DB) propagateToSiblingEpisodes(userID, titleID string, resumeMs int64, watched, played bool) error {
 	rows, err := db.Query(
 		`SELECT DISTINCT t2.id
 		   FROM titles t1
@@ -119,13 +131,16 @@ func (db *DB) propagateToSiblingEpisodes(userID, titleID string, resumeMs int64,
 	}
 	for _, sib := range siblings {
 		if _, err := db.Exec(
-			`INSERT INTO watch_state (id, user_id, title_id, resume_position_ms, watched, updated_at)
-			 VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			`INSERT INTO watch_state (id, user_id, title_id, resume_position_ms, watched, played_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?,
+			         CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END,
+			         strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			 ON CONFLICT (user_id, title_id) DO UPDATE SET
 			   resume_position_ms = excluded.resume_position_ms,
 			   watched            = excluded.watched,
+			   played_at          = COALESCE(excluded.played_at, watch_state.played_at),
 			   updated_at         = excluded.updated_at`,
-			uuid.NewString(), userID, sib, resumeMs, boolToInt(watched),
+			uuid.NewString(), userID, sib, resumeMs, boolToInt(watched), boolToInt(played),
 		); err != nil {
 			return fmt.Errorf("store: propagating watch state to sibling: %w", err)
 		}
@@ -256,28 +271,37 @@ type UpNextRow struct {
 	UpdatedAt string
 }
 
-// UpNext returns the per-User Up Next Home row (CONTEXT.md "Up Next = next
-// unwatched Episode in Show order"). It is a COMPUTED view (no stored entity):
-// for every Show the User has STARTED — has ≥1 Episode that is watched OR
-// in-progress (a resume position) — it surfaces the next unwatched Episode in
-// Show order (Season then Episode; Specials = Season 0 sort first), and only
-// when such an Episode exists (a fully-watched Show drops out).
+// UpNext returns the per-User Up Next Home row: each started Show's resume point,
+// anchored on the most-recently-PLAYED Episode (CONTEXT.md "Up Next (resume
+// point)", ADR-0028). It is a COMPUTED view (no stored "next" pointer) — a pure
+// query off watch_state, so correcting watch state is reflected on the next read.
 //
 // "Started a Show" trigger: a Show is started when the User has any watch_state
-// row against one of its Episodes (watched OR resume > 0). This is the union of
-// the Continue-Watching condition (a mid-band resume) and the Watched-threshold
+// row against one of its Episodes (watched OR resume > 0) — the union of the
+// Continue-Watching condition (a mid-band resume) and the Watched-threshold
 // condition (an Episode marked watched, by the auto ~90% path or the manual
-// toggle) — so Up Next moves consistently whether the prior Episode advanced via
-// progress crossing the ceiling or via PUT watchState, with no write-path hook
-// (it is purely a query off the same watch_state rows).
+// toggle). started_shows also carries the Show's most-recent Episode updated_at as
+// the row recency key.
 //
-// Episode ORDERING for the "next" pick: regular Seasons (number ≥ 1) in
-// season-then-episode order FIRST, with Specials (Season 0) ordered LAST. The
-// season-0-first convention is right for the Season LIST (issue 01's
-// SeasonsForShow), but for "what's next" a viewer working through Season 1 must
-// get S01E02 next — not a Special — so Up Next deliberately defers Season 0 to
-// the end of the progression. Within that, episode_number then sort_title then
-// id break ties deterministically.
+// The resume-point algorithm, per started Show (ADR-0028):
+//   - the ANCHOR is the Episode with the greatest played_at (the most-recently
+//     PLAYED — a manual mark stamps no played_at, so it never moves the anchor); a
+//     marks-only Show has no anchor;
+//   - the resume point is the first UNWATCHED Episode strictly AFTER the anchor in
+//     Show order, WRAPPING to the first unwatched from the start once the end is
+//     reached (a skipped Episode is therefore never nagged — it resurfaces once, at
+//     the wrap). With no anchor the show degenerates cleanly to first-unwatched.
+//   - a fully-watched Show has no unwatched Episode and drops out.
+//
+// Home EXCLUDES a Show whose anchor is still IN PROGRESS (resume > 0, unwatched):
+// that Episode is the resume point but belongs to Continue Watching, so the two
+// Home rows stay disjoint and never list the same Episode. The Show detail page
+// (issue 02) renders the same computation including the in-progress case.
+//
+// Episode ORDERING for the walk (and the wrap): regular Seasons (number ≥ 1) in
+// season-then-episode order FIRST, with Specials (Season 0) ordered LAST — a viewer
+// working through Season 1 gets S01E02 next, not a Special. Within that,
+// episode_number then sort_title then id break ties deterministically.
 //
 // Shows are ordered most-recently-active first (the Show's latest Episode
 // updated_at), the same recency feel as Continue Watching, then by Show id for a
@@ -287,23 +311,28 @@ func (db *DB) UpNext(userID string, limit int, filter AccessFilter) ([]UpNextRow
 	if limit <= 0 {
 		limit = 20
 	}
-	// The candidates CTE projects each surfaced Episode's library_id, so the
-	// Library filter is applied on the outer SELECT — a started Show whose next
+	// The picks CTE projects each candidate Episode's library_id, so the Library
+	// filter is applied on the outer SELECT — a started Show whose resume-point
 	// Episode is in an inaccessible Library drops out. The Rating filter is applied
 	// inside the CTE on the candidate Episode's content_rating (so an above-ceiling
-	// next Episode is skipped). Both empty under all-access. The candidates clause
-	// precedes the outer clause in the SQL, so its args come first.
+	// next Episode is skipped over to the next accessible unwatched one). Both empty
+	// under all-access. The picks clause precedes the outer clause, so its args come
+	// first. The two leading userID args feed started_shows and the episodes
+	// LEFT JOIN, in that order.
 	libClause, libArgs := filter.libraryClause("library_id")
-	rateClause, rateArgs := filter.titleRatingClause("t.content_rating")
+	rateClause, rateArgs := filter.titleRatingClause("e.content_rating")
 	args := []any{userID, userID}
 	args = append(args, rateArgs...)
 	args = append(args, libArgs...)
 	args = append(args, limit)
 	// started_shows: every Show the User has touched (any Episode with a
 	// watch_state row), carrying that Show's most-recent Episode updated_at as the
-	// recency key. next_episode: per started Show, the lowest-ordered visible
-	// Episode that is NOT watched — that is the Up Next pick. We rank candidates
-	// per show (Season then Episode then sort_title then id) and keep rank 1.
+	// recency key. episodes: every visible Episode of a started Show, LEFT-joined to
+	// the User's watch state and stamped with its Show-order ordinal (ord). anchor:
+	// per Show, the ord + watch state of the Episode with the greatest played_at
+	// (ties broken by later ord, so a played multi-episode file anchors on its later
+	// half). picks: per Show, unwatched candidates ranked "first after the anchor,
+	// then wrap to the first from the start"; rank 1 is the resume point.
 	rows, err := db.Query(
 		`WITH started_shows AS (
 		     SELECT sh.id AS show_id, MAX(w.updated_at) AS last_at
@@ -314,33 +343,60 @@ func (db *DB) UpNext(userID string, limit int, filter AccessFilter) ([]UpNextRow
 		      WHERE w.user_id = ? AND (w.watched = 1 OR w.resume_position_ms > 0)
 		      GROUP BY sh.id
 		 ),
-		 candidates AS (
-		     SELECT sh.id AS show_id, sh.title AS show_title,
+		 episodes AS (
+		     SELECT st.show_id, st.last_at, sh.title AS show_title,
 		            t.id, t.library_id, t.kind, t.title, t.year, t.identity_key,
 		            t.sort_title, t.added_at, t.tmdb_id, t.imdb_id,
-		            t.needs_review, t.ambiguous, t.hidden,
+		            t.needs_review, t.ambiguous, t.hidden, t.content_rating,
 		            t.season_number, t.episode_number, t.episode_label,
-		            st.last_at,
+		            w.watched AS w_watched, w.resume_position_ms AS w_resume,
+		            w.played_at AS w_played_at,
 		            ROW_NUMBER() OVER (
-		              PARTITION BY sh.id
+		              PARTITION BY st.show_id
 		              ORDER BY (CASE WHEN t.season_number = 0 THEN 1 ELSE 0 END) ASC,
 		                       t.season_number ASC, t.episode_number ASC,
 		                       t.sort_title ASC, t.id ASC
-		            ) AS rn
+		            ) AS ord
 		       FROM started_shows st
 		       JOIN shows   sh ON sh.id = st.show_id AND sh.hidden = 0
 		       JOIN seasons s  ON s.show_id = sh.id AND s.hidden = 0
 		       JOIN titles  t  ON t.season_id = s.id AND t.kind = 'episode' AND t.hidden = 0
-		      WHERE NOT EXISTS (
-		              SELECT 1 FROM watch_state wt
-		               WHERE wt.user_id = ? AND wt.title_id = t.id AND wt.watched = 1
-		            )`+rateClause+`
+		       LEFT JOIN watch_state w ON w.user_id = ? AND w.title_id = t.id
+		 ),
+		 anchor AS (
+		     SELECT show_id, ord AS anchor_ord, w_resume AS anchor_resume, w_watched AS anchor_watched
+		       FROM (
+		         SELECT show_id, ord, w_resume, w_watched,
+		                ROW_NUMBER() OVER (
+		                  PARTITION BY show_id
+		                  ORDER BY w_played_at DESC, ord DESC
+		                ) AS arn
+		           FROM episodes
+		          WHERE w_played_at IS NOT NULL
+		       )
+		      WHERE arn = 1
+		 ),
+		 picks AS (
+		     SELECT e.show_id, e.show_title, e.id, e.library_id, e.kind, e.title, e.year,
+		            e.identity_key, e.sort_title, e.added_at, e.tmdb_id, e.imdb_id,
+		            e.needs_review, e.ambiguous, e.hidden,
+		            e.season_number, e.episode_number, e.episode_label, e.last_at,
+		            a.anchor_resume, a.anchor_watched,
+		            ROW_NUMBER() OVER (
+		              PARTITION BY e.show_id
+		              ORDER BY (CASE WHEN e.ord > a.anchor_ord THEN 0 ELSE 1 END) ASC,
+		                       e.ord ASC
+		            ) AS pick_rn
+		       FROM episodes e
+		       LEFT JOIN anchor a ON a.show_id = e.show_id
+		      WHERE (e.w_watched IS NULL OR e.w_watched = 0)`+rateClause+`
 		 )
 		 SELECT show_id, show_title, id, library_id, kind, title, year, identity_key,
 		        sort_title, added_at, tmdb_id, imdb_id, needs_review, ambiguous, hidden,
 		        season_number, episode_number, episode_label, last_at
-		   FROM candidates
-		  WHERE rn = 1`+libClause+`
+		   FROM picks
+		  WHERE pick_rn = 1
+		    AND NOT (COALESCE(anchor_resume, 0) > 0 AND COALESCE(anchor_watched, 0) = 0)`+libClause+`
 		  ORDER BY last_at DESC, show_id ASC
 		  LIMIT ?`,
 		args...)

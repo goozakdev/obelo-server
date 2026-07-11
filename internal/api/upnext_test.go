@@ -93,43 +93,45 @@ func bearSeason1Episodes(t *testing.T, srv *testharness.Server, token, libID str
 	return showID, eps
 }
 
-// TestUpNextStartsOnInProgress: a Show with an in-progress (mid-band) Episode is
-// "started"; Up Next surfaces that same not-yet-watched Episode (E01) with its
-// Show/episode parent context.
-func TestUpNextStartsOnInProgress(t *testing.T) {
+// TestUpNextExcludesInProgressAnchor: an in-progress (mid-band) Episode is the
+// Show's anchor AND its resume point, but Home's Up Next EXCLUDES it — an
+// in-progress anchor belongs to Continue Watching, so the two Home rows stay
+// disjoint and never list the same Episode (ADR-0028).
+func TestUpNextExcludesInProgressAnchor(t *testing.T) {
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
-	e1, e2 := eps.Episodes[0], eps.Episodes[1]
+	e1 := eps.Episodes[0]
 
 	// Before any watch state, the Show is NOT started → no Up Next.
 	if got := upNextFor(getHome(t, srv, token), showID); got != nil {
 		t.Fatalf("Up Next present before the Show is started: %+v", got)
 	}
 
-	// Report mid-band progress on E01 → it lands in Continue Watching and the Show
-	// is now started. Up Next is the next UNWATCHED episode in order = E01 itself
-	// (it is in progress, not watched).
+	// Report mid-band progress on E01 → it is the in-progress anchor. It lands in
+	// Continue Watching and is kept OUT of Home's Up Next (disjointness).
 	dur := titleDuration(t, srv, token, e1.ID)
 	dec := negotiateEpisode(t, srv, token, e1.ID)
 	postProgress(t, srv, token, dec.SessionID, dur/2, http.StatusOK)
 
 	home := getHome(t, srv, token)
-	un := upNextFor(home, showID)
-	if un == nil {
-		t.Fatalf("Up Next missing after starting the Show; upNext: %+v", home.UpNext)
+	if un := upNextFor(home, showID); un != nil {
+		t.Errorf("Up Next lists the in-progress anchor E01 (%+v); it belongs to Continue Watching only", un)
 	}
-	if un.ID != e1.ID {
-		t.Errorf("Up Next = %q, want E01 (%q); next unwatched in order", un.Title, e1.Title)
+	var inCW bool
+	for i := range home.ContinueWatching {
+		if home.ContinueWatching[i].ID == e1.ID {
+			inCW = true
+		}
 	}
-	if un.Episode == nil || un.Episode.ShowTitle != "The Bear" || un.Episode.SeasonNumber != 1 || un.Episode.EpisodeNumber != 1 {
-		t.Errorf("Up Next parent context = %+v, want The Bear S01E01", un.Episode)
+	if !inCW {
+		t.Errorf("in-progress E01 missing from Continue Watching; cw: %+v", home.ContinueWatching)
 	}
-	_ = e2
 }
 
 // TestUpNextAdvancesOnThresholdCrossing: crossing the ~90% Watched threshold on
-// E01 (the auto path) advances the Show's Up Next to E02.
+// E01 (the auto playback path) makes E01 the watched anchor, so the resume point
+// advances to the next unwatched after it = E02.
 func TestUpNextAdvancesOnThresholdCrossing(t *testing.T) {
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
@@ -138,10 +140,11 @@ func TestUpNextAdvancesOnThresholdCrossing(t *testing.T) {
 
 	dur := titleDuration(t, srv, token, e1.ID)
 	dec := negotiateEpisode(t, srv, token, e1.ID)
-	// Mid first so the Show is started and Up Next = E01, then cross 90%.
+	// Mid first: E01 is the in-progress anchor, so it sits in Continue Watching and
+	// is EXCLUDED from Home's Up Next (ADR-0028 disjointness) until it crosses 90%.
 	postProgress(t, srv, token, dec.SessionID, dur/2, http.StatusOK)
-	if un := upNextFor(getHome(t, srv, token), showID); un == nil || un.ID != e1.ID {
-		t.Fatalf("Up Next before crossing = %+v, want E01", un)
+	if un := upNextFor(getHome(t, srv, token), showID); un != nil {
+		t.Fatalf("Up Next before crossing = %+v, want none (E01 is the in-progress anchor → Continue Watching)", un)
 	}
 
 	out := postProgress(t, srv, token, dec.SessionID, dur-1, http.StatusOK) // ~100% ≥ 90%
@@ -281,5 +284,152 @@ func TestHomeParentContextOnContinueWatching(t *testing.T) {
 	}
 	if ra == nil || ra.Episode == nil || ra.Episode.ShowTitle != "The Bear" {
 		t.Errorf("Recently Added Episode entry missing/incorrect parent context: %+v", ra)
+	}
+}
+
+// playEpisodeToEnd plays an Episode past the ~90% Watched threshold through the
+// real playback path (negotiate → progress), so it becomes a watched anchor
+// carrying played_at — the recency the resume point reads.
+func playEpisodeToEnd(t *testing.T, srv *testharness.Server, token, titleID string) {
+	t.Helper()
+	dur := titleDuration(t, srv, token, titleID)
+	dec := negotiateEpisode(t, srv, token, titleID)
+	out := postProgress(t, srv, token, dec.SessionID, dur-1, http.StatusOK)
+	if !out.Watched {
+		t.Fatalf("episode %s watched = false after playing to the end", titleID)
+	}
+}
+
+// markWatched drives the MANUAL PUT /titles/{id}/watchState toggle (no playback,
+// so it never stamps played_at / moves the anchor).
+func markWatched(t *testing.T, srv *testharness.Server, token, titleID string, watched bool) {
+	t.Helper()
+	if status, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+titleID+"/watchState", token,
+		map[string]any{"watched": watched}, nil); status != http.StatusOK {
+		t.Fatalf("watchState %s (watched=%v) status = %d; body: %s", titleID, watched, status, body)
+	}
+}
+
+// TestUpNextResumesForwardWithWrap: playing E02 without ever playing E01 anchors
+// the resume point on E02, so Up Next offers the next unwatched AFTER it (the
+// deferred Specials) rather than nagging the skipped E01 — which resurfaces
+// exactly once, at the wrap, after the Specials is played too.
+func TestUpNextResumesForwardWithWrap(t *testing.T) {
+	requireTVFixtures(t)
+	srv, token, libID := scanTVLibrary(t)
+	showID, eps := bearSeason1Episodes(t, srv, token, libID)
+	e1, e2 := eps.Episodes[0], eps.Episodes[1]
+
+	// Play E02 to completion; E01 is never played (a deliberate skip).
+	playEpisodeToEnd(t, srv, token, e2.ID)
+	un := upNextFor(getHome(t, srv, token), showID)
+	if un == nil {
+		t.Fatalf("Up Next missing after playing E02; the Specials is still unwatched")
+	}
+	if un.ID == e1.ID {
+		t.Fatalf("Up Next = the skipped E01 (%q); a skip must not be nagged before the wrap", e1.Title)
+	}
+	if un.Episode == nil || un.Episode.SeasonNumber != 0 {
+		t.Errorf("Up Next after E02 = %+v, want the deferred Specials (Season 0)", un.Episode)
+	}
+
+	// Play the Specials too → the anchor moves to it (most recently played). It is
+	// last in Show order, so the resume point WRAPS to the first unwatched = E01.
+	playEpisodeToEnd(t, srv, token, un.ID)
+	un = upNextFor(getHome(t, srv, token), showID)
+	if un == nil {
+		t.Fatalf("Up Next missing after the wrap; the skipped E01 is still unwatched")
+	}
+	if un.ID != e1.ID {
+		t.Errorf("Up Next after wrap = %q, want the once-skipped E01 (%q)", un.Title, e1.Title)
+	}
+}
+
+// TestUpNextAnchorFollowsPlaybackJumpAhead: starting E01 then jumping ahead to
+// play E02 moves the anchor to the most-recently-PLAYED Episode (E02); the resume
+// point advances past the mid-progress E01 (which stays in Continue Watching),
+// keeping the two Home rows disjoint.
+func TestUpNextAnchorFollowsPlaybackJumpAhead(t *testing.T) {
+	requireTVFixtures(t)
+	srv, token, libID := scanTVLibrary(t)
+	showID, eps := bearSeason1Episodes(t, srv, token, libID)
+	e1, e2 := eps.Episodes[0], eps.Episodes[1]
+
+	// Start E01 mid-band (in-progress anchor → Continue Watching, not Up Next).
+	dur := titleDuration(t, srv, token, e1.ID)
+	dec := negotiateEpisode(t, srv, token, e1.ID)
+	postProgress(t, srv, token, dec.SessionID, dur/2, http.StatusOK)
+	if un := upNextFor(getHome(t, srv, token), showID); un != nil {
+		t.Fatalf("Up Next lists in-progress E01: %+v", un)
+	}
+
+	// Jump ahead: play E02 to completion. The anchor follows to E02 (watched); the
+	// resume point is the next unwatched after it (the Specials), NOT the earlier E01.
+	playEpisodeToEnd(t, srv, token, e2.ID)
+	home := getHome(t, srv, token)
+	un := upNextFor(home, showID)
+	if un == nil {
+		t.Fatalf("Up Next missing after jumping ahead to E02")
+	}
+	if un.ID == e1.ID {
+		t.Errorf("Up Next = E01 (%q); the anchor should have followed playback to E02", e1.Title)
+	}
+	if un.Episode == nil || un.Episode.SeasonNumber != 0 {
+		t.Errorf("Up Next after the jump-ahead = %+v, want the deferred Specials", un.Episode)
+	}
+	// E01 stays mid-progress in Continue Watching — disjoint from Up Next.
+	var inCW bool
+	for i := range home.ContinueWatching {
+		if home.ContinueWatching[i].ID == e1.ID {
+			inCW = true
+		}
+	}
+	if !inCW {
+		t.Errorf("E01 dropped from Continue Watching after jumping ahead; cw: %+v", home.ContinueWatching)
+	}
+}
+
+// TestUpNextManualMarkAdvancesWithoutMovingAnchor: after playing E01 (anchor E01,
+// resume point E02), MANUALLY marking E02 watched does not move the anchor but does
+// remove E02 from the unwatched set, so the resume point advances past it to the
+// Specials ("doesn't move the anchor" is not "changes nothing", ADR-0028).
+func TestUpNextManualMarkAdvancesWithoutMovingAnchor(t *testing.T) {
+	requireTVFixtures(t)
+	srv, token, libID := scanTVLibrary(t)
+	showID, eps := bearSeason1Episodes(t, srv, token, libID)
+	e1, e2 := eps.Episodes[0], eps.Episodes[1]
+
+	playEpisodeToEnd(t, srv, token, e1.ID)
+	if un := upNextFor(getHome(t, srv, token), showID); un == nil || un.ID != e2.ID {
+		t.Fatalf("Up Next after playing E01 = %+v, want E02", un)
+	}
+
+	markWatched(t, srv, token, e2.ID, true)
+	un := upNextFor(getHome(t, srv, token), showID)
+	if un == nil {
+		t.Fatalf("Up Next gone after marking E02 watched; the Specials is still unwatched")
+	}
+	if un.ID == e2.ID {
+		t.Errorf("Up Next still = E02 after marking it watched; a mark must advance the next past it")
+	}
+	if un.Episode == nil || un.Episode.SeasonNumber != 0 {
+		t.Errorf("Up Next after marking E02 = %+v, want the deferred Specials", un.Episode)
+	}
+}
+
+// TestUpNextMarksOnlyYieldsFirstUnwatched: a Show touched only by manual marks has
+// no played_at, so it has no anchor and degenerates to first-unwatched — marking a
+// LATER Episode watched never moves the resume point forward.
+func TestUpNextMarksOnlyYieldsFirstUnwatched(t *testing.T) {
+	requireTVFixtures(t)
+	srv, token, libID := scanTVLibrary(t)
+	showID, eps := bearSeason1Episodes(t, srv, token, libID)
+	e1, e2 := eps.Episodes[0], eps.Episodes[1]
+
+	// Mark E02 watched manually (no playback anywhere) → no anchor → first-unwatched.
+	markWatched(t, srv, token, e2.ID, true)
+	un := upNextFor(getHome(t, srv, token), showID)
+	if un == nil || un.ID != e1.ID {
+		t.Fatalf("Up Next for a marks-only Show = %+v, want first-unwatched E01 (%q)", un, e1.Title)
 	}
 }

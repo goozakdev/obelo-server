@@ -72,10 +72,13 @@ type TitleStore interface {
 
 // WatchStateStore is the persistence the progress/watch-state side needs:
 // read-current and write-resume+watched for a (User, Title). *store.DB satisfies
-// it. Kept narrow so progress handling is testable without a live database.
+// it. Kept narrow so progress handling is testable without a live database. The
+// played flag distinguishes the two write paths (ADR-0028): progress reports pass
+// played=true so the write stamps played_at (the Up Next anchor's recency),
+// SetWatchState's manual toggle passes played=false so the anchor never moves.
 type WatchStateStore interface {
 	WatchStateFor(userID, titleID string) (store.WatchState, error)
-	SaveWatchState(userID, titleID string, resumeMs int64, watched bool) error
+	SaveWatchState(userID, titleID string, resumeMs int64, watched, played bool) error
 }
 
 // AudioMemoryStore is the Remembered-audio persistence (audio-streams/05, ADR-0023):
@@ -1147,7 +1150,9 @@ func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, aud
 	// storing the raw position as the resume (best effort) and leave watched as-is.
 	if sess.DurationMs <= 0 {
 		out.ResumePositionMs = positionMs
-		if err := s.watch.SaveWatchState(userID, sess.TitleID, positionMs, cur.Watched); err != nil {
+		// played=true: every write on the progress path stamps played_at, the Up Next
+		// anchor's recency (ADR-0028) — only the manual toggle leaves it untouched.
+		if err := s.watch.SaveWatchState(userID, sess.TitleID, positionMs, cur.Watched, true); err != nil {
 			return ProgressOutcome{}, err
 		}
 		return out, nil
@@ -1159,7 +1164,7 @@ func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, aud
 		// Crossed the ceiling: watched, resume cleared so it leaves Continue Watching.
 		out.Watched = true
 		out.ResumePositionMs = 0
-		if err := s.watch.SaveWatchState(userID, sess.TitleID, 0, true); err != nil {
+		if err := s.watch.SaveWatchState(userID, sess.TitleID, 0, true, true); err != nil {
 			return ProgressOutcome{}, err
 		}
 	case frac < StartedFloor:
@@ -1171,7 +1176,7 @@ func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, aud
 		// flag so re-watching from the middle puts it back in Continue Watching.
 		out.ResumePositionMs = positionMs
 		out.Watched = false
-		if err := s.watch.SaveWatchState(userID, sess.TitleID, positionMs, false); err != nil {
+		if err := s.watch.SaveWatchState(userID, sess.TitleID, positionMs, false, true); err != nil {
 			return ProgressOutcome{}, err
 		}
 	}
@@ -1209,8 +1214,10 @@ func (s *Service) rememberSessionAudioPick(userID string, sess Session, audioStr
 // the watched flag and the resume (a clean "start over"). Last-write-wins.
 func (s *Service) SetWatchState(userID, titleID string, watched bool) error {
 	// Both directions zero the resume: watched means finished, unwatched means
-	// start-over — neither carries a meaningful mid-file offset.
-	return s.watch.SaveWatchState(userID, titleID, 0, watched)
+	// start-over — neither carries a meaningful mid-file offset. played=false: a
+	// manual mark is bookkeeping, not playback, so it never stamps played_at and
+	// never moves the Up Next anchor (ADR-0028).
+	return s.watch.SaveWatchState(userID, titleID, 0, watched, false)
 }
 
 // ReapIdle removes sessions idle past the timeout (the reaper's unit of work),
