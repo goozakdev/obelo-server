@@ -162,7 +162,7 @@ A User role that can manage libraries, trigger scans, change settings, and creat
 A User role that can only browse and play, limited to the libraries granted to them and within their content-rating ceiling. May additionally trigger an on-demand subtitle fetch, which spends the shared provider quota ([ADR-0021](./docs/adr/0021-external-subtitle-fetching-mirrors-enrichment.md)) — the one outward, cost-bearing action a Member has.
 
 **Watch state**:
-Per-(User, Title) playback data: resume position, watched/unwatched, personal rating, the Remembered audio, and the Remembered video. Belongs to the User, never to the Title.
+Per-(User, Title) playback data: resume position, watched/unwatched, when the Title was last *played*, personal rating, the Remembered audio, and the Remembered video. Belongs to the User, never to the Title. "Last played" is deliberately distinct from "last touched": a manual mark-watched changes watched/unwatched but does **not** count as playing, so it never moves the played recency the Up Next anchor reads ([ADR-0028](./docs/adr/0028-up-next-anchors-on-most-recently-played.md)).
 _Avoid_: Progress, History (history is a future, separate concept).
 
 **Remembered audio**:
@@ -178,8 +178,12 @@ Core server constant: crossing ~90% played marks a Title watched (removing it fr
 _Avoid_: Completed.
 
 **Continue Watching / Up Next / Recently Added**:
-Per-User computed views (not stored entities), filtered by the User's library access and rating ceiling. Continue Watching = Titles between the 2% floor and 90% ceiling; Up Next = next unwatched Episode in Show order; Recently Added = Titles with Files added recently.
+Per-User computed views (not stored entities), filtered by the User's library access and rating ceiling. Continue Watching = Titles between the 2% floor and 90% ceiling; Up Next = a Show's **resume point**; Recently Added = Titles with Files added recently.
 _Avoid_: On Deck (Plex's term), Home row.
+
+**Up Next (resume point)**:
+A started Show's next-to-watch Episode, anchored on the Show's most-recently-**played** Episode (see Watch state — a manual mark-watched does not move the anchor): it is that Episode if still in progress, otherwise the next unwatched Episode *after* it in Show order, wrapping to the first unwatched from the start once the end is reached ([ADR-0028](./docs/adr/0028-up-next-anchors-on-most-recently-played.md)). A fully-watched Show has no resume point and drops out. Deliberately **not** the lowest-numbered unwatched Episode: a viewer who skips an Episode or Season is resumed forward from where they last played, not nagged back into the gap (the skipped Episode resurfaces once, at the wrap). The same computation drives both Home's Up Next row (which shows only Shows whose anchor is already watched — an in-progress anchor belongs to Continue Watching, keeping the two rows disjoint) and the Show detail page's next-episode block.
+_Avoid_: Next unwatched (that was the old lowest-unwatched rule), On Deck.
 
 **Content rating**:
 The age/maturity classification of a Title (e.g. PG-13, TV-MA), sourced from metadata.
