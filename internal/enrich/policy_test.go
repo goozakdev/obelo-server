@@ -207,6 +207,66 @@ func TestResolveAuthoritativePointer(t *testing.T) {
 	})
 }
 
+// TestResolveSupplementTriState table-drives the per-provider Supplement tri-state
+// (ADR-0027, issue 05): force-on activates a globally-disabled-but-keyed source,
+// force-off mutes a globally-enabled one, and inherit (slug absent) tracks the
+// global config. Asserted on the effective config's per-provider keys.
+func TestResolveSupplementTriState(t *testing.T) {
+	// Global: TMDB authoritative (keyed+enabled); OMDb enabled+keyed (a live
+	// supplement); TheTVDB DISABLED but keyed (available to force on).
+	global := GlobalEnrichment{
+		Config: ProviderConfig{TMDBAPIKey: "tk", OMDbAPIKey: "ok", MetadataLanguage: "en-US"},
+		Providers: map[string]ProviderState{
+			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
+			SlugOMDb:    {Enabled: true, Keyed: true, APIKey: "ok"},
+			SlugTheTVDB: {Enabled: false, Keyed: true, APIKey: "vk"}, // disabled but keyed
+		},
+	}
+
+	t.Run("force-on a globally-disabled-but-keyed supplement runs it", func(t *testing.T) {
+		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+			SupplementOverrides: map[string]bool{SlugTheTVDB: true},
+		})
+		if res.Config.TheTVDBAPIKey != "vk" {
+			t.Errorf("TheTVDB key = %q, want injected (force-on activates the keyed source)", res.Config.TheTVDBAPIKey)
+		}
+	})
+
+	t.Run("force-off a globally-enabled supplement mutes it", func(t *testing.T) {
+		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
+			SupplementOverrides: map[string]bool{SlugOMDb: false},
+		})
+		if res.Config.OMDbAPIKey != "" {
+			t.Errorf("OMDb key = %q, want cleared (force-off mutes it, zero calls)", res.Config.OMDbAPIKey)
+		}
+		// The authoritative and the rest are untouched.
+		if res.Config.TMDBAPIKey != "tk" {
+			t.Errorf("TMDB key disturbed by an OMDb force-off: %q", res.Config.TMDBAPIKey)
+		}
+	})
+
+	t.Run("inherit (no override) tracks the global config", func(t *testing.T) {
+		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{})
+		if res.Config.OMDbAPIKey != "ok" || res.Config.TheTVDBAPIKey != "" {
+			t.Errorf("effective keys = omdb:%q tvdb:%q, want the global config (omdb on, tvdb off)", res.Config.OMDbAPIKey, res.Config.TheTVDBAPIKey)
+		}
+	})
+
+	t.Run("force-on an UNKEYED supplement stays off (offline-first)", func(t *testing.T) {
+		g := global
+		g.Providers = map[string]ProviderState{
+			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
+			SlugTheTVDB: {Enabled: false, Keyed: false}, // no key on file
+		}
+		res := ResolveLibraryEnrichment(g, store.LibraryEnrichmentPolicy{
+			SupplementOverrides: map[string]bool{SlugTheTVDB: true},
+		})
+		if res.Config.TheTVDBAPIKey != "" {
+			t.Errorf("TheTVDB key = %q, want empty (force-on never conjures a key)", res.Config.TheTVDBAPIKey)
+		}
+	})
+}
+
 // TestResolveSupplementOverrideAuthoritativeNoOp locks in the ADR-0027 invariant
 // that force-OFF of the CURRENT Authoritative provider is a no-op — its off-switch
 // is enrich_enabled=false, not a per-provider toggle. (Issue 05 owns the tri-state

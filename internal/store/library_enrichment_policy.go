@@ -57,32 +57,93 @@ func (db *DB) LibraryEnrichmentPolicy(libraryID string) (LibraryEnrichmentPolicy
 		metadataLanguage sql.NullString
 		authoritative    sql.NullString
 	)
+	var out LibraryEnrichmentPolicy
 	err := db.QueryRow(
 		`SELECT enrich_enabled, metadata_language, authoritative_provider
 		   FROM library_enrichment_policy WHERE library_id = ?`,
 		libraryID).Scan(&enrichEnabled, &metadataLanguage, &authoritative)
-	if errors.Is(err, sql.ErrNoRows) {
-		return LibraryEnrichmentPolicy{}, nil // no row = empty policy = inherit all
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// No scalar-key row — but the Library may still carry per-provider Supplement
+		// overrides (a separate table), so fall through to read those below rather
+		// than returning early.
+	case err != nil:
 		return LibraryEnrichmentPolicy{}, fmt.Errorf("store: reading library enrichment policy: %w", err)
+	default:
+		if enrichEnabled.Valid {
+			v := enrichEnabled.Bool
+			out.EnrichEnabled = &v
+		}
+		if metadataLanguage.Valid {
+			v := metadataLanguage.String
+			out.MetadataLanguage = &v
+		}
+		if authoritative.Valid {
+			v := authoritative.String
+			out.AuthoritativeProvider = &v
+		}
 	}
-	var out LibraryEnrichmentPolicy
-	if enrichEnabled.Valid {
-		v := enrichEnabled.Bool
-		out.EnrichEnabled = &v
+	overrides, err := db.libraryProviderOverrides(libraryID)
+	if err != nil {
+		return LibraryEnrichmentPolicy{}, err
 	}
-	if metadataLanguage.Valid {
-		v := metadataLanguage.String
-		out.MetadataLanguage = &v
-	}
-	if authoritative.Valid {
-		v := authoritative.String
-		out.AuthoritativeProvider = &v
-	}
-	// SupplementOverrides is populated from the per-(Library, provider) override
-	// table in issue 05; until then it stays nil (inherit every provider).
+	out.SupplementOverrides = overrides // nil when the Library has none (inherit all)
 	return out, nil
+}
+
+// libraryProviderOverrides reads a Library's per-provider Supplement tri-state
+// overrides into a slug→forced-enabled map (issue 05). A row present is a
+// deliberate on/off override; a slug ABSENT from the map inherits the provider's
+// global enabled state. Returns a nil map (not an error) when the Library has no
+// overrides — the common "inherit every provider" case.
+func (db *DB) libraryProviderOverrides(libraryID string) (map[string]bool, error) {
+	rows, err := db.Query(
+		`SELECT provider, enabled FROM library_provider_override WHERE library_id = ?`, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading library provider overrides: %w", err)
+	}
+	defer rows.Close()
+	var out map[string]bool
+	for rows.Next() {
+		var (
+			slug    string
+			enabled bool
+		)
+		if err := rows.Scan(&slug, &enabled); err != nil {
+			return nil, fmt.Errorf("store: scanning library provider override: %w", err)
+		}
+		if out == nil {
+			out = map[string]bool{}
+		}
+		out[slug] = enabled
+	}
+	return out, rows.Err()
+}
+
+// SetLibraryProviderOverride sets (or clears) one provider's per-Library Supplement
+// override (issue 05). A nil enabled clears the override back to inherit (deletes
+// the row — row-absence is inherit, never a sentinel); a non-nil value upserts the
+// forced on/off state. The caller (API) validates the slug is a togglable supplement
+// of the Library's kind before calling.
+func (db *DB) SetLibraryProviderOverride(libraryID, provider string, enabled *bool) error {
+	if enabled == nil {
+		if _, err := db.Exec(
+			`DELETE FROM library_provider_override WHERE library_id = ? AND provider = ?`,
+			libraryID, provider); err != nil {
+			return fmt.Errorf("store: clearing library provider override: %w", err)
+		}
+		return nil
+	}
+	if _, err := db.Exec(
+		`INSERT INTO library_provider_override (library_id, provider, enabled, updated_at)
+		      VALUES (?, ?, ?, datetime('now'))
+		 ON CONFLICT(library_id, provider) DO UPDATE SET
+		      enabled    = excluded.enabled,
+		      updated_at = datetime('now')`,
+		libraryID, provider, *enabled); err != nil {
+		return fmt.Errorf("store: setting library provider override: %w", err)
+	}
+	return nil
 }
 
 // SetLibraryEnrichEnabled sets (or clears) the Library's enrich-on/off override.

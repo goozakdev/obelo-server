@@ -250,6 +250,24 @@ func FullProvidersForKind(kind string) []RegistryEntry {
 	return out
 }
 
+// SupplementProvidersForKind returns the providers of a coarse media kind that a
+// Library can force on/off via its per-provider Supplement tri-state (ADR-0027),
+// in registry order: the key-bearing providers (RequiresKey) — the ones the
+// resolver activates/mutes by injecting or clearing a key. Keyless providers
+// (MusicBrainz, Cover Art Archive) have no independent per-Library toggle (their
+// activation rides their authoritative), so they are excluded. The caller removes
+// the current Authoritative provider (its off-switch is enrich_enabled, not a
+// per-provider toggle) before presenting the list.
+func SupplementProvidersForKind(kind string) []RegistryEntry {
+	var out []RegistryEntry
+	for _, e := range registry {
+		if e.RequiresKey && e.serves(kind) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // DefaultAuthoritativeForKind returns the slug of the global default Authoritative
 // provider for a coarse media kind — the Full provider a Library inherits when its
 // authoritative pointer is unset, and the fallback target when a chosen

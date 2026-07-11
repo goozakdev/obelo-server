@@ -169,6 +169,76 @@ func TestLibraryEnrichmentPolicyAuthoritativeRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLibraryProviderOverrideRoundTrip proves the per-provider Supplement tri-state
+// (issue 05) round-trips by ROW PRESENCE: a set row is a forced on/off, clearing
+// deletes the row (inherit), and the overrides surface on the policy read as a map
+// where an absent slug means inherit.
+func TestLibraryProviderOverrideRoundTrip(t *testing.T) {
+	db := openTemp(t)
+	lib := makeLibrary(t, db, "lib-sup", "Docs", "movie")
+
+	// Empty: no overrides on the policy (nil map = inherit every provider).
+	pol, err := db.LibraryEnrichmentPolicy(lib)
+	if err != nil {
+		t.Fatalf("read empty policy: %v", err)
+	}
+	if len(pol.SupplementOverrides) != 0 {
+		t.Errorf("empty SupplementOverrides = %v, want none", pol.SupplementOverrides)
+	}
+
+	// Force OMDb on and TheTVDB off.
+	if err := db.SetLibraryProviderOverride(lib, "omdb", boolPtr(true)); err != nil {
+		t.Fatalf("force omdb on: %v", err)
+	}
+	if err := db.SetLibraryProviderOverride(lib, "thetvdb", boolPtr(false)); err != nil {
+		t.Fatalf("force thetvdb off: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if v, ok := pol.SupplementOverrides["omdb"]; !ok || !v {
+		t.Errorf("omdb override = %v/%v, want forced on", v, ok)
+	}
+	if v, ok := pol.SupplementOverrides["thetvdb"]; !ok || v {
+		t.Errorf("thetvdb override = %v/%v, want forced off", v, ok)
+	}
+	// A provider with no row inherits (absent from the map).
+	if _, ok := pol.SupplementOverrides["fanarttv"]; ok {
+		t.Errorf("fanarttv should be absent (inherit), got a stored override")
+	}
+
+	// Clear OMDb back to inherit: the row is deleted (absent = inherit), leaving
+	// TheTVDB's override intact.
+	if err := db.SetLibraryProviderOverride(lib, "omdb", nil); err != nil {
+		t.Fatalf("clear omdb: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if _, ok := pol.SupplementOverrides["omdb"]; ok {
+		t.Errorf("omdb still present after clear, want inherit (row deleted)")
+	}
+	if v, ok := pol.SupplementOverrides["thetvdb"]; !ok || v {
+		t.Errorf("thetvdb override disturbed by clearing omdb: %v/%v", v, ok)
+	}
+}
+
+// TestLibraryProviderOverrideCascade proves deleting a Library drops its provider
+// override rows (ON DELETE CASCADE).
+func TestLibraryProviderOverrideCascade(t *testing.T) {
+	db := openTemp(t)
+	lib := makeLibrary(t, db, "lib-sup-c", "Docs", "movie")
+	if err := db.SetLibraryProviderOverride(lib, "omdb", boolPtr(false)); err != nil {
+		t.Fatalf("set override: %v", err)
+	}
+	if err := db.DeleteLibrary(lib); err != nil {
+		t.Fatalf("delete library: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM library_provider_override WHERE library_id = ?`, lib).Scan(&n); err != nil {
+		t.Fatalf("count override rows: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("override rows after library delete = %d, want 0 (cascade)", n)
+	}
+}
+
 // TestLibraryEnrichmentPolicyIsolation proves a policy on one Library never leaks
 // into another (other Libraries stay on inherit).
 func TestLibraryEnrichmentPolicyIsolation(t *testing.T) {

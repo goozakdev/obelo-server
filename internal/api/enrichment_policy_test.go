@@ -40,6 +40,23 @@ type enrichmentPolicyView struct {
 		Slug string `json:"slug"`
 		Name string `json:"name"`
 	} `json:"authoritativeCandidates"`
+	Supplements []struct {
+		Slug             string `json:"slug"`
+		Name             string `json:"name"`
+		Override         *bool  `json:"override"`
+		InheritedEnabled bool   `json:"inheritedEnabled"`
+	} `json:"supplements"`
+}
+
+// supplementOverride returns a supplement's stored override (nil = inherit) and
+// whether the supplement appears in the view at all.
+func (v enrichmentPolicyView) supplementOverride(slug string) (override *bool, present bool) {
+	for _, s := range v.Supplements {
+		if s.Slug == slug {
+			return s.Override, true
+		}
+	}
+	return nil, false
 }
 
 func policyPath(libID string) string { return "/api/v1/libraries/" + libID + "/enrichment-policy" }
@@ -305,6 +322,85 @@ func hasCandidate(cands []struct {
 		}
 	}
 	return false
+}
+
+// TestEnrichmentPolicySupplementTriState: the view lists togglable Supplements of
+// the Library's kind (the authoritative excluded) with their inherited state, a
+// Library can force one off and another on without changing the global setting,
+// clearing returns it to inherit, and an invalid slug is rejected — ADR-0027.
+func TestEnrichmentPolicySupplementTriState(t *testing.T) {
+	requireFixtures(t)
+	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
+	srv := testharness.New(t,
+		testharness.WithProviderBuilder(countingBuilder(prov)),
+		testharness.WithEnrichmentKey("tmdb-key"), // TMDB authoritative
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	// OMDb enabled globally (a live supplement); TheTVDB stays disabled (available to
+	// force ON per-Library).
+	putProviders(t, srv, token, map[string]any{"providers": []map[string]any{
+		{"slug": "omdb", "enabled": true, "apiKey": "omdb-key"},
+		{"slug": "thetvdb", "enabled": false, "apiKey": "tvdb-key"},
+	}}, http.StatusOK)
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+
+	// Default view: supplements list the key-bearing video providers EXCEPT the
+	// authoritative (TMDB); each inherits its global enabled state, no override.
+	v := getPolicy(t, srv, token, libID)
+	if _, present := v.supplementOverride("tmdb"); present {
+		t.Errorf("TMDB (the authoritative) must not appear as a togglable supplement")
+	}
+	omdb, ok := v.supplementOverride("omdb")
+	if !ok || omdb != nil {
+		t.Errorf("omdb supplement = override %v present %v, want present + inherit(null)", omdb, ok)
+	}
+	for _, s := range v.Supplements {
+		if s.Slug == "omdb" && !s.InheritedEnabled {
+			t.Errorf("omdb inheritedEnabled = false, want true (enabled globally)")
+		}
+		if s.Slug == "thetvdb" && s.InheritedEnabled {
+			t.Errorf("thetvdb inheritedEnabled = true, want false (disabled globally)")
+		}
+	}
+
+	// Force OMDb OFF and TheTVDB ON for this Library only.
+	v = putPolicy(t, srv, token, libID, map[string]any{
+		"providerOverrides": map[string]any{"omdb": false, "thetvdb": true},
+	}, http.StatusOK)
+	if o, _ := v.supplementOverride("omdb"); o == nil || *o != false {
+		t.Errorf("omdb override = %v, want forced off", o)
+	}
+	if o, _ := v.supplementOverride("thetvdb"); o == nil || *o != true {
+		t.Errorf("thetvdb override = %v, want forced on", o)
+	}
+
+	// The GLOBAL settings are unchanged (the override is per-Library only).
+	var gv struct {
+		Providers []struct {
+			Slug    string `json:"slug"`
+			Enabled bool   `json:"enabled"`
+		} `json:"providers"`
+	}
+	srv.AuthGET("/api/v1/settings/metadata-providers", token, &gv)
+	for _, p := range gv.Providers {
+		if p.Slug == "omdb" && !p.Enabled {
+			t.Errorf("global omdb got disabled by a per-Library force-off")
+		}
+	}
+
+	// Clear OMDb back to inherit.
+	v = putPolicy(t, srv, token, libID, map[string]any{
+		"providerOverrides": map[string]any{"omdb": nil},
+	}, http.StatusOK)
+	if o, _ := v.supplementOverride("omdb"); o != nil {
+		t.Errorf("omdb override after clear = %v, want inherit (null)", o)
+	}
+
+	// A non-supplement slug (MusicBrainz is music; not a video supplement) is 422.
+	putPolicy(t, srv, token, libID, map[string]any{
+		"providerOverrides": map[string]any{"musicbrainz": true},
+	}, http.StatusUnprocessableEntity)
 }
 
 // TestEnrichmentPolicyAdminOnly: the whole surface is Admin-only (Member → 403 on

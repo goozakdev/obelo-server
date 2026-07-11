@@ -3201,6 +3201,20 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   max-width: 12rem;
 }
 
+/* Per-Supplement tri-state rows: the provider name beside its inherit/on/off
+   control, one row per togglable supplement. */
+.policy-supplement-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.25rem 0;
+}
+
+.policy-supplement-name {
+  font-size: 0.9rem;
+}
+
 /* Save bar sticks to the bottom of the viewport so Save is always reachable
    on a long form. */
 .provider-save-bar {

@@ -31,6 +31,13 @@ function enrichEnabledFor(choice: EnrichChoice): boolean | null {
   return choice === "on";
 }
 
+// choiceOfOverride maps a stored tri-state override (null / true / false) to the
+// control's active segment — shared by the enrich toggle and each Supplement.
+function choiceOfOverride(override: boolean | null): EnrichChoice {
+  if (override === null) return "inherit";
+  return override ? "on" : "off";
+}
+
 export default function EnrichmentPolicyDialog({
   library,
   onClose,
@@ -105,6 +112,13 @@ export default function EnrichmentPolicyDialog({
     const next = value === "inherit" ? null : value;
     if (next === policy.authoritativeProvider) return;
     await save({ authoritativeProvider: next });
+  }
+
+  // selectSupplement saves one Supplement's tri-state ("inherit" clears the key).
+  async function selectSupplement(slug: string, choice: EnrichChoice) {
+    if (!policy) return;
+    const next = choice === "inherit" ? null : choice === "on";
+    await save({ providerOverrides: { [slug]: next } });
   }
 
   const current = policy ? choiceOf(policy) : null;
@@ -310,6 +324,57 @@ export default function EnrichmentPolicyDialog({
                   </p>
                 )}
               </div>
+
+              {policy.supplements.length > 0 && (
+                <div className="field" data-testid="supplements-control">
+                  <span className="field-label">Supplements</span>
+                  <p className="field-hint">
+                    Force an individual supplement on or off for this library, or leave
+                    it on <em>Inherit</em> to track the server-wide setting.
+                  </p>
+                  {policy.supplements.map((s) => {
+                    const supChoice = choiceOfOverride(s.override);
+                    return (
+                      <div
+                        key={s.slug}
+                        className="policy-supplement-row"
+                        data-testid={`supplement-${s.slug}`}
+                      >
+                        <span className="policy-supplement-name">{s.name}</span>
+                        <div
+                          className="tri-state"
+                          role="group"
+                          aria-label={`${s.name} for this library`}
+                        >
+                          {(
+                            [
+                              {
+                                value: "inherit" as const,
+                                label: `Inherit (${s.inheritedEnabled ? "On" : "Off"})`,
+                              },
+                              { value: "on" as const, label: "On" },
+                              { value: "off" as const, label: "Off" },
+                            ]
+                          ).map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              className="tri-state-option"
+                              data-testid={`supplement-${s.slug}-${opt.value}`}
+                              data-active={supChoice === opt.value ? "true" : "false"}
+                              aria-pressed={supChoice === opt.value}
+                              disabled={saving}
+                              onClick={() => void selectSupplement(s.slug, opt.value)}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {saveError && (
                 <p className="status status-error" data-testid="enrichment-policy-save-error" role="alert">

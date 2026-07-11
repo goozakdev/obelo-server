@@ -170,6 +170,45 @@ type ProviderRef struct {
 	Name string
 }
 
+// SupplementRef is one togglable Supplement of a Library's kind, with the global
+// enabled state its per-Library tri-state inherits when unset — the per-Supplement
+// control's data (ADR-0027, issue 05). The current Authoritative provider is
+// excluded (its off-switch is enrich_enabled, not a per-provider toggle).
+type SupplementRef struct {
+	Slug             string
+	Name             string
+	InheritedEnabled bool // the provider's server-wide enabled state (the inherit baseline)
+}
+
+// SupplementProviders lists a Library's togglable Supplements for its coarse media
+// kind — the key-bearing providers of the kind EXCEPT the one currently leading
+// (the Authoritative provider) — each with the global enabled state its tri-state
+// inherits. The UI renders an inherit/on/off control per entry; the current
+// override (if any) is read from the stored policy alongside.
+func (m *Manager) SupplementProviders(ctx context.Context, libraryID, kind string) ([]SupplementRef, error) {
+	res, err := m.resolvePolicy(libraryID)
+	if err != nil {
+		return nil, err
+	}
+	var authoritative string
+	if kind == KindMusic {
+		authoritative = DefaultAuthoritativeForKind(KindMusic)
+	} else {
+		authoritative = res.Config.videoAuthoritativeSlug()
+	}
+	m.mu.Lock()
+	providers := m.global.Providers
+	m.mu.Unlock()
+	var out []SupplementRef
+	for _, e := range SupplementProvidersForKind(kind) {
+		if e.Slug == authoritative {
+			continue // the leader isn't a supplement; its off-switch is enrich_enabled
+		}
+		out = append(out, SupplementRef{Slug: e.Slug, Name: e.Name, InheritedEnabled: providers[e.Slug].Enabled})
+	}
+	return out, nil
+}
+
 // EffectiveAuthoritative reports the slug of the Full provider currently LEADING a
 // Library's Enrichment for its coarse media kind (resolving its policy over the
 // current global config), plus any fallback: fallbackFrom names a chosen

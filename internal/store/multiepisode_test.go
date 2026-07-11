@@ -7,7 +7,8 @@ import (
 )
 
 // TestMultiEpisodeIncrementalReuseCollision reproduces the scheduled-scan crash:
-//   store: inserting file "...S04E19-20...": UNIQUE constraint failed: files.id
+//
+//	store: inserting file "...S04E19-20...": UNIQUE constraint failed: files.id
 //
 // A combined-episode file (S04E19-20) resolves to TWO Episode Titles that share
 // one on-disk path. On an incremental rescan the scanner REUSES the stored File

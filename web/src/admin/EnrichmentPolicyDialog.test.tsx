@@ -51,6 +51,10 @@ function policy(over: Partial<EnrichmentPolicy> = {}): EnrichmentPolicy {
       { slug: "tmdb", name: "The Movie Database (TMDB)" },
       { slug: "omdb", name: "OMDb API" },
     ],
+    supplements: [
+      { slug: "omdb", name: "OMDb API", override: null, inheritedEnabled: true },
+      { slug: "thetvdb", name: "TheTVDB", override: null, inheritedEnabled: false },
+    ],
     ...over,
   };
 }
@@ -242,6 +246,65 @@ describe("EnrichmentPolicyDialog", () => {
     const warn = await screen.findByTestId("authoritative-unreachable");
     expect(warn).toHaveTextContent(/no longer\s+usable/);
     expect(warn).toHaveTextContent(/The Movie Database/);
+  });
+
+  it("renders a per-supplement tri-state inheriting by default", async () => {
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const row = await screen.findByTestId("supplement-omdb");
+    expect(within(row).getByTestId("supplement-omdb-inherit")).toHaveAttribute("data-active", "true");
+    expect(within(row).getByTestId("supplement-omdb-inherit")).toHaveTextContent(/Inherit \(On\)/);
+    // TheTVDB inherits Off (disabled globally).
+    expect(
+      within(screen.getByTestId("supplement-thetvdb")).getByTestId("supplement-thetvdb-inherit"),
+    ).toHaveTextContent(/Inherit \(Off\)/);
+  });
+
+  it("forcing a supplement off PUTs providerOverrides", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    updateEnrichmentPolicy.mockResolvedValue(
+      policy({
+        supplements: [
+          { slug: "omdb", name: "OMDb API", override: false, inheritedEnabled: true },
+          { slug: "thetvdb", name: "TheTVDB", override: null, inheritedEnabled: false },
+        ],
+      }),
+    );
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    await screen.findByTestId("supplement-omdb");
+    await user.click(screen.getByTestId("supplement-omdb-off"));
+
+    await waitFor(() =>
+      expect(updateEnrichmentPolicy).toHaveBeenCalledWith("lib1", { providerOverrides: { omdb: false } }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("supplement-omdb-off")).toHaveAttribute("data-active", "true"),
+    );
+  });
+
+  it("forcing a supplement to Inherit clears its override (null)", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(
+      policy({
+        supplements: [
+          { slug: "omdb", name: "OMDb API", override: false, inheritedEnabled: true },
+          { slug: "thetvdb", name: "TheTVDB", override: null, inheritedEnabled: false },
+        ],
+      }),
+    );
+    updateEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("supplement-omdb-off")).toHaveAttribute("data-active", "true"),
+    );
+    await user.click(screen.getByTestId("supplement-omdb-inherit"));
+    await waitFor(() =>
+      expect(updateEnrichmentPolicy).toHaveBeenCalledWith("lib1", { providerOverrides: { omdb: null } }),
+    );
   });
 
   it("Inherit clears the override (enrichEnabled=null) from an overridden state", async () => {

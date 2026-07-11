@@ -1716,6 +1716,16 @@ export interface ProviderRef {
   name: string;
 }
 
+/** One per-Supplement tri-state control (issue 05): the provider, its STORED
+ * override (`null` = inherit; `true`/`false` = forced on/off), and the global
+ * enabled state inheriting resolves to (for the "Inherit (currently On/Off)" label). */
+export interface SupplementControl {
+  slug: string;
+  name: string;
+  override: boolean | null;
+  inheritedEnabled: boolean;
+}
+
 export interface EnrichmentPolicy {
   enrichEnabled: boolean | null;
   inheritedEnrichEnabled: boolean;
@@ -1739,6 +1749,9 @@ export interface EnrichmentPolicy {
   authoritativeUnreachable: string | null;
   /** The dropdown candidates: usable Full providers of the Library's kind (keyed). */
   authoritativeCandidates: ProviderRef[];
+  /** The per-Supplement tri-state controls: one per togglable Supplement of the
+   * Library's kind (the current authoritative excluded). */
+  supplements: SupplementControl[];
 }
 
 /** The `PUT /libraries/{id}/enrichment-policy` body: a partial update. Each key is
@@ -1748,6 +1761,9 @@ export interface UpdateEnrichmentPolicyInput {
   enrichEnabled?: boolean | null;
   metadataLanguage?: string | null;
   authoritativeProvider?: string | null;
+  /** Per-Supplement tri-state partial update: a slug → true/false forces on/off,
+   * → null clears to inherit; a slug ABSENT from the object is unchanged. */
+  providerOverrides?: Record<string, boolean | null>;
 }
 
 /** One subtitle provider in the settings view (subtitles/05, ADR-0021): registry

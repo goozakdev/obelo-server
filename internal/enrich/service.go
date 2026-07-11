@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
 	"github.com/google/uuid"
+	"github.com/marioquake/juicebox/internal/store"
 )
 
 // Store is the persistence the enrich service needs. *store.DB satisfies it; the

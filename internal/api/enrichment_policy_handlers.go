@@ -32,6 +32,7 @@ type EnrichmentPolicyStore interface {
 	SetLibraryEnrichEnabled(libraryID string, enabled *bool) error
 	SetLibraryMetadataLanguage(libraryID string, language *string) error
 	SetLibraryAuthoritativeProvider(libraryID string, slug *string) error
+	SetLibraryProviderOverride(libraryID, provider string, enabled *bool) error
 }
 
 // EnrichmentPolicyResolver derives the per-Library enablement the policy view
@@ -51,6 +52,10 @@ type EnrichmentPolicyResolver interface {
 	// EffectiveAuthoritative reports the slug currently leading a Library's
 	// Enrichment for its kind, plus any fallback (a chosen-but-unreachable slug).
 	EffectiveAuthoritative(ctx context.Context, libraryID, kind string) (slug, fallbackFrom string, err error)
+	// SupplementProviders lists the togglable Supplements of a Library's kind (the
+	// current Authoritative provider excluded), each with the global enabled state
+	// its per-Library tri-state inherits when unset.
+	SupplementProviders(ctx context.Context, libraryID, kind string) ([]enrich.SupplementRef, error)
 }
 
 // --- Wire shapes ------------------------------------------------------------
@@ -84,6 +89,12 @@ type enrichmentPolicyResponse struct {
 	EffectiveAuthoritative   providerRefJSON   `json:"effectiveAuthoritative"`
 	AuthoritativeUnreachable *string           `json:"authoritativeUnreachable"`
 	AuthoritativeCandidates  []providerRefJSON `json:"authoritativeCandidates"`
+
+	// Supplements is the per-provider Supplement tri-state (issue 05): one entry per
+	// togglable Supplement of the Library's kind (the current Authoritative provider
+	// excluded), each carrying its STORED override (null = inherit) and the global
+	// enabled state the unset key tracks live.
+	Supplements []supplementJSON `json:"supplements"`
 }
 
 // providerRefJSON is a provider's stable slug + display name, for the authoritative
@@ -91,6 +102,16 @@ type enrichmentPolicyResponse struct {
 type providerRefJSON struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`
+}
+
+// supplementJSON is one per-Supplement tri-state control's data: the provider, its
+// STORED override (null = inherit; true/false = forced on/off), and the global
+// enabled state inheriting resolves to (for the "Inherit (currently On/Off)" label).
+type supplementJSON struct {
+	Slug             string `json:"slug"`
+	Name             string `json:"name"`
+	Override         *bool  `json:"override"`
+	InheritedEnabled bool   `json:"inheritedEnabled"`
 }
 
 // patchBool is a JSON tri-state that distinguishes an OMITTED key (Present=false,
@@ -146,6 +167,12 @@ type updateEnrichmentPolicyRequest struct {
 	EnrichEnabled         patchBool   `json:"enrichEnabled"`
 	MetadataLanguage      patchString `json:"metadataLanguage"`
 	AuthoritativeProvider patchString `json:"authoritativeProvider"`
+	// ProviderOverrides is the per-Supplement tri-state partial update: a slug mapped
+	// to true/false forces it on/off; a slug mapped to null clears it back to inherit;
+	// a slug ABSENT from the object is unchanged. (A JSON object distinguishes
+	// present-null from absent-key, which a plain map value cannot — so the presence
+	// of the key in the decoded map is the "touch this provider" signal.)
+	ProviderOverrides map[string]*bool `json:"providerOverrides"`
 }
 
 // --- Handlers ---------------------------------------------------------------
@@ -228,6 +255,22 @@ func handleUpdateEnrichmentPolicy(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
+		// Validate every override slug BEFORE writing any, so one bad slug never leaves
+		// a partially-applied update (map iteration order is unspecified).
+		for slug := range req.ProviderOverrides {
+			if !supplementSelectable(lib.Kind, slug) {
+				writeError(w, http.StatusUnprocessableEntity, codeProviderNotAuthoritative,
+					"provider is not a supplement for this library", nil)
+				return
+			}
+		}
+		for slug, enabled := range req.ProviderOverrides {
+			// enabled nil ⇒ clear to inherit (row deleted); non-nil ⇒ forced on/off.
+			if err := deps.EnrichmentPolicy.SetLibraryProviderOverride(id, slug, enabled); err != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
+				return
+			}
+		}
 		// Re-enrich the Library immediately: the app trigger invalidates the Library's
 		// cached effective provider and kicks a background full pass (emitting the usual
 		// enrichProgress SSE). Nil-safe for unit tests without the app wiring.
@@ -278,6 +321,18 @@ func authoritativeSelectable(deps Deps, libraryKind, slug string) bool {
 	}
 	for _, c := range deps.PolicyResolver.UsableFullProviders(coarseKind(libraryKind)) {
 		if c.Slug == slug {
+			return true
+		}
+	}
+	return false
+}
+
+// supplementSelectable reports whether a slug is a togglable Supplement of a
+// Library of the given kind — a key-bearing provider of the coarse kind (the
+// write-side guard mirroring the per-Supplement control list, ADR-0027).
+func supplementSelectable(libraryKind, slug string) bool {
+	for _, e := range enrich.SupplementProvidersForKind(coarseKind(libraryKind)) {
+		if e.Slug == slug {
 			return true
 		}
 	}
@@ -339,6 +394,23 @@ func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (e
 		resp.AuthoritativeCandidates = []providerRefJSON{}
 		for _, c := range deps.PolicyResolver.UsableFullProviders(kind) {
 			resp.AuthoritativeCandidates = append(resp.AuthoritativeCandidates, providerRefJSON{Slug: c.Slug, Name: c.Name})
+		}
+
+		// Per-Supplement tri-state: one entry per togglable Supplement of the kind,
+		// merging the resolver's global-enabled baseline with the stored override.
+		supplements, err := deps.PolicyResolver.SupplementProviders(ctx, id, kind)
+		if err != nil {
+			return enrichmentPolicyResponse{}, err
+		}
+		resp.Supplements = []supplementJSON{}
+		for _, s := range supplements {
+			var override *bool
+			if v, ok := policy.SupplementOverrides[s.Slug]; ok {
+				override = &v
+			}
+			resp.Supplements = append(resp.Supplements, supplementJSON{
+				Slug: s.Slug, Name: s.Name, Override: override, InheritedEnabled: s.InheritedEnabled,
+			})
 		}
 	}
 	return resp, nil
