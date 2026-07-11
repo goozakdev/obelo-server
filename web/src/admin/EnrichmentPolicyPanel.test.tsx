@@ -3,10 +3,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EnrichmentPolicy, Library } from "../api/types";
 
-// EnrichmentPolicyDialog (ADR-0027, slice 01) through the faked API client (the
-// one seam): the enrich on/off tri-state shows inherited-vs-overridden state,
-// selecting Off / Inherit PUTs the right override (false / null), and the view
-// reflects the fresh effective enablement the server returns.
+// EnrichmentPolicyPanel (ADR-0027) — the "Metadata Providers" tab of the Edit-
+// Library dialog — through the faked API client (the one seam): the enrich on/off
+// tri-state, the metadata-language control, the Authoritative-provider dropdown,
+// and the per-Supplement tri-states each show inherited-vs-overridden state and PUT
+// the right partial update, and the view reflects the fresh policy the server
+// returns.
 
 const { getEnrichmentPolicy, updateEnrichmentPolicy } = vi.hoisted(() => ({
   getEnrichmentPolicy: vi.fn(),
@@ -24,7 +26,7 @@ vi.mock("../api/client", async () => {
   };
 });
 
-import EnrichmentPolicyDialog from "./EnrichmentPolicyDialog";
+import EnrichmentPolicyPanel from "./EnrichmentPolicyPanel";
 
 function lib(over: Partial<Library> = {}): Library {
   return {
@@ -71,10 +73,10 @@ beforeEach(() => {
   updateEnrichmentPolicy.mockReset();
 });
 
-describe("EnrichmentPolicyDialog", () => {
+describe("EnrichmentPolicyPanel", () => {
   it("shows the inherited default: Inherit active, Inherited badge, effective enablement", async () => {
     getEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const control = await screen.findByTestId("enrich-enabled-control");
     expect(getEnrichmentPolicy).toHaveBeenCalledWith("lib1", expect.anything());
@@ -97,7 +99,7 @@ describe("EnrichmentPolicyDialog", () => {
     updateEnrichmentPolicy.mockResolvedValue(
       policy({ enrichEnabled: false, effective: { video: false, music: false } }),
     );
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     await screen.findByTestId("enrich-enabled-control");
     await user.click(screen.getByTestId("enrich-enabled-off"));
@@ -114,7 +116,7 @@ describe("EnrichmentPolicyDialog", () => {
 
   it("shows the metadata-language control inheriting by default with the global as placeholder", async () => {
     getEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const control = await screen.findByTestId("metadata-language-control");
     expect(control).toHaveTextContent("Inherited");
@@ -129,7 +131,7 @@ describe("EnrichmentPolicyDialog", () => {
     const user = userEvent.setup();
     getEnrichmentPolicy.mockResolvedValue(policy());
     updateEnrichmentPolicy.mockResolvedValue(policy({ metadataLanguage: "ja-JP" }));
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const input = await screen.findByTestId("metadata-language-input");
     await user.type(input, "ja-JP");
@@ -148,7 +150,7 @@ describe("EnrichmentPolicyDialog", () => {
     const user = userEvent.setup();
     getEnrichmentPolicy.mockResolvedValue(policy({ metadataLanguage: "ja-JP" }));
     updateEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     await waitFor(() =>
       expect(screen.getByTestId("metadata-language-control")).toHaveTextContent("Overridden"),
@@ -166,7 +168,7 @@ describe("EnrichmentPolicyDialog", () => {
   it("a blur with no change to the language makes no request", async () => {
     const user = userEvent.setup();
     getEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const input = await screen.findByTestId("metadata-language-input");
     await user.click(input);
@@ -176,7 +178,7 @@ describe("EnrichmentPolicyDialog", () => {
 
   it("lists the authoritative candidates and inherits by default", async () => {
     getEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const control = await screen.findByTestId("authoritative-control");
     expect(control).toHaveTextContent("Inherited");
@@ -197,7 +199,7 @@ describe("EnrichmentPolicyDialog", () => {
         effectiveAuthoritative: { slug: "omdb", name: "OMDb API" },
       }),
     );
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const select = await screen.findByTestId("authoritative-select");
     await user.selectOptions(select, "omdb");
@@ -218,7 +220,7 @@ describe("EnrichmentPolicyDialog", () => {
       policy({ authoritativeProvider: "omdb", effectiveAuthoritative: { slug: "omdb", name: "OMDb API" } }),
     );
     updateEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     await waitFor(() =>
       expect(screen.getByTestId("authoritative-control")).toHaveTextContent("Overridden"),
@@ -241,7 +243,7 @@ describe("EnrichmentPolicyDialog", () => {
         effectiveAuthoritative: { slug: "tmdb", name: "The Movie Database (TMDB)" },
       }),
     );
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const warn = await screen.findByTestId("authoritative-unreachable");
     expect(warn).toHaveTextContent(/no longer\s+usable/);
@@ -250,7 +252,7 @@ describe("EnrichmentPolicyDialog", () => {
 
   it("renders a per-supplement tri-state inheriting by default", async () => {
     getEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     const row = await screen.findByTestId("supplement-omdb");
     expect(within(row).getByTestId("supplement-omdb-inherit")).toHaveAttribute("data-active", "true");
@@ -272,7 +274,7 @@ describe("EnrichmentPolicyDialog", () => {
         ],
       }),
     );
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     await screen.findByTestId("supplement-omdb");
     await user.click(screen.getByTestId("supplement-omdb-off"));
@@ -296,7 +298,7 @@ describe("EnrichmentPolicyDialog", () => {
       }),
     );
     updateEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     await waitFor(() =>
       expect(screen.getByTestId("supplement-omdb-off")).toHaveAttribute("data-active", "true"),
@@ -313,7 +315,7 @@ describe("EnrichmentPolicyDialog", () => {
       policy({ enrichEnabled: false, effective: { video: false, music: false } }),
     );
     updateEnrichmentPolicy.mockResolvedValue(policy());
-    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+    render(<EnrichmentPolicyPanel library={lib()} />);
 
     // Starts overridden-off.
     await waitFor(() =>

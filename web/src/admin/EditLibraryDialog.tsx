@@ -3,6 +3,7 @@ import { ApiError, apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library } from "../api/types";
 import { LibraryKindIcon, libraryKindLabel } from "../browse/kindIcons";
+import EnrichmentPolicyPanel from "./EnrichmentPolicyPanel";
 
 // The Edit-Library dialog: a native modal <dialog> that lets an Admin correct a
 // Library in place — rename it, add root folders, or delete it — with a Close
@@ -12,12 +13,20 @@ import { LibraryKindIcon, libraryKindLabel } from "../browse/kindIcons";
 // folder immediately. Delete is a two-click danger action (click → confirm) that,
 // on success, closes the dialog and tells the hub the Library is gone.
 //
+// The dialog is TABBED (ADR-0027): a "General" tab carries the rename / add-folder /
+// delete controls, and a "Metadata Providers" tab carries the per-Library Enrichment
+// policy (the EnrichmentPolicyPanel). The policy panel is mounted only when its tab
+// is active, so its policy is fetched when the Admin first opens the tab — not on
+// every Edit-dialog open. Both tabs share the one dialog chrome.
+//
 // The kind is fixed at creation (a Library holds exactly one media kind,
 // CONTEXT.md), so it's shown but not editable. A folder-overlap conflict on Add
 // surfaces as a 409 FOLDER_OVERLAP inline (data-overlap), never a crash — the same
 // posture as create.
 
 const OVERLAP_CODE = "FOLDER_OVERLAP";
+
+type EditLibraryTab = "general" | "metadata-providers";
 
 export default function EditLibraryDialog({
   library,
@@ -37,6 +46,7 @@ export default function EditLibraryDialog({
   // Local view of the Library so the roots list reflects an add immediately; the
   // hub also reloads, but the open dialog shows its own up-to-date copy.
   const [lib, setLib] = useState<Library>(library);
+  const [tab, setTab] = useState<EditLibraryTab>("general");
   const [name, setName] = useState(library.name);
   const [addPath, setAddPath] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -107,6 +117,11 @@ export default function EditLibraryDialog({
     }
   }
 
+  const tabs: { key: EditLibraryTab; label: string }[] = [
+    { key: "general", label: "General" },
+    { key: "metadata-providers", label: "Metadata Providers" },
+  ];
+
   return (
     <dialog
       ref={dialogRef}
@@ -137,121 +152,146 @@ export default function EditLibraryDialog({
           </button>
         </header>
 
-        <div className="library-dialog-body">
-          <div className="field">
-            <label className="field-label" htmlFor="edit-library-name">
-              Name
-            </label>
-            <div className="edit-library-name-row">
-              <input
-                id="edit-library-name"
-                className="field-input"
-                data-testid="edit-library-name-input"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && nameDirty) void onRename();
-                }}
-                disabled={busy}
-              />
+        <div className="edit-item-tablist" role="tablist" aria-label="Edit library sections">
+          {tabs.map((t) => {
+            const selected = t.key === tab;
+            return (
               <button
-                className="nav-link"
+                key={t.key}
+                className={`edit-item-tab${selected ? " is-active" : ""}`}
                 type="button"
-                data-testid="edit-library-save-name"
-                onClick={onRename}
-                disabled={busy || !nameDirty}
+                role="tab"
+                aria-selected={selected}
+                data-testid={`edit-library-tab-${t.key}`}
+                onClick={() => setTab(t.key)}
               >
-                {renaming ? "Saving…" : "Save"}
+                {t.label}
               </button>
-            </div>
-          </div>
+            );
+          })}
+        </div>
 
-          <div className="field">
-            <span className="field-label">Root folders</span>
-            <ul className="edit-library-roots" data-testid="edit-library-roots">
-              {lib.rootFolders.map((root) => (
-                <li key={root.id} className="edit-library-root">
-                  {root.path}
-                </li>
-              ))}
-            </ul>
-            <div className="edit-library-add-row">
-              <input
-                className="field-input"
-                data-testid="edit-library-add-folder-input"
-                type="text"
-                value={addPath}
-                placeholder="/media/movies-4k"
-                onChange={(e) => setAddPath(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && trimmedAddPath) void onAddFolder();
-                }}
-                disabled={busy}
-              />
-              <button
-                className="nav-link"
-                type="button"
-                data-testid="edit-library-add-folder"
-                onClick={onAddFolder}
-                disabled={busy || !trimmedAddPath}
-              >
-                {adding ? "Adding…" : "Add folder"}
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <p
-              className="auth-error"
-              data-testid="edit-library-error"
-              data-overlap={error.overlap ? "true" : undefined}
-              role="alert"
-            >
-              {error.message}
-            </p>
-          )}
-
-          <div className="edit-library-danger">
-            {!confirmingDelete ? (
-              <button
-                className="nav-link nav-link-danger"
-                type="button"
-                data-testid="edit-library-delete"
-                onClick={() => {
-                  setError(null);
-                  setConfirmingDelete(true);
-                }}
-                disabled={busy}
-              >
-                Delete library
-              </button>
-            ) : (
-              <div className="edit-library-confirm">
-                <span className="confirm-prompt">
-                  Delete “{lib.name}” and its catalog? This can’t be undone.
-                </span>
-                <button
-                  className="nav-link nav-link-danger"
-                  type="button"
-                  data-testid="edit-library-delete-confirm"
-                  onClick={onDelete}
-                  disabled={deleting}
-                >
-                  {deleting ? "Deleting…" : "Delete"}
-                </button>
-                <button
-                  className="nav-link"
-                  type="button"
-                  data-testid="edit-library-delete-cancel"
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={deleting}
-                >
-                  Cancel
-                </button>
+        <div className="library-dialog-body" role="tabpanel">
+          {tab === "general" ? (
+            <>
+              <div className="field">
+                <label className="field-label" htmlFor="edit-library-name">
+                  Name
+                </label>
+                <div className="edit-library-name-row">
+                  <input
+                    id="edit-library-name"
+                    className="field-input"
+                    data-testid="edit-library-name-input"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && nameDirty) void onRename();
+                    }}
+                    disabled={busy}
+                  />
+                  <button
+                    className="nav-link"
+                    type="button"
+                    data-testid="edit-library-save-name"
+                    onClick={onRename}
+                    disabled={busy || !nameDirty}
+                  >
+                    {renaming ? "Saving…" : "Save"}
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
+
+              <div className="field">
+                <span className="field-label">Root folders</span>
+                <ul className="edit-library-roots" data-testid="edit-library-roots">
+                  {lib.rootFolders.map((root) => (
+                    <li key={root.id} className="edit-library-root">
+                      {root.path}
+                    </li>
+                  ))}
+                </ul>
+                <div className="edit-library-add-row">
+                  <input
+                    className="field-input"
+                    data-testid="edit-library-add-folder-input"
+                    type="text"
+                    value={addPath}
+                    placeholder="/media/movies-4k"
+                    onChange={(e) => setAddPath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && trimmedAddPath) void onAddFolder();
+                    }}
+                    disabled={busy}
+                  />
+                  <button
+                    className="nav-link"
+                    type="button"
+                    data-testid="edit-library-add-folder"
+                    onClick={onAddFolder}
+                    disabled={busy || !trimmedAddPath}
+                  >
+                    {adding ? "Adding…" : "Add folder"}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <p
+                  className="auth-error"
+                  data-testid="edit-library-error"
+                  data-overlap={error.overlap ? "true" : undefined}
+                  role="alert"
+                >
+                  {error.message}
+                </p>
+              )}
+
+              <div className="edit-library-danger">
+                {!confirmingDelete ? (
+                  <button
+                    className="nav-link nav-link-danger"
+                    type="button"
+                    data-testid="edit-library-delete"
+                    onClick={() => {
+                      setError(null);
+                      setConfirmingDelete(true);
+                    }}
+                    disabled={busy}
+                  >
+                    Delete library
+                  </button>
+                ) : (
+                  <div className="edit-library-confirm">
+                    <span className="confirm-prompt">
+                      Delete “{lib.name}” and its catalog? This can’t be undone.
+                    </span>
+                    <button
+                      className="nav-link nav-link-danger"
+                      type="button"
+                      data-testid="edit-library-delete-confirm"
+                      onClick={onDelete}
+                      disabled={deleting}
+                    >
+                      {deleting ? "Deleting…" : "Delete"}
+                    </button>
+                    <button
+                      className="nav-link"
+                      type="button"
+                      data-testid="edit-library-delete-cancel"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={deleting}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <EnrichmentPolicyPanel library={lib} />
+          )}
         </div>
 
         <footer className="library-dialog-footer library-dialog-footer-end">
