@@ -162,6 +162,8 @@ func setProviderKey(cfg *ProviderConfig, slug, key string) {
 		cfg.OMDbAPIKey = key
 	case SlugTheTVDB:
 		cfg.TheTVDBAPIKey = key
+	case SlugAniDB:
+		cfg.AniDBAPIKey = key
 	case SlugFanartTV:
 		cfg.FanartTVAPIKey = key
 	case SlugTheAudioDB:

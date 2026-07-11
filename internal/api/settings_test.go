@@ -87,8 +87,8 @@ func TestProvidersGetMasksAndAdminOnly(t *testing.T) {
 	}, http.StatusOK)
 
 	v := getProviders(t, srv, token)
-	if len(v.Providers) != 7 {
-		t.Fatalf("got %d providers, want 7 (the registry)", len(v.Providers))
+	if len(v.Providers) != 8 {
+		t.Fatalf("got %d providers, want 8 (the registry)", len(v.Providers))
 	}
 	tmdb := providerBySlug(v, "tmdb")
 	if !tmdb.Enabled || !tmdb.HasKey {

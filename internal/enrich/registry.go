@@ -23,6 +23,7 @@ const (
 	SlugTMDB        = "tmdb"
 	SlugOMDb        = "omdb"
 	SlugTheTVDB     = "thetvdb"
+	SlugAniDB       = "anidb"
 	SlugMusicBrainz = "musicbrainz"
 	SlugCoverArt    = "coverart"
 	SlugFanartTV    = "fanarttv"
@@ -69,6 +70,7 @@ const (
 	registryTMDBImageBaseURL   = "https://image.tmdb.org/t/p/original"
 	registryOMDbBaseURL        = "https://www.omdbapi.com"
 	registryTheTVDBBaseURL     = "https://api4.thetvdb.com/v4"
+	registryAniDBBaseURL       = "http://api.anidb.net:9001/httpapi"
 	registryMusicBrainzBaseURL = "https://musicbrainz.org/ws/2"
 	registryCoverArtBaseURL    = "https://coverartarchive.org"
 	registryFanartTVBaseURL    = "https://webservice.fanart.tv/v3"
@@ -140,6 +142,22 @@ var registry = []RegistryEntry{
 		DefaultBaseURL: registryTheTVDBBaseURL,
 		Description:    "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
 		DocsURL:        "https://thetvdb.com/api-information",
+	},
+	{
+		Slug:  SlugAniDB,
+		Name:  "AniDB",
+		Kinds: []string{KindVideo},
+		// A Full, authoritative-capable anime source. It is NOT the global default
+		// authoritative (TMDB, registered first, is) — AniDB ships globally DISABLED
+		// (no seed row) so it touches no Library until one explicitly points its
+		// Authoritative provider at it (ADR-0027). RequiresKey: the AniDB HTTP API
+		// needs a registered client name, so it is selectable only once configured.
+		Role:           RoleAuthoritative,
+		Class:          ClassFull,
+		RequiresKey:    true,
+		DefaultBaseURL: registryAniDBBaseURL,
+		Description:    "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
+		DocsURL:        "https://wiki.anidb.net/HTTP_API_Definition",
 	},
 	{
 		Slug:           SlugMusicBrainz,
@@ -346,6 +364,7 @@ func SettingsToProviderConfig(rows []store.MetadataProviderRow, language string,
 		TMDBImageBaseURL:     imageBaseURL(SlugTMDB),
 		OMDbBaseURL:          baseURL(SlugOMDb),
 		TheTVDBBaseURL:       baseURL(SlugTheTVDB),
+		AniDBBaseURL:         baseURL(SlugAniDB),
 		MusicBrainzBaseURL:   baseURL(SlugMusicBrainz),
 		CoverArtBaseURL:      baseURL(SlugCoverArt),
 		FanartTVBaseURL:      baseURL(SlugFanartTV),
@@ -359,6 +378,9 @@ func SettingsToProviderConfig(rows []store.MetadataProviderRow, language string,
 	}
 	if active(SlugTheTVDB) {
 		cfg.TheTVDBAPIKey = byslug[SlugTheTVDB].APIKey
+	}
+	if active(SlugAniDB) {
+		cfg.AniDBAPIKey = byslug[SlugAniDB].APIKey
 	}
 	if active(SlugMusicBrainz) {
 		cfg.MusicBrainzEnabled = true

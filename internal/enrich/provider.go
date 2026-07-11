@@ -143,6 +143,7 @@ type TitleRef struct {
 	IMDBID        string
 	MusicbrainzID string
 	TheTVDBID     string // series id for the TheTVDB supplement (show/season/episode)
+	AniDBID       string // anime id for the AniDB provider (not naming-derived; pinned)
 
 	// TV (unused by the Movie slice).
 	SeasonNumber  int

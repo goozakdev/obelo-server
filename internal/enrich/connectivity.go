@@ -47,6 +47,12 @@ func TestConnection(ctx context.Context, slug, apiKey, baseURL, language string)
 	case SlugTheTVDB:
 		provider = NewTheTVDBProvider(apiKey, base)
 		ref = TitleRef{Kind: "show", Title: "Breaking Bad"}
+	case SlugAniDB:
+		// AniDB resolves BY anime id (no name search), so probe a well-known aid
+		// (aid=1) — a normal record OR an unknown-aid no-match both prove the host
+		// answered and the client name was accepted. The apiKey is the client name.
+		provider = NewAniDBProvider(apiKey, base, language)
+		ref = TitleRef{Kind: "show", Title: "Cowboy Bebop", AniDBID: "1"}
 	case SlugMusicBrainz:
 		provider = NewMusicBrainzProvider(base, registryCoverArtBaseURL, language)
 		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"}

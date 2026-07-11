@@ -31,6 +31,14 @@ type ProviderConfig struct {
 	TheTVDBAPIKey  string
 	TheTVDBBaseURL string
 
+	// AniDB — the anime-specialist Full video provider (ADR-0027). Ships globally
+	// disabled, so its key is present here ONLY when a Library leads with it (the
+	// resolver injects it — always-active-if-keyed) or an Admin globally enabled it.
+	// When it leads, it is the video authoritative (AuthoritativeVideo == "anidb");
+	// otherwise a keyed AniDB runs as a fill-only supplement like any other.
+	AniDBAPIKey  string
+	AniDBBaseURL string
+
 	// MetadataLanguage is the preferred language/region for every source.
 	MetadataLanguage string
 
@@ -83,6 +91,8 @@ func (c ProviderConfig) videoProviderKey(slug string) string {
 		return c.OMDbAPIKey
 	case SlugTheTVDB:
 		return c.TheTVDBAPIKey
+	case SlugAniDB:
+		return c.AniDBAPIKey
 	case SlugFanartTV:
 		return c.FanartTVAPIKey
 	default:
@@ -102,6 +112,8 @@ func (c ProviderConfig) newVideoProvider(slug string) MetadataProvider {
 		return NewOMDbProvider(c.OMDbAPIKey, c.OMDbBaseURL)
 	case SlugTheTVDB:
 		return NewTheTVDBProvider(c.TheTVDBAPIKey, c.TheTVDBBaseURL)
+	case SlugAniDB:
+		return NewAniDBProvider(c.AniDBAPIKey, c.AniDBBaseURL, c.MetadataLanguage)
 	case SlugFanartTV:
 		return NewFanartTVProvider(c.FanartTVAPIKey, c.FanartTVBaseURL)
 	default:

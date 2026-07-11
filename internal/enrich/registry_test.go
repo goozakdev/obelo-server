@@ -72,7 +72,7 @@ func TestProviderStatesFromRows(t *testing.T) {
 	rows := []store.MetadataProviderRow{
 		{Slug: SlugTMDB, Enabled: true, APIKey: "tk"},
 		{Slug: SlugOMDb, Enabled: false, APIKey: "ok"}, // disabled but keyed
-		{Slug: SlugTheTVDB, Enabled: true, APIKey: ""},  // enabled but unkeyed
+		{Slug: SlugTheTVDB, Enabled: true, APIKey: ""}, // enabled but unkeyed
 	}
 	states := ProviderStatesFromRows(rows)
 
