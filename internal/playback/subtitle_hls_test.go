@@ -26,7 +26,7 @@ func (f fakeSubStore) TitleByID(id string) (store.TitleDetail, error) {
 func (f fakeSubStore) WatchStateFor(userID, titleID string) (store.WatchState, error) {
 	return store.WatchState{}, nil
 }
-func (f fakeSubStore) SaveWatchState(userID, titleID string, resumeMs int64, watched bool) error {
+func (f fakeSubStore) SaveWatchState(userID, titleID string, resumeMs int64, watched, played bool) error {
 	return nil
 }
 
