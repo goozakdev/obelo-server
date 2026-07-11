@@ -19,6 +19,7 @@ import (
 	"github.com/marioquake/juicebox/internal/config"
 	"github.com/marioquake/juicebox/internal/enrich"
 	"github.com/marioquake/juicebox/internal/events"
+	"github.com/marioquake/juicebox/internal/gpu"
 	"github.com/marioquake/juicebox/internal/library"
 	"github.com/marioquake/juicebox/internal/match"
 	"github.com/marioquake/juicebox/internal/organize"
@@ -93,6 +94,17 @@ type options struct {
 	// test seam for the fetch flow: a black-box test maps settings → a fake
 	// provider, so a fetch drives the whole flow with ZERO network.
 	subtitleProviderBuilder subfetch.BuildFunc
+	// detector overrides the setup-time hardware-accel Detector (default:
+	// transcode.NewDetector). It is the test seam for the transcoding-observability
+	// backend projection: a StaticDetector pins the resolved {active, requested,
+	// reason, degraded} outcome so the degraded/HW-active states can be asserted on
+	// a GPU-less box (the real detector only ever resolves to CPU without hardware).
+	detector transcode.Detector
+	// gpuProbe overrides the best-effort GPU-telemetry probe (default: the
+	// nvidia-smi probe). It is the test seam for the /transcoding gpu block: a fake
+	// returns fixed telemetry or "unavailable" so the endpoint is exercised across
+	// every availability state without a real GPU.
+	gpuProbe gpu.Probe
 }
 
 // WithMetadataProvider overrides the Enrichment MetadataProvider (tests inject a
@@ -117,6 +129,22 @@ func WithArtworkFetcher(f enrich.ArtworkFetcher) Option {
 // the manager stays active and rebuilds from the DB at boot and after each save.
 func WithProviderBuilder(build enrich.BuildFunc) Option {
 	return func(o *options) { o.providerBuilder = build }
+}
+
+// WithDetector overrides the setup-time hardware-accel Detector (default:
+// transcode.NewDetector). Tests inject a transcode.StaticDetector to pin the
+// resolved backend Resolution — the degraded/active/reason projection the
+// /transcoding admin surface reports — deterministically, without a GPU.
+func WithDetector(d transcode.Detector) Option {
+	return func(o *options) { o.detector = d }
+}
+
+// WithGPUProbe overrides the best-effort GPU-telemetry probe (default: the
+// nvidia-smi probe). Tests inject a fake returning fixed telemetry or "unavailable"
+// so the /transcoding gpu block is exercised across NVENC-with-telemetry,
+// NVENC-without-nvidia-smi, and non-NVENC states without a real GPU.
+func WithGPUProbe(p gpu.Probe) Option {
+	return func(o *options) { o.gpuProbe = p }
 }
 
 // WithSubtitleProviderBuilder substitutes the function the subtitle-fetch Manager
@@ -208,10 +236,28 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Governance (ADR-0009): the global concurrent-transcode cap and the HW-accel
 	// knob (off by default → the CPU libx264 path). Direct play and remux stay
 	// unmetered; only the transcode tier is bounded by the cap.
+	// Resolve the hardware-accel backend ONCE at setup (ADR-0009). The full
+	// Resolution — active/requested/reason/degraded — is retained (not just its
+	// Accel) so the admin /transcoding surface (ADR-0029) can project the "did my
+	// GPU config take" story that today lives only in the boot log line. detector
+	// is the real ffmpeg-probing detector unless a test pinned one via WithDetector.
+	detector := o.detector
+	if detector == nil {
+		detector = transcode.NewDetector("")
+	}
+	backendResolution := resolveBackend(detector, cfg.HardwareAccel)
 	playbackSvc := playback.NewService(db, transcode.FFmpeg{}, scratchRoot, playback.Governance{
 		MaxConcurrentTranscodes: cfg.MaxConcurrentTranscodes,
-		Accel:                   resolveAccel(cfg.HardwareAccel),
+		Accel:                   backendResolution.Accel,
 	})
+	// Best-effort GPU-telemetry probe for the admin /transcoding surface (ADR-0029).
+	// Constructed unconditionally (it spawns nothing until queried) but the handler
+	// only samples it when the active backend is NVENC. Tests pin a fake via
+	// WithGPUProbe; production shells out to nvidia-smi behind a short-TTL cache.
+	gpuProbe := o.gpuProbe
+	if gpuProbe == nil {
+		gpuProbe = gpu.NewNvidiaSMIProbe("", 0)
+	}
 
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
@@ -407,6 +453,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Catalog:         catalogSvc,
 		Match:           matchSvc,
 		Playback:        playbackSvc,
+		Backend:         backendResolution,
+		GPU:             gpuProbe,
 		Enrich:          enrichSvc,
 		Organize:        organizeSvc,
 		Events:          broker,
@@ -798,8 +846,8 @@ func (a *App) Close() error {
 	return nil
 }
 
-// resolveAccel turns the operator-facing HardwareAccel knob into the concrete,
-// VALIDATED transcode.Accel the playback Service runs with — the setup-time
+// resolveBackend turns the operator-facing HardwareAccel knob into the concrete,
+// VALIDATED transcode.Resolution the playback Service runs with — the setup-time
 // detection/validation pass (ADR-0009: detection is a setup-time concern, never
 // per-stream). It maps config → the preference (accelFromConfig), then runs the
 // detector ONCE: the preference is validated against the host (encoder present +
@@ -808,19 +856,23 @@ func (a *App) Close() error {
 // take down playback — the server always boots and plays. A bounded context keeps
 // a hung ffmpeg from blocking boot; the probes are sub-second in practice.
 //
+// It returns the FULL Resolution (not just its Accel): the caller keeps the
+// requested/reason/degraded context so the admin /transcoding surface (ADR-0029)
+// can show the "did my GPU config take" story, not just the resolved backend.
+//
 // A single startup log line records the resolution (loudly when an explicitly-
 // configured backend fell back to CPU), so an operator can confirm the GPU is
 // actually being used or see why it isn't.
-func resolveAccel(h config.HWAccel) transcode.Accel {
+func resolveBackend(detector transcode.Detector, h config.HWAccel) transcode.Resolution {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	res := transcode.NewDetector("").Resolve(ctx, accelFromConfig(h))
+	res := detector.Resolve(ctx, accelFromConfig(h))
 	if res.Warn {
 		log.Printf("juicebox: hardware acceleration: WARNING — %s", res.Reason)
 	} else {
 		log.Printf("juicebox: hardware acceleration: %s", res.Reason)
 	}
-	return res.Accel
+	return res
 }
 
 // seedInputFromConfig maps the config provider knobs to enrich.SeedInput — the one

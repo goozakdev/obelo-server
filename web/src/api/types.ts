@@ -1801,3 +1801,52 @@ export interface UpdateSubtitleProvidersInput {
   providers?: SubtitleProviderUpdate[];
   autoFetchLang?: string;
 }
+
+// --- Transcoding observability (ADR-0029) -----------------------------------
+
+/** The resolved Transcode backend block of the /transcoding snapshot (ADR-0009):
+ * the operator's `requested` backend, the validated `active` one in force,
+ * `degraded` (requested hardware but running on CPU — the silent-fallback signal),
+ * and a human-readable `reason`. `active` is always concrete (`cpu`/`nvenc`/`vaapi`
+ * /`qsv`/`videotoolbox`), never `auto`/`off`. The open union tolerates a future
+ * backend the server might report. */
+export interface TranscodingBackend {
+  requested: string;
+  active: "cpu" | "nvenc" | "vaapi" | "qsv" | "videotoolbox" | (string & {});
+  degraded: boolean;
+  reason: string;
+}
+
+/** Live Transcode load (ADR-0009 governance counters): the number of full
+ * transcodes running (`active` — direct play and direct stream carry no load), the
+ * concurrency `cap` (0 = unlimited), and whether the server is at capacity and thus
+ * rejecting new transcodes (always false under an unlimited cap). */
+export interface TranscodingLoad {
+  active: number;
+  cap: number;
+  atCapacity: boolean;
+}
+
+/** Best-effort GPU telemetry (ADR-0029), NVENC-only in v1. Numeric fields are
+ * nullable only in the rare case nvidia-smi reports some columns but not others;
+ * `sampledAt` is the RFC3339 capture time of the (possibly cached) sample, so a
+ * frozen probe shows as an aging "as of Ns ago" stamp. The whole block is `null`
+ * (see TranscodingSnapshot) in every unavailable case. */
+export interface TranscodingGpu {
+  utilizationPct: number | null;
+  vramUsedMb: number | null;
+  vramTotalMb: number | null;
+  encoderSessions: number | null;
+  driverVersion: string | null;
+  sampledAt: string;
+}
+
+/** The `GET /api/v1/transcoding` snapshot (Admin, read-only): a single view of the
+ * transcode subsystem — the resolved backend, live load, and best-effort GPU
+ * telemetry. `gpu` is `null` for every non-NVENC backend, when `nvidia-smi` is
+ * absent, and when the probe errors — one uniform unavailable state. */
+export interface TranscodingSnapshot {
+  backend: TranscodingBackend;
+  load: TranscodingLoad;
+  gpu: TranscodingGpu | null;
+}

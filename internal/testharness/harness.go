@@ -32,7 +32,9 @@ import (
 	"github.com/marioquake/juicebox/internal/auth"
 	"github.com/marioquake/juicebox/internal/config"
 	"github.com/marioquake/juicebox/internal/enrich"
+	"github.com/marioquake/juicebox/internal/gpu"
 	"github.com/marioquake/juicebox/internal/subfetch"
+	"github.com/marioquake/juicebox/internal/transcode"
 	"github.com/google/uuid"
 )
 
@@ -91,6 +93,29 @@ func WithTranscodeCap(n int) Option {
 // still resolve to CPU in the args builder for now.
 func WithHardwareAccel(a config.HWAccel) Option {
 	return func(b *builder) { b.cfg.HardwareAccel = a }
+}
+
+// WithBackendResolution pins the setup-time hardware-accel Resolution (ADR-0009)
+// so the admin /transcoding surface's backend projection — active/requested/
+// reason/degraded — can be asserted deterministically on a GPU-less box. It
+// injects a transcode.StaticDetector, bypassing the real ffmpeg-probing detector
+// (which only ever resolves to CPU without hardware, so it cannot exercise the
+// degraded or hardware-active states). Unlike WithHardwareAccel (which sets the
+// requested config knob and runs the real detector), this fixes the whole outcome.
+func WithBackendResolution(res transcode.Resolution) Option {
+	return func(b *builder) {
+		b.appOpts = append(b.appOpts, app.WithDetector(transcode.StaticDetector{Resolution: res}))
+	}
+}
+
+// WithGPUProbe injects the best-effort GPU-telemetry probe (ADR-0029) so the
+// /transcoding gpu block can be driven across every availability state — populated
+// telemetry, unavailable, and (via a non-NVENC backend) never-queried — without a
+// real GPU, mirroring the encode-probe discipline of detect_test.go.
+func WithGPUProbe(p gpu.Probe) Option {
+	return func(b *builder) {
+		b.appOpts = append(b.appOpts, app.WithGPUProbe(p))
+	}
 }
 
 // WithEnrichmentKey sets the TMDB API key so Enrichment is ENABLED (otherwise it

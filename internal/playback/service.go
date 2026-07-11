@@ -192,6 +192,11 @@ func NewService(s interface {
 // the DELETE without a second lookup path.
 func (s *Service) Sessions() *Manager { return s.sessions }
 
+// TranscodeLoad returns the live transcode-governance snapshot (active count +
+// cap) for the admin /transcoding surface (ADR-0029), delegating to the Manager
+// so the api layer stays out of the counter internals.
+func (s *Service) TranscodeLoad() TranscodeLoad { return s.sessions.TranscodeLoad() }
+
 // Request is a validated playback-negotiation request: the inline Capability
 // profile (device profile + constraints), the resume offset, and an optional
 // explicit Edition. clientId-referenced profiles are deferred (see package doc),

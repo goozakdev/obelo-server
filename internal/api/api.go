@@ -15,6 +15,7 @@ import (
 	"github.com/marioquake/juicebox/internal/catalog"
 	"github.com/marioquake/juicebox/internal/enrich"
 	"github.com/marioquake/juicebox/internal/events"
+	"github.com/marioquake/juicebox/internal/gpu"
 	"github.com/marioquake/juicebox/internal/library"
 	"github.com/marioquake/juicebox/internal/match"
 	"github.com/marioquake/juicebox/internal/organize"
@@ -23,6 +24,7 @@ import (
 	"github.com/marioquake/juicebox/internal/server"
 	"github.com/marioquake/juicebox/internal/store"
 	"github.com/marioquake/juicebox/internal/subfetch"
+	"github.com/marioquake/juicebox/internal/transcode"
 )
 
 // APIPrefix is the version path prefix every route lives under.
@@ -52,7 +54,16 @@ type Deps struct {
 	Catalog  *catalog.Service
 	Match    *match.Service
 	Playback *playback.Service
-	Enrich   *enrich.Service
+	// Backend is the setup-time resolved hardware-accel Resolution (ADR-0009): the
+	// active/requested/reason/degraded story the admin /transcoding surface projects
+	// (ADR-0029). The zero value (CPU, not degraded, empty reason) is a valid state —
+	// it is what a narrow unit test or an `off` config yields.
+	Backend transcode.Resolution
+	// GPU is the best-effort GPU-telemetry probe for /transcoding (ADR-0029). It is
+	// queried ONLY when the active Backend is NVENC; nil (or an unavailable probe)
+	// yields a null gpu block. May be nil in narrow unit tests.
+	GPU    gpu.Probe
+	Enrich *enrich.Service
 	// Organize is the authored-grouping domain (Collections now; Playlists later).
 	Organize *organize.Service
 	// Events is the realtime SSE Broker (ADR-0016): the /events handler subscribes
@@ -242,6 +253,13 @@ func Handler(deps Deps) http.Handler {
 	// collection, POST on the {slug}/test leaf.
 	mux.HandleFunc("/settings/",
 		requireAuth(deps.Auth, requireAdmin(handleSettingsSubtree(deps))))
+
+	// GET /transcoding: the admin-only transcode-observability snapshot (ADR-0029) —
+	// resolved backend (+ its degraded story), live transcode load, and best-effort
+	// GPU telemetry. Read-only; requireAdmin over requireAuth like /settings/. A
+	// non-admin gets 403, not a filtered view.
+	mux.HandleFunc("/transcoding",
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireAdmin(handleTranscoding(deps)))))
 
 	// GET /files/{id}/download: the sessionless direct-file stream behind the
 	// "Open in VLC" affordance. Auth is bearer OR ?token= (an external player on a

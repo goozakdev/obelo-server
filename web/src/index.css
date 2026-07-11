@@ -15,6 +15,7 @@
   --ok: #3ecf8e;
   --error: #f47174;
   --danger: #e5484d;
+  --warn: #e6a23c; /* amber — a standing caution (e.g. a Degraded backend); distinct from --error's failure red */
   --radius: 6px;
   --radius-sm: 4px;
   /* Shared layout metrics so the sticky header and the fixed Now Playing bar can be
@@ -3695,4 +3696,100 @@ textarea.metadata-input {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* --- Transcoding observability (ADR-0029) --------------------------------- */
+/* Read-only admin status panel. Flat wireframe idiom: a hairline card, a
+   headlined active backend, and the Degraded badge as the one loud pixel — the
+   only place lime yields to amber, because a silent CPU fallback is a caution. */
+.transcoding-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.1rem clamp(0.85rem, 2vw, 1.35rem);
+}
+
+.transcoding-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.transcoding-label {
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.transcoding-backend-active {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* Degraded: the requested-hardware-fell-back-to-CPU signal. Amber pill so it
+   reads as a standing caution, not a hard error. */
+.transcoding-badge {
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.transcoding-badge-degraded {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--border));
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+/* Secondary requested/reason lines as a bare definition list. */
+.transcoding-detail {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.transcoding-detail-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.transcoding-detail-row dt {
+  flex: 0 0 5.5rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.transcoding-detail-row dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.transcoding-load-count {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.transcoding-load-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.transcoding-gpu-freshness {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }

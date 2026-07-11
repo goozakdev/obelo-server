@@ -116,6 +116,16 @@ type Detector interface {
 	Resolve(ctx context.Context, pref Accel) Resolution
 }
 
+// StaticDetector is a Detector that always returns a fixed Resolution, ignoring
+// the preference and never touching a GPU. It lets the app be wired against a
+// pinned backend outcome — the test/harness seam for exercising the observability
+// projection (degraded/active/reason) deterministically on a GPU-less CI box,
+// mirroring how the fakeProbe pins encode validation.
+type StaticDetector struct{ Resolution Resolution }
+
+// Resolve implements Detector, returning the pinned Resolution unchanged.
+func (d StaticDetector) Resolve(context.Context, Accel) Resolution { return d.Resolution }
+
 // FFmpegDetector is the production Detector: it validates candidate backends by
 // shelling out to ffmpeg through an encodeProbe, and gates `auto`/the candidate
 // list on the host OS.

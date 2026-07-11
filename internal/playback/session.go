@@ -609,6 +609,25 @@ func (m *Manager) ActiveTranscodes() int {
 	return m.activeTranscodes
 }
 
+// TranscodeLoad is a snapshot of the governance counters (ADR-0009): the live
+// full-transcode count and the configured concurrency cap (0 = unlimited). It is
+// the read accessor the admin /transcoding surface (ADR-0029) projects, so the api
+// layer never reaches into the Manager's private fields.
+type TranscodeLoad struct {
+	Active int
+	Cap    int
+}
+
+// TranscodeLoad returns the current transcode load: the number of full transcodes
+// holding a cap slot and the cap itself (0 = unlimited). Direct play and remux
+// carry no load and are never counted. Read under the lock so the pair is
+// consistent with the reservation path.
+func (m *Manager) TranscodeLoad() TranscodeLoad {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return TranscodeLoad{Active: m.activeTranscodes, Cap: m.transcodeCap}
+}
+
 // SetNow overrides the Manager's clock (tests inject a fake to drive reaping
 // deterministically without real sleeps). Not used in production.
 func (m *Manager) SetNow(now func() time.Time) {

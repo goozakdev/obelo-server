@@ -6,6 +6,7 @@ import AdminDevicesScreen from "../admin/AdminDevicesScreen";
 import AdminUsersScreen from "../admin/AdminUsersScreen";
 import AdminProvidersScreen from "../admin/AdminProvidersScreen";
 import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen";
+import AdminTranscodingScreen from "../admin/AdminTranscodingScreen";
 
 // The /admin hub. Issue 06 built the libraries + scanning view; issue 07 adds the
 // attention surfaces (needs-review / Unmatched / fix-match / overrides) and the
@@ -73,6 +74,13 @@ export default function AdminScreen() {
             >
               Subtitle Providers
             </NavLink>
+            <NavLink
+              to="/admin/transcoding"
+              className="admin-tab"
+              data-testid="admin-tab-transcoding"
+            >
+              Transcoding
+            </NavLink>
           </nav>
 
           <div className="admin-content">
@@ -86,6 +94,7 @@ export default function AdminScreen() {
                 path="subtitles"
                 element={<AdminSubtitleProvidersScreen />}
               />
+              <Route path="transcoding" element={<AdminTranscodingScreen />} />
             </Routes>
           </div>
         </div>

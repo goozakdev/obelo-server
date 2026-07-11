@@ -102,6 +102,7 @@ import type {
   TitleDetailRaw,
   TitlesPage,
   TitlesResponseRaw,
+  TranscodingSnapshot,
   UnmatchedFile,
   UnmatchedFileRaw,
   User,
@@ -1364,6 +1365,14 @@ export class ApiClient {
     });
   }
 
+  /** `GET /api/v1/transcoding` (Admin) — the read-only transcode-observability
+   * snapshot (ADR-0029): the resolved backend (with its degraded story), and — in
+   * later slices — live transcode load and best-effort GPU telemetry. The
+   * Transcoding tab polls this while mounted. A Member gets a 403. */
+  getTranscoding(signal?: AbortSignal): Promise<TranscodingSnapshot> {
+    return this.request<TranscodingSnapshot>("/transcoding", { signal });
+  }
+
   /** `PUT /api/v1/settings/metadata-providers` (Admin) — a PARTIAL update. Per
    * provider `apiKey` omitted = unchanged, "" = clear, non-empty = set;
    * `enabled`/`baseURL` follow the same omit=unchanged rule. On success the server
@@ -1759,6 +1768,7 @@ export type {
   TitlesPage,
   TrackContext,
   TrackSummary,
+  TranscodingSnapshot,
   UnmatchedFile,
   User,
   UserDetail,

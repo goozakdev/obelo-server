@@ -48,3 +48,22 @@ All config is via `JUICEBOX_*` environment variables (see
 
 Pass others (e.g. `JUICEBOX_TMDB_API_KEY`, `JUICEBOX_HARDWARE_ACCEL`,
 `JUICEBOX_SCAN_INTERVAL`) with `-e` as needed.
+
+## GPU telemetry (NVENC)
+
+The admin **Transcoding** tab shows best-effort GPU telemetry (utilization, VRAM,
+encoder sessions, driver version) when `JUICEBOX_HARDWARE_ACCEL=nvenc` resolves to
+an active NVENC backend. It is read by shelling out to `nvidia-smi`, so the
+container needs both the NVIDIA container runtime and the binary on `PATH`:
+
+```sh
+docker run --rm --gpus all -p 8080:8080 \
+  -e JUICEBOX_HARDWARE_ACCEL=nvenc \
+  -v "$PWD/data:/data" \
+  -v /path/to/your/media:/media:ro \
+  juicebox
+```
+
+Without `--gpus all` (or on any non-NVENC backend), the GPU block reads
+"unavailable" — that is expected, not a defect. The rest of the Transcoding tab
+(resolved backend + live load) works regardless.
