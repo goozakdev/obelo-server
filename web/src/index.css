@@ -909,7 +909,7 @@ body {
 
 .detail-overview {
   margin: 0;
-  max-width: 48rem;
+  max-width: 35rem;
   line-height: 1.5;
 }
 
@@ -1397,7 +1397,7 @@ body {
   flex-direction: column;
   gap: 0.5rem;
   margin-top: 0.75rem;
-  max-width: 48rem;
+  max-width: 35rem;
 }
 .resume-point-heading {
   display: flex;
