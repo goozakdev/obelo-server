@@ -41,6 +41,8 @@ function policy(over: Partial<EnrichmentPolicy> = {}): EnrichmentPolicy {
     enrichEnabled: null,
     inheritedEnrichEnabled: true,
     effective: { video: true, music: true },
+    metadataLanguage: null,
+    inheritedMetadataLanguage: "en-US",
     ...over,
   };
 }
@@ -96,6 +98,68 @@ describe("EnrichmentPolicyDialog", () => {
     );
     expect(screen.getByTestId("enrich-enabled-control")).toHaveTextContent("Overridden");
     expect(screen.getByTestId("enrich-effective")).toHaveTextContent(/will not enrich/);
+  });
+
+  it("shows the metadata-language control inheriting by default with the global as placeholder", async () => {
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const control = await screen.findByTestId("metadata-language-control");
+    expect(control).toHaveTextContent("Inherited");
+    const input = within(control).getByTestId("metadata-language-input") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("Inherit (en-US)");
+    // No reset affordance while inheriting.
+    expect(screen.queryByTestId("metadata-language-reset")).toBeNull();
+  });
+
+  it("committing a language PUTs the override and shows Overridden + a reset", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    updateEnrichmentPolicy.mockResolvedValue(policy({ metadataLanguage: "ja-JP" }));
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const input = await screen.findByTestId("metadata-language-input");
+    await user.type(input, "ja-JP");
+    await user.tab(); // blur commits
+
+    await waitFor(() =>
+      expect(updateEnrichmentPolicy).toHaveBeenCalledWith("lib1", { metadataLanguage: "ja-JP" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-language-control")).toHaveTextContent("Overridden"),
+    );
+    expect(screen.getByTestId("metadata-language-reset")).toBeInTheDocument();
+  });
+
+  it("reset-to-inherit clears the language override (metadataLanguage=null)", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(policy({ metadataLanguage: "ja-JP" }));
+    updateEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-language-control")).toHaveTextContent("Overridden"),
+    );
+    await user.click(screen.getByTestId("metadata-language-reset"));
+
+    await waitFor(() =>
+      expect(updateEnrichmentPolicy).toHaveBeenCalledWith("lib1", { metadataLanguage: null }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-language-control")).toHaveTextContent("Inherited"),
+    );
+  });
+
+  it("a blur with no change to the language makes no request", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(policy());
+    render(<EnrichmentPolicyDialog library={lib()} onClose={() => {}} />);
+
+    const input = await screen.findByTestId("metadata-language-input");
+    await user.click(input);
+    await user.tab();
+    expect(updateEnrichmentPolicy).not.toHaveBeenCalled();
   });
 
   it("Inherit clears the override (enrichEnabled=null) from an overridden state", async () => {

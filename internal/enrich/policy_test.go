@@ -6,7 +6,15 @@ import (
 	"github.com/marioquake/juicebox/internal/store"
 )
 
-func boolPtr(b bool) *bool { return &b }
+func boolPtr(b bool) *bool    { return &b }
+func strPtr(s string) *string { return &s }
+
+// withLanguage returns a copy of cfg with its MetadataLanguage replaced — the
+// expected effective config when a Library overrides just its language.
+func withLanguage(cfg ProviderConfig, lang string) ProviderConfig {
+	cfg.MetadataLanguage = lang
+	return cfg
+}
 
 // TestResolveLibraryEnrichment table-drives the resolution derivation the way
 // TestSettingsToProviderConfig / TestBuildProviderComposition are driven: given a
@@ -65,6 +73,41 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 			policy:   store.LibraryEnrichmentPolicy{EnrichEnabled: boolPtr(true)},
 			wantCfg:  unconfigured,
 			wantEnab: Enablement{}, // true ≠ "turn on"; global has no keys
+		},
+		{
+			name:   "metadata_language override localizes just this Library",
+			global: videoAndMusic,
+			policy: store.LibraryEnrichmentPolicy{MetadataLanguage: strPtr("ja-JP")},
+			// Only the language changes; every other field inherits the global config.
+			wantCfg:  withLanguage(videoAndMusic, "ja-JP"),
+			wantEnab: Enablement{Video: true, Music: true},
+		},
+		{
+			name:     "metadata_language unset inherits the global language live",
+			global:   videoAndMusic, // en-US
+			policy:   store.LibraryEnrichmentPolicy{}, // no language override
+			wantCfg:  videoAndMusic,
+			wantEnab: Enablement{Video: true, Music: true},
+		},
+		{
+			name:   "metadata_language override does not enable a kind the global leaves off",
+			global: unconfigured,
+			policy: store.LibraryEnrichmentPolicy{MetadataLanguage: strPtr("fr-FR")},
+			// Language localizes the (still-off) chain; it never turns a kind on.
+			wantCfg:  withLanguage(unconfigured, "fr-FR"),
+			wantEnab: Enablement{},
+		},
+		{
+			name:   "metadata_language override survives an enrich_enabled=false gate",
+			global: videoAndMusic,
+			policy: store.LibraryEnrichmentPolicy{
+				EnrichEnabled:    boolPtr(false),
+				MetadataLanguage: strPtr("de-DE"),
+			},
+			// The language delta is still applied to the carried-through cfg, but the
+			// hard off-switch means no kind enriches (zero calls regardless).
+			wantCfg:  withLanguage(videoAndMusic, "de-DE"),
+			wantEnab: Enablement{},
 		},
 	}
 

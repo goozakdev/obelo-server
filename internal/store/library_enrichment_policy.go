@@ -24,6 +24,11 @@ type LibraryEnrichmentPolicy struct {
 	// enriching (no outbound calls, nothing filed); true forces the Library on
 	// (but still inherits which providers/keys are globally usable).
 	EnrichEnabled *bool
+
+	// MetadataLanguage overrides the server-wide preferred metadata language for
+	// just this Library (issue 02). nil = inherit the global language live; a
+	// non-empty value localizes this Library's Enrichment (a foreign-film library).
+	MetadataLanguage *string
 }
 
 // LibraryEnrichmentPolicy reads a Library's stored policy. A Library with no row
@@ -31,10 +36,13 @@ type LibraryEnrichmentPolicy struct {
 // the zero value with no error (never treated as ErrNotFound; "no overrides" is a
 // valid, common state). The caller validates the Library exists separately.
 func (db *DB) LibraryEnrichmentPolicy(libraryID string) (LibraryEnrichmentPolicy, error) {
-	var enrichEnabled sql.NullBool
+	var (
+		enrichEnabled    sql.NullBool
+		metadataLanguage sql.NullString
+	)
 	err := db.QueryRow(
-		`SELECT enrich_enabled FROM library_enrichment_policy WHERE library_id = ?`,
-		libraryID).Scan(&enrichEnabled)
+		`SELECT enrich_enabled, metadata_language FROM library_enrichment_policy WHERE library_id = ?`,
+		libraryID).Scan(&enrichEnabled, &metadataLanguage)
 	if errors.Is(err, sql.ErrNoRows) {
 		return LibraryEnrichmentPolicy{}, nil // no row = empty policy = inherit all
 	}
@@ -45,6 +53,10 @@ func (db *DB) LibraryEnrichmentPolicy(libraryID string) (LibraryEnrichmentPolicy
 	if enrichEnabled.Valid {
 		v := enrichEnabled.Bool
 		out.EnrichEnabled = &v
+	}
+	if metadataLanguage.Valid {
+		v := metadataLanguage.String
+		out.MetadataLanguage = &v
 	}
 	return out, nil
 }
@@ -69,6 +81,31 @@ func (db *DB) SetLibraryEnrichEnabled(libraryID string, enabled *bool) error {
 		libraryID, val)
 	if err != nil {
 		return fmt.Errorf("store: setting library enrich-enabled: %w", err)
+	}
+	return nil
+}
+
+// SetLibraryMetadataLanguage sets (or clears) the Library's metadata-language
+// override (issue 02). A nil language clears the key back to inherit (stored as
+// NULL); a non-nil value is a deliberate override. Upserts the policy row,
+// touching ONLY the metadata_language column so a coexisting enrich_enabled (or a
+// later authoritative) override on the same row is left intact. Inheritance is
+// NULL, never a sentinel — so clearing is genuinely distinguishable from a set
+// value on read.
+func (db *DB) SetLibraryMetadataLanguage(libraryID string, language *string) error {
+	var val any // nil → SQL NULL (inherit); *string → the deliberate override
+	if language != nil {
+		val = *language
+	}
+	_, err := db.Exec(
+		`INSERT INTO library_enrichment_policy (library_id, metadata_language, updated_at)
+		      VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(library_id) DO UPDATE SET
+		      metadata_language = excluded.metadata_language,
+		      updated_at        = datetime('now')`,
+		libraryID, val)
+	if err != nil {
+		return fmt.Errorf("store: setting library metadata language: %w", err)
 	}
 	return nil
 }

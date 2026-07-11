@@ -1,0 +1,14 @@
+-- 0036_library_enrichment_policy_language: the metadata-language override key of
+-- the per-Library Enrichment policy (ADR-0027, feature slice 02).
+--
+-- A Library may localize its Enrichment to a language distinct from the
+-- server-wide default (a foreign-film library), while the rest of the server
+-- stays on the global language. Like enrich_enabled the column is NULLABLE and
+-- that is load-bearing: NULL (or an absent row) means "inherit the global
+-- metadata language LIVE"; a stored non-empty value is a DELIBERATE override.
+-- Inheritance is NULL/row-absence only — no column ever stores a value meaning
+-- "inherit" (the Model A invariant, ADR-0027).
+--
+-- Additive column on the existing one-row-per-Library table; existing rows read
+-- back NULL (inherit), so no Library's behavior changes.
+ALTER TABLE library_enrichment_policy ADD COLUMN metadata_language TEXT;  -- NULL = inherit

@@ -66,6 +66,60 @@ func TestLibraryEnrichmentPolicyRoundTrip(t *testing.T) {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
+// TestLibraryEnrichmentPolicyLanguageRoundTrip proves the metadata-language key
+// (issue 02) round-trips sparsely and coexists with enrich_enabled on the same row:
+// setting one leaves the other intact, and clearing a key back to inherit is NULL
+// (not a sentinel), so inherit stays distinguishable from a deliberate value.
+func TestLibraryEnrichmentPolicyLanguageRoundTrip(t *testing.T) {
+	db := openTemp(t)
+	lib := makeLibrary(t, db, "lib-lang", "Foreign Film", "movie")
+
+	// Empty policy: language inherits (nil).
+	pol, err := db.LibraryEnrichmentPolicy(lib)
+	if err != nil {
+		t.Fatalf("read empty policy: %v", err)
+	}
+	if pol.MetadataLanguage != nil {
+		t.Errorf("empty policy MetadataLanguage = %q, want nil (inherit)", *pol.MetadataLanguage)
+	}
+
+	// Set a deliberate language override.
+	if err := db.SetLibraryMetadataLanguage(lib, strPtr("ja-JP")); err != nil {
+		t.Fatalf("set metadata_language: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if pol.MetadataLanguage == nil || *pol.MetadataLanguage != "ja-JP" {
+		t.Errorf("MetadataLanguage = %v, want a stored ja-JP", pol.MetadataLanguage)
+	}
+
+	// Setting enrich_enabled on the same Library leaves the language override intact
+	// (the two keys share one row but are written column-independently).
+	if err := db.SetLibraryEnrichEnabled(lib, boolPtr(false)); err != nil {
+		t.Fatalf("set enrich_enabled: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if pol.MetadataLanguage == nil || *pol.MetadataLanguage != "ja-JP" {
+		t.Errorf("language clobbered by an enrich_enabled write: %v", pol.MetadataLanguage)
+	}
+	if pol.EnrichEnabled == nil || *pol.EnrichEnabled != false {
+		t.Errorf("EnrichEnabled = %v, want stored false alongside the language", pol.EnrichEnabled)
+	}
+
+	// Clear the language back to inherit: NULL, and enrich_enabled is untouched.
+	if err := db.SetLibraryMetadataLanguage(lib, nil); err != nil {
+		t.Fatalf("clear metadata_language: %v", err)
+	}
+	pol, _ = db.LibraryEnrichmentPolicy(lib)
+	if pol.MetadataLanguage != nil {
+		t.Errorf("after clear MetadataLanguage = %v, want nil (inherit)", *pol.MetadataLanguage)
+	}
+	if pol.EnrichEnabled == nil || *pol.EnrichEnabled != false {
+		t.Errorf("clearing language disturbed enrich_enabled: %v", pol.EnrichEnabled)
+	}
+}
+
 // TestLibraryEnrichmentPolicyIsolation proves a policy on one Library never leaks
 // into another (other Libraries stay on inherit).
 func TestLibraryEnrichmentPolicyIsolation(t *testing.T) {

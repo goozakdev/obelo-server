@@ -1714,13 +1714,20 @@ export interface EnrichmentPolicy {
   enrichEnabled: boolean | null;
   inheritedEnrichEnabled: boolean;
   effective: { video: boolean; music: boolean };
+  /** The STORED metadata-language override — `null` means inherit (the key tracks
+   * the global language live), so `null`-vs-value reads as inherited-vs-overridden. */
+  metadataLanguage: string | null;
+  /** The global metadata language the unset key tracks live (for labeling the
+   * inherit option and prefilling the field). "" when the server has none set. */
+  inheritedMetadataLanguage: string;
 }
 
 /** The `PUT /libraries/{id}/enrichment-policy` body: a partial update. Each key is
- * OPTIONAL — omitted = unchanged. Sending `enrichEnabled: null` clears it back to
- * inherit; a boolean sets a deliberate override. */
+ * OPTIONAL — omitted = unchanged. Sending a key as `null` clears it back to
+ * inherit; a value sets a deliberate override. */
 export interface UpdateEnrichmentPolicyInput {
   enrichEnabled?: boolean | null;
+  metadataLanguage?: string | null;
 }
 
 /** One subtitle provider in the settings view (subtitles/05, ADR-0021): registry

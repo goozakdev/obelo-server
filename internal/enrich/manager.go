@@ -131,6 +131,15 @@ func (m *Manager) GlobalEnablement() Enablement {
 	return DeriveEnablement(m.globalCfg)
 }
 
+// GlobalMetadataLanguage returns the server-wide preferred metadata language (the
+// base a Library inherits when its language key is unset). The API reports it so
+// the Admin sees what "inherit" resolves to next to the language override control.
+func (m *Manager) GlobalMetadataLanguage() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.globalCfg.MetadataLanguage
+}
+
 // resolveLibrary returns a Library's EFFECTIVE provider + enablement, memoized in
 // libCache. On a miss it reads the Library's policy, resolves it over globalCfg
 // (ResolveLibraryEnrichment), and builds the effective provider through the same

@@ -44,6 +44,8 @@ export default function EnrichmentPolicyDialog({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Draft for the free-text language control; synced from the loaded/updated policy.
+  const [languageDraft, setLanguageDraft] = useState("");
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -54,22 +56,26 @@ export default function EnrichmentPolicyDialog({
     const controller = new AbortController();
     apiClient
       .getEnrichmentPolicy(library.id, controller.signal)
-      .then((p) => setPolicy(p))
+      .then((p) => {
+        setPolicy(p);
+        setLanguageDraft(p.metadataLanguage ?? "");
+      })
       .catch((err) => {
         if (!controller.signal.aborted) setLoadError(errorMessage(err));
       });
     return () => controller.abort();
   }, [library.id]);
 
-  async function select(choice: EnrichChoice) {
-    if (saving || !policy || choice === choiceOf(policy)) return;
+  // save applies one partial update, refreshes the view, and re-syncs the language
+  // draft to whatever the server stored (so a normalized/cleared value shows).
+  async function save(input: Parameters<typeof apiClient.updateEnrichmentPolicy>[1]) {
+    if (saving || !policy) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const updated = await apiClient.updateEnrichmentPolicy(library.id, {
-        enrichEnabled: enrichEnabledFor(choice),
-      });
+      const updated = await apiClient.updateEnrichmentPolicy(library.id, input);
       setPolicy(updated);
+      setLanguageDraft(updated.metadataLanguage ?? "");
     } catch (err) {
       setSaveError(errorMessage(err));
     } finally {
@@ -77,8 +83,25 @@ export default function EnrichmentPolicyDialog({
     }
   }
 
+  async function select(choice: EnrichChoice) {
+    if (!policy || choice === choiceOf(policy)) return;
+    await save({ enrichEnabled: enrichEnabledFor(choice) });
+  }
+
+  // commitLanguage saves the draft as an override (a blank draft clears to inherit).
+  // A no-op when the draft already equals the stored value, so a blur without a
+  // change makes no request.
+  async function commitLanguage() {
+    if (!policy) return;
+    const trimmed = languageDraft.trim();
+    const next = trimmed === "" ? null : trimmed;
+    if (next === policy.metadataLanguage) return;
+    await save({ metadataLanguage: next });
+  }
+
   const current = policy ? choiceOf(policy) : null;
   const overridden = policy ? policy.enrichEnabled !== null : false;
+  const languageOverridden = policy ? policy.metadataLanguage !== null : false;
 
   return (
     <dialog
@@ -125,58 +148,111 @@ export default function EnrichmentPolicyDialog({
           )}
 
           {policy && (
-            <div className="field" data-testid="enrich-enabled-control">
-              <div className="policy-control-label">
-                <span className="field-label">Enrich this library</span>
-                <span
-                  className="policy-override-badge"
-                  data-overridden={overridden ? "true" : "false"}
-                >
-                  {overridden ? "Overridden" : "Inherited"}
-                </span>
-              </div>
-              <div className="tri-state" role="group" aria-label="Enrich this library">
-                {(
-                  [
-                    {
-                      value: "inherit" as const,
-                      label: `Inherit (currently ${policy.inheritedEnrichEnabled ? "On" : "Off"})`,
-                    },
-                    { value: "on" as const, label: "On" },
-                    { value: "off" as const, label: "Off" },
-                  ]
-                ).map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className="tri-state-option"
-                    data-testid={`enrich-enabled-${opt.value}`}
-                    data-active={current === opt.value ? "true" : "false"}
-                    aria-pressed={current === opt.value}
-                    disabled={saving}
-                    onClick={() => select(opt.value)}
+            <>
+              <div className="field" data-testid="enrich-enabled-control">
+                <div className="policy-control-label">
+                  <span className="field-label">Enrich this library</span>
+                  <span
+                    className="policy-override-badge"
+                    data-overridden={overridden ? "true" : "false"}
                   >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <p className="field-hint" data-testid="enrich-effective">
-                {policy.effective.video || policy.effective.music
-                  ? `This library will enrich (${[
-                      policy.effective.video ? "video" : null,
-                      policy.effective.music ? "music" : null,
+                    {overridden ? "Overridden" : "Inherited"}
+                  </span>
+                </div>
+                <div className="tri-state" role="group" aria-label="Enrich this library">
+                  {(
+                    [
+                      {
+                        value: "inherit" as const,
+                        label: `Inherit (currently ${policy.inheritedEnrichEnabled ? "On" : "Off"})`,
+                      },
+                      { value: "on" as const, label: "On" },
+                      { value: "off" as const, label: "Off" },
                     ]
-                      .filter(Boolean)
-                      .join(" + ")}).`
-                  : "This library will not enrich — no outbound calls are made."}
-              </p>
+                  ).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className="tri-state-option"
+                      data-testid={`enrich-enabled-${opt.value}`}
+                      data-active={current === opt.value ? "true" : "false"}
+                      aria-pressed={current === opt.value}
+                      disabled={saving}
+                      onClick={() => select(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="field-hint" data-testid="enrich-effective">
+                  {policy.effective.video || policy.effective.music
+                    ? `This library will enrich (${[
+                        policy.effective.video ? "video" : null,
+                        policy.effective.music ? "music" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" + ")}).`
+                    : "This library will not enrich — no outbound calls are made."}
+                </p>
+              </div>
+
+              <div className="field" data-testid="metadata-language-control">
+                <div className="policy-control-label">
+                  <span className="field-label">Metadata language</span>
+                  <span
+                    className="policy-override-badge"
+                    data-overridden={languageOverridden ? "true" : "false"}
+                  >
+                    {languageOverridden ? "Overridden" : "Inherited"}
+                  </span>
+                </div>
+                <div className="policy-language-row">
+                  <input
+                    type="text"
+                    className="field-input"
+                    data-testid="metadata-language-input"
+                    aria-label="Metadata language"
+                    value={languageDraft}
+                    disabled={saving}
+                    placeholder={
+                      policy.inheritedMetadataLanguage
+                        ? `Inherit (${policy.inheritedMetadataLanguage})`
+                        : "Inherit (server default)"
+                    }
+                    onChange={(e) => setLanguageDraft(e.target.value)}
+                    onBlur={() => void commitLanguage()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void commitLanguage();
+                      }
+                    }}
+                  />
+                  {languageOverridden && (
+                    <button
+                      type="button"
+                      className="nav-link"
+                      data-testid="metadata-language-reset"
+                      disabled={saving}
+                      onClick={() => void save({ metadataLanguage: null })}
+                    >
+                      Reset to inherit
+                    </button>
+                  )}
+                </div>
+                <p className="field-hint">
+                  A language/region code (e.g. <code>en-US</code>, <code>ja-JP</code>).
+                  Leave blank to inherit the server-wide language.
+                </p>
+              </div>
+
               {saveError && (
                 <p className="status status-error" data-testid="enrichment-policy-save-error" role="alert">
                   <span className="dot dot-error" aria-hidden="true" />
                   {saveError}
                 </p>
               )}
-            </div>
+            </>
           )}
         </div>
 

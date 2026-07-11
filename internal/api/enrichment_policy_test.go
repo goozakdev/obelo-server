@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/marioquake/juicebox/internal/enrich"
@@ -23,6 +24,8 @@ type enrichmentPolicyView struct {
 		Video bool `json:"video"`
 		Music bool `json:"music"`
 	} `json:"effective"`
+	MetadataLanguage          *string `json:"metadataLanguage"`
+	InheritedMetadataLanguage string  `json:"inheritedMetadataLanguage"`
 }
 
 func policyPath(libID string) string { return "/api/v1/libraries/" + libID + "/enrichment-policy" }
@@ -141,6 +144,75 @@ func TestEnrichmentPolicyDisableStopsEnrichment(t *testing.T) {
 	waitFor(t, "cleared policy re-enrich to re-match Dune", func() bool {
 		return getEnrichedDetail(t, srv, token, duneID).EnrichmentStatus == "matched"
 	})
+}
+
+// TestEnrichmentPolicyLanguageOverride: a Library can override its metadata
+// language distinct from the server-wide default; the view reports the stored
+// override + inherited language, the override reaches the composed provider on the
+// immediate re-enrich, and clearing it tracks the global language again.
+func TestEnrichmentPolicyLanguageOverride(t *testing.T) {
+	requireFixtures(t)
+
+	// A builder that records the metadata language it was asked to compose with, so
+	// the test can assert the per-Library override actually reached the chain.
+	var (
+		mu   sync.Mutex
+		seen []string
+	)
+	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
+	recording := func(cfg enrich.ProviderConfig) (enrich.MetadataProvider, enrich.Enablement) {
+		mu.Lock()
+		seen = append(seen, cfg.MetadataLanguage)
+		mu.Unlock()
+		return enrich.CompositeProvider{Video: prov, Music: prov}, enrich.DeriveEnablement(cfg)
+	}
+	sawLanguage := func(lang string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, l := range seen {
+			if l == lang {
+				return true
+			}
+		}
+		return false
+	}
+
+	srv := testharness.New(t,
+		testharness.WithProviderBuilder(recording),
+		testharness.WithEnrichmentKey("test-key"), // video enabled globally (en-US default)
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+	scanLib(t, srv, token, libID, "")
+
+	// Default: language inherits (null), inherited value is the server default.
+	v := getPolicy(t, srv, token, libID)
+	if v.MetadataLanguage != nil {
+		t.Errorf("default metadataLanguage = %q, want null (inherit)", *v.MetadataLanguage)
+	}
+	if v.InheritedMetadataLanguage != "en-US" {
+		t.Errorf("inheritedMetadataLanguage = %q, want en-US", v.InheritedMetadataLanguage)
+	}
+
+	// Override to ja-JP: the stored value round-trips and the immediate re-enrich
+	// composes the chain in that language.
+	v = putPolicy(t, srv, token, libID, map[string]any{"metadataLanguage": "ja-JP"}, http.StatusOK)
+	if v.MetadataLanguage == nil || *v.MetadataLanguage != "ja-JP" {
+		t.Errorf("after override metadataLanguage = %v, want ja-JP", v.MetadataLanguage)
+	}
+	waitFor(t, "the re-enrich to compose in the overridden language", func() bool {
+		return sawLanguage("ja-JP")
+	})
+
+	// Clear back to inherit: null, and the inherited value still tracks the global.
+	cleared := putPolicy(t, srv, token, libID, map[string]any{"metadataLanguage": nil}, http.StatusOK)
+	if cleared.MetadataLanguage != nil {
+		t.Errorf("after clear metadataLanguage = %v, want null (inherit)", cleared.MetadataLanguage)
+	}
+	if cleared.InheritedMetadataLanguage != "en-US" {
+		t.Errorf("inheritedMetadataLanguage after clear = %q, want en-US", cleared.InheritedMetadataLanguage)
+	}
 }
 
 // TestEnrichmentPolicyAdminOnly: the whole surface is Admin-only (Member → 403 on

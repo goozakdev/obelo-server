@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/marioquake/juicebox/internal/enrich"
 	"github.com/marioquake/juicebox/internal/store"
@@ -29,6 +30,7 @@ type EnrichmentPolicyStore interface {
 	LibraryByID(id string) (store.Library, error)
 	LibraryEnrichmentPolicy(libraryID string) (store.LibraryEnrichmentPolicy, error)
 	SetLibraryEnrichEnabled(libraryID string, enabled *bool) error
+	SetLibraryMetadataLanguage(libraryID string, language *string) error
 }
 
 // EnrichmentPolicyResolver derives the per-Library enablement the policy view
@@ -38,6 +40,10 @@ type EnrichmentPolicyStore interface {
 type EnrichmentPolicyResolver interface {
 	EffectiveEnablement(ctx context.Context, libraryID string) (enrich.Enablement, error)
 	GlobalEnablement() enrich.Enablement
+	// GlobalMetadataLanguage is the server-wide preferred metadata language the
+	// language key inherits when unset — reported so the UI can label the inherit
+	// option with what "inherit" currently resolves to.
+	GlobalMetadataLanguage() string
 }
 
 // --- Wire shapes ------------------------------------------------------------
@@ -52,6 +58,12 @@ type enrichmentPolicyResponse struct {
 	EnrichEnabled          *bool          `json:"enrichEnabled"`
 	InheritedEnrichEnabled bool           `json:"inheritedEnrichEnabled"`
 	Effective              enablementJSON `json:"effective"`
+	// MetadataLanguage is the STORED language override (null = inherit; the UI reads
+	// null-vs-value as inherited-vs-overridden). InheritedMetadataLanguage is the
+	// global language the unset key tracks live, so the UI can label "Inherit
+	// (currently en-US)" and prefill the field.
+	MetadataLanguage          *string `json:"metadataLanguage"`
+	InheritedMetadataLanguage string  `json:"inheritedMetadataLanguage"`
 }
 
 // patchBool is a JSON tri-state that distinguishes an OMITTED key (Present=false,
@@ -78,11 +90,34 @@ func (p *patchBool) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// updateEnrichmentPolicyRequest is the PUT body. Each key is a patchBool so a
-// client can set it, clear it to inherit (null), or omit it (unchanged) — the
-// sparse-override contract. Later slices add the language / authoritative keys.
+// patchString is the string analogue of patchBool: it distinguishes an OMITTED
+// key (Present=false, leave unchanged) from an explicit null (clear back to
+// inherit) from a set value. Used for the metadata_language override.
+type patchString struct {
+	Present bool
+	Value   *string
+}
+
+func (p *patchString) UnmarshalJSON(data []byte) error {
+	p.Present = true
+	if string(data) == "null" {
+		p.Value = nil
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	p.Value = &s
+	return nil
+}
+
+// updateEnrichmentPolicyRequest is the PUT body. Each key is a patch* tri-state so
+// a client can set it, clear it to inherit (null), or omit it (unchanged) — the
+// sparse-override contract. Later slices add the authoritative key.
 type updateEnrichmentPolicyRequest struct {
-	EnrichEnabled patchBool `json:"enrichEnabled"`
+	EnrichEnabled    patchBool   `json:"enrichEnabled"`
+	MetadataLanguage patchString `json:"metadataLanguage"`
 }
 
 // --- Handlers ---------------------------------------------------------------
@@ -133,6 +168,18 @@ func handleUpdateEnrichmentPolicy(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
+		if req.MetadataLanguage.Present {
+			// A blank language is meaningless as an override (it can't localize anything)
+			// and would blur "inherit" vs. "deliberately none" — normalize it to a clear.
+			lang := req.MetadataLanguage.Value
+			if lang != nil && strings.TrimSpace(*lang) == "" {
+				lang = nil
+			}
+			if err := deps.EnrichmentPolicy.SetLibraryMetadataLanguage(id, lang); err != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
+				return
+			}
+		}
 		// Re-enrich the Library immediately: the app trigger invalidates the Library's
 		// cached effective provider and kicks a background full pass (emitting the usual
 		// enrichProgress SSE). Nil-safe for unit tests without the app wiring.
@@ -172,7 +219,10 @@ func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (e
 	if err != nil {
 		return enrichmentPolicyResponse{}, err
 	}
-	resp := enrichmentPolicyResponse{EnrichEnabled: policy.EnrichEnabled}
+	resp := enrichmentPolicyResponse{
+		EnrichEnabled:    policy.EnrichEnabled,
+		MetadataLanguage: policy.MetadataLanguage,
+	}
 	if deps.PolicyResolver != nil {
 		eff, err := deps.PolicyResolver.EffectiveEnablement(ctx, id)
 		if err != nil {
@@ -183,6 +233,7 @@ func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (e
 		// "Enrich this library" resolves on/off; inheriting it means "enrich iff the
 		// server enriches any kind" (the global baseline the unset key tracks live).
 		resp.InheritedEnrichEnabled = global.Video || global.Music
+		resp.InheritedMetadataLanguage = deps.PolicyResolver.GlobalMetadataLanguage()
 	}
 	return resp, nil
 }

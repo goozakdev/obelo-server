@@ -22,19 +22,34 @@ import "github.com/marioquake/juicebox/internal/store"
 // provider pointer (always-active-if-keyed, kind-constrained, unreachable
 // fallback), and the per-provider Supplement tri-state.
 func ResolveLibraryEnrichment(global ProviderConfig, policy store.LibraryEnrichmentPolicy) (ProviderConfig, Enablement) {
+	// Start from the global config and layer the sparse overrides. Only the deltas
+	// the policy actually sets change; every unset key inherits the global config
+	// LIVE (Model A) — an empty policy leaves cfg byte-for-byte equal to global.
+	cfg := global
+
+	// Metadata-language override (issue 02): a Library may localize its Enrichment
+	// to a language distinct from the server-wide default; unset inherits the global
+	// language live. The language threads into every provider constructor at build
+	// time, so overriding it here re-localizes the whole effective chain. It is
+	// applied regardless of enrich_enabled (harmless when off — no calls are made),
+	// so the disabled branch below still returns the same cfg.
+	if policy.MetadataLanguage != nil {
+		cfg.MetadataLanguage = *policy.MetadataLanguage
+	}
+
 	// enrich_enabled=false is the ONLY hard off-switch for a Library (ADR-0027):
 	// no chain runs and no outbound call is made. The service gates every fetch on
 	// Enablement, so an all-off Enablement guarantees zero traffic for the Library
-	// regardless of what keys the global config still holds. The config itself is
+	// regardless of what keys the effective config still holds. The config itself is
 	// carried through unchanged (nothing reads it while both kinds are off), so
 	// "inherit vs. deliberately-off" stays a single-key decision, not a config edit.
 	if policy.EnrichEnabled != nil && !*policy.EnrichEnabled {
-		return global, Enablement{}
+		return cfg, Enablement{}
 	}
 	// Empty policy (or enrich_enabled explicitly true): inherit the global config
 	// LIVE. enrich_enabled=true is the absence of the off-switch, NOT a command to
 	// enrich — it still inherits which kinds the global config actually enables, so
 	// a globally-unconfigured kind stays off (the Authoritative-provider pointer,
 	// added in a later slice, is what makes a specific Full provider lead).
-	return global, DeriveEnablement(global)
+	return cfg, DeriveEnablement(cfg)
 }

@@ -3188,6 +3188,19 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   cursor: default;
 }
 
+/* The metadata-language override: a free-text code input beside a reset-to-inherit
+   link, so an overridden Library can be cleared back to the global language. */
+.policy-language-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.35rem 0;
+}
+
+.policy-language-row .field-input {
+  max-width: 12rem;
+}
+
 /* Save bar sticks to the bottom of the viewport so Save is always reachable
    on a long form. */
 .provider-save-bar {
