@@ -7,6 +7,7 @@ import { useInfiniteScrollSentinel } from "./useInfiniteScrollSentinel";
 
 let lastCb: IntersectionObserverCallback | null = null;
 const observe = vi.fn();
+const unobserve = vi.fn();
 const disconnect = vi.fn();
 
 class MockIO implements IntersectionObserver {
@@ -19,7 +20,9 @@ class MockIO implements IntersectionObserver {
   observe(el: Element) {
     observe(el);
   }
-  unobserve() {}
+  unobserve(el: Element) {
+    unobserve(el);
+  }
   disconnect() {
     disconnect();
   }
@@ -38,6 +41,7 @@ function fireIntersect(target: Element) {
 beforeEach(() => {
   lastCb = null;
   observe.mockReset();
+  unobserve.mockReset();
   disconnect.mockReset();
   vi.stubGlobal("IntersectionObserver", MockIO);
 });
@@ -87,5 +91,26 @@ describe("useInfiniteScrollSentinel", () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(first).not.toHaveBeenCalled();
     expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("re-delivers the current intersection when reobserveKey changes (keeps loading while the sentinel stays on-screen)", () => {
+    // A freshly-loaded page that doesn't push the sentinel off-screen leaves it
+    // still intersecting; IntersectionObserver only fires on transitions, so
+    // without a re-observe it would stall. Bumping reobserveKey (the loaded item
+    // count) must unobserve→observe the same node so the observer re-evaluates.
+    const onMore = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ key }: { key: number }) => useInfiniteScrollSentinel(onMore, key),
+      { initialProps: { key: 20 } },
+    );
+    const node = document.createElement("div");
+    result.current(node); // sentinel mounts
+    observe.mockClear();
+    unobserve.mockClear();
+
+    rerender({ key: 40 }); // a page settled; content grew but sentinel didn't move
+
+    expect(unobserve).toHaveBeenCalledWith(node);
+    expect(observe).toHaveBeenCalledWith(node);
   });
 });

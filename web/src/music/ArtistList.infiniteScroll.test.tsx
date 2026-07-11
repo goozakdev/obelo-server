@@ -133,4 +133,56 @@ describe("ArtistList infinite scroll", () => {
     // No more pages → the end marker shows.
     expect(screen.getByTestId("grid-end")).toHaveTextContent("That's everything.");
   });
+
+  it("keeps loading pages while the sentinel stays on-screen, with no manual scroll", async () => {
+    // Reproduces the reported bug: a big library on a wide window. A real
+    // IntersectionObserver fires only on intersection *transitions*, so once the
+    // first page or two load and the sentinel is STILL in view (the short grid
+    // didn't overflow the viewport), nothing re-fires and the list stalls at 40.
+    // AlwaysInViewObserver models a sentinel that never leaves the viewport: every
+    // observe() delivers isIntersecting:true (exactly as the real observer
+    // re-delivers current state when a target is observed). On the pre-fix hook —
+    // which attached the observer once and never re-observed — this stalls at 40;
+    // the reobserveKey re-observe makes all three pages load untouched.
+    class AlwaysInViewObserver implements IntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = "";
+      readonly thresholds = [];
+      private cb: IntersectionObserverCallback;
+      constructor(cb: IntersectionObserverCallback) {
+        this.cb = cb;
+      }
+      observe(el: Element): void {
+        queueMicrotask(() =>
+          this.cb(
+            [{ isIntersecting: true, target: el } as unknown as IntersectionObserverEntry],
+            this,
+          ),
+        );
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", AlwaysInViewObserver);
+
+    const page1: ArtistsPage = { artists: artists("a", 20), nextCursor: "c1" };
+    const page2: ArtistsPage = { artists: artists("b", 20), nextCursor: "c2" };
+    const page3: ArtistsPage = { artists: artists("c", 20), nextCursor: null };
+    listArtists.mockImplementation((_id: string, opts: { cursor?: string | null }) => {
+      if (opts?.cursor === "c1") return Promise.resolve(page2);
+      if (opts?.cursor === "c2") return Promise.resolve(page3);
+      return Promise.resolve(page1);
+    });
+
+    renderGrid();
+
+    // All three pages load without any scrollSentinelIntoView() call.
+    await waitFor(() =>
+      expect(screen.getAllByTestId("poster-tile")).toHaveLength(60),
+    );
+    expect(screen.getByTestId("grid-end")).toHaveTextContent("That's everything.");
+  });
 });

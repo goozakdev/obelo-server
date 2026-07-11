@@ -77,7 +77,7 @@ function MovieGrid({
   // attaches the observer the moment the sentinel node mounts. loadMore is a
   // no-op while a fetch is in flight or when there are no more pages, so a fast
   // scroll can't double-fetch.
-  const sentinelRef = useInfiniteScrollSentinel(grid.loadMore);
+  const sentinelRef = useInfiniteScrollSentinel(grid.loadMore, grid.titles.length);
 
   return (
     <>

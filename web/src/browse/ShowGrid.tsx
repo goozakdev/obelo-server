@@ -37,7 +37,7 @@ export default function ShowGrid({
   // loadMore when it scrolls into view. The sentinel only renders once the first
   // page has loaded, so we use a callback ref (useInfiniteScrollSentinel) that
   // attaches the observer the moment the sentinel node mounts.
-  const sentinelRef = useInfiniteScrollSentinel(grid.loadMore);
+  const sentinelRef = useInfiniteScrollSentinel(grid.loadMore, grid.items.length);
 
   return (
     <>
