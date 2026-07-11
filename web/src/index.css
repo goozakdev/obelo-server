@@ -511,6 +511,13 @@ body {
   max-width: 1100px;
 }
 
+/* The Show detail is uncapped: its episode grid fills the window all the way
+   up to a 4K screen (readable text inside it stays capped per-element, e.g.
+   .detail-overview). */
+.app-main-full {
+  max-width: none;
+}
+
 /* Detail screens with a backdrop: content hugs the left edge instead of
    centering, keeping the text clear of the top-right image. Left padding is
    double .app-main's so the text doesn't sit hard against the window edge. */
@@ -934,29 +941,37 @@ body {
   outline-offset: 1px;
 }
 
-/* The Show detail episode list: each row is a three-column grid —
-   [thumbnail] [flexible text block] [hover-revealed actions menu]. */
+/* The Show detail episode grid: tiles like the library poster grid, but with
+   big 16:9 stills. ALWAYS four columns (the container is uncapped —
+   .app-main-full — so the four tiles stretch to fill a 4K screen and shrink
+   with the window down through 1080p); only a phone-width window drops to two
+   columns. Each tile stacks [still] / [episode code + title + badges] /
+   [synopsis]; the three-dots actions menu floats over the still's top-right
+   corner. */
 .episode-list {
   list-style: none;
   margin: 0.75rem 0 0;
   padding: 0;
   display: grid;
-  gap: 0.25rem;
+  gap: clamp(0.75rem, 2vw, 1.25rem);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 720px) {
+  .episode-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.episode-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 0.5rem;
-  border-radius: var(--radius);
-}
-.episode-row:hover {
-  background: var(--surface-hover);
+.episode-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
-/* Column 1: the thumbnail, a play affordance. */
+/* The still, a play affordance. Media-first hover like the poster grid: the
+   artwork answers with an accent ring instead of the chrome moving. */
 .episode-thumb {
   padding: 0;
   border: none;
@@ -965,23 +980,28 @@ body {
   line-height: 0;
 }
 .episode-still {
-  width: 11rem;
+  width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  border-radius: 6px;
-  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: border-color 0.12s ease;
+}
+.episode-tile:hover .episode-still,
+.episode-thumb:focus-visible .episode-still {
+  border-color: var(--accent);
 }
 .episode-still-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-2);
   color: var(--text-dim);
   font-size: 1.4rem;
   line-height: 1;
 }
 
-/* Column 2: the flexible text block — code + title over the synopsis. */
+/* The text block under the still — code + title (+ badges) over the synopsis. */
 .episode-text {
   display: flex;
   flex-direction: column;
@@ -1003,11 +1023,12 @@ body {
 .episode-code {
   color: var(--text-dim);
   font-size: 0.85rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .episode-title {
   font-weight: 600;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
 }
 .episode-text:hover .episode-title {
   color: var(--accent);
@@ -1017,15 +1038,18 @@ body {
   color: var(--text-dim);
   line-height: 1.4;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-/* Column 3: the per-row three-dots actions menu (hidden until row hover/focus).
-   Mirrors the music .track-menu styles, un-scoped from the music theme. */
+/* The per-tile three-dots actions menu, floating over the still's top-right
+   corner (hidden until tile hover/focus). Mirrors the music .track-menu styles,
+   un-scoped from the music theme. */
 .row-menu {
-  position: relative;
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
   display: flex;
   justify-content: center;
 }
@@ -1033,15 +1057,16 @@ body {
   padding: 0.25rem 0.5rem;
   border: none;
   border-radius: 6px;
-  background: none;
+  /* An opaque chip: the toggle sits on the artwork, not beside it. */
+  background: var(--bg);
   color: var(--text-dim);
   font-size: 1.2rem;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
 }
-.episode-row:hover .row-menu-toggle,
-.episode-row:focus-within .row-menu-toggle,
+.episode-tile:hover .row-menu-toggle,
+.episode-tile:focus-within .row-menu-toggle,
 .row-menu-toggle[aria-expanded="true"] {
   opacity: 1;
 }

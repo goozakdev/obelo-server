@@ -175,7 +175,9 @@ export default function ShowDetailScreen() {
           scrolls over it and it fades toward black (capped at 50%). */}
       <DetailBackdrop src={show?.backgroundUrl} />
       <AppHeader />
-      <main className="app-main app-main-wide app-main-left">
+      {/* app-main-full (not -wide): the episode grid scales to fill the window,
+          up to a 4K screen. */}
+      <main className="app-main app-main-full app-main-left">
         <BackLink to={parent.to} label={parent.label} />
 
         {state.status === "loading" && (
@@ -547,12 +549,12 @@ function episodeCode(ep: EpisodeSummary): string {
   return String(ep.episodeNumber);
 }
 
-// An Episode row is three columns: [1] the thumbnail, [2] a flexible text block
-// (episode code + title over its synopsis), [3] a hover-revealed three-dots
-// actions menu. Clicking the thumbnail OR the text block plays the Episode
-// (show-from-here); the menu drives Play next / Add to queue / Edit. Watched /
-// resume / needs-review markers ride along inside the text block's heading so the
-// row stays a clean three-column grid.
+// An Episode tile is a vertical card in the season's 4-across grid: the 16:9
+// still on top, a heading line (episode code + title + watched/resume/
+// needs-review badges) under it, and the synopsis under that. Clicking the
+// still OR the text block plays the Episode (show-from-here); the three-dots
+// actions menu (Play next / Add to queue / Edit) floats over the still's
+// top-right corner, hover-revealed.
 function EpisodeRow({
   episode,
   onPlay,
@@ -569,7 +571,7 @@ function EpisodeRow({
   const resuming = !episode.watched && episode.resumePositionMs > 0;
   return (
     <li
-      className="episode-row"
+      className="episode-tile"
       data-testid="episode-row"
       data-episode-id={episode.id}
       data-episode-number={episode.episodeNumber}
