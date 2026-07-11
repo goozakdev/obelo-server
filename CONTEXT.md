@@ -208,6 +208,26 @@ _Avoid_: Remux (use as a parenthetical only).
 **Transcode**:
 Re-encoding video and/or audio in real time via FFmpeg so a client can play it.
 
+**Transcode backend** (bare: _backend_):
+The resolved video-encode path a Transcode runs on: **CPU** (libx264 — the always-available software fallback) or a hardware accelerator (**NVENC**, **VAAPI**, **QSV**, **VideoToolbox**). Resolved and validated once at startup from the operator's Requested backend ([ADR-0009](./docs/adr/0009-transcode-governance.md)), and exposed — with its requested-vs-active story — on the admin transcoding surface ([ADR-0029](./docs/adr/0029-transcoding-observability-admin-surface.md)). A single Playback session may fall back from a hardware backend to CPU on its own hardware-init failure, so a session's effective backend can differ from the server's active one.
+_Avoid_: Accel, HW accel (the code-level spellings), Encoder (the ffmpeg `-c:v` name — an implementation detail below the backend).
+
+**Requested backend**:
+The operator's configured backend preference before validation: `off` (CPU), `auto` (detect the best available), or an explicit backend. Distinct from the (active) Transcode backend, because the two diverge whenever validation or a session's hardware init fails — the divergence the admin surface makes visible.
+_Avoid_: Configured accel.
+
+**Degraded**:
+The state where the Requested backend was hardware but the active Transcode backend is CPU — validation failed at boot, or a session fell back. The single signal an operator most needs surfaced, because today it lives only in a boot log line.
+_Avoid_: Fallback (that's the act; degraded is the resulting state), Warn.
+
+**Transcode load**:
+The live count of active Transcodes against the concurrency **cap** ([ADR-0009](./docs/adr/0009-transcode-governance.md) governance). Direct play and Direct stream are cheap and uncounted; only full Transcodes load the host. A cap of 0 means unlimited. The core, backend-agnostic number an operator watches on the transcoding surface.
+_Avoid_: Sessions (too broad — direct-play/remux are Playback sessions too but carry no load).
+
+**GPU telemetry**:
+Best-effort, backend-specific host GPU metrics on the admin transcoding surface — utilization, VRAM used/total, encoder-session count, driver version. **NVENC-only in v1** (read from `nvidia-smi`); absent for every other backend and when the tool is missing, behind a probe seam that VAAPI/QSV/VideoToolbox can later satisfy ([ADR-0029](./docs/adr/0029-transcoding-observability-admin-surface.md)). Distinct from Transcode load, which is always present.
+_Avoid_: GPU stats (informal — telemetry is the noun), Metrics (too generic).
+
 **Playback session**:
 A single active stream from server to one client, including the chosen tier and (if transcoding) the running FFmpeg job and its resource cost.
 _Avoid_: Stream, Transcode job (those are parts of it).

@@ -1,0 +1,23 @@
+# Transcoding observability is an admin-scope snapshot, polled — not a client-facing feature
+
+The resolved **Transcode backend**, its requested-vs-active story, live **Transcode load**, and best-effort **GPU telemetry** are exposed through one **admin-scope** endpoint — `GET /transcoding` — that the web app polls while its Transcoding tab is open. None of it reaches the public scope: backend choice and host GPU metrics are operator observability, and a Member has no lever to pull based on them (nor should every client app, present and future third-party, learn the host's hardware). This makes visible in the UI what today lives only in a boot log line — most importantly the **Degraded** state, where the operator asked for a hardware backend but the server silently fell back to CPU.
+
+The endpoint returns a single snapshot with three parts:
+
+- **`backend`** — `{ requested, active, degraded, reason }`, the four fields already carried by the setup-time `transcode.Resolution` (ADR-0009): the operator's Requested backend, the resolved-and-validated active Transcode backend, the degraded flag (`Warn`), and the human reason string.
+- **`load`** — `{ active, cap, atCapacity }`, the ADR-0009 governance counters. Direct play and Direct stream carry no load and are uncounted. `cap: 0` means **unlimited** (and `atCapacity` is then always `false`); the UI renders that as "unlimited," never "0 slots."
+- **`gpu`** — best-effort **GPU telemetry**, **NVENC-only in v1**, or `null`. When the active backend is NVENC *and* `nvidia-smi` is on PATH, it carries `{ utilizationPct, vramUsedMb, vramTotalMb, encoderSessions, driverVersion, sampledAt }`, read by shelling out to `nvidia-smi --query-gpu=... --format=csv,noheader,nounits` behind a short-TTL cache. It is `null` — one all-or-nothing "unavailable" state — for every other backend, when the tool is absent, *and* when the probe errors at query time. The probe is a seam (mirroring the encode-validation `encodeProbe` of ADR-0009) that VAAPI/QSV/VideoToolbox implementations can later satisfy without reshaping the contract.
+
+## Considered options
+
+- **Client-facing per-playback backend signal (rejected for now).** Surfacing "Transcoding — NVENC" to the player was rejected as a needless leak of host hardware to every client, with no member-actionable payoff. A "why is this buffering" hint, if ever wanted, is a separate narrow feature.
+- **SSE push instead of polling (deferred).** ADR-0016 gives us SSE, but pushing GPU telemetry needs a server-side sampling goroutine feeding the Broker — real complexity for a low-traffic screen an admin holds open for a minute. Poll on a ~3–5s interval while the tab is mounted; promote to SSE only if a live dashboard becomes a goal. The `sampledAt` timestamp makes a stale/frozen sample visible either way.
+- **Cross-vendor GPU telemetry at parity in v1 (rejected).** Portable VAAPI/QSV/VideoToolbox metrics are the fiddliest 20% (`intel_gpu_top`/`powermetrics` need root; AMD is sysfs-scraping) and would block the 80% already sitting in `Manager` and `nvidia-smi`. NVENC is the dominant self-host GPU path; the rest degrade honestly to load-only.
+- **A broader `/system` umbrella (rejected).** The surface is specifically the transcode subsystem; `/transcoding` matches the existing resource-named admin convention (`/settings/`, `/users`). A wider health surface, if it arrives, can nest transcoding under it then.
+
+## Consequences
+
+- **Per-session effective backend is a hook, not built here.** A Playback session can fall back from a hardware backend to CPU on its own hardware-init failure (the runtime's `fellBack` flag, ADR-0009 issue 03), so a session's effective backend can diverge from the server's active one. That per-session datum belongs on the **admin active-sessions monitoring endpoint deferred in ADR-0010**, which will carry each session's `effectiveBackend`; `/transcoding` stays server-wide. We deliberately do **not** add a `degradedSessions` count to this snapshot now — it has no UI home yet and would mean locking every runtime on each poll.
+- The endpoint is `requireAdmin` over `requireAuth`, like `/settings/`. A non-admin gets 403, not a filtered view.
+- The web app gains a **Transcoding** tab in the admin side-rail (`/admin/transcoding`), a read-only status panel: the active backend headlined with a Degraded badge, load as `active / cap`, and the GPU telemetry block collapsing to a plain "unavailable" line when `gpu` is `null`.
+- `nvidia-smi` is shelled out, not linked (no NVML/cgo dependency), keeping the ADR-0006 single-static-binary posture; the TTL cache bounds how often a poll can spawn it.
