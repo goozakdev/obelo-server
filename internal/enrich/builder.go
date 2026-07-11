@@ -121,6 +121,30 @@ func (c ProviderConfig) newVideoProvider(slug string) MetadataProvider {
 	}
 }
 
+// authoritativeSlugFor returns the slug of the provider LEADING a given media kind
+// in this effective config: the video authoritative for the video kinds, MusicBrainz
+// for the music kinds. Used by the per-item override precedence (issue 06) to decide
+// whether a pinned Title's record provider differs from the Library's leader.
+func (c ProviderConfig) authoritativeSlugFor(kind string) string {
+	switch kind {
+	case "artist", "album", "track":
+		return SlugMusicBrainz
+	default:
+		return c.videoAuthoritativeSlug()
+	}
+}
+
+// providerReachable reports whether a provider is usable in this effective config —
+// its key is present (video), or (MusicBrainz) the music kind is on. It is how the
+// pass decides a pinned Title's record provider is still reachable (issue 06): a
+// policy change that cleared/muted the provider makes its key absent here.
+func (c ProviderConfig) providerReachable(slug string) bool {
+	if slug == SlugMusicBrainz {
+		return c.musicEnabled()
+	}
+	return c.videoProviderKey(slug) != ""
+}
+
 // videoEnabled reports whether the Movie/TV kinds enrich: video is on exactly when
 // the Library's AUTHORITATIVE video provider is keyed (mirrors the old "TMDB has a
 // key" rule when the authoritative is the default TMDB). A repointed authoritative

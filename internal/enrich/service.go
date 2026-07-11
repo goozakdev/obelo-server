@@ -100,6 +100,15 @@ const (
 type providerSnapshot struct {
 	provider   MetadataProvider
 	enablement Enablement
+	// config is the effective per-Library ProviderConfig this snapshot was built from
+	// (ADR-0027) — carried so the pass can honor per-item Enrichment-override
+	// precedence: a Title pinned to a specific provider's record keeps resolving via
+	// THAT provider while it stays reachable, even when the Library's Authoritative
+	// provider changed underneath it, and an override whose provider a policy change
+	// made unreachable is filed to the attention list rather than silently dropped
+	// (issue 06). The zero value (the global/fixed-provider path) means "no per-Library
+	// config" — every pin then rides the chain unchanged, the pre-policy behavior.
+	config ProviderConfig
 }
 
 // Service runs Enrichment passes. It owns a Store, the ArtworkFetcher network
@@ -876,7 +885,33 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		return err
 	}
 
-	meta, err := snap.provider.Lookup(ctx, lw.ref)
+	// Per-item Enrichment-override precedence (issue 06, ADR-0027): a Title pinned to
+	// a specific provider's record keeps resolving via THAT provider — most-specific-
+	// wins — even when the Library's Authoritative provider changed underneath it, as
+	// long as the provider stays reachable. If a policy change made that provider
+	// unreachable, the override is ORPHANED: file the Title to the attention list
+	// (status 'unmatched') rather than silently resolving it against the wrong leader
+	// or dropping the pin. Only engages when the pin's provider differs from the
+	// current leader; when they match (the common case), the chain already resolves by
+	// the pinned id, so the pass is unchanged. The pinned id column is never touched —
+	// the override survives to be re-applied once its provider is reachable again.
+	provider := snap.provider
+	if pinSlug, pinned := pinnedProviderFor(t); pinned {
+		if leader := snap.config.authoritativeSlugFor(t.Kind); pinSlug != leader {
+			if !snap.config.providerReachable(pinSlug) {
+				res.Unmatched++
+				return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched") // orphaned → attention
+			}
+			// Reachable but no longer the leader: resolve via the pinned provider alone
+			// so the override still wins (the chain leads a different source that can't
+			// answer this record's id).
+			if p := snap.config.newVideoProvider(pinSlug); p != nil {
+				provider = p
+			}
+		}
+	}
+
+	meta, err := provider.Lookup(ctx, lw.ref)
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		res.Unmatched++
@@ -1216,6 +1251,27 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 		return "", false
 	}
 	return name, true
+}
+
+// pinnedProviderFor reports the registry slug of the provider a Title is pinned to
+// by a per-item Enrichment override (or an embedded id token) and whether it is
+// pinned at all: a video Title with a TMDB id resolves against TMDB's record, a
+// music Track with a MusicBrainz id against MusicBrainz's. It is how the pass
+// recognizes an override whose record provider may differ from the Library's current
+// Authoritative provider (issue 06). A Title with no external id is not pinned (its
+// resolution simply follows the Library leader).
+func pinnedProviderFor(t store.Title) (string, bool) {
+	switch t.Kind {
+	case "artist", "album", "track":
+		if t.MusicbrainzID != "" {
+			return SlugMusicBrainz, true
+		}
+	default:
+		if t.TMDBID != "" {
+			return SlugTMDB, true
+		}
+	}
+	return "", false
 }
 
 // refFor builds the provider lookup reference from a stored Title. External ids

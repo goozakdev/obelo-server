@@ -258,7 +258,10 @@ func (m *Manager) resolveLibrary(ctx context.Context, libraryID string) (provide
 	}
 	res := ResolveLibraryEnrichment(m.global, policy)
 	provider, _ := m.build(res.Config) // effective enablement comes from the resolver, not the build
-	snap := providerSnapshot{provider: provider, enablement: res.Enablement}
+	// Carry the effective config so the pass can honor per-item override precedence
+	// (issue 06): a pinned Title resolves via its record's provider while reachable,
+	// and an orphaned pin (provider made unreachable by this policy) is flagged.
+	snap := providerSnapshot{provider: provider, enablement: res.Enablement, config: res.Config}
 	m.libCache[libraryID] = snap
 	return snap, nil
 }

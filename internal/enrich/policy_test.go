@@ -6,6 +6,53 @@ import (
 	"github.com/marioquake/juicebox/internal/store"
 )
 
+// TestPinnedProviderPrecedenceHelpers locks in the pure decisions behind per-item
+// override precedence (issue 06): which provider a Title is pinned to, which
+// provider leads its kind, and whether a provider is reachable in an effective
+// config — the inputs processLeaf routes on (override-wins vs. orphaned→attention).
+func TestPinnedProviderPrecedenceHelpers(t *testing.T) {
+	// pinnedProviderFor: a video Title with a TMDB id pins TMDB; a Track with an MBID
+	// pins MusicBrainz; a Title with no external id is unpinned.
+	if slug, ok := pinnedProviderFor(store.Title{Kind: "movie", TMDBID: "555"}); !ok || slug != SlugTMDB {
+		t.Errorf("movie w/ tmdb id: got %q/%v, want tmdb/true", slug, ok)
+	}
+	if slug, ok := pinnedProviderFor(store.Title{Kind: "track", MusicbrainzID: "mb"}); !ok || slug != SlugMusicBrainz {
+		t.Errorf("track w/ mbid: got %q/%v, want musicbrainz/true", slug, ok)
+	}
+	if _, ok := pinnedProviderFor(store.Title{Kind: "movie"}); ok {
+		t.Errorf("movie w/ no id: got pinned, want unpinned")
+	}
+
+	// authoritativeSlugFor: video reads the pointer (default TMDB, or a repoint);
+	// music is always MusicBrainz.
+	repointed := ProviderConfig{AuthoritativeVideo: SlugAniDB}
+	if got := repointed.authoritativeSlugFor("show"); got != SlugAniDB {
+		t.Errorf("video leader = %q, want anidb (repointed)", got)
+	}
+	if got := (ProviderConfig{}).authoritativeSlugFor("movie"); got != SlugTMDB {
+		t.Errorf("default video leader = %q, want tmdb", got)
+	}
+	if got := repointed.authoritativeSlugFor("track"); got != SlugMusicBrainz {
+		t.Errorf("music leader = %q, want musicbrainz", got)
+	}
+
+	// providerReachable: a keyed video provider is reachable; a keyless muted one is
+	// not; MusicBrainz rides music-enablement.
+	cfg := ProviderConfig{TMDBAPIKey: "tk", MusicBrainzEnabled: true}
+	if !cfg.providerReachable(SlugTMDB) {
+		t.Errorf("keyed TMDB reported unreachable")
+	}
+	if cfg.providerReachable(SlugOMDb) {
+		t.Errorf("unkeyed OMDb reported reachable")
+	}
+	if !cfg.providerReachable(SlugMusicBrainz) {
+		t.Errorf("MusicBrainz reported unreachable with music on")
+	}
+	if (ProviderConfig{}).providerReachable(SlugMusicBrainz) {
+		t.Errorf("MusicBrainz reported reachable with music off")
+	}
+}
+
 func boolPtr(b bool) *bool    { return &b }
 func strPtr(s string) *string { return &s }
 
