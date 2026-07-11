@@ -372,6 +372,7 @@ function normalizeResumePoint(
     title: raw.title,
     overview: raw.overview ?? "",
     resumePositionMs: raw.resumePositionMs ?? 0,
+    durationMs: raw.durationMs ?? 0,
     mode: raw.mode,
     enrichmentStatus: raw.enrichmentStatus,
     stillUrl: raw.stillUrl,

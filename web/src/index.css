@@ -1432,6 +1432,33 @@ body {
   font-weight: 600;
 }
 
+/* Continue progress: a slim resume bar above the Continue/Restart buttons showing
+   how far into the Episode the viewer is, with the minutes-remaining label beside
+   it. Only rendered in the in-progress mode (a known duration). */
+.resume-point-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.resume-progress-track {
+  flex: 1 1 auto;
+  max-width: 22rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  overflow: hidden;
+}
+.resume-progress-fill {
+  height: 100%;
+  background: var(--accent);
+}
+.resume-progress-remaining {
+  flex: none;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* A square, icon-only action button. Inherits currentColor into the SVG, so the
    hover/active states are just color changes. */
 .icon-button {

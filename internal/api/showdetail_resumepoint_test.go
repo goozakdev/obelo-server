@@ -26,6 +26,7 @@ type resumePointResp struct {
 	Title            string `json:"title"`
 	Overview         string `json:"overview"`
 	ResumePositionMs int64  `json:"resumePositionMs"`
+	DurationMs       int64  `json:"durationMs"`
 	Mode             string `json:"mode"`
 }
 
@@ -104,6 +105,11 @@ func TestResumePointInProgressSurfacesOnDetailNotHome(t *testing.T) {
 	}
 	if rp.ResumePositionMs <= 0 {
 		t.Errorf("resumePoint resumePositionMs = %d, want > 0 (where Continue resumes)", rp.ResumePositionMs)
+	}
+	// DurationMs drives the Continue progress bar + minutes-remaining; it is the
+	// Episode's playable duration (the same measure progress was reported against).
+	if rp.DurationMs != dur {
+		t.Errorf("resumePoint durationMs = %d, want the Episode duration %d", rp.DurationMs, dur)
 	}
 	if rp.SeasonID == "" {
 		t.Errorf("resumePoint seasonId empty; the client needs it to build the show-from-here Queue")

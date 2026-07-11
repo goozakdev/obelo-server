@@ -165,6 +165,10 @@ type resumePointJSON struct {
 	// ResumePositionMs is where Continue seeks (the in-progress anchor's stored
 	// resume); 0 for the next mode (Play from the start).
 	ResumePositionMs int64 `json:"resumePositionMs,omitempty"`
+	// DurationMs is the Episode's playable duration; with ResumePositionMs it drives
+	// the in-progress Continue progress bar + minutes-remaining label. 0/omitted when
+	// unknown.
+	DurationMs int64 `json:"durationMs,omitempty"`
 	// Mode is "inProgress" (Continue + Restart) or "next" (a single Play).
 	Mode             string `json:"mode"`
 	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
@@ -193,6 +197,7 @@ func toResumePoint(rp store.ResumePoint, version string) *resumePointJSON {
 		Title:            displayTitle(rp.Title),
 		Overview:         rp.Overview,
 		ResumePositionMs: rp.ResumePositionMs,
+		DurationMs:       rp.DurationMs,
 		Mode:             resumePointMode(rp.InProgress),
 	}
 	if rp.EnrichmentStatus != "" && rp.EnrichmentStatus != "pending" {

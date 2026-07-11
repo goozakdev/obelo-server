@@ -481,6 +481,12 @@ type ResumePoint struct {
 	// unwatched) → the detail page offers Continue + Restart; false when the resume
 	// point is a fresh next Episode → a single Play.
 	InProgress bool
+	// DurationMs is the resume-point Episode's playable duration (MAX file
+	// duration_ms across its Editions — the same measure the resume position was
+	// recorded against). 0 when unknown (no File / duration not probed). The detail
+	// page uses it with ResumePositionMs to draw the Continue progress bar and the
+	// minutes-remaining label; it is only meaningful in the in-progress mode.
+	DurationMs int64
 	// Overview / EnrichedTitle / EnrichmentStatus carry the same Episode enrichment
 	// the Season's Episode list applies, so the detail block shows the canonical
 	// title + synopsis. (EnrichedTitle/Overview live on the embedded Title.)
@@ -506,13 +512,17 @@ func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoi
 	var needsReview, ambiguous, hidden int
 	var wResume, anchorResume sql.NullInt64
 	var anchorWatched sql.NullInt64
+	var durationMs sql.NullInt64
 	err := db.QueryRow(
 		`WITH `+resumePointCTE(" AND sh.id = ?", rateClause)+`
 		 SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
 		        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
 		        season_id, season_number, episode_number, episode_label,
 		        overview, enrichment_status, enriched_title,
-		        w_resume, anchor_resume, anchor_watched
+		        w_resume, anchor_resume, anchor_watched,
+		        (SELECT MAX(f.duration_ms) FROM editions ed
+		           JOIN files f ON f.edition_id = ed.id
+		          WHERE ed.title_id = picks.id) AS duration_ms
 		   FROM picks
 		  WHERE pick_rn = 1`+libClause,
 		args...,
@@ -520,7 +530,7 @@ func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoi
 		&t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&rp.SeasonID, &t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
-		&wResume, &anchorResume, &anchorWatched)
+		&wResume, &anchorResume, &anchorWatched, &durationMs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ResumePoint{}, false, nil
 	}
@@ -542,6 +552,9 @@ func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoi
 		!(anchorWatched.Valid && anchorWatched.Int64 == 1)
 	if rp.InProgress {
 		rp.ResumePositionMs = wResume.Int64
+	}
+	if durationMs.Valid {
+		rp.DurationMs = durationMs.Int64
 	}
 	return rp, true, nil
 }

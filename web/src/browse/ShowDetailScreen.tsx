@@ -504,6 +504,17 @@ function ResumePointBlock({
   onPlay: () => void;
 }) {
   const inProgress = resumePoint.mode === "inProgress";
+  // The Continue progress bar only makes sense when the Episode can be resumed
+  // (in-progress) and we know its duration; otherwise it's hidden. The fill is
+  // clamped to [0,100]% and the label rounds the remaining time up to whole minutes
+  // (never below "1 min left" while there's a resume position to continue from).
+  const showProgress = inProgress && resumePoint.durationMs > 0;
+  const playedFraction = showProgress
+    ? Math.min(1, Math.max(0, resumePoint.resumePositionMs / resumePoint.durationMs))
+    : 0;
+  const minutesLeft = showProgress
+    ? Math.max(1, Math.ceil((resumePoint.durationMs - resumePoint.resumePositionMs) / 60000))
+    : 0;
   return (
     <div className="detail-resume-point" data-testid="resume-point" data-mode={resumePoint.mode}>
       <div className="resume-point-heading">
@@ -518,6 +529,27 @@ function ResumePointBlock({
         <p className="detail-overview" data-testid="resume-point-synopsis">
           {resumePoint.overview}
         </p>
+      )}
+      {showProgress && (
+        <div className="resume-point-progress" data-testid="resume-point-progress">
+          <div
+            className="resume-progress-track"
+            role="progressbar"
+            aria-label="Episode progress"
+            aria-valuemin={0}
+            aria-valuemax={resumePoint.durationMs}
+            aria-valuenow={resumePoint.resumePositionMs}
+          >
+            <div
+              className="resume-progress-fill"
+              data-testid="resume-progress-fill"
+              style={{ width: `${playedFraction * 100}%` }}
+            />
+          </div>
+          <span className="resume-progress-remaining" data-testid="resume-progress-remaining">
+            {minutesLeft} min left
+          </span>
+        </div>
       )}
       <div className="resume-point-actions" data-testid="resume-point-actions">
         {inProgress ? (

@@ -103,6 +103,7 @@ function seasonsResponse(
   resumePoint: {
     mode: ResumePointMode;
     resumePositionMs: number;
+    durationMs?: number;
   } | null,
   unwatchedEpisodeCount = 0,
 ): ShowSeasons {
@@ -120,6 +121,7 @@ function seasonsResponse(
           title: "System",
           overview: "Carmy takes over.",
           resumePositionMs: resumePoint.resumePositionMs,
+          durationMs: resumePoint.durationMs ?? 0,
           mode: resumePoint.mode,
         }
       : null,
@@ -176,6 +178,40 @@ describe("ShowDetailScreen — resume-point modes", () => {
     // The whole-series Play and the Show description give way to the block.
     expect(screen.queryByTestId("play-button")).toBeNull();
     expect(screen.queryByTestId("show-overview")).toBeNull();
+  });
+
+  it("in-progress with a known duration: renders the Continue progress bar + minutes-remaining", async () => {
+    // 2 min into a 10 min Episode → 20% played, 8 minutes left.
+    getShowSeasons.mockResolvedValue(
+      seasonsResponse({ mode: "inProgress", resumePositionMs: 120000, durationMs: 600000 }),
+    );
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("show-detail")).toBeInTheDocument());
+
+    expect(screen.getByTestId("resume-point-progress")).toBeInTheDocument();
+    expect(screen.getByTestId("resume-progress-fill")).toHaveStyle({ width: "20%" });
+    expect(screen.getByTestId("resume-progress-remaining")).toHaveTextContent("8 min left");
+    // The bar sits above the Continue/Restart buttons, which are still present.
+    expect(screen.getByTestId("continue-button")).toBeInTheDocument();
+  });
+
+  it("no Continue progress bar when the duration is unknown or the mode is next", async () => {
+    // Unknown duration (0) → no bar even though it's resumable.
+    getShowSeasons.mockResolvedValue(
+      seasonsResponse({ mode: "inProgress", resumePositionMs: 42000, durationMs: 0 }),
+    );
+    const { unmount } = renderDetail();
+    await waitFor(() => expect(screen.getByTestId("resume-point")).toBeInTheDocument());
+    expect(screen.queryByTestId("resume-point-progress")).toBeNull();
+    unmount();
+
+    // A fresh next Episode (no resume) never shows the bar.
+    getShowSeasons.mockResolvedValue(
+      seasonsResponse({ mode: "next", resumePositionMs: 0, durationMs: 600000 }),
+    );
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("resume-point")).toBeInTheDocument());
+    expect(screen.queryByTestId("resume-point-progress")).toBeNull();
   });
 
   it("in-progress Continue: builds the show-from-here Queue with the head resumed at resumePositionMs", async () => {

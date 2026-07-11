@@ -906,6 +906,7 @@ export interface ResumePointRaw {
   title: string;
   overview?: string;
   resumePositionMs?: number;
+  durationMs?: number;
   mode: ResumePointMode;
   enrichmentStatus?: EnrichmentStatus;
   stillUrl?: string;
@@ -928,6 +929,9 @@ export interface ResumePoint {
   overview: string;
   /** Where Continue seeks (the in-progress anchor's stored resume); 0 for `next`. */
   resumePositionMs: number;
+  /** The Episode's playable duration (ms); with resumePositionMs it drives the
+   * in-progress Continue progress bar + minutes-remaining label. 0 when unknown. */
+  durationMs: number;
   mode: ResumePointMode;
   enrichmentStatus?: EnrichmentStatus;
   stillUrl?: string;
