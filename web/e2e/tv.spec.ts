@@ -289,3 +289,65 @@ test.describe.serial("home: TV Up Next row appears and advances", () => {
     );
   });
 });
+
+// The Show detail page's resume point (issue 02 acceptance criteria, ADR-0028)
+// against the REAL embedded server: SEED watch state (mark The Bear S01E01 watched
+// through the API), then drive the BROWSER to the Show detail and assert the hero
+// leads with the next-episode block (S01E02 "Hands") + a Play that starts from it.
+test.describe.serial("show detail: resume point block", () => {
+  let bearId = "";
+
+  test.beforeAll(async ({ playwright, baseURL }) => {
+    const request = await playwright.request.newContext({ baseURL });
+    await ensureAdmin(request);
+    const token = await login(request);
+    const auth = { Authorization: `Bearer ${token}` };
+    const libId = await seedTV(request, token);
+
+    // Resolve The Bear → Season 1 → E01 (System), and mark it watched so the resume
+    // point advances to the next unwatched Episode (S01E02).
+    const showsRes = await request.get(`/api/v1/libraries/${libId}/titles?limit=100`, { headers: auth });
+    const shows = (await showsRes.json()).shows as { id: string; title: string }[];
+    const bear = shows.find((s) => s.title === "The Bear")!;
+    expect(bear, "The Bear show seeded").toBeTruthy();
+    bearId = bear.id;
+
+    const seasonsRes = await request.get(`/api/v1/shows/${bearId}/seasons`, { headers: auth });
+    const seasons = (await seasonsRes.json()).seasons as { id: string; seasonNumber: number }[];
+    const s1 = seasons.find((s) => s.seasonNumber === 1)!;
+    const epsRes = await request.get(`/api/v1/seasons/${s1.id}/episodes`, { headers: auth });
+    const eps = (await epsRes.json()).episodes as { id: string; episodeNumber: number }[];
+    const e1 = eps.find((e) => e.episodeNumber === 1)!;
+    const put = await request.put(`/api/v1/titles/${e1.id}/watchState`, {
+      headers: auth,
+      data: { watched: true },
+    });
+    expect(put.ok(), `watchState failed: ${put.status()} ${await put.text()}`).toBeTruthy();
+
+    await request.dispose();
+  });
+
+  test("the Show detail leads with the resume point and plays from it", async ({ page }) => {
+    await uiLogin(page);
+    await page.goto(`/shows/${bearId}`);
+    await expect(page.getByTestId("show-detail")).toBeVisible();
+
+    // The hero's next-episode block surfaces the next unwatched Episode after the
+    // watched E01 = S01E02 ("Hands"), with a single Play (the anchor is watched).
+    const block = page.getByTestId("resume-point");
+    await expect(block).toBeVisible();
+    await expect(block).toHaveAttribute("data-mode", "next");
+    await expect(page.getByTestId("resume-point-code")).toHaveText("S01E02");
+    await expect(page.getByTestId("resume-point-title")).toHaveText("Hands");
+
+    // Play from the resume point starts real playback in the persistent bar.
+    await page.getByTestId("resume-play-button").click();
+    const video = page.getByTestId("player-video");
+    await expect(video).toBeVisible();
+    await expect
+      .poll(async () => video.evaluate((el: HTMLVideoElement) => el.currentTime), {
+        timeout: 20000,
+      })
+      .toBeGreaterThan(0);
+  });
+});

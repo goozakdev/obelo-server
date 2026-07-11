@@ -1389,6 +1389,49 @@ body {
   display: inline-flex;
 }
 
+/* Resume-point block (issue 02, ADR-0028): the Show detail hero's next-episode
+   block that replaces the fixed description + Play once a Show is started. The S/E
+   code · title heading over the episode synopsis, then its mode's controls. */
+.detail-resume-point {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  max-width: 48rem;
+}
+.resume-point-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.resume-point-code {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.resume-point-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.resume-point-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+.resume-point-actions .play-button {
+  margin-top: 0;
+}
+/* Restart is the secondary of the Continue/Restart pair — a quiet text button, so
+   Continue reads as the primary action. */
+.restart-button {
+  padding: 0;
+  font-weight: 600;
+}
+
 /* A square, icon-only action button. Inherits currentColor into the SVG, so the
    hover/active states are just color changes. */
 .icon-button {

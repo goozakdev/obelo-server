@@ -51,6 +51,8 @@ import type {
   PlaylistSummaryRaw,
   ScanStatus,
   ScanStatusRaw,
+  ResumePoint,
+  ResumePointRaw,
   Season,
   SeasonEpisodes,
   SeasonEpisodesResponseRaw,
@@ -354,11 +356,34 @@ function normalizeSeason(raw: SeasonRaw): Season {
   };
 }
 
+/** Normalize a Show's resume point (ADR-0028), or null when the Show is not
+ * started / fully watched (the server omits it). */
+function normalizeResumePoint(
+  raw: ResumePointRaw | null | undefined,
+): ResumePoint | null {
+  if (!raw) return null;
+  return {
+    id: raw.id,
+    kind: raw.kind,
+    seasonId: raw.seasonId,
+    seasonNumber: raw.seasonNumber,
+    episodeNumber: raw.episodeNumber ?? 0,
+    episodeLabel: raw.episodeLabel ?? "",
+    title: raw.title,
+    overview: raw.overview ?? "",
+    resumePositionMs: raw.resumePositionMs ?? 0,
+    mode: raw.mode,
+    enrichmentStatus: raw.enrichmentStatus,
+    stillUrl: raw.stillUrl,
+  };
+}
+
 /** Normalize a Show's Seasons response. */
 export function normalizeShowSeasons(raw: ShowSeasonsResponseRaw): ShowSeasons {
   return {
     show: normalizeShowSummary(raw.show),
     seasons: (raw?.seasons ?? []).map(normalizeSeason),
+    resumePoint: normalizeResumePoint(raw?.resumePoint),
   };
 }
 

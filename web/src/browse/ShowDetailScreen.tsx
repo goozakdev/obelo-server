@@ -3,8 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type {
   EpisodeSummary,
+  ResumePoint,
   Season,
   SeasonEpisodes,
+  TitleSummary,
 } from "../api/types";
 import { useQueue } from "../player/queue/useQueue";
 import {
@@ -87,6 +89,16 @@ export default function ShowDetailScreen() {
   );
   const playable = startSeason !== undefined;
 
+  // The Show's resume point (issue 02, ADR-0028): when present it replaces the
+  // Show description + Play with the anchor Episode's block (Continue + Restart for
+  // an in-progress anchor, a single Play for a fresh next Episode). When null the
+  // page reverts to the Show description — with Play only when the Show is NOT
+  // started. The two null cases are told apart by unwatchedEpisodeCount: a
+  // not-started Show still has unwatched Episodes; a fully-watched one has none
+  // (its Play is dropped — restarting a finished series is not a flow).
+  const resumePoint = state.status === "ready" ? state.data.resumePoint : null;
+  const notStarted = !resumePoint && (show?.unwatchedEpisodeCount ?? 0) > 0;
+
   // Inline confirmation / failure for the toolbar's whole-series Queue actions, so
   // an "Add to queue" / "Play next" gives feedback without leaving the page.
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
@@ -102,6 +114,31 @@ export default function ShowDetailScreen() {
         await buildShowQueue(apiClient, { showId, seasonId }, episode.id, queue);
       } catch {
         queue.playNow(buildSingleQueue(episodeToSummary(episode)));
+      }
+    },
+    [showId, queue],
+  );
+
+  // Resume-point Play / Continue / Restart: all build the SAME cross-season
+  // show-from-here Queue with the resume-point Episode as the head (buildShowQueue);
+  // only where the head starts differs (ADR-0028) — Continue at the anchor's stored
+  // resume, Restart and the next-Episode Play at 0. Starting from 0 goes through the
+  // playback path, which re-stamps played_at and keeps the anchor pinned to that
+  // Episode (Restart re-watches it without flinging the resume point elsewhere). A
+  // first-fetch failure falls back to a single-entry Queue of just that Episode.
+  const playResume = useCallback(
+    async (rp: ResumePoint, headResumeMs: number) => {
+      try {
+        await buildShowQueue(
+          apiClient,
+          { showId, seasonId: rp.seasonId },
+          rp.id,
+          queue,
+          undefined,
+          { headResumeMs },
+        );
+      } catch {
+        queue.playNow(buildSingleQueue(resumePointToSummary(rp, headResumeMs)));
       }
     },
     [showId, queue],
@@ -224,22 +261,42 @@ export default function ShowDetailScreen() {
                   </div>
                 )}
 
+                {/* Resume point (issue 02, ADR-0028): the next-episode block that
+                    replaces the fixed description + Play once the Show is started
+                    and not yet fully watched. Continue/Restart (in-progress) or a
+                    single Play (next); all build the show-from-here Queue from this
+                    Episode, differing only in the head start offset. */}
+                {resumePoint && (
+                  <ResumePointBlock
+                    resumePoint={resumePoint}
+                    onContinue={() => void playResume(resumePoint, resumePoint.resumePositionMs)}
+                    onRestart={() => void playResume(resumePoint, 0)}
+                    onPlay={() => void playResume(resumePoint, 0)}
+                  />
+                )}
+
                 {/* Action toolbar (mirrors the Movie detail): a primary Play plus
                     the icon affordances. Play builds the show-from-the-beginning
                     Queue and starts playback in the persistent Now Playing bar —
                     NO navigation. Edit (Admin) opens the "Edit item" dialog, and the
                     ⋯ overflow carries the whole-series Queue actions. */}
                 <div className="detail-actions" data-testid="detail-actions">
-                  <button
-                    className="auth-submit play-button"
-                    data-testid="play-button"
-                    type="button"
-                    disabled={!playable}
-                    title={playable ? undefined : "No episodes to play for this show"}
-                    onClick={() => void playFromStart()}
-                  >
-                    Play
-                  </button>
+                  {/* The whole-series Play shows only for a NOT-started Show (series
+                      from the first Episode — unchanged from today). A started Show
+                      plays from its resume point above; a fully-watched Show reverts
+                      to the description with no Play. */}
+                  {notStarted && (
+                    <button
+                      className="auth-submit play-button"
+                      data-testid="play-button"
+                      type="button"
+                      disabled={!playable}
+                      title={playable ? undefined : "No episodes to play for this show"}
+                      onClick={() => void playFromStart()}
+                    >
+                      Play
+                    </button>
+                  )}
 
                   {/* Edit-item (ADR-0019), Admin-only. The Edit icon opens one "Edit
                       item" dialog with two tabs — this replaces the former standalone
@@ -337,7 +394,10 @@ export default function ShowDetailScreen() {
                   </p>
                 )}
 
-                {state.data.show.overview && (
+                {/* The Show description shows only WITHOUT a resume point (a not-
+                    started or fully-watched Show); a started Show's hero leads with
+                    the resume-point Episode's synopsis instead. */}
+                {!resumePoint && state.data.show.overview && (
                   <p className="detail-overview" data-testid="show-overview">
                     {state.data.show.overview}
                   </p>
@@ -399,6 +459,99 @@ export default function ShowDetailScreen() {
 
 function seasonLabel(season: Season): string {
   return season.specials ? "Specials" : `Season ${season.seasonNumber}`;
+}
+
+// The resume-point Episode's S/E code: "S01E03" (zero-padded), or its degraded-
+// offline label when there's no reliable episode number.
+function resumePointCode(rp: ResumePoint): string {
+  if (rp.episodeLabel) return rp.episodeLabel;
+  const s = String(rp.seasonNumber).padStart(2, "0");
+  const e = String(rp.episodeNumber).padStart(2, "0");
+  return `S${s}E${e}`;
+}
+
+// The single-Episode fallback summary a failed resume-point Queue build plays:
+// the resume-point Episode as a playable Title, seeded with the head start offset
+// (Continue's resume vs. 0) so the bar resumes at the right spot.
+function resumePointToSummary(rp: ResumePoint, headResumeMs: number): TitleSummary {
+  return {
+    id: rp.id,
+    kind: rp.kind,
+    title: rp.title,
+    year: 0,
+    needsReview: false,
+    ambiguous: false,
+    resumePositionMs: headResumeMs,
+    watched: false,
+    genres: [],
+    enrichmentStatus: rp.enrichmentStatus,
+  };
+}
+
+// ResumePointBlock is the Show detail hero's next-episode block (issue 02,
+// ADR-0028): the resume-point Episode's S/E code · title · synopsis, plus the
+// controls its mode selects — Continue (resume where you left off) + Restart (from
+// 0) for an in-progress anchor, or a single Play (from 0) for a fresh next Episode.
+function ResumePointBlock({
+  resumePoint,
+  onContinue,
+  onRestart,
+  onPlay,
+}: {
+  resumePoint: ResumePoint;
+  onContinue: () => void;
+  onRestart: () => void;
+  onPlay: () => void;
+}) {
+  const inProgress = resumePoint.mode === "inProgress";
+  return (
+    <div className="detail-resume-point" data-testid="resume-point" data-mode={resumePoint.mode}>
+      <div className="resume-point-heading">
+        <span className="resume-point-code" data-testid="resume-point-code">
+          {resumePointCode(resumePoint)}
+        </span>
+        <span className="resume-point-title" data-testid="resume-point-title">
+          {resumePoint.title}
+        </span>
+      </div>
+      {resumePoint.overview && (
+        <p className="detail-overview" data-testid="resume-point-synopsis">
+          {resumePoint.overview}
+        </p>
+      )}
+      <div className="resume-point-actions" data-testid="resume-point-actions">
+        {inProgress ? (
+          <>
+            <button
+              className="auth-submit play-button"
+              data-testid="continue-button"
+              type="button"
+              onClick={onContinue}
+            >
+              Continue
+            </button>
+            <button
+              className="nav-link reorder-button restart-button"
+              data-testid="restart-button"
+              type="button"
+              onClick={onRestart}
+            >
+              Restart
+            </button>
+          </>
+        ) : (
+          <button
+            className="auth-submit play-button"
+            data-testid="resume-play-button"
+            type="button"
+            onClick={onPlay}
+          >
+            Play
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ShowOverflowMenu is the ⋯ menu in the Show detail toolbar — the secondary

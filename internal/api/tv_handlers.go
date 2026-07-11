@@ -138,6 +138,70 @@ type seasonJSON struct {
 type seasonsResponse struct {
 	Show    showSummaryJSON `json:"show"`
 	Seasons []seasonJSON    `json:"seasons"`
+	// ResumePoint is the Show detail page's next-episode block (issue 02, ADR-0028):
+	// the resume-point Episode + its mode (in-progress → Continue/Restart, next →
+	// Play). Null (omitted) for a not-started or fully-watched Show — the page then
+	// shows the Show description, with Play only when not started (the client tells
+	// the two null cases apart by the Show's unwatchedEpisodeCount).
+	ResumePoint *resumePointJSON `json:"resumePoint,omitempty"`
+}
+
+// resumePointJSON is the Show detail page's resume-point block (issue 02): the
+// Episode to surface plus the mode that selects its controls. Decorated with the
+// same Episode enrichment a Season's Episode list applies (canonical display title,
+// synopsis, still). seasonId is enough for the client to build the cross-season
+// show-from-here Queue with this Episode as the head.
+type resumePointJSON struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"` // "episode"
+	SeasonID     string `json:"seasonId"`
+	SeasonNumber int    `json:"seasonNumber"`
+	// EpisodeNumber / EpisodeLabel form the S/E code the block labels ("S01E03", or
+	// a degraded-offline label).
+	EpisodeNumber int    `json:"episodeNumber,omitempty"`
+	EpisodeLabel  string `json:"episodeLabel,omitempty"`
+	Title         string `json:"title"`
+	Overview      string `json:"overview,omitempty"`
+	// ResumePositionMs is where Continue seeks (the in-progress anchor's stored
+	// resume); 0 for the next mode (Play from the start).
+	ResumePositionMs int64 `json:"resumePositionMs,omitempty"`
+	// Mode is "inProgress" (Continue + Restart) or "next" (a single Play).
+	Mode             string `json:"mode"`
+	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
+	StillURL         string `json:"stillUrl,omitempty"`
+}
+
+// resumePointMode maps the store's in-progress flag to the wire mode string.
+func resumePointMode(inProgress bool) string {
+	if inProgress {
+		return "inProgress"
+	}
+	return "next"
+}
+
+// toResumePoint shapes a store.ResumePoint into its wire form, applying the same
+// Episode enrichment toEpisodeSummary does (canonical display title, synopsis,
+// still). version is the Episode's title-artwork cache-bust token.
+func toResumePoint(rp store.ResumePoint, version string) *resumePointJSON {
+	js := &resumePointJSON{
+		ID:               rp.ID,
+		Kind:             rp.Kind,
+		SeasonID:         rp.SeasonID,
+		SeasonNumber:     rp.SeasonNumber,
+		EpisodeNumber:    rp.EpisodeNumber,
+		EpisodeLabel:     rp.EpisodeLabel,
+		Title:            displayTitle(rp.Title),
+		Overview:         rp.Overview,
+		ResumePositionMs: rp.ResumePositionMs,
+		Mode:             resumePointMode(rp.InProgress),
+	}
+	if rp.EnrichmentStatus != "" && rp.EnrichmentStatus != "pending" {
+		js.EnrichmentStatus = rp.EnrichmentStatus
+	}
+	if rp.EnrichmentStatus == "matched" {
+		js.StillURL = withArtworkVersion(APIPrefix+"/titles/"+rp.ID+"/artwork/poster", version)
+	}
+	return js
 }
 
 func toSeasonJSON(s store.Season) seasonJSON {
@@ -437,6 +501,25 @@ func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
 			return
 		}
 		showJS := toShowSummary(show)
+		// The per-User unwatched-Episode count on the DETAIL (not just the grid, issue
+		// tv-music/04): the resume point is null for both a not-started and a fully-
+		// watched Show, so the client tells them apart by this count — > 0 (with a
+		// null resume point) means not started → show Play; 0 means fully watched → no
+		// Play. The Show-detail route runs behind requireAuth, so identity is present.
+		var resumePoint *resumePointJSON
+		if ident, ok := identityFrom(r.Context()); ok {
+			if counts, err := svc.UnwatchedEpisodeCounts(ident.User.ID, []string{show.ID}); err == nil {
+				showJS.UnwatchedEpisodeCount = counts[show.ID]
+			}
+			// The resume point (issue 02, ADR-0028): the detail page's next-episode block,
+			// the same computation as Home's Up Next but keeping the in-progress case. Null
+			// for a not-started/fully-watched Show. Decorated with the Episode's still
+			// cache-bust version, matching a Season's Episode enrichment.
+			if rp, found, err := svc.ShowResumePoint(scope, ident.User.ID, show.ID); err == nil && found {
+				versions, _ := svc.ArtworkVersionsForTitles([]string{rp.ID})
+				resumePoint = toResumePoint(rp, versions[rp.ID])
+			}
+		}
 		if e, err := svc.EntityEnrichment(store.EntityShow, show.ID); err == nil {
 			roles, _ := svc.EntityArtworkRoles(store.EntityShow, []string{show.ID})
 			versions, _ := svc.EntityArtworkVersions(store.EntityShow, []string{show.ID})
@@ -460,8 +543,9 @@ func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
 		seasonVersions, _ := svc.EntityArtworkVersions(store.EntitySeason, seasonIDs)
 
 		out := seasonsResponse{
-			Show:    showJS,
-			Seasons: make([]seasonJSON, 0, len(seasons)),
+			Show:        showJS,
+			Seasons:     make([]seasonJSON, 0, len(seasons)),
+			ResumePoint: resumePoint,
 		}
 		for _, s := range seasons {
 			js := toSeasonJSON(s)

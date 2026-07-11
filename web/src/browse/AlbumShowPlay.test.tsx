@@ -104,7 +104,9 @@ const showSeasons: ShowSeasons = {
     title: "The Bear",
     year: 2022,
     needsReview: false,
-    unwatchedEpisodeCount: 0,
+    // A NOT-started Show (no resume point, unwatched Episodes remaining) — the
+    // toolbar's whole-series Play is offered (issue 02, ADR-0028).
+    unwatchedEpisodeCount: 3,
     overview: "",
     genres: [],
   },
@@ -112,6 +114,7 @@ const showSeasons: ShowSeasons = {
     { id: "s1", showId: "sh1", seasonNumber: 1, specials: false, episodeCount: 2 },
     { id: "s2", showId: "sh1", seasonNumber: 2, specials: false, episodeCount: 1 },
   ],
+  resumePoint: null,
 };
 
 function seasonEpisodes(seasonId: string): SeasonEpisodes {

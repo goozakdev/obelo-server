@@ -325,72 +325,14 @@ func (db *DB) UpNext(userID string, limit int, filter AccessFilter) ([]UpNextRow
 	args = append(args, rateArgs...)
 	args = append(args, libArgs...)
 	args = append(args, limit)
-	// started_shows: every Show the User has touched (any Episode with a
-	// watch_state row), carrying that Show's most-recent Episode updated_at as the
-	// recency key. episodes: every visible Episode of a started Show, LEFT-joined to
-	// the User's watch state and stamped with its Show-order ordinal (ord). anchor:
-	// per Show, the ord + watch state of the Episode with the greatest played_at
-	// (ties broken by later ord, so a played multi-episode file anchors on its later
-	// half). picks: per Show, unwatched candidates ranked "first after the anchor,
-	// then wrap to the first from the start"; rank 1 is the resume point.
+	// The shared resume-point CTE (resumePointCTE) computes pick_rn=1 per started
+	// Show over ALL of the User's Shows (empty showFilter). Home then keeps
+	// pick_rn=1, EXCLUDES an in-progress anchor (the COALESCE guard — those belong
+	// to Continue Watching, kept disjoint), applies the Library filter, and orders
+	// most-recently-active first. The per-Show detail resolver (ResumePoint) reads
+	// the SAME CTE but KEEPS the in-progress case (issue 02, ADR-0028).
 	rows, err := db.Query(
-		`WITH started_shows AS (
-		     SELECT sh.id AS show_id, MAX(w.updated_at) AS last_at
-		       FROM watch_state w
-		       JOIN titles  t  ON t.id = w.title_id AND t.kind = 'episode'
-		       JOIN seasons s  ON s.id = t.season_id
-		       JOIN shows   sh ON sh.id = s.show_id
-		      WHERE w.user_id = ? AND (w.watched = 1 OR w.resume_position_ms > 0)
-		      GROUP BY sh.id
-		 ),
-		 episodes AS (
-		     SELECT st.show_id, st.last_at, sh.title AS show_title,
-		            t.id, t.library_id, t.kind, t.title, t.year, t.identity_key,
-		            t.sort_title, t.added_at, t.tmdb_id, t.imdb_id,
-		            t.needs_review, t.ambiguous, t.hidden, t.content_rating,
-		            t.season_number, t.episode_number, t.episode_label,
-		            w.watched AS w_watched, w.resume_position_ms AS w_resume,
-		            w.played_at AS w_played_at,
-		            ROW_NUMBER() OVER (
-		              PARTITION BY st.show_id
-		              ORDER BY (CASE WHEN t.season_number = 0 THEN 1 ELSE 0 END) ASC,
-		                       t.season_number ASC, t.episode_number ASC,
-		                       t.sort_title ASC, t.id ASC
-		            ) AS ord
-		       FROM started_shows st
-		       JOIN shows   sh ON sh.id = st.show_id AND sh.hidden = 0
-		       JOIN seasons s  ON s.show_id = sh.id AND s.hidden = 0
-		       JOIN titles  t  ON t.season_id = s.id AND t.kind = 'episode' AND t.hidden = 0
-		       LEFT JOIN watch_state w ON w.user_id = ? AND w.title_id = t.id
-		 ),
-		 anchor AS (
-		     SELECT show_id, ord AS anchor_ord, w_resume AS anchor_resume, w_watched AS anchor_watched
-		       FROM (
-		         SELECT show_id, ord, w_resume, w_watched,
-		                ROW_NUMBER() OVER (
-		                  PARTITION BY show_id
-		                  ORDER BY w_played_at DESC, ord DESC
-		                ) AS arn
-		           FROM episodes
-		          WHERE w_played_at IS NOT NULL
-		       )
-		      WHERE arn = 1
-		 ),
-		 picks AS (
-		     SELECT e.show_id, e.show_title, e.id, e.library_id, e.kind, e.title, e.year,
-		            e.identity_key, e.sort_title, e.added_at, e.tmdb_id, e.imdb_id,
-		            e.needs_review, e.ambiguous, e.hidden,
-		            e.season_number, e.episode_number, e.episode_label, e.last_at,
-		            a.anchor_resume, a.anchor_watched,
-		            ROW_NUMBER() OVER (
-		              PARTITION BY e.show_id
-		              ORDER BY (CASE WHEN e.ord > a.anchor_ord THEN 0 ELSE 1 END) ASC,
-		                       e.ord ASC
-		            ) AS pick_rn
-		       FROM episodes e
-		       LEFT JOIN anchor a ON a.show_id = e.show_id
-		      WHERE (e.w_watched IS NULL OR e.w_watched = 0)`+rateClause+`
-		 )
+		`WITH `+resumePointCTE("", rateClause)+`
 		 SELECT show_id, show_title, id, library_id, kind, title, year, identity_key,
 		        sort_title, added_at, tmdb_id, imdb_id, needs_review, ambiguous, hidden,
 		        season_number, episode_number, episode_label, last_at
@@ -428,6 +370,180 @@ func (db *DB) UpNext(userID string, limit int, filter AccessFilter) ([]UpNextRow
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// resumePointCTE builds the shared started_shows → episodes → anchor → picks CTE
+// that BOTH the Up Next Home row and the per-Show detail resume point read
+// (ADR-0028), so the two surfaces compute the SAME resume point and can never
+// drift. showFilter is spliced into started_shows' WHERE: empty for Home (every
+// Show the User has touched), " AND sh.id = ?" for the per-Show resolver.
+// rateClause is the access Rating filter spliced into picks (so an above-ceiling
+// candidate is skipped over). pick_rn=1 is the resume point.
+//
+//   - started_shows: each started Show (any Episode with a watch_state row —
+//     watched OR resume > 0), carrying its most-recent Episode updated_at (last_at)
+//     as Home's recency key.
+//   - episodes: every visible Episode of a started Show, LEFT-joined to the User's
+//     watch state and stamped with its Show-order ordinal (ord): regular Seasons in
+//     S/E order FIRST, Specials (Season 0) LAST.
+//   - anchor: per Show, the ord + watch state of the Episode with the greatest
+//     played_at (ties broken by later ord, so a played multi-episode file anchors on
+//     its later half). A marks-only Show has no played_at → no anchor row.
+//   - picks: per Show, unwatched candidates ranked so pick_rn=1 is the resume point:
+//     the IN-PROGRESS anchor itself first (resume > 0, unwatched — the detail page's
+//     Continue/Restart episode; Home filters this case out in its outer WHERE), else
+//     the first unwatched AFTER the anchor in Show order, WRAPPING to the first
+//     unwatched from the start once the end is reached. With no anchor every
+//     candidate falls to the wrap bucket → first-unwatched.
+func resumePointCTE(showFilter, rateClause string) string {
+	return `started_shows AS (
+	     SELECT sh.id AS show_id, MAX(w.updated_at) AS last_at
+	       FROM watch_state w
+	       JOIN titles  t  ON t.id = w.title_id AND t.kind = 'episode'
+	       JOIN seasons s  ON s.id = t.season_id
+	       JOIN shows   sh ON sh.id = s.show_id
+	      WHERE w.user_id = ? AND (w.watched = 1 OR w.resume_position_ms > 0)` + showFilter + `
+	      GROUP BY sh.id
+	 ),
+	 episodes AS (
+	     SELECT st.show_id, st.last_at, sh.title AS show_title,
+	            t.id, t.library_id, t.kind, t.title, t.year, t.identity_key,
+	            t.sort_title, t.added_at, t.tmdb_id, t.imdb_id,
+	            t.needs_review, t.ambiguous, t.hidden, t.content_rating,
+	            t.season_id, t.season_number, t.episode_number, t.episode_label,
+	            t.overview, t.enrichment_status, t.enriched_title,
+	            w.watched AS w_watched, w.resume_position_ms AS w_resume,
+	            w.played_at AS w_played_at,
+	            ROW_NUMBER() OVER (
+	              PARTITION BY st.show_id
+	              ORDER BY (CASE WHEN t.season_number = 0 THEN 1 ELSE 0 END) ASC,
+	                       t.season_number ASC, t.episode_number ASC,
+	                       t.sort_title ASC, t.id ASC
+	            ) AS ord
+	       FROM started_shows st
+	       JOIN shows   sh ON sh.id = st.show_id AND sh.hidden = 0
+	       JOIN seasons s  ON s.show_id = sh.id AND s.hidden = 0
+	       JOIN titles  t  ON t.season_id = s.id AND t.kind = 'episode' AND t.hidden = 0
+	       LEFT JOIN watch_state w ON w.user_id = ? AND w.title_id = t.id
+	 ),
+	 anchor AS (
+	     SELECT show_id, ord AS anchor_ord, w_resume AS anchor_resume, w_watched AS anchor_watched
+	       FROM (
+	         SELECT show_id, ord, w_resume, w_watched,
+	                ROW_NUMBER() OVER (
+	                  PARTITION BY show_id
+	                  ORDER BY w_played_at DESC, ord DESC
+	                ) AS arn
+	           FROM episodes
+	          WHERE w_played_at IS NOT NULL
+	       )
+	      WHERE arn = 1
+	 ),
+	 picks AS (
+	     SELECT e.show_id, e.show_title, e.id, e.library_id, e.kind, e.title, e.year,
+	            e.identity_key, e.sort_title, e.added_at, e.tmdb_id, e.imdb_id,
+	            e.needs_review, e.ambiguous, e.hidden,
+	            e.season_id, e.season_number, e.episode_number, e.episode_label, e.last_at,
+	            e.overview, e.enrichment_status, e.enriched_title,
+	            e.w_resume, e.w_watched,
+	            a.anchor_resume, a.anchor_watched,
+	            ROW_NUMBER() OVER (
+	              PARTITION BY e.show_id
+	              ORDER BY (CASE
+	                          WHEN e.ord = a.anchor_ord
+	                               AND COALESCE(a.anchor_resume, 0) > 0
+	                               AND COALESCE(a.anchor_watched, 0) = 0 THEN 0
+	                          WHEN e.ord > a.anchor_ord THEN 1
+	                          ELSE 2 END) ASC,
+	                       e.ord ASC
+	            ) AS pick_rn
+	       FROM episodes e
+	       LEFT JOIN anchor a ON a.show_id = e.show_id
+	      WHERE (e.w_watched IS NULL OR e.w_watched = 0)` + rateClause + `
+	 )`
+}
+
+// ResumePoint is a Show's computed resume point for one User (ADR-0028), surfaced
+// on the Show detail page: the Episode to play next plus the mode that selects its
+// controls. Unlike Home's Up Next it KEEPS the in-progress-anchor case (the detail
+// page's Continue/Restart). It is the shared picks pick_rn=1 Episode, so it honors
+// the same S/E ordering (Specials last) and hidden/Missing/access/rating exclusions.
+type ResumePoint struct {
+	Title
+	// SeasonID is the resume-point Episode's Season, enough for the detail page to
+	// build the cross-season show-from-here Queue with this Episode as the head.
+	SeasonID string
+	// ResumePositionMs is where Continue seeks: the in-progress anchor's stored
+	// resume for the in-progress mode, else 0 (a fresh next Episode plays from the
+	// start).
+	ResumePositionMs int64
+	// InProgress is the mode: true when the anchor is still in progress (resume > 0,
+	// unwatched) → the detail page offers Continue + Restart; false when the resume
+	// point is a fresh next Episode → a single Play.
+	InProgress bool
+	// Overview / EnrichedTitle / EnrichmentStatus carry the same Episode enrichment
+	// the Season's Episode list applies, so the detail block shows the canonical
+	// title + synopsis. (EnrichedTitle/Overview live on the embedded Title.)
+}
+
+// ResumePoint returns the User's resume point for one Show (found=false when the
+// Show is not started or fully watched — the detail page then falls back to the
+// Show description). It reads the shared resumePointCTE scoped to showID and keeps
+// pick_rn=1 including the in-progress anchor. The AccessFilter applies the caller's
+// Rating ceiling (in picks) and Library grant (outer) so an inaccessible/above-
+// ceiling candidate drops out exactly as it does for Home's Up Next.
+func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoint, bool, error) {
+	libClause, libArgs := filter.libraryClause("library_id")
+	rateClause, rateArgs := filter.titleRatingClause("e.content_rating")
+	// Arg order mirrors the CTE placeholders: userID (started_shows) + showID (its
+	// sh.id filter) + userID (episodes LEFT JOIN) + rate args (picks) + lib args (outer).
+	args := []any{userID, showID, userID}
+	args = append(args, rateArgs...)
+	args = append(args, libArgs...)
+	var rp ResumePoint
+	var t Title
+	var year sql.NullInt64
+	var needsReview, ambiguous, hidden int
+	var wResume, anchorResume sql.NullInt64
+	var anchorWatched sql.NullInt64
+	err := db.QueryRow(
+		`WITH `+resumePointCTE(" AND sh.id = ?", rateClause)+`
+		 SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
+		        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
+		        season_id, season_number, episode_number, episode_label,
+		        overview, enrichment_status, enriched_title,
+		        w_resume, anchor_resume, anchor_watched
+		   FROM picks
+		  WHERE pick_rn = 1`+libClause,
+		args...,
+	).Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey, &t.SortTitle,
+		&t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
+		&rp.SeasonID, &t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
+		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
+		&wResume, &anchorResume, &anchorWatched)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ResumePoint{}, false, nil
+	}
+	if err != nil {
+		return ResumePoint{}, false, fmt.Errorf("store: reading resume point: %w", err)
+	}
+	if year.Valid {
+		t.Year = int(year.Int64)
+	}
+	t.NeedsReview = needsReview != 0
+	t.Ambiguous = ambiguous != 0
+	t.Hidden = hidden != 0
+	rp.Title = t
+	// In-progress mode is judged on the ANCHOR (not the chosen Episode): the anchor
+	// still has a mid-band resume and is unwatched. A wrap pick can itself carry a
+	// stale resume yet still be a fresh next Episode, so it must not read as
+	// in-progress. Continue seeks the anchor's resume; a next Episode plays from 0.
+	rp.InProgress = anchorResume.Valid && anchorResume.Int64 > 0 &&
+		!(anchorWatched.Valid && anchorWatched.Int64 == 1)
+	if rp.InProgress {
+		rp.ResumePositionMs = wResume.Int64
+	}
+	return rp, true, nil
 }
 
 // RecentlyAdded returns Titles ordered newest-added first across the caller's

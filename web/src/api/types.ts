@@ -889,16 +889,63 @@ export interface Season {
   posterUrl?: string;
 }
 
+/** The resume-point mode (ADR-0028): `inProgress` = the anchor Episode is still
+ * mid-play, so the detail page offers Continue + Restart; `next` = a fresh next
+ * Episode, so a single Play (from 0). */
+export type ResumePointMode = "inProgress" | "next";
+
+/** Raw resume-point Episode on `GET /shows/{id}/seasons` — present only for a
+ * STARTED, not-fully-watched Show. */
+export interface ResumePointRaw {
+  id: string;
+  kind: string; // "episode"
+  seasonId: string;
+  seasonNumber: number;
+  episodeNumber?: number;
+  episodeLabel?: string;
+  title: string;
+  overview?: string;
+  resumePositionMs?: number;
+  mode: ResumePointMode;
+  enrichmentStatus?: EnrichmentStatus;
+  stillUrl?: string;
+}
+
+/** The Show's resume point (ADR-0028): the Episode the detail page surfaces as its
+ * next-episode block, with the `mode` that selects the controls (Continue+Restart
+ * vs. a single Play). `seasonId` is enough to build the cross-season show-from-here
+ * Queue with this Episode as the head. Null for a not-started or fully-watched Show. */
+export interface ResumePoint {
+  id: string;
+  kind: string;
+  seasonId: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  /** A date / "Episode N" for a degraded-offline episode, else "". */
+  episodeLabel: string;
+  title: string;
+  /** Episode synopsis, "" when un-enriched. */
+  overview: string;
+  /** Where Continue seeks (the in-progress anchor's stored resume); 0 for `next`. */
+  resumePositionMs: number;
+  mode: ResumePointMode;
+  enrichmentStatus?: EnrichmentStatus;
+  stillUrl?: string;
+}
+
 /** Raw `GET /shows/{id}/seasons` response: the Show plus its Seasons. */
 export interface ShowSeasonsResponseRaw {
   show: ShowSummaryRaw;
   seasons?: SeasonRaw[];
+  resumePoint?: ResumePointRaw | null;
 }
 
-/** Normalized Show + Seasons. */
+/** Normalized Show + Seasons. `resumePoint` is null for a not-started or
+ * fully-watched Show (told apart by `show.unwatchedEpisodeCount`). */
 export interface ShowSeasons {
   show: ShowSummary;
   seasons: Season[];
+  resumePoint: ResumePoint | null;
 }
 
 /** Raw Episode summary from `GET /seasons/{id}/episodes`. */

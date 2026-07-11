@@ -124,6 +124,11 @@ type Store interface {
 	// UpNext is the TV-only computed Home row: the next unwatched Episode in Show
 	// order for each Show the User has started (issue tv-music/02).
 	UpNext(userID string, limit int, filter store.AccessFilter) ([]store.UpNextRow, error)
+	// ResumePoint is the per-Show resume point for the detail page (issue 02,
+	// ADR-0028): the same computation as UpNext scoped to one Show, but KEEPING the
+	// in-progress-anchor case Home omits. found=false for a not-started/fully-watched
+	// Show. The AccessFilter drops an inaccessible/above-ceiling candidate.
+	ResumePoint(userID, showID string, filter store.AccessFilter) (store.ResumePoint, bool, error)
 	// Search matches across all browse kinds by display name (issue tv-music/04),
 	// hidden-excluded. UnwatchedEpisodeCounts powers the Show-poster watched
 	// affordance (per-User unwatched count for a page of Shows).
@@ -836,6 +841,17 @@ func (s *Service) Seasons(scope access.Scope, showID string) (store.Show, []stor
 		return store.Show{}, nil, err
 	}
 	return show, seasons, nil
+}
+
+// ShowResumePoint returns the Show detail page's resume point for the calling
+// User (issue 02, ADR-0028): the Episode to surface with its mode (in-progress vs.
+// next), or found=false for a not-started/fully-watched Show (the page then falls
+// back to the Show description). The caller has already access-guarded the Show as
+// 404; the scope's StoreFilter here additionally drops an above-ceiling candidate
+// Episode, matching Home's Up Next exclusions. It shares store.ResumePoint with the
+// Home row so both surfaces compute the same resume point.
+func (s *Service) ShowResumePoint(scope access.Scope, userID, showID string) (store.ResumePoint, bool, error) {
+	return s.store.ResumePoint(userID, showID, scope.StoreFilter())
 }
 
 // Episodes returns a Season's Episodes (Titles), or ErrNotFound for an unknown

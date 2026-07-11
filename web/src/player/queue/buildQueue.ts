@@ -112,6 +112,14 @@ export interface ShowQueueContext {
   seasonId: string;
 }
 
+/** Options for {@link buildShowQueue}. `headResumeMs` overrides where the HEAD
+ * Episode starts (the resume-point Continue/Restart split, ADR-0028): Continue
+ * passes the stored resume, Restart/Play pass 0. Omitted → the head keeps its
+ * fetched resume. */
+export interface BuildShowQueueOptions {
+  headResumeMs?: number;
+}
+
 /** From an Episode (stories 3–4, 8): walk the Show from the chosen Episode
  * forward — the current Season's Episodes from the chosen one, then the FOLLOWING
  * Seasons' Episodes in order — into `sink`. There is no single "all Episodes of a
@@ -135,13 +143,28 @@ export async function buildShowQueue(
   fromEpisodeId: string,
   sink: QueueSink,
   signal?: AbortSignal,
+  opts?: BuildShowQueueOptions,
 ): Promise<{ tail: Promise<void> }> {
   const current = await client.getSeasonEpisodes(ctx.seasonId, signal);
   const i = current.episodes.findIndex((e) => e.id === fromEpisodeId);
   const fromHere = i < 0 ? current.episodes : current.episodes.slice(i);
+  const summaries = fromHere.map(episodeToSummary);
+  // Resume-point Continue vs. Restart differ ONLY in where the HEAD Episode starts
+  // (ADR-0028): `headResumeMs` overrides the head's stored resume so the bar's
+  // resume-seek machinery seeks there — Continue at the stored offset, Restart/Play
+  // at 0. Clearing `watched` keeps the seek honest (a watched Title starts at 0).
+  // The tail Episodes keep their own watch state. Undefined leaves the fetched
+  // resume untouched (the plain from-here play).
+  if (opts?.headResumeMs !== undefined && summaries.length > 0) {
+    summaries[0] = {
+      ...summaries[0],
+      resumePositionMs: opts.headResumeMs,
+      watched: false,
+    };
+  }
   // The now-playing batch — available after a single fetch, so playback starts
   // immediately (the caller navigates as soon as this resolves).
-  sink.playNow(entriesFromTitles(fromHere.map(episodeToSummary)));
+  sink.playNow(entriesFromTitles(summaries));
   return { tail: resolveShowTail(client, ctx, sink, signal) };
 }
 
