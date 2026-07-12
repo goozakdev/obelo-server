@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -88,12 +89,30 @@ func (db *DB) LoadStoredFile(path string) (File, error) {
 	return f, nil
 }
 
+// underAny reports whether path lies within one of the given directory prefixes
+// (an exact match, or a descendant path/prefix + separator). Used to spare files
+// beneath an unreadable subtree from the soft-delete pass.
+func underAny(path string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if path == p || strings.HasPrefix(path, p+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // MarkFilesMissing flips present=0 on every File of the Library whose path is
 // NOT in seenPaths — they were absent from the latest walk (soft-delete,
 // ADR-0008). A File already present that returns is restored to present=1 by
 // UpsertTitleTree, so this only ever marks, never restores. Returns the number
 // of Files newly marked Missing.
-func (db *DB) MarkFilesMissing(libraryID string, seenPaths map[string]bool) (int, error) {
+//
+// unresolvedDirs are subtrees the walk could not read this pass (a transient
+// network-FS failure that outlasted retries). A File beneath one is left present:
+// an unreadable subtree is not evidence of deletion, so pruning it would wrongly
+// hide real content on a spurious blip — the subtree analogue of the
+// unreachable-root guard (ADR-0008).
+func (db *DB) MarkFilesMissing(libraryID string, seenPaths map[string]bool, unresolvedDirs []string) (int, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("store: begin mark missing: %w", err)
@@ -115,7 +134,7 @@ func (db *DB) MarkFilesMissing(libraryID string, seenPaths map[string]bool) (int
 			_ = rows.Close()
 			return 0, fmt.Errorf("store: scanning present file: %w", err)
 		}
-		if !seenPaths[path] {
+		if !seenPaths[path] && !underAny(path, unresolvedDirs) {
 			toMiss = append(toMiss, id)
 		}
 	}

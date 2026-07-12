@@ -666,6 +666,16 @@ func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger fu
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
 			return
+		case errors.Is(err, scanner.ErrScanInProgress):
+			// A scan is already running for this Library: don't start a second one or
+			// reset its counters — just report the in-flight status (idempotent).
+			st, sErr := status.ScanStatusByLibrary(id)
+			if sErr != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal, "scan failed", nil)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, toScanStatus(st))
+			return
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, codeInternal, "scan failed", nil)
 			return

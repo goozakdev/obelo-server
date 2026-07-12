@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -593,6 +594,12 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 					// (mirrors runEnrichPass's ctx.Err() guard).
 					if ctx.Err() != nil {
 						return
+					}
+					// A manual scan is already walking this Library: the safety-net tick
+					// defers to it — not an error, and no terminal event (the in-flight
+					// scan will emit its own).
+					if errors.Is(err, scanner.ErrScanInProgress) {
+						continue
 					}
 					log.Printf("juicebox: scheduled scan of %q: %v", lib.ID, err)
 					// Terminal-on-error: emit a Complete event so a client's

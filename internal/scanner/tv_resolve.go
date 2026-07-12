@@ -2,13 +2,12 @@ package scanner
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 
-	"github.com/marioquake/juicebox/internal/store"
 	"github.com/google/uuid"
+	"github.com/marioquake/juicebox/internal/store"
 )
 
 // TV folder resolution (issue tv-music/01). The scanner branches on the owning
@@ -35,10 +34,9 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		idOK = true
 	}
 
-	entries, err := os.ReadDir(folder)
-	if err != nil {
-		return store.ShowTree{}, nil, false, fmt.Errorf("scanner: reading show folder %q: %w", folder, err)
-	}
+	// A Show folder that can't be read after retries is skipped (recorded in
+	// sc.unresolved so the prune spares it) rather than aborting the whole scan.
+	entries := sc.readDirTolerant(folder)
 
 	var unmatched []store.UnmatchedFile
 
@@ -147,10 +145,9 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 			continue // a non-season subfolder (extras etc.) is ignored this slice
 		}
 		sub := filepath.Join(folder, e.Name())
-		subEntries, subErr := os.ReadDir(sub)
-		if subErr != nil {
-			return store.ShowTree{}, nil, false, fmt.Errorf("scanner: reading season folder %q: %w", sub, subErr)
-		}
+		// An unreadable season folder is skipped (recorded, spared from prune); the
+		// Show's other seasons still resolve.
+		subEntries := sc.readDirTolerant(sub)
 		sort.Slice(subEntries, func(i, j int) bool { return subEntries[i].Name() < subEntries[j].Name() })
 		for _, se := range subEntries {
 			if se.IsDir() || !isMedia(se.Name()) {

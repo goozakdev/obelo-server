@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/marioquake/juicebox/internal/store"
@@ -83,10 +84,18 @@ func (s *statefulStore) LoadStoredFile(path string) (store.File, error) {
 	return f, nil
 }
 
-func (s *statefulStore) MarkFilesMissing(_ string, seen map[string]bool) (int, error) {
+func (s *statefulStore) MarkFilesMissing(_ string, seen map[string]bool, unresolved []string) (int, error) {
+	under := func(path string) bool {
+		for _, p := range unresolved {
+			if path == p || strings.HasPrefix(path, p+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
 	n := 0
 	for path, f := range s.files {
-		if f.Present && !seen[path] {
+		if f.Present && !seen[path] && !under(path) {
 			f.Present = false
 			s.files[path] = f
 			n++

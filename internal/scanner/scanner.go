@@ -25,10 +25,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
 	"github.com/google/uuid"
+	"github.com/marioquake/juicebox/internal/store"
 )
 
 // ErrRootsUnavailable is returned by a scan when one or more of a Library's
@@ -74,7 +75,11 @@ type Store interface {
 	// Incremental change-detection + soft-delete.
 	ListFileSnapshots(libraryID string) (map[string]store.FileSnapshot, error)
 	LoadStoredFile(path string) (store.File, error)
-	MarkFilesMissing(libraryID string, seenPaths map[string]bool) (int, error)
+	// MarkFilesMissing soft-deletes files absent from the latest walk. unresolvedDirs
+	// are subtrees that could not be read this walk (a transient network-FS failure):
+	// a file beneath one is left present, never marked Missing, since an unreadable
+	// subtree is not evidence of deletion (ADR-0008).
+	MarkFilesMissing(libraryID string, seenPaths map[string]bool, unresolvedDirs []string) (int, error)
 	RecomputeHiddenTitles(libraryID string) error
 
 	// Match overrides (fix-match), keyed to the folder path.
@@ -96,22 +101,59 @@ const (
 	ModeFull
 )
 
-// Service runs scans. It owns a Store and a Prober (the ffprobe seam).
+// Service runs scans. It owns a Store and a Prober (the ffprobe seam), plus an
+// in-process set of the libraries currently being scanned so a second scan of the
+// same library is rejected while one is in flight (see beginScan).
 type Service struct {
 	store  Store
 	prober Prober
+
+	mu      sync.Mutex
+	running map[string]bool // library IDs with a scan in flight this process
 }
 
 // NewService builds a scanner over the given store and prober. Pass FFprobe{}
 // in production; a fake Prober in unit tests.
 func NewService(s Store, p Prober) *Service {
-	return &Service{store: s, prober: p}
+	return &Service{store: s, prober: p, running: map[string]bool{}}
+}
+
+// ErrScanInProgress is returned when a scan is requested for a Library that
+// already has one running in this process. Manual (StartScan) and scheduled
+// (ScanModeProgress) scans share one in-flight set, so a scheduled tick skips a
+// Library a manual scan is already walking and two manual scans can't overlap —
+// halving the concurrent directory-read pressure a flaky network mount sees and
+// avoiding duplicate work. The set is process-local (authoritative for the live
+// process and empty after a restart), so a crashed scan never leaves a stuck lock.
+var ErrScanInProgress = errors.New("scanner: a scan is already running for this library")
+
+// beginScan claims the in-flight slot for a Library, returning false if a scan is
+// already running for it. endScan releases it.
+func (s *Service) beginScan(libraryID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[libraryID] {
+		return false
+	}
+	s.running[libraryID] = true
+	return true
+}
+
+func (s *Service) endScan(libraryID string) {
+	s.mu.Lock()
+	delete(s.running, libraryID)
+	s.mu.Unlock()
 }
 
 // Result summarizes a completed scan.
 type Result struct {
 	TitlesFound int
 	FilesFound  int
+	// UnresolvedDirs are directories skipped because their contents could not be
+	// read after retries (a transient network-FS blip). The scan still succeeds —
+	// everything else was catalogued and nothing beneath these was pruned — but the
+	// caller can surface them so the operator knows a subtree went unscanned.
+	UnresolvedDirs []string
 }
 
 // Progress is a snapshot a scan reports through its onProgress callback as it
@@ -137,6 +179,12 @@ type scanCtx struct {
 	seen      map[string]bool                // every present media path seen this walk
 	overrides map[string]store.MatchOverride // folder path → override
 	probes    int                            // ffprobe invocations (instrumentation/tests)
+	// unresolved are directories whose contents could not be read this walk (a
+	// transient network-FS read failure that outlasted retries). The soft-delete
+	// pass skips anything beneath them: an unreadable subtree is not evidence of
+	// deletion, so its Files must stay present (ADR-0008, the subtree analogue of
+	// the unreachable-root guard).
+	unresolved []string
 }
 
 // Scan performs an incremental synchronous scan of the Library's roots
@@ -170,6 +218,12 @@ func (s *Service) ScanModeProgress(ctx context.Context, libraryID string, mode M
 	if err != nil {
 		return Result{}, err // ErrNotFound flows through to the handler
 	}
+	// Reject a concurrent scan of the same Library (a scheduled tick landing on a
+	// Library a manual scan is already walking) so both don't hammer the mount.
+	if !s.beginScan(libraryID) {
+		return Result{}, ErrScanInProgress
+	}
+	defer s.endScan(libraryID)
 	if err := s.store.MarkScanRunning(libraryID); err != nil {
 		return Result{}, err
 	}
@@ -192,10 +246,18 @@ func (s *Service) StartScan(ctx context.Context, libraryID string, mode Mode, on
 	if err != nil {
 		return err // ErrNotFound flows back to the handler → 404
 	}
+	// Reject a second concurrent scan of the same Library (double-click, or a
+	// manual scan while a scheduled tick is mid-walk) before marking running, so
+	// the counters aren't reset out from under the in-flight scan.
+	if !s.beginScan(libraryID) {
+		return ErrScanInProgress
+	}
 	if err := s.store.MarkScanRunning(libraryID); err != nil {
+		s.endScan(libraryID) // release: we never launched the goroutine
 		return err
 	}
 	go func() {
+		defer s.endScan(libraryID)
 		_, scanErr := s.runScan(ctx, lib, mode, onProgress)
 		if done != nil {
 			done(scanErr)
@@ -388,7 +450,7 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 
 	// Soft-delete: files not seen this walk become Missing (not deleted), then
 	// Titles whose every File is Missing are hidden from browse (ADR-0008).
-	if _, err := s.store.MarkFilesMissing(lib.ID, sc.seen); err != nil {
+	if _, err := s.store.MarkFilesMissing(lib.ID, sc.seen, sc.unresolved); err != nil {
 		return Result{}, err
 	}
 	if err := s.store.RecomputeHiddenTitles(lib.ID); err != nil {
@@ -423,7 +485,24 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 		}
 	}
 
-	return Result{TitlesFound: titlesFound, FilesFound: filesFound}, nil
+	return Result{TitlesFound: titlesFound, FilesFound: filesFound, UnresolvedDirs: sc.unresolved}, nil
+}
+
+// readDirTolerant reads a directory with retry, tolerating a transient failure
+// mid-walk. On persistent failure it records dir in sc.unresolved — so the
+// soft-delete pass spares anything beneath it (ADR-0008) — and returns nil
+// entries with no error, so the caller resolves whatever it could read and the
+// scan is never aborted over one unreadable folder on a flaky network mount. A
+// folder that genuinely vanished is likewise spared here and only pruned once its
+// parent listing stops naming it. This is the Movie/TV analogue of the resilient
+// music walk (readDirResilient + discoverMusicRoot).
+func (sc *scanCtx) readDirTolerant(dir string) []os.DirEntry {
+	entries, err := readDirResilient(dir)
+	if err != nil {
+		sc.unresolved = append(sc.unresolved, dir)
+		return nil
+	}
+	return entries
 }
 
 // discoverRoot lists one root, returning its movie subfolders and its bare
@@ -431,8 +510,11 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 // the root resolved on disk: a non-existent root (ENOENT — e.g. an unmounted
 // volume) returns reachable=false with no error, so the caller can distinguish
 // "the share is offline" from "the share is present but empty" and skip the
-// destructive prune in the former case (ADR-0008). Any other stat/read error
-// propagates.
+// destructive prune in the former case (ADR-0008). Any other stat error
+// propagates. A root that stats OK but whose listing fails even after retries is
+// treated as unreachable (reachable=false, no error) rather than aborting: a
+// transient network-FS blip on the root listing must not be read as "the whole
+// library was deleted", and the prune guard already spares an unreachable root.
 func (s *Service) discoverRoot(root string) (folders, bareFiles []string, reachable bool, err error) {
 	info, statErr := os.Stat(root)
 	if statErr != nil {
@@ -445,9 +527,9 @@ func (s *Service) discoverRoot(root string) (folders, bareFiles []string, reacha
 		return nil, nil, true, nil
 	}
 
-	entries, readErr := os.ReadDir(root)
+	entries, readErr := readDirResilient(root)
 	if readErr != nil {
-		return nil, nil, false, fmt.Errorf("scanner: reading root %q: %w", root, readErr)
+		return nil, nil, false, nil
 	}
 	for _, e := range entries {
 		full := filepath.Join(root, e.Name())
@@ -490,10 +572,9 @@ func (s *Service) resolveFolder(ctx context.Context, sc *scanCtx, lib store.Libr
 		idOK = true
 	}
 
-	entries, err := os.ReadDir(folder)
-	if err != nil {
-		return store.TitleTree{}, nil, false, fmt.Errorf("scanner: reading folder %q: %w", folder, err)
-	}
+	// A folder that can't be read after retries is skipped (recorded in
+	// sc.unresolved so the prune spares it) rather than aborting the whole scan.
+	entries := sc.readDirTolerant(folder)
 
 	var mains []classifiedFile
 	var extras []classifiedFile
@@ -557,10 +638,9 @@ func (s *Service) resolveFolder(ctx context.Context, sc *scanCtx, lib store.Libr
 			continue
 		}
 		sub := filepath.Join(folder, e.Name())
-		subEntries, subErr := os.ReadDir(sub)
-		if subErr != nil {
-			return store.TitleTree{}, nil, false, fmt.Errorf("scanner: reading extras folder %q: %w", sub, subErr)
-		}
+		// An unreadable extras subfolder is skipped (recorded, spared from prune);
+		// the main movie in this folder still resolves from the top-level entries.
+		subEntries := sc.readDirTolerant(sub)
 		sort.Slice(subEntries, func(i, j int) bool { return subEntries[i].Name() < subEntries[j].Name() })
 		for _, se := range subEntries {
 			if se.IsDir() || !isMedia(se.Name()) {

@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
 	"github.com/google/uuid"
+	"github.com/marioquake/juicebox/internal/store"
 )
 
 // Music scanning (issue tv-music/03). A Music Library's identity authority is the
@@ -42,11 +43,15 @@ func (s *Service) scanMusicLibrary(ctx context.Context, sc *scanCtx, lib store.L
 	var audioFiles []string
 	albumArt := map[string]string{} // folder path → local cover image path
 	for _, root := range lib.Roots {
-		files, art, err := discoverMusicRoot(root.Path)
+		files, art, unresolved, err := discoverMusicRoot(root.Path)
 		if err != nil {
 			return 0, 0, nil, err
 		}
 		audioFiles = append(audioFiles, files...)
+		// Subtrees that failed to read after retries: recorded so scanRoots can
+		// skip the soft-delete for anything beneath them (a transient smbfs blip
+		// must not mark real Tracks Missing — ADR-0008).
+		sc.unresolved = append(sc.unresolved, unresolved...)
 		for k, v := range art {
 			if _, ok := albumArt[k]; !ok {
 				albumArt[k] = v
@@ -220,47 +225,89 @@ func (s *Service) buildTrackTree(lib store.Library, id MusicIdentity, path strin
 	}
 }
 
+// readDirBackoffs is the retry schedule for a transient directory-read failure
+// (see readDirResilient). Cumulative ~1s across the four waits — enough to ride
+// out the common sub-second smbfs blip without stalling a scan when a subtree is
+// genuinely unreadable (it then falls through to skip-and-record).
+var readDirBackoffs = []time.Duration{
+	50 * time.Millisecond, 150 * time.Millisecond, 300 * time.Millisecond, 500 * time.Millisecond,
+}
+
+// readDirResilient reads a directory, retrying a few times with backoff to ride
+// out a transient failure. A network filesystem (an SMB mount on macOS) can
+// return a spurious ENOENT/EIO for a directory that DOES exist — its parent just
+// listed it — when it is opened under the burst of a deep walk: smbfs briefly
+// negative-caches the failed lookup, so the same directory that fails mid-walk
+// opens fine in isolation a moment later. A short retry rides out the common blip;
+// a failure that outlasts the budget is returned so the caller skips (never
+// aborts) that subtree.
+func readDirResilient(dir string) ([]os.DirEntry, error) {
+	for attempt := 0; ; attempt++ {
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			return entries, nil
+		}
+		if attempt >= len(readDirBackoffs) {
+			return nil, err
+		}
+		time.Sleep(readDirBackoffs[attempt])
+	}
+}
+
 // discoverMusicRoot recursively walks a Music Library root, returning every audio
-// file and a map of album-folder → local cover image (cover.jpg/folder.jpg). A
-// non-existent root is treated as empty (an unmounted volume); a real error
-// propagates. Unlike the Movie/TV discovery (one level), music walks the whole
-// tree because tag-based identity does not depend on a fixed folder depth.
-func discoverMusicRoot(root string) (audio []string, art map[string]string, err error) {
+// file, a map of album-folder → local cover image (cover.jpg/folder.jpg), and the
+// list of subdirectories that could not be read after retries (unresolved). A
+// non-existent root is treated as empty (an unmounted volume); a real error on
+// the root itself propagates. Unlike the Movie/TV discovery (one level), music
+// walks the whole tree because tag-based identity does not depend on a fixed
+// folder depth.
+//
+// A subdirectory that fails to read mid-walk (a transient smbfs ENOENT under
+// load, per readDirResilient) is NOT fatal: it is skipped and appended to
+// unresolved so the caller can suppress the destructive soft-delete for anything
+// beneath it (ADR-0008) — a spurious read blip must never mark real content
+// Missing, nor throw away the thousands of files the rest of the walk found. This
+// replaces filepath.WalkDir, whose walkFn could only abort or skip, not retry.
+func discoverMusicRoot(root string) (audio []string, art map[string]string, unresolved []string, err error) {
 	art = map[string]string{}
 	info, statErr := os.Stat(root)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
-			return nil, art, nil
+			return nil, art, nil, nil
 		}
-		return nil, nil, statErr
+		return nil, nil, nil, statErr
 	}
 	if !info.IsDir() {
-		return nil, art, nil
+		return nil, art, nil, nil
 	}
-	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
+
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, rerr := readDirResilient(dir)
+		if rerr != nil {
+			unresolved = append(unresolved, dir)
+			return
 		}
-		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if isAudio(name) {
-			audio = append(audio, path)
-			return nil
-		}
-		if role := musicArtworkRole(name); role != "" {
-			dir := filepath.Dir(path)
-			if _, ok := art[dir]; !ok {
-				art[dir] = path
+		for _, e := range entries {
+			path := filepath.Join(dir, e.Name())
+			if e.IsDir() {
+				walk(path)
+				continue
+			}
+			name := e.Name()
+			if isAudio(name) {
+				audio = append(audio, path)
+				continue
+			}
+			if role := musicArtworkRole(name); role != "" {
+				if _, ok := art[dir]; !ok {
+					art[dir] = path
+				}
 			}
 		}
-		return nil
-	})
-	if walkErr != nil {
-		return nil, nil, walkErr
 	}
-	return audio, art, nil
+	walk(root)
+	return audio, art, unresolved, nil
 }
 
 // musicArtworkRole returns a non-empty role when name is a recognized local album

@@ -58,8 +58,10 @@ func (c *captureStore) ListFileSnapshots(string) (map[string]store.FileSnapshot,
 func (c *captureStore) LoadStoredFile(string) (store.File, error) {
 	return store.File{}, store.ErrNotFound
 }
-func (c *captureStore) MarkFilesMissing(string, map[string]bool) (int, error) { return 0, nil }
-func (c *captureStore) RecomputeHiddenTitles(string) error                    { return nil }
+func (c *captureStore) MarkFilesMissing(string, map[string]bool, []string) (int, error) {
+	return 0, nil
+}
+func (c *captureStore) RecomputeHiddenTitles(string) error { return nil }
 func (c *captureStore) MatchOverridesByLibrary(string) ([]store.MatchOverride, error) {
 	return nil, nil
 }
