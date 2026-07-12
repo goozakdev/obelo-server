@@ -11,7 +11,7 @@ import { useLibraries } from "./librariesContext";
 
 export default function BackLink({ to, label }: { to: string; label: string }) {
   return (
-    <Link className="nav-link back-link" data-testid="back-link" to={to}>
+    <Link className="nav-link back-link back-link-lg" data-testid="back-link" to={to}>
       ← {label}
     </Link>
   );

@@ -6,6 +6,8 @@ import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import { useAsync } from "./useAsync";
 import { useTitleGrid } from "./useTitleGrid";
 import { useInfiniteScrollSentinel } from "./useInfiniteScrollSentinel";
+import { useLetterJump } from "./useLetterJump";
+import LetterJumpBar from "./LetterJumpBar";
 import PosterTile from "./PosterTile";
 import ShowGrid from "./ShowGrid";
 import AppHeader from "./AppHeader";
@@ -79,12 +81,17 @@ function MovieGrid({
   // scroll can't double-fetch.
   const sentinelRef = useInfiniteScrollSentinel(grid.loadMore, grid.titles.length);
 
+  // Alphabetical jump bar. It only makes sense while the list is in title order,
+  // so it's hidden when sorting by date added (a letter jump has no meaning then).
+  const { gridRef, jumpTo } = useLetterJump(grid.titles, getTitleName, grid);
+
   return (
     <>
       <div className="grid-toolbar">
         <h2 className="section-title" data-testid="library-title">
           {libraryName}
         </h2>
+        {sort === "title" && <LetterJumpBar onJump={jumpTo} />}
         <label className="sort-control">
           <span className="field-label">Sort</span>
           <select
@@ -127,7 +134,7 @@ function MovieGrid({
       )}
 
       {grid.titles.length > 0 && (
-        <ul className="poster-grid" data-testid="poster-grid">
+        <ul className="poster-grid" data-testid="poster-grid" ref={gridRef}>
           {grid.titles.map((t) => (
             <PosterTile key={t.id} title={t} />
           ))}
@@ -161,4 +168,8 @@ function MovieGrid({
       )}
     </>
   );
+}
+
+function getTitleName(t: { title: string }): string {
+  return t.title;
 }

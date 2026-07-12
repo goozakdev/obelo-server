@@ -551,6 +551,13 @@ body {
   margin-bottom: 2rem;
 }
 
+/* The parent Back link on the item detail screens (Movie/Show/Artist/Album/Song)
+   is sized to match the library-name label (.grid-toolbar .section-title). Scoped
+   to BackLink so the Collection/Playlist back links keep the default size. */
+.back-link-lg {
+  font-size: 1.8rem;
+}
+
 /* --- Library list --------------------------------------------------------- */
 .library-list {
   list-style: none;
@@ -590,13 +597,55 @@ body {
 }
 
 /* --- Grid toolbar + poster grid ------------------------------------------- */
+/* Three columns: the library name pinned left, the alphabetical jump bar
+   centered over the page, and any right-hand control (the Movie sort) at the far
+   edge. Explicit column placement (not source order) so the jump bar stays
+   centered whether or not the sort control / jump bar is present. */
 .grid-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 1rem;
-  flex-wrap: wrap;
   margin-bottom: 1rem;
+}
+.grid-toolbar .section-title {
+  grid-column: 1;
+  margin-bottom: 0;
+  /* Twice the letter-range font (1.35rem) so the library name anchors the row. */
+  font-size: 1.8rem;
+}
+.grid-toolbar .sort-control {
+  grid-column: 3;
+  justify-self: end;
+}
+
+/* The alphabetical jump bar, centered over the page: large bare text-button
+   letter ranges (flat wireframe style — no chrome until hover/focus, lime on
+   hover). */
+.letter-jump {
+  grid-column: 2;
+  justify-self: center;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem;
+}
+.letter-jump-btn {
+  padding: 0.25rem 0.7rem;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.letter-jump-btn:hover,
+.letter-jump-btn:focus-visible {
+  color: var(--accent);
+  background: var(--surface-hover);
 }
 
 .sort-control {
@@ -625,6 +674,8 @@ body {
 
 .poster-tile {
   min-width: 0;
+  /* Clear the sticky header when a letter-jump scrolls this tile to the top. */
+  scroll-margin-top: calc(var(--app-header-height) + 1rem);
 }
 
 .poster-link {

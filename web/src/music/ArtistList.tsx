@@ -4,6 +4,8 @@ import { apiClient } from "../api/client";
 import type { ArtistSummary } from "../api/types";
 import { usePaginatedList } from "../browse/usePaginatedList";
 import { useInfiniteScrollSentinel } from "../browse/useInfiniteScrollSentinel";
+import { useLetterJump } from "../browse/useLetterJump";
+import LetterJumpBar from "../browse/LetterJumpBar";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import Poster from "../browse/Poster";
 
@@ -48,12 +50,16 @@ export default function ArtistList({
   // attaches the observer the moment the sentinel node mounts.
   const sentinelRef = useInfiniteScrollSentinel(grid.loadMore, grid.items.length);
 
+  // Alphabetical jump bar (Artists are always in name order server-side).
+  const { gridRef, jumpTo } = useLetterJump(grid.items, getArtistName, grid);
+
   return (
     <>
       <div className="grid-toolbar">
         <h2 className="section-title" data-testid="library-title">
           {libraryName}
         </h2>
+        <LetterJumpBar onJump={jumpTo} />
       </div>
 
       {grid.loading && (
@@ -81,7 +87,7 @@ export default function ArtistList({
       )}
 
       {grid.items.length > 0 && (
-        <ul className="poster-grid" data-testid="poster-grid">
+        <ul className="poster-grid" data-testid="poster-grid" ref={gridRef}>
           {grid.items.map((a) => (
             <ArtistTile key={a.id} artist={a} />
           ))}
@@ -119,6 +125,10 @@ export default function ArtistList({
 
 function getArtistId(a: ArtistSummary): string {
   return a.id;
+}
+
+function getArtistName(a: ArtistSummary): string {
+  return a.name;
 }
 
 // ArtistTile mirrors the Show tile but links to the Artist detail (Albums). The

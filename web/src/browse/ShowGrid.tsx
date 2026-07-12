@@ -4,6 +4,8 @@ import { apiClient } from "../api/client";
 import type { ShowSummary } from "../api/types";
 import { usePaginatedList } from "./usePaginatedList";
 import { useInfiniteScrollSentinel } from "./useInfiniteScrollSentinel";
+import { useLetterJump } from "./useLetterJump";
+import LetterJumpBar from "./LetterJumpBar";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import Poster from "./Poster";
 
@@ -39,12 +41,16 @@ export default function ShowGrid({
   // attaches the observer the moment the sentinel node mounts.
   const sentinelRef = useInfiniteScrollSentinel(grid.loadMore, grid.items.length);
 
+  // Alphabetical jump bar (Shows are always in title order server-side).
+  const { gridRef, jumpTo } = useLetterJump(grid.items, getShowTitle, grid);
+
   return (
     <>
       <div className="grid-toolbar">
         <h2 className="section-title" data-testid="library-title">
           {libraryName}
         </h2>
+        <LetterJumpBar onJump={jumpTo} />
       </div>
 
       {grid.loading && (
@@ -72,7 +78,7 @@ export default function ShowGrid({
       )}
 
       {grid.items.length > 0 && (
-        <ul className="poster-grid" data-testid="poster-grid">
+        <ul className="poster-grid" data-testid="poster-grid" ref={gridRef}>
           {grid.items.map((s) => (
             <ShowTile key={s.id} show={s} />
           ))}
@@ -110,6 +116,10 @@ export default function ShowGrid({
 
 function getShowId(s: ShowSummary): string {
   return s.id;
+}
+
+function getShowTitle(s: ShowSummary): string {
+  return s.title;
 }
 
 // ShowTile mirrors PosterTile but links to the Show detail (Seasons/Episodes)
