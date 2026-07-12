@@ -194,6 +194,73 @@ func TestTheAudioDBArtistCandidatesNonArtistOrNoThumb(t *testing.T) {
 	}
 }
 
+// audiodbArtistArtworkJSON carries the fallback logo + backgrounds (the fanart
+// fields), alongside the thumb, so the multi-role parse can be exercised.
+const audiodbArtistArtworkJSON = `{
+  "artists": [
+    {
+      "strArtist": "Radiohead",
+      "strArtistThumb": "https://theaudiodb.com/thumb.jpg",
+      "strArtistLogo": "https://theaudiodb.com/logo.png",
+      "strArtistFanart": "https://theaudiodb.com/fan1.jpg",
+      "strArtistFanart3": "https://theaudiodb.com/fan3.jpg",
+      "strBiographyEN": "bio"
+    }
+  ]
+}`
+
+// TestTheAudioDBArtistArtworkRoles: the fallback source parses strArtistLogo into a
+// logo ref and the strArtistFanart* set into a background ref (the first, best-of),
+// alongside the thumb poster — so it can fill a logo/background fanart.tv left empty.
+func TestTheAudioDBArtistArtworkRoles(t *testing.T) {
+	p, _ := audiodbStub(t, audiodbArtistArtworkJSON, 0)
+	meta, err := p.Lookup(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	got := map[string]string{}
+	for _, a := range meta.Artwork {
+		got[a.Role] = a.URL
+	}
+	want := map[string]string{
+		"poster":     "https://theaudiodb.com/thumb.jpg",
+		"logo":       "https://theaudiodb.com/logo.png",
+		"background": "https://theaudiodb.com/fan1.jpg", // the first non-empty fanart
+	}
+	for role, url := range want {
+		if got[role] != url {
+			t.Errorf("artwork[%s] = %q, want %q (all: %+v)", role, got[role], url, meta.Artwork)
+		}
+	}
+}
+
+// TestTheAudioDBArtistCandidatesByRole: the role parameter selects the set —
+// "logo" → the single strArtistLogo, "background" → the strArtistFanart* list (in
+// order, skipping the absent Fanart2).
+func TestTheAudioDBArtistCandidatesByRole(t *testing.T) {
+	p, _ := audiodbStub(t, audiodbArtistArtworkJSON, 0)
+	logo, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid}, "logo")
+	if err != nil {
+		t.Fatalf("logo candidates: %v", err)
+	}
+	if len(logo) != 1 || logo[0].URL != "https://theaudiodb.com/logo.png" {
+		t.Errorf("logo candidates = %+v, want the single strArtistLogo", logo)
+	}
+	bg, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid}, "background")
+	if err != nil {
+		t.Fatalf("background candidates: %v", err)
+	}
+	want := []string{"https://theaudiodb.com/fan1.jpg", "https://theaudiodb.com/fan3.jpg"}
+	if len(bg) != len(want) {
+		t.Fatalf("background candidates = %d, want %d", len(bg), len(want))
+	}
+	for i, w := range want {
+		if bg[i].URL != w {
+			t.Errorf("background[%d].URL = %q, want %q", i, bg[i].URL, w)
+		}
+	}
+}
+
 // --- track synopses --------------------------------------------------------
 
 const audiodbTrackJSON = `{

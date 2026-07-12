@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { Album } from "../api/types";
 import { useAsync } from "../browse/useAsync";
 import BackLink, { useLibraryName } from "../browse/BackLink";
+import DetailBackdrop from "../browse/DetailBackdrop";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
@@ -59,25 +60,15 @@ export default function ArtistDetailScreen() {
 
       {state.status === "ready" && (
         <article className="detail" data-testid="artist-detail">
+          {/* The Artist's fanart.tv Background pinned behind the whole screen (like a
+              Show/Movie); content scrolls over it and it fades toward black. */}
+          <DetailBackdrop src={state.data.artist.backgroundUrl} />
           <div className="detail-hero">
-            {state.data.artist.artworkUrl && (
-              <div className="detail-poster artist-avatar">
-                <img
-                  className="poster poster-img"
-                  data-testid="artist-image"
-                  src={state.data.artist.artworkUrl}
-                  alt={`${state.data.artist.name} image`}
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              </div>
-            )}
-            <div className="detail-info">
-              <h1 className="detail-title" data-testid="artist-name">
-                {state.data.artist.name}
-              </h1>
+            <ArtistHero
+              name={state.data.artist.name}
+              logoUrl={state.data.artist.logoUrl}
+              photoUrl={state.data.artist.artworkUrl}
+            >
               {(state.data.artist.genres ?? []).length > 0 && (
                 <div className="detail-genres" data-testid="artist-genres">
                   {(state.data.artist.genres ?? []).join(" · ")}
@@ -88,7 +79,7 @@ export default function ArtistDetailScreen() {
                   {state.data.artist.overview}
                 </p>
               )}
-            </div>
+            </ArtistHero>
           </div>
 
           {/* Edit-item (ADR-0019), Admin-only. The Artist's two correction actions
@@ -154,6 +145,69 @@ export default function ArtistDetailScreen() {
         </article>
       )}
     </MusicShell>
+  );
+}
+
+// ArtistHero renders the detail-hero's identity: the fetched ClearLOGO leads (the
+// artist's name in its own lettering, like a Show/Movie), and when there's no logo
+// — or its image fails to load — it falls back to the artist photo avatar beside a
+// text heading, and finally to the plain text name alone. `children` (genres + bio)
+// follow the heading down the info column. The logo, when present, stands in for
+// both the avatar and the text heading, matching the show detail.
+function ArtistHero({
+  name,
+  logoUrl,
+  photoUrl,
+  children,
+}: {
+  name: string;
+  logoUrl?: string;
+  photoUrl?: string;
+  children?: ReactNode;
+}) {
+  // Reset failure state when the target changes (detail nav / a newly picked image):
+  // a URL that 404'd on a stale version may now resolve.
+  const [logoFailed, setLogoFailed] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
+  useEffect(() => setLogoFailed(false), [logoUrl]);
+  useEffect(() => setPhotoFailed(false), [photoUrl]);
+
+  const showLogo = Boolean(logoUrl) && !logoFailed;
+  const showPhoto = !showLogo && Boolean(photoUrl) && !photoFailed;
+
+  return (
+    <>
+      {showPhoto && (
+        <div className="detail-poster artist-avatar">
+          <img
+            className="poster poster-img"
+            data-testid="artist-image"
+            src={photoUrl}
+            alt={`${name} image`}
+            loading="lazy"
+            onError={() => setPhotoFailed(true)}
+          />
+        </div>
+      )}
+      <div className="detail-info">
+        {showLogo ? (
+          <h1 className="detail-logo-heading">
+            <img
+              className="detail-logo"
+              data-testid="artist-logo"
+              src={logoUrl}
+              alt={name}
+              onError={() => setLogoFailed(true)}
+            />
+          </h1>
+        ) : (
+          <h1 className="detail-title" data-testid="artist-name">
+            {name}
+          </h1>
+        )}
+        {children}
+      </div>
+    </>
   );
 }
 

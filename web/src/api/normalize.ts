@@ -430,6 +430,8 @@ export function normalizeArtistSummary(raw: ArtistSummaryRaw): ArtistSummary {
     genres: raw.genres ?? [],
     enrichmentStatus: raw.enrichmentStatus,
     artworkUrl: raw.artworkUrl,
+    backgroundUrl: raw.backgroundUrl,
+    logoUrl: raw.logoUrl,
     lockedFields: raw.lockedFields,
     enrichmentOverride: raw.enrichmentOverride,
   };

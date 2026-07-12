@@ -24,13 +24,17 @@ type artistSummaryJSON struct {
 	LibraryID string `json:"libraryId,omitempty"`
 	Kind      string `json:"kind"` // always "artist" — lets the client branch in the list
 	Name      string `json:"name"`
-	// Enrichment (issue 03): bio (overview) + genres + a fetched image, all
-	// omitempty. ArtworkURL points at the Artist artwork endpoint, set only when an
-	// image was fetched. Set on the Artist detail; omitted on the lean list.
+	// Enrichment (issue 03): bio (overview) + genres + fetched artwork, all
+	// omitempty. ArtworkURL is the artist photo; BackgroundURL/LogoURL are the
+	// fanart.tv Background + ClearLOGO (like a Show/Movie), each pointing at the
+	// Artist artwork endpoint and set only when that role was fetched. Set on the
+	// Artist detail; omitted on the lean list.
 	Overview         string   `json:"overview,omitempty"`
 	Genres           []string `json:"genres,omitempty"`
 	EnrichmentStatus string   `json:"enrichmentStatus,omitempty"`
 	ArtworkURL       string   `json:"artworkUrl,omitempty"`
+	BackgroundURL    string   `json:"backgroundUrl,omitempty"`
+	LogoURL          string   `json:"logoUrl,omitempty"`
 	// Edit-item surface (item-editing/02): on the Artist DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
@@ -55,15 +59,21 @@ func decorateArtist(js *artistSummaryJSON, e store.EntityEnrichment, roles map[s
 		js.EnrichmentStatus = e.Status
 	}
 	if roles["poster"] {
-		js.ArtworkURL = artistArtworkURL(js.ID, version)
+		js.ArtworkURL = artistArtworkURL(js.ID, "poster", version)
+	}
+	if roles["background"] {
+		js.BackgroundURL = artistArtworkURL(js.ID, "background", version)
+	}
+	if roles["logo"] {
+		js.LogoURL = artistArtworkURL(js.ID, "logo", version)
 	}
 }
 
-// artistArtworkURL builds the Artist artwork endpoint URL with its cache-bust
-// token. Shared by the lean Artist list and the Artist detail so both advertise
-// the same image location.
-func artistArtworkURL(id, version string) string {
-	return withArtworkVersion(APIPrefix+"/artists/"+id+"/artwork/poster", version)
+// artistArtworkURL builds the Artist artwork endpoint URL for a role with its
+// cache-bust token. Shared by the lean Artist list and the Artist detail so both
+// advertise the same image location.
+func artistArtworkURL(id, role, version string) string {
+	return withArtworkVersion(APIPrefix+"/artists/"+id+"/artwork/"+role, version)
 }
 
 // --- Album + Track listings -------------------------------------------------
@@ -241,7 +251,7 @@ func handleListArtists(svc *catalog.Service, libraryID string) http.HandlerFunc 
 		for _, a := range page.Artists {
 			js := toArtistSummary(a)
 			if roles[a.ID]["poster"] {
-				js.ArtworkURL = artistArtworkURL(a.ID, versions[a.ID])
+				js.ArtworkURL = artistArtworkURL(a.ID, "poster", versions[a.ID])
 			}
 			out.Artists = append(out.Artists, js)
 		}

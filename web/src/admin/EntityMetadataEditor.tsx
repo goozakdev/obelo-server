@@ -36,13 +36,14 @@ type EntityFieldKey = "title" | "overview" | "contentRating" | "network" | "genr
 
 /** The per-role artwork tabs for a browse PARENT's Edit-item dialog
  * (artwork-management/01, ADR-0026): Show → Poster + Background + Logo; Artist →
- * Artist Photo; Album → Album Cover. Each tab's body is an ArtworkPicker wired to the
- * entity artwork endpoints — it auto-searches on open (the dialog mounts only the
- * active tab) and applies + Locks on click. `onChanged` refetches the detail so the
- * served parent artwork reloads (its URL carries its own version) and the Locked
- * badge reflects the pick/release. The music tabs are relabels only: the role KEYS
- * stay `poster` (Artist) and `cover` (Album); just the display label changes to
- * "Artist Photo" / "Album Cover". */
+ * Artist Photo + Background + Logo; Album → Album Cover. Each tab's body is an
+ * ArtworkPicker wired to the entity artwork endpoints — it auto-searches on open
+ * (the dialog mounts only the active tab) and applies + Locks on click. `onChanged`
+ * refetches the detail so the served parent artwork reloads (its URL carries its own
+ * version) and the Locked badge reflects the pick/release. The Artist's photo tab is
+ * a relabel — its role KEY stays `poster`, only the label changes to "Artist Photo";
+ * its Background/Logo tabs use the same `background`/`logo` roles a Show does. The
+ * Album cover tab keeps role `cover`. */
 export function entityArtworkTabs(
   entityType: EntityKind,
   entityId: string,
@@ -78,7 +79,11 @@ export function entityArtworkTabs(
         { key: "logo", label: "Logo", node: picker("logo", "Logo") },
       ];
     case "artists":
-      return [{ key: "artist-photo", label: "Artist Photo", node: picker("poster", "Artist Photo") }];
+      return [
+        { key: "artist-photo", label: "Artist Photo", node: picker("poster", "Artist Photo") },
+        { key: "background", label: "Background", node: picker("background", "Background") },
+        { key: "logo", label: "Logo", node: picker("logo", "Logo") },
+      ];
     case "albums":
       return [{ key: "album-cover", label: "Album Cover", node: picker("cover", "Album Cover") }];
   }

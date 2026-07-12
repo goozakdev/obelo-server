@@ -21,7 +21,14 @@ const fanartArtistJSON = `{
      {"id": "3", "url": "https://assets.fanart.tv/thumb-mid.jpg", "likes": "9"}
   ],
   "artistbackground": [
-     {"id": "4", "url": "https://assets.fanart.tv/bg.jpg", "likes": "5"}
+     {"id": "4", "url": "https://assets.fanart.tv/bg-low.jpg", "likes": "2"},
+     {"id": "5", "url": "https://assets.fanart.tv/bg-best.jpg", "likes": "8"}
+  ],
+  "hdmusiclogo": [
+     {"id": "6", "url": "https://assets.fanart.tv/hdlogo.png", "likes": "4"}
+  ],
+  "musiclogo": [
+     {"id": "7", "url": "https://assets.fanart.tv/logo-sd.png", "likes": "40"}
   ]
 }`
 
@@ -53,10 +60,23 @@ func TestFanartTVBestArtistThumb(t *testing.T) {
 	if !meta.Matched || meta.Source != "fanart.tv" {
 		t.Errorf("meta = %+v, want matched fanart.tv result", meta)
 	}
-	// The highest-likes artistthumb is parsed into the one poster-role ref.
-	if len(meta.Artwork) != 1 || meta.Artwork[0].Role != "poster" ||
-		meta.Artwork[0].URL != "https://assets.fanart.tv/thumb-best.jpg" {
-		t.Errorf("artwork = %+v, want single poster = thumb-best", meta.Artwork)
+	// The highest-likes image for each role is parsed into its own ref: the artist
+	// photo (poster), the artistbackground (background), and the logo (logo). Logos
+	// coalesce hdmusiclogo AHEAD of musiclogo, so the HD lettering leads regardless of
+	// the SD logo's higher likes.
+	got := map[string]string{}
+	for _, a := range meta.Artwork {
+		got[a.Role] = a.URL
+	}
+	want := map[string]string{
+		"poster":     "https://assets.fanart.tv/thumb-best.jpg",
+		"background": "https://assets.fanart.tv/bg-best.jpg",
+		"logo":       "https://assets.fanart.tv/hdlogo.png",
+	}
+	for role, url := range want {
+		if got[role] != url {
+			t.Errorf("artwork[%s] = %q, want %q (all: %+v)", role, got[role], url, meta.Artwork)
+		}
 	}
 	// The request is MBID-keyed.
 	if len(*seen) != 1 || !strings.HasSuffix((*seen)[0], "/music/"+mbid) {
@@ -64,9 +84,23 @@ func TestFanartTVBestArtistThumb(t *testing.T) {
 	}
 }
 
-func TestFanartTVNoImageIsNoMatch(t *testing.T) {
-	// A 200 with no artistthumb (only a background) is a no-match for the poster.
+func TestFanartTVBackgroundOrLogoOnlyMatches(t *testing.T) {
+	// A record with no artist photo still matches when it carries a background or a
+	// logo — those roles stand on their own (the artist photo is no longer required).
 	p, _ := fanartStub(t, `{"name":"X","artistbackground":[{"url":"https://x/bg.jpg","likes":"1"}]}`, 0)
+	meta, err := p.Lookup(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(meta.Artwork) != 1 || meta.Artwork[0].Role != "background" {
+		t.Errorf("artwork = %+v, want a single background ref", meta.Artwork)
+	}
+}
+
+func TestFanartTVNoImageIsNoMatch(t *testing.T) {
+	// A 200 carrying none of the three image roles (thumb/background/logo) is a
+	// no-match — there is nothing for the fill-only chain to contribute.
+	p, _ := fanartStub(t, `{"name":"X"}`, 0)
 	if _, err := p.Lookup(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid}); err != ErrNoMatch {
 		t.Errorf("err = %v, want ErrNoMatch", err)
 	}
@@ -139,6 +173,41 @@ func TestFanartTVArtistCandidates(t *testing.T) {
 	// The request is MBID-keyed, exactly like the single-image Lookup.
 	if len(*seen) != 1 || !strings.HasSuffix((*seen)[0], "/music/"+mbid) {
 		t.Errorf("request paths = %v, want a single /music/%s", *seen, mbid)
+	}
+}
+
+// TestFanartTVArtistCandidatesByRole: the role parameter selects which fanart.tv
+// image set the picker surfaces — "background" → artistbackground[], "logo" → the
+// coalesced logos (hdmusiclogo ahead of musiclogo). Each is highest-"likes" first
+// within its own set, and the artist-photo grid is unaffected.
+func TestFanartTVArtistCandidatesByRole(t *testing.T) {
+	p, _ := fanartStub(t, fanartArtistJSON, 0)
+	bg, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid}, "background")
+	if err != nil {
+		t.Fatalf("background candidates: %v", err)
+	}
+	wantBG := []string{"https://assets.fanart.tv/bg-best.jpg", "https://assets.fanart.tv/bg-low.jpg"}
+	if len(bg) != len(wantBG) {
+		t.Fatalf("background candidates = %d, want %d", len(bg), len(wantBG))
+	}
+	for i, w := range wantBG {
+		if bg[i].URL != w {
+			t.Errorf("background[%d].URL = %q, want %q", i, bg[i].URL, w)
+		}
+	}
+	logos, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: mbid}, "logo")
+	if err != nil {
+		t.Fatalf("logo candidates: %v", err)
+	}
+	// HD logo leads the SD one despite the SD's higher likes (HD is prepended first).
+	wantLogos := []string{"https://assets.fanart.tv/hdlogo.png", "https://assets.fanart.tv/logo-sd.png"}
+	if len(logos) != len(wantLogos) {
+		t.Fatalf("logo candidates = %d, want %d", len(logos), len(wantLogos))
+	}
+	for i, w := range wantLogos {
+		if logos[i].URL != w {
+			t.Errorf("logo[%d].URL = %q, want %q", i, logos[i].URL, w)
+		}
 	}
 }
 

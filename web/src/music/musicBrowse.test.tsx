@@ -152,6 +152,76 @@ describe("Artist detail", () => {
     const album = screen.getByText("OK Computer").closest("a");
     expect(album).toHaveAttribute("href", "/music/albums/al1");
   });
+
+  it("pins the Background and leads the hero with the logo (no photo/name text)", async () => {
+    getArtistAlbums.mockResolvedValue({
+      ...radioheadAlbums,
+      artist: {
+        ...radioheadAlbums.artist,
+        artworkUrl: "/api/v1/artists/ar1/artwork/poster",
+        backgroundUrl: "/api/v1/artists/ar1/artwork/background",
+        logoUrl: "/api/v1/artists/ar1/artwork/logo",
+      },
+    });
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/artists/ar1"] },
+    );
+    await waitFor(() => expect(screen.getByTestId("artist-detail")).toBeInTheDocument());
+    // The Background is pinned behind the screen.
+    expect(screen.getByTestId("detail-backdrop")).toBeInTheDocument();
+    // The logo IS the heading (its name in its own lettering) — so no text heading
+    // and no artist-photo avatar are rendered.
+    const logo = screen.getByTestId("artist-logo");
+    expect(logo).toHaveAttribute("src", "/api/v1/artists/ar1/artwork/logo");
+    expect(logo).toHaveAttribute("alt", "Radiohead");
+    expect(screen.queryByTestId("artist-name")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("artist-image")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the artist photo when there is no logo", async () => {
+    getArtistAlbums.mockResolvedValue({
+      ...radioheadAlbums,
+      artist: {
+        ...radioheadAlbums.artist,
+        artworkUrl: "/api/v1/artists/ar1/artwork/poster",
+        backgroundUrl: "/api/v1/artists/ar1/artwork/background",
+        // no logoUrl
+      },
+    });
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/artists/ar1"] },
+    );
+    await waitFor(() => expect(screen.getByTestId("artist-detail")).toBeInTheDocument());
+    // No logo → the artist photo stands in, beside the text name; still a backdrop.
+    expect(screen.getByTestId("detail-backdrop")).toBeInTheDocument();
+    expect(screen.queryByTestId("artist-logo")).not.toBeInTheDocument();
+    expect(screen.getByTestId("artist-image")).toHaveAttribute(
+      "src",
+      "/api/v1/artists/ar1/artwork/poster",
+    );
+    expect(screen.getByTestId("artist-name")).toHaveTextContent("Radiohead");
+  });
+
+  it("falls back to the plain name when there is neither logo nor photo", async () => {
+    // radioheadAlbums.artist carries no artwork at all (the default mock).
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/artists/ar1"] },
+    );
+    await waitFor(() => expect(screen.getByTestId("artist-detail")).toBeInTheDocument());
+    expect(screen.queryByTestId("artist-logo")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("artist-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-backdrop")).not.toBeInTheDocument();
+    expect(screen.getByTestId("artist-name")).toHaveTextContent("Radiohead");
+  });
 });
 
 describe("Album detail", () => {
@@ -229,7 +299,7 @@ describe("Album detail", () => {
 // stay poster/cover), and a Track none. Asserting the tab BUTTONS (opening the
 // dialog stays on the Search tab, so the picker bodies never mount / query).
 describe("Edit-item artwork tabs (Admin)", () => {
-  it("shows a single Artist Photo tab on an Artist", async () => {
+  it("shows Artist Photo + Background + Logo tabs on an Artist", async () => {
     const user = userEvent.setup();
     renderWithAuth(
       <Routes>
@@ -240,12 +310,15 @@ describe("Edit-item artwork tabs (Admin)", () => {
     await waitFor(() => expect(screen.getByTestId("artist-detail")).toBeInTheDocument());
 
     await user.click(screen.getByTestId("edit-item-button"));
-    const tab = screen.getByTestId("edit-item-tab-artist-photo");
-    expect(tab).toHaveTextContent("Artist Photo");
-    // Not "Image", and no video/album artwork tabs.
-    expect(tab).not.toHaveTextContent("Image");
+    // The artist photo tab keeps the "Artist Photo" relabel (role `poster`); the
+    // Background + Logo tabs mirror a Show's (roles `background`/`logo`).
+    const photo = screen.getByTestId("edit-item-tab-artist-photo");
+    expect(photo).toHaveTextContent("Artist Photo");
+    expect(photo).not.toHaveTextContent("Image");
+    expect(screen.getByTestId("edit-item-tab-background")).toHaveTextContent("Background");
+    expect(screen.getByTestId("edit-item-tab-logo")).toHaveTextContent("Logo");
+    // Not the raw "poster" key, and no album artwork tab.
     expect(screen.queryByTestId("edit-item-tab-poster")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("edit-item-tab-background")).not.toBeInTheDocument();
     expect(screen.queryByTestId("edit-item-tab-album-cover")).not.toBeInTheDocument();
   });
 

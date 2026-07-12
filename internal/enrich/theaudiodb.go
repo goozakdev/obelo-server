@@ -23,9 +23,10 @@ import (
 // (ADR-0001/0002).
 //
 // It resolves an artist by MBID when the caller supplied one (artist-mb.php) and
-// otherwise by name (search.php), parsing strArtistThumb into a single
-// ArtworkRef{Role: "poster"} (the role the Artist artwork endpoint and the
-// artworkUrl DTO field serve) and the language-matched strBiography* into Overview.
+// otherwise by name (search.php), parsing strArtistThumb into ArtworkRef{Role:
+// "poster"}, strArtistFanart* into "background", and strArtistLogo into "logo" (the
+// fallback source behind fanart.tv for the same three artist roles) and the
+// language-matched strBiography* into Overview.
 // It resolves a track by recording MBID (track-mb.php) and otherwise by
 // artist+name (searchtrack.php), parsing the language-matched strDescription* into
 // Overview (the synopsis only — no track artwork).
@@ -48,11 +49,15 @@ type TheAudioDBProvider struct {
 }
 
 // audiodbArtist is the slice of a TheAudioDB artist record this provider needs:
-// the thumbnail image and the chosen-language biography. A zero value means "no
-// usable data" (cached as a negative result).
+// the thumbnail (poster), background(s), logo, and the chosen-language biography. A
+// zero value means "no usable data" (cached as a negative result). backgrounds
+// holds the non-empty strArtistFanart/2/3/4 in order (the first is the best-of the
+// Lookup emits; the full list feeds the Background picker grid).
 type audiodbArtist struct {
-	thumb string
-	bio   string
+	thumb       string
+	backgrounds []string
+	logo        string
+	bio         string
 }
 
 // defaultTheAudioDBThrottle spaces successive TheAudioDB requests so a large-
@@ -100,12 +105,18 @@ func (p *TheAudioDBProvider) lookupArtist(ctx context.Context, ref TitleRef) (Ti
 	if err != nil {
 		return TitleMetadata{}, err
 	}
-	if a.thumb == "" && a.bio == "" {
+	if a.thumb == "" && len(a.backgrounds) == 0 && a.logo == "" && a.bio == "" {
 		return TitleMetadata{}, ErrNoMatch
 	}
 	meta := TitleMetadata{Matched: true, Source: "theaudiodb"}
 	if a.thumb != "" {
-		meta.Artwork = []ArtworkRef{{Role: "poster", URL: a.thumb}}
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "poster", URL: a.thumb})
+	}
+	if len(a.backgrounds) > 0 {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "background", URL: a.backgrounds[0]})
+	}
+	if a.logo != "" {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "logo", URL: a.logo})
 	}
 	if a.bio != "" {
 		meta.Overview = a.bio
@@ -113,15 +124,17 @@ func (p *TheAudioDBProvider) lookupArtist(ctx context.Context, ref TitleRef) (Ti
 	return meta, nil
 }
 
-// ArtworkCandidates lists TheAudioDB's artist photo for the Artist Photo picker
-// (artwork-management/02). TheAudioDB carries a single strArtistThumb per artist,
-// so it contributes at most one candidate — the music chain unions it with
-// fanart.tv's artistthumb[] into the grid. Keyed by MBID when present and
-// otherwise by NAME (so an un-MBID'd artist still gets a photo), reusing the same
-// cached lookup as the enrichment pass. Only the "artist" kind is served (the
-// track path carries no artwork); every other kind reports ErrSearchUnavailable.
-// An artist with nothing to key by, or with no thumb, is (nil, nil).
-func (p *TheAudioDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, _ string) ([]ArtworkCandidate, error) {
+// ArtworkCandidates lists TheAudioDB's images for an artist role, backing the
+// Edit-item picker (artwork-management/02) as the fallback source behind fanart.tv.
+// The role selects the set: "background" → the strArtistFanart* list, "logo" → the
+// single strArtistLogo, "poster" (or anything else) → the single strArtistThumb —
+// the music chain unions each with fanart.tv's set into the grid. Keyed by MBID
+// when present and otherwise by NAME (so an un-MBID'd artist still gets images),
+// reusing the same cached lookup as the enrichment pass. Only the "artist" kind is
+// served (the track path carries no artwork); every other kind reports
+// ErrSearchUnavailable. An artist with nothing to key by, or with no image for the
+// role, is (nil, nil).
+func (p *TheAudioDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, role string) ([]ArtworkCandidate, error) {
 	if ref.Kind != "artist" {
 		return nil, ErrSearchUnavailable // TheAudioDB owns no listable set for this kind
 	}
@@ -133,10 +146,24 @@ func (p *TheAudioDBProvider) ArtworkCandidates(ctx context.Context, ref TitleRef
 	if err != nil {
 		return nil, err
 	}
-	if a.thumb == "" {
-		return nil, nil
+	var urls []string
+	switch role {
+	case "background":
+		urls = a.backgrounds
+	case "logo":
+		if a.logo != "" {
+			urls = []string{a.logo}
+		}
+	default: // "poster" and anything unspecified → the artist photo
+		if a.thumb != "" {
+			urls = []string{a.thumb}
+		}
 	}
-	return []ArtworkCandidate{{URL: a.thumb, Source: "theaudiodb"}}, nil
+	cands := make([]ArtworkCandidate, 0, len(urls))
+	for _, u := range urls {
+		cands = append(cands, ArtworkCandidate{URL: u, Source: "theaudiodb"})
+	}
+	return cands, nil
 }
 
 // artistRequest builds the cache key + request URL for an artist lookup, keyed by
@@ -266,7 +293,18 @@ func (p *TheAudioDBProvider) fetch(ctx context.Context, reqURL string) (audiodbA
 	if bio == "" {
 		bio = mapString(a, "strBiographyEN") // English is the broadest fallback
 	}
-	return audiodbArtist{thumb: mapString(a, "strArtistThumb"), bio: bio}, nil
+	var backgrounds []string
+	for _, f := range []string{"strArtistFanart", "strArtistFanart2", "strArtistFanart3", "strArtistFanart4"} {
+		if u := mapString(a, f); u != "" {
+			backgrounds = append(backgrounds, u)
+		}
+	}
+	return audiodbArtist{
+		thumb:       mapString(a, "strArtistThumb"),
+		backgrounds: backgrounds,
+		logo:        mapString(a, "strArtistLogo"),
+		bio:         bio,
+	}, nil
 }
 
 // fetchTrack issues one TheAudioDB track request and parses the first track's

@@ -42,7 +42,11 @@ func tvMusicProvider() *fakeProvider {
 			return enrich.TitleMetadata{
 				Matched: true, Overview: "English rock band from Oxford.",
 				Genres: []string{"Alternative Rock"}, ExternalID: "mb-artist", Source: "musicbrainz",
-				Artwork: []enrich.ArtworkRef{{Role: "poster", URL: "https://img.example/artist.jpg"}},
+				Artwork: []enrich.ArtworkRef{
+					{Role: "poster", URL: "https://img.example/artist.jpg"},
+					{Role: "background", URL: "https://img.example/artist-bg.jpg"},
+					{Role: "logo", URL: "https://img.example/artist-logo.png"},
+				},
 			}, nil
 		case "album":
 			return enrich.TitleMetadata{
@@ -119,6 +123,8 @@ type enrichedArtistResp struct {
 	Genres           []string `json:"genres"`
 	EnrichmentStatus string   `json:"enrichmentStatus"`
 	ArtworkURL       string   `json:"artworkUrl"`
+	BackgroundURL    string   `json:"backgroundUrl"`
+	LogoURL          string   `json:"logoUrl"`
 }
 
 type enrichedAlbumsResp struct {
@@ -346,6 +352,17 @@ func TestEnrichMusicArtistAlbumTrack(t *testing.T) {
 	srv.AuthGET("/api/v1/artists/"+artistID+"/albums", token, &albums)
 	if albums.Artist.Overview == "" || len(albums.Artist.Genres) == 0 || albums.Artist.ArtworkURL == "" {
 		t.Errorf("artist not enriched: %+v", albums.Artist)
+	}
+	// Artists carry a Background + ClearLOGO like a Show/Movie: the detail advertises
+	// both role URLs and each serves the fetched bytes (the list, by contrast, stays
+	// lean — only the artist photo above).
+	if albums.Artist.BackgroundURL == "" || albums.Artist.LogoURL == "" {
+		t.Errorf("artist detail missing background/logo URL: %+v", albums.Artist)
+	}
+	for _, u := range []string{albums.Artist.BackgroundURL, albums.Artist.LogoURL} {
+		if status, body := authBytes(t, srv, token, u); status != http.StatusOK || string(body) != "COVERBYTES" {
+			t.Errorf("artist artwork %q = %d %q, want 200 COVERBYTES", u, status, body)
+		}
 	}
 	var albumID string
 	for _, a := range albums.Albums {

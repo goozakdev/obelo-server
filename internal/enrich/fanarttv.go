@@ -17,11 +17,14 @@ import (
 // It serves TWO kinds, both strictly id-keyed and both artwork-ONLY (fanart.tv has
 // no text fields):
 //
-//   - Music (artist): the best "artistthumb" as a single ArtworkRef{Role:"poster"}.
-//     fanart.tv is strictly MBID-keyed here, so it only serves the "artist" kind and
-//     only when the caller already resolved a MusicBrainz artist id (the music chain
-//     feeds it via ref.MusicbrainzID). Every other music kind — and a blank id —
-//     returns ErrNoMatch.
+//   - Music (artist): the best "artistthumb" (poster), "artistbackground"
+//     (background), and logo ("hdmusiclogo" preferred over "musiclogo") as
+//     ArtworkRefs — the same three roles the Show/Movie path uses, so mergeArtwork
+//     fills only a role a prior source left empty. fanart.tv is strictly MBID-keyed
+//     here, so it only serves the "artist" kind and only when the caller already
+//     resolved a MusicBrainz artist id (the music chain feeds it via
+//     ref.MusicbrainzID). Every other music kind — and a blank id — returns
+//     ErrNoMatch.
 //   - Video (movie/show): the best poster + background as ArtworkRefs with roles
 //     "poster"/"background" (the same roles tmdb.go emits, so mergeArtwork fills only
 //     a role TMDB left empty). fanart.tv's movie endpoint is keyed by TMDB or IMDb id
@@ -46,8 +49,8 @@ type FanartTVProvider struct {
 	minInterval time.Duration
 
 	mu    sync.Mutex
-	last  time.Time         // time the next request slot was reserved (throttle)
-	cache map[string]string // artist cache: MBID -> best image URL ("" = looked up, no image)
+	last  time.Time               // time the next request slot was reserved (throttle)
+	cache map[string]artistImages // artist cache: MBID -> parsed image lists (zero value = looked up, no images)
 
 	// videoCache namespaces the video lookups so a movie/show artwork result never
 	// collides with an artist result. Keyed by "movie:<id>" / "tv:<id>" -> the
@@ -68,7 +71,7 @@ func NewFanartTVProvider(apiKey, baseURL string) *FanartTVProvider {
 		UserAgent:   "juicebox/1.0 (self-hosted)",
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultFanartTVThrottle,
-		cache:       map[string]string{},
+		cache:       map[string]artistImages{},
 		videoCache:  map[string]fanartVideoArt{},
 	}
 }
@@ -88,25 +91,33 @@ func (p *FanartTVProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMetad
 	}
 }
 
-// artistLookup returns the best fanart.tv artist image as an ArtworkRef{Role:"poster"}.
-// Only a resolved MBID is served; a blank id (or no available image) is ErrNoMatch.
+// artistLookup returns the best fanart.tv artist artwork as ArtworkRefs — the best
+// artistthumb (poster), artistbackground (background), and logo (hdmusiclogo
+// preferred over musiclogo). Only a resolved MBID is served; a blank id (or a
+// record carrying none of the three) is ErrNoMatch.
 func (p *FanartTVProvider) artistLookup(ctx context.Context, ref TitleRef) (TitleMetadata, error) {
 	mbid := strings.TrimSpace(ref.MusicbrainzID)
 	if mbid == "" {
 		return TitleMetadata{}, ErrNoMatch // strictly MBID-keyed: no id, no lookup
 	}
-	imageURL, err := p.bestImage(ctx, mbid)
+	imgs, err := p.images(ctx, mbid)
 	if err != nil {
 		return TitleMetadata{}, err
 	}
-	if imageURL == "" {
-		return TitleMetadata{}, ErrNoMatch
+	meta := TitleMetadata{Matched: true, Source: "fanart.tv"}
+	if u := bestArtistThumb(imgs.thumbs); u != "" {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "poster", URL: u})
 	}
-	return TitleMetadata{
-		Matched: true,
-		Source:  "fanart.tv",
-		Artwork: []ArtworkRef{{Role: "poster", URL: imageURL}},
-	}, nil
+	if u := bestArtistThumb(imgs.backgrounds); u != "" {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "background", URL: u})
+	}
+	if u := imgs.bestLogo(); u != "" {
+		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: "logo", URL: u})
+	}
+	if len(meta.Artwork) == 0 {
+		return TitleMetadata{}, ErrNoMatch // record carried no usable image
+	}
+	return meta, nil
 }
 
 func (p *FanartTVProvider) client() *http.Client {
@@ -116,29 +127,6 @@ func (p *FanartTVProvider) client() *http.Client {
 	return http.DefaultClient
 }
 
-// bestImage resolves the best artist image URL for an MBID, returning "" when the
-// artist has no image. It serves from the in-process response cache when possible
-// (re-enrichment doesn't re-hit fanart.tv) and otherwise throttles before issuing
-// the request. A no-match is cached as ""; a transient error is not cached.
-func (p *FanartTVProvider) bestImage(ctx context.Context, mbid string) (string, error) {
-	if u, ok := p.cached(mbid); ok {
-		return u, nil
-	}
-	if err := p.throttle(ctx); err != nil {
-		return "", err
-	}
-	u, err := p.artistImage(ctx, mbid)
-	switch {
-	case err == ErrNoMatch:
-		p.store(mbid, "")
-		return "", nil
-	case err != nil:
-		return "", err
-	}
-	p.store(mbid, u)
-	return u, nil
-}
-
 // fanartImage is one fanart.tv image entry. fanart.tv encodes "likes" as a JSON
 // string (e.g. "12"), so it is parsed lazily.
 type fanartImage struct {
@@ -146,26 +134,67 @@ type fanartImage struct {
 	Likes string `json:"likes"`
 }
 
-// artistImage fetches the fanart.tv artist record for an MBID and returns the
-// best artistthumb URL ("" when the record carries none). A 404 — fanart.tv's
-// answer for an unknown MBID — is ErrNoMatch; any other non-2xx is a real error
-// the chain logs and swallows.
-func (p *FanartTVProvider) artistImage(ctx context.Context, mbid string) (string, error) {
-	thumbs, err := p.fetchArtistThumbs(ctx, mbid)
-	if err != nil {
-		return "", err
-	}
-	return bestArtistThumb(thumbs), nil
+// artistImages is the fanart.tv artist artwork this provider needs: the thumb
+// (poster), background, and logo image lists — each the raw, unsorted entries. The
+// logos are split by tier (hdmusiclogo vs musiclogo) so the HD lettering can lead
+// regardless of "likes". A zero value means "looked up, no images" (cached as a
+// negative result).
+type artistImages struct {
+	thumbs      []fanartImage
+	backgrounds []fanartImage
+	hdLogos     []fanartImage
+	sdLogos     []fanartImage
 }
 
-// fetchArtistThumbs issues one fanart.tv artist request and returns the full
-// decoded artistthumb[] list (the raw entries, unsorted). It is the shared HTTP/
-// parse layer behind both the single-image Lookup (which collapses to the best
-// thumb) and the Artist Photo candidate list (which surfaces them all). A 404 —
-// fanart.tv's answer for an unknown MBID — is ErrNoMatch; any other non-2xx is a
-// real error the chain logs and swallows. It does NOT throttle; callers reserve a
-// request slot first (bestImage / ArtworkCandidates).
-func (p *FanartTVProvider) fetchArtistThumbs(ctx context.Context, mbid string) ([]fanartImage, error) {
+// logoURLs orders the logo candidates HD tier first, then the SD tier, each tier
+// highest-"likes" first — so the crisp HD lettering always leads even when an SD
+// logo has more likes.
+func (a artistImages) logoURLs() []string {
+	return append(sortedArtistThumbs(a.hdLogos), sortedArtistThumbs(a.sdLogos)...)
+}
+
+// bestLogo is the single logo the fill-only Lookup emits: the best HD logo when the
+// record carries one, else the best SD logo, else "".
+func (a artistImages) bestLogo() string {
+	if u := bestArtistThumb(a.hdLogos); u != "" {
+		return u
+	}
+	return bestArtistThumb(a.sdLogos)
+}
+
+// images resolves the fanart.tv artist artwork for an MBID, returning a zero value
+// when the artist has no images. It serves from the in-process response cache when
+// possible (re-enrichment and the candidate grid share one fetch) and otherwise
+// throttles before issuing the request. A no-match is cached as the zero value; a
+// transient error is not cached.
+func (p *FanartTVProvider) images(ctx context.Context, mbid string) (artistImages, error) {
+	if a, ok := p.cached(mbid); ok {
+		return a, nil
+	}
+	if err := p.throttle(ctx); err != nil {
+		return artistImages{}, err
+	}
+	a, err := p.fetchArtistImages(ctx, mbid)
+	switch {
+	case err == ErrNoMatch:
+		p.store(mbid, artistImages{})
+		return artistImages{}, nil
+	case err != nil:
+		return artistImages{}, err
+	}
+	p.store(mbid, a)
+	return a, nil
+}
+
+// fetchArtistImages issues one fanart.tv artist request and returns the artist's
+// thumb/background/logo image lists (the raw entries, unsorted). It is the shared
+// HTTP/parse layer behind both the Lookup (which collapses each role to its best
+// image) and the per-role candidate lists (which surface them all). Logos coalesce
+// hdmusiclogo ahead of musiclogo so the HD lettering leads. A 404 — fanart.tv's
+// answer for an unknown MBID — is ErrNoMatch; any other non-2xx is a real error the
+// chain logs and swallows. It does NOT throttle; callers reserve a request slot
+// first (images / ArtworkCandidates).
+func (p *FanartTVProvider) fetchArtistImages(ctx context.Context, mbid string) (artistImages, error) {
 	q := url.Values{}
 	q.Set("api_key", p.APIKey)
 	u := p.BaseURL + "/music/" + url.PathEscape(mbid)
@@ -174,40 +203,50 @@ func (p *FanartTVProvider) fetchArtistThumbs(ctx context.Context, mbid string) (
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, fmt.Errorf("enrich: building fanart.tv request: %w", err)
+		return artistImages{}, fmt.Errorf("enrich: building fanart.tv request: %w", err)
 	}
 	req.Header.Set("User-Agent", p.UserAgent)
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("enrich: fanart.tv request: %w", err)
+		return artistImages{}, fmt.Errorf("enrich: fanart.tv request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNoMatch // unknown MBID — the normal "no record" outcome
+		return artistImages{}, ErrNoMatch // unknown MBID — the normal "no record" outcome
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("enrich: fanart.tv music/%s: status %d", mbid, resp.StatusCode)
+		return artistImages{}, fmt.Errorf("enrich: fanart.tv music/%s: status %d", mbid, resp.StatusCode)
 	}
 	var out struct {
-		ArtistThumb []fanartImage `json:"artistthumb"`
+		ArtistThumb      []fanartImage `json:"artistthumb"`
+		ArtistBackground []fanartImage `json:"artistbackground"`
+		HDMusicLogo      []fanartImage `json:"hdmusiclogo"`
+		MusicLogo        []fanartImage `json:"musiclogo"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("enrich: decoding fanart.tv response: %w", err)
+		return artistImages{}, fmt.Errorf("enrich: decoding fanart.tv response: %w", err)
 	}
-	return out.ArtistThumb, nil
+	return artistImages{
+		thumbs:      out.ArtistThumb,
+		backgrounds: out.ArtistBackground,
+		hdLogos:     out.HDMusicLogo,
+		sdLogos:     out.MusicLogo,
+	}, nil
 }
 
-// ArtworkCandidates lists the artist photos the Artist Photo picker offers
-// (artwork-management/02): the FULL artistthumb[] set — highest-"likes" first, so
-// the grid leads with the "best" image the single-picture Lookup would auto-pick —
-// each surfaced as an ArtworkCandidate. fanart.tv is strictly MBID-keyed and has
-// no listable set beyond artist photos, so only the "artist" kind with a resolved
-// MBID is served; every other kind (video candidates list through TMDB, not
-// fanart.tv) reports ErrSearchUnavailable. A blank MBID, an unknown MBID (404), or
-// a record with no artistthumb is (nil, nil). fanart.tv reports no pixel
-// dimensions, so Width/Height stay 0.
-func (p *FanartTVProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, _ string) ([]ArtworkCandidate, error) {
+// ArtworkCandidates lists the fanart.tv images the Edit-item picker offers for an
+// artist role (artwork-management/02): the FULL set for that role — highest-"likes"
+// first, so the grid leads with the "best" image the single-picture Lookup would
+// auto-pick — each surfaced as an ArtworkCandidate. The role selects the set:
+// "background" → artistbackground[], "logo" → logos (hdmusiclogo ahead of
+// musiclogo), and "poster" (or anything else) → artistthumb[]. fanart.tv is
+// strictly MBID-keyed and owns no listable set for other kinds, so only the
+// "artist" kind with a resolved MBID is served; every other kind (video candidates
+// list through TMDB, not fanart.tv) reports ErrSearchUnavailable. A blank MBID, an
+// unknown MBID (404), or a record with no image for the role is (nil, nil).
+// fanart.tv reports no pixel dimensions, so Width/Height stay 0.
+func (p *FanartTVProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, role string) ([]ArtworkCandidate, error) {
 	if ref.Kind != "artist" {
 		return nil, ErrSearchUnavailable // fanart.tv owns no listable set for this kind
 	}
@@ -215,17 +254,19 @@ func (p *FanartTVProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, 
 	if mbid == "" {
 		return nil, nil // strictly MBID-keyed: no id, no candidates
 	}
-	if err := p.throttle(ctx); err != nil {
-		return nil, err
-	}
-	thumbs, err := p.fetchArtistThumbs(ctx, mbid)
-	if err == ErrNoMatch {
-		return nil, nil // unknown MBID — the normal "no images" outcome
-	}
+	imgs, err := p.images(ctx, mbid) // shared cached fetch (throttles internally)
 	if err != nil {
 		return nil, err
 	}
-	urls := sortedArtistThumbs(thumbs)
+	var urls []string
+	switch role {
+	case "background":
+		urls = sortedArtistThumbs(imgs.backgrounds)
+	case "logo":
+		urls = imgs.logoURLs() // HD tier ahead of SD, each by likes
+	default: // "poster" and anything unspecified → the artist photos
+		urls = sortedArtistThumbs(imgs.thumbs)
+	}
 	cands := make([]ArtworkCandidate, 0, len(urls))
 	for _, u := range urls {
 		cands = append(cands, ArtworkCandidate{URL: u, Source: "fanart.tv"})
@@ -452,18 +493,18 @@ func (p *FanartTVProvider) throttle(ctx context.Context) error {
 	}
 }
 
-func (p *FanartTVProvider) cached(mbid string) (string, bool) {
+func (p *FanartTVProvider) cached(mbid string) (artistImages, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	u, ok := p.cache[mbid]
-	return u, ok
+	a, ok := p.cache[mbid]
+	return a, ok
 }
 
-func (p *FanartTVProvider) store(mbid, u string) {
+func (p *FanartTVProvider) store(mbid string, a artistImages) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cache == nil {
-		p.cache = map[string]string{}
+		p.cache = map[string]artistImages{}
 	}
-	p.cache[mbid] = u
+	p.cache[mbid] = a
 }

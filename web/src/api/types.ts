@@ -1036,6 +1036,10 @@ export interface ArtistSummaryRaw {
   genres?: string[];
   enrichmentStatus?: EnrichmentStatus;
   artworkUrl?: string;
+  /** fanart.tv Background + ClearLOGO (like a Show/Movie), absent when not fetched.
+   * Set on the Artist detail; the lean list carries only artworkUrl. */
+  backgroundUrl?: string;
+  logoUrl?: string;
   // Edit-item surface (item-editing/02): on the Artist DETAIL only.
   lockedFields?: string[];
   enrichmentOverride?: EntityEnrichmentOverride;
@@ -1056,6 +1060,10 @@ export interface ArtistSummary {
   enrichmentStatus?: EnrichmentStatus;
   /** Fetched artist image URL, undefined when none. */
   artworkUrl?: string;
+  /** fanart.tv Background + ClearLOGO, undefined when not fetched. The detail pins
+   * backgroundUrl behind the screen and leads the hero with logoUrl. */
+  backgroundUrl?: string;
+  logoUrl?: string;
   /** Locked fields + active Enrichment override (item-editing/02), on the detail. */
   lockedFields?: string[];
   enrichmentOverride?: EntityEnrichmentOverride;
