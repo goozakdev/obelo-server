@@ -560,6 +560,9 @@ type scanStatusJSON struct {
 	ErrorMessage string `json:"errorMessage,omitempty"`
 	StartedAt    string `json:"startedAt,omitempty"`
 	FinishedAt   string `json:"finishedAt,omitempty"`
+	// Scope is the entity label of a running Targeted scan (ADR-0030), "" for a full
+	// scan; a client shows "Scanning <scope>…" only while State is running.
+	Scope string `json:"scope,omitempty"`
 }
 
 func toScanStatus(s store.ScanStatus) scanStatusJSON {
@@ -571,6 +574,7 @@ func toScanStatus(s store.ScanStatus) scanStatusJSON {
 		ErrorMessage: s.ErrorMessage,
 		StartedAt:    formatTimestamp(s.StartedAt),
 		FinishedAt:   formatTimestamp(s.FinishedAt),
+		Scope:        s.Scope,
 	}
 }
 
@@ -699,6 +703,8 @@ func toScanEvent(p scanner.Progress) events.ScanProgress {
 		TitlesFound: p.TitlesFound,
 		FilesFound:  p.FilesFound,
 		Complete:    p.Complete,
+		Added:       p.Added,
+		Removed:     p.Removed,
 	}
 }
 

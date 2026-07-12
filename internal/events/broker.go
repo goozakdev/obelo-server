@@ -159,6 +159,13 @@ type ScanProgress struct {
 	TitlesFound int    `json:"titlesFound"`
 	FilesFound  int    `json:"filesFound"`
 	Complete    bool   `json:"complete"`
+	// Scope is the entity label of a Targeted scan (ADR-0030), "" for a full scan —
+	// so a client can render "Scanning The Wire…" and match the terminal event to
+	// the entity it launched a scan from. Added / Removed carry that scan's
+	// "what changed" delta on the terminal (Complete) event; both 0 for a full scan.
+	Scope   string `json:"scope,omitempty"`
+	Added   int    `json:"added,omitempty"`
+	Removed int    `json:"removed,omitempty"`
 }
 
 // SessionEvent is the payload of the Admin-only session lifecycle events

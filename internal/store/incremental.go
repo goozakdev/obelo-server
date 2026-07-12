@@ -151,6 +151,56 @@ func (db *DB) MarkFilesMissing(libraryID string, seenPaths map[string]bool, unre
 	return len(toMiss), nil
 }
 
+// MarkFilesMissingUnder is MarkFilesMissing scoped to a Targeted scan (ADR-0031):
+// it flips present=0 only on present Files whose path lies under one of scopeDirs
+// (the folders the scan actually walked) and that were not seen this walk. Files
+// outside the scope are never touched — a Targeted scan walked only its entity's
+// folders, so it has no evidence about anything else. A scopeDir the walk could
+// not read is passed in unresolvedDirs and its Files are spared (an unreachable
+// folder is skipped, not assumed empty — the per-folder analogue of the prune
+// guard). Returns the number of Files newly marked Missing.
+func (db *DB) MarkFilesMissingUnder(libraryID string, scopeDirs []string, seenPaths map[string]bool, unresolvedDirs []string) (int, error) {
+	if len(scopeDirs) == 0 {
+		return 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("store: begin mark missing under: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.Query(
+		`SELECT f.id, f.path FROM files f
+		   JOIN editions e ON f.edition_id = e.id
+		   JOIN titles   t ON e.title_id   = t.id
+		  WHERE t.library_id = ? AND f.present = 1`, libraryID)
+	if err != nil {
+		return 0, fmt.Errorf("store: scanning present files: %w", err)
+	}
+	var toMiss []string
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("store: scanning present file: %w", err)
+		}
+		if underAny(path, scopeDirs) && !seenPaths[path] && !underAny(path, unresolvedDirs) {
+			toMiss = append(toMiss, id)
+		}
+	}
+	_ = rows.Close()
+
+	for _, id := range toMiss {
+		if _, err := tx.Exec(`UPDATE files SET present = 0 WHERE id = ?`, id); err != nil {
+			return 0, fmt.Errorf("store: marking file missing: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: commit mark missing under: %w", err)
+	}
+	return len(toMiss), nil
+}
+
 // RecomputeHiddenTitles sets each Title's hidden flag to reflect whether all its
 // Files are Missing. A Title with at least one present File is visible (hidden=0);
 // a Title whose every File is Missing — or that has no Files at all — is hidden

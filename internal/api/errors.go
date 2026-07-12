@@ -29,9 +29,13 @@ const (
 	codeUnauthorized     = "UNAUTHORIZED"
 	codeForbidden        = "FORBIDDEN"
 	codeFolderOverlap    = "FOLDER_OVERLAP"
-	codeSetupClosed      = "SETUP_CLOSED"
-	codeInvalidClaim     = "INVALID_CLAIM_TOKEN"
-	codeInvalidLogin     = "INVALID_CREDENTIALS"
+	// codeNoFiles (409): a Targeted scan (ADR-0030) of an entity whose Files are all
+	// Missing — there is nothing on disk to walk (hidden-entity resurrection is out
+	// of scope for v1).
+	codeNoFiles      = "NO_FILES"
+	codeSetupClosed  = "SETUP_CLOSED"
+	codeInvalidClaim = "INVALID_CLAIM_TOKEN"
+	codeInvalidLogin = "INVALID_CREDENTIALS"
 	// User-management (Admin-scope /users): a username collision and the
 	// last-Admin guard each surface as a 409 with one of these codes.
 	codeUsernameTaken = "USERNAME_TAKEN"

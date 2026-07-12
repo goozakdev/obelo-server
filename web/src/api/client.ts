@@ -85,6 +85,7 @@ import type {
   ScanMode,
   ScanStatus,
   ScanStatusRaw,
+  TargetedScanEntity,
   SeasonEpisodes,
   SeasonEpisodesResponseRaw,
   ServerInfo,
@@ -355,6 +356,25 @@ export class ApiClient {
     const qs = opts.mode === "full" ? "?mode=full" : "";
     const res = await this.request<ScanStatusRaw>(
       `/libraries/${encodeURIComponent(id)}/scan${qs}`,
+      { method: "POST", signal },
+    );
+    return normalizeScanStatus(res);
+  }
+
+  /** `POST /api/v1/{titles|shows|albums|artists}/{id}/scan` (Admin) — a Targeted
+   * scan (ADR-0030): re-walk just this browsable entity's on-disk folders, rather
+   * than its whole Library. Asynchronous like {@link scanLibrary} (202 with the
+   * scope-tagged, running status) and reusing the same per-Library lock + status
+   * row, so completion is tracked via the same scanProgress SSE / status polling.
+   * An entity whose Files are all Missing is a 409 `NO_FILES` ApiError, which we
+   * deliberately do NOT swallow so the caller can report "nothing to scan". */
+  async scanEntity(
+    entityType: TargetedScanEntity,
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<ScanStatus> {
+    const res = await this.request<ScanStatusRaw>(
+      `/${entityType}/${encodeURIComponent(id)}/scan`,
       { method: "POST", signal },
     );
     return normalizeScanStatus(res);
@@ -1752,6 +1772,7 @@ export type {
   ScanMode,
   ScanState,
   ScanStatus,
+  TargetedScanEntity,
   Season,
   SeasonEpisodes,
   ServerInfo,

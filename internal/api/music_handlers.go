@@ -272,6 +272,16 @@ func handleArtistSubtree(deps Deps) http.HandlerFunc {
 				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntityArtist, id, role))))(w, r)
 			return
 		}
+		// POST {id}/scan: Targeted scan of this Artist's album folders (Admin, ADR-0030).
+		if id, ok := strings.CutSuffix(rest, "/scan"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "artist", id))))(w, r)
+			return
+		}
 		// Edit-item on an Artist (item-editing/02), Admin-only, before the albums listing.
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityArtist, rest) {
 			return
@@ -414,6 +424,16 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 			}
 			requireMethod(http.MethodGet,
 				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleAlbumArtwork(deps.Catalog, id))))(w, r)
+			return
+		}
+		// POST {id}/scan: Targeted scan of this Album's folder(s) (Admin, ADR-0030).
+		if id, ok := strings.CutSuffix(rest, "/scan"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "album", id))))(w, r)
 			return
 		}
 		// Edit-item on an Album (item-editing/02), Admin-only, before the tracks listing.

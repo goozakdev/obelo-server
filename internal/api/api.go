@@ -42,6 +42,18 @@ type LibraryExister interface {
 	LibraryExists(id string) (bool, error)
 }
 
+// ScanScopeResolver resolves a Targeted scan's on-disk scope from a browsable
+// entity (ADR-0030): the entity's Library (roots + kind), display label, and
+// present File paths. *store.DB satisfies it. May be nil in narrow unit tests
+// that don't exercise targeted scanning.
+type ScanScopeResolver interface {
+	TitleScanScope(id string) (store.EntityScanScope, error)
+	ShowScanScope(id string) (store.EntityScanScope, error)
+	AlbumScanScope(id string) (store.EntityScanScope, error)
+	ArtistScanScope(id string) (store.EntityScanScope, error)
+	LibraryByID(id string) (store.Library, error)
+}
+
 // Deps are the dependencies the API surface needs. Later slices extend this
 // (auth service, library service, ...). Keeping it a struct of interfaces keeps
 // the HTTP layer testable without a live database.
@@ -76,6 +88,10 @@ type Deps struct {
 	EnrichTrigger func(libraryID string)
 	ScanStatus    ScanStatusReader
 	Libraries     LibraryExister
+	// ScanScope resolves a Targeted scan's folder set from a browsable entity
+	// (ADR-0030, per-entity POST /{titles|shows|albums|artists}/{id}/scan). *store.DB
+	// satisfies it; nil in narrow unit tests that don't exercise targeted scanning.
+	ScanScope ScanScopeResolver
 	// Providers is the DB-backed metadata-provider settings store (Admin-scope
 	// /settings/metadata-providers). *store.DB satisfies it. May be nil in narrow
 	// unit tests that don't exercise the settings surface.

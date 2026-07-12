@@ -424,6 +424,11 @@ export interface UpdateLibraryInput {
  * re-derivation; absent/"incremental" is the server default (ADR-0008). */
 export type ScanMode = "incremental" | "full";
 
+/** The browsable entity a Targeted scan (ADR-0030) is launched from — the API
+ * path segment its `/scan` route hangs off: a Movie Title, a Show, an Album, or
+ * an Artist. */
+export type TargetedScanEntity = "titles" | "shows" | "albums" | "artists";
+
 /** A library's scan state, from the pollable `GET /libraries/{id}/scan`. */
 export type ScanState = "idle" | "running" | "error" | (string & {});
 
@@ -438,6 +443,9 @@ export interface ScanStatusRaw {
   errorMessage?: string;
   startedAt?: string;
   finishedAt?: string;
+  /** The entity label of a running Targeted scan (ADR-0030), absent for a full
+   * Library scan; the admin surface shows "Scanning <scope>…" only while running. */
+  scope?: string;
 }
 
 /** A scan status with the `omitempty` holes filled (counts → 0): the shape the
@@ -452,6 +460,9 @@ export interface ScanStatus {
   /** RFC3339 strings, or undefined when the server omitted them. */
   startedAt?: string;
   finishedAt?: string;
+  /** The entity label of a running Targeted scan (ADR-0030), absent for a full
+   * Library scan; shown as "Scanning <scope>…" only while `state === "running"`. */
+  scope?: string;
 }
 
 /** A Title summary as it appears in a library grid (`/libraries/{id}/titles`).

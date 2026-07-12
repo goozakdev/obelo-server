@@ -69,6 +69,9 @@ type Store interface {
 	RecomputeHiddenArtists(libraryID string) error
 	ReplaceUnmatched(libraryID string, files []store.UnmatchedFile) error
 	MarkScanRunning(libraryID string) error
+	// MarkScanRunningScope marks a Targeted scan running, tagging the row with the
+	// entity's label (ADR-0030/0031) so the admin surface shows "Scanning <scope>…".
+	MarkScanRunningScope(libraryID, scope string) error
 	MarkScanFinished(libraryID string, titlesFound, filesFound int) error
 	MarkScanError(libraryID, message string) error
 
@@ -80,6 +83,10 @@ type Store interface {
 	// a file beneath one is left present, never marked Missing, since an unreadable
 	// subtree is not evidence of deletion (ADR-0008).
 	MarkFilesMissing(libraryID string, seenPaths map[string]bool, unresolvedDirs []string) (int, error)
+	// MarkFilesMissingUnder is MarkFilesMissing scoped to a Targeted scan: it only
+	// soft-deletes present Files under one of scopeDirs (the folders it walked),
+	// leaving everything else untouched (ADR-0031). Returns the count marked Missing.
+	MarkFilesMissingUnder(libraryID string, scopeDirs []string, seenPaths map[string]bool, unresolvedDirs []string) (int, error)
 	RecomputeHiddenTitles(libraryID string) error
 
 	// Match overrides (fix-match), keyed to the folder path.
@@ -167,6 +174,12 @@ type Progress struct {
 	TitlesFound int
 	FilesFound  int
 	Complete    bool
+	// Added / Removed carry a Targeted scan's "what changed" delta (ADR-0030) on
+	// its terminal Complete event: Files newly present in the walked scope and
+	// Files soft-deleted from it. Both 0 for a full-Library scan (which reports via
+	// TitlesFound/FilesFound), so a client shows the delta only for a Targeted scan.
+	Added   int
+	Removed int
 }
 
 // scanCtx carries the per-scan state threaded through folder/file resolution:

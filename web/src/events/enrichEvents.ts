@@ -30,6 +30,20 @@ export interface EnrichProgress {
   complete: boolean;
 }
 
+/** The `scanProgress` SSE payload: a snapshot of a running (or just-finished)
+ * scan of one Library. `complete` marks the terminal event; for a Targeted scan
+ * (ADR-0030) that terminal event also carries `scope` (the entity label) and the
+ * `added`/`removed` "what changed" delta — both 0/absent for a full Library scan. */
+export interface ScanProgress {
+  libraryId: string;
+  titlesFound: number;
+  filesFound: number;
+  complete: boolean;
+  scope?: string;
+  added?: number;
+  removed?: number;
+}
+
 /** A raw event off the SSE stream: its name plus the parsed JSON payload. */
 type Listener = (type: string, data: unknown) => void;
 

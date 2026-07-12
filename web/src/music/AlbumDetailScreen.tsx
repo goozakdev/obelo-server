@@ -11,6 +11,8 @@ import {
 import { entryFromTitle } from "../player/queue/model";
 import { usePlaybackTransport } from "../player/transport";
 import { useAsync } from "../browse/useAsync";
+import { useTargetedScan } from "../browse/useTargetedScan";
+import EntityScanMenu from "../browse/EntityScanMenu";
 import BackLink from "../browse/BackLink";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
@@ -55,6 +57,13 @@ export default function AlbumDetailScreen() {
 
   // An Album returns to its Artist; until the detail loads, fall back to Home.
   const album = state.status === "ready" ? state.data.album : undefined;
+  // Targeted scan of this Album's folder(s) (ADR-0030), Admin-only. On completion
+  // it bumps reloadKey → the detail refetches in place with the new Track set.
+  const {
+    scanning,
+    message: scanMessage,
+    scan: runScan,
+  } = useTargetedScan(() => setReloadKey((k) => k + 1));
   const parent = album
     ? { to: `/music/artists/${album.artistId}`, label: album.artistName || "Artist" }
     : { to: "/", label: "Home" };
@@ -198,6 +207,19 @@ export default function AlbumDetailScreen() {
                 ),
               ]}
             />
+          )}
+
+          {isAdmin && (
+            <EntityScanMenu
+              onScan={() => runScan("albums", state.data.album.id)}
+              scanning={scanning}
+              label="album"
+            />
+          )}
+          {scanMessage && (
+            <p className="status status-ok" data-testid="scan-notice" role="status">
+              {scanMessage}
+            </p>
           )}
 
           {state.data.tracks.length === 0 ? (

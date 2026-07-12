@@ -102,6 +102,7 @@ export function normalizeScanStatus(raw: ScanStatusRaw): ScanStatus {
     errorMessage: raw.errorMessage,
     startedAt: raw.startedAt,
     finishedAt: raw.finishedAt,
+    scope: raw.scope,
   };
 }
 

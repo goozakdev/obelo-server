@@ -62,6 +62,7 @@ func (s *statefulStore) UpsertTitleTree(t store.TitleTree) error {
 }
 func (s *statefulStore) ReplaceUnmatched(string, []store.UnmatchedFile) error { return nil }
 func (s *statefulStore) MarkScanRunning(string) error                         { return nil }
+func (s *statefulStore) MarkScanRunningScope(string, string) error            { return nil }
 func (s *statefulStore) MarkScanFinished(string, int, int) error              { return nil }
 func (s *statefulStore) MarkScanError(string, string) error                   { return nil }
 
@@ -96,6 +97,25 @@ func (s *statefulStore) MarkFilesMissing(_ string, seen map[string]bool, unresol
 	n := 0
 	for path, f := range s.files {
 		if f.Present && !seen[path] && !under(path) {
+			f.Present = false
+			s.files[path] = f
+			n++
+		}
+	}
+	return n, nil
+}
+func (s *statefulStore) MarkFilesMissingUnder(_ string, scopeDirs []string, seen map[string]bool, unresolved []string) (int, error) {
+	under := func(path string, prefixes []string) bool {
+		for _, p := range prefixes {
+			if path == p || strings.HasPrefix(path, p+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	n := 0
+	for path, f := range s.files {
+		if f.Present && under(path, scopeDirs) && !seen[path] && !under(path, unresolved) {
 			f.Present = false
 			s.files[path] = f
 			n++

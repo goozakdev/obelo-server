@@ -386,6 +386,16 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				requireAuth(deps.Auth, requireAdmin(handleShowIdentityCorrection(deps, id))))(w, r)
 			return
 		}
+		// POST {id}/scan: Targeted scan of this Show's folder (Admin, ADR-0030).
+		if id, ok := strings.CutSuffix(rest, "/scan"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "show", id))))(w, r)
+			return
+		}
 		// Edit-item on a Show (item-editing/02): Fix-info search/override + hand-edit +
 		// lock-release. Admin-only; served before the seasons listing fall-through.
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityShow, rest) {

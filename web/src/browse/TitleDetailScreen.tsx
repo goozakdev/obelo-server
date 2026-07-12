@@ -19,6 +19,7 @@ import {
 } from "../player/queue/buildQueue";
 import { entryFromTitle } from "../player/queue/model";
 import { useAsync } from "./useAsync";
+import { useTargetedScan } from "./useTargetedScan";
 import { errorMessage } from "../screens/errorMessage";
 import { posterUrl } from "./Poster";
 import TitleLogo from "./TitleLogo";
@@ -55,11 +56,21 @@ import { downloadVlcPlaylist } from "./openInVlc";
 
 export default function TitleDetailScreen() {
   const { titleId = "" } = useParams();
+  // A Targeted scan (ADR-0030) bumps this so the detail refetches in place once
+  // the scan settles, surfacing any newly-added / now-missing File.
+  const [reloadKey, setReloadKey] = useState(0);
   const state = useAsync(
     (signal) => apiClient.getTitle(titleId, signal),
-    [titleId],
+    [titleId, reloadKey],
   );
   const title = state.status === "ready" ? state.data : undefined;
+  // Targeted scan of this Movie's folder (ADR-0030), Admin-only. On completion it
+  // bumps reloadKey → useAsync refetches → Detail remounts with the fresh File set.
+  const {
+    scanning: titleScanning,
+    message: scanMessage,
+    scan: runScan,
+  } = useTargetedScan(() => setReloadKey((k) => k + 1));
   // An Episode returns to its Show; a Movie returns to its owning Library (named
   // from the app-wide Libraries list). Until the detail loads we don't yet know
   // which — fall back to Home so the link is never dead on the loading/error view.
@@ -95,13 +106,31 @@ export default function TitleDetailScreen() {
           </p>
         )}
 
-        {state.status === "ready" && <Detail title={state.data} />}
+        {state.status === "ready" && (
+          <Detail
+            title={state.data}
+            onScan={() => runScan("titles", state.data.id)}
+            scanning={titleScanning}
+            scanMessage={scanMessage}
+          />
+        )}
       </main>
     </div>
   );
 }
 
-function Detail({ title: initialTitle }: { title: TitleDetail }) {
+function Detail({
+  title: initialTitle,
+  onScan,
+  scanning,
+  scanMessage,
+}: {
+  title: TitleDetail;
+  /** Trigger a Targeted scan of this Movie's folder (ADR-0030). */
+  onScan: () => void;
+  scanning: boolean;
+  scanMessage: string | null;
+}) {
   const { isAdmin } = useAuth();
   const queue = useQueue();
   // The full title, held in state so an Admin correction (Fix info Enrichment
@@ -482,8 +511,18 @@ function Detail({ title: initialTitle }: { title: TitleDetail }) {
               onPlayNext={playNextInQueue}
               onOpenInVlc={playable ? openInVlc : undefined}
               onAddToCollection={() => setCollectionOpen(true)}
+              // Scan is a Movie-only Admin action here: an Episode is re-scanned
+              // from its Show detail, not this per-Title page (ADR-0030).
+              onScan={isAdmin && title.kind === "movie" ? onScan : undefined}
+              scanning={scanning}
             />
           </div>
+
+          {scanMessage && (
+            <p className="status status-ok" data-testid="scan-notice" role="status">
+              {scanMessage}
+            </p>
+          )}
 
           {/* Inline results for the toolbar actions (queue append/insert, watchlist
               add, and the watched-toggle failure), kept below the row so a click
@@ -811,6 +850,8 @@ function OverflowMenu({
   onPlayNext,
   onOpenInVlc,
   onAddToCollection,
+  onScan,
+  scanning,
 }: {
   isAdmin: boolean;
   onAddToQueue: () => void;
@@ -818,6 +859,9 @@ function OverflowMenu({
   /** Present only when the Title has a playable File. */
   onOpenInVlc?: () => void;
   onAddToCollection: () => void;
+  /** Present only for an Admin on a Movie: a Targeted scan of its folder. */
+  onScan?: () => void;
+  scanning: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -901,6 +945,19 @@ function OverflowMenu({
               onClick={pick(onAddToCollection)}
             >
               Add to Collection
+            </button>
+          )}
+          {onScan && (
+            <button
+              className="overflow-menu-item scan-item"
+              type="button"
+              role="menuitem"
+              data-testid="scan-item"
+              disabled={scanning}
+              title="Re-scan this title's folder for added or changed files"
+              onClick={pick(onScan)}
+            >
+              {scanning ? "Scanning…" : "Scan"}
             </button>
           )}
         </div>

@@ -38,12 +38,25 @@ type musicTrack struct {
 // no minimal identity (no artist/album/title from tags OR path) go to Unmatched —
 // never auto-guessed. Returns the (#Tracks, #Files) found.
 func (s *Service) scanMusicLibrary(ctx context.Context, sc *scanCtx, lib store.Library) (int, int, []store.UnmatchedFile, error) {
-	// Discover every audio file under every root, plus the album-folder → cover
+	dirs := make([]string, 0, len(lib.Roots))
+	for _, root := range lib.Roots {
+		dirs = append(dirs, root.Path)
+	}
+	return s.scanMusicDirs(ctx, sc, lib, dirs)
+}
+
+// scanMusicDirs is the music scan core over an explicit set of directories: it
+// recursively walks each dir, probes every audio file, and writes one ArtistTree
+// per Artist found. A full scan passes the Library's roots (scanMusicLibrary); a
+// Targeted scan passes an entity's album folders (ADR-0030) — a folder is walked
+// whole, so a track belonging to a sibling Album in the same folder is filed too.
+func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Library, dirs []string) (int, int, []store.UnmatchedFile, error) {
+	// Discover every audio file under each dir, plus the album-folder → cover
 	// artwork map (cover.jpg / folder.jpg honored before embedded art).
 	var audioFiles []string
 	albumArt := map[string]string{} // folder path → local cover image path
-	for _, root := range lib.Roots {
-		files, art, unresolved, err := discoverMusicRoot(root.Path)
+	for _, dir := range dirs {
+		files, art, unresolved, err := discoverMusicRoot(dir)
 		if err != nil {
 			return 0, 0, nil, err
 		}

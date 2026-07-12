@@ -233,6 +233,18 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				requireAuth(deps.Auth, requireAdmin(handleReleaseLock(deps.Catalog, titleID, field))))(w, r)
 			return
 		}
+		// POST {id}/scan: Targeted scan of this Movie's folder / bare file (Admin,
+		// ADR-0030). Offered on the Movie detail page; Episode/Track leaves scan via
+		// their Show/Album, so an all-Files-Missing or non-foldered leaf just 409s.
+		if id, ok := strings.CutSuffix(rest, "/scan"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "title", id))))(w, r)
+			return
+		}
 		// POST {id}/review: dismiss this Title's needs_review flag — the Admin
 		// confirms the uncertain identity parse is fine (Movie / Episode / Track).
 		if id, ok := strings.CutSuffix(rest, "/review"); ok {

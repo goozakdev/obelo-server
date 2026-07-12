@@ -25,6 +25,29 @@ describe("ApiClient.directFileDownloadUrl", () => {
   });
 });
 
+describe("ApiClient.scanEntity (Targeted scan)", () => {
+  it("POSTs to the entity's /scan route and normalizes the scope-tagged status", async () => {
+    let captured: { url: string; method?: string } | null = null;
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      captured = { url, method: init.method };
+      return new Response(
+        JSON.stringify({ libraryId: "lib1", state: "running", scope: "The Wire" }),
+        { status: 202, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl });
+
+    const status = await client.scanEntity("shows", "show/1");
+
+    expect(captured).not.toBeNull();
+    // Hits POST /{entityType}/{id}/scan with the id URL-encoded.
+    expect(captured!.url).toContain("/api/v1/shows/show%2F1/scan");
+    expect(captured!.method).toBe("POST");
+    // The running, scope-tagged status is normalized (counts filled, scope kept).
+    expect(status).toMatchObject({ state: "running", scope: "The Wire", titlesFound: 0 });
+  });
+});
+
 describe("ApiClient artwork upload (multipart)", () => {
   it("POSTs a FormData image part to the role's upload route, without a JSON content-type", async () => {
     let captured: { url: string; init: RequestInit } | null = null;

@@ -120,6 +120,14 @@ describe("normalize (omitempty holes filled)", () => {
       errorMessage: "root missing",
     });
     expect(failed).toMatchObject({ state: "error", errorMessage: "root missing" });
+
+    // A running Targeted scan carries the entity label through as `scope`.
+    const targeted = normalizeScanStatus({
+      libraryId: "lib1",
+      state: "running",
+      scope: "The Wire",
+    });
+    expect(targeted).toMatchObject({ state: "running", scope: "The Wire" });
   });
 
   it("fills nested holes on a detail (editions/files/streams → arrays)", () => {

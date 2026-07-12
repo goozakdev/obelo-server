@@ -17,6 +17,7 @@ import {
 } from "../player/queue/buildQueue";
 import { entryFromTitle } from "../player/queue/model";
 import { useAsync } from "./useAsync";
+import { useTargetedScan } from "./useTargetedScan";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
 import EpisodeActionsMenu from "./EpisodeActionsMenu";
@@ -61,6 +62,13 @@ export default function ShowDetailScreen() {
   // A Show returns to its owning Library (named from the app-wide Libraries list);
   // until the detail loads, fall back to Home so the link is never dead.
   const show = state.status === "ready" ? state.data.show : undefined;
+  // Targeted scan of this Show's folder (ADR-0030), Admin-only. On completion it
+  // bumps reloadKey → the detail refetches in place with the new Episode set.
+  const {
+    scanning,
+    message: scanMessage,
+    scan: runScan,
+  } = useTargetedScan(() => setReloadKey((k) => k + 1));
   const libraryName = useLibraryName(show?.libraryId);
   const parent = show
     ? { to: `/libraries/${show.libraryId}`, label: libraryName }
@@ -379,9 +387,18 @@ export default function ShowDetailScreen() {
                   <ShowOverflowMenu
                     onAddToQueue={() => void addSeriesToQueue()}
                     onPlayNext={() => void playSeriesNext()}
+                    onScan={
+                      isAdmin ? () => runScan("shows", state.data.show.id) : undefined
+                    }
+                    scanning={scanning}
                   />
                 </div>
 
+                {scanMessage && (
+                  <p className="status status-ok" data-testid="scan-notice" role="status">
+                    {scanMessage}
+                  </p>
+                )}
                 {queueNotice && (
                   <p className="status status-ok" data-testid="queue-notice" role="status">
                     {queueNotice}
@@ -595,9 +612,14 @@ function ResumePointBlock({
 function ShowOverflowMenu({
   onAddToQueue,
   onPlayNext,
+  onScan,
+  scanning,
 }: {
   onAddToQueue: () => void;
   onPlayNext: () => void;
+  /** Present only for an Admin: a Targeted scan of this Show's folder (ADR-0030). */
+  onScan?: () => void;
+  scanning: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -660,6 +682,19 @@ function ShowOverflowMenu({
           >
             Play Next
           </button>
+          {onScan && (
+            <button
+              className="overflow-menu-item scan-item"
+              type="button"
+              role="menuitem"
+              data-testid="scan-item"
+              disabled={scanning}
+              title="Re-scan this show's folder for added or changed files"
+              onClick={pick(onScan)}
+            >
+              {scanning ? "Scanning…" : "Scan"}
+            </button>
+          )}
         </div>
       )}
     </div>

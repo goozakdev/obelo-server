@@ -45,9 +45,10 @@ func (c *captureStore) ReplaceUnmatched(_ string, f []store.UnmatchedFile) error
 	c.unmatched = f
 	return nil
 }
-func (c *captureStore) MarkScanRunning(string) error            { return nil }
-func (c *captureStore) MarkScanFinished(string, int, int) error { return nil }
-func (c *captureStore) MarkScanError(string, string) error      { return nil }
+func (c *captureStore) MarkScanRunning(string) error              { return nil }
+func (c *captureStore) MarkScanRunningScope(string, string) error { return nil }
+func (c *captureStore) MarkScanFinished(string, int, int) error   { return nil }
+func (c *captureStore) MarkScanError(string, string) error        { return nil }
 
 // Incremental + override seams: the unit tests above scan a fresh temp dir with
 // no prior state, so these are inert (empty snapshot, no stored files, no
@@ -59,6 +60,9 @@ func (c *captureStore) LoadStoredFile(string) (store.File, error) {
 	return store.File{}, store.ErrNotFound
 }
 func (c *captureStore) MarkFilesMissing(string, map[string]bool, []string) (int, error) {
+	return 0, nil
+}
+func (c *captureStore) MarkFilesMissingUnder(string, []string, map[string]bool, []string) (int, error) {
 	return 0, nil
 }
 func (c *captureStore) RecomputeHiddenTitles(string) error { return nil }

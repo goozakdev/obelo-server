@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { Album } from "../api/types";
 import { useAsync } from "../browse/useAsync";
+import { useTargetedScan } from "../browse/useTargetedScan";
+import EntityScanMenu from "../browse/EntityScanMenu";
 import BackLink, { useLibraryName } from "../browse/BackLink";
 import DetailBackdrop from "../browse/DetailBackdrop";
 import Poster from "../browse/Poster";
@@ -36,6 +38,13 @@ export default function ArtistDetailScreen() {
   // An Artist returns to its owning Music Library (named from the app-wide
   // Libraries list); until the detail loads, fall back to the Music home.
   const artist = state.status === "ready" ? state.data.artist : undefined;
+  // Targeted scan of this Artist's album folders (ADR-0030), Admin-only. On
+  // completion it bumps reloadKey → the detail refetches in place.
+  const {
+    scanning,
+    message: scanMessage,
+    scan: runScan,
+  } = useTargetedScan(() => setReloadKey((k) => k + 1));
   const libraryName = useLibraryName(artist?.libraryId, "Music");
   const parent = artist
     ? { to: `/music/libraries/${artist.libraryId}`, label: libraryName }
@@ -127,6 +136,19 @@ export default function ArtistDetailScreen() {
                 ),
               ]}
             />
+          )}
+
+          {isAdmin && (
+            <EntityScanMenu
+              onScan={() => runScan("artists", state.data.artist.id)}
+              scanning={scanning}
+              label="artist"
+            />
+          )}
+          {scanMessage && (
+            <p className="status status-ok" data-testid="scan-notice" role="status">
+              {scanMessage}
+            </p>
           )}
 
           {state.data.albums.length === 0 && (
