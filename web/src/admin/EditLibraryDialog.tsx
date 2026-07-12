@@ -6,15 +6,15 @@ import { LibraryKindIcon, libraryKindLabel } from "../browse/kindIcons";
 import EnrichmentPolicyPanel from "./EnrichmentPolicyPanel";
 
 // The Edit-Library dialog: a native modal <dialog> that lets an Admin correct a
-// Library in place — rename it, add root folders, or delete it — with a Close
-// button at the bottom. Rename and Add-folder each PATCH the Library and update
-// the dialog's local view (and notify the hub to reload) without closing, so the
-// Admin can make several edits in one sitting; the roots list reflects each added
-// folder immediately. Delete is a two-click danger action (click → confirm) that,
-// on success, closes the dialog and tells the hub the Library is gone.
+// Library in place — rename it or add root folders — with a Close button at the
+// bottom. Rename and Add-folder each PATCH the Library and update the dialog's
+// local view (and notify the hub to reload) without closing, so the Admin can make
+// several edits in one sitting; the roots list reflects each added folder
+// immediately. Deleting a Library is NOT here: it's the row's ⋮ menu action (with
+// its own confirmation modal), so this dialog carries no destructive control.
 //
-// The dialog is TABBED (ADR-0027): a "General" tab carries the rename / add-folder /
-// delete controls, and a "Metadata Providers" tab carries the per-Library Enrichment
+// The dialog is TABBED (ADR-0027): a "General" tab carries the rename / add-folder
+// controls, and a "Metadata Providers" tab carries the per-Library Enrichment
 // policy (the EnrichmentPolicyPanel). The policy panel is mounted only when its tab
 // is active, so its policy is fetched when the Admin first opens the tab — not on
 // every Edit-dialog open. Both tabs share the one dialog chrome.
@@ -31,14 +31,11 @@ type EditLibraryTab = "general" | "metadata-providers";
 export default function EditLibraryDialog({
   library,
   onChanged,
-  onDeleted,
   onClose,
 }: {
   library: Library;
   /** Called after a successful rename or add-folder; the hub reloads its list. */
   onChanged: () => void;
-  /** Called after a successful delete; the hub reloads and this dialog closes. */
-  onDeleted: () => void;
   /** Close without further changes (ESC, backdrop, ✕, or Close). */
   onClose: () => void;
 }) {
@@ -51,8 +48,6 @@ export default function EditLibraryDialog({
   const [addPath, setAddPath] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<{ message: string; overlap: boolean } | null>(
     null,
   );
@@ -64,7 +59,7 @@ export default function EditLibraryDialog({
 
   const trimmedName = name.trim();
   const trimmedAddPath = addPath.trim();
-  const busy = renaming || adding || deleting;
+  const busy = renaming || adding;
   const nameDirty = trimmedName !== "" && trimmedName !== lib.name;
 
   async function onRename() {
@@ -99,21 +94,6 @@ export default function EditLibraryDialog({
       setError({ message: errorMessage(err), overlap });
     } finally {
       setAdding(false);
-    }
-  }
-
-  async function onDelete() {
-    if (busy) return;
-    setDeleting(true);
-    setError(null);
-    try {
-      await apiClient.deleteLibrary(lib.id);
-      onDeleted();
-      onClose();
-    } catch (err) {
-      setError({ message: errorMessage(err), overlap: false });
-      setDeleting(false);
-      setConfirmingDelete(false);
     }
   }
 
@@ -247,47 +227,6 @@ export default function EditLibraryDialog({
                   {error.message}
                 </p>
               )}
-
-              <div className="edit-library-danger">
-                {!confirmingDelete ? (
-                  <button
-                    className="nav-link nav-link-danger"
-                    type="button"
-                    data-testid="edit-library-delete"
-                    onClick={() => {
-                      setError(null);
-                      setConfirmingDelete(true);
-                    }}
-                    disabled={busy}
-                  >
-                    Delete library
-                  </button>
-                ) : (
-                  <div className="edit-library-confirm">
-                    <span className="confirm-prompt">
-                      Delete “{lib.name}” and its catalog? This can’t be undone.
-                    </span>
-                    <button
-                      className="nav-link nav-link-danger"
-                      type="button"
-                      data-testid="edit-library-delete-confirm"
-                      onClick={onDelete}
-                      disabled={deleting}
-                    >
-                      {deleting ? "Deleting…" : "Delete"}
-                    </button>
-                    <button
-                      className="nav-link"
-                      type="button"
-                      data-testid="edit-library-delete-cancel"
-                      onClick={() => setConfirmingDelete(false)}
-                      disabled={deleting}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
             </>
           ) : (
             <EnrichmentPolicyPanel library={lib} />
@@ -300,7 +239,6 @@ export default function EditLibraryDialog({
             type="button"
             data-testid="edit-library-close"
             onClick={onClose}
-            disabled={deleting}
           >
             Close
           </button>

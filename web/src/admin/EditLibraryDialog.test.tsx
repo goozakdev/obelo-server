@@ -3,20 +3,21 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EnrichmentPolicy, Library } from "../api/types";
 
-// EditLibraryDialog is now TABBED (ADR-0027): a "General" tab (rename / add-folder /
-// delete) and a "Metadata Providers" tab (the per-Library Enrichment policy). These
-// tests cover the tab switching, that the General form still works, and that the
-// policy panel is LAZY — its policy is fetched only when the Metadata Providers tab
-// is first shown, not on dialog open. The full policy-panel behavior lives in
+// EditLibraryDialog is TABBED (ADR-0027): a "General" tab (rename / add-folder) and
+// a "Metadata Providers" tab (the per-Library Enrichment policy). Delete is NOT
+// here — it's the row's ⋮ menu action (see AdminLibrariesScreen.test). These tests
+// cover the tab switching, that the General form still works, and that the policy
+// panel is LAZY — its policy is fetched only when the Metadata Providers tab is
+// first shown, not on dialog open. The full policy-panel behavior lives in
 // EnrichmentPolicyPanel.test.tsx; here we only assert the panel mounts + loads.
 
-const { updateLibrary, deleteLibrary, getEnrichmentPolicy, updateEnrichmentPolicy } =
-  vi.hoisted(() => ({
+const { updateLibrary, getEnrichmentPolicy, updateEnrichmentPolicy } = vi.hoisted(
+  () => ({
     updateLibrary: vi.fn(),
-    deleteLibrary: vi.fn(),
     getEnrichmentPolicy: vi.fn(),
     updateEnrichmentPolicy: vi.fn(),
-  }));
+  }),
+);
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -24,7 +25,6 @@ vi.mock("../api/client", async () => {
     ...actual,
     apiClient: {
       updateLibrary: (...a: unknown[]) => updateLibrary(...a),
-      deleteLibrary: (...a: unknown[]) => deleteLibrary(...a),
       getEnrichmentPolicy: (...a: unknown[]) => getEnrichmentPolicy(...a),
       updateEnrichmentPolicy: (...a: unknown[]) => updateEnrichmentPolicy(...a),
     },
@@ -62,12 +62,7 @@ function policy(over: Partial<EnrichmentPolicy> = {}): EnrichmentPolicy {
 
 function renderDialog(over: Partial<Library> = {}) {
   return render(
-    <EditLibraryDialog
-      library={lib(over)}
-      onChanged={() => {}}
-      onDeleted={() => {}}
-      onClose={() => {}}
-    />,
+    <EditLibraryDialog library={lib(over)} onChanged={() => {}} onClose={() => {}} />,
   );
 }
 
@@ -80,7 +75,6 @@ beforeEach(() => {
     this.dispatchEvent(new Event("close"));
   });
   updateLibrary.mockReset();
-  deleteLibrary.mockReset();
   getEnrichmentPolicy.mockReset();
   updateEnrichmentPolicy.mockReset();
 });

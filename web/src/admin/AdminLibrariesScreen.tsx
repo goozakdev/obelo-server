@@ -12,10 +12,11 @@ import EditLibraryDialog from "./EditLibraryDialog";
 //   - a top bar: an "N libraries" count on the left, and "Add Library" +
 //     "Scan All Libraries" actions on the right;
 //   - the list of Libraries, each row (LibraryAdminRow) carrying its kind icon,
-//     name, per-Library scan controls + status, and an Edit affordance; an empty
-//     list shows a single call-to-action line instead;
+//     name, status, an Edit affordance, and a ⋮ actions menu (Scan / Full scan /
+//     Delete); an empty list shows a single call-to-action line instead;
 //   - two modal dialogs, mounted on demand: the Add-Library wizard and the
-//     Edit-Library dialog (rename / add folders / delete).
+//     Edit-Library dialog (rename / add folders). Delete lives on the row's ⋮
+//     menu (its own confirmation modal), not in the Edit dialog.
 //
 // The list is reloaded after any create / edit / delete so the UI reflects the
 // server's truth without patching local state. A small reloadable loader is used
@@ -114,6 +115,7 @@ export default function AdminLibrariesScreen() {
               key={lib.id}
               library={lib}
               onEdit={setEditing}
+              onDeleted={reload}
               scanAllSignal={scanAllSignal}
             />
           ))}
@@ -134,7 +136,6 @@ export default function AdminLibrariesScreen() {
         <EditLibraryDialog
           library={editing}
           onChanged={reload}
-          onDeleted={reload}
           onClose={() => setEditing(null)}
         />
       )}

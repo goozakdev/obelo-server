@@ -2404,7 +2404,8 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   transition: opacity 0.12s ease;
 }
 .admin-library-row:hover .admin-library-actions,
-.admin-library-row:focus-within .admin-library-actions {
+.admin-library-row:focus-within .admin-library-actions,
+.admin-library-actions.is-active {
   opacity: 1;
 }
 .admin-library-actions button {
@@ -2415,6 +2416,55 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   width: 2rem;
   height: 2rem;
   font-size: 1rem;
+}
+
+/* The row's ⋮ actions menu (Scan / Full scan / Delete). Reuses the shared
+   .row-menu dropdown chrome, but sits INLINE in the actions cluster rather than
+   overlaid on artwork like the browse tiles: drop the absolute positioning (so it
+   flows next to the Edit pencil) and the opaque toggle chip (the cluster's own
+   hover-reveal governs visibility). The dropdown still anchors to the toggle. */
+.admin-library-menu {
+  position: relative;
+  top: auto;
+  right: auto;
+}
+.admin-library-menu .row-menu-toggle {
+  opacity: 1;
+  background: none;
+  color: var(--text-dim);
+}
+.admin-library-menu .row-menu-toggle:hover,
+.admin-library-menu .row-menu-toggle[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+/* The dropdown floats over the page (same --bg), so lift it onto an elevated
+   surface with a shadow — the browse tiles' menu leans on the artwork behind it
+   for contrast, which the flat admin list doesn't have. */
+.admin-library-menu .row-menu-list {
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+/* The destructive item (Delete) reads as danger and inverts on hover. */
+.row-menu-button-danger {
+  color: var(--danger);
+}
+.row-menu-button-danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+.row-menu-button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+.row-menu-button:disabled:hover {
+  background: none;
+}
+
+/* The delete-confirmation modal's message (ConfirmDialog reuses .library-dialog). */
+.confirm-dialog-message {
+  margin: 0;
+  color: var(--text);
 }
 
 /* --- Add / Edit Library dialogs (issue: admin-libraries-ui) --------------- */
@@ -2539,7 +2589,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-size: 0.9rem;
 }
 
-/* Edit dialog: name row, roots list, add-folder row, danger zone. */
+/* Edit dialog: name row, roots list, add-folder row. */
 .edit-library-name-row,
 .edit-library-add-row {
   display: flex;
@@ -2563,21 +2613,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   word-break: break-all;
-}
-.edit-library-danger {
-  margin-top: 0.25rem;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--border);
-}
-.edit-library-confirm {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-.edit-library-confirm .confirm-prompt {
-  color: var(--text-dim);
-  font-size: 0.9rem;
 }
 
 /* --- Admin: users (access-control-admin-ui issue 01) ---------------------- */

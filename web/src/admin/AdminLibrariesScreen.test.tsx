@@ -8,10 +8,12 @@ import type { Library, ScanStatus } from "../api/types";
 // AdminLibrariesScreen (redesigned UI) end-to-end through the faked API client
 // (the one seam): the top bar shows the library count + Add/Scan-All actions; the
 // list renders each Library with its kind icon, name, and per-row controls; the
-// Add-Library wizard walks kind → name → path and creates; the Edit dialog
-// renames, adds a folder, and deletes; Scan-All triggers every row's scan; and
-// scan polling reflects running → idle + counts. apiClient is faked at the module
-// boundary; scan polling uses fake timers.
+// Add-Library wizard walks kind → name → path and creates; the Edit dialog renames
+// and adds a folder; the row's ⋮ menu scans and deletes (Delete via a confirmation
+// modal); Scan-All triggers every row's scan; and scan polling reflects running →
+// idle + counts. Scan / Full scan / Delete live inside the row's ⋮ menu, so those
+// tests open the menu first. apiClient is faked at the module boundary; scan
+// polling uses fake timers.
 
 const {
   listLibraries,
@@ -250,7 +252,7 @@ describe("AdminLibrariesScreen", () => {
     );
   });
 
-  it("deletes a library from the edit dialog (confirm) and removes it", async () => {
+  it("deletes a library from the row ⋮ menu (confirm modal) and removes it", async () => {
     const user = userEvent.setup();
     listLibraries
       .mockResolvedValueOnce([lib({ id: "lib1", name: "Movies" })])
@@ -262,16 +264,41 @@ describe("AdminLibrariesScreen", () => {
       expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
     );
 
-    await user.click(screen.getByTestId("edit-library-button"));
-    const dialog = await screen.findByTestId("edit-library-dialog");
-    // Two-click danger: reveal confirm, then confirm.
-    await user.click(within(dialog).getByTestId("edit-library-delete"));
-    await user.click(within(dialog).getByTestId("edit-library-delete-confirm"));
+    // Open the row's ⋮ menu and choose Delete → a confirmation modal appears.
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("delete-library-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    expect(within(dialog).getByTestId("confirm-dialog-message")).toHaveTextContent(
+      /Delete .*Movies.* and its catalog/i,
+    );
+
+    await user.click(within(dialog).getByTestId("confirm-dialog-confirm"));
 
     await waitFor(() => expect(deleteLibrary).toHaveBeenCalledWith("lib1"));
     await waitFor(() =>
       expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
     );
+  });
+
+  it("Cancel on the delete confirmation keeps the library", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("delete-library-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    await user.click(within(dialog).getByTestId("confirm-dialog-cancel"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
+    );
+    expect(deleteLibrary).not.toHaveBeenCalled();
+    expect(screen.getByTestId("admin-library-row")).toBeInTheDocument();
   });
 });
 
@@ -300,10 +327,15 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     await flush();
     expect(screen.getByTestId("scan-status")).toBeInTheDocument();
 
+    // Scan lives in the row's ⋮ menu; open it, then trigger (the pick closes it).
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
     fireEvent.click(screen.getByTestId("scan-button"));
     await flush();
     expect(scanLibrary).toHaveBeenCalledWith("lib1", { mode: "incremental" });
     expect(screen.getByTestId("scan-status")).toHaveAttribute("data-state", "running");
+
+    // Reopen the menu: the scan controls stay disabled for the whole running scan.
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
     expect(screen.getByTestId("scan-button")).toBeDisabled();
     expect(screen.getByTestId("full-scan-button")).toBeDisabled();
 
@@ -314,6 +346,7 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     expect(screen.getByTestId("scan-status")).toHaveAttribute("data-state", "idle");
     expect(screen.getByTestId("scan-titles-found")).toHaveTextContent("4");
     expect(screen.getByTestId("scan-files-found")).toHaveTextContent("6");
+    // Menu is still open; the controls are re-enabled once the scan settles.
     expect(screen.getByTestId("scan-button")).toBeEnabled();
     expect(screen.getByTestId("full-scan-button")).toBeEnabled();
   });
@@ -325,6 +358,9 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
 
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
     await flush();
+    expect(screen.getByTestId("scan-status")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
     expect(screen.getByTestId("full-scan-button")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("full-scan-button"));

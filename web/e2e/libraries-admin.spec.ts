@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 // End-to-end admin flow (issue 06 acceptance criteria) against the REAL embedded
 // Go server: drive the BROWSER through login → /admin → create a Movie library →
 // scan → poll status to idle → confirm the titles are browsable → delete the
-// library, plus the folder-overlap error path. Unlike the browse/home/play specs
+// library (via the row's ⋮ menu + confirmation modal), plus the folder-overlap
+// error path. Unlike the browse/home/play specs
 // (which seed via the API because there was no admin UI), this spec exercises the
 // admin UI itself end-to-end.
 //
@@ -78,6 +79,17 @@ async function addLibrary(
   await page.getByTestId("add-library-submit").click();
 }
 
+// deleteLibraryRow removes a library through the row's ⋮ menu: open the menu,
+// choose Delete, and confirm in the modal. `row` is the row locator for the
+// library to delete. Leaves the (reloaded) list without that row.
+async function deleteLibraryRow(page: Page, row: Locator): Promise<void> {
+  await row.getByTestId("library-menu-toggle").click();
+  await row.getByTestId("delete-library-button").click();
+  const confirm = page.getByTestId("confirm-dialog");
+  await expect(confirm).toBeVisible();
+  await confirm.getByTestId("confirm-dialog-confirm").click();
+}
+
 // Browser login through the real UI, landing on Home.
 async function uiLogin(page: Page): Promise<void> {
   await page.goto("/login");
@@ -133,7 +145,7 @@ test.describe.serial("admin: libraries & scanning", () => {
     await expect(page.getByTestId("add-library-button")).toBeVisible();
   });
 
-  test("add → scan → status idle with titles → browsable → edit-delete", async ({ page }) => {
+  test("add → scan → status idle with titles → browsable → menu-delete", async ({ page }) => {
     await uiLogin(page);
     await page.goto("/admin");
     await expect(page.getByTestId("admin-libraries")).toBeVisible();
@@ -148,7 +160,9 @@ test.describe.serial("admin: libraries & scanning", () => {
       .filter({ has: page.getByTestId("admin-library-name").filter({ hasText: name }) });
     await expect(row).toBeVisible();
 
-    // Trigger an incremental scan and poll the status to idle with titles found.
+    // Trigger an incremental scan (Scan lives in the row's ⋮ menu) and poll the
+    // status to idle with titles found.
+    await row.getByTestId("library-menu-toggle").click();
     await row.getByTestId("scan-button").click();
     const scanStatus = row.getByTestId("scan-status");
     await expect
@@ -171,8 +185,9 @@ test.describe.serial("admin: libraries & scanning", () => {
     await expect(tiles.first()).toBeVisible();
     expect(await tiles.count()).toBeGreaterThan(0);
 
-    // Back to the admin hub, open the Edit dialog (which lists the root folder),
-    // then DELETE the library (cleanliness + assert gone).
+    // Back to the admin hub, open the Edit dialog (which lists the root folder) to
+    // confirm the root is recorded, then DELETE the library from the row's ⋮ menu
+    // (confirmation modal) for cleanliness + assert gone.
     await page.goto("/admin");
     const sameRow = page
       .getByTestId("admin-library-row")
@@ -182,8 +197,9 @@ test.describe.serial("admin: libraries & scanning", () => {
     const dialog = page.getByTestId("edit-library-dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId("edit-library-roots")).toContainText(fixturesDir);
-    await dialog.getByTestId("edit-library-delete").click();
-    await dialog.getByTestId("edit-library-delete-confirm").click();
+    await dialog.getByTestId("edit-library-close").click();
+
+    await deleteLibraryRow(page, sameRow);
     await expect(sameRow).toHaveCount(0);
   });
 
@@ -218,13 +234,9 @@ test.describe.serial("admin: libraries & scanning", () => {
     await expect(err).toHaveAttribute("data-overlap", "true");
     // The wizard is still standing (no crash).
     await expect(page.getByTestId("add-library-dialog")).toBeVisible();
-    // Close it (ESC) and clean up the base library via its Edit dialog.
+    // Close it (ESC) and clean up the base library via the row's ⋮ menu.
     await page.keyboard.press("Escape");
-    await baseRow.getByTestId("edit-library-button").click();
-    const dialog = page.getByTestId("edit-library-dialog");
-    await expect(dialog).toBeVisible();
-    await dialog.getByTestId("edit-library-delete").click();
-    await dialog.getByTestId("edit-library-delete-confirm").click();
+    await deleteLibraryRow(page, baseRow);
     await expect(baseRow).toHaveCount(0);
   });
 });
