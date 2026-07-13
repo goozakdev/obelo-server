@@ -105,6 +105,17 @@ func isMedia(name string) bool {
 	return mediaExtensions[strings.ToLower(filepath.Ext(name))]
 }
 
+// isHidden reports whether a directory entry is a hidden/dotfile that must never
+// be treated as content: any name starting with ".". Most important are the "._"
+// AppleDouble sidecars macOS/smbfs leaves next to real files on a network share —
+// a resource-fork blob that carries the real file's extension (so isMedia accepts
+// it) but is not playable media; also .DS_Store, .Trashes, .Spotlight-V100, etc.
+// Filtered at the directory-read boundary (readDirResilient) so no classifier
+// downstream (isMedia / isAudio / artworkRole / ParseEpisodeToken) ever sees them.
+func isHidden(name string) bool {
+	return strings.HasPrefix(name, ".")
+}
+
 // isSubtitle reports whether name is a sidecar-subtitle file.
 func isSubtitle(name string) bool {
 	return subtitleExtensions[strings.ToLower(filepath.Ext(name))]

@@ -258,13 +258,29 @@ func readDirResilient(dir string) ([]os.DirEntry, error) {
 	for attempt := 0; ; attempt++ {
 		entries, err := os.ReadDir(dir)
 		if err == nil {
-			return entries, nil
+			return visibleEntries(entries), nil
 		}
 		if attempt >= len(readDirBackoffs) {
 			return nil, err
 		}
 		time.Sleep(readDirBackoffs[attempt])
 	}
+}
+
+// visibleEntries drops hidden/AppleDouble entries (isHidden) from a directory
+// listing at the single read boundary every walker shares, so a "._" sidecar or
+// a .DS_Store never reaches classification or ffprobe. Filtering here (rather than
+// at each isMedia/isAudio gate) also covers hidden subdirectories, whose contents
+// are never walked.
+func visibleEntries(entries []os.DirEntry) []os.DirEntry {
+	out := entries[:0]
+	for _, e := range entries {
+		if isHidden(e.Name()) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // discoverMusicRoot recursively walks a Music Library root, returning every audio

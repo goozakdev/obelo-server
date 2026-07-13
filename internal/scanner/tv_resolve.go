@@ -39,6 +39,19 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 	entries := sc.readDirTolerant(folder)
 
 	var unmatched []store.UnmatchedFile
+	unmatchedSeen := map[string]bool{}
+	// addUnmatched records a file as Unmatched at most once. A range file
+	// (S01E05-E06) expands into multiple Episode Titles that all share the same
+	// physical path; when that file can't be resolved, every episode of the range
+	// would otherwise append the identical path, and the duplicate trips the
+	// global UNIQUE(path) constraint on unmatched_files (aborting the whole scan).
+	addUnmatched := func(path, reason string) {
+		if unmatchedSeen[path] {
+			return
+		}
+		unmatchedSeen[path] = true
+		unmatched = append(unmatched, unmatchedFile(path, reason))
+	}
 
 	// Group resolved Episodes by season number.
 	seasonEpisodes := map[int][]store.EpisodeTree{}
@@ -60,7 +73,7 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		}
 		tok, ok := ParseEpisodeToken(base, seasonHint)
 		if !ok {
-			unmatched = append(unmatched, unmatchedFile(path, "no recognized episode token (SxxExx / date / absolute)"))
+			addUnmatched(path, "no recognized episode token (SxxExx / date / absolute)")
 			return
 		}
 		season := tok.Season
@@ -97,7 +110,7 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 				Title: displayName, Year: 0, Key: identityKey,
 			}, []classifiedFile{cf}, nil, nil, nil)
 			if err != nil {
-				unmatched = append(unmatched, unmatchedFile(path, "could not probe episode file: "+err.Error()))
+				addUnmatched(path, "could not probe episode file: "+err.Error())
 				continue
 			}
 			// assembleTitle stamps kind = lib.Kind ("tv"); an Episode leaf is "episode".
@@ -163,7 +176,7 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 			for _, et := range eps {
 				for _, ed := range et.Editions {
 					for _, f := range ed.Files {
-						unmatched = append(unmatched, unmatchedFile(f.Path, "no parseable Show identity from folder name"))
+						addUnmatched(f.Path, "no parseable Show identity from folder name")
 					}
 				}
 			}
