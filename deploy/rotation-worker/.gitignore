@@ -4,3 +4,4 @@ envelope.json
 *.envelope
 .dev.vars
 .wrangler/
+wrangler.toml

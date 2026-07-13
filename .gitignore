@@ -36,6 +36,7 @@ node_modules/
 # `go build ./cmd/keytool` drops ./keytool here.
 juicebox
 keytool
+envelope.json
 
 .claude
 .scratch

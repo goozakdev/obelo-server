@@ -6,7 +6,32 @@ polls**, same-day, **without cutting a release**. Governing decision: ADR-0032.
 
 **Precondition:** you have the base64 `kAppEncKey` (the app encryption key baked into
 official builds) in your maintainer secret store, and `wrangler` is authenticated to
-the Cloudflare account hosting the rotation Worker (`deploy/rotation-worker/`).
+the Cloudflare account hosting the rotation Worker (`deploy/rotation-worker/`). If you
+haven't created `kAppEncKey` yet, see below.
+
+## Generating `kAppEncKey` (one-time setup)
+
+`kAppEncKey` is a **32-byte AES-256 key, standard-base64-encoded** — nothing more.
+The client requires exactly 32 decoded bytes (`internal/rotation/rotation.go`,
+`newGCM`), so generate it with:
+
+```sh
+openssl rand -base64 32          # 44 chars, ends in '='
+#   head -c 32 /dev/urandom | base64   # equivalent
+```
+
+It is **symmetric**: the same value both encrypts (maintainer side, `keytool`) and
+decrypts (server side, in every official binary). So store the one value in **two**
+places, and they must match exactly:
+
+- **CI secret** `JUICEBOX_APP_ENC_KEY` — injected into official binaries via
+  `-ldflags -X` (Make/Docker); verbatim, since it is already base64.
+- **Your own vault** (password manager) — you pass it as `JUICEBOX_APP_ENC_KEY` when
+  running `keytool` at rotation time (step 2 below).
+
+Generate it **once** and keep it stable — it is empty in source and never committed
+(`internal/config/bootstrap.go`). Regenerating it forces a release (see the asymmetry
+section), so only do so on a deeper compromise, not for routine provider-key rotation.
 
 ## The three steps
 
@@ -62,7 +87,8 @@ keys live only in the encrypted payload the Worker serves.
 `kAppEncKey` itself is different: it's baked into the binary via `-ldflags -X`
 (`internal/config/bootstrap.go`). If **it** is compromised, you must:
 
-1. Generate a new `kAppEncKey`, update the CI secret.
+1. Generate a new `kAppEncKey` (same command as one-time setup above), update the CI
+   secret **and** your vault copy.
 2. Cut a release (new official binaries + Docker image carry the new key).
 3. Re-seal the current provider keys under the new `kAppEncKey` (step 2 above) and
    publish (step 3), so already-updated installs keep rotating.
