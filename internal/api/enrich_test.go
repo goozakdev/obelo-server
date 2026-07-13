@@ -194,7 +194,8 @@ type enrichedDetailResp struct {
 		Character string `json:"character"`
 		Kind      string `json:"kind"`
 	} `json:"cast"`
-	Artwork []enrichedArtworkResp `json:"artwork"`
+	Artwork        []enrichedArtworkResp `json:"artwork"`
+	ArtworkVersion string                `json:"artworkVersion"`
 }
 
 type enrichedSummaryResp struct {

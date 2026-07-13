@@ -291,6 +291,7 @@ export function normalizeTitleDetail(raw: TitleDetailRaw): TitleDetail {
     addedAt: raw.addedAt,
     editions: (raw.editions ?? []).map(normalizeEdition),
     artwork: raw.artwork ?? [],
+    artworkVersion: raw.artworkVersion,
     subtitles: raw.subtitles ?? [],
     // Enrichment holes filled: strings → "", numbers → 0, lists → [].
     overview: raw.overview ?? "",

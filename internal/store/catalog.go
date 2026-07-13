@@ -114,6 +114,12 @@ type Artwork struct {
 	Role    string
 	Path    string
 	Source  string
+	// AddedAt is when this row was written (re-defaults to datetime('now') on
+	// every insert, so it advances on a re-fetch/pick/upload). The Title detail
+	// derives its cache-bust token from MAX(added_at) over the resolved rows —
+	// the row `path` is a stable per-(Title,role) cache filename and can't bust.
+	// Populated by artworkForTitle; empty from readers that don't select it.
+	AddedAt string
 }
 
 // Credit is one cast/crew member attached to a Title by Enrichment. Kind is
@@ -808,7 +814,7 @@ func (db *DB) artworkForTitle(titleID string) ([]Artwork, error) {
 	// the winning row — the detail then lists ONE artwork entry per role, matching
 	// what the serving endpoint resolves (ArtworkByTitleRole, ADR-0026).
 	rows, err := db.Query(
-		`SELECT id, title_id, role, path, source FROM artwork
+		`SELECT id, title_id, role, path, source, added_at FROM artwork
 		   WHERE title_id = ?
 		   ORDER BY role, CASE source WHEN 'uploaded' THEN 0 WHEN 'local' THEN 1 ELSE 2 END`, titleID)
 	if err != nil {
@@ -820,7 +826,7 @@ func (db *DB) artworkForTitle(titleID string) ([]Artwork, error) {
 	seen := map[string]bool{}
 	for rows.Next() {
 		var a Artwork
-		if err := rows.Scan(&a.ID, &a.TitleID, &a.Role, &a.Path, &a.Source); err != nil {
+		if err := rows.Scan(&a.ID, &a.TitleID, &a.Role, &a.Path, &a.Source, &a.AddedAt); err != nil {
 			return nil, fmt.Errorf("store: scanning artwork: %w", err)
 		}
 		if seen[a.Role] {

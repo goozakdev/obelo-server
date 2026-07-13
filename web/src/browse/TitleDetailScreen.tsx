@@ -378,18 +378,25 @@ function Detail({
   // the title in the artist's own lettering, so it replaces BOTH the poster and
   // the text heading (TitleLogo falls back to the heading when there's none —
   // always the case for an Episode, which has no logo role). Cache-bust on the
-  // row's path (the cached file changes when an Admin picks a new Logo in the
-  // Edit-item dialog) so the hero reloads without a page refresh.
+  // Title's artworkVersion (newest added_at) so a re-enrich/pick/upload reloads
+  // the hero without a page refresh. NOT the row `path`: the fetched-artwork
+  // cache filename is stable per (Title, role), so a replaced image reuses the
+  // same path and the browser would keep serving the stale bytes. Falls back to
+  // the path for an older server that doesn't send artworkVersion.
   const logoArt = title.artwork.find((a) => a.role === "logo");
-  const logoSrc = logoArt ? posterUrl(title.id, "logo", logoArt.path) : undefined;
+  const logoSrc = logoArt
+    ? posterUrl(title.id, "logo", title.artworkVersion ?? logoArt.path)
+    : undefined;
 
   // The Title's fetched Background pinned behind the whole screen (the same
   // fixed, scroll-fading backdrop the Show detail uses — position: fixed, so
-  // mounting inside the article still spans the viewport). Rendered from the
-  // locally-held title and cache-busted on the row's path, so picking a new
-  // Background in the Edit-item dialog swaps it without a page refresh.
+  // mounting inside the article still spans the viewport). Cache-busted on the
+  // Title's artworkVersion, exactly like the logo hero (see above) — the row
+  // path is a stable cache filename and can't bust a replaced Background.
   const backgroundArt = title.artwork.find((a) => a.role === "background");
-  const backdropSrc = backgroundArt ? posterUrl(title.id, "background", backgroundArt.path) : undefined;
+  const backdropSrc = backgroundArt
+    ? posterUrl(title.id, "background", title.artworkVersion ?? backgroundArt.path)
+    : undefined;
 
   return (
     <article className="detail" data-testid="detail">

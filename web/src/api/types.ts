@@ -757,6 +757,10 @@ export interface TitleDetailRaw {
   editions?: EditionRaw[];
   extras?: unknown[];
   artwork?: Artwork[];
+  /** Opaque per-Title artwork cache-bust token (newest artwork timestamp); absent
+   * when the Title has no artwork or on an older server. Appended to the hero's
+   * Logo/Background URLs so a re-fetched/picked image reloads in place. */
+  artworkVersion?: string;
   /** Every selectable Subtitle track the Title offers, from all sources (embedded
    * Streams + sidecar/fetched rows), deduped and labeled by the server (ADR-0020).
    * Absent on an older server; normalized to []. */
@@ -1633,6 +1637,12 @@ export interface TitleDetail {
   addedAt?: string;
   editions: Edition[];
   artwork: Artwork[];
+  /** Opaque per-Title artwork cache-bust token (newest artwork timestamp), or
+   * undefined when the Title has no artwork. The detail hero appends it to its
+   * Logo/Background `<img>` URLs so a re-fetch/pick/upload reloads them — the
+   * artwork row `path` is a stable per-(Title,role) cache filename and can't
+   * serve as the bust key. */
+  artworkVersion?: string;
   /** Every selectable Subtitle track the Title offers (embedded + sidecar +
    * fetched), deduped and labeled by the server (ADR-0020). Normalized to []. */
   subtitles: SubtitleTrack[];

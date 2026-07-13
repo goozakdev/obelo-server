@@ -122,6 +122,13 @@ func TestEnrichmentMatchCorrectsAndLeavesAttention(t *testing.T) {
 	if matched.Overview == "" || matched.TMDBID != "999" {
 		t.Errorf("re-enriched detail not decorated / id not set: %+v", matched)
 	}
+	// The corrected detail must carry an artwork cache-bust token: the detail hero
+	// busts its Logo/Background <img> on this (the fetched-artwork cache filename is
+	// stable per (Title, role), so the row `path` can't bust a replaced image).
+	// Without it a re-matched Title's hero art would stay stale in the browser.
+	if matched.ArtworkVersion == "" {
+		t.Errorf("re-enriched detail missing artworkVersion (hero art can't cache-bust): %+v", matched)
+	}
 
 	// Identity unchanged (year), watch state preserved (ADR-0014).
 	after := getEnrichedDetail(t, srv, token, br.ID)

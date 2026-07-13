@@ -282,6 +282,14 @@ type titleDetailJSON struct {
 	Editions         []editionJSON `json:"editions"`
 	Extras           []extraJSON   `json:"extras"`
 	Artwork          []artworkJSON `json:"artwork"`
+	// ArtworkVersion is an opaque per-Title cache-bust token (newest artwork
+	// added_at, exactly like the browse-list titleSummaryJSON), changing whenever
+	// any of the Title's served artwork could have changed. The detail hero
+	// appends it to its Logo/Background <img> URLs so a re-fetch/pick/upload
+	// reloads them in place — the fetched-artwork cache filename is stable per
+	// (Title, role), so the row `path` can't serve as the bust key. Omitted when
+	// the Title has no artwork.
+	ArtworkVersion string `json:"artworkVersion,omitempty"`
 	// Subtitles is every selectable Subtitle track the Title offers, from all
 	// sources in one list (ADR-0020). Non-nil; empty when the Title has none.
 	Subtitles []subtitleTrackJSON `json:"subtitles"`
@@ -369,6 +377,13 @@ func toTitleDetail(d store.TitleDetail, ws store.WatchState) titleDetailJSON {
 	}
 
 	artwork := make([]artworkJSON, 0, len(d.Artwork))
+	// artworkVersion = newest added_at across the resolved rows (same token the
+	// browse list computes via ArtworkVersionsForTitles), so the detail hero can
+	// cache-bust its Logo/Background <img> on a value that advances on every
+	// re-fetch/pick/upload. It travels on every detail response (GET + the
+	// correction/pick/upload endpoints all return toTitleDetail), so a hero
+	// reloads in place without a page refresh.
+	var artworkVersion string
 	for _, a := range d.Artwork {
 		artwork = append(artwork, artworkJSON{
 			Role:   a.Role,
@@ -376,6 +391,9 @@ func toTitleDetail(d store.TitleDetail, ws store.WatchState) titleDetailJSON {
 			Path:   a.Path,
 			Source: a.Source,
 		})
+		if a.AddedAt > artworkVersion {
+			artworkVersion = a.AddedAt
+		}
 	}
 
 	cast := toCreditsJSON(d.Cast)
@@ -398,6 +416,7 @@ func toTitleDetail(d store.TitleDetail, ws store.WatchState) titleDetailJSON {
 		Editions:         editions,
 		Extras:           extras,
 		Artwork:          artwork,
+		ArtworkVersion:   artworkVersion,
 		Overview:         d.Overview,
 		Tagline:          d.Tagline,
 		ContentRating:    d.ContentRating,

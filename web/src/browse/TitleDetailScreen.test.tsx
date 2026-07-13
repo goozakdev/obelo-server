@@ -714,7 +714,8 @@ describe("TitleDetailScreen — artwork tabs (Admin)", () => {
 // poster and the title text (the logo names the work in its own lettering); a
 // Title without a logo keeps the large-text heading. Picking a new Logo in the
 // Edit-item dialog reloads the hero without a page refresh (cache-busted on the
-// picked row's path).
+// Title's artworkVersion — the fetched cache filename is stable per (Title,role),
+// so the row `path` stays identical across a re-pick and can't bust the cache).
 describe("TitleDetailScreen — logo hero", () => {
   it("shows the logo artwork instead of the title text when the Title has one", async () => {
     getTitle.mockResolvedValue({
@@ -740,23 +741,30 @@ describe("TitleDetailScreen — logo hero", () => {
     expect(screen.queryByTestId("detail-logo")).not.toBeInTheDocument();
   });
 
-  it("reloads the hero logo when the Admin picks a new Logo (cache-bust on path)", async () => {
+  it("reloads the hero logo when the Admin picks a new Logo (cache-bust on artworkVersion)", async () => {
     const user = userEvent.setup();
+    // Realistic: the fetched logo cache filename is stable per (Title, role), so
+    // the row `path` is IDENTICAL before and after the pick — only artworkVersion
+    // (newest added_at) advances. Busting on `path` would leave the stale image;
+    // busting on artworkVersion reloads it. (This asymmetry is the bug fix.)
+    const stablePath = "/cache/t1-logo.png";
     getTitle.mockResolvedValue({
       ...detail,
-      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: "/cache/orig.png", source: "fetched" }],
+      artworkVersion: "v1",
+      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: stablePath, source: "fetched" }],
     });
     searchTitleArtworkCandidates.mockResolvedValue([
       { url: "https://prov/new-logo.png", width: 800, height: 310, source: "tmdb" },
     ]);
     pickTitleArtwork.mockResolvedValue({
       ...detail,
+      artworkVersion: "v2",
       lockedFields: ["logo"],
-      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: "/cache/new.png", source: "fetched" }],
+      artwork: [{ role: "logo", url: "/api/v1/titles/t1/artwork/logo", path: stablePath, source: "fetched" }],
     });
     renderDetail();
     await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
-    expect(screen.getByTestId("detail-logo")).toHaveAttribute("src", expect.stringContaining("orig.png"));
+    expect(screen.getByTestId("detail-logo")).toHaveAttribute("src", expect.stringContaining("v=v1"));
 
     await user.click(screen.getByTestId("edit-item-button"));
     await user.click(screen.getByTestId("edit-item-tab-logo"));
@@ -765,7 +773,7 @@ describe("TitleDetailScreen — logo hero", () => {
 
     expect(pickTitleArtwork).toHaveBeenCalledWith("t1", "logo", "https://prov/new-logo.png");
     await waitFor(() =>
-      expect(screen.getByTestId("detail-logo")).toHaveAttribute("src", expect.stringContaining("new.png")),
+      expect(screen.getByTestId("detail-logo")).toHaveAttribute("src", expect.stringContaining("v=v2")),
     );
   });
 });
@@ -774,7 +782,7 @@ describe("TitleDetailScreen — logo hero", () => {
 // behind the page (the same fixed, scroll-fading backdrop the Show detail uses);
 // a Title with no Background row renders no backdrop at all. Picking a new
 // Background in the Edit-item dialog reloads it without a page refresh
-// (cache-busted on the picked row's path, exactly like the logo hero).
+// (cache-busted on the Title's artworkVersion, exactly like the logo hero).
 describe("TitleDetailScreen — background backdrop", () => {
   it("pins the Background artwork behind the detail when the Title has one", async () => {
     getTitle.mockResolvedValue({
@@ -801,12 +809,17 @@ describe("TitleDetailScreen — background backdrop", () => {
     expect(screen.queryByTestId("detail-backdrop")).not.toBeInTheDocument();
   });
 
-  it("reloads the backdrop when the Admin picks a new Background (cache-bust on path)", async () => {
+  it("reloads the backdrop when the Admin picks a new Background (cache-bust on artworkVersion)", async () => {
     const user = userEvent.setup();
+    // Realistic: the fetched Background cache filename is stable per (Title, role),
+    // so the row `path` is IDENTICAL before and after the pick — only
+    // artworkVersion advances. See the logo-hero test for why this is the fix.
+    const stablePath = "/cache/t1-background.jpg";
     getTitle.mockResolvedValue({
       ...detail,
+      artworkVersion: "v1",
       artwork: [
-        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: "/cache/orig.jpg", source: "fetched" },
+        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: stablePath, source: "fetched" },
       ],
     });
     searchTitleArtworkCandidates.mockResolvedValue([
@@ -814,16 +827,17 @@ describe("TitleDetailScreen — background backdrop", () => {
     ]);
     pickTitleArtwork.mockResolvedValue({
       ...detail,
+      artworkVersion: "v2",
       lockedFields: ["background"],
       artwork: [
-        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: "/cache/new.jpg", source: "fetched" },
+        { role: "background", url: "/api/v1/titles/t1/artwork/background", path: stablePath, source: "fetched" },
       ],
     });
     renderDetail();
     await waitFor(() => expect(screen.getByTestId("detail")).toBeInTheDocument());
     expect(screen.getByTestId("detail-backdrop").querySelector("img")).toHaveAttribute(
       "src",
-      expect.stringContaining("orig.jpg"),
+      expect.stringContaining("v=v1"),
     );
 
     await user.click(screen.getByTestId("edit-item-button"));
@@ -835,7 +849,7 @@ describe("TitleDetailScreen — background backdrop", () => {
     await waitFor(() =>
       expect(screen.getByTestId("detail-backdrop").querySelector("img")).toHaveAttribute(
         "src",
-        expect.stringContaining("new.jpg"),
+        expect.stringContaining("v=v2"),
       ),
     );
   });
