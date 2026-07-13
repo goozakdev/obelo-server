@@ -25,6 +25,7 @@ import (
 	"github.com/marioquake/juicebox/internal/match"
 	"github.com/marioquake/juicebox/internal/organize"
 	"github.com/marioquake/juicebox/internal/playback"
+	"github.com/marioquake/juicebox/internal/rotation"
 	"github.com/marioquake/juicebox/internal/scanner"
 	"github.com/marioquake/juicebox/internal/server"
 	"github.com/marioquake/juicebox/internal/store"
@@ -66,6 +67,16 @@ type App struct {
 	// size 1: the settings PUT pokes it non-blockingly via SettingsChanged.
 	enrichReschedule chan struct{}
 
+	// keyRotator polls the optional rotation endpoint for replacement default keys
+	// (ADR-0032, layer 2) and applies them to the running provider. Nil when the
+	// channel is disabled (build-from-source with no enc key, JUICEBOX_KEY_ROTATION=
+	// off, no URL, or full BYOK). rotationWake pokes its loop so a just-granted
+	// consent triggers a fetch promptly (buffered size 1, coalescing like
+	// enrichReschedule); rotationDone closes when the loop exits.
+	keyRotator   *keyRotator
+	rotationWake chan struct{}
+	rotationDone chan struct{}
+
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
 	// enrich); each closes its done channel once it has fully exited, so Close
@@ -106,6 +117,14 @@ type options struct {
 	// returns fixed telemetry or "unavailable" so the endpoint is exercised across
 	// every availability state without a real GPU.
 	gpuProbe gpu.Probe
+	// rotationURL / rotationEncKey override the key-rotation endpoint URL and its
+	// decryption key (ADR-0032). Production sources the URL from config and the enc
+	// key from the build-injected config.AppEncKey(); a black-box test injects a stub
+	// URL + a known key so it can drive the full fetch→decrypt→cache→propagate path
+	// (including a rotated key picked up on the next poll) with no deployed Worker and
+	// no ldflags injection. A non-empty rotationURL marks the override as active.
+	rotationURL    string
+	rotationEncKey string
 }
 
 // WithMetadataProvider overrides the Enrichment MetadataProvider (tests inject a
@@ -146,6 +165,18 @@ func WithDetector(d transcode.Detector) Option {
 // NVENC-without-nvidia-smi, and non-NVENC states without a real GPU.
 func WithGPUProbe(p gpu.Probe) Option {
 	return func(o *options) { o.gpuProbe = p }
+}
+
+// WithKeyRotation pins the rotation endpoint URL and its base64 AES-256-GCM
+// decryption key (ADR-0032), overriding the production sources (cfg.KeyRotationURL
+// and the build-injected config.AppEncKey()). It is the black-box test seam for the
+// rotation channel: a test stands up a stub endpoint serving an encrypted envelope
+// and injects its URL + the matching key here, so the full fetch→decrypt→cache→
+// propagate loop — and a rotated key being adopted on the next poll — is verifiable
+// with no deployed Worker and no ldflags injection. Passing a URL also enables the
+// channel regardless of cfg.KeyRotationEnabled.
+func WithKeyRotation(url, encKeyB64 string) Option {
+	return func(o *options) { o.rotationURL, o.rotationEncKey = url, encKeyB64 }
 }
 
 // WithSubtitleProviderBuilder substitutes the function the subtitle-fetch Manager
@@ -302,12 +333,29 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	}
 	enrichSvc := enrich.NewService(db, provider, fetcher, enablement, cfg.ArtworkCacheDir(), cfg.ArtworkCandidateCacheTTL)
 
+	// Rotation cache (ADR-0032, layer 2): load the last successfully fetched default
+	// keys from the data dir so the boot-time resolver, seed, and posture log see any
+	// keys a prior run picked up. Absent/corrupt is a normal fall-through to the
+	// bootstrap key (the live rotation fetch happens post-boot in the key rotator,
+	// consent-gated); a corrupt cache is logged, not fatal.
+	rotCache, _, cacheErr := rotation.LoadCache(cfg.MetadataKeysPath())
+	if cacheErr != nil {
+		log.Printf("juicebox: metadata credentials: ignoring unreadable rotation cache: %v", cacheErr)
+	}
+	rotKeys := config.RotationKeys{TMDB: rotCache.TMDB, Fanart: rotCache.Fanart}
+
+	// Default-credential posture (ADR-0032): log once at boot where the effective
+	// metadata credentials come from — so an official build confirms the bundled
+	// default is active, and a build-from-source binary gets a plain "no bundled
+	// keys, use BYOK" explanation rather than a mysterious absence of enrichment.
+	logCredentialPosture(cfg, rotKeys)
+
 	// First-boot seed + source-of-truth handoff (metadata-providers 02): if the
 	// DB-backed provider settings have never been written, seed them from
 	// config.Config so an existing env-configured deployment behaves identically.
 	// Thereafter the DB is authoritative and the config provider values are ignored
 	// at runtime (documented in config.go). Idempotent — seeds only when empty.
-	seedInput := seedInputFromConfig(cfg)
+	seedInput := seedInputFromConfig(cfg, rotKeys)
 	if _, err := enrich.SeedIfEmpty(db, seedInput); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: seeding metadata provider settings: %w", err)
@@ -349,6 +397,17 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// policy over it. Only on this settings-driven path — a fixed injected
 		// provider (WithMetadataProvider) keeps using the global snapshot unchanged.
 		providerManager.EnablePerLibraryResolution()
+	}
+
+	// Key rotation (ADR-0032, layer 2): build the poller that fetches replacement
+	// default keys and applies them to the running provider. It returns nil (channel
+	// disabled) for a build-from-source binary (no enc key to decrypt with),
+	// JUICEBOX_KEY_ROTATION=off, no URL, or an all-BYOK operator — so the goroutine
+	// below is skipped and zero maintainer contact is made. A fixed injected provider
+	// (WithMetadataProvider) has no running Manager to rebuild, so rotation is off too.
+	var keyRot *keyRotator
+	if o.metadataProvider == nil {
+		keyRot = newKeyRotator(cfg, db, providerManager, o.rotationURL, o.rotationEncKey)
 	}
 
 	// External subtitle fetching (ADR-0021), mirroring the enrichment wiring above:
@@ -436,6 +495,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Events:           broker,
 		providerManager:  providerManager,
 		enrichReschedule: make(chan struct{}, 1),
+		keyRotator:       keyRot,
+		rotationWake:     make(chan struct{}, 1),
 	}
 	app.enrichQueue = make(chan enrichRequest, 64)
 
@@ -534,6 +595,15 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// interval is 0 and is poked awake by the settings PUT.
 		app.enrichSchedDone = make(chan struct{})
 		go app.runScheduledEnrich(ctx)
+
+		// Key rotation (ADR-0032, layer 2): poll the rotation endpoint for replacement
+		// default keys on startup and on a periodic cadence, consent-gated. Started only
+		// when the channel is enabled (keyRotator non-nil); it parks until consent is
+		// granted (poked by the settings PUT via rotationWake) and never blocks boot.
+		if app.keyRotator != nil {
+			app.rotationDone = make(chan struct{})
+			go app.runKeyRotation(ctx)
+		}
 	}
 
 	return app, nil
@@ -670,12 +740,19 @@ func (a *App) enqueueEnrichAfterScan(libraryID string) {
 }
 
 // notifyEnrichReschedule pokes the scheduled-enrich goroutine awake so a saved
-// EnrichInterval change applies promptly. Non-blocking (buffered size 1): a poke
-// that races an already-pending one is simply coalesced. Wired into api.Deps as
-// SettingsChanged; the settings PUT calls it after a successful save.
+// EnrichInterval change applies promptly, AND wakes the key-rotation loop so a
+// just-granted enrichment consent triggers a rotation fetch without waiting for the
+// next tick (ADR-0032: no fetch before consent, then fetch promptly once granted).
+// Non-blocking (both channels buffered size 1): a poke that races an already-pending
+// one is simply coalesced. Wired into api.Deps as SettingsChanged; the settings PUT
+// (including the consent PUT) calls it after a successful save.
 func (a *App) notifyEnrichReschedule() {
 	select {
 	case a.enrichReschedule <- struct{}{}:
+	default:
+	}
+	select {
+	case a.rotationWake <- struct{}{}:
 	default:
 	}
 }
@@ -843,6 +920,9 @@ func (a *App) Close() error {
 		if a.enrichSchedDone != nil {
 			<-a.enrichSchedDone
 		}
+		if a.rotationDone != nil {
+			<-a.rotationDone
+		}
 		a.cancel = nil
 	}
 	if a.Events != nil {
@@ -887,16 +967,31 @@ func resolveBackend(detector transcode.Detector, h config.HWAccel) transcode.Res
 // place the config vocabulary meets the Enrichment domain (enrich never imports
 // config, ADR-0006). Used only for the first-boot seed: after the DB-backed
 // provider settings exist, config's provider values are ignored at runtime.
-func seedInputFromConfig(cfg config.Config) enrich.SeedInput {
+//
+// The TMDB and fanart.tv keys are RESOLVED through the default-credential
+// precedence chain (ADR-0032): the operator's BYOK key wins, else the cached
+// rotation key (rot), else the build-injected bootstrap key bundled with official
+// builds — so a fresh OFFICIAL install seeds the bundled default and enriches out
+// of the box (still gated by the first-run consent decision, which is undecided on
+// a fresh install). A build-from-source binary has no bootstrap key, so this
+// resolves to the operator key or none, exactly as before this feature. Seeding
+// only ever fires on a fresh install (settings empty), so an upgrade — already
+// grandfathered to consent granted by migration 0040 — never silently adopts the
+// bundled default. On a fresh install rot is empty (no fetch has happened — consent
+// is undecided), so the seed uses the bootstrap key; the rotation layer's live
+// effect is applied post-boot by the key rotator (see rotation.go).
+func seedInputFromConfig(cfg config.Config, rot config.RotationKeys) enrich.SeedInput {
+	tmdbKey, _ := cfg.ResolveTMDBKey(rot)
+	fanartKey, _ := cfg.ResolveFanartTVKey(rot)
 	return enrich.SeedInput{
-		TMDBAPIKey:         cfg.TMDBAPIKey,
+		TMDBAPIKey:         tmdbKey,
 		TMDBBaseURL:        cfg.TMDBBaseURL,
 		TMDBImageBaseURL:   cfg.TMDBImageBaseURL,
 		MetadataLanguage:   cfg.MetadataLanguage,
 		MusicBrainzEnabled: cfg.MusicBrainzEnabled,
 		MusicBrainzBaseURL: cfg.MusicBrainzBaseURL,
 		CoverArtBaseURL:    cfg.CoverArtBaseURL,
-		FanartTVAPIKey:     cfg.FanartTVAPIKey,
+		FanartTVAPIKey:     fanartKey,
 		FanartTVBaseURL:    cfg.FanartTVBaseURL,
 		TheAudioDBAPIKey:   cfg.TheAudioDBAPIKey,
 		TheAudioDBBaseURL:  cfg.TheAudioDBBaseURL,
@@ -906,6 +1001,30 @@ func seedInputFromConfig(cfg config.Config) enrich.SeedInput {
 		AutoEnrichAfterScan:    cfg.AutoEnrichAfterScan,
 		EnrichIntervalSeconds:  int(cfg.EnrichInterval / time.Second),
 		MusicBrainzRateLimitMs: int(cfg.MusicBrainzRateLimit / time.Millisecond),
+		// First-run consent (ADR-0032): nil leaves it undecided (fresh install prompts,
+		// no outbound calls); a headless JUICEBOX_ENRICHMENT_CONSENT pre-seeds it.
+		ConsentGranted: cfg.EnrichmentConsentGranted,
+	}
+}
+
+// logCredentialPosture logs, once at boot, where the default metadata credentials
+// resolve from (ADR-0032), keyed on the TMDB (authoritative video) source; the
+// fanart.tv key follows the same precedence chain. It exists mainly for story 4:
+// an operator running a build-from-source binary sees a plain message that no
+// keys are bundled and BYOK is expected, so the absence of enrichment is
+// explained, not mysterious. rot carries any keys already cached from a prior
+// rotation fetch (empty on a fresh install). Consent still gates whether any call
+// is made.
+func logCredentialPosture(cfg config.Config, rot config.RotationKeys) {
+	switch _, src := cfg.ResolveTMDBKey(rot); src {
+	case config.CredentialOperator:
+		log.Printf("juicebox: metadata credentials: using your operator key (BYOK); zero maintainer contact")
+	case config.CredentialRotation:
+		log.Printf("juicebox: metadata credentials: using a rotated default key from the rotation endpoint (official build) — set JUICEBOX_TMDB_API_KEY / JUICEBOX_FANART_TV_API_KEY to use your own (BYOK), or JUICEBOX_KEY_ROTATION=off to disable rotation")
+	case config.CredentialBootstrap:
+		log.Printf("juicebox: metadata credentials: using the bundled default keys (official build) — set JUICEBOX_TMDB_API_KEY / JUICEBOX_FANART_TV_API_KEY to use your own (BYOK)")
+	default:
+		log.Printf("juicebox: metadata credentials: no default keys are bundled in this build — set JUICEBOX_TMDB_API_KEY / JUICEBOX_FANART_TV_API_KEY to enable enrichment (BYOK); otherwise metadata stays sparse (ADR-0001)")
 	}
 }
 

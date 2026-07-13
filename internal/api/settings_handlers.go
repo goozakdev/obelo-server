@@ -31,6 +31,11 @@ type ProviderSettingsStore interface {
 	// updates against the current values.
 	EnrichmentBehavior() (store.EnrichmentBehavior, error)
 	SetEnrichmentBehavior(autoEnrichAfterScan bool, enrichIntervalSeconds, musicBrainzRateLimitMs int) error
+	// First-run consent (ADR-0032): the GET reports the decision so the SPA shows
+	// the prompt while unset; the PUT records it, then Reload re-gates the running
+	// provider so the change takes effect with no restart.
+	EnrichmentConsent() (store.EnrichmentConsent, error)
+	SetEnrichmentConsent(granted bool) error
 }
 
 // --- Wire shapes ------------------------------------------------------------
@@ -137,6 +142,21 @@ func handleSettingsSubtree(deps Deps) http.HandlerFunc {
 		// routes aren't swallowed by the metadata handling.
 		if rest == "subtitle-providers" || strings.HasPrefix(rest, "subtitle-providers/") {
 			handleSubtitleSettingsSubtree(deps, rest)(w, r)
+			return
+		}
+
+		// GET/PUT /settings/enrichment-consent — the first-run consent gate (ADR-0032).
+		if rest == "enrichment-consent" {
+			switch r.Method {
+			case http.MethodGet:
+				handleGetEnrichmentConsent(deps)(w, r)
+			case http.MethodPut:
+				handleUpdateEnrichmentConsent(deps)(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+					"method not allowed", nil)
+			}
 			return
 		}
 
@@ -410,6 +430,85 @@ func handleTestProvider(deps Deps, slug string) http.HandlerFunc {
 		ok2, detail := enrich.TestConnection(ctx, slug, apiKey, baseURL, lang)
 		writeJSON(w, http.StatusOK, testProviderResponse{OK: ok2, Detail: detail})
 	}
+}
+
+// --- Enrichment consent (ADR-0032) ------------------------------------------
+
+// enrichmentConsentResponse is the GET/PUT body: the decision as a wire state the
+// SPA branches on ("unset" → show the first-run prompt; "granted"/"declined" →
+// reflect the settings toggle), plus when it was recorded (omitted while unset).
+type enrichmentConsentResponse struct {
+	State     string `json:"state"`
+	GrantedAt string `json:"grantedAt,omitempty"`
+}
+
+// updateEnrichmentConsentRequest is the PUT body: the operator's decision. Granted
+// is a required pointer so a missing field is a 422 rather than a silent decline.
+type updateEnrichmentConsentRequest struct {
+	Granted *bool `json:"granted"`
+}
+
+func handleGetEnrichmentConsent(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, err := deps.Providers.EnrichmentConsent()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to read enrichment consent", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, enrichmentConsentJSON(c))
+	}
+}
+
+func handleUpdateEnrichmentConsent(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req updateEnrichmentConsentRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if req.Granted == nil {
+			writeError(w, http.StatusUnprocessableEntity, codeProviderInvalidSetting,
+				"granted is required", nil)
+			return
+		}
+		if err := deps.Providers.SetEnrichmentConsent(*req.Granted); err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to save enrichment consent", nil)
+			return
+		}
+		// Re-gate the running provider so the decision takes effect with no restart:
+		// granting turns configured providers on, declining/revoking forces them off
+		// (the Manager ANDs consent into every emitted Enablement).
+		if deps.ProviderManager != nil {
+			if err := deps.ProviderManager.Reload(r.Context()); err != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal,
+					"failed to apply enrichment consent", nil)
+				return
+			}
+		}
+		// Wake the background triggers so a just-granted consent starts any pending
+		// enrichment promptly (nil-safe in unit tests without the app wiring).
+		if deps.SettingsChanged != nil {
+			deps.SettingsChanged()
+		}
+
+		c, err := deps.Providers.EnrichmentConsent()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to read enrichment consent", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, enrichmentConsentJSON(c))
+	}
+}
+
+// enrichmentConsentJSON shapes a stored decision into the wire response.
+func enrichmentConsentJSON(c store.EnrichmentConsent) enrichmentConsentResponse {
+	out := enrichmentConsentResponse{State: c.State()}
+	if !c.At.IsZero() {
+		out.GrantedAt = c.At.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 // --- Shared view builder ----------------------------------------------------

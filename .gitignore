@@ -31,7 +31,11 @@ node_modules/
 # except that placeholder.
 /internal/webui/dist/*
 !/internal/webui/dist/index.html
+# Stray root-level binaries from `go build ./cmd/<name>` (the tracked build output
+# goes to /bin/, ignored above). `make keytool` writes to bin/keytool, but a bare
+# `go build ./cmd/keytool` drops ./keytool here.
 juicebox
+keytool
 
 .claude
 .scratch

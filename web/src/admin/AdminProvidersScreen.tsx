@@ -9,6 +9,7 @@ import type {
   UpdateMetadataProvidersInput,
 } from "../api/types";
 import MaskedKeyInput from "./MaskedKeyInput";
+import EnrichmentConsentControl from "./EnrichmentConsentControl";
 
 // The Metadata Providers admin screen (metadata-providers 02). Behind
 // RequireAdmin (App.tsx) and still server-enforced (the /settings API is Admin
@@ -247,6 +248,10 @@ export default function AdminProvidersScreen() {
         take effect immediately — no restart. Keys are stored on the server and
         never shown again.
       </p>
+
+      {/* The master consent switch (ADR-0032): the operator's off switch for all
+          outbound metadata calls, above the per-provider configuration. */}
+      <EnrichmentConsentControl />
 
       {KIND_GROUPS.map(({ kind, label }) => {
         const inGroup = view.providers.filter((p) => p.kinds.includes(kind));

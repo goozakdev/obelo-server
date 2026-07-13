@@ -1,0 +1,37 @@
+# Cloudflare Worker deployment for the metadata key-rotation endpoint (ADR-0032).
+#
+# This config is committed; the SECRET it serves is not. The Worker reads one KV
+# entry ("envelope") that the maintainer publishes out-of-band with the runbook
+# (`wrangler kv key put` — see README.md). The repo therefore stays credential-free:
+# there is no key here, only the plumbing that serves whatever ciphertext is in KV.
+
+name = "juicebox-key-rotation"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+# The route the official client polls (config.JUICEBOX_KEY_ROTATION_URL points here).
+# Replace the zone with the maintainer's own; keep the /v1/* path so the versioned
+# envelope contract holds. Configure the custom domain/route in the dashboard or here.
+# routes = [{ pattern = "rotation.example.com/v1/*", zone_name = "example.com" }]
+
+# KV namespace holding the single published envelope. Create it once with
+#   wrangler kv namespace create KEYS_KV
+# then paste the returned id below. The stored VALUE (the keytool output) is never
+# committed — only this binding is.
+[[kv_namespaces]]
+binding = "KEYS_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Native per-IP rate limiting (ADR-0032 hardening: throttle abuse, not a security
+# control). 60 requests / 60s per IP is far above a well-behaved install's poll rate
+# (once every N hours) yet clamps a hostile loop. Tune as needed.
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+# Minimal/no logging out of respect for a self-hosting audience (ADR-0032): don't
+# accumulate operator IPs. Disables Workers Logs entirely.
+[observability]
+enabled = false

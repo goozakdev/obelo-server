@@ -16,6 +16,7 @@ package testharness
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/marioquake/juicebox/internal/app"
 	"github.com/marioquake/juicebox/internal/auth"
 	"github.com/marioquake/juicebox/internal/config"
@@ -35,7 +37,6 @@ import (
 	"github.com/marioquake/juicebox/internal/gpu"
 	"github.com/marioquake/juicebox/internal/subfetch"
 	"github.com/marioquake/juicebox/internal/transcode"
-	"github.com/google/uuid"
 )
 
 // Server is a running test server plus the handles a test needs to drive and
@@ -125,6 +126,24 @@ func WithEnrichmentKey(key string) Option {
 	return func(b *builder) { b.cfg.TMDBAPIKey = key }
 }
 
+// WithEnrichmentConsent seeds the first-run Enrichment consent decision (ADR-0032)
+// on the harness's fresh DB: true grants (the harness default), false declines,
+// and passing the undecided state is done by seeding declined then driving the API
+// — a fresh install with NO decision is modeled by WithoutEnrichmentConsent. Use
+// this to prove the gate: a declined server makes zero outbound provider calls even
+// with a provider configured.
+func WithEnrichmentConsent(granted bool) Option {
+	return func(b *builder) { b.cfg.EnrichmentConsentGranted = &granted }
+}
+
+// WithoutEnrichmentConsent leaves the first-run consent UNDECIDED on the fresh DB
+// (ADR-0032), modeling a brand-new install that has not yet answered the prompt —
+// the state under which the server must make no outbound enrichment calls and the
+// SPA shows the consent prompt.
+func WithoutEnrichmentConsent() Option {
+	return func(b *builder) { b.cfg.EnrichmentConsentGranted = nil }
+}
+
 // WithMusicBrainzEnabled turns ON Music enrichment without a TMDB key (MusicBrainz
 // + Cover Art Archive need none). Video kinds stay disabled unless WithEnrichmentKey
 // is also set. Pair with WithMetadataProvider to drive a Music pass with no network.
@@ -158,6 +177,22 @@ func WithArtworkCandidateCacheTTL(d time.Duration) Option {
 // WithMetadataProvider injects a fake Enrichment MetadataProvider (no network).
 func WithMetadataProvider(p enrich.MetadataProvider) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMetadataProvider(p)) }
+}
+
+// WithKeyRotation points the key-rotation channel (ADR-0032, layer 2) at a stub
+// endpoint with a known decryption key, and sets the re-poll interval (0 = fetch on
+// startup / on demand only, no periodic timer — the deterministic choice for a
+// test, which then drives polls via RefreshRotationKeys). It enables the channel
+// regardless of the default disable state, so a black-box test can drive the full
+// fetch→decrypt→cache→propagate loop — including a rotated key adopted on the next
+// poll — with no deployed Worker. Pair with WithProviderBuilder to observe the
+// rotated key reach the rebuilt provider with zero network.
+func WithKeyRotation(url, encKeyB64 string, interval time.Duration) Option {
+	return func(b *builder) {
+		b.cfg.KeyRotationEnabled = true
+		b.cfg.KeyRotationInterval = interval
+		b.appOpts = append(b.appOpts, app.WithKeyRotation(url, encKeyB64))
+	}
 }
 
 // WithArtworkFetcher injects a fake Enrichment ArtworkFetcher (no network).
@@ -196,6 +231,11 @@ func New(t *testing.T, opts ...Option) *Server {
 	b.cfg.SessionIdleTimeout = 0      // session reaper off by default; opt in with WithSessionIdleTimeout
 	b.cfg.AutoEnrichAfterScan = false // auto-after-scan enrich off by default; opt in with WithAutoEnrich
 	b.cfg.EnrichInterval = 0          // scheduled enrich off by default; opt in with WithEnrichInterval
+	// First-run Enrichment consent (ADR-0032) is GRANTED by default so a harness
+	// represents an operator who has already opted in — existing enrichment tests
+	// enrich as before. A consent-gate test overrides this with WithEnrichmentConsent.
+	granted := true
+	b.cfg.EnrichmentConsentGranted = &granted
 	for _, o := range opts {
 		o(b)
 	}
@@ -504,6 +544,18 @@ func (s *Server) CreateMember(username, password string) {
 		uuid.NewString(), username, hash,
 	); err != nil {
 		s.t.Fatalf("testharness: inserting member %q: %v", username, err)
+	}
+}
+
+// RefreshRotationKeys forces one synchronous key-rotation poll (ADR-0032): fetch
+// the stub endpoint, decrypt, cache, propagate the default key into the running
+// provider, and rebuild it. It is the deterministic driver for the rotation
+// black-box test — a poll on demand instead of waiting on the interval timer — and
+// fails the test on error. Pair with WithKeyRotation.
+func (s *Server) RefreshRotationKeys() {
+	s.t.Helper()
+	if err := s.app.RefreshRotationKeysNow(context.Background()); err != nil {
+		s.t.Fatalf("testharness: refreshing rotation keys: %v", err)
 	}
 }
 

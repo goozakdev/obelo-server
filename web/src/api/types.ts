@@ -10,6 +10,18 @@ export interface ServerInfo {
   setupRequired: boolean;
 }
 
+/** The first-run Enrichment consent decision (ADR-0032). `unset` means the
+ * operator has not answered the prompt yet — the SPA shows the consent gate and
+ * the server makes no outbound enrichment calls until a decision is recorded. */
+export type EnrichmentConsentState = "unset" | "granted" | "declined";
+
+/** Response of `GET`/`PUT /api/v1/settings/enrichment-consent` (Admin). */
+export interface EnrichmentConsent {
+  state: EnrichmentConsentState;
+  /** RFC3339 timestamp of the decision; absent while `unset`. */
+  grantedAt?: string;
+}
+
 /** A user's role. The backend is single-Admin today (Members deferred), but the
  * client models the role explicitly so the role gate works unchanged when
  * Member support lands (PRD "Role/user reality"). Unknown future roles are

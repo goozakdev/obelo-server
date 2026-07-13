@@ -15,6 +15,9 @@ type fakeManagerStore struct {
 	rateLimitMs int
 	// policies maps libraryID → its sparse Enrichment policy (absent = empty).
 	policies map[string]store.LibraryEnrichmentPolicy
+	// consentDeclined withholds first-run consent (ADR-0032) when true; the zero
+	// value grants it, so existing Manager tests see enrichment enabled as before.
+	consentDeclined bool
 }
 
 func (f *fakeManagerStore) MetadataProviders() ([]store.MetadataProviderRow, error) {
@@ -27,6 +30,9 @@ func (f *fakeManagerStore) EnrichmentBehavior() (store.EnrichmentBehavior, error
 }
 func (f *fakeManagerStore) LibraryEnrichmentPolicy(libraryID string) (store.LibraryEnrichmentPolicy, error) {
 	return f.policies[libraryID], nil
+}
+func (f *fakeManagerStore) EnrichmentConsent() (store.EnrichmentConsent, error) {
+	return store.EnrichmentConsent{Decided: true, Granted: !f.consentDeclined}, nil
 }
 
 // TestSettingsToProviderConfig covers the settings → ProviderConfig mapping: an
@@ -125,6 +131,44 @@ func TestManagerReload(t *testing.T) {
 	}
 	if svc.EnrichmentEnabled() {
 		t.Errorf("EnrichmentEnabled = true after disabling every source")
+	}
+}
+
+// TestManagerReloadConsentGate proves the first-run consent gate (ADR-0032): with
+// consent WITHHELD the Manager forces the global snapshot's Enablement off even
+// though a usable provider is configured, so the Service reports enrichment
+// disabled and makes no outbound calls; granting consent on the next Reload flips
+// it on with no other change.
+func TestManagerReloadConsentGate(t *testing.T) {
+	st := &fakeManagerStore{
+		rows:            []store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}},
+		lang:            "en-US",
+		consentDeclined: true, // operator has not consented
+	}
+	build := func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+		return CompositeProvider{}, DeriveEnablement(cfg)
+	}
+	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
+	mgr := NewManager(st, svc, build)
+
+	if err := mgr.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload (consent withheld): %v", err)
+	}
+	// A configured provider would normally enable both kinds; consent gates it off.
+	if en := svc.snapshot().enablement; en.Video || en.Music {
+		t.Errorf("enablement with consent withheld = %+v, want all off", en)
+	}
+	if svc.EnrichmentEnabled() {
+		t.Errorf("EnrichmentEnabled = true with consent withheld, want false")
+	}
+
+	// Grant consent and reload: the SAME configuration now enriches.
+	st.consentDeclined = false
+	if err := mgr.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload (consent granted): %v", err)
+	}
+	if en := svc.snapshot().enablement; !en.Video || !en.Music {
+		t.Errorf("enablement after granting consent = %+v, want video+music on", en)
 	}
 }
 
@@ -281,6 +325,8 @@ type fakeSeedStore struct {
 
 	behavior    store.EnrichmentBehavior
 	behaviorSet bool
+
+	consentGranted *bool // the seeded first-run consent decision (nil = never written)
 }
 
 func newFakeSeedStore(empty bool) *fakeSeedStore {
@@ -294,6 +340,10 @@ func (f *fakeSeedStore) UpsertMetadataProvider(u store.MetadataProviderUpsert) e
 }
 func (f *fakeSeedStore) SetMetadataLanguage(language string) error {
 	f.language, f.langSet = language, true
+	return nil
+}
+func (f *fakeSeedStore) SetEnrichmentConsent(granted bool) error {
+	f.consentGranted = &granted
 	return nil
 }
 func (f *fakeSeedStore) SetEnrichmentBehavior(auto bool, intervalSeconds, rateLimitMs int) error {

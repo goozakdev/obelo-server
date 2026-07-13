@@ -230,6 +230,34 @@ type Config struct {
 	// makes bulk auto-fetch a footgun, so it is strictly opt-in (ADR-0021). Seeds the
 	// DB knob on first boot. Env: JUICEBOX_SUBTITLE_AUTO_FETCH_LANG.
 	SubtitleAutoFetchLang string
+
+	// KeyRotationEnabled turns the optional maintainer-hosted key-rotation channel
+	// (ADR-0032, layer 2) ON. Default true, but it only ever contacts the endpoint on
+	// an OFFICIAL build (one with a build-injected kAppEncKey) AND after the operator
+	// grants enrichment consent — a build-from-source binary or an unconsented server
+	// makes zero rotation calls regardless. Set JUICEBOX_KEY_ROTATION=off to disable
+	// the channel entirely (one of two independent ways, alongside BYOK, to reach
+	// zero maintainer contact — ADR-0001).
+	KeyRotationEnabled bool
+	// KeyRotationURL is the endpoint the server polls for a replacement default-key
+	// payload (ADR-0032). Defaults to DefaultKeyRotationURL; tests point it at a stub.
+	// Empty disables the fetch as surely as KeyRotationEnabled=false.
+	KeyRotationURL string
+	// KeyRotationInterval is how often the server re-polls the rotation endpoint after
+	// the first successful fetch — the "every N hours" cadence (ADR-0032). Defaults to
+	// DefaultKeyRotationInterval; 0 disables the periodic re-poll (a single startup
+	// fetch only). Tests set a short value to observe a rotated key being picked up.
+	KeyRotationInterval time.Duration
+
+	// EnrichmentConsentGranted pre-seeds the first-run Enrichment consent decision
+	// (ADR-0032) on first boot, for a HEADLESS deploy that wants to answer the prompt
+	// without a UI (and the mechanism the test harness uses). nil (the default) leaves
+	// consent UNDECIDED so a fresh install prompts and makes no outbound enrichment
+	// calls until the operator answers; a non-nil value records that decision. It only
+	// SEEDS on first boot; thereafter the DB (the admin toggle) is authoritative.
+	// Env: JUICEBOX_ENRICHMENT_CONSENT (granted/true/1 → grant, declined/false/0 →
+	// decline, unset → leave undecided).
+	EnrichmentConsentGranted *bool
 }
 
 // DefaultScanInterval is the periodic safety-net scan cadence (ADR-0008). One
@@ -303,12 +331,28 @@ const DefaultEnrichInterval = 6 * time.Hour
 // staying short enough that a refreshed record surfaces new options soon.
 const DefaultArtworkCandidateCacheTTL = 2 * time.Minute
 
+// DefaultKeyRotationURL is a BUILD-INJECTED var, empty in source, declared in
+// bootstrap.go alongside the other `-ldflags -X` values so the maintainer host is
+// not committed to the public repo. A build-from-source binary therefore has no
+// default rotation URL and never polls. Overridable at runtime via
+// JUICEBOX_KEY_ROTATION_URL (tests point it at a stub).
+
+// DefaultKeyRotationInterval is how often an official build re-polls the rotation
+// endpoint after its first successful fetch (ADR-0032). Six hours matches the
+// enrichment sweep cadence: routine key rotation is not time-critical (a leaked key
+// is revoked at the provider immediately; the replacement just needs to reach
+// installs within hours), and a long interval keeps maintainer contact minimal.
+const DefaultKeyRotationInterval = 6 * time.Hour
+
 // Defaults returns a Config populated with sensible defaults. Callers may
 // override fields before calling Validate.
 func Defaults() Config {
 	return Config{
 		ListenAddr:               ":8080",
 		DataDir:                  "./data",
+		KeyRotationEnabled:       true,
+		KeyRotationURL:           DefaultKeyRotationURL,
+		KeyRotationInterval:      DefaultKeyRotationInterval,
 		ScanInterval:             DefaultScanInterval,
 		SessionIdleTimeout:       DefaultSessionIdleTimeout,
 		MaxConcurrentTranscodes:  DefaultMaxConcurrentTranscodes,
@@ -367,6 +411,15 @@ func (c Config) EnrichmentEnabled() bool {
 // and is NOT cleared at boot, so re-enrichment and restarts don't re-download.
 func (c Config) ArtworkCacheDir() string {
 	return filepath.Join(c.DataDir, "artwork")
+}
+
+// MetadataKeysPath returns the file under the data dir that caches the last
+// successfully fetched rotation-endpoint keys (ADR-0032/0007). It is durable cache
+// — like the artwork cache it survives restarts and is not cleared at boot, so a
+// brief endpoint outage reuses the last good keys rather than dropping to the
+// bootstrap key (ADR-0032 story 14).
+func (c Config) MetadataKeysPath() string {
+	return filepath.Join(c.DataDir, "metadata-keys.json")
 }
 
 // SubtitleCacheDir returns the durable on-disk cache for externally fetched
@@ -524,8 +577,49 @@ func FromEnv() Config {
 	if v := os.Getenv("JUICEBOX_SUBTITLE_AUTO_FETCH_LANG"); v != "" {
 		c.SubtitleAutoFetchLang = v
 	}
+	// Key rotation (ADR-0032, layer 2). JUICEBOX_KEY_ROTATION=off (or false/0/no)
+	// disables the channel entirely — one of two independent ways (with BYOK) to
+	// reach zero maintainer contact; any other value leaves it on. The URL and
+	// interval overrides exist mainly so tests point the fetch at a stub and observe
+	// a rotated key promptly.
+	if v := os.Getenv("JUICEBOX_KEY_ROTATION"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "off", "false", "0", "no", "disabled":
+			c.KeyRotationEnabled = false
+		default:
+			c.KeyRotationEnabled = true
+		}
+	}
+	if v := os.Getenv("JUICEBOX_KEY_ROTATION_URL"); v != "" {
+		c.KeyRotationURL = v
+	}
+	if v := os.Getenv("JUICEBOX_KEY_ROTATION_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			c.KeyRotationInterval = d
+		}
+	}
+	// Enrichment consent (ADR-0032): accept the friendly "granted"/"declined"
+	// spellings as well as the generic bool forms; anything else (or unset) leaves
+	// consent undecided so a fresh install still prompts.
+	if v := os.Getenv("JUICEBOX_ENRICHMENT_CONSENT"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "granted":
+			c.EnrichmentConsentGranted = boolPtr(true)
+		case "declined":
+			c.EnrichmentConsentGranted = boolPtr(false)
+		default:
+			if b, err := strconv.ParseBool(v); err == nil {
+				c.EnrichmentConsentGranted = boolPtr(b)
+			}
+		}
+	}
 	return c
 }
+
+// boolPtr returns a pointer to v — used for the optional tri-state config knobs
+// where nil is meaningfully distinct from false (e.g. EnrichmentConsentGranted:
+// nil = undecided, &false = declined).
+func boolPtr(v bool) *bool { return &v }
 
 // Validate checks the configuration for obvious mistakes. It does not touch
 // the filesystem; see EnsureDataDir for that.

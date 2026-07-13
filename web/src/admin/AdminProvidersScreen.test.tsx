@@ -32,6 +32,10 @@ vi.mock("../api/client", async () => {
       getMetadataProviders: (...a: unknown[]) => getMetadataProviders(...a),
       updateMetadataProviders: (...a: unknown[]) => updateMetadataProviders(...a),
       testMetadataProvider: (...a: unknown[]) => testMetadataProvider(...a),
+      // The embedded EnrichmentConsentControl (ADR-0032) fetches on mount; stub it
+      // to a settled state so this screen's tests don't exercise the consent flow.
+      getEnrichmentConsent: () => Promise.resolve({ state: "granted" }),
+      setEnrichmentConsent: () => Promise.resolve({ state: "granted" }),
     },
   };
 });

@@ -19,6 +19,7 @@ import ArtistDetailScreen from "./music/ArtistDetailScreen";
 import AlbumDetailScreen from "./music/AlbumDetailScreen";
 import TrackDetailScreen from "./music/TrackDetailScreen";
 import NowPlayingBar from "./player/NowPlayingBar";
+import EnrichmentConsentGate from "./admin/EnrichmentConsentGate";
 import { QueueProvider } from "./player/queue/useQueue";
 import { PlaybackTransportProvider } from "./player/transport";
 import { LibrariesProvider } from "./browse/librariesContext";
@@ -195,6 +196,9 @@ export default function App() {
             OUTSIDE <Routes> so it survives navigation — playback keeps going as
             the user browses. It renders nothing until a Queue is active. */}
         <NowPlayingBar />
+        {/* First-run Enrichment consent prompt (ADR-0032): mounted once in the
+            authed scope; shows only to an Admin who has not yet answered. */}
+        <EnrichmentConsentGate />
         </PlaybackTransportProvider>
         </QueueProvider>
         </LibrariesProvider>

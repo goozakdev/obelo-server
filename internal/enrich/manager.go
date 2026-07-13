@@ -23,6 +23,11 @@ type ManagerStore interface {
 	// — the deltas the per-Library resolver layers over the global config. An
 	// absent policy is the zero value (inherit everything).
 	LibraryEnrichmentPolicy(libraryID string) (store.LibraryEnrichmentPolicy, error)
+	// EnrichmentConsent reads the first-run consent decision (ADR-0032). Until it
+	// is Granted the Manager forces every emitted Enablement off, so an undecided
+	// or declined server makes ZERO outbound enrichment calls. Read on each Reload
+	// (a consent change is applied like any other settings save).
+	EnrichmentConsent() (store.EnrichmentConsent, error)
 }
 
 // BuildFunc composes a MetadataProvider + its per-kind Enablement from a
@@ -61,6 +66,14 @@ type Manager struct {
 	// settings Reload (globalCfg changed) and per-Library on a policy change
 	// (InvalidateLibrary), so it never serves a stale effective config.
 	libCache map[string]providerSnapshot
+
+	// consentGranted caches the first-run consent decision (ADR-0032) from the last
+	// Reload. It is ANDed into every Enablement the Manager emits (consentGate), so
+	// a server whose operator has not granted consent enriches NOTHING no matter
+	// which path — global snapshot or per-Library pass — reads it. Guarded by mu
+	// (set in Reload, read in resolveLibrary). False until the first Reload, so the
+	// server is gated off until settings (and consent) are loaded at boot.
+	consentGranted bool
 }
 
 // NewManager wires a Manager over the settings store, the running Service, and the
@@ -102,9 +115,22 @@ func (m *Manager) Reload(ctx context.Context) error {
 	fixed := FixedProviderInputs{
 		MusicBrainzRateLimit: time.Duration(behavior.RateLimitMs()) * time.Millisecond,
 	}
+	// The first-run consent decision (ADR-0032) gates ALL outbound enrichment: read
+	// it here so a consent change (applied via a Reload, like any settings save)
+	// takes effect live, and cache it for the per-Library resolver below.
+	consent, err := m.store.EnrichmentConsent()
+	if err != nil {
+		return fmt.Errorf("enrich: manager reload: %w", err)
+	}
+	m.consentGranted = consent.Granted
+
 	cfg := SettingsToProviderConfig(rows, lang, fixed)
 	provider, enablement := m.build(cfg)
-	m.svc.SetProvider(provider, enablement)
+	// AND consent into the global snapshot: without it, the composed provider still
+	// exists but every kind is off, so the Service's global-snapshot readers
+	// (SearchCandidates/ResolveIdentity/previewExternal/ArtworkCandidates) make no
+	// call — the same all-off posture an unconfigured server has.
+	m.svc.SetProvider(provider, m.consentGate(enablement))
 
 	// A global settings change invalidates every Library's effective snapshot: an
 	// un-overriding Library must pick the change up LIVE (Model A, ADR-0027), and
@@ -114,6 +140,20 @@ func (m *Manager) Reload(ctx context.Context) error {
 	m.global = GlobalEnrichment{Config: cfg, Providers: ProviderStatesFromRows(rows)}
 	m.libCache = map[string]providerSnapshot{}
 	return nil
+}
+
+// consentGate returns e unchanged when the first-run consent decision (ADR-0032)
+// is Granted, or the all-off Enablement when it is not. It is the SINGLE point
+// where consent is folded into what the Service sees: applied to the global
+// snapshot in Reload and to every per-Library snapshot in resolveLibrary, so a
+// withheld or declined consent yields ZERO outbound calls through every enrich
+// path — no scattered per-call checks. Callers hold m.mu (consentGranted is
+// written under it in Reload).
+func (m *Manager) consentGate(e Enablement) Enablement {
+	if !m.consentGranted {
+		return Enablement{}
+	}
+	return e
 }
 
 // EnablePerLibraryResolution installs the per-Library resolver on the Service, so
@@ -261,7 +301,10 @@ func (m *Manager) resolveLibrary(ctx context.Context, libraryID string) (provide
 	// Carry the effective config so the pass can honor per-item override precedence
 	// (issue 06): a pinned Title resolves via its record's provider while reachable,
 	// and an orphaned pin (provider made unreachable by this policy) is flagged.
-	snap := providerSnapshot{provider: provider, enablement: res.Enablement, config: res.Config}
+	// consentGate forces the Library off when consent is not granted (ADR-0032), so
+	// a per-Library pass, MatchTitle, and the background triggers all no-op the same
+	// way the global snapshot does — the gate applies uniformly regardless of policy.
+	snap := providerSnapshot{provider: provider, enablement: m.consentGate(res.Enablement), config: res.Config}
 	m.libCache[libraryID] = snap
 	return snap, nil
 }
@@ -311,6 +354,13 @@ type SeedInput struct {
 	AutoEnrichAfterScan    bool
 	EnrichIntervalSeconds  int
 	MusicBrainzRateLimitMs int
+	// ConsentGranted seeds the first-run Enrichment consent decision (ADR-0032) on
+	// first boot: nil leaves it UNDECIDED (the fresh-install default — the SPA
+	// prompts and the server makes no outbound calls), while a non-nil value records
+	// that decision (a headless deploy pre-consenting via JUICEBOX_ENRICHMENT_CONSENT,
+	// or the test harness granting it). An upgrade never reaches here (settings
+	// aren't empty); its row was grandfathered to granted by migration 0040.
+	ConsentGranted *bool
 }
 
 // SeedStore is the persistence SeedIfEmpty writes through.
@@ -319,6 +369,7 @@ type SeedStore interface {
 	UpsertMetadataProvider(u store.MetadataProviderUpsert) error
 	SetMetadataLanguage(language string) error
 	SetEnrichmentBehavior(autoEnrichAfterScan bool, enrichIntervalSeconds, musicBrainzRateLimitMs int) error
+	SetEnrichmentConsent(granted bool) error
 }
 
 // SeedIfEmpty seeds the DB-backed provider settings from a pre-feature
@@ -385,6 +436,15 @@ func SeedIfEmpty(s SeedStore, in SeedInput) (bool, error) {
 	// enablement above), after which the DB is authoritative and env is ignored.
 	if err := s.SetEnrichmentBehavior(in.AutoEnrichAfterScan, in.EnrichIntervalSeconds, in.MusicBrainzRateLimitMs); err != nil {
 		return false, err
+	}
+	// Seed the first-run consent decision only when one was supplied (ADR-0032). A
+	// nil ConsentGranted leaves the column NULL — UNDECIDED — so a fresh install
+	// prompts and makes no outbound calls until the operator answers; a non-nil
+	// value records a headless pre-consent.
+	if in.ConsentGranted != nil {
+		if err := s.SetEnrichmentConsent(*in.ConsentGranted); err != nil {
+			return false, err
+		}
 	}
 	// The language singleton is always written — this is also the marker that the
 	// settings are no longer empty, so config is never re-consulted after boot.

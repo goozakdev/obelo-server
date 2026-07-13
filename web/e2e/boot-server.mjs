@@ -300,6 +300,12 @@ const child = spawn(binPath, [], {
     JUICEBOX_COVERART_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
     JUICEBOX_AUTO_ENRICH: "false",
     JUICEBOX_ENRICH_INTERVAL: "0",
+    // Pre-grant the first-run Enrichment consent (ADR-0032) so the shared e2e
+    // server enriches out of the box and the first-run prompt doesn't overlay the
+    // admin specs. The consent-toggle spec drives the revoke/grant round-trip and
+    // restores granted. Consent is seeded only on first boot; the toggle is then
+    // DB-authoritative.
+    JUICEBOX_ENRICHMENT_CONSENT: "granted",
     // External subtitle fetching (subtitles/05) ON, pointed at the same local stub
     // (the /subtitles + /download + /subfile.srt routes above), so the "search
     // online" e2e drives a real provider fetch with no live network. A key is set so

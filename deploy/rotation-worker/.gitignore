@@ -1,0 +1,6 @@
+# Never commit a sealed envelope or any secret material — the KV value is published
+# out-of-band by the runbook, not from the repo (ADR-0032).
+envelope.json
+*.envelope
+.dev.vars
+.wrangler/

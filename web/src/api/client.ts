@@ -74,6 +74,7 @@ import type {
   TestProviderResult,
   EnrichmentPolicy,
   UpdateEnrichmentPolicyInput,
+  EnrichmentConsent,
   Playlist,
   PlaylistDetail,
   PlaylistDetailRaw,
@@ -1451,6 +1452,27 @@ export class ApiClient {
       `/libraries/${encodeURIComponent(libraryId)}/enrichment-policy`,
       { method: "PUT", body: input, signal },
     );
+  }
+
+  // --- Admin: first-run Enrichment consent (ADR-0032) --------------------
+
+  /** `GET /api/v1/settings/enrichment-consent` (Admin) — the first-run consent
+   * decision. `state: "unset"` means the operator has not answered yet, so the
+   * SPA shows the consent gate and the server makes no outbound enrichment calls. */
+  getEnrichmentConsent(signal?: AbortSignal): Promise<EnrichmentConsent> {
+    return this.request<EnrichmentConsent>(`/settings/enrichment-consent`, { signal });
+  }
+
+  /** `PUT /api/v1/settings/enrichment-consent` (Admin) — record the decision.
+   * Granting turns configured providers on; declining/revoking forces them off
+   * (the server re-gates the running provider with no restart). Returns the fresh
+   * state. */
+  setEnrichmentConsent(granted: boolean, signal?: AbortSignal): Promise<EnrichmentConsent> {
+    return this.request<EnrichmentConsent>(`/settings/enrichment-consent`, {
+      method: "PUT",
+      body: { granted },
+      signal,
+    });
   }
 
   // --- Admin: subtitle-provider settings (subtitles/05, ADR-0021) --------

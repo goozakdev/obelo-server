@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // MetadataProviderRow is one row of the metadata_providers table — the MUTABLE
@@ -230,6 +231,88 @@ func (db *DB) BackfillEnrichmentBehaviorIfUnset(autoEnrichAfterScan bool, enrich
 		autoEnrichAfterScan, enrichIntervalSeconds, musicBrainzRateLimitMs)
 	if err != nil {
 		return fmt.Errorf("store: backfilling enrichment behavior: %w", err)
+	}
+	return nil
+}
+
+// sqliteDatetimeLayout is the text format SQLite's datetime('now') writes (UTC,
+// no zone suffix). The consent timestamp is stored with it and parsed back with
+// the same layout, treated as UTC.
+const sqliteDatetimeLayout = "2006-01-02 15:04:05"
+
+// EnrichmentConsent is the persisted first-run Enrichment consent decision
+// (ADR-0032), read from the singleton metadata_settings row. Decided distinguishes
+// "the operator has answered" from the undecided default (a NULL granted column):
+// while undecided the SPA shows the first-run prompt and the server makes NO
+// outbound enrichment calls. It is the SINGLE authoritative gate both the enrich
+// Manager (which ANDs Granted into every emitted Enablement) and, later, the
+// key-rotation fetch consult.
+type EnrichmentConsent struct {
+	Decided bool
+	Granted bool
+	At      time.Time // when decided; zero while undecided
+}
+
+// State renders the decision as the wire string the API/SPA branch on: "unset"
+// (show the first-run prompt), "granted", or "declined".
+func (c EnrichmentConsent) State() string {
+	switch {
+	case !c.Decided:
+		return "unset"
+	case c.Granted:
+		return "granted"
+	default:
+		return "declined"
+	}
+}
+
+// EnrichmentConsent reads the consent decision from the singleton
+// metadata_settings row. A missing row (settings never seeded) or a NULL granted
+// column comes back Decided=false — undecided — so a fresh install is gated off
+// until the operator answers the prompt.
+func (db *DB) EnrichmentConsent() (EnrichmentConsent, error) {
+	var (
+		granted sql.NullBool
+		at      sql.NullString
+	)
+	err := db.QueryRow(
+		`SELECT enrichment_consent_granted, enrichment_consent_at
+		   FROM metadata_settings WHERE id = 1`).Scan(&granted, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EnrichmentConsent{}, nil
+	}
+	if err != nil {
+		return EnrichmentConsent{}, fmt.Errorf("store: reading enrichment consent: %w", err)
+	}
+	var out EnrichmentConsent
+	if granted.Valid {
+		out.Decided = true
+		out.Granted = granted.Bool
+	}
+	if at.Valid {
+		if t, perr := time.Parse(sqliteDatetimeLayout, at.String); perr == nil {
+			out.At = t.UTC()
+		}
+	}
+	return out, nil
+}
+
+// SetEnrichmentConsent records the operator's consent decision on the guarded
+// singleton row (id = 1), inserting the row or updating ONLY the two consent
+// columns on conflict — the language, provider, and behavior settings are left
+// untouched (mirroring SetEnrichmentBehavior). Writing either decision marks the
+// consent Decided, so the first-run prompt does not fire again.
+func (db *DB) SetEnrichmentConsent(granted bool) error {
+	_, err := db.Exec(
+		`INSERT INTO metadata_settings (id, enrichment_consent_granted, enrichment_consent_at, updated_at)
+		      VALUES (1, ?, datetime('now'), datetime('now'))
+		 ON CONFLICT(id) DO UPDATE SET
+		      enrichment_consent_granted = excluded.enrichment_consent_granted,
+		      enrichment_consent_at      = excluded.enrichment_consent_at,
+		      updated_at                 = datetime('now')`,
+		granted)
+	if err != nil {
+		return fmt.Errorf("store: setting enrichment consent: %w", err)
 	}
 	return nil
 }

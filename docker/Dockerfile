@@ -48,9 +48,35 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY --from=web /src/internal/webui/dist/ ./internal/webui/dist/
 
-# Static amd64 binary. -trimpath + -ldflags "-s -w" shrink it; no CGO needed.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/juicebox ./cmd/juicebox
+# Default metadata credentials (ADR-0032), injected only for OFFICIAL image builds
+# from CI secrets — EMPTY by default so a plain `docker build` bundles no keys and
+# stays credential-free. Pass them as build args:
+#   --build-arg JUICEBOX_BOOTSTRAP_TMDB_KEY=<plaintext tmdb key>
+#   --build-arg JUICEBOX_BOOTSTRAP_FANART_KEY=<plaintext fanart.tv key>
+#   --build-arg JUICEBOX_APP_ENC_KEY=<base64 AES-256-GCM key>
+#   --build-arg JUICEBOX_ROTATION_URL=<https://host/v1/keys>
+# The two provider keys are base64-obfuscated below (so `strings` on the binary
+# yields no bare key); kAppEncKey and the rotation URL are injected verbatim. The URL
+# is not a secret (ciphertext-only, public in the binary) but is injected so the
+# maintainer host stays out of the open-source repo. The RUNTIME override is the
+# separate JUICEBOX_KEY_ROTATION_URL env var.
+ARG JUICEBOX_BOOTSTRAP_TMDB_KEY=""
+ARG JUICEBOX_BOOTSTRAP_FANART_KEY=""
+ARG JUICEBOX_APP_ENC_KEY=""
+ARG JUICEBOX_ROTATION_URL=""
+
+# Static amd64 binary. -trimpath + -ldflags "-s -w" shrink it; no CGO needed. The
+# -X flags inject the resolved default credentials (empty unless the args are set).
+RUN CONFIG_PKG=github.com/marioquake/juicebox/internal/config; \
+    TMDB_OBF=$(printf %s "$JUICEBOX_BOOTSTRAP_TMDB_KEY" | base64 | tr -d '\n'); \
+    FANART_OBF=$(printf %s "$JUICEBOX_BOOTSTRAP_FANART_KEY" | base64 | tr -d '\n'); \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w \
+      -X ${CONFIG_PKG}.bootstrapTMDBKey=${TMDB_OBF} \
+      -X ${CONFIG_PKG}.bootstrapFanartKey=${FANART_OBF} \
+      -X ${CONFIG_PKG}.kAppEncKey=${JUICEBOX_APP_ENC_KEY} \
+      -X ${CONFIG_PKG}.DefaultKeyRotationURL=${JUICEBOX_ROTATION_URL}" \
+      -o /out/juicebox ./cmd/juicebox
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: minimal amd64 image with ffmpeg + the binary.
