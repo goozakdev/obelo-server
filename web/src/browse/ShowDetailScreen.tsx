@@ -360,6 +360,7 @@ export default function ShowDetailScreen() {
                               entityType="shows"
                               entityId={state.data.show.id}
                               currentExternalId={state.data.show.enrichmentOverride?.externalId}
+                              initialQuery={state.data.show.title}
                               onApplied={() => setReloadKey((k) => k + 1)}
                               onReplace={(c, cascade) =>
                                 apiClient.applyShowIdentityCorrection(state.data.show.id, {

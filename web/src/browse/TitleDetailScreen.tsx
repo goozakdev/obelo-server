@@ -311,6 +311,7 @@ function Detail({
               titleId={title.id}
               provider="tmdb"
               currentExternalId={title.tmdbId}
+              initialQuery={title.title}
               onApplied={(d) => {
                 setTitle(d);
                 setOverview(d.overview);

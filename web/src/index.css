@@ -320,6 +320,13 @@ body {
   cursor: progress;
 }
 
+/* Danger variant of the primary button: same padded/rounded shape as
+   `.auth-submit`, but red — used for the destructive "Replace" action. */
+.auth-submit-danger {
+  background: var(--danger, #b3261e);
+  color: #fff;
+}
+
 /* --- Authed nav (Home/Admin header). -------------------------------------- */
 /* Center column: the main nav, centered under the grid's `auto` track. */
 .app-nav {

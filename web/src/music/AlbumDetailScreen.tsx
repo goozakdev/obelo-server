@@ -196,6 +196,7 @@ export default function AlbumDetailScreen() {
                       entityId={state.data.album.id}
                       currentExternalId={state.data.album.enrichmentOverride?.externalId}
                       artistScope={state.data.album.artistName ?? ""}
+                      initialQuery={state.data.album.title}
                       onApplied={() => setReloadKey((k) => k + 1)}
                     />
                   ),

@@ -260,6 +260,7 @@ function TrackDetail({ title }: { title: TitleDetail }) {
                       titleId={title.id}
                       provider="musicbrainz"
                       artistScope={title.track?.artistName ?? ""}
+                      initialQuery={title.title}
                       onApplied={(d) => setGenres(d.genres)}
                     />
                   ),

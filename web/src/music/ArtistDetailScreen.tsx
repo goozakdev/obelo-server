@@ -125,6 +125,7 @@ export default function ArtistDetailScreen() {
                       entityType="artists"
                       entityId={state.data.artist.id}
                       currentExternalId={state.data.artist.enrichmentOverride?.externalId}
+                      initialQuery={state.data.artist.name}
                       onApplied={() => setReloadKey((k) => k + 1)}
                     />
                   ),

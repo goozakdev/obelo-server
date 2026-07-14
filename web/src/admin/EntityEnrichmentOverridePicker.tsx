@@ -28,6 +28,7 @@ export default function EntityEnrichmentOverridePicker({
   entityId,
   currentExternalId,
   artistScope,
+  initialQuery,
   onApplied,
   onReplace,
 }: {
@@ -36,6 +37,10 @@ export default function EntityEnrichmentOverridePicker({
   /** The external id currently pinned (from the parent's enrichmentOverride), so the
    * box can show which override is in effect. */
   currentExternalId?: string;
+  /** The parent's current title/name, used to pre-fill the search box — the Admin is
+   * usually only correcting part of an already-close title, so seeding it saves
+   * retyping. */
+  initialQuery?: string;
   /** When provided (an Album), the artist-scope input is shown pre-filled so the album
    * search can be narrowed to the item's artist. Omit for a Show/Artist. */
   artistScope?: string;
@@ -53,7 +58,7 @@ export default function EntityEnrichmentOverridePicker({
   // pasted bare id is detected against the right provider.
   const provider: Provider = entityType === "shows" ? "tmdb" : "musicbrainz";
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [artist, setArtist] = useState(artistScope ?? "");
   const [candidates, setCandidates] = useState<EnrichmentCandidate[] | null>(null);
   const [selected, setSelected] = useState<EnrichmentCandidate | null>(null);
@@ -274,7 +279,7 @@ export default function EntityEnrichmentOverridePicker({
           {onReplace && (
             <>
               <button
-                className="nav-link nav-link-danger edit-apply-replace-button"
+                className="auth-submit auth-submit-danger edit-apply-replace-button"
                 data-testid="edit-apply-replace"
                 type="button"
                 disabled={applying !== null}

@@ -27,6 +27,7 @@ export default function EnrichmentOverridePicker({
   titleId,
   currentExternalId,
   artistScope,
+  initialQuery,
   provider,
   onApplied,
   onReplace,
@@ -35,6 +36,9 @@ export default function EnrichmentOverridePicker({
   /** The external id currently pinned on the item (tmdbId / musicbrainzId), so the
    * box can show which override is in effect. */
   currentExternalId?: string;
+  /** The item's current title, used to pre-fill the search box — the Admin is usually
+   * only correcting part of an already-close title, so seeding it saves retyping. */
+  initialQuery?: string;
   /** When provided (music leaf), the artist-scope input is shown pre-filled with this
    * value so an album/track search can be narrowed to the item's artist. Omit for a
    * video leaf, where narrowing by artist has no meaning. */
@@ -50,7 +54,7 @@ export default function EnrichmentOverridePicker({
    * ONLY (Episode/Track have no identity-correction endpoint). */
   onReplace?: (candidate: EnrichmentCandidate) => Promise<TitleDetail>;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [artist, setArtist] = useState(artistScope ?? "");
   const [candidates, setCandidates] = useState<EnrichmentCandidate[] | null>(null);
   const [selected, setSelected] = useState<EnrichmentCandidate | null>(null);
@@ -232,7 +236,7 @@ export default function EnrichmentOverridePicker({
           {onReplace && (
             <>
               <button
-                className="nav-link nav-link-danger edit-apply-replace-button"
+                className="auth-submit auth-submit-danger edit-apply-replace-button"
                 data-testid="edit-apply-replace"
                 type="button"
                 disabled={applying !== null}
