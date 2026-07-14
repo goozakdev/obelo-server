@@ -5,6 +5,7 @@ import type { Album } from "../api/types";
 import { useAsync } from "../browse/useAsync";
 import { useTargetedScan } from "../browse/useTargetedScan";
 import EntityScanMenu from "../browse/EntityScanMenu";
+import { EditIcon } from "../browse/ActionIcons";
 import BackLink, { useLibraryName } from "../browse/BackLink";
 import DetailBackdrop from "../browse/DetailBackdrop";
 import Poster from "../browse/Poster";
@@ -88,64 +89,78 @@ export default function ArtistDetailScreen() {
                   {state.data.artist.overview}
                 </p>
               )}
+
+              {/* Action toolbar (ADR-0019), Admin-only — mirrors the Movie/Show hero
+                  toolbar: the Edit icon opens the "Edit item" dialog and the ⋯ kebab
+                  holds the Targeted scan. The Artist's two correction actions live in
+                  the dialog, one per tab:
+                  • "Search" (item-editing/unified-search) — the "wrong Nirvana" record
+                    fix: search or paste a provider URL/id, pick the right artist record,
+                    and Update it (an Enrichment override). An Artist has no per-item
+                    identity anchor, so there is no Replace (no onReplace).
+                  • "Fix label" (item-editing/03) — rename the Artist, edit its bio/genres,
+                    or pick an image; each edit is Locked and NEVER cascades. */}
+              {isAdmin && (
+                <div className="detail-actions" data-testid="detail-actions">
+                  <EditItemDialog
+                    renderTrigger={(open) => (
+                      <button
+                        className="icon-button edit-item-button"
+                        type="button"
+                        data-testid="edit-item-button"
+                        title="Edit"
+                        aria-label="Edit"
+                        onClick={open}
+                      >
+                        <EditIcon />
+                      </button>
+                    )}
+                    tabs={[
+                      {
+                        key: "fix-label",
+                        label: "Details",
+                        node: (
+                          <EntityMetadataEditor
+                            entityType="artists"
+                            entityId={state.data.artist.id}
+                            displayName={state.data.artist.name}
+                            overview={state.data.artist.overview}
+                            genres={state.data.artist.genres}
+                            lockedFields={state.data.artist.lockedFields}
+                            onChanged={() => setReloadKey((k) => k + 1)}
+                          />
+                        ),
+                      },
+                      {
+                        key: "search",
+                        label: "Search",
+                        node: (
+                          <EntityEnrichmentOverridePicker
+                            entityType="artists"
+                            entityId={state.data.artist.id}
+                            currentExternalId={state.data.artist.enrichmentOverride?.externalId}
+                            initialQuery={state.data.artist.name}
+                            onApplied={() => setReloadKey((k) => k + 1)}
+                          />
+                        ),
+                      },
+                      // Artist Photo artwork tab (artwork-management/01): auto-searches on
+                      // open; its grid stays empty until slice 02 wires artist candidates.
+                      ...entityArtworkTabs("artists", state.data.artist.id, state.data.artist.lockedFields, () =>
+                        setReloadKey((k) => k + 1),
+                      ),
+                    ]}
+                  />
+                  <EntityScanMenu
+                    onScan={() => runScan("artists", state.data.artist.id)}
+                    scanning={scanning}
+                    label="artist"
+                  />
+                </div>
+              )}
             </ArtistHero>
           </div>
 
-          {/* Edit-item (ADR-0019), Admin-only. The Artist's two correction actions
-              live in a single "Edit item" dialog, one per tab:
-              • "Search" (item-editing/unified-search) — the "wrong Nirvana" record fix:
-                search or paste a provider URL/id, pick the right artist record, and
-                Update it (an Enrichment override). An Artist has no per-item identity
-                anchor, so there is no Replace (no onReplace).
-              • "Fix label" (item-editing/03) — rename the Artist, edit its bio/genres,
-                or pick an image; each edit is Locked and NEVER cascades to albums/tracks. */}
-          {isAdmin && (
-            <EditItemDialog
-              tabs={[
-                {
-                  key: "fix-label",
-                  label: "Details",
-                  node: (
-                    <EntityMetadataEditor
-                      entityType="artists"
-                      entityId={state.data.artist.id}
-                      displayName={state.data.artist.name}
-                      overview={state.data.artist.overview}
-                      genres={state.data.artist.genres}
-                      lockedFields={state.data.artist.lockedFields}
-                      onChanged={() => setReloadKey((k) => k + 1)}
-                    />
-                  ),
-                },
-                {
-                  key: "search",
-                  label: "Search",
-                  node: (
-                    <EntityEnrichmentOverridePicker
-                      entityType="artists"
-                      entityId={state.data.artist.id}
-                      currentExternalId={state.data.artist.enrichmentOverride?.externalId}
-                      initialQuery={state.data.artist.name}
-                      onApplied={() => setReloadKey((k) => k + 1)}
-                    />
-                  ),
-                },
-                // Artist Photo artwork tab (artwork-management/01): auto-searches on
-                // open; its grid stays empty until slice 02 wires artist candidates.
-                ...entityArtworkTabs("artists", state.data.artist.id, state.data.artist.lockedFields, () =>
-                  setReloadKey((k) => k + 1),
-                ),
-              ]}
-            />
-          )}
-
-          {isAdmin && (
-            <EntityScanMenu
-              onScan={() => runScan("artists", state.data.artist.id)}
-              scanning={scanning}
-              label="artist"
-            />
-          )}
           {scanMessage && (
             <p className="status status-ok" data-testid="scan-notice" role="status">
               {scanMessage}

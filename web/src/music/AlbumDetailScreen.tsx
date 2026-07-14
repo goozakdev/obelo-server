@@ -13,6 +13,7 @@ import { usePlaybackTransport } from "../player/transport";
 import { useAsync } from "../browse/useAsync";
 import { useTargetedScan } from "../browse/useTargetedScan";
 import EntityScanMenu from "../browse/EntityScanMenu";
+import { EditIcon } from "../browse/ActionIcons";
 import BackLink from "../browse/BackLink";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
@@ -159,64 +160,78 @@ export default function AlbumDetailScreen() {
                   {(state.data.album.genres ?? []).join(" · ")}
                 </div>
               )}
+
+              {/* Action toolbar (ADR-0019), Admin-only — mirrors the Movie/Show hero
+                  toolbar: the Edit icon opens the "Edit item" dialog and the ⋯ kebab
+                  holds the Targeted scan. The Album's two correction actions live in
+                  the dialog, one per tab:
+                  • "Search" (item-editing/unified-search) — correct WHICH release
+                    decorates the Album: search or paste a provider URL/id, pick the
+                    right release, and Update it (an Enrichment override). An Album has
+                    no per-item identity anchor, so there is no Replace (no onReplace).
+                  • "Fix label" (item-editing/03) — rename the Album or pick a cover;
+                    each edit is Locked and NEVER cascades to the tracks. */}
+              {isAdmin && (
+                <div className="detail-actions" data-testid="detail-actions">
+                  <EditItemDialog
+                    renderTrigger={(open) => (
+                      <button
+                        className="icon-button edit-item-button"
+                        type="button"
+                        data-testid="edit-item-button"
+                        title="Edit"
+                        aria-label="Edit"
+                        onClick={open}
+                      >
+                        <EditIcon />
+                      </button>
+                    )}
+                    tabs={[
+                      {
+                        key: "fix-label",
+                        label: "Details",
+                        node: (
+                          <EntityMetadataEditor
+                            entityType="albums"
+                            entityId={state.data.album.id}
+                            displayName={state.data.album.title}
+                            genres={state.data.album.genres}
+                            lockedFields={state.data.album.lockedFields}
+                            onChanged={() => setReloadKey((k) => k + 1)}
+                          />
+                        ),
+                      },
+                      {
+                        key: "search",
+                        label: "Search",
+                        node: (
+                          <EntityEnrichmentOverridePicker
+                            entityType="albums"
+                            entityId={state.data.album.id}
+                            currentExternalId={state.data.album.enrichmentOverride?.externalId}
+                            artistScope={state.data.album.artistName ?? ""}
+                            initialQuery={state.data.album.title}
+                            onApplied={() => setReloadKey((k) => k + 1)}
+                          />
+                        ),
+                      },
+                      // Album Cover artwork tab (artwork-management/01): auto-search on
+                      // open, apply + Lock on click.
+                      ...entityArtworkTabs("albums", state.data.album.id, state.data.album.lockedFields, () =>
+                        setReloadKey((k) => k + 1),
+                      ),
+                    ]}
+                  />
+                  <EntityScanMenu
+                    onScan={() => runScan("albums", state.data.album.id)}
+                    scanning={scanning}
+                    label="album"
+                  />
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Edit-item (ADR-0019), Admin-only. The Album's two correction actions live
-              in a single "Edit item" dialog, one per tab:
-              • "Search" (item-editing/unified-search) — correct WHICH release decorates
-                the Album: search or paste a provider URL/id, pick the right release, and
-                Update it (an Enrichment override). An Album has no per-item identity
-                anchor, so there is no Replace (no onReplace).
-              • "Fix label" (item-editing/03) — rename the Album or pick a cover; each
-                edit is Locked and NEVER cascades to the tracks. */}
-          {isAdmin && (
-            <EditItemDialog
-              tabs={[
-                {
-                  key: "fix-label",
-                  label: "Details",
-                  node: (
-                    <EntityMetadataEditor
-                      entityType="albums"
-                      entityId={state.data.album.id}
-                      displayName={state.data.album.title}
-                      genres={state.data.album.genres}
-                      lockedFields={state.data.album.lockedFields}
-                      onChanged={() => setReloadKey((k) => k + 1)}
-                    />
-                  ),
-                },
-                {
-                  key: "search",
-                  label: "Search",
-                  node: (
-                    <EntityEnrichmentOverridePicker
-                      entityType="albums"
-                      entityId={state.data.album.id}
-                      currentExternalId={state.data.album.enrichmentOverride?.externalId}
-                      artistScope={state.data.album.artistName ?? ""}
-                      initialQuery={state.data.album.title}
-                      onApplied={() => setReloadKey((k) => k + 1)}
-                    />
-                  ),
-                },
-                // Album Cover artwork tab (artwork-management/01): auto-search on
-                // open, apply + Lock on click.
-                ...entityArtworkTabs("albums", state.data.album.id, state.data.album.lockedFields, () =>
-                  setReloadKey((k) => k + 1),
-                ),
-              ]}
-            />
-          )}
-
-          {isAdmin && (
-            <EntityScanMenu
-              onScan={() => runScan("albums", state.data.album.id)}
-              scanning={scanning}
-              label="album"
-            />
-          )}
           {scanMessage && (
             <p className="status status-ok" data-testid="scan-notice" role="status">
               {scanMessage}

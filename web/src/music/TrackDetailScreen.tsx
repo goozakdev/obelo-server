@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { TitleDetail, TitleSummary } from "../api/types";
@@ -10,6 +10,7 @@ import { errorMessage } from "../screens/errorMessage";
 import BackLink from "../browse/BackLink";
 import Poster from "../browse/Poster";
 import AddToPlaylist from "../browse/AddToPlaylist";
+import { EditIcon, MoreIcon } from "../browse/ActionIcons";
 import EnrichmentOverridePicker from "../admin/EnrichmentOverridePicker";
 import EditItemDialog from "../admin/EditItemDialog";
 import { useAuth } from "../auth/session";
@@ -185,42 +186,67 @@ function TrackDetail({ title }: { title: TitleDetail }) {
             )}
           </div>
 
-          {/* Play affordance (queue/02): album-from-here Queue + the shared player. */}
-          <button
-            className="auth-submit play-button"
-            data-testid="play-button"
-            type="button"
-            disabled={!playable}
-            title={playable ? undefined : "No playable files for this track"}
-            onClick={() => void play()}
-          >
-            {resuming ? "Resume" : "Play"}
-          </button>
+          {/* Action toolbar — mirrors the Movie/Show hero toolbar: Play, the Edit
+              icon (Admin) opening the "Edit item" dialog, and the ⋯ kebab holding the
+              queue actions.
+              Edit-item "Search" on a Track leaf (item-editing/unified-search,
+              ADR-0019): search MusicBrainz (or paste a URL/id), pick a recording, and
+              Update it as an Enrichment override — never touching identity or watch
+              state. A Track has no identity anchor, so there is no Replace (no
+              onReplace) and no Fix-label; the dialog shows this single Search tab. */}
+          <div className="detail-actions" data-testid="detail-actions">
+            {/* Play affordance (queue/02): album-from-here Queue + the shared player. */}
+            <button
+              className="auth-submit play-button"
+              data-testid="play-button"
+              type="button"
+              disabled={!playable}
+              title={playable ? undefined : "No playable files for this track"}
+              onClick={() => void play()}
+            >
+              {resuming ? "Resume" : "Play"}
+            </button>
 
-          {/* Queue affordances (queue/03). */}
-          <div className="queue-affordances" data-testid="queue-affordances">
-            <button
-              className="nav-link add-to-queue"
-              data-testid="add-to-queue-button"
-              type="button"
-              onClick={addToQueue}
-            >
-              Add to queue
-            </button>
-            <button
-              className="nav-link play-next"
-              data-testid="play-next-button"
-              type="button"
-              onClick={playNextInQueue}
-            >
-              Play next
-            </button>
-            {queueNotice && (
-              <p className="status status-ok" data-testid="queue-notice" role="status">
-                {queueNotice}
-              </p>
+            {isAdmin && (
+              <EditItemDialog
+                renderTrigger={(open) => (
+                  <button
+                    className="icon-button edit-item-button"
+                    type="button"
+                    data-testid="edit-item-button"
+                    title="Edit"
+                    aria-label="Edit"
+                    onClick={open}
+                  >
+                    <EditIcon />
+                  </button>
+                )}
+                tabs={[
+                  {
+                    key: "search",
+                    label: "Search",
+                    node: (
+                      <EnrichmentOverridePicker
+                        titleId={title.id}
+                        provider="musicbrainz"
+                        artistScope={title.track?.artistName ?? ""}
+                        initialQuery={title.title}
+                        onApplied={(d) => setGenres(d.genres)}
+                      />
+                    ),
+                  },
+                ]}
+              />
             )}
+
+            {/* Overflow / kebab: the queue actions (queue/03). */}
+            <TrackOverflowMenu onAddToQueue={addToQueue} onPlayNext={playNextInQueue} />
           </div>
+          {queueNotice && (
+            <p className="status status-ok" data-testid="queue-notice" role="status">
+              {queueNotice}
+            </p>
+          )}
 
           {/* Manual played/unplayed toggle (bypasses the server threshold). */}
           <button
@@ -243,33 +269,85 @@ function TrackDetail({ title }: { title: TitleDetail }) {
           {/* "Add to playlist": any authenticated User queues this Track into one
               of THEIR playlists (shared affordance). */}
           <AddToPlaylist titleId={title.id} titleKind={title.kind} />
-
-          {/* Edit-item "Search" on a Track leaf (item-editing/unified-search,
-              ADR-0019): search MusicBrainz (or paste a URL/id), pick a recording, and
-              Update it as an Enrichment override — never touching identity or watch
-              state. A Track has no identity anchor, so there is no Replace (no
-              onReplace) and no Fix-label; the dialog shows this single Search tab. */}
-          {isAdmin && (
-            <EditItemDialog
-              tabs={[
-                {
-                  key: "search",
-                  label: "Search",
-                  node: (
-                    <EnrichmentOverridePicker
-                      titleId={title.id}
-                      provider="musicbrainz"
-                      artistScope={title.track?.artistName ?? ""}
-                      initialQuery={title.title}
-                      onApplied={(d) => setGenres(d.genres)}
-                    />
-                  ),
-                },
-              ]}
-            />
-          )}
         </div>
       </div>
     </article>
+  );
+}
+
+// TrackOverflowMenu is the Track detail's ⋯ kebab, holding the queue actions
+// (Play next / Add to queue). It mirrors the Movie/Show/EntityScanMenu overflow
+// popover exactly (same classNames, outside-click / Escape close) so all the
+// detail pages share one kebab look.
+function TrackOverflowMenu({
+  onAddToQueue,
+  onPlayNext,
+}: {
+  onAddToQueue: () => void;
+  onPlayNext: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="overflow-menu" ref={wrapRef}>
+      <button
+        className="icon-button"
+        type="button"
+        data-testid="overflow-menu-button"
+        title="More actions"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <MoreIcon />
+      </button>
+
+      {open && (
+        <div className="overflow-menu-list" role="menu" data-testid="overflow-menu">
+          <button
+            className="overflow-menu-item"
+            type="button"
+            role="menuitem"
+            data-testid="play-next-button"
+            onClick={() => {
+              onPlayNext();
+              setOpen(false);
+            }}
+          >
+            Play next
+          </button>
+          <button
+            className="overflow-menu-item"
+            type="button"
+            role="menuitem"
+            data-testid="add-to-queue-button"
+            onClick={() => {
+              onAddToQueue();
+              setOpen(false);
+            }}
+          >
+            Add to queue
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

@@ -161,6 +161,8 @@ describe("Music TrackDetailScreen", () => {
     renderTrack();
     await screen.findByTestId("detail");
 
+    // The queue actions now live in the hero's ⋯ overflow menu; open it first.
+    fireEvent.click(screen.getByTestId("overflow-menu-button"));
     fireEvent.click(screen.getByTestId("add-to-queue-button"));
     await waitFor(() => expect(probeTitleIds()).toEqual(["t2"]));
     expect(screen.getByTestId("queue-notice")).toBeInTheDocument();
