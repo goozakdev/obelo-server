@@ -199,10 +199,23 @@ describe("NowPlayingBar — stage → pip (navigation) reuses one element + sess
     await screen.findByTestId("now-playing-pip-controls");
     expect(screen.getByTestId("now-playing-stage")).toHaveAttribute("data-surface", "pip");
     expect(screen.queryByTestId("now-playing-collapse")).toBeNull();
-    // The PiP window keeps its minimal controls (play/pause, expand, close-to-bar).
+    // The PiP window keeps its minimal controls (play/pause, expand, close-to-stop).
     expect(screen.getByTestId("now-playing-pip-play")).toBeInTheDocument();
     expect(screen.getByTestId("now-playing-pip-expand")).toBeInTheDocument();
     expect(screen.getByTestId("now-playing-pip-close")).toBeInTheDocument();
+  });
+
+  it("the PiP close button stops playback and dismisses the bar", async () => {
+    await playVideoToStage(entryFromTitle(movieSummary("t1", "Dune")));
+    fireEvent.click(screen.getByTestId("go-browse"));
+    await screen.findByTestId("now-playing-pip-controls");
+
+    // Close no longer just demotes to bar-only — it empties the Queue, so the bar
+    // (and its <video>) leaves the tree and the session ends.
+    fireEvent.click(screen.getByTestId("now-playing-pip-close"));
+    await waitFor(() => expect(screen.queryByTestId("now-playing-bar")).toBeNull());
+    expect(screen.queryByTestId("player-video")).toBeNull();
+    await waitFor(() => expect(endSession).toHaveBeenCalledWith("sess-1"));
   });
 
   it("the transition never re-negotiates: same <video> node, one startPlayback, no endSession", async () => {

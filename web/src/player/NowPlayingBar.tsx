@@ -176,6 +176,21 @@ function PauseIcon() {
   );
 }
 
+/** A rounded square — the stop glyph. Uses the smaller `now-playing-icon` sizing
+ * (like prev/next), not the prominent circular play/pause disc. */
+function StopIcon() {
+  return (
+    <svg
+      className="now-playing-icon"
+      viewBox="0 0 90 90"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect fill="currentColor" x="18" y="18" width="54" height="54" rx="8" ry="8" />
+    </svg>
+  );
+}
+
 /** Skip-to-previous (bar + double-triangle), tinted by `currentColor` and sized
  * to the font. Its {@link NextIcon} twin is the mirror image. */
 function PrevIcon() {
@@ -1637,21 +1652,13 @@ function CurrentPlayer({
               targets the BAR (the stage + the bar's control row share it as their
               parent), so the same docked transport survives fullscreen. */}
 
-          {/* Custom PiP window: minimal controls — play/pause, expand, close-to-bar. */}
+          {/* Custom PiP window: minimal controls — play/pause docked at the bottom,
+              expand pinned to the top-left corner, and close (which stops playback)
+              pinned to the top-right corner. */}
           {video && surface === "pip" && (
-            <div className="now-playing-pip-controls" data-testid="now-playing-pip-controls">
+            <>
               <button
-                className="nav-link"
-                type="button"
-                data-testid="now-playing-pip-play"
-                aria-label={playing ? "Pause" : "Play"}
-                aria-pressed={playing}
-                onClick={togglePlay}
-              >
-                {playing ? <PauseIcon /> : <PlayIcon />}
-              </button>
-              <button
-                className="nav-link"
+                className="nav-link now-playing-pip-corner now-playing-pip-corner-expand"
                 type="button"
                 data-testid="now-playing-pip-expand"
                 aria-label="Expand to stage"
@@ -1659,16 +1666,31 @@ function CurrentPlayer({
               >
                 ⤢
               </button>
+              {/* Close stops playback entirely: emptying the queue makes
+                  `queue.current` null → the whole bar unmounts (the stop-and-dismiss
+                  exit), tearing down the <video>. */}
               <button
-                className="nav-link"
+                className="nav-link now-playing-pip-corner now-playing-pip-corner-close"
                 type="button"
                 data-testid="now-playing-pip-close"
-                aria-label="Close to bar"
-                onClick={() => setSurface("bar-only")}
+                aria-label="Stop"
+                onClick={queue.clear}
               >
                 ×
               </button>
-            </div>
+              <div className="now-playing-pip-controls" data-testid="now-playing-pip-controls">
+                <button
+                  className="nav-link"
+                  type="button"
+                  data-testid="now-playing-pip-play"
+                  aria-label={playing ? "Pause" : "Play"}
+                  aria-pressed={playing}
+                  onClick={togglePlay}
+                >
+                  {playing ? <PauseIcon /> : <PlayIcon />}
+                </button>
+              </div>
+            </>
           )}
 
           {hlsError && (
@@ -1775,6 +1797,18 @@ function CurrentPlayer({
           ) : (
             <PlayerStatus session={session} title={primaryLabel} />
           )}
+          {/* Stop — sits immediately right of play/pause. Empties the Queue, which
+              makes `queue.current` null → the whole bar unmounts (the stop-and-dismiss
+              exit shared with the queue drawer's Clear button), ending the session. */}
+          <button
+            className="nav-link"
+            type="button"
+            data-testid="now-playing-stop"
+            aria-label="Stop"
+            onClick={queue.clear}
+          >
+            <StopIcon />
+          </button>
           {status.kind === "ready" && video && (
             <button
               className="nav-link"

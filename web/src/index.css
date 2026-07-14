@@ -2078,6 +2078,35 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
 }
 
+/* Expand (top-left) and close (top-right) pinned to the PiP window corners, sized a
+   little larger than the docked transport so they're easy hit targets over the video.
+   Both sit above the bottom transport gradient. */
+.now-playing-pip-corner {
+  position: absolute;
+  top: 0.35rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: #fff;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.55);
+}
+.now-playing-pip-corner:hover {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.8);
+}
+.now-playing-pip-corner-expand {
+  left: 0.35rem;
+}
+.now-playing-pip-corner-close {
+  right: 0.35rem;
+}
+
 /* End-of-episode "Up Next" card: a small overlay pinned to the bottom-right, ABOVE
    the transport, previewing the next Queue entry in the last 30s. Rendered inside
    .now-playing-bar so it survives fullscreen (which targets the bar). z-index lifts

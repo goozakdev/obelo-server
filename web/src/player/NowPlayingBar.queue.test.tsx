@@ -234,6 +234,18 @@ describe("NowPlayingBar — queue drawer reshaping", () => {
     await waitFor(() => expect(endSession).toHaveBeenCalledWith("sess-1"));
   });
 
+  it("the bar's Stop button stops playback and dismisses the bar", async () => {
+    seedAndRender(threeEntries(), 0);
+    await screen.findByTestId("player-video");
+
+    // Stop is the same stop-and-dismiss exit as Clear queue, but reachable straight
+    // from the transport (no drawer): empties the Queue → the bar unmounts.
+    fireEvent.click(screen.getByTestId("now-playing-stop"));
+    await waitFor(() => expect(screen.queryByTestId("now-playing-bar")).toBeNull());
+    expect(screen.queryByTestId("player-video")).toBeNull();
+    await waitFor(() => expect(endSession).toHaveBeenCalledWith("sess-1"));
+  });
+
   it("clearing with the drawer OPEN does not re-open it when new media starts", async () => {
     // A harness with a Play affordance so we can start fresh media after clearing.
     function Harness() {
