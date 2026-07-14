@@ -2,6 +2,14 @@
 
 A fully self-hosted media server (server + management web app + client-facing API). See `CONTEXT.md` for the domain glossary and `docs/adr/` for architectural decisions.
 
+## Build artifacts
+
+Never check in `internal/webui/dist/index.html` with real build output. It is a committed placeholder only. The local web build overwrites it with hashed asset references; before committing any code, restore the placeholder:
+
+```
+git checkout internal/webui/dist/index.html
+```
+
 ## Agent skills
 
 ### Issue tracker
