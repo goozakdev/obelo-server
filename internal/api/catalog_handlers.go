@@ -572,8 +572,14 @@ func videoStreamLabel(s store.Stream) string {
 // --- Scan status ------------------------------------------------------------
 
 type scanStatusJSON struct {
-	LibraryID    string `json:"libraryId"`
-	State        string `json:"state"`
+	LibraryID string `json:"libraryId"`
+	State     string `json:"state"`
+	// TitleCount is the Library's top-level browsable entry count (Movies / Shows /
+	// Albums by kind) — what the admin surface shows as "N titles". Distinct from
+	// TitlesFound, the scanner's leaf count (Episodes for TV, Tracks for music).
+	// Populated only on the pollable GET status; omitted (0) on the transient
+	// running responses a scan trigger returns.
+	TitleCount   int    `json:"titleCount"`
 	TitlesFound  int    `json:"titlesFound"`
 	FilesFound   int    `json:"filesFound"`
 	ErrorMessage string `json:"errorMessage,omitempty"`
@@ -728,7 +734,10 @@ func toScanEvent(p scanner.Progress) events.ScanProgress {
 }
 
 // handleScanStatus returns the pollable scan status for a Library (authenticated).
-func handleScanStatus(status ScanStatusReader, exists LibraryExister) http.HandlerFunc {
+// It decorates the status with the Library's top-level title count (Movies / Shows
+// / Albums by kind) so the admin surface reports "N titles" in the User's sense
+// rather than the scanner's leaf Episode/Track count.
+func handleScanStatus(status ScanStatusReader, exists LibraryExister, counts LibraryTitleCounter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := pathParam(r.URL.Path, "/libraries/", "/scan")
 		if id == "" {
@@ -749,7 +758,15 @@ func handleScanStatus(status ScanStatusReader, exists LibraryExister) http.Handl
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to read scan status", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, toScanStatus(st))
+		js := toScanStatus(st)
+		// Best-effort: a count failure (or a nil counter in a narrow test) leaves
+		// TitleCount at 0 rather than failing the whole status read.
+		if counts != nil {
+			if n, err := counts.LibraryTitleCount(id); err == nil {
+				js.TitleCount = n
+			}
+		}
+		writeJSON(w, http.StatusOK, js)
 	}
 }
 
@@ -1200,7 +1217,7 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			case http.MethodPost:
 				requireAdmin(handleScan(deps.Scanner, deps.ScanStatus, deps.EnrichTrigger, deps.Events))(w, r)
 			case http.MethodGet:
-				handleScanStatus(deps.ScanStatus, deps.Libraries)(w, r)
+				handleScanStatus(deps.ScanStatus, deps.Libraries, deps.TitleCounts)(w, r)
 			default:
 				w.Header().Set("Allow", "GET, POST")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,

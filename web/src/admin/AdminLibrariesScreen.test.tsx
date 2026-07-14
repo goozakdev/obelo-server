@@ -58,7 +58,14 @@ function lib(over: Partial<Library>): Library {
   };
 }
 function status(over: Partial<ScanStatus>): ScanStatus {
-  return { libraryId: "lib1", state: "idle", titlesFound: 0, filesFound: 0, ...over };
+  return {
+    libraryId: "lib1",
+    state: "idle",
+    titleCount: 0,
+    titlesFound: 0,
+    filesFound: 0,
+    ...over,
+  };
 }
 
 // HTMLDialogElement has no jsdom implementation for showModal/close; stub them so
@@ -221,6 +228,7 @@ describe("AdminLibrariesScreen", () => {
       expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
     );
 
+    await user.click(screen.getByTestId("library-menu-toggle"));
     await user.click(screen.getByTestId("edit-library-button"));
     const dialog = await screen.findByTestId("edit-library-dialog");
 
@@ -320,7 +328,7 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
     getScanStatus
       .mockResolvedValueOnce(status({ state: "idle" }))
-      .mockResolvedValue(status({ state: "idle", titlesFound: 4, filesFound: 6 }));
+      .mockResolvedValue(status({ state: "idle", titleCount: 4 }));
     scanLibrary.mockResolvedValue(status({ state: "running" }));
 
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
@@ -344,8 +352,8 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     });
     await flush();
     expect(screen.getByTestId("scan-status")).toHaveAttribute("data-state", "idle");
-    expect(screen.getByTestId("scan-titles-found")).toHaveTextContent("4");
-    expect(screen.getByTestId("scan-files-found")).toHaveTextContent("6");
+    expect(screen.getByTestId("scan-title-count")).toHaveTextContent("4");
+    expect(screen.getByTestId("scan-counts")).toHaveTextContent("4 titles");
     // Menu is still open; the controls are re-enabled once the scan settles.
     expect(screen.getByTestId("scan-button")).toBeEnabled();
     expect(screen.getByTestId("full-scan-button")).toBeEnabled();
@@ -354,7 +362,7 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
   it("full scan hits the full endpoint", async () => {
     listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
     getScanStatus.mockResolvedValue(status({ state: "idle" }));
-    scanLibrary.mockResolvedValue(status({ state: "idle", titlesFound: 1, filesFound: 1 }));
+    scanLibrary.mockResolvedValue(status({ state: "idle", titleCount: 1 }));
 
     renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
     await flush();

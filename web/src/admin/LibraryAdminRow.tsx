@@ -3,16 +3,14 @@ import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library, ScanMode } from "../api/types";
 import { LibraryKindIcon } from "../browse/kindIcons";
-import { EditIcon } from "../browse/ActionIcons";
 import { useScanStatus } from "./useScanStatus";
 import ConfirmDialog from "./ConfirmDialog";
 
 // One Library row in the redesigned admin hub: its kind icon + name on the left,
-// and a right-hand action cluster — the Edit affordance (a pencil that reveals on
-// hover/focus, reusing the detail pages' EditIcon), then a "three dots" (⋮) menu —
-// alongside a compact scan-status indicator. The menu (same click-outside / Escape
-// dropdown as the browse EpisodeActionsMenu) gathers the row's less-frequent
-// actions: Scan, Full scan, and a destructive Delete. Scan/Full scan stay disabled
+// and a right-hand action cluster — a "three dots" (⋮) menu alongside a compact
+// scan-status indicator. The menu (same click-outside / Escape dropdown as the
+// browse EpisodeActionsMenu) gathers the row's actions: Edit, Scan, Full scan, and
+// a destructive Delete. Scan/Full scan stay disabled
 // for the whole running scan so a second pick can't start a concurrent scan; the
 // row still owns its own scan poller (useScanStatus) so each Library tracks its
 // scan independently, and a trigger seeds the poller from the response (`begin`),
@@ -152,10 +150,10 @@ export default function LibraryAdminRow({
               Scan error{status?.errorMessage ? `: ${status.errorMessage}` : ""}
             </>
           )}
-          {status && state !== "error" && (
+          {status && state !== "error" && state !== "running" && (
             <span className="scan-counts" data-testid="scan-counts">
-              <span data-testid="scan-titles-found">{status.titlesFound}</span> titles,{" "}
-              <span data-testid="scan-files-found">{status.filesFound}</span> files
+              <span data-testid="scan-title-count">{status.titleCount}</span>{" "}
+              {status.titleCount === 1 ? "title" : "titles"}
             </span>
           )}
         </span>
@@ -164,17 +162,6 @@ export default function LibraryAdminRow({
             the row doesn't collapse an open dropdown (`.admin-library-actions`
             reveals on hover/focus otherwise). */}
         <div className={`admin-library-actions${menuOpen ? " is-active" : ""}`}>
-          <button
-            className="icon-button admin-library-edit"
-            type="button"
-            data-testid="edit-library-button"
-            title="Edit library"
-            aria-label={`Edit ${library.name}`}
-            onClick={() => onEdit(library)}
-          >
-            <EditIcon />
-          </button>
-
           <div className="row-menu admin-library-menu" ref={menuRef}>
             <button
               type="button"
@@ -189,6 +176,20 @@ export default function LibraryAdminRow({
             </button>
             {menuOpen && (
               <ul className="row-menu-list" role="menu" data-testid="library-menu">
+                <li className="row-menu-item" role="none">
+                  <button
+                    type="button"
+                    className="row-menu-button"
+                    role="menuitem"
+                    data-testid="edit-library-button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onEdit(library);
+                    }}
+                  >
+                    Edit
+                  </button>
+                </li>
                 <li className="row-menu-item" role="none">
                   <button
                     type="button"

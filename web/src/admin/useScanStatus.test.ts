@@ -21,7 +21,14 @@ vi.mock("../api/client", async () => {
 import { useScanStatus } from "./useScanStatus";
 
 function status(over: Partial<ScanStatus>): ScanStatus {
-  return { libraryId: "lib1", state: "idle", titlesFound: 0, filesFound: 0, ...over };
+  return {
+    libraryId: "lib1",
+    state: "idle",
+    titleCount: 0,
+    titlesFound: 0,
+    filesFound: 0,
+    ...over,
+  };
 }
 
 /** Flush the microtask queue so awaited promise resolutions land in state. */

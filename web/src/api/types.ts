@@ -450,6 +450,11 @@ export type ScanState = "idle" | "running" | "error" | (string & {});
 export interface ScanStatusRaw {
   libraryId: string;
   state: ScanState;
+  /** The Library's top-level browsable entry count (Movies / Shows / Albums by
+   * kind) — the admin "N titles" summary, distinct from the scanner's leaf
+   * `titlesFound`. Present only on the pollable GET status; absent (0) on the
+   * transient running responses a scan trigger returns. */
+  titleCount?: number;
   titlesFound?: number;
   filesFound?: number;
   errorMessage?: string;
@@ -465,6 +470,11 @@ export interface ScanStatusRaw {
 export interface ScanStatus {
   libraryId: string;
   state: ScanState;
+  /** The Library's top-level browsable entry count (Movies / Shows / Albums by
+   * kind) — what the admin row shows as "N titles". Distinct from the scanner's
+   * leaf `titlesFound` (Episodes for TV, Tracks for music). 0 on a running/never-
+   * populated status. */
+  titleCount: number;
   titlesFound: number;
   filesFound: number;
   /** Present only when `state === "error"`. */

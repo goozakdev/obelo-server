@@ -523,6 +523,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		EnrichTrigger:   enrichTrigger,
 		ScanStatus:      db,
 		Libraries:       db,
+		TitleCounts:     db,
 		ScanScope:       db,
 		Providers:       db,
 		ProviderManager: providerManager,

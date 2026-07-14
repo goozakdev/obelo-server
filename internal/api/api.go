@@ -42,6 +42,13 @@ type LibraryExister interface {
 	LibraryExists(id string) (bool, error)
 }
 
+// LibraryTitleCounter counts a Library's top-level browsable entries (Movies /
+// Shows / Albums by kind) so the admin scan-status surface can report "N titles"
+// in the User's sense — not the leaf Episode/Track count. *store.DB satisfies it.
+type LibraryTitleCounter interface {
+	LibraryTitleCount(libraryID string) (int, error)
+}
+
 // ScanScopeResolver resolves a Targeted scan's on-disk scope from a browsable
 // entity (ADR-0030): the entity's Library (roots + kind), display label, and
 // present File paths. *store.DB satisfies it. May be nil in narrow unit tests
@@ -88,6 +95,10 @@ type Deps struct {
 	EnrichTrigger func(libraryID string)
 	ScanStatus    ScanStatusReader
 	Libraries     LibraryExister
+	// TitleCounts reports a Library's top-level browsable entry count (Movies /
+	// Shows / Albums by kind) for the admin scan-status "N titles" summary. *store.DB
+	// satisfies it; may be nil in narrow unit tests (the count is then omitted).
+	TitleCounts LibraryTitleCounter
 	// ScanScope resolves a Targeted scan's folder set from a browsable entity
 	// (ADR-0030, per-entity POST /{titles|shows|albums|artists}/{id}/scan). *store.DB
 	// satisfies it; nil in narrow unit tests that don't exercise targeted scanning.

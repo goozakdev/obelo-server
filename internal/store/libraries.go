@@ -200,6 +200,43 @@ func (db *DB) LibraryByID(id string) (Library, error) {
 	return l, nil
 }
 
+// LibraryTitleCount returns the number of top-level browsable entries in a
+// Library, chosen by kind to match what a User sees at the top of the browse
+// tree: Movies for a movie Library, Shows (series) for a TV Library, and Albums
+// for a music Library. This is deliberately NOT the leaf count the scanner
+// reports as titlesFound (which counts Episodes for TV and Tracks for music).
+// Hidden rows (every File Missing) are excluded, matching the browse listings. An
+// unknown Library yields ErrNotFound.
+func (db *DB) LibraryTitleCount(libraryID string) (int, error) {
+	var kind string
+	err := db.QueryRow(`SELECT kind FROM libraries WHERE id = ?`, libraryID).Scan(&kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: reading library kind: %w", err)
+	}
+
+	var query string
+	switch kind {
+	case "tv":
+		query = `SELECT COUNT(*) FROM shows WHERE library_id = ? AND hidden = 0`
+	case "music":
+		query = `SELECT COUNT(*) FROM albums a
+		           JOIN artists ar ON ar.id = a.artist_id
+		          WHERE ar.library_id = ? AND a.hidden = 0`
+	default: // movie
+		query = `SELECT COUNT(*) FROM titles
+		          WHERE library_id = ? AND kind = 'movie' AND hidden = 0`
+	}
+
+	var n int
+	if err := db.QueryRow(query, libraryID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: counting library titles: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteLibrary removes a Library and (via ON DELETE CASCADE) its root folders
 // and empty catalog. Returns ErrNotFound if no such Library exists.
 func (db *DB) DeleteLibrary(id string) error {

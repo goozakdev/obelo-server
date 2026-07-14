@@ -97,6 +97,7 @@ export function normalizeScanStatus(raw: ScanStatusRaw): ScanStatus {
   return {
     libraryId: raw.libraryId,
     state: raw.state,
+    titleCount: raw.titleCount ?? 0,
     titlesFound: raw.titlesFound ?? 0,
     filesFound: raw.filesFound ?? 0,
     errorMessage: raw.errorMessage,

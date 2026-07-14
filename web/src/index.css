@@ -2355,7 +2355,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  max-width: 52rem;
+  max-width: 35rem;
 }
 
 /* Top bar: the "N libraries" count on the left, actions pinned right. */
@@ -2365,10 +2365,11 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+  background: #3f4245;
+  padding: 5px 5px 5px 13px;
 }
 .admin-libraries-count {
-  font-size: 1.1rem;
-  font-weight: 650;
+  font-size: 0.9rem;
 }
 .admin-libraries-bar-actions {
   display: flex;
@@ -2383,13 +2384,19 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-size: 0.9rem;
 }
 
+/* "Scan All Libraries" sits in its own band above the list, separate from the
+   top bar's per-library count + Add action. */
+.admin-libraries-scan-all {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .admin-library-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
 }
 
 /* A row is a single horizontal band: identity on the left, the status + action
@@ -2462,17 +2469,11 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 .admin-library-actions button {
   cursor: pointer;
 }
-/* The Edit pencil is a compact icon button (reuses .icon-button sizing). */
-.admin-library-edit {
-  width: 2rem;
-  height: 2rem;
-  font-size: 1rem;
-}
 
-/* The row's ⋮ actions menu (Scan / Full scan / Delete). Reuses the shared
+/* The row's ⋮ actions menu (Edit / Scan / Full scan / Delete). Reuses the shared
    .row-menu dropdown chrome, but sits INLINE in the actions cluster rather than
    overlaid on artwork like the browse tiles: drop the absolute positioning (so it
-   flows next to the Edit pencil) and the opaque toggle chip (the cluster's own
+   flows in the actions cluster) and the opaque toggle chip (the cluster's own
    hover-reveal governs visibility). The dropdown still anchors to the toggle. */
 .admin-library-menu {
   position: relative;

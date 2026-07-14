@@ -9,8 +9,9 @@ import EditLibraryDialog from "./EditLibraryDialog";
 // The library-management hub, redesigned for a cleaner layout (issue:
 // admin-libraries-ui). Behind RequireAdmin (App.tsx) and still server-enforced.
 // Three parts:
-//   - a top bar: an "N libraries" count on the left, and "Add Library" +
-//     "Scan All Libraries" actions on the right;
+//   - a "Scan All Libraries" area in its own band at the top;
+//   - a bar below it: an "N libraries" count on the left and the "Add Library"
+//     action on the right;
 //   - the list of Libraries, each row (LibraryAdminRow) carrying its kind icon,
 //     name, status, an Edit affordance, and a ⋮ actions menu (Scan / Full scan /
 //     Delete); an empty list shows a single call-to-action line instead;
@@ -60,6 +61,20 @@ export default function AdminLibrariesScreen() {
 
   return (
     <section className="admin-libraries" data-testid="admin-libraries">
+      {state.status === "ready" && (
+        <div className="admin-libraries-scan-all">
+          <button
+            className="nav-link"
+            type="button"
+            data-testid="scan-all-button"
+            onClick={() => setScanAllSignal((n) => n + 1)}
+            disabled={count === 0}
+          >
+            Scan All Libraries
+          </button>
+        </div>
+      )}
+
       <div className="admin-libraries-bar">
         <span className="admin-libraries-count" data-testid="admin-libraries-count">
           {count} {count === 1 ? "library" : "libraries"}
@@ -72,15 +87,6 @@ export default function AdminLibrariesScreen() {
             onClick={() => setAddOpen(true)}
           >
             Add Library
-          </button>
-          <button
-            className="nav-link"
-            type="button"
-            data-testid="scan-all-button"
-            onClick={() => setScanAllSignal((n) => n + 1)}
-            disabled={count === 0}
-          >
-            Scan All Libraries
           </button>
         </div>
       </div>
