@@ -4,94 +4,88 @@ import { errorMessage } from "../screens/errorMessage";
 import type {
   MetadataProvider,
   MetadataProvidersView,
-  ProviderUpdate,
-  TestProviderResult,
   UpdateMetadataProvidersInput,
 } from "../api/types";
-import MaskedKeyInput from "./MaskedKeyInput";
 import EnrichmentConsentControl from "./EnrichmentConsentControl";
+import ProviderConfigDialog from "./ProviderConfigDialog";
 
-// The Metadata Providers admin screen (metadata-providers 02). Behind
+// The Metadata Providers admin screen (metadata-providers redesign). Behind
 // RequireAdmin (App.tsx) and still server-enforced (the /settings API is Admin
 // scope regardless of the client gate). An Admin sees every external metadata
-// source the server knows about, grouped by the media kind it serves, and can:
-//   - enable/disable each source,
-//   - enter, rotate, or clear its API key (masked; the stored value is never
-//     shown — only a "configured"/"not set" indicator),
-//   - override its base URL (advanced), and
-//   - test its connectivity/credentials.
-// Plus a server-wide metadata language. Saving takes effect at runtime with no
-// restart (the server rebuilds + hot-swaps the active provider).
+// source the server knows about, grouped by the media kind it serves (Video,
+// Music). Within a group the authoritative source is pinned to the top and
+// labeled; the rest follow. Each source is a compact row with:
+//   - an Enabled checkbox that persists IMMEDIATELY (save-per-action), and
+//   - an Edit icon that opens a per-provider configuration dialog (API key,
+//     base-URL overrides, Test connection) which saves just that provider.
+// The stored API key is never shown — only a "configured"/"not set" indicator.
+// Saving takes effect at runtime with no restart (the server rebuilds + hot-swaps
+// the active provider).
 //
-// One global Save persists the whole form as a PARTIAL update: only providers the
-// Admin actually changed are sent (so an untouched key-requiring source is never
-// dragged into a PROVIDER_KEY_REQUIRED rejection). A refused save (validation) is
-// NOT swallowed — its readable message shows inline and the form stays put.
+// Server-wide knobs that are NOT per-provider — the metadata language and the
+// enrichment-behavior trio — keep their own explicit "Save settings" button at
+// the bottom, since a number field shouldn't persist mid-typing.
 
-/** Per-provider local edits, keyed by slug. `key` is what the Admin is typing now
- * ("" = not typing → unchanged); `clearKey` marks the stored key for clearing;
- * `baseURL` is the (possibly edited) effective host. */
-interface Draft {
-  enabled: Record<string, boolean>;
-  key: Record<string, string>;
-  clearKey: Record<string, boolean>;
-  baseURL: Record<string, string>;
-  imageBaseURL: Record<string, string>;
-  language: string;
-  // Enrichment behavior knobs (enrichment-runtime-settings). The interval is edited
-  // in MINUTES (converted to/from the API's enrichIntervalSeconds); the rate limit
-  // stays in milliseconds. Both number inputs are held as strings so the controlled
-  // field can be cleared while typing.
-  autoEnrichAfterScan: boolean;
-  enrichIntervalMinutes: string;
-  musicBrainzRateLimitMs: string;
-}
-
-function draftFromView(view: MetadataProvidersView): Draft {
-  const enabled: Record<string, boolean> = {};
-  const key: Record<string, string> = {};
-  const clearKey: Record<string, boolean> = {};
-  const baseURL: Record<string, string> = {};
-  const imageBaseURL: Record<string, string> = {};
-  for (const p of view.providers) {
-    enabled[p.slug] = p.enabled;
-    key[p.slug] = "";
-    clearKey[p.slug] = false;
-    baseURL[p.slug] = p.baseURL;
-    imageBaseURL[p.slug] = p.imageBaseURL ?? "";
-  }
-  return {
-    enabled,
-    key,
-    clearKey,
-    baseURL,
-    imageBaseURL,
-    language: view.metadataLanguage,
-    autoEnrichAfterScan: view.autoEnrichAfterScan,
-    enrichIntervalMinutes: String(view.enrichIntervalSeconds / 60),
-    musicBrainzRateLimitMs: String(view.musicBrainzRateLimitMs),
-  };
-}
-
-type TestState =
-  | { status: "idle" }
-  | { status: "pending" }
-  | { status: "done"; result: TestProviderResult };
-
-// The coarse kind groups, in display order (video authoritative first).
+// The coarse kind groups, in display order (video first).
 const KIND_GROUPS: { kind: string; label: string }[] = [
   { kind: "video", label: "Video" },
   { kind: "music", label: "Music" },
 ];
 
+/** Local edits for the server-wide settings block (the only draft the screen
+ * still holds; per-provider edits live in the config dialog — including the
+ * MusicBrainz throttle, which lives in that provider's dialog). The interval is
+ * edited in MINUTES (converted to/from the API's enrichIntervalSeconds); it is
+ * held as a string so the controlled input can be cleared. */
+interface SettingsDraft {
+  language: string;
+  autoEnrichAfterScan: boolean;
+  enrichIntervalMinutes: string;
+}
+
+function settingsDraftFromView(view: MetadataProvidersView): SettingsDraft {
+  return {
+    language: view.metadataLanguage,
+    autoEnrichAfterScan: view.autoEnrichAfterScan,
+    enrichIntervalMinutes: String(view.enrichIntervalSeconds / 60),
+  };
+}
+
+// PencilIcon is the Edit affordance on each provider row — a plain stroke glyph
+// that inherits the row's text color (theme-aware, no asset).
+function PencilIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="15"
+      height="15"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M11.2 2.3l2.5 2.5" />
+      <path d="M12.4 1.1a1.2 1.2 0 0 1 1.7 1.7L4.9 12l-3 .8.8-3z" />
+    </svg>
+  );
+}
+
 export default function AdminProvidersScreen() {
   const [view, setView] = useState<MetadataProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [settings, setSettings] = useState<SettingsDraft | null>(null);
+  // Per-provider enable-toggle state: which slug's toggle is in flight, and the
+  // last inline error for a row whose immediate save was refused.
+  const [toggling, setToggling] = useState<Record<string, boolean>>({});
+  const [rowError, setRowError] = useState<Record<string, string | null>>({});
+  // The provider whose configuration dialog is open (null = none).
+  const [editing, setEditing] = useState<MetadataProvider | null>(null);
+  // Server-wide settings Save state.
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [tests, setTests] = useState<Record<string, TestState>>({});
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoadError(null);
@@ -99,7 +93,7 @@ export default function AdminProvidersScreen() {
       const v = await apiClient.getMetadataProviders(signal);
       if (signal?.aborted) return;
       setView(v);
-      setDraft(draftFromView(v));
+      setSettings(settingsDraftFromView(v));
     } catch (err) {
       if (signal?.aborted) return;
       setLoadError(errorMessage(err));
@@ -112,49 +106,43 @@ export default function AdminProvidersScreen() {
     return () => ctrl.abort();
   }, [load]);
 
-  function patch(update: (d: Draft) => Draft) {
-    setDraft((prev) => (prev ? update(prev) : prev));
+  function patchSettings(update: (d: SettingsDraft) => SettingsDraft) {
+    setSettings((prev) => (prev ? update(prev) : prev));
     setSaved(false);
   }
 
-  // Build the partial PUT payload from what actually changed vs. the loaded view.
-  function buildPayload(v: MetadataProvidersView, d: Draft): UpdateMetadataProvidersInput {
-    const providers: ProviderUpdate[] = [];
-    for (const p of v.providers) {
-      const upd: ProviderUpdate = { slug: p.slug };
-      let changed = false;
-      if (d.enabled[p.slug] !== p.enabled) {
-        upd.enabled = d.enabled[p.slug];
-        changed = true;
-      }
-      const typed = d.key[p.slug] ?? "";
-      if (typed !== "") {
-        upd.apiKey = typed; // set
-        changed = true;
-      } else if (d.clearKey[p.slug]) {
-        upd.apiKey = ""; // clear
-        changed = true;
-      }
-      const base = d.baseURL[p.slug] ?? p.baseURL;
-      if (base !== p.baseURL) {
-        upd.baseURL = base; // set or reset (empty)
-        changed = true;
-      }
-      // Image host: only for providers that have one (p.imageBaseURL present).
-      if (p.imageBaseURL !== undefined) {
-        const img = d.imageBaseURL[p.slug] ?? p.imageBaseURL;
-        if (img !== p.imageBaseURL) {
-          upd.imageBaseURL = img; // set or reset (empty)
-          changed = true;
-        }
-      }
-      if (changed) providers.push(upd);
+  // Toggling a provider's Enabled checkbox persists immediately (save-per-action).
+  // The checkbox is driven by the loaded view, so on a refused save the view is
+  // untouched and the box simply stays where it was — we only surface the error.
+  async function onToggle(p: MetadataProvider, enabled: boolean) {
+    setRowError((prev) => ({ ...prev, [p.slug]: null }));
+    setToggling((prev) => ({ ...prev, [p.slug]: true }));
+    try {
+      const next = await apiClient.updateMetadataProviders({
+        providers: [{ slug: p.slug, enabled }],
+      });
+      setView(next);
+    } catch (err) {
+      setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
+    } finally {
+      setToggling((prev) => ({ ...prev, [p.slug]: false }));
     }
+  }
+
+  // A per-provider dialog save returns the fresh masked view; adopt it and clear
+  // any stale row error for that provider.
+  function onProviderSaved(next: MetadataProvidersView) {
+    setView(next);
+    if (editing) setRowError((prev) => ({ ...prev, [editing.slug]: null }));
+  }
+
+  // Build the server-wide settings payload (language + behavior) from what changed.
+  function buildSettingsPayload(
+    v: MetadataProvidersView,
+    d: SettingsDraft,
+  ): UpdateMetadataProvidersInput {
     const payload: UpdateMetadataProvidersInput = {};
-    if (providers.length > 0) payload.providers = providers;
     if (d.language !== v.metadataLanguage) payload.metadataLanguage = d.language;
-    // Behavior knobs: send only what changed. The interval is entered in minutes →
-    // converted to whole seconds; a blank/invalid number is treated as unchanged.
     if (d.autoEnrichAfterScan !== v.autoEnrichAfterScan) {
       payload.autoEnrichAfterScan = d.autoEnrichAfterScan;
     }
@@ -163,48 +151,25 @@ export default function AdminProvidersScreen() {
       const seconds = Math.round(minutes * 60);
       if (seconds !== v.enrichIntervalSeconds) payload.enrichIntervalSeconds = seconds;
     }
-    const ms = Number(d.musicBrainzRateLimitMs);
-    if (d.musicBrainzRateLimitMs.trim() !== "" && Number.isFinite(ms)) {
-      const rounded = Math.round(ms);
-      if (rounded !== v.musicBrainzRateLimitMs) payload.musicBrainzRateLimitMs = rounded;
-    }
     return payload;
   }
 
-  async function onSave() {
-    if (!view || !draft || saving) return;
+  async function onSaveSettings() {
+    if (!view || !settings || saving) return;
     setSaving(true);
     setSaveError(null);
     setSaved(false);
     try {
-      const next = await apiClient.updateMetadataProviders(buildPayload(view, draft));
-      // Refetch-shaped: the PUT returns the fresh masked view — reset the form to it.
+      const next = await apiClient.updateMetadataProviders(
+        buildSettingsPayload(view, settings),
+      );
       setView(next);
-      setDraft(draftFromView(next));
+      setSettings(settingsDraftFromView(next));
       setSaved(true);
     } catch (err) {
       setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function onTest(p: MetadataProvider) {
-    if (!draft) return;
-    setTests((prev) => ({ ...prev, [p.slug]: { status: "pending" } }));
-    const typed = draft.key[p.slug] ?? "";
-    const base = draft.baseURL[p.slug] ?? p.baseURL;
-    const creds: { apiKey?: string; baseURL?: string } = {};
-    if (typed !== "") creds.apiKey = typed;
-    if (base !== p.baseURL) creds.baseURL = base;
-    try {
-      const result = await apiClient.testMetadataProvider(p.slug, creds);
-      setTests((prev) => ({ ...prev, [p.slug]: { status: "done", result } }));
-    } catch (err) {
-      setTests((prev) => ({
-        ...prev,
-        [p.slug]: { status: "done", result: { ok: false, detail: errorMessage(err) } },
-      }));
     }
   }
 
@@ -231,7 +196,7 @@ export default function AdminProvidersScreen() {
     );
   }
 
-  if (!view || !draft) {
+  if (!view || !settings) {
     return (
       <section className="admin-providers" data-testid="admin-providers">
         <p className="status status-loading" data-testid="admin-providers-loading">
@@ -244,9 +209,9 @@ export default function AdminProvidersScreen() {
   return (
     <section className="admin-providers" data-testid="admin-providers">
       <p className="admin-providers-intro">
-        Configure which external metadata sources decorate your library. Changes
-        take effect immediately — no restart. Keys are stored on the server and
-        never shown again.
+        Configure which external metadata sources decorate your library. Enabling a
+        source and editing its settings take effect immediately — no restart. Keys
+        are stored on the server and never shown again.
       </p>
 
       {/* The master consent switch (ADR-0032): the operator's off switch for all
@@ -256,6 +221,15 @@ export default function AdminProvidersScreen() {
       {KIND_GROUPS.map(({ kind, label }) => {
         const inGroup = view.providers.filter((p) => p.kinds.includes(kind));
         if (inGroup.length === 0) return null;
+        // The single authoritative source for the kind is the first provider whose
+        // role is authoritative (registry order → TMDB for video, MusicBrainz for
+        // music); pin it to the top, the rest follow in their existing order.
+        const authIdx = inGroup.findIndex((p) => p.role === "authoritative");
+        const authSlug = authIdx >= 0 ? inGroup[authIdx].slug : null;
+        const ordered =
+          authIdx > 0
+            ? [inGroup[authIdx], ...inGroup.filter((_, i) => i !== authIdx)]
+            : inGroup;
         const kindOn = kind === "video" ? view.enablement.video : view.enablement.music;
         return (
           <div
@@ -275,166 +249,61 @@ export default function AdminProvidersScreen() {
             </div>
 
             <ul className="provider-list">
-              {inGroup.map((p) => {
-                const test = tests[p.slug] ?? { status: "idle" };
+              {ordered.map((p) => {
+                const isAuth = p.slug === authSlug;
                 return (
                   <li
                     className="provider-row"
                     data-testid="provider-row"
                     data-slug={p.slug}
+                    data-authoritative={isAuth ? "true" : undefined}
                     key={p.slug}
                   >
-                    <div className="provider-head">
+                    <div className="provider-row-main">
+                      <input
+                        type="checkbox"
+                        className="provider-enable"
+                        data-testid={`provider-toggle-${p.slug}`}
+                        aria-label={`Enable ${p.name}`}
+                        checked={p.enabled}
+                        onChange={(e) => void onToggle(p, e.target.checked)}
+                        disabled={toggling[p.slug]}
+                      />
                       <span
                         className="provider-name"
                         data-testid={`provider-name-${p.slug}`}
                       >
                         {p.name}
                       </span>
-                      <span
-                        className="provider-role-badge"
-                        data-testid={`provider-role-${p.slug}`}
-                        data-role={p.role}
-                      >
-                        {p.role === "authoritative" ? "Authoritative" : "Supplement"}
-                      </span>
-                      <span className="provider-kinds">{p.kinds.join(", ")}</span>
-                      <label className="provider-toggle">
-                        <input
-                          type="checkbox"
-                          data-testid={`provider-toggle-${p.slug}`}
-                          checked={draft.enabled[p.slug]}
-                          onChange={(e) =>
-                            patch((d) => ({
-                              ...d,
-                              enabled: { ...d.enabled, [p.slug]: e.target.checked },
-                            }))
-                          }
-                          disabled={saving}
-                        />{" "}
-                        Enabled
-                      </label>
-                    </div>
-
-                    <p className="provider-description">
-                      {p.description}{" "}
-                      {p.docsURL && (
-                        <a
-                          href={p.docsURL}
-                          target="_blank"
-                          rel="noreferrer"
-                          data-testid={`provider-docs-${p.slug}`}
-                        >
-                          Get a key
-                        </a>
-                      )}
-                    </p>
-
-                    {p.requiresKey && (
-                      <div className="field provider-key-field">
-                        <span className="field-label">API key</span>
-                        <MaskedKeyInput
-                          slug={p.slug}
-                          hasKey={p.hasKey}
-                          value={draft.key[p.slug] ?? ""}
-                          cleared={draft.clearKey[p.slug] ?? false}
-                          disabled={saving}
-                          onChange={(value) =>
-                            patch((d) => ({
-                              ...d,
-                              key: { ...d.key, [p.slug]: value },
-                              clearKey: { ...d.clearKey, [p.slug]: false },
-                            }))
-                          }
-                          onClear={() =>
-                            patch((d) => ({
-                              ...d,
-                              clearKey: { ...d.clearKey, [p.slug]: true },
-                              key: { ...d.key, [p.slug]: "" },
-                            }))
-                          }
-                        />
-                      </div>
-                    )}
-
-                    <details className="provider-advanced">
-                      <summary>Advanced</summary>
-                      <div className="field">
-                        <label
-                          className="field-label"
-                          htmlFor={`provider-baseurl-${p.slug}`}
-                        >
-                          Base URL override
-                        </label>
-                        <input
-                          id={`provider-baseurl-${p.slug}`}
-                          className="field-input"
-                          data-testid={`provider-baseurl-${p.slug}`}
-                          type="text"
-                          value={draft.baseURL[p.slug] ?? ""}
-                          onChange={(e) =>
-                            patch((d) => ({
-                              ...d,
-                              baseURL: { ...d.baseURL, [p.slug]: e.target.value },
-                            }))
-                          }
-                          disabled={saving}
-                        />
-                      </div>
-                      {p.imageBaseURL !== undefined && (
-                        <div className="field">
-                          <label
-                            className="field-label"
-                            htmlFor={`provider-imagebaseurl-${p.slug}`}
-                          >
-                            Image host override
-                          </label>
-                          <input
-                            id={`provider-imagebaseurl-${p.slug}`}
-                            className="field-input"
-                            data-testid={`provider-imagebaseurl-${p.slug}`}
-                            type="text"
-                            value={draft.imageBaseURL[p.slug] ?? ""}
-                            onChange={(e) =>
-                              patch((d) => ({
-                                ...d,
-                                imageBaseURL: {
-                                  ...d.imageBaseURL,
-                                  [p.slug]: e.target.value,
-                                },
-                              }))
-                            }
-                            disabled={saving}
-                          />
-                        </div>
-                      )}
-                    </details>
-
-                    <div className="provider-test">
-                      <button
-                        className="nav-link"
-                        type="button"
-                        data-testid={`provider-test-${p.slug}`}
-                        onClick={() => void onTest(p)}
-                        disabled={test.status === "pending"}
-                      >
-                        {test.status === "pending" ? "Testing…" : "Test connection"}
-                      </button>
-                      {test.status === "done" && (
+                      {isAuth && (
                         <span
-                          className={`status ${test.result.ok ? "status-ok" : "status-error"}`}
-                          data-testid={`provider-test-status-${p.slug}`}
-                          data-ok={test.result.ok ? "true" : "false"}
-                          role={test.result.ok ? "status" : "alert"}
+                          className="provider-role-badge"
+                          data-testid={`provider-role-${p.slug}`}
+                          data-role="authoritative"
                         >
-                          <span
-                            className={`dot ${test.result.ok ? "dot-ok" : "dot-error"}`}
-                            aria-hidden="true"
-                          />
-                          {test.result.detail}
+                          Authoritative
                         </span>
                       )}
+                      <button
+                        className="provider-edit"
+                        type="button"
+                        data-testid={`provider-edit-${p.slug}`}
+                        aria-label={`Configure ${p.name}`}
+                        onClick={() => setEditing(p)}
+                      >
+                        <PencilIcon />
+                      </button>
                     </div>
+                    {rowError[p.slug] && (
+                      <p
+                        className="status status-error provider-row-error"
+                        data-testid={`provider-row-error-${p.slug}`}
+                        role="alert"
+                      >
+                        <span className="dot dot-error" aria-hidden="true" />
+                        {rowError[p.slug]}
+                      </p>
+                    )}
                   </li>
                 );
               })}
@@ -452,25 +321,22 @@ export default function AdminProvidersScreen() {
           className="field-input"
           data-testid="metadata-language-input"
           type="text"
-          value={draft.language}
+          value={settings.language}
           placeholder="en-US"
-          onChange={(e) => patch((d) => ({ ...d, language: e.target.value }))}
+          onChange={(e) => patchSettings((d) => ({ ...d, language: e.target.value }))}
           disabled={saving}
         />
       </div>
 
-      <div
-        className="provider-behavior card"
-        data-testid="provider-behavior"
-      >
+      <div className="provider-behavior card" data-testid="provider-behavior">
         <h2 className="section-title">Enrichment behavior</h2>
         <label className="provider-toggle">
           <input
             type="checkbox"
             data-testid="auto-enrich-after-scan-input"
-            checked={draft.autoEnrichAfterScan}
+            checked={settings.autoEnrichAfterScan}
             onChange={(e) =>
-              patch((d) => ({ ...d, autoEnrichAfterScan: e.target.checked }))
+              patchSettings((d) => ({ ...d, autoEnrichAfterScan: e.target.checked }))
             }
             disabled={saving}
           />{" "}
@@ -486,31 +352,13 @@ export default function AdminProvidersScreen() {
             data-testid="enrich-interval-minutes-input"
             type="number"
             min={0}
-            value={draft.enrichIntervalMinutes}
+            value={settings.enrichIntervalMinutes}
             onChange={(e) =>
-              patch((d) => ({ ...d, enrichIntervalMinutes: e.target.value }))
+              patchSettings((d) => ({ ...d, enrichIntervalMinutes: e.target.value }))
             }
             disabled={saving}
           />
           <span className="field-hint">0 disables the scheduled sweep.</span>
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor="musicbrainz-rate-limit-input">
-            MusicBrainz rate limit (ms)
-          </label>
-          <input
-            id="musicbrainz-rate-limit-input"
-            className="field-input"
-            data-testid="musicbrainz-rate-limit-input"
-            type="number"
-            min={0}
-            value={draft.musicBrainzRateLimitMs}
-            onChange={(e) =>
-              patch((d) => ({ ...d, musicBrainzRateLimitMs: e.target.value }))
-            }
-            disabled={saving}
-          />
-          <span className="field-hint">0 = no throttle.</span>
         </div>
       </div>
 
@@ -519,7 +367,7 @@ export default function AdminProvidersScreen() {
           className="auth-submit"
           type="button"
           data-testid="save-providers-button"
-          onClick={() => void onSave()}
+          onClick={() => void onSaveSettings()}
           disabled={saving}
         >
           {saving ? "Saving…" : "Save settings"}
@@ -544,6 +392,16 @@ export default function AdminProvidersScreen() {
           </p>
         )}
       </div>
+
+      {editing && (
+        <ProviderConfigDialog
+          key={editing.slug}
+          provider={editing}
+          musicBrainzRateLimitMs={view.musicBrainzRateLimitMs}
+          onSaved={onProviderSaved}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </section>
   );
 }

@@ -10,12 +10,14 @@ import type { ApiClient } from "../api/client";
 import type { MetadataProvider, MetadataProvidersView } from "../api/types";
 
 // AdminProvidersScreen end-to-end through the faked API client (the one seam —
-// exactly as AdminUsersScreen.test.tsx fakes apiClient): the screen lists
-// providers grouped by kind; the masked key field never shows a stored key;
-// toggles/keys/language submit the right PARTIAL payload; a validation refusal
-// shows a readable inline error; the Test-connection button reflects ok/error;
-// and a pending save disables the button. A separate block exercises the tab in
-// the Admin hub and the RequireAdmin gate.
+// exactly as AdminUsersScreen.test.tsx fakes apiClient). The redesigned screen
+// lists providers grouped by kind with the authoritative one labeled; each row's
+// Enabled checkbox persists IMMEDIATELY (save-per-action); an Edit icon opens a
+// per-provider config dialog whose masked key field never shows a stored key and
+// whose Save submits a single-provider partial payload; a refused enable shows a
+// readable inline row error; the Test-connection button (in the dialog) reflects
+// ok/error; and the server-wide language/behavior knobs keep their own Save. A
+// separate block exercises the tab in the Admin hub and the RequireAdmin gate.
 
 const { getMetadataProviders, updateMetadataProviders, testMetadataProvider } =
   vi.hoisted(() => ({
@@ -117,7 +119,7 @@ beforeEach(() => {
 });
 
 describe("AdminProvidersScreen", () => {
-  it("renders providers grouped by kind", async () => {
+  it("renders providers grouped by kind with the authoritative one labeled and on top", async () => {
     getMetadataProviders.mockResolvedValue(view());
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
 
@@ -128,16 +130,58 @@ describe("AdminProvidersScreen", () => {
     const musicGroup = screen.getByTestId("provider-group-music");
     // Video group holds only TMDB; the four music sources are in the music group.
     expect(within(videoGroup).getAllByTestId("provider-row")).toHaveLength(1);
-    expect(within(musicGroup).getAllByTestId("provider-row")).toHaveLength(4);
-    expect(within(videoGroup).getByTestId("provider-name-tmdb")).toHaveTextContent(
-      "The Movie Database (TMDB)",
+    const musicRows = within(musicGroup).getAllByTestId("provider-row");
+    expect(musicRows).toHaveLength(4);
+    // The authoritative source (MusicBrainz) is the first music row and is labeled;
+    // the supplements carry no role badge.
+    expect(musicRows[0]).toHaveAttribute("data-slug", "musicbrainz");
+    expect(within(musicRows[0]).getByTestId("provider-role-musicbrainz")).toHaveTextContent(
+      /authoritative/i,
     );
     expect(within(videoGroup).getByTestId("provider-role-tmdb")).toHaveTextContent(
       /authoritative/i,
     );
+    expect(screen.queryByTestId("provider-role-coverart")).toBeNull();
   });
 
-  it("masks the key field and never shows a stored key", async () => {
+  it("enabling a provider's checkbox persists immediately (save-per-action)", async () => {
+    const user = userEvent.setup();
+    getMetadataProviders.mockResolvedValue(view());
+    updateMetadataProviders.mockResolvedValue(
+      view({ enablement: { video: false, music: true } }),
+    );
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-video");
+
+    await user.click(screen.getByTestId("provider-toggle-musicbrainz"));
+
+    await waitFor(() =>
+      expect(updateMetadataProviders).toHaveBeenCalledWith({
+        providers: [{ slug: "musicbrainz", enabled: true }],
+      }),
+    );
+  });
+
+  it("shows an inline row error and leaves the box unchecked when an enable is refused", async () => {
+    const user = userEvent.setup();
+    getMetadataProviders.mockResolvedValue(view());
+    updateMetadataProviders.mockRejectedValue(
+      new ApiError(422, "PROVIDER_KEY_REQUIRED", "TMDB requires an API key to be enabled"),
+    );
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-video");
+
+    // Enable TMDB with no key → the server rejects it.
+    await user.click(screen.getByTestId("provider-toggle-tmdb"));
+
+    const err = await screen.findByTestId("provider-row-error-tmdb");
+    expect(err).toHaveTextContent(/requires an api key/i);
+    // The view never changed, so the checkbox reflects the still-disabled state.
+    expect(screen.getByTestId("provider-toggle-tmdb")).not.toBeChecked();
+  });
+
+  it("opens the config dialog and never shows a stored key", async () => {
+    const user = userEvent.setup();
     // TMDB already has a key on file (hasKey), but the value is never sent to the
     // client — the field starts empty and masked, with a "configured" indicator.
     getMetadataProviders.mockResolvedValue(
@@ -149,6 +193,9 @@ describe("AdminProvidersScreen", () => {
       }),
     );
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-video");
+
+    await user.click(screen.getByTestId("provider-edit-tmdb"));
 
     const keyInput = (await screen.findByTestId(
       "provider-key-input-tmdb",
@@ -161,71 +208,92 @@ describe("AdminProvidersScreen", () => {
     );
 
     // The reveal toggle flips the field to text (for shoulder-surf-safe pasting).
-    const user = userEvent.setup();
     await user.click(screen.getByTestId("provider-key-reveal-tmdb"));
     expect(keyInput).toHaveAttribute("type", "text");
   });
 
-  it("submits changed toggles, keys, and language as a partial update", async () => {
+  it("saves a typed key from the dialog as a single-provider partial update and closes", async () => {
     const user = userEvent.setup();
     getMetadataProviders.mockResolvedValue(view());
     updateMetadataProviders.mockResolvedValue(
       view({
-        providers: [prov({ slug: "tmdb", hasKey: true })].concat(
-          view().providers.slice(1).map((p) => (p.slug === "musicbrainz" ? { ...p, enabled: true } : p)),
-        ),
-        metadataLanguage: "fr-FR",
-        enablement: { video: false, music: true },
+        providers: [prov({ slug: "tmdb", hasKey: true })].concat(view().providers.slice(1)),
       }),
     );
-
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     await screen.findByTestId("provider-group-video");
 
-    // Type a TMDB key, enable MusicBrainz, change the language.
-    await user.type(screen.getByTestId("provider-key-input-tmdb"), "new-key");
-    await user.click(screen.getByTestId("provider-toggle-musicbrainz"));
-    const lang = screen.getByTestId("metadata-language-input");
-    await user.clear(lang);
-    await user.type(lang, "fr-FR");
-    await user.click(screen.getByTestId("save-providers-button"));
+    await user.click(screen.getByTestId("provider-edit-tmdb"));
+    await user.type(await screen.findByTestId("provider-key-input-tmdb"), "new-key");
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
 
     await waitFor(() =>
       expect(updateMetadataProviders).toHaveBeenCalledWith({
-        providers: [
-          { slug: "tmdb", apiKey: "new-key" },
-          { slug: "musicbrainz", enabled: true },
-        ],
-        metadataLanguage: "fr-FR",
+        providers: [{ slug: "tmdb", apiKey: "new-key" }],
       }),
     );
-    // Success affordance shows.
-    expect(await screen.findByTestId("save-providers-success")).toBeInTheDocument();
+    // The dialog closes after a successful save.
+    await waitFor(() =>
+      expect(screen.queryByTestId("provider-config-dialog-tmdb")).toBeNull(),
+    );
   });
 
   it("shows the image-host override only for a source that has one, and submits it", async () => {
     const user = userEvent.setup();
     getMetadataProviders.mockResolvedValue(view());
     updateMetadataProviders.mockResolvedValue(view());
-
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     await screen.findByTestId("provider-group-video");
 
-    // TMDB has a distinct image host → the extra override renders; MusicBrainz
-    // (no image host) does not.
-    const imageInput = screen.getByTestId("provider-imagebaseurl-tmdb");
-    expect(imageInput).toBeInTheDocument();
-    expect(screen.queryByTestId("provider-imagebaseurl-musicbrainz")).toBeNull();
-
+    // TMDB has a distinct image host → the extra override renders in its dialog.
+    await user.click(screen.getByTestId("provider-edit-tmdb"));
+    const imageInput = await screen.findByTestId("provider-imagebaseurl-tmdb");
     await user.clear(imageInput);
     await user.type(imageInput, "https://img.mirror.test/p");
-    await user.click(screen.getByTestId("save-providers-button"));
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
 
     await waitFor(() =>
       expect(updateMetadataProviders).toHaveBeenCalledWith({
         providers: [{ slug: "tmdb", imageBaseURL: "https://img.mirror.test/p" }],
       }),
     );
+  });
+
+  it("omits the image-host override for a source that has none", async () => {
+    const user = userEvent.setup();
+    getMetadataProviders.mockResolvedValue(view());
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-music");
+
+    // MusicBrainz has no distinct image host → no override field in its dialog.
+    await user.click(screen.getByTestId("provider-edit-musicbrainz"));
+    await screen.findByTestId("provider-baseurl-musicbrainz");
+    expect(screen.queryByTestId("provider-imagebaseurl-musicbrainz")).toBeNull();
+  });
+
+  it("reports a Test-connection result from the dialog (ok and error)", async () => {
+    const user = userEvent.setup();
+    getMetadataProviders.mockResolvedValue(view());
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-music");
+
+    // A successful probe for MusicBrainz (keyless; sends no creds).
+    await user.click(screen.getByTestId("provider-edit-musicbrainz"));
+    testMetadataProvider.mockResolvedValueOnce({ ok: true, detail: "connection succeeded" });
+    await user.click(await screen.findByTestId("provider-test-musicbrainz"));
+    const okStatus = await screen.findByTestId("provider-test-status-musicbrainz");
+    expect(okStatus).toHaveAttribute("data-ok", "true");
+    expect(okStatus).toHaveTextContent(/succeeded/i);
+    expect(testMetadataProvider).toHaveBeenCalledWith("musicbrainz", {});
+    await user.click(screen.getByTestId("provider-config-cancel-musicbrainz"));
+
+    // A failing probe for fanart.tv shows the error detail.
+    await user.click(screen.getByTestId("provider-edit-fanarttv"));
+    testMetadataProvider.mockResolvedValueOnce({ ok: false, detail: "an API key is required" });
+    await user.click(await screen.findByTestId("provider-test-fanarttv"));
+    const errStatus = await screen.findByTestId("provider-test-status-fanarttv");
+    expect(errStatus).toHaveAttribute("data-ok", "false");
+    expect(errStatus).toHaveTextContent(/api key is required/i);
   });
 
   it("renders the enrichment-behavior controls reflecting loaded values", async () => {
@@ -237,69 +305,89 @@ describe("AdminProvidersScreen", () => {
 
     const auto = screen.getByTestId("auto-enrich-after-scan-input") as HTMLInputElement;
     const interval = screen.getByTestId("enrich-interval-minutes-input") as HTMLInputElement;
-    const rate = screen.getByTestId("musicbrainz-rate-limit-input") as HTMLInputElement;
     expect(auto.checked).toBe(false);
     expect(interval.value).toBe("60"); // 3600s → 60 minutes
-    expect(rate.value).toBe("250");
+    // The MusicBrainz throttle no longer lives on the behavior card — it moved to
+    // the MusicBrainz provider dialog.
+    expect(screen.queryByTestId("musicbrainz-rate-limit-input")).toBeNull();
   });
 
-  it("submits changed enrichment-behavior knobs (minutes → seconds) as a partial update", async () => {
+  it("submits changed language + behavior knobs (minutes → seconds) via the settings Save", async () => {
     const user = userEvent.setup();
-    getMetadataProviders.mockResolvedValue(view()); // auto on, 360min, 1000ms
+    getMetadataProviders.mockResolvedValue(view()); // en-US, auto on, 360min
     updateMetadataProviders.mockResolvedValue(view());
-
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     await screen.findByTestId("provider-behavior");
 
-    // Toggle auto off, set the sweep to 30 minutes, and clear the throttle to 0.
+    // Change the language, toggle auto off, set the sweep to 30 minutes.
+    const lang = screen.getByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "fr-FR");
     await user.click(screen.getByTestId("auto-enrich-after-scan-input"));
     const interval = screen.getByTestId("enrich-interval-minutes-input");
     await user.clear(interval);
     await user.type(interval, "30");
-    const rate = screen.getByTestId("musicbrainz-rate-limit-input");
-    await user.clear(rate);
-    await user.type(rate, "0");
     await user.click(screen.getByTestId("save-providers-button"));
 
     await waitFor(() =>
       expect(updateMetadataProviders).toHaveBeenCalledWith({
+        metadataLanguage: "fr-FR",
         autoEnrichAfterScan: false,
         enrichIntervalSeconds: 1800, // 30 minutes → 1800 seconds
-        musicBrainzRateLimitMs: 0,
       }),
+    );
+    // Success affordance shows.
+    expect(await screen.findByTestId("save-providers-success")).toBeInTheDocument();
+  });
+
+  it("edits the MusicBrainz throttle from its dialog and saves it (server-wide knob)", async () => {
+    const user = userEvent.setup();
+    getMetadataProviders.mockResolvedValue(view()); // musicBrainzRateLimitMs: 1000
+    updateMetadataProviders.mockResolvedValue(view({ musicBrainzRateLimitMs: 0 }));
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-music");
+
+    await user.click(screen.getByTestId("provider-edit-musicbrainz"));
+    const rate = (await screen.findByTestId(
+      "musicbrainz-rate-limit-input",
+    )) as HTMLInputElement;
+    expect(rate.value).toBe("1000"); // seeded from the server-wide value
+    await user.clear(rate);
+    await user.type(rate, "0");
+    await user.click(screen.getByTestId("provider-config-save-musicbrainz"));
+
+    // Only the throttle changed → the payload carries just that server-wide knob.
+    await waitFor(() =>
+      expect(updateMetadataProviders).toHaveBeenCalledWith({ musicBrainzRateLimitMs: 0 }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("provider-config-dialog-musicbrainz")).toBeNull(),
     );
   });
 
-  it("shows a readable inline error when the save is rejected (validation)", async () => {
+  it("shows the throttle field only in the MusicBrainz dialog", async () => {
     const user = userEvent.setup();
     getMetadataProviders.mockResolvedValue(view());
-    updateMetadataProviders.mockRejectedValue(
-      new ApiError(422, "PROVIDER_KEY_REQUIRED", "TMDB requires an API key to be enabled"),
-    );
-
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     await screen.findByTestId("provider-group-video");
 
-    // Enable TMDB with no key → the server rejects it.
-    await user.click(screen.getByTestId("provider-toggle-tmdb"));
-    await user.click(screen.getByTestId("save-providers-button"));
-
-    const err = await screen.findByTestId("save-providers-error");
-    expect(err).toHaveTextContent(/requires an api key/i);
-    // The form is still mounted (no crash) and the toggle state is preserved.
-    expect(screen.getByTestId("provider-toggle-tmdb")).toBeChecked();
+    // TMDB's dialog has no MusicBrainz throttle.
+    await user.click(screen.getByTestId("provider-edit-tmdb"));
+    await screen.findByTestId("provider-baseurl-tmdb");
+    expect(screen.queryByTestId("musicbrainz-rate-limit-input")).toBeNull();
   });
 
-  it("disables the save button while the save is in flight", async () => {
+  it("disables the settings Save button while the save is in flight", async () => {
     const user = userEvent.setup();
     getMetadataProviders.mockResolvedValue(view());
     const pending = deferred<MetadataProvidersView>();
     updateMetadataProviders.mockReturnValue(pending.promise);
-
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
-    await screen.findByTestId("provider-group-video");
+    await screen.findByTestId("provider-behavior");
 
-    await user.click(screen.getByTestId("provider-toggle-musicbrainz"));
+    const lang = screen.getByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "de-DE");
     await user.click(screen.getByTestId("save-providers-button"));
 
     await waitFor(() =>
@@ -307,33 +395,10 @@ describe("AdminProvidersScreen", () => {
     );
     expect(screen.getByTestId("save-providers-button")).toHaveTextContent(/saving/i);
 
-    pending.resolve(view({ enablement: { video: false, music: true } }));
+    pending.resolve(view({ metadataLanguage: "de-DE" }));
     await waitFor(() =>
       expect(screen.getByTestId("save-providers-button")).toBeEnabled(),
     );
-  });
-
-  it("reports a Test-connection result (ok and error)", async () => {
-    const user = userEvent.setup();
-    getMetadataProviders.mockResolvedValue(view());
-
-    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
-    await screen.findByTestId("provider-group-video");
-
-    // A successful probe for MusicBrainz (keyless; sends no creds).
-    testMetadataProvider.mockResolvedValueOnce({ ok: true, detail: "connection succeeded" });
-    await user.click(screen.getByTestId("provider-test-musicbrainz"));
-    const okStatus = await screen.findByTestId("provider-test-status-musicbrainz");
-    expect(okStatus).toHaveAttribute("data-ok", "true");
-    expect(okStatus).toHaveTextContent(/succeeded/i);
-    expect(testMetadataProvider).toHaveBeenCalledWith("musicbrainz", {});
-
-    // A failing probe for fanart.tv shows the error detail.
-    testMetadataProvider.mockResolvedValueOnce({ ok: false, detail: "an API key is required" });
-    await user.click(screen.getByTestId("provider-test-fanarttv"));
-    const errStatus = await screen.findByTestId("provider-test-status-fanarttv");
-    expect(errStatus).toHaveAttribute("data-ok", "false");
-    expect(errStatus).toHaveTextContent(/api key is required/i);
   });
 });
 
