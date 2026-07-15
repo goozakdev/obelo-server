@@ -653,7 +653,14 @@ type HomeRow struct {
 type HomeTitle struct {
 	store.Title
 	ResumePositionMs int64
-	Episode          *store.EpisodeContext
+	// DurationMs is the Title's playable duration, paired with ResumePositionMs to
+	// draw the Continue Watching card's progress bar (the same measure, and the same
+	// MAX-across-Editions derivation, the Show detail's resumePoint reports). It is
+	// populated for Continue Watching only — Up Next and Recently Added carry 0, as
+	// they carry resume 0: neither row draws a progress bar, so neither pays for the
+	// duration lookup. 0 also when the duration is genuinely unknown.
+	DurationMs int64
+	Episode    *store.EpisodeContext
 	// Track is the Artist/Album/disc/track parent context for a non-Movie Track
 	// leaf (kind "track"), so a Home card reads as "Radiohead · OK Computer"; nil
 	// for a Movie/Episode (issue tv-music/03, additive).
@@ -681,7 +688,7 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 	}
 	continueWatching.Titles = make([]HomeTitle, 0, len(cw))
 	for _, r := range cw {
-		ht := HomeTitle{Title: r.Title, ResumePositionMs: r.ResumePositionMs}
+		ht := HomeTitle{Title: r.Title, ResumePositionMs: r.ResumePositionMs, DurationMs: r.DurationMs}
 		s.attachEpisodeContext(&ht)
 		continueWatching.Titles = append(continueWatching.Titles, ht)
 	}

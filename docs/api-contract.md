@@ -324,7 +324,7 @@ URLs advertised in parent JSON carry `?v={version}` cache-busters; title-detail 
 { "continueWatching": [ homeTitleJSON ], "upNext": [ homeTitleJSON ], "recentlyAdded": [ homeTitleJSON ] }
 ```
 
-`homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"? }`. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first.
+`homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "durationMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"? }`. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first. `resumePositionMs`/`durationMs` are populated on **Continue Watching only** — together they drive the card's progress bar, the same pairing `resumePoint` carries on the Show detail; Up Next / Recently Added omit both, and `durationMs` is also omitted when the duration is unknown.
 
 #### GET /search?q=…
 

@@ -200,9 +200,11 @@ func (db *DB) WatchStatesForTitles(userID string, titleIDs []string) (map[string
 //
 // The 2%/90% band is enforced upstream when the resume is WRITTEN (the playback
 // domain stores no resume below the floor and clears it above the ceiling), so
-// this query only needs "has a resume" — it never re-derives a percentage and
-// has no access to each File's duration, keeping the threshold in exactly one
-// place.
+// this query only needs "has a resume" — it never re-derives a percentage,
+// keeping the threshold in exactly one place. The row DOES carry each Title's
+// duration, but strictly as a display input for the card's progress bar: it is
+// reported, never compared against. Do not add a duration-derived predicate to
+// the WHERE clause — that would put the threshold in two places.
 func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([]ContinueWatchingRow, error) {
 	if limit <= 0 {
 		limit = 20
@@ -214,7 +216,10 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 	rows, err := db.Query(
 		`SELECT t.id, t.library_id, t.kind, t.title, t.year, t.identity_key, t.sort_title,
 		        t.added_at, t.tmdb_id, t.imdb_id, t.needs_review, t.ambiguous, t.hidden,
-		        w.resume_position_ms, w.updated_at
+		        w.resume_position_ms, w.updated_at,
+		        (SELECT MAX(f.duration_ms) FROM editions ed
+		           JOIN files f ON f.edition_id = ed.id
+		          WHERE ed.title_id = t.id) AS duration_ms
 		   FROM watch_state w
 		   JOIN titles t ON t.id = w.title_id
 		  WHERE w.user_id = ? AND w.resume_position_ms > 0 AND w.watched = 0 AND t.hidden = 0`+clause+`
@@ -233,9 +238,10 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 		var needsReview, ambiguous, hidden int
 		var resume int64
 		var updatedAt string
+		var durationMs sql.NullInt64
 		if err := rows.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 			&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
-			&resume, &updatedAt); err != nil {
+			&resume, &updatedAt, &durationMs); err != nil {
 			return nil, fmt.Errorf("store: scanning continue watching: %w", err)
 		}
 		if year.Valid {
@@ -244,7 +250,11 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 		t.NeedsReview = needsReview != 0
 		t.Ambiguous = ambiguous != 0
 		t.Hidden = hidden != 0
-		out = append(out, ContinueWatchingRow{Title: t, ResumePositionMs: resume, UpdatedAt: updatedAt})
+		row := ContinueWatchingRow{Title: t, ResumePositionMs: resume, UpdatedAt: updatedAt}
+		if durationMs.Valid {
+			row.DurationMs = durationMs.Int64
+		}
+		out = append(out, row)
 	}
 	return out, rows.Err()
 }
@@ -255,6 +265,12 @@ type ContinueWatchingRow struct {
 	Title
 	ResumePositionMs int64
 	UpdatedAt        string
+	// DurationMs is the Title's playable duration (MAX file duration_ms across its
+	// Editions — the same measure the resume position was recorded against, and the
+	// same one ResumePoint reports). 0 when unknown (no File / duration not probed).
+	// With ResumePositionMs it drives the card's progress bar; it is NOT used to
+	// re-derive the 2%/90% band, which stays enforced at write time.
+	DurationMs int64
 }
 
 // UpNextRow is one Up Next entry: the next-to-watch Episode Title plus the Show

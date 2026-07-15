@@ -29,6 +29,7 @@ type upNextHomeTitle struct {
 	Kind             string            `json:"kind"`
 	Title            string            `json:"title"`
 	ResumePositionMs int64             `json:"resumePositionMs"`
+	DurationMs       int64             `json:"durationMs"`
 	Episode          *upNextEpisodeCtx `json:"episode"`
 }
 
@@ -284,6 +285,65 @@ func TestHomeParentContextOnContinueWatching(t *testing.T) {
 	}
 	if ra == nil || ra.Episode == nil || ra.Episode.ShowTitle != "The Bear" {
 		t.Errorf("Recently Added Episode entry missing/incorrect parent context: %+v", ra)
+	}
+}
+
+// TestHomeContinueWatchingCarriesDuration: a Continue Watching entry carries the
+// durationMs that, with resumePositionMs, draws the card's progress bar — the
+// same pairing the Show detail's resumePoint already carried. The value is the
+// Title's real playable duration, so the fraction is computable from /home alone
+// with no extra round-trip. Up Next / Recently Added draw no bar and omit it.
+func TestHomeContinueWatchingCarriesDuration(t *testing.T) {
+	requireTVFixtures(t)
+	srv, token, libID := scanTVLibrary(t)
+	showID, eps := bearSeason1Episodes(t, srv, token, libID)
+	e1 := eps.Episodes[0]
+
+	// Mid-band progress on E01 makes it the in-progress anchor → Continue Watching.
+	// (Up Next stays empty here by design: the in-progress anchor is excluded from
+	// it, so the two rows are disjoint — TestUpNextExcludesInProgressAnchor.)
+	dur := titleDuration(t, srv, token, e1.ID)
+	dec := negotiateEpisode(t, srv, token, e1.ID)
+	postProgress(t, srv, token, dec.SessionID, dur/2, http.StatusOK)
+
+	home := getHome(t, srv, token)
+	var cw *upNextHomeTitle
+	for i := range home.ContinueWatching {
+		if home.ContinueWatching[i].ID == e1.ID {
+			cw = &home.ContinueWatching[i]
+		}
+	}
+	if cw == nil {
+		t.Fatalf("E01 not in Continue Watching; cw: %+v", home.ContinueWatching)
+	}
+	if cw.DurationMs != dur {
+		t.Errorf("Continue Watching durationMs = %d, want %d (the Title's playable duration)", cw.DurationMs, dur)
+	}
+	// The point of the field: the progress fraction is computable, and lands in the
+	// 2–90% band the row is defined by.
+	frac := float64(cw.ResumePositionMs) / float64(cw.DurationMs)
+	if frac <= 0.02 || frac >= 0.90 {
+		t.Errorf("progress fraction = %.3f (resume %d / duration %d), want inside the 2–90%% band",
+			frac, cw.ResumePositionMs, cw.DurationMs)
+	}
+
+	// Recently Added lists the same Episode, draws no bar, and omits the duration.
+	for i := range home.RecentlyAdded {
+		if home.RecentlyAdded[i].DurationMs != 0 {
+			t.Errorf("Recently Added durationMs = %d, want 0 (omitted — no progress bar on that row)",
+				home.RecentlyAdded[i].DurationMs)
+		}
+	}
+
+	// Finishing E01 advances Up Next to E02. That row carries no resume and draws
+	// no bar, so it omits the duration too.
+	playEpisodeToEnd(t, srv, token, e1.ID)
+	un := upNextFor(getHome(t, srv, token), showID)
+	if un == nil {
+		t.Fatalf("Up Next missing after finishing E01")
+	}
+	if un.DurationMs != 0 {
+		t.Errorf("Up Next durationMs = %d, want 0 (omitted — no progress bar on that row)", un.DurationMs)
 	}
 }
 

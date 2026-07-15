@@ -33,7 +33,13 @@ type homeTitleJSON struct {
 	IMDBID           string              `json:"imdbId,omitempty"`
 	AddedAt          string              `json:"addedAt,omitempty"`
 	ResumePositionMs int64               `json:"resumePositionMs,omitempty"`
-	Episode          *episodeContextJSON `json:"episode,omitempty"`
+	// DurationMs is the Title's playable duration; with ResumePositionMs it drives
+	// the Continue Watching card's progress bar — the same pairing, and the same
+	// value, the Show detail's resumePoint carries. Present on Continue Watching
+	// entries only (Up Next / Recently Added draw no bar, so they omit it, as they
+	// omit resumePositionMs); also omitted when the duration is unknown.
+	DurationMs int64               `json:"durationMs,omitempty"`
+	Episode    *episodeContextJSON `json:"episode,omitempty"`
 	// Track carries the Artist/Album/disc/track parent context for a Track leaf
 	// (kind "track"), so a Home card reads as "Radiohead · OK Computer"; omitted
 	// for a Movie/Episode (issue tv-music/03, additive).
@@ -61,6 +67,7 @@ func toHomeTitle(t catalog.HomeTitle) homeTitleJSON {
 		IMDBID:           t.IMDBID,
 		AddedAt:          formatTimestamp(t.AddedAt),
 		ResumePositionMs: t.ResumePositionMs,
+		DurationMs:       t.DurationMs,
 		Overview:         t.Overview,
 		Genres:           t.Genres,
 		DisplayTitle:     t.EnrichedTitle,
