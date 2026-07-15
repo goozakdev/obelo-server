@@ -15,10 +15,13 @@ source. The "fallback" is the only path that exists — and it reads as a kept p
 building a client against the ADR. The Apple TV client is now being built, which is exactly the
 "Apple clients" case the ADR was written for, so the gap is no longer theoretical.
 
-A second ADR-0005 promise is also unbuilt — *"The server provides a configurable external URL"* —
-there is no `JUICEBOX_EXTERNAL_URL`; absolute-URL correctness rests entirely on forwarded
-headers. That may well be sufficient, in which case the claim should be **retired** rather than
-implemented. Out of scope here, but it should not keep sitting in an ADR unexamined.
+A second ADR-0005 promise was also unbuilt — *"The server provides a configurable external URL"* —
+and this ADR flagged it as out of scope but not to be left sitting unexamined. It has since been
+examined: **the claim was retired unbuilt on 2026-07-15**, because the server emits no absolute
+self-referential URL for an external URL to correct — every URL it emits is relative, so a
+proxied client stays on the proxy's origin on its own. See the retirement note in
+[ADR-0005](./0005-discovery-and-tls-via-reverse-proxy.md) for the evidence and for the
+origin-root assumption it documents. Nothing here depends on it either way.
 
 ## Scope
 
