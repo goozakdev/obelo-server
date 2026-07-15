@@ -62,8 +62,15 @@ Local on-disk assets are honored before, and instead of, external Enrichment. **
 - Matched to the media file sharing the basename, or to the sole video in the folder.
 
 ### Local artwork
-- **Video:** `poster.jpg`/`cover.jpg` → poster; `fanart.jpg`/`backdrop.jpg` → background; also `<basename>-poster.jpg`. TV season posters as `Season NN.jpg`.
+- **Movie:** `poster.jpg`/`cover.jpg` → poster; `fanart.jpg`/`backdrop.jpg` → background; also `<basename>-poster.jpg`.
 - **Music:** `cover.jpg`/`folder.jpg` in the album folder, with embedded cover art in the audio tags as fallback.
+- **TV: not implemented.** ~~TV season posters as `Season NN.jpg`.~~ The Scanner's local-artwork
+  discovery runs per **movie folder** only (`resolveFolder`), so `Show/poster.jpg`,
+  `Show/fanart.jpg`, and `Show/Season NN.jpg` are all ignored. Show and Season artwork come
+  **only from Enrichment** today, which means a TV library on a server with no metadata provider
+  has no artwork at all and no local escape hatch — unlike Movies and Music. Either implement the
+  discovery or retire the claim; do not read the struck-through line as a description of the
+  server.
 
 ## Unmatched and needs-review files
 
