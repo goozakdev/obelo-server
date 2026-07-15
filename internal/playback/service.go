@@ -1125,13 +1125,21 @@ type ProgressOutcome struct {
 // progress, on the same watch-state surface — to have it Remembered. It is resolved
 // against the session's File and written best-effort; it never affects the resume /
 // watched threshold math (that stays position-only) and an unknown id is ignored.
-func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, audioStreamID string) (ProgressOutcome, error) {
+// videoStreamID is the exact video parallel for clients whose player switches video
+// tracks in-container without re-negotiating (libmpv on direct play — unlike HLS,
+// where a video switch is a RESTART and the negotiation itself records the pick,
+// ADR-0025): it is resolved against the session File's selectable video Streams and
+// Remembered best-effort, same as audio.
+func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, audioStreamID, videoStreamID string) (ProgressOutcome, error) {
 	sess, ok := s.sessions.Get(sessionID)
 	if !ok || sess.UserID != userID {
 		return ProgressOutcome{}, ErrSessionNotFound
 	}
 	if audioStreamID != "" {
 		s.rememberSessionAudioPick(userID, sess, audioStreamID)
+	}
+	if videoStreamID != "" {
+		s.rememberSessionVideoPick(userID, sess, videoStreamID)
 	}
 	if positionMs < 0 {
 		positionMs = 0
@@ -1211,6 +1219,34 @@ func (s *Service) rememberSessionAudioPick(userID string, sess Session, audioStr
 		return
 	}
 	s.rememberAudioPick(userID, sess.TitleID, stream)
+}
+
+// rememberSessionVideoPick writes Remembered video for an in-band pick reported
+// through the progress surface — the video mirror of rememberSessionAudioPick,
+// for players (libmpv) that switch video tracks in-container on direct play
+// without the HLS restart that would otherwise record the pick (ADR-0025). The id
+// is resolved against the session File's SELECTABLE video Streams (cover-art
+// excluded, so album art can never be Remembered as a video pick) and written
+// best-effort — a missing Title/File/Stream is silently ignored so a stale or
+// malformed id never fails a progress report.
+func (s *Service) rememberSessionVideoPick(userID string, sess Session, videoStreamID string) {
+	if s.videoMem == nil {
+		return
+	}
+	detail, err := s.store.TitleByID(sess.TitleID)
+	if err != nil {
+		return
+	}
+	file, ok := fileByID(detail, sess.FileID)
+	if !ok {
+		return
+	}
+	for _, stream := range SelectableVideoStreams(file) {
+		if stream.ID == videoStreamID {
+			s.rememberVideoPick(userID, sess.TitleID, stream)
+			return
+		}
+	}
 }
 
 // SetWatchState manually toggles watched/unwatched for a (User, Title),

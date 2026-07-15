@@ -121,6 +121,16 @@ func (p *deviceProfileJSON) toDomain() playback.DeviceProfile {
 	}
 }
 
+// textSubtitleFormats returns the profile's declared text-subtitle formats,
+// nil-safe: an absent profile declares none, so every text track's delivery URL
+// falls back to the WebVTT conversion (ADR-0033).
+func (p *deviceProfileJSON) textSubtitleFormats() []string {
+	if p == nil {
+		return nil
+	}
+	return p.TextSubtitleFormats
+}
+
 func (c *constraintsJSON) toDomain() playback.Constraints {
 	if c == nil {
 		return playback.Constraints{}
@@ -165,6 +175,12 @@ type decisionSubtitleJSON struct {
 	Forced   bool   `json:"forced"`
 	Label    string `json:"label"`
 	URL      string `json:"url,omitempty"`
+	// Format is the delivery format of the bytes at url — "vtt" (the universal
+	// WebVTT conversion) or, when the client's Capability profile declares support
+	// for the track's original format (textSubtitleFormats, ADR-0033), the original
+	// "srt"/"ass" with styling intact (libmpv renders ASS natively). Absent when
+	// there is no url.
+	Format string `json:"format,omitempty"`
 }
 
 // decisionResponse is the negotiation decision (api-contract.md). streamUrl is the
@@ -551,11 +567,11 @@ func handlePlayback(svc *playback.Service) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toDecisionResponse(sess.ID, titleID, dec))
+		writeJSON(w, http.StatusOK, toDecisionResponse(sess.ID, titleID, dec, req.DeviceProfile.textSubtitleFormats()))
 	}
 }
 
-func toDecisionResponse(sessionID, titleID string, d playback.Decision) decisionResponse {
+func toDecisionResponse(sessionID, titleID string, d playback.Decision, clientSubtitleFormats []string) decisionResponse {
 	// The streamUrl depends on the tier (ADR-0004): direct play is a progressive
 	// byte-range stream; directStream (remux) and transcode are an HLS playlist the
 	// client loads with hls.js / native HLS. On the HLS tiers, when the File offers
@@ -592,7 +608,7 @@ func toDecisionResponse(sessionID, titleID string, d playback.Decision) decision
 		// pick), which may differ from the container is_default disposition on a multi-
 		// video File (selectable-video/01).
 		VideoStreams:     toVideoStreams(d.File.Streams, d.VideoStream.ID),
-		Subtitles:        toDecisionSubtitles(titleID, d.Subtitles),
+		Subtitles:        toDecisionSubtitles(titleID, d.Subtitles, clientSubtitleFormats),
 		EstimatedBitrate: d.EstimatedBitrate,
 	}
 	// An audio Stream is present for every real Movie File; omit it only for the
@@ -609,11 +625,23 @@ func toDecisionResponse(sessionID, titleID string, d playback.Decision) decision
 }
 
 // toDecisionSubtitles maps the domain Subtitle-track list onto the decision wire
-// shape, attaching the out-of-band WebVTT delivery URL to each deliverable TEXT
-// track (identity-scoped, cacheable — mirrors the artwork endpoint). Image tracks
-// and any text track we can't convert carry no url (burn-in / unsupported-format
-// is a later concern). Always non-nil so the JSON is a `[]`, never null.
-func toDecisionSubtitles(titleID string, tracks []playback.SubtitleTrack) []decisionSubtitleJSON {
+// shape, attaching the out-of-band delivery URL to each deliverable TEXT track
+// (identity-scoped, cacheable — mirrors the artwork endpoint). The URL's format is
+// negotiated per track (ADR-0033): a client whose Capability profile declares the
+// track's ORIGINAL format in textSubtitleFormats gets the original (.srt/.ass,
+// styling intact — libmpv territory); everyone else gets the WebVTT conversion.
+// Image tracks and any text track we can't convert carry no url (burn-in /
+// unsupported-format is a later concern). Always non-nil so the JSON is a `[]`,
+// never null.
+func toDecisionSubtitles(titleID string, tracks []playback.SubtitleTrack, clientFormats []string) []decisionSubtitleJSON {
+	accepts := map[string]bool{}
+	for _, f := range clientFormats {
+		// Normalize the client's tokens the same way track codecs fold ("subrip"→
+		// srt, "ssa"→ass, "webvtt"→vtt) so a human-written profile matches.
+		if canon := subtitle.TextFormat(f); canon != "" {
+			accepts[canon] = true
+		}
+	}
 	out := make([]decisionSubtitleJSON, 0, len(tracks))
 	for _, t := range tracks {
 		entry := decisionSubtitleJSON{
@@ -625,7 +653,13 @@ func toDecisionSubtitles(titleID string, tracks []playback.SubtitleTrack) []deci
 			Label:    subtitle.Label(t.Language, t.Forced),
 		}
 		if t.Kind == "text" && t.Convertible {
-			entry.URL = subtitleVTTURL(titleID, t.ID)
+			if t.Format != "" && t.Format != "vtt" && accepts[t.Format] {
+				entry.URL = subtitleOriginalURL(titleID, t.ID, t.Format)
+				entry.Format = t.Format
+			} else {
+				entry.URL = subtitleVTTURL(titleID, t.ID)
+				entry.Format = "vtt"
+			}
 		}
 		out = append(out, entry)
 	}
@@ -723,6 +757,12 @@ type progressRequest struct {
 	// affect the resume/watched threshold; an unknown id is ignored. Empty on an
 	// ordinary progress tick.
 	AudioStreamID string `json:"audioStreamId"`
+	// VideoStreamID is the exact video parallel of AudioStreamID, for players that
+	// switch video tracks in-container without re-negotiating (libmpv on direct
+	// play; an HLS video switch is a RESTART whose negotiation already records the
+	// pick, ADR-0025). When set, the pick is Remembered for the next play;
+	// best-effort, an unknown id is ignored. Empty on an ordinary progress tick.
+	VideoStreamID string `json:"videoStreamId"`
 }
 
 // progressResponse echoes the server-resolved watch state after applying the
@@ -750,7 +790,7 @@ func handleSessionProgress(svc *playback.Service, sessionID string) http.Handler
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		out, err := svc.ReportProgress(id.User.ID, sessionID, req.PositionMs, req.AudioStreamID)
+		out, err := svc.ReportProgress(id.User.ID, sessionID, req.PositionMs, req.AudioStreamID, req.VideoStreamID)
 		switch {
 		case errors.Is(err, playback.ErrSessionNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "session not found", nil)

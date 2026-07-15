@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,6 +225,58 @@ func TestRememberedVideoBubblesUpToSiblingEpisode(t *testing.T) {
 	ep2dec := negotiateVideo(t, srv, token, ep2, mkvVideoProfile())
 	if got := resolvedVideoHeight(t, ep2dec); got != 120 {
 		t.Fatalf("sibling episode resolved height = %d, want 120 (inherited Black & White)", got)
+	}
+}
+
+// TestRememberedVideoViaInBandProgress: an in-band pick reported through the progress
+// surface (videoStreamId on POST /sessions/{id}/progress — the path a player that
+// switches video tracks in-container without re-negotiating uses, e.g. libmpv on
+// direct play) is Remembered, so a later play resolves it. The video mirror of
+// TestRememberedAudioViaInBandProgress; pins the write-back that has no
+// re-negotiation of its own.
+func TestRememberedVideoViaInBandProgress(t *testing.T) {
+	requireMultiVideoShowFixtures(t)
+	srv, token, libID := scanVideoShow(t)
+	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
+
+	// Default resolution → Colour (240); grab the Black & White Stream id.
+	base := negotiateVideo(t, srv, token, ep1, mkvVideoProfile())
+	if got := resolvedVideoHeight(t, base); got != 240 {
+		t.Fatalf("default resolved height = %d, want 240 (Colour default)", got)
+	}
+	bwID := videoStreamByLabel(t, base, "Black & White").ID
+
+	// Report the in-band pick alongside a progress tick (no re-negotiation).
+	status, body := srv.JSON(http.MethodPost, "/api/v1/sessions/"+base.SessionID+"/progress", token,
+		map[string]any{"positionMs": 1000, "state": "playing", "videoStreamId": bwID}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("progress+video status = %d, want 200; body: %s", status, body)
+	}
+
+	// A later play resolves the Remembered Black & White cut.
+	replay := negotiateVideo(t, srv, token, ep1, mkvVideoProfile())
+	if got := resolvedVideoHeight(t, replay); got != 120 {
+		t.Fatalf("replay resolved height = %d, want 120 (remembered via progress write-back)", got)
+	}
+}
+
+// TestRememberedVideoProgressUnknownIDIgnored: a stale/malformed videoStreamId on the
+// progress surface is silently ignored — the progress report still succeeds and the
+// next play stays on the default cut (best-effort memory never fails a keepalive).
+func TestRememberedVideoProgressUnknownIDIgnored(t *testing.T) {
+	requireMultiVideoShowFixtures(t)
+	srv, token, libID := scanVideoShow(t)
+	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
+
+	base := negotiateVideo(t, srv, token, ep1, mkvVideoProfile())
+	status, body := srv.JSON(http.MethodPost, "/api/v1/sessions/"+base.SessionID+"/progress", token,
+		map[string]any{"positionMs": 1000, "state": "playing", "videoStreamId": "no-such-stream"}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("progress with unknown videoStreamId status = %d, want 200; body: %s", status, body)
+	}
+	replay := negotiateVideo(t, srv, token, ep1, mkvVideoProfile())
+	if got := resolvedVideoHeight(t, replay); got != 240 {
+		t.Fatalf("replay resolved height = %d, want 240 (unknown id must not disturb the default)", got)
 	}
 }
 

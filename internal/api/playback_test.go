@@ -34,6 +34,7 @@ type decisionSubtitleResp struct {
 	Forced   bool   `json:"forced"`
 	Label    string `json:"label"`
 	URL      string `json:"url"`
+	Format   string `json:"format"`
 }
 
 type decisionResp struct {

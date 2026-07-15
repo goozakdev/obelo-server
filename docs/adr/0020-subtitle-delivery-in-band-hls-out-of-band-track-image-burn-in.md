@@ -1,5 +1,7 @@
 # Subtitle delivery: in-band HLS rendition, out-of-band track for direct play, burn-in for image subs
 
+> **Amended by [ADR-0033](./0033-original-format-subtitle-delivery-negotiated-by-capability.md):** the "downgraded to plain cues" flattening below is now the *fallback*. A client whose Capability profile declares a track's original format (`textSubtitleFormats`) is served the original bytes — styling intact — out-of-band; WebVTT remains the delivery for everyone else and for the in-band HLS rendition.
+
 Subtitles reach the client by three paths, chosen by subtitle kind and playback tier:
 
 - **Text subtitles** — embedded text Streams and text Sidecar subtitles (SRT, WebVTT, mov_text, and ASS/SSA **downgraded to plain cues**) — are converted to **WebVTT** and delivered as *selectable* tracks:

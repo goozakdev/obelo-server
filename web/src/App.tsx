@@ -23,6 +23,7 @@ import EnrichmentConsentGate from "./admin/EnrichmentConsentGate";
 import { QueueProvider } from "./player/queue/useQueue";
 import { PlaybackTransportProvider } from "./player/transport";
 import { LibrariesProvider } from "./browse/librariesContext";
+import ScrollToTop from "./ScrollToTop";
 
 // App is the router root (issue 02): auth/first-run + the role gate + a minimal
 // authed landing. Browse, player, home rows, and admin screens are later issues.
@@ -42,6 +43,10 @@ import { LibrariesProvider } from "./browse/librariesContext";
 export default function App() {
   return (
     <BrowserRouter>
+      {/* Reset scroll to the top on each forward navigation so a new screen
+          never inherits the previous screen's scroll offset (they share the one
+          document scroll). Back/Forward keep the browser's restored position. */}
+      <ScrollToTop />
       <AuthProvider>
         {/* Libraries load once inside the auth scope so the header's media nav
             (Music / Movies / TV) is derived from a single fetch shared across

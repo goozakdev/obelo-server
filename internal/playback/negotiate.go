@@ -933,6 +933,12 @@ type SubtitleTrack struct {
 	Language    string
 	Forced      bool
 	Convertible bool
+	// Format is the track's canonical ORIGINAL text format ("srt"|"vtt"|"ass" per
+	// subtitle.TextFormat; "" when unknown or not one we can serve raw, e.g. an
+	// embedded mov_text). It lets the api layer offer the original bytes — styling
+	// intact — to a client whose Capability profile declares support for the format
+	// (libmpv renders ASS natively), with the WebVTT conversion as the fallback.
+	Format string
 }
 
 // buildSubtitleTracks assembles the played File's full Subtitle-track list from
@@ -967,6 +973,9 @@ func buildSubtitleTracks(f store.File, subs []store.Subtitle) []SubtitleTrack {
 			// codec (mov_text/subrip/ass all convert), so any embedded text track is
 			// deliverable; an image track is not.
 			Convertible: kind == "text",
+			// The original format is servable raw only for codecs TextFormat knows
+			// (subrip/ass); mov_text folds to "" and stays WebVTT-only.
+			Format: subtitle.TextFormat(s.Codec),
 		})
 	}
 	for _, sub := range subs {
@@ -978,6 +987,7 @@ func buildSubtitleTracks(f store.File, subs []store.Subtitle) []SubtitleTrack {
 			Language:    lang,
 			Forced:      sub.Forced,
 			Convertible: sub.Kind == "text" && subtitle.IsTextConvertible(sub.Codec),
+			Format:      subtitle.TextFormat(sub.Codec),
 		})
 	}
 	return out

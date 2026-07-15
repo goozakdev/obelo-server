@@ -89,12 +89,19 @@ func (s *Service) Search(ctx context.Context, ref FetchRef, lang string) ([]Cand
 	return cands, nil
 }
 
-// Pick downloads the chosen candidate, normalizes a text subtitle to WebVTT (an
-// image subtitle is cached raw for burn-in), writes it identity-keyed under the
-// data dir, and records the locking source='fetched' row. It returns the created
-// Subtitle so the caller can surface it immediately. A disabled provider yields
-// ErrProviderDisabled (the caller reports nothing found); a genuine download/convert
-// failure is a real error.
+// Pick downloads the chosen candidate, caches a text subtitle in its ORIGINAL
+// format (an image subtitle is cached raw for burn-in), writes it identity-keyed
+// under the data dir, and records the locking source='fetched' row. It returns the
+// created Subtitle so the caller can surface it immediately. A disabled provider
+// yields ErrProviderDisabled (the caller reports nothing found); a genuine
+// download failure is a real error.
+//
+// Keeping the original (ADR-0033) — not the pre-converted WebVTT this used to
+// cache — means the row behaves exactly like a Sidecar subtitle at serve time: the
+// .vtt endpoint converts on demand (the same subtitle.ToWebVTT path), and a client
+// that declares the format in its Capability profile gets the original bytes with
+// ASS styling intact. Rows written before this change carry codec "vtt" and keep
+// serving through the conversion path's passthrough unchanged.
 func (s *Service) Pick(ctx context.Context, ref FetchRef, candidate Candidate, lang string) (store.Subtitle, error) {
 	lang = subtitle.NormalizeLang(lang)
 	data, format, err := s.current().Download(ctx, candidate)
@@ -109,14 +116,14 @@ func (s *Service) Pick(ctx context.Context, ref FetchRef, candidate Candidate, l
 		ext     string
 	)
 	if kind == "text" && subtitle.IsTextConvertible(format) {
-		// Normalize to WebVTT on the same conversion path sidecars use (slice 02), so
-		// a fetched subtitle serves through the existing out-of-band .vtt endpoint
-		// unchanged.
-		vtt, cerr := subtitle.ToWebVTT(data, format)
-		if cerr != nil {
+		// Cache the original, canonically named (subrip→srt, ssa→ass). Validate the
+		// conversion NOW so a malformed download is rejected at pick time, not
+		// discovered by the first .vtt fetch.
+		canon := subtitle.TextFormat(format)
+		if _, cerr := subtitle.ToWebVTT(data, canon); cerr != nil {
 			return store.Subtitle{}, fmt.Errorf("subfetch: converting fetched subtitle: %w", cerr)
 		}
-		outData, codec, ext = vtt, "vtt", ".vtt"
+		outData, codec, ext = data, canon, "."+canon
 	} else {
 		// A fetched image subtitle (rare) is cached raw and burns in on transcode
 		// (slice 04) like any image track.
