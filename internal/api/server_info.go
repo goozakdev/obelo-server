@@ -7,9 +7,18 @@ import (
 )
 
 // serverInfoResponse is the camelCase JSON shape of GET /api/v1/server defined
-// in docs/api-contract.md: server version, supported API versions, a
-// feature-flags map, and setupRequired.
+// in docs/api-contract.md: the Server identity, server version, supported API
+// versions, a feature-flags map, and setupRequired.
 type serverInfoResponse struct {
+	// ID and Name are the Server identity (ADR-0034). Both are omitempty, which is
+	// what makes them additive: a client written against this contract must treat
+	// them as optional, and a server that cannot resolve an identity degrades to
+	// the pre-ADR-0034 shape rather than advertising empty strings.
+	//
+	// Neither is a secret — this endpoint is [Unauthenticated], the id is an opaque
+	// UUID granting nothing, and the name is chosen by the operator.
+	ID                string          `json:"id,omitempty"`
+	Name              string          `json:"name,omitempty"`
 	Version           string          `json:"version"`
 	SupportedVersions []int           `json:"supportedVersions"`
 	Features          map[string]bool `json:"features"`
@@ -28,6 +37,8 @@ func handleServerInfo(meta *server.Metadata) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, serverInfoResponse{
+			ID:                info.Identity.ID,
+			Name:              info.Identity.Name,
 			Version:           info.Version,
 			SupportedVersions: info.SupportedVersions,
 			Features:          info.Features,

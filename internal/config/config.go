@@ -74,6 +74,16 @@ type Config struct {
 	// database and, in later slices, filesystem caches (ADR-0007).
 	DataDir string
 
+	// ServerName is the Server identity's human-facing display name (ADR-0034):
+	// what a client shows in a discovery picker, and what GET /server reports as
+	// "name". Empty means "derive one" — the host's name, else a constant — so a
+	// server always has something printable without configuration.
+	//
+	// Purely cosmetic: nothing keys on it, and renaming never invalidates a Device
+	// token (that is the id's job, and the two are separate for exactly this
+	// reason).
+	ServerName string
+
 	// ScanInterval is how often the always-on scheduled scan re-walks every
 	// Library as the safety net for changes manual/filesystem triggers missed
 	// (ADR-0008). The scheduled scan is incremental, so an unchanged library is
@@ -434,6 +444,8 @@ func (c Config) SubtitleCacheDir() string {
 //
 //	JUICEBOX_LISTEN_ADDR    -> ListenAddr
 //	JUICEBOX_DATA_DIR       -> DataDir
+//	JUICEBOX_SERVER_NAME    -> ServerName (the Server identity's display name,
+//	                               ADR-0034; empty derives one from the hostname)
 //	JUICEBOX_SCAN_INTERVAL  -> ScanInterval (a Go duration, e.g. "30m";
 //	                               "0" disables the scheduled scan)
 //	JUICEBOX_SESSION_IDLE_TIMEOUT -> SessionIdleTimeout (a Go duration, e.g.
@@ -469,6 +481,9 @@ func FromEnv() Config {
 	}
 	if v := os.Getenv("JUICEBOX_DATA_DIR"); v != "" {
 		c.DataDir = v
+	}
+	if v := os.Getenv("JUICEBOX_SERVER_NAME"); v != "" {
+		c.ServerName = v
 	}
 	if v := os.Getenv("JUICEBOX_SCAN_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {

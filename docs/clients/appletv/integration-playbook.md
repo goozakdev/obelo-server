@@ -4,7 +4,16 @@ How the tvOS client *uses* the Juice Box API: the sequences, state machines, and
 
 **The player is libmpv** (embedded via `MPVKit` or similar, rendering into a Metal layer). That choice shapes this whole doc: mpv's network stack is ffmpeg, so it sends real HTTP headers on media requests (no cookie tricks), demuxes MKV directly, renders ASS subtitles natively via libass, and switches audio/video/subtitle tracks in-container without server round-trips.
 
-Server base URL: user-configured (`http://<host>:8080` on the LAN, or an HTTPS reverse-proxy URL). All API paths below are relative to `<base>/api/v1`.
+Server base URL: discovered on the LAN (below) or user-entered (`http://<host>:8080`, or an HTTPS reverse-proxy URL). All API paths below are relative to `<base>/api/v1`.
+
+## 0. Finding the server
+
+The server advertises `_juicebox._tcp` on the local link with TXT `txtvers=1 id=<uuid> name=<display> path=/api/v1` ([ADR-0034](../../adr/0034-server-identity-and-mdns-advertisement.md); `api-contract.md` §3.1). Browse with `NWBrowser`; declare `NSBonjourServices: [_juicebox._tcp]` in Info.plist or you will see nothing.
+
+- **Still build manual entry.** mDNS is link-local, so a reverse-proxied or VPN-reachable server can never be discovered. Manual entry is the permanent path, not a stopgap.
+- **Store the `id` alongside the token.** This is the payoff: when the server's DHCP lease changes, rediscover the service whose `id` matches, update the base URL, and **keep the token** — it is bound to a Device row, not to an address. The user never sees a re-login.
+- TXT is a hint (RFC 6763). Confirm against `GET /server`, which carries the same `id`/`name`.
+- Both fields are additive: a server predating ADR-0034 omits them. Absent means "old server", never "error".
 
 ## 1. Cold start
 

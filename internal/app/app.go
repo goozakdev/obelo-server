@@ -51,6 +51,12 @@ type App struct {
 	Events   *events.Broker
 	Handler  http.Handler
 
+	// Identity is this Server's stable id + display name (ADR-0034). Exposed so the
+	// mDNS advertiser and the handshake advertise the same values — cmd/juicebox
+	// owns the advertiser because only it knows the listen address, but the
+	// identity is resolved here, once.
+	Identity server.Identity
+
 	// providerManager rebuilds + hot-swaps the running Enrichment provider and owns
 	// the per-Library effective-provider cache (ADR-0027). Held here so a policy
 	// change can invalidate the affected Library's cache before its re-enrich.
@@ -219,7 +225,19 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		return nil, fmt.Errorf("app: running migrations: %w", err)
 	}
 
-	meta := server.NewMetadata(db)
+	// Server identity (ADR-0034): minted once into the data dir on first boot, then
+	// stable forever. Resolved before anything advertises it — the handshake and
+	// the mDNS TXT record must agree, so both read it from Metadata.
+	//
+	// A failure here is fatal rather than degraded: an unwritable data dir has
+	// already failed EnsureDataDir above, so reaching this error means something is
+	// wrong we should not paper over by serving an anonymous server.
+	identity, err := server.LoadOrCreateIdentity(cfg.DataDir, cfg.ServerName)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	meta := server.NewMetadata(db, identity)
 
 	authSvc, err := auth.NewService(db)
 	if err != nil {
@@ -482,6 +500,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 	app := &App{
 		Config:           cfg,
+		Identity:         identity,
 		DB:               db,
 		Auth:             authSvc,
 		Library:          librarySvc,

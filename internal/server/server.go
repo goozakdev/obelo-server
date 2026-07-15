@@ -18,6 +18,10 @@ var SupportedAPIVersions = []int{1}
 // Info is the payload behind the handshake. The api layer serializes it to the
 // camelCase JSON shape defined in docs/api-contract.md.
 type Info struct {
+	// Identity is the Server's stable id + display name (ADR-0034). Additive to
+	// the handshake, so it never bumps the API major version; a client written
+	// against an older server must treat both as optional.
+	Identity          Identity
 	Version           string
 	SupportedVersions []int
 	Features          map[string]bool
@@ -34,13 +38,21 @@ type UserCounter interface {
 // Metadata assembles handshake Info. It is the single source of truth for what
 // the server advertises.
 type Metadata struct {
-	users UserCounter
+	users    UserCounter
+	identity Identity
 }
 
-// NewMetadata builds a Metadata backed by the given user counter.
-func NewMetadata(users UserCounter) *Metadata {
-	return &Metadata{users: users}
+// NewMetadata builds a Metadata backed by the given user counter, advertising the
+// given Identity (ADR-0034). A zero Identity is legal — the handshake simply omits
+// the fields, which is what a client sees from a server predating ADR-0034.
+func NewMetadata(users UserCounter, identity Identity) *Metadata {
+	return &Metadata{users: users, identity: identity}
 }
+
+// Identity returns the Server identity this metadata advertises. The mDNS
+// advertiser reads it from here so there is exactly one source of truth for what
+// the handshake and the TXT record claim.
+func (m *Metadata) Identity() Identity { return m.identity }
 
 // Features returns the advertised feature-flags map. Clients branch on these
 // rather than version strings. As later slices land, flags flip to true.
@@ -69,6 +81,7 @@ func (m *Metadata) Info() (Info, error) {
 		return Info{}, err
 	}
 	return Info{
+		Identity:          m.identity,
 		Version:           Version,
 		SupportedVersions: SupportedAPIVersions,
 		Features:          m.Features(),

@@ -253,3 +253,7 @@ _Avoid_: Loop, Repeat-track (use repeat-one).
 **Device**:
 A first-class, named client installation belonging to a User (e.g. "Brandon's iPhone"). Holds a long-lived bearer token issued at login; listed per-User and individually revocable. Revoking a Device invalidates its token.
 _Avoid_: Client (the app generically), Session (that's playback).
+
+**Server identity**:
+A Server's stable self-assigned id and its operator-chosen display name — minted once and persisted with the rest of its state, independent of whatever address it happens to be reachable at ([ADR-0034](./docs/adr/0034-server-identity-and-mdns-advertisement.md)). The id is machine-facing and permanent; the name is human-facing and freely changeable, so renaming never orphans a Device's token. What lets a client recognize the same Server after its address changes, and answer "is this the one I logged into?" — unanswerable before it existed. Advertised over mDNS and reported by the handshake.
+_Avoid_: Server ID (bare — the identity is both fields), Instance, Host / address (that's where it is, not which it is), Fingerprint (implies derivation from a key).

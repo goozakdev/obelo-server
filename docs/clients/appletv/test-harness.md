@@ -88,10 +88,21 @@ Useful variants: with the libmpv profile both `.mkv` and `.mp4` direct-play, so 
 ## Libraries + scan
 
 ```bash
+# Parse the id properly — do NOT reach for sed here. libraryJSON is
+#   { "id", "name", "kind", "rootFolders": [ { "id", "path" } ] }
+# and `sed -E 's/.*"id":"([^"]+)".*/\1/'` is GREEDY: `.*` runs to the LAST "id" in
+# the body, so it returns the root folder's id, not the library's. The scan below
+# then POSTs to a library that doesn't exist, 404s, and you get an empty library
+# with no error anywhere. (The `"token"` extraction above is safe only because a
+# login response has exactly one `"token"` key.)
 MLIB=$(curl -s -X POST $B/libraries -H "Authorization: Bearer $TOKEN" \
   -d "{\"name\":\"Movies\",\"kind\":\"movie\",\"rootFolders\":[\"$PWD/$M/Movies\"]}" \
-  | sed -E 's/.*"id":"([^"]+)".*/\1/')
-curl -s -X POST $B/libraries/$MLIB/scan -H "Authorization: Bearer $TOKEN"   # → 202
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+
+# Expect 202. Anything else (404 = wrong id, 409 = the library already exists) means
+# the scan never ran.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $B/libraries/$MLIB/scan \
+  -H "Authorization: Bearer $TOKEN"
 # poll: GET $B/libraries/$MLIB/scan until state:"idle"
 # repeat for TV (kind "tv") and Music (kind "music")
 ```
@@ -110,6 +121,7 @@ Resetting the data dir is the cheapest way back to a known state — cheaper tha
 ## Gotchas
 
 - **Simulator vs device**: the simulator shares the Mac's localhost; a physical Apple TV needs the Mac's LAN IP and `JUICEBOX_LISTEN_ADDR=0.0.0.0:…`, plus local-network permission in the tvOS app.
+- **Discovery**: the harness advertises `_juicebox._tcp` like any instance (ADR-0034). Name it with `JUICEBOX_SERVER_NAME="Harness"` so it is obvious in a picker next to a real server. Verify from the Mac with `dns-sd -B _juicebox._tcp local` — if the app sees nothing, check that its Info.plist declares `NSBonjourServices`, since without it the browse returns empty and looks like a server fault. Note a **simulator does not join the LAN's multicast** the way a device does; test discovery on real hardware and use manual entry in the simulator.
 - **HTTP on tvOS**: plain-HTTP LAN backends need an ATS exception (`NSAllowsLocalNetworking`) in the app's Info.plist.
 - The server binds plain HTTP; TLS is a reverse proxy's job in production. Testing the `Secure`-cookie path needs a proxy setting `X-Forwarded-Proto: https`.
 - Progress keepalive: an idle session is reaped after **90 s** (`JUICEBOX_SESSION_IDLE_TIMEOUT`); set it low (e.g. `10s`) to test the app's reaped-session recovery quickly.

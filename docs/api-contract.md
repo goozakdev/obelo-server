@@ -2,7 +2,7 @@
 
 The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-unified-two-scope-api.md)), consumed by the web app and all clients. Treated as a versioned product because clients and server update independently.
 
-> **Generated from source at commit `0eeda2c` (2026-07-14)**, plus the ADR-0033 original-format subtitle delivery and the progress `videoStreamId` (added 2026-07-14, post-`0eeda2c` working tree), by extracting handler/DTO structs in `internal/api` and verifying responses against a live instance. Every JSON field name below is a verbatim struct tag; examples are captured or derived from real responses. If code and this doc disagree, the code wins — regenerate by re-running the extraction against `internal/api/*.go` and `internal/events/broker.go`.
+> **Generated from source at commit `c57f537` (2026-07-14)** — which committed the ADR-0033 original-format subtitle delivery and the progress `videoStreamId` that an earlier revision of this doc described as an uncommitted working tree — plus the ADR-0034 Server identity (`GET /server`'s `id`/`name`) and mDNS advertisement, currently uncommitted. Extracted from handler/DTO structs in `internal/api` and verified against a live instance. Every JSON field name below is a verbatim struct tag; examples are captured or derived from real responses. If code and this doc disagree, the code wins — regenerate by re-running the extraction against `internal/api/*.go` and `internal/events/broker.go`.
 
 **Reading this catalog:**
 - Every path lives under **`/api/v1`** (`APIPrefix`, `internal/api/api.go`). The prefix is stripped before dispatch; unknown paths under it return the enveloped `404 NOT_FOUND`, never a plain-text 404.
@@ -113,6 +113,8 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
 
 ```json
 {
+  "id": "90f0aa62-4769-4788-b63a-d9e3cb4ad51c",
+  "name": "Living Room",
   "version": "0.1.0",
   "supportedVersions": [1],
   "features": {
@@ -124,7 +126,30 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
 }
 ```
 
+`id` and `name` are the **Server identity** ([ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). Both are `omitempty` and both are **additive** — a server predating ADR-0034 omits them, so treat them as optional rather than as an error.
+
+- **`id`** — an opaque UUID, minted once into the server's data dir and stable for its lifetime. It is *not* derived from a key or from hardware, so it survives both. **Its purpose is to make an address change survivable:** a client that stored the id can rediscover the server at a new address (DHCP lease change) and keep its token, because the token is bound to a Device row on this server ([ADR-0015](./adr/0015-opaque-db-backed-tokens.md)), never to an address. It is also the only way to answer "is this the same server I logged into?". Wiping the data dir mints a new id — correct, since that server has no Users, Devices, or tokens to honor.
+- **`name`** — the operator's display name (`JUICEBOX_SERVER_NAME`, defaulting to the host's name). Cosmetic; nothing keys on it, and renaming never invalidates a token. That is exactly why it is a separate field from `id`.
+
+Neither is a secret: this endpoint is unauthenticated, the id grants nothing, and the name is operator-chosen.
+
 Errors: `500 INTERNAL`.
+
+#### LAN discovery — mDNS/Bonjour
+
+Not an HTTP endpoint, but part of how a native client reaches this contract ([ADR-0005](./adr/0005-discovery-and-tls-via-reverse-proxy.md), implemented by [ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). The server advertises on the local link:
+
+```
+service:  _juicebox._tcp        (in the local domain, on the listen port)
+TXT:      txtvers=1  id=<uuid>  name=<display name>  path=/api/v1
+```
+
+Verify with `dns-sd -B _juicebox._tcp local` / `dns-sd -L "<name>" _juicebox._tcp local`.
+
+- **TXT is a hint, not a contract** (RFC 6763). Confirm everything against `GET /server` once connected; `id`/`name` appear in both, and the handshake is authoritative.
+- **A discovered server is always plain `http`.** The server binds plain HTTP and a TLS-terminating reverse proxy is by definition not on the local link, so no scheme is advertised.
+- **Discovery is LAN-only, permanently.** mDNS is link-local by construction: a reverse-proxied or VPN-reachable instance is not discoverable and never will be. **Manual address entry is the permanent path for remote access, not a stopgap** — every client needs it.
+- **Advertisement is best-effort.** A server that failed to register still serves normally; it just has to be addressed manually. Absence of a Bonjour record is not evidence the server is down — use `GET /server`, the cheapest liveness probe.
 
 #### POST /setup — [Unauthenticated]
 
