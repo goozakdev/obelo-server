@@ -33,7 +33,7 @@ The web app's hover states translate to the tvOS focus engine, not to new invent
 
 - **Focused poster/card**: the system scale+parallax effect, plus a **2pt `accent` ring** — the lime ring *is* the Juice Box focus signature; don't use white glows or shadows. Hairline `border` on unfocused items is optional at 10 feet (it won't read from the couch); the accent ring on focus is mandatory.
 - **Focused text row** (settings, track lists): `surface2` pill behind the row + text brightens `textDim → text`. No underlines.
-- **Buttons**: default = transparent with `borderStrong` outline; primary/confirm = `accent` fill with `accentInk` label. One primary per screen.
+- **Buttons**: default = transparent with `borderStrong` outline; primary/confirm = `accent` fill with `accentInk` label. One primary per screen. **Focused**: the default button takes the same 2pt `accent` ring as a card. The primary can't — a lime ring on a lime fill is invisible at ten feet — so it takes the system scale lift instead. Focus must change *something* on every button; this bullet once specified only the resting state, and the tvOS client faithfully implemented the hole, shipping 17 buttons that rendered identically focused and unfocused.
 
 ## Navigation chrome
 
