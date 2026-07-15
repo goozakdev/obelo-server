@@ -27,7 +27,8 @@ GET /server                      (unauthenticated)
 ```
 
 - Persist a **stable `clientId` UUID** on first launch (Keychain). Re-login with the same `clientId` reuses the server-side Device instead of creating "Living Room (7)".
-- Branch on `features` flags, not `version`. Treat absent keys as `false`. **Known caveat** (contract, Part 1): `search`, `collections`, `playlists`, `realtimeEvents` currently read `false` on a server where the routes work — until the server flips them, gate UI on a minimum server `version` instead of those four flags.
+- Branch on `features` flags, not `version`. Treat absent keys as `false` — that is what makes a flag safe to read against a server that predates one.
+- Historical note, because an earlier revision of this playbook told you to do the wrong thing: `search`, `collections`, `playlists`, and `realtimeEvents` once advertised `false` while serving those routes, and this document advised gating UI on "a minimum server `version`" until the server flipped them. That advice was never implementable — `version` was `0.1.0` both before and after the fix, so no version string ever separated a lying server from an honest one. The flags are now pinned to their routes by `TestFeaturesMatchRoutes`. Gate on the flag; do not add a version check.
 
 ## 2. Login & credential handling
 

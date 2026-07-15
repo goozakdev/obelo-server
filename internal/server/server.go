@@ -55,7 +55,9 @@ func NewMetadata(users UserCounter, identity Identity) *Metadata {
 func (m *Metadata) Identity() Identity { return m.identity }
 
 // Features returns the advertised feature-flags map. Clients branch on these
-// rather than version strings. As later slices land, flags flip to true.
+// rather than version strings, so a flag that lags its routes is a bug: it tells
+// every client to hide a feature this server serves. Flip the flag in the same
+// commit that lands the route, and keep TestFeaturesMatchRoutes honest.
 func (m *Metadata) Features() map[string]bool {
 	return map[string]bool{
 		"auth":           true,
@@ -64,11 +66,15 @@ func (m *Metadata) Features() map[string]bool {
 		"directPlay":     true,
 		"watchState":     true,
 		"home":           true,
-		"transcode":      false,
-		"search":         false,
-		"collections":    false,
-		"playlists":      false,
-		"realtimeEvents": false,
+		"search":         true,
+		"collections":    true,
+		"playlists":      true,
+		"realtimeEvents": true,
+		// transcode is not a route-existence flag: /transcoding is only the
+		// admin observability snapshot (ADR-0029). It advertises the transcode
+		// delivery tier, which depends on a resolved ffmpeg backend, so it stays
+		// false until it is computed from that backend rather than hardcoded.
+		"transcode": false,
 	}
 }
 

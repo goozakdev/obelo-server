@@ -17,7 +17,7 @@ The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-uni
 
 - **REST-ish JSON over HTTP**, resource-oriented, **camelCase** field names.
 - **Versioning via URL path** — `/api/v1/…`. One integer major version. Additive changes (new fields/endpoints) never bump it; only breaking changes mint `/api/v2`, and the server may serve both during a transition.
-- **Handshake** — `GET /server` returns server version, supported API versions, and a **feature-flags** map. Clients branch on feature flags, not version strings. *Caveat:* a flag means "advertised ready", not "route exists" — `search`, `collections`, `playlists`, and `realtimeEvents` currently report `false` while their routes exist and work.
+- **Handshake** — `GET /server` returns server version, supported API versions, and a **feature-flags** map. Clients branch on feature flags, not version strings. A flag means "this server serves these routes"; `TestFeaturesMatchRoutes` holds the map to that meaning by probing the routes. The one exception is **`transcode`**, which advertises the transcode *delivery tier* rather than a route, and currently reads `false` pending resolution from the ffmpeg backend.
 - **Success content type**: `application/json; charset=utf-8`, except `204 No Content` (empty body) and the media byte endpoints (images, video, HLS artifacts, WebVTT).
 
 ### Error envelope
@@ -73,7 +73,7 @@ The **server** applies the threshold, never the client: crossing ~**90%** of dur
 
 - **No `GET /sessions` collection** — only per-session sub-resources exist. An Admin session list is a known follow-up; the admin-only session SSE events are deliverable without it.
 - The SSE stream sends **no `id:` lines, no `retry:` hint, and no heartbeat** beyond the initial `: connected` comment — clients must rely on EventSource/HTTP-level reconnect and treat every event as a refetch nudge (each maps to a pollable resource).
-- Feature flags for shipped-but-unadvertised features (`search`, `collections`, `playlists`, `realtimeEvents`) still read `false`.
+- The `transcode` flag is hardcoded `false` rather than computed from the resolved ffmpeg backend, so a server that can transcode still does not advertise it. Unlike the other flags it is not route-existence — `/transcoding` (the ADR-0029 admin snapshot) is served either way.
 
 ---
 
@@ -119,8 +119,8 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
   "supportedVersions": [1],
   "features": {
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
-    "watchState": true, "home": true, "transcode": false, "search": false,
-    "collections": false, "playlists": false, "realtimeEvents": false
+    "watchState": true, "home": true, "search": true, "collections": true,
+    "playlists": true, "realtimeEvents": true, "transcode": false
   },
   "setupRequired": false
 }
