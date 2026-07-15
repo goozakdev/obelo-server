@@ -45,7 +45,10 @@ type decisionResp struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"edition"`
-	VideoStream      decisionStreamResp     `json:"videoStream"`
+	// Both are pointers because both are omitted when there is no such Stream: video
+	// for an audio-only Track (ADR-0017), audio for a silent File. A value type here
+	// cannot tell "omitted" from "zero", which is the very bug this shape now guards.
+	VideoStream      *decisionStreamResp    `json:"videoStream"`
 	AudioStream      *decisionStreamResp    `json:"audioStream"`
 	AudioStreams     []decisionAudioResp    `json:"audioStreams"`
 	VideoStreams     []videoStreamResp      `json:"videoStreams"`
@@ -123,6 +126,12 @@ func TestPlaybackDirectPlay(t *testing.T) {
 	}
 	if dec.Edition.ID == "" {
 		t.Errorf("edition id empty; body: %s", body)
+	}
+	// The counterweight to TestMusicTrackDecisionOmitsVideoStreamKey: a Movie must
+	// still CARRY videoStream. Omitting it for audio-only is only correct if real
+	// video is unaffected, so the two assertions are only meaningful as a pair.
+	if dec.VideoStream == nil {
+		t.Fatalf("movie decision omits videoStream, want it present; body: %s", body)
 	}
 	if dec.VideoStream.Codec != "h264" {
 		t.Errorf("videoStream codec = %q, want h264", dec.VideoStream.Codec)

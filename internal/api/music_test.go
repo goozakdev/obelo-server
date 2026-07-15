@@ -485,6 +485,58 @@ func TestMusicTrackDirectPlay(t *testing.T) {
 	if dec.SessionID == "" {
 		t.Errorf("sessionId empty; body: %s", body)
 	}
+	// "no video stream" above is a wire claim, so assert it on the wire. This went
+	// unasserted while the field marshalled as {"index":0,"codec":""} on every Track
+	// — present, empty, and true under `if (d.videoStream)`.
+	if dec.VideoStream != nil {
+		t.Errorf("track decision carries videoStream %+v, want it OMITTED (ADR-0017); body: %s",
+			*dec.VideoStream, body)
+	}
+	if dec.AudioStream == nil {
+		t.Errorf("track decision has no audioStream; body: %s", body)
+	}
+}
+
+// TestMusicTrackDecisionOmitsVideoStreamKey: the stronger form of the assertion
+// above — the `videoStream` KEY is absent from the JSON, not merely null. A client
+// distinguishes audio-only from video by the field's presence, so "null" and
+// "omitted" must not diverge (Swift decodes both to nil, but JS `"videoStream" in d`
+// does not). Paired with the Movie case, which must still carry it: the guard has to
+// omit for Tracks WITHOUT silently dropping the field for real video.
+func TestMusicTrackDecisionOmitsVideoStreamKey(t *testing.T) {
+	requireMusicFixtures(t)
+	srv, token, libID := scanMusicLibrary(t)
+	artists := listArtists(t, srv, token, libID)
+	radio := artistAlbums(t, srv, token, findArtist(t, artists, "Radiohead"))
+	var okc albumResp
+	for _, a := range radio.Albums {
+		if a.Title == "OK Computer" {
+			okc = a
+		}
+	}
+	tracks := albumTracks(t, srv, token, okc.ID)
+	profile := map[string]any{
+		"deviceProfile": map[string]any{
+			"containers":       []string{"mp4", "m4a", "mov"},
+			"audioCodecs":      []string{"aac", "flac", "alac"},
+			"maxAudioChannels": 8,
+		},
+		"constraints": map[string]any{"maxBitrate": 100000000},
+	}
+	var raw map[string]any
+	status, body := srv.JSON(http.MethodPost, "/api/v1/titles/"+tracks.Tracks[0].ID+"/playback", token, profile, &raw)
+	if status != http.StatusOK {
+		t.Fatalf("track playback status = %d, want 200; body: %s", status, body)
+	}
+	if _, present := raw["videoStream"]; present {
+		t.Errorf("track decision JSON has a videoStream key (= %v), want it absent; body: %s",
+			raw["videoStream"], body)
+	}
+	// The empty list is the plural's contract and is unrelated to the singular's
+	// omission — it was already correct, and must stay a [] rather than disappear.
+	if vs, present := raw["videoStreams"]; !present || vs == nil {
+		t.Errorf("videoStreams must stay a present empty list, got %v; body: %s", vs, body)
+	}
 }
 
 // TestMusicTrackTranscodeFLACtoAAC: a FLAC Track under a profile that supports

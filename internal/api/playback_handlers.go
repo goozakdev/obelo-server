@@ -188,11 +188,17 @@ type decisionSubtitleJSON struct {
 // subtitles is every selectable Subtitle track for the played File (ADR-0020),
 // replacing the old thin subtitle:{mode,url}; non-nil, empty when the File has none.
 type decisionResponse struct {
-	SessionID   string              `json:"sessionId"`
-	Tier        string              `json:"tier"`
-	StreamURL   string              `json:"streamUrl"`
-	Edition     decisionEditionJSON `json:"edition"`
-	VideoStream decisionStreamJSON  `json:"videoStream"`
+	SessionID string              `json:"sessionId"`
+	Tier      string              `json:"tier"`
+	StreamURL string              `json:"streamUrl"`
+	Edition   decisionEditionJSON `json:"edition"`
+	// VideoStream is the resolved video Stream, OMITTED for an audio-only Decision —
+	// a Music Track, or any File whose only video Stream is cover art (ADR-0017: a
+	// Track's Decision "carries an audio Stream and no video Stream"). A pointer
+	// because encoding/json's omitempty does nothing to a struct: as a value type this
+	// field marshalled as `{"index":0,"codec":""}` on every Track, so `if (d.videoStream)`
+	// was true for audio-only and each client had to sniff the empty codec instead.
+	VideoStream *decisionStreamJSON `json:"videoStream,omitempty"`
 	AudioStream *decisionStreamJSON `json:"audioStream,omitempty"`
 	// AudioStreams is every selectable audio Stream the played File offers, labeled
 	// for the Audio menu (audio-streams/02) — the same projection the catalog exposes
@@ -592,17 +598,10 @@ func toDecisionResponse(sessionID, titleID string, d playback.Decision, clientSu
 		streamURL = APIPrefix + "/sessions/" + sessionID + "/hls/" + file
 	}
 	resp := decisionResponse{
-		SessionID: sessionID,
-		Tier:      string(d.Tier),
-		StreamURL: streamURL,
-		Edition:   decisionEditionJSON{ID: d.Edition.ID, Name: d.Edition.Name},
-		VideoStream: decisionStreamJSON{
-			Index:    d.VideoStream.Index,
-			Codec:    d.VideoStream.Codec,
-			Language: d.VideoStream.Language,
-			Width:    d.VideoStream.Width,
-			Height:   d.VideoStream.Height,
-		},
+		SessionID:    sessionID,
+		Tier:         string(d.Tier),
+		StreamURL:    streamURL,
+		Edition:      decisionEditionJSON{ID: d.Edition.ID, Name: d.Edition.Name},
 		AudioStreams: toAudioStreams(d.File.Streams),
 		// Re-flag the default to the resolved video Stream (the capability-then-quality
 		// pick), which may differ from the container is_default disposition on a multi-
@@ -610,6 +609,21 @@ func toDecisionResponse(sessionID, titleID string, d playback.Decision, clientSu
 		VideoStreams:     toVideoStreams(d.File.Streams, d.VideoStream.ID),
 		Subtitles:        toDecisionSubtitles(titleID, d.Subtitles, clientSubtitleFormats),
 		EstimatedBitrate: d.EstimatedBitrate,
+	}
+	// A video Stream is present for every Movie/Episode; omit it for an audio-only
+	// Decision (a Track, or a File whose only video is cover art) so the response
+	// stays honest — the same rule as audio below, which this field used to break by
+	// marshalling a zero value instead of disappearing. Tested on the Stream rather
+	// than on d.AudioOnly: this asks the question the field answers ("is there a real
+	// video Stream to describe?") rather than trusting a flag set elsewhere.
+	if d.VideoStream.Kind == "video" || d.VideoStream.Codec != "" {
+		resp.VideoStream = &decisionStreamJSON{
+			Index:    d.VideoStream.Index,
+			Codec:    d.VideoStream.Codec,
+			Language: d.VideoStream.Language,
+			Width:    d.VideoStream.Width,
+			Height:   d.VideoStream.Height,
+		}
 	}
 	// An audio Stream is present for every real Movie File; omit it only for the
 	// (rare) silent file so the response stays honest.

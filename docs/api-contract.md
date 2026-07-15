@@ -370,8 +370,8 @@ Negotiates a Capability profile → picks a tier ([ADR-0003](./adr/0003-three-ti
   "tier": "directPlay",
   "streamUrl": "/api/v1/sessions/{sessionId}/stream",
   "edition": { "id": "…", "name": "SD" },
-  "videoStream": { "index": 0, "codec": "h264", "width": 320, "height": 180 },
-  "audioStream": { "index": 1, "codec": "aac", "channels": 1 },
+  "videoStream"?: { "index": 0, "codec": "h264", "width": 320, "height": 180 },
+  "audioStream"?: { "index": 1, "codec": "aac", "channels": 1 },
   "audioStreams": [ { "id": "…", "index": 1, "codec": "aac", "language"?, "channels"?, "layout"?, "isDefault": false, "commentary"?, "label": "Unknown Mono" } ],
   "videoStreams": [ { "id": "…", "index": 0, "codec": "h264", "width": 320, "height": 180, "isDefault": true, "label": "180p" } ],
   "subtitles": [ { "id", "source": "embedded|sidecar|fetched", "kind": "text|image",
@@ -384,6 +384,7 @@ Negotiates a Capability profile → picks a tier ([ADR-0003](./adr/0003-three-ti
 
 - `tier` ∈ `directPlay | directStream | transcode`.
 - `streamUrl`: **directPlay** → `/sessions/{id}/stream` (progressive byte-range); **directStream/transcode** → `/sessions/{id}/hls/master.m3u8` when the session has demuxed audio renditions or deliverable text subtitles, else `/sessions/{id}/hls/index.m3u8` ([ADR-0004](./adr/0004-hls-for-adaptive-progressive-for-direct-play.md)).
+- `videoStream` **omitted for an audio-only Decision** — a music Track, or any File whose only video Stream is cover art ([ADR-0017](./adr/0017-audio-only-playback-path.md)). Test the field's **presence**, not its contents: it is absent, never a zero value. (It formerly marshalled as `{"index":0,"codec":""}` on every Track — present but empty, so `if (d.videoStream)` was true for audio-only and clients had to sniff the empty codec. That shape is gone; a client still carrying such a workaround can drop it once it no longer talks to an older server.) The `videoStreams` list is unaffected — it was already `[]` for a Track and stays a present empty list.
 - `audioStream` omitted only for a silent File. Subtitle `url` present only for text tracks ([ADR-0020](./adr/0020-subtitle-delivery-in-band-hls-out-of-band-track-image-burn-in.md)); image tracks burn in via `burnSubtitleId`. `format` names what the `url` serves ([ADR-0033](./adr/0033-original-format-subtitle-delivery-negotiated-by-capability.md)): when `deviceProfile.textSubtitleFormats` declares the track's **original** format (`srt`/`ass`, aliases `subrip`/`ssa` fold), the url points at the original bytes — ASS styling intact — else at the WebVTT conversion. Embedded `mov_text` is always WebVTT-only.
 
 Errors:

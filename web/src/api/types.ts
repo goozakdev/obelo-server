@@ -1588,7 +1588,10 @@ export interface PlaybackDecision {
   tier: PlaybackTier;
   streamUrl: string;
   edition: { id: string; name: string };
-  videoStream: DecisionStream;
+  /** The resolved video Stream — **absent for an audio-only Decision** (a music
+   * Track, or a File whose only video is cover art; ADR-0017). `videoStream !==
+   * undefined` is therefore the honest "does this session have video" test. */
+  videoStream?: DecisionStream;
   /** Every selectable video Stream the played File offers, labeled for the Video
    * menu (selectable-video/01, ADR-0025) — the same projection the catalog exposes,
    * but with `isDefault` re-marked to the capability-then-quality pick the decision
