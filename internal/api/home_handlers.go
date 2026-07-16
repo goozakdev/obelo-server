@@ -25,14 +25,14 @@ import (
 // entries. Episode carries the Show/Season/episode parent context for an Episode
 // leaf (omitted entirely for a Movie — additive, Movie shape unchanged).
 type homeTitleJSON struct {
-	ID               string              `json:"id"`
-	Kind             string              `json:"kind"`
-	Title            string              `json:"title"`
-	Year             int                 `json:"year,omitempty"`
-	TMDBID           string              `json:"tmdbId,omitempty"`
-	IMDBID           string              `json:"imdbId,omitempty"`
-	AddedAt          string              `json:"addedAt,omitempty"`
-	ResumePositionMs int64               `json:"resumePositionMs,omitempty"`
+	ID               string `json:"id"`
+	Kind             string `json:"kind"`
+	Title            string `json:"title"`
+	Year             int    `json:"year,omitempty"`
+	TMDBID           string `json:"tmdbId,omitempty"`
+	IMDBID           string `json:"imdbId,omitempty"`
+	AddedAt          string `json:"addedAt,omitempty"`
+	ResumePositionMs int64  `json:"resumePositionMs,omitempty"`
 	// DurationMs is the Title's playable duration; with ResumePositionMs it drives
 	// the Continue Watching card's progress bar — the same pairing, and the same
 	// value, the Show detail's resumePoint carries. Present on Continue Watching
