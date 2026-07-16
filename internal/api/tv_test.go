@@ -41,6 +41,22 @@ var tvClips = []tvClip{
 	{filepath.Join("Anime Show", "Season 01", "Anime Show - 135 - The Battle.mkv"), "160x120"},
 }
 
+// Local TV artwork (naming-convention.md "Local artwork"), on Double Show only.
+//
+// It lives on an EXISTING Show rather than a new folder because TestTVShowsList
+// asserts the fixture's show count. It lives on DOUBLE SHOW rather than The Bear
+// because local artwork WINS over fetched, and TestEnrichTVShowSeasonEpisode
+// asserts The Bear serves the enrichment's bytes — giving The Bear a poster.jpg
+// would silently gut that test's point instead of failing it honestly. So the two
+// cases now live on two Shows: The Bear proves fetched artwork serves, Double Show
+// proves local artwork beats it. The remaining Shows carry neither and prove the
+// absent case.
+var tvPosters = []namingPoster{
+	{filepath.Join("Double Show (2020)", "poster.jpg"), "blue"},
+	{filepath.Join("Double Show (2020)", "fanart.jpg"), "red"},
+	{filepath.Join("Double Show (2020)", "Season 01.jpg"), "green"},
+}
+
 var tvFixturesAvailable bool
 
 func requireTVFixtures(t *testing.T) {
@@ -74,6 +90,18 @@ func ensureTVFixtures() bool {
 			return false
 		}
 	}
+	for _, p := range tvPosters {
+		out := filepath.Join(root, p.relPath)
+		if fileExists(out) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return false
+		}
+		if !generatePoster(p, out) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -89,11 +117,13 @@ func tvRoot(t *testing.T) string {
 // --- wire shapes ------------------------------------------------------------
 
 type showSummaryResp struct {
-	ID          string `json:"id"`
-	Kind        string `json:"kind"`
-	Title       string `json:"title"`
-	Year        int    `json:"year"`
-	NeedsReview bool   `json:"needsReview"`
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Title         string `json:"title"`
+	Year          int    `json:"year"`
+	NeedsReview   bool   `json:"needsReview"`
+	PosterURL     string `json:"posterUrl"`
+	BackgroundURL string `json:"backgroundUrl"`
 }
 
 type showsListResp struct {
@@ -107,6 +137,7 @@ type seasonResp struct {
 	SeasonNumber int    `json:"seasonNumber"`
 	Specials     bool   `json:"specials"`
 	EpisodeCount int    `json:"episodeCount"`
+	PosterURL    string `json:"posterUrl"`
 }
 
 type seasonsListResp struct {

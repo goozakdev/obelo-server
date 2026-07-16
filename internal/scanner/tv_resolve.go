@@ -141,9 +141,34 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		}
 	}
 
-	// Episodes living directly in the Show folder (loose layout).
+	// Local artwork in the Show folder (naming-convention.md): `poster.jpg`/`cover.jpg`
+	// and `fanart.jpg`/`backdrop.jpg` poster/background the SHOW; `Season NN.jpg`
+	// posters that season. First wins per role, and topFiles is sorted, so a folder
+	// with both `poster.jpg` and `cover.jpg` resolves the same way on every rescan.
+	// This is the Movie path's per-folder discovery (resolveFolder) reaching TV at
+	// last — without it a TV Library has artwork ONLY from Enrichment, so a server
+	// with no metadata provider shows a grid of blank cards.
+	showArt := map[string]string{}
+	var showArtOrder []string
+	seasonArt := map[int]string{}
+
+	// Episodes living directly in the Show folder (loose layout), plus that folder's
+	// artwork.
 	sort.Slice(topFiles, func(i, j int) bool { return topFiles[i].Name() < topFiles[j].Name() })
 	for _, e := range topFiles {
+		if role := artworkRole(e.Name()); role != "" {
+			if _, seen := showArt[role]; !seen {
+				showArt[role] = filepath.Join(folder, e.Name())
+				showArtOrder = append(showArtOrder, role)
+			}
+			continue
+		}
+		if season, ok := ParseSeasonPoster(e.Name()); ok {
+			if _, seen := seasonArt[season]; !seen {
+				seasonArt[season] = filepath.Join(folder, e.Name())
+			}
+			continue
+		}
 		if !isMedia(e.Name()) {
 			continue
 		}
@@ -201,6 +226,9 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		NeedsReview: !id.HasYear(),
 	}
 	tree := store.ShowTree{Show: show}
+	for _, role := range showArtOrder {
+		tree.Artwork = append(tree.Artwork, store.EntityArtworkRow{Role: role, Path: showArt[role]})
+	}
 	for _, n := range seasonOrder {
 		eps := seasonEpisodes[n]
 		// Stable episode order within a season.
@@ -210,11 +238,18 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 			}
 			return eps[i].Title.SortTitle < eps[j].Title.SortTitle
 		})
-		tree.Seasons = append(tree.Seasons, store.SeasonTree{
+		st := store.SeasonTree{
 			SeasonNumber: n,
 			IdentityKey:  id.Key + "|s" + pad2(n),
 			Episodes:     eps,
-		})
+		}
+		// A `Season NN.jpg` naming a season with no episodes is ignored: seasonOrder
+		// holds only seasons that resolved episodes, and a poster must not conjure a
+		// Season row that no media backs.
+		if p, ok := seasonArt[n]; ok {
+			st.Artwork = []store.EntityArtworkRow{{Role: "poster", Path: p}}
+		}
+		tree.Seasons = append(tree.Seasons, st)
 	}
 	return tree, unmatched, true, nil
 }

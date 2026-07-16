@@ -29,6 +29,7 @@ func (f fakeProber) Probe(_ context.Context, _ string) (MediaInfo, error) {
 type captureStore struct {
 	lib       store.Library
 	trees     []store.TitleTree
+	showTrees []store.ShowTree
 	unmatched []store.UnmatchedFile
 }
 
@@ -37,7 +38,15 @@ func (c *captureStore) UpsertTitleTree(t store.TitleTree) error {
 	c.trees = append(c.trees, t)
 	return nil
 }
-func (c *captureStore) UpsertShowTree(store.ShowTree) error     { return nil }
+
+// Records the tree like UpsertTitleTree does. It discarded its argument until
+// local TV artwork needed asserting, which is part of why the TV resolver's
+// output went unexamined at this level for so long.
+func (c *captureStore) UpsertShowTree(t store.ShowTree) error {
+	c.showTrees = append(c.showTrees, t)
+	return nil
+}
+
 func (c *captureStore) RecomputeHiddenShows(string) error       { return nil }
 func (c *captureStore) UpsertArtistTree(store.ArtistTree) error { return nil }
 func (c *captureStore) RecomputeHiddenArtists(string) error     { return nil }

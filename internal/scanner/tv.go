@@ -73,6 +73,25 @@ func ParseSeasonFolder(name string) (season int, ok bool) {
 	return 0, false
 }
 
+// ParseSeasonPoster parses a Show-folder image named for a season — `Season 01.jpg`,
+// and by the same grammar `Season 1.png` and `Specials.jpg` (season 0) — into the
+// season it posters (naming-convention.md "Local artwork"). ok=false for any other
+// name, including the Show's own `poster.jpg`/`fanart.jpg`, which artworkRole
+// classifies instead.
+//
+// The name is parsed by ParseSeasonFolder, deliberately: a season poster is named
+// for its season FOLDER, so the two grammars cannot drift apart and `Specials.jpg`
+// works because `Specials/` does. This is a separate classifier from artworkRole
+// rather than an extension of it — artworkRole answers "which role?" from a
+// basename alone, while this must also answer "which season?", and it is only
+// meaningful in a Show folder.
+func ParseSeasonPoster(name string) (season int, ok bool) {
+	if !imageExtensions[strings.ToLower(filepath.Ext(name))] {
+		return 0, false
+	}
+	return ParseSeasonFolder(strings.TrimSuffix(name, filepath.Ext(name)))
+}
+
 // ParseEpisodeToken extracts the Episode identity from a file's base name
 // (extension stripped). It tries, in order: the canonical SxxExx (incl. ranges),
 // then a date token, then a bare absolute number. Returns ok=false when no

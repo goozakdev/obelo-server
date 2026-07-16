@@ -62,6 +62,10 @@ type SeasonTree struct {
 	SeasonNumber int
 	IdentityKey  string
 	Episodes     []EpisodeTree
+	// Artwork is the Season's LOCAL on-disk artwork (`Season NN.jpg` in the Show
+	// folder) — written as source='local', which outranks Enrichment's 'fetched' in
+	// every read. Empty when the Show folder names no image for this season.
+	Artwork []EntityArtworkRow
 }
 
 // ShowTree is the complete result of resolving one on-disk Show folder: the Show
@@ -72,6 +76,11 @@ type SeasonTree struct {
 type ShowTree struct {
 	Show    Show
 	Seasons []SeasonTree
+	// Artwork is the Show's LOCAL on-disk artwork (`poster.jpg`/`fanart.jpg` in the
+	// Show folder), the TV counterpart of TitleTree.Artwork for a Movie. It is
+	// written as source='local' and outranks Enrichment's 'fetched' in every read,
+	// so a TV Library on a server with no metadata provider still has artwork.
+	Artwork []EntityArtworkRow
 }
 
 // UpsertShowTree persists one resolved Show folder in a single transaction. The
@@ -91,6 +100,9 @@ func (db *DB) UpsertShowTree(tree ShowTree) error {
 	if err != nil {
 		return err
 	}
+	if err := writeLocalEntityArtwork(tx, EntityShow, showID, tree.Artwork); err != nil {
+		return err
+	}
 
 	// One shared "paths written this tx" set across all Episodes of the Show, so a
 	// multi-episode file (two Episode Titles, one path) keeps both File rows
@@ -99,6 +111,9 @@ func (db *DB) UpsertShowTree(tree ShowTree) error {
 	for _, st := range tree.Seasons {
 		seasonID, err := upsertSeason(tx, showID, st)
 		if err != nil {
+			return err
+		}
+		if err := writeLocalEntityArtwork(tx, EntitySeason, seasonID, st.Artwork); err != nil {
 			return err
 		}
 		for _, ep := range st.Episodes {
@@ -110,6 +125,36 @@ func (db *DB) UpsertShowTree(tree ShowTree) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit upsert show tree: %w", err)
+	}
+	return nil
+}
+
+// writeLocalEntityArtwork rewrites one parent entity's LOCAL artwork rows, the
+// Show/Season counterpart of the Movie path's local-artwork clear in
+// UpsertTitleTree — and it follows that function's rule exactly: delete only
+// source='local', so Enrichment's 'fetched' rows survive every rescan. The two
+// writers are disjoint by source, and reads rank uploaded > local > fetched, so a
+// local poster.jpg wins over a fetched one without either side knowing about the
+// other.
+//
+// The delete runs even when rows is empty: that is what makes REMOVING a
+// poster.jpg from disk take effect on rescan instead of stranding the old row
+// forever.
+func writeLocalEntityArtwork(tx *sql.Tx, entityType, entityID string, rows []EntityArtworkRow) error {
+	if _, err := tx.Exec(
+		`DELETE FROM entity_artwork WHERE entity_type = ? AND entity_id = ? AND source = 'local'`,
+		entityType, entityID,
+	); err != nil {
+		return fmt.Errorf("store: clearing local %s artwork: %w", entityType, err)
+	}
+	for _, a := range rows {
+		if _, err := tx.Exec(
+			`INSERT INTO entity_artwork (id, entity_type, entity_id, role, path, source, added_at)
+			 VALUES (?, ?, ?, ?, ?, 'local', datetime('now'))`,
+			uuid.NewString(), entityType, entityID, a.Role, a.Path,
+		); err != nil {
+			return fmt.Errorf("store: inserting local %s artwork: %w", entityType, err)
+		}
 	}
 	return nil
 }

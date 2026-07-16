@@ -130,8 +130,10 @@ type seasonJSON struct {
 	// Specials is true for Season 0 so the client can label it "Specials".
 	Specials     bool `json:"specials,omitempty"`
 	EpisodeCount int  `json:"episodeCount"`
-	// PosterURL points at the Season artwork endpoint, set only when Enrichment
-	// fetched a season poster (issue 03).
+	// PosterURL points at the Season artwork endpoint, set when the Season HAS a
+	// poster from either source: a local `Season NN.jpg` in the Show folder
+	// (naming-convention.md) or one Enrichment fetched (issue 03). Local wins when
+	// both exist; the URL is the same either way, so a client never learns which.
 	PosterURL string `json:"posterUrl,omitempty"`
 }
 

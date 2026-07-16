@@ -70,8 +70,12 @@ type EntityEnrichmentWrite struct {
 	Cast []Credit
 }
 
-// EntityArtworkRow is one fetched image already written to the artwork cache,
-// pending insertion against a parent entity (Source is forced to 'fetched').
+// EntityArtworkRow is one image pending insertion against a parent entity. The
+// WRITER sets the source, and the two writers never overlap: Enrichment forces
+// 'fetched' (Path relative to the artwork cache it just downloaded into), while
+// the Scanner forces 'local' (Path absolute, media-adjacent on disk). Reads rank
+// uploaded > local > fetched, so the two coexist per role and local wins.
+// ResolveArtworkPath tells the two Path flavors apart by IsAbs.
 type EntityArtworkRow struct {
 	Role string
 	Path string
@@ -350,15 +354,18 @@ func (db *DB) EntityEnrichmentForMany(entityType string, ids []string) (map[stri
 	return out, grows.Err()
 }
 
-// EntityArtworkByRole returns the on-disk path of a parent entity's fetched
-// artwork for a role, or ErrNotFound. The API serves the bytes through the
-// parent's artwork endpoint (local sources, where they exist, are served ahead of
-// this by the caller — local wins).
+// EntityArtworkByRole returns the on-disk path of a parent entity's artwork for a
+// role — whichever source wins — or ErrNotFound. The API serves the bytes through
+// the parent's artwork endpoint.
 func (db *DB) EntityArtworkByRole(entityType, entityID, role string) (Artwork, error) {
 	var a Artwork
-	// Serve precedence uploaded > local > fetched (ADR-0026): an Admin-uploaded
-	// parent image outranks a local cover (albums.artwork_path, served ahead of
-	// this by the caller) and a fetched/picked one. Take the single highest row.
+	// Serve precedence uploaded > local > fetched (ADR-0026), resolved HERE for any
+	// parent whose local artwork lives in this table: a Show/Season's local
+	// poster.jpg / `Season NN.jpg` (source='local', written by the scanner) outranks
+	// Enrichment's fetched image, and an Admin upload outranks both. An Album is the
+	// exception — its local cover lives in albums.artwork_path and is served ahead of
+	// this by the caller, so it never appears in this ordering. Take the single
+	// highest row.
 	err := db.QueryRow(
 		`SELECT id, role, path, source FROM entity_artwork
 		   WHERE entity_type = ? AND entity_id = ? AND role = ?
