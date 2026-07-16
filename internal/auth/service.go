@@ -18,9 +18,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
 	"github.com/google/uuid"
+	"github.com/marioquake/juicebox/internal/store"
 )
 
 // Role values a User may hold (CONTEXT.md: Admin manages; Member browses/plays).
@@ -48,6 +49,15 @@ type Store interface {
 	InsertToken(tokenHash, deviceID, userID string) error
 	LookupToken(tokenHash string) (store.TokenIdentity, error)
 	DeleteToken(tokenHash string) error
+	// Device authorization grant (ADR-0036).
+	InsertDeviceAuthRequest(req store.DeviceAuthRequest) error
+	DeviceAuthByUserCode(userCode string) (store.DeviceAuthRequest, error)
+	DeviceAuthByCodeHash(hash string) (store.DeviceAuthRequest, error)
+	ApproveDeviceAuth(userCode, userID, now string) error
+	RedeemDeviceAuth(hash, now string) (store.DeviceAuthRequest, error)
+	TouchDeviceAuthPoll(hash, now string) (string, error)
+	CountLiveDeviceAuthRequests(now string) (int, error)
+	DeleteExpiredDeviceAuthRequests(now string) error
 }
 
 // Common service errors, mapped to HTTP envelopes by the api layer. They are
@@ -80,13 +90,41 @@ type Service struct {
 	// dir — so the token can never be reused.
 	mu         sync.RWMutex
 	claimToken string
+
+	// now is the clock. It exists as a field only so tests can move time: the
+	// Device authorization grant (ADR-0036) turns on expiry windows and a rate
+	// limiter, and a test that had to sleep for five real minutes to watch a code
+	// expire would never be written, which means the expiry would never be tested.
+	now func() time.Time
+
+	// approveFails is the per-boot brute-force counter for the device-code approve
+	// endpoint. See device_auth.go for why it is in memory and keyed by User.
+	approveMu    sync.Mutex
+	approveFails map[string]*approveAttempts
+}
+
+// Option configures the Service. Present for the clock seam; NewService's
+// zero-option form is the production path.
+type Option func(*Service)
+
+// WithClock replaces the service's clock. Tests use it to expire codes and open
+// rate-limit windows without sleeping.
+func WithClock(now func() time.Time) Option {
+	return func(s *Service) { s.now = now }
 }
 
 // NewService builds the auth service. If the database has zero Users it
 // generates a fresh one-time claim token (returned via ClaimToken for the
 // bootstrap to log); otherwise the claim token is empty and setup is closed.
-func NewService(s Store) (*Service, error) {
-	svc := &Service{store: s}
+func NewService(s Store, opts ...Option) (*Service, error) {
+	svc := &Service{
+		store:        s,
+		now:          time.Now,
+		approveFails: map[string]*approveAttempts{},
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
 	n, err := s.CountUsers()
 	if err != nil {
 		return nil, err
@@ -202,20 +240,10 @@ func (s *Service) Login(username, password string, dev DeviceInput) (LoginResult
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
-	device, err := s.store.UpsertDevice(uuid.NewString(), user.ID, dev.ClientID, dev.Name, dev.Platform)
-	if err != nil {
-		return LoginResult{}, err
-	}
-
-	raw, err := newToken()
-	if err != nil {
-		return LoginResult{}, err
-	}
-	if err := s.store.InsertToken(hashToken(raw), device.ID, user.ID); err != nil {
-		return LoginResult{}, err
-	}
-
-	return LoginResult{Token: raw, User: user, Device: device}, nil
+	// Everything past "the password was right" is shared with the device-code
+	// grant (ADR-0036), which authenticates differently but must produce an
+	// identical session. issueSession is that shared tail; see device_auth.go.
+	return s.issueSession(user, dev)
 }
 
 // dummyHash is a valid hash of a random value, used to equalize login timing

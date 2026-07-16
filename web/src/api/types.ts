@@ -140,6 +140,17 @@ export interface DevicesResponse {
   devices: Device[];
 }
 
+/** Response from `POST /api/v1/auth/device/approve` (ADR-0036) — the Device that
+ * was just signed in. Only the descriptive half of a Device: at approve time no
+ * Device row exists yet (it is minted when the TV polls and collects), so there
+ * is no id or timestamp to report. */
+export interface DeviceApprovalResponse {
+  device: {
+    name: string;
+    platform: string;
+  };
+}
+
 // --- Admin: attention surfaces & devices (issue 07) ------------------------
 //
 // These mirror the server's JSON exactly (catalog_handlers.go Unmatched,

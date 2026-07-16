@@ -32,6 +32,7 @@ import type {
   ArtistAlbumsResponseRaw,
   ArtistsPage,
   ArtistsResponseRaw,
+  DeviceApprovalResponse,
   ArtworkCandidate,
   ArtworkCandidatesResult,
   EntityMetadataEditInput,
@@ -1263,6 +1264,28 @@ export class ApiClient {
   deleteDevice(id: string, signal?: AbortSignal): Promise<void> {
     return this.request<void>(`/devices/${encodeURIComponent(id)}`, {
       method: "DELETE",
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/auth/device/approve` (authenticated) — authorize a TV that is
+   * showing `userCode`, signing it into the calling User's account (ADR-0036).
+   * Returns the Device it just authorized, so the screen can name it.
+   *
+   * This browser is the *approving* side of the grant, never the polling side:
+   * the other two endpoints (`/auth/device/code`, `/auth/device/token`) belong to
+   * the device being signed in and have no caller here.
+   *
+   * A code that is unknown, expired, or already used is a single 404
+   * INVALID_USER_CODE — deliberately indistinguishable. Too many wrong codes is
+   * 429 TOO_MANY_ATTEMPTS. */
+  approveDeviceCode(
+    userCode: string,
+    signal?: AbortSignal,
+  ): Promise<DeviceApprovalResponse> {
+    return this.request<DeviceApprovalResponse>("/auth/device/approve", {
+      method: "POST",
+      body: { userCode },
       signal,
     });
   }

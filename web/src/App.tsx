@@ -4,6 +4,7 @@ import { RequireAdmin, RequireAuth } from "./auth/guards";
 import { useServerInfo } from "./useServerInfo";
 import SetupScreen from "./screens/SetupScreen";
 import LoginScreen from "./screens/LoginScreen";
+import LinkScreen from "./screens/LinkScreen";
 import HomeScreen from "./screens/HomeScreen";
 import AdminScreen from "./screens/AdminScreen";
 import LibraryListScreen from "./browse/LibraryListScreen";
@@ -31,6 +32,7 @@ import ScrollToTop from "./ScrollToTop";
 // Routes:
 //   /setup   first-run only (handshake setupRequired) → create first Admin
 //   /login   credentials → session
+//   /link/:code?  approve a TV's sign-in code (RequireAuth) — ADR-0036
 //   /        authed landing (RequireAuth)
 //   /admin   admin-only placeholder (RequireAdmin)
 //   *        unknown client routes fall back to the landing (which redirects to
@@ -63,6 +65,21 @@ export default function App() {
         <Routes>
           <Route path="/setup" element={<SetupGate />} />
           <Route path="/login" element={<LoginGate />} />
+          {/* /link is where a TV's QR code lands (ADR-0036). RequireAuth is what
+              implements "ask for a password first if you aren't signed in" — it
+              bounces to /login and comes back — so this route needs no auth
+              logic of its own. The code is a PATH param because the login bounce
+              preserves only pathname, not search: /link?code=X would return from
+              /login with the code gone. The bare /link form is the fallback for
+              a hand-typed code. */}
+          <Route
+            path="/link/:code?"
+            element={
+              <RequireAuth>
+                <LinkScreen />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/"
             element={

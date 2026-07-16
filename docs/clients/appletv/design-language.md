@@ -35,6 +35,16 @@ The web app's hover states translate to the tvOS focus engine, not to new invent
 - **Focused text row** (settings, track lists): `surface2` pill behind the row + text brightens `textDim → text`. No underlines.
 - **Buttons**: default = transparent with `borderStrong` outline; primary/confirm = `accent` fill with `accentInk` label. One primary per screen. **Focused**: the default button takes the same 2pt `accent` ring as a card. The primary can't — a lime ring on a lime fill is invisible at ten feet — so it takes the system scale lift instead. Focus must change *something* on every button; this bullet once specified only the resting state, and the tvOS client faithfully implemented the hole, shipping 17 buttons that rendered identically focused and unfocused.
 
+## Machine-readable things are not brand surfaces
+
+A QR code (the sign-in screen, [ADR-0036](../../adr/0036-device-authorization-grant-for-tv-sign-in.md)) is a **scanner target that happens to be on screen**, and every instinct in this document is wrong for it. It renders **black modules on a white card, with white quiet-zone padding** — never `accent` on `bg`, never themed, never bled to its own edge:
+
+- A decoder thresholds on **luminance** and expects dark-on-light. Lime on charcoal is both low-contrast and inverted; phones simply fail to read it.
+- The **quiet zone is structural**, not margin: without ≥4 modules of clear space most scanners never locate the code at all.
+- Scale it by an **integer** with interpolation **off**. A smoothed module edge is a decode failure, not a softer look.
+
+The code *beside* the QR is ordinary UI and does follow the palette (`accent`, oversized, letter-spaced — it is read aloud across a room). This is the exception that proves the rule: style what a human reads, leave alone what a machine reads. Written down because the palette is otherwise applied by reflex, and a lime QR looks perfectly fine on a designer's screen right up until nobody can sign in.
+
 ## Navigation chrome
 
 The web app uses side tabs; on tvOS use the **standard top tab bar** (platform convention wins for the 10-foot swipe-down gesture): Home · per-Library tabs · Search · Settings. Everything below the bar is content — no persistent sidebars, no breadcrumbs.

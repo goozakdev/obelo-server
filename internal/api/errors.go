@@ -36,6 +36,29 @@ const (
 	codeSetupClosed  = "SETUP_CLOSED"
 	codeInvalidClaim = "INVALID_CLAIM_TOKEN"
 	codeInvalidLogin = "INVALID_CREDENTIALS"
+	// Device authorization grant (ADR-0036). The first four are the RFC 8628 poll
+	// states, respelled into this envelope's SCREAMING_SNAKE vocabulary — the
+	// state machine is the RFC's, the wire spelling is ours, because a client
+	// switching on error.code should not have to know that four of the values it
+	// matches came from a different document than the rest.
+	//
+	//   codeAuthorizationPending (400) — not approved yet; keep polling.
+	//   codeSlowDown             (400) — polling faster than the granted interval.
+	//   codeExpiredToken         (400) — the code aged out; start over on the TV.
+	//   codeInvalidDeviceCode    (400) — no such device code, or already redeemed.
+	//   codeInvalidUserCode      (404) — the human-typed code is not live. One
+	//                                    answer for unknown/expired/used, so the
+	//                                    live code space cannot be mapped by
+	//                                    watching which reply comes back.
+	//   codeTooManyAttempts      (429) — approve brute-force limit tripped.
+	//   codeDeviceAuthBusy       (503) — too many flows in flight to mint a code.
+	codeAuthorizationPending = "AUTHORIZATION_PENDING"
+	codeSlowDown             = "SLOW_DOWN"
+	codeExpiredToken         = "EXPIRED_TOKEN"
+	codeInvalidDeviceCode    = "INVALID_DEVICE_CODE"
+	codeInvalidUserCode      = "INVALID_USER_CODE"
+	codeTooManyAttempts      = "TOO_MANY_ATTEMPTS"
+	codeDeviceAuthBusy       = "DEVICE_AUTH_BUSY"
 	// User-management (Admin-scope /users): a username collision and the
 	// last-Admin guard each surface as a 409 with one of these codes.
 	codeUsernameTaken = "USERNAME_TAKEN"

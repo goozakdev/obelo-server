@@ -41,6 +41,10 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 		{"collections", "/api/v1/collections"},
 		{"playlists", "/api/v1/playlists"},
 		{"realtimeEvents", "/api/v1/events"},
+		// POST-only, so this GET probe draws a 405 — which is exactly what the
+		// probe wants: a 405 proves the route exists, and existence is all the flag
+		// claims (ADR-0036).
+		{"deviceAuth", "/api/v1/auth/device/code"},
 	}
 
 	for _, p := range probes {

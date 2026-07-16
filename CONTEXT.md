@@ -254,6 +254,14 @@ _Avoid_: Loop, Repeat-track (use repeat-one).
 A first-class, named client installation belonging to a User (e.g. "Brandon's iPhone"). Holds a long-lived bearer token issued at login; listed per-User and individually revocable. Revoking a Device invalidates its token.
 _Avoid_: Client (the app generically), Session (that's playback).
 
+**Device authorization grant**:
+Signing a Device in from another, already-signed-in Device instead of typing a password on it — for a TV, where typing is the worst thing we ask of anyone. The signing-in Device shows a User code and polls; a phone approves that code and the Device collects a session ([ADR-0036](./docs/adr/0036-device-authorization-grant-for-tv-sign-in.md)). It issues an ordinary token to an ordinary Device: it changes how you prove who you are, not what you get.
+_Avoid_: Pairing (nothing is bound to anything — the flow leaves behind exactly one Device, as a password login would), Device login, QR login (the QR is a convenience over the User code, not the mechanism).
+
+**User code**:
+The four characters shown on a signing-in Device and read into a phone to approve it. Deliberately short and drawn from an alphabet with no confusable glyphs, because a human retypes it across a room. **Not a credential**: it names a pending request, and approving one requires a real bearer token. Distinct from the Device code, which never leaves the Device and is the only thing that can collect the session.
+_Avoid_: PIN, Pairing code, OTP (it authorizes nothing on its own, which is what those words imply).
+
 **Server identity**:
 A Server's stable self-assigned id and its operator-chosen display name — minted once and persisted with the rest of its state, independent of whatever address it happens to be reachable at ([ADR-0034](./docs/adr/0034-server-identity-and-mdns-advertisement.md)). The id is machine-facing and permanent; the name is human-facing and freely changeable, so renaming never orphans a Device's token. What lets a client recognize the same Server after its address changes, and answer "is this the one I logged into?" — unanswerable before it existed. Advertised over mDNS and reported by the handshake.
 _Avoid_: Server ID (bare — the identity is both fields), Instance, Host / address (that's where it is, not which it is), Fingerprint (implies derivation from a key).

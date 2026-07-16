@@ -120,7 +120,8 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
   "features": {
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
     "watchState": true, "home": true, "search": true, "collections": true,
-    "playlists": true, "realtimeEvents": true, "transcode": false
+    "playlists": true, "realtimeEvents": true, "deviceAuth": true,
+    "transcode": false
   },
   "setupRequired": false
 }
@@ -179,6 +180,67 @@ Errors: `400 BAD_REQUEST` (bad body / missing fields / collision), `403 SETUP_CL
 
 Side effect: sets the `ms_media` cookie with the same token.
 Errors: `400 BAD_REQUEST` (`"device.clientId is required"` / bad body), `401 INVALID_CREDENTIALS`, `500`.
+
+#### Device authorization grant — signing a TV in from a phone ([ADR-0036](./adr/0036-device-authorization-grant-for-tv-sign-in.md))
+
+Gated by the **`deviceAuth`** feature flag. Branch on the flag, never on a version — a server without these routes 404s them, and the correct fallback is `POST /auth/login`, which every client keeps anyway (typing a password is the permanent manual path, not a deprecated one).
+
+Three endpoints, and **two codes that are not interchangeable**:
+
+- **`deviceCode`** — the poll secret. 256-bit, held by the signing-in Device, shown to nobody, stored only as a hash. The only thing that can collect a session.
+- **`userCode`** — 4 characters from an unambiguous alphabet (no `0`/`O`, no `1`/`I`/`L`, no `U`). Displayed and carried in the QR. **Powerless alone**: approving requires a bearer token. This is why 4 characters is safe — see the ADR.
+
+The flow: the TV `POST /auth/device/code` → shows `userCode` + a QR of `verificationUriComplete` → polls `POST /auth/device/token` on `interval` → a phone opens the URL, signs in if needed, and `POST /auth/device/approve`s → the TV's next poll returns a session.
+
+##### POST /auth/device/code — [Unauthenticated]
+
+```json
+{ "device": { "name": "Living Room TV", "platform": "tvos", "clientId": "stable-uuid" } }
+```
+
+`device.clientId` is **required**, same rule as login. The Device is declared **here**, at the start — it is what the approving phone is shown and what the Device row is minted from at redemption. The poll carries only `deviceCode`, so nothing can swap the identity out from under a human who already approved one.
+
+→ `201`:
+
+```json
+{
+  "deviceCode": "opaque-256-bit-secret",
+  "userCode": "K7R9",
+  "verificationUri": "http://192.168.1.50:8096/link",
+  "verificationUriComplete": "http://192.168.1.50:8096/link/K7R9",
+  "expiresIn": 300,
+  "interval": 2
+}
+```
+
+`verificationUri*` are built from the **inbound request's** Host/scheme (honouring `X-Forwarded-Host`/`-Proto`), because the server cannot know its own address — only the one it was reached on, which is the one the phone beside the TV needs. Encode `verificationUriComplete` in the QR; show `verificationUri` + `userCode` as text for anyone typing it.
+Errors: `400 BAD_REQUEST` (`"device.clientId is required"`), `503 DEVICE_AUTH_BUSY` (too many flows in flight), `500`.
+
+##### POST /auth/device/token — [Unauthenticated]
+
+Body `{ "deviceCode": "…" }`. Poll no faster than `interval`.
+
+→ `200` — **byte-identical to `POST /auth/login`'s response** (`{token, user, device}`), cookie included. That is deliberate: this is a second way to *obtain* a session, not a second kind of session, so a client reuses one code path.
+
+Every other answer is a `400` carrying the state (the grant models "keep waiting" as an error, so a client must not treat 2xx as the only terminal answer):
+
+| code | meaning |
+|---|---|
+| `AUTHORIZATION_PENDING` | Nobody has approved yet. Keep polling. The usual answer. |
+| `SLOW_DOWN` | Polling faster than `interval`. Back off; not fatal. |
+| `EXPIRED_TOKEN` | The code aged out. Start a new flow. |
+| `INVALID_DEVICE_CODE` | Unknown, or already redeemed — a device code is **one-shot**. |
+
+##### POST /auth/device/approve — [Public]
+
+Body `{ "userCode": "K7R9" }`. Case-insensitive; spaces and hyphens are ignored (`k7-r9` works). Confusable characters are **not** repaired — the alphabet excludes them, so a code containing one was misread and guessing which glyph was meant would authorize the wrong request.
+
+**Approval is immediate — there is no confirmation step** (ADR-0036 records why, and what it costs).
+
+→ `200` `{ "device": { "name": "Living Room TV", "platform": "tvos" } }` — the Device just authorized. With no confirmation beforehand, this is the user's only chance to notice a mis-entered code; show it. (No `id`: the Device row does not exist until the TV redeems.)
+Errors: `404 INVALID_USER_CODE` — unknown, expired, **and** already-used, deliberately indistinguishable so the live code space cannot be mapped. `429 TOO_MANY_ATTEMPTS` — the per-User brute-force limit. `401`, `500`.
+
+There is no deny operation. The recourse for an unintended approval is `DELETE /devices/{id}`, which revokes instantly.
 
 #### POST /auth/logout — [Public] (bearer only)
 

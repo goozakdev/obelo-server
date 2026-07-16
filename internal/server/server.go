@@ -70,6 +70,12 @@ func (m *Metadata) Features() map[string]bool {
 		"collections":    true,
 		"playlists":      true,
 		"realtimeEvents": true,
+		// deviceAuth advertises the Device authorization grant (ADR-0036) — the
+		// QR/one-time-code sign-in. A client MUST branch on this rather than on a
+		// version: an older server has no /auth/device/* routes, and the correct
+		// behaviour there is to fall back to the username/password form, which
+		// every client keeps anyway as the manual path.
+		"deviceAuth": true,
 		// transcode is not a route-existence flag: /transcoding is only the
 		// admin observability snapshot (ADR-0029). It advertises the transcode
 		// delivery tier, which depends on a resolved ffmpeg backend, so it stays

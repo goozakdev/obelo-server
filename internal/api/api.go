@@ -160,6 +160,18 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("/auth/logout",
 		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleLogout(deps.Auth))))
 
+	// Device authorization grant (ADR-0036): sign a TV in from a phone, so nobody
+	// types a password on a remote. /code and /token are unauthenticated by
+	// design — a TV that could authenticate would not need the flow — while
+	// /approve is the authenticated half, and is the only one that decides
+	// anything. See auth/device_code.go for why the codes carry the weight here.
+	mux.HandleFunc("/auth/device/code",
+		requireMethod(http.MethodPost, handleDeviceCode(deps.Auth)))
+	mux.HandleFunc("/auth/device/token",
+		requireMethod(http.MethodPost, handleDeviceToken(deps.Auth)))
+	mux.HandleFunc("/auth/device/approve",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleDeviceApprove(deps.Auth))))
+
 	// GET /devices lists the caller's Devices.
 	mux.HandleFunc("/devices",
 		requireMethod(http.MethodGet, requireAuth(deps.Auth, handleListDevices(deps.Auth))))
