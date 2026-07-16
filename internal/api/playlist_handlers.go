@@ -108,8 +108,10 @@ func handlePlaylistsCollection(deps Deps) http.HandlerFunc {
 // The {id}/items/{itemId} sub-resource is matched BEFORE {id}/items so the longer
 // suffix isn't shadowed (mirrors the Collection subtree's /items/ vs /items order).
 // Every leaf resolves ownership inside its handler and hides a foreign Playlist as
-// 404. The GET detail leaf is additionally wrapped with requireScope so member
-// resolution uses the caller's (== owner's) access Scope.
+// 404. The GET detail and PUT reorder leaves are additionally wrapped with
+// requireScope: both are judged against what the caller can SEE, so both need the
+// caller's (== owner's) access Scope — detail to resolve members, reorder to
+// validate the payload against that same set.
 func handlePlaylistSubtree(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/playlists/")
@@ -138,7 +140,7 @@ func handlePlaylistSubtree(deps Deps) http.HandlerFunc {
 			case http.MethodPost:
 				handleAppendPlaylistItem(deps.Organize, id)(w, r)
 			case http.MethodPut:
-				handleReorderPlaylistItems(deps.Organize, id)(w, r)
+				requireScope(deps.Access, handleReorderPlaylistItems(deps, id))(w, r)
 			default:
 				w.Header().Set("Allow", "POST, PUT")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
@@ -353,21 +355,31 @@ type playlistReorderRequest struct {
 }
 
 // handleReorderPlaylistItems handles PUT /playlists/{id}/items: the body is the
-// FULL desired order of the Playlist's item ids; positions are rewritten to match.
-// Owner only (getOwned → 404 for a non-owner). A payload that doesn't EXACTLY match
-// the current item set is a 422 ITEM_SET_MISMATCH no-op. Returns 204.
-func handleReorderPlaylistItems(svc *organize.Service, id string) http.HandlerFunc {
+// FULL desired order of the item ids this caller can SEE — the set GET
+// /playlists/{id} just returned them. Positions are rewritten to match, with
+// members hidden from that view keeping their place. Owner only (getOwned → 404 for
+// a non-owner). A payload that doesn't EXACTLY match the visible item set is a 422
+// ITEM_SET_MISMATCH no-op. Returns 204.
+//
+// Wrapped in requireScope for the same reason the GET detail leaf is: the payload is
+// judged against what the caller can see, so it needs the caller's (== owner's)
+// access Scope to know what that is.
+func handleReorderPlaylistItems(deps Deps, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
 			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
 			return
 		}
+		scope, ok := mustScope(w, r)
+		if !ok {
+			return
+		}
 		var req playlistReorderRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		switch err := svc.ReorderPlaylistItems(ident.User.ID, id, req.ItemIDs); {
+		switch err := deps.Organize.ReorderPlaylistItems(scope, ident.User.ID, id, req.ItemIDs); {
 		case errors.Is(err, organize.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "playlist not found", nil)
 		case errors.Is(err, organize.ErrItemSetMismatch):

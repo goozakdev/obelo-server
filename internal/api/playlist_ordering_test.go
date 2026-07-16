@@ -252,6 +252,94 @@ func TestPlaylistMissingSurvival(t *testing.T) {
 	}
 }
 
+// TestPlaylistReorderWithMissingMember: a Playlist holding a Missing member is still
+// reorderable. The payload is the order of the VISIBLE items — the only ids a client
+// can name, since the Missing member is omitted from the view — and the Missing item
+// keeps its INDEX in the sequence rather than counting against the payload.
+//
+// This is a regression test. Reorder used to validate the payload against every item
+// ROW, so a client that could only ever see (and therefore only ever send) the visible
+// ids could never match the count: one Missing file froze a Playlist's order forever,
+// with no client-side recourse. Acceptance: reorder reachable with a Missing member;
+// the Missing member neither moves nor leaks.
+func TestPlaylistReorderWithMissingMember(t *testing.T) {
+	requireFixtures(t)
+	srv, admin, _, list := scanMovies(t)
+	a := findTitle(t, list, "Dune")
+	b := findTitle(t, list, "Blade Runner")
+	c := findTitle(t, list, "Sample Movie")
+
+	plID := createPlaylist(t, srv, admin, "Missing But Sortable")
+	items := appendAndCaptureItemIDs(t, srv, admin, plID, a, b, c) // A@1, B@2, C@3
+	itemA, itemB, itemC := items[0], items[1], items[2]
+
+	// B goes Missing: the client now sees only [A, C].
+	srv.SetTitleHidden(b, true)
+	if got := playlistMemberItemIDs(getPlaylistDetail(t, srv, admin, plID)); !reflect.DeepEqual(got, []string{itemA, itemC}) {
+		t.Fatalf("visible items with B Missing = %v, want [A,C]", got)
+	}
+
+	// Reordering the two visible items to C,A succeeds — this is the whole bug.
+	if st, env := reorderPlaylist(t, srv, admin, plID, []string{itemC, itemA}); st != http.StatusNoContent {
+		t.Fatalf("reorder of visible items = %d/%s, want 204 (a Missing member must not freeze the order)", st, env.Error.Code)
+	}
+	if got := playlistMemberItemIDs(getPlaylistDetail(t, srv, admin, plID)); !reflect.DeepEqual(got, []string{itemC, itemA}) {
+		t.Errorf("visible order after reorder = %v, want [C,A]", got)
+	}
+
+	// Naming the Missing item id is still a mismatch: you cannot reorder by an id you
+	// were never shown, so the hidden row stays unnameable rather than half-addressable.
+	if st, env := reorderPlaylist(t, srv, admin, plID, []string{itemC, itemB, itemA}); st != http.StatusUnprocessableEntity || env.Error.Code != "ITEM_SET_MISMATCH" {
+		t.Errorf("reorder naming the Missing item = %d/%s, want 422 ITEM_SET_MISMATCH", st, env.Error.Code)
+	}
+
+	// B's Files return: it reappears at the INDEX it held (second), between the
+	// reordered C and A. It was never moved by a reorder it took no part in.
+	srv.SetTitleHidden(b, false)
+	if got := playlistMemberIDs(getPlaylistDetail(t, srv, admin, plID)); !reflect.DeepEqual(got, []string{c, b, a}) {
+		t.Errorf("after B restored = %v, want [C,B,A] (B pinned at its index through the reorder)", got)
+	}
+}
+
+// TestPlaylistReorderWithOutOfScopeMember: the same reachability, for the other way a
+// member leaves the view. An owner whose rating ceiling hides a member reorders the
+// rest by the ids they can see; the out-of-scope member holds its index and reappears
+// there when the ceiling lifts. Acceptance: reorder reachable under a narrowed Scope.
+func TestPlaylistReorderWithOutOfScopeMember(t *testing.T) {
+	requireFixtures(t)
+	srv, admin, lib, list := scanMovies(t)
+	pg := findTitle(t, list, "Dune")        // → PG-13
+	r := findTitle(t, list, "Blade Runner") // → R (above a PG-13 ceiling)
+	other := findTitle(t, list, "Sample Movie")
+	srv.SetTitleContentRating(pg, "PG-13")
+	srv.SetTitleContentRating(r, "R")
+
+	ownerID := srv.CreateUser(admin, "sorter", "sorterpass12", "member")
+	owner := srv.LoginAs("sorter", "sorterpass12")
+	grantLibraries(t, srv, admin, ownerID, lib)
+
+	plID := createPlaylist(t, srv, owner, "Capped But Sortable")
+	items := appendAndCaptureItemIDs(t, srv, owner, plID, pg, r, other) // PG@1, R@2, other@3
+	itemPG, itemOther := items[0], items[2]
+
+	// A PG-13 ceiling hides R; the owner sees [PG, other].
+	setRatingCeiling(t, srv, admin, ownerID, "PG-13")
+	if got := playlistMemberItemIDs(getPlaylistDetail(t, srv, owner, plID)); !reflect.DeepEqual(got, []string{itemPG, itemOther}) {
+		t.Fatalf("visible items under ceiling = %v, want [PG, other]", got)
+	}
+
+	// The owner reorders what they can see.
+	if st, env := reorderPlaylist(t, srv, owner, plID, []string{itemOther, itemPG}); st != http.StatusNoContent {
+		t.Fatalf("reorder under ceiling = %d/%s, want 204", st, env.Error.Code)
+	}
+
+	// Lifting the ceiling: R is back at its index (second), untouched by the reorder.
+	setRatingCeiling(t, srv, admin, ownerID, "")
+	if got := playlistMemberIDs(getPlaylistDetail(t, srv, owner, plID)); !reflect.DeepEqual(got, []string{other, r, pg}) {
+		t.Errorf("after ceiling lifted = %v, want [other, R, PG] (R pinned at its index)", got)
+	}
+}
+
 // TestPlaylistOrderingOwnership404: the ordering ops are owner-only. A non-owner — a
 // second Member AND an Admin (no override) — gets 404 on PUT /playlists/{id}/items
 // (reorder) and DELETE /playlists/{id}/items/{itemId} (remove) of another User's

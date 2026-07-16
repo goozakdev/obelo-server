@@ -79,9 +79,10 @@ type Store interface {
 	// PlaylistItemsInOrder returns a Playlist's (itemId, titleId) pairs in position
 	// order (Missing/duplicates included; the service resolves + filters them).
 	PlaylistItemsInOrder(playlistID string) ([]store.PlaylistItem, error)
-	// ReorderPlaylistItems rewrites a Playlist's order to exactly the itemIDs
-	// sequence (ErrItemSetMismatch if the set doesn't match the current items).
-	ReorderPlaylistItems(playlistID string, itemIDs []string) error
+	// ReorderPlaylistItems rewrites a Playlist's order to the itemIDs sequence,
+	// which must be exactly the items VISIBLE under filter (ErrItemSetMismatch
+	// otherwise). Members hidden by filter keep their place in the sequence.
+	ReorderPlaylistItems(playlistID string, itemIDs []string, filter store.AccessFilter) error
 	// RemovePlaylistItem removes one entry by its item id (ErrNotFound if no such
 	// row belongs to the Playlist).
 	RemovePlaylistItem(playlistID, itemID string) error

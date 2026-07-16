@@ -447,7 +447,7 @@ A foreign Playlist is `404` on every leaf (hide-existence), including for Admins
 | `PUT /playlists/{id}` | `{ "name" }` → `200` playlistJSON. `422 SYSTEM_PLAYLIST` for the Watchlist. |
 | `DELETE /playlists/{id}` | → `204`. `422 SYSTEM_PLAYLIST` for the Watchlist. |
 | `POST /playlists/{id}/items` | `{ "titleId" }` → `204` (append at end; new `itemId` not returned). First append fixes the kind (`movie`/`tv`/`music` from title kinds movie/episode/track); `422 KIND_MISMATCH` on cross-kind; `422 UNKNOWN_TITLE`. |
-| `PUT /playlists/{id}/items` | `{ "itemIds": [ … ] }` — the **full permutation** of current item ids, rewritten transactionally → `204`. Any mismatch → `422 ITEM_SET_MISMATCH`, order unchanged. |
+| `PUT /playlists/{id}/items` | `{ "itemIds": [ … ] }` — the **full permutation of the item ids `GET /playlists/{id}` just returned you** (i.e. the *visible* ones), rewritten transactionally → `204`. Any mismatch — wrong count, duplicate, unknown id, or an id you can't see — → `422 ITEM_SET_MISMATCH`, order unchanged. Members omitted from the resolved view (Missing/out-of-scope) keep their **index** in the sequence: they neither move nor need naming, so a Missing member does not freeze the order. |
 | `DELETE /playlists/{id}/items/{itemId}` | → `204`. By **item id** (duplicates safe). Unknown item → `404 "playlist item not found"`. The kind persists even when the last item is removed. |
 
 #### Watchlist — [Public], the per-User system Playlist, addressed by name

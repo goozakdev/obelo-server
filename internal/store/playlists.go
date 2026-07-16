@@ -17,9 +17,10 @@ import (
 // stable Title id (ADR-0014); duplicates are allowed (no UNIQUE on title_id).
 
 // ErrItemSetMismatch means a reorder payload's item-id set did not EXACTLY match
-// the Playlist's current item ids — it omitted an id, named a foreign/unknown id,
-// or repeated one. The reorder is rejected as a no-op that leaves the existing
-// order unchanged (the api layer answers 422 ITEM_SET_MISMATCH).
+// the Playlist's currently VISIBLE item ids — it omitted an id, named a
+// foreign/unknown/invisible id, or repeated one. The reorder is rejected as a no-op
+// that leaves the existing order unchanged (the api layer answers 422
+// ITEM_SET_MISMATCH).
 var ErrItemSetMismatch = errors.New("store: playlist reorder item set mismatch")
 
 // Playlist is a User-owned, ordered, single-media-kind queue of Titles (CONTEXT.md
@@ -283,17 +284,28 @@ func (db *DB) AppendPlaylistItem(playlistID, titleID, mappedKind string) (string
 	return itemID, nil
 }
 
-// ReorderPlaylistItems rewrites the Playlist's order to exactly the sequence in
-// itemIDs, transactionally and atomically. The payload is the FULL desired order
-// of the Playlist's item ids; each item's position is rewritten to its index in
-// itemIDs (1-based, consistent with append's MAX+1). It validates — inside the
-// transaction, BEFORE any write — that itemIDs is EXACTLY the Playlist's current
-// item-id set: same count, every id belongs to this Playlist, and no duplicate in
-// the payload. Any mismatch returns ErrItemSetMismatch and rolls back, so a
-// rejected reorder is a true no-op leaving the existing order intact. Idempotent
-// (same input → same order). Bumps updated_at on success. ErrNotFound for an
-// unknown Playlist. (Ownership is checked by the caller before this runs.)
-func (db *DB) ReorderPlaylistItems(playlistID string, itemIDs []string) error {
+// ReorderPlaylistItems rewrites the Playlist's order to the sequence in itemIDs,
+// transactionally and atomically. The payload is the full desired order of the
+// items the caller can SEE — exactly what GET /playlists/{id} returned them under
+// the same `filter`.
+//
+// Validated inside the transaction BEFORE any write: itemIDs must be EXACTLY the
+// Playlist's currently visible item-id set — same count, every id a visible member
+// of this Playlist, no duplicate in the payload. Any mismatch returns
+// ErrItemSetMismatch and rolls back, so a rejected reorder is a true no-op leaving
+// the existing order intact. Idempotent. Bumps updated_at on success. ErrNotFound
+// for an unknown Playlist. (Ownership is checked by the caller before this runs.)
+//
+// Validating against the VISIBLE set — not every row — is what makes reorder
+// reachable at all. A member whose Title went Missing (titles.hidden = 1, ADR-0008)
+// or fell outside the caller's Scope is omitted from the resolved view while its
+// item row persists (0017_playlists.sql), so a client can neither see that row nor
+// name its item id. Validating against every row therefore froze the order of any
+// Playlist that had ever lost a file: the only payload the client could build was
+// the visible one, and it could never match. Hidden items instead keep their INDEX
+// in the sequence — the visible ids are merged back around them — so they neither
+// move nor leak, and reappear where they were when their Files return.
+func (db *DB) ReorderPlaylistItems(playlistID string, itemIDs []string, filter AccessFilter) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("store: begin reorder playlist items: %w", err)
@@ -309,18 +321,49 @@ func (db *DB) ReorderPlaylistItems(playlistID string, itemIDs []string) error {
 		return fmt.Errorf("store: validating playlist %q: %w", playlistID, err)
 	}
 
-	// Read the Playlist's current item-id set to validate the payload against.
-	current, err := func() (map[string]bool, error) {
-		rows, err := tx.Query(`SELECT id FROM playlist_items WHERE playlist_id = ?`, playlistID)
+	// Every item row in position order — hidden members included, because they hold
+	// the slots the visible ids are merged back around.
+	ordered, err := func() ([]string, error) {
+		rows, err := tx.Query(
+			`SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position, id`,
+			playlistID)
 		if err != nil {
 			return nil, fmt.Errorf("store: reading playlist items: %w", err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("store: scanning playlist item: %w", err)
+			}
+			out = append(out, id)
+		}
+		return out, rows.Err()
+	}()
+	if err != nil {
+		return err
+	}
+
+	// The subset of those the caller may see — the same `hidden = 0` + access
+	// predicate ResolveVisibleTitles applies, so this set is exactly the one the
+	// detail view showed.
+	accessClause, accessArgs := filter.titleClauses("t.library_id", "t.content_rating")
+	visible, err := func() (map[string]bool, error) {
+		args := append([]any{playlistID}, accessArgs...)
+		rows, err := tx.Query(
+			`SELECT pi.id FROM playlist_items pi
+			   JOIN titles t ON t.id = pi.title_id
+			  WHERE pi.playlist_id = ? AND t.hidden = 0`+accessClause, args...)
+		if err != nil {
+			return nil, fmt.Errorf("store: reading visible playlist items: %w", err)
 		}
 		defer rows.Close()
 		set := make(map[string]bool)
 		for rows.Next() {
 			var id string
 			if err := rows.Scan(&id); err != nil {
-				return nil, fmt.Errorf("store: scanning playlist item: %w", err)
+				return nil, fmt.Errorf("store: scanning visible playlist item: %w", err)
 			}
 			set[id] = true
 		}
@@ -330,20 +373,34 @@ func (db *DB) ReorderPlaylistItems(playlistID string, itemIDs []string) error {
 		return err
 	}
 
-	// No partial reorder: the payload must be EXACTLY the current set. Same count,
-	// no duplicate in the payload, and every id a current member of this Playlist.
-	if len(itemIDs) != len(current) {
+	// No partial reorder: the payload must be EXACTLY the visible set. Same count,
+	// no duplicate in the payload, and every id a visible member of this Playlist.
+	if len(itemIDs) != len(visible) {
 		return ErrItemSetMismatch
 	}
 	seen := make(map[string]bool, len(itemIDs))
 	for _, id := range itemIDs {
-		if seen[id] || !current[id] {
+		if seen[id] || !visible[id] {
 			return ErrItemSetMismatch
 		}
 		seen[id] = true
 	}
 
-	for i, id := range itemIDs {
+	// Walk the full sequence, spending the payload in order at each visible slot and
+	// leaving hidden items where they sit. Renumbering the merged result 1-based
+	// keeps append's MAX+1 landing at the end and compacts any gaps a removal left.
+	merged := make([]string, 0, len(ordered))
+	next := 0
+	for _, id := range ordered {
+		if visible[id] {
+			merged = append(merged, itemIDs[next])
+			next++
+			continue
+		}
+		merged = append(merged, id)
+	}
+
+	for i, id := range merged {
 		if _, err := tx.Exec(
 			`UPDATE playlist_items SET position = ? WHERE id = ? AND playlist_id = ?`,
 			i+1, id, playlistID,

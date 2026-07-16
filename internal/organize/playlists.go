@@ -179,19 +179,23 @@ func (s *Service) AppendPlaylistItem(ownerUserID, id, titleID string) (string, e
 	return s.store.AppendPlaylistItem(id, titleID, mapped)
 }
 
-// ReorderPlaylistItems rewrites the order of one of ownerUserID's Playlists to
-// exactly the given item-id sequence (collections-playlists 04). It funnels through
-// getOwned, so a non-owner (Member OR Admin, no override) gets ErrNotFound, exactly
-// like every other owner-scoped op. itemIDs must be the FULL desired order of the
-// Playlist's CURRENT item ids — same set, no missing/foreign/duplicate id — or the
-// reorder is rejected as a no-op with ErrItemSetMismatch, leaving the order intact.
-// The rewrite is transactional and atomic; positions are reassigned to the desired
-// order. Idempotent (same input → same order).
-func (s *Service) ReorderPlaylistItems(ownerUserID, id string, itemIDs []string) error {
+// ReorderPlaylistItems rewrites the order of one of ownerUserID's Playlists to the
+// given item-id sequence (collections-playlists 04). It funnels through getOwned,
+// so a non-owner (Member OR Admin, no override) gets ErrNotFound, exactly like every
+// other owner-scoped op. itemIDs must be the FULL desired order of the Playlist's
+// currently VISIBLE item ids under `scope` — the same set PlaylistMembers returned —
+// with no missing/foreign/duplicate id, or the reorder is rejected as a no-op with
+// ErrItemSetMismatch, leaving the order intact. The rewrite is transactional and
+// atomic. Idempotent (same input → same order).
+//
+// The scope is what keeps reorder reachable: members hidden from PlaylistMembers
+// (Missing, or out of scope) keep their place in the sequence rather than counting
+// against a payload the caller had no way to name them in. See the store method.
+func (s *Service) ReorderPlaylistItems(scope access.Scope, ownerUserID, id string, itemIDs []string) error {
 	if _, err := s.getOwned(ownerUserID, id); err != nil {
 		return err // ErrNotFound flows through (incl. non-owner)
 	}
-	switch err := s.store.ReorderPlaylistItems(id, itemIDs); {
+	switch err := s.store.ReorderPlaylistItems(id, itemIDs, scope.StoreFilter()); {
 	case errors.Is(err, store.ErrItemSetMismatch):
 		return ErrItemSetMismatch
 	case errors.Is(err, store.ErrNotFound):
