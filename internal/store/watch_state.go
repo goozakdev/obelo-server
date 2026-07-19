@@ -198,6 +198,10 @@ func (db *DB) WatchStatesForTitles(userID string, titleIDs []string) (map[string
 // rows are already cleared of their resume on crossing ~90%, so the resume > 0
 // filter alone keeps finished Titles out. limit caps the row count.
 //
+// Continue Watching is video only: the row is restricted to movie/episode Titles
+// so in-progress music Tracks (kind = 'track') never surface here, even though
+// they carry a resume position of their own. Music is ambient, not "watched."
+//
 // The 2%/90% band is enforced upstream when the resume is WRITTEN (the playback
 // domain stores no resume below the floor and clears it above the ceiling), so
 // this query only needs "has a resume" — it never re-derives a percentage,
@@ -222,7 +226,8 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 		          WHERE ed.title_id = t.id) AS duration_ms
 		   FROM watch_state w
 		   JOIN titles t ON t.id = w.title_id
-		  WHERE w.user_id = ? AND w.resume_position_ms > 0 AND w.watched = 0 AND t.hidden = 0`+clause+`
+		  WHERE w.user_id = ? AND w.resume_position_ms > 0 AND w.watched = 0 AND t.hidden = 0
+		    AND t.kind IN ('movie', 'episode')`+clause+`
 		  ORDER BY w.updated_at DESC, t.id DESC
 		  LIMIT ?`,
 		args...)
