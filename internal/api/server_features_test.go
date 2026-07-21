@@ -45,6 +45,11 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 		// probe wants: a 405 proves the route exists, and existence is all the flag
 		// claims (ADR-0036).
 		{"deviceAuth", "/api/v1/auth/device/code"},
+		// remuxSelectedOnly rides the POST-only playback route (the flag advertises a
+		// request FIELD on it, PRD remux-selected). A GET draws a 405 — the route
+		// exists, which is what the flag claims; the field's behaviour is pinned by the
+		// playback tests, not by route existence.
+		{"remuxSelectedOnly", "/api/v1/titles/nonexistent/playback"},
 	}
 
 	for _, p := range probes {

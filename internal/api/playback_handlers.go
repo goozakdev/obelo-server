@@ -71,6 +71,18 @@ type playbackRequest struct {
 	// the default keeps the current tier. An id that is not a selectable video Stream of
 	// the Title is 404.
 	VideoStreamID string `json:"videoStreamId"`
+	// RemuxSelectedOnly forces a lean, copy-only directStream (one video + one audio
+	// Stream) on a File that would otherwise directPlay, so a many-track container is
+	// trimmed to just the selected/negotiated tracks without a transcode (PRD
+	// remux-selected). When the negotiation would land on directPlay, the tier becomes
+	// directStream with the FFmpeg map pinned to the resolved video + audio (every other
+	// a/v Stream dropped); codecs are copied, never re-encoded, so it does NOT consume a
+	// transcode cap slot. It is a no-op when the session is already directStream/transcode
+	// for another reason (container mismatch, Quality cap, AAC narrowing) or when the
+	// resolved audio can't ride the remux container — the decision's `tier` tells the
+	// client the truth. Subtitles are unchanged. Advertised via features.remuxSelectedOnly;
+	// omitted/false is today's behaviour exactly. Decoded here, defaulting false.
+	RemuxSelectedOnly bool `json:"remuxSelectedOnly"`
 }
 
 type deviceProfileJSON struct {
@@ -512,17 +524,18 @@ func handlePlayback(svc *playback.Service) http.HandlerFunc {
 		}
 
 		dec, sess, unsup, busy, err := svc.Negotiate(playback.Request{
-			UserID:         id.User.ID,
-			DeviceID:       id.Device.ID,
-			TitleID:        titleID,
-			Profile:        req.DeviceProfile.toDomain(),
-			Constraints:    req.Constraints.toDomain(),
-			StartPosition:  req.StartPosition,
-			EditionID:      req.EditionID,
-			BurnSubtitleID: req.BurnSubtitleID,
-			AudioStreamID:  req.AudioStreamID,
-			VideoStreamID:  req.VideoStreamID,
-			Scope:          scope,
+			UserID:            id.User.ID,
+			DeviceID:          id.Device.ID,
+			TitleID:           titleID,
+			Profile:           req.DeviceProfile.toDomain(),
+			Constraints:       req.Constraints.toDomain(),
+			StartPosition:     req.StartPosition,
+			EditionID:         req.EditionID,
+			BurnSubtitleID:    req.BurnSubtitleID,
+			AudioStreamID:     req.AudioStreamID,
+			VideoStreamID:     req.VideoStreamID,
+			RemuxSelectedOnly: req.RemuxSelectedOnly,
+			Scope:             scope,
 		})
 		switch {
 		case errors.Is(err, playback.ErrTitleNotFound):

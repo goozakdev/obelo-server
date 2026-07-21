@@ -418,11 +418,12 @@ Negotiates a Capability profile → picks a tier ([ADR-0003](./adr/0003-three-ti
   "editionId": "",
   "burnSubtitleId": "",
   "audioStreamId": "",
-  "videoStreamId": ""
+  "videoStreamId": "",
+  "remuxSelectedOnly": false
 }
 ```
 
-`maxBitrate` (bits/sec) reflects current network and is the field that most often flips direct-play into transcode. `maxLevel`/`hdr`/`preferredSubtitleLang` are recorded, not yet enforced. `textSubtitleFormats` **is** enforced — it selects each text subtitle's delivery format (original vs WebVTT, [ADR-0033](./adr/0033-original-format-subtitle-delivery-negotiated-by-capability.md)); omit it (or declare only `vtt`) for WebVTT everywhere. Resolution tokens: `144p…4320p` plus `sd/hd/fhd/2k/4k/uhd/8k`. `audioStreamId`/`videoStreamId`/`burnSubtitleId` select non-default streams (may escalate the tier; a video pick restarts in-container, [ADR-0025](./adr/0025-selectable-video-streams-in-container-restart-switch.md)).
+`maxBitrate` (bits/sec) reflects current network and is the field that most often flips direct-play into transcode. `maxLevel`/`hdr`/`preferredSubtitleLang` are recorded, not yet enforced. `textSubtitleFormats` **is** enforced — it selects each text subtitle's delivery format (original vs WebVTT, [ADR-0033](./adr/0033-original-format-subtitle-delivery-negotiated-by-capability.md)); omit it (or declare only `vtt`) for WebVTT everywhere. Resolution tokens: `144p…4320p` plus `sd/hd/fhd/2k/4k/uhd/8k`. `audioStreamId`/`videoStreamId`/`burnSubtitleId` select non-default streams (may escalate the tier; a video pick restarts in-container, [ADR-0025](./adr/0025-selectable-video-streams-in-container-restart-switch.md)). `remuxSelectedOnly` (default `false`) forces a lean, **copy-only** `directStream` — one video + one audio Stream — on a File that would **otherwise directPlay**: the negotiated tier becomes `directStream` with the FFmpeg map pinned to the selected/negotiated video + audio (the `videoStreamId`/`audioStreamId` picks if sent, else the negotiated defaults), every other a/v Stream dropped, codecs copied (never re-encoded, so it does **not** count against the transcode cap). It is a **no-op** when the session is already `directStream`/`transcode` for another reason (container mismatch, a Quality cap, an AAC narrowing, a non-default pick) or when the resolved audio cannot ride the remux container — the returned `tier` tells the truth. Subtitles are unchanged (out-of-band / in-band renditions). Advertised via `features.remuxSelectedOnly`; a client hides the affordance when it is absent.
 
 → `200` decision (live-verified):
 

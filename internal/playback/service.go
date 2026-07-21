@@ -241,6 +241,18 @@ type Request struct {
 	// no selectable video Stream of the Title is ErrVideoStreamNotFound. Empty leaves the
 	// video on the capability-then-quality default, unchanged.
 	VideoStreamID string
+	// RemuxSelectedOnly, when true, asks the server to trim an otherwise-directPlay File
+	// to a lean, copy-only directStream carrying just the selected/negotiated video +
+	// audio Stream (PRD remux-selected) — a many-track container repackaged down to the
+	// bytes the viewer actually uses on a bandwidth-limited link, with no re-encode (so
+	// it never consumes a transcode cap slot). It is applied AFTER audio/video
+	// resolution, so it drops every a/v Stream but the resolved pair. It is a no-op when
+	// the Decision is already directStream/transcode for another reason (a container
+	// mismatch, a Quality cap, an AAC narrowing, a non-default pick — already lean or
+	// re-encoded) or when the resolved audio can't be copied into the remux container;
+	// see applyRemuxSelectedOnly. Subtitles are unaffected (delivered out-of-band / as
+	// in-band renditions, ADR-0020). Empty leaves negotiation on its cheapest tier.
+	RemuxSelectedOnly bool
 	// Scope is the caller's resolved access scope. A Title in a Library the caller
 	// may not access is negotiated as not-found (404, hide existence) before any
 	// session is created. No-op under an all-access scope (the current default).
@@ -424,6 +436,17 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 		} else {
 			dec = videoDec
 		}
+	}
+
+	// Lean single-track remux (PRD remux-selected): when the client asked to drop every
+	// a/v Stream but the resolved pair AND the Decision would otherwise direct-play,
+	// escalate to a copy-only directStream pinned to just the resolved video + audio. It
+	// runs LAST of the escalations — after the burn/audio/video resolution above — so it
+	// trims to the FINAL selected Streams, and no-ops when any of those already forced a
+	// directStream/transcode (already lean or re-encoded). Copy-only, so it never
+	// consumes a transcode cap slot; a directStream is unmetered in CreateGoverned below.
+	if req.RemuxSelectedOnly {
+		dec = applyRemuxSelectedOnly(req.Profile, req.Constraints, dec)
 	}
 
 	// A video-copy transcode (ADR-0024) copies the source video and transcodes only
@@ -732,6 +755,7 @@ func escalateForVideo(req Request, detail store.TitleDetail, base Decision, vide
 //     realignment. When that backend is HARDWARE (transcode.IsHardware), the second
 //     return is the identical builder forced to AccelCPU — the per-session fallback
 //     the runtime restarts on if the hardware job fails to launch (issue 03).
+//
 // boundaries, when non-nil, are the probed keyframe segment boundaries of a video
 // COPY (Negotiate probes them for remux/video-copy sessions): a TS copy job then
 // DICTATES its cut times to the segment muxer so segments match the synthesized
@@ -770,6 +794,15 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 		// (nil for single-audio → byte-for-byte the original copy-everything remux),
 		// closing the reported-vs-audible divergence (audio-streams/02).
 		audioIdx := audioMapIndex(dec.File, dec.AudioStream)
+		// A remux-selected session drops every a/v Stream but the resolved pair, so it
+		// pins BOTH maps even on a single-stream File (where the ordinary path leaves the
+		// index nil / copy-everything). demuxed is already false for such a Decision
+		// (IsDemuxed suppresses it), so we are on this muxed path; the explicit
+		// `-map 0:v:N -map 0:a:M -c copy` keeps exactly one video + one audio.
+		if dec.RemuxSelectedOnly {
+			videoIdx = forcedVideoMapIndex(dec.File, dec.VideoStream)
+			audioIdx = forcedAudioMapIndex(dec.File, dec.AudioStream)
+		}
 		return func(outputDir string, seek transcode.SeekOffset) []string {
 			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
 		}, nil, nil
@@ -830,6 +863,13 @@ func segmentTimesFor(boundaries []float64, seek transcode.SeekOffset) []float64 
 // audio-only Music Track, and direct play all stay muxed/unchanged by construction.
 func IsDemuxed(dec Decision) bool {
 	if dec.Tier == TierDirectPlay || dec.AudioOnly {
+		return false
+	}
+	// A remux-selected session deliberately KEEPS only the one selected audio Stream
+	// (PRD): demuxing would deliver every audio Stream as its own rendition, the exact
+	// opposite of the lean trim the client asked for. So it stays muxed even on a
+	// multi-audio File — the single pinned audio rides in the video variant.
+	if dec.RemuxSelectedOnly {
 		return false
 	}
 	return audioStreamCount(dec.File) >= 2

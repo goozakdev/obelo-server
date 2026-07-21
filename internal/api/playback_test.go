@@ -164,6 +164,48 @@ func TestPlaybackDirectPlay(t *testing.T) {
 	}
 }
 
+// TestPlaybackRemuxSelectedOnly: the remuxSelectedOnly request field forces an
+// otherwise-directPlay File onto the copy-only directStream (remux) tier — the
+// lean single-track trim (PRD remux-selected). Omitting the field is today's
+// behaviour exactly (directPlay), so the two assertions together prove the flag
+// is the only thing that moved the tier.
+func TestPlaybackRemuxSelectedOnly(t *testing.T) {
+	requireFixtures(t)
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	list := scanFixtureLibrary(t, srv, token)
+	duneID := findTitle(t, list, "Dune")
+
+	// Baseline: the same profile direct-plays Dune (mp4/h264/aac).
+	var base decisionResp
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/titles/"+duneID+"/playback", token, mp4Profile(), &base); status != http.StatusOK {
+		t.Fatalf("baseline status = %d, want 200; body: %s", status, body)
+	}
+	if base.Tier != "directPlay" {
+		t.Fatalf("baseline tier = %q, want directPlay (guard for the flip below)", base.Tier)
+	}
+
+	// With remuxSelectedOnly: the same request escalates to a copy-only directStream
+	// delivered over HLS, without a re-encode (still h264, not TRANSCODE_REQUIRED).
+	body := mp4Profile()
+	body["remuxSelectedOnly"] = true
+	var dec decisionResp
+	status, raw := srv.JSON(http.MethodPost, "/api/v1/titles/"+duneID+"/playback", token, body, &dec)
+	if status != http.StatusOK {
+		t.Fatalf("remux-selected status = %d, want 200; body: %s", status, raw)
+	}
+	if dec.Tier != "directStream" {
+		t.Errorf("remux-selected tier = %q, want directStream; body: %s", dec.Tier, raw)
+	}
+	hlsBase := "/api/v1/sessions/" + dec.SessionID + "/hls/"
+	if !strings.HasPrefix(dec.StreamURL, hlsBase) {
+		t.Errorf("remux-selected streamUrl = %q, want an HLS playlist under %q", dec.StreamURL, hlsBase)
+	}
+	if dec.VideoStream == nil || dec.VideoStream.Codec != "h264" {
+		t.Errorf("remux-selected videoStream = %+v, want h264 (copied, not re-encoded)", dec.VideoStream)
+	}
+}
+
 // TestPlaybackDirectStreamContainerOnly: a profile that supports the File's
 // codecs (mpeg4 + mp3) but NOT its container (mkv) now negotiates the
 // directStream (remux) tier — the streamUrl is an HLS media playlist, not the

@@ -99,6 +99,18 @@ type Decision struct {
 	// (exact dictated-cut playlists), fMP4 only for the native Apple player that
 	// requires it.
 	HevcInMpegTS bool
+	// RemuxSelectedOnly marks a directStream FORCED by the client's remux-selected
+	// request (PRD remux-selected): an otherwise-directPlay File repackaged, copy-only,
+	// down to just the selected/negotiated video + audio Stream so a many-track file is
+	// trimmed to the bytes the viewer actually uses on a bandwidth-limited link. It
+	// changes two things versus an ordinary directStream: the session stays MUXED even
+	// on a multi-audio File (IsDemuxed is off — the whole point is to DROP the other
+	// audio, not offer it as renditions), and the copy map is pinned to exactly one
+	// video + one audio (forcedVideoMapIndex/forcedAudioMapIndex) so every other a/v
+	// Stream is left out. It is only ever set by applyRemuxSelectedOnly, which escalates
+	// solely from directPlay and only when the resolved audio can be copied into the
+	// remux container; false for every other Decision.
+	RemuxSelectedOnly bool
 }
 
 // UsesFMP4 reports whether the HLS session is delivered as fragmented-MP4 (.m4s +
@@ -818,6 +830,74 @@ func audioRelIndex(f store.File, streamID string) (idx, total int, found bool) {
 		total++
 	}
 	return idx, total, found
+}
+
+// applyRemuxSelectedOnly forces a lean, copy-only directStream mapped down to just
+// the resolved video + audio Stream (PRD remux-selected): the client asked to trim a
+// many-track File to the bytes it actually plays without paying for a transcode. It
+// keys on the PRD's "otherwise directPlay-CAPABLE" — the played File's DEFAULT config
+// must direct-play — rather than on the Decision's current tier, which matters when a
+// non-default video/audio pick has already bumped a directPlay-capable File to
+// directStream to -map the chosen Stream: that pick is exactly what this trim honors,
+// so the flag must still fire (acceptance: "those exact Streams are the ones
+// retained"). It no-ops when:
+//
+//   - the Decision is a TRANSCODE (a Quality cap, an AAC narrowing, a burn, an
+//     undecodable pick) or an audio-only Music Track — a copy can't reshape a
+//     re-encode, and an audio-only File has no other a/v Stream to drop.
+//   - the File is NOT directPlay-capable — its CONTAINER is unsupported, so the
+//     directStream is a plain container-mismatch remux, "already remuxed for another
+//     reason" per the PRD (the client greys the affordance, but the server stays
+//     robust to still receiving the flag).
+//   - the resolved audio can't be COPIED into the remux container (FLAC, Opus, …): a
+//     copy-only repackage can't honor it, so the working direct play stands and the
+//     tier tells the client the truth (the PRD's open question, resolved to "silent").
+//
+// On success it flips the tier to directStream and sets RemuxSelectedOnly so the
+// session runtime + args builders constrain the copy to the single selected pair. It
+// composes after the burn/audio/video resolution the Service runs, judging the FINAL
+// played File.
+func applyRemuxSelectedOnly(profile DeviceProfile, constraints Constraints, dec Decision) Decision {
+	if dec.Tier == TierTranscode || dec.AudioOnly {
+		return dec
+	}
+	// "Otherwise directPlay-capable": the played File's default config direct-plays.
+	// For a tier already on directStream this fails ONLY on a container mismatch (any
+	// other blocker would have made the base a transcode, not a remux), cleanly
+	// separating a container-mismatch remux (no-op) from a stream-pick remux (trim).
+	if _, unsup := Negotiate(profile, constraints, dec.Edition, dec.File); unsup != nil {
+		return dec
+	}
+	if ac := firstNonEmpty(dec.AudioStream.Codec, dec.File.AudioCodec); ac != "" && !hlsRemuxableAudio(ac) {
+		return dec
+	}
+	dec.Tier = TierDirectStream
+	dec.RemuxSelectedOnly = true
+	return dec
+}
+
+// forcedVideoMapIndex / forcedAudioMapIndex return the `-map 0:v:N` / `-map 0:a:N`
+// selector for a remux-selected session, ALWAYS non-nil — index 0 when the Stream
+// can't be located or the File carries only one — so the copied output maps exactly
+// one video + one audio and drops every other a/v Stream (the lean-remux point).
+// Contrast videoMapIndex/audioMapIndex, which return nil for a single-stream File to
+// keep an ordinary remux's args byte-for-byte unchanged; a remux-selected session is
+// a new path with no such back-compat concern, and pinning both tracks makes "exactly
+// the selected pair" hold by construction even on a single-track File.
+func forcedVideoMapIndex(f store.File, chosen store.Stream) *int {
+	idx, _, found := videoRelIndex(f, chosen.ID)
+	if !found {
+		idx = 0
+	}
+	return &idx
+}
+
+func forcedAudioMapIndex(f store.File, chosen store.Stream) *int {
+	idx, _, found := audioRelIndex(f, chosen.ID)
+	if !found {
+		idx = 0
+	}
+	return &idx
 }
 
 // audioMapIndex returns the `-map 0:a:N` selector for the negotiated audio Stream,

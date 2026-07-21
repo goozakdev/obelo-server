@@ -76,6 +76,12 @@ func (m *Metadata) Features() map[string]bool {
 		// behaviour there is to fall back to the username/password form, which
 		// every client keeps anyway as the manual path.
 		"deviceAuth": true,
+		// remuxSelectedOnly advertises the playback route's remuxSelectedOnly request
+		// field (PRD remux-selected): the client may force a lean, copy-only directStream
+		// (one video + one audio Stream) on an otherwise-directPlay File. A client MUST
+		// branch on this rather than a version — an older server rejects the unknown field
+		// with 400 — and grey the "Force Remux on Server" affordance when it is absent.
+		"remuxSelectedOnly": true,
 		// transcode is not a route-existence flag: /transcoding is only the
 		// admin observability snapshot (ADR-0029). It advertises the transcode
 		// delivery tier, which depends on a resolved ffmpeg backend, so it stays
