@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/session";
+import { useFeature } from "../serverInfoContext";
 import { useEnrichmentActivity } from "../events/enrichEvents";
 import { useLibraries } from "./librariesContext";
 import { MusicIcon, FilmIcon, TvIcon } from "./kindIcons";
@@ -117,6 +118,11 @@ export default function AppHeader() {
 // UserMenu is the far-right account dropdown: the username toggles a menu of the
 // utility links (Playlists, Collections, admin-only Admin) plus Sign out.
 // Closes on outside click, on Escape, and on selection.
+//
+// Playlists and Collections are gated on the server's advertised feature flags
+// (Apple TV → Web parity §4): a server that does not advertise `playlists` /
+// `collections` has no such routes, so the link is hidden rather than offering a
+// dead end. We gate on the flag, never on the server version.
 function UserMenu({
   username,
   isAdmin,
@@ -126,6 +132,8 @@ function UserMenu({
 }) {
   const navigate = useNavigate();
   const { logout } = useAuth();
+  const showPlaylists = useFeature("playlists");
+  const showCollections = useFeature("collections");
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -175,28 +183,32 @@ function UserMenu({
           role="menu"
           data-testid="user-menu"
         >
-          <li role="none">
-            <Link
-              role="menuitem"
-              className="nav-dropdown-item"
-              to="/playlists"
-              data-testid="nav-playlists"
-              onClick={() => setOpen(false)}
-            >
-              Playlists
-            </Link>
-          </li>
-          <li role="none">
-            <Link
-              role="menuitem"
-              className="nav-dropdown-item"
-              to="/collections"
-              data-testid="nav-collections"
-              onClick={() => setOpen(false)}
-            >
-              Collections
-            </Link>
-          </li>
+          {showPlaylists && (
+            <li role="none">
+              <Link
+                role="menuitem"
+                className="nav-dropdown-item"
+                to="/playlists"
+                data-testid="nav-playlists"
+                onClick={() => setOpen(false)}
+              >
+                Playlists
+              </Link>
+            </li>
+          )}
+          {showCollections && (
+            <li role="none">
+              <Link
+                role="menuitem"
+                className="nav-dropdown-item"
+                to="/collections"
+                data-testid="nav-collections"
+                onClick={() => setOpen(false)}
+              >
+                Collections
+              </Link>
+            </li>
+          )}
           {isAdmin && (
             <li role="none">
               <Link
