@@ -222,6 +222,52 @@ describe("Artist detail", () => {
     expect(screen.queryByTestId("detail-backdrop")).not.toBeInTheDocument();
     expect(screen.getByTestId("artist-name")).toHaveTextContent("Radiohead");
   });
+
+  it("renders the alphabet jump bar and scrolls the Album wall by the article-stripped sort key", async () => {
+    // jsdom doesn't implement scrollIntoView; capture the element it's called on.
+    const originalScroll = Element.prototype.scrollIntoView;
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView =
+      scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
+
+    // Albums as the server orders them (year, sort_title). "The Bends" buckets on
+    // its sort key — the leading article is stripped, so it files under B, not T.
+    getArtistAlbums.mockResolvedValue({
+      artist: { id: "ar1", kind: "artist", name: "Radiohead" },
+      albums: [
+        { id: "al-bends", artistId: "ar1", artistName: "Radiohead", title: "The Bends", year: 1995, hasArtwork: false, trackCount: 1 },
+        { id: "al-ok", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 1 },
+        { id: "al-kida", artistId: "ar1", artistName: "Radiohead", title: "Kid A", year: 2000, hasArtwork: false, trackCount: 1 },
+      ],
+    });
+
+    try {
+      renderWithAuth(
+        <Routes>
+          <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+        </Routes>,
+        { initialEntries: ["/music/artists/ar1"] },
+      );
+
+      await waitFor(() => expect(screen.getByTestId("album-grid")).toBeInTheDocument());
+      // The Album wall carries the jump bar (parity with Movies/Shows/Artists).
+      expect(screen.getByTestId("letter-jump")).toBeInTheDocument();
+
+      // Jump to E-H. "The Bends" sorts under B (article stripped, "bends"), so the
+      // jump skips it and lands on the first album at/after E in list order —
+      // "OK Computer". A display-name bucket would wrongly file "The Bends" under
+      // T and land the E jump there.
+      await userEvent.click(screen.getByTestId("letter-jump-e"));
+
+      await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+      const scrolled = scrollSpy.mock.instances[
+        scrollSpy.mock.instances.length - 1
+      ] as HTMLElement;
+      expect(scrolled).toHaveAttribute("data-album-id", "al-ok");
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+    }
+  });
 });
 
 describe("Album detail", () => {
