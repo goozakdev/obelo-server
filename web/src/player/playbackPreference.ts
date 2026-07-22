@@ -6,10 +6,11 @@
 // OWNERSHIP (client ADR-0011): this store holds ONLY the axes the SERVER has no
 // memory of. The audio / video Stream picks are the server's per-user Remembered
 // audio / Remembered video (server ADR-0023/0025) and must NOT be duplicated here
-// (they'd drift the moment the viewer switches in-player). For THIS slice that
-// leaves the Edition, the Quality cap, and the Subtitle track (stored by language +
-// forced, since subtitle choice has no server memory — CONTEXT.md), with AAC / Force
-// Remux slated to join the same struct later.
+// (they'd drift the moment the viewer switches in-player). That leaves the Edition,
+// the Quality cap, the Subtitle track (stored by language + forced, since subtitle
+// choice has no server memory — CONTEXT.md), and the AAC-stereo toggle (a capability-
+// profile narrowing with no contract field at all), with Force Remux slated to join
+// the same struct later.
 //
 // KEYING: per Active user + per Title (Movies) / per Show (TV). A Movie keys on its
 // own Title id; a TV Episode keys on its SHOW id, so a single choice ports across
@@ -42,8 +43,8 @@ export interface SubtitlePreference {
 }
 
 /** A committed Playback preference — the axes with no server memory (ADR-0011).
- * The Edition, the Quality cap, and the Subtitle track for this slice; future axes
- * (AAC, force-remux) slot in here alongside them. */
+ * The Edition, the Quality cap, the Subtitle track, and the AAC-stereo toggle;
+ * future axes (force-remux) slot in here alongside them. */
 export interface PlaybackPreference {
   /** The chosen Edition's NAME (not id): the name ports across a Show's Episodes,
    * which each carry a different id for the "same" Edition. `null` = **Auto** — omit
@@ -61,6 +62,13 @@ export interface PlaybackPreference {
    * tier, emits `burnSubtitleId`; a text track (selectable WebVTT) and a direct-play
    * image track render locally, so they add no request field. */
   subtitle: SubtitlePreference | null;
+  /** The "Transcode to AAC (Stereo)" toggle (appletv-web-parity §1/§7). There is NO
+   * AAC field in the contract — when true the player narrows the SENT `deviceProfile`
+   * to `audioCodecs: ["aac"], maxAudioChannels: 2` (the resolver emits the narrowing;
+   * the session merges it over the capability default). `false` = off — send today's
+   * full probed profile unchanged. Issue 07 reads this flag (the draft in the sheet,
+   * the stored value here) to disable Force Remux while AAC is on. */
+  aacStereo: boolean;
 }
 
 /** The all-Auto preference: nothing pinned, every axis deferred to the server /
@@ -70,6 +78,7 @@ export const AUTO_PREFERENCE: PlaybackPreference = {
   editionName: null,
   qualityCap: null,
   subtitle: null,
+  aacStereo: false,
 };
 
 /** Defensively coerce a stored/foreign value into a {@link SubtitlePreference}, or
@@ -127,7 +136,10 @@ export function loadPreference(
     const qualityCap = isQualityCapId(parsed.qualityCap) ? parsed.qualityCap : null;
     // Coerce a stored/foreign subtitle to {language, forced}; anything else → Off.
     const subtitle = parseSubtitlePreference(parsed.subtitle);
-    return { editionName, qualityCap, subtitle };
+    // Coerce the AAC toggle to a strict boolean: a pref persisted before the axis
+    // existed (or a foreign truthy) degrades to off — today's full profile.
+    const aacStereo = parsed.aacStereo === true;
+    return { editionName, qualityCap, subtitle, aacStereo };
   } catch {
     return { ...AUTO_PREFERENCE };
   }

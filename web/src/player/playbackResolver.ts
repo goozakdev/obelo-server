@@ -1,4 +1,4 @@
-import type { PlaybackConstraints, StartPlaybackOptions } from "../api/types";
+import type { DeviceProfile, PlaybackConstraints, StartPlaybackOptions } from "../api/types";
 import type { PlaybackPreference, SubtitlePreference } from "./playbackPreference";
 import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLadder";
 
@@ -9,9 +9,9 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 //
 // PURE and side-effect-free: given a preference + the Title's Editions it returns
 // the override fields; the player merges them into the capability-derived request.
-// This is the seam the axes (Quality cap → constraints, Subtitle → burn id, and the
-// later AAC → deviceProfile, Force Remux → remuxSelectedOnly) bolt onto — each adds a
-// branch here and a field to {@link ResolvedPlayback}, nothing else moves.
+// This is the seam the axes (Quality cap → constraints, Subtitle → burn id, AAC →
+// deviceProfile, and the later Force Remux → remuxSelectedOnly) bolt onto — each adds
+// a branch here and a field to {@link ResolvedPlayback}, nothing else moves.
 //
 // EDITION is stored by NAME (so a Show's choice ports across Episodes with different
 // Edition ids); resolution matches the name to THIS Title's Editions and emits that
@@ -37,17 +37,41 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 // a direct-play tier the image track renders locally, so no field is emitted. The
 // pre-play transcode signal the resolver reads is the Quality-cap constraints issue 03
 // already computes — a downscale rung means the tier transcodes.
+//
+// AAC-STEREO (appletv-web-parity §7) has NO contract field: it is a CAPABILITY-PROFILE
+// narrowing. When the stored toggle is on, the resolver emits the audio side of the
+// `deviceProfile` — `audioCodecs: ["aac"], maxAudioChannels: 2` — which the session
+// merges OVER the browser-probed capability default, forcing the server to deliver
+// stereo AAC. Off (false) emits nothing, so the sent profile stays today's full probe.
+// It needs no negotiation context (no name→id map, no source height): a pure flag.
+
+/** The audio side of a {@link DeviceProfile} the AAC-stereo axis narrows — the two
+ * fields the toggle overrides; every other profile field keeps its probed value. */
+export type AudioProfileOverride = Pick<DeviceProfile, "audioCodecs" | "maxAudioChannels">;
 
 /** The subset of {@link StartPlaybackOptions} a preference can override. Grows as
- * axes land (remuxSelectedOnly, a narrowed deviceProfile). Omitted fields mean "take
- * the server / capability default" (Auto / Direct Play / subtitles Off or local). */
+ * axes land (remuxSelectedOnly). Omitted fields mean "take the server / capability
+ * default" (Auto / Direct Play / subtitles Off or local / the full probed profile). */
 export type ResolvedPlayback = Pick<StartPlaybackOptions, "editionId" | "burnSubtitleId"> & {
   /** The Quality-cap override (appletv-web-parity §3): `maxResolution` + the paired
    * `maxBitrate` from the ladder. Present only for a genuine downscale rung; absent =
    * Direct Play (the capability-derived viewport resolution + no manual bitrate cap).
    * The player merges it OVER the capability constraints in negotiate. */
   constraints?: Pick<PlaybackConstraints, "maxResolution" | "maxBitrate">;
+  /** The AAC-stereo narrowing (appletv-web-parity §7): present ONLY when the stored
+   * toggle is on — `audioCodecs: ["aac"], maxAudioChannels: 2`, merged OVER the
+   * probed capability profile's audio side in negotiate. Absent = off — the sent
+   * `deviceProfile` is the full capability default, unchanged. Its presence is also
+   * the discoverable "this draft transcodes audio" signal issue 07's Force-Remux
+   * disable rule reads. */
+  deviceProfile?: AudioProfileOverride;
 };
+
+/** The AAC-stereo audio narrowing (appletv-web-parity §7) — the constant profile
+ * override the toggle maps to. A fresh object per call (callers may merge/mutate). */
+export function aacStereoAudioProfile(): AudioProfileOverride {
+  return { audioCodecs: ["aac"], maxAudioChannels: 2 };
+}
 
 /** The minimal Subtitle track shape the resolver needs to decide burn-in: the id to
  * emit, the `kind` (text vs image — image is the only burned source, ADR-0020), and
@@ -98,6 +122,9 @@ export function resolvePlayback(
     constraints !== undefined,
   );
   if (burnSubtitleId) resolved.burnSubtitleId = burnSubtitleId;
+  // The AAC-stereo axis (appletv-web-parity §7): a pure flag → the audio-side profile
+  // narrowing. No negotiation context needed; off emits nothing (full probed profile).
+  if (pref?.aacStereo) resolved.deviceProfile = aacStereoAudioProfile();
   return resolved;
 }
 

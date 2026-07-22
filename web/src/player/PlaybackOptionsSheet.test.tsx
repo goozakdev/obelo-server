@@ -366,6 +366,59 @@ describe("PlaybackOptionsSheet — Video axis", () => {
   });
 });
 
+// ── Audio-delivery axis: the AAC-stereo toggle (issue 06, §7) ────────────────────
+// A PERSISTED axis (no server memory, no contract field): a checkbox riding the pref
+// draft like Edition / Quality / Subtitle. Play commits it; backing out discards it.
+// The narrowing itself (deviceProfile → aac/2ch) is the resolver/session's job — the
+// sheet only owns the flag.
+
+describe("PlaybackOptionsSheet — AAC-stereo toggle", () => {
+  it("shows the \"Transcode to AAC (Stereo)\" toggle, off by default", () => {
+    render(
+      <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    const toggle = screen.getByRole("checkbox", { name: /Transcode to AAC \(Stereo\)/ });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("Play commits the toggle to the preference store (draft-only until then)", () => {
+    const onPlay = vi.fn();
+    render(
+      <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={onPlay} />,
+    );
+    fireEvent.click(screen.getByTestId("aac-stereo-toggle"));
+    // A toggle is a draft change only — nothing persisted yet.
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).aacStereo).toBe(false);
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).aacStereo).toBe(true);
+    expect(onPlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens reflecting the saved toggle and commits off over it", () => {
+    window.localStorage.setItem(
+      "juicebox.playback-pref.u1.title.t1",
+      JSON.stringify({ editionName: null, qualityCap: null, subtitle: null, aacStereo: true }),
+    );
+    render(
+      <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    const toggle = screen.getByTestId("aac-stereo-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).aacStereo).toBe(false);
+  });
+
+  it("backing out discards the draft toggle (preference untouched)", () => {
+    render(
+      <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    fireEvent.click(screen.getByTestId("aac-stereo-toggle"));
+    fireEvent.click(screen.getByTestId("playback-options-cancel"));
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).aacStereo).toBe(false);
+  });
+});
+
 // ── Subtitle axis (issue 05, ADR-0020) ───────────────────────────────────────────
 // A PERSISTED axis (subtitle choice has no server memory): Off + one source-tagged
 // row per Subtitle track, SELECTION ONLY (no network on open/selection), persisted BY

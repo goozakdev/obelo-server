@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  aacStereoAudioProfile,
   resolveBurnSubtitle,
   resolveEditionId,
   resolvePlayback,
@@ -27,9 +28,9 @@ const episode2Editions: ResolverEdition[] = [
   { id: "ep2-dc", name: "Director's Cut" },
 ];
 
-/** A full preference — the axes default to Auto / Direct Play / subtitles Off. */
+/** A full preference — the axes default to Auto / Direct Play / subtitles Off / AAC off. */
 function pref(p: Partial<PlaybackPreference>): PlaybackPreference {
-  return { editionName: null, qualityCap: null, subtitle: null, ...p };
+  return { editionName: null, qualityCap: null, subtitle: null, aacStereo: false, ...p };
 }
 
 describe("playbackResolver — Edition axis", () => {
@@ -218,5 +219,47 @@ describe("playbackResolver — Subtitle axis (burnSubtitleId)", () => {
     expect(resolvePlayback(pref({ subtitle: { language: "en", forced: false } }), uhdEditions)).toEqual(
       {},
     );
+  });
+});
+
+// ── AAC-stereo axis (issue 06, appletv-web-parity §7) ────────────────────────────
+// NO contract field: the toggle is a CAPABILITY-PROFILE narrowing. On → the resolver
+// emits the audio side of the deviceProfile (`audioCodecs: ["aac"], maxAudioChannels:
+// 2`) for the session to merge OVER the probed capability default; off → nothing (the
+// sent profile is today's full probe, unchanged). A pure flag — it needs no Editions
+// or Subtitle context to resolve.
+
+describe("playbackResolver — AAC-stereo axis (deviceProfile narrowing)", () => {
+  it("off (false) emits no deviceProfile override — the full probed profile is sent", () => {
+    expect(resolvePlayback(pref({ aacStereo: false }), movieEditions)).toEqual({});
+    expect(resolvePlayback(null, movieEditions)).toEqual({});
+  });
+
+  it("on (true) narrows the audio side to aac / 2 channels", () => {
+    expect(resolvePlayback(pref({ aacStereo: true }), movieEditions)).toEqual({
+      deviceProfile: { audioCodecs: ["aac"], maxAudioChannels: 2 },
+    });
+  });
+
+  it("resolves with NO negotiation context (a pure flag, unlike the by-name axes)", () => {
+    expect(resolvePlayback(pref({ aacStereo: true }), [])).toEqual({
+      deviceProfile: { audioCodecs: ["aac"], maxAudioChannels: 2 },
+    });
+  });
+
+  it("aacStereoAudioProfile is the same narrowing, as a fresh object per call", () => {
+    const a = aacStereoAudioProfile();
+    expect(a).toEqual({ audioCodecs: ["aac"], maxAudioChannels: 2 });
+    expect(aacStereoAudioProfile()).not.toBe(a);
+  });
+
+  it("rides alongside the other axes without disturbing them", () => {
+    expect(
+      resolvePlayback(pref({ editionName: "4K", qualityCap: "720p", aacStereo: true }), uhdEditions),
+    ).toEqual({
+      editionId: "ed-uhd",
+      constraints: { maxResolution: "720p", maxBitrate: 4_000_000 },
+      deviceProfile: { audioCodecs: ["aac"], maxAudioChannels: 2 },
+    });
   });
 });

@@ -89,7 +89,14 @@ function selectableFile(
 // (playbackPreference), so a Show's choice ports across Episodes; the resolver decides
 // delivery from the resulting tier (an image track burns in only on transcode / remux,
 // via burnSubtitleId — a text track and a direct-play image track render locally).
-// AAC / Force-Remux are later sections bolted onto this same skeleton.
+//
+// AUDIO DELIVERY — the "Transcode to AAC (Stereo)" toggle (appletv-web-parity §7,
+// issue 06) — is a persisted axis on the pref draft like Edition / Quality / Subtitle.
+// There is NO contract field for it: on Play the resolver maps the flag to a
+// capability-profile narrowing (`audioCodecs: ["aac"], maxAudioChannels: 2`) merged
+// over the sent `deviceProfile`. The draft flag (`draft.aacStereo`) is the state issue
+// 07's rule reads to disable Force Remux while AAC is on (AAC moves the session off
+// pure direct play). Force-Remux is a later section bolted onto this same skeleton.
 
 /** A native <dialog> sheet, opened with showModal() (Esc-to-close, top layer, focus
  * containment, ::backdrop for free — mirroring EditItemDialog). Controlled by the
@@ -218,6 +225,10 @@ export default function PlaybackOptionsSheet({
             streams={streamFile?.audioStreams ?? []}
             selected={activeAudioId}
             onSelect={setAudioStreamId}
+          />
+          <AudioDeliverySection
+            enabled={draft.aacStereo}
+            onToggle={(aacStereo) => setDraft((d) => ({ ...d, aacStereo }))}
           />
           <VideoSection
             streams={streamFile?.videoStreams ?? []}
@@ -386,6 +397,52 @@ function AudioSection({
             onSelect={() => onSelect(s.id)}
           />
         ))}
+      </ul>
+    </section>
+  );
+}
+
+// The Audio-delivery section (appletv-web-parity §7, issue 06): the single
+// "Transcode to AAC (Stereo)" toggle. NOT a request field — a capability-profile
+// narrowing (the resolver maps the flag to `audioCodecs: ["aac"], maxAudioChannels:
+// 2` over the sent `deviceProfile`). A PERSISTED axis riding the pref draft like
+// Edition / Quality / Subtitle (this axis has no server memory), so a toggle here is
+// draft-only until Play commits it. Checkbox semantics (on/off), not a radio row —
+// there is no "Auto" third state. Issue 07 reads the same draft flag to disable
+// Force Remux while this is on (AAC moves the session off pure direct play).
+function AudioDeliverySection({
+  enabled,
+  onToggle,
+}: {
+  /** The draft AAC-stereo flag (persisted on Play). */
+  enabled: boolean;
+  onToggle: (aacStereo: boolean) => void;
+}) {
+  return (
+    <section className="playback-options-section" data-testid="audio-delivery-section">
+      <h3 className="section-title playback-options-section-title">Audio delivery</h3>
+      <ul className="playback-options-list">
+        <li className="playback-options-item">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={enabled}
+            className={`playback-options-row${enabled ? " is-active" : ""}`}
+            data-testid="aac-stereo-toggle"
+            data-active={enabled ? "1" : undefined}
+            onClick={() => onToggle(!enabled)}
+          >
+            <span className="playback-options-mark" aria-hidden="true">
+              {enabled ? "☑" : "☐"}
+            </span>
+            <span className="playback-options-row-text">
+              <span className="playback-options-row-label">Transcode to AAC (Stereo)</span>
+              <span className="playback-options-row-hint">
+                Deliver stereo AAC audio — for devices that can't decode surround sound.
+              </span>
+            </span>
+          </button>
+        </li>
       </ul>
     </section>
   );

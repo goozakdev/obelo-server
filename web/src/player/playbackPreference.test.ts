@@ -50,11 +50,13 @@ describe("playbackPreference — persistence", () => {
       editionName: "Director's Cut",
       qualityCap: null,
       subtitle: null,
+      aacStereo: false,
     });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "Director's Cut",
       qualityCap: null,
       subtitle: null,
+      aacStereo: false,
     });
   });
 
@@ -79,11 +81,12 @@ describe("playbackPreference — persistence", () => {
   });
 
   it("round-trips a committed Quality cap alongside the Edition", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p", subtitle: null });
+    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p", subtitle: null, aacStereo: false });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "4K",
       qualityCap: "720p",
       subtitle: null,
+      aacStereo: false,
     });
   });
 
@@ -134,6 +137,31 @@ describe("playbackPreference — persistence", () => {
       JSON.stringify({ subtitle: { forced: true } }),
     );
     expect(loadPreference(window.localStorage, "u1", titleScope).subtitle).toBeNull();
+  });
+
+  it("round-trips the committed AAC-stereo toggle (issue 06)", () => {
+    savePreference(window.localStorage, "u1", titleScope, {
+      editionName: null,
+      qualityCap: null,
+      subtitle: null,
+      aacStereo: true,
+    });
+    expect(loadPreference(window.localStorage, "u1", titleScope).aacStereo).toBe(true);
+  });
+
+  it("defaults a missing AAC toggle to off, and coerces a foreign truthy to off", () => {
+    // A pref persisted before the AAC axis existed carries no aacStereo → off.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ editionName: "4K" }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).aacStereo).toBe(false);
+    // Only a strict boolean true turns it on — a foreign truthy ("yes", 1) is off.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ aacStereo: "yes" }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).aacStereo).toBe(false);
   });
 
   it("loadPreferenceForTitle derives the scope (Episode → Show)", () => {
