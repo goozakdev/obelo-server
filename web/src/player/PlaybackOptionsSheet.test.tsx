@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { MediaFile, TitleDetail } from "../api/types";
+import type { AudioStream, MediaFile, TitleDetail, VideoStream } from "../api/types";
 import { loadPreference } from "./playbackPreference";
 import PlaybackOptionsSheet from "./PlaybackOptionsSheet";
 
@@ -199,5 +199,163 @@ describe("PlaybackOptionsSheet — Quality cap axis", () => {
     fireEvent.click(screen.getByTestId("quality-option-direct"));
     fireEvent.click(screen.getByTestId("playback-options-play"));
     expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).qualityCap).toBeNull();
+  });
+});
+
+// ── Audio + Video Stream axes (issue 04) ─────────────────────────────────────────
+// The two SERVER-owned axes: Auto omits the id (→ the server's Remembered pick), an
+// explicit pick flows to Play (never to the store, client ADR-0011), and the Video
+// section shows only when the File carries >1 selectable Video Stream.
+
+function audio(id: string, label: string, extra?: Partial<AudioStream>): AudioStream {
+  return { id, index: 0, codec: "eac3", isDefault: false, label, ...extra };
+}
+function videoStream(id: string, label: string, extra?: Partial<VideoStream>): VideoStream {
+  return { id, index: 0, codec: "h264", isDefault: false, label, ...extra };
+}
+
+/** A File carrying explicit audio + video Streams for the Audio / Video sections. */
+function streamsFile(audioStreams: AudioStream[], videoStreams: VideoStream[]): MediaFile {
+  return { ...file(1080), audioStreams, videoStreams };
+}
+
+/** A Movie whose single Edition's File carries the given audio / video Streams. */
+function streamsDetail(audioStreams: AudioStream[], videoStreams: VideoStream[]): TitleDetail {
+  return {
+    ...movieDetail(),
+    editions: [{ id: "ed1", name: "Default", files: [streamsFile(audioStreams, videoStreams)] }],
+  };
+}
+
+/** The last StreamSelection Play handed onPlay, for asserting the id reaches Play.
+ * Unmounts before returning so a second call in the same test doesn't leave two
+ * sheets (two radiogroups) in the DOM. */
+function playAndCapture(detail: TitleDetail, pick: () => void) {
+  const onPlay = vi.fn();
+  const { unmount } = render(
+    <PlaybackOptionsSheet title={detail} userId="u1" open onClose={() => {}} onPlay={onPlay} />,
+  );
+  pick();
+  fireEvent.click(screen.getByTestId("playback-options-play"));
+  unmount();
+  return onPlay;
+}
+
+describe("PlaybackOptionsSheet — Audio axis", () => {
+  const streams = [
+    audio("a-en", "English 5.1", { language: "en", isDefault: true }),
+    audio("a-fr", "Français Stéréo", { language: "fr" }),
+    audio("a-com", "Director's Commentary", { commentary: true }),
+  ];
+
+  it("shows Auto + one row per audio Stream, Auto active by default", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail(streams, [])} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(screen.getByTestId("audio-option-auto")).toBeInTheDocument();
+    expect(screen.getAllByTestId("audio-option")).toHaveLength(3);
+    // Auto (server Remembered audio) is the honest initial state — the client can't
+    // read the server's memory, so no explicit row is pre-marked.
+    expect(screen.getByTestId("audio-option-auto")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("Auto omits audioStreamId; an explicit pick sends it to Play", () => {
+    // Auto → null (omit).
+    let onPlay = playAndCapture(streamsDetail(streams, []), () => {});
+    expect(onPlay).toHaveBeenCalledWith({ audioStreamId: null, videoStreamId: null });
+    // Explicit pick → the chosen Stream id reaches Play.
+    onPlay = playAndCapture(streamsDetail(streams, []), () =>
+      fireEvent.click(screen.getByRole("radio", { name: /Director's Commentary/ })),
+    );
+    expect(onPlay).toHaveBeenCalledWith({ audioStreamId: "a-com", videoStreamId: null });
+  });
+
+  it("renders nothing for a silent File (no audio Streams)", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail([], [])} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(screen.queryByTestId("audio-section")).not.toBeInTheDocument();
+  });
+
+  it("never writes the audio pick to the preference store (ADR-0011)", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail(streams, [])} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /Français/ }));
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    // The persisted preference carries only Edition + Quality — no audio field exists,
+    // and the store's raw JSON must not smuggle one in.
+    const raw = window.localStorage.getItem("juicebox.playback-pref.u1.title.t1");
+    expect(raw).not.toBeNull();
+    expect(raw).not.toContain("a-fr");
+    expect(raw).not.toContain("audioStreamId");
+  });
+
+  it("copy says \"Audio\", never \"Audio track\"", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail(streams, [])} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    const section = screen.getByTestId("audio-section");
+    expect(section).toHaveTextContent("Audio");
+    expect(section.textContent).not.toMatch(/Audio track/i);
+  });
+});
+
+describe("PlaybackOptionsSheet — Video axis", () => {
+  const audioOnly = [audio("a-en", "English", { isDefault: true })];
+  const twoVideos = [
+    videoStream("v-col", "Colour", { isDefault: true }),
+    videoStream("v-bw", "Black & White"),
+  ];
+
+  it("is hidden when the File carries a single (or no) Video Stream", () => {
+    render(
+      <PlaybackOptionsSheet
+        title={streamsDetail(audioOnly, [videoStream("v-only", "1080p", { isDefault: true })])}
+        userId="u1"
+        open
+        onClose={() => {}}
+        onPlay={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("video-section")).not.toBeInTheDocument();
+  });
+
+  it("renders Auto + a row per variant when the File carries >1 Video Stream", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail(audioOnly, twoVideos)} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(screen.getByTestId("video-option-auto")).toBeInTheDocument();
+    expect(screen.getAllByTestId("video-option")).toHaveLength(2);
+    expect(screen.getByTestId("video-option-auto")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("Auto omits videoStreamId; an explicit pick sends it to Play", () => {
+    let onPlay = playAndCapture(streamsDetail(audioOnly, twoVideos), () => {});
+    expect(onPlay).toHaveBeenCalledWith({ audioStreamId: null, videoStreamId: null });
+    onPlay = playAndCapture(streamsDetail(audioOnly, twoVideos), () =>
+      fireEvent.click(screen.getByRole("radio", { name: /Black & White/ })),
+    );
+    expect(onPlay).toHaveBeenCalledWith({ audioStreamId: null, videoStreamId: "v-bw" });
+  });
+
+  it("never writes the video pick to the preference store (ADR-0011)", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail(audioOnly, twoVideos)} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /Black & White/ }));
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    const raw = window.localStorage.getItem("juicebox.playback-pref.u1.title.t1");
+    expect(raw).not.toContain("v-bw");
+    expect(raw).not.toContain("videoStreamId");
+  });
+
+  it("copy says \"Video\", never \"Video track\"", () => {
+    render(
+      <PlaybackOptionsSheet title={streamsDetail(audioOnly, twoVideos)} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    const section = screen.getByTestId("video-section");
+    expect(section).toHaveTextContent("Video");
+    expect(section.textContent).not.toMatch(/Video track/i);
   });
 });

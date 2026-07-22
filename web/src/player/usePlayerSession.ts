@@ -175,6 +175,17 @@ export interface PlayerPreference {
    * (`maxResolution` + `maxBitrate` from the ladder). Undefined = Direct Play: keep
    * the viewport-derived resolution + the generous Direct-Play bitrate default. */
   constraints?: Pick<PlaybackConstraints, "maxResolution" | "maxBitrate">;
+  /** The pre-play Audio Stream pick (appletv-web-parity §1, issue 04) that SEEDS the
+   * initial negotiation's `audioStreamId`. Unlike `editionId` / `constraints` this is
+   * NOT a persisted preference — it's the server's Remembered audio (server ADR-0023),
+   * handed in once from the transient Queue entry (client ADR-0011). It seeds the
+   * audio ref ONCE (at mount); an in-player switch then owns the value and this prop
+   * never re-seeds over it (no stale-value resurrection). Undefined = Auto. */
+  audioStreamId?: string;
+  /** The pre-play Video Stream pick (issue 04), seeding the initial `videoStreamId`
+   * exactly like `audioStreamId` — seed-once, never persisted, superseded by an
+   * in-player Video switch. Undefined = Auto (→ server Remembered video, ADR-0025). */
+  videoStreamId?: string;
   pending?: boolean;
 }
 
@@ -210,16 +221,26 @@ export function usePlayerSession(
   // The audio Stream the last negotiation requested (audio-streams/04), or null for
   // the server-resolved default. State so the Audio menu re-renders on an escalation;
   // mirrored into audioRef so negotiate reads it without being a dependency. Carried
-  // on every re-negotiation (a burn switch) so an audio pick survives it.
-  const [audioStreamId, setAudioStreamId] = useState<string | null>(null);
-  const audioRef = useRef<string | null>(null);
+  // on every re-negotiation (a burn switch) so an audio pick survives it. SEEDED ONCE
+  // from the pre-play pick (issue 04, the sheet's Auto-or-explicit choice on the entry)
+  // via the useState/useRef initializers — which run only on mount, so a later render
+  // (the same `preference` prop) NEVER re-seeds over an in-player switch. That seed-
+  // once (contrast the every-render editionRef sync above) is what stops a stale sheet
+  // value resurrecting after the viewer changes audio in-player.
+  const [audioStreamId, setAudioStreamId] = useState<string | null>(
+    preference?.audioStreamId ?? null,
+  );
+  const audioRef = useRef<string | null>(preference?.audioStreamId ?? null);
   // The video Stream the last negotiation requested (selectable-video/03), or null
   // for the server-resolved capability-then-quality default. State so the Video menu
   // re-renders on a switch; mirrored into videoStreamRef so negotiate reads it
   // without being a dependency. Carried on every re-negotiation (a burn/audio switch)
-  // so a video pick survives it.
-  const [videoStreamId, setVideoStreamId] = useState<string | null>(null);
-  const videoStreamRef = useRef<string | null>(null);
+  // so a video pick survives it. SEEDED ONCE from the pre-play pick (issue 04), exactly
+  // like audio — an in-player Video switch then owns it, never re-seeded.
+  const [videoStreamId, setVideoStreamId] = useState<string | null>(
+    preference?.videoStreamId ?? null,
+  );
+  const videoStreamRef = useRef<string | null>(preference?.videoStreamId ?? null);
   // The resume offset negotiation requests (and the position a burn re-negotiation
   // resumes near). Initialized to startPosition; a burn switch updates it to the
   // live position so the restarted stream resumes where the viewer was.
