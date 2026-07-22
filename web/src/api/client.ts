@@ -278,6 +278,21 @@ export class ApiClient {
     }
   }
 
+  /** `POST /api/v1/auth/media-cookie` — re-issue the HttpOnly `ms_media` cookie so
+   * it carries the CURRENT bearer's session token (appletv-parity/12). The instant
+   * user switch swaps the bearer from JS, but the media cookie (which authenticates
+   * browser `<video>`/`<img>`/HLS GETs, since they cannot send an Authorization
+   * header) is HttpOnly and unreachable from JS — so after a switch it still carries
+   * the PREVIOUS user's token until the server rewrites it. This is that rewrite.
+   *
+   * Bearer-only server-side: a lone `ms_media` cookie cannot authorize its own
+   * re-issue. Callers gate this on the `mediaCookieRefresh` feature flag — an older
+   * server without the route simply doesn't get the refresh (media falls back to
+   * today's behaviour), so this is never called blind. 204 No Content on success. */
+  async refreshMediaCookie(signal?: AbortSignal): Promise<void> {
+    await this.request<void>("/auth/media-cookie", { method: "POST", signal });
+  }
+
   /** `GET /api/v1/devices` — the caller's registered Devices. Used here as a
    * lightweight authenticated probe to confirm a restored token is still valid:
    * a revoked/garbage token returns 401, which fires the global unauthorized

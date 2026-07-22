@@ -98,3 +98,14 @@ export function useServerInfoContext(): ServerInfoContextValue {
 export function useFeature(name: string): boolean {
   return useServerInfoContext().feature(name);
 }
+
+/** Like {@link useFeature}, but SAFE outside a ServerInfoProvider: returns false
+ * (feature off) when no provider is mounted, instead of throwing. For components
+ * that legitimately render both under the provider (the app) and bare (unit tests
+ * that mount a sub-tree in isolation) — e.g. AuthProvider gating the media-cookie
+ * refresh (appletv-parity/12). An absent provider degrades exactly like an absent
+ * flag: the gated feature simply stays off. */
+export function useOptionalFeature(name: string): boolean {
+  const ctx = useContext(ServerInfoContext);
+  return ctx?.feature(name) ?? false;
+}

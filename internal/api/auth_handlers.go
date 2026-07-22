@@ -161,6 +161,36 @@ func handleLogout(svc *auth.Service) http.HandlerFunc {
 	}
 }
 
+// --- POST /auth/media-cookie (authenticated, bearer-only) ------------------
+
+// handleRefreshMediaCookie re-issues the ms_media cookie so it carries the
+// REQUESTING BEARER's session token. It is the login cookie machinery minus the
+// credential check: the request's already-validated bearer identity IS the
+// authorization. It closes the identity-leak the web instant user switch opens
+// (appletv-parity/12) — a switch swaps the bearer from JS but cannot touch the
+// HttpOnly media cookie, so browser byte-serving keeps authenticating as the
+// PREVIOUS user until the cookie is rewritten. Only the server can do that.
+//
+// It reuses setMediaCookie so every attribute (HttpOnly, SameSite=Lax, API-scoped
+// path, Secure only under HTTPS) is byte-for-byte identical to the login cookie.
+// It is registered under requireAuth (bearer-only), NOT requireAuthAllowCookie:
+// a lone ms_media cookie must never authorize re-issuing itself, or a stale
+// cookie could perpetuate the leak it exists to close.
+func handleRefreshMediaCookie() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := identityFrom(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
+			return
+		}
+		// Re-issue carrying the bearer's token (id.Token is the raw bearer, set by
+		// requireAuth), so the cookie identity always matches the active bearer. Must
+		// run before WriteHeader, which writes the status line.
+		setMediaCookie(w, r, id.Token)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // --- GET /devices (authenticated) ------------------------------------------
 
 type devicesResponse struct {

@@ -50,6 +50,10 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 		// exists, which is what the flag claims; the field's behaviour is pinned by the
 		// playback tests, not by route existence.
 		{"remuxSelectedOnly", "/api/v1/titles/nonexistent/playback"},
+		// POST-only, so this GET probe draws a 405 — which proves the route exists,
+		// and existence is all the flag claims. mediaCookieRefresh advertises
+		// POST /auth/media-cookie (appletv-parity/12).
+		{"mediaCookieRefresh", "/api/v1/auth/media-cookie"},
 	}
 
 	for _, p := range probes {
