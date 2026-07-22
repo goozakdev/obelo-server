@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { resolveEditionId, resolvePlayback } from "./playbackResolver";
+import { resolveEditionId, resolvePlayback, resolveQualityConstraints } from "./playbackResolver";
 import type { ResolverEdition } from "./playbackResolver";
+import type { PlaybackPreference } from "./playbackPreference";
 
-// The Playback RESOLVER seam (appletv-web-parity §1): turns a committed preference
+// The Playback RESOLVER seam (appletv-web-parity §1/§3): turns a committed preference
 // into the `startPlayback` override fields against a Title's Editions. Pure, so the
-// Edition axis — including the load-bearing "a Show choice replays across Episodes
-// BY NAME" rule — is asserted here without React or a live player.
+// Edition axis (a Show choice replays across Episodes BY NAME) and the Quality axis
+// (a rung → its paired {maxResolution, maxBitrate}, offered only below source) are
+// asserted here without React or a live player.
 
 const movieEditions: ResolverEdition[] = [
   { id: "ed-4k", name: "4K" },
@@ -20,9 +22,14 @@ const episode2Editions: ResolverEdition[] = [
   { id: "ep2-dc", name: "Director's Cut" },
 ];
 
+/** A full preference (both axes) — the two axes default to Auto / Direct Play. */
+function pref(p: Partial<PlaybackPreference>): PlaybackPreference {
+  return { editionName: null, qualityCap: null, ...p };
+}
+
 describe("playbackResolver — Edition axis", () => {
   it("Auto (null name) omits editionId", () => {
-    expect(resolvePlayback({ editionName: null }, movieEditions)).toEqual({});
+    expect(resolvePlayback(pref({ editionName: null }), movieEditions)).toEqual({});
     expect(resolveEditionId(null, movieEditions)).toBeUndefined();
   });
 
@@ -32,12 +39,14 @@ describe("playbackResolver — Edition axis", () => {
   });
 
   it("an explicit Edition pick resolves the name to this Title's Edition id", () => {
-    expect(resolvePlayback({ editionName: "4K" }, movieEditions)).toEqual({ editionId: "ed-4k" });
+    expect(resolvePlayback(pref({ editionName: "4K" }), movieEditions)).toEqual({
+      editionId: "ed-4k",
+    });
     expect(resolveEditionId("Director's Cut", movieEditions)).toBe("ed-dc");
   });
 
   it("a Show preference replays across Episodes BY NAME (different ids)", () => {
-    const showPref = { editionName: "Director's Cut" };
+    const showPref = pref({ editionName: "Director's Cut" });
     // The same stored name resolves to each Episode's OWN id for that Edition.
     expect(resolvePlayback(showPref, movieEditions)).toEqual({ editionId: "ed-dc" });
     expect(resolvePlayback(showPref, episode2Editions)).toEqual({ editionId: "ep2-dc" });
@@ -45,10 +54,76 @@ describe("playbackResolver — Edition axis", () => {
 
   it("a name absent from this Title's Editions degrades to Auto", () => {
     // Episode 2 has no "4K" Edition → omit rather than strand the play.
-    expect(resolvePlayback({ editionName: "4K" }, episode2Editions)).toEqual({});
+    expect(resolvePlayback(pref({ editionName: "4K" }), episode2Editions)).toEqual({});
   });
 
   it("an empty name is treated as Auto", () => {
     expect(resolveEditionId("", movieEditions)).toBeUndefined();
+  });
+});
+
+// A 4K-source Edition (2160 lines): rungs strictly below it are 1080p / 720p / SD.
+const uhdEditions: ResolverEdition[] = [
+  { id: "ed-uhd", name: "4K", files: [{ height: 2160 }] },
+  { id: "ed-hd", name: "1080p", files: [{ height: 1080 }] },
+];
+
+describe("playbackResolver — Quality axis", () => {
+  it("Direct Play (null cap) omits the constraints override", () => {
+    expect(resolvePlayback(pref({ qualityCap: null }), uhdEditions)).toEqual({});
+    expect(resolveQualityConstraints(null, uhdEditions, null)).toBeUndefined();
+  });
+
+  it("a rung resolves to its paired {maxResolution, maxBitrate} from the ladder", () => {
+    // Against the 4K source (Auto edition → tallest = 2160), each rung below source
+    // carries BOTH its resolution token and its paired bitrate ceiling.
+    expect(resolveQualityConstraints("1080p", uhdEditions, null)).toEqual({
+      maxResolution: "1080p",
+      maxBitrate: 8_000_000,
+    });
+    expect(resolveQualityConstraints("720p", uhdEditions, null)).toEqual({
+      maxResolution: "720p",
+      maxBitrate: 4_000_000,
+    });
+    expect(resolveQualityConstraints("sd", uhdEditions, null)).toEqual({
+      maxResolution: "sd",
+      maxBitrate: 1_500_000,
+    });
+  });
+
+  it("resolvePlayback carries the rung constraints alongside the editionId", () => {
+    expect(resolvePlayback(pref({ editionName: "4K", qualityCap: "720p" }), uhdEditions)).toEqual({
+      editionId: "ed-uhd",
+      constraints: { maxResolution: "720p", maxBitrate: 4_000_000 },
+    });
+  });
+
+  it("a rung at/above the selected Edition's source degrades to Direct Play", () => {
+    // The 1080p Edition's source is 1080 → a 1080p rung is not a downscale (≥ source),
+    // and the 4K rung certainly isn't; both omit the override (scale never upscales).
+    expect(resolveQualityConstraints("1080p", uhdEditions, "1080p")).toBeUndefined();
+    expect(resolveQualityConstraints("4k", uhdEditions, "1080p")).toBeUndefined();
+    // But a 720p rung IS below the 1080p source → it applies.
+    expect(resolveQualityConstraints("720p", uhdEditions, "1080p")).toEqual({
+      maxResolution: "720p",
+      maxBitrate: 4_000_000,
+    });
+  });
+
+  it("changing the Edition re-derives whether a stored rung still applies", () => {
+    const p = pref({ qualityCap: "1080p" });
+    // On the 4K source the 1080p rung is a genuine downscale.
+    expect(resolvePlayback({ ...p, editionName: "4K" }, uhdEditions).constraints).toEqual({
+      maxResolution: "1080p",
+      maxBitrate: 8_000_000,
+    });
+    // Switch the Edition to the 1080p source → the same rung is no longer below
+    // source, so it degrades to Direct Play (no override).
+    expect(resolvePlayback({ ...p, editionName: "1080p" }, uhdEditions).constraints).toBeUndefined();
+  });
+
+  it("an unknown source height (no File dims) offers no rung (Direct Play)", () => {
+    // Editions with no dims → source height 0 → every rung degrades to Direct Play.
+    expect(resolveQualityConstraints("720p", movieEditions, null)).toBeUndefined();
   });
 });

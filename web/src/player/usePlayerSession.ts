@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/errors";
-import type { PlaybackDecision, PlaybackState } from "../api/types";
+import type { PlaybackConstraints, PlaybackDecision, PlaybackState } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import { deriveCapabilityProfile } from "./capabilities";
 
@@ -164,12 +164,17 @@ function unsupportedMessage(err: ApiError): { reason: string; message: string } 
 }
 
 /** The pre-play Playback preference the session negotiates with (appletv-web-parity
- * §1): the resolved `editionId` (undefined = Auto), plus a `pending` flag while that
+ * §1/§3): the resolved `editionId` (undefined = Auto) and the resolved Quality-cap
+ * `constraints` override (undefined = Direct Play), plus a `pending` flag while that
  * resolution is still in flight. Negotiation is DEFERRED until `pending` clears — but
  * ONLY the configured path waits: with no stored preference the caller passes
  * `pending: false` (or omits this) and playback starts immediately, exactly as before. */
 export interface PlayerPreference {
   editionId?: string;
+  /** The Quality-cap override merged OVER the capability-derived constraints
+   * (`maxResolution` + `maxBitrate` from the ladder). Undefined = Direct Play: keep
+   * the viewport-derived resolution + the generous Direct-Play bitrate default. */
+  constraints?: Pick<PlaybackConstraints, "maxResolution" | "maxBitrate">;
   pending?: boolean;
 }
 
@@ -186,6 +191,12 @@ export function usePlayerSession(
   // carries through every re-negotiation (a burn/audio/video switch) unchanged.
   const editionRef = useRef<string | undefined>(preference?.editionId);
   editionRef.current = preference?.editionId;
+  // The resolved Quality-cap constraints override (appletv-web-parity §3), or
+  // undefined for Direct Play. Held in a ref, kept in sync each render (like the
+  // Edition), so negotiate reads it without being a dependency AND it carries through
+  // every re-negotiation (a burn/audio/video switch) unchanged.
+  const constraintsRef = useRef<PlayerPreference["constraints"]>(preference?.constraints);
+  constraintsRef.current = preference?.constraints;
   // While the preference is still resolving (its Edition NAME → this Title's id needs
   // the detail), hold off the FIRST negotiation so it goes out WITH the editionId
   // rather than re-negotiating after (which would re-buffer). Only the configured
@@ -237,10 +248,17 @@ export function usePlayerSession(
       negotiateCtrlRef.current = ctrl;
       endedRef.current = false;
       const { deviceProfile, constraints } = deriveCapabilityProfile();
-      const effectiveConstraints =
-        overrideMaxBitrate != null
-          ? { ...constraints, maxBitrate: overrideMaxBitrate }
-          : constraints;
+      // Layer the constraints: the capability-derived defaults (viewport resolution +
+      // the generous Direct-Play bitrate, ADR-0003) first, then the Quality-cap rung
+      // OVER them (a manual override of both axes — appletv-web-parity §3), then a
+      // SERVER_BUSY step-down last so a busy retry still lowers the bitrate further.
+      let effectiveConstraints: PlaybackConstraints = {
+        ...constraints,
+        ...(constraintsRef.current ?? {}),
+      };
+      if (overrideMaxBitrate != null) {
+        effectiveConstraints = { ...effectiveConstraints, maxBitrate: overrideMaxBitrate };
+      }
       void (async () => {
         try {
           const decision = await client.startPlayback(

@@ -46,16 +46,20 @@ describe("playbackPreference — persistence", () => {
   });
 
   it("round-trips a committed Edition name for a user + Title", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "Director's Cut" });
+    savePreference(window.localStorage, "u1", titleScope, {
+      editionName: "Director's Cut",
+      qualityCap: null,
+    });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "Director's Cut",
+      qualityCap: null,
     });
   });
 
   it("keys per user, per scope, and per anon bucket (no bleed)", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K" });
-    savePreference(window.localStorage, "u2", titleScope, { editionName: "1080p" });
-    savePreference(window.localStorage, "u1", showScope, { editionName: "Extended" });
+    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: null });
+    savePreference(window.localStorage, "u2", titleScope, { editionName: "1080p", qualityCap: null });
+    savePreference(window.localStorage, "u1", showScope, { editionName: "Extended", qualityCap: null });
     expect(loadPreference(window.localStorage, "u1", titleScope).editionName).toBe("4K");
     expect(loadPreference(window.localStorage, "u2", titleScope).editionName).toBe("1080p");
     expect(loadPreference(window.localStorage, "u1", showScope).editionName).toBe("Extended");
@@ -72,8 +76,36 @@ describe("playbackPreference — persistence", () => {
     expect(loadPreference(window.localStorage, "u1", titleScope).editionName).toBeNull();
   });
 
+  it("round-trips a committed Quality cap alongside the Edition", () => {
+    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p" });
+    expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
+      editionName: "4K",
+      qualityCap: "720p",
+    });
+  });
+
+  it("defaults a missing Quality cap to Direct Play (null)", () => {
+    // A pref persisted before the Quality axis existed carries no qualityCap.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ editionName: "4K" }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).qualityCap).toBeNull();
+  });
+
+  it("coerces an unknown/foreign Quality cap to Direct Play (null)", () => {
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ editionName: null, qualityCap: "8k" }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).qualityCap).toBeNull();
+  });
+
   it("loadPreferenceForTitle derives the scope (Episode → Show)", () => {
-    savePreference(window.localStorage, "u1", showScope, { editionName: "Director's Cut" });
+    savePreference(window.localStorage, "u1", showScope, {
+      editionName: "Director's Cut",
+      qualityCap: null,
+    });
     const pref = loadPreferenceForTitle(window.localStorage, "u1", {
       id: "ep1",
       kind: "episode",

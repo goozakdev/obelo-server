@@ -7,6 +7,11 @@ import {
   savePreference,
   type PlaybackPreference,
 } from "./playbackPreference";
+import {
+  availableRungs,
+  sourceHeightForSelection,
+  type QualityCapId,
+} from "./qualityLadder";
 
 // The Playback Options sheet (appletv-web-parity §1/§2) — the pre-play
 // configuration surface, opened from Movie / Episode detail. It is built PURELY
@@ -19,12 +24,14 @@ import {
 // from the start). Backing out (Cancel / Esc / backdrop) DISCARDS the draft — the
 // saved preference is untouched.
 //
-// This slice carries ONE axis — the Edition. Rows: **Auto** (omit `editionId`, let
-// the server pick the best direct-play Edition) + one row per `title.editions`. The
-// choice persists BY EDITION NAME (playbackPreference) so it ports across a Show's
-// Episodes; the resolver maps the name back to an id per-Episode at negotiate time.
-// Quality / Audio / Subtitle / AAC / Force-Remux are later sections bolted onto this
-// same skeleton.
+// This slice carries two axes — the Edition and the Quality cap. Edition rows:
+// **Auto** (omit `editionId`, let the server pick the best direct-play Edition) + one
+// row per `title.editions`, persisted BY EDITION NAME (playbackPreference) so it ports
+// across a Show's Episodes; the resolver maps the name back to an id per-Episode.
+// Quality rows: **Direct Play** (uncapped — the viewport-derived resolution) + the
+// downscale rungs STRICTLY BELOW the selected Edition's source height (re-derived when
+// the Edition changes), each sending a paired `maxResolution` + `maxBitrate`. Audio /
+// Subtitle / AAC / Force-Remux are later sections bolted onto this same skeleton.
 
 /** A native <dialog> sheet, opened with showModal() (Esc-to-close, top layer, focus
  * containment, ::backdrop for free — mirroring EditItemDialog). Controlled by the
@@ -108,6 +115,12 @@ export default function PlaybackOptionsSheet({
             selected={draft.editionName}
             onSelect={(editionName) => setDraft((d) => ({ ...d, editionName }))}
           />
+          <QualitySection
+            editions={title.editions}
+            editionName={draft.editionName}
+            selected={draft.qualityCap}
+            onSelect={(qualityCap) => setDraft((d) => ({ ...d, qualityCap }))}
+          />
         </div>
 
         <div className="playback-options-footer">
@@ -173,8 +186,60 @@ function EditionSection({
   );
 }
 
+// The Quality-cap section (appletv-web-parity §3): a **Direct Play** row (uncapped —
+// the viewport-derived resolution, no manual bitrate cap) + one row per downscale rung
+// STRICTLY BELOW the selected Edition's source height (availableRungs — never a rung ≥
+// source, since the scale filter never upscales). Changing the Edition re-derives the
+// source height, hence the offered rungs. Selecting a row only updates the DRAFT
+// (persisted BY RUNG ID); nothing persists until Play. Each rung sends both a
+// `maxResolution` and a paired `maxBitrate` — the resolver builds those from the id.
+function QualitySection({
+  editions,
+  editionName,
+  selected,
+  onSelect,
+}: {
+  editions: TitleDetail["editions"];
+  /** The draft Edition name (null = Auto) — governs which rungs are below source. */
+  editionName: string | null;
+  /** The draft Quality-cap rung id, or null for Direct Play. */
+  selected: QualityCapId | null;
+  onSelect: (qualityCap: QualityCapId | null) => void;
+}) {
+  const rungs = availableRungs(sourceHeightForSelection(editions, editionName));
+  // A rung no longer below source (the Edition shrank) is no longer offered → treat the
+  // draft as Direct Play so the active mark stays honest (the resolver degrades it too).
+  const activeRung = rungs.some((r) => r.id === selected) ? selected : null;
+  return (
+    <section className="playback-options-section" data-testid="quality-section">
+      <h3 className="section-title playback-options-section-title">Quality cap</h3>
+      <ul className="playback-options-list" role="radiogroup" aria-label="Quality cap">
+        <OptionRow
+          label="Direct Play"
+          hint="Uncapped — sized to your screen."
+          active={activeRung === null}
+          testId="quality-option-direct"
+          onSelect={() => onSelect(null)}
+        />
+        {rungs.map((rung) => (
+          <OptionRow
+            key={rung.id}
+            label={rung.label}
+            hint={`Up to ${Math.round(rung.maxBitrate / 1_000_000)} Mbps`}
+            active={activeRung === rung.id}
+            testId="quality-option"
+            dataName={rung.id}
+            onSelect={() => onSelect(rung.id)}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 // One selectable option row (a radio in a list). The active row shows a mark and
-// carries aria-checked + data-active for tests / styling.
+// carries aria-checked + data-active for tests / styling. `dataName` is the row's
+// stored value (an Edition name or a Quality rung id), exposed as data-option-value.
 function OptionRow({
   label,
   hint,
@@ -198,7 +263,7 @@ function OptionRow({
         aria-checked={active}
         className={`playback-options-row${active ? " is-active" : ""}`}
         data-testid={testId}
-        data-edition-name={dataName}
+        data-option-value={dataName}
         data-active={active ? "1" : undefined}
         onClick={onSelect}
       >
