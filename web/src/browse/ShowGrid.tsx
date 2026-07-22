@@ -1,10 +1,13 @@
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { ShowSummary } from "../api/types";
 import { usePaginatedList } from "./usePaginatedList";
 import { useInfiniteScrollSentinel } from "./useInfiniteScrollSentinel";
 import { useLetterJump } from "./useLetterJump";
+import { useLayoutMode } from "./browseLayout";
+import LayoutToggle from "./LayoutToggle";
+import BrowseList, { type BrowseRowData } from "./BrowseList";
 import LetterJumpBar from "./LetterJumpBar";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import Poster from "./Poster";
@@ -30,6 +33,7 @@ export default function ShowGrid({
     },
     [libraryId],
   );
+  const [mode, setMode] = useLayoutMode(libraryId);
   const grid = usePaginatedList(fetchPage, getShowId);
   // Live-refresh as this Library is scanned/enriched: new Shows appear and
   // freshly-fetched posters land in place, no manual reload (realtime-events).
@@ -51,6 +55,9 @@ export default function ShowGrid({
           {libraryName}
         </h2>
         <LetterJumpBar onJump={jumpTo} />
+        <div className="grid-controls">
+          <LayoutToggle mode={mode} onChange={setMode} />
+        </div>
       </div>
 
       {grid.loading && (
@@ -78,11 +85,13 @@ export default function ShowGrid({
       )}
 
       {grid.items.length > 0 && (
-        <ul className="poster-grid" data-testid="poster-grid" ref={gridRef}>
-          {grid.items.map((s) => (
-            <ShowTile key={s.id} show={s} />
-          ))}
-        </ul>
+        <BrowseList
+          mode={mode}
+          items={grid.items}
+          gridRef={gridRef}
+          renderTile={(s) => <ShowTile key={s.id} show={s} />}
+          toRow={showToRow}
+        />
       )}
 
       {/* Scroll sentinel + inline paging states. Rendered once there is content
@@ -120,6 +129,42 @@ function getShowId(s: ShowSummary): string {
 
 function getShowTitle(s: ShowSummary): string {
   return s.title;
+}
+
+// A Show's Detail/List row, from already-loaded summary fields only (client
+// ADR-0007). Shows are the RICH case: the list payload already carries `overview`,
+// so Detail leads with the poster thumbnail, the title, a year · rating · network
+// line, and the synopsis — no per-row fetch.
+function showToRow(s: ShowSummary): BrowseRowData {
+  return {
+    key: s.id,
+    to: `/shows/${s.id}`,
+    name: s.title,
+    dataAttrs: { "data-show-id": s.id },
+    thumb: (
+      <div className="poster-frame">
+        <Poster titleId={s.id} title={s.title} src={s.posterUrl} />
+      </div>
+    ),
+    meta: showMeta(s),
+  };
+}
+
+function showMeta(s: ShowSummary): ReactNode {
+  const bits: string[] = [];
+  if (s.year > 0) bits.push(String(s.year));
+  if (s.contentRating) bits.push(s.contentRating);
+  if (s.network) bits.push(s.network);
+  return (
+    <>
+      {bits.length > 0 && <span className="browse-row-facts">{bits.join(" · ")}</span>}
+      {s.overview && (
+        <span className="browse-row-overview" data-testid="browse-row-overview">
+          {s.overview}
+        </span>
+      )}
+    </>
+  );
 }
 
 // ShowTile mirrors PosterTile but links to the Show detail (Seasons/Episodes)

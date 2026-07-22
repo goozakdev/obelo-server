@@ -12,6 +12,9 @@ import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
 import { useLetterJump, type LetterJumpPager } from "../browse/useLetterJump";
 import LetterJumpBar from "../browse/LetterJumpBar";
+import { useLayoutMode } from "../browse/browseLayout";
+import LayoutToggle from "../browse/LayoutToggle";
+import BrowseList, { type BrowseRowData } from "../browse/BrowseList";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
 import EditItemDialog from "../admin/EditItemDialog";
@@ -55,6 +58,11 @@ export default function ArtistDetailScreen() {
   // An Artist returns to its owning Music Library (named from the app-wide
   // Libraries list); until the detail loads, fall back to the Music home.
   const artist = state.status === "ready" ? state.data.artist : undefined;
+  // The Albums browse grid's layout mode (appletv-web-parity §5), keyed on the
+  // Artist's owning Music Library — so the Album layout matches how the rest of
+  // that Library browses. The id resolves once the Artist loads; the hook re-reads
+  // then (the grid only renders in the ready state anyway).
+  const [mode, setMode] = useLayoutMode(artist?.libraryId ?? "");
   // Targeted scan of this Artist's album folders (ADR-0030), Admin-only. On
   // completion it bumps reloadKey → the detail refetches in place.
   const {
@@ -200,12 +208,18 @@ export default function ArtistDetailScreen() {
             <>
               <div className="grid-toolbar">
                 <LetterJumpBar onJump={jumpTo} />
+                <div className="grid-controls">
+                  <LayoutToggle mode={mode} onChange={setMode} />
+                </div>
               </div>
-              <ul className="poster-grid" data-testid="album-grid" ref={gridRef}>
-                {state.data.albums.map((album) => (
-                  <AlbumTile key={album.id} album={album} />
-                ))}
-              </ul>
+              <BrowseList
+                mode={mode}
+                items={state.data.albums}
+                testId="album-grid"
+                gridRef={gridRef}
+                renderTile={(album) => <AlbumTile key={album.id} album={album} />}
+                toRow={albumToRow}
+              />
             </>
           )}
         </article>
@@ -279,6 +293,43 @@ function ArtistHero({
 
 function getAlbumTitle(a: Album): string {
   return a.title;
+}
+
+// An Album's Detail/List row, from already-loaded fields only (client ADR-0007).
+// Like Artists this is the THIN case: Detail is the cover thumbnail + title, with a
+// year · track-count line from the fields already in hand. No per-row fetch.
+function albumToRow(album: Album): BrowseRowData {
+  return {
+    key: album.id,
+    to: `/music/albums/${album.id}`,
+    name: album.title,
+    dataAttrs: { "data-album-id": album.id },
+    thumb: (
+      <div className="poster-frame album-frame">
+        {album.hasArtwork ? (
+          <img
+            className="poster poster-img"
+            data-testid="poster-img"
+            src={albumArtworkUrl(album.id, album.artworkVersion)}
+            alt={`${album.title} cover`}
+            loading="lazy"
+          />
+        ) : (
+          <Poster titleId={album.id} title={album.title} />
+        )}
+      </div>
+    ),
+    meta: albumMeta(album),
+  };
+}
+
+function albumMeta(album: Album): ReactNode {
+  const bits: string[] = [];
+  if (album.year > 0) bits.push(String(album.year));
+  if (album.trackCount > 0) {
+    bits.push(`${album.trackCount} ${album.trackCount === 1 ? "track" : "tracks"}`);
+  }
+  return bits.length > 0 ? <span>{bits.join(" · ")}</span> : null;
 }
 
 // AlbumTile is an album card linking to the Album detail (its track list). When
