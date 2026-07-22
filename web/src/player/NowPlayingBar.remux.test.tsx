@@ -21,7 +21,15 @@ const { getTitle, startPlayback, reportProgress, endSession } = vi.hoisted(() =>
 }));
 
 const { attachHls } = vi.hoisted(() => ({ attachHls: vi.fn() }));
-vi.mock("./hls", () => ({ attachHls: (...a: unknown[]) => attachHls(...a) }));
+// The `??` fallback guards a teardown race: a late attach effect can fire after
+// afterEach's restoreAllMocks strips the stub (the bare vi.fn returns undefined),
+// which would throw `.then of undefined` inside the component and bleed into a
+// neighbouring test under full-suite load.
+vi.mock("./hls", () => ({
+  attachHls: (...a: unknown[]) =>
+    attachHls(...a) ??
+    Promise.resolve({ mode: "hls.js", detach: () => {}, setTextTrack: () => {} }),
+}));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
