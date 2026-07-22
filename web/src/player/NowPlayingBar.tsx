@@ -13,7 +13,7 @@ import { episodeContextLabel } from "../browse/episodeLabel";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
 import { attachHls, type HlsAttachment } from "./hls";
-import { usePlayerSession } from "./usePlayerSession";
+import { usePlayerSession, type PlayerPreference } from "./usePlayerSession";
 import {
   applySubtitleSelection,
   defaultTrackId,
@@ -37,7 +37,7 @@ import type {
 } from "../api/types";
 import { usePlaybackPrefs } from "./usePlaybackPrefs";
 import { loadPreferenceForTitle } from "./playbackPreference";
-import { resolveEditionId } from "./playbackResolver";
+import { resolvePlayback } from "./playbackResolver";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
 import { useQueue } from "./queue/useQueue";
@@ -857,14 +857,16 @@ function CurrentPlayer({
   const detailState = useAsync((signal) => apiClient.getTitle(titleId, signal), [titleId]);
   const detail = detailState.status === "ready" ? detailState.data : null;
 
-  // Replay the committed Playback preference (appletv-web-parity §1): resolve the
-  // saved Edition NAME to THIS Title's Edition id and negotiate with it. The
-  // preference key is derived synchronously — a Movie from its own id, an Episode
-  // from the Show id threaded onto the entry — so a Title with NO stored preference
-  // negotiates immediately (unchanged behaviour). Only a Title WITH a stored Edition
-  // pick waits (`pending`) for the detail so the first request already carries the
-  // editionId (no start-then-re-negotiate). An Episode without a threaded showId, or
-  // a detail that failed to load, degrades to Auto rather than blocking.
+  // Replay the committed Playback preference (appletv-web-parity §1/§3): resolve the
+  // saved Edition NAME to THIS Title's Edition id AND the saved Quality-cap rung to its
+  // paired constraints, then negotiate with them. The preference key is derived
+  // synchronously — a Movie from its own id, an Episode from the Show id threaded onto
+  // the entry — so a Title with NO stored config negotiates immediately (unchanged
+  // behaviour). Only a Title WITH a stored Edition or Quality pick waits (`pending`) for
+  // the detail (both axes resolve against the detail's Editions — the name→id map and
+  // the source height) so the first request already carries the overrides (no
+  // start-then-re-negotiate). An Episode without a threaded showId, or a detail that
+  // failed to load, degrades to Auto / Direct Play rather than blocking.
   const userId = persistedUserId();
   const prefTitle =
     entry.title.kind === "episode"
@@ -872,15 +874,18 @@ function CurrentPlayer({
         ? { id: titleId, kind: "episode", episode: { showId: entry.showId } }
         : null
       : { id: titleId, kind: entry.title.kind };
-  const storedEditionName = prefTitle
-    ? loadPreferenceForTitle(window.localStorage, userId, prefTitle).editionName
+  const storedPref = prefTitle
+    ? loadPreferenceForTitle(window.localStorage, userId, prefTitle)
     : null;
-  let playerPreference: { editionId?: string; pending?: boolean } | undefined;
-  if (storedEditionName) {
+  const hasStoredConfig =
+    !!storedPref && (storedPref.editionName !== null || storedPref.qualityCap !== null);
+  let playerPreference: PlayerPreference | undefined;
+  if (hasStoredConfig) {
     if (detail) {
-      playerPreference = { editionId: resolveEditionId(storedEditionName, detail.editions ?? []) };
+      const resolved = resolvePlayback(storedPref, detail.editions ?? []);
+      playerPreference = { editionId: resolved.editionId, constraints: resolved.constraints };
     } else if (detailState.status === "error") {
-      playerPreference = {}; // can't resolve → Auto, never block
+      playerPreference = {}; // can't resolve → Auto / Direct Play, never block
     } else {
       playerPreference = { pending: true }; // wait for the detail, then negotiate once
     }

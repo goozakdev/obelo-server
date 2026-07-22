@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import { renderWithAuth } from "../test/renderWithAuth";
-import type { PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
+import type { MediaFile, PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";
 import { saveQueue } from "./queue/persist";
 import { savePreference } from "./playbackPreference";
 
-// Edition REPLAY through the persistent player (appletv-web-parity §1/§2): a
-// committed Playback preference is resolved by the bar (from the store + the entry's
-// detail) and reaches `startPlayback` as `editionId`. Auto / no preference omits it
-// (unchanged behaviour), and a SHOW preference replays across Episodes BY NAME —
-// each Episode's own Edition id for that name.
+// Quality-cap REPLAY through the persistent player (appletv-web-parity §1/§3): a
+// committed Quality rung is resolved by the bar (from the store + the entry's detail's
+// source height) and reaches `startPlayback` as the paired `constraints`
+// (`maxResolution` + `maxBitrate`). Direct Play / no preference keeps the generous
+// capability default (no manual cap) — the 100 Mbps hardcode is no longer the ceiling.
 
 const { getTitle, startPlayback, reportProgress, endSession } = vi.hoisted(() => ({
   getTitle: vi.fn(),
@@ -51,31 +51,30 @@ function movieSummary(id: string, name: string): TitleSummary {
   };
 }
 
-/** A Movie detail carrying two Editions the preference can resolve against. */
-function movieDetailWithEditions(id: string, name: string): Partial<TitleDetail> {
+function file(height: number): MediaFile {
+  return {
+    id: `f-${height}`,
+    path: "",
+    container: "mp4",
+    width: Math.round((height * 16) / 9),
+    height,
+    bitrate: 0,
+    durationMs: 0,
+    sizeBytes: 0,
+    missing: false,
+    streams: [],
+    audioStreams: [],
+    videoStreams: [],
+  };
+}
+
+/** A Movie detail whose Edition is a 4K (2160-line) source — downscale rungs apply. */
+function uhdDetail(id: string, name: string): Partial<TitleDetail> {
   return {
     id,
     kind: "movie",
     title: name,
-    editions: [
-      { id: "ed-tc", name: "Theatrical Cut", files: [] },
-      { id: "ed-fc", name: "Final Cut", files: [] },
-    ],
-  };
-}
-
-/** Episode detail whose "Director's Cut" Edition carries a DIFFERENT id per episode
- * — the drift the by-name Show preference survives. */
-function episodeDetail(id: string, dcId: string): Partial<TitleDetail> {
-  return {
-    id,
-    kind: "episode",
-    title: `Episode ${id}`,
-    episode: { showId: "sh1", showTitle: "The Bear", seasonId: "s1", seasonNumber: 1, episodeNumber: 1 },
-    editions: [
-      { id: `${id}-std`, name: "Broadcast", files: [] },
-      { id: dcId, name: "Director's Cut", files: [] },
-    ],
+    editions: [{ id: "ed-uhd", name: "4K", files: [file(2160)] }],
   };
 }
 
@@ -83,7 +82,7 @@ const decision: PlaybackDecision = {
   sessionId: "sess-1",
   tier: "directPlay",
   streamUrl: "/api/v1/sessions/sess-1/stream",
-  edition: { id: "ed-fc", name: "Final Cut" },
+  edition: { id: "ed-uhd", name: "4K" },
   videoStream: { index: 0, codec: "h264", width: 1920, height: 1080 },
   videoStreams: [],
   audioStream: { index: 1, codec: "aac", channels: 2 },
@@ -101,9 +100,7 @@ function seedAndRender(entries: QueueEntry[]) {
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
-  // renderWithAuth seeds the authenticated user (its token/user), which localStorage
-  // .clear() would wipe — but renderWithAuth re-seeds it on render, so clear first.
-  getTitle.mockReset().mockResolvedValue(movieDetailWithEditions("t1", "Dune"));
+  getTitle.mockReset().mockResolvedValue(uhdDetail("t1", "Dune"));
   startPlayback.mockReset().mockResolvedValue(decision);
   reportProgress.mockReset().mockResolvedValue({ titleId: "t1", resumePositionMs: 0, watched: false });
   endSession.mockReset().mockResolvedValue(undefined);
@@ -119,42 +116,24 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("NowPlayingBar — Edition preference replay", () => {
-  it("no stored preference → startPlayback omits editionId (unchanged behaviour)", async () => {
+describe("NowPlayingBar — Quality cap replay", () => {
+  it("no stored cap → startPlayback keeps the generous default (no manual 4 Mbps cap)", async () => {
     seedAndRender([entryFromTitle(movieSummary("t1", "Dune"))]);
     await screen.findByTestId("player-video");
-    expect(startPlayback).toHaveBeenCalledWith(
-      "t1",
-      expect.objectContaining({ editionId: undefined }),
-      expect.anything(),
-    );
+    const constraints = startPlayback.mock.calls[0][1].constraints;
+    expect(constraints.maxBitrate).toBe(100_000_000);
   });
 
-  it("a committed Movie preference reaches startPlayback as the resolved editionId", async () => {
-    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { editionName: "Final Cut", qualityCap: null });
+  it("a committed rung reaches startPlayback as the paired maxResolution + maxBitrate", async () => {
+    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { editionName: null, qualityCap: "720p" });
     seedAndRender([entryFromTitle(movieSummary("t1", "Dune"))]);
     await screen.findByTestId("player-video");
     await waitFor(() =>
       expect(startPlayback).toHaveBeenCalledWith(
         "t1",
-        expect.objectContaining({ editionId: "ed-fc" }),
-        expect.anything(),
-      ),
-    );
-  });
-
-  it("a Show preference replays across Episodes by NAME (each Episode's own id)", async () => {
-    savePreference(window.localStorage, "u1", { kind: "show", id: "sh1" }, { editionName: "Director's Cut", qualityCap: null });
-    // Episode 7's "Director's Cut" is id ep7-dc; the entry carries showId (as a Show
-    // walk would thread it), so the Show preference keys synchronously.
-    getTitle.mockResolvedValue(episodeDetail("ep7", "ep7-dc"));
-    const entry: QueueEntry = { ...entryFromTitle({ ...movieSummary("ep7", "System"), kind: "episode" }), showId: "sh1" };
-    seedAndRender([entry]);
-    await screen.findByTestId("player-video");
-    await waitFor(() =>
-      expect(startPlayback).toHaveBeenCalledWith(
-        "ep7",
-        expect.objectContaining({ editionId: "ep7-dc" }),
+        expect.objectContaining({
+          constraints: expect.objectContaining({ maxResolution: "720p", maxBitrate: 4_000_000 }),
+        }),
         expect.anything(),
       ),
     );

@@ -7,7 +7,7 @@
 // memory of. The audio / video Stream picks are the server's per-user Remembered
 // audio / Remembered video (server ADR-0023/0025) and must NOT be duplicated here
 // (they'd drift the moment the viewer switches in-player). For THIS slice that
-// leaves exactly one axis — the Edition — with Quality / Subtitle / AAC / Force
+// leaves the Edition and the Quality cap (this slice), with Subtitle / AAC / Force
 // Remux slated to join the same struct later.
 //
 // KEYING: per Active user + per Title (Movies) / per Show (TV). A Movie keys on its
@@ -21,21 +21,29 @@
 // Distinct from usePlaybackPrefs (volume/mute, per-user only): this is a separate
 // concern, keyed additionally per Title/Show.
 
+import { isQualityCapId, type QualityCapId } from "./qualityLadder";
+
 const STORAGE_PREFIX = "juicebox.playback-pref";
 
 /** A committed Playback preference — the axes with no server memory (ADR-0011).
- * For now just the Edition; future axes (quality cap, subtitle, AAC, force-remux)
- * slot in here alongside `editionName`. */
+ * The Edition + the Quality cap for this slice; future axes (subtitle, AAC,
+ * force-remux) slot in here alongside them. */
 export interface PlaybackPreference {
   /** The chosen Edition's NAME (not id): the name ports across a Show's Episodes,
    * which each carry a different id for the "same" Edition. `null` = **Auto** — omit
    * `editionId` on the request and let the server pick the best direct-play Edition. */
   editionName: string | null;
+  /** The chosen Quality-cap rung id (appletv-web-parity §1/§3), or `null` for
+   * **Direct Play** — uncapped, the viewport-derived resolution + no manual bitrate
+   * cap. A rung sends its paired `maxResolution` + `maxBitrate` (see qualityLadder);
+   * it is a manual override of the viewport default, superseding it at negotiate. */
+  qualityCap: QualityCapId | null;
 }
 
-/** The all-Auto preference: nothing pinned, every axis deferred to the server. The
- * backward-compatible default — an unconfigured Title plays exactly as today. */
-export const AUTO_PREFERENCE: PlaybackPreference = { editionName: null };
+/** The all-Auto preference: nothing pinned, every axis deferred to the server /
+ * capability default. The backward-compatible default — an unconfigured Title plays
+ * exactly as today (Auto Edition + Direct Play quality). */
+export const AUTO_PREFERENCE: PlaybackPreference = { editionName: null, qualityCap: null };
 
 /** The scope a preference is keyed to: a Movie keys per Title; a TV Episode keys
  * per Show (so the choice ports across the Show's Episodes — CONTEXT.md). */
@@ -77,7 +85,9 @@ export function loadPreference(
     const parsed = JSON.parse(raw) as Partial<PlaybackPreference>;
     const editionName =
       typeof parsed.editionName === "string" ? parsed.editionName : null;
-    return { editionName };
+    // Coerce a stored/foreign quality cap to a known rung; anything else → Direct Play.
+    const qualityCap = isQualityCapId(parsed.qualityCap) ? parsed.qualityCap : null;
+    return { editionName, qualityCap };
   } catch {
     return { ...AUTO_PREFERENCE };
   }
