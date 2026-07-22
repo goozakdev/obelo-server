@@ -20,6 +20,7 @@ import ArtistDetailScreen from "./music/ArtistDetailScreen";
 import AlbumDetailScreen from "./music/AlbumDetailScreen";
 import TrackDetailScreen from "./music/TrackDetailScreen";
 import NowPlayingBar from "./player/NowPlayingBar";
+import MediaSessionBridge from "./player/MediaSessionBridge";
 import EnrichmentConsentGate from "./admin/EnrichmentConsentGate";
 import { QueueProvider } from "./player/queue/useQueue";
 import { PlaybackTransportProvider } from "./player/transport";
@@ -218,6 +219,11 @@ export default function App() {
             OUTSIDE <Routes> so it survives navigation — playback keeps going as
             the user browses. It renders nothing until a Queue is active. */}
         <NowPlayingBar />
+        {/* Media Session bridge (appletv-parity/11): mounted once, inside the
+            Queue + Transport providers, so OS media keys / the lock screen /
+            the browser media hub reflect and drive MUSIC playback. Renders
+            nothing; music-only, and a graceful no-op where the API is absent. */}
+        <MediaSessionBridge />
         {/* First-run Enrichment consent prompt (ADR-0032): mounted once in the
             authed scope; shows only to an Admin who has not yet answered. */}
         <EnrichmentConsentGate />
