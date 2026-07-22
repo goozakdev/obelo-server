@@ -3,6 +3,8 @@ import { render, screen, act, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./session";
 import { ApiClient } from "../api/client";
+import { ServerInfoStateProvider } from "../serverInfoContext";
+import type { ServerState } from "../useServerInfo";
 import { QueueProvider, useQueue } from "../player/queue/useQueue";
 import { entryFromTitle } from "../player/queue/model";
 import type { TitleSummary } from "../api/types";
@@ -33,6 +35,9 @@ function title(id: string): TitleSummary {
 
 interface Counts {
   login: number;
+  /** POST /auth/media-cookie hits — the re-issue on an instant switch
+   * (appletv-parity/12). Optional so the older tests need not thread it. */
+  mediaCookie?: number;
 }
 
 function makeFetch(counts: Counts): typeof fetch {
@@ -62,6 +67,10 @@ function makeFetch(counts: Counts): typeof fetch {
         user: { id: `u-${username}`, username, role: username === "ana" ? "admin" : "member" },
         device: { id: "d", name: "n", platform: "web", clientId: "c" },
       });
+    }
+    if (url.endsWith("/api/v1/auth/media-cookie")) {
+      counts.mediaCookie = (counts.mediaCookie ?? 0) + 1;
+      return new Response(null, { status: 204 });
     }
     if (url.endsWith("/api/v1/auth/logout")) return new Response(null, { status: 204 });
     if (url.endsWith("/api/v1/devices")) return json({ devices: [] });
@@ -118,6 +127,36 @@ function renderApp(client: ApiClient) {
           <Harness />
         </QueueProvider>
       </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+// Like renderApp, but wraps AuthProvider in a ServerInfoStateProvider carrying a
+// ready handshake with the given feature flags — the seam the media-cookie
+// re-issue (appletv-parity/12) gates on. The default renderApp mounts AuthProvider
+// bare (no provider), which is itself the "server too old to advertise the flag"
+// case: useOptionalFeature reads false and the switch skips the refresh.
+function renderAppWithFeatures(client: ApiClient, features: Record<string, boolean>) {
+  const state: ServerState = {
+    status: "ready",
+    info: {
+      id: "srv-1",
+      name: "Test",
+      version: "t",
+      supportedVersions: [1],
+      features,
+      setupRequired: false,
+    },
+  };
+  return render(
+    <MemoryRouter>
+      <ServerInfoStateProvider state={state}>
+        <AuthProvider client={client}>
+          <QueueProvider>
+            <Harness />
+          </QueueProvider>
+        </AuthProvider>
+      </ServerInfoStateProvider>
     </MemoryRouter>,
   );
 }
@@ -194,6 +233,45 @@ describe("AuthProvider — roster switch-user", () => {
     expect(screen.getByTestId("queue-current")).toHaveTextContent("none");
     // The active token is now ben's, retained durably.
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe("tok-ben");
+  });
+
+  it("re-issues the media cookie on an instant switch when the flag is on (appletv-parity/12)", async () => {
+    const counts: Counts = { login: 0, mediaCookie: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    renderAppWithFeatures(client, { mediaCookieRefresh: true });
+
+    // ben signs in (→ a Signed-in roster entry), then ana becomes active.
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await click("login-ana-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ana"));
+
+    // Login must NOT hit the re-issue endpoint (the server sets the cookie inline).
+    expect(counts.mediaCookie).toBe(0);
+
+    // Instant switch to ben: the HttpOnly media cookie can't be swapped from JS, so
+    // the switch calls POST /auth/media-cookie to flip byte-serving to ben.
+    await click("switch-ben");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await waitFor(() => expect(counts.mediaCookie).toBe(1));
+  });
+
+  it("does NOT re-issue the media cookie (and does not throw) when the flag is absent", async () => {
+    const counts: Counts = { login: 0, mediaCookie: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    // Server advertises no flags → the switch must degrade gracefully.
+    renderAppWithFeatures(client, {});
+
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await click("login-ana-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ana"));
+
+    await click("switch-ben");
+    // The switch itself still works…
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    // …but with no flag the re-issue endpoint is never called.
+    expect(counts.mediaCookie).toBe(0);
   });
 
   it("seeds Known entries from GET /users for an Admin", async () => {

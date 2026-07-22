@@ -121,7 +121,7 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
     "watchState": true, "home": true, "search": true, "collections": true,
     "playlists": true, "realtimeEvents": true, "deviceAuth": true,
-    "transcode": false
+    "mediaCookieRefresh": true, "transcode": false
   },
   "setupRequired": false
 }
@@ -245,6 +245,16 @@ There is no deny operation. The recourse for an unintended approval is `DELETE /
 #### POST /auth/logout — [Public] (bearer only)
 
 No body → `204`. Revokes exactly the calling token and clears the `ms_media` cookie.
+
+#### POST /auth/media-cookie — [Public] (bearer only)
+
+Gated by the **`mediaCookieRefresh`** feature flag. Branch on the flag, never on a version — a server without the route 404s it, and the correct fallback is to skip the call (media byte-serving keeps today's behaviour until the next real login).
+
+No body → `204`. **Re-issues** the `ms_media` cookie carrying the **requesting bearer's** session token — byte-for-byte the login cookie (same `HttpOnly`, `SameSite=Lax`, `Path=/api/v1`, MaxAge, and `Secure`-only-under-TLS attributes). It is the login cookie machinery minus the credential check: the request's validated bearer identity **is** the authorization.
+
+**Bearer only** — it does **not** honor the `ms_media` cookie itself (only the read-only media GETs do), so a lone/stale cookie can never authorize re-issuing itself. Unauthenticated or invalid-bearer requests are `401` and set no cookie.
+
+Why it exists: the web instant user switch swaps the *bearer* token from JS but **cannot** touch the `HttpOnly` cookie, so after a switch browser media bytes would still serve under the **previous** user's cookie. A client calls this (after adopting the new bearer, before resuming media) so the cookie identity always matches the active bearer — closing that identity leak (the client ADR-0009 hard-teardown class).
 
 #### GET /devices — [Public]
 

@@ -82,6 +82,14 @@ func (m *Metadata) Features() map[string]bool {
 		// branch on this rather than a version — an older server rejects the unknown field
 		// with 400 — and grey the "Force Remux on Server" affordance when it is absent.
 		"remuxSelectedOnly": true,
+		// mediaCookieRefresh advertises POST /auth/media-cookie: a bearer-authenticated
+		// re-issue of the HttpOnly ms_media cookie carrying the CURRENT bearer's token
+		// (appletv-parity/12). The web instant user switch swaps the bearer from JS but
+		// cannot touch the HttpOnly cookie, so it calls this to flip browser byte-serving
+		// to the switched-in identity. A client MUST branch on this rather than a version:
+		// an older server has no such route, and the correct behaviour there is to skip the
+		// refresh (media falls back to today's behaviour until the next real login).
+		"mediaCookieRefresh": true,
 		// transcode is not a route-existence flag: /transcoding is only the
 		// admin observability snapshot (ADR-0029). It advertises the transcode
 		// delivery tier, which depends on a resolved ffmpeg backend, so it stays

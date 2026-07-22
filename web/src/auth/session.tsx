@@ -9,6 +9,7 @@ import {
 } from "react";
 import { apiClient, type ApiClient } from "../api/client";
 import { NetworkError } from "../api/errors";
+import { useOptionalFeature } from "../serverInfoContext";
 import { browserDevice } from "./clientId";
 import type { LoginResult, Role, User } from "../api/types";
 import {
@@ -168,6 +169,12 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   // Bumped whenever the persisted roster changes so the derived `roster` recomputes.
   const [rosterVersion, setRosterVersion] = useState(0);
   const bumpRoster = useCallback(() => setRosterVersion((v) => v + 1), []);
+  // Whether the server advertises POST /auth/media-cookie (appletv-parity/12): the
+  // bearer-authed re-issue of the HttpOnly ms_media cookie. Read via the OPTIONAL
+  // gate so AuthProvider still mounts bare in unit tests (no ServerInfoProvider) —
+  // there the flag simply reads false and the switch skips the refresh, exactly as
+  // it should against a server too old to advertise the route.
+  const canRefreshMediaCookie = useOptionalFeature("mediaCookieRefresh");
 
   const clearSession = useCallback(() => {
     client.setToken(null);
@@ -334,6 +341,18 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       };
       writeUser(user, true);
       setSession({ token: entry.token, user });
+      // Re-issue the HttpOnly ms_media cookie so browser byte-serving (<video>/<img>/
+      // HLS GETs, which can't send a bearer) flips to the switched-in identity BEFORE
+      // any media resumes — the one thing the JS-side token swap above cannot do
+      // itself (the cookie is HttpOnly). Gated on the feature flag: a server too old
+      // to advertise the route simply doesn't get the refresh (media falls back to
+      // today's behaviour until the next real login). Best-effort — a failed refresh
+      // must never break the switch (the JSON/browse path already works).
+      if (canRefreshMediaCookie && typeof client.refreshMediaCookie === "function") {
+        void client.refreshMediaCookie().catch(() => {
+          /* best-effort: leave the previous cookie rather than fail the switch */
+        });
+      }
       // Confirm the adopted token. A dead one 401s — the global handler clears the
       // session and the guard routes to /login — and we demote it to Known so it
       // stops presenting as an instant switch. An offline probe is left alone.
@@ -345,7 +364,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
         });
       }
     },
-    [client, serverId, bumpRoster],
+    [client, serverId, bumpRoster, canRefreshMediaCookie],
   );
 
   const forgetRosterUser = useCallback(
