@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { TitleDetail } from "../api/types";
+import type { AudioStream, MediaFile, TitleDetail, VideoStream } from "../api/types";
 import {
   AUTO_PREFERENCE,
   loadPreferenceForTitle,
@@ -12,6 +12,38 @@ import {
   sourceHeightForSelection,
   type QualityCapId,
 } from "./qualityLadder";
+import { orderedAudioStreams, preferredAudioLang } from "./audio";
+import { orderedVideoStreams } from "./video";
+
+/** The pre-play Audio + Video Stream picks the sheet's Play carries (issue 04).
+ * Distinct from the persisted {@link PlaybackPreference}: these are the server's
+ * per-user Remembered audio / Remembered video (server ADR-0023/0025), NOT a local
+ * axis (client ADR-0011) — so they NEVER touch the preference store. `null` = Auto
+ * (omit the id → the server applies its memory). They flow straight to Play as this
+ * play's `audioStreamId` / `videoStreamId`; the server records them as Remembered
+ * via the progress write-back, and an in-player switch later supersedes them without
+ * any stale sheet value resurrecting. */
+export interface StreamSelection {
+  audioStreamId: string | null;
+  videoStreamId: string | null;
+}
+
+/** The File the Audio / Video sections are built from: the first present (non-
+ * missing) File of the drafted Edition (whose stream ids are what a play of that
+ * Edition negotiates), falling back to the first present File across all Editions
+ * when the draft is Auto (or the drafted Edition has no present File). undefined for
+ * a Title with no present File at all. */
+function selectableFile(
+  editions: TitleDetail["editions"],
+  editionName: string | null,
+): MediaFile | undefined {
+  const scoped = editionName ? editions.filter((e) => e.name === editionName) : [];
+  const pool = scoped.length > 0 ? scoped : editions;
+  return (
+    pool.flatMap((e) => e.files).find((f) => !f.missing) ??
+    editions.flatMap((e) => e.files).find((f) => !f.missing)
+  );
+}
 
 // The Playback Options sheet (appletv-web-parity §1/§2) — the pre-play
 // configuration surface, opened from Movie / Episode detail. It is built PURELY
@@ -24,14 +56,24 @@ import {
 // from the start). Backing out (Cancel / Esc / backdrop) DISCARDS the draft — the
 // saved preference is untouched.
 //
-// This slice carries two axes — the Edition and the Quality cap. Edition rows:
-// **Auto** (omit `editionId`, let the server pick the best direct-play Edition) + one
-// row per `title.editions`, persisted BY EDITION NAME (playbackPreference) so it ports
-// across a Show's Episodes; the resolver maps the name back to an id per-Episode.
-// Quality rows: **Direct Play** (uncapped — the viewport-derived resolution) + the
-// downscale rungs STRICTLY BELOW the selected Edition's source height (re-derived when
-// the Edition changes), each sending a paired `maxResolution` + `maxBitrate`. Audio /
-// Subtitle / AAC / Force-Remux are later sections bolted onto this same skeleton.
+// This slice carries four axes — the Edition, the Quality cap, and (issue 04) the
+// Audio + Video Stream. Edition rows: **Auto** (omit `editionId`, let the server pick
+// the best direct-play Edition) + one row per `title.editions`, persisted BY EDITION
+// NAME (playbackPreference) so it ports across a Show's Episodes; the resolver maps the
+// name back to an id per-Episode. Quality rows: **Direct Play** (uncapped — the
+// viewport-derived resolution) + the downscale rungs STRICTLY BELOW the selected
+// Edition's source height (re-derived when the Edition changes), each sending a paired
+// `maxResolution` + `maxBitrate`.
+//
+// AUDIO + VIDEO are DELIBERATELY NOT persisted (client ADR-0011). Unlike Edition /
+// Quality they are the server's per-user Remembered audio / Remembered video (server
+// ADR-0023/0025), so the sheet holds them as DRAFT-ONLY {@link StreamSelection} state
+// (never written to the preference store — duplicating them would drift the moment the
+// viewer switches audio in-player) that flows STRAIGHT to Play as this play's
+// `audioStreamId` / `videoStreamId`. **Auto** omits the id (→ server memory); an
+// explicit pick sends it over the wire (web has no local mpv `aid` pre-seed). The
+// Video section renders ONLY when the File carries >1 selectable Video Stream. Subtitle
+// / AAC / Force-Remux are later sections bolted onto this same skeleton.
 
 /** A native <dialog> sheet, opened with showModal() (Esc-to-close, top layer, focus
  * containment, ::backdrop for free — mirroring EditItemDialog). Controlled by the
@@ -49,23 +91,34 @@ export default function PlaybackOptionsSheet({
   userId: string | null;
   open: boolean;
   onClose: () => void;
-  /** Start playback of the committed configuration — the detail's existing play()
-   * (Continue at the resume position when in progress, else from the start). */
-  onPlay: () => void;
+  /** Start playback of the committed configuration — the detail's existing play(),
+   * handed this play's Audio / Video Stream picks (Continue at the resume position
+   * when in progress, else from the start). */
+  onPlay: (streams: StreamSelection) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  // The DRAFT Edition name (null = Auto), seeded from the saved preference each time
-  // the sheet opens so it always reflects the committed choice, and discarded on a
-  // back-out (we only persist on Play).
+  // The DRAFT Edition name + Quality cap (null = Auto), seeded from the SAVED
+  // preference each time the sheet opens so it always reflects the committed choice,
+  // and discarded on a back-out (we only persist on Play).
   const [draft, setDraft] = useState<PlaybackPreference>(AUTO_PREFERENCE);
+  // The DRAFT Audio / Video Stream picks (null = Auto). NOT part of `draft` because
+  // they are NEVER persisted (client ADR-0011) — the server owns their memory. The
+  // sheet always OPENS at Auto: the client can't read the server's Remembered pick, so
+  // Auto ("use server memory") is the honest initial state, re-seeded to null on each
+  // open. They flow to Play, never to the store (see commitAndPlay).
+  const [audioStreamId, setAudioStreamId] = useState<string | null>(null);
+  const [videoStreamId, setVideoStreamId] = useState<string | null>(null);
 
   // Drive the native dialog imperatively; keep React's `open` in sync via its own
-  // close event (Esc / backdrop). Re-seed the draft from the store on each open.
+  // close event (Esc / backdrop). Re-seed the draft from the store on each open, and
+  // reset the (unpersisted) Audio / Video picks to Auto.
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (open && !dialog.open) {
       setDraft(loadPreferenceForTitle(window.localStorage, userId, title));
+      setAudioStreamId(null);
+      setVideoStreamId(null);
       dialog.showModal();
     }
     if (!open && dialog.open) dialog.close();
@@ -74,12 +127,36 @@ export default function PlaybackOptionsSheet({
   const scope = preferenceScopeForTitle(title);
   const resuming = !title.watched && title.resumePositionMs > 0;
 
+  // The File the Audio / Video sections read their Streams from, re-derived from the
+  // drafted Edition (its stream ids are per-File, so switching Edition changes the set
+  // — hence the Audio / Video picks reset when the Edition draft changes, below).
+  const streamFile = selectableFile(title.editions, draft.editionName);
+  // Only send a pick that still belongs to the current File (an Edition switch left a
+  // stale id from a different File's Streams) — otherwise degrade to Auto, mirroring
+  // the Quality axis's degrade-to-Direct-Play. Auto is always the safe omission.
+  const audioIds = new Set((streamFile?.audioStreams ?? []).map((s) => s.id));
+  const videoIds = new Set((streamFile?.videoStreams ?? []).map((s) => s.id));
+  const activeAudioId = audioStreamId && audioIds.has(audioStreamId) ? audioStreamId : null;
+  const activeVideoId = videoStreamId && videoIds.has(videoStreamId) ? videoStreamId : null;
+
+  // Changing the Edition draft re-points the negotiated File, whose Stream ids differ,
+  // so the Audio / Video picks reset to Auto (a stale id would be sent to the wrong
+  // File). Quality re-derives its rungs but stays a draft change like before.
+  function selectEdition(editionName: string | null) {
+    setDraft((d) => ({ ...d, editionName }));
+    setAudioStreamId(null);
+    setVideoStreamId(null);
+  }
+
   // Commit the draft as the saved preference, then start playback. Persisting only
-  // happens here (never on a row click), so backing out discards the draft.
+  // happens here (never on a row click), and persists ONLY the Edition + Quality axes
+  // — the Audio / Video picks are handed to Play instead (client ADR-0011), so they
+  // never enter the store and can't drift against an in-player switch. A pick that no
+  // longer matches the negotiated File degrades to Auto (activeAudioId/activeVideoId).
   function commitAndPlay() {
     if (scope) savePreference(window.localStorage, userId, scope, draft);
     onClose();
-    onPlay();
+    onPlay({ audioStreamId: activeAudioId, videoStreamId: activeVideoId });
   }
 
   return (
@@ -113,13 +190,23 @@ export default function PlaybackOptionsSheet({
           <EditionSection
             editions={title.editions}
             selected={draft.editionName}
-            onSelect={(editionName) => setDraft((d) => ({ ...d, editionName }))}
+            onSelect={selectEdition}
           />
           <QualitySection
             editions={title.editions}
             editionName={draft.editionName}
             selected={draft.qualityCap}
             onSelect={(qualityCap) => setDraft((d) => ({ ...d, qualityCap }))}
+          />
+          <AudioSection
+            streams={streamFile?.audioStreams ?? []}
+            selected={activeAudioId}
+            onSelect={setAudioStreamId}
+          />
+          <VideoSection
+            streams={streamFile?.videoStreams ?? []}
+            selected={activeVideoId}
+            onSelect={setVideoStreamId}
           />
         </div>
 
@@ -230,6 +317,98 @@ function QualitySection({
             testId="quality-option"
             dataName={rung.id}
             onSelect={() => onSelect(rung.id)}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// The Audio section (appletv-web-parity §1, issue 04): an **Auto** row (omit
+// `audioStreamId` → the server applies its Remembered audio) + one row per audio
+// Stream of the negotiated File, ordered like the in-player Audio menu (preferred
+// language, then default disposition, then label). A pick is DRAFT-ONLY and is handed
+// to Play as `audioStreamId` — it is NEVER written to the preference store (client
+// ADR-0011): the server records it as Remembered via the progress write-back. Renders
+// nothing for a silent File (no audio Streams) — there's no meaningful choice. Per
+// CONTEXT.md these are audio Streams, never a coined "Audio track".
+function AudioSection({
+  streams,
+  selected,
+  onSelect,
+}: {
+  streams: AudioStream[];
+  /** The draft audio Stream id, or null for Auto. */
+  selected: string | null;
+  onSelect: (audioStreamId: string | null) => void;
+}) {
+  if (streams.length === 0) return null;
+  const ordered = orderedAudioStreams(streams, preferredAudioLang());
+  return (
+    <section className="playback-options-section" data-testid="audio-section">
+      <h3 className="section-title playback-options-section-title">Audio</h3>
+      <ul className="playback-options-list" role="radiogroup" aria-label="Audio">
+        <OptionRow
+          label="Auto"
+          hint="Use your remembered audio."
+          active={selected === null}
+          testId="audio-option-auto"
+          onSelect={() => onSelect(null)}
+        />
+        {ordered.map((s) => (
+          <OptionRow
+            key={s.id}
+            label={s.label}
+            active={selected === s.id}
+            testId="audio-option"
+            dataName={s.id}
+            onSelect={() => onSelect(s.id)}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// The Video section (appletv-web-parity §1, issue 04): an **Auto** row (omit
+// `videoStreamId` → the server applies its Remembered video) + one row per selectable
+// Video Stream (e.g. Black & White / Colour cuts). Rendered ONLY when the File carries
+// >1 selectable Video Stream — a lone Video Stream is not a choice (mirrors the detail
+// screen's ≥2 chip gate and the in-player Video menu). A pick is DRAFT-ONLY and handed
+// to Play as `videoStreamId`, never persisted (client ADR-0011). Per CONTEXT.md these
+// are Video Streams, never a coined "Video track".
+function VideoSection({
+  streams,
+  selected,
+  onSelect,
+}: {
+  streams: VideoStream[];
+  /** The draft video Stream id, or null for Auto. */
+  selected: string | null;
+  onSelect: (videoStreamId: string | null) => void;
+}) {
+  // Gate at >1 — the whole point of the section is choosing between alternates.
+  if (streams.length < 2) return null;
+  const ordered = orderedVideoStreams(streams);
+  return (
+    <section className="playback-options-section" data-testid="video-section">
+      <h3 className="section-title playback-options-section-title">Video</h3>
+      <ul className="playback-options-list" role="radiogroup" aria-label="Video">
+        <OptionRow
+          label="Auto"
+          hint="Use your remembered video."
+          active={selected === null}
+          testId="video-option-auto"
+          onSelect={() => onSelect(null)}
+        />
+        {ordered.map((s) => (
+          <OptionRow
+            key={s.id}
+            label={s.label}
+            active={selected === s.id}
+            testId="video-option"
+            dataName={s.id}
+            onSelect={() => onSelect(s.id)}
           />
         ))}
       </ul>

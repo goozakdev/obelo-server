@@ -27,6 +27,16 @@ export interface QueueEntry {
    * async detail fetch — so a no-preference Episode still plays instantly
    * (appletv-web-parity §1). Absent for Movies/Tracks and single plays. */
   showId?: string;
+  /** The pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04),
+   * seeded onto the HEAD entry by the Playback Options sheet's Play. These are the
+   * server's per-user Remembered audio / Remembered video (server ADR-0023/0025), NOT
+   * a persisted local preference (client ADR-0011) — so they ride the TRANSIENT Queue
+   * entry (this play only), never the PlaybackPreference store. They seed the initial
+   * negotiation's `audioStreamId` / `videoStreamId`; the server then records them as
+   * Remembered via the progress write-back, and an in-player switch supersedes them
+   * without any stale value resurrecting. Absent = Auto (omit the id → server memory). */
+  audioStreamId?: string;
+  videoStreamId?: string;
 }
 
 /** The three states of Repeat mode (music only — see CONTEXT.md): `off` stops

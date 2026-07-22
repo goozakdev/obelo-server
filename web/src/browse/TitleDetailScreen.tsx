@@ -16,6 +16,7 @@ import { useQueue } from "../player/queue/useQueue";
 import {
   buildShowQueue,
   buildSingleQueue,
+  cleanStreams,
 } from "../player/queue/buildQueue";
 import { entryFromTitle } from "../player/queue/model";
 import { useAsync } from "./useAsync";
@@ -40,7 +41,9 @@ import { titleDetailSummary } from "./titleSummary";
 import { episodeContextCode } from "./episodeLabel";
 import { formatDate, formatDuration, formatTimecode } from "../time";
 import { downloadVlcPlaylist } from "./openInVlc";
-import PlaybackOptionsSheet from "../player/PlaybackOptionsSheet";
+import PlaybackOptionsSheet, {
+  type StreamSelection,
+} from "../player/PlaybackOptionsSheet";
 
 // The Title detail page (issue 03 / PRD user stories 12–13): GET /titles/{id}
 // rendered as summary/year/artwork + the Editions → Files (quality/version
@@ -212,25 +215,41 @@ function Detail({
   // single-entry Queue. A failed build (transient/404) falls back to a single-entry
   // Queue of THIS Title so the player is never stranded (story 39). (Tracks have
   // their own detail/play in music/; this screen serves movie + episode only.)
-  async function play() {
+  async function play(streams?: StreamSelection) {
     const summary: TitleSummary = titleDetailSummary(title, watched, resumeMs);
+    // The pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04) the
+    // Playback Options sheet handed us, seeded onto the HEAD (now-playing) entry only.
+    // Transient — they ride the Queue entry, NEVER the persisted preference store
+    // (client ADR-0011). The main Play button passes nothing → Auto (server memory).
+    const headStreams = streams ? cleanStreams(streams) : undefined;
+    // Attach the head picks to a single-entry Queue (the Movie / standalone path).
+    const singleEntries = () => {
+      const entries = buildSingleQueue(summary);
+      if (headStreams && entries.length > 0) {
+        entries[0] = { ...entries[0], ...headStreams };
+      }
+      return entries;
+    };
     try {
       if (title.kind === "episode" && title.episode) {
         // buildShowQueue plays the now-playing batch itself and resolves once it
-        // can; the cross-season tail fills in lazily (we don't await it).
+        // can; the cross-season tail fills in lazily (we don't await it). The head
+        // Episode carries the sheet's picks via headStreams.
         await buildShowQueue(
           apiClient,
           { showId: title.episode.showId, seasonId: title.episode.seasonId },
           title.id,
           queue,
+          undefined,
+          headStreams ? { headStreams } : undefined,
         );
       } else {
-        queue.playNow(buildSingleQueue(summary));
+        queue.playNow(singleEntries());
       }
     } catch {
       // A transient/404 build failure never strands the player — fall back to
-      // playing just this Title.
-      queue.playNow(buildSingleQueue(summary));
+      // playing just this Title (still carrying the head picks).
+      queue.playNow(singleEntries());
     }
   }
 
@@ -591,7 +610,7 @@ function Detail({
             userId={userId}
             open={optionsOpen}
             onClose={() => setOptionsOpen(false)}
-            onPlay={() => void play()}
+            onPlay={(streams) => void play(streams)}
           />
 
           {/* "Add to collection" (collections-playlists-ui issue 02, Admin only):

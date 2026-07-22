@@ -890,6 +890,19 @@ function CurrentPlayer({
       playerPreference = { pending: true }; // wait for the detail, then negotiate once
     }
   }
+  // Seed the pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04)
+  // straight off the TRANSIENT Queue entry — the Playback Options sheet's Play attached
+  // them to the head entry, NOT to the persisted preference (client ADR-0011). So they
+  // seed usePlayerSession REGARDLESS of `hasStoredConfig` and need NO detail to resolve
+  // (they are ids, not by-name/height): they never force `pending`. The session seeds
+  // its audio/video refs from these ONCE, so an in-player switch later supersedes them.
+  if (entry.audioStreamId || entry.videoStreamId) {
+    playerPreference = {
+      ...(playerPreference ?? {}),
+      audioStreamId: entry.audioStreamId,
+      videoStreamId: entry.videoStreamId,
+    };
+  }
 
   const session = usePlayerSession(apiClient, titleId, resumeMs, playerPreference);
   const videoRef = useRef<HTMLVideoElement | null>(null);
