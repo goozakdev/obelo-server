@@ -163,12 +163,34 @@ function unsupportedMessage(err: ApiError): { reason: string; message: string } 
   };
 }
 
+/** The pre-play Playback preference the session negotiates with (appletv-web-parity
+ * §1): the resolved `editionId` (undefined = Auto), plus a `pending` flag while that
+ * resolution is still in flight. Negotiation is DEFERRED until `pending` clears — but
+ * ONLY the configured path waits: with no stored preference the caller passes
+ * `pending: false` (or omits this) and playback starts immediately, exactly as before. */
+export interface PlayerPreference {
+  editionId?: string;
+  pending?: boolean;
+}
+
 export function usePlayerSession(
   client: ApiClient,
   titleId: string,
   startPosition: number,
+  preference?: PlayerPreference,
 ): PlayerSession {
   const [status, setStatus] = useState<PlayerStatus>({ kind: "negotiating" });
+  // The resolved Edition the negotiation sends (appletv-web-parity §2), or undefined
+  // for Auto (omit → server picks the best direct-play Edition). Held in a ref, kept
+  // in sync each render, so negotiate reads it without being a dependency — and so it
+  // carries through every re-negotiation (a burn/audio/video switch) unchanged.
+  const editionRef = useRef<string | undefined>(preference?.editionId);
+  editionRef.current = preference?.editionId;
+  // While the preference is still resolving (its Edition NAME → this Title's id needs
+  // the detail), hold off the FIRST negotiation so it goes out WITH the editionId
+  // rather than re-negotiating after (which would re-buffer). Only the configured
+  // path is `pending`; the no-preference path is never held.
+  const pendingPreference = preference?.pending ?? false;
   // The image sub burned into the video (subtitles/04), or null. State (not a ref)
   // so the captions menu re-renders when a burn is selected/cleared; mirrored into
   // burnRef so negotiate reads it without being a dependency.
@@ -227,6 +249,7 @@ export function usePlayerSession(
               deviceProfile,
               constraints: effectiveConstraints,
               startPosition: resumeRef.current,
+              editionId: editionRef.current,
               burnSubtitleId: burnRef.current ?? undefined,
               audioStreamId: audioRef.current ?? undefined,
               videoStreamId: videoStreamRef.current ?? undefined,
@@ -277,13 +300,19 @@ export function usePlayerSession(
     [client, titleId],
   );
 
-  // Negotiate once per title. Aborts the request on unmount/title change.
+  // Negotiate once per title, once the preference has resolved. While
+  // `pendingPreference` is true (a stored preference whose Edition is still being
+  // resolved against the detail) we hold off so the first request already carries the
+  // editionId — no start-then-re-negotiate re-buffer. The no-preference path is never
+  // pending, so it negotiates immediately (unchanged behaviour). Aborts on
+  // unmount/title change.
   useEffect(() => {
+    if (pendingPreference) return;
     autoRetriedRef.current = false;
     setStatus({ kind: "negotiating" });
     negotiate();
     return () => negotiateCtrlRef.current?.abort();
-  }, [negotiate]);
+  }, [negotiate, pendingPreference]);
 
   // Manual retry from the busy state: re-negotiate at the last suggested lower
   // bitrate (if any) so the request is a genuine step down, not the rejected one.
