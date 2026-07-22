@@ -877,25 +877,33 @@ function CurrentPlayer({
   const storedPref = prefTitle
     ? loadPreferenceForTitle(window.localStorage, userId, prefTitle)
     : null;
-  const hasStoredConfig =
+  // Only the axes that resolve AGAINST the detail (the Edition name→id map, the
+  // Quality source height, the Subtitle burn decision) make the negotiation wait
+  // (`pending`) for it. The AAC-stereo toggle (issue 06) is detail-free — a pure flag
+  // → a fixed profile narrowing — so an AAC-only preference negotiates immediately,
+  // and a failed detail fetch still applies it (degrading only the detail-bound axes
+  // to Auto / Direct Play, never blocking).
+  const needsDetail =
     !!storedPref &&
     (storedPref.editionName !== null ||
       storedPref.qualityCap !== null ||
       storedPref.subtitle !== null);
+  const hasStoredConfig = needsDetail || storedPref?.aacStereo === true;
   let playerPreference: PlayerPreference | undefined;
   if (hasStoredConfig) {
-    if (detail) {
+    if (detail || !needsDetail || detailState.status === "error") {
       // Resolve against BOTH the Editions (Edition + Quality axes) and the Subtitle
       // tracks (the burn-in decision), so a committed image-subtitle choice on a
       // transcode/remux tier seeds the first negotiation's burnSubtitleId (ADR-0020).
-      const resolved = resolvePlayback(storedPref, detail.editions ?? [], detail.subtitles ?? []);
+      // Without a detail (AAC-only, or the fetch failed) the arrays are empty and
+      // those axes degrade; the AAC narrowing needs no context and always resolves.
+      const resolved = resolvePlayback(storedPref, detail?.editions ?? [], detail?.subtitles ?? []);
       playerPreference = {
         editionId: resolved.editionId,
         constraints: resolved.constraints,
         burnSubtitleId: resolved.burnSubtitleId,
+        deviceProfile: resolved.deviceProfile,
       };
-    } else if (detailState.status === "error") {
-      playerPreference = {}; // can't resolve → Auto / Direct Play, never block
     } else {
       playerPreference = { pending: true }; // wait for the detail, then negotiate once
     }

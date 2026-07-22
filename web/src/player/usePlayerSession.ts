@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/errors";
-import type { PlaybackConstraints, PlaybackDecision, PlaybackState } from "../api/types";
+import type {
+  DeviceProfile,
+  PlaybackConstraints,
+  PlaybackDecision,
+  PlaybackState,
+} from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import { deriveCapabilityProfile } from "./capabilities";
 
@@ -175,6 +180,13 @@ export interface PlayerPreference {
    * (`maxResolution` + `maxBitrate` from the ladder). Undefined = Direct Play: keep
    * the viewport-derived resolution + the generous Direct-Play bitrate default. */
   constraints?: Pick<PlaybackConstraints, "maxResolution" | "maxBitrate">;
+  /** The AAC-stereo capability narrowing (appletv-web-parity §7, issue 06) merged
+   * OVER the probed capability profile: `audioCodecs: ["aac"], maxAudioChannels: 2`.
+   * There is NO contract field for AAC — narrowing the sent profile is the whole
+   * mechanism. Undefined = off: the full probed `deviceProfile` goes out unchanged
+   * (today's behaviour). Like `editionId` / `constraints` it is a PERSISTED axis, so
+   * it carries through every re-negotiation (a burn/audio/video switch). */
+  deviceProfile?: Pick<DeviceProfile, "audioCodecs" | "maxAudioChannels">;
   /** The pre-play Audio Stream pick (appletv-web-parity §1, issue 04) that SEEDS the
    * initial negotiation's `audioStreamId`. Unlike `editionId` / `constraints` this is
    * NOT a persisted preference — it's the server's Remembered audio (server ADR-0023),
@@ -217,6 +229,12 @@ export function usePlayerSession(
   // every re-negotiation (a burn/audio/video switch) unchanged.
   const constraintsRef = useRef<PlayerPreference["constraints"]>(preference?.constraints);
   constraintsRef.current = preference?.constraints;
+  // The AAC-stereo profile narrowing (issue 06), or undefined for the full probed
+  // profile. Held in a ref, kept in sync each render (like the Edition / constraints
+  // — it is a persisted axis), so negotiate reads it without being a dependency AND
+  // it carries through every re-negotiation (a burn/audio/video switch) unchanged.
+  const profileRef = useRef<PlayerPreference["deviceProfile"]>(preference?.deviceProfile);
+  profileRef.current = preference?.deviceProfile;
   // While the preference is still resolving (its Edition NAME → this Title's id needs
   // the detail), hold off the FIRST negotiation so it goes out WITH the editionId
   // rather than re-negotiating after (which would re-buffer). Only the configured
@@ -283,6 +301,14 @@ export function usePlayerSession(
       negotiateCtrlRef.current = ctrl;
       endedRef.current = false;
       const { deviceProfile, constraints } = deriveCapabilityProfile();
+      // Layer the profile: the browser-probed capability default first, then the
+      // AAC-stereo narrowing OVER its audio side (appletv-web-parity §7 — narrowing
+      // the SENT profile to aac/2ch is the whole mechanism; there is no request
+      // field). No narrowing (the common case) sends the probed profile unchanged.
+      const effectiveProfile: DeviceProfile = {
+        ...deviceProfile,
+        ...(profileRef.current ?? {}),
+      };
       // Layer the constraints: the capability-derived defaults (viewport resolution +
       // the generous Direct-Play bitrate, ADR-0003) first, then the Quality-cap rung
       // OVER them (a manual override of both axes — appletv-web-parity §3), then a
@@ -299,7 +325,7 @@ export function usePlayerSession(
           const decision = await client.startPlayback(
             titleId,
             {
-              deviceProfile,
+              deviceProfile: effectiveProfile,
               constraints: effectiveConstraints,
               startPosition: resumeRef.current,
               editionId: editionRef.current,
