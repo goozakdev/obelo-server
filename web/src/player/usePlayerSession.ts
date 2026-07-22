@@ -187,6 +187,14 @@ export interface PlayerPreference {
    * (today's behaviour). Like `editionId` / `constraints` it is a PERSISTED axis, so
    * it carries through every re-negotiation (a burn/audio/video switch). */
   deviceProfile?: Pick<DeviceProfile, "audioCodecs" | "maxAudioChannels">;
+  /** Force Remux (appletv-web-parity §10, issue 07): `true` asks the server to trim
+   * a would-be direct play to a lean copy-only directStream of just the selected
+   * video + audio Stream. The resolver emits it ONLY for an otherwise-direct-play
+   * draft (no constraints, no AAC narrowing) on a server advertising
+   * `features.remuxSelectedOnly`. Undefined = off — the field never rides the
+   * request. A PERSISTED axis like `editionId` / `constraints`, so it carries
+   * through every re-negotiation (a burn/audio/video switch) unchanged. */
+  remuxSelectedOnly?: boolean;
   /** The pre-play Audio Stream pick (appletv-web-parity §1, issue 04) that SEEDS the
    * initial negotiation's `audioStreamId`. Unlike `editionId` / `constraints` this is
    * NOT a persisted preference — it's the server's Remembered audio (server ADR-0023),
@@ -235,6 +243,11 @@ export function usePlayerSession(
   // it carries through every re-negotiation (a burn/audio/video switch) unchanged.
   const profileRef = useRef<PlayerPreference["deviceProfile"]>(preference?.deviceProfile);
   profileRef.current = preference?.deviceProfile;
+  // The Force Remux flag (issue 07), or undefined for off. A persisted axis like the
+  // Edition / constraints / profile above: an every-render ref sync, carried through
+  // every re-negotiation unchanged (the server no-ops it off the direct-play tier).
+  const remuxRef = useRef<PlayerPreference["remuxSelectedOnly"]>(preference?.remuxSelectedOnly);
+  remuxRef.current = preference?.remuxSelectedOnly;
   // While the preference is still resolving (its Edition NAME → this Title's id needs
   // the detail), hold off the FIRST negotiation so it goes out WITH the editionId
   // rather than re-negotiating after (which would re-buffer). Only the configured
@@ -332,6 +345,8 @@ export function usePlayerSession(
               burnSubtitleId: burnRef.current ?? undefined,
               audioStreamId: audioRef.current ?? undefined,
               videoStreamId: videoStreamRef.current ?? undefined,
+              // Only ever true (the client omits a falsy field from the body).
+              remuxSelectedOnly: remuxRef.current || undefined,
             },
             ctrl.signal,
           );

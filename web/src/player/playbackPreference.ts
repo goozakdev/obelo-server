@@ -9,8 +9,8 @@
 // (they'd drift the moment the viewer switches in-player). That leaves the Edition,
 // the Quality cap, the Subtitle track (stored by language + forced, since subtitle
 // choice has no server memory — CONTEXT.md), and the AAC-stereo toggle (a capability-
-// profile narrowing with no contract field at all), with Force Remux slated to join
-// the same struct later.
+// profile narrowing with no contract field at all), and the Force Remux checkbox
+// (a flag-gated request field with no server memory).
 //
 // KEYING: per Active user + per Title (Movies) / per Show (TV). A Movie keys on its
 // own Title id; a TV Episode keys on its SHOW id, so a single choice ports across
@@ -69,6 +69,14 @@ export interface PlaybackPreference {
    * full probed profile unchanged. Issue 07 reads this flag (the draft in the sheet,
    * the stored value here) to disable Force Remux while AAC is on. */
   aacStereo: boolean;
+  /** The Force Remux checkbox (appletv-web-parity §10, issue 07). When true — and
+   * ONLY when the resolved draft is otherwise pure direct play (no Quality-cap
+   * downscale, AAC off) — the resolver emits `remuxSelectedOnly: true`, asking the
+   * server to trim the direct-play File to a lean copy-only directStream carrying
+   * just the selected video + audio Stream. On a draft that already transcodes /
+   * remuxes the resolver drops the field (the server no-ops it anyway). `false` =
+   * off — the field never rides the request. */
+  remuxSelectedOnly: boolean;
 }
 
 /** The all-Auto preference: nothing pinned, every axis deferred to the server /
@@ -79,6 +87,7 @@ export const AUTO_PREFERENCE: PlaybackPreference = {
   qualityCap: null,
   subtitle: null,
   aacStereo: false,
+  remuxSelectedOnly: false,
 };
 
 /** Defensively coerce a stored/foreign value into a {@link SubtitlePreference}, or
@@ -139,7 +148,9 @@ export function loadPreference(
     // Coerce the AAC toggle to a strict boolean: a pref persisted before the axis
     // existed (or a foreign truthy) degrades to off — today's full profile.
     const aacStereo = parsed.aacStereo === true;
-    return { editionName, qualityCap, subtitle, aacStereo };
+    // Same strictness for Force Remux: pre-axis / foreign values degrade to off.
+    const remuxSelectedOnly = parsed.remuxSelectedOnly === true;
+    return { editionName, qualityCap, subtitle, aacStereo, remuxSelectedOnly };
   } catch {
     return { ...AUTO_PREFERENCE };
   }

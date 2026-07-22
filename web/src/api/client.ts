@@ -1595,6 +1595,9 @@ export class ApiClient {
     if (opts.burnSubtitleId) body.burnSubtitleId = opts.burnSubtitleId;
     if (opts.audioStreamId) body.audioStreamId = opts.audioStreamId;
     if (opts.videoStreamId) body.videoStreamId = opts.videoStreamId;
+    // Conditional like the ids above: only ever `true` on the wire, never `false`
+    // (the server defaults the absent field to false; older servers reject it).
+    if (opts.remuxSelectedOnly) body.remuxSelectedOnly = true;
     return this.request<PlaybackDecision>(
       `/titles/${encodeURIComponent(titleId)}/playback`,
       { method: "POST", body, signal },

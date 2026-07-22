@@ -25,6 +25,53 @@ describe("ApiClient.directFileDownloadUrl", () => {
   });
 });
 
+describe("ApiClient.startPlayback (conditional body fields)", () => {
+  const profile = {
+    containers: [],
+    videoCodecs: [],
+    audioCodecs: [],
+    maxAudioChannels: 2,
+    textSubtitleFormats: [],
+  };
+  const constraints = { maxBitrate: 100_000_000 };
+
+  async function captureBody(opts: Parameters<ApiClient["startPlayback"]>[1]) {
+    let body: Record<string, unknown> | null = null;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify({ sessionId: "s1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl });
+    await client.startPlayback("t1", opts);
+    return body!;
+  }
+
+  it("sends remuxSelectedOnly: true when set (appletv-web-parity §10)", async () => {
+    const body = await captureBody({
+      deviceProfile: profile,
+      constraints,
+      remuxSelectedOnly: true,
+    });
+    expect(body.remuxSelectedOnly).toBe(true);
+  });
+
+  it("omits the field when absent or false — never `false` on the wire", async () => {
+    // Absent: an older server rejects the unknown field, so off must be OMISSION.
+    let body = await captureBody({ deviceProfile: profile, constraints });
+    expect("remuxSelectedOnly" in body).toBe(false);
+    // Explicit false: same — the server defaults the absent field to false.
+    body = await captureBody({
+      deviceProfile: profile,
+      constraints,
+      remuxSelectedOnly: false,
+    });
+    expect("remuxSelectedOnly" in body).toBe(false);
+  });
+});
+
 describe("ApiClient.scanEntity (Targeted scan)", () => {
   it("POSTs to the entity's /scan route and normalizes the scope-tagged status", async () => {
     let captured: { url: string; method?: string } | null = null;

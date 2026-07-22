@@ -1,13 +1,16 @@
+import type { ReactElement } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type {
   AudioStream,
   MediaFile,
+  ServerInfo,
   SubtitleTrack,
   TitleDetail,
   VideoStream,
 } from "../api/types";
 import { loadPreference } from "./playbackPreference";
+import { ServerInfoStateProvider } from "../serverInfoContext";
 import PlaybackOptionsSheet from "./PlaybackOptionsSheet";
 
 // The Playback Options sheet (appletv-web-parity §1/§2). The whole sheet is built
@@ -505,5 +508,146 @@ describe("PlaybackOptionsSheet — Subtitle axis", () => {
     expect(group).toBeInTheDocument();
     // No bare "Track" (a standalone word) leaks into the section copy.
     expect(screen.getByTestId("subtitles-section").textContent).not.toMatch(/\bTrack\b/);
+  });
+});
+
+// ── Force Remux axis (issue 07, appletv-web-parity §10) ──────────────────────────
+// A FLAG-GATED checkbox: hidden entirely unless the server advertises
+// `features.remuxSelectedOnly`, and enabled ONLY while the draft would otherwise
+// DIRECT PLAY — a Quality-cap downscale (issue 03) or AAC-stereo on (issue 06)
+// disables it AND Play then commits the axis OFF, so the flag never persists under
+// (and never rides) a transcoding draft.
+
+/** Mount under a ready handshake advertising `remuxSelectedOnly` — the sheet reads
+ * the flag through useOptionalFeature, so a bare mount (no provider, as every other
+ * describe in this file uses) is exactly the absent-flag / older-server case. */
+function withRemuxFlag(ui: ReactElement, on = true): ReactElement {
+  const info: ServerInfo = {
+    version: "test",
+    supportedVersions: [1],
+    features: { remuxSelectedOnly: on },
+    setupRequired: false,
+  };
+  return (
+    <ServerInfoStateProvider state={{ status: "ready", info }}>{ui}</ServerInfoStateProvider>
+  );
+}
+
+describe("PlaybackOptionsSheet — Force Remux checkbox", () => {
+  const prefT1 = () => loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" });
+
+  it("is hidden entirely without the feature flag (bare mount = older server)", () => {
+    render(
+      <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(screen.queryByTestId("force-remux-section")).not.toBeInTheDocument();
+  });
+
+  it("is hidden when the handshake advertises the flag as false", () => {
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+        false,
+      ),
+    );
+    expect(screen.queryByTestId("force-remux-section")).not.toBeInTheDocument();
+  });
+
+  it("shows enabled + unchecked on an otherwise-direct-play draft; Play commits true", () => {
+    const onPlay = vi.fn();
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={onPlay} />,
+      ),
+    );
+    const toggle = screen.getByRole("checkbox", { name: /Force Remux/ });
+    expect(toggle).not.toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    // A toggle is a draft change only — nothing persisted yet.
+    expect(prefT1().remuxSelectedOnly).toBe(false);
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(prefT1().remuxSelectedOnly).toBe(true);
+    expect(onPlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Quality-cap rung disables it (shown unchecked) and Play commits the axis OFF", () => {
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={uhdDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+      ),
+    );
+    // Check Force Remux while the draft still direct-plays…
+    fireEvent.click(screen.getByTestId("force-remux-toggle"));
+    expect(screen.getByTestId("force-remux-toggle")).toHaveAttribute("aria-checked", "true");
+    // …then pick a downscale rung: the draft now transcodes, so the checkbox
+    // disables and honestly reads unchecked (that is what Play will commit).
+    fireEvent.click(screen.getByRole("radio", { name: /720p/ }));
+    const toggle = screen.getByTestId("force-remux-toggle");
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(prefT1().remuxSelectedOnly).toBe(false);
+    expect(prefT1().qualityCap).toBe("720p");
+  });
+
+  it("AAC-stereo on disables it and Play commits the axis OFF", () => {
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+      ),
+    );
+    fireEvent.click(screen.getByTestId("force-remux-toggle"));
+    fireEvent.click(screen.getByTestId("aac-stereo-toggle"));
+    const toggle = screen.getByTestId("force-remux-toggle");
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(prefT1().remuxSelectedOnly).toBe(false);
+    expect(prefT1().aacStereo).toBe(true);
+  });
+
+  it("re-enables with the draft check preserved when the transcoding pick is reverted", () => {
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+      ),
+    );
+    fireEvent.click(screen.getByTestId("force-remux-toggle"));
+    fireEvent.click(screen.getByTestId("aac-stereo-toggle")); // AAC on → disabled
+    expect(screen.getByTestId("force-remux-toggle")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("aac-stereo-toggle")); // AAC off again
+    const toggle = screen.getByTestId("force-remux-toggle");
+    // The draft check survives the round-trip — only a COMMIT clears it.
+    expect(toggle).not.toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("opens reflecting the saved checkbox and commits off over it", () => {
+    window.localStorage.setItem(
+      "juicebox.playback-pref.u1.title.t1",
+      JSON.stringify({ editionName: null, qualityCap: null, subtitle: null, remuxSelectedOnly: true }),
+    );
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+      ),
+    );
+    const toggle = screen.getByTestId("force-remux-toggle");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(prefT1().remuxSelectedOnly).toBe(false);
+  });
+
+  it("backing out discards the draft check (preference untouched)", () => {
+    render(
+      withRemuxFlag(
+        <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+      ),
+    );
+    fireEvent.click(screen.getByTestId("force-remux-toggle"));
+    fireEvent.click(screen.getByTestId("playback-options-cancel"));
+    expect(prefT1().remuxSelectedOnly).toBe(false);
   });
 });

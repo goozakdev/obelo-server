@@ -10,8 +10,8 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 // PURE and side-effect-free: given a preference + the Title's Editions it returns
 // the override fields; the player merges them into the capability-derived request.
 // This is the seam the axes (Quality cap → constraints, Subtitle → burn id, AAC →
-// deviceProfile, and the later Force Remux → remuxSelectedOnly) bolt onto — each adds
-// a branch here and a field to {@link ResolvedPlayback}, nothing else moves.
+// deviceProfile, Force Remux → remuxSelectedOnly) bolt onto — each adds a branch
+// here and a field to {@link ResolvedPlayback}, nothing else moves.
 //
 // EDITION is stored by NAME (so a Show's choice ports across Episodes with different
 // Edition ids); resolution matches the name to THIS Title's Editions and emits that
@@ -35,8 +35,10 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 // the player renders it as a <track> / in-band HLS rendition), and an IMAGE track is
 // burned in via `burnSubtitleId` ONLY when the resolved tier transcodes / remuxes; on
 // a direct-play tier the image track renders locally, so no field is emitted. The
-// pre-play transcode signal the resolver reads is the Quality-cap constraints issue 03
-// already computes — a downscale rung means the tier transcodes.
+// pre-play transcode signal the resolver reads is the OFF-DIRECT-PLAY state the other
+// axes already compute: a Quality-cap downscale (issue 03's constraints) OR the
+// AAC-stereo narrowing (issue 06's profile — narrowing audio to aac/2ch moves the
+// session off direct play just as surely as a downscale).
 //
 // AAC-STEREO (appletv-web-parity §7) has NO contract field: it is a CAPABILITY-PROFILE
 // narrowing. When the stored toggle is on, the resolver emits the audio side of the
@@ -44,15 +46,25 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 // merges OVER the browser-probed capability default, forcing the server to deliver
 // stereo AAC. Off (false) emits nothing, so the sent profile stays today's full probe.
 // It needs no negotiation context (no name→id map, no source height): a pure flag.
+//
+// FORCE REMUX (appletv-web-parity §10) maps the stored checkbox to the contract's
+// `remuxSelectedOnly: true` — but ONLY when the resolved draft is otherwise pure
+// direct play (no Quality-cap constraints, no AAC narrowing): the server-side field
+// is defined as "trim a would-be directPlay to a copy-only directStream", a no-op on
+// any other tier, so a transcoding draft drops the field rather than riding it. Off
+// (or a transcoding draft) emits nothing — the field is never `false` on the wire.
 
 /** The audio side of a {@link DeviceProfile} the AAC-stereo axis narrows — the two
  * fields the toggle overrides; every other profile field keeps its probed value. */
 export type AudioProfileOverride = Pick<DeviceProfile, "audioCodecs" | "maxAudioChannels">;
 
-/** The subset of {@link StartPlaybackOptions} a preference can override. Grows as
- * axes land (remuxSelectedOnly). Omitted fields mean "take the server / capability
- * default" (Auto / Direct Play / subtitles Off or local / the full probed profile). */
-export type ResolvedPlayback = Pick<StartPlaybackOptions, "editionId" | "burnSubtitleId"> & {
+/** The subset of {@link StartPlaybackOptions} a preference can override. Omitted
+ * fields mean "take the server / capability default" (Auto / Direct Play / subtitles
+ * Off or local / the full probed profile / no forced remux). */
+export type ResolvedPlayback = Pick<
+  StartPlaybackOptions,
+  "editionId" | "burnSubtitleId" | "remuxSelectedOnly"
+> & {
   /** The Quality-cap override (appletv-web-parity §3): `maxResolution` + the paired
    * `maxBitrate` from the ladder. Present only for a genuine downscale rung; absent =
    * Direct Play (the capability-derived viewport resolution + no manual bitrate cap).
@@ -113,18 +125,22 @@ export function resolvePlayback(
     pref?.editionName ?? null,
   );
   if (constraints) resolved.constraints = constraints;
+  // The one pre-play "this draft leaves direct play" signal (issue 07): a Quality-cap
+  // downscale (issue 03's constraints) OR the AAC-stereo narrowing (issue 06 — aac/2ch
+  // forces at least an audio transcode). It gates the burn-in below AND Force Remux.
+  const transcoding = constraints !== undefined || pref?.aacStereo === true;
   // Delivery follows the source (ADR-0020): burn an IMAGE Subtitle track ONLY on a
-  // tier that transcodes / remuxes. The pre-play transcode signal is a Quality-cap
-  // downscale (constraints present) — the same computation issue 03 already made.
-  const burnSubtitleId = resolveBurnSubtitle(
-    pref?.subtitle ?? null,
-    subtitles,
-    constraints !== undefined,
-  );
+  // tier that transcodes / remuxes; on direct play it renders locally.
+  const burnSubtitleId = resolveBurnSubtitle(pref?.subtitle ?? null, subtitles, transcoding);
   if (burnSubtitleId) resolved.burnSubtitleId = burnSubtitleId;
   // The AAC-stereo axis (appletv-web-parity §7): a pure flag → the audio-side profile
   // narrowing. No negotiation context needed; off emits nothing (full probed profile).
   if (pref?.aacStereo) resolved.deviceProfile = aacStereoAudioProfile();
+  // Force Remux (appletv-web-parity §10, issue 07): emitted ONLY when the preference
+  // is on AND the draft is otherwise pure direct play — on a transcoding / remuxing
+  // draft the field is dropped (mirroring the TV's disable rule; the server would
+  // no-op it anyway). Never emits `false`: absent IS off on the wire.
+  if (pref?.remuxSelectedOnly && !transcoding) resolved.remuxSelectedOnly = true;
   return resolved;
 }
 
