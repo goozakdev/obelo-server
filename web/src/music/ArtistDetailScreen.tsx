@@ -10,6 +10,8 @@ import BackLink, { useLibraryName } from "../browse/BackLink";
 import DetailBackdrop from "../browse/DetailBackdrop";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
+import { useLetterJump, type LetterJumpPager } from "../browse/useLetterJump";
+import LetterJumpBar from "../browse/LetterJumpBar";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
 import EditItemDialog from "../admin/EditItemDialog";
@@ -23,6 +25,20 @@ import MusicShell from "./MusicShell";
 //
 // Lives in the music module and links into /music/...: it renders inside the
 // music shell, and an Album tile opens /music/albums/{id}.
+
+// The Albums of an Artist arrive in a single GET (no cursor paging), so the
+// alphabet jump never needs to pull further pages — a static pager that reports
+// nothing pending lets useLetterJump scroll straight to an already-loaded row.
+const STATIC_PAGER: LetterJumpPager = {
+  loadMore: () => {},
+  hasMore: false,
+  loading: false,
+  loadingMore: false,
+};
+
+// Stable empty array so useLetterJump's items dependency doesn't churn before the
+// detail has loaded.
+const NO_ALBUMS: Album[] = [];
 
 export default function ArtistDetailScreen() {
   const { artistId = "" } = useParams();
@@ -50,6 +66,13 @@ export default function ArtistDetailScreen() {
   const parent = artist
     ? { to: `/music/libraries/${artist.libraryId}`, label: libraryName }
     : { to: "/", label: "Home" };
+
+  // Alphabetical jump bar over the Artist's Albums (parity with the Movie/Show/
+  // Artist walls). Albums bucket on the article-stripped sort key (sortTitle) via
+  // useLetterJump's sortFirstChar, so "The Bends" files under B, mirroring the
+  // server's sort_title ordering. They load in one shot, so the pager is static.
+  const albums = state.status === "ready" ? state.data.albums : NO_ALBUMS;
+  const { gridRef, jumpTo } = useLetterJump(albums, getAlbumTitle, STATIC_PAGER);
 
   return (
     <MusicShell testId="artist-detail-screen">
@@ -174,11 +197,16 @@ export default function ArtistDetailScreen() {
           )}
 
           {state.data.albums.length > 0 && (
-            <ul className="poster-grid" data-testid="album-grid">
-              {state.data.albums.map((album) => (
-                <AlbumTile key={album.id} album={album} />
-              ))}
-            </ul>
+            <>
+              <div className="grid-toolbar">
+                <LetterJumpBar onJump={jumpTo} />
+              </div>
+              <ul className="poster-grid" data-testid="album-grid" ref={gridRef}>
+                {state.data.albums.map((album) => (
+                  <AlbumTile key={album.id} album={album} />
+                ))}
+              </ul>
+            </>
           )}
         </article>
       )}
@@ -247,6 +275,10 @@ function ArtistHero({
       </div>
     </>
   );
+}
+
+function getAlbumTitle(a: Album): string {
+  return a.title;
 }
 
 // AlbumTile is an album card linking to the Album detail (its track list). When
