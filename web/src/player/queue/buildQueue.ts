@@ -6,6 +6,12 @@ import type {
 } from "../../api/types";
 import { entriesFromTitles, entryFromTitle, type QueueEntry } from "./model";
 
+/** Tag Episode entries with the Show they were walked from, so the player can key
+ * the per-Show Playback preference synchronously (appletv-web-parity §1). */
+function withShowId(entries: QueueEntry[], showId: string): QueueEntry[] {
+  return entries.map((e) => ({ ...e, showId }));
+}
+
 // Build helpers turn a PLAY CONTEXT into ordered Queue entries by reading the
 // existing ApiClient endpoints (no new server surface — ADR-0010/0012). They are
 // the ONLY place in the Queue feature that touches I/O; the model stays pure and
@@ -164,7 +170,7 @@ export async function buildShowQueue(
   }
   // The now-playing batch — available after a single fetch, so playback starts
   // immediately (the caller navigates as soon as this resolves).
-  sink.playNow(entriesFromTitles(summaries));
+  sink.playNow(withShowId(entriesFromTitles(summaries), ctx.showId));
   return { tail: resolveShowTail(client, ctx, sink, signal) };
 }
 
@@ -184,7 +190,7 @@ async function resolveShowTail(
     for (const season of following) {
       const { episodes } = await client.getSeasonEpisodes(season.id, signal);
       if (episodes.length > 0) {
-        sink.enqueue(entriesFromTitles(episodes.map(episodeToSummary)));
+        sink.enqueue(withShowId(entriesFromTitles(episodes.map(episodeToSummary)), ctx.showId));
       }
     }
   } catch {
@@ -208,7 +214,7 @@ export async function buildFullShowEntries(
   const entries: QueueEntry[] = [];
   for (const season of seasons) {
     const { episodes } = await client.getSeasonEpisodes(season.id, signal);
-    entries.push(...entriesFromTitles(episodes.map(episodeToSummary)));
+    entries.push(...withShowId(entriesFromTitles(episodes.map(episodeToSummary)), showId));
   }
   return entries;
 }

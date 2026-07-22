@@ -263,6 +263,28 @@ describe("buildShowQueue", () => {
     expect(playedIds()).toEqual([["e2", "e3"]]);
   });
 
+  it("threads the Show id onto every Episode entry (per-Show preference keying)", async () => {
+    const s1 = seasonEpisodes("s1", 1, [episode("e1", 1, 1), episode("e2", 1, 2)]);
+    const s2 = seasonEpisodes("s2", 2, [episode("e3", 2, 1)]);
+    const byId: Record<string, SeasonEpisodes> = { s1, s2 };
+    const getSeasonEpisodes = vi.fn((id: string) => Promise.resolve(byId[id]));
+    const getShowSeasons = vi
+      .fn()
+      .mockResolvedValue(showSeasons([{ id: "s1", n: 1 }, { id: "s2", n: 2 }]));
+    const client = { getSeasonEpisodes, getShowSeasons } as unknown as ApiClient;
+    const { sink, playNow, enqueue } = recordingSink();
+
+    const { tail } = await buildShowQueue(client, { showId: "sh1", seasonId: "s1" }, "e1", sink);
+    await tail;
+
+    // Both the now-playing batch and the appended tail carry showId "sh1", so the
+    // player can key the Show's Playback preference synchronously (no detail wait).
+    const played = playNow.mock.calls[0][0] as QueueEntry[];
+    const appended = enqueue.mock.calls[0][0] as QueueEntry[];
+    expect(played.every((e) => e.showId === "sh1")).toBe(true);
+    expect(appended.every((e) => e.showId === "sh1")).toBe(true);
+  });
+
   it("walks the following seasons in order, across the season boundary", async () => {
     const s1 = seasonEpisodes("s1", 1, [episode("e1", 1, 1), episode("e2", 1, 2)]);
     const s2 = seasonEpisodes("s2", 2, [episode("e3", 2, 1), episode("e4", 2, 2)]);

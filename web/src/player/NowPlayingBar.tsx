@@ -36,6 +36,8 @@ import type {
   VideoStream,
 } from "../api/types";
 import { usePlaybackPrefs } from "./usePlaybackPrefs";
+import { loadPreferenceForTitle } from "./playbackPreference";
+import { resolveEditionId } from "./playbackResolver";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
 import { useQueue } from "./queue/useQueue";
@@ -68,6 +70,22 @@ import { formatTimecode } from "../time";
 /** HLS tiers play via hls.js / native HLS; directPlay uses a progressive src. */
 function isHlsTier(tier: string): boolean {
   return tier === "directStream" || tier === "transcode";
+}
+
+/** Read the logged-in user's id SYNCHRONOUSLY from the same storage the auth layer
+ * hydrates from (mirrors usePlaybackPrefs). The player negotiates on its first
+ * render — before the async auth hydrate — so the per-user Playback preference must
+ * be keyed off a value available NOW, or a configured Title would negotiate Auto
+ * once, then re-negotiate once auth lands. Anon (`null`) gets its own bucket. */
+function persistedUserId(): string | null {
+  try {
+    const raw = window.localStorage.getItem("juicebox.user");
+    if (!raw) return null;
+    const u = JSON.parse(raw) as { id?: unknown };
+    return typeof u?.id === "string" ? u.id : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A friendly noun for a Title's media kind (used as the label's degraded fallback
@@ -831,7 +849,44 @@ function CurrentPlayer({
   // <video> here and report it to the session so tracking continues from the right
   // spot. A watched Title starts from 0.
   const resumeMs = entry.title.watched ? 0 : entry.title.resumePositionMs;
-  const session = usePlayerSession(apiClient, titleId, resumeMs);
+
+  // The rich now-playing label + artwork come from the Title detail (Artist/Album,
+  // Show/Season context the lean Queue entry omits). Fetched independently of
+  // playback: a failure degrades the label but NEVER blocks playback. It also
+  // carries the Editions the Playback preference resolves against (below).
+  const detailState = useAsync((signal) => apiClient.getTitle(titleId, signal), [titleId]);
+  const detail = detailState.status === "ready" ? detailState.data : null;
+
+  // Replay the committed Playback preference (appletv-web-parity §1): resolve the
+  // saved Edition NAME to THIS Title's Edition id and negotiate with it. The
+  // preference key is derived synchronously — a Movie from its own id, an Episode
+  // from the Show id threaded onto the entry — so a Title with NO stored preference
+  // negotiates immediately (unchanged behaviour). Only a Title WITH a stored Edition
+  // pick waits (`pending`) for the detail so the first request already carries the
+  // editionId (no start-then-re-negotiate). An Episode without a threaded showId, or
+  // a detail that failed to load, degrades to Auto rather than blocking.
+  const userId = persistedUserId();
+  const prefTitle =
+    entry.title.kind === "episode"
+      ? entry.showId
+        ? { id: titleId, kind: "episode", episode: { showId: entry.showId } }
+        : null
+      : { id: titleId, kind: entry.title.kind };
+  const storedEditionName = prefTitle
+    ? loadPreferenceForTitle(window.localStorage, userId, prefTitle).editionName
+    : null;
+  let playerPreference: { editionId?: string; pending?: boolean } | undefined;
+  if (storedEditionName) {
+    if (detail) {
+      playerPreference = { editionId: resolveEditionId(storedEditionName, detail.editions ?? []) };
+    } else if (detailState.status === "error") {
+      playerPreference = {}; // can't resolve → Auto, never block
+    } else {
+      playerPreference = { pending: true }; // wait for the detail, then negotiate once
+    }
+  }
+
+  const session = usePlayerSession(apiClient, titleId, resumeMs, playerPreference);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // Guard so we only auto-seek to the resume point once (the first loadedmetadata).
   const seekedRef = useRef(false);
@@ -1011,12 +1066,9 @@ function CurrentPlayer({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // The rich now-playing label + artwork come from the Title detail (which carries
-  // the Artist/Album and Show/Season/episode parent context the lean Queue entry
-  // omits). Fetched independently of playback: a failure degrades the label to the
-  // bare title + kind, and NEVER blocks playback (which reads the entry directly).
-  const detailState = useAsync((signal) => apiClient.getTitle(titleId, signal), [titleId]);
-  const detail = detailState.status === "ready" ? detailState.data : null;
+  // The now-playing label reads the Title detail fetched above (near usePlayerSession,
+  // where the Playback preference also resolves against its Editions). A failed fetch
+  // degrades the label to the bare title + kind and NEVER blocks playback.
   const primaryLabel = detail?.title ?? entry.title.title;
   let contextLabel = "";
   if (detail?.kind === "track" && detail.track) {

@@ -21,6 +21,12 @@ import type { TitleSummary } from "../../api/types";
 export interface QueueEntry {
   entryId: string;
   title: TitleSummary;
+  /** The Show a queued Episode belongs to, set when the entry was built from a Show
+   * walk (buildShowQueue / buildFullShowEntries). Lets the player derive the
+   * per-Show Playback preference key SYNCHRONOUSLY — without waiting on the entry's
+   * async detail fetch — so a no-preference Episode still plays instantly
+   * (appletv-web-parity §1). Absent for Movies/Tracks and single plays. */
+  showId?: string;
 }
 
 /** The three states of Repeat mode (music only — see CONTEXT.md): `off` stops
