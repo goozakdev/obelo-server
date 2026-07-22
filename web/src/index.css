@@ -488,6 +488,26 @@ body {
   opacity: 0.6;
 }
 
+/* Switch-user section (appletv-parity/10): a muted, non-interactive label above
+   the remembered-Users roster in the account menu. */
+.nav-dropdown-section {
+  padding: 0.5rem 0.6rem 0.2rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  margin-top: 0.2rem;
+}
+
+/* The right-aligned Signed-in / Sign-in hint on a roster entry. */
+.switch-user-status {
+  float: right;
+  margin-left: 1rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
 /* The username toggle reads as muted text with its caret; hovering hints it's
    interactive without the underline the link toggles use. */
 .user-menu-toggle {

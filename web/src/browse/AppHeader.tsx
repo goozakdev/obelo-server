@@ -116,8 +116,9 @@ export default function AppHeader() {
 }
 
 // UserMenu is the far-right account dropdown: the username toggles a menu of the
-// utility links (Playlists, Collections, admin-only Admin) plus Sign out.
-// Closes on outside click, on Escape, and on selection.
+// utility links (Playlists, Collections, admin-only Admin), a Switch user section
+// (the remembered-Users roster, appletv-parity/10), plus Sign out. Closes on
+// outside click, on Escape, and on selection.
 //
 // Playlists and Collections are gated on the server's advertised feature flags
 // (Apple TV → Web parity §4): a server that does not advertise `playlists` /
@@ -131,12 +132,28 @@ function UserMenu({
   isAdmin: boolean;
 }) {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { logout, roster, switchTo, clearActiveSession } = useAuth();
   const showPlaylists = useFeature("playlists");
   const showCollections = useFeature("collections");
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Switch to a remembered User. A Signed-in entry (retained durable token)
+  // switches instantly and auth-free, then lands on Home fresh under the new
+  // identity; a Known entry steps aside locally and routes to /login with the
+  // username pre-filled (the current user's retained token survives the step-aside,
+  // so they remain an instant-switch target).
+  async function onSwitch(userId: string, signedIn: boolean, name: string) {
+    setOpen(false);
+    if (signedIn) {
+      await switchTo(userId);
+      navigate("/", { replace: true });
+    } else {
+      clearActiveSession();
+      navigate(`/login?user=${encodeURIComponent(name)}`, { replace: true });
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -221,6 +238,31 @@ function UserMenu({
                 Admin
               </Link>
             </li>
+          )}
+          {roster.length > 0 && (
+            <>
+              <li role="none" className="nav-dropdown-section" aria-hidden="true">
+                Switch user
+              </li>
+              {roster.map((u) => (
+                <li key={u.userId} role="none">
+                  <button
+                    role="menuitem"
+                    className="nav-dropdown-item nav-dropdown-item-button"
+                    data-testid="switch-user"
+                    data-user-id={u.userId}
+                    data-signed-in={u.signedIn}
+                    type="button"
+                    onClick={() => void onSwitch(u.userId, u.signedIn, u.username)}
+                  >
+                    {u.username}
+                    <span className="switch-user-status" aria-hidden="true">
+                      {u.signedIn ? "Signed in" : "Sign in"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </>
           )}
           <li role="none">
             <button
