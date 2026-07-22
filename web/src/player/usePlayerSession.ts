@@ -186,6 +186,15 @@ export interface PlayerPreference {
    * exactly like `audioStreamId` — seed-once, never persisted, superseded by an
    * in-player Video switch. Undefined = Auto (→ server Remembered video, ADR-0025). */
   videoStreamId?: string;
+  /** The pre-play IMAGE Subtitle burn-in (appletv-web-parity §1, issue 05, ADR-0020),
+   * seeding the initial `burnSubtitleId` so a committed image-subtitle choice on a
+   * transcode/remux tier is burned from frame one. UNLIKE audio/video this axis IS a
+   * persisted preference (subtitle choice has no server memory), resolved by the
+   * playbackResolver from the stored language(+forced): it emits an id ONLY for an
+   * image track on a transcoding tier — a text track and a direct-play image track
+   * render locally and leave this undefined. Seeded ONCE (like audio/video), so an
+   * in-player captions switch then owns the burn. Undefined = no pre-play burn. */
+  burnSubtitleId?: string;
   pending?: boolean;
 }
 
@@ -215,9 +224,14 @@ export function usePlayerSession(
   const pendingPreference = preference?.pending ?? false;
   // The image sub burned into the video (subtitles/04), or null. State (not a ref)
   // so the captions menu re-renders when a burn is selected/cleared; mirrored into
-  // burnRef so negotiate reads it without being a dependency.
-  const [burnSubtitleId, setBurnSubtitleId] = useState<string | null>(null);
-  const burnRef = useRef<string | null>(null);
+  // burnRef so negotiate reads it without being a dependency. SEEDED ONCE from the
+  // pre-play preference (issue 05 — a committed image sub on a transcode/remux tier)
+  // via the useState/useRef initializers, which run only on mount, so a later in-
+  // player captions switch owns the burn and this never re-seeds over it.
+  const [burnSubtitleId, setBurnSubtitleId] = useState<string | null>(
+    preference?.burnSubtitleId ?? null,
+  );
+  const burnRef = useRef<string | null>(preference?.burnSubtitleId ?? null);
   // The audio Stream the last negotiation requested (audio-streams/04), or null for
   // the server-resolved default. State so the Audio menu re-renders on an escalation;
   // mirrored into audioRef so negotiate reads it without being a dependency. Carried
