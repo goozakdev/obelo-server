@@ -28,9 +28,17 @@ const episode2Editions: ResolverEdition[] = [
   { id: "ep2-dc", name: "Director's Cut" },
 ];
 
-/** A full preference — the axes default to Auto / Direct Play / subtitles Off / AAC off. */
+/** A full preference — the axes default to Auto / Direct Play / subtitles Off /
+ * AAC off / Force Remux off. */
 function pref(p: Partial<PlaybackPreference>): PlaybackPreference {
-  return { editionName: null, qualityCap: null, subtitle: null, aacStereo: false, ...p };
+  return {
+    editionName: null,
+    qualityCap: null,
+    subtitle: null,
+    aacStereo: false,
+    remuxSelectedOnly: false,
+    ...p,
+  };
 }
 
 describe("playbackResolver — Edition axis", () => {
@@ -261,5 +269,68 @@ describe("playbackResolver — AAC-stereo axis (deviceProfile narrowing)", () =>
       constraints: { maxResolution: "720p", maxBitrate: 4_000_000 },
       deviceProfile: { audioCodecs: ["aac"], maxAudioChannels: 2 },
     });
+  });
+
+  it("AAC-on is an off-direct-play signal: an image sub now burns without a Quality cap", () => {
+    // Narrowing audio to aac/2ch moves the session off direct play just like a
+    // downscale rung, so the image-subtitle burn keys off it too (issue 06's
+    // deferred refinement, folded in by issue 07).
+    expect(
+      resolvePlayback(
+        pref({ aacStereo: true, subtitle: { language: "en", forced: false } }),
+        uhdEditions,
+        ep1Subs,
+      ),
+    ).toEqual({
+      deviceProfile: { audioCodecs: ["aac"], maxAudioChannels: 2 },
+      burnSubtitleId: "ep1-en-img",
+    });
+  });
+});
+
+// ── Force Remux axis (issue 07, appletv-web-parity §10) ──────────────────────────
+// The stored checkbox maps to the contract's `remuxSelectedOnly: true` — emitted
+// ONLY when the resolved draft is otherwise PURE DIRECT PLAY (no Quality-cap
+// constraints, no AAC narrowing): the server-side field trims a would-be directPlay
+// to a copy-only directStream and no-ops on any other tier, so a transcoding draft
+// drops the field. Never `false` on the wire — absent IS off.
+
+describe("playbackResolver — Force Remux axis (remuxSelectedOnly)", () => {
+  it("off (false) emits nothing — as does a null preference", () => {
+    expect(resolvePlayback(pref({ remuxSelectedOnly: false }), uhdEditions)).toEqual({});
+    expect(resolvePlayback(null, uhdEditions)).toEqual({});
+  });
+
+  it("on + an otherwise-direct-play draft emits remuxSelectedOnly: true", () => {
+    expect(resolvePlayback(pref({ remuxSelectedOnly: true }), uhdEditions)).toEqual({
+      remuxSelectedOnly: true,
+    });
+    // It rides alongside a resolved Edition (still direct play — no downscale).
+    expect(
+      resolvePlayback(pref({ editionName: "4K", remuxSelectedOnly: true }), uhdEditions),
+    ).toEqual({ editionId: "ed-uhd", remuxSelectedOnly: true });
+  });
+
+  it("a Quality-cap downscale drops the field (the draft already transcodes)", () => {
+    expect(
+      resolvePlayback(pref({ qualityCap: "720p", remuxSelectedOnly: true }), uhdEditions),
+    ).toEqual({ constraints: { maxResolution: "720p", maxBitrate: 4_000_000 } });
+  });
+
+  it("AAC-stereo on drops the field (the draft already transcodes audio)", () => {
+    expect(
+      resolvePlayback(pref({ aacStereo: true, remuxSelectedOnly: true }), uhdEditions),
+    ).toEqual({ deviceProfile: { audioCodecs: ["aac"], maxAudioChannels: 2 } });
+  });
+
+  it("a rung that degrades to Direct Play (at/above source) re-enables the emission", () => {
+    // The 1080p rung against the 1080p Edition is NOT a downscale → no constraints →
+    // the draft still direct-plays → Force Remux applies after all.
+    expect(
+      resolvePlayback(
+        pref({ editionName: "1080p", qualityCap: "1080p", remuxSelectedOnly: true }),
+        uhdEditions,
+      ),
+    ).toEqual({ editionId: "ed-hd", remuxSelectedOnly: true });
   });
 });

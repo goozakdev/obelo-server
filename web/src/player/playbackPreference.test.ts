@@ -51,12 +51,14 @@ describe("playbackPreference — persistence", () => {
       qualityCap: null,
       subtitle: null,
       aacStereo: false,
+      remuxSelectedOnly: false,
     });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "Director's Cut",
       qualityCap: null,
       subtitle: null,
       aacStereo: false,
+      remuxSelectedOnly: false,
     });
   });
 
@@ -81,12 +83,13 @@ describe("playbackPreference — persistence", () => {
   });
 
   it("round-trips a committed Quality cap alongside the Edition", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p", subtitle: null, aacStereo: false });
+    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p", subtitle: null, aacStereo: false, remuxSelectedOnly: false });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "4K",
       qualityCap: "720p",
       subtitle: null,
       aacStereo: false,
+      remuxSelectedOnly: false,
     });
   });
 
@@ -162,6 +165,32 @@ describe("playbackPreference — persistence", () => {
       JSON.stringify({ aacStereo: "yes" }),
     );
     expect(loadPreference(window.localStorage, "u1", titleScope).aacStereo).toBe(false);
+  });
+
+  it("round-trips the committed Force Remux checkbox (issue 07)", () => {
+    savePreference(window.localStorage, "u1", titleScope, {
+      editionName: null,
+      qualityCap: null,
+      subtitle: null,
+      aacStereo: false,
+      remuxSelectedOnly: true,
+    });
+    expect(loadPreference(window.localStorage, "u1", titleScope).remuxSelectedOnly).toBe(true);
+  });
+
+  it("defaults a missing Force Remux to off, and coerces a foreign truthy to off", () => {
+    // A pref persisted before the Force Remux axis existed carries no flag → off.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ editionName: "4K" }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).remuxSelectedOnly).toBe(false);
+    // Only a strict boolean true turns it on — a foreign truthy ("yes", 1) is off.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ remuxSelectedOnly: 1 }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).remuxSelectedOnly).toBe(false);
   });
 
   it("loadPreferenceForTitle derives the scope (Episode → Show)", () => {

@@ -1545,6 +1545,14 @@ export interface StartPlaybackOptions {
    * (SERVER_BUSY at the cap). The player sends it when the viewer picks a track from
    * the Video menu. Omit to take the server-resolved capability-then-quality default. */
   videoStreamId?: string;
+  /** Force Remux (appletv-web-parity §10, playback-remux-selected): asks the server
+   * to trim a File that would otherwise directPlay down to a lean, copy-only
+   * directStream carrying just the selected video + audio Stream (bandwidth saving
+   * without a transcode — it never consumes a transcode cap slot). A no-op when the
+   * session already remuxes/transcodes for another reason. Send ONLY when the server
+   * advertises `features.remuxSelectedOnly` (an older server rejects the unknown
+   * field); omit for today's behaviour. */
+  remuxSelectedOnly?: boolean;
 }
 
 /** A selected elementary stream in a playback decision (raw server shape;

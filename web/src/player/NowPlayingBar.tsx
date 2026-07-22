@@ -38,6 +38,7 @@ import type {
 import { usePlaybackPrefs } from "./usePlaybackPrefs";
 import { loadPreferenceForTitle } from "./playbackPreference";
 import { resolvePlayback } from "./playbackResolver";
+import { useOptionalFeature } from "../serverInfoContext";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
 import { useQueue } from "./queue/useQueue";
@@ -868,6 +869,11 @@ function CurrentPlayer({
   // start-then-re-negotiate). An Episode without a threaded showId, or a detail that
   // failed to load, degrades to Auto / Direct Play rather than blocking.
   const userId = persistedUserId();
+  // Force Remux (issue 07) is FLAG-GATED end to end: even a stored `remuxSelectedOnly`
+  // preference must not reach the wire unless the server advertises the feature (an
+  // older server rejects the unknown request field). Optional so a bare test mount
+  // (no provider) degrades to off, exactly like an absent flag.
+  const remuxAllowed = useOptionalFeature("remuxSelectedOnly");
   const prefTitle =
     entry.title.kind === "episode"
       ? entry.showId
@@ -888,7 +894,13 @@ function CurrentPlayer({
     (storedPref.editionName !== null ||
       storedPref.qualityCap !== null ||
       storedPref.subtitle !== null);
-  const hasStoredConfig = needsDetail || storedPref?.aacStereo === true;
+  // Force Remux (issue 07) is detail-free like AAC (a pure flag — its direct-play
+  // guard reads the OTHER axes' resolutions), but it only counts as stored config
+  // when the server actually advertises the feature.
+  const hasStoredConfig =
+    needsDetail ||
+    storedPref?.aacStereo === true ||
+    (remuxAllowed && storedPref?.remuxSelectedOnly === true);
   let playerPreference: PlayerPreference | undefined;
   if (hasStoredConfig) {
     if (detail || !needsDetail || detailState.status === "error") {
@@ -903,6 +915,10 @@ function CurrentPlayer({
         constraints: resolved.constraints,
         burnSubtitleId: resolved.burnSubtitleId,
         deviceProfile: resolved.deviceProfile,
+        // The resolver already guards on the direct-play state (it emits only when
+        // no constraints / no AAC narrowing resolved); the flag gate here keeps a
+        // stored choice off the wire against a server that never advertised it.
+        remuxSelectedOnly: remuxAllowed ? resolved.remuxSelectedOnly : undefined,
       };
     } else {
       playerPreference = { pending: true }; // wait for the detail, then negotiate once

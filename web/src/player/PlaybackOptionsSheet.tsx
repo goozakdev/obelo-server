@@ -21,6 +21,8 @@ import {
 } from "./qualityLadder";
 import { orderedAudioStreams, preferredAudioLang } from "./audio";
 import { orderedVideoStreams } from "./video";
+import { resolveQualityConstraints } from "./playbackResolver";
+import { useOptionalFeature } from "../serverInfoContext";
 
 /** The pre-play Audio + Video Stream picks the sheet's Play carries (issue 04).
  * Distinct from the persisted {@link PlaybackPreference}: these are the server's
@@ -96,7 +98,17 @@ function selectableFile(
 // capability-profile narrowing (`audioCodecs: ["aac"], maxAudioChannels: 2`) merged
 // over the sent `deviceProfile`. The draft flag (`draft.aacStereo`) is the state issue
 // 07's rule reads to disable Force Remux while AAC is on (AAC moves the session off
-// pure direct play). Force-Remux is a later section bolted onto this same skeleton.
+// pure direct play).
+//
+// FORCE REMUX (appletv-web-parity §10, issue 07) — a flag-gated checkbox asking the
+// server to trim a would-be direct play to a copy-only directStream of just the
+// selected audio + video Stream. The section renders ONLY when the server advertises
+// `features.remuxSelectedOnly` (absent flag → hidden entirely), and the checkbox is
+// ENABLED only while the draft would otherwise DIRECT PLAY: a Quality-cap downscale
+// (issue 03's resolved constraints) or AAC-stereo on (issue 06's draft flag) disables
+// it — and Play then commits the axis OFF, so the field never rides a transcoding
+// draft (the resolver drops it independently as a second guard). A persisted axis on
+// the pref draft like Edition / Quality / Subtitle / AAC.
 
 /** A native <dialog> sheet, opened with showModal() (Esc-to-close, top layer, focus
  * containment, ::backdrop for free — mirroring EditItemDialog). Controlled by the
@@ -150,6 +162,19 @@ export default function PlaybackOptionsSheet({
   const scope = preferenceScopeForTitle(title);
   const resuming = !title.watched && title.resumePositionMs > 0;
 
+  // Force Remux (issue 07) renders only when the server advertises the feature.
+  // Optional so a bare test mount (no ServerInfoProvider) degrades to hidden,
+  // exactly like an absent flag on an older server.
+  const remuxAvailable = useOptionalFeature("remuxSelectedOnly");
+  // Whether the DRAFT already leaves direct play — the same two signals the resolver
+  // reads (issue 03's Quality constraints, issue 06's AAC flag). A genuine downscale
+  // rung (strictly below the drafted Edition's source, via the shared resolver
+  // computation) or AAC-stereo on means the session transcodes / remuxes anyway, so
+  // Force Remux is moot: the checkbox disables and Play commits the axis off.
+  const draftTranscodes =
+    resolveQualityConstraints(draft.qualityCap, title.editions, draft.editionName) !==
+      undefined || draft.aacStereo;
+
   // The File the Audio / Video sections read their Streams from, re-derived from the
   // drafted Edition (its stream ids are per-File, so switching Edition changes the set
   // — hence the Audio / Video picks reset when the Edition draft changes, below).
@@ -177,7 +202,11 @@ export default function PlaybackOptionsSheet({
   // never enter the store and can't drift against an in-player switch. A pick that no
   // longer matches the negotiated File degrades to Auto (activeAudioId/activeVideoId).
   function commitAndPlay() {
-    if (scope) savePreference(window.localStorage, userId, scope, draft);
+    // A transcoding draft clears Force Remux (issue 07): the checkbox was disabled,
+    // so the stale flag must not persist under a Quality cap / AAC and ride a later
+    // replay of this same preference.
+    const committed = draftTranscodes ? { ...draft, remuxSelectedOnly: false } : draft;
+    if (scope) savePreference(window.localStorage, userId, scope, committed);
     onClose();
     onPlay({ audioStreamId: activeAudioId, videoStreamId: activeVideoId });
   }
@@ -230,6 +259,15 @@ export default function PlaybackOptionsSheet({
             enabled={draft.aacStereo}
             onToggle={(aacStereo) => setDraft((d) => ({ ...d, aacStereo }))}
           />
+          {remuxAvailable && (
+            <ForceRemuxSection
+              checked={draft.remuxSelectedOnly}
+              disabled={draftTranscodes}
+              onToggle={(remuxSelectedOnly) =>
+                setDraft((d) => ({ ...d, remuxSelectedOnly }))
+              }
+            />
+          )}
           <VideoSection
             streams={streamFile?.videoStreams ?? []}
             selected={activeVideoId}
@@ -439,6 +477,63 @@ function AudioDeliverySection({
               <span className="playback-options-row-label">Transcode to AAC (Stereo)</span>
               <span className="playback-options-row-hint">
                 Deliver stereo AAC audio — for devices that can't decode surround sound.
+              </span>
+            </span>
+          </button>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
+// The Force Remux section (appletv-web-parity §10, issue 07): a single checkbox
+// asking the server to trim a would-be direct play to a lean copy-only directStream
+// carrying just the selected audio + video Stream (`remuxSelectedOnly: true` on the
+// playback request — bandwidth saving without a transcode). Rendered ONLY when the
+// server advertises `features.remuxSelectedOnly` (the caller gates), and ENABLED only
+// while the draft would otherwise direct play: under a Quality-cap downscale or
+// AAC-stereo the session transcodes / remuxes anyway, so the checkbox disables (shown
+// unchecked — that is what Play would commit) and the axis is dropped. A PERSISTED
+// axis riding the pref draft like Edition / Quality / Subtitle / AAC.
+function ForceRemuxSection({
+  checked,
+  disabled,
+  onToggle,
+}: {
+  /** The draft Force Remux flag (persisted on Play). */
+  checked: boolean;
+  /** True when the draft already transcodes / remuxes (Quality cap below source, or
+   * AAC-stereo on) — the checkbox disables and reads unchecked. */
+  disabled: boolean;
+  onToggle: (remuxSelectedOnly: boolean) => void;
+}) {
+  // A disabled checkbox reads UNCHECKED regardless of the draft: a transcoding draft
+  // commits the axis off on Play, so showing a stale check would lie.
+  const effective = checked && !disabled;
+  return (
+    <section className="playback-options-section" data-testid="force-remux-section">
+      <h3 className="section-title playback-options-section-title">Delivery</h3>
+      <ul className="playback-options-list">
+        <li className="playback-options-item">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={effective}
+            disabled={disabled}
+            className={`playback-options-row${effective ? " is-active" : ""}`}
+            data-testid="force-remux-toggle"
+            data-active={effective ? "1" : undefined}
+            onClick={() => onToggle(!checked)}
+          >
+            <span className="playback-options-mark" aria-hidden="true">
+              {effective ? "☑" : "☐"}
+            </span>
+            <span className="playback-options-row-text">
+              <span className="playback-options-row-label">Force Remux</span>
+              <span className="playback-options-row-hint">
+                {disabled
+                  ? "Unavailable — this configuration already transcodes."
+                  : "Deliver only the selected audio and video streams — saves bandwidth on multi-track files."}
               </span>
             </span>
           </button>
