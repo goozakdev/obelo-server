@@ -1,11 +1,18 @@
 import { useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/session";
 import { errorMessage } from "./errorMessage";
 
 // Login (PRD user story 3). Exchanges credentials for a session via the auth
 // provider, then returns the user to wherever they were headed before the guard
 // bounced them here (location.state.from), defaulting to Home.
+//
+// Remember me (appletv-parity/10) governs token retention only — NO password is
+// ever stored, only the durable bearer token. Checked (the default, matching the
+// historical always-persist behaviour) keeps the token in localStorage so the
+// session survives a tab close; unchecked keeps it session-only, gone on close.
+// A `?user=` param pre-fills the username when arriving from a Known roster
+// entry's switch-user affordance.
 
 interface FromState {
   from?: { pathname?: string };
@@ -14,9 +21,11 @@ interface FromState {
 export default function LoginScreen() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { login } = useAuth();
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(() => searchParams.get("user") ?? "");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -27,7 +36,7 @@ export default function LoginScreen() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(username, password);
+      await login(username, password, remember);
       navigate(from, { replace: true });
     } catch (err) {
       setError(errorMessage(err));
@@ -65,6 +74,16 @@ export default function LoginScreen() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+        </label>
+
+        <label className="field-checkbox">
+          <input
+            data-testid="login-remember"
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          <span className="field-checkbox-label">Remember me on this device</span>
         </label>
 
         {error && (

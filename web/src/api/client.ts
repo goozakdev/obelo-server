@@ -1,5 +1,5 @@
 import { ApiError, NetworkError, parseErrorEnvelope } from "./errors";
-import { localStorageTokenStore, type TokenStore } from "./token";
+import { webTokenStore, supportsRetention, type TokenStore } from "./token";
 import {
   normalizeAlbumTracks,
   normalizeArtistAlbums,
@@ -193,7 +193,7 @@ export class ApiClient {
 
   constructor(opts: ApiClientOptions = {}) {
     this.baseUrl = opts.baseUrl ?? "";
-    this.tokenStore = opts.tokenStore ?? localStorageTokenStore;
+    this.tokenStore = opts.tokenStore ?? webTokenStore();
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.onUnauthorized = opts.onUnauthorized;
   }
@@ -214,6 +214,15 @@ export class ApiClient {
    * a 401 or logout clears it (issue 02 wires the call sites). */
   setToken(token: string | null): void {
     this.tokenStore.set(token);
+  }
+
+  /** Choose token retention for subsequently-stored tokens — the "Remember me"
+   * seam (appletv-parity/10). `true` → durable (localStorage, survives a tab
+   * close); `false` → session-only (sessionStorage, gone on tab close). A no-op
+   * when the token store doesn't support retention (e.g. a memory store in tests).
+   * NO password is ever stored either way — only the opaque bearer token. */
+  setTokenDurable(durable: boolean): void {
+    if (supportsRetention(this.tokenStore)) this.tokenStore.setDurable(durable);
   }
 
   // --- Endpoints ---------------------------------------------------------

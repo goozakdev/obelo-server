@@ -4,6 +4,13 @@
 
 /** The handshake payload from `GET /api/v1/server`. */
 export interface ServerInfo {
+  /** The Server identity id (ADR-0034): an opaque, stable UUID. Both `id` and
+   * `name` are additive/`omitempty` — a server predating ADR-0034 omits them, so
+   * treat them as optional. `id` keys the per-server remembered-Users roster
+   * (appletv-parity/10). */
+  id?: string;
+  /** The operator-chosen display name (ADR-0034). Cosmetic; nothing keys on it. */
+  name?: string;
   version: string;
   supportedVersions: number[];
   features: Record<string, boolean>;

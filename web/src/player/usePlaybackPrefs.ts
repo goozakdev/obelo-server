@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "../auth/session";
+import { useAuth, persistedUserId } from "../auth/session";
 
 // Playback preferences (now-playing-bar/02): the user's volume + mute setting.
 //
@@ -66,20 +66,10 @@ export function savePlaybackPrefs(
   }
 }
 
-/** Read the logged-in user's id synchronously from the SAME storage the auth
- * layer hydrates from, so the hook can load the right user's prefs on its FIRST
- * render (before the async auth hydrate). The `useAuth` reconcile (below) then
- * follows a login/logout/switch. Mirrors useQueue's `persistedUserId`. */
-function persistedUserId(): string | null {
-  try {
-    const raw = window.localStorage.getItem("juicebox.user");
-    if (!raw) return null;
-    const u = JSON.parse(raw) as { id?: unknown };
-    return typeof u?.id === "string" ? u.id : null;
-  } catch {
-    return null;
-  }
-}
+// The logged-in user's id is read synchronously (via the auth layer's shared
+// `persistedUserId`, which checks BOTH the durable and session-only storage tiers)
+// so the hook loads the right user's prefs on its FIRST render, before the async
+// auth hydrate. The `useAuth` reconcile (below) then follows a login/logout/switch.
 
 /** The prefs as the bar consumes them: the current volume/mute plus setters that
  * commit and persist. */
