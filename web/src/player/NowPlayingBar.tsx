@@ -13,7 +13,7 @@ import { episodeContextLabel } from "../browse/episodeLabel";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
 import { attachHls, type HlsAttachment } from "./hls";
-import { usePlayerSession } from "./usePlayerSession";
+import { usePlayerSession, type PlayerPreference } from "./usePlayerSession";
 import {
   applySubtitleSelection,
   defaultTrackId,
@@ -36,6 +36,9 @@ import type {
   VideoStream,
 } from "../api/types";
 import { usePlaybackPrefs } from "./usePlaybackPrefs";
+import { loadPreferenceForTitle } from "./playbackPreference";
+import { resolvePlayback } from "./playbackResolver";
+import { useOptionalFeature } from "../serverInfoContext";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
 import { useQueue } from "./queue/useQueue";
@@ -68,6 +71,22 @@ import { formatTimecode } from "../time";
 /** HLS tiers play via hls.js / native HLS; directPlay uses a progressive src. */
 function isHlsTier(tier: string): boolean {
   return tier === "directStream" || tier === "transcode";
+}
+
+/** Read the logged-in user's id SYNCHRONOUSLY from the same storage the auth layer
+ * hydrates from (mirrors usePlaybackPrefs). The player negotiates on its first
+ * render — before the async auth hydrate — so the per-user Playback preference must
+ * be keyed off a value available NOW, or a configured Title would negotiate Auto
+ * once, then re-negotiate once auth lands. Anon (`null`) gets its own bucket. */
+function persistedUserId(): string | null {
+  try {
+    const raw = window.localStorage.getItem("juicebox.user");
+    if (!raw) return null;
+    const u = JSON.parse(raw) as { id?: unknown };
+    return typeof u?.id === "string" ? u.id : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A friendly noun for a Title's media kind (used as the label's degraded fallback
@@ -831,7 +850,95 @@ function CurrentPlayer({
   // <video> here and report it to the session so tracking continues from the right
   // spot. A watched Title starts from 0.
   const resumeMs = entry.title.watched ? 0 : entry.title.resumePositionMs;
-  const session = usePlayerSession(apiClient, titleId, resumeMs);
+
+  // The rich now-playing label + artwork come from the Title detail (Artist/Album,
+  // Show/Season context the lean Queue entry omits). Fetched independently of
+  // playback: a failure degrades the label but NEVER blocks playback. It also
+  // carries the Editions the Playback preference resolves against (below).
+  const detailState = useAsync((signal) => apiClient.getTitle(titleId, signal), [titleId]);
+  const detail = detailState.status === "ready" ? detailState.data : null;
+
+  // Replay the committed Playback preference (appletv-web-parity §1/§3): resolve the
+  // saved Edition NAME to THIS Title's Edition id AND the saved Quality-cap rung to its
+  // paired constraints, then negotiate with them. The preference key is derived
+  // synchronously — a Movie from its own id, an Episode from the Show id threaded onto
+  // the entry — so a Title with NO stored config negotiates immediately (unchanged
+  // behaviour). Only a Title WITH a stored Edition or Quality pick waits (`pending`) for
+  // the detail (both axes resolve against the detail's Editions — the name→id map and
+  // the source height) so the first request already carries the overrides (no
+  // start-then-re-negotiate). An Episode without a threaded showId, or a detail that
+  // failed to load, degrades to Auto / Direct Play rather than blocking.
+  const userId = persistedUserId();
+  // Force Remux (issue 07) is FLAG-GATED end to end: even a stored `remuxSelectedOnly`
+  // preference must not reach the wire unless the server advertises the feature (an
+  // older server rejects the unknown request field). Optional so a bare test mount
+  // (no provider) degrades to off, exactly like an absent flag.
+  const remuxAllowed = useOptionalFeature("remuxSelectedOnly");
+  const prefTitle =
+    entry.title.kind === "episode"
+      ? entry.showId
+        ? { id: titleId, kind: "episode", episode: { showId: entry.showId } }
+        : null
+      : { id: titleId, kind: entry.title.kind };
+  const storedPref = prefTitle
+    ? loadPreferenceForTitle(window.localStorage, userId, prefTitle)
+    : null;
+  // Only the axes that resolve AGAINST the detail (the Edition name→id map, the
+  // Quality source height, the Subtitle burn decision) make the negotiation wait
+  // (`pending`) for it. The AAC-stereo toggle (issue 06) is detail-free — a pure flag
+  // → a fixed profile narrowing — so an AAC-only preference negotiates immediately,
+  // and a failed detail fetch still applies it (degrading only the detail-bound axes
+  // to Auto / Direct Play, never blocking).
+  const needsDetail =
+    !!storedPref &&
+    (storedPref.editionName !== null ||
+      storedPref.qualityCap !== null ||
+      storedPref.subtitle !== null);
+  // Force Remux (issue 07) is detail-free like AAC (a pure flag — its direct-play
+  // guard reads the OTHER axes' resolutions), but it only counts as stored config
+  // when the server actually advertises the feature.
+  const hasStoredConfig =
+    needsDetail ||
+    storedPref?.aacStereo === true ||
+    (remuxAllowed && storedPref?.remuxSelectedOnly === true);
+  let playerPreference: PlayerPreference | undefined;
+  if (hasStoredConfig) {
+    if (detail || !needsDetail || detailState.status === "error") {
+      // Resolve against BOTH the Editions (Edition + Quality axes) and the Subtitle
+      // tracks (the burn-in decision), so a committed image-subtitle choice on a
+      // transcode/remux tier seeds the first negotiation's burnSubtitleId (ADR-0020).
+      // Without a detail (AAC-only, or the fetch failed) the arrays are empty and
+      // those axes degrade; the AAC narrowing needs no context and always resolves.
+      const resolved = resolvePlayback(storedPref, detail?.editions ?? [], detail?.subtitles ?? []);
+      playerPreference = {
+        editionId: resolved.editionId,
+        constraints: resolved.constraints,
+        burnSubtitleId: resolved.burnSubtitleId,
+        deviceProfile: resolved.deviceProfile,
+        // The resolver already guards on the direct-play state (it emits only when
+        // no constraints / no AAC narrowing resolved); the flag gate here keeps a
+        // stored choice off the wire against a server that never advertised it.
+        remuxSelectedOnly: remuxAllowed ? resolved.remuxSelectedOnly : undefined,
+      };
+    } else {
+      playerPreference = { pending: true }; // wait for the detail, then negotiate once
+    }
+  }
+  // Seed the pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04)
+  // straight off the TRANSIENT Queue entry — the Playback Options sheet's Play attached
+  // them to the head entry, NOT to the persisted preference (client ADR-0011). So they
+  // seed usePlayerSession REGARDLESS of `hasStoredConfig` and need NO detail to resolve
+  // (they are ids, not by-name/height): they never force `pending`. The session seeds
+  // its audio/video refs from these ONCE, so an in-player switch later supersedes them.
+  if (entry.audioStreamId || entry.videoStreamId) {
+    playerPreference = {
+      ...(playerPreference ?? {}),
+      audioStreamId: entry.audioStreamId,
+      videoStreamId: entry.videoStreamId,
+    };
+  }
+
+  const session = usePlayerSession(apiClient, titleId, resumeMs, playerPreference);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // Guard so we only auto-seek to the resume point once (the first loadedmetadata).
   const seekedRef = useRef(false);
@@ -1011,12 +1118,9 @@ function CurrentPlayer({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // The rich now-playing label + artwork come from the Title detail (which carries
-  // the Artist/Album and Show/Season/episode parent context the lean Queue entry
-  // omits). Fetched independently of playback: a failure degrades the label to the
-  // bare title + kind, and NEVER blocks playback (which reads the entry directly).
-  const detailState = useAsync((signal) => apiClient.getTitle(titleId, signal), [titleId]);
-  const detail = detailState.status === "ready" ? detailState.data : null;
+  // The now-playing label reads the Title detail fetched above (near usePlayerSession,
+  // where the Playback preference also resolves against its Editions). A failed fetch
+  // degrades the label to the bare title + kind and NEVER blocks playback.
   const primaryLabel = detail?.title ?? entry.title.title;
   let contextLabel = "";
   if (detail?.kind === "track" && detail.track) {

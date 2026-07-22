@@ -159,6 +159,13 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("/auth/login", requireMethod(http.MethodPost, handleLogin(deps.Auth)))
 	mux.HandleFunc("/auth/logout",
 		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleLogout(deps.Auth))))
+	// POST /auth/media-cookie re-issues the ms_media cookie carrying the CURRENT
+	// bearer's token (appletv-parity/12). Bearer-only (requireAuth), NOT
+	// requireAuthAllowCookie: a lone ms_media cookie must not authorize re-issuing
+	// itself. Advertised via the mediaCookieRefresh feature flag so clients gate on
+	// the flag, never on a version.
+	mux.HandleFunc("/auth/media-cookie",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleRefreshMediaCookie())))
 
 	// Device authorization grant (ADR-0036): sign a TV in from a phone, so nobody
 	// types a password on a remote. /code and /token are unauthenticated by

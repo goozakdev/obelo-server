@@ -6,6 +6,26 @@ import type {
 } from "../../api/types";
 import { entriesFromTitles, entryFromTitle, type QueueEntry } from "./model";
 
+/** Tag Episode entries with the Show they were walked from, so the player can key
+ * the per-Show Playback preference synchronously (appletv-web-parity §1). */
+function withShowId(entries: QueueEntry[], showId: string): QueueEntry[] {
+  return entries.map((e) => ({ ...e, showId }));
+}
+
+/** The subset of a HEAD entry's pre-play Stream picks that is actually set — drops
+ * null / undefined fields so a Play with no explicit pick leaves the entry at Auto
+ * (an absent id, not `id: null`, keeps the QueueEntry `string | undefined` shape and
+ * the negotiation omission). Shared by the single-Title and Show head-seeding paths. */
+export function cleanStreams(streams: {
+  audioStreamId?: string | null;
+  videoStreamId?: string | null;
+}): { audioStreamId?: string; videoStreamId?: string } {
+  const out: { audioStreamId?: string; videoStreamId?: string } = {};
+  if (streams.audioStreamId) out.audioStreamId = streams.audioStreamId;
+  if (streams.videoStreamId) out.videoStreamId = streams.videoStreamId;
+  return out;
+}
+
 // Build helpers turn a PLAY CONTEXT into ordered Queue entries by reading the
 // existing ApiClient endpoints (no new server surface — ADR-0010/0012). They are
 // the ONLY place in the Queue feature that touches I/O; the model stays pure and
@@ -118,6 +138,10 @@ export interface ShowQueueContext {
  * fetched resume. */
 export interface BuildShowQueueOptions {
   headResumeMs?: number;
+  /** The pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04) to
+   * seed onto the HEAD entry (the chosen Episode). Transient, per-play — see
+   * {@link QueueEntry.audioStreamId}. Omitted / null fields leave the head at Auto. */
+  headStreams?: { audioStreamId?: string | null; videoStreamId?: string | null };
 }
 
 /** From an Episode (stories 3–4, 8): walk the Show from the chosen Episode
@@ -163,8 +187,14 @@ export async function buildShowQueue(
     };
   }
   // The now-playing batch — available after a single fetch, so playback starts
-  // immediately (the caller navigates as soon as this resolves).
-  sink.playNow(entriesFromTitles(summaries));
+  // immediately (the caller navigates as soon as this resolves). The chosen Episode
+  // is the head; seed it with the sheet's pre-play Audio / Video picks (issue 04) so
+  // the first negotiation carries them (transient — never persisted).
+  const entries = withShowId(entriesFromTitles(summaries), ctx.showId);
+  if (entries.length > 0 && opts?.headStreams) {
+    entries[0] = { ...entries[0], ...cleanStreams(opts.headStreams) };
+  }
+  sink.playNow(entries);
   return { tail: resolveShowTail(client, ctx, sink, signal) };
 }
 
@@ -184,7 +214,7 @@ async function resolveShowTail(
     for (const season of following) {
       const { episodes } = await client.getSeasonEpisodes(season.id, signal);
       if (episodes.length > 0) {
-        sink.enqueue(entriesFromTitles(episodes.map(episodeToSummary)));
+        sink.enqueue(withShowId(entriesFromTitles(episodes.map(episodeToSummary)), ctx.showId));
       }
     }
   } catch {
@@ -208,7 +238,7 @@ export async function buildFullShowEntries(
   const entries: QueueEntry[] = [];
   for (const season of seasons) {
     const { episodes } = await client.getSeasonEpisodes(season.id, signal);
-    entries.push(...entriesFromTitles(episodes.map(episodeToSummary)));
+    entries.push(...withShowId(entriesFromTitles(episodes.map(episodeToSummary)), showId));
   }
   return entries;
 }

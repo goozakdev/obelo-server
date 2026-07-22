@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useAuth } from "../../auth/session";
+import { useAuth, persistedUserId } from "../../auth/session";
 import * as model from "./model";
 import type { QueueEntry, QueueState, RepeatMode } from "./model";
 import { clearStoredQueue, loadQueue, saveQueue } from "./persist";
@@ -60,20 +60,11 @@ export interface QueueStore {
 
 const QueueContext = createContext<QueueStore | null>(null);
 
-/** Read the logged-in user's id synchronously from the SAME storage the auth
- * layer hydrates from, so the provider can scope/load the persisted Queue on its
- * first render WITHOUT waiting for the (async) auth hydrate. The auth `ready`
- * gate (below) then reconciles login/logout. */
-function persistedUserId(): string | null {
-  try {
-    const raw = window.localStorage.getItem("juicebox.user");
-    if (!raw) return null;
-    const u = JSON.parse(raw) as { id?: unknown };
-    return typeof u?.id === "string" ? u.id : null;
-  } catch {
-    return null;
-  }
-}
+// The logged-in user's id is read synchronously from storage (via the auth
+// layer's shared `persistedUserId`, which checks BOTH the durable and session-only
+// tiers) so the provider can scope/load the persisted Queue on its first render
+// WITHOUT waiting for the async auth hydrate. The auth `ready` gate (below) then
+// reconciles login/logout/switch.
 
 export interface QueueProviderProps {
   children: ReactNode;

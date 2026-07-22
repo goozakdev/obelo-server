@@ -16,6 +16,7 @@ import { useQueue } from "../player/queue/useQueue";
 import {
   buildShowQueue,
   buildSingleQueue,
+  cleanStreams,
 } from "../player/queue/buildQueue";
 import { entryFromTitle } from "../player/queue/model";
 import { useAsync } from "./useAsync";
@@ -40,6 +41,9 @@ import { titleDetailSummary } from "./titleSummary";
 import { episodeContextCode } from "./episodeLabel";
 import { formatDate, formatDuration, formatTimecode } from "../time";
 import { downloadVlcPlaylist } from "./openInVlc";
+import PlaybackOptionsSheet, {
+  type StreamSelection,
+} from "../player/PlaybackOptionsSheet";
 
 // The Title detail page (issue 03 / PRD user stories 12–13): GET /titles/{id}
 // rendered as summary/year/artwork + the Editions → Files (quality/version
@@ -131,7 +135,8 @@ function Detail({
   scanning: boolean;
   scanMessage: string | null;
 }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, session } = useAuth();
+  const userId = session?.user.id ?? null;
   const queue = useQueue();
   // The full title, held in state so an Admin correction (Fix info Enrichment
   // override / metadata edit) refreshes the WHOLE object — display title, poster,
@@ -166,6 +171,10 @@ function Detail({
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
   // The Admin "Add to collection" panel the overflow (⋯) menu opens.
   const [collectionOpen, setCollectionOpen] = useState(false);
+  // The pre-play Playback Options sheet (appletv-web-parity §1): built purely from
+  // the in-hand `title`, opened alongside Play. Its Play commits the Edition draft
+  // as the saved preference and starts playback; the main Play button replays it.
+  const [optionsOpen, setOptionsOpen] = useState(false);
 
   const resuming = !watched && resumeMs > 0;
   // The first present (non-missing) File across the Editions — the one Play falls
@@ -206,25 +215,41 @@ function Detail({
   // single-entry Queue. A failed build (transient/404) falls back to a single-entry
   // Queue of THIS Title so the player is never stranded (story 39). (Tracks have
   // their own detail/play in music/; this screen serves movie + episode only.)
-  async function play() {
+  async function play(streams?: StreamSelection) {
     const summary: TitleSummary = titleDetailSummary(title, watched, resumeMs);
+    // The pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04) the
+    // Playback Options sheet handed us, seeded onto the HEAD (now-playing) entry only.
+    // Transient — they ride the Queue entry, NEVER the persisted preference store
+    // (client ADR-0011). The main Play button passes nothing → Auto (server memory).
+    const headStreams = streams ? cleanStreams(streams) : undefined;
+    // Attach the head picks to a single-entry Queue (the Movie / standalone path).
+    const singleEntries = () => {
+      const entries = buildSingleQueue(summary);
+      if (headStreams && entries.length > 0) {
+        entries[0] = { ...entries[0], ...headStreams };
+      }
+      return entries;
+    };
     try {
       if (title.kind === "episode" && title.episode) {
         // buildShowQueue plays the now-playing batch itself and resolves once it
-        // can; the cross-season tail fills in lazily (we don't await it).
+        // can; the cross-season tail fills in lazily (we don't await it). The head
+        // Episode carries the sheet's picks via headStreams.
         await buildShowQueue(
           apiClient,
           { showId: title.episode.showId, seasonId: title.episode.seasonId },
           title.id,
           queue,
+          undefined,
+          headStreams ? { headStreams } : undefined,
         );
       } else {
-        queue.playNow(buildSingleQueue(summary));
+        queue.playNow(singleEntries());
       }
     } catch {
       // A transient/404 build failure never strands the player — fall back to
-      // playing just this Title.
-      queue.playNow(buildSingleQueue(summary));
+      // playing just this Title (still carrying the head picks).
+      queue.playNow(singleEntries());
     }
   }
 
@@ -480,6 +505,24 @@ function Detail({
               {resuming ? "Resume" : "Play"}
             </button>
 
+            {/* Playback options (appletv-web-parity §1): opens the pre-play sheet
+                (Edition, more axes to come), built from the in-hand detail — no
+                network on open. Its Play commits the draft + starts playback. Shown
+                only when the Title is playable. */}
+            {playable && (
+              <button
+                className="icon-button playback-options-button"
+                data-testid="playback-options-button"
+                type="button"
+                title="Playback options"
+                aria-label="Playback options"
+                aria-haspopup="dialog"
+                onClick={() => setOptionsOpen(true)}
+              >
+                <PlaybackOptionsIcon />
+              </button>
+            )}
+
             {/* Add to watchlist — always available to the authenticated User. */}
             <button
               className="icon-button"
@@ -557,6 +600,18 @@ function Detail({
               {toggleError}
             </p>
           )}
+
+          {/* Pre-play Playback Options sheet (appletv-web-parity §1): built purely
+              from the in-hand `title`. Its Play commits the Edition draft as the
+              saved preference (per user + per Title/Show) and starts playback via
+              the same play() the main button uses (which replays the saved pref). */}
+          <PlaybackOptionsSheet
+            title={title}
+            userId={userId}
+            open={optionsOpen}
+            onClose={() => setOptionsOpen(false)}
+            onPlay={(streams) => void play(streams)}
+          />
 
           {/* "Add to collection" (collections-playlists-ui issue 02, Admin only):
               opened from the overflow menu. A Member never gets the menu item; the
@@ -1317,6 +1372,23 @@ function formatBitrate(bps: number): string {
   const mbps = bps / 1_000_000;
   if (mbps >= 1) return `${mbps.toFixed(1)} Mbps`;
   return `${Math.round(bps / 1000)} kbps`;
+}
+
+// A sliders glyph for the Playback options trigger (pre-play configuration), sized
+// to the icon button like the other toolbar affordances.
+function PlaybackOptionsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="1.1em" height="1.1em" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <line x1="4" y1="7" x2="20" y2="7" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+        <line x1="4" y1="17" x2="20" y2="17" />
+        <circle cx="9" cy="7" r="2.2" fill="var(--bg, #000)" />
+        <circle cx="15" cy="12" r="2.2" fill="var(--bg, #000)" />
+        <circle cx="8" cy="17" r="2.2" fill="var(--bg, #000)" />
+      </g>
+    </svg>
+  );
 }
 
 // formatRuntime renders an enriched runtime (minutes) as "2h 35m" / "47m".

@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/session";
 import { RequireAdmin, RequireAuth } from "./auth/guards";
-import { useServerInfo } from "./useServerInfo";
+import { ServerInfoProvider, useServerInfoContext } from "./serverInfoContext";
 import SetupScreen from "./screens/SetupScreen";
 import LoginScreen from "./screens/LoginScreen";
 import LinkScreen from "./screens/LinkScreen";
@@ -20,6 +20,7 @@ import ArtistDetailScreen from "./music/ArtistDetailScreen";
 import AlbumDetailScreen from "./music/AlbumDetailScreen";
 import TrackDetailScreen from "./music/TrackDetailScreen";
 import NowPlayingBar from "./player/NowPlayingBar";
+import MediaSessionBridge from "./player/MediaSessionBridge";
 import EnrichmentConsentGate from "./admin/EnrichmentConsentGate";
 import { QueueProvider } from "./player/queue/useQueue";
 import { PlaybackTransportProvider } from "./player/transport";
@@ -49,6 +50,11 @@ export default function App() {
           never inherits the previous screen's scroll offset (they share the one
           document scroll). Back/Forward keep the browser's restored position. */}
       <ScrollToTop />
+      {/* The server handshake runs once here, above the auth scope, so the
+          first-run gates (Setup/Login) and every authed screen read the one same
+          result — and so `feature(name)` gating (Apple TV → Web parity §4) is a
+          one-liner anywhere in the tree. */}
+      <ServerInfoProvider>
       <AuthProvider>
         {/* Libraries load once inside the auth scope so the header's media nav
             (Music / Movies / TV) is derived from a single fetch shared across
@@ -218,6 +224,11 @@ export default function App() {
             OUTSIDE <Routes> so it survives navigation — playback keeps going as
             the user browses. It renders nothing until a Queue is active. */}
         <NowPlayingBar />
+        {/* Media Session bridge (appletv-parity/11): mounted once, inside the
+            Queue + Transport providers, so OS media keys / the lock screen /
+            the browser media hub reflect and drive MUSIC playback. Renders
+            nothing; music-only, and a graceful no-op where the API is absent. */}
+        <MediaSessionBridge />
         {/* First-run Enrichment consent prompt (ADR-0032): mounted once in the
             authed scope; shows only to an Admin who has not yet answered. */}
         <EnrichmentConsentGate />
@@ -225,6 +236,7 @@ export default function App() {
         </QueueProvider>
         </LibrariesProvider>
       </AuthProvider>
+      </ServerInfoProvider>
     </BrowserRouter>
   );
 }
@@ -233,7 +245,7 @@ export default function App() {
 // reachable on a fresh server (setupRequired). Once an Admin exists, /setup
 // redirects to /login so the screen is never shown post-bootstrap.
 function SetupGate() {
-  const state = useServerInfo();
+  const { state } = useServerInfoContext();
   if (state.status === "loading") return <Connecting />;
   if (state.status === "unreachable" || state.status === "error") {
     return <Unreachable message={describe(state)} />;
@@ -248,7 +260,7 @@ function SetupGate() {
 // Home; otherwise it shows the login form.
 function LoginGate() {
   const { isAuthenticated, ready } = useAuth();
-  const state = useServerInfo();
+  const { state } = useServerInfoContext();
 
   if (!ready || state.status === "loading") return <Connecting />;
   if (state.status === "unreachable" || state.status === "error") {

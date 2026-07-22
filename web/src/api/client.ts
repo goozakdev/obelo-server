@@ -1,5 +1,5 @@
 import { ApiError, NetworkError, parseErrorEnvelope } from "./errors";
-import { localStorageTokenStore, type TokenStore } from "./token";
+import { webTokenStore, supportsRetention, type TokenStore } from "./token";
 import {
   normalizeAlbumTracks,
   normalizeArtistAlbums,
@@ -193,7 +193,7 @@ export class ApiClient {
 
   constructor(opts: ApiClientOptions = {}) {
     this.baseUrl = opts.baseUrl ?? "";
-    this.tokenStore = opts.tokenStore ?? localStorageTokenStore;
+    this.tokenStore = opts.tokenStore ?? webTokenStore();
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.onUnauthorized = opts.onUnauthorized;
   }
@@ -214,6 +214,15 @@ export class ApiClient {
    * a 401 or logout clears it (issue 02 wires the call sites). */
   setToken(token: string | null): void {
     this.tokenStore.set(token);
+  }
+
+  /** Choose token retention for subsequently-stored tokens — the "Remember me"
+   * seam (appletv-parity/10). `true` → durable (localStorage, survives a tab
+   * close); `false` → session-only (sessionStorage, gone on tab close). A no-op
+   * when the token store doesn't support retention (e.g. a memory store in tests).
+   * NO password is ever stored either way — only the opaque bearer token. */
+  setTokenDurable(durable: boolean): void {
+    if (supportsRetention(this.tokenStore)) this.tokenStore.setDurable(durable);
   }
 
   // --- Endpoints ---------------------------------------------------------
@@ -267,6 +276,21 @@ export class ApiClient {
     } finally {
       this.setToken(null);
     }
+  }
+
+  /** `POST /api/v1/auth/media-cookie` — re-issue the HttpOnly `ms_media` cookie so
+   * it carries the CURRENT bearer's session token (appletv-parity/12). The instant
+   * user switch swaps the bearer from JS, but the media cookie (which authenticates
+   * browser `<video>`/`<img>`/HLS GETs, since they cannot send an Authorization
+   * header) is HttpOnly and unreachable from JS — so after a switch it still carries
+   * the PREVIOUS user's token until the server rewrites it. This is that rewrite.
+   *
+   * Bearer-only server-side: a lone `ms_media` cookie cannot authorize its own
+   * re-issue. Callers gate this on the `mediaCookieRefresh` feature flag — an older
+   * server without the route simply doesn't get the refresh (media falls back to
+   * today's behaviour), so this is never called blind. 204 No Content on success. */
+  async refreshMediaCookie(signal?: AbortSignal): Promise<void> {
+    await this.request<void>("/auth/media-cookie", { method: "POST", signal });
   }
 
   /** `GET /api/v1/devices` — the caller's registered Devices. Used here as a
@@ -1571,6 +1595,9 @@ export class ApiClient {
     if (opts.burnSubtitleId) body.burnSubtitleId = opts.burnSubtitleId;
     if (opts.audioStreamId) body.audioStreamId = opts.audioStreamId;
     if (opts.videoStreamId) body.videoStreamId = opts.videoStreamId;
+    // Conditional like the ids above: only ever `true` on the wire, never `false`
+    // (the server defaults the absent field to false; older servers reject it).
+    if (opts.remuxSelectedOnly) body.remuxSelectedOnly = true;
     return this.request<PlaybackDecision>(
       `/titles/${encodeURIComponent(titleId)}/playback`,
       { method: "POST", body, signal },

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/errors";
-import type { PlaybackDecision, PlaybackState } from "../api/types";
+import type {
+  DeviceProfile,
+  PlaybackConstraints,
+  PlaybackDecision,
+  PlaybackState,
+} from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import { deriveCapabilityProfile } from "./capabilities";
 
@@ -163,30 +168,124 @@ function unsupportedMessage(err: ApiError): { reason: string; message: string } 
   };
 }
 
+/** The pre-play Playback preference the session negotiates with (appletv-web-parity
+ * §1/§3): the resolved `editionId` (undefined = Auto) and the resolved Quality-cap
+ * `constraints` override (undefined = Direct Play), plus a `pending` flag while that
+ * resolution is still in flight. Negotiation is DEFERRED until `pending` clears — but
+ * ONLY the configured path waits: with no stored preference the caller passes
+ * `pending: false` (or omits this) and playback starts immediately, exactly as before. */
+export interface PlayerPreference {
+  editionId?: string;
+  /** The Quality-cap override merged OVER the capability-derived constraints
+   * (`maxResolution` + `maxBitrate` from the ladder). Undefined = Direct Play: keep
+   * the viewport-derived resolution + the generous Direct-Play bitrate default. */
+  constraints?: Pick<PlaybackConstraints, "maxResolution" | "maxBitrate">;
+  /** The AAC-stereo capability narrowing (appletv-web-parity §7, issue 06) merged
+   * OVER the probed capability profile: `audioCodecs: ["aac"], maxAudioChannels: 2`.
+   * There is NO contract field for AAC — narrowing the sent profile is the whole
+   * mechanism. Undefined = off: the full probed `deviceProfile` goes out unchanged
+   * (today's behaviour). Like `editionId` / `constraints` it is a PERSISTED axis, so
+   * it carries through every re-negotiation (a burn/audio/video switch). */
+  deviceProfile?: Pick<DeviceProfile, "audioCodecs" | "maxAudioChannels">;
+  /** Force Remux (appletv-web-parity §10, issue 07): `true` asks the server to trim
+   * a would-be direct play to a lean copy-only directStream of just the selected
+   * video + audio Stream. The resolver emits it ONLY for an otherwise-direct-play
+   * draft (no constraints, no AAC narrowing) on a server advertising
+   * `features.remuxSelectedOnly`. Undefined = off — the field never rides the
+   * request. A PERSISTED axis like `editionId` / `constraints`, so it carries
+   * through every re-negotiation (a burn/audio/video switch) unchanged. */
+  remuxSelectedOnly?: boolean;
+  /** The pre-play Audio Stream pick (appletv-web-parity §1, issue 04) that SEEDS the
+   * initial negotiation's `audioStreamId`. Unlike `editionId` / `constraints` this is
+   * NOT a persisted preference — it's the server's Remembered audio (server ADR-0023),
+   * handed in once from the transient Queue entry (client ADR-0011). It seeds the
+   * audio ref ONCE (at mount); an in-player switch then owns the value and this prop
+   * never re-seeds over it (no stale-value resurrection). Undefined = Auto. */
+  audioStreamId?: string;
+  /** The pre-play Video Stream pick (issue 04), seeding the initial `videoStreamId`
+   * exactly like `audioStreamId` — seed-once, never persisted, superseded by an
+   * in-player Video switch. Undefined = Auto (→ server Remembered video, ADR-0025). */
+  videoStreamId?: string;
+  /** The pre-play IMAGE Subtitle burn-in (appletv-web-parity §1, issue 05, ADR-0020),
+   * seeding the initial `burnSubtitleId` so a committed image-subtitle choice on a
+   * transcode/remux tier is burned from frame one. UNLIKE audio/video this axis IS a
+   * persisted preference (subtitle choice has no server memory), resolved by the
+   * playbackResolver from the stored language(+forced): it emits an id ONLY for an
+   * image track on a transcoding tier — a text track and a direct-play image track
+   * render locally and leave this undefined. Seeded ONCE (like audio/video), so an
+   * in-player captions switch then owns the burn. Undefined = no pre-play burn. */
+  burnSubtitleId?: string;
+  pending?: boolean;
+}
+
 export function usePlayerSession(
   client: ApiClient,
   titleId: string,
   startPosition: number,
+  preference?: PlayerPreference,
 ): PlayerSession {
   const [status, setStatus] = useState<PlayerStatus>({ kind: "negotiating" });
+  // The resolved Edition the negotiation sends (appletv-web-parity §2), or undefined
+  // for Auto (omit → server picks the best direct-play Edition). Held in a ref, kept
+  // in sync each render, so negotiate reads it without being a dependency — and so it
+  // carries through every re-negotiation (a burn/audio/video switch) unchanged.
+  const editionRef = useRef<string | undefined>(preference?.editionId);
+  editionRef.current = preference?.editionId;
+  // The resolved Quality-cap constraints override (appletv-web-parity §3), or
+  // undefined for Direct Play. Held in a ref, kept in sync each render (like the
+  // Edition), so negotiate reads it without being a dependency AND it carries through
+  // every re-negotiation (a burn/audio/video switch) unchanged.
+  const constraintsRef = useRef<PlayerPreference["constraints"]>(preference?.constraints);
+  constraintsRef.current = preference?.constraints;
+  // The AAC-stereo profile narrowing (issue 06), or undefined for the full probed
+  // profile. Held in a ref, kept in sync each render (like the Edition / constraints
+  // — it is a persisted axis), so negotiate reads it without being a dependency AND
+  // it carries through every re-negotiation (a burn/audio/video switch) unchanged.
+  const profileRef = useRef<PlayerPreference["deviceProfile"]>(preference?.deviceProfile);
+  profileRef.current = preference?.deviceProfile;
+  // The Force Remux flag (issue 07), or undefined for off. A persisted axis like the
+  // Edition / constraints / profile above: an every-render ref sync, carried through
+  // every re-negotiation unchanged (the server no-ops it off the direct-play tier).
+  const remuxRef = useRef<PlayerPreference["remuxSelectedOnly"]>(preference?.remuxSelectedOnly);
+  remuxRef.current = preference?.remuxSelectedOnly;
+  // While the preference is still resolving (its Edition NAME → this Title's id needs
+  // the detail), hold off the FIRST negotiation so it goes out WITH the editionId
+  // rather than re-negotiating after (which would re-buffer). Only the configured
+  // path is `pending`; the no-preference path is never held.
+  const pendingPreference = preference?.pending ?? false;
   // The image sub burned into the video (subtitles/04), or null. State (not a ref)
   // so the captions menu re-renders when a burn is selected/cleared; mirrored into
-  // burnRef so negotiate reads it without being a dependency.
-  const [burnSubtitleId, setBurnSubtitleId] = useState<string | null>(null);
-  const burnRef = useRef<string | null>(null);
+  // burnRef so negotiate reads it without being a dependency. SEEDED ONCE from the
+  // pre-play preference (issue 05 — a committed image sub on a transcode/remux tier)
+  // via the useState/useRef initializers, which run only on mount, so a later in-
+  // player captions switch owns the burn and this never re-seeds over it.
+  const [burnSubtitleId, setBurnSubtitleId] = useState<string | null>(
+    preference?.burnSubtitleId ?? null,
+  );
+  const burnRef = useRef<string | null>(preference?.burnSubtitleId ?? null);
   // The audio Stream the last negotiation requested (audio-streams/04), or null for
   // the server-resolved default. State so the Audio menu re-renders on an escalation;
   // mirrored into audioRef so negotiate reads it without being a dependency. Carried
-  // on every re-negotiation (a burn switch) so an audio pick survives it.
-  const [audioStreamId, setAudioStreamId] = useState<string | null>(null);
-  const audioRef = useRef<string | null>(null);
+  // on every re-negotiation (a burn switch) so an audio pick survives it. SEEDED ONCE
+  // from the pre-play pick (issue 04, the sheet's Auto-or-explicit choice on the entry)
+  // via the useState/useRef initializers — which run only on mount, so a later render
+  // (the same `preference` prop) NEVER re-seeds over an in-player switch. That seed-
+  // once (contrast the every-render editionRef sync above) is what stops a stale sheet
+  // value resurrecting after the viewer changes audio in-player.
+  const [audioStreamId, setAudioStreamId] = useState<string | null>(
+    preference?.audioStreamId ?? null,
+  );
+  const audioRef = useRef<string | null>(preference?.audioStreamId ?? null);
   // The video Stream the last negotiation requested (selectable-video/03), or null
   // for the server-resolved capability-then-quality default. State so the Video menu
   // re-renders on a switch; mirrored into videoStreamRef so negotiate reads it
   // without being a dependency. Carried on every re-negotiation (a burn/audio switch)
-  // so a video pick survives it.
-  const [videoStreamId, setVideoStreamId] = useState<string | null>(null);
-  const videoStreamRef = useRef<string | null>(null);
+  // so a video pick survives it. SEEDED ONCE from the pre-play pick (issue 04), exactly
+  // like audio — an in-player Video switch then owns it, never re-seeded.
+  const [videoStreamId, setVideoStreamId] = useState<string | null>(
+    preference?.videoStreamId ?? null,
+  );
+  const videoStreamRef = useRef<string | null>(preference?.videoStreamId ?? null);
   // The resume offset negotiation requests (and the position a burn re-negotiation
   // resumes near). Initialized to startPosition; a burn switch updates it to the
   // live position so the restarted stream resumes where the viewer was.
@@ -215,21 +314,39 @@ export function usePlayerSession(
       negotiateCtrlRef.current = ctrl;
       endedRef.current = false;
       const { deviceProfile, constraints } = deriveCapabilityProfile();
-      const effectiveConstraints =
-        overrideMaxBitrate != null
-          ? { ...constraints, maxBitrate: overrideMaxBitrate }
-          : constraints;
+      // Layer the profile: the browser-probed capability default first, then the
+      // AAC-stereo narrowing OVER its audio side (appletv-web-parity §7 — narrowing
+      // the SENT profile to aac/2ch is the whole mechanism; there is no request
+      // field). No narrowing (the common case) sends the probed profile unchanged.
+      const effectiveProfile: DeviceProfile = {
+        ...deviceProfile,
+        ...(profileRef.current ?? {}),
+      };
+      // Layer the constraints: the capability-derived defaults (viewport resolution +
+      // the generous Direct-Play bitrate, ADR-0003) first, then the Quality-cap rung
+      // OVER them (a manual override of both axes — appletv-web-parity §3), then a
+      // SERVER_BUSY step-down last so a busy retry still lowers the bitrate further.
+      let effectiveConstraints: PlaybackConstraints = {
+        ...constraints,
+        ...(constraintsRef.current ?? {}),
+      };
+      if (overrideMaxBitrate != null) {
+        effectiveConstraints = { ...effectiveConstraints, maxBitrate: overrideMaxBitrate };
+      }
       void (async () => {
         try {
           const decision = await client.startPlayback(
             titleId,
             {
-              deviceProfile,
+              deviceProfile: effectiveProfile,
               constraints: effectiveConstraints,
               startPosition: resumeRef.current,
+              editionId: editionRef.current,
               burnSubtitleId: burnRef.current ?? undefined,
               audioStreamId: audioRef.current ?? undefined,
               videoStreamId: videoStreamRef.current ?? undefined,
+              // Only ever true (the client omits a falsy field from the body).
+              remuxSelectedOnly: remuxRef.current || undefined,
             },
             ctrl.signal,
           );
@@ -277,13 +394,19 @@ export function usePlayerSession(
     [client, titleId],
   );
 
-  // Negotiate once per title. Aborts the request on unmount/title change.
+  // Negotiate once per title, once the preference has resolved. While
+  // `pendingPreference` is true (a stored preference whose Edition is still being
+  // resolved against the detail) we hold off so the first request already carries the
+  // editionId — no start-then-re-negotiate re-buffer. The no-preference path is never
+  // pending, so it negotiates immediately (unchanged behaviour). Aborts on
+  // unmount/title change.
   useEffect(() => {
+    if (pendingPreference) return;
     autoRetriedRef.current = false;
     setStatus({ kind: "negotiating" });
     negotiate();
     return () => negotiateCtrlRef.current?.abort();
-  }, [negotiate]);
+  }, [negotiate, pendingPreference]);
 
   // Manual retry from the busy state: re-negotiate at the last suggested lower
   // bitrate (if any) so the request is a genuine step down, not the rejected one.

@@ -121,9 +121,13 @@ function canPlay(video: HTMLVideoElement, mime: string): boolean {
 }
 
 /** Probe the browser and build the device profile + per-request constraints to
- * send on a playback request. `maxBitrate` is generous (we are not bandwidth-
- * constrained in a self-hosted LAN); `maxResolution` tracks the viewport so we
- * never ask for more pixels than the screen can show. */
+ * send on a playback request. These constraints are the **Direct Play / auto
+ * default**: `maxBitrate` is generous (we are not bandwidth-constrained on a
+ * self-hosted LAN) and `maxResolution` tracks the viewport so we never ask for
+ * more pixels than the screen can show. A viewer's Quality-cap rung (Playback
+ * Options, appletv-web-parity §3) is a MANUAL OVERRIDE merged over these in
+ * usePlayerSession's negotiate — so the 100 Mbps below is the Direct-Play default,
+ * no longer the user-facing ceiling. */
 export function deriveCapabilityProfile(): {
   deviceProfile: DeviceProfile;
   constraints: PlaybackConstraints;
@@ -177,8 +181,10 @@ export function deriveCapabilityProfile(): {
   };
 }
 
-// A generous bitrate cap — direct play on a LAN is not bandwidth-limited, and a
-// too-low cap would needlessly flip a playable file into TRANSCODE_REQUIRED.
+// The Direct-Play / auto bitrate default — direct play on a LAN is not bandwidth-
+// limited, and a too-low cap would needlessly flip a playable file into a transcode.
+// A Quality-cap rung supersedes this (qualityLadder / usePlayerSession); it is the
+// Direct-Play default, not the user-facing ceiling.
 function maxBitrate(): number {
   return 100_000_000; // 100 Mbps
 }
