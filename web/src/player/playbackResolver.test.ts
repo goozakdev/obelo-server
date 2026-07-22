@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { resolveEditionId, resolvePlayback, resolveQualityConstraints } from "./playbackResolver";
-import type { ResolverEdition } from "./playbackResolver";
+import {
+  resolveBurnSubtitle,
+  resolveEditionId,
+  resolvePlayback,
+  resolveQualityConstraints,
+} from "./playbackResolver";
+import type { ResolverEdition, ResolverSubtitle } from "./playbackResolver";
 import type { PlaybackPreference } from "./playbackPreference";
 
 // The Playback RESOLVER seam (appletv-web-parity §1/§3): turns a committed preference
@@ -22,9 +27,9 @@ const episode2Editions: ResolverEdition[] = [
   { id: "ep2-dc", name: "Director's Cut" },
 ];
 
-/** A full preference (both axes) — the two axes default to Auto / Direct Play. */
+/** A full preference — the axes default to Auto / Direct Play / subtitles Off. */
 function pref(p: Partial<PlaybackPreference>): PlaybackPreference {
-  return { editionName: null, qualityCap: null, ...p };
+  return { editionName: null, qualityCap: null, subtitle: null, ...p };
 }
 
 describe("playbackResolver — Edition axis", () => {
@@ -125,5 +130,93 @@ describe("playbackResolver — Quality axis", () => {
   it("an unknown source height (no File dims) offers no rung (Direct Play)", () => {
     // Editions with no dims → source height 0 → every rung degrades to Direct Play.
     expect(resolveQualityConstraints("720p", movieEditions, null)).toBeUndefined();
+  });
+});
+
+// ── Subtitle axis (issue 05, ADR-0020) ───────────────────────────────────────────
+// The resolver's ONLY subtitle output is burnSubtitleId, and it emits it under ONE
+// condition: the stored language(+forced) matches an IMAGE track on THIS Title AND
+// the resolved tier transcodes/remuxes. Text tracks (selectable WebVTT) and direct-
+// play image tracks render locally → no field. Matching is BY LANGUAGE(+forced), not
+// id, so a Show choice replays across Episodes whose tracks carry different ids.
+
+// Episode 1's tracks and Episode 2's carry the SAME languages under DIFFERENT ids —
+// the drift the by-language keying survives. Each has an English IMAGE (PGS) track.
+const ep1Subs: ResolverSubtitle[] = [
+  { id: "ep1-en-img", kind: "image", language: "en", forced: false },
+  { id: "ep1-en-txt", kind: "text", language: "en", forced: false },
+  { id: "ep1-fr-forced", kind: "text", language: "fr", forced: true },
+];
+const ep2Subs: ResolverSubtitle[] = [
+  { id: "ep2-en-img", kind: "image", language: "en", forced: false },
+  { id: "ep2-fr-forced", kind: "text", language: "fr", forced: true },
+];
+
+describe("playbackResolver — Subtitle axis (burnSubtitleId)", () => {
+  it("Off (null subtitle) emits no burnSubtitleId", () => {
+    expect(resolveBurnSubtitle(null, ep1Subs, true)).toBeUndefined();
+    expect(resolveBurnSubtitle(null, ep1Subs, false)).toBeUndefined();
+  });
+
+  it("an IMAGE track on a TRANSCODE tier resolves to burnSubtitleId", () => {
+    expect(
+      resolveBurnSubtitle({ language: "en", forced: false }, ep1Subs, true),
+    ).toBe("ep1-en-img");
+  });
+
+  it("an IMAGE track on a DIRECT-PLAY tier is left to local render (omitted)", () => {
+    // Same pick, tier does NOT transcode → no burn (the player renders it locally).
+    expect(
+      resolveBurnSubtitle({ language: "en", forced: false }, ep1Subs, false),
+    ).toBeUndefined();
+  });
+
+  it("a TEXT track never sets burnSubtitleId, even on a transcode tier", () => {
+    // The fr forced track is text — a selectable WebVTT rendition, never a burn.
+    expect(
+      resolveBurnSubtitle({ language: "fr", forced: true }, ep1Subs, true),
+    ).toBeUndefined();
+  });
+
+  it("a language absent from THIS Title emits no burnSubtitleId", () => {
+    expect(
+      resolveBurnSubtitle({ language: "de", forced: false }, ep1Subs, true),
+    ).toBeUndefined();
+  });
+
+  it("matches by language+forced, not id — a Show choice replays across Episodes", () => {
+    const pick: { language: string; forced: boolean } = { language: "en", forced: false };
+    // The SAME stored key resolves to EACH Episode's own image-track id.
+    expect(resolveBurnSubtitle(pick, ep1Subs, true)).toBe("ep1-en-img");
+    expect(resolveBurnSubtitle(pick, ep2Subs, true)).toBe("ep2-en-img");
+  });
+
+  it("resolvePlayback emits burnSubtitleId only when a Quality cap makes it transcode", () => {
+    // The stored image sub + a downscale rung (constraints present = transcode) → burn.
+    expect(
+      resolvePlayback(
+        pref({ editionName: "4K", qualityCap: "720p", subtitle: { language: "en", forced: false } }),
+        uhdEditions,
+        ep1Subs,
+      ),
+    ).toEqual({
+      editionId: "ed-uhd",
+      constraints: { maxResolution: "720p", maxBitrate: 4_000_000 },
+      burnSubtitleId: "ep1-en-img",
+    });
+    // Same image sub but Direct Play (no cap) → no transcode signal → no burn.
+    expect(
+      resolvePlayback(
+        pref({ subtitle: { language: "en", forced: false } }),
+        uhdEditions,
+        ep1Subs,
+      ),
+    ).toEqual({});
+  });
+
+  it("defaults subtitles to [] so a caller without Subtitle context is unaffected", () => {
+    expect(resolvePlayback(pref({ subtitle: { language: "en", forced: false } }), uhdEditions)).toEqual(
+      {},
+    );
   });
 });

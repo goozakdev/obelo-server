@@ -1,5 +1,5 @@
 import type { PlaybackConstraints, StartPlaybackOptions } from "../api/types";
-import type { PlaybackPreference } from "./playbackPreference";
+import type { PlaybackPreference, SubtitlePreference } from "./playbackPreference";
 import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLadder";
 
 // The Playback resolver (appletv-web-parity §1) — the web equivalent of the TV's
@@ -9,8 +9,8 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 //
 // PURE and side-effect-free: given a preference + the Title's Editions it returns
 // the override fields; the player merges them into the capability-derived request.
-// This is the seam the later axes (Quality cap → constraints, Subtitle → burn id,
-// AAC → deviceProfile, Force Remux → remuxSelectedOnly) bolt onto — each adds a
+// This is the seam the axes (Quality cap → constraints, Subtitle → burn id, and the
+// later AAC → deviceProfile, Force Remux → remuxSelectedOnly) bolt onto — each adds a
 // branch here and a field to {@link ResolvedPlayback}, nothing else moves.
 //
 // EDITION is stored by NAME (so a Show's choice ports across Episodes with different
@@ -27,17 +27,38 @@ import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLa
 // Because the source height comes from the SAME `editionName` the pref carries, a
 // Show cap replays consistently across Episodes and a shrunk Edition drops a now-
 // impossible rung rather than stranding it.
+//
+// SUBTITLE is stored by LANGUAGE (+ forced), not id (so a Show's choice ports across
+// Episodes whose Subtitle tracks carry different ids); resolution matches the stored
+// language+forced against THIS Title's `subtitles[]`. Delivery then follows the SOURCE
+// (ADR-0020): a matched TEXT track is a selectable WebVTT track (no request field —
+// the player renders it as a <track> / in-band HLS rendition), and an IMAGE track is
+// burned in via `burnSubtitleId` ONLY when the resolved tier transcodes / remuxes; on
+// a direct-play tier the image track renders locally, so no field is emitted. The
+// pre-play transcode signal the resolver reads is the Quality-cap constraints issue 03
+// already computes — a downscale rung means the tier transcodes.
 
 /** The subset of {@link StartPlaybackOptions} a preference can override. Grows as
- * axes land (burnSubtitleId, remuxSelectedOnly, a narrowed deviceProfile). Omitted
- * fields mean "take the server / capability default" (Auto / Direct Play). */
-export type ResolvedPlayback = Pick<StartPlaybackOptions, "editionId"> & {
+ * axes land (remuxSelectedOnly, a narrowed deviceProfile). Omitted fields mean "take
+ * the server / capability default" (Auto / Direct Play / subtitles Off or local). */
+export type ResolvedPlayback = Pick<StartPlaybackOptions, "editionId" | "burnSubtitleId"> & {
   /** The Quality-cap override (appletv-web-parity §3): `maxResolution` + the paired
    * `maxBitrate` from the ladder. Present only for a genuine downscale rung; absent =
    * Direct Play (the capability-derived viewport resolution + no manual bitrate cap).
    * The player merges it OVER the capability constraints in negotiate. */
   constraints?: Pick<PlaybackConstraints, "maxResolution" | "maxBitrate">;
 };
+
+/** The minimal Subtitle track shape the resolver needs to decide burn-in: the id to
+ * emit, the `kind` (text vs image — image is the only burned source, ADR-0020), and
+ * the `language` + `forced` the stored preference matches by. Satisfied by the API
+ * `SubtitleTrack` (which carries `source`/`label`/`url` besides). */
+export interface ResolverSubtitle {
+  id: string;
+  kind: "text" | "image" | (string & {});
+  language?: string;
+  forced: boolean;
+}
 
 /** The minimal Edition shape the resolver needs: id + name, plus each File's height
  * so the Quality axis can read the source resolution. Satisfied by the catalog
@@ -49,12 +70,15 @@ export interface ResolverEdition {
   files?: { height?: number }[];
 }
 
-/** Resolve a committed preference against a Title's Editions into the playback
- * request overrides. A `null`/absent preference, or an all-Auto one, yields `{}`
- * (nothing overridden → today's behaviour). */
+/** Resolve a committed preference against a Title's Editions + Subtitle tracks into
+ * the playback request overrides. A `null`/absent preference, or an all-Auto one,
+ * yields `{}` (nothing overridden → today's behaviour). `subtitles` defaults to `[]`,
+ * so a caller with no Subtitle context (or a pre-subtitle call site) still resolves
+ * the Edition / Quality axes unchanged. */
 export function resolvePlayback(
   pref: PlaybackPreference | null | undefined,
   editions: ResolverEdition[],
+  subtitles: ResolverSubtitle[] = [],
 ): ResolvedPlayback {
   const resolved: ResolvedPlayback = {};
   const editionId = resolveEditionId(pref?.editionName ?? null, editions);
@@ -65,7 +89,50 @@ export function resolvePlayback(
     pref?.editionName ?? null,
   );
   if (constraints) resolved.constraints = constraints;
+  // Delivery follows the source (ADR-0020): burn an IMAGE Subtitle track ONLY on a
+  // tier that transcodes / remuxes. The pre-play transcode signal is a Quality-cap
+  // downscale (constraints present) — the same computation issue 03 already made.
+  const burnSubtitleId = resolveBurnSubtitle(
+    pref?.subtitle ?? null,
+    subtitles,
+    constraints !== undefined,
+  );
+  if (burnSubtitleId) resolved.burnSubtitleId = burnSubtitleId;
   return resolved;
+}
+
+/** Resolve a committed Subtitle preference into a `burnSubtitleId`, or undefined for
+ * "no burn" — the ONLY subtitle-delivery decision the resolver owns (ADR-0020). Off
+ * (null pref) and a language with no track on THIS Title both yield undefined. A
+ * matched TEXT track also yields undefined: it is a selectable WebVTT track the player
+ * renders itself (out-of-band <track> on direct play, in-band HLS rendition on the
+ * transcode tiers), never a burn. A matched IMAGE track burns in ONLY when the tier
+ * `transcoding` — on direct play the image track renders locally, no field emitted. */
+export function resolveBurnSubtitle(
+  subtitle: SubtitlePreference | null,
+  subtitles: ResolverSubtitle[],
+  transcoding: boolean,
+): string | undefined {
+  if (!subtitle) return undefined; // Off
+  const match = matchSubtitle(subtitle, subtitles);
+  if (!match || match.kind !== "image") return undefined; // no track / text → no burn
+  return transcoding ? match.id : undefined; // image burns only on a transcode/remux tier
+}
+
+/** Match a stored subtitle preference (language + forced) to THIS Title's Subtitle
+ * tracks — the by-language keying that ports a Show's choice across Episodes whose
+ * tracks carry different ids. Case-insensitive on language; `forced` must match
+ * exactly (a forced and a full track in one language stay distinct). The FIRST track
+ * satisfying both wins when several share the key. undefined when none matches — the
+ * preference then adds no request field (the Title lacks that language). */
+function matchSubtitle(
+  subtitle: SubtitlePreference,
+  subtitles: ResolverSubtitle[],
+): ResolverSubtitle | undefined {
+  const lang = subtitle.language.toLowerCase();
+  return subtitles.find(
+    (s) => (s.language ?? "").toLowerCase() === lang && s.forced === subtitle.forced,
+  );
 }
 
 /** Resolve a stored Quality-cap rung id into its paired `{ maxResolution, maxBitrate }`

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { AudioStream, MediaFile, TitleDetail, VideoStream } from "../api/types";
+import type {
+  AudioStream,
+  MediaFile,
+  SubtitleTrack,
+  TitleDetail,
+  VideoStream,
+} from "../api/types";
 import { loadPreference } from "./playbackPreference";
 import PlaybackOptionsSheet from "./PlaybackOptionsSheet";
 
@@ -357,5 +363,94 @@ describe("PlaybackOptionsSheet — Video axis", () => {
     const section = screen.getByTestId("video-section");
     expect(section).toHaveTextContent("Video");
     expect(section.textContent).not.toMatch(/Video track/i);
+  });
+});
+
+// ── Subtitle axis (issue 05, ADR-0020) ───────────────────────────────────────────
+// A PERSISTED axis (subtitle choice has no server memory): Off + one source-tagged
+// row per Subtitle track, SELECTION ONLY (no network on open/selection), persisted BY
+// LANGUAGE (+ forced) — never the track id — so a Show's choice ports across Episodes.
+
+function sub(id: string, extra: Partial<SubtitleTrack>): SubtitleTrack {
+  return { id, source: "embedded", kind: "text", forced: false, label: id, ...extra };
+}
+
+/** A Movie carrying the given Subtitle tracks on its detail payload. */
+function subsDetail(subtitles: SubtitleTrack[]): TitleDetail {
+  return { ...movieDetail(), subtitles };
+}
+
+const tracks = [
+  sub("s-en", { source: "embedded", kind: "text", language: "en", label: "English" }),
+  sub("s-en-img", { source: "sidecar", kind: "image", language: "en", label: "English (PGS)" }),
+  sub("s-fr", { source: "fetched", kind: "text", language: "fr", label: "Français" }),
+];
+
+describe("PlaybackOptionsSheet — Subtitle axis", () => {
+  it("shows Off + one source-tagged row per Subtitle track, Off active by default, no network", () => {
+    render(
+      <PlaybackOptionsSheet title={subsDetail(tracks)} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(apiCalls.calls).toBe(0); // built purely from the in-hand payload
+    expect(screen.getByTestId("subtitle-option-off")).toBeInTheDocument();
+    expect(screen.getByTestId("subtitle-option-off")).toHaveAttribute("aria-checked", "true");
+    const rows = screen.getAllByTestId("subtitle-option");
+    expect(rows).toHaveLength(3);
+    // Each row carries its SOURCE tag (Embedded / Sidecar / Fetched).
+    const section = screen.getByTestId("subtitles-section");
+    expect(section).toHaveTextContent("Embedded");
+    expect(section).toHaveTextContent("Sidecar");
+    expect(section).toHaveTextContent("Fetched");
+  });
+
+  it("renders nothing when the Title carries no Subtitle track (Off alone is no choice)", () => {
+    render(
+      <PlaybackOptionsSheet title={subsDetail([])} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(screen.queryByTestId("subtitles-section")).not.toBeInTheDocument();
+  });
+
+  it("Play commits the pick BY LANGUAGE (+ forced), NOT by id", () => {
+    const onPlay = vi.fn();
+    render(
+      <PlaybackOptionsSheet title={subsDetail(tracks)} userId="u1" open onClose={() => {}} onPlay={onPlay} />,
+    );
+    // Pick the French track (a draft change only).
+    fireEvent.click(screen.getByRole("radio", { name: /Français/ }));
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).subtitle).toBeNull();
+    // Play commits + starts.
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).subtitle).toEqual({
+      language: "fr",
+      forced: false,
+    });
+    expect(onPlay).toHaveBeenCalledTimes(1);
+    // The stored value is the LANGUAGE key, not the track id.
+    const raw = window.localStorage.getItem("juicebox.playback-pref.u1.title.t1");
+    expect(raw).not.toContain("s-fr");
+  });
+
+  it("opens reflecting a saved pick and commits Off over it", () => {
+    window.localStorage.setItem(
+      "juicebox.playback-pref.u1.title.t1",
+      JSON.stringify({ editionName: null, qualityCap: null, subtitle: { language: "fr", forced: false } }),
+    );
+    render(
+      <PlaybackOptionsSheet title={subsDetail(tracks)} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    expect(screen.getByRole("radio", { name: /Français/ })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByTestId("subtitle-option-off"));
+    fireEvent.click(screen.getByTestId("playback-options-play"));
+    expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" }).subtitle).toBeNull();
+  });
+
+  it("copy uses \"Subtitle track\", source-tagged, never a bare \"Track\"", () => {
+    render(
+      <PlaybackOptionsSheet title={subsDetail(tracks)} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
+    );
+    const group = screen.getByRole("radiogroup", { name: "Subtitle track" });
+    expect(group).toBeInTheDocument();
+    // No bare "Track" (a standalone word) leaks into the section copy.
+    expect(screen.getByTestId("subtitles-section").textContent).not.toMatch(/\bTrack\b/);
   });
 });

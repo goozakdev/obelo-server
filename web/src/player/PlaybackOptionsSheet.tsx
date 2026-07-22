@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { AudioStream, MediaFile, TitleDetail, VideoStream } from "../api/types";
+import type {
+  AudioStream,
+  MediaFile,
+  SubtitleTrack,
+  TitleDetail,
+  VideoStream,
+} from "../api/types";
 import {
   AUTO_PREFERENCE,
   loadPreferenceForTitle,
   preferenceScopeForTitle,
   savePreference,
   type PlaybackPreference,
+  type SubtitlePreference,
 } from "./playbackPreference";
 import {
   availableRungs,
@@ -72,8 +79,17 @@ function selectableFile(
 // viewer switches audio in-player) that flows STRAIGHT to Play as this play's
 // `audioStreamId` / `videoStreamId`. **Auto** omits the id (→ server memory); an
 // explicit pick sends it over the wire (web has no local mpv `aid` pre-seed). The
-// Video section renders ONLY when the File carries >1 selectable Video Stream. Subtitle
-// / AAC / Force-Remux are later sections bolted onto this same skeleton.
+// Video section renders ONLY when the File carries >1 selectable Video Stream.
+//
+// SUBTITLE (appletv-web-parity §1, ADR-0020) IS a persisted axis, so — unlike audio /
+// video — it rides the pref DRAFT like Edition / Quality and commits on Play. It is
+// SELECTION ONLY: **Off** + one source-tagged row per `subtitles[]` track, with NO
+// search / fetch (that stays in the in-player captions menu, so the sheet takes no
+// network on open or selection). The choice persists BY LANGUAGE (+ forced), not id
+// (playbackPreference), so a Show's choice ports across Episodes; the resolver decides
+// delivery from the resulting tier (an image track burns in only on transcode / remux,
+// via burnSubtitleId — a text track and a direct-play image track render locally).
+// AAC / Force-Remux are later sections bolted onto this same skeleton.
 
 /** A native <dialog> sheet, opened with showModal() (Esc-to-close, top layer, focus
  * containment, ::backdrop for free — mirroring EditItemDialog). Controlled by the
@@ -207,6 +223,11 @@ export default function PlaybackOptionsSheet({
             streams={streamFile?.videoStreams ?? []}
             selected={activeVideoId}
             onSelect={setVideoStreamId}
+          />
+          <SubtitlesSection
+            subtitles={title.subtitles ?? []}
+            selected={draft.subtitle}
+            onSelect={(subtitle) => setDraft((d) => ({ ...d, subtitle }))}
           />
         </div>
 
@@ -414,6 +435,79 @@ function VideoSection({
       </ul>
     </section>
   );
+}
+
+// The Subtitles section (appletv-web-parity §1, ADR-0020): an **Off** row (no
+// subtitle) + one row per `subtitles[]` Subtitle track, each SOURCE-TAGGED (Embedded /
+// Sidecar / Fetched — the source decides delivery, so it must be visible). SELECTION
+// ONLY: no search / fetch happens here (that lives in the in-player captions menu), so
+// the section builds purely from the in-hand `subtitles` with no network. Unlike
+// Audio / Video this IS persisted (client ADR-0011: subtitle choice has no server
+// memory) — stored BY LANGUAGE (+ forced), never the track id, so a Show's choice
+// ports across Episodes whose tracks carry different ids. Renders nothing when the
+// Title carries no Subtitle track (Off alone is no choice). Per CONTEXT.md these are
+// "Subtitle track"s, always source-tagged — never a bare "Track".
+function SubtitlesSection({
+  subtitles,
+  selected,
+  onSelect,
+}: {
+  subtitles: SubtitleTrack[];
+  /** The draft Subtitle choice (language + forced), or null for Off. */
+  selected: SubtitlePreference | null;
+  onSelect: (subtitle: SubtitlePreference | null) => void;
+}) {
+  if (subtitles.length === 0) return null;
+  return (
+    <section className="playback-options-section" data-testid="subtitles-section">
+      <h3 className="section-title playback-options-section-title">Subtitles</h3>
+      <ul className="playback-options-list" role="radiogroup" aria-label="Subtitle track">
+        <OptionRow
+          label="Off"
+          hint="No subtitles."
+          active={selected === null}
+          testId="subtitle-option-off"
+          onSelect={() => onSelect(null)}
+        />
+        {subtitles.map((sub) => (
+          <OptionRow
+            key={sub.id}
+            label={sub.label}
+            hint={subtitleSourceLabel(sub.source)}
+            // Stored by language (+ forced), so the ACTIVE mark is by that key, not id
+            // — a persisted choice highlights every same-language track, exactly what
+            // ports across Episodes.
+            active={
+              selected !== null &&
+              (sub.language ?? "").toLowerCase() === selected.language.toLowerCase() &&
+              sub.forced === selected.forced
+            }
+            testId="subtitle-option"
+            dataName={sub.source}
+            onSelect={() =>
+              onSelect({ language: sub.language ?? "", forced: sub.forced })
+            }
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The human source tag for a Subtitle track (ADR-0020's three sources) — the
+ * source decides delivery, so the row must show it. An unknown source falls back to
+ * a capitalized form rather than a bare "Track". */
+function subtitleSourceLabel(source: string): string {
+  switch (source) {
+    case "embedded":
+      return "Embedded";
+    case "sidecar":
+      return "Sidecar";
+    case "fetched":
+      return "Fetched";
+    default:
+      return source ? source[0].toUpperCase() + source.slice(1) : "";
+  }
 }
 
 // One selectable option row (a radio in a list). The active row shows a mark and

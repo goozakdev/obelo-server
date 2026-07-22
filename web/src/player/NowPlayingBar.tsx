@@ -878,12 +878,22 @@ function CurrentPlayer({
     ? loadPreferenceForTitle(window.localStorage, userId, prefTitle)
     : null;
   const hasStoredConfig =
-    !!storedPref && (storedPref.editionName !== null || storedPref.qualityCap !== null);
+    !!storedPref &&
+    (storedPref.editionName !== null ||
+      storedPref.qualityCap !== null ||
+      storedPref.subtitle !== null);
   let playerPreference: PlayerPreference | undefined;
   if (hasStoredConfig) {
     if (detail) {
-      const resolved = resolvePlayback(storedPref, detail.editions ?? []);
-      playerPreference = { editionId: resolved.editionId, constraints: resolved.constraints };
+      // Resolve against BOTH the Editions (Edition + Quality axes) and the Subtitle
+      // tracks (the burn-in decision), so a committed image-subtitle choice on a
+      // transcode/remux tier seeds the first negotiation's burnSubtitleId (ADR-0020).
+      const resolved = resolvePlayback(storedPref, detail.editions ?? [], detail.subtitles ?? []);
+      playerPreference = {
+        editionId: resolved.editionId,
+        constraints: resolved.constraints,
+        burnSubtitleId: resolved.burnSubtitleId,
+      };
     } else if (detailState.status === "error") {
       playerPreference = {}; // can't resolve → Auto / Direct Play, never block
     } else {

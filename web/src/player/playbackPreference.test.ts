@@ -49,17 +49,19 @@ describe("playbackPreference — persistence", () => {
     savePreference(window.localStorage, "u1", titleScope, {
       editionName: "Director's Cut",
       qualityCap: null,
+      subtitle: null,
     });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "Director's Cut",
       qualityCap: null,
+      subtitle: null,
     });
   });
 
   it("keys per user, per scope, and per anon bucket (no bleed)", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: null });
-    savePreference(window.localStorage, "u2", titleScope, { editionName: "1080p", qualityCap: null });
-    savePreference(window.localStorage, "u1", showScope, { editionName: "Extended", qualityCap: null });
+    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: null, subtitle: null });
+    savePreference(window.localStorage, "u2", titleScope, { editionName: "1080p", qualityCap: null, subtitle: null });
+    savePreference(window.localStorage, "u1", showScope, { editionName: "Extended", qualityCap: null, subtitle: null });
     expect(loadPreference(window.localStorage, "u1", titleScope).editionName).toBe("4K");
     expect(loadPreference(window.localStorage, "u2", titleScope).editionName).toBe("1080p");
     expect(loadPreference(window.localStorage, "u1", showScope).editionName).toBe("Extended");
@@ -77,10 +79,11 @@ describe("playbackPreference — persistence", () => {
   });
 
   it("round-trips a committed Quality cap alongside the Edition", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p" });
+    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: "720p", subtitle: null });
     expect(loadPreference(window.localStorage, "u1", titleScope)).toEqual({
       editionName: "4K",
       qualityCap: "720p",
+      subtitle: null,
     });
   });
 
@@ -101,10 +104,43 @@ describe("playbackPreference — persistence", () => {
     expect(loadPreference(window.localStorage, "u1", titleScope).qualityCap).toBeNull();
   });
 
+  it("round-trips a committed Subtitle track BY LANGUAGE (+ forced), not id", () => {
+    savePreference(window.localStorage, "u1", titleScope, {
+      editionName: null,
+      qualityCap: null,
+      subtitle: { language: "en", forced: false },
+    });
+    expect(loadPreference(window.localStorage, "u1", titleScope).subtitle).toEqual({
+      language: "en",
+      forced: false,
+    });
+    // Persisted BY LANGUAGE — no track id is smuggled into the store (that is what
+    // lets a Show's choice replay across Episodes carrying different track ids).
+    const raw = window.localStorage.getItem(preferenceKey("u1", titleScope));
+    expect(raw).toContain('"language":"en"');
+    expect(raw).not.toContain("id");
+  });
+
+  it("defaults a missing Subtitle to Off (null), and coerces a malformed one to Off", () => {
+    // A pref persisted before the Subtitle axis existed carries no subtitle.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ editionName: "4K" }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).subtitle).toBeNull();
+    // A subtitle object without a string language is not a valid key → Off.
+    window.localStorage.setItem(
+      preferenceKey("u1", titleScope),
+      JSON.stringify({ subtitle: { forced: true } }),
+    );
+    expect(loadPreference(window.localStorage, "u1", titleScope).subtitle).toBeNull();
+  });
+
   it("loadPreferenceForTitle derives the scope (Episode → Show)", () => {
     savePreference(window.localStorage, "u1", showScope, {
       editionName: "Director's Cut",
       qualityCap: null,
+      subtitle: null,
     });
     const pref = loadPreferenceForTitle(window.localStorage, "u1", {
       id: "ep1",
