@@ -1,13 +1,17 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
-import type { TitleSort } from "../api/types";
+import type { TitleSort, TitleSummary } from "../api/types";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import { useAsync } from "./useAsync";
 import { useTitleGrid } from "./useTitleGrid";
 import { useInfiniteScrollSentinel } from "./useInfiniteScrollSentinel";
 import { useLetterJump } from "./useLetterJump";
+import { useLayoutMode } from "./browseLayout";
+import LayoutToggle from "./LayoutToggle";
+import BrowseList, { type BrowseRowData } from "./BrowseList";
 import LetterJumpBar from "./LetterJumpBar";
+import Poster from "./Poster";
 import PosterTile from "./PosterTile";
 import ShowGrid from "./ShowGrid";
 import AppHeader from "./AppHeader";
@@ -65,6 +69,7 @@ function MovieGrid({
   libraryName: string;
 }) {
   const [sort, setSort] = useState<TitleSort>("title");
+  const [mode, setMode] = useLayoutMode(libraryId);
   const grid = useTitleGrid(apiClient, libraryId, sort);
   // Live-refresh: as this Library is scanned (Titles appearing) or enriched
   // (posters/fields landing), merge the fresh window in place — new Titles slot
@@ -92,21 +97,24 @@ function MovieGrid({
           {libraryName}
         </h2>
         {sort === "title" && <LetterJumpBar onJump={jumpTo} />}
-        <label className="sort-control">
-          <span className="field-label">Sort</span>
-          <select
-            className="sort-select"
-            data-testid="sort-select"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as TitleSort)}
-          >
-            {SORTS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="grid-controls">
+          <LayoutToggle mode={mode} onChange={setMode} />
+          <label className="sort-control">
+            <span className="field-label">Sort</span>
+            <select
+              className="sort-select"
+              data-testid="sort-select"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as TitleSort)}
+            >
+              {SORTS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       {grid.loading && (
@@ -134,11 +142,13 @@ function MovieGrid({
       )}
 
       {grid.titles.length > 0 && (
-        <ul className="poster-grid" data-testid="poster-grid" ref={gridRef}>
-          {grid.titles.map((t) => (
-            <PosterTile key={t.id} title={t} />
-          ))}
-        </ul>
+        <BrowseList
+          mode={mode}
+          items={grid.titles}
+          gridRef={gridRef}
+          renderTile={(t) => <PosterTile key={t.id} title={t} />}
+          toRow={movieToRow}
+        />
       )}
 
       {/* Scroll sentinel + inline paging states. Always rendered (when there
@@ -172,4 +182,31 @@ function MovieGrid({
 
 function getTitleName(t: { title: string }): string {
   return t.title;
+}
+
+// A Movie's Detail/List row, built ONLY from already-loaded summary fields (client
+// ADR-0007 — no per-row fetch): the poster thumbnail (Detail), the title, and a
+// serviceable secondary line (year · rating · genres). Same poster + cache-bust
+// token the tile uses, so a re-enrich reloads the thumbnail identically.
+function movieToRow(t: TitleSummary): BrowseRowData {
+  return {
+    key: t.id,
+    to: `/titles/${t.id}`,
+    name: t.title,
+    dataAttrs: { "data-title-id": t.id },
+    thumb: (
+      <div className="poster-frame">
+        <Poster titleId={t.id} title={t.title} version={t.artworkVersion} />
+      </div>
+    ),
+    meta: movieMeta(t),
+  };
+}
+
+function movieMeta(t: TitleSummary): ReactNode {
+  const bits: string[] = [];
+  if (t.year > 0) bits.push(String(t.year));
+  if (t.contentRating) bits.push(t.contentRating);
+  if (t.genres.length > 0) bits.push(t.genres.join(", "));
+  return bits.length > 0 ? <span>{bits.join(" · ")}</span> : null;
 }

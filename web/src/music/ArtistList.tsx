@@ -1,10 +1,13 @@
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { ArtistSummary } from "../api/types";
 import { usePaginatedList } from "../browse/usePaginatedList";
 import { useInfiniteScrollSentinel } from "../browse/useInfiniteScrollSentinel";
 import { useLetterJump } from "../browse/useLetterJump";
+import { useLayoutMode } from "../browse/browseLayout";
+import LayoutToggle from "../browse/LayoutToggle";
+import BrowseList, { type BrowseRowData } from "../browse/BrowseList";
 import LetterJumpBar from "../browse/LetterJumpBar";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import Poster from "../browse/Poster";
@@ -39,6 +42,7 @@ export default function ArtistList({
     },
     [libraryId],
   );
+  const [mode, setMode] = useLayoutMode(libraryId);
   const grid = usePaginatedList(fetchPage, getArtistId);
   // Live-refresh as this Library is scanned/enriched: new Artists appear as
   // they're indexed, no manual reload (realtime-events web slice).
@@ -60,6 +64,9 @@ export default function ArtistList({
           {libraryName}
         </h2>
         <LetterJumpBar onJump={jumpTo} />
+        <div className="grid-controls">
+          <LayoutToggle mode={mode} onChange={setMode} />
+        </div>
       </div>
 
       {grid.loading && (
@@ -87,11 +94,13 @@ export default function ArtistList({
       )}
 
       {grid.items.length > 0 && (
-        <ul className="poster-grid" data-testid="poster-grid" ref={gridRef}>
-          {grid.items.map((a) => (
-            <ArtistTile key={a.id} artist={a} />
-          ))}
-        </ul>
+        <BrowseList
+          mode={mode}
+          items={grid.items}
+          gridRef={gridRef}
+          renderTile={(a) => <ArtistTile key={a.id} artist={a} />}
+          toRow={artistToRow}
+        />
       )}
 
       {/* Scroll sentinel + inline paging states. Rendered once there is content
@@ -129,6 +138,29 @@ function getArtistId(a: ArtistSummary): string {
 
 function getArtistName(a: ArtistSummary): string {
   return a.name;
+}
+
+// An Artist's Detail/List row, from already-loaded summary fields only (client
+// ADR-0007). Artists are the THIN case — the list payload has no per-Artist blurb
+// beyond the photo and name — so Detail is the circular photo + name, plus genres
+// if enrichment supplied any. No per-row fetch.
+function artistToRow(a: ArtistSummary): BrowseRowData {
+  return {
+    key: a.id,
+    to: `/music/artists/${a.id}`,
+    name: a.name,
+    dataAttrs: { "data-artist-id": a.id },
+    thumb: (
+      <div className="poster-frame artist-frame">
+        <Poster titleId={a.id} title={a.name} src={a.artworkUrl} />
+      </div>
+    ),
+    meta: artistMeta(a),
+  };
+}
+
+function artistMeta(a: ArtistSummary): ReactNode {
+  return a.genres.length > 0 ? <span>{a.genres.join(", ")}</span> : null;
 }
 
 // ArtistTile mirrors the Show tile but links to the Artist detail (Albums). The
