@@ -37,6 +37,25 @@ The cost of that choice: normalization turns punctuation into spaces first, so "
 "A-ha"), and a false merge requires two real artists in one library distinguished only by a leading
 article-word — accepted as vanishingly rare against the very common split this fixes.
 
+## Amendment (2026-07-22): the word "and" folds too
+
+"Marina and the Diamonds" and "Marina & the Diamonds" split the same way. `normalizeTitle`
+already collapses "&" and "+" to a space, so the ampersand spelling keyed as
+`artist:marina the diamonds` — but the *word* "and" survived normalization and keyed apart.
+
+The rule gains one step, between normalization and the article strip:
+
+`artistIdentityKey(name) = "artist:" + stripLeadingArticle(stripAndWords(normalizeTitle(name)))`
+
+`stripAndWords` drops every standalone "and" word. The canonical direction is forced, not chosen:
+stored keys from "&" spellings lost the ampersand at normalization, so "and" cannot be reinserted —
+the "and"-less form is the only key derivable from stored text, and migration 0043 merges the
+word-ful rows into it with the same machinery as 0042. The drop runs *before* the article strip so
+a leading "And" mirrors a leading "&" ("And The X" → "the x" → "x"). A name that is only the word
+("And") keeps it — a key never empties. Same accepted-quirk shape as "A-ha": the fold is keying
+only, display names keep their spelling, and a false merge needs two real artists in one library
+distinguished only by an "and" word.
+
 ## Consequences
 
 - Album and Track identity keys embed the artist key as a prefix; migration 0042 rewrites those
