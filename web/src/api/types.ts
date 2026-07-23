@@ -1150,6 +1150,10 @@ export interface AlbumRaw {
   /** Cover cache-bust token (newest fetched-cover timestamp); absent for a
    * local-only cover. Appended to the cover URL so a re-enriched cover reloads. */
   artworkVersion?: string;
+  /** Normalized release type from tags ("album", "single", "ep", …); absent
+   * (omitempty) when untagged. Non-album types render a badge so a Single that
+   * shares its title with an LP is tellable apart (ADR-0038). */
+  releaseType?: string;
   trackCount?: number;
   // Enrichment (issue 03): genres + status. hasArtwork above is true for a local
   // OR a fetched cover (local wins at serve time).
@@ -1172,6 +1176,9 @@ export interface Album {
   /** Cover cache-bust token (newest fetched-cover timestamp), or undefined for a
    * local-only cover — appended to the cover URL so a re-enriched cover reloads. */
   artworkVersion?: string;
+  /** Normalized release type from tags ("album", "single", "ep", …), "" when
+   * untagged. Non-album types render a badge (ADR-0038). */
+  releaseType: string;
   trackCount: number;
   /** Enriched genres, [] when un-enriched. */
   genres: string[];

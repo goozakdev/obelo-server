@@ -458,6 +458,7 @@ function normalizeAlbum(raw: AlbumRaw): Album {
     year: raw.year ?? 0,
     hasArtwork: raw.hasArtwork ?? false,
     artworkVersion: raw.artworkVersion,
+    releaseType: raw.releaseType ?? "",
     trackCount: raw.trackCount ?? 0,
     genres: raw.genres ?? [],
     enrichmentStatus: raw.enrichmentStatus,
