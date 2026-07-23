@@ -904,6 +904,13 @@ body {
 .browse-row .poster-title {
   white-space: normal;
 }
+/* Name + optional inline badge (BrowseRowData.badge) on one line. */
+.browse-row-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
 .browse-row-meta {
   display: flex;
   flex-direction: column;

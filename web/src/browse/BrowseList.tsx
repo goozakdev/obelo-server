@@ -42,6 +42,10 @@ export interface BrowseRowData {
   /** The secondary text under the name, shown in Detail only — year, overview,
    * genres, track count: whatever the kind already has in hand. */
   meta?: ReactNode;
+  /** An inline marker rendered beside the name in Detail AND List (which shows
+   * nothing else) — e.g. an Album's release-type badge, without which two
+   * same-titled releases are indistinguishable in List (ADR-0038). */
+  badge?: ReactNode;
 }
 
 export interface BrowseListProps<T> {
@@ -107,12 +111,15 @@ function BrowseRow({
           <div className="browse-row-thumb">{row.thumb}</div>
         )}
         <div className="browse-row-text">
-          <span
-            className="poster-title"
-            data-testid="poster-title"
-            title={row.name}
-          >
-            {row.name}
+          <span className="browse-row-name">
+            <span
+              className="poster-title"
+              data-testid="poster-title"
+              title={row.name}
+            >
+              {row.name}
+            </span>
+            {row.badge}
           </span>
           {mode === "detail" && row.meta && (
             <div className="browse-row-meta" data-testid="browse-row-meta">

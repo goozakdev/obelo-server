@@ -544,6 +544,25 @@ describe("Release-type badge (ADR-0038)", () => {
     expect(badges[0].closest("li")).toContainElement(screen.getByText("Rockin' the Suburbs"));
   });
 
+  it("keeps the badge beside the name in the List layout (names-only rows)", async () => {
+    getArtistAlbums.mockResolvedValue(suburbsAlbums);
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/artists/ar9"] },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("artist-detail")).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId("layout-list"));
+    expect(screen.getByTestId("album-grid")).toHaveAttribute("data-layout", "list");
+    const badges = screen.getAllByTestId("release-type-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("Single");
+    // Beside the single's name, not the LP's.
+    expect(badges[0].closest("li")).toContainElement(screen.getByText("Rockin' the Suburbs"));
+  });
+
   it("badges the Album detail header for a non-album type", async () => {
     getAlbumTracks.mockResolvedValue({
       album: { id: "al-single", artistId: "ar9", artistName: "Ben Folds", title: "Rockin' the Suburbs", year: 2001, hasArtwork: false, trackCount: 3, releaseType: "ep" },
