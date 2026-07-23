@@ -25,6 +25,8 @@ import (
 //                               tags but a shared album_artist → ONE Album
 //   (tagless) Pink Floyd/The Wall (1979)/05 - Brick.flac → PATH FALLBACK
 //   Radiohead FLAC track      → transcoded FLAC→AAC (codec the test profile lacks)
+//   Ben Folds LP + single     → SAME album title, different MusicBrainz release
+//                               groups → TWO Albums, badged by releaseType (ADR-0038)
 
 const musicRootRel = "music"
 
@@ -78,6 +80,29 @@ var musicClips = []musicClip{
 		// Tagless: identity must fall back to the Artist/Album (Year)/NN - Title path.
 		relPath: filepath.Join("Pink Floyd", "The Wall (1979)", "05 - Another Brick.mp3"),
 		tags:    nil,
+	},
+	{
+		// LP whose title single shares its (normalized) album title — the curly vs
+		// straight apostrophe is exactly the punctuation normalizeTitle collapses.
+		// The MusicBrainz release-group id must split the two (ADR-0038). FLAC so
+		// ffmpeg preserves the arbitrary Vorbis comment keys.
+		relPath: filepath.Join("Ben Folds", "Rockin' the Suburbs", "01 - Annie Waits.flac"),
+		tags: map[string]string{
+			"artist": "Ben Folds", "album_artist": "Ben Folds", "album": "Rockin’ the Suburbs",
+			"title": "Annie Waits", "track": "1/12", "date": "2001",
+			"musicbrainz_releasegroupid": "b110c311-9cd1-3a5e-82e2-6ab07a1665c7",
+			"releasetype":                "album",
+		},
+	},
+	{
+		// The title single: same normalized album title, different release group.
+		relPath: filepath.Join("Ben Folds", "Rockin' the Suburbs Single", "01 - Rockin' the Suburbs.flac"),
+		tags: map[string]string{
+			"artist": "Ben Folds", "album_artist": "Ben Folds", "album": "Rockin' the Suburbs",
+			"title": "Rockin' the Suburbs (radio edit)", "track": "1/3", "date": "2001",
+			"musicbrainz_releasegroupid": "1c45b7fd-f0fd-3a0d-87b0-8f1e4f5445b9",
+			"releasetype":                "single",
+		},
 	},
 }
 
@@ -142,12 +167,13 @@ type artistsListResp struct {
 }
 
 type albumResp struct {
-	ID         string `json:"id"`
-	ArtistID   string `json:"artistId"`
-	Title      string `json:"title"`
-	Year       int    `json:"year"`
-	HasArtwork bool   `json:"hasArtwork"`
-	TrackCount int    `json:"trackCount"`
+	ID          string `json:"id"`
+	ArtistID    string `json:"artistId"`
+	Title       string `json:"title"`
+	Year        int    `json:"year"`
+	HasArtwork  bool   `json:"hasArtwork"`
+	ReleaseType string `json:"releaseType"`
+	TrackCount  int    `json:"trackCount"`
 }
 
 type albumsListResp struct {
@@ -272,9 +298,10 @@ func TestMusicScanBuildsHierarchy(t *testing.T) {
 	srv, token, libID := scanMusicLibrary(t)
 
 	artists := listArtists(t, srv, token, libID)
-	// Three artists: Radiohead, Various Artists (compilation album_artist), Pink Floyd.
-	if len(artists.Artists) != 3 {
-		t.Fatalf("artists = %d, want 3; have: %+v", len(artists.Artists), artists.Artists)
+	// Four artists: Radiohead, Various Artists (compilation album_artist),
+	// Pink Floyd, Ben Folds (release-group split fixtures).
+	if len(artists.Artists) != 4 {
+		t.Fatalf("artists = %d, want 4; have: %+v", len(artists.Artists), artists.Artists)
 	}
 	for _, a := range artists.Artists {
 		if a.Kind != "artist" {
@@ -350,6 +377,48 @@ func TestMusicCompilationGrouping(t *testing.T) {
 	tracks := albumTracks(t, srv, token, va.Albums[0].ID)
 	if len(tracks.Tracks) != 2 {
 		t.Fatalf("Summer Hits tracks = %d, want 2", len(tracks.Tracks))
+	}
+}
+
+// TestMusicSameTitleReleasesSplit (album-release-identity, ADR-0038): an LP and
+// its title single share a normalized album title (apostrophe styles collapse)
+// but carry distinct MusicBrainz release-group ids — they must file as TWO
+// Albums with disjoint track lists, each labeled with its releaseType so the
+// client can badge the single.
+func TestMusicSameTitleReleasesSplit(t *testing.T) {
+	requireMusicFixtures(t)
+	srv, token, libID := scanMusicLibrary(t)
+
+	artists := listArtists(t, srv, token, libID)
+	bf := artistAlbums(t, srv, token, findArtist(t, artists, "Ben Folds"))
+	if len(bf.Albums) != 2 {
+		t.Fatalf("Ben Folds albums = %d, want 2 (LP + single split); have: %+v",
+			len(bf.Albums), bf.Albums)
+	}
+	var lp, single albumResp
+	for _, a := range bf.Albums {
+		switch a.ReleaseType {
+		case "album":
+			lp = a
+		case "single":
+			single = a
+		}
+	}
+	if lp.ID == "" || single.ID == "" {
+		t.Fatalf("expected one album + one single; have: %+v", bf.Albums)
+	}
+	if lp.TrackCount != 1 || single.TrackCount != 1 {
+		t.Errorf("trackCounts = %d/%d, want 1/1 (disjoint track lists)",
+			lp.TrackCount, single.TrackCount)
+	}
+	lpTracks := albumTracks(t, srv, token, lp.ID)
+	singleTracks := albumTracks(t, srv, token, single.ID)
+	if len(lpTracks.Tracks) != 1 || lpTracks.Tracks[0].Title != "Annie Waits" {
+		t.Errorf("LP tracks = %+v, want [Annie Waits]", lpTracks.Tracks)
+	}
+	if len(singleTracks.Tracks) != 1 ||
+		singleTracks.Tracks[0].Title != "Rockin' the Suburbs (radio edit)" {
+		t.Errorf("single tracks = %+v, want [Rockin' the Suburbs (radio edit)]", singleTracks.Tracks)
 	}
 }
 

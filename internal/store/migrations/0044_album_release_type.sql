@@ -1,0 +1,11 @@
+-- 0044_album_release_type: descriptive release type on Albums
+-- (.scratch/album-release-identity: issue 02, companion to ADR-0038). The
+-- scanner now reads the embedded release-type tag (Vorbis "releasetype" /
+-- ID3v2-MP4 "musicbrainz album type") and records the normalized primary type
+-- ('album', 'single', 'ep', 'compilation', …, '' when untagged) so the browse
+-- UI can badge a Single/EP that shares its title with an LP — the two now
+-- split into separate Albums (ADR-0038) and would otherwise render as
+-- identical twins. Display-only: identity uses the release-group id / type
+-- TIERS inside the identity_key, never this column. Existing rows backfill on
+-- the next music scan (tags are re-probed every scan).
+ALTER TABLE albums ADD COLUMN release_type TEXT NOT NULL DEFAULT '';

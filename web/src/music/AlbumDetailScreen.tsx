@@ -23,6 +23,7 @@ import EditItemDialog from "../admin/EditItemDialog";
 import { useAuth } from "../auth/session";
 import { formatTimecode } from "../time";
 import MusicShell from "./MusicShell";
+import { ReleaseTypeBadge, releaseTypeLabel } from "./ReleaseTypeBadge";
 import TrackActionsMenu from "./TrackActionsMenu";
 
 // The Album detail screen (tv-music issue 03 / PRD user story 27): GET
@@ -150,9 +151,13 @@ export default function AlbumDetailScreen() {
                   </Link>
                 </p>
               )}
-              {state.data.album.year > 0 && (
+              {(state.data.album.year > 0 ||
+                releaseTypeLabel(state.data.album.releaseType) !== "") && (
                 <div className="detail-meta">
-                  <span data-testid="album-year">{state.data.album.year}</span>
+                  {state.data.album.year > 0 && (
+                    <span data-testid="album-year">{state.data.album.year}</span>
+                  )}
+                  <ReleaseTypeBadge releaseType={state.data.album.releaseType} />
                 </div>
               )}
               {(state.data.album.genres ?? []).length > 0 && (

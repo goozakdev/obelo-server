@@ -43,6 +43,10 @@ type Album struct {
 	IdentityKey string
 	SortTitle   string
 	ArtworkPath string
+	// ReleaseType is the album's normalized primary release type from tags
+	// ("album", "single", "ep", …), "" when untagged. Descriptive only — the
+	// browse UI badges non-album types (migration 0044, ADR-0038).
+	ReleaseType string
 	Hidden      bool
 	AddedAt     string
 	// TrackCount is computed for the browse list (not stored).
@@ -67,6 +71,7 @@ type AlbumTree struct {
 	IdentityKey string
 	SortTitle   string
 	ArtworkPath string
+	ReleaseType string
 	Tracks      []TrackTree
 }
 
@@ -156,9 +161,9 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 	case errors.Is(err, sql.ErrNoRows):
 		albumID = uuid.NewString()
 		if _, err := tx.Exec(
-			`INSERT INTO albums (id, artist_id, title, year, identity_key, sort_title, artwork_path, hidden)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-			albumID, artistID, at.Title, nullableYear(at.Year), at.IdentityKey, at.SortTitle, at.ArtworkPath,
+			`INSERT INTO albums (id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+			albumID, artistID, at.Title, nullableYear(at.Year), at.IdentityKey, at.SortTitle, at.ArtworkPath, at.ReleaseType,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting album: %w", err)
 		}
@@ -166,8 +171,8 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 		return "", fmt.Errorf("store: resolving album: %w", err)
 	default:
 		if _, err := tx.Exec(
-			`UPDATE albums SET title = ?, year = ?, sort_title = ?, artwork_path = ?, hidden = 0 WHERE id = ?`,
-			at.Title, nullableYear(at.Year), at.SortTitle, at.ArtworkPath, albumID,
+			`UPDATE albums SET title = ?, year = ?, sort_title = ?, artwork_path = ?, release_type = ?, hidden = 0 WHERE id = ?`,
+			at.Title, nullableYear(at.Year), at.SortTitle, at.ArtworkPath, at.ReleaseType, albumID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating album: %w", err)
 		}
@@ -274,7 +279,7 @@ func (db *DB) AlbumsForArtist(artistID string) ([]Album, error) {
 	}
 	rows, err := db.Query(
 		`SELECT a.id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
-		        a.artwork_path, a.hidden, a.added_at,
+		        a.artwork_path, a.release_type, a.hidden, a.added_at,
 		        (SELECT COUNT(*) FROM titles t WHERE t.album_id = a.id AND t.hidden = 0) AS track_count
 		   FROM albums a WHERE a.artist_id = ? AND a.hidden = 0
 		  ORDER BY a.year ASC, a.sort_title ASC, a.id ASC`, artistID)
@@ -299,10 +304,10 @@ func (db *DB) AlbumByID(id string) (Album, error) {
 	var year sql.NullInt64
 	var hidden int
 	err := db.QueryRow(
-		`SELECT id, artist_id, title, year, identity_key, sort_title, artwork_path, hidden, added_at
+		`SELECT id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, added_at
 		   FROM albums WHERE id = ?`, id,
 	).Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey, &al.SortTitle,
-		&al.ArtworkPath, &hidden, &al.AddedAt)
+		&al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Album{}, ErrNotFound
 	}
@@ -471,7 +476,7 @@ func scanAlbum(s scanner) (Album, error) {
 	var year sql.NullInt64
 	var hidden int
 	if err := s.Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey,
-		&al.SortTitle, &al.ArtworkPath, &hidden, &al.AddedAt, &al.TrackCount); err != nil {
+		&al.SortTitle, &al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.TrackCount); err != nil {
 		return Album{}, err
 	}
 	if year.Valid {
