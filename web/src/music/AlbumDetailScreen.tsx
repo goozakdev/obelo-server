@@ -23,7 +23,7 @@ import EditItemDialog from "../admin/EditItemDialog";
 import { useAuth } from "../auth/session";
 import { formatTimecode } from "../time";
 import MusicShell from "./MusicShell";
-import { ReleaseTypeBadge, releaseTypeLabel } from "./ReleaseTypeBadge";
+import { ReleaseTypeBadge } from "./ReleaseTypeBadge";
 import TrackActionsMenu from "./TrackActionsMenu";
 
 // The Album detail screen (tv-music issue 03 / PRD user story 27): GET
@@ -136,6 +136,9 @@ export default function AlbumDetailScreen() {
               ) : (
                 <Poster titleId={state.data.album.id} title={state.data.album.title} />
               )}
+              {/* Pill on the cover itself, mirroring the Show poster's
+                  episode-count badge (top-right, accent). */}
+              <ReleaseTypeBadge releaseType={state.data.album.releaseType} />
             </div>
             <div className="detail-info">
               <h1 className="detail-title album-title" data-testid="album-title">
@@ -151,13 +154,9 @@ export default function AlbumDetailScreen() {
                   </Link>
                 </p>
               )}
-              {(state.data.album.year > 0 ||
-                releaseTypeLabel(state.data.album.releaseType) !== "") && (
+              {state.data.album.year > 0 && (
                 <div className="detail-meta">
-                  {state.data.album.year > 0 && (
-                    <span data-testid="album-year">{state.data.album.year}</span>
-                  )}
-                  <ReleaseTypeBadge releaseType={state.data.album.releaseType} />
+                  <span data-testid="album-year">{state.data.album.year}</span>
                 </div>
               )}
               {(state.data.album.genres ?? []).length > 0 && (
