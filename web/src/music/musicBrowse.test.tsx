@@ -223,6 +223,20 @@ describe("Artist detail", () => {
     expect(screen.getByTestId("artist-name")).toHaveTextContent("Radiohead");
   });
 
+  it("hides the alphabet jump bar on a short Album list", async () => {
+    // The default mock has a single album — well under MIN_LETTER_JUMP_ITEMS, so
+    // the bar is distracting chrome and stays hidden.
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/artists/ar1"] },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("album-grid")).toBeInTheDocument());
+    expect(screen.queryByTestId("letter-jump")).not.toBeInTheDocument();
+  });
+
   it("renders the alphabet jump bar and scrolls the Album wall by the article-stripped sort key", async () => {
     // jsdom doesn't implement scrollIntoView; capture the element it's called on.
     const originalScroll = Element.prototype.scrollIntoView;
@@ -232,9 +246,21 @@ describe("Artist detail", () => {
 
     // Albums as the server orders them (year, sort_title). "The Bends" buckets on
     // its sort key — the leading article is stripped, so it files under B, not T.
+    // Padded with A-sorting filler to clear MIN_LETTER_JUMP_ITEMS (the bar hides
+    // on short lists); the filler sorts before E so it never absorbs the E jump.
+    const filler = Array.from({ length: 21 }, (_, i) => ({
+      id: `al-fill-${i}`,
+      artistId: "ar1",
+      artistName: "Radiohead",
+      title: `Anthology ${String(i).padStart(2, "0")}`,
+      year: 1990,
+      hasArtwork: false,
+      trackCount: 1,
+    }));
     getArtistAlbums.mockResolvedValue({
       artist: { id: "ar1", kind: "artist", name: "Radiohead" },
       albums: [
+        ...filler,
         { id: "al-bends", artistId: "ar1", artistName: "Radiohead", title: "The Bends", year: 1995, hasArtwork: false, trackCount: 1 },
         { id: "al-ok", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 1 },
         { id: "al-kida", artistId: "ar1", artistName: "Radiohead", title: "Kid A", year: 2000, hasArtwork: false, trackCount: 1 },

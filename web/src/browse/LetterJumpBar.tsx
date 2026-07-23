@@ -3,6 +3,12 @@
 // (alphabetically ordered) list. Paired with useLetterJump, which owns the
 // scroll + on-demand paging. Rendered by the Movie/TV/Music library grids.
 
+// Below this many items the bar is noise: the whole list fits in a screenful or
+// two, so scrolling beats jumping and the bar just adds chrome. Screens that
+// know their full list length (e.g. the Artist detail's single-GET Album list)
+// skip rendering the bar under this count.
+export const MIN_LETTER_JUMP_ITEMS = 24;
+
 export interface LetterRange {
   label: string;
   /** Lower-case first letter of the range — the jump target passed to onJump. */

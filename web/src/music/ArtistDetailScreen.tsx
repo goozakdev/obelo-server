@@ -11,7 +11,7 @@ import DetailBackdrop from "../browse/DetailBackdrop";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
 import { useLetterJump, type LetterJumpPager } from "../browse/useLetterJump";
-import LetterJumpBar from "../browse/LetterJumpBar";
+import LetterJumpBar, { MIN_LETTER_JUMP_ITEMS } from "../browse/LetterJumpBar";
 import { useLayoutMode } from "../browse/browseLayout";
 import LayoutToggle from "../browse/LayoutToggle";
 import BrowseList, { type BrowseRowData } from "../browse/BrowseList";
@@ -207,7 +207,12 @@ export default function ArtistDetailScreen() {
           {state.data.albums.length > 0 && (
             <>
               <div className="grid-toolbar">
-                <LetterJumpBar onJump={jumpTo} />
+                {/* On a short discography the bar is distracting chrome — the list is
+                    scrolled faster than it's jumped. The full Album list is in hand
+                    (single GET), so the loaded length is the true count. */}
+                {state.data.albums.length >= MIN_LETTER_JUMP_ITEMS && (
+                  <LetterJumpBar onJump={jumpTo} />
+                )}
                 <div className="grid-controls">
                   <LayoutToggle mode={mode} onChange={setMode} />
                 </div>
