@@ -278,3 +278,13 @@
   color: var(--text-dim);
   font-size: 0.85rem;
 }
+
+/* Release-type badge ("Single", "EP", …): flat bordered text, no fill — the
+   wireframe take on a chip. Distinguishes a non-album release from a
+   same-titled LP after the identity split (ADR-0038). */
+.badge-release-type {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  font-weight: 500;
+}

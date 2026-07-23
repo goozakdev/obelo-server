@@ -93,10 +93,15 @@ type albumJSON struct {
 	// ArtworkVersion is the cover's cache-bust token (newest fetched-cover
 	// timestamp), or "" for a local-only cover. The client appends it to the
 	// /albums/{id}/artwork URL so a re-enriched cover reloads in place. Omitempty.
-	ArtworkVersion   string   `json:"artworkVersion,omitempty"`
-	Genres           []string `json:"genres,omitempty"`
-	EnrichmentStatus string   `json:"enrichmentStatus,omitempty"`
-	TrackCount       int      `json:"trackCount"`
+	ArtworkVersion string   `json:"artworkVersion,omitempty"`
+	Genres         []string `json:"genres,omitempty"`
+	// ReleaseType is the album's normalized release type from tags ("album",
+	// "single", "ep", …), absent when untagged. Clients badge non-album types
+	// so a Single that shares its title with an LP is tellable apart
+	// (album-release-identity/02, ADR-0038).
+	ReleaseType      string `json:"releaseType,omitempty"`
+	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
+	TrackCount       int    `json:"trackCount"`
 	// Edit-item surface (item-editing/02): on the Album DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
@@ -109,12 +114,13 @@ type albumsResponse struct {
 
 func toAlbumJSON(a store.Album) albumJSON {
 	return albumJSON{
-		ID:         a.ID,
-		ArtistID:   a.ArtistID,
-		Title:      a.Title,
-		Year:       a.Year,
-		HasArtwork: a.ArtworkPath != "",
-		TrackCount: a.TrackCount,
+		ID:          a.ID,
+		ArtistID:    a.ArtistID,
+		Title:       a.Title,
+		Year:        a.Year,
+		HasArtwork:  a.ArtworkPath != "",
+		ReleaseType: a.ReleaseType,
+		TrackCount:  a.TrackCount,
 	}
 }
 

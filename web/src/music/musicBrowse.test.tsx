@@ -515,3 +515,60 @@ describe("Track detail context", () => {
     expect(screen.getByTestId("play-button")).toBeEnabled();
   });
 });
+
+describe("Release-type badge (ADR-0038)", () => {
+  // An LP and its title single now split into two Albums; the badge is what
+  // tells the entries apart. A plain album renders no badge.
+  const suburbsAlbums: ArtistAlbums = {
+    artist: { id: "ar9", kind: "artist", name: "Ben Folds" },
+    albums: [
+      { id: "al-lp", artistId: "ar9", artistName: "Ben Folds", title: "Rockin’ the Suburbs", year: 2001, hasArtwork: false, trackCount: 12, releaseType: "album" },
+      { id: "al-single", artistId: "ar9", artistName: "Ben Folds", title: "Rockin' the Suburbs", year: 2001, hasArtwork: false, trackCount: 3, releaseType: "single" },
+    ],
+  };
+
+  it("badges the single on the Artist's album wall, not the LP", async () => {
+    getArtistAlbums.mockResolvedValue(suburbsAlbums);
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/artists/:artistId" element={<ArtistDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/artists/ar9"] },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("artist-detail")).toBeInTheDocument());
+    const badges = screen.getAllByTestId("release-type-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("Single");
+    // The badge sits on the single's tile, not the LP's.
+    expect(badges[0].closest("li")).toContainElement(screen.getByText("Rockin' the Suburbs"));
+  });
+
+  it("badges the Album detail header for a non-album type", async () => {
+    getAlbumTracks.mockResolvedValue({
+      album: { id: "al-single", artistId: "ar9", artistName: "Ben Folds", title: "Rockin' the Suburbs", year: 2001, hasArtwork: false, trackCount: 3, releaseType: "ep" },
+      tracks: [],
+    });
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/albums/:albumId" element={<AlbumDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/albums/al-single"] },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("album-detail")).toBeInTheDocument());
+    expect(screen.getByTestId("release-type-badge")).toHaveTextContent("EP");
+  });
+
+  it("renders no badge for a plain or untagged album", async () => {
+    renderWithAuth(
+      <Routes>
+        <Route path="/music/albums/:albumId" element={<AlbumDetailScreen />} />
+      </Routes>,
+      { initialEntries: ["/music/albums/al1"] },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("album-detail")).toBeInTheDocument());
+    expect(screen.queryByTestId("release-type-badge")).toBeNull();
+  });
+});

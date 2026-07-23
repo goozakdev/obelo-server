@@ -152,13 +152,18 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 				IdentityKey: id.AlbumKey,
 				SortTitle:   sortTitle(albumTitle),
 				ArtworkPath: albumArt[filepath.Dir(path)],
+				ReleaseType: id.ReleaseType,
 			}
 			acc.albums[id.AlbumKey] = at
 			acc.order = append(acc.order, id.AlbumKey)
 		}
-		// A later track of the album may carry the year / artwork the first lacked.
+		// A later track of the album may carry the year / artwork / release type
+		// the first lacked.
 		if at.Year == 0 && id.AlbumYear != 0 {
 			at.Year = id.AlbumYear
+		}
+		if at.ReleaseType == "" {
+			at.ReleaseType = id.ReleaseType
 		}
 		if at.ArtworkPath == "" {
 			if art := albumArt[filepath.Dir(path)]; art != "" {

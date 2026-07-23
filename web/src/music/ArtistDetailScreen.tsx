@@ -20,6 +20,7 @@ import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadata
 import EditItemDialog from "../admin/EditItemDialog";
 import { useAuth } from "../auth/session";
 import MusicShell from "./MusicShell";
+import { ReleaseTypeBadge } from "./ReleaseTypeBadge";
 
 // The Artist detail screen (tv-music issue 03 / PRD user story 26): GET
 // /artists/{id}/albums rendered as the Artist header + a grid of its Albums in
@@ -334,7 +335,13 @@ function albumMeta(album: Album): ReactNode {
   if (album.trackCount > 0) {
     bits.push(`${album.trackCount} ${album.trackCount === 1 ? "track" : "tracks"}`);
   }
-  return bits.length > 0 ? <span>{bits.join(" · ")}</span> : null;
+  const badge = <ReleaseTypeBadge releaseType={album.releaseType} />;
+  if (bits.length === 0) return badge;
+  return (
+    <span>
+      {bits.join(" · ")} {badge}
+    </span>
+  );
 }
 
 // AlbumTile is an album card linking to the Album detail (its track list). When
@@ -367,6 +374,7 @@ function AlbumTile({ album }: { album: Album }) {
             {album.title}
           </span>
           {album.year > 0 && <span className="poster-year">{album.year}</span>}
+          <ReleaseTypeBadge releaseType={album.releaseType} />
         </div>
       </Link>
     </li>

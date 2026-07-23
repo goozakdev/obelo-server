@@ -44,6 +44,12 @@ type MusicIdentity struct {
 	Track int
 	// Genre is the "genre" tag, "" when absent (descriptive only).
 	Genre string
+	// ReleaseType is the album's normalized primary release type from the
+	// release-type tag ("album", "single", "ep", "compilation", …), "" when
+	// untagged. Descriptive: the browse UI badges non-album types
+	// (album-release-identity/02); identity uses the tag via the AlbumKey
+	// tiers (ADR-0038), never this field.
+	ReleaseType string
 	// ArtistKey / AlbumKey / TrackKey are the stable dedup keys (normalized) used
 	// to re-resolve the same Artist / Album / Track across rescans (ADR-0014). The
 	// Album key includes the AlbumArtist so two artists' same-named albums
@@ -203,6 +209,7 @@ func MusicIdentityFromTags(tags map[string]string, path string) (MusicIdentity, 
 		Disc:        disc,
 		Track:       track,
 		Genre:       genre,
+		ReleaseType: releaseTypeTag(tags),
 		FromTags:    fromTags,
 	}
 	id.ArtistKey = artistIdentityKey(albumArtist)
