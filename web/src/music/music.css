@@ -279,12 +279,37 @@
   font-size: 0.85rem;
 }
 
-/* Release-type badge ("Single", "EP", …): flat bordered text, no fill — the
-   wireframe take on a chip. Distinguishes a non-album release from a
-   same-titled LP after the identity split (ADR-0038). */
+/* Release-type badge ("Single", "EP", …): distinguishes a non-album release
+   from a same-titled LP after the identity split (ADR-0038). In a text row
+   (the artist page's Detail/List layouts) it is flat bordered text, the
+   wireframe take on a chip. */
 .badge-release-type {
   background: transparent;
   color: var(--text-dim);
   border: 1px solid var(--border-strong);
   font-weight: 500;
+}
+
+/* On cover artwork (album wall tile, album detail hero) it becomes the accent
+   pill the Show poster's episode-count badge uses: absolute top-right on the
+   image. .poster-frame .badge already positions top-left; flip to the right
+   and pick up the accent fill. The .music-theme scope out-ranks that base rule
+   regardless of stylesheet order (else its left: 0.5rem pins both edges and
+   stretches the pill across the tile). */
+.music-theme .poster-frame .badge-release-type,
+.music-theme .detail-poster .badge-release-type {
+  position: absolute;
+  top: 0.5rem;
+  left: auto;
+  right: 0.5rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  font-weight: 600;
+}
+
+/* Anchor for the hero-cover pill (the shared .detail-poster is not
+   positioned); scoped to the music shell so Movie/TV heroes are untouched. */
+.music-theme .detail-poster {
+  position: relative;
 }

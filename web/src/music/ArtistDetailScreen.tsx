@@ -368,13 +368,15 @@ function AlbumTile({ album }: { album: Album }) {
           ) : (
             <Poster titleId={album.id} title={album.title} />
           )}
+          {/* Pill on the artwork itself, mirroring the Show poster's
+              episode-count badge (top-right, accent). */}
+          <ReleaseTypeBadge releaseType={album.releaseType} />
         </div>
         <div className="poster-caption">
           <span className="poster-title" data-testid="poster-title" title={album.title}>
             {album.title}
           </span>
           {album.year > 0 && <span className="poster-year">{album.year}</span>}
-          <ReleaseTypeBadge releaseType={album.releaseType} />
         </div>
       </Link>
     </li>
