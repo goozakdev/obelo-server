@@ -74,6 +74,18 @@ var trackFilePrefixRe = regexp.MustCompile(`^\s*\d{1,3}\s*[-_.) ]+\s*`)
 // e.g. "Greatest Hits (2021)" → album "Greatest Hits", year 2021.
 var albumFolderYearRe = regexp.MustCompile(`^(.*?)[\s_]*\((19\d{2}|20\d{2})\)\s*$`)
 
+// artistIdentityKey is the Artist grouping key for an album-artist name. On top
+// of normalizeTitle it is ARTICLE-INSENSITIVE: a leading "the "/"an "/"a " word
+// is stripped AFTER normalization, so "The Smashing Pumpkins" and "Smashing
+// Pumpkins" (two tag spellings of one band) resolve to ONE Artist rather than
+// splitting the discography across two rows (ADR-0037). Stripping after
+// normalization — unlike sortTitle, which strips from the raw name — makes the
+// new key derivable from the stored key text alone, which migration 0042 relies
+// on to merge pre-existing rows without re-probing any file.
+func artistIdentityKey(albumArtist string) string {
+	return "artist:" + stripLeadingArticle(normalizeTitle(albumArtist))
+}
+
 // MusicIdentityFromTags derives the music identity of one audio file from its
 // extracted tags, falling back to the file's path layout
 // (`Artist/Album (Year)/NN - Title.ext`) for any field the tags do not supply
@@ -167,7 +179,7 @@ func MusicIdentityFromTags(tags map[string]string, path string) (MusicIdentity, 
 		Genre:       genre,
 		FromTags:    fromTags,
 	}
-	id.ArtistKey = "artist:" + normalizeTitle(albumArtist)
+	id.ArtistKey = artistIdentityKey(albumArtist)
 	// Album identity is (album artist, album title) ONLY — deliberately NOT the
 	// year. A compilation ("Greatest Hits") commonly tags each track with its
 	// original release year, so embedding the year here would split one album into
@@ -229,7 +241,7 @@ func MusicIdentityFromTagsWithOverride(tags map[string]string, path string, ov *
 	id.Album = ov.Album
 	id.AlbumYear = ov.Year
 	id.FromTags = true // an Admin-confirmed match is never needs-review
-	id.ArtistKey = "artist:" + normalizeTitle(id.AlbumArtist)
+	id.ArtistKey = artistIdentityKey(id.AlbumArtist)
 	// A distinct "album-override:" namespace on the override's identity_key keeps
 	// the corrected Album from colliding with any tag-derived AlbumKey.
 	id.AlbumKey = id.ArtistKey + "|album-override:" + ov.Key
