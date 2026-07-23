@@ -386,3 +386,103 @@ func TestArtistKeyAndInsensitive(t *testing.T) {
 		t.Errorf("AlbumArtist = %q, display must keep the word", id.AlbumArtist)
 	}
 }
+
+// TestMusicReleaseGroupIdentity (album-release-identity/01, ADR-0038): an LP and
+// its title single share an album title — punctuation aside, "Rockin’ the
+// Suburbs" and "Rockin' the Suburbs" normalize identically — but carry distinct
+// MusicBrainz release-group ids. The rgid IS the album identity when present, so
+// the two releases file as TWO Albums instead of one interleaved track list.
+func TestMusicReleaseGroupIdentity(t *testing.T) {
+	lp, ok1 := MusicIdentityFromTags(map[string]string{
+		"artist": "Ben Folds", "album_artist": "Ben Folds",
+		"album": "Rockin’ the Suburbs", "title": "Annie Waits", "track": "1",
+		"musicbrainz_releasegroupid": "B110C311-9CD1-3A5E-82E2-6AB07A1665C7",
+		"releasetype":                "album",
+	}, "/m/Ben Folds/Rockin’ the Suburbs/01 Annie Waits.flac")
+	single, ok2 := MusicIdentityFromTags(map[string]string{
+		"artist": "Ben Folds", "album_artist": "Ben Folds",
+		"album": "Rockin' the Suburbs", "title": "Rockin' the Suburbs (radio edit)", "track": "1",
+		"musicbrainz_releasegroupid": "1c45b7fd-f0fd-3a0d-87b0-8f1e4f5445b9",
+		"releasetype":                "single",
+	}, "/m/Ben Folds/Rockin' the Suburbs/01 Rockin' the Suburbs (radio edit).flac")
+	if !ok1 || !ok2 {
+		t.Fatal("expected both tracks to resolve")
+	}
+	if lp.ArtistKey != single.ArtistKey {
+		t.Errorf("ArtistKey split: %q vs %q (same artist)", lp.ArtistKey, single.ArtistKey)
+	}
+	if lp.AlbumKey == single.AlbumKey {
+		t.Errorf("LP and single share AlbumKey %q (distinct release groups must split)", lp.AlbumKey)
+	}
+	// The rgid is the key (case-folded), not the title.
+	if want := lp.ArtistKey + "|album-mbrg:b110c311-9cd1-3a5e-82e2-6ab07a1665c7"; lp.AlbumKey != want {
+		t.Errorf("LP AlbumKey = %q, want %q", lp.AlbumKey, want)
+	}
+
+	// Two tracks of ONE release group group together regardless of folder or
+	// album-tag spelling — the rgid overrides the normalized title entirely.
+	other, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "Ben Folds", "album_artist": "Ben Folds",
+		"album": "Rockin the Suburbs", "title": "Zak and Sara", "track": "2",
+		"musicbrainz_releasegroupid": "b110c311-9cd1-3a5e-82e2-6ab07a1665c7",
+	}, "/elsewhere/02 Zak and Sara.flac")
+	if other.AlbumKey != lp.AlbumKey {
+		t.Errorf("same release group split: %q vs %q", other.AlbumKey, lp.AlbumKey)
+	}
+}
+
+// TestMusicReleaseTypeIdentity: with NO MusicBrainz ids, a release-type tag
+// still splits an LP from a same-titled single/EP. The primary type is the
+// first value of a multi-valued tag, and the ID3v2 spelling ("MusicBrainz
+// Album Type", lower-cased by collectTags) reads the same as the Vorbis one.
+func TestMusicReleaseTypeIdentity(t *testing.T) {
+	lp, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "X", "album_artist": "X",
+		"album": "Doppelganger", "title": "One", "track": "1",
+		"releasetype": "album",
+	}, "/m/X/Doppelganger/01 One.flac")
+	single, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "X", "album_artist": "X",
+		"album": "Doppelganger", "title": "One (edit)", "track": "1",
+		"releasetype": "single",
+	}, "/m/X/Doppelganger Single/01 One (edit).flac")
+	if lp.AlbumKey == single.AlbumKey {
+		t.Errorf("album/single share AlbumKey %q (release types must split)", lp.AlbumKey)
+	}
+	if want := lp.ArtistKey + "|album:doppelganger|type:album"; lp.AlbumKey != want {
+		t.Errorf("LP AlbumKey = %q, want %q", lp.AlbumKey, want)
+	}
+
+	// Multi-valued tag: the primary (first) type keys.
+	multi, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "X", "album_artist": "X",
+		"album": "Doppelganger", "title": "Two", "track": "2",
+		"releasetype": "Album; Compilation",
+	}, "/m/X/Doppelganger/02 Two.flac")
+	if multi.AlbumKey != lp.AlbumKey {
+		t.Errorf("multi-valued releasetype keyed %q, want %q (primary type)", multi.AlbumKey, lp.AlbumKey)
+	}
+
+	// ID3v2/MP4 spelling groups with the Vorbis spelling.
+	id3, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "X", "album_artist": "X",
+		"album": "Doppelganger", "title": "Three", "track": "3",
+		"musicbrainz album type": "album",
+	}, "/m/X/Doppelganger/03 Three.mp3")
+	if id3.AlbumKey != lp.AlbumKey {
+		t.Errorf("id3v2 spelling keyed %q, want %q", id3.AlbumKey, lp.AlbumKey)
+	}
+}
+
+// TestMusicAlbumKeyStableWithoutReleaseTags: files carrying neither a
+// release-group id nor a release type key EXACTLY as before this change — an
+// untagged library sees zero identity churn on rescan.
+func TestMusicAlbumKeyStableWithoutReleaseTags(t *testing.T) {
+	id, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "Radiohead", "album_artist": "Radiohead",
+		"album": "OK Computer", "title": "Airbag", "track": "1",
+	}, "/m/Radiohead/OK Computer/01 Airbag.flac")
+	if want := "artist:radiohead|album:ok computer"; id.AlbumKey != want {
+		t.Errorf("AlbumKey = %q, want %q (pre-change shape)", id.AlbumKey, want)
+	}
+}
