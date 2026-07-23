@@ -326,6 +326,9 @@ function albumToRow(album: Album): BrowseRowData {
       </div>
     ),
     meta: albumMeta(album),
+    // Beside the name in Detail AND List — List shows nothing else, and two
+    // same-titled releases (ADR-0038) must stay tellable apart there.
+    badge: <ReleaseTypeBadge releaseType={album.releaseType} />,
   };
 }
 
@@ -335,13 +338,7 @@ function albumMeta(album: Album): ReactNode {
   if (album.trackCount > 0) {
     bits.push(`${album.trackCount} ${album.trackCount === 1 ? "track" : "tracks"}`);
   }
-  const badge = <ReleaseTypeBadge releaseType={album.releaseType} />;
-  if (bits.length === 0) return badge;
-  return (
-    <span>
-      {bits.join(" · ")} {badge}
-    </span>
-  );
+  return bits.length > 0 ? <span>{bits.join(" · ")}</span> : null;
 }
 
 // AlbumTile is an album card linking to the Album detail (its track list). When
