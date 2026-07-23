@@ -211,9 +211,63 @@ func MusicIdentityFromTags(tags map[string]string, path string) (MusicIdentity, 
 	// original release year, so embedding the year here would split one album into
 	// one-per-year. The year stays a descriptive field (Album.Year) for display +
 	// sorting, resolved from the album's tracks during tree assembly.
-	id.AlbumKey = id.ArtistKey + "|album:" + normalizeTitle(album)
+	//
+	// Same-titled releases (an LP and its title single, whose album tags may
+	// differ only in punctuation normalizeTitle strips) are disambiguated by the
+	// tags' own release identity when present (ADR-0038): an embedded MusicBrainz
+	// release-group id IS the album identity — the music analogue of the Movie
+	// "embedded external id wins" rule (identityKey, identity.go) — and failing
+	// that, a release-type tag joins the title key so an LP and a single still
+	// split. Files with neither tag key exactly as before (zero key churn).
+	switch rgid, relType := releaseGroupID(tags), releaseTypeTag(tags); {
+	case rgid != "":
+		id.AlbumKey = id.ArtistKey + "|album-mbrg:" + rgid
+	case relType != "":
+		id.AlbumKey = id.ArtistKey + "|album:" + normalizeTitle(album) + "|type:" + relType
+	default:
+		id.AlbumKey = id.ArtistKey + "|album:" + normalizeTitle(album)
+	}
 	id.TrackKey = id.AlbumKey + "|d" + pad2(disc) + "t" + pad2(track) + ":" + normalizeTitle(title)
 	return id, true
+}
+
+// releaseGroupID returns the file's MusicBrainz release-group id, lower-cased,
+// "" when untagged. The key spelling varies by container: Vorbis comments
+// (FLAC/OGG) surface as "musicbrainz_releasegroupid", ID3v2 TXXX frames (MP3)
+// and MP4 freeform atoms as "musicbrainz release group id" (collectTags already
+// lower-cased both).
+func releaseGroupID(tags map[string]string) string {
+	for _, k := range []string{"musicbrainz_releasegroupid", "musicbrainz release group id"} {
+		if v := strings.TrimSpace(tags[k]); v != "" {
+			return strings.ToLower(v)
+		}
+	}
+	return ""
+}
+
+// releaseTypeTag returns the file's normalized primary release type ("album",
+// "single", "ep", "compilation", …), "" when untagged. Reads the Vorbis
+// "releasetype" comment and its ID3v2/MP4 spelling "musicbrainz album type".
+// The tag may be multi-valued ("album; compilation" / "album/compilation");
+// the primary type is the first value.
+func releaseTypeTag(tags map[string]string) string {
+	for _, k := range []string{"releasetype", "musicbrainz album type"} {
+		if v := tags[k]; v != "" {
+			return primaryReleaseType(v)
+		}
+	}
+	return ""
+}
+
+// primaryReleaseType reduces a release-type tag to its first value, normalized
+// (lower-cased, punctuation collapsed): "Album; Compilation" → "album".
+func primaryReleaseType(s string) string {
+	for _, sep := range []string{";", "/", ","} {
+		if i := strings.Index(s, sep); i >= 0 {
+			s = s[:i]
+		}
+	}
+	return normalizeTitle(s)
 }
 
 // AlbumOverride is the corrected Album identity from a folder-keyed Match
