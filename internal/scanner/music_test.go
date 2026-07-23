@@ -271,3 +271,67 @@ func TestMusicIdentityNilOverrideUnchanged(t *testing.T) {
 		t.Errorf("nil override changed the result:\n got %+v (%v)\nwant %+v (%v)", b, bok, a, aok)
 	}
 }
+
+// TestArtistKeyArticleInsensitive: "The Smashing Pumpkins" and "Smashing
+// Pumpkins" are two tag spellings of ONE band — their ArtistKeys (and album-key
+// prefixes) must match so the discography files under a single Artist
+// (ADR-0037). Sorting already stripped articles (sortTitle); identity now
+// applies the same rule.
+func TestArtistKeyArticleInsensitive(t *testing.T) {
+	the, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "The Smashing Pumpkins", "album_artist": "The Smashing Pumpkins",
+		"album": "Siamese Dream", "title": "Cherub Rock", "track": "1",
+	}, "/m/The Smashing Pumpkins/Siamese Dream/01.flac")
+	bare, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "Smashing Pumpkins", "album_artist": "Smashing Pumpkins",
+		"album": "Siamese Dream", "title": "Quiet", "track": "2",
+	}, "/m/Smashing Pumpkins/Siamese Dream/02.flac")
+	if the.ArtistKey != bare.ArtistKey {
+		t.Errorf("article spellings split the artist: %q vs %q", the.ArtistKey, bare.ArtistKey)
+	}
+	if the.ArtistKey != "artist:smashing pumpkins" {
+		t.Errorf("ArtistKey = %q, want artist:smashing pumpkins", the.ArtistKey)
+	}
+	if the.AlbumKey != bare.AlbumKey {
+		t.Errorf("article spellings split the album: %q vs %q", the.AlbumKey, bare.AlbumKey)
+	}
+	// Display fields keep the article — only the KEY is article-insensitive.
+	if the.AlbumArtist != "The Smashing Pumpkins" {
+		t.Errorf("AlbumArtist = %q, display must keep the article", the.AlbumArtist)
+	}
+
+	// "An"/"A" strip too, and exactly ONE article strips ("The A Team" → "a team",
+	// not double-stripped to "team").
+	an, _ := MusicIdentityFromTags(map[string]string{
+		"album_artist": "An Emerald City", "artist": "An Emerald City",
+		"album": "X", "title": "Y",
+	}, "/m/a.mp3")
+	if an.ArtistKey != "artist:emerald city" {
+		t.Errorf("ArtistKey = %q, want artist:emerald city", an.ArtistKey)
+	}
+	once, _ := MusicIdentityFromTags(map[string]string{
+		"album_artist": "The A Team", "artist": "The A Team",
+		"album": "X", "title": "Y",
+	}, "/m/b.mp3")
+	if once.ArtistKey != "artist:a team" {
+		t.Errorf("ArtistKey = %q, want artist:a team (single strip only)", once.ArtistKey)
+	}
+
+	// A band NAMED for an article survives: "The The" keeps its trailing word and
+	// a bare "The" (no following word) is untouched.
+	thethe, _ := MusicIdentityFromTags(map[string]string{
+		"album_artist": "The The", "artist": "The The", "album": "X", "title": "Y",
+	}, "/m/c.mp3")
+	if thethe.ArtistKey != "artist:the" {
+		t.Errorf("ArtistKey = %q, want artist:the", thethe.ArtistKey)
+	}
+
+	// The override path composes ArtistKey identically (same helper).
+	ovID, _ := MusicIdentityFromTagsWithOverride(map[string]string{
+		"album_artist": "The Smashing Pumpkins", "artist": "The Smashing Pumpkins",
+		"album": "Adore", "title": "Ava Adore",
+	}, "/m/d.mp3", &AlbumOverride{Album: "Adore", Year: 1998, Key: "adore-key"})
+	if ovID.ArtistKey != "artist:smashing pumpkins" {
+		t.Errorf("override ArtistKey = %q, want artist:smashing pumpkins", ovID.ArtistKey)
+	}
+}
