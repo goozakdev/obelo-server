@@ -75,15 +75,41 @@ var trackFilePrefixRe = regexp.MustCompile(`^\s*\d{1,3}\s*[-_.) ]+\s*`)
 var albumFolderYearRe = regexp.MustCompile(`^(.*?)[\s_]*\((19\d{2}|20\d{2})\)\s*$`)
 
 // artistIdentityKey is the Artist grouping key for an album-artist name. On top
-// of normalizeTitle it is ARTICLE-INSENSITIVE: a leading "the "/"an "/"a " word
-// is stripped AFTER normalization, so "The Smashing Pumpkins" and "Smashing
-// Pumpkins" (two tag spellings of one band) resolve to ONE Artist rather than
-// splitting the discography across two rows (ADR-0037). Stripping after
-// normalization — unlike sortTitle, which strips from the raw name — makes the
-// new key derivable from the stored key text alone, which migration 0042 relies
-// on to merge pre-existing rows without re-probing any file.
+// of normalizeTitle it folds two spelling families that split one band into two
+// rows (ADR-0037):
+//   - "AND"-INSENSITIVE: every standalone "and" word is dropped, joining the
+//     spellings normalizeTitle already collapses ("&", "+") — so "Marina and
+//     the Diamonds" and "Marina & the Diamonds" resolve to ONE Artist;
+//   - ARTICLE-INSENSITIVE: a leading "the "/"an "/"a " word is then stripped,
+//     so "The Smashing Pumpkins" and "Smashing Pumpkins" resolve to ONE Artist.
+//
+// Both folds apply AFTER normalization — unlike sortTitle, which strips from
+// the raw name — so the new key is derivable from the stored key text alone,
+// which migrations 0042/0043 rely on to merge pre-existing rows without
+// re-probing any file. The "and" drop runs first: it can expose a leading
+// article ("And The X" → "the x" → "x"), mirroring how "& The X" normalizes.
 func artistIdentityKey(albumArtist string) string {
-	return "artist:" + stripLeadingArticle(normalizeTitle(albumArtist))
+	name := stripAndWords(normalizeTitle(albumArtist))
+	return "artist:" + stripLeadingArticle(name)
+}
+
+// stripAndWords drops every standalone "and" word from an already-normalized
+// (lower-cased, single-spaced) name. normalizeTitle collapses "&" and "+" to a
+// space but the WORD "and" survives it, so the two spellings of one band keyed
+// apart; dropping the word folds them together (ADR-0037 amendment, migration
+// 0043). A name consisting ONLY of "and" is kept whole — a key never empties.
+func stripAndWords(s string) string {
+	fields := strings.Fields(s)
+	kept := fields[:0]
+	for _, f := range fields {
+		if f != "and" {
+			kept = append(kept, f)
+		}
+	}
+	if len(kept) == 0 || len(kept) == len(fields) {
+		return s
+	}
+	return strings.Join(kept, " ")
 }
 
 // MusicIdentityFromTags derives the music identity of one audio file from its

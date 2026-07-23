@@ -335,3 +335,54 @@ func TestArtistKeyArticleInsensitive(t *testing.T) {
 		t.Errorf("override ArtistKey = %q, want artist:smashing pumpkins", ovID.ArtistKey)
 	}
 }
+
+// TestArtistKeyAndInsensitive: "Marina and the Diamonds" and "Marina & the
+// Diamonds" are two tag spellings of ONE artist. normalizeTitle already drops
+// "&"/"+" as punctuation; the standalone word "and" is dropped from the key too
+// so all three spellings converge (ADR-0037 amendment).
+func TestArtistKeyAndInsensitive(t *testing.T) {
+	key := func(albumArtist string) string {
+		t.Helper()
+		id, ok := MusicIdentityFromTags(map[string]string{
+			"artist": albumArtist, "album_artist": albumArtist,
+			"album": "The Family Jewels", "title": "Hollywood",
+		}, "/m/x.mp3")
+		if !ok {
+			t.Fatalf("no identity for %q", albumArtist)
+		}
+		return id.ArtistKey
+	}
+
+	want := "artist:marina the diamonds"
+	for _, spelling := range []string{
+		"Marina and the Diamonds",
+		"Marina & the Diamonds",
+		"Marina + the Diamonds",
+	} {
+		if got := key(spelling); got != want {
+			t.Errorf("key(%q) = %q, want %q", spelling, got, want)
+		}
+	}
+
+	// The drop runs before the article strip, so a leading "And" mirrors a
+	// leading "&": "And The X" → "the x" → "x".
+	if got := key("And The Ones"); got != "artist:ones" {
+		t.Errorf("key(And The Ones) = %q, want artist:ones", got)
+	}
+	// "And One" (a real band): the word drops wherever it appears.
+	if got := key("And One"); got != "artist:one" {
+		t.Errorf("key(And One) = %q, want artist:one", got)
+	}
+	// A name that is ONLY the word keeps it — a key never empties.
+	if got := key("And"); got != "artist:and" {
+		t.Errorf("key(And) = %q, want artist:and", got)
+	}
+	// Display fields are untouched — only the key folds.
+	id, _ := MusicIdentityFromTags(map[string]string{
+		"artist": "Marina and the Diamonds", "album_artist": "Marina and the Diamonds",
+		"album": "Electra Heart", "title": "Primadonna",
+	}, "/m/y.mp3")
+	if id.AlbumArtist != "Marina and the Diamonds" {
+		t.Errorf("AlbumArtist = %q, display must keep the word", id.AlbumArtist)
+	}
+}

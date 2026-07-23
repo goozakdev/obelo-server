@@ -47,7 +47,7 @@ All main video files in a movie folder belong to the one Title. They are sorted 
 For music, **embedded tags are the identity authority**, not the path (see amended [ADR-0002](./adr/0002-naming-convention-is-identity-authority.md)). Tags are local and offline — just a different local source than the filename.
 
 - **Identity from tags:** Artist, Album, Album Artist, Disc #, Track #, Track title come from ID3v2 / Vorbis comments / MP4 atoms.
-- **Grouping:** **Album Artist** (falling back to Artist) groups Albums, so compilations and "Various Artists" albums file correctly under one Album rather than fragmenting per track artist. Grouping is article-insensitive: "The Smashing Pumpkins" and "Smashing Pumpkins" are one Artist ([ADR-0037](./adr/0037-artist-identity-is-article-insensitive.md)).
+- **Grouping:** **Album Artist** (falling back to Artist) groups Albums, so compilations and "Various Artists" albums file correctly under one Album rather than fragmenting per track artist. Grouping is article- and "and"/"&"-insensitive: "The Smashing Pumpkins" = "Smashing Pumpkins", "Marina and the Diamonds" = "Marina & the Diamonds" — one Artist each ([ADR-0037](./adr/0037-artist-identity-is-article-insensitive.md)).
 - **Path is fallback only** — when tags are missing, the scanner falls back to `Artist/Album (Year)/NN - Title.ext` folder/filename parsing.
 
 ## Co-located assets: subtitles and artwork
