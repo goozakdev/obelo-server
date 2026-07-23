@@ -70,12 +70,24 @@
   line-height: 1.1;
 }
 
+/* Music detail heroes have no 16:9 backdrop, so drop the shared min-height
+   (index.css sizes `.detail-hero` to a TV/Movie backdrop's height, which on wide
+   screens stretches the album header and opens a big gap above the track list). */
+.music-theme .detail-hero {
+  min-height: 0;
+}
+
 /* ── Album track list ──────────────────────────────────────────────────────
    Each row is a 4-column grid: [number/play] [title+artist] [length] [actions],
    vertically centered. The number cell becomes a play/pause control on hover (or
    always, for the now-playing track); the title/artist column takes the slack. */
 .music-theme .track-listing {
-  margin-top: 2rem;
+  margin-top: 4rem;
+  /* Track rows are short (number / title / length); capping the width keeps the
+     length and actions columns near the titles instead of flung to the far edge.
+     Auto inline margins center the capped list under the header. */
+  max-width: 48rem;
+  margin-inline: auto;
 }
 
 .music-theme .track-list {
