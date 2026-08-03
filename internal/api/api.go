@@ -260,6 +260,27 @@ func Handler(deps Deps) http.Handler {
 	// support; DELETE {id} is the clean stop.
 	mux.HandleFunc("/sessions/", handleSessionSubtree(deps))
 
+	// GET /stream/{streamToken}/stream and /stream/{streamToken}/hls/{file}: the
+	// SAME session media as the /sessions/{id}/… routes above, authenticated by a
+	// session-scoped stream token carried in the URL PATH
+	// (.scratch/session-stream-tokens). It exists for the player that hands the URL
+	// to somebody else and lets THEM fetch it — an AirPlay receiver is a television
+	// that will set no Authorization header and carry no ms_media cookie.
+	//
+	// The token is in the PATH and not a query parameter, and that is not a style
+	// choice: every playlist this server emits uses bare relative URIs, which a
+	// player resolves against the playlist URL with the query string DISCARDED — so
+	// "?token=" would authenticate the manifest and 401 every segment under it. The
+	// path prefix carries down to the segments for free, so ZERO playlist bytes
+	// change. See stream_routes.go before "tidying" this into a query parameter; the
+	// breakage only shows on a real receiver.
+	//
+	// GET only, and the method is checked before the token so the refusal cannot be
+	// used as a validity oracle. Auth lives inside the dispatcher rather than in a
+	// middleware because this credential answers a dead token with an
+	// existence-hiding 404, not the 401 the bearer/cookie middlewares produce.
+	mux.HandleFunc("/stream/", handleStreamTokenSubtree(deps))
+
 	// Collections (collections-playlists 01): Admin-curated, shared groupings of
 	// Titles. Writes (POST/PUT/DELETE on the Collection and its items) are Admin
 	// scope; reads (GET list/detail) are any authenticated User. A `/collections`

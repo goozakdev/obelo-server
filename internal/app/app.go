@@ -476,6 +476,18 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			eventType = events.TypeNowPlaying
 		case playback.SessionEnded:
 			eventType = events.TypeSessionEnded
+			// Session end IS revocation for stream tokens
+			// (.scratch/session-stream-tokens): the credential a client may have handed
+			// to a television dies with the stream it authorised. It hangs off this
+			// observer rather than off the DELETE handler precisely because the idle
+			// reaper fires the SAME event — so an abandoned session cannot leave a live
+			// credential behind, and there is one revocation path instead of two that
+			// can drift. Failure is logged, not fatal: the token's own TTL is the
+			// backstop, and there is nobody to report a failure to (the reaper has no
+			// caller, and the DELETE has already succeeded).
+			if err := authSvc.RevokeStreamTokens(e.SessionID); err != nil {
+				log.Printf("juicebox: revoking stream tokens for ended session %s: %v", e.SessionID, err)
+			}
 		default:
 			return
 		}

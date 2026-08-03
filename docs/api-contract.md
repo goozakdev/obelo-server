@@ -6,7 +6,7 @@ The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-uni
 
 **Reading this catalog:**
 - Every path lives under **`/api/v1`** (`APIPrefix`, `internal/api/api.go`). The prefix is stripped before dispatch; unknown paths under it return the enveloped `404 NOT_FOUND`, never a plain-text 404.
-- Each endpoint is tagged **[Public]** (any authenticated User), **[Admin]** (requires `role: "admin"`), or **[Unauthenticated]**.
+- Each endpoint is tagged **[Public]** (any authenticated User), **[Admin]** (requires `role: "admin"`), or **[Unauthenticated]**. Two routes carry a fourth tag, **[Stream token]** — they take no bearer and no cookie, only the session-scoped media credential in their path (§Auth, [ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)).
 - **An Apple TV / native client needs only the [Public] endpoints** plus `/server`, `/setup`, `/auth/*`, `/devices`. The [Admin] scope is used only by the management web app (ADR-0010).
 
 ---
@@ -38,13 +38,23 @@ Every JSON body is capped at **1 MiB** and decoded with **unknown fields rejecte
 
 ### Authentication
 
-Three credential transports, each honored only where stated:
+Four credential transports, each honored only where stated:
 
 1. **Bearer token** (the universal credential): `Authorization: Bearer <token>`. The token is **opaque and DB-backed** — validated on every request, so revocation (logout, device delete) is immediate ([ADR-0015](./adr/0015-opaque-db-backed-tokens.md)). Every endpoint accepts it. When bearer and another credential are both present, bearer wins. Auth failures set `WWW-Authenticate: Bearer` and return `401 UNAUTHORIZED`.
 2. **`ms_media` cookie** (media/browser credential): carries the *same* opaque token. Set by `POST /auth/login` (`HttpOnly`, `SameSite=Lax`, `Path=/api/v1`, 30-day MaxAge, `Secure` only when the request arrived over TLS), cleared by `POST /auth/logout`. Honored **only** by the read-only media/stream GETs and the SSE stream — exactly: `GET /titles/{id}/artwork/{role}`, `GET /titles/{id}/subtitles/{subId}.vtt`, `GET /shows/{id}/artwork/{role}`, `GET /seasons/{id}/artwork/{role}`, `GET /artists/{id}/artwork/{role}`, `GET /albums/{id}/artwork`, `GET /people/{personRef}/artwork/{role}`, `GET /sessions/{id}/stream`, `GET /sessions/{id}/hls/*`, `GET /events`. No JSON/mutation endpoint honors it.
 3. **`?token=` query param**: honored by **exactly one** endpoint — `GET /files/{id}/download` (external players fed a `.xspf` can send neither header nor cookie). The URL-borne token is an accepted tradeoff there; it is still DB-validated and revocable.
+4. **Stream token** — the **third media credential**, alongside the bearer and the `ms_media` cookie ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). A separate secret, carried in the URL **path**, honored **only** by the two routes built for it: `GET /stream/{streamToken}/stream` and `GET /stream/{streamToken}/hls/{file}`. Gated by the **`streamToken`** feature flag. Its scope is the whole point of it, so state it in the same breath as the mechanism:
+   - **One session.** It authorises the media artifacts of exactly one Playback session — not the JSON API, not metadata, not another session, not another User's session.
+   - **Read-only.** It reaches only GET media routes; a non-GET is `405` before the token is even examined. There is no token-authenticated progress report, session delete, or mint.
+   - **Expiring.** 4 hours from minting, reported as `streamTokenExpiresAt`.
+   - **Revoked by `DELETE /sessions/{id}`** — and by the idle reaper, which is the same cascade. Whichever comes first, the token or the session, kills both.
+   - **Not an account token.** It is a different table and a different lookup: a stream token is refused as a bearer everywhere, and a bearer pasted into the path is refused here. Minting one always requires a bearer.
+
+   Obtained from a Decision (`streamToken` + `streamTokenExpiresAt`, §3.6) or minted on demand with `POST /sessions/{id}/stream-token`. It exists for the player that **hands the URL to somebody else** — an AirPlay receiver, a cast target, a smart-TV app — where the fetching party is software we do not own, cannot be made to send an `Authorization` header, and may or may not carry a cookie depending on an OS and a firmware we do not control.
 
 **Native clients (Apple TV / libmpv):** the tvOS client plays through **libmpv**, whose HTTP layer (ffmpeg) can attach arbitrary headers to every media request — so a native client simply sends **`Authorization: Bearer <token>` on media requests too** (mpv: `http-header-fields`), and needs neither the cookie nor `?token=`. The `ms_media` cookie exists for players that *cannot* set headers — the browser's `<video>`/`<img>`/`EventSource` (and it would equally serve an AVPlayer-based client via cookie injection). Do not put `?token=` on stream/HLS URLs — the server only accepts it on `/files/{id}/download`.
+
+**The stream token does not soften that refusal — it is what removed the need to bend it.** The two are different credentials in different places, and the distinction is the entire reason one is allowed in a URL and the other is not. `?token=` carries the **account** bearer: permanent (there is no `expires_at` on it), authorising every read and every mutation in the API, for as long as the Device lives. That is why it is confined to a single read-only download route, and why no media route accepts it — a URL is logged by this server, by any proxy, and by whatever fetches it, and an account credential must not be in one. A stream token is scoped to one session's bytes, read-only by construction, expiring, and revoked with its session, so the same URL exposure costs one film for one sitting instead of an account. **A client that needs a self-authenticating media URL uses a stream token; it never puts `?token=` on a stream or HLS URL.**
 
 **Bootstrap** ([ADR-0013](./adr/0013-first-admin-claim-token-bootstrap.md)): `GET /server` reports `setupRequired: true` while zero Users exist; the server logs a **claim token** at boot; `POST /setup` with `{claimToken, username, password}` creates the first Admin. Setup does *not* log you in — call `/auth/login` after.
 
@@ -121,7 +131,7 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
     "watchState": true, "home": true, "search": true, "collections": true,
     "playlists": true, "realtimeEvents": true, "deviceAuth": true,
-    "mediaCookieRefresh": true, "transcode": false
+    "mediaCookieRefresh": true, "streamToken": true, "transcode": false
   },
   "setupRequired": false
 }
@@ -452,13 +462,16 @@ Negotiates a Capability profile → picks a tier ([ADR-0003](./adr/0003-three-ti
                    "language"?, "forced": false, "label": "English",
                    "url"?: "/api/v1/titles/{id}/subtitles/{subId}.vtt",
                    "format"?: "vtt|srt|ass" } ],
-  "estimatedBitrate": 112023
+  "estimatedBitrate": 112023,
+  "streamToken"?: "opaque-256-bit-secret",
+  "streamTokenExpiresAt"?: "2026-08-03T14:00:00Z"
 }
 ```
 
 - `tier` ∈ `directPlay | directStream | transcode`.
 - `streamUrl`: **directPlay** → `/sessions/{id}/stream` (progressive byte-range); **directStream/transcode** → `/sessions/{id}/hls/master.m3u8` when the session has demuxed audio renditions or deliverable text subtitles, else `/sessions/{id}/hls/index.m3u8` ([ADR-0004](./adr/0004-hls-for-adaptive-progressive-for-direct-play.md)).
 - `videoStream` **omitted for an audio-only Decision** — a music Track, or any File whose only video Stream is cover art ([ADR-0017](./adr/0017-audio-only-playback-path.md)). Test the field's **presence**, not its contents: it is absent, never a zero value. (It formerly marshalled as `{"index":0,"codec":""}` on every Track — present but empty, so `if (d.videoStream)` was true for audio-only and clients had to sniff the empty codec. That shape is gone; a client still carrying such a workaround can drop it once it no longer talks to an older server.) The `videoStreams` list is unaffected — it was already `[]` for a Track and stays a present empty list.
+- `streamToken` / `streamTokenExpiresAt` — the session's **stream token** and its expiry ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)), minted with the session so handing a media URL to a receiver is one request rather than two. Gated by `features.streamToken`. Both are `omitempty` and must be treated as **optional**: they are absent on a server predating this slice, and absent on this one if the mint failed — the session is still playable over the bearer or the cookie, so a mint hiccup omits the fields rather than failing a negotiation the client can act on. The token substitutes into the path routes below (**not** into `streamUrl`, which stays the session-id form for the bearer/cookie paths): `/api/v1/stream/{streamToken}/stream` for a `directPlay` decision, `/api/v1/stream/{streamToken}/hls/{the same artifact streamUrl names}` for an HLS one. Scope, expiry, and revocation are in §Auth; treat the value as a secret — never display it, never log it.
 - `audioStream` omitted only for a silent File. Subtitle `url` present only for text tracks ([ADR-0020](./adr/0020-subtitle-delivery-in-band-hls-out-of-band-track-image-burn-in.md)); image tracks burn in via `burnSubtitleId`. `format` names what the `url` serves ([ADR-0033](./adr/0033-original-format-subtitle-delivery-negotiated-by-capability.md)): when `deviceProfile.textSubtitleFormats` declares the track's **original** format (`srt`/`ass`, aliases `subrip`/`ssa` fold), the url points at the original bytes — ASS styling intact — else at the WebVTT conversion. Embedded `mov_text` is always WebVTT-only.
 
 Errors:
@@ -473,7 +486,14 @@ Errors:
 | `GET /sessions/{id}/stream` — [Public] | bearer **or cookie** | Progressive bytes; `Range`/`If-Range`/HEAD supported; `200`/`206`. Foreign/ended session → `404`. Seek = byte range; no new decision needed. |
 | `GET /sessions/{id}/hls/{file}` — [Public] | bearer **or cookie** | HLS artifacts: `master.m3u8`; `index.m3u8` + `NNN.ts`/`.m4s` + `init.mp4` (video); `audio_{streamId}.m3u8` + `audio_{streamId}_NNN.ts`/`.m4s` + `audio_{streamId}_init.mp4`; `subs_{subId}.m3u8` + `subs_{subId}_NNN.vtt` (4s cadence). Content types: `application/vnd.apple.mpegurl`, `video/mp2t`, `video/mp4`, `text/vtt`. Playlists are `Cache-Control: no-cache`. Errors: `404` `"session media unavailable"` / `"segment not available"`. |
 | `POST /sessions/{id}/progress` — [Public] | bearer only | `{ "positionMs": 123456, "state": "playing|paused|buffering", "audioStreamId"?, "videoStreamId"? }` every ~10–15s → `200` `{ "titleId", "resumePositionMs", "watched" }`. **Doubles as keepalive** — an idle session is reaped (FFmpeg killed, scratch deleted, cap slot freed). `audioStreamId` records an in-band audio pick as the Remembered audio ([ADR-0023](./adr/0023-per-user-audio-memory-two-level-language-keyed.md)); `videoStreamId` is its video mirror for players that switch video tracks in-container without re-negotiating (libmpv on direct play — records the Remembered video, ADR-0025). Unknown ids are ignored, best-effort. |
-| `DELETE /sessions/{id}` — [Public] | bearer only | Clean stop → `204`. **Takes no body** — report the final position via a last `/progress` POST before deleting. |
+| `DELETE /sessions/{id}` — [Public] | bearer only | Clean stop → `204`. **Takes no body** — report the final position via a last `/progress` POST before deleting. **Also revokes the session's stream tokens**, in the same cascade the idle reaper fires. |
+| `POST /sessions/{id}/stream-token` — [Public] | **bearer only** | Re-mints the session's stream token ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). No body → `201` `{ "streamToken", "streamTokenExpiresAt", "expiresIn": 14400 }` — the same two field names the Decision uses, so a client has one name for the value however it obtained it, plus `expiresIn` in seconds so it can schedule a re-mint without trusting its clock against the server's. Gated by `features.streamToken`. For a client that decides to AirPlay long after negotiating: cheaper than re-negotiating a stream already playing. **Bearer only** — deliberately not the cookie and never a stream token, so a credential already handed to a television cannot extend its own life. Unknown, ended, or another User's session → `404` `"session not found"` (never `403`). |
+| `GET /stream/{streamToken}/stream` — [Stream token] | **stream token in the path, no bearer, no cookie** | The same progressive bytes as `GET /sessions/{id}/stream`, for the same session — `Range`/`If-Range`, `200`/`206`, `Accept-Ranges: bytes`, content type sniffed from the File. **No session id in the URL: the token identifies the session.** |
+| `GET /stream/{streamToken}/hls/{file}` — [Stream token] | **stream token in the path, no bearer, no cookie** | The same HLS artifacts, named identically to the session-id route: `master.m3u8`, `index.m3u8`, `NNN.ts`/`.m4s`, `init.mp4`, `audio_{streamId}*`, `subs_{subId}*`. Content types: `*.m3u8` → `application/vnd.apple.mpegurl` (+ `Cache-Control: no-cache`); `.ts` → `video/mp2t`; `.m4s`/`.mp4` → `video/mp4`; `.vtt` → `text/vtt; charset=utf-8`. Byte-identical to what the bearer path serves — no playlist is rewritten. |
+
+**Both `/stream/…` routes are GET-only and answer every refusal identically.** A non-GET is `405 METHOD_NOT_ALLOWED` with `Allow: GET`, refused **before** the token is examined (otherwise the difference between `405` and `404` would be a token-validity oracle). Every credential or path failure — unknown token, expired token, a token whose session was revoked, an account bearer pasted into the path, a malformed path, an unknown artifact — is one byte-identical `404 { "error": { "code": "NOT_FOUND", "message": "session not found" } }`, with **no** `WWW-Authenticate` header. That is the same envelope a wrong-User fetch on `/sessions/{id}/stream` already produces, and it is deliberate: a refusal that told the cases apart would confirm which tokens are real.
+
+**The token rides in the path, not a query string** ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). Every playlist this server emits uses **bare relative URIs** (`000.ts`, `#EXT-X-MAP:URI="init.mp4"`, `audio_7.m3u8`), and a player resolves those against the playlist's URL **with the query string discarded** — so `?token=` would authenticate the manifest and fail every segment beneath it, while a path prefix carries down for free and not one playlist byte changes. Do not "tidy" a stream-token URL into a query parameter: it passes any test that only fetches a manifest and breaks on a real player.
 
 A new decision is required only when constraints change (e.g. bandwidth drop → lower `maxBitrate`) or a different video Stream is selected.
 

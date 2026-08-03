@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/marioquake/juicebox/internal/api"
 	"github.com/marioquake/juicebox/internal/app"
 	"github.com/marioquake/juicebox/internal/config"
 	"github.com/marioquake/juicebox/internal/discovery"
@@ -71,8 +72,14 @@ func run() error {
 	}
 
 	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           application.Handler,
+		Addr: cfg.ListenAddr,
+		// The access log lives here, around the fully composed handler, rather than
+		// inside app.New: the test harness serves application.Handler directly, so the
+		// suite is not drowned in a line per HLS segment. api.LogRequests redacts the
+		// two URLs that carry a credential — the stream token in
+		// /stream/{streamToken}/… and the ?token= on the direct-file download — because
+		// a request logger is the most likely way either reaches a file on disk.
+		Handler:           api.LogRequests(application.Handler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
