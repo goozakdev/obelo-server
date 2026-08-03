@@ -87,6 +87,11 @@ docker run --rm -p 8080:8080 \
 - **Your media** — mount anywhere read-only; you'll point libraries at these
   paths from the web UI.
 
+Want native clients to **find the server** instead of being handed an address?
+Run it with `--network host` instead of `-p` — mDNS is link-local multicast and
+does not cross a Docker bridge. See
+[`docker/README.md`](./docker/README.md#lan-discovery-bonjour-_juicebox_tcp).
+
 Building on Apple Silicon still produces a `linux/amd64` image (the Go binary is
 pure-Go and cross-compiles). If your Docker can't run amd64 locally, use buildx:
 
@@ -178,6 +183,8 @@ All configuration is via `JUICEBOX_*` environment variables. Common ones:
 | `JUICEBOX_THEAUDIODB_API_KEY`        | —         | Adds artist images + biographies from TheAudioDB.              |
 | `JUICEBOX_OPENSUBTITLES_API_KEY`     | —         | Enables on-demand subtitle fetching.                           |
 | `JUICEBOX_METADATA_LANGUAGE`         | `en-US`   | Preferred language/region for fetched metadata.               |
+| `JUICEBOX_ADVERTISE_IP`              | auto      | IPs to publish in the mDNS records (comma-separated).          |
+| `JUICEBOX_MDNS_INTERFACE`            | auto      | Interface the mDNS responder listens on (e.g. `eth0`).         |
 
 Provider keys and language seed the database only on **first boot** — afterward
 you manage providers from the admin settings UI (no restart needed). Juice Box

@@ -148,6 +148,7 @@ TXT:      txtvers=1  id=<uuid>  name=<display name>  path=/api/v1
 Verify with `dns-sd -B _juicebox._tcp local` / `dns-sd -L "<name>" _juicebox._tcp local`.
 
 - **TXT is a hint, not a contract** (RFC 6763). Confirm everything against `GET /server` once connected; `id`/`name` appear in both, and the handshake is authoritative.
+- **The SRV target is always a `.local` name**, and its A/AAAA records carry the server host's own LAN addresses, most-likely-reachable first. Resolve and try them in order. (Servers predating the 2026-08-02 amendment to ADR-0034 could advertise a single-label host name that only unicast DNS would answer, and in a container often advertised nothing at all.)
 - **A discovered server is always plain `http`.** The server binds plain HTTP and a TLS-terminating reverse proxy is by definition not on the local link, so no scheme is advertised.
 - **Discovery is LAN-only, permanently.** mDNS is link-local by construction: a reverse-proxied or VPN-reachable instance is not discoverable and never will be. **Manual address entry is the permanent path for remote access, not a stopgap** — every client needs it.
 - **Advertisement is best-effort.** A server that failed to register still serves normally; it just has to be addressed manually. Absence of a Bonjour record is not evidence the server is down — use `GET /server`, the cheapest liveness probe.

@@ -84,6 +84,23 @@ type Config struct {
 	// reason).
 	ServerName string
 
+	// AdvertiseIPs overrides the addresses published in the mDNS A/AAAA records
+	// (ADR-0034). Empty — the normal case — means the server discovers its own
+	// link-capable interface addresses. Set it when that guess is wrong: an
+	// unusual bridge topology, or a multi-homed host that should only be found on
+	// one segment.
+	AdvertiseIPs []string
+
+	// MDNSInterface pins the network interface the mDNS responder listens on, and
+	// restricts the advertised addresses to that interface's own. Empty — the
+	// normal case — lets the kernel pick the default multicast interface.
+	//
+	// Set it on a Docker host, where that default is frequently docker0 rather
+	// than the LAN NIC: the responder then joins the multicast group on a bridge
+	// nobody queries and never sees the query, which looks exactly like a server
+	// that is not running.
+	MDNSInterface string
+
 	// ScanInterval is how often the always-on scheduled scan re-walks every
 	// Library as the safety net for changes manual/filesystem triggers missed
 	// (ADR-0008). The scheduled scan is incremental, so an unchanged library is
@@ -446,6 +463,11 @@ func (c Config) SubtitleCacheDir() string {
 //	JUICEBOX_DATA_DIR       -> DataDir
 //	JUICEBOX_SERVER_NAME    -> ServerName (the Server identity's display name,
 //	                               ADR-0034; empty derives one from the hostname)
+//	JUICEBOX_ADVERTISE_IP   -> AdvertiseIPs (comma-separated IPs to publish in the
+//	                               mDNS records; empty auto-discovers them)
+//	JUICEBOX_MDNS_INTERFACE -> MDNSInterface (an interface name, e.g. "eth0", to
+//	                               pin the mDNS responder to; empty uses the
+//	                               system default multicast interface)
 //	JUICEBOX_SCAN_INTERVAL  -> ScanInterval (a Go duration, e.g. "30m";
 //	                               "0" disables the scheduled scan)
 //	JUICEBOX_SESSION_IDLE_TIMEOUT -> SessionIdleTimeout (a Go duration, e.g.
@@ -484,6 +506,19 @@ func FromEnv() Config {
 	}
 	if v := os.Getenv("JUICEBOX_SERVER_NAME"); v != "" {
 		c.ServerName = v
+	}
+	if v := os.Getenv("JUICEBOX_ADVERTISE_IP"); v != "" {
+		// Split only; the addresses are parsed where they are used, so a typo is
+		// reported as "not a valid IP address" in the boot log rather than
+		// silently dropped here.
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				c.AdvertiseIPs = append(c.AdvertiseIPs, part)
+			}
+		}
+	}
+	if v := os.Getenv("JUICEBOX_MDNS_INTERFACE"); v != "" {
+		c.MDNSInterface = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("JUICEBOX_SCAN_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
