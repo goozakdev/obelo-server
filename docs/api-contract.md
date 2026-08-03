@@ -17,7 +17,7 @@ The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-uni
 
 - **REST-ish JSON over HTTP**, resource-oriented, **camelCase** field names.
 - **Versioning via URL path** — `/api/v1/…`. One integer major version. Additive changes (new fields/endpoints) never bump it; only breaking changes mint `/api/v2`, and the server may serve both during a transition.
-- **Handshake** — `GET /server` returns server version, supported API versions, and a **feature-flags** map. Clients branch on feature flags, not version strings. A flag means "this server serves these routes"; `TestFeaturesMatchRoutes` holds the map to that meaning by probing the routes. The one exception is **`transcode`**, which advertises the transcode *delivery tier* rather than a route, and currently reads `false` pending resolution from the ffmpeg backend.
+- **Handshake** — `GET /server` returns server version, supported API versions, and a **feature-flags** map. Clients branch on feature flags, not version strings. A flag means "this server serves these routes"; `TestFeaturesMatchRoutes` holds the map to that meaning by probing the routes. The one exception is **`transcode`**, which advertises the transcode *delivery tier* rather than a route: it is computed at startup from whether this host has a usable ffmpeg ([ADR-0040](./adr/0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)), so it is the one flag two identical builds can disagree about. `true` means the `directStream`/`transcode` half of negotiation can actually run here; `false` means this deployment has no working ffmpeg, so **only direct play works** — hide the affordance rather than offer it and collect a `500`. A client that cannot direct-play a File should read a `false` flag as "unplayable on this server" rather than negotiate. Note this is orthogonal to `/transcoding`, the admin observability snapshot ([ADR-0029](./adr/0029-transcoding-observability-admin-surface.md)), which is served either way.
 - **Success content type**: `application/json; charset=utf-8`, except `204 No Content` (empty body) and the media byte endpoints (images, video, HLS artifacts, WebVTT).
 
 ### Error envelope
@@ -83,7 +83,6 @@ The **server** applies the threshold, never the client: crossing ~**90%** of dur
 
 - **No `GET /sessions` collection** — only per-session sub-resources exist. An Admin session list is a known follow-up; the admin-only session SSE events are deliverable without it.
 - The SSE stream sends **no `id:` lines, no `retry:` hint, and no heartbeat** beyond the initial `: connected` comment — clients must rely on EventSource/HTTP-level reconnect and treat every event as a refetch nudge (each maps to a pollable resource).
-- The `transcode` flag is hardcoded `false` rather than computed from the resolved ffmpeg backend, so a server that can transcode still does not advertise it. Unlike the other flags it is not route-existence — `/transcoding` (the ADR-0029 admin snapshot) is served either way.
 
 ---
 
@@ -131,11 +130,13 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
     "watchState": true, "home": true, "search": true, "collections": true,
     "playlists": true, "realtimeEvents": true, "deviceAuth": true,
-    "mediaCookieRefresh": true, "streamToken": true, "transcode": false
+    "mediaCookieRefresh": true, "streamToken": true, "transcode": true
   },
   "setupRequired": false
 }
 ```
+
+Every flag above reads `true` on a normally-provisioned server. `transcode` is the one that legitimately varies by host — it reads `false` on a deployment with no usable ffmpeg (see the handshake note in Part 1).
 
 `id` and `name` are the **Server identity** ([ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). Both are `omitempty` and both are **additive** — a server predating ADR-0034 omits them, so treat them as optional rather than as an error.
 
@@ -484,7 +485,7 @@ Errors:
 | Endpoint | Auth | Notes |
 | --- | --- | --- |
 | `GET /sessions/{id}/stream` — [Public] | bearer **or cookie** | Progressive bytes; `Range`/`If-Range`/HEAD supported; `200`/`206`. Foreign/ended session → `404`. Seek = byte range; no new decision needed. |
-| `GET /sessions/{id}/hls/{file}` — [Public] | bearer **or cookie** | HLS artifacts: `master.m3u8`; `index.m3u8` + `NNN.ts`/`.m4s` + `init.mp4` (video); `audio_{streamId}.m3u8` + `audio_{streamId}_NNN.ts`/`.m4s` + `audio_{streamId}_init.mp4`; `subs_{subId}.m3u8` + `subs_{subId}_NNN.vtt` (4s cadence). Content types: `application/vnd.apple.mpegurl`, `video/mp2t`, `video/mp4`, `text/vtt`. Playlists are `Cache-Control: no-cache`. Errors: `404` `"session media unavailable"` / `"segment not available"`. |
+| `GET /sessions/{id}/hls/{file}` — [Public] | bearer **or cookie** | HLS artifacts: `master.m3u8`; `index.m3u8` + `NNN.ts`/`.m4s` + `init.mp4` (video); `audio_{streamId}.m3u8` + `audio_{streamId}_NNN.ts`/`.m4s` + `audio_{streamId}_init.mp4`; `subs_{subId}.m3u8` + `subs_{subId}_NNN.vtt` (4s cadence). Content types: `application/vnd.apple.mpegurl`, `video/mp2t`, `video/mp4`, `text/vtt`. Playlists are `Cache-Control: no-cache`. Errors: `404` `"session media unavailable"` / `"segment not available"`; `500 INTERNAL` `"failed to serve HLS media"` when FFmpeg cannot be launched at all — which is what a server advertising `features.transcode: false` answers here, immediately rather than by hanging ([ADR-0040](./adr/0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)). |
 | `POST /sessions/{id}/progress` — [Public] | bearer only | `{ "positionMs": 123456, "state": "playing|paused|buffering", "audioStreamId"?, "videoStreamId"? }` every ~10–15s → `200` `{ "titleId", "resumePositionMs", "watched" }`. **Doubles as keepalive** — an idle session is reaped (FFmpeg killed, scratch deleted, cap slot freed). `audioStreamId` records an in-band audio pick as the Remembered audio ([ADR-0023](./adr/0023-per-user-audio-memory-two-level-language-keyed.md)); `videoStreamId` is its video mirror for players that switch video tracks in-container without re-negotiating (libmpv on direct play — records the Remembered video, ADR-0025). Unknown ids are ignored, best-effort. |
 | `DELETE /sessions/{id}` — [Public] | bearer only | Clean stop → `204`. **Takes no body** — report the final position via a last `/progress` POST before deleting. **Also revokes the session's stream tokens**, in the same cascade the idle reaper fires. |
 | `POST /sessions/{id}/stream-token` — [Public] | **bearer only** | Re-mints the session's stream token ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). No body → `201` `{ "streamToken", "streamTokenExpiresAt", "expiresIn": 14400 }` — the same two field names the Decision uses, so a client has one name for the value however it obtained it, plus `expiresIn` in seconds so it can schedule a re-mint without trusting its clock against the server's. Gated by `features.streamToken`. For a client that decides to AirPlay long after negotiating: cheaper than re-negotiating a stream already playing. **Bearer only** — deliberately not the cookie and never a stream token, so a credential already handed to a television cannot extend its own life. Unknown, ended, or another User's session → `404` `"session not found"` (never `403`). |

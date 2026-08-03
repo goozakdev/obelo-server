@@ -125,4 +125,4 @@ Resetting the data dir is the cheapest way back to a known state — cheaper tha
 - **HTTP on tvOS**: plain-HTTP LAN backends need an ATS exception (`NSAllowsLocalNetworking`) in the app's Info.plist.
 - The server binds plain HTTP; TLS is a reverse proxy's job in production. Testing the `Secure`-cookie path needs a proxy setting `X-Forwarded-Proto: https`.
 - Progress keepalive: an idle session is reaped after **90 s** (`JUICEBOX_SESSION_IDLE_TIMEOUT`); set it low (e.g. `10s`) to test the app's reaped-session recovery quickly.
-- The transcode tier needs ffmpeg on the server host (bundled in the Docker image; on macOS `brew install ffmpeg`).
+- The transcode tier needs ffmpeg on the server host (bundled in the Docker image; on macOS `brew install ffmpeg`). The server checks for it once at boot and reports the answer as `features.transcode` in the handshake ([ADR-0040](../../adr/0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)) — so if a harness is advertising `transcode: false`, ffmpeg is missing or unrunnable on that host, and the boot log line says which.

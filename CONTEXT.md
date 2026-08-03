@@ -210,7 +210,7 @@ Repackaging a File's container (or swapping a Stream) on the fly without re-enco
 _Avoid_: Remux (use as a parenthetical only).
 
 **Transcode**:
-Re-encoding video and/or audio in real time via FFmpeg so a client can play it.
+Re-encoding video and/or audio in real time via FFmpeg so a client can play it. Like Direct stream it needs a usable FFmpeg on the host, which is resolved once at startup and advertised to clients as the handshake's `transcode` feature flag ([ADR-0040](./docs/adr/0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)) — a deployment without one still serves Direct play and says so, rather than failing at the first playback. Distinct from the Transcode backend, which is *which* encoder a Transcode runs on and always has an answer (CPU).
 
 **Transcode backend** (bare: _backend_):
 The resolved video-encode path a Transcode runs on: **CPU** (libx264 — the always-available software fallback) or a hardware accelerator (**NVENC**, **VAAPI**, **QSV**, **VideoToolbox**). Resolved and validated once at startup from the operator's Requested backend ([ADR-0009](./docs/adr/0009-transcode-governance.md)), and exposed — with its requested-vs-active story — on the admin transcoding surface ([ADR-0029](./docs/adr/0029-transcoding-observability-admin-surface.md)). A single Playback session may fall back from a hardware backend to CPU on its own hardware-init failure, so a session's effective backend can differ from the server's active one.
