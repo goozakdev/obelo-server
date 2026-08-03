@@ -105,3 +105,48 @@ bug.
 - **`CONTEXT.md` gains the term _Server identity_.**
 - Multi-server clients become possible without further server work. Not built, not promised — just
   no longer blocked.
+
+## Amendment (2026-08-02) — the server picks its own addresses and host name
+
+The advertisement above shipped, and it did not work in Docker — the way most people run this
+server. Two defects, both from letting the mDNS library infer things from the OS.
+
+**1. The A record depended on the hostname resolving, and in a container it does not.** The
+library was handed an empty host name and a nil IP list, on the reasoning that it should resolve
+its own addresses ("correct for a multi-homed box, where hardcoding one interface's IP would
+advertise an address some clients cannot route to"). The reasoning was sound and the consequence
+was not: the library resolves `os.Hostname()` through the normal resolver to decide what to put
+in its A records, and Docker generates the container's own `/etc/hosts` with no entry for that
+name. The `<host>.local` fallback fails too, because nothing in the container speaks mDNS.
+`NewMDNSService` returns an error, advertisement is best-effort, and the server boots fine with
+**no discovery at all**. The operator sees "it works on my Mac, not on my server" and has nothing
+to go on. **The server now enumerates its own link-capable interfaces** — up, multicast-capable,
+not loopback, not a container/VM bridge — and publishes those addresses directly, ordered with
+the address the kernel would send from first. Nothing depends on name resolution inside the
+process's network namespace any more.
+
+**2. The SRV target was not in `.local`, so an Apple client could discover the server and then
+fail to resolve it.** `os.Hostname()` on Linux yields a bare `nuc`, which became the FQDN `nuc.`
+— a single-label name Apple's resolver hands to *unicast* DNS, where nothing answers. macOS hosts
+escaped this only because their hostname is already `something.local`. **The advertised host name
+is now always `<first label>.local.`**, sanitized to a legal DNS label, falling back to
+`juicebox.local.` when the OS name is unusable.
+
+Two escape hatches, both empty by default and neither needed on a bare-metal install:
+
+- **`JUICEBOX_ADVERTISE_IP`** (comma-separated) publishes exactly these addresses instead of the
+  discovered ones. Interface selection is a name-prefix heuristic (`docker*`, `br-*`, `veth*`,
+  `virbr*`, …) and heuristics are wrong sometimes; this is the way out. A malformed entry fails
+  the advertisement loudly rather than being dropped — an operator setting this knob is already
+  debugging, and a half-applied setting is the worst answer available.
+- **`JUICEBOX_MDNS_INTERFACE`** pins the responder's multicast listener to a named interface. The
+  library binds with no interface, leaving the kernel to pick "the default multicast interface"
+  from the routing table — on a Docker host that is frequently `docker0`, so the group membership
+  lands on a bridge nobody queries and the responder never *receives* the query. A correct A
+  record does not save you from this one; only pinning does.
+
+**The boot log now names the advertised host, addresses, and interface.** Discovery fails
+silently by nature — no client complains, nothing 500s — so the log line is the only place an
+operator can catch a wrong address before a client does.
+
+Unchanged: best-effort registration, the TXT record, the service type, and the LAN-only scope.

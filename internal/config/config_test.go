@@ -285,3 +285,23 @@ func TestEnrichTriggerConfig(t *testing.T) {
 		t.Errorf("enrich interval = %v, want 45m", c.EnrichInterval)
 	}
 }
+
+// TestDiscoveryOverridesFromEnv: the two mDNS escape hatches (ADR-0034). Both are
+// empty by default — a bare-metal install needs neither — and both exist for the
+// container case, where the host's own interfaces and the kernel's default
+// multicast interface are not what the responder should be using.
+func TestDiscoveryOverridesFromEnv(t *testing.T) {
+	if c := config.Defaults(); len(c.AdvertiseIPs) != 0 || c.MDNSInterface != "" {
+		t.Fatalf("defaults advertise %v via %q, want neither set", c.AdvertiseIPs, c.MDNSInterface)
+	}
+
+	t.Setenv("JUICEBOX_ADVERTISE_IP", " 192.168.1.50 , fd00::1 ,, ")
+	t.Setenv("JUICEBOX_MDNS_INTERFACE", " eth0 ")
+	c := config.FromEnv()
+	if len(c.AdvertiseIPs) != 2 || c.AdvertiseIPs[0] != "192.168.1.50" || c.AdvertiseIPs[1] != "fd00::1" {
+		t.Errorf("AdvertiseIPs = %v, want the two addresses, trimmed, empties dropped", c.AdvertiseIPs)
+	}
+	if c.MDNSInterface != "eth0" {
+		t.Errorf("MDNSInterface = %q, want %q", c.MDNSInterface, "eth0")
+	}
+}

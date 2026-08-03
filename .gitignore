@@ -34,8 +34,13 @@ node_modules/
 # Stray root-level binaries from `go build ./cmd/<name>` (the tracked build output
 # goes to /bin/, ignored above). `make keytool` writes to bin/keytool, but a bare
 # `go build ./cmd/keytool` drops ./keytool here.
-juicebox
-keytool
+#
+# ANCHORED, and it must stay that way: an unanchored `juicebox` matches the
+# DIRECTORY cmd/juicebox/ as well as the binary, which silently untracked both
+# entry points — `git ls-files cmd/` was empty and a fresh clone could not build
+# the server at all.
+/juicebox
+/keytool
 envelope.json
 
 .claude
