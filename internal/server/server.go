@@ -35,18 +35,39 @@ type UserCounter interface {
 	CountUsers() (int, error)
 }
 
+// Capabilities are the startup-resolved facts about THIS deployment that the
+// handshake advertises but that cannot be answered by "does the binary serve this
+// route" — the ones that depend on the host the server happens to be running on.
+// They are resolved once, before Metadata is built, and only read from here after:
+// Info() is the unauthenticated endpoint every client hits on connect, so it must
+// never probe anything (ADR-0009's setup-time posture, applied to the handshake).
+//
+// A zero Capabilities is the honest answer for a deployment where nothing
+// host-dependent resolved — every flag here is false-by-default and false means
+// "not available", never "unknown".
+type Capabilities struct {
+	// Transcode reports whether a usable ffmpeg was resolved at startup, and so
+	// whether the remux/transcode delivery tiers of ADR-0003 can run here at all.
+	// It comes from transcode.Availability; the server package deliberately takes
+	// the resolved bool rather than importing the transcode domain, keeping the
+	// handshake a thin advertiser of decisions made elsewhere (ADR-0006).
+	Transcode bool
+}
+
 // Metadata assembles handshake Info. It is the single source of truth for what
 // the server advertises.
 type Metadata struct {
 	users    UserCounter
 	identity Identity
+	caps     Capabilities
 }
 
 // NewMetadata builds a Metadata backed by the given user counter, advertising the
-// given Identity (ADR-0034). A zero Identity is legal — the handshake simply omits
-// the fields, which is what a client sees from a server predating ADR-0034.
-func NewMetadata(users UserCounter, identity Identity) *Metadata {
-	return &Metadata{users: users, identity: identity}
+// given Identity (ADR-0034) and the given startup-resolved Capabilities. A zero
+// Identity is legal — the handshake simply omits the fields, which is what a
+// client sees from a server predating ADR-0034.
+func NewMetadata(users UserCounter, identity Identity, caps Capabilities) *Metadata {
+	return &Metadata{users: users, identity: identity, caps: caps}
 }
 
 // Identity returns the Server identity this metadata advertises. The mDNS
@@ -100,11 +121,18 @@ func (m *Metadata) Features() map[string]bool {
 		// not as an error the app can catch. Every other credential path is unchanged,
 		// so an absent flag costs nothing else.
 		"streamToken": true,
-		// transcode is not a route-existence flag: /transcoding is only the
-		// admin observability snapshot (ADR-0029). It advertises the transcode
-		// delivery tier, which depends on a resolved ffmpeg backend, so it stays
-		// false until it is computed from that backend rather than hardcoded.
-		"transcode": false,
+		// transcode is the one flag that is NOT route-existence — which is why
+		// TestFeaturesMatchRoutes excludes it: /transcoding is only the admin
+		// observability snapshot (ADR-0029) and is served either way. It advertises the
+		// transcode DELIVERY TIER (ADR-0003), computed at startup from whether a usable
+		// ffmpeg was resolved on this host (transcode.Availability). True means the
+		// remux/transcode half of negotiation can actually run here; false means this
+		// deployment has no working ffmpeg, so every playback that is not direct play
+		// will fail, and the correct client behaviour is to HIDE the affordance rather
+		// than offer it and collect an error. A client that cannot direct-play a File
+		// (an AVPlayer profile facing Matroska, say) should treat a false flag as "this
+		// Title is unplayable here" rather than attempting negotiation.
+		"transcode": m.caps.Transcode,
 	}
 }
 
