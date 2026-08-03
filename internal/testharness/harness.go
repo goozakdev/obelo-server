@@ -528,6 +528,23 @@ func (s *Server) CountPlaylistRowsForOwner(ownerUserID string) (playlists, items
 	return playlists, items
 }
 
+// CountStreamTokensForSession returns the raw number of stream_tokens rows minted
+// for a Playback session (.scratch/session-stream-tokens). It is a direct-DB seam
+// (like CountPlaylistRowsForOwner) because revocation is otherwise unobservable
+// from outside: the media routes answer an identical 404 for a revoked token, a
+// wrong token, and a session that never existed — which is the point of the
+// posture, and exactly why a cascade test cannot be written against it.
+func (s *Server) CountStreamTokensForSession(sessionID string) int {
+	s.t.Helper()
+	var n int
+	if err := s.app.DB.QueryRow(
+		`SELECT COUNT(*) FROM stream_tokens WHERE session_id = ?`, sessionID,
+	).Scan(&n); err != nil {
+		s.t.Fatalf("testharness: counting stream tokens for session %q: %v", sessionID, err)
+	}
+	return n
+}
+
 // CreateMember inserts a non-Admin (role "member") User directly into the
 // database with the given credentials. Prefer CreateUser (which drives the real
 // admin API); this direct-insert seam remains for the pre-API baseline — seeding
