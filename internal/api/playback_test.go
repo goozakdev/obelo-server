@@ -54,6 +54,10 @@ type decisionResp struct {
 	VideoStreams     []videoStreamResp      `json:"videoStreams"`
 	Subtitles        []decisionSubtitleResp `json:"subtitles"`
 	EstimatedBitrate int64                  `json:"estimatedBitrate"`
+	// The session-scoped media credential minted with the session
+	// (.scratch/session-stream-tokens, issue 01). Asserted in stream_token_test.go.
+	StreamToken          string `json:"streamToken"`
+	StreamTokenExpiresAt string `json:"streamTokenExpiresAt"`
 }
 
 // decisionAudioResp is one entry of the decision's selectable audio-Stream list

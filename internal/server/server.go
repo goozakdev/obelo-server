@@ -90,6 +90,16 @@ func (m *Metadata) Features() map[string]bool {
 		// an older server has no such route, and the correct behaviour there is to skip the
 		// refresh (media falls back to today's behaviour until the next real login).
 		"mediaCookieRefresh": true,
+		// streamToken advertises the path-carried media routes
+		// (GET /stream/{streamToken}/stream and .../hls/{file}, ADR-0039) plus the
+		// streamToken/streamTokenExpiresAt fields on a Decision and
+		// POST /sessions/{id}/stream-token. A client MUST branch on this rather than a
+		// version: an older server 404s those paths, and the correct behaviour there is
+		// to hide any affordance that hands a media URL to somebody else (AirPlay video,
+		// a cast receiver) — because the failure surfaces as a television going black,
+		// not as an error the app can catch. Every other credential path is unchanged,
+		// so an absent flag costs nothing else.
+		"streamToken": true,
 		// transcode is not a route-existence flag: /transcoding is only the
 		// admin observability snapshot (ADR-0029). It advertises the transcode
 		// delivery tier, which depends on a resolved ffmpeg backend, so it stays
