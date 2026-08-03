@@ -58,6 +58,15 @@ type Store interface {
 	TouchDeviceAuthPoll(hash, now string) (string, error)
 	CountLiveDeviceAuthRequests(now string) (int, error)
 	DeleteExpiredDeviceAuthRequests(now string) error
+	// Session stream tokens (.scratch/session-stream-tokens). A SEPARATE namespace
+	// from InsertToken/LookupToken above, and deliberately so: nothing here reads
+	// or writes auth_tokens, so a stream token can never authenticate as a bearer
+	// and a bearer can never authenticate as a stream token.
+	InsertStreamToken(t store.StreamToken) error
+	LiveStreamToken(hash, now string) (store.StreamToken, error)
+	LiveStreamTokenForSession(hash, sessionID, now string) (store.StreamToken, error)
+	DeleteStreamTokensForSession(sessionID string) error
+	DeleteExpiredStreamTokens(now string) error
 }
 
 // Common service errors, mapped to HTTP envelopes by the api layer. They are

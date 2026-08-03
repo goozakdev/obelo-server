@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/marioquake/juicebox/internal/audio"
 	"github.com/marioquake/juicebox/internal/catalog"
@@ -226,6 +228,22 @@ type decisionResponse struct {
 	VideoStreams     []videoStreamJSON      `json:"videoStreams"`
 	Subtitles        []decisionSubtitleJSON `json:"subtitles"`
 	EstimatedBitrate int64                  `json:"estimatedBitrate"`
+	// StreamToken is a session-scoped, read-only, EXPIRING credential for this
+	// session's media artifacts, minted alongside the session so an AirPlay handoff
+	// is one request rather than two (.scratch/session-stream-tokens). It travels in
+	// the URL PATH, not a query string, because every playlist this server emits uses
+	// bare relative URIs and a player drops the query when resolving them.
+	//
+	// It is NOT the account bearer token and cannot be used as one: it reaches only
+	// the media GETs of THIS session, and it dies with the session (DELETE
+	// /sessions/{id} and the idle reaper both revoke it) or at
+	// streamTokenExpiresAt, whichever comes first.
+	//
+	// Both fields are omitted when minting failed — the session is still perfectly
+	// playable over the bearer header or the ms_media cookie, so a mint hiccup must
+	// not fail a negotiation the client can act on.
+	StreamToken          string `json:"streamToken,omitempty"`
+	StreamTokenExpiresAt string `json:"streamTokenExpiresAt,omitempty"`
 }
 
 // --- handlers ---------------------------------------------------------------
@@ -242,7 +260,7 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/titles/")
 		if strings.HasSuffix(rest, "/playback") {
-			requireMethod(http.MethodPost, requireAuth(deps.Auth, requireScope(deps.Access, handlePlayback(deps.Playback))))(w, r)
+			requireMethod(http.MethodPost, requireAuth(deps.Auth, requireScope(deps.Access, handlePlayback(deps))))(w, r)
 			return
 		}
 		if id, ok := strings.CutSuffix(rest, "/watchState"); ok {
@@ -501,7 +519,8 @@ func handleSetWatchState(svc *playback.Service, cat *catalog.Service, titleID st
 // the directStream (remux) and transcode tiers. A File that is structurally
 // unplayable (no video stream) returns the structured TRANSCODE_REQUIRED error
 // (501-class). Unknown Title (or all-Missing) → 404 (hide existence).
-func handlePlayback(svc *playback.Service) http.HandlerFunc {
+func handlePlayback(deps Deps) http.HandlerFunc {
+	svc := deps.Playback
 	return func(w http.ResponseWriter, r *http.Request) {
 		titleID := pathParam(r.URL.Path, "/titles/", "/playback")
 		if titleID == "" {
@@ -586,7 +605,20 @@ func handlePlayback(svc *playback.Service) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toDecisionResponse(sess.ID, titleID, dec, req.DeviceProfile.textSubtitleFormats()))
+		resp := toDecisionResponse(sess.ID, titleID, dec, req.DeviceProfile.textSubtitleFormats())
+		// Mint the session's stream token with the session, so a client that will hand
+		// this URL to a receiver (AirPlay) has it without a second round trip. The
+		// session already exists and is playable over the bearer/cookie paths, so a
+		// mint failure omits the fields rather than failing the negotiation.
+		if grant, err := deps.Auth.MintStreamToken(sess.ID, id.User.ID); err != nil {
+			// The error is logged, never rendered: an envelope is the other place a
+			// secret leaks, and there is nothing here a client could act on.
+			log.Printf("juicebox: api: minting stream token for session %s: %v", sess.ID, err)
+		} else {
+			resp.StreamToken = grant.Token
+			resp.StreamTokenExpiresAt = grant.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 
@@ -719,6 +751,22 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 				requireAuthAllowCookie(deps.Auth, handleSessionStream(svc, id)))(w, r)
 			return
 		}
+		// POST {id}/stream-token: re-mint the session's stream token
+		// (.scratch/session-stream-tokens). BEARER ONLY — requireAuth, deliberately
+		// NOT requireAuthAllowCookie and never reachable with a stream token itself.
+		// Minting a media credential is an account-level act; a lone cookie (or a
+		// token already handed to a television) must not be able to extend its own
+		// life. Matched before the bare-{id} DELETE; "/stream-token" does not end in
+		// "/stream", so the media GET above cannot shadow it either way.
+		if id, ok := strings.CutSuffix(rest, "/stream-token"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, handleMintStreamToken(deps, id)))(w, r)
+			return
+		}
 		// GET {id}/hls/{file}: the HLS artifacts for a directStream/transcode session
 		// (ADR-0004). Like /stream these are read-only GETs the browser's hls.js/
 		// <video> fetches WITHOUT an Authorization header, so they accept the media
@@ -830,6 +878,57 @@ func handleSessionProgress(svc *playback.Service, sessionID string) http.Handler
 			TitleID:          out.TitleID,
 			ResumePositionMs: out.ResumePositionMs,
 			Watched:          out.Watched,
+		})
+	}
+}
+
+// streamTokenResponse is the body of POST /sessions/{id}/stream-token: a fresh
+// session-scoped media credential and when it dies. The field names match the
+// Decision's, so a client has ONE name for this value however it obtained it.
+type streamTokenResponse struct {
+	StreamToken          string `json:"streamToken"`
+	StreamTokenExpiresAt string `json:"streamTokenExpiresAt"`
+	// ExpiresIn is the same instant in seconds, mirroring the device-code response,
+	// so a client can schedule a re-mint without parsing a timestamp or trusting
+	// its own clock to agree with the server's.
+	ExpiresIn int `json:"expiresIn"`
+}
+
+// handleMintStreamToken re-mints a stream token for a live session
+// (.scratch/session-stream-tokens). It exists because a session outlives a token
+// when the TTL is short, and because a client may decide to AirPlay long after it
+// negotiated — at which point going back for a fresh token is cheaper than
+// re-negotiating a stream that is already playing.
+//
+// Only the session's OWNER may mint, and an unknown, ended, or foreign session is
+// 404 — never 403 — matching the existence-hiding posture the stream handlers
+// already take. A caller must not be able to learn that somebody else's session
+// id is real by the shape of the refusal.
+func handleMintStreamToken(deps Deps, sessionID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := identityFrom(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
+			return
+		}
+		sess, ok := deps.Playback.Sessions().Get(sessionID)
+		if !ok || sess.UserID != id.User.ID {
+			writeError(w, http.StatusNotFound, codeNotFound, "session not found", nil)
+			return
+		}
+		grant, err := deps.Auth.MintStreamToken(sessionID, id.User.ID)
+		if err != nil {
+			// Logged, not rendered — an error envelope is one of the two places the
+			// secret could leak, and the other is the access log.
+			log.Printf("juicebox: api: minting stream token for session %s: %v", sessionID, err)
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to mint stream token", nil)
+			return
+		}
+		writeJSON(w, http.StatusCreated, streamTokenResponse{
+			StreamToken:          grant.Token,
+			StreamTokenExpiresAt: grant.ExpiresAt.UTC().Format(time.RFC3339),
+			ExpiresIn:            int(grant.ExpiresIn.Seconds()),
 		})
 	}
 }
@@ -1409,6 +1508,13 @@ func isAudioSegment(file string) bool {
 // handleEndSession ends a Playback session (the clean stop, DELETE
 // /sessions/{id}). Only the owner may end it; an unknown/ended id or another
 // User's session is 404 (hide existence). On success it returns 204 No Content.
+//
+// Ending a session also REVOKES its stream tokens
+// (.scratch/session-stream-tokens), but not from here: End fires the Manager's
+// session-ended observer, and app.New hangs the revocation off that one signal so
+// the idle reaper — which fires the same event — revokes by the identical path.
+// Two call sites would be two things to keep in step, and the one that drifts is
+// always the reaper, because nobody watches it end a session.
 func handleEndSession(svc *playback.Service, sessionID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := identityFrom(r.Context())
