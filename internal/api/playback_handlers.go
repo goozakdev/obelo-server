@@ -780,25 +780,8 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 				return
 			}
-			// Dispatch the HLS artifact by filename. The MASTER playlist is now the
-			// unified builder (video variant + AUDIO group + SUBTITLES group,
-			// audio-streams/03); the demuxed audio renditions (audio_<id>.*) and the
-			// in-band subtitle renditions (subs_*) each have their own handler; everything
-			// else (index.m3u8, .ts) is the video runtime path.
-			switch {
-			case file == playbackHLSMaster:
-				requireMethod(http.MethodGet,
-					requireAuthAllowCookie(deps.Auth, handleSessionMasterHLS(deps, id)))(w, r)
-			case isAudioHLSFile(file):
-				requireMethod(http.MethodGet,
-					requireAuthAllowCookie(deps.Auth, handleSessionAudioHLS(deps, id, file)))(w, r)
-			case isSubtitleHLSFile(file):
-				requireMethod(http.MethodGet,
-					requireAuthAllowCookie(deps.Auth, handleSessionSubtitleHLS(deps, id, file)))(w, r)
-			default:
-				requireMethod(http.MethodGet,
-					requireAuthAllowCookie(deps.Auth, handleSessionHLS(svc, id, file)))(w, r)
-			}
+			requireMethod(http.MethodGet,
+				requireAuthAllowCookie(deps.Auth, hlsArtifactHandler(deps, id, file)))(w, r)
 			return
 		}
 		if id, ok := strings.CutSuffix(rest, "/progress"); ok {
@@ -979,6 +962,38 @@ func cutHLS(rest string) (id, file string, ok bool) {
 		return "", "", false
 	}
 	return rest[:i], rest[i+len("/hls/"):], true
+}
+
+// hlsArtifactHandler resolves an /hls/{file} artifact name to the handler that
+// serves it. The MASTER playlist is the unified builder (video variant + AUDIO
+// group + SUBTITLES group, audio-streams/03); the demuxed audio renditions
+// (audio_<id>.*) and the in-band subtitle renditions (subs_*) each have their
+// own handler; everything else (index.m3u8, .ts, .m4s, init.mp4) is the video
+// runtime path.
+//
+// It is factored out of the /sessions dispatcher because there are now TWO ways
+// to reach these artifacts — the session-id path behind bearer/cookie, and the
+// token-carrying path (.scratch/session-stream-tokens, stream_routes.go) — and
+// they differ ONLY in how the session id and the User are established. A second
+// copy of this switch would drift: the fMP4-vs-TS and audio-vs-subtitle prefix
+// rules are precisely the sort of detail that gets fixed in one copy and not the
+// other, and the failure would surface as one rendition silently 404ing on a
+// television rather than as a test failure here.
+//
+// It does NOT apply auth or the method gate — both entry points own those,
+// because they answer them differently (401 for a missing bearer/cookie vs. an
+// existence-hiding 404 for a dead token).
+func hlsArtifactHandler(deps Deps, sessionID, file string) http.HandlerFunc {
+	switch {
+	case file == playbackHLSMaster:
+		return handleSessionMasterHLS(deps, sessionID)
+	case isAudioHLSFile(file):
+		return handleSessionAudioHLS(deps, sessionID, file)
+	case isSubtitleHLSFile(file):
+		return handleSessionSubtitleHLS(deps, sessionID, file)
+	default:
+		return handleSessionHLS(deps.Playback, sessionID, file)
+	}
 }
 
 // handleSessionHLS serves a directStream session's HLS media playlist or one of

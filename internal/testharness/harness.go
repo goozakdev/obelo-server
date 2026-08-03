@@ -545,6 +545,28 @@ func (s *Server) CountStreamTokensForSession(sessionID string) int {
 	return n
 }
 
+// ExpireStreamTokensForSession ages every stream token of a session out, by
+// backdating expires_at an hour into the past. It is a direct-DB seam because
+// there is no other way to reach the state: the TTL is four hours, nothing in
+// the API shortens it, and a test that slept would sleep for four hours.
+//
+// Expiry is enforced in the lookup's WHERE clause (store.LiveStreamToken), so a
+// backdated row is exactly what a genuinely aged-out one looks like — the only
+// difference is which clock got there first.
+func (s *Server) ExpireStreamTokensForSession(sessionID string) {
+	s.t.Helper()
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	res, err := s.app.DB.Exec(
+		`UPDATE stream_tokens SET expires_at = ? WHERE session_id = ?`, past, sessionID,
+	)
+	if err != nil {
+		s.t.Fatalf("testharness: expiring stream tokens for session %q: %v", sessionID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		s.t.Fatalf("testharness: no stream tokens to expire for session %q", sessionID)
+	}
+}
+
 // CreateMember inserts a non-Admin (role "member") User directly into the
 // database with the given credentials. Prefer CreateUser (which drives the real
 // admin API); this direct-insert seam remains for the pre-API baseline — seeding
