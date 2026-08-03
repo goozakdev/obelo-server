@@ -10,6 +10,8 @@ FFmpeg is the remux and transcode engine.
 
 > **Amended ([ADR-0017](./0017-audio-only-playback-path.md)):** this ADR was written for video and originally gated every tier on a video Stream. The three tiers now apply equally to **audio-only** Files (music Tracks): negotiation falls back to the audio Stream when no video exists, and `ReasonNoVideo` is narrowed to mean "no video *and* no audio." See ADR-0017.
 
+> **Amended ([ADR-0040](./0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)):** "FFmpeg is a hard runtime dependency" below is now **degraded, not fatal**. A server whose host has no usable ffmpeg boots and serves tier 1 (direct play) as normal; it loses tiers 2–3 and says so, via a `features.transcode` flag computed from a startup-resolved availability check. See ADR-0040.
+
 ## Why
 Target clients (iPhone, desktop, Apple TV) have very different codec support and stream over variable connections including cellular, so on-the-fly transcoding is mandatory for the product to work, not optional.
 

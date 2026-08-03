@@ -109,6 +109,31 @@ func WithBackendResolution(res transcode.Resolution) Option {
 	}
 }
 
+// WithFFmpegAvailability pins the setup-time "is there a usable ffmpeg" answer,
+// which drives the handshake's features.transcode flag AND the binary the
+// transcode Runner spawns. Pass true for a server that advertises and serves the
+// transcode tier; false for one that has no ffmpeg at all — which points the
+// Runner at a path that cannot exist, so the advertisement and the actual failure
+// mode are exercised together rather than the flag being asserted in isolation.
+//
+// It exists because neither direction is otherwise testable: a developer box has
+// ffmpeg (so the false case is unreachable) and a CI box may not (so the true case
+// is), and no test may install or delete a binary to find out.
+func WithFFmpegAvailability(available bool) Option {
+	return func(b *builder) {
+		av := transcode.Availability{
+			Available: available,
+			Reason:    "pinned by the test harness",
+		}
+		if !available {
+			// A path no host has, so a transcode request really does fail to spawn
+			// ffmpeg — the honest error the false flag promises clients they will get.
+			av.Binary = filepath.Join(string(filepath.Separator), "nonexistent", "juicebox-test", "ffmpeg")
+		}
+		b.appOpts = append(b.appOpts, app.WithFFmpegAvailability(transcode.StaticAvailability{Availability: av}))
+	}
+}
+
 // WithGPUProbe injects the best-effort GPU-telemetry probe (ADR-0029) so the
 // /transcoding gpu block can be driven across every availability state — populated
 // telemetry, unavailable, and (via a non-NVENC backend) never-queried — without a
