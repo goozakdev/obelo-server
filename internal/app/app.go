@@ -118,6 +118,14 @@ type options struct {
 	// reason, degraded} outcome so the degraded/HW-active states can be asserted on
 	// a GPU-less box (the real detector only ever resolves to CPU without hardware).
 	detector transcode.Detector
+	// availability overrides the setup-time ffmpeg-availability probe (default:
+	// transcode.NewAvailabilityProbe). It is the test seam for the handshake's
+	// features.transcode flag AND for the no-ffmpeg failure path: pinning a
+	// transcode.StaticAvailability decides both what the server advertises and which
+	// binary the Runner tries to spawn, so a test can assert the flag in EITHER
+	// direction — and that the advertisement matches the behaviour — on a box that
+	// does have ffmpeg as well as one that does not.
+	availability transcode.AvailabilityProbe
 	// gpuProbe overrides the best-effort GPU-telemetry probe (default: the
 	// nvidia-smi probe). It is the test seam for the /transcoding gpu block: a fake
 	// returns fixed telemetry or "unavailable" so the endpoint is exercised across
@@ -163,6 +171,16 @@ func WithProviderBuilder(build enrich.BuildFunc) Option {
 // /transcoding admin surface reports — deterministically, without a GPU.
 func WithDetector(d transcode.Detector) Option {
 	return func(o *options) { o.detector = d }
+}
+
+// WithFFmpegAvailability overrides the setup-time ffmpeg-availability probe
+// (default: transcode.NewAvailabilityProbe). Tests inject a
+// transcode.StaticAvailability to pin whether this deployment has a usable ffmpeg
+// — which decides both the handshake's features.transcode flag and the binary the
+// transcode Runner invokes, so the flag and the behaviour it advertises are pinned
+// TOGETHER rather than able to disagree.
+func WithFFmpegAvailability(p transcode.AvailabilityProbe) Option {
+	return func(o *options) { o.availability = p }
 }
 
 // WithGPUProbe overrides the best-effort GPU-telemetry probe (default: the
@@ -237,7 +255,6 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	meta := server.NewMetadata(db, identity)
 
 	authSvc, err := auth.NewService(db)
 	if err != nil {
@@ -283,6 +300,18 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: clearing transcode scratch %q: %w", scratchRoot, err)
 	}
+	// Is there a usable ffmpeg here AT ALL? Resolved ONCE at setup, before the
+	// backend question below, because it is the question underneath it: without
+	// ffmpeg there is no encoder to choose. The answer feeds BOTH the Runner that
+	// will spawn ffmpeg and the handshake's features.transcode flag, so the server
+	// advertises exactly the ffmpeg it would actually run — one resolution, not two
+	// notions that can drift. availability is the real probe unless a test pinned an
+	// answer via WithFFmpegAvailability.
+	availabilityProbe := o.availability
+	if availabilityProbe == nil {
+		availabilityProbe = transcode.NewAvailabilityProbe("")
+	}
+	ffmpegAvailability := resolveFFmpegAvailability(availabilityProbe)
 	// Governance (ADR-0009): the global concurrent-transcode cap and the HW-accel
 	// knob (off by default → the CPU libx264 path). Direct play and remux stay
 	// unmetered; only the transcode tier is bounded by the cap.
@@ -296,9 +325,16 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		detector = transcode.NewDetector("")
 	}
 	backendResolution := resolveBackend(detector, cfg.HardwareAccel)
-	playbackSvc := playback.NewService(db, transcode.FFmpeg{}, scratchRoot, playback.Governance{
+	playbackSvc := playback.NewService(db, transcode.FFmpeg{Binary: ffmpegAvailability.Binary}, scratchRoot, playback.Governance{
 		MaxConcurrentTranscodes: cfg.MaxConcurrentTranscodes,
 		Accel:                   backendResolution.Accel,
+	})
+	// The handshake advertises what THIS host can do (ADR-0034 identity + the
+	// feature flags). Built here, after the setup-time resolutions above, so
+	// Metadata.Info() only ever reads already-resolved values — an unauthenticated
+	// endpoint every client hits on connect must not probe the host.
+	meta := server.NewMetadata(db, identity, server.Capabilities{
+		Transcode: ffmpegAvailability.Available,
 	})
 	// Best-effort GPU-telemetry probe for the admin /transcoding surface (ADR-0029).
 	// Constructed unconditionally (it spawns nothing until queried) but the handler
@@ -993,6 +1029,28 @@ func resolveBackend(detector transcode.Detector, h config.HWAccel) transcode.Res
 		log.Printf("juicebox: hardware acceleration: %s", res.Reason)
 	}
 	return res
+}
+
+// resolveFFmpegAvailability runs the setup-time "is there a usable ffmpeg here"
+// probe ONCE and logs the answer, mirroring resolveBackend's shape (and ADR-0009's
+// setup-time posture) for the question underneath it. A bounded context keeps a
+// wedged binary from blocking boot; the probe is milliseconds in practice.
+//
+// The answer is never fatal: a server with no ffmpeg boots and serves direct play
+// exactly as before — it just stops CLAIMING a transcode tier it cannot deliver.
+// That is why the unavailable branch logs loudly: an operator whose clients have
+// quietly hidden their transcode affordance needs one line telling them ffmpeg is
+// missing (or broken), not silence.
+func resolveFFmpegAvailability(probe transcode.AvailabilityProbe) transcode.Availability {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	av := probe.Resolve(ctx)
+	if av.Available {
+		log.Printf("juicebox: transcode tier: %s", av.Reason)
+	} else {
+		log.Printf("juicebox: transcode tier: WARNING — %s", av.Reason)
+	}
+	return av
 }
 
 // seedInputFromConfig maps the config provider knobs to enrich.SeedInput — the one

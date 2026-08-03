@@ -107,7 +107,7 @@ func TestLoadOrCreateIdentityPersistsToDataDir(t *testing.T) {
 }
 
 func TestMetadataAdvertisesIdentity(t *testing.T) {
-	meta := NewMetadata(fakeUsers{n: 1}, Identity{ID: "srv-1", Name: "Living Room"})
+	meta := NewMetadata(fakeUsers{n: 1}, Identity{ID: "srv-1", Name: "Living Room"}, Capabilities{})
 	info, err := meta.Info()
 	if err != nil {
 		t.Fatalf("Info: %v", err)
