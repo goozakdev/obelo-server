@@ -54,8 +54,18 @@ Temporarily comment out the `[[unsafe.bindings]]` rate-limit block in `wrangler.
 to avoid a first-timer snag, then:
 
 ```sh
+wrangler deploy --dry-run   # ALWAYS check this first — see the warning below
 wrangler deploy
 ```
+
+> **⚠️ Confirm the dry-run lists `env.KEYS_KV` before deploying.** Wrangler resolves its
+> config by walking UP from the current directory, so any `wrangler.jsonc` / `wrangler.toml`
+> nearer the repo root **silently wins over this file** and you deploy something else
+> entirely under a different Worker name. This happened on 2026-08-08: a stray root
+> `wrangler.jsonc` swallowed the deploy, published the whole `web/` tree as a public Worker,
+> and left the real rotation endpoint untouched and 404ing for weeks-old reasons nobody
+> could see. The tells are `No bindings found` and an "assets directory" line in the
+> dry-run. If you see either, re-run with `--config ./wrangler.toml`.
 
 It prints your live URL, e.g. `https://obelo-key-rotation.<subdomain>.workers.dev`.
 Your rotation endpoint is that URL **+ `/v1/keys`**. It returns `503 no envelope
