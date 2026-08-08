@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Unit tests for the image-subtitle burn-in negotiation (ADR-0020, subtitles/04):

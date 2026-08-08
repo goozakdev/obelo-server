@@ -3,7 +3,7 @@ package enrich
 import (
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // TestProviderClass asserts the Full vs. Artwork-only capability the Authoritative-

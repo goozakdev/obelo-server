@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // The Admin these tests sign in as. Each test boots its own zero-user server, so
@@ -325,7 +325,7 @@ func TestVerificationURIHonoursForwardedHeaders(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-Proto", "https")
-	req.Header.Set("X-Forwarded-Host", "juicebox.example.com")
+	req.Header.Set("X-Forwarded-Host", "obelo.example.com")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestVerificationURIHonoursForwardedHeaders(t *testing.T) {
 		t.Fatalf("decode: %v; body: %s", err, raw)
 	}
 
-	const want = "https://juicebox.example.com/link"
+	const want = "https://obelo.example.com/link"
 	if out.VerificationURI != want {
 		t.Errorf("verificationUri behind a proxy = %q, want %q", out.VerificationURI, want)
 	}

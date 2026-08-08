@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/events"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/events"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Wire shapes for the Enrichment surface (docs/api-contract.md): camelCase. The

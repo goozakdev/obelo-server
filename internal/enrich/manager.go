@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // ManagerStore is the persistence the provider Manager reads to rebuild the
@@ -357,7 +357,7 @@ type SeedInput struct {
 	// ConsentGranted seeds the first-run Enrichment consent decision (ADR-0032) on
 	// first boot: nil leaves it UNDECIDED (the fresh-install default — the SPA
 	// prompts and the server makes no outbound calls), while a non-nil value records
-	// that decision (a headless deploy pre-consenting via JUICEBOX_ENRICHMENT_CONSENT,
+	// that decision (a headless deploy pre-consenting via OBELO_ENRICHMENT_CONSENT,
 	// or the test harness granting it). An upgrade never reaches here (settings
 	// aren't empty); its row was grandfathered to granted by migration 0040.
 	ConsentGranted *bool

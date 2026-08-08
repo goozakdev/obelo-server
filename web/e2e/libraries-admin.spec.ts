@@ -110,7 +110,7 @@ test.describe.serial("admin: libraries & scanning", () => {
     // "Sample Movie (2000).mp4" (a loose file) and the "Dune (2021)" folder. Both
     // are tiny checked-in fixtures the scanner recognizes, so the scan finds >0
     // titles without colliding with any other spec's library root.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-admin-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-admin-fixtures-"));
     cpSync(
       join(MOVIES, "Sample Movie (2000).mp4"),
       join(fixturesDir, "Sample Movie (2000).mp4"),

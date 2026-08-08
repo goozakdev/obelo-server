@@ -17,7 +17,7 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-const KEY = "juicebox.token";
+const KEY = "obelo.token";
 
 describe("webTokenStore retention", () => {
   it("defaults to durable: a set token lands in localStorage (Remember me on)", () => {

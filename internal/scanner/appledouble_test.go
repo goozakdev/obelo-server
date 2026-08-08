@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // recordingProber succeeds like fakeProber but records every path it is asked to

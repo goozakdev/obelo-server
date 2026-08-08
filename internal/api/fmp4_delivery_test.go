@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Issue "Back to the Future" (ADR-0024) delivery test: a HEVC File whose audio the

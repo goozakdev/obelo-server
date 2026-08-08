@@ -25,9 +25,9 @@ beforeEach(() => {
 
 describe("roster store", () => {
   it("keys the roster per server id", () => {
-    expect(rosterStorageKey("srv-1")).toBe("juicebox.roster.srv-1");
+    expect(rosterStorageKey("srv-1")).toBe("obelo.roster.srv-1");
     // A server that advertises no id buckets under a stable fallback.
-    expect(rosterStorageKey(null)).toBe("juicebox.roster.unknown");
+    expect(rosterStorageKey(null)).toBe("obelo.roster.unknown");
   });
 
   it("remembers a Remember-me login as a Signed-in entry (durable token retained)", () => {

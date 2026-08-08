@@ -71,9 +71,9 @@ function authStubClient(): ApiClient {
 export function renderWithAuth(ui: ReactElement, opts: Options = {}) {
   // Seed a session so the provider hydrates as authenticated. The role defaults
   // to Admin; a test asserting the role-aware split passes a member user.
-  window.localStorage.setItem("juicebox.token", "fake-token");
+  window.localStorage.setItem("obelo.token", "fake-token");
   window.localStorage.setItem(
-    "juicebox.user",
+    "obelo.user",
     JSON.stringify(opts.user ?? ADMIN_USER),
   );
 

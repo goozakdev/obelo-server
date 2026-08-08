@@ -24,9 +24,9 @@ It is **symmetric**: the same value both encrypts (maintainer side, `keytool`) a
 decrypts (server side, in every official binary). So store the one value in **two**
 places, and they must match exactly:
 
-- **CI secret** `JUICEBOX_APP_ENC_KEY` — injected into official binaries via
+- **CI secret** `OBELO_APP_ENC_KEY` — injected into official binaries via
   `-ldflags -X` (Make/Docker); verbatim, since it is already base64.
-- **Your own vault** (password manager) — you pass it as `JUICEBOX_APP_ENC_KEY` when
+- **Your own vault** (password manager) — you pass it as `OBELO_APP_ENC_KEY` when
   running `keytool` at rotation time (step 2 below).
 
 Generate it **once** and keep it stable — it is empty in source and never committed
@@ -51,7 +51,7 @@ Seal the new key(s) into the versioned envelope the server fetches. Supply
 `kAppEncKey` via the env var (not a flag) so it stays out of your shell history:
 
 ```sh
-JUICEBOX_APP_ENC_KEY=<base64-kAppEncKey> \
+OBELO_APP_ENC_KEY=<base64-kAppEncKey> \
   go run ./cmd/keytool \
     -tmdb   <new-tmdb-key> \
     -fanart <new-fanart-key> \
@@ -101,7 +101,7 @@ release-free and only a deeper compromise costs a release.
 
 ```sh
 # The Worker serves the new envelope:
-curl -H 'User-Agent: juicebox/verify' https://<rotation-host>/v1/keys
+curl -H 'User-Agent: obelo/verify' https://<rotation-host>/v1/keys
 
 # A server picks it up: watch its log for the rotation-source credential line on the
 # next poll, or trigger one on demand in a test build via Server.RefreshRotationKeys().

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/auth"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Service-level tests for the Device authorization grant (ADR-0036).

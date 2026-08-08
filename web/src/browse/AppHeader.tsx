@@ -78,7 +78,7 @@ export default function AppHeader() {
   return (
     <header className="app-header">
       <Link className="app-title app-title-link" to="/">
-        Juice Box
+        Obelo
       </Link>
       <nav className="app-nav" aria-label="Main">
         <Link className="nav-link nav-icon-link" to="/" data-testid="nav-home">

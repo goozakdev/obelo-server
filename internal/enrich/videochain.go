@@ -108,7 +108,7 @@ func (p *VideoChainProvider) lookup(ctx context.Context, src MetadataProvider, r
 	meta, err := src.Lookup(ctx, ref)
 	if err != nil {
 		if !errors.Is(err, ErrNoMatch) {
-			log.Printf("juicebox: enrich %s video supplement (title %q): %v", ref.Kind, ref.Title, err)
+			log.Printf("obelo: enrich %s video supplement (title %q): %v", ref.Kind, ref.Title, err)
 		}
 		return TitleMetadata{}, false
 	}

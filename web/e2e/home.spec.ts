@@ -287,7 +287,7 @@ test.describe("home: empty-state rendering matches the API", () => {
 
     // Ground truth from the API, using the browser's stored token.
     const home = await page.evaluate(async () => {
-      const token = window.localStorage.getItem("juicebox.token");
+      const token = window.localStorage.getItem("obelo.token");
       const res = await fetch("/api/v1/home", {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });

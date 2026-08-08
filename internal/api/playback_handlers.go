@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/audio"
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/playback"
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/audio"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/playback"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
 // HTTP transport for the direct-play tier (ADR-0003 tier 1, ADR-0004 progressive
@@ -613,7 +613,7 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 		if grant, err := deps.Auth.MintStreamToken(sess.ID, id.User.ID); err != nil {
 			// The error is logged, never rendered: an envelope is the other place a
 			// secret leaks, and there is nothing here a client could act on.
-			log.Printf("juicebox: api: minting stream token for session %s: %v", sess.ID, err)
+			log.Printf("obelo: api: minting stream token for session %s: %v", sess.ID, err)
 		} else {
 			resp.StreamToken = grant.Token
 			resp.StreamTokenExpiresAt = grant.ExpiresAt.UTC().Format(time.RFC3339)
@@ -903,7 +903,7 @@ func handleMintStreamToken(deps Deps, sessionID string) http.HandlerFunc {
 		if err != nil {
 			// Logged, not rendered — an error envelope is one of the two places the
 			// secret could leak, and the other is the access log.
-			log.Printf("juicebox: api: minting stream token for session %s: %v", sessionID, err)
+			log.Printf("obelo: api: minting stream token for session %s: %v", sessionID, err)
 			writeError(w, http.StatusInternalServerError, codeInternal,
 				"failed to mint stream token", nil)
 			return

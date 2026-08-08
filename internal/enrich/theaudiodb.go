@@ -71,7 +71,7 @@ func NewTheAudioDBProvider(apiKey, baseURL, language string) *TheAudioDBProvider
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
 		Language:    language,
-		UserAgent:   "juicebox/1.0 (self-hosted)",
+		UserAgent:   "obelo/1.0 (self-hosted)",
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultTheAudioDBThrottle,
 		cache:       map[string]audiodbArtist{},

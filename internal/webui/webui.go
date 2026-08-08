@@ -28,7 +28,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/api"
+	"github.com/marioquake/obelo-server/internal/api"
 )
 
 // dist holds the built SPA assets. The Vite build writes here before `go build`
@@ -41,7 +41,7 @@ var dist embed.FS
 // placeholderMarker appears in the committed placeholder index.html and nowhere
 // in a real Vite build. IsPlaceholder uses it so build tooling can detect that
 // the real frontend bundle was never built in.
-const placeholderMarker = "juicebox-spa-placeholder"
+const placeholderMarker = "obelo-spa-placeholder"
 
 // Handler wraps the API handler with SPA serving. The returned handler routes:
 //

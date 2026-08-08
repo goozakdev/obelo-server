@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // item-editing issue 02 black-box tests: the Edit-item "Fix info" + Locked-field

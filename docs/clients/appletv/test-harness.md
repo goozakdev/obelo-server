@@ -1,31 +1,31 @@
 # Test harness — disposable backend for tvOS development
 
-How to boot an isolated, throwaway Juice Box server with generated media, so the tvOS app (simulator or device) develops against something real without touching a production instance. Everything below is scriptable; wire it into the tvOS repo as a `make backend` target or an Xcode pre-action.
+How to boot an isolated, throwaway Obelo server with generated media, so the tvOS app (simulator or device) develops against something real without touching a production instance. Everything below is scriptable; wire it into the tvOS repo as a `make backend` target or an Xcode pre-action.
 
 ## Option A — Docker (no Go/Node toolchain needed)
 
 The server repo ships a multi-stage Dockerfile building a static linux binary with ffmpeg in the runtime image.
 
 ```bash
-# from a checkout of the juicebox repo:
-docker build -f docker/Dockerfile -t juicebox .
+# from a checkout of the obelo-server repo:
+docker build -f docker/Dockerfile -t obelo .
 
 docker run --rm -p 8099:8080 \
   -v "$PWD/harness/data:/data" -v "$PWD/harness/media:/media" \
-  -e JUICEBOX_DATA_DIR=/data \
-  juicebox
+  -e OBELO_DATA_DIR=/data \
+  obelo
 ```
 
 ## Option B — build from source (needs Go + Node; matches server HEAD)
 
 ```bash
-# from a checkout of the juicebox repo:
+# from a checkout of the obelo-server repo:
 make web                                   # SPA bundle (go:embed prerequisite)
-go build -o /tmp/jb-harness/juicebox ./cmd/juicebox
+go build -o /tmp/jb-harness/obelo ./cmd/obelo
 
-JUICEBOX_DATA_DIR=/tmp/jb-harness/data \
-JUICEBOX_LISTEN_ADDR=0.0.0.0:8099 \
-  /tmp/jb-harness/juicebox > /tmp/jb-harness/server.log 2>&1 &
+OBELO_DATA_DIR=/tmp/jb-harness/data \
+OBELO_LISTEN_ADDR=0.0.0.0:8099 \
+  /tmp/jb-harness/obelo > /tmp/jb-harness/server.log 2>&1 &
 echo $! > /tmp/jb-harness/server.pid
 ```
 
@@ -36,7 +36,7 @@ echo $! > /tmp/jb-harness/server.pid
 First boot logs a one-time claim token:
 
 ```
-juicebox: no users yet — first-Admin claim token: <TOKEN>
+obelo: no users yet — first-Admin claim token: <TOKEN>
 ```
 
 ```bash
@@ -107,7 +107,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST $B/libraries/$MLIB/scan \
 # repeat for TV (kind "tv") and Music (kind "music")
 ```
 
-Scans are async (202 + poll); the harness fixtures scan in well under a second. Without a TMDB key, enrichment stays sparse — fine for API testing (`enrichmentStatus: "pending"`, no artwork). To exercise artwork/metadata paths, set `JUICEBOX_TMDB_API_KEY` at boot and `POST /libraries/{id}/enrich`.
+Scans are async (202 + poll); the harness fixtures scan in well under a second. Without a TMDB key, enrichment stays sparse — fine for API testing (`enrichmentStatus: "pending"`, no artwork). To exercise artwork/metadata paths, set `OBELO_TMDB_API_KEY` at boot and `POST /libraries/{id}/enrich`.
 
 ## Teardown / reset
 
@@ -120,9 +120,9 @@ Resetting the data dir is the cheapest way back to a known state — cheaper tha
 
 ## Gotchas
 
-- **Simulator vs device**: the simulator shares the Mac's localhost; a physical Apple TV needs the Mac's LAN IP and `JUICEBOX_LISTEN_ADDR=0.0.0.0:…`, plus local-network permission in the tvOS app.
-- **Discovery**: the harness advertises `_juicebox._tcp` like any instance (ADR-0034). Name it with `JUICEBOX_SERVER_NAME="Harness"` so it is obvious in a picker next to a real server. Verify from the Mac with `dns-sd -B _juicebox._tcp local` — if the app sees nothing, check that its Info.plist declares `NSBonjourServices`, since without it the browse returns empty and looks like a server fault. Note a **simulator does not join the LAN's multicast** the way a device does; test discovery on real hardware and use manual entry in the simulator.
+- **Simulator vs device**: the simulator shares the Mac's localhost; a physical Apple TV needs the Mac's LAN IP and `OBELO_LISTEN_ADDR=0.0.0.0:…`, plus local-network permission in the tvOS app.
+- **Discovery**: the harness advertises `_obelo._tcp` like any instance (ADR-0034). Name it with `OBELO_SERVER_NAME="Harness"` so it is obvious in a picker next to a real server. Verify from the Mac with `dns-sd -B _obelo._tcp local` — if the app sees nothing, check that its Info.plist declares `NSBonjourServices`, since without it the browse returns empty and looks like a server fault. Note a **simulator does not join the LAN's multicast** the way a device does; test discovery on real hardware and use manual entry in the simulator.
 - **HTTP on tvOS**: plain-HTTP LAN backends need an ATS exception (`NSAllowsLocalNetworking`) in the app's Info.plist.
 - The server binds plain HTTP; TLS is a reverse proxy's job in production. Testing the `Secure`-cookie path needs a proxy setting `X-Forwarded-Proto: https`.
-- Progress keepalive: an idle session is reaped after **90 s** (`JUICEBOX_SESSION_IDLE_TIMEOUT`); set it low (e.g. `10s`) to test the app's reaped-session recovery quickly.
+- Progress keepalive: an idle session is reaped after **90 s** (`OBELO_SESSION_IDLE_TIMEOUT`); set it low (e.g. `10s`) to test the app's reaped-session recovery quickly.
 - The transcode tier needs ffmpeg on the server host (bundled in the Docker image; on macOS `brew install ffmpeg`). The server checks for it once at boot and reports the answer as `features.transcode` in the handshake ([ADR-0040](../../adr/0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)) — so if a harness is advertising `transcode: false`, ffmpeg is missing or unrunnable on that host, and the boot log line says which.

@@ -3,7 +3,7 @@ package playback
 import (
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Regression for the "Safari won't play a non-AAC default audio" bug. Safari's

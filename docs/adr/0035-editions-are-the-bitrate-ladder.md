@@ -51,7 +51,7 @@ the 4K Edition at home, travel, resume at 30 minutes on the 720p Edition over a 
   *Are these different cuts that share one audio set?* → **Streams.**
 - **Automatic bandwidth-driven switching is the client's, and needs no server change.** `editionId`
   and `startPosition` already exist on the negotiate request. The Apple TV client's **ADR-0005**
-  (*Automatic bitrate adaptation is Edition re-negotiation*, in the JuiceBoxPlayer repo) diverges
+  (*Automatic bitrate adaptation is Edition re-negotiation*, in the Obelo repo) diverges
   from ADR-0025's refusal of automatic switching and explains why. It is deliberately not linked:
   this repo does not assume where a client is checked out, and `[Public]`-scope consumers are not
   its dependencies.

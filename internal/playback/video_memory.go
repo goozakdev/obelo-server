@@ -3,7 +3,7 @@ package playback
 import (
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Remembered video (selectable-video/04, ADR-0025, ADR-0023 mirrored): an explicit

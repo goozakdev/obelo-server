@@ -1,6 +1,6 @@
 # Apple TV client — integration playbook (libmpv)
 
-How the tvOS client *uses* the Juice Box API: the sequences, state machines, and recovery rules. Endpoint shapes live in `api-contract.md` (bundled alongside); this doc covers the choreography. Everything here uses only the **[Public]** scope plus the auth spine.
+How the tvOS client *uses* the Obelo API: the sequences, state machines, and recovery rules. Endpoint shapes live in `api-contract.md` (bundled alongside); this doc covers the choreography. Everything here uses only the **[Public]** scope plus the auth spine.
 
 **The player is libmpv** (embedded via `MPVKit` or similar, rendering into a Metal layer). That choice shapes this whole doc: mpv's network stack is ffmpeg, so it sends real HTTP headers on media requests (no cookie tricks), demuxes MKV directly, renders ASS subtitles natively via libass, and switches audio/video/subtitle tracks in-container without server round-trips.
 
@@ -8,7 +8,7 @@ Server base URL: discovered on the LAN (below) or user-entered (`http://<host>:8
 
 ## 0. Finding the server
 
-The server advertises `_juicebox._tcp` on the local link with TXT `txtvers=1 id=<uuid> name=<display> path=/api/v1` ([ADR-0034](../../adr/0034-server-identity-and-mdns-advertisement.md); `api-contract.md` §3.1). Browse with `NWBrowser`; declare `NSBonjourServices: [_juicebox._tcp]` in Info.plist or you will see nothing.
+The server advertises `_obelo._tcp` on the local link with TXT `txtvers=1 id=<uuid> name=<display> path=/api/v1` ([ADR-0034](../../adr/0034-server-identity-and-mdns-advertisement.md); `api-contract.md` §3.1). Browse with `NWBrowser`; declare `NSBonjourServices: [_obelo._tcp]` in Info.plist or you will see nothing.
 
 - **Still build manual entry.** mDNS is link-local, so a reverse-proxied or VPN-reachable server can never be discovered. Manual entry is the permanent path, not a stopgap.
 - **Store the `id` alongside the token.** This is the payoff: when the server's DHCP lease changes, rediscover the service whose `id` matches, update the base URL, and **keep the token** — it is bound to a Device row, not to an address. The user never sees a re-login.
@@ -80,7 +80,7 @@ POST /sessions/{id}/progress { positionMs, state: "playing"|"paused"|"buffering"
                                audioStreamId?, videoStreamId? }
 ```
 
-This is **both** watch-state reporting and the session keepalive. The server reaps a session after **90 s without a report** (default `JUICEBOX_SESSION_IDLE_TIMEOUT`) — keep reporting while **paused** too. Report raw position only; the server applies the watched threshold (≥90% marks watched, <2% stores nothing). The two optional ids are the **track-memory write-back** — see §5.
+This is **both** watch-state reporting and the session keepalive. The server reaps a session after **90 s without a report** (default `OBELO_SESSION_IDLE_TIMEOUT`) — keep reporting while **paused** too. Report raw position only; the server applies the watched threshold (≥90% marks watched, <2% stores nothing). The two optional ids are the **track-memory write-back** — see §5.
 
 **Stop** — final `POST /progress` with the last position, then `DELETE /sessions/{id}` (no body). Fire both in a background task on app suspension; if missed, the reaper cleans up within 90 s.
 
@@ -135,4 +135,4 @@ Subtitle preference has **no server memory** in v1 (audio and video do) — pers
 
 - **Licensing**: build libmpv **LGPL** (`-Dgpl=false`, and mind ffmpeg's own flags) for App Store distribution, and provide relinking compliance per LGPL. The GPL default build is not App-Store-compatible.
 - Ship mpv's own ICC/HDR tone-mapping config for the Apple TV's output mode; declare `hdr` in the profile but verify Dolby Vision output behavior on-device (mpv outputs HDR10 from DV profiles it can't fully handle).
-- Set a distinct `User-Agent` (e.g. `JuiceBox-tvOS/<version>`) via mpv's `user-agent` property — useful in server logs next to the Device row.
+- Set a distinct `User-Agent` (e.g. `Obelo-tvOS/<version>`) via mpv's `user-agent` property — useful in server logs next to the Device row.

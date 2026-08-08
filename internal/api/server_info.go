@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/marioquake/juicebox/internal/server"
+	"github.com/marioquake/obelo-server/internal/server"
 )
 
 // serverInfoResponse is the camelCase JSON shape of GET /api/v1/server defined

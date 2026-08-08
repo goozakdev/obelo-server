@@ -3,7 +3,7 @@ package store_test
 import (
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // TestMetadataProvidersRoundTrip covers the DB-backed provider settings

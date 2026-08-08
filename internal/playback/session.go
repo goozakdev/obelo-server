@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/transcode"
 	"github.com/google/uuid"
 )
 

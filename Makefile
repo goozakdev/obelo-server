@@ -1,4 +1,4 @@
-# Juice Box build orchestration.
+# Obelo build orchestration.
 #
 # Critical build order (ADR-0012): the frontend bundle must be built into
 # internal/webui/dist BEFORE `go build`, because the Go binary embeds it via
@@ -9,28 +9,28 @@
 
 WEB_DIR := web
 EMBED_DIR := internal/webui/dist
-BIN := bin/juicebox
+BIN := bin/obelo
 
 # Build-time default metadata credentials (ADR-0032). EMPTY here and in source: a
 # plain `make build` bundles NO keys, so a build-from-source binary is credential-
 # free and uses BYOK. OFFICIAL builds export these from CI secrets:
-#   JUICEBOX_BOOTSTRAP_TMDB_KEY / _FANART_KEY  — the plaintext provider keys
-#   JUICEBOX_APP_ENC_KEY                        — the base64 AES-256-GCM rotation key
-#   JUICEBOX_ROTATION_URL                       — the maintainer rotation endpoint
+#   OBELO_BOOTSTRAP_TMDB_KEY / _FANART_KEY  — the plaintext provider keys
+#   OBELO_APP_ENC_KEY                        — the base64 AES-256-GCM rotation key
+#   OBELO_ROTATION_URL                       — the maintainer rotation endpoint
 # The two provider keys are base64-OBFUSCATED here (a speed bump so `strings` on
 # the binary yields no bare key); kAppEncKey and the URL are injected as-is (the URL
 # is not a secret — it's ciphertext-only and public in the binary — but is injected
 # so the maintainer host stays out of the open-source repo, not GitHub-searchable).
-# Note JUICEBOX_ROTATION_URL is the BUILD-time default; the RUNTIME override is the
-# separate JUICEBOX_KEY_ROTATION_URL env var read by config.FromEnv.
+# Note OBELO_ROTATION_URL is the BUILD-time default; the RUNTIME override is the
+# separate OBELO_KEY_ROTATION_URL env var read by config.FromEnv.
 # `printf %s "" | base64` is empty, so an unset key injects an empty string.
-CONFIG_PKG := github.com/marioquake/juicebox/internal/config
-BOOTSTRAP_TMDB_OBF   := $(shell printf %s "$(JUICEBOX_BOOTSTRAP_TMDB_KEY)" | base64 | tr -d '\n')
-BOOTSTRAP_FANART_OBF := $(shell printf %s "$(JUICEBOX_BOOTSTRAP_FANART_KEY)" | base64 | tr -d '\n')
+CONFIG_PKG := github.com/marioquake/obelo-server/internal/config
+BOOTSTRAP_TMDB_OBF   := $(shell printf %s "$(OBELO_BOOTSTRAP_TMDB_KEY)" | base64 | tr -d '\n')
+BOOTSTRAP_FANART_OBF := $(shell printf %s "$(OBELO_BOOTSTRAP_FANART_KEY)" | base64 | tr -d '\n')
 LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).bootstrapFanartKey=$(BOOTSTRAP_FANART_OBF) \
-           -X $(CONFIG_PKG).kAppEncKey=$(JUICEBOX_APP_ENC_KEY) \
-           -X $(CONFIG_PKG).DefaultKeyRotationURL=$(JUICEBOX_ROTATION_URL)
+           -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
+           -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
 .PHONY: all build web go-build keytool run test test-go test-e2e check-bundle check-credentials-free fmt clean
 
@@ -45,9 +45,9 @@ web:
 
 ## go-build: compile the binary (assumes the bundle is already built into $(EMBED_DIR)).
 ## Injects the default metadata credentials (ADR-0032) via -ldflags -X — empty
-## unless the JUICEBOX_BOOTSTRAP_* / JUICEBOX_APP_ENC_KEY env vars are set (CI).
+## unless the OBELO_BOOTSTRAP_* / OBELO_APP_ENC_KEY env vars are set (CI).
 go-build:
-	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/juicebox
+	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/obelo
 
 ## keytool: build the offline maintainer key-rotation CLI (ADR-0032). Seals default
 ## provider keys into the rotation envelope for the runbook — never bundles a secret,

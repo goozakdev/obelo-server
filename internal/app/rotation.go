@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/config"
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/rotation"
-	"github.com/marioquake/juicebox/internal/server"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/rotation"
+	"github.com/marioquake/obelo-server/internal/server"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // rotationFetchTimeout bounds a single rotation fetch so a hung endpoint never
@@ -60,7 +60,7 @@ type keyRotator struct {
 // newKeyRotator builds the rotator, or returns nil when the rotation channel is off
 // for this deployment (ADR-0032). It is off when: the enc key is absent (a build-
 // from-source binary can't decrypt any payload — the honest "no bundled keys" path);
-// JUICEBOX_KEY_ROTATION=off; no endpoint URL; or the operator has supplied BOTH
+// OBELO_KEY_ROTATION=off; no endpoint URL; or the operator has supplied BOTH
 // default-provider keys via BYOK (env), which bypasses the channel entirely for zero
 // maintainer contact. The url/encKey overrides (WithKeyRotation) let a black-box
 // test inject a stub endpoint + known key without ldflags; production passes empty
@@ -97,7 +97,7 @@ func newKeyRotator(cfg config.Config, db *store.DB, manager *enrich.Manager, url
 			URL:        url,
 			EncKeyB64:  encKey,
 			AppVersion: server.Version,
-			UserAgent:  "juicebox/" + server.Version,
+			UserAgent:  "obelo/" + server.Version,
 			HTTP:       &http.Client{Timeout: rotationFetchTimeout},
 		},
 		// Seed the provenance guard with the bootstrap keys: on a fresh official
@@ -160,7 +160,7 @@ func (a *App) refreshRotationSafe(ctx context.Context) {
 	defer a.keyRotator.mu.Unlock()
 	if err != nil {
 		if !a.keyRotator.warned {
-			log.Printf("juicebox: metadata credentials: rotation fetch failed, using the last cached/bootstrap key: %v", err)
+			log.Printf("obelo: metadata credentials: rotation fetch failed, using the last cached/bootstrap key: %v", err)
 			a.keyRotator.warned = true
 		}
 		return
@@ -228,7 +228,7 @@ func (kr *keyRotator) refreshOnce(ctx context.Context) error {
 		if err := kr.manager.Reload(ctx); err != nil {
 			return fmt.Errorf("reloading provider after rotation: %w", err)
 		}
-		log.Printf("juicebox: metadata credentials: adopted a rotated default key from the rotation endpoint")
+		log.Printf("obelo: metadata credentials: adopted a rotated default key from the rotation endpoint")
 	}
 	return nil
 }

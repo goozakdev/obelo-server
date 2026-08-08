@@ -1,4 +1,4 @@
-// Command juicebox is the single-process entry point for the media server
+// Command obelo is the single-process entry point for the media server
 // (the modular monolith of ADR-0006). It boots the app from environment-derived
 // config and serves the HTTP API until interrupted.
 package main
@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/api"
-	"github.com/marioquake/juicebox/internal/app"
-	"github.com/marioquake/juicebox/internal/config"
-	"github.com/marioquake/juicebox/internal/discovery"
+	"github.com/marioquake/obelo-server/internal/api"
+	"github.com/marioquake/obelo-server/internal/app"
+	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/marioquake/obelo-server/internal/discovery"
 )
 
 func main() {
@@ -28,7 +28,7 @@ func main() {
 		return
 	}
 	if err := run(); err != nil {
-		log.Fatalf("juicebox: fatal: %v", err)
+		log.Fatalf("obelo: fatal: %v", err)
 	}
 }
 
@@ -59,13 +59,13 @@ func run() error {
 	// server for a cosmetic one.
 	advOpts := discovery.Options{IPs: cfg.AdvertiseIPs, Interface: cfg.MDNSInterface}
 	if adv, advErr := discovery.Advertise(application.Identity, cfg.ListenAddr, advOpts); advErr != nil {
-		log.Printf("juicebox: mDNS advertisement unavailable (%v) — clients must enter the address manually", advErr)
+		log.Printf("obelo: mDNS advertisement unavailable (%v) — clients must enter the address manually", advErr)
 	} else {
 		// The advertised addresses are logged because they are the thing that goes
 		// wrong: a record pointing at a bridge address a client cannot route to
 		// fails exactly like a server that never advertised, and this line is the
 		// only place to catch it without a packet capture.
-		log.Printf("juicebox: advertising %q as %s on %s port %d at %s%s (id: %s)",
+		log.Printf("obelo: advertising %q as %s on %s port %d at %s%s (id: %s)",
 			adv.Instance, adv.Host, discovery.ServiceType, adv.Port,
 			formatIPs(adv.IPs), viaInterface(adv.Interface), application.Identity.ID)
 		defer func() { _ = adv.Close() }()
@@ -95,7 +95,7 @@ func run() error {
 	// Serve in the background so we can react to OS signals for graceful stop.
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("juicebox: listening on %s (data dir: %s)", cfg.ListenAddr, cfg.DataDir)
+		log.Printf("obelo: listening on %s (data dir: %s)", cfg.ListenAddr, cfg.DataDir)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return
@@ -110,7 +110,7 @@ func run() error {
 	case err := <-serveErr:
 		return err
 	case <-stop:
-		log.Printf("juicebox: shutting down")
+		log.Printf("obelo: shutting down")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(ctx)

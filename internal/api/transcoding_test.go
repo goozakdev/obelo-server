@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/gpu"
-	"github.com/marioquake/juicebox/internal/testharness"
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/gpu"
+	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // Admin-scope transcode-observability black-box tests (ADR-0029): the

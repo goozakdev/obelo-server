@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // --- pure helpers ---

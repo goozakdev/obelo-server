@@ -82,7 +82,7 @@ test.describe.serial("edit-item: Fix info on a Show (parent Enrichment override)
 
     // Unique temp TV fixtures: one Show with a single episode (copied from the Go
     // TV testdata) so the enrichment pass has a parent to enrich + correct.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-enrich-override-parent-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-enrich-override-parent-"));
     const seasonDir = join(fixturesDir, "The Bear (2022)", "Season 01");
     mkdirSync(seasonDir, { recursive: true });
     cpSync(

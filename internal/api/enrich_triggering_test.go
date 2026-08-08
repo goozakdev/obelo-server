@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // External-metadata-enrichment issue 02 black-box tests: the THREE triggers

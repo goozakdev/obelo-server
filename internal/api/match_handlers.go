@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/match"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/match"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Wire shapes + handlers for the fix-match Match override (ADR-0002/0014). An

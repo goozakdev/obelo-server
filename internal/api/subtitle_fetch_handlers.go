@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/subfetch"
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
 // External subtitle fetching (ADR-0021, subtitles slice 05). Two POST leaves on

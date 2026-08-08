@@ -5,11 +5,11 @@
 # (`wrangler kv key put` — see README.md). The repo therefore stays credential-free:
 # there is no key here, only the plumbing that serves whatever ciphertext is in KV.
 
-name = "juicebox-key-rotation"
+name = "obelo-key-rotation"
 main = "src/worker.js"
 compatibility_date = "2025-01-01"
 
-# The route the official client polls (config.JUICEBOX_KEY_ROTATION_URL points here).
+# The route the official client polls (config.OBELO_KEY_ROTATION_URL points here).
 # Replace the zone with the maintainer's own; keep the /v1/* path so the versioned
 # envelope contract holds. Configure the custom domain/route in the dashboard or here.
 # routes = [{ pattern = "rotation.example.com/v1/*", zone_name = "example.com" }]

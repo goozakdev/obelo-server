@@ -85,7 +85,7 @@ test.describe.serial("edit-item: Wrong item re-identifies a Movie", () => {
 
     // Unique temp fixtures: a movie whose folder parses to a DIFFERENT work than it
     // actually is, so an Admin re-identifies it with Wrong item.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-wrong-item-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-wrong-item-fixtures-"));
     const movieDir = join(fixturesDir, "Wrongly Named (2098)");
     mkdirSync(movieDir, { recursive: true });
     cpSync(

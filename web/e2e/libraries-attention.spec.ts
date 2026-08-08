@@ -98,7 +98,7 @@ test.describe.serial("admin: attention surfaces & devices", () => {
 
     // Unique temp fixtures: a yearless folder (→ needs-review) and a bare
     // quality-token file (→ Unmatched). Both are tiny checked-in fixtures.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-attention-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-attention-fixtures-"));
     cpSync(
       join(NAMING, "Yearless Movie"),
       join(fixturesDir, "Yearless Movie"),

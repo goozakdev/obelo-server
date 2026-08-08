@@ -8,7 +8,7 @@ export interface TokenStore {
   set(token: string | null): void;
 }
 
-const STORAGE_KEY = "juicebox.token";
+const STORAGE_KEY = "obelo.token";
 
 // memoryTokenStore keeps the token in a closure — useful for tests and any
 // context without a DOM.

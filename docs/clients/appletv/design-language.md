@@ -1,4 +1,4 @@
-# Juice Box design language — tvOS (10-foot) adaptation
+# Obelo design language — tvOS (10-foot) adaptation
 
 The web app's visual language, restated for a focus-driven TV UI. The spirit is fixed; the chrome follows tvOS conventions. Goal: the TV app and web app unmistakably feel like one product.
 
@@ -31,7 +31,7 @@ Corner radius stays small and unshowy: 6pt default, 4pt small (scale up only for
 
 The web app's hover states translate to the tvOS focus engine, not to new invention:
 
-- **Focused poster/card**: the system scale+parallax effect, plus a **2pt `accent` ring** — the lime ring *is* the Juice Box focus signature; don't use white glows or shadows. Hairline `border` on unfocused items is optional at 10 feet (it won't read from the couch); the accent ring on focus is mandatory.
+- **Focused poster/card**: the system scale+parallax effect, plus a **2pt `accent` ring** — the lime ring *is* the Obelo focus signature; don't use white glows or shadows. Hairline `border` on unfocused items is optional at 10 feet (it won't read from the couch); the accent ring on focus is mandatory.
 - **Focused text row** (settings, track lists): `surface2` pill behind the row + text brightens `textDim → text`. No underlines.
 - **Buttons**: default = transparent with `borderStrong` outline; primary/confirm = `accent` fill with `accentInk` label. One primary per screen. **Focused**: the default button takes the same 2pt `accent` ring as a card. The primary can't — a lime ring on a lime fill is invisible at ten feet — so it takes the system scale lift instead. Focus must change *something* on every button; this bullet once specified only the resting state, and the tvOS client faithfully implemented the hole, shipping 17 buttons that rendered identically focused and unfocused.
 

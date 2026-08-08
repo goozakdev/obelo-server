@@ -57,14 +57,14 @@ to avoid a first-timer snag, then:
 wrangler deploy
 ```
 
-It prints your live URL, e.g. `https://juicebox-key-rotation.<subdomain>.workers.dev`.
+It prints your live URL, e.g. `https://obelo-key-rotation.<subdomain>.workers.dev`.
 Your rotation endpoint is that URL **+ `/v1/keys`**. It returns `503 no envelope
 published` until step 5 — that's correct.
 
 ### 4. Generate `kAppEncKey` (once)
 
 ```sh
-openssl rand -base64 32        # store in your vault AND as the CI secret JUICEBOX_APP_ENC_KEY
+openssl rand -base64 32        # store in your vault AND as the CI secret OBELO_APP_ENC_KEY
 ```
 
 This is the symmetric key `keytool` encrypts with and the binary decrypts with — see
@@ -76,7 +76,7 @@ Use the TMDB **v3 API Key** (the `?api_key=` string, not the v4 Read Access Toke
 
 ```sh
 # from the repo root
-JUICEBOX_APP_ENC_KEY="<base64 key from step 4>" \
+OBELO_APP_ENC_KEY="<base64 key from step 4>" \
   go run ./cmd/keytool -tmdb "<tmdb-v3-key>" -fanart "<fanart-key>" -o envelope.json
 cd deploy/rotation-worker
 wrangler kv key put --binding=KEYS_KV envelope --path=../../envelope.json
@@ -86,10 +86,10 @@ rm ../../envelope.json
 ### 6. Verify
 
 ```sh
-curl -H 'User-Agent: juicebox/verify' https://juicebox-key-rotation.<subdomain>.workers.dev/v1/keys
+curl -H 'User-Agent: obelo/verify' https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys
 ```
 
-Returns the `{"v":1,…,"payload":"…"}` JSON. Without the `juicebox/` User-Agent you get
+Returns the `{"v":1,…,"payload":"…"}` JSON. Without the `obelo/` User-Agent you get
 a 404 — the bot-shed working.
 
 ### 7. Point official builds at it
@@ -98,14 +98,14 @@ Inject the host at **build time** so it stays out of the repo (baked via `-ldfla
 see `internal/config/bootstrap.go`); in CI these become secrets:
 
 ```sh
-JUICEBOX_ROTATION_URL="https://juicebox-key-rotation.<subdomain>.workers.dev/v1/keys" \
-JUICEBOX_APP_ENC_KEY="<same base64 key>" \
-JUICEBOX_BOOTSTRAP_TMDB_KEY="<tmdb key>" \
-JUICEBOX_BOOTSTRAP_FANART_KEY="<fanart key>" \
+OBELO_ROTATION_URL="https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys" \
+OBELO_APP_ENC_KEY="<same base64 key>" \
+OBELO_BOOTSTRAP_TMDB_KEY="<tmdb key>" \
+OBELO_BOOTSTRAP_FANART_KEY="<fanart key>" \
   make build                   # or --build-arg for Docker
 ```
 
-Operators can override the baked default at runtime with `JUICEBOX_KEY_ROTATION_URL`.
+Operators can override the baked default at runtime with `OBELO_KEY_ROTATION_URL`.
 
 ### 8. Add rate limiting back (optional)
 
@@ -127,7 +127,7 @@ The publish step lands here:
 
 ```sh
 # 2. seal the replacement keys (kAppEncKey from the maintainer's secret store)
-JUICEBOX_APP_ENC_KEY=<base64-kAppEncKey> \
+OBELO_APP_ENC_KEY=<base64-kAppEncKey> \
   go run ./cmd/keytool -tmdb <new-tmdb> -fanart <new-fanart> -o envelope.json
 
 # 3. publish — installs pick it up on their next poll, no release

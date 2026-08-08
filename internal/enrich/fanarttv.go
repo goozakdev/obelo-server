@@ -68,7 +68,7 @@ func NewFanartTVProvider(apiKey, baseURL string) *FanartTVProvider {
 	return &FanartTVProvider{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
-		UserAgent:   "juicebox/1.0 (self-hosted)",
+		UserAgent:   "obelo/1.0 (self-hosted)",
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultFanartTVThrottle,
 		cache:       map[string]artistImages{},

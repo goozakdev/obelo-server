@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // artwork-management issue 02 black-box test: the Artist Photo picker now returns a

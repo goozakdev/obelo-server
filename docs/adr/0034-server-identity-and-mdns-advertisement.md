@@ -35,10 +35,10 @@ origin-root assumption it documents. Nothing here depends on it either way.
 ## Decisions
 
 - **A Server gains an identity: a stable `id` and a display `name`.** The `id` is a UUID
-  generated once on first boot and persisted in `JUICEBOX_DATA_DIR` alongside the SQLite file —
+  generated once on first boot and persisted in `OBELO_DATA_DIR` alongside the SQLite file —
   the same durability boundary as every other piece of server state, so "reset the data dir" (the
   documented cheapest reset) correctly mints a new identity. The `name` comes from a new
-  `JUICEBOX_SERVER_NAME`, defaulting to the host's name.
+  `OBELO_SERVER_NAME`, defaulting to the host's name.
 - **Both are added to `GET /server`.** This is **additive** — per the contract's own rule,
   *"Additive changes (new fields/endpoints) never bump it"* — so no `/api/v2`, and existing
   clients are unaffected:
@@ -48,7 +48,7 @@ origin-root assumption it documents. Nothing here depends on it either way.
     "supportedVersions": [1], "features": { … }, "setupRequired": false }
   ```
 
-- **The server advertises `_juicebox._tcp` on its listen port**, with a deliberately small TXT
+- **The server advertises `_obelo._tcp` on its listen port**, with a deliberately small TXT
   record (per RFC 6763, TXT is a hint; the client confirms against the real protocol):
 
   ```
@@ -63,7 +63,7 @@ origin-root assumption it documents. Nothing here depends on it either way.
 
 ## Why
 
-The picker — "choose Juice Box from a list" instead of thumbing `http://192.168.1.50:8080` into
+The picker — "choose Obelo from a list" instead of thumbing `http://192.168.1.50:8080` into
 an on-screen keyboard with a Siri Remote — is the visible win, and it alone justifies the work.
 That is the worst first-run experience the client has, and it lands at the exact moment a user
 decides whether the product feels real.
@@ -96,7 +96,7 @@ bug.
 - **First boot gains a side effect** — minting and persisting the identity — joining the claim
   token ([ADR-0013](./0013-first-admin-claim-token-bootstrap.md)) as things that happen once. It
   must be generated *before* the first advertisement.
-- **Resetting `JUICEBOX_DATA_DIR` changes the server's identity**, so clients treat it as a new
+- **Resetting `OBELO_DATA_DIR` changes the server's identity**, so clients treat it as a new
   server and must re-login. Correct — a wiped data dir has no Users, no Devices, and no tokens to
   honor — and consistent with `test-harness.md`'s reset story.
 - **`GET /server` is `[Unauthenticated]`**, so `id` and `name` are public to anyone who can reach
@@ -130,16 +130,16 @@ fail to resolve it.** `os.Hostname()` on Linux yields a bare `nuc`, which became
 — a single-label name Apple's resolver hands to *unicast* DNS, where nothing answers. macOS hosts
 escaped this only because their hostname is already `something.local`. **The advertised host name
 is now always `<first label>.local.`**, sanitized to a legal DNS label, falling back to
-`juicebox.local.` when the OS name is unusable.
+`obelo.local.` when the OS name is unusable.
 
 Two escape hatches, both empty by default and neither needed on a bare-metal install:
 
-- **`JUICEBOX_ADVERTISE_IP`** (comma-separated) publishes exactly these addresses instead of the
+- **`OBELO_ADVERTISE_IP`** (comma-separated) publishes exactly these addresses instead of the
   discovered ones. Interface selection is a name-prefix heuristic (`docker*`, `br-*`, `veth*`,
   `virbr*`, …) and heuristics are wrong sometimes; this is the way out. A malformed entry fails
   the advertisement loudly rather than being dropped — an operator setting this knob is already
   debugging, and a half-applied setting is the worst answer available.
-- **`JUICEBOX_MDNS_INTERFACE`** pins the responder's multicast listener to a named interface. The
+- **`OBELO_MDNS_INTERFACE`** pins the responder's multicast listener to a named interface. The
   library binds with no interface, leaving the kernel to pick "the default multicast interface"
   from the routing table — on a Docker host that is frequently `docker0`, so the group membership
   lands on a bridge nobody queries and the responder never *receives* the query. A correct A

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/api"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/api"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Black-box tests for the path-carried media routes (.scratch/session-stream-tokens,
@@ -692,7 +692,7 @@ func (b *syncBuffer) String() string {
 //
 // The secret is in r.URL.Path, and printing the request path is what every
 // access log on earth does — so this drives a real playthrough through
-// api.LogRequests (the middleware cmd/juicebox wraps the server in) with the
+// api.LogRequests (the middleware cmd/obelo wraps the server in) with the
 // standard logger captured, and requires that the token appears in NO line while
 // the request itself still does. It also checks the account credential on the
 // ?token= download route stays out, since that is the same failure one URL over.
@@ -710,7 +710,7 @@ func TestStreamTokenNeverReachesTheAccessLog(t *testing.T) {
 	})
 
 	// The production composition: the access-log middleware wrapped around the
-	// fully wired server, exactly as cmd/juicebox does it.
+	// fully wired server, exactly as cmd/obelo does it.
 	ts := httptest.NewServer(api.LogRequests(srv.Handler()))
 	defer ts.Close()
 

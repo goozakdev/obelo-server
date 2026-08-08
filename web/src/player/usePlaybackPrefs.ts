@@ -14,7 +14,7 @@ import { useAuth, persistedUserId } from "../auth/session";
 // unit-testable at the store seam without React — the same seam philosophy as
 // the Queue's persist.ts.
 
-const STORAGE_PREFIX = "juicebox.playback-prefs";
+const STORAGE_PREFIX = "obelo.playback-prefs";
 
 /** Volume ∈ [0, 1] and mute. Defaults to full volume, un-muted. */
 export interface PlaybackPrefs {

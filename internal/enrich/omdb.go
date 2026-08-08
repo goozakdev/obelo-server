@@ -75,7 +75,7 @@ func NewOMDbProvider(apiKey, baseURL string) *OMDbProvider {
 	return &OMDbProvider{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
-		UserAgent:   "juicebox/1.0 (self-hosted)",
+		UserAgent:   "obelo/1.0 (self-hosted)",
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultOMDbThrottle,
 		cache:       map[string]omdbResult{},

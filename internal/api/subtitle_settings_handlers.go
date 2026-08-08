@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/subfetch"
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
 // Admin-scope subtitle-provider settings (ADR-0021), the exact shape of the

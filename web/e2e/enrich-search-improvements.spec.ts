@@ -79,7 +79,7 @@ test.describe.serial("edit-item: paste a provider id/URL to apply an Enrichment 
     const token = await login(request);
     const auth = { Authorization: `Bearer ${token}` };
 
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-search-improvements-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-search-improvements-fixtures-"));
     const movieDir = join(fixturesDir, "Nomatch Movie (2097)");
     mkdirSync(movieDir, { recursive: true });
     cpSync(

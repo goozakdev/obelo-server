@@ -17,7 +17,7 @@ import type { TitleSummary } from "../api/types";
 // Signed-in entry, playback teardown + client-state re-key across a switch, and
 // Admin GET /users seeding.
 
-const TOKEN_KEY = "juicebox.token";
+const TOKEN_KEY = "obelo.token";
 
 function title(id: string): TitleSummary {
   return {
@@ -189,8 +189,8 @@ describe("AuthProvider — Remember me retention", () => {
     expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(window.sessionStorage.getItem(TOKEN_KEY)).toBe("tok-ana");
     // The user hint follows the same tier (no durable user hint either).
-    expect(window.localStorage.getItem("juicebox.user")).toBeNull();
-    expect(window.sessionStorage.getItem("juicebox.user")).not.toBeNull();
+    expect(window.localStorage.getItem("obelo.user")).toBeNull();
+    expect(window.sessionStorage.getItem("obelo.user")).not.toBeNull();
   });
 
   it("persists the token to localStorage when Remember me is on", async () => {

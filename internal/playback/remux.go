@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // hlsRuntime owns the on-demand HLS job for one directStream OR transcode
@@ -221,7 +221,7 @@ func (rt *hlsRuntime) launchInitial() error {
 	// an operator can see a validated hardware backend failing at runtime and the
 	// session quietly running on CPU — the startup log alone cannot reveal this
 	// (ADR-0009). filepath.Base(scratchDir) is the session ID (scratch is keyed by it).
-	log.Printf("juicebox: hardware acceleration: session %s — hardware encode failed to launch (%v); falling back to CPU libx264", filepath.Base(rt.scratchDir), err)
+	log.Printf("obelo: hardware acceleration: session %s — hardware encode failed to launch (%v); falling back to CPU libx264", filepath.Base(rt.scratchDir), err)
 	rt.fellBack = true
 	rt.killCurrentLocked() // reap the dead/half-started hardware job before restarting
 	return rt.startLocked(transcode.SeekOffset{})
@@ -290,7 +290,7 @@ func (rt *hlsRuntime) startLocked(seek transcode.SeekOffset) error {
 		}
 		rt.mu.Unlock()
 		if err != nil {
-			log.Printf("juicebox: transcode: ffmpeg job for session %s failed: %v", sess, err)
+			log.Printf("obelo: transcode: ffmpeg job for session %s failed: %v", sess, err)
 		} else if !superseded && seek.StartNumber == 0 {
 			// Self-check only a from-the-top run that completed as the current job: its
 			// playlist spans the whole timeline, so the comparison is meaningful. A
@@ -345,13 +345,13 @@ func (rt *hlsRuntime) verifySynthPlaylist(sess string) {
 		return
 	}
 	if len(actual) != len(boundaries)-1 {
-		log.Printf("juicebox: playback: session %s synthesized playlist MISMATCH: predicted %d segments, ffmpeg produced %d — the keyframe index disagrees with ffmpeg's cuts for this file",
+		log.Printf("obelo: playback: session %s synthesized playlist MISMATCH: predicted %d segments, ffmpeg produced %d — the keyframe index disagrees with ffmpeg's cuts for this file",
 			sess, len(boundaries)-1, len(actual))
 		return
 	}
 	for i, d := range actual {
 		if p := boundaries[i+1] - boundaries[i]; p-d > 0.1 || d-p > 0.1 {
-			log.Printf("juicebox: playback: session %s synthesized playlist MISMATCH at segment %d: predicted %.3fs, ffmpeg produced %.3fs",
+			log.Printf("obelo: playback: session %s synthesized playlist MISMATCH at segment %d: predicted %.3fs, ffmpeg produced %.3fs",
 				sess, i, p, d)
 			return
 		}

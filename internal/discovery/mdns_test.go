@@ -176,7 +176,7 @@ func TestSelectIPsHoistsThePreferredSource(t *testing.T) {
 }
 
 func TestParseIPsRejectsGarbage(t *testing.T) {
-	// An operator sets JUICEBOX_ADVERTISE_IP because discovery is already broken.
+	// An operator sets OBELO_ADVERTISE_IP because discovery is already broken.
 	// Dropping the entry they typo'd and advertising the rest would leave them
 	// debugging a half-configured server; failing loudly puts it in the boot log.
 	if _, err := parseIPs([]string{"192.168.1.50", "not-an-ip"}); err == nil {
@@ -232,7 +232,7 @@ func TestServiceTypeIsThePublishedContract(t *testing.T) {
 	// Clients browse for exactly this string. Changing it breaks discovery for
 	// every deployed client, silently — they just find nothing. This test exists
 	// to make that change deliberate rather than incidental.
-	if ServiceType != "_juicebox._tcp" {
+	if ServiceType != "_obelo._tcp" {
 		t.Fatalf("ServiceType = %q — this is a published interface (ADR-0034); "+
 			"changing it strands every deployed client", ServiceType)
 	}

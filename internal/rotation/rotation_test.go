@@ -117,7 +117,7 @@ func TestFetchHappyPath(t *testing.T) {
 	}
 	url, hits := serveEnvelope(t, &Envelope{V: 1, MinAppVersion: "0.1.0", Payload: payload}, "")
 
-	c := Client{URL: url, EncKeyB64: enc, AppVersion: "0.1.0", UserAgent: "juicebox/test"}
+	c := Client{URL: url, EncKeyB64: enc, AppVersion: "0.1.0", UserAgent: "obelo/test"}
 	keys, err := c.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)

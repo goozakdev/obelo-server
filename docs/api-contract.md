@@ -141,7 +141,7 @@ Every flag above reads `true` on a normally-provisioned server. `transcode` is t
 `id` and `name` are the **Server identity** ([ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). Both are `omitempty` and both are **additive** — a server predating ADR-0034 omits them, so treat them as optional rather than as an error.
 
 - **`id`** — an opaque UUID, minted once into the server's data dir and stable for its lifetime. It is *not* derived from a key or from hardware, so it survives both. **Its purpose is to make an address change survivable:** a client that stored the id can rediscover the server at a new address (DHCP lease change) and keep its token, because the token is bound to a Device row on this server ([ADR-0015](./adr/0015-opaque-db-backed-tokens.md)), never to an address. It is also the only way to answer "is this the same server I logged into?". Wiping the data dir mints a new id — correct, since that server has no Users, Devices, or tokens to honor.
-- **`name`** — the operator's display name (`JUICEBOX_SERVER_NAME`, defaulting to the host's name). Cosmetic; nothing keys on it, and renaming never invalidates a token. That is exactly why it is a separate field from `id`.
+- **`name`** — the operator's display name (`OBELO_SERVER_NAME`, defaulting to the host's name). Cosmetic; nothing keys on it, and renaming never invalidates a token. That is exactly why it is a separate field from `id`.
 
 Neither is a secret: this endpoint is unauthenticated, the id grants nothing, and the name is operator-chosen.
 
@@ -152,11 +152,11 @@ Errors: `500 INTERNAL`.
 Not an HTTP endpoint, but part of how a native client reaches this contract ([ADR-0005](./adr/0005-discovery-and-tls-via-reverse-proxy.md), implemented by [ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). The server advertises on the local link:
 
 ```
-service:  _juicebox._tcp        (in the local domain, on the listen port)
+service:  _obelo._tcp        (in the local domain, on the listen port)
 TXT:      txtvers=1  id=<uuid>  name=<display name>  path=/api/v1
 ```
 
-Verify with `dns-sd -B _juicebox._tcp local` / `dns-sd -L "<name>" _juicebox._tcp local`.
+Verify with `dns-sd -B _obelo._tcp local` / `dns-sd -L "<name>" _obelo._tcp local`.
 
 - **TXT is a hint, not a contract** (RFC 6763). Confirm everything against `GET /server` once connected; `id`/`name` appear in both, and the handshake is authoritative.
 - **The SRV target is always a `.local` name**, and its A/AAAA records carry the server host's own LAN addresses, most-likely-reachable first. Resolve and try them in order. (Servers predating the 2026-08-02 amendment to ADR-0034 could advertise a single-label host name that only unicast DNS would answer, and in a container often advertised nothing at all.)

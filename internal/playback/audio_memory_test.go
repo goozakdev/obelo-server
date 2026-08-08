@@ -3,7 +3,7 @@ package playback
 import (
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Unit tests for the Remembered-audio trait re-resolver (audio-streams/05, ADR-0023)

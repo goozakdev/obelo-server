@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Admin-scope per-Library Enrichment policy (ADR-0027):

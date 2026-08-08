@@ -3,8 +3,8 @@ package playback
 import (
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/audio"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/audio"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Remembered audio (audio-streams/05, ADR-0023): an explicit audio pick is stored

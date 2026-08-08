@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/rotation"
+	"github.com/marioquake/obelo-server/internal/rotation"
 )
 
 // testEncKey returns a fresh base64 AES-256 key.
@@ -53,7 +53,7 @@ func TestBuildEnvelopeRoundTripThroughClient(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	keys, err := (rotation.Client{URL: srv.URL, EncKeyB64: enc, AppVersion: "0.1.0", UserAgent: "juicebox/test"}).Fetch(context.Background())
+	keys, err := (rotation.Client{URL: srv.URL, EncKeyB64: enc, AppVersion: "0.1.0", UserAgent: "obelo/test"}).Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("client Fetch of keytool envelope: %v", err)
 	}

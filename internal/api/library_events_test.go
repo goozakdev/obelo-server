@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // TestLibraryScopedEventsGatedByGrant: the realtime stream honors real grants. A

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/config"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Real-ffmpeg integration tests for the directStream (remux) HLS path (issue

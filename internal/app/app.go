@@ -13,25 +13,25 @@ import (
 	"os"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/api"
-	"github.com/marioquake/juicebox/internal/auth"
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/config"
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/events"
-	"github.com/marioquake/juicebox/internal/gpu"
-	"github.com/marioquake/juicebox/internal/library"
-	"github.com/marioquake/juicebox/internal/match"
-	"github.com/marioquake/juicebox/internal/organize"
-	"github.com/marioquake/juicebox/internal/playback"
-	"github.com/marioquake/juicebox/internal/rotation"
-	"github.com/marioquake/juicebox/internal/scanner"
-	"github.com/marioquake/juicebox/internal/server"
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/subfetch"
-	"github.com/marioquake/juicebox/internal/transcode"
-	"github.com/marioquake/juicebox/internal/webui"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/api"
+	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/events"
+	"github.com/marioquake/obelo-server/internal/gpu"
+	"github.com/marioquake/obelo-server/internal/library"
+	"github.com/marioquake/obelo-server/internal/match"
+	"github.com/marioquake/obelo-server/internal/organize"
+	"github.com/marioquake/obelo-server/internal/playback"
+	"github.com/marioquake/obelo-server/internal/rotation"
+	"github.com/marioquake/obelo-server/internal/scanner"
+	"github.com/marioquake/obelo-server/internal/server"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/webui"
 )
 
 // App is a fully wired server: an http.Handler ready to serve, plus the
@@ -52,7 +52,7 @@ type App struct {
 	Handler  http.Handler
 
 	// Identity is this Server's stable id + display name (ADR-0034). Exposed so the
-	// mDNS advertiser and the handshake advertise the same values — cmd/juicebox
+	// mDNS advertiser and the handshake advertise the same values — cmd/obelo
 	// owns the advertiser because only it knows the listen address, but the
 	// identity is resolved here, once.
 	Identity server.Identity
@@ -75,7 +75,7 @@ type App struct {
 
 	// keyRotator polls the optional rotation endpoint for replacement default keys
 	// (ADR-0032, layer 2) and applies them to the running provider. Nil when the
-	// channel is disabled (build-from-source with no enc key, JUICEBOX_KEY_ROTATION=
+	// channel is disabled (build-from-source with no enc key, OBELO_KEY_ROTATION=
 	// off, no URL, or full BYOK). rotationWake pokes its loop so a just-granted
 	// consent triggers a fetch promptly (buffered size 1, coalescing like
 	// enrichReschedule); rotationDone closes when the loop exits.
@@ -268,8 +268,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// is the single, intentional disclosure point. Once an Admin exists the token
 	// is empty and nothing is logged.
 	if tok := authSvc.ClaimToken(); tok != "" {
-		log.Printf("juicebox: no users yet — first-Admin claim token: %s", tok)
-		log.Printf("juicebox: complete setup via POST /api/v1/setup with this claimToken")
+		log.Printf("obelo: no users yet — first-Admin claim token: %s", tok)
+		log.Printf("obelo: complete setup via POST /api/v1/setup with this claimToken")
 	}
 
 	librarySvc := library.NewService(db)
@@ -394,7 +394,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// consent-gated); a corrupt cache is logged, not fatal.
 	rotCache, _, cacheErr := rotation.LoadCache(cfg.MetadataKeysPath())
 	if cacheErr != nil {
-		log.Printf("juicebox: metadata credentials: ignoring unreadable rotation cache: %v", cacheErr)
+		log.Printf("obelo: metadata credentials: ignoring unreadable rotation cache: %v", cacheErr)
 	}
 	rotKeys := config.RotationKeys{TMDB: rotCache.TMDB, Fanart: rotCache.Fanart}
 
@@ -456,7 +456,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Key rotation (ADR-0032, layer 2): build the poller that fetches replacement
 	// default keys and applies them to the running provider. It returns nil (channel
 	// disabled) for a build-from-source binary (no enc key to decrypt with),
-	// JUICEBOX_KEY_ROTATION=off, no URL, or an all-BYOK operator — so the goroutine
+	// OBELO_KEY_ROTATION=off, no URL, or an all-BYOK operator — so the goroutine
 	// below is skipped and zero maintainer contact is made. A fixed injected provider
 	// (WithMetadataProvider) has no running Manager to rebuild, so rotation is off too.
 	var keyRot *keyRotator
@@ -522,7 +522,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			// backstop, and there is nobody to report a failure to (the reaper has no
 			// caller, and the DELETE has already succeeded).
 			if err := authSvc.RevokeStreamTokens(e.SessionID); err != nil {
-				log.Printf("juicebox: revoking stream tokens for ended session %s: %v", e.SessionID, err)
+				log.Printf("obelo: revoking stream tokens for ended session %s: %v", e.SessionID, err)
 			}
 		default:
 			return
@@ -708,7 +708,7 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 		case <-ticker.C:
 			libs, err := a.DB.Libraries()
 			if err != nil {
-				log.Printf("juicebox: scheduled scan: listing libraries: %v", err)
+				log.Printf("obelo: scheduled scan: listing libraries: %v", err)
 				continue
 			}
 			// Same scanProgress publish the manual scan handler does, so the
@@ -740,7 +740,7 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 					if errors.Is(err, scanner.ErrScanInProgress) {
 						continue
 					}
-					log.Printf("juicebox: scheduled scan of %q: %v", lib.ID, err)
+					log.Printf("obelo: scheduled scan of %q: %v", lib.ID, err)
 					// Terminal-on-error: emit a Complete event so a client's
 					// "scanning…" indicator clears instead of hanging.
 					a.Events.PublishScanProgress(events.ScanProgress{LibraryID: lib.ID, Complete: true})
@@ -798,7 +798,7 @@ func (a *App) reEnrichLibraryForPolicy(libraryID string) {
 func (a *App) enqueueEnrichAfterScan(libraryID string) {
 	behavior, err := a.DB.EnrichmentBehavior()
 	if err != nil {
-		log.Printf("juicebox: reading auto-enrich setting: %v", err)
+		log.Printf("obelo: reading auto-enrich setting: %v", err)
 		return
 	}
 	if !behavior.Auto() {
@@ -854,7 +854,7 @@ func (a *App) enqueue(req enrichRequest) {
 	select {
 	case a.enrichQueue <- req:
 	default:
-		log.Printf("juicebox: enrich queue full, dropping %q", req.libraryID)
+		log.Printf("obelo: enrich queue full, dropping %q", req.libraryID)
 	}
 }
 
@@ -886,7 +886,7 @@ func (a *App) runEnrichPass(ctx context.Context, libID string, mode enrich.Mode)
 	res, err := a.Enrich.EnrichLibraryProgress(ctx, libID, mode, cb)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("juicebox: enrich pass of %q: %v", libID, err)
+			log.Printf("obelo: enrich pass of %q: %v", libID, err)
 		}
 		return
 	}
@@ -947,7 +947,7 @@ func (a *App) runScheduledEnrich(ctx context.Context) {
 func (a *App) enrichIntervalSeconds() int {
 	behavior, err := a.DB.EnrichmentBehavior()
 	if err != nil {
-		log.Printf("juicebox: reading enrich interval: %v", err)
+		log.Printf("obelo: reading enrich interval: %v", err)
 		return 0
 	}
 	return behavior.IntervalSeconds()
@@ -958,7 +958,7 @@ func (a *App) enrichIntervalSeconds() int {
 func (a *App) sweepEnrich(ctx context.Context) {
 	libs, err := a.DB.Libraries()
 	if err != nil {
-		log.Printf("juicebox: scheduled enrich: listing libraries: %v", err)
+		log.Printf("obelo: scheduled enrich: listing libraries: %v", err)
 		return
 	}
 	for _, lib := range libs {
@@ -1024,9 +1024,9 @@ func resolveBackend(detector transcode.Detector, h config.HWAccel) transcode.Res
 	defer cancel()
 	res := detector.Resolve(ctx, accelFromConfig(h))
 	if res.Warn {
-		log.Printf("juicebox: hardware acceleration: WARNING — %s", res.Reason)
+		log.Printf("obelo: hardware acceleration: WARNING — %s", res.Reason)
 	} else {
-		log.Printf("juicebox: hardware acceleration: %s", res.Reason)
+		log.Printf("obelo: hardware acceleration: %s", res.Reason)
 	}
 	return res
 }
@@ -1046,9 +1046,9 @@ func resolveFFmpegAvailability(probe transcode.AvailabilityProbe) transcode.Avai
 	defer cancel()
 	av := probe.Resolve(ctx)
 	if av.Available {
-		log.Printf("juicebox: transcode tier: %s", av.Reason)
+		log.Printf("obelo: transcode tier: %s", av.Reason)
 	} else {
-		log.Printf("juicebox: transcode tier: WARNING — %s", av.Reason)
+		log.Printf("obelo: transcode tier: WARNING — %s", av.Reason)
 	}
 	return av
 }
@@ -1092,7 +1092,7 @@ func seedInputFromConfig(cfg config.Config, rot config.RotationKeys) enrich.Seed
 		EnrichIntervalSeconds:  int(cfg.EnrichInterval / time.Second),
 		MusicBrainzRateLimitMs: int(cfg.MusicBrainzRateLimit / time.Millisecond),
 		// First-run consent (ADR-0032): nil leaves it undecided (fresh install prompts,
-		// no outbound calls); a headless JUICEBOX_ENRICHMENT_CONSENT pre-seeds it.
+		// no outbound calls); a headless OBELO_ENRICHMENT_CONSENT pre-seeds it.
 		ConsentGranted: cfg.EnrichmentConsentGranted,
 	}
 }
@@ -1108,13 +1108,13 @@ func seedInputFromConfig(cfg config.Config, rot config.RotationKeys) enrich.Seed
 func logCredentialPosture(cfg config.Config, rot config.RotationKeys) {
 	switch _, src := cfg.ResolveTMDBKey(rot); src {
 	case config.CredentialOperator:
-		log.Printf("juicebox: metadata credentials: using your operator key (BYOK); zero maintainer contact")
+		log.Printf("obelo: metadata credentials: using your operator key (BYOK); zero maintainer contact")
 	case config.CredentialRotation:
-		log.Printf("juicebox: metadata credentials: using a rotated default key from the rotation endpoint (official build) — set JUICEBOX_TMDB_API_KEY / JUICEBOX_FANART_TV_API_KEY to use your own (BYOK), or JUICEBOX_KEY_ROTATION=off to disable rotation")
+		log.Printf("obelo: metadata credentials: using a rotated default key from the rotation endpoint (official build) — set OBELO_TMDB_API_KEY / OBELO_FANART_TV_API_KEY to use your own (BYOK), or OBELO_KEY_ROTATION=off to disable rotation")
 	case config.CredentialBootstrap:
-		log.Printf("juicebox: metadata credentials: using the bundled default keys (official build) — set JUICEBOX_TMDB_API_KEY / JUICEBOX_FANART_TV_API_KEY to use your own (BYOK)")
+		log.Printf("obelo: metadata credentials: using the bundled default keys (official build) — set OBELO_TMDB_API_KEY / OBELO_FANART_TV_API_KEY to use your own (BYOK)")
 	default:
-		log.Printf("juicebox: metadata credentials: no default keys are bundled in this build — set JUICEBOX_TMDB_API_KEY / JUICEBOX_FANART_TV_API_KEY to enable enrichment (BYOK); otherwise metadata stays sparse (ADR-0001)")
+		log.Printf("obelo: metadata credentials: no default keys are bundled in this build — set OBELO_TMDB_API_KEY / OBELO_FANART_TV_API_KEY to enable enrichment (BYOK); otherwise metadata stays sparse (ADR-0001)")
 	}
 }
 

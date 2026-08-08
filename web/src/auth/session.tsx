@@ -49,7 +49,7 @@ import {
 // session, which the per-userId Queue/prefs stores already react to — tearing down
 // the previous identity's playback (client ADR-0009) rather than swapping a header.
 
-const USER_KEY = "juicebox.user";
+const USER_KEY = "obelo.user";
 
 export interface Session {
   user: User;

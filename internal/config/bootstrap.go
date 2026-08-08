@@ -36,7 +36,7 @@ var (
 // binary therefore has no rotation URL and never polls — already true, since it also
 // has no kAppEncKey to decrypt a payload with. Injected verbatim (not obfuscated: it
 // is public in the binary by design). Overridable at runtime via
-// JUICEBOX_KEY_ROTATION_URL so tests point it at a stub.
+// OBELO_KEY_ROTATION_URL so tests point it at a stub.
 var DefaultKeyRotationURL string
 
 // deobfuscate decodes a build-injected bootstrap credential. Injected values are

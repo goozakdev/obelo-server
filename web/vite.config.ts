@@ -14,7 +14,7 @@ import react from "@vitejs/plugin-react";
 // Dev proxy: `npm run dev` serves the SPA on :5173 with HMR and proxies
 // `/api/v1` to a locally running Go server on :8080, so local development hits
 // the real API without CORS. Start the Go server separately
-// (`go run ./cmd/juicebox`) before `npm run dev`. The proxy is dev-only;
+// (`go run ./cmd/obelo`) before `npm run dev`. The proxy is dev-only;
 // production has no proxy because everything is same-origin.
 export default defineConfig({
   plugins: [react()],

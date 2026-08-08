@@ -83,7 +83,7 @@ test.describe.serial("edit-item: search a provider and apply an Enrichment overr
 
     // Unique temp fixtures: one movie folder the stub deliberately no-matches, so
     // it starts with no overview until the Admin fixes it.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-enrich-override-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-enrich-override-fixtures-"));
     const movieDir = join(fixturesDir, "Nomatch Movie (2098)");
     mkdirSync(movieDir, { recursive: true });
     cpSync(

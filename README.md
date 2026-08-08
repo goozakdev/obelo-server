@@ -1,8 +1,8 @@
-# Juice Box
+# Obelo
 
 **A fully self-hosted media server for your household's movies, TV, and music.**
 
-Juice Box scans the video and music files you already have on disk, organizes
+Obelo scans the video and music files you already have on disk, organizes
 them into browsable libraries, decorates them with artwork and descriptions from
 public metadata sources, and streams them to your devices through a clean web
 app — all from a single binary you run on your own hardware. No accounts on
@@ -69,7 +69,7 @@ Build the image (the build context is the repository root, not the `docker/`
 directory):
 
 ```sh
-docker build -f docker/Dockerfile -t juicebox .
+docker build -f docker/Dockerfile -t obelo .
 ```
 
 Run it, mounting a writable data directory and your media (read-only):
@@ -78,7 +78,7 @@ Run it, mounting a writable data directory and your media (read-only):
 docker run --rm -p 8080:8080 \
   -v "$PWD/data:/data" \
   -v /path/to/your/media:/media:ro \
-  juicebox
+  obelo
 ```
 
 - **`:8080`** — the web app and API (same origin). Open <http://localhost:8080>.
@@ -90,23 +90,23 @@ docker run --rm -p 8080:8080 \
 Want native clients to **find the server** instead of being handed an address?
 Run it with `--network host` instead of `-p` — mDNS is link-local multicast and
 does not cross a Docker bridge. See
-[`docker/README.md`](./docker/README.md#lan-discovery-bonjour-_juicebox_tcp).
+[`docker/README.md`](./docker/README.md#lan-discovery-bonjour-_obelo_tcp).
 
 Building on Apple Silicon still produces a `linux/amd64` image (the Go binary is
 pure-Go and cross-compiles). If your Docker can't run amd64 locally, use buildx:
 
 ```sh
-docker buildx build --platform linux/amd64 -f docker/Dockerfile -t juicebox . --load
+docker buildx build --platform linux/amd64 -f docker/Dockerfile -t obelo . --load
 ```
 
 ### GPU-accelerated transcoding (NVIDIA / NVENC)
 
 ```sh
 docker run --rm --gpus all -p 8080:8080 \
-  -e JUICEBOX_HARDWARE_ACCEL=nvenc \
+  -e OBELO_HARDWARE_ACCEL=nvenc \
   -v "$PWD/data:/data" \
   -v /path/to/your/media:/media:ro \
-  juicebox
+  obelo
 ```
 
 The admin **Transcoding** tab then shows GPU telemetry (utilization, VRAM,
@@ -123,10 +123,10 @@ More detail lives in [`docker/README.md`](./docker/README.md).
 Prerequisites: **Go 1.25+**, **Node.js 22+**, and **`ffmpeg`** on `PATH`.
 
 ```sh
-git clone https://github.com/marioquake/juicebox.git
-cd juicebox
+git clone https://github.com/marioquake/obelo-server.git
+cd obelo
 make build      # builds the web bundle first, then the Go binary that embeds it
-./bin/juicebox
+./bin/obelo
 ```
 
 `make build` enforces the required order: the React/Vite SPA is bundled into
@@ -147,13 +147,13 @@ By default the server listens on `:8080` and stores state in `./data`.
 
 ## First run: create the first admin
 
-Everything in Juice Box is authenticated, so the very first admin is
+Everything in Obelo is authenticated, so the very first admin is
 bootstrapped with a **one-time claim token** printed to the server's logs on
 first start (when the database has no users yet):
 
 ```
-juicebox: no users yet — first-Admin claim token: <token>
-juicebox: complete setup via POST /api/v1/setup with this claimToken
+obelo: no users yet — first-Admin claim token: <token>
+obelo: complete setup via POST /api/v1/setup with this claimToken
 ```
 
 Open the web app, and the setup wizard will ask for that token to create your
@@ -168,26 +168,26 @@ and descriptions — turn on enrichment and grant consent.
 
 ## Configuration
 
-All configuration is via `JUICEBOX_*` environment variables. Common ones:
+All configuration is via `OBELO_*` environment variables. Common ones:
 
 | Variable                             | Default   | Purpose                                                        |
 | ------------------------------------ | --------- | -------------------------------------------------------------- |
-| `JUICEBOX_LISTEN_ADDR`               | `:8080`   | `host:port` the server binds to.                               |
-| `JUICEBOX_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
-| `JUICEBOX_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
-| `JUICEBOX_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
-| `JUICEBOX_MAX_CONCURRENT_TRANSCODES` | `3`       | Cap on simultaneous transcodes (`0` = unlimited).              |
-| `JUICEBOX_TMDB_API_KEY`              | —         | Enables Movie/TV enrichment via TMDB.                          |
-| `JUICEBOX_MUSICBRAINZ_ENABLED`       | `false`   | Turns on Music enrichment (needs no key).                      |
-| `JUICEBOX_FANART_TV_API_KEY`         | —         | Adds artist imagery from fanart.tv.                            |
-| `JUICEBOX_THEAUDIODB_API_KEY`        | —         | Adds artist images + biographies from TheAudioDB.              |
-| `JUICEBOX_OPENSUBTITLES_API_KEY`     | —         | Enables on-demand subtitle fetching.                           |
-| `JUICEBOX_METADATA_LANGUAGE`         | `en-US`   | Preferred language/region for fetched metadata.               |
-| `JUICEBOX_ADVERTISE_IP`              | auto      | IPs to publish in the mDNS records (comma-separated).          |
-| `JUICEBOX_MDNS_INTERFACE`            | auto      | Interface the mDNS responder listens on (e.g. `eth0`).         |
+| `OBELO_LISTEN_ADDR`               | `:8080`   | `host:port` the server binds to.                               |
+| `OBELO_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
+| `OBELO_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
+| `OBELO_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
+| `OBELO_MAX_CONCURRENT_TRANSCODES` | `3`       | Cap on simultaneous transcodes (`0` = unlimited).              |
+| `OBELO_TMDB_API_KEY`              | —         | Enables Movie/TV enrichment via TMDB.                          |
+| `OBELO_MUSICBRAINZ_ENABLED`       | `false`   | Turns on Music enrichment (needs no key).                      |
+| `OBELO_FANART_TV_API_KEY`         | —         | Adds artist imagery from fanart.tv.                            |
+| `OBELO_THEAUDIODB_API_KEY`        | —         | Adds artist images + biographies from TheAudioDB.              |
+| `OBELO_OPENSUBTITLES_API_KEY`     | —         | Enables on-demand subtitle fetching.                           |
+| `OBELO_METADATA_LANGUAGE`         | `en-US`   | Preferred language/region for fetched metadata.               |
+| `OBELO_ADVERTISE_IP`              | auto      | IPs to publish in the mDNS records (comma-separated).          |
+| `OBELO_MDNS_INTERFACE`            | auto      | Interface the mDNS responder listens on (e.g. `eth0`).         |
 
 Provider keys and language seed the database only on **first boot** — afterward
-you manage providers from the admin settings UI (no restart needed). Juice Box
+you manage providers from the admin settings UI (no restart needed). Obelo
 is **offline-first**: with no keys configured it makes zero outbound calls and
 every title simply shows as un-enriched. The full list of knobs is documented in
 [`internal/config/config.go`](./internal/config/config.go).
@@ -196,8 +196,8 @@ every title simply shows as un-enriched. The full list of knobs is documented in
 
 ## Attribution
 
-Juice Box's *metadata enrichment* is optional and, when enabled, decorates your
-library using these public sources. Juice Box is not endorsed by or affiliated
+Obelo's *metadata enrichment* is optional and, when enabled, decorates your
+library using these public sources. Obelo is not endorsed by or affiliated
 with any of them.
 
 <table>
@@ -229,7 +229,7 @@ sources.
 ## Project layout
 
 ```
-cmd/juicebox/        server entry point
+cmd/obelo/        server entry point
 internal/            the modular monolith (scanner, enrichment, playback, api, …)
 web/                 React + TypeScript SPA (embedded into the binary)
 docker/              multi-stage Dockerfile + docker notes

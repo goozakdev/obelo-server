@@ -61,7 +61,7 @@ placeholder instead of a real bundle. A genuinely missing `dist/` is a Go
 
 ```
 # terminal 1: the real API
-go run ./cmd/juicebox          # serves :8080
+go run ./cmd/obelo          # serves :8080
 
 # terminal 2: the SPA with HMR
 cd web && npm install && npm run dev   # serves :5173, proxies /api/v1 → :8080

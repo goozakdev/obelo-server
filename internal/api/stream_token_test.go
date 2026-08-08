@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Black-box tests for session stream tokens (.scratch/session-stream-tokens,

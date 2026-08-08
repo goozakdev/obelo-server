@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/marioquake/juicebox/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/catalog"
 )
 
 // GET /api/v1/home (issue 08, extended tv-music/02): the per-User computed Home

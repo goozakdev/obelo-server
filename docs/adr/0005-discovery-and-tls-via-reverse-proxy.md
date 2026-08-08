@@ -3,7 +3,7 @@
 > **Amended by [ADR-0034](./0034-server-identity-and-mdns-advertisement.md)**, which implements
 > the discovery half below — it went unbuilt for a long time while this ADR read as though it
 > had shipped. ADR-0034 adds the **Server identity** the advertisement needed and the
-> `_juicebox._tcp` responder. The remote-access and TLS postures below stand unchanged.
+> `_obelo._tcp` responder. The remote-access and TLS postures below stand unchanged.
 >
 > **Retired 2026-07-15 — *"The server provides a configurable external URL"*.** Never built, and
 > the design does not need it: **the server emits no absolute self-referential URL anywhere.** HLS
@@ -20,7 +20,7 @@
 > ([ADR-0012](./0012-react-spa-embedded-in-binary.md)) already requires independently:
 > `web/vite.config.ts` sets no `base`, the built bundle references `/assets/...`, and
 > `internal/webui/webui.go` registers `/api/v1` and `/` as literal mux patterns with no
-> `StripPrefix`. Mounting at a subpath (`https://example.com/juicebox/`) is therefore unsupported
+> `StripPrefix`. Mounting at a subpath (`https://example.com/obelo/`) is therefore unsupported
 > at all three layers — build, SPA runtime, and routing. Subdomains are unaffected and are the
 > expected deployment. Supporting a subpath would be a real feature (a vite `base`, a rebuilt
 > bundle, prefix-aware routing, a prefix threaded through every DTO builder), not the config knob

@@ -12,7 +12,7 @@ func TestIsPlaceholderContent(t *testing.T) {
 		index string
 		want  bool
 	}{
-		{"committed placeholder", `<!doctype html><title>juicebox-spa-placeholder</title>`, true},
+		{"committed placeholder", `<!doctype html><title>obelo-spa-placeholder</title>`, true},
 		{"real vite build", `<!doctype html><script type="module" src="/assets/index-abc123.js"></script>`, false},
 		{"empty", ``, false},
 	}

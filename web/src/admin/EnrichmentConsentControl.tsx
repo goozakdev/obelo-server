@@ -52,7 +52,7 @@ export default function EnrichmentConsentControl() {
           onChange={(e) => void onToggle(e.target.checked)}
           disabled={saving || state === null}
         />{" "}
-        Allow Juice Box to contact TMDB and fanart.tv for posters, descriptions,
+        Allow Obelo to contact TMDB and fanart.tv for posters, descriptions,
         cast, and artwork
       </label>
       <p className="field-hint" data-testid="enrichment-consent-state" data-state={state ?? "loading"}>

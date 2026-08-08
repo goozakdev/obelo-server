@@ -85,7 +85,7 @@ test.describe.serial("edit-item: Fix label — manual edit + image picker", () =
     // A single Movie carrying an embedded {tmdb-777} id so enrichment resolves BY id
     // (and the image picker can list /movie/777/images). Its detail starts enriched
     // with a pinned id and can be Fix-label'd.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-fix-label-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-fix-label-fixtures-"));
     const movieDir = join(fixturesDir, "Fixlabel Movie (2099) {tmdb-777}");
     mkdirSync(movieDir, { recursive: true });
     cpSync(

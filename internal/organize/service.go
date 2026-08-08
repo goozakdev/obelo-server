@@ -16,8 +16,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/store"
 	"github.com/google/uuid"
 )
 

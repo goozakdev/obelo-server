@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Issue audio-streams/02 integration tests: deliver the audio the Decision reports.

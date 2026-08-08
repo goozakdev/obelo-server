@@ -82,7 +82,7 @@ test.describe.serial("enrichment match: attention surface + correct a no-match",
     const auth = { Authorization: `Bearer ${token}` };
 
     // Unique temp fixtures: one movie folder the stub deliberately no-matches.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-enrich-match-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-enrich-match-fixtures-"));
     const movieDir = join(fixturesDir, "Nomatch Movie (2099)");
     mkdirSync(movieDir, { recursive: true });
     cpSync(

@@ -84,5 +84,5 @@ func resolveName(configured string) string {
 			return h
 		}
 	}
-	return "Juice Box"
+	return "Obelo"
 }

@@ -1,4 +1,4 @@
-# Juice Box
+# Obelo
 
 A fully self-hosted media server that organizes a household's video and music collection, presents it through a management web app, and streams it to connecting client apps. See [ADR-0001](./docs/adr/0001-fully-self-hosted-no-vendor-dependency.md) for the self-hosting posture.
 

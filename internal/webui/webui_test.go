@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // The webui package composes the top-level routing: /api/v1 stays the API's,

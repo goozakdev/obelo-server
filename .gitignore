@@ -35,13 +35,20 @@ node_modules/
 # goes to /bin/, ignored above). `make keytool` writes to bin/keytool, but a bare
 # `go build ./cmd/keytool` drops ./keytool here.
 #
-# ANCHORED, and it must stay that way: an unanchored `juicebox` matches the
-# DIRECTORY cmd/juicebox/ as well as the binary, which silently untracked both
+# ANCHORED, and it must stay that way: an unanchored `obelo` matches the
+# DIRECTORY cmd/obelo/ as well as the binary, which silently untracked both
 # entry points — `git ls-files cmd/` was empty and a fresh clone could not build
 # the server at all.
-/juicebox
+/obelo
 /keytool
 envelope.json
 
 .claude
 .scratch
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example

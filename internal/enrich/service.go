@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Store is the persistence the enrich service needs. *store.DB satisfies it; the
@@ -842,7 +842,7 @@ func (s *Service) removeReplacedUpload(replacedPath, newPath string) {
 		return
 	}
 	if err := os.Remove(s.cacheAbs(replacedPath)); err != nil && !os.IsNotExist(err) {
-		log.Printf("juicebox: enrich artwork: removing replaced upload %q: %v", replacedPath, err)
+		log.Printf("obelo: enrich artwork: removing replaced upload %q: %v", replacedPath, err)
 	}
 }
 
@@ -918,7 +918,7 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched")
 	case err != nil:
 		// Non-fatal: log + record failed, keep going (story 36).
-		log.Printf("juicebox: enrich %q (%s): provider error: %v", t.Title, t.ID, err)
+		log.Printf("obelo: enrich %q (%s): provider error: %v", t.Title, t.ID, err)
 		res.Failed++
 		return s.store.SetTitleEnrichmentStatus(t.ID, "failed")
 	}
@@ -1126,7 +1126,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
 	case err != nil:
-		log.Printf("juicebox: enrich %s %q: provider error: %v", entityType, entityID, err)
+		log.Printf("obelo: enrich %s %q: provider error: %v", entityType, entityID, err)
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "failed")
 	}
 
@@ -1207,7 +1207,7 @@ func (s *Service) fetchCastHeadshots(ctx context.Context, cast []Credit) {
 			continue // logged in cacheArtwork; non-fatal (the cast member keeps its name/character)
 		}
 		if err := s.store.UpsertPersonArtwork(c.PersonRef, personProfileRole, path); err != nil {
-			log.Printf("juicebox: enrich person headshot %q: store failed: %v", c.PersonRef, err)
+			log.Printf("obelo: enrich person headshot %q: store failed: %v", c.PersonRef, err)
 		}
 	}
 }
@@ -1233,7 +1233,7 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 		// A missing image (404) is the normal "no art for this entity" outcome —
 		// skip it quietly. Only real failures are worth a log (ADR-0001).
 		if !errors.Is(err, ErrArtworkNotFound) {
-			log.Printf("juicebox: enrich artwork %q (%s): fetch failed: %v", ar.Role, key, err)
+			log.Printf("obelo: enrich artwork %q (%s): fetch failed: %v", ar.Role, key, err)
 		}
 		return "", false
 	}
@@ -1242,12 +1242,12 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 	// content-type no browser will decode. Candidate listing already filters SVG
 	// paths; this guards the mislabeled/other-provider cases.
 	if strings.HasPrefix(contentType, "image/svg") {
-		log.Printf("juicebox: enrich artwork %q (%s): skipping SVG %s (raster images only)", ar.Role, key, ar.URL)
+		log.Printf("obelo: enrich artwork %q (%s): skipping SVG %s (raster images only)", ar.Role, key, ar.URL)
 		return "", false
 	}
 	name := key + "-" + ar.Role + extensionFor(contentType)
 	if err := os.WriteFile(filepath.Join(s.cacheDir, name), data, 0o644); err != nil {
-		log.Printf("juicebox: enrich artwork %q (%s): write failed: %v", ar.Role, key, err)
+		log.Printf("obelo: enrich artwork %q (%s): write failed: %v", ar.Role, key, err)
 		return "", false
 	}
 	return name, true
