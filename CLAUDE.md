@@ -8,7 +8,22 @@ Never check in `internal/webui/dist/index.html` with real build output. It is a 
 
 ```
 git checkout internal/webui/dist/index.html
+git diff --quiet internal/webui/dist/index.html || echo "STILL DIRTY — do not commit"
 ```
+
+**Nothing enforces this at commit time, and it silently rotted once.** The two guards want
+*opposite* things — `make check-bundle` fails unless the bundle is REAL (a release must not ship
+the placeholder), while this rule wants the committed file to be the PLACEHOLDER — and only the
+release side is automated. Between 2026-07 and 2026-08-08 the committed `index.html` was real
+Vite output referencing `/assets/index-ijKWYbjt.js`, an asset that had long since stopped
+existing and was never committed (`.gitignore` ignores all of `dist/*`; `index.html` is tracked
+only because it was force-added). So a fresh clone built with plain `go build` served a blank
+page requesting two 404s, and `check-bundle` reported success the whole time, because it only
+looks for the `obelo-spa-placeholder` marker and real output never contains it.
+
+Verify both directions after touching this file: with the placeholder committed
+`go run ./internal/webui/cmd/checkbundle` must exit **1**, and after `make web` it must exit
+**0**. If the committed file ever references a hashed asset, it is wrong by construction.
 
 ## Agent skills
 
