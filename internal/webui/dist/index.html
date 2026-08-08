@@ -1,14 +1,93 @@
 <!doctype html>
+<!--
+  obelo-spa-placeholder
+
+  This is the COMMITTED PLACEHOLDER, not a build artifact. Do not "fix" it by
+  pasting Vite output here — that is the bug this file exists to prevent.
+
+  internal/webui/dist/ is embedded with `go:embed all:dist`, which is a COMPILE
+  error if the directory is missing. This file guarantees it exists, so
+  `go build ./...` and `go test ./...` work with no Node toolchain present.
+
+  `make build` runs `make web` first, and Vite OVERWRITES this file with the real
+  hashed bundle. That is expected and correct — but it means a real build shows up
+  as a local modification to a tracked file. Restore it before committing:
+
+      git checkout internal/webui/dist/index.html
+
+  The marker on the first line is what internal/webui.IsPlaceholder looks for, and
+  it appears in no real Vite build. `make check-bundle` exits non-zero while it is
+  present, so a release binary that would serve this page cannot ship unnoticed.
+
+  Deliberately self-contained: no script tag, no stylesheet link, no hashed asset
+  reference anywhere — not even inside this comment, so that grepping the file for
+  an asset path is a reliable way to detect the mistake. An earlier revision was
+  real-but-stale Vite output naming a hashed bundle that had not existed for some
+  time and was never committed, so a from-source build served a blank page
+  requesting two 404s while check-bundle reported success (it only looks for the
+  marker, which real output never carries). Nothing here may reference an asset
+  that is not in this same commit.
+-->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <title>Obelo</title>
-    <script type="module" crossorigin src="/assets/index-ijKWYbjt.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CqA5yIxd.css">
+    <meta name="obelo-bundle" content="obelo-spa-placeholder" />
+    <title>Obelo — web UI not built</title>
+    <style>
+      :root { color-scheme: dark light; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+        box-sizing: border-box;
+        font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: #14161a;
+        color: #e6e8eb;
+      }
+      main { max-width: 34rem; }
+      h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+      p { margin: 0 0 1rem; color: #a8b0b8; }
+      code, pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.875rem;
+      }
+      pre {
+        background: #1d2026;
+        border: 1px solid #2b3038;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        overflow-x: auto;
+        color: #e6e8eb;
+      }
+      .note { font-size: 0.875rem; color: #7d868f; }
+      @media (prefers-color-scheme: light) {
+        body { background: #fbfbfc; color: #1a1d21; }
+        p { color: #5c6570; }
+        pre { background: #f2f3f5; border-color: #dfe2e6; color: #1a1d21; }
+        .note { color: #79828c; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <main>
+      <h1>The Obelo web UI was not built into this binary.</h1>
+      <p>
+        The API is unaffected and is serving normally under
+        <code>/api/v1</code> — only the browser interface is missing. Apple TV,
+        iPhone, and iPad clients do not use this page and will work as usual.
+      </p>
+      <p>Build the frontend bundle, then rebuild the server:</p>
+      <pre>make build</pre>
+      <p class="note">
+        <code>make build</code> runs the Vite build first and embeds its output
+        here. Building with plain <code>go build</code> skips that step, which is
+        what produced this page.
+      </p>
+    </main>
   </body>
 </html>
