@@ -3,7 +3,7 @@ package store_test
 import (
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // makeLibrary creates a Library (no roots) and returns its id, for the policy

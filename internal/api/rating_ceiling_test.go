@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Black-box tests for access-control issue 04: the per-User Rating ceiling. A

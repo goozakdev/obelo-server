@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
 // In-band HLS AUDIO rendition delivery (ADR-0022, audio-streams/03). On the HLS

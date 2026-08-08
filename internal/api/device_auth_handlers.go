@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/auth"
+	"github.com/marioquake/obelo-server/internal/auth"
 )
 
 // The Device authorization grant's HTTP surface (ADR-0036, docs/api-contract.md

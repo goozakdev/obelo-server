@@ -13,9 +13,9 @@ import (
 
 	cryptorand "crypto/rand"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/rotation"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/rotation"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // rotationStub is a controllable stub for the maintainer-hosted rotation endpoint

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Black-box integration tests for the direct-play tier (issue 07): negotiate a

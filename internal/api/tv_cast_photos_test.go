@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Cast-photos/02 black-box tests: scan + enrich a TV library with a FAKE

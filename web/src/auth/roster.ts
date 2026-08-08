@@ -14,8 +14,8 @@ import type { Role } from "../api/types";
 // tests pass a fake/real Storage), so the round-trip is unit-testable without
 // React — the same seam philosophy as the Queue's persist.ts / usePlaybackPrefs.
 
-const STORAGE_PREFIX = "juicebox.roster";
-const SERVER_ID_KEY = "juicebox.serverId";
+const STORAGE_PREFIX = "obelo.roster";
+const SERVER_ID_KEY = "obelo.serverId";
 
 /** A stored roster entry. The `token`, when present, is a retained DURABLE bearer
  * token that makes this a Signed-in entry; its absence makes it Known. */

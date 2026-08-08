@@ -136,7 +136,7 @@ describe("PlaybackOptionsSheet — Edition axis", () => {
   it("selecting Auto omits the Edition (stored as null)", () => {
     // Seed a prior pick, then commit Auto over it.
     window.localStorage.setItem(
-      "juicebox.playback-pref.u1.title.t1",
+      "obelo.playback-pref.u1.title.t1",
       JSON.stringify({ editionName: "Final Cut" }),
     );
     render(
@@ -197,7 +197,7 @@ describe("PlaybackOptionsSheet — Quality cap axis", () => {
 
   it("Direct Play commits a null cap (uncapped)", () => {
     window.localStorage.setItem(
-      "juicebox.playback-pref.u1.title.t1",
+      "obelo.playback-pref.u1.title.t1",
       JSON.stringify({ editionName: null, qualityCap: "720p" }),
     );
     render(
@@ -294,7 +294,7 @@ describe("PlaybackOptionsSheet — Audio axis", () => {
     fireEvent.click(screen.getByTestId("playback-options-play"));
     // The persisted preference carries only Edition + Quality — no audio field exists,
     // and the store's raw JSON must not smuggle one in.
-    const raw = window.localStorage.getItem("juicebox.playback-pref.u1.title.t1");
+    const raw = window.localStorage.getItem("obelo.playback-pref.u1.title.t1");
     expect(raw).not.toBeNull();
     expect(raw).not.toContain("a-fr");
     expect(raw).not.toContain("audioStreamId");
@@ -354,7 +354,7 @@ describe("PlaybackOptionsSheet — Video axis", () => {
     );
     fireEvent.click(screen.getByRole("radio", { name: /Black & White/ }));
     fireEvent.click(screen.getByTestId("playback-options-play"));
-    const raw = window.localStorage.getItem("juicebox.playback-pref.u1.title.t1");
+    const raw = window.localStorage.getItem("obelo.playback-pref.u1.title.t1");
     expect(raw).not.toContain("v-bw");
     expect(raw).not.toContain("videoStreamId");
   });
@@ -399,7 +399,7 @@ describe("PlaybackOptionsSheet — AAC-stereo toggle", () => {
 
   it("opens reflecting the saved toggle and commits off over it", () => {
     window.localStorage.setItem(
-      "juicebox.playback-pref.u1.title.t1",
+      "obelo.playback-pref.u1.title.t1",
       JSON.stringify({ editionName: null, qualityCap: null, subtitle: null, aacStereo: true }),
     );
     render(
@@ -482,13 +482,13 @@ describe("PlaybackOptionsSheet — Subtitle axis", () => {
     });
     expect(onPlay).toHaveBeenCalledTimes(1);
     // The stored value is the LANGUAGE key, not the track id.
-    const raw = window.localStorage.getItem("juicebox.playback-pref.u1.title.t1");
+    const raw = window.localStorage.getItem("obelo.playback-pref.u1.title.t1");
     expect(raw).not.toContain("s-fr");
   });
 
   it("opens reflecting a saved pick and commits Off over it", () => {
     window.localStorage.setItem(
-      "juicebox.playback-pref.u1.title.t1",
+      "obelo.playback-pref.u1.title.t1",
       JSON.stringify({ editionName: null, qualityCap: null, subtitle: { language: "fr", forced: false } }),
     );
     render(
@@ -625,7 +625,7 @@ describe("PlaybackOptionsSheet — Force Remux checkbox", () => {
 
   it("opens reflecting the saved checkbox and commits off over it", () => {
     window.localStorage.setItem(
-      "juicebox.playback-pref.u1.title.t1",
+      "obelo.playback-pref.u1.title.t1",
       JSON.stringify({ editionName: null, qualityCap: null, subtitle: null, remuxSelectedOnly: true }),
     );
     render(

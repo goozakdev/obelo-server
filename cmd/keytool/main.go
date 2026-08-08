@@ -26,7 +26,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/marioquake/juicebox/internal/rotation"
+	"github.com/marioquake/obelo-server/internal/rotation"
 )
 
 // options are the resolved inputs for one keytool run.
@@ -58,9 +58,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	var opt options
-	fs.StringVar(&opt.tmdb, "tmdb", os.Getenv("JUICEBOX_BOOTSTRAP_TMDB_KEY"), "plaintext default TMDB key (default $JUICEBOX_BOOTSTRAP_TMDB_KEY)")
-	fs.StringVar(&opt.fanart, "fanart", os.Getenv("JUICEBOX_BOOTSTRAP_FANART_KEY"), "plaintext default fanart.tv key (default $JUICEBOX_BOOTSTRAP_FANART_KEY)")
-	fs.StringVar(&opt.encKeyB64, "enc-key", os.Getenv("JUICEBOX_APP_ENC_KEY"), "base64 AES-256-GCM app encryption key (default $JUICEBOX_APP_ENC_KEY — prefer the env var so the key stays out of shell history)")
+	fs.StringVar(&opt.tmdb, "tmdb", os.Getenv("OBELO_BOOTSTRAP_TMDB_KEY"), "plaintext default TMDB key (default $OBELO_BOOTSTRAP_TMDB_KEY)")
+	fs.StringVar(&opt.fanart, "fanart", os.Getenv("OBELO_BOOTSTRAP_FANART_KEY"), "plaintext default fanart.tv key (default $OBELO_BOOTSTRAP_FANART_KEY)")
+	fs.StringVar(&opt.encKeyB64, "enc-key", os.Getenv("OBELO_APP_ENC_KEY"), "base64 AES-256-GCM app encryption key (default $OBELO_APP_ENC_KEY — prefer the env var so the key stays out of shell history)")
 	fs.StringVar(&opt.minAppVersion, "min-app-version", "0.x", "envelope minAppVersion: only builds >= this adopt the payload (\"0.x\" = any)")
 	fs.StringVar(&opt.out, "o", "-", "output file for the envelope JSON (\"-\" = stdout)")
 	if err := fs.Parse(args); err != nil {
@@ -97,7 +97,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 // silently wipe every install's default keys), caught here rather than shipped.
 func buildEnvelope(opt options) (rotation.Envelope, error) {
 	if opt.encKeyB64 == "" {
-		return rotation.Envelope{}, fmt.Errorf("no app encryption key: pass -enc-key or set $JUICEBOX_APP_ENC_KEY (the base64 kAppEncKey baked into official builds)")
+		return rotation.Envelope{}, fmt.Errorf("no app encryption key: pass -enc-key or set $OBELO_APP_ENC_KEY (the base64 kAppEncKey baked into official builds)")
 	}
 	if opt.tmdb == "" && opt.fanart == "" {
 		return rotation.Envelope{}, fmt.Errorf("no provider keys: pass at least one of -tmdb / -fanart (an empty payload would strip every install's default keys)")
@@ -118,14 +118,14 @@ func buildEnvelope(opt options) (rotation.Envelope, error) {
 
 const usage = `keytool — seal default metadata provider keys into a rotation envelope (ADR-0032).
 
-Emits the versioned JSON envelope the Juice Box server fetches and decrypts, so a
+Emits the versioned JSON envelope the Obelo server fetches and decrypts, so a
 leaked default TMDB/fanart.tv key can be revoked and replaced WITHOUT cutting a
 release. See docs/runbooks/metadata-key-rotation.md for the full runbook.
 
 Usage:
   keytool -tmdb <key> -fanart <key> [-enc-key <b64>] [-min-app-version 0.x] [-o file]
 
-Prefer supplying the encryption key (and provider keys) via the JUICEBOX_* env vars
+Prefer supplying the encryption key (and provider keys) via the OBELO_* env vars
 so no secret lands in your shell history. Publish the output to the Worker's KV:
   keytool -o envelope.json && wrangler kv key put --binding=KEYS_KV envelope --path=envelope.json
 

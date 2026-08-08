@@ -74,7 +74,7 @@ export default function EnrichmentConsentGate() {
 
         <div className="library-dialog-body">
           <p className="confirm-dialog-message" data-testid="enrichment-consent-message">
-            Juice Box can fetch posters, descriptions, cast, and artwork for your
+            Obelo can fetch posters, descriptions, cast, and artwork for your
             library from <strong>TMDB</strong> and <strong>fanart.tv</strong>. This
             contacts those services over the internet. You can change this anytime
             under Admin → Metadata Providers.

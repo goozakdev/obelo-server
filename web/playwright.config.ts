@@ -4,7 +4,7 @@ import { defineConfig, devices } from "@playwright/test";
 //
 // The webServer below is the harness: it runs `e2e/boot-server.mjs`, which
 // (1) builds the frontend into internal/webui/dist, (2) `go build`s the real
-// juicebox binary that embeds that bundle, and (3) boots it against a fresh
+// obelo binary that embeds that bundle, and (3) boots it against a fresh
 // temp data dir on PORT. Playwright waits for the URL to answer, then runs the
 // browser specs against the REAL embedded server — UI + API client + Go server
 // as one black box, exactly like the server's own httptest harness but driven

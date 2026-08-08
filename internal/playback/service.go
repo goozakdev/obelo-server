@@ -6,10 +6,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/audio"
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/audio"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // ErrTitleNotFound means the requested Title does not exist (or, per the
@@ -977,7 +977,7 @@ func (s *Service) probeSegmentBoundaries(f store.File) []float64 {
 	defer cancel()
 	b, err := transcode.KeyframeBoundaries(ctx, "", f.Path, float64(transcode.SegmentSeconds), float64(f.DurationMs)/1000)
 	if err != nil {
-		log.Printf("juicebox: playback: keyframe probe failed for %s: %v — serving ffmpeg's own playlist (a LONG file may 404 until the copy completes)", f.Path, err)
+		log.Printf("obelo: playback: keyframe probe failed for %s: %v — serving ffmpeg's own playlist (a LONG file may 404 until the copy completes)", f.Path, err)
 		return nil
 	}
 	return b
@@ -1523,7 +1523,7 @@ func (s *Service) SessionAudioContext(userID, sessionID string) (SessionAudioCon
 		traits, terr := transcode.ProbeVideoTraits(tctx, "", file.Path)
 		cancel()
 		if terr != nil {
-			log.Printf("juicebox: playback: video-traits probe failed for %s: %v — master omits VIDEO-RANGE/FRAME-RATE (Safari may refuse an HDR variant)", file.Path, terr)
+			log.Printf("obelo: playback: video-traits probe failed for %s: %v — master omits VIDEO-RANGE/FRAME-RATE (Safari may refuse an HDR variant)", file.Path, terr)
 		} else {
 			ctx.VideoRange = traits.VideoRange
 			ctx.FrameRate = traits.FrameRate

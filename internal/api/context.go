@@ -3,8 +3,8 @@ package api
 import (
 	"context"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // identity is what the bearer-auth middleware attaches to an authenticated

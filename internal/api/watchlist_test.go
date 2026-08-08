@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Black-box HTTP tests for the Watchlist surface (watchlist 01): the per-User system

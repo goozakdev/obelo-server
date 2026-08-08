@@ -25,7 +25,7 @@
 
 import { isQualityCapId, type QualityCapId } from "./qualityLadder";
 
-const STORAGE_PREFIX = "juicebox.playback-pref";
+const STORAGE_PREFIX = "obelo.playback-pref";
 
 /** A committed pre-play Subtitle track choice, persisted BY LANGUAGE (+ forced), NOT
  * by track id (appletv-web-parity §1, ADR-0020). Unlike audio / video this axis has

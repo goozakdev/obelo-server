@@ -3,7 +3,7 @@
 # Multi-stage build for the self-hosted media server, targeting linux/amd64.
 #
 # Build context is the REPO ROOT (not this directory):
-#     docker build -f docker/Dockerfile -t juicebox .
+#     docker build -f docker/Dockerfile -t obelo .
 #
 # Critical build order (ADR-0012): the Vite/React SPA bundle must be produced
 # BEFORE `go build`, because the Go binary embeds internal/webui/dist via
@@ -51,32 +51,32 @@ COPY --from=web /src/internal/webui/dist/ ./internal/webui/dist/
 # Default metadata credentials (ADR-0032), injected only for OFFICIAL image builds
 # from CI secrets — EMPTY by default so a plain `docker build` bundles no keys and
 # stays credential-free. Pass them as build args:
-#   --build-arg JUICEBOX_BOOTSTRAP_TMDB_KEY=<plaintext tmdb key>
-#   --build-arg JUICEBOX_BOOTSTRAP_FANART_KEY=<plaintext fanart.tv key>
-#   --build-arg JUICEBOX_APP_ENC_KEY=<base64 AES-256-GCM key>
-#   --build-arg JUICEBOX_ROTATION_URL=<https://host/v1/keys>
+#   --build-arg OBELO_BOOTSTRAP_TMDB_KEY=<plaintext tmdb key>
+#   --build-arg OBELO_BOOTSTRAP_FANART_KEY=<plaintext fanart.tv key>
+#   --build-arg OBELO_APP_ENC_KEY=<base64 AES-256-GCM key>
+#   --build-arg OBELO_ROTATION_URL=<https://host/v1/keys>
 # The two provider keys are base64-obfuscated below (so `strings` on the binary
 # yields no bare key); kAppEncKey and the rotation URL are injected verbatim. The URL
 # is not a secret (ciphertext-only, public in the binary) but is injected so the
 # maintainer host stays out of the open-source repo. The RUNTIME override is the
-# separate JUICEBOX_KEY_ROTATION_URL env var.
-ARG JUICEBOX_BOOTSTRAP_TMDB_KEY=""
-ARG JUICEBOX_BOOTSTRAP_FANART_KEY=""
-ARG JUICEBOX_APP_ENC_KEY=""
-ARG JUICEBOX_ROTATION_URL=""
+# separate OBELO_KEY_ROTATION_URL env var.
+ARG OBELO_BOOTSTRAP_TMDB_KEY=""
+ARG OBELO_BOOTSTRAP_FANART_KEY=""
+ARG OBELO_APP_ENC_KEY=""
+ARG OBELO_ROTATION_URL=""
 
 # Static amd64 binary. -trimpath + -ldflags "-s -w" shrink it; no CGO needed. The
 # -X flags inject the resolved default credentials (empty unless the args are set).
-RUN CONFIG_PKG=github.com/marioquake/juicebox/internal/config; \
-    TMDB_OBF=$(printf %s "$JUICEBOX_BOOTSTRAP_TMDB_KEY" | base64 | tr -d '\n'); \
-    FANART_OBF=$(printf %s "$JUICEBOX_BOOTSTRAP_FANART_KEY" | base64 | tr -d '\n'); \
+RUN CONFIG_PKG=github.com/marioquake/obelo-server/internal/config; \
+    TMDB_OBF=$(printf %s "$OBELO_BOOTSTRAP_TMDB_KEY" | base64 | tr -d '\n'); \
+    FANART_OBF=$(printf %s "$OBELO_BOOTSTRAP_FANART_KEY" | base64 | tr -d '\n'); \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w \
       -X ${CONFIG_PKG}.bootstrapTMDBKey=${TMDB_OBF} \
       -X ${CONFIG_PKG}.bootstrapFanartKey=${FANART_OBF} \
-      -X ${CONFIG_PKG}.kAppEncKey=${JUICEBOX_APP_ENC_KEY} \
-      -X ${CONFIG_PKG}.DefaultKeyRotationURL=${JUICEBOX_ROTATION_URL}" \
-      -o /out/juicebox ./cmd/juicebox
+      -X ${CONFIG_PKG}.kAppEncKey=${OBELO_APP_ENC_KEY} \
+      -X ${CONFIG_PKG}.DefaultKeyRotationURL=${OBELO_ROTATION_URL}" \
+      -o /out/obelo ./cmd/obelo
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: minimal amd64 image with ffmpeg + the binary.
@@ -90,17 +90,17 @@ FROM --platform=linux/amd64 alpine:3.20 AS runtime
 # ffmpeg bundles ffprobe; ca-certificates for outbound HTTPS (TMDB/MusicBrainz);
 # tzdata so scheduled scans honor the configured timezone.
 RUN apk add --no-cache ffmpeg ca-certificates tzdata \
-    && adduser -D -H -u 10001 juicebox
+    && adduser -D -H -u 10001 obelo
 
-COPY --from=build /out/juicebox /usr/local/bin/juicebox
+COPY --from=build /out/obelo /usr/local/bin/obelo
 
 # The single writable data dir (SQLite DB, artwork cache). Mount a volume here.
-ENV JUICEBOX_DATA_DIR=/data \
-    JUICEBOX_LISTEN_ADDR=:8080
-RUN mkdir -p /data && chown juicebox:juicebox /data
+ENV OBELO_DATA_DIR=/data \
+    OBELO_LISTEN_ADDR=:8080
+RUN mkdir -p /data && chown obelo:obelo /data
 VOLUME /data
 
-USER juicebox
+USER obelo
 EXPOSE 8080
 
-ENTRYPOINT ["juicebox"]
+ENTRYPOINT ["obelo"]

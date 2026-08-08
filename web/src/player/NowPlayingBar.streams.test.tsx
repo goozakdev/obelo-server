@@ -137,7 +137,7 @@ describe("NowPlayingBar — pre-play Audio / Video Stream picks", () => {
         expect.anything(),
       ),
     );
-    expect(window.localStorage.getItem("juicebox.playback-pref.u1.title.t1")).toBeNull();
+    expect(window.localStorage.getItem("obelo.playback-pref.u1.title.t1")).toBeNull();
   });
 
   it("seeds alongside a stored Edition preference (both reach startPlayback)", async () => {

@@ -37,14 +37,14 @@ import (
 	"strings"
 
 	"github.com/hashicorp/mdns"
-	"github.com/marioquake/juicebox/internal/server"
+	"github.com/marioquake/obelo-server/internal/server"
 )
 
 // ServiceType is the DNS-SD service this server advertises under. Clients browse
 // for exactly this string, so it is a published interface: changing it breaks
 // every deployed client's discovery, silently (they simply find nothing). Treat it
 // like a route, not a constant.
-const ServiceType = "_juicebox._tcp"
+const ServiceType = "_obelo._tcp"
 
 // TXT record keys. Per RFC 6763 the TXT record is a hint, not a contract — a
 // client confirms everything against GET /server once it connects. Kept small and
@@ -72,7 +72,7 @@ const ipv4Group = "224.0.0.251:5353"
 
 // fallbackHost names the server when the OS hostname is unusable — a container
 // with no hostname set, or a name that sanitizes down to nothing.
-const fallbackHost = "juicebox"
+const fallbackHost = "obelo"
 
 // Options tune how the advertisement reaches the link. Both exist for the same
 // reason: the library's defaults assume a normally-configured host, and a
@@ -83,7 +83,7 @@ type Options struct {
 	// of the ones this package would discover. The escape hatch for every case
 	// the interface heuristics get wrong — an unusual bridge topology, a
 	// multi-homed box that should only be found on one segment, a LAN interface
-	// whose name looks virtual. Wired to JUICEBOX_ADVERTISE_IP.
+	// whose name looks virtual. Wired to OBELO_ADVERTISE_IP.
 	IPs []string
 
 	// Interface, when non-empty, names the network interface the responder binds
@@ -96,7 +96,7 @@ type Options struct {
 	// on a Docker host that is frequently docker0 rather than the LAN NIC, so the
 	// group membership lands on a bridge nobody queries and the responder never
 	// sees the query at all. Naming the LAN interface pins it. Wired to
-	// JUICEBOX_MDNS_INTERFACE.
+	// OBELO_MDNS_INTERFACE.
 	Interface string
 }
 
@@ -207,7 +207,7 @@ func advertisedIPs(configured []string, iface *net.Interface) ([]net.IP, error) 
 	ips := selectIPs(links, preferredSourceIP())
 	if len(ips) == 0 {
 		return nil, fmt.Errorf("discovery: no usable interface address found%s "+
-			"— set JUICEBOX_ADVERTISE_IP to this host's LAN address", forInterface(iface))
+			"— set OBELO_ADVERTISE_IP to this host's LAN address", forInterface(iface))
 	}
 	return ips, nil
 }
@@ -348,7 +348,7 @@ func usableLink(l link) bool {
 // not somewhere a client lives: container and VM bridges.
 //
 // This is a heuristic on names, which is exactly as fragile as it sounds — hence
-// JUICEBOX_ADVERTISE_IP, which bypasses it entirely. The prefixes are chosen to be
+// OBELO_ADVERTISE_IP, which bypasses it entirely. The prefixes are chosen to be
 // unambiguous: "br-" is Docker's user-defined-network bridge naming and does NOT
 // match a hand-built LAN bridge like br0 (Proxmox, KVM hosts), which is a real
 // interface a real client is reachable through.
@@ -470,7 +470,7 @@ func instanceName(name string) string {
 	n = strings.ReplaceAll(n, ".", " ")
 	n = strings.Join(strings.Fields(n), " ") // collapse whitespace runs
 	if n == "" {
-		return "Juice Box"
+		return "Obelo"
 	}
 	// DNS labels cap at 63 octets. Truncate on a rune boundary so a multi-byte
 	// name doesn't get cut mid-character into invalid UTF-8.

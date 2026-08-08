@@ -81,7 +81,7 @@ test.describe.serial("edit-item: cascade to children (Show → episodes)", () =>
 
     // Unique temp TV fixtures: one Show with a single episode (copied from the Go TV
     // testdata) so the cascade has an episode child to update.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-cascade-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-cascade-"));
     const seasonDir = join(fixturesDir, "The Bear (2022)", "Season 01");
     mkdirSync(seasonDir, { recursive: true });
     cpSync(

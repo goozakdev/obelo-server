@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // fakeStore is a minimal access.Store for resolver/grant tests.

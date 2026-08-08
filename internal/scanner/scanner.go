@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // ErrRootsUnavailable is returned by a scan when one or more of a Library's

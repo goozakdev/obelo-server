@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Issue selectable-video/04 integration tests: Remembered video through the HTTP API

@@ -11,7 +11,7 @@ import { emptyQueue, type QueueState } from "./model";
 // These are pure, storage-injected helpers (the store passes `sessionStorage`,
 // tests pass a fake/real Storage), so the load/save round-trip is unit-testable.
 
-const STORAGE_PREFIX = "juicebox.queue";
+const STORAGE_PREFIX = "obelo.queue";
 
 /** The per-user storage key (a logged-out/anon session gets its own bucket). */
 export function queueStorageKey(userId: string | null): string {

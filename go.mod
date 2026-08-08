@@ -1,4 +1,4 @@
-module github.com/marioquake/juicebox
+module github.com/marioquake/obelo-server
 
 go 1.25.0
 

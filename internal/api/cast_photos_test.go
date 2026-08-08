@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Cast-photos/01 black-box tests: scan + enrich a Movie library with a FAKE

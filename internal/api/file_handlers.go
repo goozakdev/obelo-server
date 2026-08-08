@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/catalog"
 )
 
 // Sessionless direct-file download (the "Open in VLC" affordance). Unlike the

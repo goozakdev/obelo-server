@@ -5,7 +5,7 @@
 // It is independent of the bearer token: logging out clears the token but keeps
 // the clientId, so the next login lands on the same Device.
 
-const CLIENT_ID_KEY = "juicebox.clientId";
+const CLIENT_ID_KEY = "obelo.clientId";
 
 /** Returns this browser's stable clientId, generating and persisting one on
  * first use. Falls back to an ephemeral id if localStorage is unavailable

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Issue subtitles/02 integration test: TEXT subtitle delivery on the direct-play

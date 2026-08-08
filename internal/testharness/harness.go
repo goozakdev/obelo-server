@@ -30,13 +30,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/juicebox/internal/app"
-	"github.com/marioquake/juicebox/internal/auth"
-	"github.com/marioquake/juicebox/internal/config"
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/gpu"
-	"github.com/marioquake/juicebox/internal/subfetch"
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/app"
+	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/gpu"
+	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // Server is a running test server plus the handles a test needs to drive and
@@ -128,7 +128,7 @@ func WithFFmpegAvailability(available bool) Option {
 		if !available {
 			// A path no host has, so a transcode request really does fail to spawn
 			// ffmpeg — the honest error the false flag promises clients they will get.
-			av.Binary = filepath.Join(string(filepath.Separator), "nonexistent", "juicebox-test", "ffmpeg")
+			av.Binary = filepath.Join(string(filepath.Separator), "nonexistent", "obelo-test-", "ffmpeg")
 		}
 		b.appOpts = append(b.appOpts, app.WithFFmpegAvailability(transcode.StaticAvailability{Availability: av}))
 	}

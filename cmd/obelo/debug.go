@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
-// debugHLSBoundaries is the `juicebox debug-hls-boundaries <file>` diagnostic:
+// debugHLSBoundaries is the `obelo debug-hls-boundaries <file>` diagnostic:
 // it runs the container keyframe-index parser against a REAL media file, computes
 // the copy-mode segment boundaries the server would synthesize, and verifies the
 // parsed keyframes against an interval-bounded ffprobe packet scan of the file's
@@ -134,14 +134,14 @@ func formatTimes(ts []float64, limit int) string {
 	return b.String()
 }
 
-// maybeRunDebugCommand dispatches `juicebox debug-hls-boundaries <file>`;
+// maybeRunDebugCommand dispatches `obelo debug-hls-boundaries <file>`;
 // returns true when it handled the invocation (main should exit).
 func maybeRunDebugCommand() bool {
 	if len(os.Args) < 2 || os.Args[1] != "debug-hls-boundaries" {
 		return false
 	}
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: juicebox debug-hls-boundaries <media-file>")
+		fmt.Fprintln(os.Stderr, "usage: obelo debug-hls-boundaries <media-file>")
 		os.Exit(2)
 	}
 	if err := debugHLSBoundaries(os.Args[2]); err != nil {

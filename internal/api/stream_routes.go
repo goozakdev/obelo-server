@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Path-carried session media (.scratch/session-stream-tokens, issue 02).

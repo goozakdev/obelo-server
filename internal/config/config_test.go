@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/config"
+	"github.com/marioquake/obelo-server/internal/config"
 )
 
 // TestScanIntervalFromEnv: the scheduled-scan cadence is env-overridable and a
@@ -16,17 +16,17 @@ func TestScanIntervalFromEnv(t *testing.T) {
 		t.Errorf("default scan interval = %v, want %v", d, config.DefaultScanInterval)
 	}
 
-	t.Setenv("JUICEBOX_SCAN_INTERVAL", "30m")
+	t.Setenv("OBELO_SCAN_INTERVAL", "30m")
 	if d := config.FromEnv().ScanInterval; d != 30*time.Minute {
 		t.Errorf("env scan interval = %v, want 30m", d)
 	}
 
-	t.Setenv("JUICEBOX_SCAN_INTERVAL", "0")
+	t.Setenv("OBELO_SCAN_INTERVAL", "0")
 	if d := config.FromEnv().ScanInterval; d != 0 {
 		t.Errorf("scan interval = %v, want 0 (disabled)", d)
 	}
 
-	t.Setenv("JUICEBOX_SCAN_INTERVAL", "not-a-duration")
+	t.Setenv("OBELO_SCAN_INTERVAL", "not-a-duration")
 	if d := config.FromEnv().ScanInterval; d != config.DefaultScanInterval {
 		t.Errorf("garbage scan interval = %v, want default %v", d, config.DefaultScanInterval)
 	}
@@ -40,17 +40,17 @@ func TestTranscodeCapFromEnv(t *testing.T) {
 		t.Errorf("default cap = %d, want %d", n, config.DefaultMaxConcurrentTranscodes)
 	}
 
-	t.Setenv("JUICEBOX_MAX_CONCURRENT_TRANSCODES", "1")
+	t.Setenv("OBELO_MAX_CONCURRENT_TRANSCODES", "1")
 	if n := config.FromEnv().MaxConcurrentTranscodes; n != 1 {
 		t.Errorf("env cap = %d, want 1", n)
 	}
 
-	t.Setenv("JUICEBOX_MAX_CONCURRENT_TRANSCODES", "0")
+	t.Setenv("OBELO_MAX_CONCURRENT_TRANSCODES", "0")
 	if n := config.FromEnv().MaxConcurrentTranscodes; n != 0 {
 		t.Errorf("cap = %d, want 0 (unlimited)", n)
 	}
 
-	t.Setenv("JUICEBOX_MAX_CONCURRENT_TRANSCODES", "not-an-int")
+	t.Setenv("OBELO_MAX_CONCURRENT_TRANSCODES", "not-an-int")
 	if n := config.FromEnv().MaxConcurrentTranscodes; n != config.DefaultMaxConcurrentTranscodes {
 		t.Errorf("garbage cap = %d, want default %d", n, config.DefaultMaxConcurrentTranscodes)
 	}
@@ -89,14 +89,14 @@ func TestHardwareAccelFromEnv(t *testing.T) {
 		{"  videotoolbox  ", config.HWAccelVideoToolbox},
 		{" auto ", config.HWAccelAuto},
 	} {
-		t.Setenv("JUICEBOX_HARDWARE_ACCEL", tc.env)
+		t.Setenv("OBELO_HARDWARE_ACCEL", tc.env)
 		if got := config.FromEnv().HardwareAccel; got != tc.want {
 			t.Errorf("env HARDWARE_ACCEL=%q → %q, want %q", tc.env, got, tc.want)
 		}
 	}
 
 	// Garbage leaves the default off.
-	t.Setenv("JUICEBOX_HARDWARE_ACCEL", "not-a-backend")
+	t.Setenv("OBELO_HARDWARE_ACCEL", "not-a-backend")
 	if got := config.FromEnv().HardwareAccel; got != config.HWAccelOff {
 		t.Errorf("garbage HardwareAccel = %q, want %q (stays off)", got, config.HWAccelOff)
 	}
@@ -162,9 +162,9 @@ func TestEnrichmentConfig(t *testing.T) {
 		t.Errorf("default metadata language = %q, want %q", got, config.DefaultMetadataLanguage)
 	}
 
-	t.Setenv("JUICEBOX_TMDB_API_KEY", "secret")
-	t.Setenv("JUICEBOX_METADATA_LANGUAGE", "fr-FR")
-	t.Setenv("JUICEBOX_TMDB_BASE_URL", "http://stub/3")
+	t.Setenv("OBELO_TMDB_API_KEY", "secret")
+	t.Setenv("OBELO_METADATA_LANGUAGE", "fr-FR")
+	t.Setenv("OBELO_TMDB_BASE_URL", "http://stub/3")
 	c := config.FromEnv()
 	if !c.EnrichmentEnabled() {
 		t.Error("enrichment not enabled after setting a key")
@@ -183,7 +183,7 @@ func TestEnrichmentConfig(t *testing.T) {
 }
 
 // TestMusicEnrichmentWithoutKey: Music enrichment can be turned on without a TMDB
-// key via JUICEBOX_MUSICBRAINZ_ENABLED (MusicBrainz + Cover Art Archive need
+// key via OBELO_MUSICBRAINZ_ENABLED (MusicBrainz + Cover Art Archive need
 // none), while video stays off until a key is set. A fresh install enables neither.
 func TestMusicEnrichmentWithoutKey(t *testing.T) {
 	def := config.Defaults()
@@ -193,7 +193,7 @@ func TestMusicEnrichmentWithoutKey(t *testing.T) {
 	}
 
 	// Music opt-in, no TMDB key: music on, video off, master switch on.
-	t.Setenv("JUICEBOX_MUSICBRAINZ_ENABLED", "true")
+	t.Setenv("OBELO_MUSICBRAINZ_ENABLED", "true")
 	c := config.FromEnv()
 	if !c.MusicEnrichmentEnabled() {
 		t.Error("music enrichment off with MUSICBRAINZ_ENABLED=true and no key")
@@ -206,8 +206,8 @@ func TestMusicEnrichmentWithoutKey(t *testing.T) {
 	}
 
 	// A TMDB key alone still turns on every kind (backward compatible).
-	t.Setenv("JUICEBOX_MUSICBRAINZ_ENABLED", "")
-	t.Setenv("JUICEBOX_TMDB_API_KEY", "secret")
+	t.Setenv("OBELO_MUSICBRAINZ_ENABLED", "")
+	t.Setenv("OBELO_TMDB_API_KEY", "secret")
 	c = config.FromEnv()
 	if !c.VideoEnrichmentEnabled() || !c.MusicEnrichmentEnabled() {
 		t.Errorf("TMDB key did not enable both kinds: video=%v music=%v",
@@ -230,8 +230,8 @@ func TestMusicBrainzServerConfig(t *testing.T) {
 	}
 
 	// Point at a mirror and relax its throttle.
-	t.Setenv("JUICEBOX_MUSICBRAINZ_BASE_URL", "https://mirror.example/ws/2")
-	t.Setenv("JUICEBOX_MUSICBRAINZ_RATE_LIMIT", "200ms")
+	t.Setenv("OBELO_MUSICBRAINZ_BASE_URL", "https://mirror.example/ws/2")
+	t.Setenv("OBELO_MUSICBRAINZ_RATE_LIMIT", "200ms")
 	c := config.FromEnv()
 	if c.MusicBrainzBaseURL != "https://mirror.example/ws/2" {
 		t.Errorf("MusicBrainz base URL not overridden: got %q", c.MusicBrainzBaseURL)
@@ -241,13 +241,13 @@ func TestMusicBrainzServerConfig(t *testing.T) {
 	}
 
 	// "0" disables throttling on a self-hosted mirror with no rate policy.
-	t.Setenv("JUICEBOX_MUSICBRAINZ_RATE_LIMIT", "0")
+	t.Setenv("OBELO_MUSICBRAINZ_RATE_LIMIT", "0")
 	if got := config.FromEnv().MusicBrainzRateLimit; got != 0 {
 		t.Errorf("MusicBrainz rate limit = %v, want 0 (no throttling)", got)
 	}
 
 	// An unparseable value keeps the safe default.
-	t.Setenv("JUICEBOX_MUSICBRAINZ_RATE_LIMIT", "not-a-duration")
+	t.Setenv("OBELO_MUSICBRAINZ_RATE_LIMIT", "not-a-duration")
 	if got := config.FromEnv().MusicBrainzRateLimit; got != config.DefaultMusicBrainzRateLimit {
 		t.Errorf("MusicBrainz rate limit = %v, want default %v on garbage input", got, config.DefaultMusicBrainzRateLimit)
 	}
@@ -265,21 +265,21 @@ func TestEnrichTriggerConfig(t *testing.T) {
 		t.Errorf("default enrich interval = %v, want %v", d.EnrichInterval, config.DefaultEnrichInterval)
 	}
 
-	t.Setenv("JUICEBOX_AUTO_ENRICH", "false")
-	t.Setenv("JUICEBOX_ENRICH_INTERVAL", "0")
+	t.Setenv("OBELO_AUTO_ENRICH", "false")
+	t.Setenv("OBELO_ENRICH_INTERVAL", "0")
 	c := config.FromEnv()
 	if c.AutoEnrichAfterScan {
-		t.Error("auto-enrich not disabled by JUICEBOX_AUTO_ENRICH=false")
+		t.Error("auto-enrich not disabled by OBELO_AUTO_ENRICH=false")
 	}
 	if c.EnrichInterval != 0 {
 		t.Errorf("enrich interval = %v, want 0 (disabled)", c.EnrichInterval)
 	}
 
-	t.Setenv("JUICEBOX_AUTO_ENRICH", "not-a-bool")
-	t.Setenv("JUICEBOX_ENRICH_INTERVAL", "45m")
+	t.Setenv("OBELO_AUTO_ENRICH", "not-a-bool")
+	t.Setenv("OBELO_ENRICH_INTERVAL", "45m")
 	c = config.FromEnv()
 	if !c.AutoEnrichAfterScan {
-		t.Error("an unparseable JUICEBOX_AUTO_ENRICH should keep the default (true)")
+		t.Error("an unparseable OBELO_AUTO_ENRICH should keep the default (true)")
 	}
 	if c.EnrichInterval != 45*time.Minute {
 		t.Errorf("enrich interval = %v, want 45m", c.EnrichInterval)
@@ -295,8 +295,8 @@ func TestDiscoveryOverridesFromEnv(t *testing.T) {
 		t.Fatalf("defaults advertise %v via %q, want neither set", c.AdvertiseIPs, c.MDNSInterface)
 	}
 
-	t.Setenv("JUICEBOX_ADVERTISE_IP", " 192.168.1.50 , fd00::1 ,, ")
-	t.Setenv("JUICEBOX_MDNS_INTERFACE", " eth0 ")
+	t.Setenv("OBELO_ADVERTISE_IP", " 192.168.1.50 , fd00::1 ,, ")
+	t.Setenv("OBELO_MDNS_INTERFACE", " eth0 ")
 	c := config.FromEnv()
 	if len(c.AdvertiseIPs) != 2 || c.AdvertiseIPs[0] != "192.168.1.50" || c.AdvertiseIPs[1] != "fd00::1" {
 		t.Errorf("AdvertiseIPs = %v, want the two addresses, trimmed, empties dropped", c.AdvertiseIPs)

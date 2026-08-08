@@ -4,7 +4,7 @@
 // specs exercise UI + typed API client + Go server as one black box:
 //
 //   1. Build the frontend (vite build) into ../internal/webui/dist.
-//   2. `go build` the juicebox binary, which embeds that bundle via go:embed.
+//   2. `go build` the obelo binary, which embeds that bundle via go:embed.
 //   3. Boot the binary against a FRESH temp data dir on E2E_PORT.
 //
 // The process stays in the foreground; Playwright waits for /api/v1/server to
@@ -255,12 +255,12 @@ function run(cmd, args, opts = {}) {
 run("npm", ["run", "build"], { cwd: webDir });
 
 // 2. Build the server binary that embeds the freshly built bundle.
-const binPath = join(mkdtempSync(join(tmpdir(), "juicebox-bin-")), "juicebox");
-run("go", ["build", "-o", binPath, "./cmd/juicebox"], { cwd: repoRoot });
+const binPath = join(mkdtempSync(join(tmpdir(), "obelo-bin-")), "obelo");
+run("go", ["build", "-o", binPath, "./cmd/obelo"], { cwd: repoRoot });
 
 // 3. Boot the binary against a fresh temp data dir. Scheduled scan + session
 //    reaper are disabled so the smoke run is deterministic and quiet.
-const dataDir = mkdtempSync(join(tmpdir(), "juicebox-data-"));
+const dataDir = mkdtempSync(join(tmpdir(), "obelo-data-"));
 console.log(`[boot-server] starting server on :${port} (data dir: ${dataDir})`);
 
 // Start each run with no stale claim token on disk.
@@ -276,42 +276,42 @@ const child = spawn(binPath, [], {
   stdio: ["inherit", "pipe", "pipe"],
   env: {
     ...process.env,
-    JUICEBOX_LISTEN_ADDR: `127.0.0.1:${port}`,
-    JUICEBOX_DATA_DIR: dataDir,
-    JUICEBOX_SCAN_INTERVAL: "0",
-    JUICEBOX_SESSION_IDLE_TIMEOUT: "0",
+    OBELO_LISTEN_ADDR: `127.0.0.1:${port}`,
+    OBELO_DATA_DIR: dataDir,
+    OBELO_SCAN_INTERVAL: "0",
+    OBELO_SESSION_IDLE_TIMEOUT: "0",
     // Cap concurrent transcodes at 1 so the play spec can deterministically
     // provoke a 503 SERVER_BUSY: occupy the single slot via the API, then drive
     // the browser to a transcode-requiring title and assert the busy/retry UX
     // (ADR-0009 / TRANSCODE issue 05). Direct play and remux are unmetered, so
     // every other E2E spec is unaffected.
-    JUICEBOX_MAX_CONCURRENT_TRANSCODES: "1",
+    OBELO_MAX_CONCURRENT_TRANSCODES: "1",
     // Enrichment ON, pointed at the local TMDB stub above (no live network), so
     // the enrichment specs can drive a real pass and assert the decorated detail
     // + the live SSE-driven grid update. Auto-after-scan and the scheduled sweep
     // are OFF so a scan never races a spec's MANUAL POST /enrich (the specs assert
     // exact pass counts and drive the live-update from the manual pass).
-    JUICEBOX_TMDB_API_KEY: "e2e-key",
-    JUICEBOX_TMDB_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
-    JUICEBOX_TMDB_IMAGE_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
+    OBELO_TMDB_API_KEY: "e2e-key",
+    OBELO_TMDB_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
+    OBELO_TMDB_IMAGE_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
     // Music enrichment (issue 03): MusicBrainz + Cover Art Archive pointed at the
     // same local stub, so the TV/Music enrichment spec runs with no live network.
-    JUICEBOX_MUSICBRAINZ_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
-    JUICEBOX_COVERART_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
-    JUICEBOX_AUTO_ENRICH: "false",
-    JUICEBOX_ENRICH_INTERVAL: "0",
+    OBELO_MUSICBRAINZ_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
+    OBELO_COVERART_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
+    OBELO_AUTO_ENRICH: "false",
+    OBELO_ENRICH_INTERVAL: "0",
     // Pre-grant the first-run Enrichment consent (ADR-0032) so the shared e2e
     // server enriches out of the box and the first-run prompt doesn't overlay the
     // admin specs. The consent-toggle spec drives the revoke/grant round-trip and
     // restores granted. Consent is seeded only on first boot; the toggle is then
     // DB-authoritative.
-    JUICEBOX_ENRICHMENT_CONSENT: "granted",
+    OBELO_ENRICHMENT_CONSENT: "granted",
     // External subtitle fetching (subtitles/05) ON, pointed at the same local stub
     // (the /subtitles + /download + /subfile.srt routes above), so the "search
     // online" e2e drives a real provider fetch with no live network. A key is set so
     // SeedIfEmpty enables the provider on first boot.
-    JUICEBOX_OPENSUBTITLES_API_KEY: "e2e-sub-key",
-    JUICEBOX_OPENSUBTITLES_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
+    OBELO_OPENSUBTITLES_API_KEY: "e2e-sub-key",
+    OBELO_OPENSUBTITLES_BASE_URL: `http://127.0.0.1:${tmdbPort}`,
   },
 });
 

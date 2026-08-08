@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // fakeManagerStore is an in-memory ManagerStore for the Manager tests (no DB).

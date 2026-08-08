@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/audio"
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/events"
-	"github.com/marioquake/juicebox/internal/playback"
-	"github.com/marioquake/juicebox/internal/scanner"
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/audio"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/events"
+	"github.com/marioquake/obelo-server/internal/playback"
+	"github.com/marioquake/obelo-server/internal/scanner"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
 // Wire shapes for the browse/scan surface (docs/api-contract.md): camelCase,

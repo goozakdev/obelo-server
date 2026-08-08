@@ -323,9 +323,9 @@ describe("Users tab in the Admin hub", () => {
 
   it("redirects a Member away from /admin/users (RequireAdmin gate)", async () => {
     // Seed a Member session (renderWithAuth hardcodes an Admin, so wire it by hand).
-    window.localStorage.setItem("juicebox.token", "fake-token");
+    window.localStorage.setItem("obelo.token", "fake-token");
     window.localStorage.setItem(
-      "juicebox.user",
+      "obelo.user",
       JSON.stringify({ id: "m1", username: "kid", role: "member" }),
     );
     const stub = {

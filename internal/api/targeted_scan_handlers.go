@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/marioquake/juicebox/internal/events"
-	"github.com/marioquake/juicebox/internal/scanner"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/events"
+	"github.com/marioquake/obelo-server/internal/scanner"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // targeted_scan_handlers.go serves the Targeted scan (ADR-0030): POST

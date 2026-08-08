@@ -32,7 +32,7 @@ func TestAniDBLookupByID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewAniDBProvider("juicebox-client", srv.URL, "en-US")
+	p := NewAniDBProvider("obelo-client", srv.URL, "en-US")
 	p.minInterval = 0 // no throttle in the test
 
 	meta, err := p.Lookup(context.Background(), TitleRef{Kind: "show", Title: "whatever", AniDBID: "1"})

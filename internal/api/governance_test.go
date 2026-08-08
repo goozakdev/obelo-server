@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Real-ffmpeg integration tests for transcode governance (ADR-0009 / issue

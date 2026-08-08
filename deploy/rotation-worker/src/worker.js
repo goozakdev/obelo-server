@@ -16,7 +16,7 @@
 
 const ROUTE = "/v1/keys";
 const KV_KEY = "envelope"; // the single KV entry the runbook publishes via `wrangler kv key put`
-const UA_PREFIX = "juicebox/"; // official builds send `User-Agent: juicebox/<version>`
+const UA_PREFIX = "obelo/"; // official builds send `User-Agent: obelo/<version>`
 
 export default {
   async fetch(request, env) {

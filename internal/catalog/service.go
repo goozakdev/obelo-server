@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/marioquake/juicebox/internal/access"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/access"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Domain errors mapped to HTTP by the api layer.

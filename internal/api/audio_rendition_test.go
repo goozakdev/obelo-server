@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Issue audio-streams/03 integration tests: the in-band HLS AUDIO rendition group.

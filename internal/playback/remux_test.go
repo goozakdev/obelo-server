@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/transcode"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // fakeRunner records launches and lets a test observe the kill of the ffmpeg

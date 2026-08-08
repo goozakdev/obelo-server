@@ -128,9 +128,9 @@ test.describe.serial("first-run, login, logout, and the 401 path", () => {
     // → the guard redirects to /login (PRD user story 5).
     await page.goto("/login");
     await page.evaluate(() => {
-      localStorage.setItem("juicebox.token", "garbage-revoked-token");
+      localStorage.setItem("obelo.token", "garbage-revoked-token");
       localStorage.setItem(
-        "juicebox.user",
+        "obelo.user",
         JSON.stringify({ id: "x", username: "ghost", role: "admin" }),
       );
     });

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/organize"
+	"github.com/marioquake/obelo-server/internal/organize"
 )
 
 // The Watchlist surface: a thin, dedicated façade over the per-User system

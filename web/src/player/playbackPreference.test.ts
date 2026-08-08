@@ -71,8 +71,8 @@ describe("playbackPreference — persistence", () => {
     expect(loadPreference(window.localStorage, "u1", showScope).editionName).toBe("Extended");
     // A different Title / anon are separate again.
     expect(loadPreference(window.localStorage, "u1", { kind: "title", id: "t9" }).editionName).toBeNull();
-    expect(preferenceKey(null, titleScope)).toBe("juicebox.playback-pref.anon.title.t1");
-    expect(preferenceKey("u1", showScope)).toBe("juicebox.playback-pref.u1.show.sh1");
+    expect(preferenceKey(null, titleScope)).toBe("obelo.playback-pref.anon.title.t1");
+    expect(preferenceKey("u1", showScope)).toBe("obelo.playback-pref.u1.show.sh1");
   });
 
   it("degrades a malformed/partial payload to Auto rather than throwing", () => {

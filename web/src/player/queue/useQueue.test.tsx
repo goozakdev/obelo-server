@@ -85,9 +85,9 @@ beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
   // Seed a logged-in user (u1) the way the app persists it.
-  window.localStorage.setItem("juicebox.token", "fake-token");
+  window.localStorage.setItem("obelo.token", "fake-token");
   window.localStorage.setItem(
-    "juicebox.user",
+    "obelo.user",
     JSON.stringify({ id: "u1", username: "operator", role: "admin" }),
   );
 });

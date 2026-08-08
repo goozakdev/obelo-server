@@ -83,7 +83,7 @@ func (p *MusicChainProvider) ArtworkCandidates(ctx context.Context, ref TitleRef
 			// a genuine failure is logged and treated as no data so the other source
 			// still populates the grid and the pass continues (ADR-0001).
 			if !errors.Is(err, ErrNoMatch) && !errors.Is(err, ErrSearchUnavailable) {
-				log.Printf("juicebox: enrich artist artwork candidates (mbid %q): %v", ref.MusicbrainzID, err)
+				log.Printf("obelo: enrich artist artwork candidates (mbid %q): %v", ref.MusicbrainzID, err)
 			}
 			return
 		}
@@ -160,7 +160,7 @@ func (p *MusicChainProvider) lookup(ctx context.Context, src MetadataProvider, r
 	meta, err := src.Lookup(ctx, ref)
 	if err != nil {
 		if !errors.Is(err, ErrNoMatch) {
-			log.Printf("juicebox: enrich %s image/bio/synopsis (mbid %q): %v", ref.Kind, mbid, err)
+			log.Printf("obelo: enrich %s image/bio/synopsis (mbid %q): %v", ref.Kind, mbid, err)
 		}
 		return TitleMetadata{}, false
 	}

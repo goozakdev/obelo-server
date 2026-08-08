@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // ADR-0033 integration tests: original-format text-subtitle delivery through the

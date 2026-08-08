@@ -18,7 +18,7 @@
 -- regardless. A brand-new install has NO row here yet (SeedIfEmpty creates it on
 -- first boot AFTER migrations), so the UPDATE matches nothing and the column stays
 -- NULL/undecided — the prompt then fires. First boot may seed a decision from
--- JUICEBOX_ENRICHMENT_CONSENT (headless deploys / the test harness).
+-- OBELO_ENRICHMENT_CONSENT (headless deploys / the test harness).
 ALTER TABLE metadata_settings ADD COLUMN enrichment_consent_granted INTEGER;
 ALTER TABLE metadata_settings ADD COLUMN enrichment_consent_at TEXT;
 

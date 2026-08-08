@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // serverInfo mirrors the camelCase handshake response so the test asserts the

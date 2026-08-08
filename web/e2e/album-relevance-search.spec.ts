@@ -87,7 +87,7 @@ test.describe.serial("album Fix-info: relevance-ranked search finds a descriptor
     // copied from the Go music testdata, so the browse grid has an album whose Fix-info
     // picker we can drive. Scan only — the picker is an Admin affordance on any album,
     // so enrichment isn't needed to reach it.
-    fixturesDir = mkdtempSync(join(tmpdir(), "juicebox-album-relevance-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-album-relevance-"));
     const albumDir = join(fixturesDir, "Radiohead", "OK Computer (1997)");
     mkdirSync(albumDir, { recursive: true });
     for (const f of ["01 - Airbag.m4a", "02 - Paranoid Android.m4a"]) {

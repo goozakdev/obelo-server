@@ -36,12 +36,12 @@ function LocationProbe() {
 function renderHeader() {
   // Seed an active Admin session (ana) and a two-entry roster under server srv-1:
   // ben is Signed-in (a retained token), cy is Known.
-  window.localStorage.setItem("juicebox.token", "fake-token");
+  window.localStorage.setItem("obelo.token", "fake-token");
   window.localStorage.setItem(
-    "juicebox.user",
+    "obelo.user",
     JSON.stringify({ id: "u-ana", username: "ana", role: "admin" }),
   );
-  window.localStorage.setItem("juicebox.serverId", "srv-1");
+  window.localStorage.setItem("obelo.serverId", "srv-1");
   rememberUser(window.localStorage, "srv-1", { id: "u-ben", username: "ben", role: "member" }, "tok-ben");
   rememberUser(window.localStorage, "srv-1", { id: "u-cy", username: "cy", role: "member" }, null);
 

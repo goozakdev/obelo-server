@@ -17,7 +17,7 @@ import (
 
 // HWAccel is the hardware-acceleration knob's vocabulary (ADR-0009): off (CPU),
 // auto (detect the best backend), or an explicit backend. The string values are
-// the operator-facing names parsed from JUICEBOX_HARDWARE_ACCEL and match the
+// the operator-facing names parsed from OBELO_HARDWARE_ACCEL and match the
 // transcode tier's Accel values 1:1 (the app wires one to the other), so a backend
 // added there needs only a constant here. HWAccelOff is the zero-ish default.
 type HWAccel string
@@ -39,7 +39,7 @@ const (
 	HWAccelVideoToolbox HWAccel = "videotoolbox"
 )
 
-// parseHWAccel maps a JUICEBOX_HARDWARE_ACCEL value to a HWAccel, reporting
+// parseHWAccel maps a OBELO_HARDWARE_ACCEL value to a HWAccel, reporting
 // whether it was recognized. It is lenient and back-compatible (mirrors the
 // "garbage stays off" policy of the other knobs): the explicit names parse to
 // themselves; off/false/0/no/"" → off; and the legacy bool-true spellings
@@ -176,7 +176,7 @@ type Config struct {
 	// point both at a local server). These hosts need no key of their own — Music
 	// enrichment is gated by MusicBrainzEnabled (or, for backward compatibility, a
 	// TMDBAPIKey), not by an API key on these hosts. Env:
-	// JUICEBOX_MUSICBRAINZ_BASE_URL / JUICEBOX_COVERART_BASE_URL.
+	// OBELO_MUSICBRAINZ_BASE_URL / OBELO_COVERART_BASE_URL.
 	MusicBrainzBaseURL string
 	CoverArtBaseURL    string
 
@@ -185,7 +185,7 @@ type Config struct {
 	// policy (it answers 503 once you exceed it). It defaults to
 	// DefaultMusicBrainzRateLimit. A mirror may set its own policy, so this is
 	// tunable; 0 disables throttling entirely (appropriate for a self-hosted mirror
-	// with no rate limit). Env: JUICEBOX_MUSICBRAINZ_RATE_LIMIT.
+	// with no rate limit). Env: OBELO_MUSICBRAINZ_RATE_LIMIT.
 	MusicBrainzRateLimit time.Duration
 
 	// MusicBrainzEnabled turns ON Music enrichment (MusicBrainz + Cover Art
@@ -193,19 +193,19 @@ type Config struct {
 	// key, this explicit opt-in is what keeps a fresh install from making surprise
 	// outbound calls (ADR-0001): Music enrichment stays OFF until either this is
 	// set or a TMDBAPIKey is present (a key still turns on every kind). Off by
-	// default. Env: JUICEBOX_MUSICBRAINZ_ENABLED.
+	// default. Env: OBELO_MUSICBRAINZ_ENABLED.
 	MusicBrainzEnabled bool
 
 	// FanartTVAPIKey enables artist imagery from fanart.tv — the source for the one
 	// thing MusicBrainz lacks (artist images). Empty by default: with no key the
 	// chain is not wired and Music enrichment behaves byte-for-byte as before, with
 	// zero calls to fanart.tv (ADR-0001 explicit opt-in). Env:
-	// JUICEBOX_FANART_TV_API_KEY.
+	// OBELO_FANART_TV_API_KEY.
 	FanartTVAPIKey string
 	// FanartTVBaseURL overrides the fanart.tv API host. It defaults to the public
 	// endpoint; tests point it at a local server so the chain is exercised with no
 	// real network (mirrors TMDBBaseURL / MusicBrainzBaseURL). Env:
-	// JUICEBOX_FANART_TV_BASE_URL.
+	// OBELO_FANART_TV_BASE_URL.
 	FanartTVBaseURL string
 
 	// TheAudioDBAPIKey enables the second artist source, TheAudioDB — the one that
@@ -213,12 +213,12 @@ type Config struct {
 	// image) and that carries a real biography (preferred over MusicBrainz's
 	// synthesized stub). Empty by default: with no key TheAudioDB is not wired and
 	// Music enrichment makes zero calls to it (ADR-0001 explicit opt-in). Env:
-	// JUICEBOX_THEAUDIODB_API_KEY.
+	// OBELO_THEAUDIODB_API_KEY.
 	TheAudioDBAPIKey string
 	// TheAudioDBBaseURL overrides the TheAudioDB API host. It defaults to the public
 	// endpoint; tests point it at a local server so the chain is exercised with no
 	// real network (mirrors FanartTVBaseURL). Env:
-	// JUICEBOX_THEAUDIODB_BASE_URL.
+	// OBELO_THEAUDIODB_BASE_URL.
 	TheAudioDBBaseURL string
 
 	// AutoEnrichAfterScan triggers a background Enrichment pass for the newly-
@@ -245,24 +245,24 @@ type Config struct {
 	// (ADR-0021). Empty by default: with no key the provider is not wired and a
 	// "search online" makes zero outbound calls (ADR-0001 explicit opt-in). It only
 	// SEEDS the DB-backed subtitle-provider settings on first boot; thereafter the
-	// admin settings UI is authoritative. Env: JUICEBOX_OPENSUBTITLES_API_KEY.
+	// admin settings UI is authoritative. Env: OBELO_OPENSUBTITLES_API_KEY.
 	OpenSubtitlesAPIKey string
 	// OpenSubtitlesBaseURL overrides the OpenSubtitles API host. It defaults to the
 	// public endpoint; tests point it at a local stub so the fetch flow is exercised
 	// with no real network (mirrors TMDBBaseURL). Env:
-	// JUICEBOX_OPENSUBTITLES_BASE_URL.
+	// OBELO_OPENSUBTITLES_BASE_URL.
 	OpenSubtitlesBaseURL string
 	// SubtitleAutoFetchLang is the ISO-639-1 language a completed scan auto-fetches
 	// subtitles for. Empty by default (OFF) — OpenSubtitles' small download quota
 	// makes bulk auto-fetch a footgun, so it is strictly opt-in (ADR-0021). Seeds the
-	// DB knob on first boot. Env: JUICEBOX_SUBTITLE_AUTO_FETCH_LANG.
+	// DB knob on first boot. Env: OBELO_SUBTITLE_AUTO_FETCH_LANG.
 	SubtitleAutoFetchLang string
 
 	// KeyRotationEnabled turns the optional maintainer-hosted key-rotation channel
 	// (ADR-0032, layer 2) ON. Default true, but it only ever contacts the endpoint on
 	// an OFFICIAL build (one with a build-injected kAppEncKey) AND after the operator
 	// grants enrichment consent — a build-from-source binary or an unconsented server
-	// makes zero rotation calls regardless. Set JUICEBOX_KEY_ROTATION=off to disable
+	// makes zero rotation calls regardless. Set OBELO_KEY_ROTATION=off to disable
 	// the channel entirely (one of two independent ways, alongside BYOK, to reach
 	// zero maintainer contact — ADR-0001).
 	KeyRotationEnabled bool
@@ -282,7 +282,7 @@ type Config struct {
 	// consent UNDECIDED so a fresh install prompts and makes no outbound enrichment
 	// calls until the operator answers; a non-nil value records that decision. It only
 	// SEEDS on first boot; thereafter the DB (the admin toggle) is authoritative.
-	// Env: JUICEBOX_ENRICHMENT_CONSENT (granted/true/1 → grant, declined/false/0 →
+	// Env: OBELO_ENRICHMENT_CONSENT (granted/true/1 → grant, declined/false/0 →
 	// decline, unset → leave undecided).
 	EnrichmentConsentGranted *bool
 }
@@ -362,7 +362,7 @@ const DefaultArtworkCandidateCacheTTL = 2 * time.Minute
 // bootstrap.go alongside the other `-ldflags -X` values so the maintainer host is
 // not committed to the public repo. A build-from-source binary therefore has no
 // default rotation URL and never polls. Overridable at runtime via
-// JUICEBOX_KEY_ROTATION_URL (tests point it at a stub).
+// OBELO_KEY_ROTATION_URL (tests point it at a stub).
 
 // DefaultKeyRotationInterval is how often an official build re-polls the rotation
 // endpoint after its first successful fetch (ADR-0032). Six hours matches the
@@ -459,38 +459,38 @@ func (c Config) SubtitleCacheDir() string {
 
 // FromEnv builds a Config from defaults overlaid with environment variables:
 //
-//	JUICEBOX_LISTEN_ADDR    -> ListenAddr
-//	JUICEBOX_DATA_DIR       -> DataDir
-//	JUICEBOX_SERVER_NAME    -> ServerName (the Server identity's display name,
+//	OBELO_LISTEN_ADDR    -> ListenAddr
+//	OBELO_DATA_DIR       -> DataDir
+//	OBELO_SERVER_NAME    -> ServerName (the Server identity's display name,
 //	                               ADR-0034; empty derives one from the hostname)
-//	JUICEBOX_ADVERTISE_IP   -> AdvertiseIPs (comma-separated IPs to publish in the
+//	OBELO_ADVERTISE_IP   -> AdvertiseIPs (comma-separated IPs to publish in the
 //	                               mDNS records; empty auto-discovers them)
-//	JUICEBOX_MDNS_INTERFACE -> MDNSInterface (an interface name, e.g. "eth0", to
+//	OBELO_MDNS_INTERFACE -> MDNSInterface (an interface name, e.g. "eth0", to
 //	                               pin the mDNS responder to; empty uses the
 //	                               system default multicast interface)
-//	JUICEBOX_SCAN_INTERVAL  -> ScanInterval (a Go duration, e.g. "30m";
+//	OBELO_SCAN_INTERVAL  -> ScanInterval (a Go duration, e.g. "30m";
 //	                               "0" disables the scheduled scan)
-//	JUICEBOX_SESSION_IDLE_TIMEOUT -> SessionIdleTimeout (a Go duration, e.g.
+//	OBELO_SESSION_IDLE_TIMEOUT -> SessionIdleTimeout (a Go duration, e.g.
 //	                               "2m"; "0" disables the session reaper)
-//	JUICEBOX_MAX_CONCURRENT_TRANSCODES -> MaxConcurrentTranscodes (an integer;
+//	OBELO_MAX_CONCURRENT_TRANSCODES -> MaxConcurrentTranscodes (an integer;
 //	                               "0" or negative disables the cap / unlimited)
-//	JUICEBOX_HARDWARE_ACCEL -> HardwareAccel (an enum: off|auto|nvenc|vaapi|
+//	OBELO_HARDWARE_ACCEL -> HardwareAccel (an enum: off|auto|nvenc|vaapi|
 //	                               qsv|videotoolbox; off/false/0 → off, the legacy
 //	                               true/1 → auto; default off → CPU libx264 path)
-//	JUICEBOX_MUSICBRAINZ_ENABLED -> MusicBrainzEnabled (a bool; default false —
+//	OBELO_MUSICBRAINZ_ENABLED -> MusicBrainzEnabled (a bool; default false —
 //	                               turns on Music enrichment without a TMDB key)
-//	JUICEBOX_MUSICBRAINZ_BASE_URL -> MusicBrainzBaseURL (the MusicBrainz host;
+//	OBELO_MUSICBRAINZ_BASE_URL -> MusicBrainzBaseURL (the MusicBrainz host;
 //	                               point at a mirror, default is the public host)
-//	JUICEBOX_MUSICBRAINZ_RATE_LIMIT -> MusicBrainzRateLimit (a Go duration, e.g.
+//	OBELO_MUSICBRAINZ_RATE_LIMIT -> MusicBrainzRateLimit (a Go duration, e.g.
 //	                               "1s"; "0" disables throttling for a mirror with
 //	                               no rate policy; default DefaultMusicBrainzRateLimit)
-//	JUICEBOX_FANART_TV_API_KEY -> FanartTVAPIKey (enables artist imagery from
+//	OBELO_FANART_TV_API_KEY -> FanartTVAPIKey (enables artist imagery from
 //	                               fanart.tv; empty = off, no fanart.tv calls)
-//	JUICEBOX_THEAUDIODB_API_KEY -> TheAudioDBAPIKey (enables the name-matching
+//	OBELO_THEAUDIODB_API_KEY -> TheAudioDBAPIKey (enables the name-matching
 //	                               artist image + biography source; empty = off,
 //	                               no TheAudioDB calls)
-//	JUICEBOX_AUTO_ENRICH    -> AutoEnrichAfterScan (a bool; default true)
-//	JUICEBOX_ENRICH_INTERVAL -> EnrichInterval (a Go duration, e.g. "6h";
+//	OBELO_AUTO_ENRICH    -> AutoEnrichAfterScan (a bool; default true)
+//	OBELO_ENRICH_INTERVAL -> EnrichInterval (a Go duration, e.g. "6h";
 //	                               "0" disables the scheduled enrich)
 //
 // An unparseable scan-interval falls back to the default rather than failing
@@ -498,16 +498,16 @@ func (c Config) SubtitleCacheDir() string {
 // lenient policy applies to the transcode-cap and HW-accel knobs.
 func FromEnv() Config {
 	c := Defaults()
-	if v := os.Getenv("JUICEBOX_LISTEN_ADDR"); v != "" {
+	if v := os.Getenv("OBELO_LISTEN_ADDR"); v != "" {
 		c.ListenAddr = v
 	}
-	if v := os.Getenv("JUICEBOX_DATA_DIR"); v != "" {
+	if v := os.Getenv("OBELO_DATA_DIR"); v != "" {
 		c.DataDir = v
 	}
-	if v := os.Getenv("JUICEBOX_SERVER_NAME"); v != "" {
+	if v := os.Getenv("OBELO_SERVER_NAME"); v != "" {
 		c.ServerName = v
 	}
-	if v := os.Getenv("JUICEBOX_ADVERTISE_IP"); v != "" {
+	if v := os.Getenv("OBELO_ADVERTISE_IP"); v != "" {
 		// Split only; the addresses are parsed where they are used, so a typo is
 		// reported as "not a valid IP address" in the boot log rather than
 		// silently dropped here.
@@ -517,27 +517,27 @@ func FromEnv() Config {
 			}
 		}
 	}
-	if v := os.Getenv("JUICEBOX_MDNS_INTERFACE"); v != "" {
+	if v := os.Getenv("OBELO_MDNS_INTERFACE"); v != "" {
 		c.MDNSInterface = strings.TrimSpace(v)
 	}
-	if v := os.Getenv("JUICEBOX_SCAN_INTERVAL"); v != "" {
+	if v := os.Getenv("OBELO_SCAN_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.ScanInterval = d
 		}
 	}
-	if v := os.Getenv("JUICEBOX_SESSION_IDLE_TIMEOUT"); v != "" {
+	if v := os.Getenv("OBELO_SESSION_IDLE_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.SessionIdleTimeout = d
 		}
 	}
-	if v := os.Getenv("JUICEBOX_MAX_CONCURRENT_TRANSCODES"); v != "" {
+	if v := os.Getenv("OBELO_MAX_CONCURRENT_TRANSCODES"); v != "" {
 		// A parseable integer overrides the default; 0/negative means unlimited.
 		// An unparseable value keeps the default rather than failing boot.
 		if n, err := strconv.Atoi(v); err == nil {
 			c.MaxConcurrentTranscodes = n
 		}
 	}
-	if v := os.Getenv("JUICEBOX_HARDWARE_ACCEL"); v != "" {
+	if v := os.Getenv("OBELO_HARDWARE_ACCEL"); v != "" {
 		// Off by default; an explicit backend name (or the legacy bool true→auto)
 		// selects it. An unrecognized value leaves the default off (the safe CPU
 		// path), mirroring the other knobs' lenient "garbage stays safe" policy.
@@ -548,69 +548,69 @@ func FromEnv() Config {
 	// Enrichment knobs (external-metadata-enrichment). A key turns enrichment on;
 	// its absence keeps the offline-first no-op posture. The base-URL overrides
 	// exist so tests/e2e point at a local stub.
-	if v := os.Getenv("JUICEBOX_TMDB_API_KEY"); v != "" {
+	if v := os.Getenv("OBELO_TMDB_API_KEY"); v != "" {
 		c.TMDBAPIKey = v
 	}
-	if v := os.Getenv("JUICEBOX_METADATA_LANGUAGE"); v != "" {
+	if v := os.Getenv("OBELO_METADATA_LANGUAGE"); v != "" {
 		c.MetadataLanguage = v
 	}
-	if v := os.Getenv("JUICEBOX_TMDB_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_TMDB_BASE_URL"); v != "" {
 		c.TMDBBaseURL = v
 	}
-	if v := os.Getenv("JUICEBOX_TMDB_IMAGE_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_TMDB_IMAGE_BASE_URL"); v != "" {
 		c.TMDBImageBaseURL = v
 	}
-	if v := os.Getenv("JUICEBOX_MUSICBRAINZ_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_MUSICBRAINZ_BASE_URL"); v != "" {
 		c.MusicBrainzBaseURL = v
 	}
-	if v := os.Getenv("JUICEBOX_COVERART_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_COVERART_BASE_URL"); v != "" {
 		c.CoverArtBaseURL = v
 	}
 	// MusicBrainzRateLimit: a Go duration ("0" disables throttling, for a mirror
 	// with no rate policy). An unparseable value keeps the default rather than
 	// failing boot (throttling is a politeness knob, not a critical path).
-	if v := os.Getenv("JUICEBOX_MUSICBRAINZ_RATE_LIMIT"); v != "" {
+	if v := os.Getenv("OBELO_MUSICBRAINZ_RATE_LIMIT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.MusicBrainzRateLimit = d
 		}
 	}
-	if v := os.Getenv("JUICEBOX_FANART_TV_API_KEY"); v != "" {
+	if v := os.Getenv("OBELO_FANART_TV_API_KEY"); v != "" {
 		c.FanartTVAPIKey = v
 	}
-	if v := os.Getenv("JUICEBOX_FANART_TV_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_FANART_TV_BASE_URL"); v != "" {
 		c.FanartTVBaseURL = v
 	}
-	if v := os.Getenv("JUICEBOX_THEAUDIODB_API_KEY"); v != "" {
+	if v := os.Getenv("OBELO_THEAUDIODB_API_KEY"); v != "" {
 		c.TheAudioDBAPIKey = v
 	}
-	if v := os.Getenv("JUICEBOX_THEAUDIODB_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_THEAUDIODB_BASE_URL"); v != "" {
 		c.TheAudioDBBaseURL = v
 	}
 	// MusicBrainzEnabled: opt Music enrichment in without a TMDB key. Off by
 	// default; only a clearly-true value flips it on (an unparseable value leaves
 	// the offline-safe default).
-	if v := os.Getenv("JUICEBOX_MUSICBRAINZ_ENABLED"); v != "" {
+	if v := os.Getenv("OBELO_MUSICBRAINZ_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.MusicBrainzEnabled = b
 		}
 	}
 	// AutoEnrichAfterScan defaults ON; only a clearly-false value turns it off (an
 	// unparseable value leaves the default).
-	if v := os.Getenv("JUICEBOX_AUTO_ENRICH"); v != "" {
+	if v := os.Getenv("OBELO_AUTO_ENRICH"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.AutoEnrichAfterScan = b
 		}
 	}
 	// EnrichInterval: a Go duration ("0" disables the scheduled enrich). An
 	// unparseable value keeps the default (the sweep is a safety net, not critical).
-	if v := os.Getenv("JUICEBOX_ENRICH_INTERVAL"); v != "" {
+	if v := os.Getenv("OBELO_ENRICH_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.EnrichInterval = d
 		}
 	}
 	// ArtworkCandidateCacheTTL: a Go duration ("0" disables the picker's candidate
 	// cache). An unparseable value keeps the default (a pure performance knob).
-	if v := os.Getenv("JUICEBOX_ARTWORK_CANDIDATE_CACHE_TTL"); v != "" {
+	if v := os.Getenv("OBELO_ARTWORK_CANDIDATE_CACHE_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.ArtworkCandidateCacheTTL = d
 		}
@@ -618,21 +618,21 @@ func FromEnv() Config {
 	// External subtitle fetching (ADR-0021): these only SEED the DB-backed
 	// subtitle-provider settings on first boot; thereafter the admin UI is
 	// authoritative. Empty means "no provider configured" (zero outbound calls).
-	if v := os.Getenv("JUICEBOX_OPENSUBTITLES_API_KEY"); v != "" {
+	if v := os.Getenv("OBELO_OPENSUBTITLES_API_KEY"); v != "" {
 		c.OpenSubtitlesAPIKey = v
 	}
-	if v := os.Getenv("JUICEBOX_OPENSUBTITLES_BASE_URL"); v != "" {
+	if v := os.Getenv("OBELO_OPENSUBTITLES_BASE_URL"); v != "" {
 		c.OpenSubtitlesBaseURL = v
 	}
-	if v := os.Getenv("JUICEBOX_SUBTITLE_AUTO_FETCH_LANG"); v != "" {
+	if v := os.Getenv("OBELO_SUBTITLE_AUTO_FETCH_LANG"); v != "" {
 		c.SubtitleAutoFetchLang = v
 	}
-	// Key rotation (ADR-0032, layer 2). JUICEBOX_KEY_ROTATION=off (or false/0/no)
+	// Key rotation (ADR-0032, layer 2). OBELO_KEY_ROTATION=off (or false/0/no)
 	// disables the channel entirely — one of two independent ways (with BYOK) to
 	// reach zero maintainer contact; any other value leaves it on. The URL and
 	// interval overrides exist mainly so tests point the fetch at a stub and observe
 	// a rotated key promptly.
-	if v := os.Getenv("JUICEBOX_KEY_ROTATION"); v != "" {
+	if v := os.Getenv("OBELO_KEY_ROTATION"); v != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "off", "false", "0", "no", "disabled":
 			c.KeyRotationEnabled = false
@@ -640,10 +640,10 @@ func FromEnv() Config {
 			c.KeyRotationEnabled = true
 		}
 	}
-	if v := os.Getenv("JUICEBOX_KEY_ROTATION_URL"); v != "" {
+	if v := os.Getenv("OBELO_KEY_ROTATION_URL"); v != "" {
 		c.KeyRotationURL = v
 	}
-	if v := os.Getenv("JUICEBOX_KEY_ROTATION_INTERVAL"); v != "" {
+	if v := os.Getenv("OBELO_KEY_ROTATION_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.KeyRotationInterval = d
 		}
@@ -651,7 +651,7 @@ func FromEnv() Config {
 	// Enrichment consent (ADR-0032): accept the friendly "granted"/"declined"
 	// spellings as well as the generic bool forms; anything else (or unset) leaves
 	// consent undecided so a fresh install still prompts.
-	if v := os.Getenv("JUICEBOX_ENRICHMENT_CONSENT"); v != "" {
+	if v := os.Getenv("OBELO_ENRICHMENT_CONSENT"); v != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "granted":
 			c.EnrichmentConsentGranted = boolPtr(true)
@@ -686,7 +686,7 @@ func (c Config) Validate() error {
 // DBPath returns the absolute path to the SQLite database file inside the
 // data directory.
 func (c Config) DBPath() string {
-	return filepath.Join(c.DataDir, "juicebox.db")
+	return filepath.Join(c.DataDir, "obelo.db")
 }
 
 // TranscodeScratchDir returns the directory under the data dir that holds the

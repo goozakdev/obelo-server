@@ -1,4 +1,4 @@
-# Juice Box
+# Obelo
 
 A fully self-hosted media server (server + management web app + client-facing API). See `CONTEXT.md` for the domain glossary and `docs/adr/` for architectural decisions.
 

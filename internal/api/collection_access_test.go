@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // Black-box HTTP tests for collections-playlists issue 02: per-viewer Collection

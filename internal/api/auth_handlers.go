@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/auth"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Wire shapes for the authentication endpoints (docs/api-contract.md). All

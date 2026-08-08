@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Session stream tokens (.scratch/session-stream-tokens): the server's SECOND
@@ -185,5 +185,5 @@ func logStreamTokenLookupError(err error) {
 	if err == nil || errors.Is(err, store.ErrNotFound) {
 		return
 	}
-	log.Printf("juicebox: auth: stream token lookup failed: %v", err)
+	log.Printf("obelo: auth: stream token lookup failed: %v", err)
 }

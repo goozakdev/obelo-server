@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // TestMovieScanSkipsUnreadableFolder is the Movie/TV analogue of the music

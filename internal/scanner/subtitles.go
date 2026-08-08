@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/marioquake/juicebox/internal/store"
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 	"github.com/google/uuid"
 )
 

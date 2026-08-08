@@ -80,7 +80,7 @@ function isHlsTier(tier: string): boolean {
  * once, then re-negotiate once auth lands. Anon (`null`) gets its own bucket. */
 function persistedUserId(): string | null {
   try {
-    const raw = window.localStorage.getItem("juicebox.user");
+    const raw = window.localStorage.getItem("obelo.user");
     if (!raw) return null;
     const u = JSON.parse(raw) as { id?: unknown };
     return typeof u?.id === "string" ? u.id : null;

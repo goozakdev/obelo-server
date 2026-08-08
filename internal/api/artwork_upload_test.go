@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // artwork-management issue 03 black-box tests: the one genuinely new capability —

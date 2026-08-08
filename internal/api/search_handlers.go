@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/marioquake/juicebox/internal/catalog"
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/catalog"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Cross-kind search (issue tv-music/04, docs/api-contract.md /search). One

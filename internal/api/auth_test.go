@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // These are black-box tests: they drive the fully wired server over HTTP and

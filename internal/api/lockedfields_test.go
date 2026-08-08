@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/enrich"
-	"github.com/marioquake/juicebox/internal/testharness"
+	"github.com/marioquake/obelo-server/internal/enrich"
+	"github.com/marioquake/obelo-server/internal/testharness"
 )
 
 // External-metadata-enrichment issue 04 black-box tests: the Locked field loop.

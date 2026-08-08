@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/juicebox/internal/subtitle"
+	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
 // OpenSubtitlesProvider is the first concrete SubtitleProvider (ADR-0021): it owns
@@ -43,7 +43,7 @@ func NewOpenSubtitlesProvider(apiKey, baseURL string) *OpenSubtitlesProvider {
 	return &OpenSubtitlesProvider{
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
-		UserAgent:  "juicebox/1.0 (self-hosted)",
+		UserAgent:  "obelo/1.0 (self-hosted)",
 		HTTPClient: &http.Client{Timeout: 20 * time.Second},
 	}
 }

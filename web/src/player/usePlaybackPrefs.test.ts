@@ -32,7 +32,7 @@ describe("usePlaybackPrefs — persistence (store seam)", () => {
     expect(loadPlaybackPrefs(window.localStorage, "u2")).toEqual({ volume: 0.9, muted: true });
     // A logged-out/anon bucket is separate again.
     expect(loadPlaybackPrefs(window.localStorage, null).volume).toBe(DEFAULT_PREFS.volume);
-    expect(playbackPrefsKey(null)).toBe("juicebox.playback-prefs.anon");
+    expect(playbackPrefsKey(null)).toBe("obelo.playback-prefs.anon");
   });
 
   it("clamps an out-of-range stored volume into [0, 1]", () => {

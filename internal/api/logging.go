@@ -26,7 +26,7 @@ import (
 
 // LogRequests wraps h with the server's access log: one line per request with
 // the method, status, response size, duration, and a REDACTED path. It is
-// applied by the binary (cmd/juicebox) around the fully composed handler; the
+// applied by the binary (cmd/obelo) around the fully composed handler; the
 // test harness serves the handler unwrapped, so the suite stays quiet.
 //
 // Wrapping is otherwise transparent: the ResponseWriter passthrough keeps
@@ -41,7 +41,7 @@ func LogRequests(h http.Handler) http.Handler {
 		// RequestURI rather than URL.Path: it is the raw request line, so it is what
 		// a naive logger would reach for, and routing it through RedactPath here is
 		// the point of this function. Nothing prints the query string.
-		log.Printf("juicebox: http: %s %s %d %dB %s",
+		log.Printf("obelo: http: %s %s %d %dB %s",
 			r.Method, RedactPath(pathOnly(r.RequestURI)), lw.statusCode(), lw.written, time.Since(start).Round(time.Millisecond))
 	})
 }

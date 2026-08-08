@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Unit test for the owner-checked SessionSubtitleContext seam (subtitles/03):

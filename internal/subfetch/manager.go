@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // ManagerStore is the persistence the Manager reads to rebuild the active

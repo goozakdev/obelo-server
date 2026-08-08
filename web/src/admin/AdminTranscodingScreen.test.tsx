@@ -253,9 +253,9 @@ describe("Transcoding tab in the Admin hub", () => {
   });
 
   it("redirects a Member away from /admin/transcoding (RequireAdmin gate)", async () => {
-    window.localStorage.setItem("juicebox.token", "fake-token");
+    window.localStorage.setItem("obelo.token", "fake-token");
     window.localStorage.setItem(
-      "juicebox.user",
+      "obelo.user",
       JSON.stringify({ id: "m1", username: "kid", role: "member" }),
     );
     const stub = {

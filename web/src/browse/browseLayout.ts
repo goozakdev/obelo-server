@@ -34,7 +34,7 @@ export const LAYOUT_LABELS: Record<LayoutMode, string> = {
  * shown, so nothing changes until the viewer picks another layout. */
 export const DEFAULT_LAYOUT_MODE: LayoutMode = "tile";
 
-const STORAGE_PREFIX = "juicebox.browse-layout";
+const STORAGE_PREFIX = "obelo.browse-layout";
 
 /** The per-Library storage key. Keying per Library (not per user) matches the TV:
  * the layout is a property of how THIS grid is browsed, shared across whoever uses

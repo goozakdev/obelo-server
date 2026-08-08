@@ -1,6 +1,6 @@
 package enrich
 
-import "github.com/marioquake/juicebox/internal/store"
+import "github.com/marioquake/obelo-server/internal/store"
 
 // Per-Library Enrichment policy resolution (ADR-0027) — the PRIMARY seam of the
 // per-library-enrichment-policy feature. ResolveLibraryEnrichment is the pure

@@ -3,7 +3,7 @@ package playback
 import (
 	"testing"
 
-	"github.com/marioquake/juicebox/internal/store"
+	"github.com/marioquake/obelo-server/internal/store"
 )
 
 // Unit tests for the negotiation core and edition selection — the logic the
