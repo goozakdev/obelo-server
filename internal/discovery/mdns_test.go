@@ -1,6 +1,8 @@
 package discovery
 
 import (
+	"io"
+	"log"
 	"net"
 	"strings"
 	"testing"
@@ -238,5 +240,40 @@ func TestServiceTypeIsThePublishedContract(t *testing.T) {
 	}
 	if APIPath != "/api/v1" {
 		t.Fatalf("APIPath = %q, want /api/v1 (must mirror internal/api's prefix)", APIPath)
+	}
+}
+
+func TestResponderLoggerDropsTruncatedBitNotice(t *testing.T) {
+	// Verbatim from a real link: a truncated Known-Answer query for _ipp._tcp,
+	// which RFC 6762 §7.2 permits and hashicorp/mdns reports as an error. It is
+	// not about this server and there is nothing an operator can do about it, so
+	// it must not reach the log — once per query, forever, is the whole problem.
+	const noisy = `[ERR] mdns: Failed to handle query: [ERR] mdns: support for DNS ` +
+		`requests with high truncated bit not implemented: {{0 false 0 false true ` +
+		`false false false false false 0} false [{canon\ mf741c/743c._ipp._tcp.local. 16 1}] [] [] []}`
+
+	var buf strings.Builder
+	logger := log.New(dropTruncatedBitNotice{out: &buf}, "", 0)
+
+	logger.Printf("%s", noisy)
+	if buf.Len() != 0 {
+		t.Fatalf("truncated-bit notice reached the log: %q", buf.String())
+	}
+
+	// A real responder failure still must.
+	logger.Printf("[ERR] mdns: Failed to unpack packet: %v", "boom")
+	if !strings.Contains(buf.String(), "Failed to unpack packet") {
+		t.Fatalf("dropped a log line that should have been kept: %q", buf.String())
+	}
+}
+
+func TestResponderLoggerWriteReportsFullCount(t *testing.T) {
+	// A short count is an error to log.Logger, which prints it to stderr — that
+	// would trade one line of noise for another.
+	w := dropTruncatedBitNotice{out: io.Discard}
+	p := []byte("x " + truncatedBitNotice + " y\n")
+	n, err := w.Write(p)
+	if err != nil || n != len(p) {
+		t.Fatalf("Write = (%d, %v), want (%d, nil)", n, err, len(p))
 	}
 }
