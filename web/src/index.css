@@ -526,12 +526,35 @@ body {
 }
 
 /* --- Browse: shared ------------------------------------------------------- */
+/* The header's home link. It wraps the Obelo wordmark rather than the word, so
+   `color` here is what the mark's letterforms inherit (they are currentColor) —
+   the brand lime at rest, lifted on hover. It reads as a color swap rather than
+   the old text link's, because a logo that greys out at rest looks unfinished.
+   `.app-title` still styles the Admin page heading, which is plain text, so the
+   wordmark's own metrics live on `.app-wordmark` and not on the shared class. */
 .app-title-link {
-  color: var(--text);
+  color: var(--accent);
   text-decoration: none;
+  /* The link box is the mark; without this it keeps the line-height of the text
+     it replaced and sits a couple of pixels low in the 4.5rem header. */
+  display: inline-flex;
+  align-items: center;
 }
 .app-title-link:hover {
-  color: var(--accent);
+  color: #cfe86a; /* a lift on the accent — the mark is already the brand color */
+}
+
+/* Sized by height so the 3.10:1 artwork sets its own width. Deliberately larger
+   than the type it replaced: a wordmark set at body-copy height reads as a label
+   rather than a logo. The ceiling is half of `--app-header-height` (4.5rem), so
+   the mark cannot change the header's fixed height no matter the viewport — the
+   queue drawer and other overlays clear the header with that exact variable, so
+   growing it here would move them too. The floor stays modest because the narrow
+   header is already tight on room with four nav links beside it. */
+.app-wordmark {
+  display: block;
+  height: clamp(1.35rem, 4.6vw, 2.2rem);
+  width: auto;
 }
 
 /* Browse screens are wider than the auth/landing cards. */
