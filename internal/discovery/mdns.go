@@ -30,7 +30,10 @@
 package discovery
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -155,7 +158,7 @@ func Advertise(identity server.Identity, listenAddr string, opts Options) (*Adve
 		return nil, fmt.Errorf("discovery: building service: %w", err)
 	}
 
-	srv, err := mdns.NewServer(&mdns.Config{Zone: svc, Iface: iface})
+	srv, err := mdns.NewServer(&mdns.Config{Zone: svc, Iface: iface, Logger: responderLogger()})
 	if err != nil {
 		return nil, fmt.Errorf("discovery: starting responder: %w", err)
 	}
@@ -176,6 +179,49 @@ func (a *Advertiser) Close() error {
 		return nil
 	}
 	return a.server.Shutdown()
+}
+
+// truncatedBitNotice is the library's complaint about a query it will not parse.
+// Matched as a substring because the rest of the line is the entire dumped
+// message struct — every record the querier attached, on one line.
+const truncatedBitNotice = "support for DNS requests with high truncated bit not implemented"
+
+// responderLogger is the logger the mDNS library logs through. Without it the
+// library logs to log.Default(), i.e. straight into the server's own log, where
+// its noise reads like Obelo failing.
+//
+// The noise in question: RFC 6762 §7.2 lets a querier set the TC bit on a query
+// to mean "more Known-Answer records are following shortly" — nothing to do with
+// the unicast DNS meaning of "this message was cut short". It is ordinary,
+// correct behaviour, emitted by any host browsing a link with more known answers
+// than fit in one packet (a Mac that can see a chatty AirPrint printer will do it
+// all day). hashicorp/mdns has a standing TODO for it and returns an error
+// instead, which its receive loop logs at [ERR], once per query, forever.
+//
+// So it is dropped rather than reworded. Nothing is lost: those queries are other
+// devices' business — the questions in them are for services like _ipp._tcp, not
+// _obelo._tcp — and a browse for this server that ever did arrive truncated gets
+// answered on the querier's next attempt, because browsers re-query.
+//
+// Everything else the library says is kept and prefixed, so a real responder
+// problem still surfaces and is still attributable to mDNS rather than to us.
+func responderLogger() *log.Logger {
+	return log.New(dropTruncatedBitNotice{out: log.Writer()}, "obelo: mdns: ", log.LstdFlags)
+}
+
+// dropTruncatedBitNotice discards whole log lines matching truncatedBitNotice.
+// Filtering at the writer is safe because log.Logger emits one Write per Printf,
+// so a line is never split across calls and never partially suppressed.
+type dropTruncatedBitNotice struct{ out io.Writer }
+
+func (w dropTruncatedBitNotice) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(truncatedBitNotice)) {
+		// Report the full write as accepted: a short count is an io.Writer error
+		// to the caller, and log.Logger would print *that* to stderr — swapping
+		// one line of noise for another.
+		return len(p), nil
+	}
+	return w.out.Write(p)
 }
 
 // resolveInterface looks up a configured interface by name. An unknown name is an
