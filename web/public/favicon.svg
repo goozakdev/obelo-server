@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!--
+    The Obelo "O" mark: brand-lime disc with a dark play triangle.
+
+    Same artwork as the inline wordmark's disc in src/browse/AppHeader.tsx, with
+    the coordinates normalized from that file's 50.25/108/r=44.25 space to a
+    square 0-100 viewBox so the disc is full-bleed at 16px.
+
+    Colors are literal, not currentColor: a favicon has no inherited color, and
+    the triangle is drawn ON TOP of the disc, so it must never be able to match
+    it. #c0d94a is the brand artwork lime (also the tvOS/iOS app icons) — very
+    slightly greener than the accent token in index.css, which is the same known
+    cosmetic gap the wordmark has.
+
+    The triangle is #2A2724, matching the Apple clients. It was #ffffff, which is
+    1.58:1 against this lime — barely half the 3:1 floor for a non-text graphic,
+    because the lime is high-luminance (L~0.61) and sits far closer to white than
+    to mid-gray. The dark fill is 9.4:1. This matters MOST at favicon sizes: at
+    16px the triangle is a handful of pixels, and a 1.58:1 edge is simply gone.
+
+    Not a transparent cutout, deliberately. A cutout looks identical to this on a
+    dark tab strip but reverts to near-white-on-lime anywhere the icon lands on a
+    light surface, which reintroduces the bug where nobody is looking.
+
+    NB: this is XML, so a comment may not contain a double hyphen. Writing the
+    CSS custom property with its leading dashes here is a PARSE ERROR that kills
+    the whole file, not just the comment — the icon silently stops rendering
+    everywhere. That is exactly how this comment got written the first time.
+  -->
+  <circle cx="50" cy="50" r="50" fill="#c0d94a"/>
+  <polygon points="35.94,25.03 35.94,74.97 74.97,50" fill="#2A2724"/>
+</svg>
