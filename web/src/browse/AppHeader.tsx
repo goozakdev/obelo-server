@@ -69,11 +69,19 @@ function ObeloWordmark() {
       <path d="m 74.963039,27.010476 c -1.32556,0.09525 -2.76225,-0.0635 -4.01637,-0.508 -8.37671,-2.9845 -8.18092,-16.258646 0.22754,-18.8224584 0.71702,-0.219604 1.40758,-0.425979 2.16165,-0.481542 1.5531,-0.113771 3.19352,0.0053 4.64079,0.627063 8.91116,3.8232294 7.27339,18.4282284 -3.01361,19.1849374 z m -0.39952,-4.238625 c 6.47436,-0.518583 5.90815,-11.869208 -0.81756,-11.358563 -6.20448,0.470959 -5.59329,11.871855 0.81756,11.358563 z" />
       <g transform="matrix(0.22459887,0,0,0.22459887,-1.3475932,-7.1581184)">
         <circle cx="50.25" cy="108" r="44.25" />
-        {/* The play triangle is a light fill, NOT currentColor: it is a shape
-            drawn on top of the disc, so tying it to the link color would make
-            it vanish the moment the mark and the triangle matched. Same as the
-            tvOS/iOS app icons, which draw it #ffffff over the lime. */}
-        <polygon points="37.81,85.9 37.81,130.1 72.35,108" fill="#fff" />
+        {/* The play triangle is a fixed dark fill, NOT currentColor: it is a
+            shape drawn on top of the disc, so tying it to the link color would
+            make it vanish the moment the mark and the triangle matched. Same
+            #2A2724 as the tvOS/iOS app icons and the favicon.
+
+            It was #ffffff, which failed contrast badly — and worse here than on
+            the favicon, because this disc is currentColor and so renders in the
+            *accent* limes, not the artwork lime: 1.52:1 at rest (--accent) and
+            1.36:1 on hover (#cfe86a), against a 3:1 floor for a non-text
+            graphic. The dark fill is 9.8:1 and 10.9:1 respectively. A lighter
+            triangle has nowhere to go; every brand lime we use is
+            high-luminance, so the contrast has to come from the dark side. */}
+        <polygon points="37.81,85.9 37.81,130.1 72.35,108" fill="#2A2724" />
       </g>
     </svg>
   );
