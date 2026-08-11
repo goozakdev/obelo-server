@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log"
 	"net/url"
@@ -50,7 +51,7 @@ func newStreamFixture(t *testing.T) (*auth.Service, *fakeClock, store.User, *sto
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	user, err := svc.Setup(svc.ClaimToken(), "admin", "correct-horse-battery")
+	user, err := svc.Setup(context.Background(), svc.ClaimToken(), "admin", "correct-horse-battery")
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -229,9 +230,9 @@ func TestStreamTokenIsNotABearerToken(t *testing.T) {
 
 func TestBearerTokenIsNotAStreamToken(t *testing.T) {
 	svc, _, _, _ := newStreamFixture(t)
-	login, err := svc.Login("admin", "correct-horse-battery", auth.DeviceInput{
+	login, err := svc.Login(context.Background(), "admin", "correct-horse-battery", auth.DeviceInput{
 		Name: "Living Room TV", Platform: "tvos", ClientID: "tv-client-1",
-	})
+	}, "192.0.2.10")
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -386,7 +387,7 @@ func TestMintStreamTokenRequiresSessionAndUser(t *testing.T) {
 // live URL pointing at a deleted User's session.
 func TestDeletingAUserRevokesTheirStreamTokens(t *testing.T) {
 	svc, _, admin, db := newStreamFixture(t)
-	member, err := svc.CreateUser("member", "member-password-long", auth.RoleMember)
+	member, err := svc.CreateUser(context.Background(), "member", "member-password-long", auth.RoleMember)
 	if err != nil {
 		t.Fatalf("create member: %v", err)
 	}

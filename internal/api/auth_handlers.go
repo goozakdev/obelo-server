@@ -2,8 +2,11 @@ package api
 
 import (
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/marioquake/obelo-server/internal/auth"
 	"github.com/marioquake/obelo-server/internal/store"
@@ -61,7 +64,7 @@ func handleSetup(svc *auth.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		user, err := svc.Setup(req.ClaimToken, req.Username, req.Password)
+		user, err := svc.Setup(r.Context(), req.ClaimToken, req.Username, req.Password)
 		switch {
 		case errors.Is(err, auth.ErrSetupClosed):
 			writeError(w, http.StatusForbidden, codeSetupClosed,
@@ -112,12 +115,24 @@ func handleLogin(svc *auth.Service) http.HandlerFunc {
 				"device.clientId is required", nil)
 			return
 		}
-		res, err := svc.Login(req.Username, req.Password, auth.DeviceInput{
+		res, err := svc.Login(r.Context(), req.Username, req.Password, auth.DeviceInput{
 			Name:     req.Device.Name,
 			Platform: req.Device.Platform,
 			ClientID: req.Device.ClientID,
-		})
+		}, clientIP(r))
 		switch {
+		case errors.Is(err, auth.ErrTooManyLoginAttempts):
+			// 429 with the same TOO_MANY_ATTEMPTS code the approve endpoint uses —
+			// one vocabulary for "you are being rate limited", so a client has one
+			// branch to write. The message says nothing about which counter tripped
+			// or whether the username exists; see auth.ErrTooManyLoginAttempts.
+			var throttled *auth.LoginThrottledError
+			if errors.As(err, &throttled) {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(throttled.RetryAfter)))
+			}
+			writeError(w, http.StatusTooManyRequests, codeTooManyAttempts,
+				"too many failed sign-in attempts; wait and try again", nil)
+			return
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			writeError(w, http.StatusUnauthorized, codeInvalidLogin,
 				"invalid username or password", nil)
@@ -139,6 +154,18 @@ func handleLogin(svc *auth.Service) http.HandlerFunc {
 			Device: toDeviceJSON(res.Device),
 		})
 	}
+}
+
+// retryAfterSeconds renders d as an RFC 9110 Retry-After delay: whole seconds,
+// rounded UP because rounding down invites a retry that is still refused, and
+// never below 1 because "Retry-After: 0" reads as "go ahead now", which is the
+// one thing this response means to deny.
+func retryAfterSeconds(d time.Duration) int {
+	secs := int(math.Ceil(d.Seconds()))
+	if secs < 1 {
+		return 1
+	}
+	return secs
 }
 
 // --- POST /auth/logout (authenticated) -------------------------------------

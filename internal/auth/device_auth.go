@@ -58,7 +58,9 @@ const (
 	// counts FAILURES only, so a household approving real codes never meets it,
 	// and it is keyed by User (the endpoint is authenticated, so there is always
 	// one) rather than by IP — an IP is shared by every device behind the NAT and
-	// spoofable besides.
+	// spoofable besides. Password login (login_limit.go) reaches the opposite
+	// conclusion about IP because it is UNAUTHENTICATED and therefore has no User
+	// to key on; the two are not in disagreement.
 	approveFailureLimit  = 10
 	approveFailureWindow = 5 * time.Minute
 )
@@ -317,42 +319,22 @@ func (s *Service) issueSession(user store.User, dev DeviceInput) (LoginResult, e
 
 // --- approve rate limiting -------------------------------------------------
 
-// approveAttempts is the in-memory failure counter behind the approve endpoint.
-// In memory, like the claim token (ADR-0013), and for the same reason: this is
-// per-boot safety state, not a record of anything. A restart clears it, which is
-// acceptable — restarting the server is not an attack primitive a household
-// attacker has, and persisting it would buy a table and a sweeper for nothing.
-type approveAttempts struct {
-	count       int
-	windowStart time.Time
-}
-
+// The counter itself is failureLimiter (failure_limiter.go), shared with password
+// login, which needs the identical fixed-window shape three times over. These two
+// wrappers stay because they are what the flow above reads like — resolveUserCode
+// asking "may this User try?" rather than reaching into a field — and because the
+// Service owns the clock the limiter is deliberately without.
+//
+// The approve endpoint ignores the retry-after the limiter can report: its 429
+// carries no Retry-After header (the phone's advice is "wait a few minutes and
+// try again"), and adding one would be a contract change, not a cleanup.
 func (s *Service) allowApproveAttempt(userID string) bool {
-	s.approveMu.Lock()
-	defer s.approveMu.Unlock()
-	a, ok := s.approveFails[userID]
-	if !ok {
-		return true
-	}
-	if s.now().Sub(a.windowStart) >= approveFailureWindow {
-		delete(s.approveFails, userID)
-		return true
-	}
-	return a.count < approveFailureLimit
+	ok, _ := s.approveFails.allow(userID, s.now())
+	return ok
 }
 
 func (s *Service) chargeApproveFailure(userID string) {
-	s.approveMu.Lock()
-	defer s.approveMu.Unlock()
-	if s.approveFails == nil {
-		s.approveFails = map[string]*approveAttempts{}
-	}
-	a, ok := s.approveFails[userID]
-	if !ok || s.now().Sub(a.windowStart) >= approveFailureWindow {
-		s.approveFails[userID] = &approveAttempts{count: 1, windowStart: s.now()}
-		return
-	}
-	a.count++
+	s.approveFails.charge(userID, s.now())
 }
 
 // --- time ------------------------------------------------------------------

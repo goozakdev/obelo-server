@@ -433,6 +433,61 @@ func (s *Server) JSON(method, path, token string, in, out any) (status int, body
 	return resp.StatusCode, body
 }
 
+// JSONFrom is JSON with a chosen CLIENT ADDRESS and arbitrary extra request
+// headers, and it hands back the response headers too. It exists for the login
+// rate limiter (auth/login_limit.go), which keys one of its two counters on the
+// source address and answers a refusal with Retry-After — none of which the plain
+// JSON helper can drive or observe.
+//
+// remoteAddr is a "host:port" string and lands verbatim in r.RemoteAddr, which is
+// the only thing the server will look at (the api layer deliberately ignores
+// X-Forwarded-For; see clientIP there). That is also why this cannot go over the
+// httptest listener the other helpers use: every request there arrives from
+// 127.0.0.1 on a fresh ephemeral port, so a test could never present a second
+// address, and "the per-IP counter is per-IP" would be untestable. extraHeaders
+// (nil is fine) is what lets a test then SPOOF a forwarding header and prove the
+// server ignores it.
+//
+// The tradeoff is that this serves the request IN PROCESS, against the same fully
+// wired handler the listener serves, rather than over a real socket. Everything
+// above the transport is identical; anything that depends on a real connection
+// (TLS state, streaming, connection reuse) belongs in JSON or Do instead.
+func (s *Server) JSONFrom(method, path, token, remoteAddr string, extraHeaders http.Header, in, out any) (status int, header http.Header, body []byte) {
+	s.t.Helper()
+	var rdr io.Reader
+	if in != nil {
+		buf, err := json.Marshal(in)
+		if err != nil {
+			s.t.Fatalf("testharness: marshaling body for %s %s: %v", method, path, err)
+		}
+		rdr = bytes.NewReader(buf)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	req.RemoteAddr = remoteAddr
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, vs := range extraHeaders {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	s.app.Handler.ServeHTTP(rec, req)
+
+	body = rec.Body.Bytes()
+	if out != nil && len(body) > 0 {
+		if err := json.Unmarshal(body, out); err != nil {
+			s.t.Fatalf("testharness: decoding body of %s %s: %v\nbody: %s", method, path, err, body)
+		}
+	}
+	return rec.Code, rec.Result().Header, body
+}
+
 // AuthGET issues an authenticated GET (bearer token) and decodes into out.
 func (s *Server) AuthGET(path, token string, out any) (status int, body []byte) {
 	s.t.Helper()

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net"
 	"net/http"
 	"strings"
 
@@ -197,6 +198,37 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return tok, true
+}
+
+// clientIP returns the host portion of the connection's remote address — the
+// address this process actually received the bytes from.
+//
+// It does NOT consult X-Forwarded-For, X-Real-IP, or any other client-supplied
+// header, and that is the security property, not an oversight. This server has no
+// trusted-proxy configuration: nothing tells it which upstream is allowed to
+// assert an origin address. Honoring the header without that would mean the
+// per-IP login counter (auth/login_limit.go) is keyed on a value the attacker
+// writes, so every guess could arrive from a fresh "address" and the counter
+// would be decorative.
+//
+// The cost is the reverse-proxy deployment (ADR-0005): behind one, every request
+// genuinely does arrive from the proxy, so the per-IP counter collapses into a
+// single global counter for the whole internet. That is the safe direction to
+// fail — one shared budget is stricter than per-attacker budgets, never looser —
+// and the per-username counter still discriminates. Wiring a real trusted-proxy
+// setting (an operator-configured CIDR allowlist, and only then reading the
+// left-most untrusted hop of X-Forwarded-For) is the correct fix and is out of
+// scope here; until it exists, do not "improve" this by reading the header.
+//
+// A RemoteAddr with no parseable port is returned whole rather than dropped: an
+// unusual transport should still get its own bucket, and returning "" would pool
+// it with every other unparseable caller.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return strings.TrimSpace(r.RemoteAddr)
+	}
+	return host
 }
 
 // queryToken pulls the opaque session token out of the ?token= query parameter.

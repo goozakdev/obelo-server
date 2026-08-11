@@ -49,7 +49,7 @@ func handleCreateUser(svc *auth.Service) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		user, err := svc.CreateUser(req.Username, req.Password, req.Role)
+		user, err := svc.CreateUser(r.Context(), req.Username, req.Password, req.Role)
 		switch {
 		case errors.Is(err, auth.ErrInvalidUser):
 			writeError(w, http.StatusBadRequest, codeBadRequest,
@@ -292,7 +292,7 @@ func handleSetUserPassword(svc *auth.Service, id string) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		err := svc.SetPassword(id, req.Password)
+		err := svc.SetPassword(r.Context(), id, req.Password)
 		switch {
 		case errors.Is(err, auth.ErrInvalidUser):
 			writeError(w, http.StatusBadRequest, codeBadRequest, "password is required", nil)

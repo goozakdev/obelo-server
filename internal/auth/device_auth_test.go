@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func newFixture(t *testing.T) (*auth.Service, *fakeClock, store.User) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	user, err := svc.Setup(svc.ClaimToken(), "admin", "correct-horse-battery")
+	user, err := svc.Setup(context.Background(), svc.ClaimToken(), "admin", "correct-horse-battery")
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}

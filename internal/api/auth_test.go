@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/marioquake/obelo-server/internal/testharness"
@@ -204,6 +206,128 @@ func TestLoginUnknownUser(t *testing.T) {
 	}
 	if env.Error.Code != "INVALID_CREDENTIALS" {
 		t.Errorf("code = %q, want INVALID_CREDENTIALS", env.Error.Code)
+	}
+}
+
+// TestLoginRateLimitReturns429: once the login limiter trips (auth/login_limit.go)
+// the endpoint answers 429 TOO_MANY_ATTEMPTS with a Retry-After telling the client
+// when to come back, and it says the same thing whether or not the username exists.
+//
+// Every attempt here presents the SAME client address, which is the only way to
+// drive the per-IP counter — the harness's other helpers all arrive from
+// 127.0.0.1 on a fresh port. Each attempt uses a different username so it is the
+// per-IP counter tripping and not the per-username one.
+func TestLoginRateLimitReturns429(t *testing.T) {
+	srv := testharness.New(t)
+	setupAdmin(t, srv, "brandon", "hunter2hunter2")
+
+	const attacker = "203.0.113.9:51000"
+	var status int
+	var header http.Header
+	var env errorEnvelope
+	var body []byte
+	for i := 0; i < 64 && status != http.StatusTooManyRequests; i++ {
+		status, header, body = srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", attacker, nil, map[string]any{
+			"username": fmt.Sprintf("nobody-%d", i),
+			"password": "wrong-password",
+			"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+		}, &env)
+		if status != http.StatusUnauthorized && status != http.StatusTooManyRequests {
+			t.Fatalf("attempt %d status = %d, want 401 or 429; body: %s", i, status, body)
+		}
+	}
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("the limiter never tripped over 64 failed logins")
+	}
+	if env.Error.Code != "TOO_MANY_ATTEMPTS" {
+		t.Errorf("code = %q, want TOO_MANY_ATTEMPTS; body: %s", env.Error.Code, body)
+	}
+
+	// Retry-After is what makes the 429 actionable rather than just rude.
+	retry := header.Get("Retry-After")
+	secs, err := strconv.Atoi(retry)
+	if err != nil {
+		t.Fatalf("Retry-After = %q, want whole seconds", retry)
+	}
+	if secs < 1 || secs > 3600 {
+		t.Errorf("Retry-After = %d seconds, want a positive delay inside the window", secs)
+	}
+
+	// The REAL admin with the REAL password is refused too — the limiter is a
+	// limit, not a speed bump — and an invented username is refused identically.
+	// Any difference between these two responses is a username oracle.
+	var knownEnv, unknownEnv errorEnvelope
+	knownStatus, _, knownBody := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", attacker, nil, map[string]any{
+		"username": "brandon",
+		"password": "hunter2hunter2",
+		"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+	}, &knownEnv)
+	unknownStatus, _, unknownBody := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", attacker, nil, map[string]any{
+		"username": "ghost",
+		"password": "hunter2hunter2",
+		"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+	}, &unknownEnv)
+	if knownStatus != http.StatusTooManyRequests {
+		t.Errorf("known username status = %d, want 429; body: %s", knownStatus, knownBody)
+	}
+	if unknownStatus != knownStatus {
+		t.Errorf("unknown username status = %d, known = %d: the refusal leaks whether the user exists",
+			unknownStatus, knownStatus)
+	}
+	if string(knownBody) != string(unknownBody) {
+		t.Errorf("refusal bodies differ:\n known:   %s\n unknown: %s", knownBody, unknownBody)
+	}
+
+	// A different client address is unaffected: 401, not 429. This is the per-IP
+	// counter actually being per-IP.
+	otherStatus, _, otherBody := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", "203.0.113.77:52000", nil, map[string]any{
+		"username": "brandon",
+		"password": "wrong-password",
+		"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+	}, nil)
+	if otherStatus != http.StatusUnauthorized {
+		t.Errorf("unrelated address status = %d, want 401; body: %s", otherStatus, otherBody)
+	}
+}
+
+// TestLoginRateLimitIgnoresForwardedForHeader: the counter is keyed on the
+// connection's real peer address, so a caller cannot mint themselves a fresh
+// allowance by claiming a new one. There is no trusted-proxy configuration in
+// this server (see clientIP in middleware.go), which means any X-Forwarded-For is
+// attacker-controlled — honoring it would make the per-IP limit decorative.
+func TestLoginRateLimitIgnoresForwardedForHeader(t *testing.T) {
+	srv := testharness.New(t)
+	setupAdmin(t, srv, "brandon", "hunter2hunter2")
+
+	const attacker = "203.0.113.9:51000"
+	attempt := func(i int) int {
+		status, _, _ := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", attacker, nil, map[string]any{
+			"username": fmt.Sprintf("nobody-%d", i),
+			"password": "wrong-password",
+			"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+		}, nil)
+		return status
+	}
+	var status int
+	for i := 0; i < 64 && status != http.StatusTooManyRequests; i++ {
+		status = attempt(i)
+	}
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("the limiter never tripped over 64 failed logins")
+	}
+
+	// Same connection, brand new claimed origin. Still refused.
+	spoofed := http.Header{}
+	spoofed.Set("X-Forwarded-For", "198.51.100.1")
+	spoofed.Set("X-Real-IP", "198.51.100.1")
+	spoofStatus, _, spoofBody := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", attacker, spoofed, map[string]any{
+		"username": "brandon",
+		"password": "hunter2hunter2",
+		"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+	}, nil)
+	if spoofStatus != http.StatusTooManyRequests {
+		t.Errorf("spoofed X-Forwarded-For status = %d, want 429 — the header must not "+
+			"reset the counter; body: %s", spoofStatus, spoofBody)
 	}
 }
 
