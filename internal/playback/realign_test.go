@@ -48,9 +48,17 @@ func TestParseSegmentIndex(t *testing.T) {
 		{"segment000.ts", 0, true},
 		{"segment007.ts", 7, true},
 		{"segment123.ts", 123, true},
+		// Past three digits: %03d is zero-PADDING on the write side, not a cap, so a
+		// title longer than 1000·SegmentSeconds asks for four- and five-digit names.
+		{"segment999.ts", 999, true},
+		{"segment1000.ts", 1000, true},
+		{"segment1009.ts", 1009, true},
+		{"segment12345.ts", 12345, true},
+		{"segment1000.m4s", 1000, true},
 		{"index.m3u8", 0, false},
 		{"segment.ts", 0, false},
 		{"segmentABC.ts", 0, false},
+		{"segment-1.ts", 0, false},
 		{"../escape.ts", 0, false},
 		{"", 0, false},
 	}
@@ -61,6 +69,68 @@ func TestParseSegmentIndex(t *testing.T) {
 				t.Errorf("parseSegmentIndex(%q) = (%d,%v), want (%d,%v)", tc.name, got, ok, tc.want, tc.wantOK)
 			}
 		})
+	}
+}
+
+// TestSegmentIndexTemplateBeyondThreeDigits: the runtimes that carry an explicit
+// segNameFmt (a video COPY with probed boundaries; a demuxed audio rendition) must
+// parse four-digit indices too. They once went through fmt.Sscanf, where the "03"
+// of "%03d" is a maximum field width: it read three digits, choked on the leftover
+// one, and reported "not a segment", so every index from 1000 up 404'd and playback
+// froze ~66 minutes into a long movie.
+func TestSegmentIndexTemplateBeyondThreeDigits(t *testing.T) {
+	tests := []struct {
+		fmtStr string
+		name   string
+		want   int
+		wantOK bool
+	}{
+		{transcode.SegmentPattern, "segment999.ts", 999, true},
+		{transcode.SegmentPattern, "segment1000.ts", 1000, true},
+		{transcode.SegmentPattern, "segment1517.ts", 1517, true},
+		{transcode.SegmentPatternFMP4, "segment2048.m4s", 2048, true},
+		{transcode.SegmentPattern, "segment1000.m4s", 0, false},
+		{transcode.SegmentPattern, "index.m3u8", 0, false},
+		{transcode.AudioRenditionSegmentPattern("abc"), "audio_abc_1000.ts", 1000, true},
+		{transcode.AudioRenditionSegmentPatternFMP4("abc"), "audio_abc_1000.m4s", 1000, true},
+		{transcode.AudioRenditionSegmentPattern("abc"), "audio_xyz_1000.ts", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &hlsRuntime{segNameFmt: tc.fmtStr}
+			got, ok := rt.segmentIndex(tc.name)
+			if ok != tc.wantOK || (ok && got != tc.want) {
+				t.Errorf("segmentIndex(%q) with %q = (%d,%v), want (%d,%v)",
+					tc.name, tc.fmtStr, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestGatedSegmentServesFourDigitIndex: the end-to-end shape of the freeze — a
+// sequential-gated video-copy runtime (the tier that serves a big remuxed movie)
+// asked for a four-digit segment that is ON DISK must serve it, not 404 it.
+func TestGatedSegmentServesFourDigitIndex(t *testing.T) {
+	dir := t.TempDir()
+	rt := &hlsRuntime{
+		scratchDir:     dir,
+		ownsPlaylist:   true,
+		gateSequential: true,
+		segNameFmt:     transcode.SegmentPattern,
+		segmentCount:   1600,
+		segmentSeconds: transcode.SegmentSeconds,
+		jobExited:      true, // no job running: a present segment is complete by definition
+	}
+	name := fmt.Sprintf(transcode.SegmentPattern, 1000)
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("ts"), 0o644); err != nil {
+		t.Fatalf("seed segment: %v", err)
+	}
+	b, err := rt.segment(name)
+	if err != nil {
+		t.Fatalf("segment(%q): %v", name, err)
+	}
+	if len(b) == 0 {
+		t.Fatalf("segment(%q) returned no bytes", name)
 	}
 }
 

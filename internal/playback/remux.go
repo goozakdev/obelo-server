@@ -588,11 +588,7 @@ func (rt *hlsRuntime) segmentIndex(name string) (int, bool) {
 	if rt.segNameFmt == "" {
 		return parseSegmentIndex(name)
 	}
-	var n int
-	if _, err := fmt.Sscanf(name, rt.segNameFmt, &n); err != nil {
-		return 0, false
-	}
-	return n, true
+	return indexFromTemplate(name, rt.segNameFmt)
 }
 
 // gatedSegment serves one segment of a boundaries-based video-copy runtime:
@@ -715,19 +711,48 @@ func (rt *hlsRuntime) shouldRealign(idx int) bool {
 const segmentNameFmt = "segment%03d.ts"
 
 func parseSegmentIndex(name string) (int, bool) {
-	if !strings.HasPrefix(name, "segment") {
+	if n, ok := indexFromTemplate(name, transcode.SegmentPattern); ok {
+		return n, true
+	}
+	// fMP4 (ADR-0024) media segments.
+	return indexFromTemplate(name, transcode.SegmentPatternFMP4)
+}
+
+// indexFromTemplate parses the segment index out of name against a Printf
+// segment-name template — prefix + a %…d verb + suffix, covering all four forms
+// (segment%03d.ts/.m4s and an audio rendition's audio_<id>_%03d.ts/.m4s). It
+// matches the two literal parts exactly and reads the digits between them.
+//
+// Deliberately NOT fmt.Sscanf: in a SCAN format the "03" of "%03d" is a MAXIMUM
+// field width, not zero-padding, so Sscanf consumed only three digits of a longer
+// index, then failed to match the suffix against the leftover digit. Every segment
+// from 1000 on was therefore "not a segment name" and 404'd — freezing playback
+// ~66 minutes in (1000 · SegmentSeconds) on any title long enough to reach a
+// four-digit index, but only on the paths that set segNameFmt (a video COPY with
+// probed boundaries, and demuxed audio renditions).
+func indexFromTemplate(name, tmpl string) (int, bool) {
+	verb := strings.IndexByte(tmpl, '%')
+	if verb < 0 {
 		return 0, false
 	}
-	s := name[len("segment"):]
-	switch {
-	case strings.HasSuffix(s, ".ts"):
-		s = strings.TrimSuffix(s, ".ts")
-	case strings.HasSuffix(s, ".m4s"): // fMP4 (ADR-0024) media segments
-		s = strings.TrimSuffix(s, ".m4s")
-	default:
+	end := strings.IndexByte(tmpl[verb:], 'd')
+	if end < 0 {
 		return 0, false
 	}
-	n, err := strconv.Atoi(s)
+	prefix, suffix := tmpl[:verb], tmpl[verb+end+1:]
+	if len(name) < len(prefix)+len(suffix) ||
+		!strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return 0, false
+	}
+	digits := name[len(prefix) : len(name)-len(suffix)]
+	// Digits only: Atoi alone would accept a sign, admitting names ("segment-1.ts")
+	// that no muxer writes.
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(digits)
 	if err != nil {
 		return 0, false
 	}
