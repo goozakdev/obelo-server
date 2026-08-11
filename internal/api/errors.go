@@ -50,8 +50,14 @@ const (
 	//                                    answer for unknown/expired/used, so the
 	//                                    live code space cannot be mapped by
 	//                                    watching which reply comes back.
-	//   codeTooManyAttempts      (429) — approve brute-force limit tripped.
-	//   codeDeviceAuthBusy       (503) — too many flows in flight to mint a code.
+	//   codeTooManyAttempts      (429) — the CALLER is over one of its own limits:
+	//                                    approve's brute-force counter, or the
+	//                                    per-address quota on starting a flow.
+	//                                    Carries Retry-After on the second.
+	//   codeDeviceAuthBusy       (503) — the SERVER has no code space left. Not the
+	//                                    caller's doing, and a retry may work at
+	//                                    any moment; see device_auth_handlers.go
+	//                                    for why these two are not one code.
 	codeAuthorizationPending = "AUTHORIZATION_PENDING"
 	codeSlowDown             = "SLOW_DOWN"
 	codeExpiredToken         = "EXPIRED_TOKEN"

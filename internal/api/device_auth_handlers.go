@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/marioquake/obelo-server/internal/auth"
@@ -58,8 +59,36 @@ func handleDeviceCode(svc *auth.Service) http.HandlerFunc {
 			Name:     req.Device.Name,
 			Platform: req.Device.Platform,
 			ClientID: req.Device.ClientID,
-		})
+		}, clientIP(r))
 		switch {
+		case errors.Is(err, auth.ErrDeviceAuthThrottled):
+			// 429 rather than the 503 below, and the distinction is for the CLIENT,
+			// not for us. These two refusals want opposite behaviour from a TV app:
+			//
+			//   503 DEVICE_AUTH_BUSY — the server's code space is full. Nothing the
+			//   caller did caused it and nothing it does fixes it; codes expire on
+			//   their own, so "try again in a few minutes" is honest advice and a
+			//   retry may well succeed on the next attempt.
+			//
+			//   429 TOO_MANY_ATTEMPTS — this ADDRESS is over its own quota. Retrying
+			//   is the one thing that must not happen: every further start spends the
+			//   same budget, and behind a reverse proxy that budget belongs to the
+			//   whole household (see clientIP). A client here is either retry-looping
+			//   — a bug it should be told about — or sharing an address with something
+			//   that is. Retry-After says exactly when the window reopens, so it can
+			//   stop guessing and stop hammering.
+			//
+			// Collapsing them into one code would give a client one branch to write
+			// and the wrong behaviour in one of the two cases. There is no leak in
+			// telling them apart: no username and no code identity is involved, and
+			// the only fact disclosed is how many requests the caller itself has made.
+			var throttled *auth.DeviceAuthThrottledError
+			if errors.As(err, &throttled) {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(throttled.RetryAfter)))
+			}
+			writeError(w, http.StatusTooManyRequests, codeTooManyAttempts,
+				"too many sign-in codes requested; wait and try again", nil)
+			return
 		case errors.Is(err, auth.ErrDeviceAuthBusy):
 			writeError(w, http.StatusServiceUnavailable, codeDeviceAuthBusy,
 				"too many sign-ins in progress; try again in a few minutes", nil)
