@@ -3,7 +3,15 @@
 > **Amended by [ADR-0034](./0034-server-identity-and-mdns-advertisement.md)**, which implements
 > the discovery half below — it went unbuilt for a long time while this ADR read as though it
 > had shipped. ADR-0034 adds the **Server identity** the advertisement needed and the
-> `_obelo._tcp` responder. The remote-access and TLS postures below stand unchanged.
+> `_obelo._tcp` responder. The remote-access posture below stands unchanged; for TLS see the
+> next note.
+>
+> **Amended by [ADR-0041](./0041-native-tls-optional-alongside-plain-http.md)**, which builds the
+> "native TLS termination is a planned later addition" line at the bottom of this ADR. The server
+> can now terminate TLS itself, opt-in and off by default. The reverse-proxy deployment below is
+> unchanged and still fully supported — it is simply no longer the only way to get TLS, and the
+> plain-HTTP listener survives either way because a public CA cannot certify a LAN address or a
+> `.local` name.
 >
 > **Retired 2026-07-15 — *"The server provides a configurable external URL"*.** Never built, and
 > the design does not need it: **the server emits no absolute self-referential URL anywhere.** HLS
