@@ -21,7 +21,17 @@ const adminPassword = "hunter2hunter2"
 // Authorization header; every other endpoint rejects it; logout clears it; the
 // Secure flag tracks HTTPS.
 
-const mediaCookieName = "ms_media"
+// The two media-cookie names, one per listener scheme. They are spelled out here
+// rather than imported because these are black-box tests, and because the exact
+// strings ARE the contract: the whole point of the split is that the plain-HTTP
+// name is one no HTTPS response ever writes, and vice versa (internal/api/
+// cookie.go, "One cookie NAME per scheme"). See also
+// TestMediaCookieNamesDoNotCollideAcrossListeners in cmd/obelo/tls_test.go.
+const (
+	mediaCookieName       = "ms_media_plain"
+	secureMediaCookieName = "__Secure-ms_media"
+	legacyMediaCookieName = "ms_media"
+)
 
 // rawLogin posts a login and returns the raw response so the test can inspect
 // Set-Cookie headers. The caller owns closing the body.
@@ -152,12 +162,18 @@ func TestMediaCookieSecureUnderHTTPS(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("HTTPS login status = %d, want 200; body: %s", resp.StatusCode, raw)
 	}
-	cookie := findCookie(resp, mediaCookieName)
+	cookie := findCookie(resp, secureMediaCookieName)
 	if cookie == nil {
-		t.Fatalf("HTTPS login did not set the media cookie")
+		t.Fatalf("HTTPS login did not set the %q cookie; headers: %v",
+			secureMediaCookieName, resp.Header.Values("Set-Cookie"))
 	}
 	if !cookie.Secure {
 		t.Errorf("cookie Secure = false under HTTPS, want true")
+	}
+	// And it did NOT also write the plain-HTTP name, which is what would let one
+	// origin shadow the other's cookie in the browser's jar.
+	if c := findCookie(resp, mediaCookieName); c != nil {
+		t.Errorf("HTTPS login also set %q; the plain-HTTP name must be written by the plain listener alone", mediaCookieName)
 	}
 	// Sanity: TLS check used directly (avoids an unused import if the helper
 	// changes) — the connection state confirms TLS was actually negotiated.
@@ -193,9 +209,14 @@ func TestMediaCookieSecureViaForwardedProto(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 	defer resp.Body.Close()
-	cookie := findCookie(resp, mediaCookieName)
+	// A trusted proxy's "this was HTTPS" makes the request an HTTPS request for
+	// every purpose, the cookie's NAME included — otherwise a proxy deployment
+	// would get a Secure cookie under the plain-HTTP name, which is the shadowing
+	// hazard again with an extra step.
+	cookie := findCookie(resp, secureMediaCookieName)
 	if cookie == nil {
-		t.Fatalf("login did not set the media cookie")
+		t.Fatalf("login behind a trusted proxy did not set the %q cookie; headers: %v",
+			secureMediaCookieName, resp.Header.Values("Set-Cookie"))
 	}
 	if !cookie.Secure {
 		t.Errorf("cookie Secure = false with X-Forwarded-Proto: https from a trusted proxy, want true")
@@ -407,6 +428,120 @@ func TestLogoutClearsMediaCookie(t *testing.T) {
 		t.Errorf("post-logout token on /devices = %d, want 401 (revoked)", status)
 	}
 	_ = cookie
+}
+
+// --- the cookie-name split (internal/api/cookie.go) ------------------------
+//
+// The read half. The write half — that each listener writes only its own name —
+// is asserted above for HTTPS and in TestMediaCookieNamesDoNotCollideAcrossListeners
+// (cmd/obelo/tls_test.go), which is the one place both real listeners exist.
+
+// mediaAuthProbe reports whether a set of cookies authenticates a media GET, with
+// no Authorization header, and without needing a scanned library: an unknown
+// session id is 404 once the CALLER is authenticated (handleSessionStream hides
+// existence) and 401 when it is not, so the two statuses separate "the cookie was
+// read and accepted" from "no credential was found" with nothing else in play.
+func mediaAuthProbe(t *testing.T, srv *testharness.Server, cookies ...*http.Cookie) bool {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srv.URL("/api/v1/sessions/no-such-session/stream"), nil)
+	if err != nil {
+		t.Fatalf("building probe request: %v", err)
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("probe GET: %v", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return true
+	case http.StatusUnauthorized:
+		return false
+	default:
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("probe status = %d, want 404 (authenticated) or 401 (not); body: %s", resp.StatusCode, raw)
+		return false
+	}
+}
+
+// TestLegacyMediaCookieStillAuthenticates: a session established BEFORE the
+// name split still serves bytes. The upgrade renamed the plain-HTTP cookie, and
+// a browser holding the old name would otherwise have every <img>/<video> start
+// 401ing at deploy time with no way for the user to recover but a logout — the
+// same silent breakage the split exists to fix, arriving from the other side.
+func TestLegacyMediaCookieStillAuthenticates(t *testing.T) {
+	srv := testharness.New(t)
+	setupAdmin(t, srv, "brandon", "hunter2hunter2")
+	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
+
+	legacy := &http.Cookie{Name: legacyMediaCookieName, Value: token}
+	if !mediaAuthProbe(t, srv, legacy) {
+		t.Errorf("a %q cookie carrying a valid token did not authenticate; a pre-split session must survive the upgrade", legacyMediaCookieName)
+	}
+	if mediaAuthProbe(t, srv, &http.Cookie{Name: legacyMediaCookieName, Value: "not-a-real-token"}) {
+		t.Errorf("a %q cookie carrying a garbage token authenticated; the legacy name is read, not trusted", legacyMediaCookieName)
+	}
+}
+
+// TestMediaCookiePreferenceOrder: when several media cookies arrive at once, the
+// name THIS listener writes wins over the legacy shared name. A browser can hold
+// both — an unexpired pre-split cookie alongside a current one — and preferring
+// the stale entry would authenticate as whoever held it, which is exactly the
+// identity leak POST /auth/media-cookie exists to close (a re-issue writes the
+// current name, so the reader must prefer it).
+func TestMediaCookiePreferenceOrder(t *testing.T) {
+	srv := testharness.New(t)
+	setupAdmin(t, srv, "brandon", "hunter2hunter2")
+	token, current := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
+	if current.Name != mediaCookieName {
+		t.Fatalf("plain-HTTP login set cookie %q, want %q", current.Name, mediaCookieName)
+	}
+
+	stale := &http.Cookie{Name: legacyMediaCookieName, Value: "not-a-real-token"}
+	live := &http.Cookie{Name: mediaCookieName, Value: token}
+	if !mediaAuthProbe(t, srv, stale, live) {
+		t.Errorf("a live %q cookie was not preferred over a stale %q one", mediaCookieName, legacyMediaCookieName)
+	}
+	// Order in the Cookie header must not decide it.
+	if !mediaAuthProbe(t, srv, live, stale) {
+		t.Errorf("preference changed with the order of the Cookie header; it must depend on the name alone")
+	}
+}
+
+// TestLogoutClearsLegacyMediaCookieToo: logout expires this scheme's cookie AND
+// the legacy shared name, so no media credential is left behind on the origin it
+// was issued to. It must NOT clear the other scheme's name — that is a separate
+// session on a separate origin, and reaching across is the cross-scheme
+// interference the split removes.
+func TestLogoutClearsLegacyMediaCookieToo(t *testing.T) {
+	srv := testharness.New(t)
+	setupAdmin(t, srv, "brandon", "hunter2hunter2")
+	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL("/api/v1/auth/logout"), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	defer resp.Body.Close()
+
+	for _, name := range []string{mediaCookieName, legacyMediaCookieName} {
+		c := findCookie(resp, name)
+		if c == nil {
+			t.Errorf("logout emitted no Set-Cookie clearing %q", name)
+			continue
+		}
+		if c.MaxAge > 0 {
+			t.Errorf("cleared %q MaxAge = %d, want <= 0 (expired)", name, c.MaxAge)
+		}
+	}
+	if c := findCookie(resp, secureMediaCookieName); c != nil {
+		t.Errorf("a plain-HTTP logout cleared %q; that is the HTTPS origin's separate session", secureMediaCookieName)
+	}
 }
 
 // cookieGET issues a GET against an API path with an optional single cookie and

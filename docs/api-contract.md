@@ -37,7 +37,7 @@ The server speaks **plain HTTP on `OBELO_LISTEN_ADDR`** (default `:8080`), and *
 What a client can rely on:
 
 - **HTTPS is additive.** Turning it on never stops the plain-HTTP listener; the LAN keeps the transport it has, and the `_obelo._tcp` advertisement of [ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md) is unaffected. No public CA will certify a LAN address or a `.local` name, which is why this is a permanent arrangement rather than a migration step.
-- **One handler, two listeners.** Both serve the identical API — same routes, same auth, same responses. Nothing in the request path learns which listener it arrived on except the `ms_media` cookie's `Secure` flag (§Authentication), which is set when the request actually arrived over TLS. A session, token, or device works over either.
+- **One handler, two listeners.** Both serve the identical API — same routes, same auth, same responses. Nothing in the request path learns which listener it arrived on except the media cookie, which is named and flagged for the scheme the request actually arrived on (§Authentication). A session, token, or device works over either.
 - **No redirect.** The server never redirects HTTP to HTTPS and emits no absolute URLs; a client that connects to the plain port stays there.
 - **HTTP/2** is negotiated on the TLS listener (ALPN `h2`), which suits HLS: many small segment fetches multiplex over one connection. The plain-HTTP listener is HTTP/1.1.
 - **TLS 1.2 is the floor**, matching Apple's ATS requirement.
@@ -66,9 +66,18 @@ Every JSON body is capped at **1 MiB** and decoded with **unknown fields rejecte
 Four credential transports, each honored only where stated:
 
 1. **Bearer token** (the universal credential): `Authorization: Bearer <token>`. The token is **opaque and DB-backed** — validated on every request, so revocation (logout, device delete) is immediate ([ADR-0015](./adr/0015-opaque-db-backed-tokens.md)). Every endpoint accepts it. When bearer and another credential are both present, bearer wins. Auth failures set `WWW-Authenticate: Bearer` and return `401 UNAUTHORIZED`.
-2. **`ms_media` cookie** (media/browser credential): carries the *same* opaque token. Set by `POST /auth/login` (`HttpOnly`, `SameSite=Lax`, `Path=/api/v1`, 30-day MaxAge, `Secure` only when the request arrived over TLS), cleared by `POST /auth/logout`. Honored **only** by the read-only media/stream GETs and the SSE stream — exactly: `GET /titles/{id}/artwork/{role}`, `GET /titles/{id}/subtitles/{subId}.vtt`, `GET /shows/{id}/artwork/{role}`, `GET /seasons/{id}/artwork/{role}`, `GET /artists/{id}/artwork/{role}`, `GET /albums/{id}/artwork`, `GET /people/{personRef}/artwork/{role}`, `GET /sessions/{id}/stream`, `GET /sessions/{id}/hls/*`, `GET /events`, `GET /providerImage?ref=` (which is additionally Admin-only). No JSON/mutation endpoint honors it.
+2. **Media cookie** (media/browser credential): carries the *same* opaque token. Set by `POST /auth/login` (`HttpOnly`, `SameSite=Lax`, `Path=/api/v1`, 30-day MaxAge), cleared by `POST /auth/logout`. Honored **only** by the read-only media/stream GETs and the SSE stream — exactly: `GET /titles/{id}/artwork/{role}`, `GET /titles/{id}/subtitles/{subId}.vtt`, `GET /shows/{id}/artwork/{role}`, `GET /seasons/{id}/artwork/{role}`, `GET /artists/{id}/artwork/{role}`, `GET /albums/{id}/artwork`, `GET /people/{personRef}/artwork/{role}`, `GET /sessions/{id}/stream`, `GET /sessions/{id}/hls/*`, `GET /events`, `GET /providerImage?ref=` (which is additionally Admin-only). No JSON/mutation endpoint honors it.
+
+   **Its name depends on the listener**, and a client that hardcodes one name is wrong:
+
+   | Request arrived over | Cookie name | `Secure` |
+   | --- | --- | --- |
+   | TLS (`r.TLS`, or a trusted proxy's `X-Forwarded-Proto: https`) | `__Secure-ms_media` | yes |
+   | plain HTTP | `ms_media_plain` | no |
+
+   A response only ever sets the name belonging to its own listener; requests are accepted under either, plus the pre-split name `ms_media` (read for compatibility, never written, expires on its own). **The split is load-bearing, not cosmetic.** A cookie jar is partitioned by neither scheme nor port, so while both listeners wrote one name at one path they contended for a single jar entry — and [RFC 6265bis §5.7](https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis) ("leave secure cookies alone", implemented by every current browser) resolves that contention by discarding the *non-secure* origin's `Set-Cookie`. One HTTPS login therefore broke browser media on the plain-HTTP origin permanently and silently: the plain listener kept issuing a correct cookie, the browser kept throwing it away, every `<img>`/`<video>` `401`ed, and the rest of the page kept working on its origin-scoped bearer. Logging in again over HTTP could not fix it — that was the write being refused.
 3. **`?token=` query param**: honored by **exactly one** endpoint — `GET /files/{id}/download` (external players fed a `.xspf` can send neither header nor cookie). The URL-borne token is an accepted tradeoff there; it is still DB-validated and revocable.
-4. **Stream token** — the **third media credential**, alongside the bearer and the `ms_media` cookie ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). A separate secret, carried in the URL **path**, honored **only** by the two routes built for it: `GET /stream/{streamToken}/stream` and `GET /stream/{streamToken}/hls/{file}`. Gated by the **`streamToken`** feature flag. Its scope is the whole point of it, so state it in the same breath as the mechanism:
+4. **Stream token** — the **third media credential**, alongside the bearer and the media cookie ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)). A separate secret, carried in the URL **path**, honored **only** by the two routes built for it: `GET /stream/{streamToken}/stream` and `GET /stream/{streamToken}/hls/{file}`. Gated by the **`streamToken`** feature flag. Its scope is the whole point of it, so state it in the same breath as the mechanism:
    - **One session.** It authorises the media artifacts of exactly one Playback session — not the JSON API, not metadata, not another session, not another User's session.
    - **Read-only.** It reaches only GET media routes; a non-GET is `405` before the token is even examined. There is no token-authenticated progress report, session delete, or mint.
    - **Expiring.** 4 hours from minting, reported as `streamTokenExpiresAt`.
@@ -77,7 +86,7 @@ Four credential transports, each honored only where stated:
 
    Obtained from a Decision (`streamToken` + `streamTokenExpiresAt`, §3.6) or minted on demand with `POST /sessions/{id}/stream-token`. It exists for the player that **hands the URL to somebody else** — an AirPlay receiver, a cast target, a smart-TV app — where the fetching party is software we do not own, cannot be made to send an `Authorization` header, and may or may not carry a cookie depending on an OS and a firmware we do not control.
 
-**Native clients (Apple TV / libmpv):** the tvOS client plays through **libmpv**, whose HTTP layer (ffmpeg) can attach arbitrary headers to every media request — so a native client simply sends **`Authorization: Bearer <token>` on media requests too** (mpv: `http-header-fields`), and needs neither the cookie nor `?token=`. The `ms_media` cookie exists for players that *cannot* set headers — the browser's `<video>`/`<img>`/`EventSource` (and it would equally serve an AVPlayer-based client via cookie injection). Do not put `?token=` on stream/HLS URLs — the server only accepts it on `/files/{id}/download`.
+**Native clients (Apple TV / libmpv):** the tvOS client plays through **libmpv**, whose HTTP layer (ffmpeg) can attach arbitrary headers to every media request — so a native client simply sends **`Authorization: Bearer <token>` on media requests too** (mpv: `http-header-fields`), and needs neither the cookie nor `?token=`. The media cookie exists for players that *cannot* set headers — the browser's `<video>`/`<img>`/`EventSource` (and it would equally serve an AVPlayer-based client via cookie injection). Do not put `?token=` on stream/HLS URLs — the server only accepts it on `/files/{id}/download`.
 
 **The stream token does not soften that refusal — it is what removed the need to bend it.** The two are different credentials in different places, and the distinction is the entire reason one is allowed in a URL and the other is not. `?token=` carries the **account** bearer: permanent (there is no `expires_at` on it), authorising every read and every mutation in the API, for as long as the Device lives. That is why it is confined to a single read-only download route, and why no media route accepts it — a URL is logged by this server, by any proxy, and by whatever fetches it, and an account credential must not be in one. A stream token is scoped to one session's bytes, read-only by construction, expiring, and revoked with its session, so the same URL exposure costs one film for one sitting instead of an account. **A client that needs a self-authenticating media URL uses a stream token; it never puts `?token=` on a stream or HLS URL.**
 
@@ -115,7 +124,7 @@ The **server** applies the threshold, never the client: crossing ~**90%** of dur
 
 ### GET /events — [Public]
 
-Single server→client SSE stream ([ADR-0016](./adr/0016-sse-for-realtime-updates.md)). Auth: bearer **or** `ms_media` cookie (a browser `EventSource` cannot set headers).
+Single server→client SSE stream ([ADR-0016](./adr/0016-sse-for-realtime-updates.md)). Auth: bearer **or** media cookie (a browser `EventSource` cannot set headers).
 
 Wire format: status 200 with `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`, `X-Accel-Buffering: no`. First bytes are the comment `: connected`. Each event:
 
@@ -215,7 +224,7 @@ Errors: `400 BAD_REQUEST` (bad body / missing fields / collision), `403 SETUP_CL
 }
 ```
 
-Side effect: sets the `ms_media` cookie with the same token.
+Side effect: sets the media cookie with the same token.
 Errors: `400 BAD_REQUEST` (`"device.clientId is required"` / bad body), `401 INVALID_CREDENTIALS`, `429 TOO_MANY_ATTEMPTS`, `500`.
 
 **Rate limited.** Repeated *failures* — never successes — are counted per username **and** per client IP, and either counter going over refuses further attempts for a fixed window with `429 TOO_MANY_ATTEMPTS` and a `Retry-After` (seconds). The refusal is identical for a known and an unknown username, so it is not a username oracle, and it precedes the credential check, so the correct password is refused too while the window is open. Clients should surface the wait rather than retry-loop; a retry loop is what the limit exists to stop.
@@ -285,15 +294,15 @@ There is no deny operation. The recourse for an unintended approval is `DELETE /
 
 #### POST /auth/logout — [Public] (bearer only)
 
-No body → `204`. Revokes exactly the calling token and clears the `ms_media` cookie.
+No body → `204`. Revokes exactly the calling token and clears the media cookie.
 
 #### POST /auth/media-cookie — [Public] (bearer only)
 
 Gated by the **`mediaCookieRefresh`** feature flag. Branch on the flag, never on a version — a server without the route 404s it, and the correct fallback is to skip the call (media byte-serving keeps today's behaviour until the next real login).
 
-No body → `204`. **Re-issues** the `ms_media` cookie carrying the **requesting bearer's** session token — byte-for-byte the login cookie (same `HttpOnly`, `SameSite=Lax`, `Path=/api/v1`, MaxAge, and `Secure`-only-under-TLS attributes). It is the login cookie machinery minus the credential check: the request's validated bearer identity **is** the authorization.
+No body → `204`. **Re-issues** the media cookie carrying the **requesting bearer's** session token — byte-for-byte the login cookie (same name-for-the-scheme, `HttpOnly`, `SameSite=Lax`, `Path=/api/v1`, MaxAge, and `Secure`-only-under-TLS attributes), or the browser would store a second cookie instead of overwriting the one being replaced. It is the login cookie machinery minus the credential check: the request's validated bearer identity **is** the authorization.
 
-**Bearer only** — it does **not** honor the `ms_media` cookie itself (only the read-only media GETs do), so a lone/stale cookie can never authorize re-issuing itself. Unauthenticated or invalid-bearer requests are `401` and set no cookie.
+**Bearer only** — it does **not** honor the media cookie itself (only the read-only media GETs do), so a lone/stale cookie can never authorize re-issuing itself. Unauthenticated or invalid-bearer requests are `401` and set no cookie.
 
 Why it exists: the web instant user switch swaps the *bearer* token from JS but **cannot** touch the `HttpOnly` cookie, so after a switch browser media bytes would still serve under the **previous** user's cookie. A client calls this (after adopting the new bearer, before resuming media) so the cookie identity always matches the active bearer — closing that identity leak (the client ADR-0009 hard-teardown class).
 
@@ -414,7 +423,7 @@ The full nested Title detail (`titleDetailJSON`): Editions → Files → Streams
 
 All: unknown/ungranted parent → `404`.
 
-#### Artwork bytes — all [Public], bearer **or `ms_media` cookie**
+#### Artwork bytes — all [Public], bearer **or media cookie**
 
 Raw image bytes (`http.ServeFile`: content type sniffed, Range-capable). Unknown role or no image → `404 "artwork not found"`.
 
@@ -607,7 +616,7 @@ Title routes return the full `titleDetailJSON`; Show/Artist/Album routes return 
 | `GET …/enrichmentCandidates?q=&artist=&page=` — [Admin] | → `200` `{ "candidates": [ { "externalId", "title", "year"?, "thumbnailUrl"? (a same-origin `GET /providerImage` URL, never the provider's host), "disambiguation"?, "kind", "typeLabel"?, "tracklist"?: [ { "disc"?, "position", "title" } ] } ], "hasMore"? }`. Page size 12. Blank `q` → empty list. `503 SEARCH_UNAVAILABLE` when the provider is unconfigured/unreachable. |
 | `GET …/externalPreview?ref=` — [Admin] | Resolve a pasted TMDB/MusicBrainz id or URL → `200` single candidate. `400` invalid/kind-mismatch ref, `404` no record, `503`. |
 | `PUT …/enrichmentOverride` — [Admin] | `{ "externalId", "cascade"? }` → `200` detail. Durable record pin + immediate re-enrich; never touches identity/watch state; honors Locked fields. Cascade (Show→episodes, Album→tracks, Artist→albums→tracks) is best-effort, surfaced in `cascade` counts. |
-| `GET /providerImage?ref=` — [Admin] | The metadata-provider image proxy behind the pickers: serves a candidate thumbnail's bytes from this origin so the browser never contacts TMDB / the Cover Art Archive ([ADR-0001](./adr/0001-fully-self-hosted-no-vendor-dependency.md)); it is why the CSP can say `img-src 'self'`. `ref` is an **opaque, HMAC-signed reference the server minted** when it emitted the candidate — never a caller-supplied URL, and a reference this process did not sign is `404` (it is not an open proxy). Bearer **or** `ms_media` cookie (it is an `<img src>`). Any upstream failure — dead provider, non-image body, oversized body, refused redirect — is also `404`. References do not survive a server restart; refetch the candidate list. |
+| `GET /providerImage?ref=` — [Admin] | The metadata-provider image proxy behind the pickers: serves a candidate thumbnail's bytes from this origin so the browser never contacts TMDB / the Cover Art Archive ([ADR-0001](./adr/0001-fully-self-hosted-no-vendor-dependency.md)); it is why the CSP can say `img-src 'self'`. `ref` is an **opaque, HMAC-signed reference the server minted** when it emitted the candidate — never a caller-supplied URL, and a reference this process did not sign is `404` (it is not an open proxy). Bearer **or** media cookie (it is an `<img src>`). Any upstream failure — dead provider, non-image body, oversized body, refused redirect — is also `404`. References do not survive a server restart; refetch the candidate list. |
 | `PUT /titles/{id}/enrichmentMatch` — [Admin] | `{ "tmdbId"? \| "imdbId"? \| "musicbrainzId"? }` (≥1) → `200` titleDetailJSON. The id-anchored variant of the override. |
 | `PUT …/metadata` — [Admin] | Hand edits; every present field is written **and Locked** ([ADR-0019](./adr/0019-item-editing-preserves-local-identity.md)). Title fields: `overview, tagline, title, contentRating, releaseDate, runtimeMinutes, studio, genres, cast, lockArtwork`. Entity fields: `overview, contentRating, network, genres, title, lockArtwork`. `title` edits the display label only, never identity. → `200` detail with updated `lockedFields`. |
 | `DELETE …/metadata/locks/{field}` — [Admin] | Release a Locked field back to auto → `200` detail. No-op if not locked. |
