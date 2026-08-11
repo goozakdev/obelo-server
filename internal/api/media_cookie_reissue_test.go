@@ -177,9 +177,13 @@ func TestReissueMediaCookieSecureUnderHTTPS(t *testing.T) {
 }
 
 // TestReissueMediaCookieSecureViaForwardedProto: a plain-HTTP re-issue carrying
-// X-Forwarded-Proto: https (the reverse-proxy path, ADR-0005) also gets Secure.
+// X-Forwarded-Proto: https FROM A TRUSTED PROXY (the reverse-proxy path,
+// ADR-0005) also gets Secure — the re-issued cookie's attributes must match the
+// login cookie's, including this one, or the browser would fail to overwrite it.
+// Trusting loopback makes the test client the proxy; without the allowlist the
+// header is ignored (see the cookie_test.go pair for that half).
 func TestReissueMediaCookieSecureViaForwardedProto(t *testing.T) {
-	srv := testharness.New(t)
+	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-proxy")
 

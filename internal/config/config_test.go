@@ -634,3 +634,77 @@ func writeTestKeyPair(t *testing.T, dir, commonName string) (certPath, keyPath s
 	}
 	return certPath, keyPath
 }
+
+// TestTrustedProxiesFromEnv: the allowlist that decides whether any
+// X-Forwarded-* header is believed (ADR-0041). Empty by default, which is the
+// whole posture — every deployment that has not opted in reads no forwarded
+// header from anybody.
+func TestTrustedProxiesFromEnv(t *testing.T) {
+	d := config.Defaults()
+	if len(d.TrustedProxies) != 0 {
+		t.Errorf("defaults trust %v, want nothing — a forwarded header is unbelievable until an operator says otherwise", d.TrustedProxies)
+	}
+	if prefixes, err := d.TrustedProxyPrefixes(); err != nil || len(prefixes) != 0 {
+		t.Errorf("default prefixes = %v, %v; want none and no error", prefixes, err)
+	}
+
+	t.Setenv("OBELO_TRUSTED_PROXIES", " 127.0.0.1/32 , 10.0.0.0/8 ,, fd00::/8 ")
+	c := config.FromEnv()
+	if len(c.TrustedProxies) != 3 {
+		t.Fatalf("TrustedProxies = %v, want the three entries, trimmed, empties dropped", c.TrustedProxies)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate rejected a well-formed allowlist: %v", err)
+	}
+	prefixes, err := c.TrustedProxyPrefixes()
+	if err != nil {
+		t.Fatalf("TrustedProxyPrefixes: %v", err)
+	}
+	if len(prefixes) != 3 || prefixes[0].String() != "127.0.0.1/32" || prefixes[1].String() != "10.0.0.0/8" {
+		t.Errorf("prefixes = %v, want the three parsed", prefixes)
+	}
+}
+
+// TestTrustedProxiesAcceptsBareAddress: an operator typing "127.0.0.1" for "the
+// proxy on this box" gets the narrowest possible reading of it — a single host —
+// rather than a boot failure over a missing /32. Leniency here can only ever
+// trust FEWER hosts than they meant.
+func TestTrustedProxiesAcceptsBareAddress(t *testing.T) {
+	c := config.Defaults()
+	c.TrustedProxies = []string{"127.0.0.1", "fd00::1", "10.1.2.3/8"}
+	prefixes, err := c.TrustedProxyPrefixes()
+	if err != nil {
+		t.Fatalf("TrustedProxyPrefixes: %v", err)
+	}
+	want := []string{"127.0.0.1/32", "fd00::1/128", "10.0.0.0/8"}
+	if len(prefixes) != len(want) {
+		t.Fatalf("prefixes = %v, want %v", prefixes, want)
+	}
+	for i, w := range want {
+		// The third entry also checks masking: "10.1.2.3/8" is the /8 the operator
+		// meant, not a prefix carrying host bits that Contains answers oddly for.
+		if got := prefixes[i].String(); got != w {
+			t.Errorf("prefixes[%d] = %q, want %q", i, got, w)
+		}
+	}
+}
+
+// TestValidateRejectsMalformedTrustedProxy: a typo REFUSES TO BOOT rather than
+// being skipped. Skipping is the tempting choice and the failure is invisible —
+// the proxy's forwarded headers are silently ignored, so every client behind it
+// collapses into one shared login budget, months before anybody connects the two
+// facts.
+func TestValidateRejectsMalformedTrustedProxy(t *testing.T) {
+	for _, bad := range []string{"10.0.0.0/33", "not-an-address", "10.0.0.0/8/8", "192.168.1.1:8080", "example.com"} {
+		c := config.Defaults()
+		c.TrustedProxies = []string{"127.0.0.1/32", bad}
+		err := c.Validate()
+		if err == nil {
+			t.Errorf("Validate accepted OBELO_TRUSTED_PROXIES entry %q; want a refusal to boot", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), bad) {
+			t.Errorf("Validate error for %q = %v, want it to quote the entry the operator typed", bad, err)
+		}
+	}
+}

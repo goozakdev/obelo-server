@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -202,6 +203,34 @@ type Config struct {
 	//
 	// Env: OBELO_ACME_DIRECTORY.
 	ACMEDirectoryURL string
+
+	// TrustedProxies is the operator's allowlist of reverse proxies, written as
+	// CIDR prefixes ("127.0.0.1/32,10.0.0.0/8"); a bare address is accepted and
+	// read as that single host. EMPTY BY DEFAULT, and the empty default IS the
+	// security posture: with no entry, X-Forwarded-For and X-Forwarded-Proto are
+	// ignored on every request, from every peer, always.
+	//
+	// It exists because ADR-0041 changed who is on the other end of the socket.
+	// While a reverse proxy was assumed (ADR-0005), only a proxy could set a
+	// forwarded header, so reading one was defensible. Now that the server
+	// terminates TLS itself, clients reach it directly, and a forwarded header is
+	// written by whoever connected — which, on a port-forwarded box, means the
+	// attacker. This list is the only thing that separates "my proxy said so" from
+	// "a stranger said so": a forwarded header is read ONLY when the immediate
+	// peer (r.RemoteAddr) is inside one of these prefixes.
+	//
+	// LISTING A RANGE YOU DO NOT CONTROL HANDS EVERY HOST INSIDE IT THE ABILITY TO
+	// FORGE CLIENT ADDRESSES. That is not a theoretical cost: the login failure
+	// limiter and the device-code quota are both keyed on the resolved client
+	// address, so a host that can name its own address has no limit at all. List
+	// the proxy, not the network the proxy happens to sit on: "127.0.0.1/32" for a
+	// proxy on the same host, or the one address of the box running nginx —
+	// "10.0.0.0/8" because the proxy is somewhere in it also trusts every laptop,
+	// television, and compromised IoT plug on the LAN.
+	//
+	// Env: OBELO_TRUSTED_PROXIES (comma-separated). An unparseable entry is a
+	// Validate error — see TrustedProxyPrefixes for why it cannot be skipped.
+	TrustedProxies []string
 
 	// DataDir is the single writable data directory. It holds the SQLite
 	// database and, in later slices, filesystem caches (ADR-0007).
@@ -650,6 +679,12 @@ func (c Config) SubtitleCacheDir() string {
 //	                               https://acme-staging-v02.api.letsencrypt.org/directory
 //	                               while setting up, or the production rate limits
 //	                               will lock you out mid-debug)
+//	OBELO_TRUSTED_PROXIES -> TrustedProxies (comma-separated CIDRs, or bare
+//	                               addresses; EMPTY BY DEFAULT, which means no
+//	                               X-Forwarded-* header is ever trusted. Only a
+//	                               request whose immediate peer is inside one of
+//	                               these has its forwarded headers read at all. A
+//	                               malformed entry is a Validate error)
 //	OBELO_DATA_DIR       -> DataDir
 //	OBELO_SERVER_NAME    -> ServerName (the Server identity's display name,
 //	                               ADR-0034; empty derives one from the hostname)
@@ -724,6 +759,18 @@ func FromEnv() Config {
 	}
 	if v := os.Getenv("OBELO_ACME_DIRECTORY"); v != "" {
 		c.ACMEDirectoryURL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_TRUSTED_PROXIES"); v != "" {
+		// Split and trim only; the prefixes are parsed in Validate, which can refuse
+		// to boot and quote the entry back. Dropping a malformed one here would give
+		// the operator a shorter allowlist than they wrote, and the symptom — one
+		// proxy whose forwarded headers are silently ignored, so every client behind
+		// it shares a single rate-limit bucket — looks like nothing at all.
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				c.TrustedProxies = append(c.TrustedProxies, part)
+			}
+		}
 	}
 	if v := os.Getenv("OBELO_DATA_DIR"); v != "" {
 		c.DataDir = v
@@ -910,7 +957,53 @@ func (c Config) Validate() error {
 	if err := c.validateTLS(); err != nil {
 		return err
 	}
+	if _, err := c.TrustedProxyPrefixes(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// TrustedProxyPrefixes parses TrustedProxies into the prefixes the api layer
+// matches r.RemoteAddr against. Validate calls it, so a server that boots has
+// already proved every entry parses; app.New calls it again for the value.
+//
+// A malformed entry REFUSES TO BOOT rather than being skipped, which is the same
+// posture validateTLS takes and for the same reason. Skipping is the tempting
+// choice — one bad entry out of four, why stop the world — but the outcome is a
+// server that runs with a shorter allowlist than the operator wrote, and the
+// failure is invisible: forwarded headers from that proxy are ignored, so every
+// client behind it collapses into one rate-limit bucket and one shared login
+// budget, months before anybody connects the two facts. A typo is worth ten
+// seconds at boot.
+//
+// A bare address is accepted and read as that single host ("127.0.0.1" means
+// "127.0.0.1/32"), because that is what an operator types for "the proxy on this
+// box" and the reading is the NARROWEST possible one — leniency here can only
+// ever trust fewer hosts than the operator meant, never more.
+func (c Config) TrustedProxyPrefixes() ([]netip.Prefix, error) {
+	if len(c.TrustedProxies) == 0 {
+		return nil, nil
+	}
+	prefixes := make([]netip.Prefix, 0, len(c.TrustedProxies))
+	for _, entry := range c.TrustedProxies {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(entry); err == nil {
+			// Masked() so a sloppy "10.1.2.3/8" means the /8 the operator meant and
+			// not a prefix with host bits set, which Contains would answer for oddly.
+			prefixes = append(prefixes, p.Masked())
+			continue
+		}
+		if a, err := netip.ParseAddr(entry); err == nil {
+			a = a.Unmap()
+			prefixes = append(prefixes, netip.PrefixFrom(a, a.BitLen()))
+			continue
+		}
+		return nil, fmt.Errorf("config: OBELO_TRUSTED_PROXIES entry %q is not a CIDR prefix or an IP address — give the proxy's address, e.g. \"127.0.0.1/32\" or \"127.0.0.1\". Every host inside a prefix listed here is allowed to assert the client address of any request it forwards, so list the proxy itself rather than the network it sits on", entry)
+	}
+	return prefixes, nil
 }
 
 // validateTLS checks the native-TLS knobs (ADR-0041).

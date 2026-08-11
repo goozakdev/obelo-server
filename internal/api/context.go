@@ -23,6 +23,7 @@ type ctxKey int
 const (
 	identityKey ctxKey = iota
 	scopeKey
+	originKey
 )
 
 // withIdentity returns a copy of ctx carrying the authenticated identity.
@@ -50,4 +51,22 @@ func withScope(ctx context.Context, s access.Scope) context.Context {
 func scopeFrom(ctx context.Context) (access.Scope, bool) {
 	s, ok := ctx.Value(scopeKey).(access.Scope)
 	return s, ok
+}
+
+// withRequestOrigin returns a copy of ctx carrying the resolved client address
+// and scheme (forwarded.go), attached by the resolveRequestOrigin middleware
+// that wraps the whole API.
+func withRequestOrigin(ctx context.Context, o requestOrigin) context.Context {
+	return context.WithValue(ctx, originKey, o)
+}
+
+// requestOriginFrom extracts the resolved origin. The bool is false only for a
+// request that never met the middleware — a handler called directly by a narrow
+// unit test — and the callers (clientIP, requestIsHTTPS) then re-derive it with
+// an EMPTY allowlist, which is the same answer the middleware would give a server
+// whose operator configured no trusted proxy. Missing context therefore means
+// "trust nothing", never "trust anything".
+func requestOriginFrom(ctx context.Context) (requestOrigin, bool) {
+	o, ok := ctx.Value(originKey).(requestOrigin)
+	return o, ok
 }

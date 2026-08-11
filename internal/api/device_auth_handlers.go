@@ -72,8 +72,9 @@ func handleDeviceCode(svc *auth.Service) http.HandlerFunc {
 			//
 			//   429 TOO_MANY_ATTEMPTS — this ADDRESS is over its own quota. Retrying
 			//   is the one thing that must not happen: every further start spends the
-			//   same budget, and behind a reverse proxy that budget belongs to the
-			//   whole household (see clientIP). A client here is either retry-looping
+			//   same budget, and behind a reverse proxy the operator has not listed in
+			//   OBELO_TRUSTED_PROXIES that budget belongs to the whole household (see
+			//   clientIP). A client here is either retry-looping
 			//   — a bug it should be told about — or sharing an address with something
 			//   that is. Retry-After says exactly when the window reopens, so it can
 			//   stop guessing and stop hammering.
@@ -241,7 +242,18 @@ func externalBaseURL(r *http.Request) string {
 	}
 	host := r.Host
 	// A reverse proxy rewrites Host to the upstream; X-Forwarded-Host carries the
-	// original. Same first-hop rule as requestIsHTTPS.
+	// original. First hop of the chain, like X-Forwarded-Proto.
+	//
+	// This one is NOT gated on the trusted-proxy allowlist, unlike the scheme above
+	// (forwarded.go), and the asymmetry is deliberate rather than an omission.
+	// X-Forwarded-Proto steers a security attribute — the cookie's Secure flag —
+	// for a session belonging to whoever authenticates. This header only decides
+	// what URL we hand back to the very caller that sent it, in a response only
+	// that caller sees, and that caller then displays whatever it likes on a
+	// television regardless of what we said. Forging it buys the forger a string
+	// they already controlled. Gating it would meanwhile break the reverse-proxy
+	// deployment's QR code for every operator who has not yet set
+	// OBELO_TRUSTED_PROXIES, which is a real regression bought with no security.
 	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
 		if i := strings.IndexByte(fwd, ','); i >= 0 {
 			fwd = fwd[:i]

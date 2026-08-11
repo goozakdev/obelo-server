@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -17,11 +16,12 @@ import (
 // only non-state-changing GETs and is SameSite=Lax, CSRF exposure is negligible
 // (PRD), so no CSRF token is added.
 //
-// Secure flag: the server runs plain HTTP behind a TLS-terminating reverse proxy
-// (ADR-0005). Setting Secure unconditionally would make the cookie vanish on the
-// plain-HTTP LAN path, breaking browser media there. So Secure is set ONLY when
-// the request actually arrived over TLS — detected via r.TLS or the proxy's
-// X-Forwarded-Proto header.
+// Secure flag: the server serves plain HTTP on the LAN whether or not it also
+// terminates TLS (ADR-0041 — the HTTPS listener is an addition, never a
+// replacement). Setting Secure unconditionally would make the cookie vanish on
+// the plain-HTTP path, breaking browser media there. So Secure is set ONLY when
+// the request actually arrived over TLS — r.TLS, or a trusted proxy's
+// X-Forwarded-Proto (see requestIsHTTPS).
 const (
 	// mediaCookieName carries the session token for the media GET endpoints.
 	mediaCookieName = "ms_media"
@@ -36,24 +36,35 @@ const (
 	mediaCookieMaxAge = 30 * 24 * time.Hour
 )
 
-// requestIsHTTPS reports whether the request reached us over TLS, either
-// directly (r.TLS set) or via a TLS-terminating reverse proxy that forwards the
-// original scheme (ADR-0005). Used to decide the cookie's Secure flag: Secure on
-// HTTPS, off on the plain-HTTP LAN path so the cookie is not silently dropped.
+// requestIsHTTPS reports whether the request reached us over TLS: directly
+// (r.TLS is set, which since ADR-0041 is a real signal because this server can
+// terminate HTTPS itself), or via a TLS-terminating reverse proxy that forwarded
+// the original scheme. Used to decide the cookie's Secure flag — Secure on HTTPS,
+// off on the plain-HTTP LAN path so the cookie is not silently dropped.
+//
+// X-Forwarded-Proto is honoured ONLY from a peer inside OBELO_TRUSTED_PROXIES,
+// and this function no longer reads it directly at all: the decision is made once
+// per request in forwarded.go and looked up here. Reading it unconditionally was
+// defensible while a proxy was the only thing that could reach the socket
+// (ADR-0005); it stopped being so the moment clients started connecting directly,
+// at which point a stranger's `X-Forwarded-Proto: https` on a plain-HTTP request
+// marks the cookie Secure, the browser then refuses to send it back over http,
+// and the user's media quietly stops working. Self-inflicted denial rather than
+// disclosure, but a client-supplied header steering a security attribute all the
+// same.
+//
+// The consequence worth naming: an existing reverse-proxy deployment that sets
+// no OBELO_TRUSTED_PROXIES now gets a cookie WITHOUT Secure, where it previously
+// got one with it. That is the intended trade — the header is unbelievable
+// without the setting, and the cookie still travels the proxy's TLS — and it is
+// one line of configuration to restore.
 func requestIsHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
+	if o, ok := requestOriginFrom(r.Context()); ok {
+		return o.HTTPS
 	}
-	// A reverse proxy that terminated TLS forwards the original scheme. Accept the
-	// standard header (and the comma-separated first hop if a chain set it).
-	proto := r.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
-		return false
-	}
-	if i := strings.IndexByte(proto, ','); i >= 0 {
-		proto = proto[:i]
-	}
-	return strings.EqualFold(strings.TrimSpace(proto), "https")
+	// No middleware ran (a handler exercised directly). Resolve with an empty
+	// allowlist, which is r.TLS and nothing else.
+	return resolveOrigin(r, nil).HTTPS
 }
 
 // setMediaCookie writes the media cookie carrying the opaque session token. It

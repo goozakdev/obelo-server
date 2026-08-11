@@ -9,6 +9,7 @@ package api
 
 import (
 	"net/http"
+	"net/netip"
 
 	"github.com/marioquake/obelo-server/internal/access"
 	"github.com/marioquake/obelo-server/internal/auth"
@@ -138,6 +139,14 @@ type Deps struct {
 	// a settings save. The PUT handler calls Reload; nil leaves persistence working
 	// without the runtime swap.
 	SubtitleProviderManager *subfetch.Manager
+
+	// TrustedProxies is the operator's parsed OBELO_TRUSTED_PROXIES allowlist
+	// (config.Config.TrustedProxyPrefixes). NIL — the zero value every narrow unit
+	// test carries — trusts nothing, so X-Forwarded-For and X-Forwarded-Proto are
+	// ignored and the peer address and r.TLS are the whole truth. See forwarded.go
+	// for what a non-empty list changes and for why the direction of the walk is
+	// the security property.
+	TrustedProxies []netip.Prefix
 
 	// providerImages signs + serves the metadata-provider thumbnail proxy
 	// (provider_image.go). Unexported on purpose: it is not a wiring choice a caller
@@ -399,5 +408,10 @@ func Handler(deps Deps) http.Handler {
 		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 	})
 
-	return root
+	// Settle who the client is and whether their hop was encrypted BEFORE any
+	// route runs, so every handler below reads one already-made decision instead of
+	// re-deriving trust from raw headers (forwarded.go). Outermost on purpose: the
+	// 404 branches above are the only things it wraps needlessly, and a middleware
+	// applied per-route is a middleware somebody forgets on the next route.
+	return resolveRequestOrigin(deps.TrustedProxies, root)
 }

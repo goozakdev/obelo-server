@@ -343,12 +343,14 @@ func TestDeviceCodeQuotaAnswers429WithRetryAfter(t *testing.T) {
 }
 
 // TestDeviceCodeQuotaIgnoresForwardedHeaders is the reason the quota is worth
-// anything at all. clientIP reads RemoteAddr and never X-Forwarded-For, because
-// nothing configures which upstream may assert an origin — so a caller who could
-// mint a fresh "address" per request would face a quota that is decorative.
+// anything at all. clientIP reads RemoteAddr, and X-Forwarded-For only from a
+// peer the operator listed in OBELO_TRUSTED_PROXIES — which the harness leaves
+// empty here, as it ships. A caller who could mint a fresh "address" per request
+// would face a quota that is decorative.
 //
-// The cost of that choice is real and is accepted elsewhere: behind a genuine
-// reverse proxy every request shares one budget. See clientIP in middleware.go.
+// The cost of that default is real and is accepted elsewhere: behind a reverse
+// proxy nobody declared, every request shares one budget. See clientIP in
+// middleware.go, and the declared-proxy half below.
 func TestDeviceCodeQuotaIgnoresForwardedHeaders(t *testing.T) {
 	srv := testharness.New(t)
 
@@ -363,6 +365,55 @@ func TestDeviceCodeQuotaIgnoresForwardedHeaders(t *testing.T) {
 	if status != http.StatusTooManyRequests {
 		t.Errorf("start with a spoofed X-Forwarded-For = %d, want 429 — a client that can "+
 			"claim its own source address has no quota at all", status)
+	}
+}
+
+// TestDeviceCodeQuotaPerClientBehindDeclaredProxy is the other half: the
+// degradation maxDeviceAuthStartsPerSource documents — 128 per five minutes for
+// the whole household, because every request keys to the proxy — is a
+// consequence of not declaring the proxy, not a fact about proxies. Declared, the
+// household's TVs each hold their own budget again, and one TV burning its own
+// does not stop the next one signing in.
+//
+// The forged half matters as much as the honest one: the exhausted client pads
+// its chain with entries an attacker would actually send, including one
+// impersonating the proxy itself, and stays refused.
+func TestDeviceCodeQuotaPerClientBehindDeclaredProxy(t *testing.T) {
+	srv := testharness.New(t, testharness.WithTrustedProxies("10.0.0.1/32"))
+
+	const proxy = "10.0.0.1:41000"
+	startVia := func(chain string) int {
+		t.Helper()
+		var env errEnvelope
+		status, _, _ := srv.JSONFrom(http.MethodPost, "/api/v1/auth/device/code", "",
+			proxy, http.Header{"X-Forwarded-For": []string{chain}}, tvDeviceBody(), &env)
+		return status
+	}
+
+	var status int
+	for i := 0; i < deviceStartProbe && status != http.StatusTooManyRequests; i++ {
+		status = startVia("198.51.100.7")
+	}
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("%d starts from one client behind a declared proxy and none was refused", deviceStartProbe)
+	}
+
+	// A different TV behind the same proxy, over the same connection: unaffected.
+	if got := startVia("198.51.100.8"); got != http.StatusCreated {
+		t.Errorf("second client behind the declared proxy = %d, want 201 — the quota must "+
+			"discriminate once the operator has said who the proxy is", got)
+	}
+
+	// The exhausted one cannot buy itself a new budget by padding the chain.
+	for _, chain := range []string{
+		"9.9.9.9, 198.51.100.7",
+		"10.0.0.9, 198.51.100.7",
+		"198.51.100.8, 198.51.100.7",
+	} {
+		if got := startVia(chain); got != http.StatusTooManyRequests {
+			t.Errorf("start with chain %q = %d, want 429 — forged entries sit to the LEFT "+
+				"of what the proxy appended and must never be read", chain, got)
+		}
 	}
 }
 
@@ -441,8 +492,14 @@ func TestVerificationURIMatchesTheRequestHost(t *testing.T) {
 // deployment (ADR-0005). The server binds plain HTTP and never sees the TLS
 // origin the TV actually used, so a QR built from r.Host alone would send the
 // phone to an internal address it cannot reach.
+//
+// The proxy is declared (WithTrustedProxies), which is what the scheme half now
+// requires: X-Forwarded-Proto is read only from a listed peer (ADR-0041). The
+// HOST half is not gated — see externalBaseURL for why forging it only changes a
+// string the forger already controlled — so an undeclared proxy still gets the
+// right host here, with an http:// scheme it fixes by declaring itself.
 func TestVerificationURIHonoursForwardedHeaders(t *testing.T) {
-	srv := testharness.New(t)
+	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))
 
 	// Hand-built rather than via the harness helpers: this is the only test that
 	// needs to set request headers, and one local request is cheaper than a

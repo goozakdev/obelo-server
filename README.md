@@ -180,6 +180,7 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | `OBELO_TLS_DOMAINS`               | —         | Comma-separated DNS names. **Required** in `acme` mode.        |
 | `OBELO_ACME_EMAIL`                | —         | Optional contact for the CA's expiry notices.                  |
 | `OBELO_ACME_DIRECTORY`            | Let's Encrypt | ACME directory URL; point at staging while setting up.     |
+| `OBELO_TRUSTED_PROXIES`           | —         | CIDRs whose `X-Forwarded-*` headers are believed. See below.   |
 | `OBELO_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
 | `OBELO_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
 | `OBELO_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
@@ -228,6 +229,49 @@ And about `files` mode:
 
 - **Renewals are picked up without a restart.** The certificate files are re-read when they change, so a certbot renewal takes effect on the next connection. If a renewal leaves a file half-written, the previous certificate keeps serving and the problem is logged rather than taking the listener down.
 - **A broken certificate stops the boot.** If you turn `files` mode on and the certificate is missing, unreadable, or does not match the key, the server refuses to start and says which path is wrong. That is deliberate, and it is the opposite of the `acme` behaviour above for a reason: a path that is wrong is a typo you can fix in ten seconds, and starting anyway would leave you on plain HTTP believing you had TLS. A CA being down is nobody's typo.
+
+### Running behind a reverse proxy
+
+If something else terminates TLS in front of Obelo — nginx, Caddy, a container
+ingress — tell Obelo which address that proxy connects from:
+
+```
+OBELO_TRUSTED_PROXIES=127.0.0.1/32          # a proxy on the same machine
+OBELO_TRUSTED_PROXIES=10.4.0.9/32,10.4.0.10/32   # two proxies, by address
+```
+
+**It is empty by default, and empty means no `X-Forwarded-For` or
+`X-Forwarded-Proto` header is believed from anybody.** That default is not
+caution for its own sake. Obelo can now terminate HTTPS itself, so clients reach
+it directly, and a forwarded header on a direct connection is written by whoever
+dialled the port. Obelo therefore reads one only when the machine on the other
+end of the socket is an address you listed. Without the setting it uses the
+connection's real peer address and the connection's real scheme, which is always
+true and sometimes less useful.
+
+Setting it turns two things back on:
+
+- **Per-client rate limits.** The failed-login limiter and the TV sign-in code
+  quota are counted per client address. Behind an undeclared proxy every request
+  looks like it came from the proxy, so the whole household shares one budget —
+  safe, but blunt. Declared, each device gets its own again.
+- **The session cookie's `Secure` flag on the proxy's HTTPS.** Undeclared, Obelo
+  sees a plain-HTTP request and marks the cookie accordingly. Nothing breaks — the
+  cookie still travels inside your proxy's TLS — but it is not flagged.
+
+**Only list a proxy you control.** Every host inside a range you name is allowed
+to tell Obelo what address a request came from, which means it can also *lie*
+about it, and a host that can name its own address has no rate limit at all. List
+the proxy itself — `10.4.0.9/32` — not the network it happens to sit on:
+`10.0.0.0/8` because the proxy is somewhere in there also trusts every laptop,
+television, and compromised smart plug on your LAN. A bare address means that one
+host (`127.0.0.1` is read as `127.0.0.1/32`), and an entry that is not an address
+or a CIDR stops the server at boot and says which one it was.
+
+Obelo reads the **left-most entry in `X-Forwarded-For` that is not itself a
+trusted proxy**, working from the right. A client can put anything it likes at the
+front of that header; whatever your proxy appends comes after it, so the forged
+part is never reached.
 
 Provider keys and language seed the database only on **first boot** — afterward
 you manage providers from the admin settings UI (no restart needed). Obelo

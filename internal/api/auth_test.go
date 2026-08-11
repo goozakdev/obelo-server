@@ -292,9 +292,11 @@ func TestLoginRateLimitReturns429(t *testing.T) {
 
 // TestLoginRateLimitIgnoresForwardedForHeader: the counter is keyed on the
 // connection's real peer address, so a caller cannot mint themselves a fresh
-// allowance by claiming a new one. There is no trusted-proxy configuration in
-// this server (see clientIP in middleware.go), which means any X-Forwarded-For is
-// attacker-controlled — honoring it would make the per-IP limit decorative.
+// allowance by claiming a new one. This server trusts no proxy by default (see
+// clientIP in middleware.go and OBELO_TRUSTED_PROXIES), which means any
+// X-Forwarded-For is attacker-controlled — honoring it would make the per-IP
+// limit decorative. The harness sets no allowlist here on purpose: this is the
+// shipped default being asserted, not a test configuration.
 func TestLoginRateLimitIgnoresForwardedForHeader(t *testing.T) {
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
@@ -328,6 +330,129 @@ func TestLoginRateLimitIgnoresForwardedForHeader(t *testing.T) {
 	if spoofStatus != http.StatusTooManyRequests {
 		t.Errorf("spoofed X-Forwarded-For status = %d, want 429 — the header must not "+
 			"reset the counter; body: %s", spoofStatus, spoofBody)
+	}
+}
+
+// The declared-proxy half of the rate limiter (OBELO_TRUSTED_PROXIES, ADR-0041).
+//
+// proxyAddr is the peer every request in these two tests arrives from — the
+// operator's reverse proxy, and the only address the allowlist names. Everything
+// else is a claim in a header, which is the point.
+const (
+	proxyAddr   = "10.0.0.1:41000"
+	proxyCIDR   = "10.0.0.1/32"
+	realClient  = "198.51.100.7"
+	otherClient = "198.51.100.8"
+)
+
+// trustedProxyServer boots a server that trusts exactly one proxy and has an
+// Admin to log in as.
+func trustedProxyServer(t *testing.T) *testharness.Server {
+	t.Helper()
+	srv := testharness.New(t, testharness.WithTrustedProxies(proxyCIDR))
+	setupAdmin(t, srv, "brandon", adminPassword)
+	return srv
+}
+
+// failLoginFrom spends one wrong password on the limiter, arriving from the proxy
+// and claiming forwardedFor as the chain. A distinct username per call keeps the
+// PER-USERNAME counter (30, looser) out of the way so what trips is unambiguously
+// the per-IP one (15).
+func failLoginFrom(t *testing.T, srv *testharness.Server, forwardedFor string, attempt int) int {
+	t.Helper()
+	h := http.Header{}
+	if forwardedFor != "" {
+		h.Set("X-Forwarded-For", forwardedFor)
+	}
+	status, _, _ := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", proxyAddr, h, map[string]any{
+		"username": fmt.Sprintf("nobody-%d", attempt),
+		"password": "wrong-password",
+		"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+	}, nil)
+	return status
+}
+
+// exhaustBudgetFor spends failures until the limiter refuses the given claimed
+// client, and fails the test if it never does.
+func exhaustBudgetFor(t *testing.T, srv *testharness.Server, forwardedFor string) {
+	t.Helper()
+	var status int
+	for i := 0; i < 64 && status != http.StatusTooManyRequests; i++ {
+		status = failLoginFrom(t, srv, forwardedFor, i)
+	}
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("the limiter never tripped over 64 failed logins claiming %s", forwardedFor)
+	}
+}
+
+// TestLoginRateLimitPerClientBehindDeclaredProxy is what the allowlist buys. With
+// the proxy named, the per-IP counter stops being one global budget for everyone
+// behind it (the degradation documented on loginIPFailureLimit) and goes back to
+// discriminating between clients: exhausting one household member's budget leaves
+// the next member's untouched, over the same connection.
+func TestLoginRateLimitPerClientBehindDeclaredProxy(t *testing.T) {
+	srv := trustedProxyServer(t)
+
+	exhaustBudgetFor(t, srv, realClient)
+
+	// Same peer, same connection, a different client behind the proxy: not refused.
+	if status := failLoginFrom(t, srv, otherClient, 0); status != http.StatusUnauthorized {
+		t.Errorf("second client behind the proxy = %d, want 401 — a declared proxy must "+
+			"give each client its own budget, or the setting bought nothing", status)
+	}
+}
+
+// TestLoginRateLimitCannotBeResetByPaddingForwardedFor is the attack the walk's
+// DIRECTION exists to stop, asserted against the real control rather than the
+// helper.
+//
+// A client behind a declared proxy writes its own X-Forwarded-For before
+// connecting; the proxy appends the address it saw and forwards both. So the
+// client can put anything it likes to the LEFT of the truth, and an implementation
+// that read the left-most entry — the folklore version of "the client IP is the
+// first entry" — would hand it a brand-new 15-failure budget on every request,
+// which is a password-guessing oracle with no limiter in front of it at all.
+// Walking right-to-left steps back over the hops we trust and stops at the first
+// we do not, so the padding is never reached.
+func TestLoginRateLimitCannotBeResetByPaddingForwardedFor(t *testing.T) {
+	srv := trustedProxyServer(t)
+
+	exhaustBudgetFor(t, srv, realClient)
+
+	// Now pad the header with forged entries — including one impersonating the
+	// proxy itself, and a fresh one per request, which is what an attacker would
+	// actually do.
+	for i, chain := range []string{
+		"9.9.9.9, " + realClient,
+		"1.2.3.4, 5.6.7.8, " + realClient,
+		"10.0.0.9, " + realClient,
+		otherClient + ", " + realClient,
+	} {
+		h := http.Header{}
+		h.Set("X-Forwarded-For", chain)
+		status, _, body := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", proxyAddr, h, map[string]any{
+			"username": "brandon",
+			"password": adminPassword,
+			"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+		}, nil)
+		if status != http.StatusTooManyRequests {
+			t.Errorf("chain %d (%q) = %d, want 429 — padding X-Forwarded-For with forged "+
+				"entries must not mint a fresh budget; body: %s", i, chain, status, body)
+		}
+	}
+
+	// And the correct password is genuinely correct: the refusal above is the
+	// limiter, not a broken credential, so the test cannot pass for the wrong
+	// reason. A second, unexhausted client proves it over the same connection.
+	h := http.Header{}
+	h.Set("X-Forwarded-For", otherClient)
+	status, _, body := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "", proxyAddr, h, map[string]any{
+		"username": "brandon",
+		"password": adminPassword,
+		"device":   map[string]any{"name": "x", "platform": "y", "clientId": "c"},
+	}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("login from an unexhausted client = %d, want 200; body: %s", status, body)
 	}
 }
 

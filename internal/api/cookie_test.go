@@ -114,6 +114,11 @@ func TestLoginSetsMediaCookie(t *testing.T) {
 
 // TestMediaCookieSecureUnderHTTPS: the same login over an HTTPS (TLS) server
 // sets the Secure flag, while plain HTTP does not (asserted above).
+//
+// The request also carries a contradicting `X-Forwarded-Proto: http`, and no
+// proxy is trusted. r.TLS is the one scheme signal that is not hearsay — this
+// process negotiated the handshake — so it wins outright and no header can turn
+// it off. Without that the header would be a downgrade switch for anybody.
 func TestMediaCookieSecureUnderHTTPS(t *testing.T) {
 	// Boot the app and wrap its handler in a TLS httptest server so r.TLS is set.
 	srv := testharness.New(t)
@@ -132,7 +137,13 @@ func TestMediaCookieSecureUnderHTTPS(t *testing.T) {
 		"device":   map[string]any{"name": "Browser", "platform": "web", "clientId": "tls-client"},
 	}
 	buf, _ := json.Marshal(body)
-	resp, err := client.Post(tlsSrv.URL+"/api/v1/auth/login", "application/json", bytes.NewReader(buf))
+	req, err := http.NewRequest(http.MethodPost, tlsSrv.URL+"/api/v1/auth/login", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "http")
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("HTTPS login: %v", err)
 	}
@@ -156,9 +167,13 @@ func TestMediaCookieSecureUnderHTTPS(t *testing.T) {
 }
 
 // TestMediaCookieSecureViaForwardedProto: a plain-HTTP request carrying
-// X-Forwarded-Proto: https (the reverse-proxy path, ADR-0005) also gets Secure.
+// X-Forwarded-Proto: https FROM A TRUSTED PROXY (the reverse-proxy path,
+// ADR-0005) also gets Secure. The listener is loopback, so trusting 127.0.0.1
+// makes the test client the "proxy" — which is the whole point: the header does
+// nothing until an operator says who may send it. The untrusted half of the pair
+// is TestMediaCookieIgnoresForwardedProtoFromUntrustedPeer below.
 func TestMediaCookieSecureViaForwardedProto(t *testing.T) {
-	srv := testharness.New(t)
+	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
 	body := map[string]any{
@@ -183,8 +198,69 @@ func TestMediaCookieSecureViaForwardedProto(t *testing.T) {
 		t.Fatalf("login did not set the media cookie")
 	}
 	if !cookie.Secure {
-		t.Errorf("cookie Secure = false with X-Forwarded-Proto: https, want true")
+		t.Errorf("cookie Secure = false with X-Forwarded-Proto: https from a trusted proxy, want true")
 	}
+}
+
+// TestMediaCookieIgnoresForwardedProtoFromUntrustedPeer is the half of the pair
+// that ADR-0041 made necessary. Once the server terminates TLS itself, clients
+// reach it directly and X-Forwarded-Proto is written by whoever connected — so on
+// a server with no trusted-proxy configuration (the default, and every existing
+// deployment) a stranger's `X-Forwarded-Proto: https` on a plain-HTTP request
+// would mark the session cookie Secure, the browser would then decline to send it
+// back over http, and the user's media would quietly stop working.
+//
+// Two servers, because "the header is ignored" and "the header is ignored FROM
+// THIS PEER" are different claims and only the second one is a trust check: the
+// first has no allowlist at all, the second has one that does not contain the
+// caller.
+func TestMediaCookieIgnoresForwardedProtoFromUntrustedPeer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		trusted []string
+	}{
+		{name: "no allowlist configured"},
+		{name: "peer outside the allowlist", trusted: []string{"10.0.0.0/8"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := testharness.New(t, testharness.WithTrustedProxies(tc.trusted...))
+			setupAdmin(t, srv, "brandon", "hunter2hunter2")
+
+			spoofed := http.Header{"X-Forwarded-Proto": []string{"https"}}
+			var out struct {
+				Token string `json:"token"`
+			}
+			status, header, body := srv.JSONFrom(http.MethodPost, "/api/v1/auth/login", "",
+				"203.0.113.44:51000", spoofed, map[string]any{
+					"username": "brandon",
+					"password": "hunter2hunter2",
+					"device":   map[string]any{"name": "Browser", "platform": "web", "clientId": "spoof-client"},
+				}, &out)
+			if status != http.StatusOK {
+				t.Fatalf("login status = %d, want 200; body: %s", status, body)
+			}
+			cookie := findSetCookie(t, header, mediaCookieName)
+			if cookie.Secure {
+				t.Errorf("cookie Secure = true from an untrusted peer claiming X-Forwarded-Proto: https — " +
+					"the header is attacker-supplied on the direct path, and marking the cookie " +
+					"Secure over plain HTTP makes the browser stop sending it")
+			}
+		})
+	}
+}
+
+// findSetCookie parses one named cookie out of a response's Set-Cookie headers.
+// The JSONFrom helper hands back headers rather than an *http.Response, so the
+// findCookie above (which takes a response) cannot be reused.
+func findSetCookie(t *testing.T, header http.Header, name string) *http.Cookie {
+	t.Helper()
+	for _, c := range (&http.Response{Header: header}).Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("no %q cookie in Set-Cookie: %v", name, header.Values("Set-Cookie"))
+	return nil
 }
 
 // TestMediaCookieAcceptedOnArtwork: the artwork GET succeeds with ONLY the media

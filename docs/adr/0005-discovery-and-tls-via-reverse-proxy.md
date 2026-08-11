@@ -13,6 +13,15 @@
 > plain-HTTP listener survives either way because a public CA cannot certify a LAN address or a
 > `.local` name.
 >
+> One line below IS amended by it, though: **"it trusts `X-Forwarded-Proto`" now reads "it trusts
+> `X-Forwarded-Proto` from a peer the operator listed in `OBELO_TRUSTED_PROXIES`"**, empty by
+> default. The unconditional reading was safe only because a proxy was the only thing that could
+> reach the socket; once clients connect directly the header is written by whoever dialled the
+> port. The same allowlist is what lets `X-Forwarded-For` be read at all — the left-most hop
+> outside it — so a declared proxy stops collapsing the login limiter and the device-code quota
+> into one budget for everyone behind it. A reverse-proxy deployment that sets nothing keeps
+> working; its cookie simply loses the `Secure` flag until the proxy is named.
+>
 > **Retired 2026-07-15 — *"The server provides a configurable external URL"*.** Never built, and
 > the design does not need it: **the server emits no absolute self-referential URL anywhere.** HLS
 > playlists reference bare session-relative filenames (`index.m3u8`, `subs_003.vtt`), and every
