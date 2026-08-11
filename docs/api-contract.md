@@ -514,7 +514,7 @@ A new decision is required only when constraints change (e.g. bandwidth drop →
 
 #### GET /files/{id}/download — [Public] (bearer **or `?token=`**)
 
-Sessionless original bytes ("Open in VLC"), Range-capable, no Playback session. Missing File → `404 "file not found"`; on-disk unreadable → `404 "file unavailable"`.
+Sessionless original bytes ("Open in VLC"), Range-capable, no Playback session. **Access-scoped like browse**: the caller's Scope is applied to the Title that owns the File, in both dimensions (Library grant *and* Rating ceiling), so a Member cannot fetch bytes they could not browse to. Unknown id, out-of-scope File, orphaned File, and Missing File all return the **identical** `404 "file not found"` — the refusal must not distinguish "not yours" from "does not exist" (§ "404, not 403"); on-disk unreadable → `404 "file unavailable"`.
 
 ### 3.7 Collections, Playlists, Watchlist
 

@@ -924,6 +924,37 @@ func (db *DB) FileByID(id string) (File, error) {
 	return f, nil
 }
 
+// LibraryAndRatingOfFile resolves the two access dimensions of the Title that
+// OWNS a File — the Library it lives in and its Content rating — or ErrNotFound.
+// It is the LibraryOfTitle of the direct-file download: that route addresses a
+// File by its own id and never loads a Title, so this is the only place the
+// caller's Scope can be applied to it. Both dimensions come back together
+// because the download must check both (a Library grant does not exempt a
+// Member from their Rating ceiling), and one row read is cheaper than two.
+//
+// Both joins are INNER on purpose, and that is the fail-closed property, not an
+// optimization. A File whose edition or title row is gone (a torn write, a
+// half-finished prune, a hand-edited DB) matches NO row and comes back
+// ErrNotFound — refused, never served. LEFT JOINs would "succeed" with an empty
+// library_id and an empty content_rating, which AllowsRating reads as unrated
+// (visible) and AllowsLibrary reads as allowed under any all-access Scope: an
+// orphaned File would become downloadable by everyone. Do not loosen these.
+func (db *DB) LibraryAndRatingOfFile(fileID string) (libraryID, contentRating string, err error) {
+	row := db.QueryRow(
+		`SELECT t.library_id, t.content_rating
+		   FROM files f
+		   JOIN editions e ON e.id = f.edition_id
+		   JOIN titles t ON t.id = e.title_id
+		  WHERE f.id = ?`, fileID)
+	if err := row.Scan(&libraryID, &contentRating); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", ErrNotFound
+		}
+		return "", "", fmt.Errorf("store: resolving library and rating of file: %w", err)
+	}
+	return libraryID, contentRating, nil
+}
+
 func (db *DB) filesForEdition(editionID string) ([]File, error) {
 	rows, err := db.Query(
 		`SELECT id, edition_id, path, container, video_codec, audio_codec, width, height,
