@@ -340,7 +340,15 @@ export interface EnrichmentCandidatesResult {
  * label, ADR-0019): the URL to preview + pick and the source dimensions (0 when
  * unreported). */
 export interface ArtworkCandidate {
+  /** The provider's own image URL — this candidate's IDENTITY. It is what a pick
+   * sends back in `PUT /artwork` (the server downloads it) and what "Applied" is
+   * compared against. Never render it: see thumbnailUrl. */
   url: string;
+  /** Same-origin URL to PREVIEW this candidate with, proxied through the server so
+   * the grid never makes the browser contact TMDB / the Cover Art Archive itself
+   * (ADR-0001; the CSP is `img-src 'self'`). Absent only from an older server, in
+   * which case the raw `url` is the fallback and the CSP will block it. */
+  thumbnailUrl?: string;
   width?: number;
   height?: number;
   source?: string;

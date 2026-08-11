@@ -171,10 +171,45 @@ func TestCSPAllowsWhatPlaybackNeeds(t *testing.T) {
 		"media-src 'self' blob:",
 		"worker-src 'self' blob:",
 		"connect-src 'self'",
+		"img-src 'self'",
 	} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("CSP is missing %q — playback and/or the baseline hardening depends on it\nCSP: %s", want, csp)
 		}
+	}
+}
+
+// img-src permits NOTHING but this origin, and that is a property worth its own
+// test because the substring check above cannot see the difference: "img-src
+// 'self'" matches "img-src 'self' https:" happily.
+//
+// The directive carried `https:` until the metadata-provider image proxy landed
+// (internal/api/provider_image.go). Every image the app renders — library artwork,
+// cast headshots, and the admin Edit-item pickers' candidate thumbnails — is now
+// served from this origin, so `https:` would buy nothing except an outbound
+// channel an injected <img> could signal on, and would quietly re-permit a future
+// screen to point a household browser at a third party (ADR-0001).
+//
+// If this fails, the question to answer is WHICH image needs a foreign host, and
+// the answer is almost certainly "proxy it too" rather than "widen the policy".
+func TestCSPImgSrcIsSameOriginOnly(t *testing.T) {
+	srv := testharness.New(t)
+
+	resp := srv.Do(http.MethodGet, "/", nil)
+	resp.Body.Close()
+	csp := resp.Header.Get("Content-Security-Policy")
+
+	var imgSrc string
+	for _, d := range strings.Split(csp, ";") {
+		if d = strings.TrimSpace(d); strings.HasPrefix(d, "img-src ") {
+			imgSrc = d
+		}
+	}
+	if imgSrc == "" {
+		t.Fatalf("CSP has no img-src directive\nCSP: %s", csp)
+	}
+	if imgSrc != "img-src 'self'" {
+		t.Errorf("img-src = %q, want exactly \"img-src 'self'\" — provider thumbnails are proxied through this origin now (ADR-0001)\nCSP: %s", imgSrc, csp)
 	}
 }
 

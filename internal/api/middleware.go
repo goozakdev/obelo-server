@@ -43,13 +43,27 @@ func requireAuth(svc *auth.Service, h http.HandlerFunc) http.HandlerFunc {
 // requireAuthAllowCookie is the media-auth middleware. It authenticates EITHER
 // the bearer header OR the ms_media cookie, validating whichever it finds the
 // SAME way as requireAuth (auth.Service.Authenticate), and attaches the resolved
-// identity to the context. It exists ONLY for the read-only media GET endpoints
-// a browser reaches via <img src>/<video src>/hls.js (which cannot send an
-// Authorization header): GET /sessions/{id}/stream, the HLS playlist + segments
-// at GET /sessions/{id}/hls/* (ADR-0004), and GET /titles/{id}/artwork/{role}.
+// identity to the context. It exists ONLY for the read-only GET endpoints a
+// browser reaches via <img src>/<video src>/hls.js/EventSource, none of which can
+// set an Authorization header:
+//
+//   - GET /sessions/{id}/stream and the HLS playlist + segments at
+//     GET /sessions/{id}/hls/* (ADR-0004)
+//   - GET /titles|shows|seasons|artists|albums/{id}/artwork/… and the cast
+//     headshots at GET /people/{ref}/artwork/{role}
+//   - GET /events, the SSE stream (ADR-0016)
+//   - GET /providerImage?ref=…, the metadata-provider thumbnail proxy behind the
+//     admin Edit-item pickers (provider_image.go), which is additionally wrapped
+//     in requireAdmin — it is an Admin surface, and the cookie authenticates the
+//     caller without widening WHO may reach it.
+//
 // Every other endpoint keeps requireAuth (bearer-only) and must NOT honor the
-// cookie. The posture stays SameSite=Lax, read-only GET only — CSRF exposure
-// stays negligible.
+// cookie. The list above grew for the proxy, so state the posture rather than
+// assume it still holds: the cookie is HttpOnly, SameSite=Lax, and scoped to the
+// /api/v1 path, and every route here is a read-only GET that changes no state, so
+// the worst a cross-site request can do is cause a fetch whose bytes it cannot
+// read. CSRF exposure stays negligible. Anything that WRITES must not join this
+// list, whatever it would cost the browser.
 //
 // The bearer header wins when both are present (native clients and the API
 // client always send it). Because the token is validated against the DB on each

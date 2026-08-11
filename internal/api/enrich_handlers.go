@@ -348,12 +348,19 @@ type enrichmentCandidatesJSON struct {
 
 // toCandidateJSON maps a provider Candidate onto the Edit-item picker wire shape,
 // shared by the leaf + parent candidate handlers (and the paste-id preview).
-func toCandidateJSON(c enrich.Candidate) enrichmentCandidateJSON {
+//
+// The thumbnail is rewritten to a same-origin /providerImage reference: the wire
+// field is the URL the picker puts in an <img src>, and pointing that at TMDB or
+// the Cover Art Archive is what handed those hosts the admin's IP (ADR-0001, see
+// provider_image.go). Doing it HERE rather than in each provider means the enrich
+// package keeps emitting honest provider URLs — which is what the pick/apply path
+// still needs — and no emit site can be forgotten.
+func toCandidateJSON(p *providerImageProxy, c enrich.Candidate) enrichmentCandidateJSON {
 	jc := enrichmentCandidateJSON{
 		ExternalID:     c.ExternalID,
 		Title:          c.Title,
 		Year:           c.Year,
-		ThumbnailURL:   c.ThumbnailURL,
+		ThumbnailURL:   p.proxyURL(c.ThumbnailURL),
 		Disambiguation: c.Disambiguation,
 		TypeLabel:      c.TypeLabel,
 		Kind:           c.Kind,
@@ -393,7 +400,7 @@ func searchOptionsFrom(r *http.Request) enrich.SearchOptions {
 // SEARCH_UNAVAILABLE so the box reports why instead of hanging (results are capped
 // server-side). Unknown Title → 404 (hide existence). Reads only — identity and
 // watch state are untouched.
-func handleEnrichmentCandidates(enrichSvc *enrich.Service) http.HandlerFunc {
+func handleEnrichmentCandidates(enrichSvc *enrich.Service, images *providerImageProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		titleID := pathParam(r.URL.Path, "/titles/", "/enrichmentCandidates")
 		if titleID == "" {
@@ -418,19 +425,19 @@ func handleEnrichmentCandidates(enrichSvc *enrich.Service) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toCandidatesJSON(cands))
+		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
 	}
 }
 
 // toCandidatesJSON shapes a provider candidate page into the picker wire response,
 // setting HasMore when a full page came back (another page likely exists).
-func toCandidatesJSON(cands []enrich.Candidate) enrichmentCandidatesJSON {
+func toCandidatesJSON(p *providerImageProxy, cands []enrich.Candidate) enrichmentCandidatesJSON {
 	out := enrichmentCandidatesJSON{
 		Candidates: make([]enrichmentCandidateJSON, 0, len(cands)),
 		HasMore:    len(cands) >= enrich.SearchCandidateLimit,
 	}
 	for _, c := range cands {
-		out.Candidates = append(out.Candidates, toCandidateJSON(c))
+		out.Candidates = append(out.Candidates, toCandidateJSON(p, c))
 	}
 	return out
 }
@@ -439,7 +446,7 @@ func toCandidatesJSON(cands []enrich.Candidate) enrichmentCandidatesJSON {
 // leaf + parent paste-id preview handlers so both surface the same statuses: an
 // unreadable paste → 400, a wrong-kind URL → 400, a disabled provider → 503, and a
 // stale/unknown id → 404 ("not found", never a hang or 500).
-func writeExternalPreview(w http.ResponseWriter, c enrich.Candidate, err error) {
+func writeExternalPreview(w http.ResponseWriter, p *providerImageProxy, c enrich.Candidate, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "item not found", nil)
@@ -461,7 +468,7 @@ func writeExternalPreview(w http.ResponseWriter, c enrich.Candidate, err error) 
 		writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
 			"metadata provider lookup failed — the source may be unreachable", nil)
 	default:
-		writeJSON(w, http.StatusOK, toCandidateJSON(c))
+		writeJSON(w, http.StatusOK, toCandidateJSON(p, c))
 	}
 }
 
@@ -515,7 +522,7 @@ var (
 // enough" escape hatch (item-editing/search-improvements). The Admin sees the record's
 // title/year before applying it via the existing enrichmentOverride endpoint, so a
 // typo'd or stale id previews as 404 rather than being pinned blind. Reads only.
-func handleTitleExternalPreview(enrichSvc *enrich.Service) http.HandlerFunc {
+func handleTitleExternalPreview(enrichSvc *enrich.Service, images *providerImageProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		titleID := pathParam(r.URL.Path, "/titles/", "/externalPreview")
 		if titleID == "" {
@@ -524,7 +531,7 @@ func handleTitleExternalPreview(enrichSvc *enrich.Service) http.HandlerFunc {
 		}
 		ref := strings.TrimSpace(r.URL.Query().Get("ref"))
 		c, err := enrichSvc.PreviewTitleExternal(r.Context(), titleID, ref)
-		writeExternalPreview(w, c, err)
+		writeExternalPreview(w, images, c, err)
 	}
 }
 
@@ -594,13 +601,26 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 // --- Edit-item: image picker (list candidates + pick + role lock) -----------
 
 // artworkCandidateJSON is one image the provider offers for a role in the Edit-item
-// image picker (Fix label, ADR-0019): the URL to preview + pick, and the source's
-// dimensions (0 when unreported) so the picker can hint resolution.
+// image picker (Fix label, ADR-0019): the URL to pick, a same-origin URL to PREVIEW
+// it with, and the source's dimensions (0 when unreported) so the picker can hint
+// resolution.
+//
+// url and thumbnailUrl are two different jobs that used to be one field, and
+// splitting them is the point. url is the candidate's IDENTITY: it goes back in the
+// PUT /artwork body, the server downloads it, and the picker compares it to mark
+// which image is applied — so it stays the provider's own URL, unchanged.
+// thumbnailUrl is what the grid puts in an <img src>, and it is proxied through
+// this server so displaying the grid does not hand TMDB / the Cover Art Archive /
+// fanart.tv the admin's IP address (ADR-0001, provider_image.go). Do not collapse
+// them back together: making url the proxy URL would mean the pick path had to
+// unwrap its own proxy references, and making thumbnailUrl the raw URL would put
+// the browser straight back in touch with the third party.
 type artworkCandidateJSON struct {
-	URL    string `json:"url"`
-	Width  int    `json:"width,omitempty"`
-	Height int    `json:"height,omitempty"`
-	Source string `json:"source,omitempty"`
+	URL          string `json:"url"`
+	ThumbnailURL string `json:"thumbnailUrl,omitempty"`
+	Width        int    `json:"width,omitempty"`
+	Height       int    `json:"height,omitempty"`
+	Source       string `json:"source,omitempty"`
 }
 
 type artworkCandidatesJSON struct {
@@ -628,11 +648,12 @@ func validArtworkRole(role string) bool {
 	}
 }
 
-func toArtworkCandidatesJSON(role string, cands []enrich.ArtworkCandidate) artworkCandidatesJSON {
+func toArtworkCandidatesJSON(p *providerImageProxy, role string, cands []enrich.ArtworkCandidate) artworkCandidatesJSON {
 	out := artworkCandidatesJSON{Role: role, Candidates: make([]artworkCandidateJSON, 0, len(cands))}
 	for _, c := range cands {
 		out.Candidates = append(out.Candidates, artworkCandidateJSON{
-			URL: c.URL, Width: c.Width, Height: c.Height, Source: c.Source,
+			URL: c.URL, ThumbnailURL: p.proxyURL(c.URL),
+			Width: c.Width, Height: c.Height, Source: c.Source,
 		})
 	}
 	return out
@@ -643,7 +664,7 @@ func toArtworkCandidatesJSON(role string, cands []enrich.ArtworkCandidate) artwo
 // /titles/{id}/artworkCandidates?role=…, Admin-only). Same SEARCH_UNAVAILABLE (503)
 // semantics as the record search when the provider is unconfigured/unreachable.
 // Unknown Title → 404. A missing/invalid role → 400. Reads only.
-func handleTitleArtworkCandidates(enrichSvc *enrich.Service) http.HandlerFunc {
+func handleTitleArtworkCandidates(enrichSvc *enrich.Service, images *providerImageProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		titleID := pathParam(r.URL.Path, "/titles/", "/artworkCandidates")
 		if titleID == "" {
@@ -669,7 +690,7 @@ func handleTitleArtworkCandidates(enrichSvc *enrich.Service) http.HandlerFunc {
 				"metadata provider image lookup failed — the source may be unreachable", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, toArtworkCandidatesJSON(role, cands))
+		writeJSON(w, http.StatusOK, toArtworkCandidatesJSON(images, role, cands))
 	}
 }
 

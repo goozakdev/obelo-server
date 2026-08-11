@@ -117,7 +117,7 @@ func buildEntityDetail(cat *catalog.Service, entityType, entityID string) (entit
 // candidate carries its tracklist. A blank query returns an empty list; an
 // unconfigured/unreachable provider is 503 SEARCH_UNAVAILABLE. Unknown parent →
 // 404. Reads only.
-func handleEntityEnrichmentCandidates(enrichSvc *enrich.Service, cat *catalog.Service, entityType, entityID string) http.HandlerFunc {
+func handleEntityEnrichmentCandidates(enrichSvc *enrich.Service, images *providerImageProxy, cat *catalog.Service, entityType, entityID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ok, err := cat.EntityExists(entityType, entityID)
 		if err != nil {
@@ -141,7 +141,7 @@ func handleEntityEnrichmentCandidates(enrichSvc *enrich.Service, cat *catalog.Se
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toCandidatesJSON(cands))
+		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
 	}
 }
 
@@ -150,7 +150,7 @@ func handleEntityEnrichmentCandidates(enrichSvc *enrich.Service, cat *catalog.Se
 // /shows|artists|albums/{id}/externalPreview?ref=…, Admin-only) — the parent analogue
 // of handleTitleExternalPreview (item-editing/search-improvements). Reads only; the
 // apply reuses the existing enrichmentOverride endpoint. Unknown parent → 404.
-func handleEntityExternalPreview(enrichSvc *enrich.Service, cat *catalog.Service, entityType, entityID string) http.HandlerFunc {
+func handleEntityExternalPreview(enrichSvc *enrich.Service, images *providerImageProxy, cat *catalog.Service, entityType, entityID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ok, err := cat.EntityExists(entityType, entityID)
 		if err != nil {
@@ -163,7 +163,7 @@ func handleEntityExternalPreview(enrichSvc *enrich.Service, cat *catalog.Service
 		}
 		ref := strings.TrimSpace(r.URL.Query().Get("ref"))
 		c, err := enrichSvc.PreviewEntityExternal(r.Context(), entityType, entityID, ref)
-		writeExternalPreview(w, c, err)
+		writeExternalPreview(w, images, c, err)
 	}
 }
 
@@ -272,7 +272,7 @@ func handleReleaseEntityLock(cat *catalog.Service, broker *events.Broker, entity
 // /shows|artists|albums/{id}/artworkCandidates?role=…, Admin-only). Same
 // SEARCH_UNAVAILABLE (503) semantics as the record search. Unknown parent → 404;
 // missing/invalid role → 400. Reads only.
-func handleEntityArtworkCandidates(enrichSvc *enrich.Service, cat *catalog.Service, entityType, entityID string) http.HandlerFunc {
+func handleEntityArtworkCandidates(enrichSvc *enrich.Service, images *providerImageProxy, cat *catalog.Service, entityType, entityID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ok, err := cat.EntityExists(entityType, entityID)
 		if err != nil {
@@ -299,7 +299,7 @@ func handleEntityArtworkCandidates(enrichSvc *enrich.Service, cat *catalog.Servi
 				"metadata provider image lookup failed — the source may be unreachable", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, toArtworkCandidatesJSON(role, cands))
+		writeJSON(w, http.StatusOK, toArtworkCandidatesJSON(images, role, cands))
 	}
 }
 
@@ -419,7 +419,7 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodGet,
-			requireAuth(deps.Auth, requireAdmin(handleEntityEnrichmentCandidates(deps.Enrich, deps.Catalog, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(handleEntityEnrichmentCandidates(deps.Enrich, deps.providerImages, deps.Catalog, entityType, id))))(w, r)
 		return true
 	}
 	// GET {id}/externalPreview?ref=: preview a pasted MusicBrainz/TMDB id-or-URL before
@@ -430,7 +430,7 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodGet,
-			requireAuth(deps.Auth, requireAdmin(handleEntityExternalPreview(deps.Enrich, deps.Catalog, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(handleEntityExternalPreview(deps.Enrich, deps.providerImages, deps.Catalog, entityType, id))))(w, r)
 		return true
 	}
 	// GET {id}/artworkCandidates?role=: list provider images for a role (Fix-label
@@ -441,7 +441,7 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodGet,
-			requireAuth(deps.Auth, requireAdmin(handleEntityArtworkCandidates(deps.Enrich, deps.Catalog, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(handleEntityArtworkCandidates(deps.Enrich, deps.providerImages, deps.Catalog, entityType, id))))(w, r)
 		return true
 	}
 	// PUT {id}/artwork: apply a picked provider image to a role + Lock it (Fix label).
