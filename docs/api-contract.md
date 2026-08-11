@@ -26,10 +26,13 @@ The server speaks **plain HTTP on `OBELO_LISTEN_ADDR`** (default `:8080`), and *
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OBELO_TLS_MODE` | `off` | `off` \| `files` \| `acme`. `files` serves HTTPS from an operator-supplied certificate. `acme` is a **reserved** name: it is a *known* value that fails startup with "not yet supported", so it will not need renaming when automatic certificates land. Any other value is a startup error, never a silent fallback to `off`. |
+| `OBELO_TLS_MODE` | `off` | `off` \| `files` \| `acme`. `files` serves HTTPS from an operator-supplied certificate; `acme` obtains one automatically over ACME/TLS-ALPN-01. Any other value is a startup error, never a silent fallback to `off`. |
 | `OBELO_TLS_CERT` | — | Absolute path to the PEM certificate chain (leaf first). Required in `files` mode. |
 | `OBELO_TLS_KEY` | — | Absolute path to the PEM private key. Required in `files` mode. |
 | `OBELO_TLS_LISTEN_ADDR` | `:8443` | `host:port` for HTTPS. Must differ from `OBELO_LISTEN_ADDR` — both listeners run at once. |
+| `OBELO_TLS_DOMAINS` | — | Comma-separated DNS names, matched exactly (no wildcards). **Required** in `acme` mode and deliberately without a permissive default: it is the CA host policy, and an absent one would let any SNI name trigger an issuance. |
+| `OBELO_ACME_EMAIL` | — | Optional contact registered with the ACME account, used by the CA for expiry notices. |
+| `OBELO_ACME_DIRECTORY` | Let's Encrypt production | ACME directory URL. Point at `https://acme-staging-v02.api.letsencrypt.org/directory` while setting up; production allows only five failed authorizations per name per hour. |
 
 What a client can rely on:
 
@@ -39,7 +42,8 @@ What a client can rely on:
 - **HTTP/2** is negotiated on the TLS listener (ALPN `h2`), which suits HLS: many small segment fetches multiplex over one connection. The plain-HTTP listener is HTTP/1.1.
 - **TLS 1.2 is the floor**, matching Apple's ATS requirement.
 - **No `Strict-Transport-Security`, on either listener**, and no `upgrade-insecure-requests` in the CSP. HSTS is sticky per hostname and the plain-HTTP LAN path still exists, so emitting it could lock a household out of its own server. Clients must not infer HTTPS support from headers; they connect to the port they were given.
-- **A certificate problem is a startup failure, not a degraded mode.** In `files` mode a missing, unreadable, or mismatched certificate stops the server with an error naming the path, rather than silently serving plain HTTP only. Renewed files are re-read while the server runs (no restart); a failed re-read keeps the previous certificate serving.
+- **`acme` needs exactly one forwarded port.** The TLS-ALPN-01 challenge completes on the HTTPS port; the server never listens on port 80 and never serves an HTTP-01 challenge path. Certificates are obtained on the first handshake for a listed name and renewed automatically; the ACME account key and issued keys live in `OBELO_DATA_DIR/acme` (mode `0700`) and must persist across restarts.
+- **The two modes fail in opposite directions, on purpose.** In `files` mode a missing, unreadable, or mismatched certificate is a **startup failure** with an error naming the path, because that is a typo the operator can fix and booting anyway would serve plain HTTP to someone who believes they have TLS. Renewed files are re-read while the server runs (no restart); a failed re-read keeps the previous certificate serving. In `acme` mode a certificate that cannot be obtained — CA unreachable, DNS not yet pointed, no port-forward, rate-limited — is **never** a startup failure: the server boots, the plain-HTTP listener serves as usual, the failure is logged, and issuance is retried on later handshakes. A client sees this as an HTTPS port that refuses to complete a handshake while the plain-HTTP port works normally.
 
 ### Error envelope
 

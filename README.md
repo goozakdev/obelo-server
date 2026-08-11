@@ -173,10 +173,13 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | Variable                             | Default   | Purpose                                                        |
 | ------------------------------------ | --------- | -------------------------------------------------------------- |
 | `OBELO_LISTEN_ADDR`               | `:8080`   | `host:port` the server binds to.                               |
-| `OBELO_TLS_MODE`                  | `off`     | `off` / `files`. `files` **adds** an HTTPS listener.           |
+| `OBELO_TLS_MODE`                  | `off`     | `off` / `files` / `acme`. Either **adds** an HTTPS listener.   |
 | `OBELO_TLS_CERT`                  | —         | Absolute path to the PEM certificate chain (`files` mode).     |
 | `OBELO_TLS_KEY`                   | —         | Absolute path to the PEM private key (`files` mode).           |
 | `OBELO_TLS_LISTEN_ADDR`           | `:8443`   | `host:port` for HTTPS; must differ from `OBELO_LISTEN_ADDR`.   |
+| `OBELO_TLS_DOMAINS`               | —         | Comma-separated DNS names. **Required** in `acme` mode.        |
+| `OBELO_ACME_EMAIL`                | —         | Optional contact for the CA's expiry notices.                  |
+| `OBELO_ACME_DIRECTORY`            | Let's Encrypt | ACME directory URL; point at staging while setting up.     |
 | `OBELO_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
 | `OBELO_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
 | `OBELO_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
@@ -192,7 +195,17 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 
 ### HTTPS
 
-Obelo can terminate TLS itself ([ADR-0041](./docs/adr/0041-native-tls-optional-alongside-plain-http.md)) — useful if you reach your server from outside the house by forwarding a port, with no reverse proxy in front. Point it at a certificate and key you already have:
+Obelo can terminate TLS itself ([ADR-0041](./docs/adr/0041-native-tls-optional-alongside-plain-http.md)) — useful if you reach your server from outside the house by forwarding a port, with no reverse proxy in front. There are two ways to get a certificate.
+
+**`acme` — Obelo gets one for you, automatically.** This is the one most households want. You need a domain name whose public DNS points at your house, and **one forwarded port**: the router's port 443 to `OBELO_TLS_LISTEN_ADDR`.
+
+```
+OBELO_TLS_MODE=acme
+OBELO_TLS_DOMAINS=media.example.com
+OBELO_ACME_EMAIL=you@example.com          # optional; the CA warns you before expiry
+```
+
+**`files` — you supply the certificate.** Any CA, including your own:
 
 ```
 OBELO_TLS_MODE=files
@@ -202,12 +215,19 @@ OBELO_TLS_KEY=/etc/letsencrypt/live/example.com/privkey.pem
 
 **HTTPS is an addition, never a replacement.** The plain-HTTP listener keeps serving `OBELO_LISTEN_ADDR` exactly as before, because no public CA will issue a certificate for a LAN address or a `.local` name — so the LAN, and the mDNS discovery that depends on it, goes on working unchanged while TLS covers the hop that leaves the house. Both listeners serve the same API, and a session created on one works on the other.
 
-Two things worth knowing:
+Things worth knowing about `acme` mode:
+
+- **Only one port has to be forwarded.** Obelo proves it controls your domain with the TLS-ALPN-01 challenge, which completes on the HTTPS port itself. Nothing needs port 80, and there is no second listener to set up.
+- **`OBELO_TLS_DOMAINS` is required, and it is an exact list.** Every name you want a certificate for goes in it, `www.` included; wildcards are not possible with this challenge type. There is no "any name" setting on purpose — without the list, the server would ask the CA for a certificate for whatever name any stranger's connection asked about, which spends your rate limit on other people's domains.
+- **Set it up against the staging directory first.** Let's Encrypt's production endpoint allows only five failed attempts per name per hour, so one wrong port-forward can lock you out for the rest of the afternoon. Point `OBELO_ACME_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory` while you get DNS and the router right, then remove it. Staging certificates come from an untrusted root, so your browser will warn — that warning *is* the success signal — and switching to production issues a fresh, real certificate.
+- **A certificate that cannot be obtained does NOT stop the server.** If the CA is unreachable, DNS has not propagated, the port-forward is not set up yet, or you are rate-limited, Obelo boots anyway, keeps serving plain HTTP on the LAN, logs the reason, and keeps trying. A CA outage is not your mistake, and it should not cost you your media server.
+- **Keep the data directory.** The ACME account key and every issued private key live in `OBELO_DATA_DIR/acme` (mode `0700`). If that directory is wiped on each restart — a container without a volume, or a tmpfs — Obelo re-issues every time and will hit the CA's duplicate-certificate limit within days.
+- **Renewal is automatic** and needs nothing from you.
+
+And about `files` mode:
 
 - **Renewals are picked up without a restart.** The certificate files are re-read when they change, so a certbot renewal takes effect on the next connection. If a renewal leaves a file half-written, the previous certificate keeps serving and the problem is logged rather than taking the listener down.
-- **A broken certificate stops the boot.** If you turn `files` mode on and the certificate is missing, unreadable, or does not match the key, the server refuses to start and says which path is wrong. That is deliberate: starting anyway would leave you on plain HTTP believing you had TLS.
-
-`OBELO_TLS_MODE=acme` (automatic certificates) is a reserved name and not implemented yet; it is rejected at startup rather than silently ignored.
+- **A broken certificate stops the boot.** If you turn `files` mode on and the certificate is missing, unreadable, or does not match the key, the server refuses to start and says which path is wrong. That is deliberate, and it is the opposite of the `acme` behaviour above for a reason: a path that is wrong is a typo you can fix in ten seconds, and starting anyway would leave you on plain HTTP believing you had TLS. A CA being down is nobody's typo.
 
 Provider keys and language seed the database only on **first boot** — afterward
 you manage providers from the admin settings UI (no restart needed). Obelo
