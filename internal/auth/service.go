@@ -107,20 +107,29 @@ type Service struct {
 	// expire would never be written, which means the expiry would never be tested.
 	now func() time.Time
 
-	// The per-boot brute-force counters. All three are the same fixed-window
-	// failureLimiter (failure_limiter.go); what differs is what they are keyed by
-	// and how generous they are.
+	// The per-boot abuse counters. All four are the same fixedWindowLimiter
+	// (fixed_window_limiter.go); what differs is what they are keyed by, how
+	// generous they are, and — this is the one that is easy to misread — WHAT THEY
+	// COUNT.
 	//
-	//   approveFails   — device-code approve, keyed by User (that endpoint is
-	//                    authenticated, so there is always one). See device_auth.go.
-	//   loginUserFails — password login, keyed by the submitted username.
-	//   loginIPFails   — password login, keyed by client IP.
+	//   approveFails      — device-code approve FAILURES, keyed by User (that
+	//                       endpoint is authenticated, so there is always one).
+	//   loginUserFails    — password login failures, keyed by submitted username.
+	//   loginIPFails      — password login failures, keyed by client IP.
+	//   deviceStartQuota  — device-code starts that SUCCEEDED, keyed by client IP.
+	//
+	// The first three are free until somebody is wrong repeatedly. The fourth is a
+	// quota on a scarce resource rather than a penalty for being wrong, because a
+	// successful start is exactly what consumes a slot in the live code space; see
+	// maxDeviceAuthStartsPerSource in device_auth.go for why that difference forces
+	// a different number.
 	//
 	// Login checks BOTH of its counters and refuses if either is over; see
 	// login_limit.go for why one without the other is not a control.
-	approveFails   *failureLimiter
-	loginUserFails *failureLimiter
-	loginIPFails   *failureLimiter
+	approveFails     *fixedWindowLimiter
+	loginUserFails   *fixedWindowLimiter
+	loginIPFails     *fixedWindowLimiter
+	deviceStartQuota *fixedWindowLimiter
 }
 
 // Option configures the Service. Present for the clock seam; NewService's
@@ -138,11 +147,12 @@ func WithClock(now func() time.Time) Option {
 // bootstrap to log); otherwise the claim token is empty and setup is closed.
 func NewService(s Store, opts ...Option) (*Service, error) {
 	svc := &Service{
-		store:          s,
-		now:            time.Now,
-		approveFails:   newFailureLimiter(approveFailureLimit, approveFailureWindow),
-		loginUserFails: newFailureLimiter(loginUserFailureLimit, loginFailureWindow),
-		loginIPFails:   newFailureLimiter(loginIPFailureLimit, loginFailureWindow),
+		store:            s,
+		now:              time.Now,
+		approveFails:     newFixedWindowLimiter(approveFailureLimit, approveFailureWindow),
+		loginUserFails:   newFixedWindowLimiter(loginUserFailureLimit, loginFailureWindow),
+		loginIPFails:     newFixedWindowLimiter(loginIPFailureLimit, loginFailureWindow),
+		deviceStartQuota: newFixedWindowLimiter(maxDeviceAuthStartsPerSource, deviceAuthStartWindow),
 	}
 	for _, opt := range opts {
 		opt(svc)

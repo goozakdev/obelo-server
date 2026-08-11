@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,12 +60,21 @@ func tvDevice() auth.DeviceInput {
 	return auth.DeviceInput{Name: "Living Room TV", Platform: "tvos", ClientID: "tv-client-1"}
 }
 
+// Source addresses for the per-source start quota. Drawn from the documentation
+// ranges (RFC 5737) so nothing here can be mistaken for a real host, and kept
+// apart from each other so "a different source is unaffected" is a claim these
+// tests can actually make.
+const (
+	tvSourceIP    = "192.0.2.10"
+	otherSourceIP = "198.51.100.7"
+)
+
 // TestDeviceAuthHappyPath walks the whole grant: the TV starts, polls once and
 // is told to wait, the phone approves, the TV polls again and gets a session.
 func TestDeviceAuthHappyPath(t *testing.T) {
 	svc, clock, admin := newFixture(t)
 
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -123,7 +133,7 @@ func TestDeviceAuthHappyPath(t *testing.T) {
 func TestDeviceCodeIsOneShot(t *testing.T) {
 	svc, clock, admin := newFixture(t)
 
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -144,7 +154,7 @@ func TestDeviceCodeIsOneShot(t *testing.T) {
 func TestDeviceCodeExpires(t *testing.T) {
 	svc, clock, admin := newFixture(t)
 
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -168,7 +178,7 @@ func TestDeviceCodeExpires(t *testing.T) {
 func TestExpiryComparesAcrossTheDatetimeFormatBoundary(t *testing.T) {
 	svc, clock, _ := newFixture(t)
 
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -185,7 +195,7 @@ func TestExpiryComparesAcrossTheDatetimeFormatBoundary(t *testing.T) {
 func TestDeviceAuthSlowDown(t *testing.T) {
 	svc, _, _ := newFixture(t)
 
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -205,7 +215,7 @@ func TestDeviceAuthSlowDown(t *testing.T) {
 func TestExpiryOutranksSlowDown(t *testing.T) {
 	svc, clock, _ := newFixture(t)
 
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -241,7 +251,7 @@ func TestApproveRateLimit(t *testing.T) {
 
 	// While limited, even the RIGHT code is refused — otherwise the limiter would
 	// be a speed bump rather than a limit.
-	start, err := svc.StartDeviceAuth(tvDevice())
+	start, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -256,7 +266,7 @@ func TestApproveRateLimit(t *testing.T) {
 	// limited for a minutes-long window has long since lost the 5-minute code on
 	// the TV screen, and starts over there anyway.
 	clock.advance(approveWindowGap)
-	fresh, err := svc.StartDeviceAuth(tvDevice())
+	fresh, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP)
 	if err != nil {
 		t.Fatalf("start after the window reopened: %v", err)
 	}
@@ -273,7 +283,7 @@ func TestApproveRateLimitCountsOnlyFailures(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		start, err := svc.StartDeviceAuth(auth.DeviceInput{
 			Name: "TV", Platform: "tvos", ClientID: "tv",
-		})
+		}, tvSourceIP)
 		if err != nil {
 			t.Fatalf("start %d: %v", i, err)
 		}
@@ -305,7 +315,7 @@ func TestUserCodeAlphabetExcludesConfusables(t *testing.T) {
 		clock.advance(deviceAuthTTLGap)
 		start, err := svc.StartDeviceAuth(auth.DeviceInput{
 			Name: "TV", Platform: "tvos", ClientID: "tv",
-		})
+		}, tvSourceIP)
 		if err != nil {
 			t.Fatalf("start %d: %v", i, err)
 		}
@@ -343,6 +353,141 @@ func TestNormalizeUserCode(t *testing.T) {
 	}
 }
 
+// --- the caps on starting a flow -------------------------------------------
+//
+// POST /auth/device/code takes no credential, by design (ADR-0036), so these two
+// caps are the only things standing between an anonymous caller and every TV in
+// the house. They are tested here rather than over HTTP because both are sized in
+// the hundreds and one of them is a time window; the api tests cover the wire.
+
+// startUntilRefused starts flows from ip until one is refused, and returns how
+// many succeeded first along with the refusal. It gives up at probe attempts so a
+// cap that stopped capping fails the test instead of looping forever.
+func startUntilRefused(t *testing.T, svc *auth.Service, ip string, probe int) (succeeded int, refusal error) {
+	t.Helper()
+	for i := 0; i < probe; i++ {
+		if _, err := svc.StartDeviceAuth(tvDevice(), ip); err != nil {
+			return succeeded, err
+		}
+		succeeded++
+	}
+	t.Fatalf("%d starts from %s and none was refused; a cap has stopped capping", probe, ip)
+	return 0, nil
+}
+
+// TestDeviceStartQuotaRefusesOneNoisySource is the whole point of the quota.
+// Before it existed, one unauthenticated caller could hold every slot in the code
+// space and lock the household's TVs out indefinitely for the price of 32
+// requests every five minutes.
+//
+// The assertions are about SHAPE, not about the constant (this package exports
+// neither), and each one is a separate property:
+//
+//   - the refusal arrives at all, so one address cannot own the pool;
+//   - it is a throttle rather than "the server is busy", so a client learns that
+//     backing off is what helps and retrying is what does not;
+//   - it carries a usable Retry-After, so the client need not guess;
+//   - and it arrives only after MORE than the old global cap of 32. That last one
+//     is the reverse-proxy guard: behind a proxy every request in the world keys
+//     to the same address, so this quota becomes the global cap, and a quota below
+//     32 would ship a regression as a security fix.
+func TestDeviceStartQuotaRefusesOneNoisySource(t *testing.T) {
+	svc, _, _ := newFixture(t)
+
+	succeeded, refusal := startUntilRefused(t, svc, tvSourceIP, startQuotaProbe)
+
+	if !errors.Is(refusal, auth.ErrDeviceAuthThrottled) {
+		t.Fatalf("start %d from one address = %v, want ErrDeviceAuthThrottled "+
+			"(ErrDeviceAuthBusy would mean one source can still exhaust the whole pool)",
+			succeeded+1, refusal)
+	}
+	if succeeded <= oldGlobalLiveCap {
+		t.Errorf("one address got %d codes before being refused, want more than the %d "+
+			"the entire server used to allow — behind a reverse proxy this quota IS the "+
+			"global cap, so anything at or below that makes proxied deployments worse",
+			succeeded, oldGlobalLiveCap)
+	}
+
+	var throttled *auth.DeviceAuthThrottledError
+	if !errors.As(refusal, &throttled) {
+		t.Fatalf("refusal %v carries no retry-after; the 429 would have nothing to say", refusal)
+	}
+	if throttled.RetryAfter <= 0 || throttled.RetryAfter > deviceAuthTTLGap {
+		t.Errorf("retry-after = %v, want a positive duration inside the window", throttled.RetryAfter)
+	}
+}
+
+// TestDeviceStartQuotaSpendsOnlyTheOffendersBudget: the quota has to be a
+// per-source bound and not a global one in disguise, or it would be the busy cap
+// again with a different error code. A household TV on its own LAN address must
+// be untouched by whatever the noisy address did.
+func TestDeviceStartQuotaSpendsOnlyTheOffendersBudget(t *testing.T) {
+	svc, _, _ := newFixture(t)
+
+	if _, refusal := startUntilRefused(t, svc, tvSourceIP, startQuotaProbe); !errors.Is(refusal, auth.ErrDeviceAuthThrottled) {
+		t.Fatalf("exhausting the noisy source = %v, want ErrDeviceAuthThrottled", refusal)
+	}
+	if _, err := svc.StartDeviceAuth(tvDevice(), otherSourceIP); err != nil {
+		t.Fatalf("start from a second address after the first was throttled: %v — "+
+			"one caller must not be able to spend everyone else's budget", err)
+	}
+}
+
+// TestDeviceStartQuotaWindowReopens: the refusal is a delay, not a ban. Nothing
+// clears this state but time — there is no admin unlock and no restart to wait
+// on — so a window that never reopened would be the outage it exists to prevent.
+func TestDeviceStartQuotaWindowReopens(t *testing.T) {
+	svc, clock, _ := newFixture(t)
+
+	if _, refusal := startUntilRefused(t, svc, tvSourceIP, startQuotaProbe); !errors.Is(refusal, auth.ErrDeviceAuthThrottled) {
+		t.Fatalf("exhausting the source = %v, want ErrDeviceAuthThrottled", refusal)
+	}
+
+	// One step past the window. It also outlives every code just minted, which is
+	// not a coincidence to fix: the quota window is the code TTL, so a caller who
+	// waits out the quota has necessarily lost the codes it was holding anyway.
+	clock.advance(deviceAuthTTLGap)
+	if _, err := svc.StartDeviceAuth(tvDevice(), tvSourceIP); err != nil {
+		t.Fatalf("start after the window reopened: %v", err)
+	}
+}
+
+// TestDeviceAuthBusyStillRefusesWhenTheSpaceIsFull pins the OTHER cap, which the
+// quota is layered on top of rather than replacing. Filling it now takes a spread
+// of source addresses — that is the quota working — and what must still happen at
+// the end is a 503-shaped refusal, not a throttle: the caller is within its own
+// budget and the server genuinely has nothing to give it.
+func TestDeviceAuthBusyStillRefusesWhenTheSpaceIsFull(t *testing.T) {
+	svc, _, _ := newFixture(t)
+
+	// The clock never moves, so nothing expires and every successful start stays
+	// live. Sources rotate every startsPerFloodSource so no single one is throttled
+	// before the pool fills.
+	var succeeded int
+	var refusal error
+	for i := 0; i < globalCapProbe; i++ {
+		ip := fmt.Sprintf("192.0.2.%d", i/startsPerFloodSource)
+		if _, err := svc.StartDeviceAuth(tvDevice(), ip); err != nil {
+			refusal = err
+			break
+		}
+		succeeded++
+	}
+	if !errors.Is(refusal, auth.ErrDeviceAuthBusy) {
+		t.Fatalf("after %d starts across many addresses err = %v, want ErrDeviceAuthBusy", succeeded, refusal)
+	}
+	if succeeded <= oldGlobalLiveCap {
+		t.Errorf("the code space filled after %d live codes, want more than the old %d — "+
+			"the cap may be raised but lowering it makes the lockout cheaper", succeeded, oldGlobalLiveCap)
+	}
+
+	// A source that has never been seen is refused too, which is what makes this
+	// the GLOBAL cap rather than the per-source quota answering under another name.
+	if _, err := svc.StartDeviceAuth(tvDevice(), otherSourceIP); !errors.Is(err, auth.ErrDeviceAuthBusy) {
+		t.Errorf("start from an unseen address with the space full = %v, want ErrDeviceAuthBusy", err)
+	}
+}
+
 // Test-local time steps, named for what they are past rather than for their
 // value — these must stay comfortably beyond the service's own constants, which
 // are unexported, so the tests state the intent instead of restating the number.
@@ -354,4 +499,24 @@ const (
 	deviceAuthTTLGap = 6 * time.Minute
 	// approveWindowGap outlives the approve rate-limit window.
 	approveWindowGap = 6 * time.Minute
+)
+
+// Bounds for the cap tests. Same rule as the time steps above: comfortably past
+// the service's own numbers without restating them, so raising a cap does not
+// silently turn one of these loops into an infinite one or a false pass.
+const (
+	// oldGlobalLiveCap is what maxLiveDeviceAuthRequests was before the per-source
+	// quota existed, and the floor both caps are held above. It is a historical
+	// fact rather than a current constant, which is why it is safe to write down:
+	// it is the cost of the lockout this work was fixing, and neither cap may ever
+	// make that cheaper again.
+	oldGlobalLiveCap = 32
+	// startQuotaProbe bounds the per-source loops.
+	startQuotaProbe = 512
+	// globalCapProbe bounds the fill-the-space loop.
+	globalCapProbe = 4096
+	// startsPerFloodSource is how many starts that loop takes from one address
+	// before rotating. Well under the per-source quota, so the global cap is what
+	// it measures.
+	startsPerFloodSource = 32
 )

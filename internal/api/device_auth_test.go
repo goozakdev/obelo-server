@@ -3,8 +3,10 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -275,6 +277,137 @@ func TestDeviceCodeRequiresClientID(t *testing.T) {
 			status, env.Error.Code, raw)
 	}
 }
+
+// --- the two ways a start can be refused ------------------------------------
+//
+// Both caps are sized and reasoned about in auth/device_auth.go, and both are
+// tested there where the clock can be moved. What is HERE is the wire: a client
+// has to be able to tell "you are asking too often" from "the server has nothing
+// left", because the correct behaviour differs — back off versus retry — and the
+// only thing carrying that distinction across the wire is the status and code.
+
+// startFrom runs POST /auth/device/code as if it arrived from remoteAddr,
+// returning the status, the response headers, and the decoded error envelope.
+// It goes through JSONFrom rather than the listener because every request over
+// the listener arrives from 127.0.0.1, which would make "per source" untestable.
+func startFrom(t *testing.T, srv *testharness.Server, remoteAddr string) (int, http.Header, errEnvelope) {
+	t.Helper()
+	var env errEnvelope
+	status, header, _ := srv.JSONFrom(http.MethodPost, "/api/v1/auth/device/code", "",
+		remoteAddr, nil, tvDeviceBody(), &env)
+	return status, header, env
+}
+
+// startUntilRefusedFrom hammers the start endpoint from one address until it is
+// refused, and returns that refusal. probe bounds the loop so a cap that stopped
+// capping fails the test rather than running forever.
+func startUntilRefusedFrom(t *testing.T, srv *testharness.Server, remoteAddr string, probe int) (int, http.Header, errEnvelope) {
+	t.Helper()
+	for i := 0; i < probe; i++ {
+		status, header, env := startFrom(t, srv, remoteAddr)
+		if status != http.StatusCreated {
+			return status, header, env
+		}
+	}
+	t.Fatalf("%d starts from %s and none was refused", probe, remoteAddr)
+	return 0, nil, errEnvelope{}
+}
+
+// TestDeviceCodeQuotaAnswers429WithRetryAfter covers the refusal a client can do
+// something about. It is a 429 and not the 503 below on purpose: 503 means the
+// server is full and a retry may work at any moment, while 429 means this caller
+// is over its own budget and retrying is the one thing that makes it worse. The
+// Retry-After is what lets a TV wait exactly long enough instead of guessing.
+func TestDeviceCodeQuotaAnswers429WithRetryAfter(t *testing.T) {
+	srv := testharness.New(t)
+
+	status, header, env := startUntilRefusedFrom(t, srv, "192.0.2.10:51000", deviceStartProbe)
+	if status != http.StatusTooManyRequests || env.Error.Code != "TOO_MANY_ATTEMPTS" {
+		t.Fatalf("over-quota start = %d/%s, want 429/TOO_MANY_ATTEMPTS", status, env.Error.Code)
+	}
+	retry, err := strconv.Atoi(header.Get("Retry-After"))
+	if err != nil {
+		t.Fatalf("Retry-After = %q, want whole seconds: %v", header.Get("Retry-After"), err)
+	}
+	if retry < 1 {
+		t.Errorf("Retry-After = %d; zero or negative reads as 'go ahead now', which is "+
+			"the one thing this response means to deny", retry)
+	}
+
+	// A different address is untouched. Behind a reverse proxy this is the case
+	// that cannot happen — every request keys to the proxy — which is exactly why
+	// the quota is sized above the old global cap rather than tuned for a household.
+	if status, _, env := startFrom(t, srv, "198.51.100.7:51000"); status != http.StatusCreated {
+		t.Errorf("start from a second address = %d/%s, want 201", status, env.Error.Code)
+	}
+}
+
+// TestDeviceCodeQuotaIgnoresForwardedHeaders is the reason the quota is worth
+// anything at all. clientIP reads RemoteAddr and never X-Forwarded-For, because
+// nothing configures which upstream may assert an origin — so a caller who could
+// mint a fresh "address" per request would face a quota that is decorative.
+//
+// The cost of that choice is real and is accepted elsewhere: behind a genuine
+// reverse proxy every request shares one budget. See clientIP in middleware.go.
+func TestDeviceCodeQuotaIgnoresForwardedHeaders(t *testing.T) {
+	srv := testharness.New(t)
+
+	if status, _, env := startUntilRefusedFrom(t, srv, "192.0.2.10:51000", deviceStartProbe); status != http.StatusTooManyRequests {
+		t.Fatalf("over-quota start = %d/%s, want 429", status, env.Error.Code)
+	}
+
+	var env errEnvelope
+	spoofed := http.Header{"X-Forwarded-For": []string{"203.0.113.99"}, "X-Real-IP": []string{"203.0.113.99"}}
+	status, _, _ := srv.JSONFrom(http.MethodPost, "/api/v1/auth/device/code", "",
+		"192.0.2.10:51000", spoofed, tvDeviceBody(), &env)
+	if status != http.StatusTooManyRequests {
+		t.Errorf("start with a spoofed X-Forwarded-For = %d, want 429 — a client that can "+
+			"claim its own source address has no quota at all", status)
+	}
+}
+
+// TestDeviceCodeBusyAnswers503 keeps the pre-existing refusal reachable and
+// tested. Filling the code space now takes a spread of source addresses, which is
+// the per-source quota doing its job; what must come back at the end is still a
+// 503 DEVICE_AUTH_BUSY, addressed to a caller that has done nothing wrong.
+func TestDeviceCodeBusyAnswers503(t *testing.T) {
+	srv := testharness.New(t)
+
+	var filled int
+	var status int
+	var env errEnvelope
+	for i := 0; i < deviceSpaceProbe; i++ {
+		addr := fmt.Sprintf("192.0.2.%d:51000", i/deviceStartsPerAddr)
+		status, _, env = startFrom(t, srv, addr)
+		if status != http.StatusCreated {
+			break
+		}
+		filled++
+	}
+	if status != http.StatusServiceUnavailable || env.Error.Code != "DEVICE_AUTH_BUSY" {
+		t.Fatalf("start after %d live codes = %d/%s, want 503/DEVICE_AUTH_BUSY",
+			filled, status, env.Error.Code)
+	}
+	// And no Retry-After: nothing here knows when a slot frees up, and inventing a
+	// number would be a promise the server cannot keep.
+	if _, _, env := startFrom(t, srv, "198.51.100.7:51000"); env.Error.Code != "DEVICE_AUTH_BUSY" {
+		t.Errorf("an unseen address with the space full got %s, want DEVICE_AUTH_BUSY", env.Error.Code)
+	}
+}
+
+// Loop bounds for the two cap tests. Named rather than inlined for the same
+// reason the service-level tests name theirs: they must stay comfortably past the
+// server's own constants without restating them.
+const (
+	// deviceStartProbe bounds a single address's run at the per-source quota.
+	deviceStartProbe = 512
+	// deviceSpaceProbe bounds the fill-the-code-space loop.
+	deviceSpaceProbe = 4096
+	// deviceStartsPerAddr is how many starts that loop takes from one address
+	// before rotating, well under the per-source quota so the global cap is what
+	// it ends up measuring.
+	deviceStartsPerAddr = 32
+)
 
 // TestVerificationURIMatchesTheRequestHost pins what the QR encodes. The phone
 // must reach the SAME server the TV reached, and the server cannot know its own
