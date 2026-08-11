@@ -11,6 +11,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -106,10 +107,20 @@ type Service struct {
 	// expire would never be written, which means the expiry would never be tested.
 	now func() time.Time
 
-	// approveFails is the per-boot brute-force counter for the device-code approve
-	// endpoint. See device_auth.go for why it is in memory and keyed by User.
-	approveMu    sync.Mutex
-	approveFails map[string]*approveAttempts
+	// The per-boot brute-force counters. All three are the same fixed-window
+	// failureLimiter (failure_limiter.go); what differs is what they are keyed by
+	// and how generous they are.
+	//
+	//   approveFails   — device-code approve, keyed by User (that endpoint is
+	//                    authenticated, so there is always one). See device_auth.go.
+	//   loginUserFails — password login, keyed by the submitted username.
+	//   loginIPFails   — password login, keyed by client IP.
+	//
+	// Login checks BOTH of its counters and refuses if either is over; see
+	// login_limit.go for why one without the other is not a control.
+	approveFails   *failureLimiter
+	loginUserFails *failureLimiter
+	loginIPFails   *failureLimiter
 }
 
 // Option configures the Service. Present for the clock seam; NewService's
@@ -127,9 +138,11 @@ func WithClock(now func() time.Time) Option {
 // bootstrap to log); otherwise the claim token is empty and setup is closed.
 func NewService(s Store, opts ...Option) (*Service, error) {
 	svc := &Service{
-		store:        s,
-		now:          time.Now,
-		approveFails: map[string]*approveAttempts{},
+		store:          s,
+		now:            time.Now,
+		approveFails:   newFailureLimiter(approveFailureLimit, approveFailureWindow),
+		loginUserFails: newFailureLimiter(loginUserFailureLimit, loginFailureWindow),
+		loginIPFails:   newFailureLimiter(loginIPFailureLimit, loginFailureWindow),
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -179,7 +192,11 @@ func (s *Service) SetupRequired() (bool, error) {
 // once any User exists (ErrSetupClosed) or if the token is wrong/absent
 // (ErrInvalidClaimToken). On success the in-memory claim token is cleared so it
 // cannot be reused. The comparison is constant-time.
-func (s *Service) Setup(claimToken, username, password string) (store.User, error) {
+//
+// ctx is threaded in for the KDF meter (password.go), and only reaches it after
+// the claim token has already been checked — a caller with the wrong token never
+// gets as far as costing us a derivation.
+func (s *Service) Setup(ctx context.Context, claimToken, username, password string) (store.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -198,7 +215,7 @@ func (s *Service) Setup(claimToken, username, password string) (store.User, erro
 		return store.User{}, fmt.Errorf("auth: username and password are required")
 	}
 
-	hash, err := HashPassword(password)
+	hash, err := HashPasswordContext(ctx, password)
 	if err != nil {
 		return store.User{}, err
 	}
@@ -231,21 +248,53 @@ type DeviceInput struct {
 // clientId (no duplicates), mints a fresh opaque token, stores only its hash,
 // and returns the raw token to the caller. A bad username or password both
 // yield ErrInvalidCredentials.
-func (s *Service) Login(username, password string, dev DeviceInput) (LoginResult, error) {
+//
+// clientIP is the caller's source address, and the auth package takes it as a
+// plain string precisely so it can stay transport-agnostic — deriving it is the
+// api layer's job (see clientIP there for why it is RemoteAddr and never
+// X-Forwarded-For). Pass "" if there genuinely is none; those callers then share
+// one bucket in the per-IP counter, which is stricter, not looser.
+//
+// Too many recent FAILURES from this username or this address yield
+// ErrTooManyLoginAttempts, returned before any credential work — see
+// login_limit.go. A successful login charges nothing, so a household that types
+// its passwords correctly never meets the limiter at all.
+func (s *Service) Login(ctx context.Context, username, password string, dev DeviceInput, clientIP string) (LoginResult, error) {
 	if dev.ClientID == "" {
 		return LoginResult{}, fmt.Errorf("auth: device.clientId is required")
 	}
 
+	// Before the user lookup, before the KDF, before anything that could differ
+	// between a real username and a made-up one. This ordering is the whole reason
+	// the refusal leaks nothing.
+	if err := s.refuseLogin(username, clientIP); err != nil {
+		return LoginResult{}, err
+	}
+
 	user, err := s.store.UserByUsername(username)
 	if errors.Is(err, store.ErrNotFound) {
-		// Run a verification anyway to keep timing roughly uniform, then fail.
-		_ = VerifyPassword(dummyHash, password)
+		// Run a verification anyway to keep timing roughly uniform, then fail. It
+		// goes through VerifyPasswordContext like the real one, so it queues on the
+		// same KDF semaphore: a dummy verify that skipped the queue would return
+		// instantly under load while a real one waited, which is the timing
+		// difference this call exists to erase, reintroduced by the fix for a
+		// different problem.
+		if verr := VerifyPasswordContext(ctx, dummyHash, password); kdfAbandoned(verr) {
+			return LoginResult{}, verr
+		}
+		s.chargeLoginFailure(username, clientIP)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err != nil {
+		// A store failure is our fault, not the caller's; charging it would let a
+		// sick database lock out the people trying to use it.
 		return LoginResult{}, err
 	}
-	if err := VerifyPassword(user.PasswordHash, password); err != nil {
+	if verr := VerifyPasswordContext(ctx, user.PasswordHash, password); verr != nil {
+		if kdfAbandoned(verr) {
+			return LoginResult{}, verr
+		}
+		s.chargeLoginFailure(username, clientIP)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
@@ -258,6 +307,13 @@ func (s *Service) Login(username, password string, dev DeviceInput) (LoginResult
 // dummyHash is a valid hash of a random value, used to equalize login timing
 // when the username is unknown so attackers can't distinguish "no such user"
 // from "wrong password" by response time.
+//
+// It is derived once, at package initialization, via the uncancellable
+// HashPassword — there is no request to hang up on here, and the KDF semaphore it
+// takes is uncontended because nothing is serving yet. Do not make this lazy: a
+// first-use derivation would make the very first unknown-username login slower
+// than every one after it, which is a timing difference in the function whose job
+// is not having one.
 var dummyHash = func() string {
 	h, err := HashPassword("dummy-password-for-timing-equalization")
 	if err != nil {
@@ -326,8 +382,10 @@ func (s *Service) DeleteDevice(caller store.User, deviceID string) error {
 // CreateUser mints a User with the given role (defaulting to Member when role
 // is empty), hashing the password here so no plaintext leaves the caller. A
 // duplicate username yields ErrUsernameTaken; an empty username/password or an
-// unknown role yields ErrInvalidUser.
-func (s *Service) CreateUser(username, password, role string) (store.User, error) {
+// unknown role yields ErrInvalidUser. ctx is threaded in for the KDF meter
+// (password.go): this is an Admin-only endpoint, but it hashes, and every path
+// into argon2 queues in the same line.
+func (s *Service) CreateUser(ctx context.Context, username, password, role string) (store.User, error) {
 	if username == "" || password == "" {
 		return store.User{}, ErrInvalidUser
 	}
@@ -337,7 +395,7 @@ func (s *Service) CreateUser(username, password, role string) (store.User, error
 	if role != RoleAdmin && role != RoleMember {
 		return store.User{}, ErrInvalidUser
 	}
-	hash, err := HashPassword(password)
+	hash, err := HashPasswordContext(ctx, password)
 	if err != nil {
 		return store.User{}, err
 	}
@@ -366,12 +424,13 @@ func (s *Service) User(id string) (store.User, error) {
 }
 
 // SetPassword resets a User's password (Admin recovery). ErrInvalidUser for an
-// empty password; ErrUserNotFound for an unknown User.
-func (s *Service) SetPassword(id, password string) error {
+// empty password; ErrUserNotFound for an unknown User. ctx is threaded in for the
+// KDF meter (password.go), same as CreateUser.
+func (s *Service) SetPassword(ctx context.Context, id, password string) error {
 	if password == "" {
 		return ErrInvalidUser
 	}
-	hash, err := HashPassword(password)
+	hash, err := HashPasswordContext(ctx, password)
 	if err != nil {
 		return err
 	}

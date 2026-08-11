@@ -191,7 +191,9 @@ Errors: `400 BAD_REQUEST` (bad body / missing fields / collision), `403 SETUP_CL
 ```
 
 Side effect: sets the `ms_media` cookie with the same token.
-Errors: `400 BAD_REQUEST` (`"device.clientId is required"` / bad body), `401 INVALID_CREDENTIALS`, `500`.
+Errors: `400 BAD_REQUEST` (`"device.clientId is required"` / bad body), `401 INVALID_CREDENTIALS`, `429 TOO_MANY_ATTEMPTS`, `500`.
+
+**Rate limited.** Repeated *failures* — never successes — are counted per username **and** per client IP, and either counter going over refuses further attempts for a fixed window with `429 TOO_MANY_ATTEMPTS` and a `Retry-After` (seconds). The refusal is identical for a known and an unknown username, so it is not a username oracle, and it precedes the credential check, so the correct password is refused too while the window is open. Clients should surface the wait rather than retry-loop; a retry loop is what the limit exists to stop.
 
 #### Device authorization grant — signing a TV in from a phone ([ADR-0036](./adr/0036-device-authorization-grant-for-tv-sign-in.md))
 
