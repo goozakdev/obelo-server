@@ -347,14 +347,16 @@ func TestNativeTLSSessionCookieAndPlainHTTPSideBySide(t *testing.T) {
 		t.Errorf("login arrived over %s, want HTTP/2.0 on the TLS listener", resp.Proto)
 	}
 
+	// The HTTPS listener's cookie name (the plain listener writes a different one;
+	// see TestMediaCookieNamesDoNotCollideAcrossListeners for why they must differ).
 	var cookie *http.Cookie
 	for _, c := range resp.Cookies() {
-		if c.Name == "ms_media" {
+		if c.Name == "__Secure-ms_media" {
 			cookie = c
 		}
 	}
 	if cookie == nil {
-		t.Fatalf("the HTTPS login set no ms_media cookie; body: %s", raw)
+		t.Fatalf("the HTTPS login set no __Secure-ms_media cookie; body: %s", raw)
 	}
 	if !cookie.Secure {
 		t.Error("ms_media Secure = false on a request that arrived over the server's own TLS listener — requestIsHTTPS is not seeing r.TLS")
@@ -390,6 +392,164 @@ func TestNativeTLSSessionCookieAndPlainHTTPSideBySide(t *testing.T) {
 	if got := plainResp.Header.Get("Strict-Transport-Security"); got != "" {
 		t.Errorf("plain-HTTP response carries Strict-Transport-Security = %q, want it ABSENT", got)
 	}
+}
+
+// TestMediaCookieNamesDoNotCollideAcrossListeners is the regression test for the
+// bug the cookie-name split fixes: with BOTH listeners writing the name
+// "ms_media" at Path=/api/v1, one HTTPS login permanently broke browser media on
+// the plain-HTTP origin, because a cookie jar is partitioned by neither scheme
+// nor port and RFC 6265bis §5.7 ("leave secure cookies alone", implemented by
+// every current browser) makes a non-secure origin unable to overwrite a Secure
+// cookie of the same name. The plain listener went on issuing a correct cookie,
+// the browser went on discarding it, and every <img>/<video> 401ed while the rest
+// of the page — bearer-authenticated out of an origin-scoped localStorage — kept
+// working, so nothing pointed at the cookie.
+//
+// Go's cookiejar implements RFC 6265, not the 6265bis protection, so no Go client
+// can reproduce the browser's refusal. What CAN be pinned, and is what the browser
+// rule actually keys on, is the precondition: the two listeners must never write
+// the same (name, path) pair, and each must accept the cookie its own scheme
+// issued. That is what this asserts, against both real listeners.
+//
+// The one thing to preserve if this test is ever rewritten: assert the NAMES, not
+// just the Secure flag. Secure was always set correctly — internal/api/cookie.go
+// has tracked the request's real scheme since ADR-0041 — and the bug lived
+// entirely in the name the two listeners shared.
+func TestMediaCookieNamesDoNotCollideAcrossListeners(t *testing.T) {
+	const (
+		secureName = "__Secure-ms_media"
+		plainName  = "ms_media_plain"
+		legacyName = "ms_media" // the shared name that caused the collision
+	)
+
+	h := testharness.New(t)
+	status, body := h.JSON(http.MethodPost, "/api/v1/setup", "", map[string]any{
+		"claimToken": h.ClaimToken(),
+		"username":   "brandon",
+		"password":   "hunter2hunter2",
+	}, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("setup status = %d, want 201; body: %s", status, body)
+	}
+
+	certFile, keyFile, pool := writeKeyPairForTest(t, t.TempDir(), "obelo.test")
+	servers, err := newServers(tlsConfigForTest(certFile, keyFile), h.Handler(), func() {})
+	if err != nil {
+		t.Fatalf("newServers: %v", err)
+	}
+	addrs := startServers(t, servers)
+	httpAddr, httpsAddr := addrs[0], addrs[1]
+
+	// One browser, both origins: log in over each listener the way a user does.
+	httpsCookies := loginForCookies(t, httpsClient(pool), "https://"+httpsAddr, "https-browser")
+	plainCookies := loginForCookies(t, http.DefaultClient, "http://"+httpAddr, "plain-browser")
+
+	secure := pickCookie(httpsCookies, secureName)
+	if secure == nil {
+		t.Fatalf("the HTTPS login set no %q cookie; it set %v", secureName, cookieNames(httpsCookies))
+	}
+	if !secure.Secure {
+		t.Errorf("%q is not Secure; the __Secure- prefix makes that mandatory and a browser would reject the cookie outright", secureName)
+	}
+	plain := pickCookie(plainCookies, plainName)
+	if plain == nil {
+		t.Fatalf("the plain-HTTP login set no %q cookie; it set %v", plainName, cookieNames(plainCookies))
+	}
+	if plain.Secure {
+		t.Errorf("%q is Secure on the plain listener; the browser would never send it back over http", plainName)
+	}
+
+	// The collision itself. Neither listener may write the other's name, and
+	// neither may write the shared name they used before the split.
+	for _, c := range httpsCookies {
+		if c.Name == plainName || c.Name == legacyName {
+			t.Errorf("the HTTPS login wrote %q — a name the plain listener also writes, which is the shadowing bug", c.Name)
+		}
+	}
+	for _, c := range plainCookies {
+		if c.Name == secureName || c.Name == legacyName {
+			t.Errorf("the plain-HTTP login wrote %q — a name the HTTPS listener also writes, which is the shadowing bug", c.Name)
+		}
+	}
+	if secure.Path != plain.Path {
+		// Not a requirement, but if it ever stops holding the assertions above are
+		// no longer the whole story: the browser rule keys on name AND path.
+		t.Logf("note: the two cookies now differ in Path (%q vs %q)", secure.Path, plain.Path)
+	}
+
+	// And each listener authenticates byte-serving from its own cookie, with no
+	// Authorization header — the thing a <video>/<img> actually does. An unknown
+	// session id is 404 once the caller is authenticated and 401 when it is not,
+	// which separates the two without needing a scanned library.
+	if got := cookieOnlyStatus(t, httpsClient(pool), "https://"+httpsAddr, secure); got != http.StatusNotFound {
+		t.Errorf("media GET over HTTPS with only %q = %d, want 404 (authenticated)", secureName, got)
+	}
+	if got := cookieOnlyStatus(t, http.DefaultClient, "http://"+httpAddr, plain); got != http.StatusNotFound {
+		t.Errorf("media GET over plain HTTP with only %q = %d, want 404 (authenticated)", plainName, got)
+	}
+	// The negative control: the probe really does distinguish the two.
+	if got := cookieOnlyStatus(t, http.DefaultClient, "http://"+httpAddr, nil); got != http.StatusUnauthorized {
+		t.Errorf("media GET with no cookie = %d, want 401", got)
+	}
+}
+
+// loginForCookies logs in over the given base URL and returns the Set-Cookie
+// cookies. Each base URL is a distinct browser ORIGIN, which is the entire point:
+// the two logins are separate sessions that a real browser keeps in one jar.
+func loginForCookies(t *testing.T, client *http.Client, base, clientID string) []*http.Cookie {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"username": "brandon",
+		"password": "hunter2hunter2",
+		"device":   map[string]any{"name": "Browser", "platform": "web", "clientId": clientID},
+	})
+	resp, err := client.Post(base+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("login at %s: %v", base, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("login at %s = %d, want 200; body: %s", base, resp.StatusCode, raw)
+	}
+	return resp.Cookies()
+}
+
+// cookieOnlyStatus issues a media GET carrying ONLY the given cookie (nil for
+// none) and no Authorization header, and returns the status.
+func cookieOnlyStatus(t *testing.T, client *http.Client, base string, cookie *http.Cookie) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, base+"/api/v1/sessions/no-such-session/stream", nil)
+	if err != nil {
+		t.Fatalf("building media GET: %v", err)
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("media GET at %s: %v", base, err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func pickCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, c := range cookies {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func cookieNames(cookies []*http.Cookie) []string {
+	names := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		names = append(names, c.Name)
+	}
+	return names
 }
 
 // TestWorldReadableKeyWarns: a key anyone on the box can read is a mistake that

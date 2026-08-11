@@ -167,9 +167,13 @@ func TestReissueMediaCookieSecureUnderHTTPS(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("HTTPS re-issue status = %d, want 204", resp.StatusCode)
 	}
-	cookie := findCookie(resp, mediaCookieName)
+	// Under TLS the re-issue writes the HTTPS listener's name, exactly as the
+	// login does — the two must stay byte-for-byte identical or the re-issue
+	// would not overwrite the cookie it exists to replace.
+	cookie := findCookie(resp, secureMediaCookieName)
 	if cookie == nil {
-		t.Fatalf("HTTPS re-issue did not set the media cookie")
+		t.Fatalf("HTTPS re-issue did not set the %q cookie; headers: %v",
+			secureMediaCookieName, resp.Header.Values("Set-Cookie"))
 	}
 	if !cookie.Secure {
 		t.Errorf("re-issued cookie Secure = false under HTTPS, want true")
@@ -201,9 +205,10 @@ func TestReissueMediaCookieSecureViaForwardedProto(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("re-issue status = %d, want 204", resp.StatusCode)
 	}
-	cookie := findCookie(resp, mediaCookieName)
+	cookie := findCookie(resp, secureMediaCookieName)
 	if cookie == nil {
-		t.Fatalf("re-issue did not set the media cookie")
+		t.Fatalf("re-issue behind a trusted proxy did not set the %q cookie; headers: %v",
+			secureMediaCookieName, resp.Header.Values("Set-Cookie"))
 	}
 	if !cookie.Secure {
 		t.Errorf("re-issued cookie Secure = false with X-Forwarded-Proto: https, want true")

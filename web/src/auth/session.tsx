@@ -170,7 +170,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   const [rosterVersion, setRosterVersion] = useState(0);
   const bumpRoster = useCallback(() => setRosterVersion((v) => v + 1), []);
   // Whether the server advertises POST /auth/media-cookie (appletv-parity/12): the
-  // bearer-authed re-issue of the HttpOnly ms_media cookie. Read via the OPTIONAL
+  // bearer-authed re-issue of the HttpOnly media cookie. Read via the OPTIONAL
   // gate so AuthProvider still mounts bare in unit tests (no ServerInfoProvider) —
   // there the flag simply reads false and the switch skips the refresh, exactly as
   // it should against a server too old to advertise the route.
@@ -341,7 +341,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       };
       writeUser(user, true);
       setSession({ token: entry.token, user });
-      // Re-issue the HttpOnly ms_media cookie so browser byte-serving (<video>/<img>/
+      // Re-issue the HttpOnly media cookie so browser byte-serving (<video>/<img>/
       // HLS GETs, which can't send a bearer) flips to the switched-in identity BEFORE
       // any media resumes — the one thing the JS-side token swap above cannot do
       // itself (the cookie is HttpOnly). Gated on the feature flag: a server too old
