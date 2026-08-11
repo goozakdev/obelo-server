@@ -32,7 +32,7 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
            -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
-.PHONY: all build web go-build keytool run test test-go test-e2e check-bundle check-credentials-free fmt clean
+.PHONY: all build web go-build keytool run test test-go test-e2e check check-fmt vet check-placeholder check-bundle check-credentials-free fmt clean
 
 all: build
 
@@ -70,7 +70,57 @@ test-go:
 test-e2e:
 	cd $(WEB_DIR) && npm run test:e2e
 
+## check: the pre-commit gate — run this before every commit.
+##
+## Cheap guards first so a failure arrives in seconds rather than after the Go
+## suite. Deliberately NOT including check-bundle or test-e2e: both want a REAL
+## frontend bundle built in, which is the opposite of what check-placeholder
+## requires, and both are release-time concerns rather than commit-time ones.
+check: check-fmt vet check-placeholder check-credentials-free test-go
+
+## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.
+## This exists because nothing enforced formatting and it silently drifted to
+## eleven files across six packages before anyone noticed.
+check-fmt:
+	@files=$$(gofmt -l . 2>/dev/null); \
+	if [ -n "$$files" ]; then \
+	  echo "ERROR: not gofmt-clean (run 'make fmt'):"; echo "$$files"; exit 1; \
+	else echo "ok: gofmt clean"; fi
+
+## vet: go vet over the whole module.
+vet:
+	@go vet ./... && echo "ok: go vet clean"
+
+## check-placeholder: fail if the bundle that WOULD BE COMMITTED is a real build
+## rather than the placeholder (CLAUDE.md "Build artifacts").
+##
+## This is the exact OPPOSITE of check-bundle below, and both are correct: a
+## RELEASE must not ship the placeholder, and a COMMIT must not ship a real
+## build. Only the release side was ever automated, and the commit side rotted
+## once already — between 2026-07 and 2026-08-08 the committed index.html
+## referenced /assets/index-ijKWYbjt.js, an asset .gitignore had never let anyone
+## commit, so a fresh clone served a blank page requesting two 404s while
+## check-bundle reported success throughout. This target is the missing half.
+##
+## It inspects git's INDEX (`git show :path`), not the working tree, and that is
+## deliberate: a developer running the app locally MUST have a real bundle on
+## disk, and a check that failed for them would be disabled within a week. What
+## matters is only what gets committed.
+check-placeholder:
+	@git rev-parse --git-dir >/dev/null 2>&1 || { \
+	  echo "ERROR: not a git repository — cannot inspect the committed bundle"; exit 1; }
+	@if git show :$(EMBED_DIR)/index.html 2>/dev/null | grep -q 'obelo-spa-placeholder'; then \
+	  echo "ok: the committed $(EMBED_DIR)/index.html is the placeholder"; \
+	else \
+	  echo "ERROR: $(EMBED_DIR)/index.html would be committed as a REAL build."; \
+	  echo "       A fresh clone would then serve a blank page (the hashed assets"; \
+	  echo "       are gitignored and never committed). Restore it with:"; \
+	  echo "         git checkout $(EMBED_DIR)/index.html"; \
+	  exit 1; fi
+
 ## check-bundle: fail loudly if the embedded bundle is the placeholder, not a real build.
+## RELEASE-time guard; the commit-time guard is check-placeholder above, which wants
+## the opposite. Do not "reconcile" them.
 check-bundle:
 	@go run ./internal/webui/cmd/checkbundle
 
