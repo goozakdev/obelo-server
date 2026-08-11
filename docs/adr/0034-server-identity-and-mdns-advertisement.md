@@ -150,3 +150,25 @@ silently by nature — no client complains, nothing 500s — so the log line is 
 operator can catch a wrong address before a client does.
 
 Unchanged: best-effort registration, the TXT record, the service type, and the LAN-only scope.
+
+## Amendment (2026-08-11) — the record still advertises one port, and that is correct
+
+[ADR-0041](./0041-native-tls-optional-alongside-plain-http.md) added an optional HTTPS listener on
+its own port, so this server can now be serving two ports with two schemes while `_obelo._tcp`
+advertises exactly one. That looks like a gap. It was examined and **deliberately left alone**;
+this note exists so the next person to spot it finds the reasoning instead of re-deriving it.
+
+The advertisement is for the **LAN**, and the LAN keeps plain HTTP. A publicly-trusted certificate
+is issued for a DNS name, and what this record publishes is A/AAAA addresses and a `.local` host
+name — neither of which any CA will certify (see ADR-0041 for why the alternatives, split-horizon
+DNS aside, are worse than keeping the HTTP listener). So the port this record names is the port a
+LAN client should actually use, and the record is already telling the truth.
+
+The deployment that does want TLS on the LAN is the one running split-horizon DNS to point a real
+name at the LAN address — and that deployment does not use mDNS to find the server at all. It has
+a name, which is the whole point of it.
+
+So: no TXT key, no second service type, no scheme field. If a concrete client need ever appears,
+a TXT key (`https=1`, `tlsport=…`) is the additive shape to reach for, since older clients ignore
+unknown keys — but it must land with the client that reads it, or it is churn advertising a fact
+nobody consumes.
