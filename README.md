@@ -173,6 +173,10 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | Variable                             | Default   | Purpose                                                        |
 | ------------------------------------ | --------- | -------------------------------------------------------------- |
 | `OBELO_LISTEN_ADDR`               | `:8080`   | `host:port` the server binds to.                               |
+| `OBELO_TLS_MODE`                  | `off`     | `off` / `files`. `files` **adds** an HTTPS listener.           |
+| `OBELO_TLS_CERT`                  | —         | Absolute path to the PEM certificate chain (`files` mode).     |
+| `OBELO_TLS_KEY`                   | —         | Absolute path to the PEM private key (`files` mode).           |
+| `OBELO_TLS_LISTEN_ADDR`           | `:8443`   | `host:port` for HTTPS; must differ from `OBELO_LISTEN_ADDR`.   |
 | `OBELO_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
 | `OBELO_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
 | `OBELO_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
@@ -185,6 +189,25 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | `OBELO_METADATA_LANGUAGE`         | `en-US`   | Preferred language/region for fetched metadata.               |
 | `OBELO_ADVERTISE_IP`              | auto      | IPs to publish in the mDNS records (comma-separated).          |
 | `OBELO_MDNS_INTERFACE`            | auto      | Interface the mDNS responder listens on (e.g. `eth0`).         |
+
+### HTTPS
+
+Obelo can terminate TLS itself ([ADR-0041](./docs/adr/0041-native-tls-optional-alongside-plain-http.md)) — useful if you reach your server from outside the house by forwarding a port, with no reverse proxy in front. Point it at a certificate and key you already have:
+
+```
+OBELO_TLS_MODE=files
+OBELO_TLS_CERT=/etc/letsencrypt/live/example.com/fullchain.pem
+OBELO_TLS_KEY=/etc/letsencrypt/live/example.com/privkey.pem
+```
+
+**HTTPS is an addition, never a replacement.** The plain-HTTP listener keeps serving `OBELO_LISTEN_ADDR` exactly as before, because no public CA will issue a certificate for a LAN address or a `.local` name — so the LAN, and the mDNS discovery that depends on it, goes on working unchanged while TLS covers the hop that leaves the house. Both listeners serve the same API, and a session created on one works on the other.
+
+Two things worth knowing:
+
+- **Renewals are picked up without a restart.** The certificate files are re-read when they change, so a certbot renewal takes effect on the next connection. If a renewal leaves a file half-written, the previous certificate keeps serving and the problem is logged rather than taking the listener down.
+- **A broken certificate stops the boot.** If you turn `files` mode on and the certificate is missing, unreadable, or does not match the key, the server refuses to start and says which path is wrong. That is deliberate: starting anyway would leave you on plain HTTP believing you had TLS.
+
+`OBELO_TLS_MODE=acme` (automatic certificates) is a reserved name and not implemented yet; it is rejected at startup rather than silently ignored.
 
 Provider keys and language seed the database only on **first boot** — afterward
 you manage providers from the admin settings UI (no restart needed). Obelo

@@ -1,8 +1,16 @@
 package config_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -304,4 +312,211 @@ func TestDiscoveryOverridesFromEnv(t *testing.T) {
 	if c.MDNSInterface != "eth0" {
 		t.Errorf("MDNSInterface = %q, want %q", c.MDNSInterface, "eth0")
 	}
+}
+
+// TestTLSConfigFromEnv: the native-TLS knobs (ADR-0041) are OFF by default, take
+// the same off/false/0 spellings as the other knobs, and — unlike every other
+// enum here — carry an unrecognized value through to Validate instead of
+// swallowing it. A typo'd mode must not resolve to "plain HTTP, quietly".
+func TestTLSConfigFromEnv(t *testing.T) {
+	d := config.Defaults()
+	if d.TLSMode != config.TLSModeOff {
+		t.Errorf("default TLS mode = %q, want %q — TLS is opt-in (ADR-0041)", d.TLSMode, config.TLSModeOff)
+	}
+	if d.TLSListenAddr != config.DefaultTLSListenAddr {
+		t.Errorf("default TLS listen addr = %q, want %q", d.TLSListenAddr, config.DefaultTLSListenAddr)
+	}
+	if d.TLSCertFile != "" || d.TLSKeyFile != "" {
+		t.Errorf("defaults name certificate files (%q/%q), want neither set", d.TLSCertFile, d.TLSKeyFile)
+	}
+
+	t.Setenv("OBELO_TLS_MODE", " Files ")
+	t.Setenv("OBELO_TLS_CERT", " /etc/obelo/fullchain.pem ")
+	t.Setenv("OBELO_TLS_KEY", " /etc/obelo/privkey.pem ")
+	t.Setenv("OBELO_TLS_LISTEN_ADDR", " :9443 ")
+	c := config.FromEnv()
+	if c.TLSMode != config.TLSModeFiles {
+		t.Errorf("TLS mode = %q, want %q (case and surrounding space are tolerated)", c.TLSMode, config.TLSModeFiles)
+	}
+	if c.TLSCertFile != "/etc/obelo/fullchain.pem" || c.TLSKeyFile != "/etc/obelo/privkey.pem" {
+		t.Errorf("cert/key = %q/%q, want the trimmed paths", c.TLSCertFile, c.TLSKeyFile)
+	}
+	if c.TLSListenAddr != ":9443" {
+		t.Errorf("TLS listen addr = %q, want %q", c.TLSListenAddr, ":9443")
+	}
+
+	t.Setenv("OBELO_TLS_MODE", "off")
+	if got := config.FromEnv().TLSMode; got != config.TLSModeOff {
+		t.Errorf("TLS mode = %q, want %q", got, config.TLSModeOff)
+	}
+
+	// The load-bearing difference from OBELO_HARDWARE_ACCEL: garbage is KEPT so
+	// Validate can reject it and name it. If this ever starts resolving to "off",
+	// an operator who mistyped the mode gets a server that boots happily and sends
+	// their password over the internet in the clear.
+	t.Setenv("OBELO_TLS_MODE", "fiels")
+	c = config.FromEnv()
+	if c.TLSMode != config.TLSMode("fiels") {
+		t.Errorf("TLS mode = %q, want the raw value kept for Validate to reject", c.TLSMode)
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("Validate accepted an unknown OBELO_TLS_MODE; want a refusal to boot")
+	} else if !strings.Contains(err.Error(), "fiels") {
+		t.Errorf("Validate error = %v, want it to quote the value the operator typed", err)
+	}
+}
+
+// TestValidateTLSFiles: with `files` mode explicitly asked for, a certificate
+// that cannot be used is a refusal to boot, not a fallback to plain HTTP
+// (ADR-0041 + the issue's boot posture). Every rejection must name the offending
+// path, because the operator's next action is to go and look at that file.
+func TestValidateTLSFiles(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath := writeTestKeyPair(t, dir, "obelo.test")
+	_, otherKey := writeTestKeyPair(t, filepath.Join(dir, "other"), "somewhere.else")
+
+	base := func() config.Config {
+		c := config.Defaults()
+		c.TLSMode = config.TLSModeFiles
+		c.TLSCertFile = certPath
+		c.TLSKeyFile = keyPath
+		return c
+	}
+
+	if err := base().Validate(); err != nil {
+		t.Fatalf("Validate rejected a good certificate pair: %v", err)
+	}
+
+	missing := filepath.Join(dir, "not-here.pem")
+	cases := []struct {
+		name     string
+		mutate   func(*config.Config)
+		wantText string
+	}{
+		{"cert path empty", func(c *config.Config) { c.TLSCertFile = "" }, "OBELO_TLS_CERT"},
+		{"key path empty", func(c *config.Config) { c.TLSKeyFile = "" }, "OBELO_TLS_KEY"},
+		{"cert missing", func(c *config.Config) { c.TLSCertFile = missing }, missing},
+		{"key missing", func(c *config.Config) { c.TLSKeyFile = missing }, missing},
+		// The one a stat cannot catch: two perfectly readable PEM files that are
+		// simply not each other's pair.
+		{"key belongs to another certificate", func(c *config.Config) { c.TLSKeyFile = otherKey }, otherKey},
+		{"TLS port equals the HTTP port", func(c *config.Config) { c.TLSListenAddr = c.ListenAddr }, "ADDITIONAL listener"},
+		{"TLS port empty", func(c *config.Config) { c.TLSListenAddr = "" }, "OBELO_TLS_LISTEN_ADDR"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base()
+			tc.mutate(&c)
+			err := c.Validate()
+			if err == nil {
+				t.Fatalf("Validate accepted %s; want a refusal so the server does not boot believing it has TLS", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("Validate error = %v, want it to mention %q", err, tc.wantText)
+			}
+		})
+	}
+
+	// An unreadable certificate is the same story as a missing one. Skipped for
+	// root, who can read it regardless (containers commonly run as root).
+	if os.Geteuid() != 0 {
+		unreadable := filepath.Join(dir, "unreadable.pem")
+		if err := os.WriteFile(unreadable, []byte("irrelevant"), 0o000); err != nil {
+			t.Fatalf("writing the unreadable fixture: %v", err)
+		}
+		c := base()
+		c.TLSCertFile = unreadable
+		if err := c.Validate(); err == nil {
+			t.Error("Validate accepted an unreadable certificate file; want a refusal")
+		} else if !strings.Contains(err.Error(), unreadable) {
+			t.Errorf("Validate error = %v, want it to name %q", err, unreadable)
+		}
+	}
+}
+
+// TestValidateTLSOffIgnoresCertificateKnobs: with TLS off nothing binds the HTTPS
+// port and nothing reads the certificate, so leftover values in those fields are
+// inert. Validating them anyway would refuse to boot a perfectly good plain-HTTP
+// server over a field it does not use — e.g. an operator who set
+// OBELO_LISTEN_ADDR=:8443 and never turned TLS on.
+func TestValidateTLSOffIgnoresCertificateKnobs(t *testing.T) {
+	c := config.Defaults()
+	c.TLSCertFile = "/nowhere/fullchain.pem"
+	c.TLSKeyFile = "/nowhere/privkey.pem"
+	c.TLSListenAddr = c.ListenAddr
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate = %v, want nil — the TLS fields are inert while the mode is off", err)
+	}
+
+	// The zero value is what a hand-built Config carries (tests, embedders). It
+	// must mean the same thing as an explicit "off" rather than "unknown mode".
+	c = config.Defaults()
+	c.TLSMode = ""
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate = %v on the zero-value TLS mode, want nil (it means off)", err)
+	}
+}
+
+// TestValidateTLSACMEReserved: `acme` is a KNOWN value that is not implemented
+// yet (ADR-0041 phase 2). It must fail loudly with "not yet supported" rather
+// than fall through to the unknown-mode error or, worse, to off — so the mode
+// that lands later needs no renaming, and an operator who tried it early is told
+// why instead of silently running plain HTTP.
+func TestValidateTLSACMEReserved(t *testing.T) {
+	c := config.Defaults()
+	c.TLSMode = config.TLSModeACME
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted OBELO_TLS_MODE=acme; want it rejected until the mode exists")
+	}
+	if !strings.Contains(err.Error(), "not yet supported") {
+		t.Errorf("Validate error = %v, want it to say the mode is not yet supported", err)
+	}
+	if strings.Contains(err.Error(), "unknown OBELO_TLS_MODE") {
+		t.Errorf("Validate error = %v, want the reserved-mode message, not the unknown-value one", err)
+	}
+}
+
+// writeTestKeyPair generates a throwaway self-signed certificate and its key into
+// dir, returning the two paths. In-process with crypto/x509 rather than fixture
+// files: a committed certificate expires, and a test that regenerates its own
+// cannot rot.
+func writeTestKeyPair(t *testing.T, dir, commonName string) (certPath, keyPath string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", dir, err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating a key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:              []string{commonName},
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("creating the certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshaling the key: %v", err)
+	}
+
+	certPath = filepath.Join(dir, "cert.pem")
+	keyPath = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		t.Fatalf("writing the certificate: %v", err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatalf("writing the key: %v", err)
+	}
+	return certPath, keyPath
 }
