@@ -30,8 +30,15 @@ type Store interface {
 	ListTitles(libraryID string, sort store.TitleSort, cursor *store.TitleCursor, limit int, genre string, filter store.AccessFilter) (store.TitlePage, error)
 	TitleByID(id string) (store.TitleDetail, error)
 	// FileByID loads one File (with Streams) by its stable id, or ErrNotFound —
-	// the lookup behind the sessionless direct-file download route.
+	// the lookup behind the sessionless direct-file download route. It carries no
+	// access information of its own (a File row knows only its Edition), so the
+	// scope guard below supplies it.
 	FileByID(id string) (store.File, error)
+	// LibraryAndRatingOfFile resolves the owning Title's Library and Content
+	// rating for a File id (ErrNotFound when the file — or its edition/title
+	// chain — is missing), so the direct-file download can apply the caller's
+	// Scope to a route that never loads a Title.
+	LibraryAndRatingOfFile(fileID string) (libraryID, contentRating string, err error)
 	// GenresForTitles bulk-reads enriched genres for a page of Titles, keyed by
 	// id, so a browse list attaches genres without an N+1 query.
 	GenresForTitles(titleIDs []string) (map[string][]string, error)
@@ -347,7 +354,36 @@ func (s *Service) guardEntity(scope access.Scope, entityType, entityID string) e
 // FileByID returns one File (with its Streams) by id, or ErrNotFound. It backs
 // the sessionless direct-file download (an external player like VLC fetching the
 // original bytes), addressed by the stable File id rather than a Playback session.
-func (s *Service) FileByID(id string) (store.File, error) {
+//
+// It takes a Scope for the same reason GetTitle does, and applies BOTH dimensions
+// against the Title that owns the File: this route bypasses GetTitle entirely, so
+// without the guard here a Member could fetch the original bytes of any File in
+// the catalog by id — around their Library grants AND around their Rating ceiling
+// — on the one route whose credential is also the weakest (?token= in the URL).
+// A refusal is ErrNotFound, never a distinct "forbidden" error, so the api layer
+// answers the byte-identical 404 it gives an unknown id (existence-hiding,
+// api-contract.md "404, not 403").
+//
+// The Scope is a required parameter rather than an optional guard alongside an
+// unscoped variant, deliberately: an unscoped FileByID sitting next to this one
+// is one autocomplete away from silently re-opening the hole, and nothing in the
+// type system would notice. Admin callers pass access.AllAccess(), which makes
+// both checks no-ops.
+func (s *Service) FileByID(scope access.Scope, id string) (store.File, error) {
+	// Resolve the owning Title's access facts BEFORE loading the File. An unknown
+	// id, an orphaned File (edition or title row gone — the join finds nothing),
+	// and an out-of-scope File all converge on ErrNotFound here, so the path that
+	// opens bytes on disk is never reached by a caller who may not have them.
+	lib, rating, err := s.store.LibraryAndRatingOfFile(id)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.File{}, ErrNotFound
+	}
+	if err != nil {
+		return store.File{}, err
+	}
+	if !scope.AllowsLibrary(lib) || !scope.AllowsRating(rating) {
+		return store.File{}, ErrNotFound
+	}
 	f, err := s.store.FileByID(id)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.File{}, ErrNotFound
