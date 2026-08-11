@@ -127,11 +127,10 @@ func (p *OMDbProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMetadata,
 	}, nil
 }
 
+// client returns this provider's HTTP client, under the shared redirect policy —
+// see providerClient in fetcher.go for why the JSON clients get it too.
 func (p *OMDbProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return providerClient(p.HTTPClient)
 }
 
 // result resolves a lookup key to a parsed OMDb record, returning a zero value

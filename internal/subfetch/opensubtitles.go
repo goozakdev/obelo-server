@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marioquake/obelo-server/internal/safefetch"
 	"github.com/marioquake/obelo-server/internal/subtitle"
 )
 
@@ -48,11 +49,20 @@ func NewOpenSubtitlesProvider(apiKey, baseURL string) *OpenSubtitlesProvider {
 	}
 }
 
+// client returns the HTTP client every call in this file goes through, carrying
+// safefetch's redirect policy.
+//
+// It matters most for fetchLink: the download URL is a `link` string out of the
+// provider's own JSON response, fetched server-side with the bytes written to disk
+// beside the operator's media — the same shape as the artwork fetcher, and the same
+// answer. It is applied to the search/download calls too, which go to the CONFIGURED
+// base URL: only redirect targets are checked, so an operator's own mirror still
+// works on the first hop, and a mirror that then bounces us at 169.254.169.254 does
+// not. Guard copies, so a caller-supplied HTTPClient (and http.DefaultClient, which
+// is process-global) is never mutated — and the policy cannot be lost by injecting
+// a bare client.
 func (p *OpenSubtitlesProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return safefetch.Guard(p.HTTPClient)
 }
 
 // Search tries the match narrowings in order and returns the first non-empty set.
@@ -209,7 +219,9 @@ func (p *OpenSubtitlesProvider) Download(ctx context.Context, candidate Candidat
 }
 
 // fetchLink GETs the time-limited download URL and returns the subtitle bytes,
-// bounded so a redirect to an error page can't balloon memory.
+// bounded so a redirect to an error page can't balloon memory. The link is the
+// PROVIDER'S string, not ours, so the fetch runs under the redirect policy on
+// client() — a hop pointed inward is refused, not followed.
 func (p *OpenSubtitlesProvider) fetchLink(ctx context.Context, link string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {

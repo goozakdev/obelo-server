@@ -8,7 +8,27 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/marioquake/obelo-server/internal/safefetch"
 )
+
+// providerClient is the one place the JSON metadata clients (tmdb.go, musicbrainz.go,
+// fanarttv.go, theaudiodb.go, anidb.go, omdb.go, thetvdb.go) turn their injectable
+// HTTPClient field into the client they actually use, so all seven get the shared
+// redirect policy and none of them can quietly opt out.
+//
+// Those clients only PARSE what comes back, so a hop inward leaks no body — the
+// reason they are covered anyway is that "connected" and "did not connect" are
+// distinguishable by timing and by which error surfaces, which is enough to map an
+// internal network blindly from a provider's Location header. It costs nothing:
+// only redirect TARGETS are checked, so an operator's own mirror is still a
+// perfectly good base URL (ADR-0001), and none of these APIs redirects off-host in
+// normal operation.
+//
+// Guard copies rather than mutating, which matters here because the nil case used
+// to be http.DefaultClient — a process-global whose redirect behaviour is not ours
+// to change.
+func providerClient(c *http.Client) *http.Client { return safefetch.Guard(c) }
 
 // ErrArtworkNotFound is the benign "the source has no image at this URL" outcome
 // (an HTTP 404) — e.g. a Cover Art Archive release-group with no cover. It is
@@ -21,6 +41,21 @@ var ErrArtworkNotFound = errors.New("enrich: artwork not found")
 // content-type is an image, so a redirect to an HTML error page or an oversized
 // body can't poison the artwork cache. A failure is non-fatal upstream (the
 // metadata still applies; only the image is skipped).
+//
+// The URL is a THIRD PARTY'S choice — it comes out of a provider's JSON, or out of
+// an admin's PUT /titles/{id}/artwork — and so is any redirect off it, which is why
+// every fetch here runs under safefetch's redirect policy: a hop onto 127.0.0.1, an
+// RFC1918 address or 169.254.169.254 would otherwise put the bytes of a LAN admin
+// panel or a cloud metadata endpoint into the artwork cache, and from there into an
+// admin's browser.
+//
+// HTTPClient stays injectable (the tests point it at httptest servers), but it is
+// NOT where the policy lives: Fetch applies safefetch.Guard to whatever client it
+// was handed. That is the difference between a control and a control-shaped
+// comment — app.go constructs this with a nil client today, and a future line
+// assigning a bare &http.Client{} must not be able to disarm it silently. Only
+// redirect TARGETS are checked, so a stub server on loopback is still fetchable,
+// which is what keeps that injection useful.
 type HTTPArtworkFetcher struct {
 	HTTPClient *http.Client
 	// MaxBytes caps a downloaded image; 0 uses defaultMaxArtworkBytes.
@@ -35,6 +70,9 @@ func (f HTTPArtworkFetcher) Fetch(ctx context.Context, url string) ([]byte, stri
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	// Guard, not assume: this is applied per fetch, to the injected client as much
+	// as to the default one, and it copies rather than mutating the caller's.
+	client = safefetch.Guard(client)
 	max := f.MaxBytes
 	if max <= 0 {
 		max = defaultMaxArtworkBytes

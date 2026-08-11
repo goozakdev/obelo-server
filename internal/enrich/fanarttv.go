@@ -120,11 +120,10 @@ func (p *FanartTVProvider) artistLookup(ctx context.Context, ref TitleRef) (Titl
 	return meta, nil
 }
 
+// client returns this provider's HTTP client, under the shared redirect policy —
+// see providerClient in fetcher.go for why the JSON clients get it too.
 func (p *FanartTVProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return providerClient(p.HTTPClient)
 }
 
 // fanartImage is one fanart.tv image entry. fanart.tv encodes "likes" as a JSON
