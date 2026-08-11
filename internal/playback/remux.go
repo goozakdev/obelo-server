@@ -673,6 +673,7 @@ func fileExists(path string) bool {
 //     cold-start burst must never read as a seek;
 //   - a recent predecessor exists, under its final name (the segment muxer writes
 //     in place) or as the hls muxer's in-flight .tmp — production is approaching.
+//
 // The window is a handful of segments: wide enough that parallel prefetch several
 // segments ahead of disk never restarts the job, narrow enough that a genuine jump
 // (a resume/seek minutes ahead) still realigns instantly.

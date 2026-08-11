@@ -16,9 +16,9 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/marioquake/obelo-server/internal/access"
 	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/google/uuid"
 )
 
 // Domain errors mapped to HTTP by the api layer.

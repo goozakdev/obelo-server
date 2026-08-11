@@ -383,10 +383,10 @@ func TestFMP4CopyRealignsOnJump(t *testing.T) {
 	// (ADR-0024), with probed keyframe boundaries (irregular, like a real remux).
 	boundaries := []float64{0, 4.5, 8, 12.4, 17.1, 20.5, 24.4, 28.2, 32.5, 36.5, 40, 44.4, 48, 52.1, 56.4, 60.2, 64, 68.3, 72.1, 76, 80}
 	dec := Decision{
-		Tier:      TierTranscode,
-		VideoCopy: true,
-		Edition:   store.Edition{ID: "e1"},
-		File:      store.File{ID: "f1", Path: "/m/x.mkv", DurationMs: 80_000, VideoCodec: "hevc"},
+		Tier:        TierTranscode,
+		VideoCopy:   true,
+		Edition:     store.Edition{ID: "e1"},
+		File:        store.File{ID: "f1", Path: "/m/x.mkv", DurationMs: 80_000, VideoCodec: "hevc"},
 		VideoStream: store.Stream{Codec: "hevc"},
 	}
 	if !dec.UsesFMP4() {

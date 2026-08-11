@@ -4,9 +4,9 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/marioquake/obelo-server/internal/access"
 	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/google/uuid"
 )
 
 // The User-owned, ordered, single-media-kind Playlist (collections-playlists 03) —

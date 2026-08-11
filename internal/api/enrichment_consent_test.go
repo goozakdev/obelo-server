@@ -46,8 +46,8 @@ func TestEnrichmentConsentGate(t *testing.T) {
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
 		testharness.WithProviderBuilder(countingBuilder(prov)),
-		testharness.WithEnrichmentKey("test-key"),   // TMDB configured → video WOULD be enabled…
-		testharness.WithoutEnrichmentConsent(),       // …but consent is undecided, so it is gated off
+		testharness.WithEnrichmentKey("test-key"), // TMDB configured → video WOULD be enabled…
+		testharness.WithoutEnrichmentConsent(),    // …but consent is undecided, so it is gated off
 		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
 	)
 	token := adminToken(t, srv)

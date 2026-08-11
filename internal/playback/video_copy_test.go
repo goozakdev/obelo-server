@@ -159,11 +159,12 @@ func videoCopyTranscodeDecision(id string) Decision {
 // TestVideoCopySessionIsUnmeteredAndServesFFmpegPlaylist pins the two session
 // consequences of ADR-0024 that ALSO fix the "h264 file, flaky first play / breaks on
 // audio switch" bug (cases 1 & 2): a video-copy transcode
-//   (a) does NOT take a transcode cap slot (no video encode — unmetered like remux), and
-//   (b) serves ffmpeg's OWN media playlist, not the synthesized uniform-4s one — a
-//       copied stream has no forced-keyframe grid, so a synthesized playlist would
-//       mislist its segments and 404/stall the player (the documented no-keyframe-grid
-//       failure). Before this change a copy-video transcode wrongly did both.
+//
+//	(a) does NOT take a transcode cap slot (no video encode — unmetered like remux), and
+//	(b) serves ffmpeg's OWN media playlist, not the synthesized uniform-4s one — a
+//	    copied stream has no forced-keyframe grid, so a synthesized playlist would
+//	    mislist its segments and 404/stall the player (the documented no-keyframe-grid
+//	    failure). Before this change a copy-video transcode wrongly did both.
 func TestVideoCopySessionIsUnmeteredAndServesFFmpegPlaylist(t *testing.T) {
 	root := t.TempDir()
 	m := NewRemuxManager(&fakeRunner{}, root)

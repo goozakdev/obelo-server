@@ -1370,7 +1370,7 @@ func TestTranscodeArgsMapsSelectedVideo(t *testing.T) {
 // still maps 0:v:N + the shared audio.
 func TestTranscodeArgsMapsSelectedVideoCopy(t *testing.T) {
 	args := TranscodeArgs(TranscodeJob{
-		SourcePath:       "/m/x.mkv", OutputDir: "/s",
+		SourcePath: "/m/x.mkv", OutputDir: "/s",
 		Video:            VideoPlan{Copy: true},
 		Audio:            AudioPlan{Copy: true},
 		HasAudio:         true,
@@ -1388,7 +1388,7 @@ func TestTranscodeArgsMapsSelectedVideoCopy(t *testing.T) {
 // onto the CHOSEN video's [0:v:N] input, so the reported and burned video agree.
 func TestTranscodeArgsBurnOverlaysSelectedVideo(t *testing.T) {
 	args := TranscodeArgs(TranscodeJob{
-		SourcePath:       "/m/x.mkv", OutputDir: "/s",
+		SourcePath: "/m/x.mkv", OutputDir: "/s",
 		Video:            VideoPlan{Copy: true},
 		Audio:            AudioPlan{Copy: true},
 		HasAudio:         true,
