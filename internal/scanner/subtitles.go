@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/marioquake/obelo-server/internal/store"
 	"github.com/marioquake/obelo-server/internal/subtitle"
-	"github.com/google/uuid"
 )
 
 // buildSidecarSubtitles turns the sidecar subtitle files discovered beside a

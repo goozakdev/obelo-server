@@ -17,33 +17,33 @@ import (
 // mislist segments and the player would 404 / stall.
 func TestSegmentBoundaries(t *testing.T) {
 	cases := []struct {
-		name      string
-		keyframes []float64
-		duration  float64
+		name       string
+		keyframes  []float64
+		duration   float64
 		wantExtinf []float64 // ffmpeg's actual per-segment durations
 	}{
 		{
-			name:      "irregular",
-			keyframes: []float64{0, 3, 5, 9, 11, 15, 18},
-			duration:  20,
+			name:       "irregular",
+			keyframes:  []float64{0, 3, 5, 9, 11, 15, 18},
+			duration:   20,
 			wantExtinf: []float64{5, 4, 6, 3, 2}, // boundaries 0,5,9,15,18,20
 		},
 		{
-			name:      "sparse long GOP",
-			keyframes: []float64{0, 10, 20},
-			duration:  24,
+			name:       "sparse long GOP",
+			keyframes:  []float64{0, 10, 20},
+			duration:   24,
 			wantExtinf: []float64{10, 10, 4}, // boundaries 0,10,20,24
 		},
 		{
-			name:      "regular 2s keyframes",
-			keyframes: []float64{0, 2, 4, 6, 8, 10, 12, 14, 16},
-			duration:  18,
+			name:       "regular 2s keyframes",
+			keyframes:  []float64{0, 2, 4, 6, 8, 10, 12, 14, 16},
+			duration:   18,
 			wantExtinf: []float64{4, 4, 4, 4, 2},
 		},
 		{
-			name:      "weird",
-			keyframes: []float64{0, 1, 7, 8, 13},
-			duration:  15,
+			name:       "weird",
+			keyframes:  []float64{0, 1, 7, 8, 13},
+			duration:   15,
 			wantExtinf: []float64{7, 1, 5, 2}, // boundaries 0,7,8,13,15
 		},
 	}
