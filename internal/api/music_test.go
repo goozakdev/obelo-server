@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -504,18 +505,63 @@ func TestMusicAccessControl404(t *testing.T) {
 }
 
 // TestMusicScanIdempotent: a rescan re-resolves to the same Artists/Albums/Tracks.
+//
+// It compares the post-rescan catalog against what the FIRST scan produced, and
+// compares IDENTITIES rather than totals. Both choices are deliberate.
+//
+// Identities, because "the same artists" and "the same NUMBER of artists" are
+// different claims and only the first is idempotence: a rescan that dropped one
+// artist and minted another would hold the count and still be the bug this test
+// exists to catch.
+//
+// A captured baseline rather than literal counts, because the literals rotted.
+// This test asserted `want 3` from the initial commit until 720e17f added the Ben
+// Folds release-group fixtures (ADR-0038), bumped its sibling
+// TestMusicScanBuildsHierarchy from 3 to 4 in the same diff, and left this one
+// behind — so it then failed on the FIRST scan's count, before the rescan it
+// guards was even reached, and sat red while the scan itself was provably stable.
+// Reading the baseline from the first scan cannot rot that way: add a fixture
+// artist tomorrow and this test keeps testing rescan stability instead of
+// demanding an edit. Do not "simplify" it back to a literal count.
 func TestMusicScanIdempotent(t *testing.T) {
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
+
+	before := listArtists(t, srv, token, libID)
+	beforeRadiohead := artistAlbums(t, srv, token, findArtist(t, before, "Radiohead"))
+
 	scanLib(t, srv, token, libID, "")
-	artists := listArtists(t, srv, token, libID)
-	if len(artists.Artists) != 3 {
-		t.Errorf("after rescan artists = %d, want 3 (no duplicates)", len(artists.Artists))
+
+	after := listArtists(t, srv, token, libID)
+	if got, want := artistIDs(after), artistIDs(before); !slices.Equal(got, want) {
+		t.Errorf("after rescan artists = %v, want %v (no duplicates, no churn)", got, want)
 	}
-	radio := artistAlbums(t, srv, token, findArtist(t, artists, "Radiohead"))
-	if len(radio.Albums) != 2 {
-		t.Errorf("after rescan Radiohead albums = %d, want 2", len(radio.Albums))
+	afterRadiohead := artistAlbums(t, srv, token, findArtist(t, after, "Radiohead"))
+	if got, want := albumIDs(afterRadiohead), albumIDs(beforeRadiohead); !slices.Equal(got, want) {
+		t.Errorf("after rescan Radiohead albums = %v, want %v", got, want)
 	}
+}
+
+// artistIDs and albumIDs project a listing down to its sorted ids, so the
+// idempotence comparison is about membership and not about the order a listing
+// happened to come back in — browse ordering is its own property with its own
+// tests, and letting it fail this one would be a false alarm.
+func artistIDs(list artistsListResp) []string {
+	ids := make([]string, 0, len(list.Artists))
+	for _, a := range list.Artists {
+		ids = append(ids, a.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func albumIDs(list albumsListResp) []string {
+	ids := make([]string, 0, len(list.Albums))
+	for _, a := range list.Albums {
+		ids = append(ids, a.ID)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // TestMusicTrackDirectPlay: a Track whose audio codec the client supports
