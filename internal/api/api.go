@@ -138,6 +138,14 @@ type Deps struct {
 	// a settings save. The PUT handler calls Reload; nil leaves persistence working
 	// without the runtime swap.
 	SubtitleProviderManager *subfetch.Manager
+
+	// providerImages signs + serves the metadata-provider thumbnail proxy
+	// (provider_image.go). Unexported on purpose: it is not a wiring choice a caller
+	// gets to make. Handler builds it with a fresh per-boot key and threads THAT
+	// instance into both halves — the candidate handlers that mint references and the
+	// /providerImage route that verifies them — because a second instance would carry
+	// a second key and would refuse every reference the first one signed.
+	providerImages *providerImageProxy
 }
 
 // Handler builds the root http.Handler for the whole API, mounted at /api/v1.
@@ -145,6 +153,10 @@ type Deps struct {
 // than Go's plain-text 404, so every response a client sees is well-formed.
 func Handler(deps Deps) http.Handler {
 	mux := http.NewServeMux()
+
+	// One proxy (one per-boot signing key) for this process, captured by every
+	// closure below through the deps copy. See provider_image.go.
+	deps.providerImages = newProviderImageProxy()
 
 	// Register /server for all methods and gate the method inside the handler:
 	// a catch-all "/" route (below) would otherwise shadow ServeMux's built-in
@@ -344,6 +356,20 @@ func Handler(deps Deps) http.Handler {
 	// access-filtered (hidden excluded) exactly like browse. Authenticated.
 	mux.HandleFunc("/search",
 		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSearch(deps.Catalog)))))
+
+	// GET /providerImage?ref=: the metadata-provider thumbnail proxy behind the admin
+	// Edit-item pickers (provider_image.go). It exists so the browser never contacts
+	// TMDB / the Cover Art Archive / fanart.tv itself (ADR-0001), which is also what
+	// lets the CSP say img-src 'self' (internal/webui/webui.go).
+	//
+	// Cookie-capable because it is an <img src> (no Authorization header possible),
+	// Admin-only because the pickers are, and read-only. The ?ref= is NOT a URL the
+	// caller chooses — it is an HMAC-signed reference this process minted when it
+	// emitted the candidate. Read the header comment in provider_image.go before
+	// touching the parameter; a plain ?url= here would be an open proxy.
+	mux.HandleFunc(providerImagePath,
+		requireMethod(http.MethodGet,
+			requireAuthAllowCookie(deps.Auth, requireAdmin(handleProviderImage(deps.providerImages)))))
 
 	// GET /events: the single server→client SSE stream (ADR-0016). Cookie-capable
 	// auth because a browser EventSource cannot set an Authorization header (same

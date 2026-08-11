@@ -218,7 +218,10 @@ export function ArtworkPicker({
                     onClick={() => void choose(c.url)}
                     title={dims}
                   >
-                    <img src={c.url} alt="" loading="lazy" />
+                    {/* thumbnailUrl, not url: the preview goes through the server's
+                        image proxy so this grid never contacts the provider from the
+                        browser (ADR-0001). c.url stays the pick identity above. */}
+                    <img src={c.thumbnailUrl ?? c.url} alt="" loading="lazy" />
                     {dims && (
                       <span className="fixlabel-artwork-dims" data-testid="artwork-dims">
                         {dims}

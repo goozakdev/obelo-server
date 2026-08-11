@@ -330,7 +330,7 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodGet,
-				requireAuth(deps.Auth, requireAdmin(handleEnrichmentCandidates(deps.Enrich))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(handleEnrichmentCandidates(deps.Enrich, deps.providerImages))))(w, r)
 			return
 		}
 		// GET {id}/externalPreview?ref=: preview a pasted MusicBrainz/TMDB id-or-URL
@@ -342,7 +342,7 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodGet,
-				requireAuth(deps.Auth, requireAdmin(handleTitleExternalPreview(deps.Enrich))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(handleTitleExternalPreview(deps.Enrich, deps.providerImages))))(w, r)
 			return
 		}
 		// PUT {id}/enrichmentOverride: apply a picked candidate as a durable Enrichment
@@ -388,7 +388,7 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodGet,
-				requireAuth(deps.Auth, requireAdmin(handleTitleArtworkCandidates(deps.Enrich))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(handleTitleArtworkCandidates(deps.Enrich, deps.providerImages))))(w, r)
 			return
 		}
 		// PUT {id}/artwork: apply a picked provider image to a role + Lock the role

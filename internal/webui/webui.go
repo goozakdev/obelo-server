@@ -142,19 +142,24 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	// "web UI was not built" page renders unstyled. It is a build-mistake page,
 	// its text is the whole point, and styling it is not worth a hash that would
 	// have to be kept in lockstep with that file.
-	"img-src 'self' https:; " +
-	// 'self' covers all library artwork (same-origin /api/v1/... URLs, authed by
-	// the media cookie). https: is required by the admin enrichment pickers,
-	// which render candidate thumbnails from the metadata provider's own image
-	// host — TMDB (image.tmdb.org) and the Cover Art Archive, which redirects
-	// into archive.org. Both hosts are operator-configurable (OBELO_TMDB_IMAGE_
-	// BASE_URL, and the per-provider imageBaseURL setting), so a fixed host
-	// allowlist would be wrong by construction and would break a self-hosted
-	// mirror with nothing but a broken thumbnail to show for it. Images are not
-	// a script vector; the residual risk is that injected script could use an
-	// <img> URL as an outbound signal, which is why the scheme is pinned to
-	// https: instead of '*'. Note the corollary: an operator who points a
-	// provider at a plain-http image mirror gets blocked images.
+	"img-src 'self'; " +
+	// EVERY image this app renders is same-origin: library artwork, cast
+	// headshots, and — since the metadata-provider image proxy landed — the admin
+	// Edit-item pickers' candidate thumbnails too. Those last ones used to come
+	// straight off image.tmdb.org and the Cover Art Archive, which is why this
+	// directive carried `https:`; the server now fetches them itself and serves
+	// them from GET /api/v1/providerImage (internal/api/provider_image.go), so
+	// nothing is left for `https:` to permit except an outbound signalling
+	// channel for injected script. Verified by grep AND in a browser with this
+	// exact policy: the record-search picker, the Fix-label image grid, and the
+	// browse/detail screens load with zero CSP violations and zero third-party
+	// requests.
+	//
+	// If a screen ever needs a genuinely third-party image, proxy it the same way
+	// rather than restoring `https:` — a self-hosted media server that phones a
+	// stranger's host from the household's browsers is the thing ADR-0001 exists
+	// to prevent, and the CSP is what keeps that decision from being made by
+	// accident.
 	"media-src 'self' blob:; " +
 	// 'self' is direct play and the HLS segments. blob: is NOT optional and is
 	// NOT theoretical: the hls.js MSE path attaches the stream by setting
@@ -238,12 +243,14 @@ func securityHeaders(h http.Handler) http.Handler {
 		// origin), because this app's URLs are themselves sensitive: the
 		// direct-file download carries ?token=<session token> in the URL
 		// (api.requireAuthAllowQueryToken), and library/session/title IDs sit in
-		// the path. The default would still hand the full URL to same-origin
-		// requests and the bare origin to cross-origin ones — and the
-		// cross-origin case is real, since the admin enrichment pickers load
-		// thumbnails from TMDB and the Cover Art Archive, which would otherwise
-		// learn this server's hostname (often a home DDNS name). Nothing server-
-		// side reads Referer, so there is nothing to lose by sending none.
+		// the path. The default would still hand the full URL to every
+		// same-origin request. It also used to be the only thing standing between
+		// the metadata providers and this server's (often home DDNS) hostname,
+		// back when the admin pickers loaded thumbnails from TMDB and the Cover
+		// Art Archive directly; that hole is now closed at the source (the images
+		// are proxied, and img-src is 'self'), which makes this header defense in
+		// depth rather than the defense. Keep it: nothing server-side reads
+		// Referer, so there is nothing to lose by sending none.
 		head.Set("Referrer-Policy", "no-referrer")
 		head.Set("Content-Security-Policy", contentSecurityPolicy)
 		h.ServeHTTP(w, r)
