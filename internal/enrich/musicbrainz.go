@@ -617,11 +617,10 @@ func (p *MusicBrainzProvider) recordingByID(ctx context.Context, mbid string) (T
 	return TitleMetadata{Matched: true, Name: out.Title, ExternalID: out.ID, Source: "musicbrainz"}, nil
 }
 
+// client returns this provider's HTTP client, under the shared redirect policy —
+// see providerClient in fetcher.go for why the JSON clients get it too.
 func (p *MusicBrainzProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return providerClient(p.HTTPClient)
 }
 
 type mbTag struct {

@@ -7,12 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/marioquake/obelo-server/internal/safefetch"
 )
 
 // The metadata-provider image proxy: GET /providerImage?ref=<signed reference>.
@@ -92,23 +93,11 @@ const (
 	// image grid opens a dozen of these at once.
 	providerImageTimeout = 15 * time.Second
 
-	// maxProviderImageRedirects bounds the redirect chain. Refusing redirects
-	// outright is not an option — the Cover Art Archive answers every cover with a
-	// redirect into archive.org, and that is the normal, working path — so the
-	// chain is bounded instead of banned. Three hops covers coverartarchive →
-	// archive.org → the storage node it picks.
-	maxProviderImageRedirects = 3
-
 	// providerImageCacheSeconds lets the browser reuse a thumbnail while the
 	// picker is open (private: it is behind auth and admin-only). Short, because
 	// the reference dies with the process anyway.
 	providerImageCacheSeconds = 300
 )
-
-// errRedirectBlocked is returned from the client's CheckRedirect when a hop tries
-// to land somewhere we will not follow. It is never surfaced to the caller — every
-// upstream failure is one 404 (see handleProviderImage).
-var errRedirectBlocked = errors.New("api: provider image redirect blocked")
 
 // providerImageProxy mints and verifies the signed references, and owns the HTTP
 // client that fetches them. One instance per process, built by Handler.
@@ -118,6 +107,14 @@ type providerImageProxy struct {
 }
 
 // newProviderImageProxy builds the proxy with a fresh per-boot signing key.
+//
+// The client comes from safefetch, which owns the redirect policy this proxy used
+// to carry alone: bounded hops, and a hop that resolves inward refused. The
+// signature only vouches for the FIRST url — where that host chooses to redirect is
+// the host's decision, not ours — and the same shape turned up in the artwork
+// fetcher and the subtitle download, so the rule moved somewhere all three could
+// share ONE copy of it. safefetch.CheckRedirect's doc comment carries the reasoning,
+// including why the initial request is deliberately not checked.
 //
 // A crypto/rand failure panics rather than degrading to a weak or empty key: it
 // happens at boot, before the listener is up, and the alternative — a server that
@@ -129,61 +126,9 @@ func newProviderImageProxy() *providerImageProxy {
 		panic("api: generating provider-image signing key: " + err.Error())
 	}
 	return &providerImageProxy{
-		key: key,
-		client: &http.Client{
-			Timeout:       providerImageTimeout,
-			CheckRedirect: checkProviderImageRedirect,
-		},
+		key:    key,
+		client: safefetch.Client(providerImageTimeout),
 	}
-}
-
-// checkProviderImageRedirect bounds the redirect chain and refuses a hop that
-// resolves to a loopback/private/link-local address.
-//
-// The signature only vouches for the FIRST url — the one a provider handed us.
-// Where that host chooses to redirect is the host's decision, not ours, so a
-// compromised or hostile provider (or a DNS answer for one) could otherwise walk
-// this fetch onto 127.0.0.1 or 169.254.169.254 and hand the body back to the
-// admin's browser. The check is on the redirect TARGET only, and that asymmetry is
-// deliberate: the first hop is allowed to be a private address because a
-// self-hosted operator may legitimately point OBELO_TMDB_IMAGE_BASE_URL or a
-// per-provider imageBaseURL at a mirror on their own LAN (ADR-0001 — that is the
-// spirit of this product, not an attack). Such a mirror must not then bounce us
-// somewhere internal; if one genuinely needs an internal redirect, the fix is to
-// configure the final URL, not to loosen this.
-//
-// A name that will not resolve is refused rather than passed to the transport:
-// failing closed on a lookup error costs a thumbnail, and the alternative leaves
-// the decision to a resolver whose answer we never saw.
-func checkProviderImageRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= maxProviderImageRedirects {
-		return errRedirectBlocked
-	}
-	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-		return errRedirectBlocked
-	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(req.Context(), req.URL.Hostname())
-	if err != nil || len(addrs) == 0 {
-		return errRedirectBlocked
-	}
-	for _, a := range addrs {
-		if isInternalIP(a.IP) {
-			return errRedirectBlocked
-		}
-	}
-	return nil
-}
-
-// isInternalIP reports whether ip is somewhere a redirect must not take us: the
-// loopback, RFC1918/ULA private space, link-local (which includes the cloud
-// metadata address 169.254.169.254), the unspecified address, and multicast.
-func isInternalIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast()
 }
 
 // proxyURL turns an absolute provider image URL into the same-origin proxy URL

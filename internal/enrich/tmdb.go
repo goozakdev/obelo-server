@@ -293,11 +293,10 @@ type tmdbImage struct {
 	Height   int    `json:"height"`
 }
 
+// client returns this provider's HTTP client, under the shared redirect policy —
+// see providerClient in fetcher.go for why the JSON clients get it too.
 func (p *TMDBProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return providerClient(p.HTTPClient)
 }
 
 func (p *TMDBProvider) searchMovie(ctx context.Context, title string, year int) (string, error) {

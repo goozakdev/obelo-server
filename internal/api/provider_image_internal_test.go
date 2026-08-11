@@ -1,9 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/marioquake/obelo-server/internal/safefetch"
 )
 
 // White-box tests for the two provider-image rules that cannot be observed from
@@ -76,40 +79,24 @@ func TestProviderImageRefIsKeyBound(t *testing.T) {
 	}
 }
 
-// TestProviderImageRedirectPolicy: redirects are followed (the Cover Art Archive
-// needs it) but bounded, and never onto an address that only this server can
-// reach. The blocked list is what stops a hostile or hijacked provider from using
-// this proxy to read 127.0.0.1, a LAN admin panel, or 169.254.169.254.
-//
-// Every case uses an IP LITERAL so the resolver answers without a DNS query — the
-// test stays hermetic and cannot fail on somebody's flaky network.
-func TestProviderImageRedirectPolicy(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		target  string
-		hops    int
-		wantErr bool
-	}{
-		{"public address, first hop", "https://93.184.216.34/cover.jpg", 1, false},
-		{"public address, last allowed hop", "https://93.184.216.34/cover.jpg", maxProviderImageRedirects - 1, false},
-		{"public address, one hop too many", "https://93.184.216.34/cover.jpg", maxProviderImageRedirects, true},
-		{"loopback", "http://127.0.0.1:8080/admin", 1, true},
-		{"IPv6 loopback", "http://[::1]:8080/admin", 1, true},
-		{"RFC1918 private", "http://192.168.1.1/admin", 1, true},
-		{"link-local (cloud metadata)", "http://169.254.169.254/latest/meta-data/", 1, true},
-		{"unspecified", "http://0.0.0.0/", 1, true},
-		{"non-http scheme", "file:///etc/passwd", 1, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, tc.target, nil)
-			if err != nil {
-				t.Fatalf("building request for %q: %v", tc.target, err)
-			}
-			via := make([]*http.Request, tc.hops)
-			err = checkProviderImageRedirect(req, via)
-			if tc.wantErr != (err != nil) {
-				t.Fatalf("checkProviderImageRedirect(%q, %d hops) = %v, want blocked=%v", tc.target, tc.hops, err, tc.wantErr)
-			}
-		})
+// TestProviderImageClientCarriesTheRedirectPolicy: the proxy's client is built by
+// safefetch and keeps its policy. The policy's own table of blocked hops now lives
+// with it (internal/safefetch), because the artwork fetcher and the subtitle
+// download need the identical rule and a second copy would drift; what has to be
+// asserted HERE is only that this client still has it. The end-to-end refusal —
+// a provider redirecting the proxy back onto loopback yields a 404 and the bytes
+// never arrive — is TestProviderImageUpstreamFailuresAreAll404 in
+// provider_image_test.go.
+func TestProviderImageClientCarriesTheRedirectPolicy(t *testing.T) {
+	p := newProviderImageProxy()
+	if p.client.CheckRedirect == nil {
+		t.Fatal("the provider-image client follows redirects unchecked")
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://169.254.169.254/latest/meta-data/", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	if err := p.client.CheckRedirect(req, []*http.Request{nil}); !errors.Is(err, safefetch.ErrRedirectBlocked) {
+		t.Fatalf("redirect to the cloud metadata address = %v, want safefetch.ErrRedirectBlocked", err)
 	}
 }

@@ -293,11 +293,10 @@ func parseYear(s string) int {
 	return y
 }
 
+// client returns this provider's HTTP client, under the shared redirect policy —
+// see providerClient in fetcher.go for why the JSON clients get it too.
 func (p *AniDBProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return providerClient(p.HTTPClient)
 }
 
 // throttle blocks until the next per-host request slot, reserving it so concurrent

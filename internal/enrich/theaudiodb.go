@@ -219,11 +219,10 @@ func (p *TheAudioDBProvider) lookupTrack(ctx context.Context, ref TitleRef) (Tit
 	return TitleMetadata{Matched: true, Source: "theaudiodb", Overview: desc}, nil
 }
 
+// client returns this provider's HTTP client, under the shared redirect policy —
+// see providerClient in fetcher.go for why the JSON clients get it too.
 func (p *TheAudioDBProvider) client() *http.Client {
-	if p.HTTPClient != nil {
-		return p.HTTPClient
-	}
-	return http.DefaultClient
+	return providerClient(p.HTTPClient)
 }
 
 // artist resolves a lookup key to a parsed artist record, returning a zero value
