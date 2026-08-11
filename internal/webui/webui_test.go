@@ -87,6 +87,97 @@ func TestRootServesSPA(t *testing.T) {
 	}
 }
 
+// Every response leaves this process through webui.Handler's securityHeaders
+// wrapper, so the baseline headers must be on the SPA shell AND on the API — one
+// uniform set, deliberately (see securityHeaders). A header that only lands on
+// one of the two subtrees is the exact regression these two cases catch.
+func TestSecurityHeadersOnSPAAndAPI(t *testing.T) {
+	srv := testharness.New(t)
+
+	want := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"SPA shell", "/"},
+		{"API", "/api/v1/server"},
+	} {
+		resp := srv.Do(http.MethodGet, tc.path, nil)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		for h, v := range want {
+			if got := resp.Header.Get(h); got != v {
+				t.Errorf("%s (GET %s): %s = %q, want %q\nbody: %s", tc.name, tc.path, h, got, v, body)
+			}
+		}
+		if resp.Header.Get("Content-Security-Policy") == "" {
+			t.Errorf("%s (GET %s): no Content-Security-Policy header", tc.name, tc.path)
+		}
+		// Strict-Transport-Security is deliberately never sent: this server
+		// speaks plain HTTP and the operator's TLS proxy owns that decision
+		// (ADR-0005), and HSTS is sticky per hostname — emitting it here can
+		// lock a household out of the plain-HTTP LAN path for the whole
+		// max-age. See securityHeaders for the full reasoning before "fixing"
+		// this.
+		if got := resp.Header.Get("Strict-Transport-Security"); got != "" {
+			t.Errorf("%s (GET %s): Strict-Transport-Security = %q, want it ABSENT", tc.name, tc.path, got)
+		}
+	}
+}
+
+// The CSP directives that video playback depends on.
+//
+// THIS TEST EXISTS SO A FUTURE CSP TIGHTENING FAILS HERE INSTEAD OF IN A USER'S
+// BROWSER, HALFWAY THROUGH A MOVIE. Both blob: allowances read like leftovers to
+// anyone tidying the policy, and neither failure is visible from the server:
+//
+//   - media-src blob: — the hls.js MSE path attaches the stream by setting
+//     video.src to a blob: object URL wrapping the MediaSource. Without it Chrome
+//     refuses the attach and <video> dies with "Media load rejected by URL safety
+//     check" on every non-Safari browser.
+//   - worker-src blob: — hls.js builds its demuxer worker from a blob: URL
+//     (no workerPath, so nothing same-origin could be allowed instead). It is
+//     dormant only because Vite resolves hls.js's ESM dist, which omits the
+//     inlined worker bundle; an hls.js repackaging re-arms it silently.
+//
+// connect-src 'self' is asserted too: it carries the API, hls.js's segment
+// fetches, and the never-ending SSE stream at GET /api/v1/events.
+//
+// The assertions are substring checks on purpose — they pin the source
+// expressions that matter, not the directive order or the rest of the policy, so
+// tightening an unrelated directive does not fail here.
+func TestCSPAllowsWhatPlaybackNeeds(t *testing.T) {
+	srv := testharness.New(t)
+
+	resp := srv.Do(http.MethodGet, "/", nil)
+	resp.Body.Close()
+	csp := resp.Header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("GET /: no Content-Security-Policy header")
+	}
+
+	for _, want := range []string{
+		"default-src 'self'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"object-src 'none'",
+		"frame-ancestors 'none'",
+		"media-src 'self' blob:",
+		"worker-src 'self' blob:",
+		"connect-src 'self'",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP is missing %q — playback and/or the baseline hardening depends on it\nCSP: %s", want, csp)
+		}
+	}
+}
+
 // A deep client-side route (no matching asset, not under /api/v1) falls back to
 // index.html with a 200, so deep links and refreshes load the app.
 func TestClientRouteFallback(t *testing.T) {
