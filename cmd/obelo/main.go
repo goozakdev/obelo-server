@@ -71,17 +71,13 @@ func run() error {
 		defer func() { _ = adv.Close() }()
 	}
 
-	srv := &http.Server{
-		Addr: cfg.ListenAddr,
-		// The access log lives here, around the fully composed handler, rather than
-		// inside app.New: the test harness serves application.Handler directly, so the
-		// suite is not drowned in a line per HLS segment. api.LogRequests redacts the
-		// two URLs that carry a credential — the stream token in
-		// /stream/{streamToken}/… and the ?token= on the direct-file download — because
-		// a request logger is the most likely way either reaches a file on disk.
-		Handler:           api.LogRequests(application.Handler),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	// The access log lives here, around the fully composed handler, rather than
+	// inside app.New: the test harness serves application.Handler directly, so the
+	// suite is not drowned in a line per HLS segment. api.LogRequests redacts the
+	// two URLs that carry a credential — the stream token in
+	// /stream/{streamToken}/… and the ?token= on the direct-file download — because
+	// a request logger is the most likely way either reaches a file on disk.
+	srv := newHTTPServer(cfg, api.LogRequests(application.Handler))
 
 	// Release long-lived SSE subscribers (GET /api/v1/events) as part of graceful
 	// shutdown. srv.Shutdown waits for in-flight requests to drain, but an SSE
@@ -114,6 +110,89 @@ func run() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(ctx)
+	}
+}
+
+// newHTTPServer builds the listening server with the connection timeouts we
+// intend. It is a function rather than a literal inside run() so main_test.go can
+// assert those timeouts without binding a port — in particular that WriteTimeout
+// is still zero. It does no wiring beyond the struct: run() owns
+// RegisterOnShutdown, ListenAndServe, and the signal handling.
+//
+// ADR-0005 puts an operator's reverse proxy in front of this in the expected
+// deployment, and a proxy absorbs most of what these bound — but the proxy is the
+// operator's to configure, not ours to assume, and the server also gets pointed
+// straight at a LAN (and, increasingly, at a port-forward) with nothing in front
+// of it. These are the direct-exposure defaults; a proxy in front only makes them
+// redundant, never wrong.
+func newHTTPServer(cfg config.Config, h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: h,
+
+		// Headers must arrive promptly. Nothing legitimate takes ten seconds to send
+		// a request line and a few KB of headers, and this is the slowloris bound.
+		ReadHeaderTimeout: 10 * time.Second,
+
+		// The whole request, body included — ReadHeaderTimeout stops at the blank
+		// line, so without this a client can send valid headers and then dribble a
+		// body one byte at a time forever, holding a connection for free.
+		//
+		// Sized against the largest legitimate body we accept: the artwork upload,
+		// capped at 16 MiB (maxArtworkUploadBytes) plus 1 MiB of multipart framing
+		// slack (uploadSlack) = 17 MiB ≈ 17.8 MB on the wire. Five minutes means a
+		// sustained ~59 KiB/s (~490 kbit/s) uplink completes it; a 1 Mbit/s domestic
+		// uplink — the slow end of what anyone still has — finishes in ~2.5 minutes,
+		// so there is roughly 2× headroom for a bad afternoon on the DSL. Shrink this
+		// and the first symptom is an admin on a poor connection getting a truncated
+		// upload on a large poster, which reads as a mystery server bug, not a
+		// timeout. Every other request we serve has a body of at most a few KB.
+		//
+		// Safe for the streaming endpoints despite covering the request: for a
+		// request with no body left to read (every GET, so every HLS segment, the
+		// direct-file download, and the SSE stream), net/http clears the connection's
+		// read deadline before it calls the handler. The read deadline therefore
+		// never fires under a long-running response. Verified against Go 1.26
+		// (connReader.startBackgroundRead).
+		ReadTimeout: 5 * time.Minute,
+
+		// WriteTimeout MUST stay zero. Do not "finish the set" by filling this in.
+		//
+		// It is an absolute deadline on the whole response, armed when the request is
+		// read, not an idle timer — so any non-zero value is a hard cap on how long a
+		// response may take, and this server exists to send responses that are
+		// deliberately longer than any number you would pick:
+		//   - progressive direct-play and HLS segment delivery (ADR-0004): a movie is
+		//     served over a connection for as long as the client plays it;
+		//   - the direct-file download, which is however long the file is over
+		//     however slow the link is;
+		//   - GET /api/v1/events, the SSE stream (ADR-0016), which by design never
+		//     finishes — it lives as long as the browser tab does.
+		// Setting it to, say, 30s does not "harden" anything; it makes playback and
+		// live updates cut out mid-response for every user, intermittently, in a way
+		// that looks like a network fault rather than a config change. The
+		// asymmetry with ReadTimeout above is intentional and load-bearing.
+		//
+		// The correct way to bound a genuinely slow response is a per-handler write
+		// deadline via http.ResponseController on the handlers that are NOT supposed
+		// to stream — the JSON API — which leaves the streaming ones alone. That is a
+		// change to individual handlers, not to this struct. TestNewHTTPServerTimeouts
+		// asserts this field is zero so the shortcut fails loudly instead.
+		WriteTimeout: 0,
+
+		// The keep-alive bound, and the main fix here: with both this and ReadTimeout
+		// at zero, net/http applies no idle deadline whatsoever and idle keep-alive
+		// connections accumulate until something else runs out of file descriptors.
+		// Two minutes comfortably outlives the gap between a client's polling calls
+		// and between HLS segment fetches, so it costs a reconnect only on
+		// connections that were doing nothing anyway.
+		IdleTimeout: 2 * time.Minute,
+
+		// MaxHeaderBytes is deliberately left at Go's 1 MB default. It is already a
+		// bound, so there is nothing to fix, and lowering it is not free: requests
+		// arrive through the operator's reverse proxy (ADR-0005) carrying whatever
+		// X-Forwarded-* and auth headers that proxy adds, and a too-tight cap turns
+		// into a 431 that is very hard to attribute from the client side.
 	}
 }
 
