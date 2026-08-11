@@ -9,6 +9,7 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -87,11 +88,10 @@ const (
 	// TLSModeFiles terminates TLS with an operator-supplied certificate and key
 	// on disk, from any CA they like, re-read without a restart when they change.
 	TLSModeFiles TLSMode = "files"
-	// TLSModeACME is RESERVED for automatic certificates over ACME/TLS-ALPN-01
-	// (ADR-0041). It parses as a KNOWN value today and Validate rejects it with
-	// "not yet supported": naming it now means the mode that lands later needs no
-	// renaming, and an operator who tries it is told so instead of quietly
-	// getting plain HTTP because the value fell through to the default.
+	// TLSModeACME obtains and renews a certificate automatically from an ACME CA
+	// (Let's Encrypt by default) using the TLS-ALPN-01 challenge, which completes
+	// on the HTTPS port itself — so the household forwards exactly one port and
+	// never needs port 80 reachable (ADR-0041). It requires TLSDomains.
 	TLSModeACME TLSMode = "acme"
 )
 
@@ -120,8 +120,8 @@ type Config struct {
 	ListenAddr string
 
 	// TLSMode selects native TLS termination (ADR-0041): TLSModeOff (the
-	// default), TLSModeFiles, or TLSModeACME (reserved; Validate rejects it until
-	// that mode exists).
+	// default), TLSModeFiles (a certificate on disk), or TLSModeACME (one obtained
+	// automatically over ACME/TLS-ALPN-01, which additionally needs TLSDomains).
 	//
 	// When it is on, the HTTPS listener is an ADDITION — the plain-HTTP listener
 	// keeps serving ListenAddr unchanged. That is the load-bearing part of the
@@ -157,6 +157,51 @@ type Config struct {
 	//
 	// Env: OBELO_TLS_LISTEN_ADDR.
 	TLSListenAddr string
+
+	// TLSDomains are the public DNS names this server answers to in TLSModeACME.
+	// They become autocert's HostWhitelist, and Validate REQUIRES at least one.
+	//
+	// The requirement is the load-bearing part, not a convenience. autocert's host
+	// policy defaults to "allow anything", and an ACME manager with no policy asks
+	// the CA for a certificate for whatever name arrives in a client's SNI. On a
+	// port-forwarded box that is not hypothetical: internet-wide scanners connect
+	// with other people's host names in the SNI all day. The server would then
+	// burn the CA's per-account issuance rate limit on names it does not own — and
+	// become an unwitting participant in somebody else's traffic — while looking
+	// completely healthy. So the whitelist is not optional, and neither is this
+	// field.
+	//
+	// Only exact matches count (autocert's HostWhitelist does no wildcards, and
+	// TLS-ALPN-01 cannot validate one anyway — RFC 8737 §3 restricts wildcards to
+	// DNS-01, which ADR-0041 rules out). List every name, `www.` included.
+	//
+	// Env: OBELO_TLS_DOMAINS (comma-separated).
+	TLSDomains []string
+
+	// ACMEEmail is the optional contact address registered with the ACME account.
+	// The CA uses it for expiry warnings and for reaching an operator whose
+	// certificate is about to lapse — which, on a box nobody watches, is the one
+	// notification worth having. Empty registers an account with no contact, which
+	// Let's Encrypt allows.
+	//
+	// Env: OBELO_ACME_EMAIL.
+	ACMEEmail string
+
+	// ACMEDirectoryURL is the ACME directory to obtain certificates from,
+	// defaulting to Let's Encrypt production (DefaultACMEDirectoryURL).
+	//
+	// This override is not a nicety. Let's Encrypt production allows 5 failed
+	// authorizations per account per hostname per hour and applies duplicate-
+	// certificate limits on top; anyone debugging a port-forward against it runs
+	// out of attempts in minutes and is then locked out for an hour with no way to
+	// tell a fixed setup from a rate-limited one. Point this at the staging
+	// directory — https://acme-staging-v02.api.letsencrypt.org/directory — while
+	// setting things up. Staging issues from an untrusted root, so browsers will
+	// warn; that is the point, and it means the certificate is real enough to
+	// prove the plumbing works.
+	//
+	// Env: OBELO_ACME_DIRECTORY.
+	ACMEDirectoryURL string
 
 	// DataDir is the single writable data directory. It holds the SQLite
 	// database and, in later slices, filesystem caches (ADR-0007).
@@ -382,6 +427,18 @@ type Config struct {
 // "forward a port on the router", the deployment this exists for.
 const DefaultTLSListenAddr = ":8443"
 
+// DefaultACMEDirectoryURL is the ACME directory used when the operator names
+// none: Let's Encrypt production. Spelled out rather than taken from
+// acme.LetsEncryptURL so this package does not pull in x/crypto/acme just to
+// hold a string; it is the same URL, and it is stable enough that a CA changing
+// it would be news.
+//
+// Test and set up against the STAGING directory instead —
+// https://acme-staging-v02.api.letsencrypt.org/directory — see
+// Config.ACMEDirectoryURL for why the production rate limits make iterating
+// against this one miserable.
+const DefaultACMEDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
+
 // DefaultScanInterval is the periodic safety-net scan cadence (ADR-0008). One
 // hour balances "pick up changes without being told" against pointless churn;
 // the scan is incremental so an unchanged library costs only a directory walk.
@@ -473,6 +530,7 @@ func Defaults() Config {
 		ListenAddr:               ":8080",
 		TLSMode:                  TLSModeOff,
 		TLSListenAddr:            DefaultTLSListenAddr,
+		ACMEDirectoryURL:         DefaultACMEDirectoryURL,
 		DataDir:                  "./data",
 		KeyRotationEnabled:       true,
 		KeyRotationURL:           DefaultKeyRotationURL,
@@ -546,6 +604,22 @@ func (c Config) MetadataKeysPath() string {
 	return filepath.Join(c.DataDir, "metadata-keys.json")
 }
 
+// ACMECacheDir returns the directory autocert stores its state in (ADR-0041,
+// TLSModeACME): the ACME ACCOUNT KEY and every issued certificate's PRIVATE KEY.
+// Under the data dir like every other durable file (ADR-0007), and created 0700
+// by the caller in cmd/obelo — this is the most sensitive directory the server
+// owns, and anyone who can read it can impersonate the server to every client in
+// the house.
+//
+// It must survive restarts, and that is not merely an optimization. autocert
+// re-issues anything it cannot find here, so a cache on tmpfs, or one pointed at
+// a container layer that is rebuilt on deploy, means a fresh certificate on every
+// restart — which walks straight into the CA's duplicate-certificate rate limit
+// and leaves the operator unable to get a certificate at all for a week.
+func (c Config) ACMECacheDir() string {
+	return filepath.Join(c.DataDir, "acme")
+}
+
 // SubtitleCacheDir returns the durable on-disk cache for externally fetched
 // Subtitle tracks, under the data dir (ADR-0007/0021), a sibling of the artwork
 // cache. Like it, this is durable cache — never written into library folders and
@@ -557,14 +631,25 @@ func (c Config) SubtitleCacheDir() string {
 // FromEnv builds a Config from defaults overlaid with environment variables:
 //
 //	OBELO_LISTEN_ADDR    -> ListenAddr
-//	OBELO_TLS_MODE       -> TLSMode (off|files|acme; default off. `files` adds an
-//	                               HTTPS listener alongside the plain-HTTP one —
-//	                               it never replaces it. An unrecognized value is
-//	                               a Validate error, unlike the knobs below)
+//	OBELO_TLS_MODE       -> TLSMode (off|files|acme; default off. `files` and
+//	                               `acme` both ADD an HTTPS listener alongside the
+//	                               plain-HTTP one — neither replaces it. An
+//	                               unrecognized value is a Validate error, unlike
+//	                               the knobs below)
 //	OBELO_TLS_CERT       -> TLSCertFile (absolute path to the PEM chain)
 //	OBELO_TLS_KEY        -> TLSKeyFile (absolute path to the PEM private key)
 //	OBELO_TLS_LISTEN_ADDR -> TLSListenAddr (host:port for HTTPS, default :8443;
 //	                               must differ from OBELO_LISTEN_ADDR)
+//	OBELO_TLS_DOMAINS    -> TLSDomains (comma-separated public DNS names;
+//	                               REQUIRED in acme mode — it becomes autocert's
+//	                               HostWhitelist, and there is deliberately no
+//	                               "allow anything" default)
+//	OBELO_ACME_EMAIL     -> ACMEEmail (optional CA contact for expiry notices)
+//	OBELO_ACME_DIRECTORY -> ACMEDirectoryURL (the ACME directory; defaults to
+//	                               Let's Encrypt production. Point it at
+//	                               https://acme-staging-v02.api.letsencrypt.org/directory
+//	                               while setting up, or the production rate limits
+//	                               will lock you out mid-debug)
 //	OBELO_DATA_DIR       -> DataDir
 //	OBELO_SERVER_NAME    -> ServerName (the Server identity's display name,
 //	                               ADR-0034; empty derives one from the hostname)
@@ -621,6 +706,24 @@ func FromEnv() Config {
 	}
 	if v := os.Getenv("OBELO_TLS_LISTEN_ADDR"); v != "" {
 		c.TLSListenAddr = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_TLS_DOMAINS"); v != "" {
+		// Split and trim only; the names are checked in Validate, which can refuse
+		// to boot and say why. Dropping a malformed entry here would leave the
+		// operator with a host policy quietly missing one of the names they listed
+		// — and the symptom, months later, is one hostname that never gets a
+		// certificate while the others do.
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				c.TLSDomains = append(c.TLSDomains, part)
+			}
+		}
+	}
+	if v := os.Getenv("OBELO_ACME_EMAIL"); v != "" {
+		c.ACMEEmail = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_ACME_DIRECTORY"); v != "" {
+		c.ACMEDirectoryURL = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("OBELO_DATA_DIR"); v != "" {
 		c.DataDir = v
@@ -812,33 +915,55 @@ func (c Config) Validate() error {
 
 // validateTLS checks the native-TLS knobs (ADR-0041).
 //
-// The posture here is deliberately STRICTER than anywhere else in this file:
-// with `files` mode explicitly asked for and the certificate unusable, the
-// server REFUSES TO BOOT rather than falling back to plain HTTP. An operator who
-// mistyped a path has made a typo, not suffered an outage — and a server that
-// started anyway would leave them believing they had HTTPS while their password
-// and session cookie crossed the internet in the clear, which is strictly worse
-// than a loud failure at the moment they can still fix it.
+// THE TWO MODES HAVE OPPOSITE BOOT POSTURES ON PURPOSE. Do not reconcile them.
 //
-// That is narrower than ADR-0041's "a failure to obtain a certificate must not
-// stop the server from booting". That sentence is about `acme`, where a CA
-// outage is nobody's mistake and the LAN should keep working through it; issue
-// 02 takes the other path for exactly that reason. A file that is not where the
-// operator said it is is not a CA outage.
+//   - `files` is STRICT: an unreadable path or a mismatched pair REFUSES TO BOOT.
+//     The operator typed a path; a path that is wrong is a typo, not an outage,
+//     and a server that started anyway would leave them believing they had HTTPS
+//     while their password and session cookie crossed the internet in the clear.
+//     A loud failure at the moment they can still fix it is strictly better.
+//
+//   - `acme` is LENIENT about the certificate and strict only about the
+//     CONFIGURATION. Everything checked here is something the operator typed
+//     (the domain list, the ports). Whether a certificate can actually be
+//     obtained is not checked at all, and must not be: a CA outage, DNS that has
+//     not propagated, a router whose port-forward is not set up yet, or a
+//     rate limit are the world being temporarily unavailable, not a mistake, and
+//     ADR-0041 is explicit that refusing to serve the LAN over one of them is a
+//     bad trade. That side lives in cmd/obelo (newServers/acmeCertificates),
+//     which builds the listener regardless and logs when a handshake cannot be
+//     answered.
+//
+// The dividing line is "did the operator get something wrong, or did the world?"
+// — not the mode. Both readings follow from the same ADR sentence.
 func (c Config) validateTLS() error {
 	switch c.TLSMode {
 	case "", TLSModeOff:
-		// No HTTPS listener is built, so the cert/key/address fields are inert and
-		// there is nothing to check — including TLSListenAddr, which nothing binds.
-		// "" is the zero value a hand-built Config (tests, embedders) carries and
-		// means the same as off; only FromEnv/Defaults populate the constant.
+		// No HTTPS listener is built, so the cert/key/domain/address fields are
+		// inert and there is nothing to check — including TLSListenAddr, which
+		// nothing binds. "" is the zero value a hand-built Config (tests,
+		// embedders) carries and means the same as off; only FromEnv/Defaults
+		// populate the constant.
 		return nil
-	case TLSModeACME:
-		return fmt.Errorf("config: OBELO_TLS_MODE=acme is not yet supported — ADR-0041 reserves the name for automatic certificates; use OBELO_TLS_MODE=files with OBELO_TLS_CERT and OBELO_TLS_KEY, or leave TLS off")
-	case TLSModeFiles:
+	case TLSModeFiles, TLSModeACME:
 		// Checked below.
 	default:
 		return fmt.Errorf("config: unknown OBELO_TLS_MODE %q (want off, files, or acme)", string(c.TLSMode))
+	}
+
+	// Both modes bind the HTTPS listener, so both need an address of its own.
+	// Checked before the mode-specific parts so the message an operator gets is
+	// about the port they set rather than about a certificate they have not got
+	// round to yet.
+	if c.TLSListenAddr == "" {
+		return fmt.Errorf("config: OBELO_TLS_LISTEN_ADDR must not be empty when OBELO_TLS_MODE=%s (default %q)", string(c.TLSMode), DefaultTLSListenAddr)
+	}
+	if c.TLSListenAddr == c.ListenAddr {
+		return fmt.Errorf("config: OBELO_TLS_LISTEN_ADDR and OBELO_LISTEN_ADDR are both %q — HTTPS is an ADDITIONAL listener, not a replacement for the plain-HTTP one (ADR-0041), so the two need separate ports", c.TLSListenAddr)
+	}
+
+	if c.TLSMode == TLSModeACME {
+		return c.validateACME()
 	}
 
 	if c.TLSCertFile == "" {
@@ -847,12 +972,6 @@ func (c Config) validateTLS() error {
 	if c.TLSKeyFile == "" {
 		return fmt.Errorf("config: OBELO_TLS_MODE=files needs OBELO_TLS_KEY (an absolute path to the PEM private key)")
 	}
-	if c.TLSListenAddr == "" {
-		return fmt.Errorf("config: OBELO_TLS_LISTEN_ADDR must not be empty when OBELO_TLS_MODE=files (default %q)", DefaultTLSListenAddr)
-	}
-	if c.TLSListenAddr == c.ListenAddr {
-		return fmt.Errorf("config: OBELO_TLS_LISTEN_ADDR and OBELO_LISTEN_ADDR are both %q — HTTPS is an ADDITIONAL listener, not a replacement for the plain-HTTP one (ADR-0041), so the two need separate ports", c.TLSListenAddr)
-	}
 	// Load the pair here, at the one moment a bad path is cheap to fix. The error
 	// from LoadX509KeyPair names the file it failed on ("open /etc/…: no such
 	// file"), so both paths are restated around it: the common mistakes are a
@@ -860,6 +979,53 @@ func (c Config) validateTLS() error {
 	// certificate, and the third one is invisible without actually pairing them.
 	if _, err := tls.LoadX509KeyPair(c.TLSCertFile, c.TLSKeyFile); err != nil {
 		return fmt.Errorf("config: TLS certificate %q with key %q does not load as a usable pair: %w", c.TLSCertFile, c.TLSKeyFile, err)
+	}
+	return nil
+}
+
+// validateACME checks the knobs the operator types for TLSModeACME. It makes no
+// network call and touches no file — see validateTLS on why a certificate that
+// cannot be obtained is emphatically not this function's business.
+//
+// THE HOST LIST IS THE WHOLE POINT OF THIS FUNCTION. Everything else here is
+// spelling; the empty check below is what stops the server becoming a
+// certificate vending machine for whatever host name a stranger puts in an SNI.
+func (c Config) validateACME() error {
+	if len(c.TLSDomains) == 0 {
+		return fmt.Errorf("config: OBELO_TLS_MODE=acme needs OBELO_TLS_DOMAINS (a comma-separated list of the public DNS names this server answers to, e.g. \"media.example.com\"). It is required and has no default on purpose: the list becomes autocert's HostWhitelist, and a manager with no host policy asks the CA for a certificate for whatever name arrives in a client's SNI — so a port-forwarded server would spend the account's issuance rate limit on names it does not own, on behalf of whoever pointed them here, while looking perfectly healthy")
+	}
+	for _, d := range c.TLSDomains {
+		if err := validateACMEDomain(d); err != nil {
+			return fmt.Errorf("config: OBELO_TLS_DOMAINS entry %q: %w", d, err)
+		}
+	}
+	if c.ACMEDirectoryURL == "" {
+		return fmt.Errorf("config: OBELO_TLS_MODE=acme needs an ACME directory URL (OBELO_ACME_DIRECTORY); leave it unset to use %s, or point it at https://acme-staging-v02.api.letsencrypt.org/directory while you are setting things up", DefaultACMEDirectoryURL)
+	}
+	return nil
+}
+
+// validateACMEDomain rejects the entries that could never work, as opposed to
+// the ones that merely might not. Each of these fails silently and permanently
+// otherwise: autocert's HostWhitelist "silently ignores" a name it cannot
+// convert, and every rejection below then surfaces months later as one hostname
+// that never gets a certificate while its siblings do, or as an opaque error
+// from the CA that names nothing an operator can act on.
+func validateACMEDomain(d string) error {
+	if strings.ContainsAny(d, " \t/\\") || strings.Contains(d, "://") {
+		return fmt.Errorf("looks like a URL or has a stray character — give a bare host name, e.g. \"media.example.com\", with no scheme, path, or spaces")
+	}
+	if strings.HasPrefix(d, "*") {
+		return fmt.Errorf("wildcards are not possible here — TLS-ALPN-01 cannot validate one (RFC 8737 §3 allows wildcards only over DNS-01, which ADR-0041 rules out), and autocert's host whitelist matches exactly in any case. List each name in full")
+	}
+	if strings.Contains(d, ":") {
+		return fmt.Errorf("carries a port — the certificate is issued for a name, not a name:port. Set the port with OBELO_TLS_LISTEN_ADDR")
+	}
+	if net.ParseIP(d) != nil {
+		return fmt.Errorf("is an IP address — autocert only ever asks the CA to authorize a DNS identifier, so this can never be issued. Use the DNS name that points at this address (ADR-0041: the LAN keeps plain HTTP precisely because no CA will certify an address)")
+	}
+	if !strings.Contains(strings.Trim(d, "."), ".") {
+		return fmt.Errorf("is a single label — autocert refuses a name with no dot, so this would be rejected at every handshake. Give the fully qualified name")
 	}
 	return nil
 }

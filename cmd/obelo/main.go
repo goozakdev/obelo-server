@@ -120,9 +120,14 @@ func run() error {
 
 // newServers builds the listeners this configuration asks for: always the
 // plain-HTTP one, plus the HTTPS one when the operator opted into native TLS
-// (ADR-0041, OBELO_TLS_MODE=files). With TLS off it returns exactly the one
-// server this command has always had — same struct, same handler, and no
+// (ADR-0041, OBELO_TLS_MODE=files or =acme). With TLS off it returns exactly the
+// one server this command has always had — same struct, same handler, and no
 // certificate machinery constructed or goroutine started.
+//
+// THE TWO TLS MODES FAIL IN OPPOSITE DIRECTIONS HERE, ON PURPOSE. `files`
+// returns an error and stops the boot when the certificate will not load;
+// `acme` cannot return an error at all. See the switch below and
+// config.validateTLS, which carries the same reasoning from the config side.
 //
 // onShutdown is registered on EVERY server returned, and that is load-bearing
 // rather than tidy. It releases the long-lived SSE subscribers of
@@ -145,7 +150,8 @@ func newServers(cfg config.Config, h http.Handler, onShutdown func()) ([]*http.S
 	srv.RegisterOnShutdown(onShutdown)
 	servers := []*http.Server{srv}
 
-	if cfg.TLSMode == config.TLSModeFiles {
+	switch cfg.TLSMode {
+	case config.TLSModeFiles:
 		// cfg.Validate has already loaded this pair once, so a failure here is a
 		// file that changed in the moments since — rare, and still a refusal,
 		// because the operator asked for HTTPS and must not get a quietly
@@ -155,6 +161,30 @@ func newServers(cfg config.Config, h http.Handler, onShutdown func()) ([]*http.S
 			return nil, err
 		}
 		tlsSrv := newTLSServer(cfg, h, reloader.GetCertificate)
+		tlsSrv.RegisterOnShutdown(onShutdown)
+		servers = append(servers, tlsSrv)
+
+	case config.TLSModeACME:
+		// Note what is missing: an error path. Nothing between here and a serving
+		// listener can fail, because nothing here talks to the CA — the first
+		// handshake for a whitelisted name does. If the CA is down, if DNS is not
+		// pointed at the house yet, if the router forwards nothing, or if the
+		// account is rate-limited, this server still boots and still serves the LAN
+		// on ListenAddr; only HTTPS is missing, and it is logged every time someone
+		// asks for it (acmeCertificates.complain).
+		//
+		// That is the deliberate opposite of the `files` branch above, and the
+		// reasoning is ADR-0041's: `files` failing means the operator mistyped a
+		// path they control, so a loud refusal is a favour. `acme` failing means
+		// the world is temporarily unavailable, and taking the household's media
+		// server down over a third party's outage would be a bad trade. Anyone
+		// tempted to "make these consistent" should change neither.
+		//
+		// Also absent, and equally deliberate: any use of Manager.HTTPHandler.
+		// HTTP-01 would need port 80 reachable from the internet — a second
+		// listener and a second port-forward for a household that only wanted one,
+		// which is precisely the usability cost TLS-ALPN-01 exists to avoid.
+		tlsSrv := newACMEServer(cfg, h, newACMECertificates(cfg))
 		tlsSrv.RegisterOnShutdown(onShutdown)
 		servers = append(servers, tlsSrv)
 	}
@@ -316,7 +346,7 @@ func newTLSServer(cfg config.Config, h http.Handler, getCert func(*tls.ClientHel
 		// somebody restarts the process. See certReloader.
 		GetCertificate: getCert,
 
-		// NextProtos IS DELIBERATELY UNSET. Do not fill it in.
+		// NextProtos IS DELIBERATELY UNSET HERE. Do not fill it in.
 		//
 		// http.Server.ServeTLS negotiates HTTP/2 for us — it appends "h2" to a copy
 		// of this config when TLSNextProto is nil, which it is. Setting NextProtos
@@ -327,7 +357,40 @@ func newTLSServer(cfg config.Config, h http.Handler, getCert func(*tls.ClientHel
 		// instead of queueing against the browser's per-origin connection limit.
 		// The symptom would be "playback got choppier after some TLS change", months
 		// later, with no error anywhere.
+		//
+		// newACMEServer below IS the one caller that sets it, and it takes the whole
+		// list from autocert rather than writing one out, so "h2" cannot go missing
+		// there either. See its comment for why acme mode has no choice.
 	}
+	return srv
+}
+
+// newACMEServer builds the HTTPS listener for OBELO_TLS_MODE=acme (ADR-0041
+// phase 2). It is newTLSServer plus the two things autocert has to supply, so
+// the timeouts, the TLS 1.2 floor, and the rest of the posture cannot drift
+// between the two TLS modes.
+//
+// NextProtos MUST be set in this mode, which is the one exception to the rule
+// stated above, and it is copied from autocert.Manager.TLSConfig() rather than
+// written out here. Two things depend on the exact contents:
+//
+//   - "acme-tls/1" (acme.ALPNProto) must be present or the TLS-ALPN-01 challenge
+//     CANNOT COMPLETE. The CA connects with that protocol and nothing else; a
+//     server that does not offer it fails ALPN, the challenge is never answered,
+//     and the certificate never arrives. The failure surfaces as a CA-side
+//     authorization error that reads like a problem at Let's Encrypt, so it is
+//     very easy to spend an afternoon on — and, worse, each attempt spends one of
+//     the five failed authorizations per hostname per hour.
+//   - "h2" must survive, for the HLS multiplexing reason in newTLSServer. Setting
+//     NextProtos by hand is exactly how it gets dropped, which is why the list
+//     comes from the manager (it is ["h2", "http/1.1", "acme-tls/1"]) instead of
+//     being retyped. Order matters too: Go's TLS server picks the first entry the
+//     client also offers, so h2 leading keeps ordinary traffic on HTTP/2 while a
+//     CA offering only acme-tls/1 still matches.
+func newACMEServer(cfg config.Config, h http.Handler, certs *acmeCertificates) *http.Server {
+	fromManager := certs.manager.TLSConfig()
+	srv := newTLSServer(cfg, h, certs.GetCertificate)
+	srv.TLSConfig.NextProtos = fromManager.NextProtos
 	return srv
 }
 

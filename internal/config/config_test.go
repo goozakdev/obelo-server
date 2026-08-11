@@ -457,23 +457,137 @@ func TestValidateTLSOffIgnoresCertificateKnobs(t *testing.T) {
 	}
 }
 
-// TestValidateTLSACMEReserved: `acme` is a KNOWN value that is not implemented
-// yet (ADR-0041 phase 2). It must fail loudly with "not yet supported" rather
-// than fall through to the unknown-mode error or, worse, to off — so the mode
-// that lands later needs no renaming, and an operator who tried it early is told
-// why instead of silently running plain HTTP.
-func TestValidateTLSACMEReserved(t *testing.T) {
-	c := config.Defaults()
-	c.TLSMode = config.TLSModeACME
+// TestValidateTLSACMENeedsDomains: the single most expensive thing to get wrong
+// in this mode. autocert's host policy defaults to "allow anything", and a
+// manager with no policy obtains a certificate for whatever name arrives in a
+// client's SNI — so a port-forwarded server would spend the account's issuance
+// rate limit on strangers' domains, at their request, while looking healthy. The
+// list has no default and cannot be empty, and that is enforced here rather than
+// left to the server to notice.
+func TestValidateTLSACMENeedsDomains(t *testing.T) {
+	base := func() config.Config {
+		c := config.Defaults()
+		c.TLSMode = config.TLSModeACME
+		c.TLSDomains = []string{"media.example.com"}
+		return c
+	}
+
+	if err := base().Validate(); err != nil {
+		t.Fatalf("Validate rejected a well-formed acme config: %v", err)
+	}
+
+	c := base()
+	c.TLSDomains = nil
 	err := c.Validate()
 	if err == nil {
-		t.Fatal("Validate accepted OBELO_TLS_MODE=acme; want it rejected until the mode exists")
+		t.Fatal("Validate accepted acme mode with no OBELO_TLS_DOMAINS; want a refusal — an empty host policy is a rate-limit incinerator")
 	}
-	if !strings.Contains(err.Error(), "not yet supported") {
-		t.Errorf("Validate error = %v, want it to say the mode is not yet supported", err)
+	if !strings.Contains(err.Error(), "OBELO_TLS_DOMAINS") {
+		t.Errorf("Validate error = %v, want it to name the missing variable", err)
 	}
-	if strings.Contains(err.Error(), "unknown OBELO_TLS_MODE") {
-		t.Errorf("Validate error = %v, want the reserved-mode message, not the unknown-value one", err)
+
+	// The port checks apply in acme mode too — both modes bind the HTTPS listener.
+	c = base()
+	c.TLSListenAddr = c.ListenAddr
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "ADDITIONAL listener") {
+		t.Errorf("Validate = %v with both listeners on one port in acme mode, want the two-ports refusal", err)
+	}
+	c = base()
+	c.TLSListenAddr = ""
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "OBELO_TLS_LISTEN_ADDR") {
+		t.Errorf("Validate = %v with an empty TLS listen address in acme mode, want a refusal naming it", err)
+	}
+
+	// acme mode needs no certificate files, and must not start asking for them.
+	c = base()
+	c.TLSCertFile, c.TLSKeyFile = "", ""
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate = %v in acme mode with no cert/key paths, want nil — the CA supplies them", err)
+	}
+
+	// An unreachable directory is emphatically NOT a validation error: whether a
+	// certificate can be obtained is the world's business, not the operator's, and
+	// ADR-0041 forbids stopping the boot over it. Validate makes no network call.
+	c = base()
+	c.ACMEDirectoryURL = "http://127.0.0.1:1/directory"
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate = %v for an unreachable ACME directory, want nil — reachability is checked by trying, at handshake time, and a CA outage must not stop the boot", err)
+	}
+}
+
+// TestValidateACMEDomainShapes: each of these entries fails silently and
+// permanently if it is let through. autocert's HostWhitelist "silently ignores"
+// a name it cannot convert, and the rest produce a CA error that names nothing
+// an operator can act on — so the refusal has to happen here, where it can say
+// what is wrong.
+func TestValidateACMEDomainShapes(t *testing.T) {
+	cases := []struct {
+		domain   string
+		wantText string
+	}{
+		{"https://media.example.com", "URL"},
+		{"media.example.com/", "URL"},
+		{"media example.com", "URL"},
+		{"*.example.com", "wildcard"},
+		{"media.example.com:8443", "port"},
+		{"192.168.1.50", "IP address"},
+		{"2001:db8::1", "port"}, // a bare IPv6 literal trips the colon check first, which is fine — both messages point at the same fix
+		{"localhost", "single label"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.domain, func(t *testing.T) {
+			c := config.Defaults()
+			c.TLSMode = config.TLSModeACME
+			c.TLSDomains = []string{tc.domain}
+			err := c.Validate()
+			if err == nil {
+				t.Fatalf("Validate accepted OBELO_TLS_DOMAINS=%q; want a refusal", tc.domain)
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("Validate error = %v, want it to mention %q", err, tc.wantText)
+			}
+			if !strings.Contains(err.Error(), tc.domain) {
+				t.Errorf("Validate error = %v, want it to quote the entry the operator typed", err)
+			}
+		})
+	}
+}
+
+// TestACMEConfigFromEnv: the three ACME knobs, plus the defaults an operator who
+// sets none of them gets.
+func TestACMEConfigFromEnv(t *testing.T) {
+	d := config.Defaults()
+	if d.ACMEDirectoryURL != config.DefaultACMEDirectoryURL {
+		t.Errorf("default ACME directory = %q, want %q", d.ACMEDirectoryURL, config.DefaultACMEDirectoryURL)
+	}
+	if len(d.TLSDomains) != 0 || d.ACMEEmail != "" {
+		t.Errorf("defaults carry domains %v / email %q, want neither — ACME is opt-in", d.TLSDomains, d.ACMEEmail)
+	}
+	if !strings.Contains(config.DefaultACMEDirectoryURL, "acme-v02.api.letsencrypt.org") {
+		t.Errorf("the default ACME directory is %q, want Let's Encrypt production", config.DefaultACMEDirectoryURL)
+	}
+
+	t.Setenv("OBELO_TLS_DOMAINS", " media.example.com , www.example.com ,, ")
+	t.Setenv("OBELO_ACME_EMAIL", " ops@example.com ")
+	t.Setenv("OBELO_ACME_DIRECTORY", " https://acme-staging-v02.api.letsencrypt.org/directory ")
+	c := config.FromEnv()
+	if len(c.TLSDomains) != 2 || c.TLSDomains[0] != "media.example.com" || c.TLSDomains[1] != "www.example.com" {
+		t.Errorf("TLSDomains = %v, want the two names, trimmed, empties dropped", c.TLSDomains)
+	}
+	if c.ACMEEmail != "ops@example.com" {
+		t.Errorf("ACMEEmail = %q, want it trimmed", c.ACMEEmail)
+	}
+	if c.ACMEDirectoryURL != "https://acme-staging-v02.api.letsencrypt.org/directory" {
+		t.Errorf("ACMEDirectoryURL = %q, want the staging override — without it nobody can set this up without burning the production rate limit", c.ACMEDirectoryURL)
+	}
+
+	// The cache holds the ACME account key and every issued private key, so it
+	// belongs under the data dir with everything else durable (ADR-0007) rather
+	// than in a temp directory that a reboot would clear — which would re-issue
+	// every time and hit the CA's duplicate-certificate limit.
+	c.DataDir = "/srv/obelo"
+	if got := c.ACMECacheDir(); got != filepath.Join("/srv/obelo", "acme") {
+		t.Errorf("ACMECacheDir = %q, want it under the data dir", got)
 	}
 }
 

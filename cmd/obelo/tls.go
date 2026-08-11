@@ -8,6 +8,11 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
+
+	"github.com/marioquake/obelo-server/internal/config"
 )
 
 // certReloader owns the operator-supplied certificate on disk (ADR-0041,
@@ -193,6 +198,211 @@ func describeCert(cert *tls.Certificate) string {
 		return "unparseable leaf"
 	}
 	return fmt.Sprintf("subject %q, expires %s", leaf.Subject.CommonName, leaf.NotAfter.UTC().Format(time.RFC3339))
+}
+
+// --- ACME (OBELO_TLS_MODE=acme, ADR-0041 phase 2) ---------------------------
+
+// acmeCertificates owns the autocert.Manager for OBELO_TLS_MODE=acme and wraps
+// its GetCertificate hook with the logging an unattended household server needs.
+//
+// The wrapper exists because the two things an operator has to know — "TLS is
+// working now" and "TLS is not working, and here is the short list of reasons" —
+// are otherwise invisible. autocert returns its errors to the TLS stack, which
+// hands them to net/http, which prints "http: TLS handshake error from
+// 203.0.113.9: acme/autocert: …": true, unattributed, and indistinguishable from
+// the noise a port-forwarded box gets all day.
+//
+// THIS TYPE MUST NEVER TURN A CERTIFICATE FAILURE INTO A BOOT FAILURE. That is
+// the whole posture of `acme` mode and the exact opposite of `files` mode. A CA
+// outage, DNS that has not propagated, a port-forward the household has not set
+// up yet, or a rate limit are the world being unavailable — none of them is the
+// operator's mistake, and ADR-0041 says plainly that refusing to serve the LAN
+// over one would be a bad trade. So: log, keep the plain-HTTP listener serving,
+// and let autocert try again on the next handshake. config.validateTLS carries
+// the same reasoning from the other side.
+type acmeCertificates struct {
+	manager *autocert.Manager
+
+	// listenAddrs are quoted back in the failure message. An operator reading
+	// "no certificate yet" needs to be told, in the same breath, that the LAN
+	// listener is fine and which port the router has to forward.
+	plainAddr string
+	tlsAddr   string
+	directory string
+
+	// complainEvery bounds how often a failure is logged. This is not tidiness.
+	// The host policy rejects every unknown SNI, and an internet-facing port gets
+	// those continuously from scanners — one line each would bury the one failure
+	// that is about the operator's own domain under thousands that are not.
+	complainEvery time.Duration
+
+	mu         sync.Mutex
+	lastGripe  time.Time
+	suppressed int
+	announced  map[string]bool
+}
+
+// defaultACMEComplaintInterval is the floor between two logged certificate
+// failures. A minute is short enough that an operator restarting the server and
+// reloading a browser sees the reason immediately, and long enough that a
+// scanner sweeping SNI names cannot fill the disk.
+const defaultACMEComplaintInterval = time.Minute
+
+// newACMECertificates builds the autocert manager from the config and prepares
+// its cache directory. It returns no error, deliberately — see the type comment.
+func newACMECertificates(cfg config.Config) *acmeCertificates {
+	cacheDir := cfg.ACMECacheDir()
+
+	// 0700 because this directory holds the ACME account key and every issued
+	// certificate's private key. autocert's DirCache would create it itself (also
+	// 0700, on first Put), but only lazily: creating it here means the permissions
+	// are right and visible from the first boot, before anything sensitive lands
+	// in it, and it gives the check below something to look at.
+	//
+	// A failure is a warning rather than a refusal, and rather than skipping the
+	// listener. The data directory has already been proven writable by
+	// config.EnsureDataDir, so getting here at all means something unusual and
+	// probably transient; DirCache retries the same MkdirAll on every Put, so a
+	// problem that clears fixes itself. What must not happen is a boot failure
+	// (that is `files` mode's posture, not this one) or a running server with no
+	// cache at all, which would re-issue on every restart and walk straight into
+	// the CA's duplicate-certificate limit.
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		log.Printf("obelo: WARNING: cannot create the ACME cache directory %s (%v) — certificates and the ACME account key have nowhere durable to live, so this server may re-issue on every restart and hit the CA's rate limit. HTTPS will still be attempted.", cacheDir, err)
+	} else {
+		warnIfACMECacheIsExposed(cacheDir)
+	}
+
+	m := &autocert.Manager{
+		Prompt: autocert.AcceptTOS,
+		Cache:  autocert.DirCache(cacheDir),
+
+		// NEVER nil. With no host policy autocert obtains a certificate for
+		// whatever name a client puts in its SNI, which on a port-forwarded box
+		// means strangers' host names, the account's rate limit spent on domains
+		// this server has no business with, and our IP appearing in somebody else's
+		// certificate transparency log entry. config.validateACME refuses to boot
+		// with an empty list so this cannot silently become HostWhitelist() — which
+		// would be a policy that rejects everything, not one that allows it, but is
+		// still not a state worth reaching by accident.
+		HostPolicy: autocert.HostWhitelist(cfg.TLSDomains...),
+
+		Email: cfg.ACMEEmail,
+
+		// The directory URL is always explicit, even when it is the default, so the
+		// boot log below can name the CA that is about to be talked to. A staging
+		// URL here is the difference between debugging a port-forward calmly and
+		// being locked out by the production rate limit after five attempts.
+		Client: &acme.Client{DirectoryURL: cfg.ACMEDirectoryURL},
+	}
+
+	log.Printf("obelo: ACME enabled for %v via %s (cache: %s) — certificates are obtained on the first HTTPS handshake for a listed name, over TLS-ALPN-01 on %s; port 80 is not used and does not need forwarding",
+		cfg.TLSDomains, cfg.ACMEDirectoryURL, cacheDir, cfg.TLSListenAddr)
+
+	return &acmeCertificates{
+		manager:       m,
+		plainAddr:     cfg.ListenAddr,
+		tlsAddr:       cfg.TLSListenAddr,
+		directory:     cfg.ACMEDirectoryURL,
+		complainEvery: defaultACMEComplaintInterval,
+		announced:     map[string]bool{},
+	}
+}
+
+// GetCertificate is the tls.Config.GetCertificate hook for `acme` mode.
+//
+// Nothing is obtained ahead of time, and that is a decision rather than an
+// omission. Issuance is driven by the first handshake for a listed name because
+// (a) the CA validates TLS-ALPN-01 by connecting BACK to this listener, so an
+// attempt made before the listener is accepting fails for a reason that has
+// nothing to do with the operator's setup, and (b) a boot-time attempt on a box
+// whose DNS is not pointed yet spends one of the CA's five failed authorizations
+// per hostname per hour — on every restart, which is exactly when an operator is
+// restarting most. Failing toward "did not talk to the CA" is the cheaper
+// mistake. autocert caches what it obtains and renews it on its own timer, so the
+// cost of laziness is one slow handshake per certificate per lifetime.
+func (a *acmeCertificates) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	cert, err := a.manager.GetCertificate(hello)
+
+	// The CA validating our challenge is not a user, and its handshake is not
+	// news: it presents a throwaway certificate carrying the challenge response
+	// and hangs up. Logging it as "a certificate is ready" would be wrong, and
+	// logging its failures alongside real ones would be noise.
+	if isACMEChallengeHandshake(hello) {
+		return cert, err
+	}
+
+	if err != nil {
+		a.complain(hello.ServerName, err)
+		return nil, err
+	}
+	a.announce(hello.ServerName, cert)
+	return cert, nil
+}
+
+// isACMEChallengeHandshake reports whether this handshake is a CA verifying a
+// TLS-ALPN-01 challenge. The test matches autocert's own (a client offering
+// acme-tls/1 and nothing else); no real client ever does that, because a real
+// client wants to speak HTTP afterwards.
+func isACMEChallengeHandshake(hello *tls.ClientHelloInfo) bool {
+	return len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto
+}
+
+// announce logs the first successful certificate for each name. Once per name,
+// not once per handshake: this is the line an operator greps for to confirm the
+// thing worked, and it is worthless if it repeats.
+func (a *acmeCertificates) announce(name string, cert *tls.Certificate) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.announced[name] {
+		return
+	}
+	a.announced[name] = true
+	log.Printf("obelo: HTTPS certificate ready for %q from %s (%s)", name, a.directory, describeCert(cert))
+}
+
+// complain reports a certificate that could not be produced, rate-limited to one
+// line per complainEvery with a count of what was swallowed.
+//
+// The message is long on purpose. It arrives on a box nobody is watching, hours
+// after the operator changed something, and its job is to answer "what do I go
+// and look at" without a second round trip — including the part they will not
+// otherwise believe, which is that the server is still running and the LAN is
+// unaffected.
+func (a *acmeCertificates) complain(name string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	if now.Sub(a.lastGripe) < a.complainEvery {
+		a.suppressed++
+		return
+	}
+	a.lastGripe = now
+
+	also := ""
+	if a.suppressed > 0 {
+		also = fmt.Sprintf(" (%d further certificate failures suppressed since the last message)", a.suppressed)
+		a.suppressed = 0
+	}
+	log.Printf("obelo: WARNING: no HTTPS certificate for %q: %v%s — the server is STILL RUNNING and plain HTTP on %s is unaffected (ADR-0041: a certificate problem costs HTTPS, not the LAN). Check that %q is in OBELO_TLS_DOMAINS, that its public DNS points at this house, that the router forwards 443 to %s, and that %s is reachable. autocert retries on the next handshake.",
+		name, err, also, a.plainAddr, name, a.tlsAddr, a.directory)
+}
+
+// warnIfACMECacheIsExposed logs when the ACME cache directory is readable or
+// traversable beyond its owner. A warning, never a refusal — the same call
+// warnIfKeyIsExposed makes below, for the same reason: the operator may have
+// arranged group access on purpose, and this server does not get to overrule
+// their filesystem. But this directory holds every private key it will ever
+// serve, so a mode nobody chose deserves a line in the log.
+func warnIfACMECacheIsExposed(dir string) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return // The caller is already reporting whatever went wrong here.
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		log.Printf("obelo: WARNING: the ACME cache directory %s is mode %04o — readable beyond its owner, and it holds the ACME account key and every issued private key; anyone who can read it can impersonate this server. Consider chmod 700.", dir, perm)
+	}
 }
 
 // warnIfKeyIsExposed logs when the private key is readable by anyone but its
