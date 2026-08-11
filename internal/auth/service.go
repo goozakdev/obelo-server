@@ -261,9 +261,10 @@ type DeviceInput struct {
 //
 // clientIP is the caller's source address, and the auth package takes it as a
 // plain string precisely so it can stay transport-agnostic — deriving it is the
-// api layer's job (see clientIP there for why it is RemoteAddr and never
-// X-Forwarded-For). Pass "" if there genuinely is none; those callers then share
-// one bucket in the per-IP counter, which is stricter, not looser.
+// api layer's job (see clientIP there: RemoteAddr, and X-Forwarded-For only from
+// a peer the operator listed in OBELO_TRUSTED_PROXIES). Pass "" if there
+// genuinely is none; those callers then share one bucket in the per-IP counter,
+// which is stricter, not looser.
 //
 // Too many recent FAILURES from this username or this address yield
 // ErrTooManyLoginAttempts, returned before any credential work — see

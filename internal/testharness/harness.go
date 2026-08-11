@@ -80,6 +80,23 @@ func WithSessionIdleTimeout(d time.Duration) Option {
 	return func(b *builder) { b.cfg.SessionIdleTimeout = d }
 }
 
+// WithTrustedProxies sets the reverse-proxy allowlist (OBELO_TRUSTED_PROXIES,
+// ADR-0041) as CIDR prefixes or bare addresses. The default harness sets none,
+// which is the production default and means no X-Forwarded-* header is believed
+// from anyone — so the spoofing tests that assert a forged header cannot mint a
+// fresh rate-limit budget need no option at all, and keep asserting the shipped
+// default.
+//
+// A test that opts in is describing the OTHER deployment: a proxy the operator
+// vouched for. Pair it with JSONFrom, which is the only helper that can present a
+// chosen peer address — from the httptest listener every request arrives from
+// 127.0.0.1, so trusting that CIDR there makes the LISTENER the trusted proxy,
+// which is exactly what the X-Forwarded-Proto cookie tests want and exactly what
+// an X-Forwarded-For test must avoid.
+func WithTrustedProxies(cidrs ...string) Option {
+	return func(b *builder) { b.cfg.TrustedProxies = append(b.cfg.TrustedProxies, cidrs...) }
+}
+
 // WithTranscodeCap sets the global concurrent-transcode cap (ADR-0009
 // governance; 0 = unlimited). The governance tests set it to 1 to drive the
 // SERVER_BUSY path — start one transcode, then assert a second transcode-
@@ -439,14 +456,16 @@ func (s *Server) JSON(method, path, token string, in, out any) (status int, body
 // source address and answers a refusal with Retry-After — none of which the plain
 // JSON helper can drive or observe.
 //
-// remoteAddr is a "host:port" string and lands verbatim in r.RemoteAddr, which is
-// the only thing the server will look at (the api layer deliberately ignores
-// X-Forwarded-For; see clientIP there). That is also why this cannot go over the
-// httptest listener the other helpers use: every request there arrives from
-// 127.0.0.1 on a fresh ephemeral port, so a test could never present a second
-// address, and "the per-IP counter is per-IP" would be untestable. extraHeaders
-// (nil is fine) is what lets a test then SPOOF a forwarding header and prove the
-// server ignores it.
+// remoteAddr is a "host:port" string and lands verbatim in r.RemoteAddr, which by
+// default is the only thing the server will look at — X-Forwarded-For is read
+// only from a peer inside OBELO_TRUSTED_PROXIES, which the harness leaves empty
+// unless a test passes WithTrustedProxies (see clientIP in the api package). That
+// is also why this cannot go over the httptest listener the other helpers use:
+// every request there arrives from 127.0.0.1 on a fresh ephemeral port, so a test
+// could never present a second address — nor an UNtrusted one — and neither "the
+// per-IP counter is per-IP" nor "the allowlist is what makes the header
+// believable" would be testable. extraHeaders (nil is fine) is what lets a test
+// then SPOOF a forwarding header and prove the server ignores it.
 //
 // The tradeoff is that this serves the request IN PROCESS, against the same fully
 // wired handler the listener serves, rather than over a real socket. Everything

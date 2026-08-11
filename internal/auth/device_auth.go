@@ -93,29 +93,39 @@ const (
 	//
 	// The number is 128 and every digit of it is about the reverse-proxy
 	// deployment (ADR-0005), so read this before tightening it. The client address
-	// comes from clientIP in the api package, which reads RemoteAddr and never
-	// X-Forwarded-For, because there is no trusted-proxy configuration to make the
-	// header safe. BEHIND A PROXY, THEREFORE, EVERY REQUEST IN THE WORLD SHARES ONE
-	// KEY, and this per-source quota IS the global cap — 1024 becomes unreachable
-	// and 128 per 5 minutes is what the whole household gets.
+	// comes from clientIP in the api package, which reads RemoteAddr and reads
+	// X-Forwarded-For only from a peer inside the operator's OBELO_TRUSTED_PROXIES
+	// allowlist (ADR-0041). BEHIND A PROXY THE OPERATOR HAS NOT LISTED, THEREFORE,
+	// EVERY REQUEST IN THE WORLD SHARES ONE KEY, and this per-source quota IS the
+	// global cap — 1024 becomes unreachable and 128 per 5 minutes is what the whole
+	// household gets. A proxy that IS listed behaves like the direct case below,
+	// because each client behind it is keyed on its own address again.
+	//
+	// The listing is a per-deployment choice an operator may not make, so the
+	// degraded case is still a case that ships, and 128 is left where it is: it was
+	// derived against the worst of the two and is the SAME number for both, so
+	// there is nothing to re-derive until somebody wants to tune the good case
+	// separately — which would be a different decision with its own reasoning.
 	//
 	// That is the trap in this control, and the only thing that makes it safe is
 	// that 128 is comfortably ABOVE the 32 it replaces:
 	//
-	//   Behind a proxy — an attacker locks the household out by burning the shared
-	//   128 before it does, which costs 128 starts per 5 minutes instead of 32. The
-	//   shape of the outage is unchanged and its price is 4x. Strictly better than
-	//   today, and strictly worse than the 1024 a proxy-aware deployment would get,
-	//   which is the price of not reading a header we cannot trust.
+	//   Behind an UNLISTED proxy — an attacker locks the household out by burning
+	//   the shared 128 before it does, which costs 128 starts per 5 minutes instead
+	//   of 32. The shape of the outage is unchanged and its price is 4x. Strictly
+	//   better than today, and strictly worse than the 1024 a proxy-aware
+	//   deployment gets, which is now the price of not naming your proxy rather
+	//   than the price of a header nobody could ever trust.
 	//
-	//   Directly exposed (LAN, or a port-forward) — one address gets 128 per
+	//   Directly exposed, or behind a LISTED proxy (LAN, or a port-forward) — one
+	//   address gets 128 per
 	//   window, so at most 256 codes live at once counting a window straddle, out
 	//   of 1024. A single source can no longer lock anybody out at all: it takes
 	//   four addresses timed across a boundary, or eight without. Meanwhile the
 	//   household's own TVs each hold their own budget and never interact.
 	//
 	// Anything BELOW 32 turns this into a regression delivered as a security fix:
-	// behind a proxy it would be a global cap tighter than the one it replaced, and
+	// behind an unlisted proxy it would be a global cap tighter than the one it replaced, and
 	// legitimate TV sign-in would get harder than it is today. Do not tune this
 	// down without re-deriving that comparison. The number to move first is
 	// maxLiveDeviceAuthRequests, upward.

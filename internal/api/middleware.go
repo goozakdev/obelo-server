@@ -1,7 +1,6 @@
 package api
 
 import (
-	"net"
 	"net/http"
 	"strings"
 
@@ -214,35 +213,38 @@ func bearerToken(r *http.Request) (string, bool) {
 	return tok, true
 }
 
-// clientIP returns the host portion of the connection's remote address — the
-// address this process actually received the bytes from.
+// clientIP returns the address the per-source controls key on: the login failure
+// limiter (auth/login_limit.go) and the device-code start quota
+// (auth/device_auth.go).
 //
-// It does NOT consult X-Forwarded-For, X-Real-IP, or any other client-supplied
-// header, and that is the security property, not an oversight. This server has no
-// trusted-proxy configuration: nothing tells it which upstream is allowed to
-// assert an origin address. Honoring the header without that would mean the
-// per-IP login counter (auth/login_limit.go) is keyed on a value the attacker
-// writes, so every guess could arrive from a fresh "address" and the counter
-// would be decorative.
+// By default it is the host portion of the connection's remote address — the
+// address this process actually received the bytes from — and X-Forwarded-For,
+// X-Real-IP, and every other client-supplied header are ignored outright. That
+// default is the security property, not an oversight: a counter keyed on a value
+// the caller writes is decorative, because every guess can arrive from a fresh
+// "address".
 //
-// The cost is the reverse-proxy deployment (ADR-0005): behind one, every request
-// genuinely does arrive from the proxy, so the per-IP counter collapses into a
-// single global counter for the whole internet. That is the safe direction to
-// fail — one shared budget is stricter than per-attacker budgets, never looser —
-// and the per-username counter still discriminates. Wiring a real trusted-proxy
-// setting (an operator-configured CIDR allowlist, and only then reading the
-// left-most untrusted hop of X-Forwarded-For) is the correct fix and is out of
-// scope here; until it exists, do not "improve" this by reading the header.
+// A header is read only where the operator has said which upstream may assert an
+// origin, via OBELO_TRUSTED_PROXIES, and then only right-to-left for the
+// left-most hop OUTSIDE that allowlist. All of that happens once per request in
+// forwarded.go — read the comment on forwardedFor before touching any of it —
+// and this function is only the lookup of the answer.
 //
-// A RemoteAddr with no parseable port is returned whole rather than dropped: an
-// unusual transport should still get its own bucket, and returning "" would pool
-// it with every other unparseable caller.
+// The reverse-proxy deployment (ADR-0005) is what changes hands here. Configured,
+// it now gets genuine per-client counters. UNCONFIGURED, it still collapses to a
+// single global counter, because every request really does arrive from the proxy;
+// that remains the safe direction to fail — one shared budget is stricter than
+// per-attacker budgets, never looser — and the per-username counter still
+// discriminates. So the degradation is now an operator's choice rather than a
+// property of the server, and the fix is a line of configuration rather than a
+// change here. Do not "improve" this by reading the header unconditionally.
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return strings.TrimSpace(r.RemoteAddr)
+	if o, ok := requestOriginFrom(r.Context()); ok {
+		return o.ClientIP
 	}
-	return host
+	// No middleware ran (a handler exercised directly). Resolve with an empty
+	// allowlist, which is RemoteAddr and nothing else.
+	return resolveOrigin(r, nil).ClientIP
 }
 
 // queryToken pulls the opaque session token out of the ?token= query parameter.

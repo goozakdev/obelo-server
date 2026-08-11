@@ -39,10 +39,18 @@ const (
 	// past "the remote's keyboard is awful"; a household's devices each have their
 	// own LAN address, so one member fumbling does not spend anybody else's budget.
 	//
-	// Behind a reverse proxy this degrades: see clientIP in the api package. Every
-	// request appears to come from the proxy, so this becomes a single global
-	// counter — stricter than intended rather than looser, which is the safe
-	// direction to fail.
+	// Behind a reverse proxy this degrades UNLESS THE OPERATOR NAMES THE PROXY.
+	// The client address comes from clientIP in the api package, which reads
+	// X-Forwarded-For only from a peer inside OBELO_TRUSTED_PROXIES (ADR-0041) —
+	// with that set, each client behind the proxy carries its own budget, as on the
+	// LAN. With it unset, every request appears to come from the proxy and this
+	// becomes a single global counter: stricter than intended rather than looser,
+	// which is the safe direction to fail, and the reason the header is not read
+	// until somebody vouches for the upstream that writes it.
+	//
+	// The number was derived against that degraded case and is left where it is. It
+	// holds up in both: 15 is a per-device allowance either way, and a configured
+	// proxy only makes it discriminate better.
 	loginIPFailureLimit = 15
 
 	// loginUserFailureLimit is the per-username allowance, and it is deliberately

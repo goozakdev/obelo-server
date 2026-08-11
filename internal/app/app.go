@@ -234,6 +234,16 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	// The trusted-proxy allowlist (ADR-0041), parsed before anything opens so a
+	// typo in it fails the boot rather than the first forwarded request. Empty is
+	// the default and means no X-Forwarded-* header is ever believed; Validate has
+	// usually already rejected a malformed entry, but app.New is also reached
+	// directly (the test harness, an embedder) so it checks rather than assumes.
+	trustedProxies, err := cfg.TrustedProxyPrefixes()
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := store.Open(cfg.DBPath())
 	if err != nil {
 		return nil, err
@@ -605,6 +615,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		SubFetch:                subFetchSvc,
 		SubtitleProviders:       db,
 		SubtitleProviderManager: subtitleManager,
+
+		// Which upstreams may assert a client address / original scheme
+		// (OBELO_TRUSTED_PROXIES). Empty trusts nothing — see api/forwarded.go.
+		TrustedProxies: trustedProxies,
 	})
 
 	// Top-level composition (ADR-0012): /api/v1 stays the API's; every other
