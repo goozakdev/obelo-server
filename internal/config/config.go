@@ -7,6 +7,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,10 +66,97 @@ func parseHWAccel(v string) (HWAccel, bool) {
 	}
 }
 
+// TLSMode is the native-TLS knob's vocabulary (ADR-0041): whether the server
+// terminates HTTPS itself, and from where it gets the certificate. Parsed from
+// OBELO_TLS_MODE, defaulting to TLSModeOff.
+//
+// It is the one enum here that does NOT follow the "unrecognized value keeps the
+// safe default" policy of parseHWAccel and friends, and the asymmetry is
+// deliberate. Silently ignoring a typo in a performance knob costs a slower
+// encode; silently ignoring `OBELO_TLS_MODE=fiels` gives the operator a server
+// that boots cleanly, reports nothing wrong, and carries their password and
+// session cookie across the internet in cleartext — while they believe they
+// turned TLS on. So FromEnv keeps whatever was typed and Validate refuses to
+// boot on it (see Validate).
+type TLSMode string
+
+const (
+	// TLSModeOff is the default: one plain-HTTP listener, exactly as before, with
+	// transport security left to the operator's reverse proxy (ADR-0005).
+	TLSModeOff TLSMode = "off"
+	// TLSModeFiles terminates TLS with an operator-supplied certificate and key
+	// on disk, from any CA they like, re-read without a restart when they change.
+	TLSModeFiles TLSMode = "files"
+	// TLSModeACME is RESERVED for automatic certificates over ACME/TLS-ALPN-01
+	// (ADR-0041). It parses as a KNOWN value today and Validate rejects it with
+	// "not yet supported": naming it now means the mode that lands later needs no
+	// renaming, and an operator who tries it is told so instead of quietly
+	// getting plain HTTP because the value fell through to the default.
+	TLSModeACME TLSMode = "acme"
+)
+
+// parseTLSMode maps an OBELO_TLS_MODE value to a TLSMode, reporting whether it
+// was recognized. It mirrors parseHWAccel's shape — the same lenient spellings
+// for "off" — but not its failure policy: an unrecognized value is returned
+// VERBATIM rather than replaced with the default, so Validate can quote back
+// exactly what the operator typed instead of a value nobody wrote.
+func parseTLSMode(v string) (TLSMode, bool) {
+	trimmed := strings.TrimSpace(v)
+	switch strings.ToLower(trimmed) {
+	case "", "off", "false", "0", "no", "disabled":
+		return TLSModeOff, true
+	case "files":
+		return TLSModeFiles, true
+	case "acme":
+		return TLSModeACME, true
+	default:
+		return TLSMode(trimmed), false
+	}
+}
+
 // Config is the resolved server configuration.
 type Config struct {
 	// ListenAddr is the host:port the HTTP API binds to (e.g. ":8080").
 	ListenAddr string
+
+	// TLSMode selects native TLS termination (ADR-0041): TLSModeOff (the
+	// default), TLSModeFiles, or TLSModeACME (reserved; Validate rejects it until
+	// that mode exists).
+	//
+	// When it is on, the HTTPS listener is an ADDITION — the plain-HTTP listener
+	// keeps serving ListenAddr unchanged. That is the load-bearing part of the
+	// decision, not an interim step: no public CA will issue for the raw LAN
+	// address or the `.local` name the mDNS advertisement publishes (ADR-0034),
+	// so a server that dropped its HTTP listener when TLS came on would break
+	// discovery for the entire household in exchange for encrypting a hop that
+	// never leaves the house.
+	//
+	// Env: OBELO_TLS_MODE.
+	TLSMode TLSMode
+
+	// TLSCertFile and TLSKeyFile are the PEM certificate chain (leaf first) and
+	// its private key, used in TLSModeFiles. Give ABSOLUTE paths: they are re-read
+	// while the server runs, so a relative path resolves against whatever working
+	// directory the process happened to start in.
+	//
+	// They are re-read on change rather than loaded once at boot because a
+	// renewal (certbot, a cron job, a Makefile) rewrites them in place, and a
+	// server still holding the boot-time copy serves a chain that is dead the
+	// moment the old one expires — with nothing in any log to say so until every
+	// client in the house stops trusting it on the same afternoon.
+	//
+	// Env: OBELO_TLS_CERT / OBELO_TLS_KEY.
+	TLSCertFile string
+	TLSKeyFile  string
+
+	// TLSListenAddr is the host:port the HTTPS listener binds (default
+	// DefaultTLSListenAddr). Separate from ListenAddr, and necessarily so: both
+	// listeners run at once, so they cannot share a port. Validate says that in
+	// words rather than letting the second bind fail at boot with a bare
+	// "address already in use" that names no cause.
+	//
+	// Env: OBELO_TLS_LISTEN_ADDR.
+	TLSListenAddr string
 
 	// DataDir is the single writable data directory. It holds the SQLite
 	// database and, in later slices, filesystem caches (ADR-0007).
@@ -287,6 +375,13 @@ type Config struct {
 	EnrichmentConsentGranted *bool
 }
 
+// DefaultTLSListenAddr is the port the HTTPS listener binds when TLS is turned
+// on (ADR-0041). 8443 is the conventional unprivileged HTTPS port, and pairing
+// it with the unprivileged 8080 keeps the server runnable as a normal user —
+// binding 443 would need root or a capability, which is a much larger ask than
+// "forward a port on the router", the deployment this exists for.
+const DefaultTLSListenAddr = ":8443"
+
 // DefaultScanInterval is the periodic safety-net scan cadence (ADR-0008). One
 // hour balances "pick up changes without being told" against pointless churn;
 // the scan is incremental so an unchanged library costs only a directory walk.
@@ -376,6 +471,8 @@ const DefaultKeyRotationInterval = 6 * time.Hour
 func Defaults() Config {
 	return Config{
 		ListenAddr:               ":8080",
+		TLSMode:                  TLSModeOff,
+		TLSListenAddr:            DefaultTLSListenAddr,
 		DataDir:                  "./data",
 		KeyRotationEnabled:       true,
 		KeyRotationURL:           DefaultKeyRotationURL,
@@ -460,6 +557,14 @@ func (c Config) SubtitleCacheDir() string {
 // FromEnv builds a Config from defaults overlaid with environment variables:
 //
 //	OBELO_LISTEN_ADDR    -> ListenAddr
+//	OBELO_TLS_MODE       -> TLSMode (off|files|acme; default off. `files` adds an
+//	                               HTTPS listener alongside the plain-HTTP one —
+//	                               it never replaces it. An unrecognized value is
+//	                               a Validate error, unlike the knobs below)
+//	OBELO_TLS_CERT       -> TLSCertFile (absolute path to the PEM chain)
+//	OBELO_TLS_KEY        -> TLSKeyFile (absolute path to the PEM private key)
+//	OBELO_TLS_LISTEN_ADDR -> TLSListenAddr (host:port for HTTPS, default :8443;
+//	                               must differ from OBELO_LISTEN_ADDR)
 //	OBELO_DATA_DIR       -> DataDir
 //	OBELO_SERVER_NAME    -> ServerName (the Server identity's display name,
 //	                               ADR-0034; empty derives one from the hostname)
@@ -500,6 +605,22 @@ func FromEnv() Config {
 	c := Defaults()
 	if v := os.Getenv("OBELO_LISTEN_ADDR"); v != "" {
 		c.ListenAddr = v
+	}
+	// Native TLS (ADR-0041). Note the missing `if ok` the other enum knobs have:
+	// an unrecognized mode is stored as typed and rejected by Validate, because
+	// falling back to "off" here would answer "I asked for TLS" with a silently
+	// plain-HTTP server.
+	if v := os.Getenv("OBELO_TLS_MODE"); v != "" {
+		c.TLSMode, _ = parseTLSMode(v)
+	}
+	if v := os.Getenv("OBELO_TLS_CERT"); v != "" {
+		c.TLSCertFile = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_TLS_KEY"); v != "" {
+		c.TLSKeyFile = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_TLS_LISTEN_ADDR"); v != "" {
+		c.TLSListenAddr = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("OBELO_DATA_DIR"); v != "" {
 		c.DataDir = v
@@ -671,14 +792,74 @@ func FromEnv() Config {
 // nil = undecided, &false = declined).
 func boolPtr(v bool) *bool { return &v }
 
-// Validate checks the configuration for obvious mistakes. It does not touch
-// the filesystem; see EnsureDataDir for that.
+// Validate checks the configuration for obvious mistakes. It touches the
+// filesystem in exactly one place — loading the TLS key pair in files mode,
+// which is the only way to tell a mistyped path or a mismatched pair from a
+// working one — and is otherwise a pure check; see EnsureDataDir for the data
+// directory.
 func (c Config) Validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("config: ListenAddr must not be empty")
 	}
 	if c.DataDir == "" {
 		return fmt.Errorf("config: DataDir must not be empty")
+	}
+	if err := c.validateTLS(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateTLS checks the native-TLS knobs (ADR-0041).
+//
+// The posture here is deliberately STRICTER than anywhere else in this file:
+// with `files` mode explicitly asked for and the certificate unusable, the
+// server REFUSES TO BOOT rather than falling back to plain HTTP. An operator who
+// mistyped a path has made a typo, not suffered an outage — and a server that
+// started anyway would leave them believing they had HTTPS while their password
+// and session cookie crossed the internet in the clear, which is strictly worse
+// than a loud failure at the moment they can still fix it.
+//
+// That is narrower than ADR-0041's "a failure to obtain a certificate must not
+// stop the server from booting". That sentence is about `acme`, where a CA
+// outage is nobody's mistake and the LAN should keep working through it; issue
+// 02 takes the other path for exactly that reason. A file that is not where the
+// operator said it is is not a CA outage.
+func (c Config) validateTLS() error {
+	switch c.TLSMode {
+	case "", TLSModeOff:
+		// No HTTPS listener is built, so the cert/key/address fields are inert and
+		// there is nothing to check — including TLSListenAddr, which nothing binds.
+		// "" is the zero value a hand-built Config (tests, embedders) carries and
+		// means the same as off; only FromEnv/Defaults populate the constant.
+		return nil
+	case TLSModeACME:
+		return fmt.Errorf("config: OBELO_TLS_MODE=acme is not yet supported — ADR-0041 reserves the name for automatic certificates; use OBELO_TLS_MODE=files with OBELO_TLS_CERT and OBELO_TLS_KEY, or leave TLS off")
+	case TLSModeFiles:
+		// Checked below.
+	default:
+		return fmt.Errorf("config: unknown OBELO_TLS_MODE %q (want off, files, or acme)", string(c.TLSMode))
+	}
+
+	if c.TLSCertFile == "" {
+		return fmt.Errorf("config: OBELO_TLS_MODE=files needs OBELO_TLS_CERT (an absolute path to the PEM certificate chain)")
+	}
+	if c.TLSKeyFile == "" {
+		return fmt.Errorf("config: OBELO_TLS_MODE=files needs OBELO_TLS_KEY (an absolute path to the PEM private key)")
+	}
+	if c.TLSListenAddr == "" {
+		return fmt.Errorf("config: OBELO_TLS_LISTEN_ADDR must not be empty when OBELO_TLS_MODE=files (default %q)", DefaultTLSListenAddr)
+	}
+	if c.TLSListenAddr == c.ListenAddr {
+		return fmt.Errorf("config: OBELO_TLS_LISTEN_ADDR and OBELO_LISTEN_ADDR are both %q — HTTPS is an ADDITIONAL listener, not a replacement for the plain-HTTP one (ADR-0041), so the two need separate ports", c.TLSListenAddr)
+	}
+	// Load the pair here, at the one moment a bad path is cheap to fix. The error
+	// from LoadX509KeyPair names the file it failed on ("open /etc/…: no such
+	// file"), so both paths are restated around it: the common mistakes are a
+	// wrong path, an unreadable file, and a key that belongs to a different
+	// certificate, and the third one is invisible without actually pairing them.
+	if _, err := tls.LoadX509KeyPair(c.TLSCertFile, c.TLSKeyFile); err != nil {
+		return fmt.Errorf("config: TLS certificate %q with key %q does not load as a usable pair: %w", c.TLSCertFile, c.TLSKeyFile, err)
 	}
 	return nil
 }

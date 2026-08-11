@@ -20,6 +20,27 @@ The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-uni
 - **Handshake** — `GET /server` returns server version, supported API versions, and a **feature-flags** map. Clients branch on feature flags, not version strings. A flag means "this server serves these routes"; `TestFeaturesMatchRoutes` holds the map to that meaning by probing the routes. The one exception is **`transcode`**, which advertises the transcode *delivery tier* rather than a route: it is computed at startup from whether this host has a usable ffmpeg ([ADR-0040](./adr/0040-transcode-tier-advertised-from-startup-resolved-ffmpeg-availability.md)), so it is the one flag two identical builds can disagree about. `true` means the `directStream`/`transcode` half of negotiation can actually run here; `false` means this deployment has no working ffmpeg, so **only direct play works** — hide the affordance rather than offer it and collect a `500`. A client that cannot direct-play a File should read a `false` flag as "unplayable on this server" rather than negotiate. Note this is orthogonal to `/transcoding`, the admin observability snapshot ([ADR-0029](./adr/0029-transcoding-observability-admin-surface.md)), which is served either way.
 - **Success content type**: `application/json; charset=utf-8`, except `204 No Content` (empty body) and the media byte endpoints (images, video, HLS artifacts, WebVTT).
 
+### Transport — HTTP always, HTTPS optionally alongside it
+
+The server speaks **plain HTTP on `OBELO_LISTEN_ADDR`** (default `:8080`), and *may additionally* terminate **TLS itself** on a second port ([ADR-0041](./adr/0041-native-tls-optional-alongside-plain-http.md)). Native TLS is **off by default** and opt-in:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OBELO_TLS_MODE` | `off` | `off` \| `files` \| `acme`. `files` serves HTTPS from an operator-supplied certificate. `acme` is a **reserved** name: it is a *known* value that fails startup with "not yet supported", so it will not need renaming when automatic certificates land. Any other value is a startup error, never a silent fallback to `off`. |
+| `OBELO_TLS_CERT` | — | Absolute path to the PEM certificate chain (leaf first). Required in `files` mode. |
+| `OBELO_TLS_KEY` | — | Absolute path to the PEM private key. Required in `files` mode. |
+| `OBELO_TLS_LISTEN_ADDR` | `:8443` | `host:port` for HTTPS. Must differ from `OBELO_LISTEN_ADDR` — both listeners run at once. |
+
+What a client can rely on:
+
+- **HTTPS is additive.** Turning it on never stops the plain-HTTP listener; the LAN keeps the transport it has, and the `_obelo._tcp` advertisement of [ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md) is unaffected. No public CA will certify a LAN address or a `.local` name, which is why this is a permanent arrangement rather than a migration step.
+- **One handler, two listeners.** Both serve the identical API — same routes, same auth, same responses. Nothing in the request path learns which listener it arrived on except the `ms_media` cookie's `Secure` flag (§Authentication), which is set when the request actually arrived over TLS. A session, token, or device works over either.
+- **No redirect.** The server never redirects HTTP to HTTPS and emits no absolute URLs; a client that connects to the plain port stays there.
+- **HTTP/2** is negotiated on the TLS listener (ALPN `h2`), which suits HLS: many small segment fetches multiplex over one connection. The plain-HTTP listener is HTTP/1.1.
+- **TLS 1.2 is the floor**, matching Apple's ATS requirement.
+- **No `Strict-Transport-Security`, on either listener**, and no `upgrade-insecure-requests` in the CSP. HSTS is sticky per hostname and the plain-HTTP LAN path still exists, so emitting it could lock a household out of its own server. Clients must not infer HTTPS support from headers; they connect to the port they were given.
+- **A certificate problem is a startup failure, not a degraded mode.** In `files` mode a missing, unreadable, or mismatched certificate stops the server with an error naming the path, rather than silently serving plain HTTP only. Renewed files are re-read while the server runs (no restart); a failed re-read keeps the previous certificate serving.
+
 ### Error envelope
 
 Every error — including the catch-all 404/405 — returns:
