@@ -79,18 +79,71 @@ RUN CONFIG_PKG=github.com/marioquake/obelo-server/internal/config; \
       -o /out/obelo ./cmd/obelo
 
 # ---------------------------------------------------------------------------
-# Stage 3 — runtime: minimal amd64 image with ffmpeg + the binary.
+# Stage 3 — runtime: amd64 image with ffmpeg + the GPU userspace + the binary.
 # The platform is pinned to a constant on purpose: this guarantees an amd64
 # image even when built on an arm64 host (matching the amd64 binary compiled
 # above). BuildKit emits a cosmetic "const platform" warning for this — that is
 # expected and the build is correct.
+#
+# WHY DEBIAN AND NOT ALPINE (ADR-0042): the runtime base is glibc because NVENC
+# requires it. Alpine's ffmpeg is built with NO h264_nvenc at all, so ADR-0009's
+# setup-time detection could never validate step 1 (encoder compiled in) and
+# OBELO_HARDWARE_ACCEL=nvenc always warned and fell back to CPU. Rebuilding
+# ffmpeg would not have been enough: the NVIDIA Container Toolkit injects the
+# HOST's glibc-linked driver libraries (libnvidia-encode.so, libcuda.so,
+# nvidia-smi) into the container, and those cannot load into a musl process. A
+# glibc base is the only way an NVIDIA card works here.
 # ---------------------------------------------------------------------------
-FROM --platform=linux/amd64 alpine:3.20 AS runtime
+FROM --platform=linux/amd64 debian:trixie-slim AS runtime
 
 # ffmpeg bundles ffprobe; ca-certificates for outbound HTTPS (TMDB/MusicBrainz);
 # tzdata so scheduled scans honor the configured timezone.
-RUN apk add --no-cache ffmpeg ca-certificates tzdata \
-    && adduser -D -H -u 10001 obelo
+#
+# The rest is the GPU userspace for the backends ADR-0009 names. NVENC needs
+# nothing installed — Debian's ffmpeg carries h264_nvenc and dlopen()s the
+# driver the container toolkit injects at run time. VAAPI and QSV do: libva
+# finds nothing without a VA DRIVER, and the previous Alpine image shipped
+# libva with an EMPTY /usr/lib/dri, so those two backends failed their
+# test-encode on every host regardless of the card fitted.
+#   mesa-va-drivers       — AMD (radeonsi) + the Intel gallium fallback
+#   intel-media-va-driver — Intel iHD, Gen8+ (the QSV/VAAPI path on modern Intel)
+#   libvpl2               — the oneVPL dispatcher ffmpeg 7's h264_qsv links
+#   libmfx-gen1.2         — the oneVPL GPU runtime the dispatcher then loads
+#
+# Pre-Gen8 Intel (the legacy i965 driver) is deliberately NOT installed: those
+# parts are old enough that CPU libx264 is the realistic path, and iHD dropped
+# them. Such a host validates nothing and falls back to CPU, as designed.
+RUN set -eux; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ffmpeg \
+      ca-certificates \
+      tzdata \
+      mesa-va-drivers \
+      intel-media-va-driver \
+      libvpl2 \
+      libmfx-gen1.2 \
+    ; \
+    rm -rf /var/lib/apt/lists/*
+
+# /dev/dri/renderD* is root:render 0660, so the unprivileged runtime user needs
+# both groups to open a VAAPI/QSV device. `render` is not guaranteed to exist in
+# a slim base, hence the create-if-missing. This only fixes the CONTAINER side:
+# the host's render GID often differs, so the run docs still tell operators to
+# pass --group-add with the host value.
+RUN set -eux; \
+    useradd --system --no-create-home --shell /usr/sbin/nologin --uid 10001 obelo; \
+    getent group render >/dev/null || groupadd --system render; \
+    usermod -aG video,render obelo
+
+# NVIDIA Container Toolkit capability request (NVENC + nvidia-smi telemetry).
+# `--gpus all` selects which DEVICES are visible but does NOT widen the driver
+# capabilities, and the default set omits `video` — without which
+# libnvidia-encode is never injected and h264_nvenc fails its test-encode even
+# on a correctly configured host. `utility` is what puts nvidia-smi on PATH for
+# the ADR-0029 GPU telemetry block. Harmless on non-NVIDIA hosts: with no NVIDIA
+# runtime in play these are inert environment variables.
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 COPY --from=build /out/obelo /usr/local/bin/obelo
 

@@ -2,7 +2,9 @@
 
 Multi-stage image that builds the media server for **linux/amd64** from source:
 the React/Vite SPA is bundled first, embedded into the Go binary (`go:embed`,
-ADR-0012), and the result runs on a minimal Alpine image with `ffmpeg`.
+ADR-0012), and the result runs on a slim Debian image with `ffmpeg` and the GPU
+userspace for every hardware backend Obelo supports
+([ADR-0042](../docs/adr/0042-glibc-runtime-base-for-hardware-transcoding.md)).
 
 ## Build
 
@@ -98,12 +100,31 @@ this does **not** work against a server on the *same* Mac — macOS's own
 `mDNSResponder` owns port 5353 and a second responder on that host is invisible to
 it. That is a same-host artifact, not a server fault.
 
-## GPU telemetry (NVENC)
+## Hardware transcoding
 
-The admin **Transcoding** tab shows best-effort GPU telemetry (utilization, VRAM,
-encoder sessions, driver version) when `OBELO_HARDWARE_ACCEL=nvenc` resolves to
-an active NVENC backend. It is read by shelling out to `nvidia-smi`, so the
-container needs both the NVIDIA container runtime and the binary on `PATH`:
+The image ships the userspace for all three Linux backends ADR-0009 names —
+NVENC, VAAPI, and QSV. Installing it is only half the job: the container also
+has to be able to reach the card, and that differs per vendor.
+
+Whatever you pass, `OBELO_HARDWARE_ACCEL` is only a *preference*. At startup the
+server validates it against the host in two steps (the encoder must be compiled
+into ffmpeg **and** a one-frame test-encode must succeed) and then logs the
+outcome. Read that line first when a GPU seems idle:
+
+```
+obelo: hardware acceleration: using configured hardware backend nvenc (h264_nvenc validated)
+obelo: hardware acceleration: WARNING — configured backend nvenc did not validate
+       (encoder missing or no working device); falling back to CPU libx264
+```
+
+The warning is never fatal — playback keeps working on CPU libx264.
+
+### NVIDIA (NVENC)
+
+Requires the [NVIDIA Container
+Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host. Nothing else: the toolkit injects the driver libraries, and the
+image already requests the `video` capability that carries `libnvidia-encode`.
 
 ```sh
 docker run --rm --gpus all -p 8080:8080 \
@@ -112,6 +133,40 @@ docker run --rm --gpus all -p 8080:8080 \
   -v /path/to/your/media:/media:ro \
   obelo
 ```
+
+### Intel / AMD (VAAPI, QSV)
+
+Pass the DRM render node through and add the **host's** `render` GID. The image
+puts its runtime user in a `render` group, but GIDs are host-specific, so the
+in-image group alone will usually not match the device's owner:
+
+```sh
+docker run --rm -p 8080:8080 \
+  --device /dev/dri:/dev/dri \
+  --group-add "$(getent group render | cut -d: -f3)" \
+  -e OBELO_HARDWARE_ACCEL=vaapi \
+  -v "$PWD/data:/data" \
+  -v /path/to/your/media:/media:ro \
+  obelo
+```
+
+Swap `vaapi` for `qsv` on Intel if you want Quick Sync specifically; `auto`
+probes NVENC → VAAPI → QSV and takes the first that validates.
+
+A backend that validates when run as root but not as the normal user is the
+group-permission problem above, not a driver problem — check `--group-add`
+before anything else.
+
+Intel's `intel-media-va-driver-non-free` decodes a few extra formats, but it
+lives in Debian's non-free component and is deliberately not baked in; add it
+yourself in a derived image if you need it.
+
+## GPU telemetry (NVENC)
+
+The admin **Transcoding** tab shows best-effort GPU telemetry (utilization, VRAM,
+encoder sessions, driver version) when `OBELO_HARDWARE_ACCEL=nvenc` resolves to
+an active NVENC backend. It shells out to `nvidia-smi`, which the container
+toolkit injects along with the driver.
 
 Without `--gpus all` (or on any non-NVENC backend), the GPU block reads
 "unavailable" — that is expected, not a defect. The rest of the Transcoding tab
