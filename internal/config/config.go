@@ -28,17 +28,17 @@ type HWAccel string
 const (
 	// HWAccelOff is the default — the always-available CPU libx264 path.
 	HWAccelOff HWAccel = "off"
-	// HWAccelAuto asks the server to detect and use the best available backend.
-	// INTERIM: detection is a later slice, so this resolves to CPU for now.
+	// HWAccelAuto asks the server to detect and use the best available backend,
+	// probing the platform candidates in priority order and falling back to CPU
+	// when none validate.
 	HWAccelAuto HWAccel = "auto"
-	// HWAccelNVENC forces NVIDIA NVENC. RESERVED: resolves to CPU until wired.
+	// HWAccelNVENC forces NVIDIA NVENC (Linux).
 	HWAccelNVENC HWAccel = "nvenc"
-	// HWAccelVAAPI forces VAAPI (Intel/AMD on Linux). RESERVED: CPU until wired.
+	// HWAccelVAAPI forces VAAPI (Intel/AMD on Linux).
 	HWAccelVAAPI HWAccel = "vaapi"
-	// HWAccelQSV forces Intel Quick Sync. RESERVED: CPU until wired.
+	// HWAccelQSV forces Intel Quick Sync (Linux).
 	HWAccelQSV HWAccel = "qsv"
-	// HWAccelVideoToolbox forces Apple VideoToolbox (macOS) — the one backend wired
-	// to a real encoder today.
+	// HWAccelVideoToolbox forces Apple VideoToolbox (macOS).
 	HWAccelVideoToolbox HWAccel = "videotoolbox"
 )
 
@@ -289,15 +289,15 @@ type Config struct {
 	// HardwareAccel selects hardware-accelerated encoding for the transcode tier
 	// (ADR-0009). It is an enum: HWAccelOff (the default — CPU libx264), HWAccelAuto
 	// (detect the best available backend), or an explicit backend (HWAccelNVENC /
-	// HWAccelVAAPI / HWAccelQSV / HWAccelVideoToolbox). The CPU path is the
-	// always-available fallback; an explicit backend that is not really present
-	// surfaces at transcode time (the warn-then-CPU startup safety and per-session
-	// fallback are later slices). VideoToolbox is the one backend wired to a real
-	// encoder today; the rest currently resolve to CPU in the args builder.
+	// HWAccelVAAPI / HWAccelQSV / HWAccelVideoToolbox). All four backends are wired
+	// to real encoder args; the CPU path is the always-available fallback.
 	//
-	// INTERIM: detection is a later slice, so HWAccelAuto resolves to CPU for now
-	// (an un-resolved auto is the safe software path). The env back-compat true→auto
-	// therefore behaves as CPU until the detector lands.
+	// This knob is only a PREFERENCE: at startup the transcode Detector resolves it
+	// to a concrete, validated backend once (encoder compiled into ffmpeg AND a tiny
+	// real test-encode succeeds), never per-stream. An explicit backend that does not
+	// validate warns loudly and falls back to CPU rather than failing boot, and a
+	// single session may still fall back to CPU on its own hardware-init failure — so
+	// the effective backend can differ from what is configured here.
 	HardwareAccel HWAccel
 
 	// --- Enrichment (external-metadata-enrichment) -----------------------------
