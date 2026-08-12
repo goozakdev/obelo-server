@@ -99,7 +99,15 @@ pure-Go and cross-compiles). If your Docker can't run amd64 locally, use buildx:
 docker buildx build --platform linux/amd64 -f docker/Dockerfile -t obelo . --load
 ```
 
-### GPU-accelerated transcoding (NVIDIA / NVENC)
+### GPU-accelerated transcoding
+
+The image ships the full GPU userspace for every backend Obelo supports on
+Linux, so `nvenc`, `vaapi`, and `qsv` all work — the card just has to be reachable
+from inside the container.
+
+**NVIDIA (NVENC)** — needs the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host:
 
 ```sh
 docker run --rm --gpus all -p 8080:8080 \
@@ -113,6 +121,23 @@ The admin **Transcoding** tab then shows GPU telemetry (utilization, VRAM,
 encoder sessions, driver version). Without `--gpus all`, or on any non-NVENC
 backend, the GPU block reads "unavailable" — that's expected; the rest of the
 tab still works.
+
+**Intel / AMD (VAAPI or QSV)** — pass the render node through instead, and add
+the host's `render` group so the unprivileged container user can open it:
+
+```sh
+docker run --rm -p 8080:8080 \
+  --device /dev/dri:/dev/dri \
+  --group-add "$(getent group render | cut -d: -f3)" \
+  -e OBELO_HARDWARE_ACCEL=vaapi \
+  -v "$PWD/data:/data" \
+  -v /path/to/your/media:/media:ro \
+  obelo
+```
+
+Use `OBELO_HARDWARE_ACCEL=auto` to let the server pick the best backend the host
+actually validates. Whichever you choose, the boot log states what happened —
+including a loud warning if an explicitly requested backend fell back to CPU.
 
 More detail lives in [`docker/README.md`](./docker/README.md).
 
