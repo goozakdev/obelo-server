@@ -206,6 +206,11 @@ OBELO_TLS_DOMAINS=media.example.com
 OBELO_ACME_EMAIL=you@example.com          # optional; the CA warns you before expiry
 ```
 
+The settings are only half of it — the DNS record, the port-forward, and the
+staging-first order of operations are the part that actually goes wrong. For a
+first-time setup end to end, follow
+[docs/runbooks/https-with-lets-encrypt.md](./docs/runbooks/https-with-lets-encrypt.md).
+
 **`files` — you supply the certificate.** Any CA, including your own:
 
 ```
