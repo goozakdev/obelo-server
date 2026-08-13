@@ -261,17 +261,22 @@ func TestTranscodeArgsAccelVideoToolbox(t *testing.T) {
 		Accel:      AccelVideoToolbox,
 	})
 
-	// HW DECODE (issue 05): -hwaccel videotoolbox in the plain auto-download form
-	// (no -hwaccel_output_format) must appear BEFORE -i so the heavy decode is on the
-	// media engine; the rest of the pipeline stays in the CPU domain.
+	// Decode into VideoToolbox surfaces: both the hwaccel and its output format must
+	// appear BEFORE -i, so frames never round-trip through system memory (ADR-0009's
+	// device-domain rule; measured 128% -> 32% CPU on this dev Mac).
 	if !hasPair(args, "-hwaccel", "videotoolbox") {
 		t.Errorf("missing -hwaccel videotoolbox (HW decode); args: %v", args)
 	}
-	if hasFlag(args, "-hwaccel_output_format") {
-		t.Errorf("VideoToolbox must use the PLAIN -hwaccel form (auto-download), not -hwaccel_output_format; args: %v", args)
+	// videotoolbox_vld, NOT videotoolbox — ffmpeg rejects the bare name with
+	// "Unrecognised hwaccel output format" and the whole transcode fails.
+	if !hasPair(args, "-hwaccel_output_format", "videotoolbox_vld") {
+		t.Errorf("missing -hwaccel_output_format videotoolbox_vld — frames must stay on VT surfaces; args: %v", args)
 	}
 	if i := indexOf(args, "-hwaccel"); i < 0 || i > indexOf(args, "-i") {
 		t.Errorf("VideoToolbox -hwaccel must precede -i; args: %v", args)
+	}
+	if i := indexOf(args, "-hwaccel_output_format"); i < 0 || i > indexOf(args, "-i") {
+		t.Errorf("VideoToolbox -hwaccel_output_format must precede -i; args: %v", args)
 	}
 	// The real HW encoder, not the CPU encoder and not a copy.
 	if !hasPair(args, "-c:v", videoEncoderVideoToolbox) {
@@ -287,13 +292,17 @@ func TestTranscodeArgsAccelVideoToolbox(t *testing.T) {
 	if hasFlag(args, "-preset") {
 		t.Errorf("VideoToolbox job must not carry the libx264 -preset; args: %v", args)
 	}
-	// CPU-domain scale (system-memory frames), no HW upload filter.
+	// VideoToolbox-domain scale, and no system-memory -pix_fmt: either a CPU scale
+	// or a -pix_fmt would force a download straight back off the surfaces.
 	scale := valueOf(args, "-vf")
-	if !strings.Contains(scale, "scale=-2:") || !strings.Contains(scale, "720") || !strings.Contains(scale, "min(") {
-		t.Errorf("-vf = %q, want a CPU scale=-2:'min(720,ih)' downscale; args: %v", scale, args)
+	if scale != "scale_vt=-2:720" {
+		t.Errorf("-vf = %q, want \"scale_vt=-2:720\"; args: %v", scale, args)
 	}
-	if strings.Contains(scale, "hwupload") || strings.Contains(scale, "scale_vaapi") || strings.Contains(scale, "scale_qsv") {
-		t.Errorf("VideoToolbox -vf = %q, want no HW upload/scale (system-memory frames); args: %v", scale, args)
+	if strings.Contains(scale, "scale=-2:") || strings.Contains(scale, "hwupload") {
+		t.Errorf("VideoToolbox -vf = %q, want no CPU scale or upload filter (forces a download); args: %v", scale, args)
+	}
+	if hasFlag(args, "-pix_fmt") {
+		t.Errorf("VideoToolbox must carry no -pix_fmt (a system-memory format forces a download); args: %v", args)
 	}
 	// Bitrate cap honored via -b:v rate control.
 	if !hasPair(args, "-b:v", "4000000") {
@@ -460,29 +469,42 @@ func TestTranscodeArgsAccelQSV(t *testing.T) {
 	assertCapAndKeyframes(t, args, "QSV")
 }
 
-// TestAllHardwareBackendsDecodeOnDevice pins the issue-05 "all four HW backends
-// hardware-DECODE" guarantee: each named HW backend's descriptor carries a decode
-// -hwaccel (videotoolbox / cuda / vaapi / qsv) in its initArgs, while the CPU
-// descriptor carries none (pure software decode — the guaranteed fallback). This is
-// the single assertion that keeps a future backend from silently shipping with HW
-// encode but software decode (the motivating 4K-HEVC bug).
-func TestAllHardwareBackendsDecodeOnDevice(t *testing.T) {
+// TestAllHardwareBackendsStayOnDevice pins ADR-0009's device-domain rule for every
+// hardware backend at once: decode into device surfaces (-hwaccel plus a matching
+// -hwaccel_output_format) AND scale in that same domain, so no frame is copied back
+// to system memory mid-pipeline. The CPU descriptor is the one with neither — pure
+// software decode, the guaranteed fallback.
+//
+// This is the assertion that stops a future backend shipping as partial offload:
+// HW encode with a host-side scale looks like acceleration and reports as
+// acceleration, while costing multiples of the real thing (NVENC measured ~450% vs
+// ~50% CPU, VideoToolbox 128% vs 32%). Wiring only `encoder` is the easy mistake;
+// this test makes it a failure rather than a silent regression.
+func TestAllHardwareBackendsStayOnDevice(t *testing.T) {
 	for _, tc := range []struct {
-		accel    Accel
-		wantArg  string // the -hwaccel method this backend decodes with
-		wantOutF bool   // true if the backend also keeps frames on HW surfaces (-hwaccel_output_format)
+		accel     Accel
+		wantArg   string // the -hwaccel method this backend decodes with
+		wantOutF  string // the surface format decoded frames must stay in
+		wantScale string // the device-domain scale filter for a 720 cap
 	}{
-		{AccelVideoToolbox, "videotoolbox", false},
-		{AccelNVENC, "cuda", true},
-		{AccelVAAPI, "vaapi", true},
-		{AccelQSV, "qsv", true},
+		{AccelVideoToolbox, "videotoolbox", "videotoolbox_vld", "scale_vt=-2:720"},
+		{AccelNVENC, "cuda", "cuda", "scale_cuda=-2:720:format=nv12"},
+		{AccelVAAPI, "vaapi", "vaapi", "scale_vaapi=-2:720"},
+		{AccelQSV, "qsv", "qsv", "scale_qsv=-2:720"},
 	} {
 		be := videoBackend(tc.accel)
 		if !hasPair(be.initArgs, "-hwaccel", tc.wantArg) {
 			t.Errorf("videoBackend(%q).initArgs = %v, want a decode -hwaccel %s", tc.accel, be.initArgs, tc.wantArg)
 		}
-		if gotOutF := hasFlag(be.initArgs, "-hwaccel_output_format"); gotOutF != tc.wantOutF {
-			t.Errorf("videoBackend(%q) -hwaccel_output_format present = %v, want %v (plain auto-download vs HW-surface); initArgs: %v", tc.accel, gotOutF, tc.wantOutF, be.initArgs)
+		if !hasPair(be.initArgs, "-hwaccel_output_format", tc.wantOutF) {
+			t.Errorf("videoBackend(%q).initArgs = %v, want -hwaccel_output_format %s (frames must stay on device)", tc.accel, be.initArgs, tc.wantOutF)
+		}
+		if be.scaleFilter == nil {
+			t.Errorf("videoBackend(%q) has no scaleFilter — a HW backend owes a device-domain scale, not just an encoder", tc.accel)
+			continue
+		}
+		if got := be.scaleFilter(720); got != tc.wantScale {
+			t.Errorf("videoBackend(%q).scaleFilter(720) = %q, want %q", tc.accel, got, tc.wantScale)
 		}
 	}
 	// The CPU fallback is the one descriptor with NO decode hwaccel — software decode.
