@@ -939,9 +939,12 @@ func TestRealignEncodeStaysADTSExpressible(t *testing.T) {
 	if got := encodedAudioChannels(2, 7); got != 2 {
 		t.Errorf("encodedAudioChannels(max=2, src=7) = %d, want 2 (client cap wins)", got)
 	}
-	// No cap and an expressible source → emit nothing, keep the source layout.
-	if got := encodedAudioChannels(0, 6); got != 0 {
-		t.Errorf("encodedAudioChannels(max=0, src=6) = %d, want 0 (no -ac needed)", got)
+	// No cap and an already-expressible source → STILL emit the count. -ac is what
+	// pins the standard layout for that count; without it a 5.1(side) source encodes
+	// to channel_configuration=0 + a PCE, and only the first segment of each ffmpeg
+	// run carries that PCE.
+	if got := encodedAudioChannels(0, 6); got != 6 {
+		t.Errorf("encodedAudioChannels(max=0, src=6) = %d, want 6 (pins the standard layout)", got)
 	}
 	// No cap and an INEXPRESSIBLE source → must emit the corrected count.
 	if got := encodedAudioChannels(0, 7); got != 6 {
