@@ -804,7 +804,7 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 			audioIdx = forcedAudioMapIndex(dec.File, dec.AudioStream)
 		}
 		return func(outputDir string, seek transcode.SeekOffset) []string {
-			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, AudioSourceChannels: dec.AudioStream.Channels, FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, AudioSourceChannels: effectiveAudioChannels(dec), FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
 		}, nil, nil
 	case TierTranscode:
 		plan := transcodeJobPlan(profile, constraints, dec)
@@ -949,6 +949,29 @@ func planAudioRendition(profile DeviceProfile, stream store.Stream, f store.File
 	return false, 0
 }
 
+// effectiveAudioChannels is the channel count of the audio track a Decision will
+// actually deliver, resolved from the Decision's pinned Stream when there is one and
+// otherwise from the File's first audio Stream.
+//
+// The fallback is load-bearing, not defensive. dec.AudioStream is populated ONLY on
+// the explicit-audioStreamId path (escalateForAudio); an ordinary single-audio
+// negotiation leaves it the zero value, so reading dec.AudioStream.Channels directly
+// yields 0 for the common case. Everything downstream that reasons about channel
+// counts — the ADTS-expressibility cap a realignment-forced audio encode depends on
+// (transcode.AudioPlan.SourceChannels) — is then silently inert precisely where it is
+// needed. Sourcing it from the File closes that.
+func effectiveAudioChannels(dec Decision) int {
+	if dec.AudioStream.Channels > 0 {
+		return dec.AudioStream.Channels
+	}
+	for _, s := range dec.File.Streams {
+		if s.Kind == "audio" {
+			return s.Channels
+		}
+	}
+	return 0
+}
+
 // audioStreamByID returns the File's audio Stream with id streamID, or false.
 func audioStreamByID(f store.File, streamID string) (store.Stream, bool) {
 	for _, s := range f.Streams {
@@ -1060,7 +1083,7 @@ func transcodeJobPlan(profile DeviceProfile, constraints Constraints, dec Decisi
 			AudioStreamIndex: audioMapIndex(f, dec.AudioStream),
 			Audio: transcode.PlanAudio(
 				srcAudioCodec,
-				dec.AudioStream.Channels,
+				effectiveAudioChannels(dec),
 				profile.supportsAudio(transcode.AudioCodecAAC),
 				profile.MaxAudioChannels,
 			),
@@ -1075,7 +1098,7 @@ func transcodeJobPlan(profile DeviceProfile, constraints Constraints, dec Decisi
 		srcAudioCodec := firstNonEmpty(dec.AudioStream.Codec, f.AudioCodec)
 		audio = transcode.PlanAudio(
 			srcAudioCodec,
-			dec.AudioStream.Channels,
+			effectiveAudioChannels(dec),
 			profile.supportsAudio(transcode.AudioCodecAAC),
 			profile.MaxAudioChannels,
 		)

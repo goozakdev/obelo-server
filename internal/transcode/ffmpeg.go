@@ -992,17 +992,31 @@ func adtsExpressibleChannels(n int) int {
 
 // encodedAudioChannels resolves the -ac value for a job that is ENCODING audio: the
 // client's cap when one applies, else the source count capped to what ADTS can
-// express. Returns 0 to emit no -ac at all (unknown source, or a count that needs no
-// adjustment and no cap).
+// express. Returns 0 only when the source count is unknown.
+//
+// It emits -ac even when the count is UNCHANGED, and that is the point rather than a
+// redundancy. -ac makes ffmpeg resolve the output to the DEFAULT layout for that
+// channel count, which is the layout AAC's standard channel_configuration table
+// describes. Without it, a source layout that merely shares a channel count with a
+// standard one — 5.1(side) against AAC's back-channel 5.1 — has no configuration, so
+// the encoder falls back to channel_configuration=0 and describes the layout in a
+// PCE instead.
+//
+// A PCE is written ONCE, at the head of each ffmpeg run. Every segment after the
+// first of that run is then undecodable on its own: verified against an AC3
+// 5.1(side) source, where the realigned run's first segment decodes clean and the
+// very next one fails all 171 of its frames. That breaks the central promise of
+// #EXT-X-INDEPENDENT-SEGMENTS, and it breaks a resume specifically, because a
+// resuming player enters at a segment that is not the first of any run.
+//
+// Coercing to the standard layout for the same channel count costs nothing audible —
+// it is a channel-order mapping, not a downmix — and makes every segment carry its
+// own configuration.
 func encodedAudioChannels(maxChannels, sourceChannels int) int {
 	if maxChannels > 0 {
 		return maxChannels
 	}
-	safe := adtsExpressibleChannels(sourceChannels)
-	if safe > 0 && safe != sourceChannels {
-		return safe
-	}
-	return 0
+	return adtsExpressibleChannels(sourceChannels)
 }
 
 // BurnSubtitle names the image Subtitle track to burn into the video frames

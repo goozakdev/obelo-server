@@ -123,6 +123,7 @@ RUN set -eux; \
       intel-media-va-driver \
       libvpl2 \
       libmfx-gen1.2 \
+      procps \
     ; \
     rm -rf /var/lib/apt/lists/*
 
