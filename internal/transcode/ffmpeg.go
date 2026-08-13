@@ -188,6 +188,28 @@ func (s SeekOffset) inputSeekArgs() []string {
 // probing the source's audio extradata on the playback path, which is a real cost on
 // every negotiation to save an encode on a minority of seeks.
 //
+// KNOWN LIMIT. Only the FIRST segment of a copied run carries the config, so every
+// later segment of the initial job is non-self-describing in isolation too (ffprobe
+// reports 0 channels for segment001 of such a run). That is harmless when a player
+// consumes the initial job in order from segment 0 — which is why from-the-top
+// playback was never broken — but it means a resume landing INSIDE the realign
+// lookahead (internal/playback/remux.go's realignLookahead, ~the first 12s) serves
+// copied segments at a non-zero entry point with no realignment to force the encode,
+// and would be silent again on such content. Left uncovered deliberately: closing it
+// means encoding audio for every session that could ever be entered anywhere,
+// including from-the-top plays that never seek.
+//
+// It goes unreached in practice only because clients happen to read from segment 0
+// before seeking, and that is NOT contractual on either known client. libmpv gets
+// there via its HLS demuxer's probe — ffmpeg's behaviour, not the client's, so it can
+// move on a library bump with nothing changing in their tree. AVPlayer does the
+// OPPOSITE on purpose: it holds play() until the start seek lands specifically to
+// avoid fetching segment 0 (it makes us realign to the top and produce bytes nobody
+// watches), so a Picture-in-Picture or AirPlay entry inside the lookahead window
+// would hit this. That path is separately immune for 7-channel audio — that client
+// caps at 6 channels, so 6.1 downmixes and never reaches the copy branch — leaving
+// only PCE-described audio at 6 channels or fewer, entered in the first few seconds.
+//
 // So the condition is positional rather than content-based: a job producing from a
 // non-zero offset does not copy audio. The initial job — every from-the-top play,
 // which is the overwhelming majority of playback — still copies, and direct play
