@@ -822,9 +822,151 @@ func TestRemuxArgsSeekRealignment(t *testing.T) {
 	if !hasPair(args, "-start_number", "3") {
 		t.Errorf("-start_number = %q, want 3; args: %v", valueOf(args, "-start_number"), args)
 	}
-	// Still a copy-only remux.
-	if !hasPair(args, "-c", "copy") {
-		t.Errorf("seeked remux must still copy; args: %v", args)
+	// VIDEO still copies — that is the tier's entire purpose, and a realignment must
+	// not turn a remux into a transcode.
+	if !hasPair(args, "-c:v", "copy") {
+		t.Errorf("seeked remux must still COPY VIDEO; args: %v", args)
+	}
+	// AUDIO does not. A realigned job resumes copying the audio elementary stream
+	// from a point that may carry no decoder config (an AAC channel map living in a
+	// PCE at the head of the stream), which decodes to silence for the whole run —
+	// verified end-to-end against a TS source. Encoding makes it self-describing.
+	if !hasPair(args, "-c:a", audioEncoderAAC) {
+		t.Errorf("seeked remux must RE-ENCODE audio (mid-stream copy loses the decoder config); args: %v", args)
+	}
+	if hasPair(args, "-c", "copy") {
+		t.Errorf("seeked remux must not blanket-copy — that would copy audio too; args: %v", args)
+	}
+}
+
+// TestRealignedJobNeverCopiesAudio pins the fix for the resume-silence bug across
+// EVERY job shape that can be realigned. A job producing from a non-zero offset
+// resumes an audio stream-copy mid-stream, past the point where the decoder config
+// lives; for a PCE-described AAC source in a container that carries no extradata
+// (MPEG-TS, some MKV), every frame from the resume point then fails with "channel
+// element N.M is not allocated" — video plays, audio is silent for the whole run.
+// Reproduced end-to-end: the same 6.1 AAC bitstream realigns fine from an MP4 source
+// (ffmpeg re-emits the config from extradata) and fails from a TS source.
+//
+// The INITIAL job must still copy — that is the common path and it is not broken.
+func TestRealignedJobNeverCopiesAudio(t *testing.T) {
+	realigned := SeekOffset{StartNumber: 20, StartSeconds: 80}
+
+	t.Run("transcode", func(t *testing.T) {
+		job := TranscodeJob{
+			SourcePath: "/m/x.mkv", OutputDir: "/s",
+			Video: VideoPlan{MaxHeight: 720}, Audio: AudioPlan{Copy: true}, HasAudio: true,
+		}
+		if args := TranscodeArgs(job); !hasPair(args, "-c:a", "copy") {
+			t.Errorf("INITIAL transcode must still copy audio; args: %v", args)
+		}
+		job.Seek = realigned
+		args := TranscodeArgs(job)
+		if hasPair(args, "-c:a", "copy") {
+			t.Errorf("realigned transcode must not copy audio; args: %v", args)
+		}
+		if !hasPair(args, "-c:a", audioEncoderAAC) {
+			t.Errorf("realigned transcode must encode audio to aac; args: %v", args)
+		}
+	})
+
+	t.Run("remux", func(t *testing.T) {
+		job := RemuxJob{SourcePath: "/m/x.mkv", OutputDir: "/s"}
+		if args := RemuxArgs(job); !hasPair(args, "-c", "copy") {
+			t.Errorf("INITIAL remux must stay a blanket copy; args: %v", args)
+		}
+		job.Seek = realigned
+		args := RemuxArgs(job)
+		if !hasPair(args, "-c:v", "copy") {
+			t.Errorf("realigned remux must still copy VIDEO (the tier's purpose); args: %v", args)
+		}
+		if !hasPair(args, "-c:a", audioEncoderAAC) {
+			t.Errorf("realigned remux must encode audio; args: %v", args)
+		}
+	})
+
+	t.Run("remux_video_only_stays_pure_copy", func(t *testing.T) {
+		// -an already dropped audio, so there is nothing unsafe to copy.
+		args := RemuxArgs(RemuxJob{SourcePath: "/m/x.mkv", OutputDir: "/s", VideoOnly: true, Seek: realigned})
+		if !hasPair(args, "-c", "copy") {
+			t.Errorf("realigned video-only remux carries no audio and must stay a pure copy; args: %v", args)
+		}
+	})
+
+	t.Run("audio_rendition", func(t *testing.T) {
+		job := AudioRenditionJob{
+			SourcePath: "/m/x.mkv", OutputDir: "/s", Copy: true,
+			PlaylistName: "audio_a.m3u8", SegmentPattern: "audio_a_%03d.ts",
+		}
+		if args := AudioRenditionArgs(job); !hasPair(args, "-c:a", "copy") {
+			t.Errorf("INITIAL audio rendition must still copy; args: %v", args)
+		}
+		job.Seek = realigned
+		args := AudioRenditionArgs(job)
+		if hasPair(args, "-c:a", "copy") {
+			t.Errorf("realigned audio rendition must not copy — it would be silent for its whole run; args: %v", args)
+		}
+		if !hasPair(args, "-c:a", audioEncoderAAC) {
+			t.Errorf("realigned audio rendition must encode audio; args: %v", args)
+		}
+	})
+}
+
+// TestRealignEncodeStaysADTSExpressible guards the trap that made the FIRST version
+// of the realignment fix worse than the bug. A copied stream may carry a layout ADTS
+// cannot describe (6.1 = 7 channels, whose channel map rides in a PCE). Re-encoding
+// such a track without capping it makes ffmpeg's ADTS muxer refuse the stream —
+// "channelConfiguration > 7 is not supported in ADTS" — and the job then writes NO
+// OUTPUT AT ALL, converting silent audio into a hung playback. Verified against a
+// real 6.1 source both ways.
+func TestRealignEncodeStaysADTSExpressible(t *testing.T) {
+	for _, tc := range []struct{ in, want int }{
+		{0, 0},  // unknown → no -ac, leave ffmpeg's default
+		{1, 1},  // mono
+		{2, 2},  // stereo
+		{6, 6},  // 5.1
+		{7, 6},  // 6.1 has NO ADTS configuration → nearest expressible
+		{8, 8},  // 7.1 is configuration 7
+		{10, 8}, // beyond the table → cap
+	} {
+		if got := adtsExpressibleChannels(tc.in); got != tc.want {
+			t.Errorf("adtsExpressibleChannels(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+
+	// The client's cap wins when it applies — it is already ADTS-safe by construction
+	// and is the viewer's explicit choice.
+	if got := encodedAudioChannels(2, 7); got != 2 {
+		t.Errorf("encodedAudioChannels(max=2, src=7) = %d, want 2 (client cap wins)", got)
+	}
+	// No cap and an expressible source → emit nothing, keep the source layout.
+	if got := encodedAudioChannels(0, 6); got != 0 {
+		t.Errorf("encodedAudioChannels(max=0, src=6) = %d, want 0 (no -ac needed)", got)
+	}
+	// No cap and an INEXPRESSIBLE source → must emit the corrected count.
+	if got := encodedAudioChannels(0, 7); got != 6 {
+		t.Errorf("encodedAudioChannels(max=0, src=7) = %d, want 6", got)
+	}
+
+	// End to end through the args: a realigned 6.1 transcode must carry -ac 6.
+	args := TranscodeArgs(TranscodeJob{
+		SourcePath: "/m/x.mkv", OutputDir: "/s",
+		Video:    VideoPlan{MaxHeight: 720},
+		Audio:    AudioPlan{Copy: true, SourceChannels: 7},
+		HasAudio: true,
+		Seek:     SeekOffset{StartNumber: 20, StartSeconds: 80},
+	})
+	if !hasPair(args, "-ac", "6") {
+		t.Errorf("realigned 6.1 transcode must cap to -ac 6 or ffmpeg writes nothing; args: %v", args)
+	}
+	// And a realigned remux likewise.
+	rem := RemuxArgs(RemuxJob{
+		SourcePath: "/m/x.mkv", OutputDir: "/s",
+		AudioSourceChannels: 7,
+		Seek:                SeekOffset{StartNumber: 20, StartSeconds: 80},
+	})
+	if !hasPair(rem, "-ac", "6") {
+		t.Errorf("realigned 6.1 remux must cap to -ac 6; args: %v", rem)
 	}
 }
 
