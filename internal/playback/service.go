@@ -804,7 +804,7 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 			audioIdx = forcedAudioMapIndex(dec.File, dec.AudioStream)
 		}
 		return func(outputDir string, seek transcode.SeekOffset) []string {
-			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, AudioSourceChannels: dec.AudioStream.Channels, FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
 		}, nil, nil
 	case TierTranscode:
 		plan := transcodeJobPlan(profile, constraints, dec)
@@ -917,6 +917,7 @@ func (s *Service) audioRenditionBuilder(profile DeviceProfile, constraints Const
 			AudioStreamIndex: idx,
 			Copy:             copyStream,
 			MaxChannels:      maxChannels,
+			SourceChannels:   stream.Channels,
 			PlaylistName:     transcode.AudioRenditionPlaylist(streamID),
 			SegmentPattern:   transcode.AudioRenditionSegmentPattern(streamID),
 			Seek:             seek,

@@ -94,6 +94,12 @@ type RemuxJob struct {
 	// (which likewise counts cover art), not the cover-art-filtered selectable set.
 	VideoStreamIndex *int
 
+	// AudioSourceChannels is the mapped audio track's channel count, used ONLY when a
+	// realignment forces this otherwise-pure-copy job to encode its audio
+	// (SeekOffset.mustEncodeCopiedAudio) so the result stays ADTS-expressible. 0 when
+	// unknown or when the job carries no audio.
+	AudioSourceChannels int
+
 	// VideoOnly copies ONLY the video track (`-map 0:v:N -an`) — the demuxed
 	// multi-audio layout (audio-streams/03, ADR-0022): the video variant carries no
 	// audio, and every audio Stream rides as its own in-band `#EXT-X-MEDIA:TYPE=AUDIO`
@@ -156,6 +162,42 @@ func (s SeekOffset) inputSeekArgs() []string {
 	return []string{"-ss", strconv.FormatFloat(s.StartSeconds, 'f', -1, 64)}
 }
 
+// mustEncodeCopiedAudio reports whether a job that would otherwise STREAM-COPY its
+// audio has to re-encode it instead, because this job starts mid-stream.
+//
+// Copying audio is only safe when the copied elementary stream is self-describing
+// at the point the job starts emitting. It is not, in general. An AAC stream whose
+// channel map lives in a PCE (program config element) rather than in the ADTS
+// channel_configuration field carries that map ONCE, at the head of the stream. A
+// from-the-top job copies the head and every segment decodes; a REALIGNED job seeks
+// past it and copies frames that reference a configuration the decoder was never
+// given. Every frame then fails with "channel element N.M is not allocated", so the
+// segments carry video but no decodable audio.
+//
+// Whether that bites depends on the SOURCE CONTAINER, not on the bitstream. When the
+// container holds the decoder config as extradata (MP4's AudioSpecificConfig), ffmpeg
+// re-emits it into the realigned output and the copy is safe; when the config exists
+// only in-band (MPEG-TS, and some MKV muxes), there is nothing to re-emit. Verified
+// both ways on the same 6.1 AAC bitstream: MP4 source realigns fine, TS source
+// produces a realigned segment whose every audio frame fails to decode.
+//
+// We deliberately do NOT try to detect that. The container-extradata fact is not in
+// anything the scanner records, and the obvious-looking discriminator — ADTS
+// channel_configuration == 0 — is WRONG: it was true of both the working MP4 case and
+// the broken TS case, so it does not separate them. Detecting it properly would mean
+// probing the source's audio extradata on the playback path, which is a real cost on
+// every negotiation to save an encode on a minority of seeks.
+//
+// So the condition is positional rather than content-based: a job producing from a
+// non-zero offset does not copy audio. The initial job — every from-the-top play,
+// which is the overwhelming majority of playback — still copies, and direct play
+// never realigns at all, so neither pays anything. What it costs is an audio encode
+// on resumes and seeks: marginal on the transcode tier, where a video encode is
+// already running, and genuinely new on the remux tier, which is the deliberate
+// price of that tier being seekable at all (ADR-0009 realignment applies there too —
+// internal/playback/session.go sets realignable for a video COPY as well).
+func (s SeekOffset) mustEncodeCopiedAudio() bool { return s.StartSeconds > 0 }
+
 // outputOffsetArgs keeps a REALIGNED job's output timestamps CONTINUOUS with the
 // session timeline: ffmpeg rebases output pts to ~0 after an input -ss, so without
 // this a post-seek segment's timestamps jump BACKWARD relative to the segments a
@@ -211,7 +253,20 @@ func RemuxArgs(job RemuxJob) []string {
 		// File pins neither and emits no -map — byte-for-byte the copy-everything args.
 		args = append(args, remuxMapArgs(job.VideoStreamIndex, job.AudioStreamIndex)...)
 	}
-	args = append(args, "-c", "copy")
+	// -c copy is the tier's whole point. The ONE exception is a realigned job that
+	// still carries audio: it would resume copying the audio elementary stream from a
+	// point with no decoder config in front of it (mustEncodeCopiedAudio), so its
+	// audio is re-encoded while the VIDEO — the expensive stream, and the reason this
+	// tier exists — keeps copying. A VideoOnly job already dropped audio (-an), so it
+	// stays a pure copy.
+	if job.Seek.mustEncodeCopiedAudio() && !job.VideoOnly {
+		args = append(args, "-c:v", "copy", "-c:a", audioEncoderAAC)
+		if ch := encodedAudioChannels(0, job.AudioSourceChannels); ch > 0 {
+			args = append(args, "-ac", itoa(ch))
+		}
+	} else {
+		args = append(args, "-c", "copy")
+	}
 	args = append(args, job.Seek.outputOffsetArgs()...)
 	return append(args, videoHlsOutput(job.OutputDir, job.FMP4, job.SegmentTimes, job.Seek.StartNumber)...)
 }
@@ -881,6 +936,51 @@ type AudioPlan struct {
 	// MaxChannels, when > 0 and the source has more channels, downmixes to this
 	// many channels (e.g. 5.1 → 2 = stereo). Ignored when Copy is set.
 	MaxChannels int
+	// SourceChannels is the source track's channel count, carried so a job that has
+	// to ENCODE audio it would rather have copied (a realignment — see
+	// SeekOffset.mustEncodeCopiedAudio) can pick a channel count the ADTS header can
+	// actually express. Copying is exempt: a copied stream keeps whatever layout it
+	// already had. 0 when unknown, which emits no -ac and leaves ffmpeg's default.
+	SourceChannels int
+}
+
+// adtsExpressibleChannels maps a channel count to the nearest count at or below it
+// that an ADTS header can describe, or 0 when the count is unknown.
+//
+// ADTS carries a 3-bit channel_configuration covering 1, 2, 3, 4, 5, 6 and 8
+// channels. Anything else — 7 (6.1), or more than 8 — has no representation, and
+// ffmpeg's ADTS muxer REFUSES the stream outright: "channelConfiguration > 7 is not
+// supported in ADTS", after which the job writes no output at all. That matters
+// because a copied stream can carry such a layout perfectly well (its channel map
+// rides in a PCE), so re-encoding a copied 6.1 track without capping it converts
+// silent-audio into a job that produces nothing and hangs playback entirely. Found
+// by verifying the realignment fix against a 6.1 source rather than trusting it.
+func adtsExpressibleChannels(n int) int {
+	switch {
+	case n <= 0:
+		return 0
+	case n <= 6:
+		return n // 1..6 all have a configuration
+	case n == 7:
+		return 6 // 6.1 has none; 5.1 is the nearest expressible layout
+	default:
+		return 8 // 8 is configuration 7; anything above has none
+	}
+}
+
+// encodedAudioChannels resolves the -ac value for a job that is ENCODING audio: the
+// client's cap when one applies, else the source count capped to what ADTS can
+// express. Returns 0 to emit no -ac at all (unknown source, or a count that needs no
+// adjustment and no cap).
+func encodedAudioChannels(maxChannels, sourceChannels int) int {
+	if maxChannels > 0 {
+		return maxChannels
+	}
+	safe := adtsExpressibleChannels(sourceChannels)
+	if safe > 0 && safe != sourceChannels {
+		return safe
+	}
+	return 0
 }
 
 // BurnSubtitle names the image Subtitle track to burn into the video frames
@@ -1081,12 +1181,15 @@ func TranscodeArgs(job TranscodeJob) []string {
 			// (0:a) to keep the co-packaged shared audio track rather than drop it.
 			args = append(args, "-map", "0:a")
 		}
-		if job.Audio.Copy {
+		// A realigned job cannot copy audio safely (mustEncodeCopiedAudio): it would
+		// resume copying an elementary stream from a point that carries no decoder
+		// config. Encoding produces a self-describing stream from the first frame.
+		if job.Audio.Copy && !job.Seek.mustEncodeCopiedAudio() {
 			args = append(args, "-c:a", "copy")
 		} else {
 			args = append(args, "-c:a", audioEncoderAAC)
-			if job.Audio.MaxChannels > 0 {
-				args = append(args, "-ac", itoa(job.Audio.MaxChannels))
+			if ch := encodedAudioChannels(job.Audio.MaxChannels, job.Audio.SourceChannels); ch > 0 {
+				args = append(args, "-ac", itoa(ch))
 			}
 		}
 	}
@@ -1118,6 +1221,10 @@ type AudioRenditionJob struct {
 	// MaxChannels, when > 0 and re-encoding, downmixes the AAC output to this many
 	// channels (the client's channel cap). Ignored when Copy is set.
 	MaxChannels int
+	// SourceChannels is the Stream's channel count, used when a realignment forces
+	// this rendition to encode audio it would have copied, so the output stays
+	// ADTS-expressible. 0 when unknown.
+	SourceChannels int
 	// PlaylistName / SegmentPattern are this rendition's output filenames within
 	// OutputDir (AudioRenditionPlaylist/AudioRenditionSegmentPattern), so the flat
 	// scratch dir holds one distinctly-named playlist + segment set per rendition.
@@ -1151,12 +1258,15 @@ func AudioRenditionArgs(job AudioRenditionJob) []string {
 	args = append(args, "-i", job.SourcePath)
 	// Audio-only: drop video, map exactly the chosen audio Stream.
 	args = append(args, "-vn", "-map", "0:a:"+itoa(job.AudioStreamIndex))
-	if job.Copy {
+	// A realigned rendition has the same mid-stream-entry problem as the muxed paths
+	// (mustEncodeCopiedAudio) — and more acutely, since audio is ALL this job emits:
+	// a copied rendition entered past its decoder config is silent for its whole run.
+	if job.Copy && !job.Seek.mustEncodeCopiedAudio() {
 		args = append(args, "-c:a", "copy")
 	} else {
 		args = append(args, "-c:a", audioEncoderAAC)
-		if job.MaxChannels > 0 {
-			args = append(args, "-ac", itoa(job.MaxChannels))
+		if ch := encodedAudioChannels(job.MaxChannels, job.SourceChannels); ch > 0 {
+			args = append(args, "-ac", itoa(ch))
 		}
 	}
 	args = append(args, job.Seek.outputOffsetArgs()...)
@@ -1204,9 +1314,9 @@ func PlanVideo(sourceCodec string, sourceHeight int, sourceBitrate int64, client
 func PlanAudio(sourceCodec string, sourceChannels int, clientSupportsAAC bool, maxChannels int) AudioPlan {
 	needDownmix := maxChannels > 0 && sourceChannels > 0 && sourceChannels > maxChannels
 	if normCodec(sourceCodec) == AudioCodecAAC && clientSupportsAAC && !needDownmix {
-		return AudioPlan{Copy: true}
+		return AudioPlan{Copy: true, SourceChannels: sourceChannels}
 	}
-	p := AudioPlan{}
+	p := AudioPlan{SourceChannels: sourceChannels}
 	if needDownmix {
 		p.MaxChannels = maxChannels
 	}
