@@ -206,9 +206,16 @@ func (s SeekOffset) inputSeekArgs() []string {
 // OPPOSITE on purpose: it holds play() until the start seek lands specifically to
 // avoid fetching segment 0 (it makes us realign to the top and produce bytes nobody
 // watches), so a Picture-in-Picture or AirPlay entry inside the lookahead window
-// would hit this. That path is separately immune for 7-channel audio — that client
-// caps at 6 channels, so 6.1 downmixes and never reaches the copy branch — leaving
-// only PCE-described audio at 6 channels or fewer, entered in the first few seconds.
+// would hit this. That path is separately immune for 7-channel audio, leaving only
+// PCE-described audio at 6 channels or fewer, entered in the first few seconds.
+//
+// That immunity comes from the TIER GATE, not from a downmix, and the distinction was
+// worth chasing: negotiate.go rejects a source above the profile's MaxAudioChannels
+// with ReasonAudioChannels, which pushes it off direct play / remux and onto the
+// transcode tier, where audio is encoded rather than copied. It reads its stream from
+// pickAudioStream(f, ...) — the File's real Streams — so it has always worked. The
+// DOWNMIX half of the same cap had not: it runs off the Decision's AudioStream, which
+// was unpopulated on an ordinary negotiation until effectiveAudioChannels landed.
 //
 // So the condition is positional rather than content-based: a job producing from a
 // non-zero offset does not copy audio. The initial job — every from-the-top play,
