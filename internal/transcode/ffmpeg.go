@@ -571,29 +571,49 @@ func videoToolboxBackend() backend {
 	}
 }
 
-// nvencBackend is the NVIDIA NVENC descriptor (h264_nvenc). DECODE is now hardware
-// too (issue 05): initArgs ask ffmpeg to decode on the GPU with CUDA (-hwaccel cuda)
-// in the PLAIN form — no -hwaccel_output_format — so the decoder auto-downloads
-// frames back to system memory and the rest of the pipeline stays in the CPU domain
-// (the cpuScaleFilter scale-down, then -c:v h264_nvenc, whose encoder re-uploads to
-// the GPU automatically). So the baseline is now HW-decode → CPU-scale → NVENC
-// encode: there is still NO -init_hw_device and NO hwupload filter, and no full-CUDA
-// scale_npp surface chain. Keeping the auto-download baseline (rather than a zero-
-// copy scale_npp pipeline) trades a little memory bandwidth for robustness across
-// driver/container combinations (PRD "robust baseline"), while still moving the
-// heavy decode off the CPU. Quality/speed is the rate-controlled -preset pN
-// (nvencPreset); the shared -b:v/-maxrate/-bufsize cap (TranscodeArgs) drives NVENC's
-// native rate control, and yuv420p keeps the output broadly decodable.
+// nvencBackend is the NVIDIA NVENC descriptor (h264_nvenc). Decode, scale, and
+// encode all run in the CUDA domain: initArgs decode into CUDA surfaces (-hwaccel
+// cuda -hwaccel_output_format cuda) and scaleFilter is the VRAM-resident
+// scale_cuda, so a frame is never copied back to system memory between decode and
+// encode. This mirrors what vaapiBackend/qsvBackend already do in their surface
+// domains — NVENC was the odd one out.
+//
+// It previously used the PLAIN -hwaccel cuda form with the CPU scale, on the
+// theory that auto-downloading frames traded "a little memory bandwidth" for
+// robustness across driver/container combinations. The bandwidth was not little.
+// That shape decodes on the GPU, copies every full-size frame back over PCIe,
+// runs swscale + a yuv420p conversion on the CPU, then re-uploads to encode.
+// Measured on a 1080p 8 Mbps H.264 source scaled to SD (Threadripper 2950X): ~450%
+// CPU on the auto-download form against ~50% on this surface chain — a 9x
+// difference for one stream, which at the ADR-0009 concurrency cap is the
+// difference between a handful of streams and a saturated host.
+//
+// No uploadFilter is needed (unlike VAAPI/QSV): -hwaccel_output_format cuda means
+// the decoder already lands frames on CUDA surfaces, and NVENC consumes them
+// directly. There is deliberately no -pix_fmt: it names a system-memory format and
+// would force a download back out of the CUDA domain, undoing the whole point. The
+// 8-bit guarantee it used to provide moved onto cudaScaleFilter's format=nv12.
+// Quality/speed is the rate-controlled -preset pN (nvencPreset) and the shared
+// -b:v/-maxrate/-bufsize cap (TranscodeArgs) drives NVENC's rate control.
+//
+// KNOWN GAP: the format conversion rides on the scale filter, which TranscodeArgs
+// only emits when a height cap binds. A 10-bit source transcoded with a bitrate
+// cap but NO height cap therefore reaches h264_nvenc as p010 and fails encoder
+// init. ADR-0009's per-session hardware→CPU fallback catches it — that stream
+// plays, on CPU — so this is a performance gap, not a playback failure. Closing it
+// means emitting a format-only scale_cuda on the uncapped path, which the current
+// scaleFilter seam has no shape for; deferred rather than bodged.
 //
 // NOTE (arg-verified, not CI-run here): the macOS dev host has no NVIDIA hardware,
-// so -hwaccel cuda is pinned by the exact-arg-vector unit test only; the gated real
-// e2e self-skips on this box.
+// so this vector is pinned by the exact-arg-vector unit test only; the gated real
+// e2e self-skips on this box. The 450%→50% figures above came from an operator's
+// A/B on real hardware, not from CI.
 func nvencBackend() backend {
 	return backend{
-		initArgs:    []string{"-hwaccel", "cuda"},
+		initArgs:    []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda"},
 		encoder:     videoEncoderNVENC,
-		presetArgs:  []string{"-preset", nvencPreset, "-pix_fmt", "yuv420p"},
-		scaleFilter: cpuScaleFilter,
+		presetArgs:  []string{"-preset", nvencPreset},
+		scaleFilter: cudaScaleFilter,
 	}
 }
 
@@ -656,6 +676,24 @@ func vaapiScaleFilter(maxHeight int) string {
 // qsvScaleFilter is vaapiScaleFilter's QSV-domain analogue (scale_qsv).
 func qsvScaleFilter(maxHeight int) string {
 	return "scale_qsv=-2:" + itoa(maxHeight)
+}
+
+// cudaScaleFilter is vaapiScaleFilter's CUDA-domain analogue (scale_cuda), used
+// with -hwaccel_output_format cuda so decoded frames are resized in VRAM and
+// handed straight to NVENC. scale_cuda is the FREE filter shipped with ffmpeg's
+// nvcodec support (unlike scale_npp, which needs a non-free CUDA SDK build), so
+// it is present in the stock Debian ffmpeg the runtime image installs.
+//
+// format=nv12 carries the 8-bit guarantee the old CPU-domain path got from
+// -pix_fmt yuv420p. A 10-bit source (4K HEVC being the obvious one) decodes to
+// p010 CUDA surfaces, and h264_nvenc cannot encode 10-bit H.264, so without this
+// the encoder init fails and the session falls back to CPU — the exact content
+// where hardware matters most. nv12 rather than yuv420p because nv12 is NVENC's
+// native 8-bit surface format, making this a passthrough for 8-bit sources
+// (scale_cuda's `passthrough` default) and a real p010→nv12 conversion only where
+// one is needed.
+func cudaScaleFilter(maxHeight int) string {
+	return "scale_cuda=-2:" + itoa(maxHeight) + ":format=nv12"
 }
 
 // IsHardware reports whether Accel a selects a hardware video encoder rather than

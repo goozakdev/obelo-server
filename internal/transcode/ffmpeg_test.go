@@ -353,10 +353,10 @@ func hwTranscodeJob(accel Accel) TranscodeJob {
 }
 
 // TestTranscodeArgsAccelNVENC: the NVENC knob emits -c:v h264_nvenc with the
-// rate-controlled -preset pN, HW DECODE via -hwaccel cuda (issue 05), the CPU-domain
-// scale (robust HW-decode → CPU-scale → NVENC baseline — no -init_hw_device, no
-// hwupload, no scale_npp), the bitrate cap, and the preserved segment keyframes.
-// Pure arg vector — no GPU touched (this Mac has no NVENC; the gated e2e self-skips).
+// rate-controlled -preset pN and a FULL CUDA surface chain — decode into CUDA
+// frames (-hwaccel cuda -hwaccel_output_format cuda) then scale_cuda — plus the
+// bitrate cap and preserved segment keyframes. Pure arg vector — no GPU touched
+// (this Mac has no NVENC; the gated e2e self-skips).
 func TestTranscodeArgsAccelNVENC(t *testing.T) {
 	args := TranscodeArgs(hwTranscodeJob(AccelNVENC))
 
@@ -366,24 +366,38 @@ func TestTranscodeArgsAccelNVENC(t *testing.T) {
 	if !hasPair(args, "-preset", nvencPreset) {
 		t.Errorf("missing NVENC -preset %s; args: %v", nvencPreset, args)
 	}
-	// HW DECODE: -hwaccel cuda in the PLAIN auto-download form (no
-	// -hwaccel_output_format) must precede -i, but the baseline still carries no
-	// -init_hw_device, no hwupload, and no scale_npp (decode on GPU, scale on CPU).
+	// The decode hwaccel and its output format must BOTH precede -i: without the
+	// output format ffmpeg auto-downloads every frame to system memory, which is
+	// the ~9x-CPU regression this vector exists to prevent regressing into.
 	if !hasPair(args, "-hwaccel", "cuda") {
 		t.Errorf("missing -hwaccel cuda (HW decode); args: %v", args)
+	}
+	if !hasPair(args, "-hwaccel_output_format", "cuda") {
+		t.Errorf("missing -hwaccel_output_format cuda — frames must stay on CUDA surfaces; args: %v", args)
 	}
 	if i := indexOf(args, "-hwaccel"); i < 0 || i > indexOf(args, "-i") {
 		t.Errorf("NVENC -hwaccel must precede -i; args: %v", args)
 	}
-	if hasFlag(args, "-hwaccel_output_format") || hasFlag(args, "-init_hw_device") {
-		t.Errorf("NVENC robust baseline must use plain -hwaccel cuda (no -hwaccel_output_format/-init_hw_device); args: %v", args)
+	if i := indexOf(args, "-hwaccel_output_format"); i < 0 || i > indexOf(args, "-i") {
+		t.Errorf("NVENC -hwaccel_output_format must precede -i; args: %v", args)
 	}
 	scale := valueOf(args, "-vf")
-	if !strings.Contains(scale, "scale=-2:") || !strings.Contains(scale, "720") {
-		t.Errorf("NVENC -vf = %q, want a CPU-domain scale=-2:'min(720,ih)'; args: %v", scale, args)
+	if scale != "scale_cuda=-2:720:format=nv12" {
+		t.Errorf("NVENC -vf = %q, want \"scale_cuda=-2:720:format=nv12\"; args: %v", scale, args)
 	}
-	if strings.Contains(scale, "hwupload") || strings.Contains(scale, "scale_npp") || strings.Contains(scale, "scale_vaapi") {
-		t.Errorf("NVENC -vf = %q, want no upload/HW-scale (CPU-scale baseline); args: %v", scale, args)
+	// format=nv12 is the 8-bit guarantee that -pix_fmt yuv420p used to provide:
+	// without it a 10-bit source reaches h264_nvenc as p010 and fails encoder init,
+	// dropping the session to CPU exactly on 4K HEVC content.
+	if !strings.Contains(scale, "format=nv12") {
+		t.Errorf("NVENC -vf = %q must pin format=nv12 (10-bit sources otherwise fail NVENC init); args: %v", scale, args)
+	}
+	// A CPU scale or a system-memory -pix_fmt would each force a download out of
+	// the CUDA domain, defeating the surface chain.
+	if strings.Contains(scale, "scale=-2:") {
+		t.Errorf("NVENC -vf = %q, want no CPU-domain scale (forces a VRAM download); args: %v", scale, args)
+	}
+	if hasFlag(args, "-pix_fmt") {
+		t.Errorf("NVENC must carry no -pix_fmt (a system-memory format forces a download); args: %v", args)
 	}
 	assertCapAndKeyframes(t, args, "NVENC")
 }
@@ -459,7 +473,7 @@ func TestAllHardwareBackendsDecodeOnDevice(t *testing.T) {
 		wantOutF bool   // true if the backend also keeps frames on HW surfaces (-hwaccel_output_format)
 	}{
 		{AccelVideoToolbox, "videotoolbox", false},
-		{AccelNVENC, "cuda", false},
+		{AccelNVENC, "cuda", true},
 		{AccelVAAPI, "vaapi", true},
 		{AccelQSV, "qsv", true},
 	} {
