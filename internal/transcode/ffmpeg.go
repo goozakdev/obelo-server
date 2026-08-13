@@ -550,24 +550,38 @@ func videoBackend(a Accel) backend {
 }
 
 // videoToolboxBackend is Apple's VideoToolbox descriptor (h264_videotoolbox,
-// macOS) — the reference HW backend. DECODE and encode both run on the media
-// engine: initArgs ask ffmpeg to hardware-decode with VideoToolbox (-hwaccel
-// videotoolbox) in the PLAIN form — no -hwaccel_output_format — so the decoder
-// auto-downloads frames back to system memory. That keeps the rest of the pipeline
-// in the CPU domain (the cpuScaleFilter scale-down, -pix_fmt yuv420p, and the
-// h264_videotoolbox encode from system-memory frames), so only the heavy decode
-// moves off the CPU while everything downstream is byte-for-byte as before. This
-// is the issue-05 fix for the motivating bug: a 4K HEVC source pegged the CPU
-// because the DECODE was software even though the encode was on the media engine.
+// macOS). Decode, scale, and encode all stay on VideoToolbox surfaces: initArgs
+// decode into them (-hwaccel videotoolbox -hwaccel_output_format videotoolbox_vld)
+// and scaleFilter is the in-domain scale_vt, so no frame is copied back to system
+// memory mid-pipeline (ADR-0009's device-domain rule).
+//
+// The output format is spelled videotoolbox_vld, NOT videotoolbox. The bare name
+// is not a pixel format and ffmpeg rejects it with "Unrecognised hwaccel output
+// format", which fails fast and loudly rather than silently degrading — but it
+// looks plausible enough to be worth naming here.
+//
+// Like NVENC, this previously used the plain -hwaccel form so frames auto-
+// downloaded to a CPU scale. Unified memory makes that cheaper than NVENC's PCIe
+// round-trip, but not free — measured on this repo's dev Mac, 1080p 8 Mbps H.264
+// to 480p over 600 frames: 128% CPU on the auto-download form against 32% on this
+// surface chain. Wall-clock is near-identical (1.62s vs 1.55s) because the media
+// engine, not the CPU, is the bottleneck either way; what changes is how much of
+// the host is left for everything else at the ADR-0009 concurrency cap.
+//
+// Unlike NVENC this needs NO format pinning, and that asymmetry is real rather
+// than an oversight: scale_vt has no `format` option to pin with, and it turns out
+// not to need one, because VideoToolbox's encoder converts internally. A 10-bit
+// HEVC source encodes fine on this path, as does an uncapped transcode that emits
+// no scale filter at all — both verified, and both the cases that remain gaps on
+// the NVENC side.
+//
 // The shared -b:v rate control and segment-boundary keyframe forcing (TranscodeArgs)
-// are unchanged. Only -c:v and the preset flags differ from CPU besides this decode
-// hwaccel.
+// are unchanged.
 func videoToolboxBackend() backend {
 	return backend{
-		initArgs:    []string{"-hwaccel", "videotoolbox"},
+		initArgs:    []string{"-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"},
 		encoder:     videoEncoderVideoToolbox,
-		presetArgs:  []string{"-pix_fmt", "yuv420p"},
-		scaleFilter: cpuScaleFilter,
+		scaleFilter: vtScaleFilter,
 	}
 }
 
@@ -676,6 +690,16 @@ func vaapiScaleFilter(maxHeight int) string {
 // qsvScaleFilter is vaapiScaleFilter's QSV-domain analogue (scale_qsv).
 func qsvScaleFilter(maxHeight int) string {
 	return "scale_qsv=-2:" + itoa(maxHeight)
+}
+
+// vtScaleFilter is vaapiScaleFilter's VideoToolbox-domain analogue (scale_vt),
+// used with -hwaccel_output_format videotoolbox_vld so frames are resized on the
+// media engine. It carries no format pinning because scale_vt exposes no `format`
+// option and the VideoToolbox encoder handles conversion itself (see
+// videoToolboxBackend). scale_vt needs ffmpeg 6.0+; an older ffmpeg fails the
+// filter graph and ADR-0009's per-session fallback drops that stream to CPU.
+func vtScaleFilter(maxHeight int) string {
+	return "scale_vt=-2:" + itoa(maxHeight)
 }
 
 // cudaScaleFilter is vaapiScaleFilter's CUDA-domain analogue (scale_cuda), used
