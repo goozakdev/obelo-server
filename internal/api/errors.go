@@ -149,6 +149,17 @@ const (
 	// leave the current image unchanged so a bad file never blanks the artwork.
 	codeUnsupportedMedia = "UNSUPPORTED_MEDIA_TYPE"
 	codePayloadTooLarge  = "PAYLOAD_TOO_LARGE"
+	// Tailnet remote-access settings (Admin-scope /settings/tailscale, ADR-0043).
+	// Both 422 — well-formed JSON naming a value that cannot work:
+	//   codeTailnetInvalidHostname — a hostname that is not a legal DNS label. It
+	//                               is validated HERE, strictly, because it becomes
+	//                               one at join time inside somebody else's code,
+	//                               where the failure is a message written for
+	//                               somebody else's user.
+	//   codeTailnetInvalidControlURL — a coordination-server URL that is not a
+	//                               well-formed absolute http(s) URL.
+	codeTailnetInvalidHostname   = "TAILNET_INVALID_HOSTNAME"
+	codeTailnetInvalidControlURL = "TAILNET_INVALID_CONTROL_URL"
 )
 
 // decodeJSON reads the request body as JSON into dst. It returns false (after

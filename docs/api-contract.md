@@ -145,6 +145,7 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
 | `sessionStarted` | admin-only | `{ "sessionId", "userId", "titleId" }` | — (no session list yet) |
 | `nowPlaying` | admin-only | `{ "sessionId", "userId", "titleId", "positionMs" }` | — |
 | `sessionEnded` | admin-only | `{ "sessionId", "userId", "titleId" }` | — |
+| `tailscaleState` | admin-only | `{}` — a refetch nudge carrying **no state**, fired on every Tailnet node transition ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)) | `GET /settings/tailscale` |
 
 ---
 
@@ -164,13 +165,17 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
     "auth": true, "libraries": true, "scanner": true, "directPlay": true,
     "watchState": true, "home": true, "search": true, "collections": true,
     "playlists": true, "realtimeEvents": true, "deviceAuth": true,
-    "mediaCookieRefresh": true, "streamToken": true, "transcode": true
+    "mediaCookieRefresh": true, "streamToken": true, "transcode": true,
+    "tailscale": false
   },
   "setupRequired": false
 }
 ```
 
-Every flag above reads `true` on a normally-provisioned server. `transcode` is the one that legitimately varies by host — it reads `false` on a deployment with no usable ffmpeg (see the handshake note in Part 1).
+Every flag above reads `true` on a normally-provisioned server except the two that describe **this deployment** rather than the API surface:
+
+- **`transcode`** varies by host — `false` on a deployment with no usable ffmpeg (see the handshake note in Part 1).
+- **`tailscale`** varies by **build** ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)): `true` only in a binary compiled with `-tags tailscale`, which is what the Docker image and the release binaries are and what a plain `go build` is not. It says whether this server *can* join a Tailnet, **not** whether remote access is switched on — that is `GET /settings/tailscale` (§3.9). A client that sees `false` should explain that remote access is unavailable in this build rather than offer a control that can only fail; the `/settings/tailscale` routes are served either way, answering with an error that names the build, precisely so the failure is not a bare `404` that reads like a mistyped path.
 
 `id` and `name` are the **Server identity** ([ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). Both are `omitempty` and both are **additive** — a server predating ADR-0034 omits them, so treat them as optional rather than as an error.
 
@@ -641,6 +646,32 @@ All under `/settings/`, bearer + admin.
 | `POST /settings/subtitle-providers/{slug}/test` — [Admin] | As the metadata test: `200` `{ "ok", "detail" }`. |
 | `GET /settings/enrichment-consent` — [Admin] | → `200` `{ "state": "unset"\|"granted"\|"declined", "grantedAt"? }`. |
 | `PUT /settings/enrichment-consent` — [Admin] | `{ "granted": true\|false }` (required) → `200` (GET shape). Consent gates all outbound enrichment; hot-reloads. `422 PROVIDER_INVALID_SETTING` when absent. |
+| `GET /settings/tailscale` — [Admin] | → `200` `{ "enabled", "hostname", "controlURL", "httpsEnabled", "status": { "state", "fqdn"?, "addresses"?, "keyExpiry", "loginURL"?, "lastError"?, "httpsBound", "httpsError"? } }`. Tailnet remote access ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)). See the state table below. |
+| `PUT /settings/tailscale` — [Admin] | Partial update `{ "enabled"?, "hostname"?, "controlURL"?, "httpsEnabled"? }`, pointer semantics (omitted = unchanged). Validated whole before anything is written. → `200` (GET shape). Errors: `422 TAILNET_INVALID_HOSTNAME` (must be a single DNS label) / `TAILNET_INVALID_CONTROL_URL` (absolute http(s) URL, or `""` for Tailscale's own). **Applies with no restart**: flipping `enabled` connects or disconnects, and a changed hostname re-joins. |
+| `POST /settings/tailscale/connect` — [Admin] | Brings the node up and persists the desire, so it comes back after a restart. → `200` (GET shape). |
+| `POST /settings/tailscale/disconnect` — [Admin] | Stops the node and its listener, **keeping** the state directory — reconnecting needs no re-authorization. → `200` (GET shape). |
+| `POST /settings/tailscale/forget` — [Admin] | Stops the node **and wipes** its state directory, so the next connect is a fresh join. → `200` (GET shape). It cannot finish the job: the now-dead node row stays in the operator's Tailscale console and only they can delete it. |
+
+**Tailnet node states** (`status.state`), which a client branches on rather than parsing prose:
+
+| State | Means | What the operator does |
+| --- | --- | --- |
+| `stopped` | Not running, nothing wrong. The resting state; remote access is off until it is turned on. | Connect |
+| `starting` | Coming up, not settled. No address yet. | Wait |
+| `needsLogin` | Interactive join waiting on a human — the **normal first run**, not an error. `loginURL` is the link to open. | Open the link |
+| `keyExpired` | The node key **lapsed**: this worked and has stopped. `keyExpiry` is the date it lapsed and `loginURL` is a fresh link. Frame it as re-authorization, **not** as a fault. | Open the link; then disable key expiry in the Tailscale console |
+| `running` | Up and reachable at `fqdn` over plain HTTP on the Tailnet. | Nothing |
+| `error` | The node tried and failed — unreachable coordination server, rejected key, unusable state directory, or a build with no Tailnet support. `lastError` says which. Never a boot failure and never affects the LAN. | Read `lastError` |
+
+`keyExpiry` is **nullable and never omitted**: `null` means the key does not expire (a tagged node, or expiry disabled in the console) — a genuinely different and better state than "expires soon", and one a missing field could not express. Otherwise it is RFC 3339 UTC. The server also logs the expiry at boot and warns under 14 days.
+
+**`httpsEnabled` is the request; `status.httpsBound` is the outcome, and a client must not read one as the other.** `httpsEnabled` is a saved setting — it says the operator asked for HTTPS on the Tailnet, and a `PUT` that sets it succeeds whether or not it can work. `httpsBound` says whether tailnet `:443` **is accepting connections right now**, which additionally needs MagicDNS *and* HTTPS certificates enabled in the Tailscale console — prerequisites this server can neither set nor detect in advance. The two therefore disagree in precisely the misconfiguration this feature is most likely to be in, and **the scheme of the address a client displays or dials must come from `httpsBound`**: `enabled && !bound` means plain HTTP on the Tailnet is serving normally and `https://<fqdn>` would refuse the connection. `httpsBound` is **never omitted** — `false` is the case that matters, and a field that disappears when false cannot be told from one the server forgot to send.
+
+`httpsError` accompanies `httpsBound: false` and is the server's own paragraph, identical to the one in the log: it names **both** console settings, states that the `http://` address is unaffected, and says the server retries on its own. Render it **verbatim** — it is the only actionable part, and a paraphrase drops the setting names. It is absent while HTTPS is off, and absent once it is bound. `httpsBound: true` means the listener came up (which proves both console prerequisites are met); it does **not** promise a certificate was issued — with `tsnet` the certificate is fetched inside the node on the first handshake, and a failure there is not observable from this server.
+
+`fqdn` — the MagicDNS name — appears **here and nowhere else**: this is an authenticated admin surface, and an unauthenticated scanner hitting a port-forward must not learn that a Tailnet exists or what it is called. Publishing it to signed-in clients is a separate, later slice.
+
+On a build without `-tags tailscale` (`features.tailscale: false`) all five routes are still served, and the verbs answer `200` with `status.state: "error"` and a `lastError` **naming the build** — never a `404`, which would be indistinguishable from a mistyped path.
 
 ### 3.10 Transcoding observability (admin scope)
 

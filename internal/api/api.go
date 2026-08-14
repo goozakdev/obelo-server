@@ -25,6 +25,7 @@ import (
 	"github.com/marioquake/obelo-server/internal/server"
 	"github.com/marioquake/obelo-server/internal/store"
 	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/tailnet"
 	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
@@ -139,6 +140,14 @@ type Deps struct {
 	// a settings save. The PUT handler calls Reload; nil leaves persistence working
 	// without the runtime swap.
 	SubtitleProviderManager *subfetch.Manager
+
+	// Tailnet remote access (ADR-0043, Admin-scope /settings/tailscale).
+	// TailnetSettings persists the four settings; Tailnet is the state machine the
+	// GET reads live status from and the three verbs drive. Either may be nil in a
+	// narrow unit test, and the routes then answer 503 with a message rather than a
+	// 404 that reads identically to a typo'd path.
+	TailnetSettings TailnetSettingsStore
+	Tailnet         *tailnet.Manager
 
 	// TrustedProxies is the operator's parsed OBELO_TRUSTED_PROXIES allowlist
 	// (config.Config.TrustedProxyPrefixes). NIL — the zero value every narrow unit

@@ -52,6 +52,18 @@ type Capabilities struct {
 	// the resolved bool rather than importing the transcode domain, keeping the
 	// handshake a thin advertiser of decisions made elsewhere (ADR-0006).
 	Transcode bool
+
+	// Tailnet reports whether this BUILD can join the operator's Tailnet — i.e.
+	// whether it was compiled with `-tags tailscale` (ADR-0043). It comes from
+	// tailnet.Supported, a build constant, for the same reason Transcode comes from
+	// the resolved availability rather than a probe: the handshake advertises facts
+	// already settled, never facts it goes and finds out.
+	//
+	// It is NOT route existence. The Tailnet routes are served in BOTH builds — a
+	// tag-less binary answers them with an error naming the build rather than a 404
+	// that reads like a typo'd path — so this is the only way a client can tell the
+	// two binaries apart, and the reason the flag exists at all.
+	Tailnet bool
 }
 
 // Metadata assembles handshake Info. It is the single source of truth for what
@@ -133,6 +145,20 @@ func (m *Metadata) Features() map[string]bool {
 		// (an AVPlayer profile facing Matroska, say) should treat a false flag as "this
 		// Title is unplayable here" rather than attempting negotiation.
 		"transcode": m.caps.Transcode,
+		// tailscale is the SECOND flag that is not route-existence, and it is excluded
+		// from TestFeaturesMatchRoutes for exactly the reason transcode is: the
+		// /settings/tailscale routes are served in BOTH builds (a tag-less binary
+		// answers them with an error naming the build, deliberately, so the operator
+		// can tell "not in your binary" from "broken"), so a route probe would report
+		// true on a binary that cannot join anything.
+		//
+		// What it advertises is whether `tailscale.com` is linked in — a property of
+		// the BUILD, not of the host and not of the settings (ADR-0043). False means
+		// remote access over a Tailnet is unavailable here whatever the settings say,
+		// and the correct client behaviour is to explain that rather than to offer a
+		// Connect button that can only fail. It says nothing about whether the feature
+		// is switched ON: that is the settings endpoint's business.
+		"tailscale": m.caps.Tailnet,
 	}
 }
 

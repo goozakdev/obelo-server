@@ -145,6 +145,14 @@ func handleSettingsSubtree(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		// Tailnet remote-access settings (ADR-0043) — the same subtree shape, plus
+		// three imperative verbs. Branched here, before the /test suffix handling
+		// below, so /settings/tailscale/connect is not read as a provider probe.
+		if rest == "tailscale" || strings.HasPrefix(rest, "tailscale/") {
+			handleTailnetSubtree(deps, rest)(w, r)
+			return
+		}
+
 		// GET/PUT /settings/enrichment-consent — the first-run consent gate (ADR-0032).
 		if rest == "enrichment-consent" {
 			switch r.Method {

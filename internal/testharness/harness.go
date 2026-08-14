@@ -26,6 +26,7 @@ import (
 	"net/textproto"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,16 +37,18 @@ import (
 	"github.com/marioquake/obelo-server/internal/enrich"
 	"github.com/marioquake/obelo-server/internal/gpu"
 	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/tailnet"
 	"github.com/marioquake/obelo-server/internal/transcode"
 )
 
 // Server is a running test server plus the handles a test needs to drive and
 // inspect it.
 type Server struct {
-	t       *testing.T
-	app     *app.App
-	http    *httptest.Server
-	DataDir string
+	t         *testing.T
+	app       *app.App
+	http      *httptest.Server
+	DataDir   string
+	closeOnce sync.Once
 }
 
 // Option customizes how a Server boots. Most options tweak the config; the
@@ -159,6 +162,56 @@ func WithGPUProbe(p gpu.Probe) Option {
 	return func(b *builder) {
 		b.appOpts = append(b.appOpts, app.WithGPUProbe(p))
 	}
+}
+
+// WithTailnet injects the Tailnet node (ADR-0043) the state machine drives,
+// following WithGPUProbe / WithMetadataProvider. It is how the settings, the five
+// admin endpoints, the connect/disconnect/forget state machine, the expiry
+// reporting and the boot path are exercised at all — against tailnet.Fake, with no
+// coordination server and no network, in BOTH builds.
+//
+// The default harness injects NONE, and that is deliberate rather than lazy: it
+// keeps the tag-less and tagged suites identical, and it means a test that forgets
+// to inject a fake cannot accidentally get the real `tsnet` node and go looking
+// for somebody's Tailnet. Production injects its own (cmd/obelo passes
+// tailnet.NewNode()); no node here answers every Tailnet operation with the same
+// error naming the build.
+func WithTailnet(n tailnet.Node) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithTailnet(n)) }
+}
+
+// WithTailnetAuthKey pins the pre-authorized Tailnet join key (production reads
+// OBELO_TAILSCALE_AUTHKEY at join time). A test uses it to push a known value
+// through a join and then prove that value reached no table, no log line, and no
+// API response.
+func WithTailnetAuthKey(key string) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithTailnetAuthKey(key)) }
+}
+
+// WithTailnetEnabled seeds the Tailnet desired state (OBELO_TAILSCALE_ENABLED) on
+// the harness's fresh DB, so a server boots with an ENABLED node — the
+// connects-at-boot path. Like every OBELO_TAILSCALE_* knob it seeds first boot
+// only; a second server over the same data dir ignores it, which is exactly what
+// the seeding test asserts.
+func WithTailnetEnabled(on bool) Option {
+	return func(b *builder) { b.cfg.TailnetEnabled = on }
+}
+
+// WithTailnetHostname seeds the MagicDNS hostname (OBELO_TAILSCALE_HOSTNAME).
+// Empty (the default) derives one from the Server's display name.
+func WithTailnetHostname(h string) Option {
+	return func(b *builder) { b.cfg.TailnetHostname = h }
+}
+
+// WithTailnetControlURL seeds the coordination server (OBELO_TAILSCALE_CONTROL_URL)
+// — the operator's own Headscale rather than Tailscale's.
+func WithTailnetControlURL(u string) Option {
+	return func(b *builder) { b.cfg.TailnetControlURL = u }
+}
+
+// WithTailnetHTTPS seeds the tailnet :443 opt-in (OBELO_TAILSCALE_HTTPS).
+func WithTailnetHTTPS(on bool) Option {
+	return func(b *builder) { b.cfg.TailnetHTTPSEnabled = on }
 }
 
 // WithEnrichmentKey sets the TMDB API key so Enrichment is ENABLED (otherwise it
@@ -290,11 +343,23 @@ func New(t *testing.T, opts ...Option) *Server {
 	ts := httptest.NewServer(application.Handler)
 
 	s := &Server{t: t, app: application, http: ts, DataDir: b.cfg.DataDir}
-	t.Cleanup(func() {
-		ts.Close()
-		_ = application.Close()
-	})
+	t.Cleanup(s.Close)
 	return s
+}
+
+// Close shuts this server down early — before the automatic t.Cleanup — leaving
+// its DATA DIRECTORY intact. It exists for reboot tests: pass the same
+// WithDataDir to a second New and you have modelled a restart of the same
+// install, which is the only way to assert the settings handoffs this server is
+// full of ("the env seeds first boot and is ignored on the next one" is otherwise
+// a claim about code nobody has run twice).
+//
+// Idempotent, so the registered cleanup can run again harmlessly.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		s.http.Close()
+		_ = s.app.Close()
+	})
 }
 
 // URL returns the absolute URL for an API path. Pass a path under the version
@@ -310,6 +375,20 @@ func (s *Server) URL(path string) string {
 // app's internals.
 func (s *Server) Handler() http.Handler {
 	return s.app.Handler
+}
+
+// Tailnet is the remote-access state machine (ADR-0043), exposed for the one
+// thing no HTTP route can do: stand in for the LISTENER SUPERVISOR.
+//
+// The supervisor lives in cmd/obelo — it is the only thing that binds tailnet
+// :443, so it is the only thing that can observe whether it came up, and it hands
+// that observation back through Manager.ReportHTTPS. A black-box test of the
+// settings endpoint cannot bind anything, so it plays the supervisor's part and
+// then asks the API what the operator would see. The alternative would be for the
+// handler to infer boundness from the settings row, which is precisely the bug
+// tailscale/06 exists to remove.
+func (s *Server) Tailnet() *tailnet.Manager {
+	return s.app.Tailnet()
 }
 
 // GET issues a GET and returns the decoded status, raw body, and the body
