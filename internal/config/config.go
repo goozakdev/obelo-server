@@ -447,6 +447,56 @@ type Config struct {
 	// Env: OBELO_ENRICHMENT_CONSENT (granted/true/1 → grant, declined/false/0 →
 	// decline, unset → leave undecided).
 	EnrichmentConsentGranted *bool
+
+	// --- Tailnet remote access (ADR-0043) --------------------------------------
+	//
+	// SOURCE-OF-TRUTH HANDOFF, in the same words as the enrichment knobs above
+	// because it is the same handoff and it is the second-most-confusing thing
+	// about knobs of this shape — the first being that people do not read this
+	// paragraph. The four Tailnet knobs below are the runtime source of truth ONLY
+	// on a fresh install. On first boot (when the DB-backed Tailnet settings row
+	// has never been written) they are SEEDED into the database once; thereafter
+	// the DB is authoritative and these env values are IGNORED at runtime. An Admin
+	// manages remote access from the web UI (GET/PUT /settings/tailscale, plus
+	// connect/disconnect/forget), which takes effect with no restart. So to change
+	// any of this on an existing deployment, use the UI — editing the env var here
+	// will NOT change anything (it only seeded the initial values), and the symptom
+	// of believing otherwise is an operator who restarts the server repeatedly
+	// wondering why their new hostname never takes.
+	//
+	// It is OFF by default and it is an ADDITION: with TailnetEnabled false the
+	// server is byte-for-byte what it is today — no node, no goroutine, no state
+	// directory, and zero outbound contact with any coordination server (ADR-0001's
+	// exemption is conditional on exactly that).
+	//
+	// THE JOIN KEY IS DELIBERATELY NOT HERE. OBELO_TAILSCALE_AUTHKEY is read from
+	// the environment at join time by the tailnet Manager and dropped: it is not a
+	// setting, it has no column, it is never logged, and it appears in no API
+	// response (ADR-0043 — no long-lived Tailnet credential is ever stored in this
+	// server's database). Interactive login is the default join; the key exists for
+	// headless installs and the test harness.
+	//
+	// TailnetEnabled seeds the DESIRED state, so a headless deploy can come up
+	// already on the Tailnet. Env: OBELO_TAILSCALE_ENABLED.
+	TailnetEnabled bool
+	// TailnetHostname seeds the MagicDNS label this Server joins under. Empty
+	// derives it from ServerName, sanitized to a legal DNS label, falling back to
+	// "obelo" — resolved ONCE at seed time and then stored, because ServerName is
+	// documented as purely cosmetic (ADR-0034) and a rename must never silently
+	// change the address every roaming client has stored. Env:
+	// OBELO_TAILSCALE_HOSTNAME.
+	TailnetHostname string
+	// TailnetControlURL seeds the coordination server, empty for Tailscale's own.
+	// It is the escape hatch that keeps ADR-0001 defensible: an operator who will
+	// not depend on a vendor points this at their own Headscale and everything else
+	// about the feature works unchanged. Env: OBELO_TAILSCALE_CONTROL_URL.
+	TailnetControlURL string
+	// TailnetHTTPSEnabled seeds the tailnet :443 opt-in. Off by default because it
+	// additionally requires MagicDNS and HTTPS certificates to be enabled in the
+	// Tailscale console — a prerequisite outside this server — so turning it on by
+	// default would manufacture a failure the operator cannot act on from here.
+	// Env: OBELO_TAILSCALE_HTTPS.
+	TailnetHTTPSEnabled bool
 }
 
 // DefaultTLSListenAddr is the port the HTTPS listener binds when TLS is turned
@@ -649,6 +699,21 @@ func (c Config) ACMECacheDir() string {
 	return filepath.Join(c.DataDir, "acme")
 }
 
+// TailnetStateDir returns the directory the Tailnet node keeps its durable state
+// in (ADR-0043), under the data dir like every other durable file (ADR-0007) and
+// alongside the ACME cache and the server identity, for the same reason: losing
+// it costs a re-authorization. It is created 0700 AT JOIN TIME by the tailnet
+// Manager and never at boot — a server with the feature off leaves no trace of it
+// on disk. Wiping the data dir mints a new Tailnet node exactly as it mints a new
+// Server identity (ADR-0034).
+//
+// The directory keeps the vendor's spelling because that is what an operator
+// poking around a data volume will recognize, and what every piece of Tailscale
+// documentation calls it.
+func (c Config) TailnetStateDir() string {
+	return filepath.Join(c.DataDir, "tailscale")
+}
+
 // SubtitleCacheDir returns the durable on-disk cache for externally fetched
 // Subtitle tracks, under the data dir (ADR-0007/0021), a sibling of the artwork
 // cache. Like it, this is durable cache — never written into library folders and
@@ -717,6 +782,21 @@ func (c Config) SubtitleCacheDir() string {
 //	OBELO_AUTO_ENRICH    -> AutoEnrichAfterScan (a bool; default true)
 //	OBELO_ENRICH_INTERVAL -> EnrichInterval (a Go duration, e.g. "6h";
 //	                               "0" disables the scheduled enrich)
+//	OBELO_TAILSCALE_ENABLED -> TailnetEnabled (a bool; default false. SEEDS the
+//	                               DB-backed Tailnet settings on FIRST BOOT ONLY —
+//	                               see Config.TailnetEnabled; after that the admin
+//	                               UI is authoritative and this is ignored)
+//	OBELO_TAILSCALE_HOSTNAME -> TailnetHostname (the MagicDNS label; empty derives
+//	                               one from OBELO_SERVER_NAME. First boot only)
+//	OBELO_TAILSCALE_CONTROL_URL -> TailnetControlURL (a coordination server of the
+//	                               operator's own, e.g. a Headscale; empty uses
+//	                               Tailscale's. First boot only)
+//	OBELO_TAILSCALE_HTTPS -> TailnetHTTPSEnabled (a bool; default false — tailnet
+//	                               :443 needs MagicDNS + HTTPS certificates enabled
+//	                               in the Tailscale console first. First boot only)
+//	OBELO_TAILSCALE_AUTHKEY -> NOTHING. Deliberately absent from Config: the join
+//	                               key is read from the environment at join time
+//	                               and dropped, never persisted and never logged.
 //
 // An unparseable scan-interval falls back to the default rather than failing
 // boot (the scheduled scan is a safety net, not a critical path); the same
@@ -917,6 +997,30 @@ func FromEnv() Config {
 	if v := os.Getenv("OBELO_KEY_ROTATION_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.KeyRotationInterval = d
+		}
+	}
+	// Tailnet remote access (ADR-0043). Every one of these SEEDS the DB-backed
+	// settings on first boot and is ignored at runtime thereafter. An unparseable
+	// bool leaves the off-by-default posture rather than failing the boot: this is
+	// an optional feature, and a typo in a knob for it must not stop a media server
+	// from serving the living room.
+	//
+	// Note the absence of OBELO_TAILSCALE_AUTHKEY. It is not read here on purpose —
+	// see Config's Tailnet section.
+	if v := os.Getenv("OBELO_TAILSCALE_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.TailnetEnabled = b
+		}
+	}
+	if v := os.Getenv("OBELO_TAILSCALE_HOSTNAME"); v != "" {
+		c.TailnetHostname = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_TAILSCALE_CONTROL_URL"); v != "" {
+		c.TailnetControlURL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBELO_TAILSCALE_HTTPS"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.TailnetHTTPSEnabled = b
 		}
 	}
 	// Enrichment consent (ADR-0032): accept the friendly "granted"/"declined"

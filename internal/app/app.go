@@ -30,6 +30,7 @@ import (
 	"github.com/marioquake/obelo-server/internal/server"
 	"github.com/marioquake/obelo-server/internal/store"
 	"github.com/marioquake/obelo-server/internal/subfetch"
+	"github.com/marioquake/obelo-server/internal/tailnet"
 	"github.com/marioquake/obelo-server/internal/transcode"
 	"github.com/marioquake/obelo-server/internal/webui"
 )
@@ -82,6 +83,12 @@ type App struct {
 	keyRotator   *keyRotator
 	rotationWake chan struct{}
 	rotationDone chan struct{}
+
+	// tailnetMgr is the Tailnet node's state machine (ADR-0043): the one place the
+	// node is started and stopped, driven by boot, by the settings PUT, and by the
+	// connect/disconnect/forget verbs. Never nil, and inert while the feature is off.
+	// Reached from outside through Tailnet().
+	tailnetMgr *tailnet.Manager
 
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
@@ -139,6 +146,19 @@ type options struct {
 	// no ldflags injection. A non-empty rotationURL marks the override as active.
 	rotationURL    string
 	rotationEncKey string
+	// tailnetNode is the Tailnet node (ADR-0043), and it is ALWAYS injected — there
+	// is no default here on purpose. cmd/obelo passes tailnet.NewNode(), which is the
+	// `tsnet` adapter under `-tags tailscale` and a stub that answers ErrNoNode
+	// without it; the test harness passes the package's Fake. Constructing one here
+	// would put a real node behind every test in the suite, one enabled setting away
+	// from trying to join somebody's Tailnet, so this stays nil unless a caller says
+	// otherwise — and a nil node answers ErrNoNode exactly as the stub does.
+	tailnetNode tailnet.Node
+	// tailnetAuthKey overrides where the pre-authorized join key comes from
+	// (default: tailnet.EnvAuthKey, i.e. OBELO_TAILSCALE_AUTHKEY read at join time).
+	// A test injects a known value so it can then prove that value reaches no table,
+	// no log line, and no API response.
+	tailnetAuthKey func() string
 }
 
 // WithMetadataProvider overrides the Enrichment MetadataProvider (tests inject a
@@ -211,6 +231,29 @@ func WithKeyRotation(url, encKeyB64 string) Option {
 // from the DB at boot and after each settings save.
 func WithSubtitleProviderBuilder(build subfetch.BuildFunc) Option {
 	return func(o *options) { o.subtitleProviderBuilder = build }
+}
+
+// WithTailnet injects the Tailnet node (ADR-0043) the state machine drives.
+//
+// It is how PRODUCTION gets its node too: cmd/obelo passes tailnet.NewNode() —
+// the `tsnet` adapter under `-tags tailscale`, a stub that answers ErrNoNode
+// without it — because this layer must not construct one. app.New is also the
+// test harness's entry point, and a harness that silently built a real node would
+// leave every test in the suite one enabled setting away from joining a real
+// Tailnet. Tests inject tailnet.Fake to drive connect / disconnect / forget, the
+// login-and-expiry states, and the boot path with no network at all.
+func WithTailnet(n tailnet.Node) Option {
+	return func(o *options) { o.tailnetNode = n }
+}
+
+// WithTailnetAuthKey pins the pre-authorized Tailnet join key, overriding the
+// production source (OBELO_TAILSCALE_AUTHKEY, read at join time). It exists so a
+// test can put a known value through the join and then assert that value appears
+// in no table, no log line, and no API response — the property that makes "no
+// long-lived Tailnet credential is ever stored here" (ADR-0043) checkable rather
+// than merely stated.
+func WithTailnetAuthKey(key string) Option {
+	return func(o *options) { o.tailnetAuthKey = func() string { return key } }
 }
 
 // New boots the application from cfg: ensures the data directory exists and is
@@ -345,6 +388,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// endpoint every client hits on connect must not probe the host.
 	meta := server.NewMetadata(db, identity, server.Capabilities{
 		Transcode: ffmpegAvailability.Available,
+		// A build constant, not a setting and not a probe: it says whether this binary
+		// has `tailscale.com` linked in at all (ADR-0043). The routes exist either way.
+		Tailnet: tailnet.Supported,
 	})
 	// Best-effort GPU-telemetry probe for the admin /transcoding surface (ADR-0029).
 	// Constructed unconditionally (it spawns nothing until queried) but the handler
@@ -545,6 +591,40 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		})
 	})
 
+	// Tailnet remote access (ADR-0043): seed the DB-backed settings from the
+	// OBELO_TAILSCALE_* env vars exactly once, then hand authority to the database —
+	// the metadata-provider handoff, applied to the first piece of this server's
+	// NETWORK configuration to live in the DB rather than in the environment. The
+	// hostname is derived from the Server's display name here and then frozen, so a
+	// later cosmetic rename cannot silently change the address roaming clients have
+	// stored (ADR-0034).
+	if _, err := tailnet.SeedIfEmpty(db, tailnet.SeedInput{
+		Enabled:      cfg.TailnetEnabled,
+		Hostname:     cfg.TailnetHostname,
+		ControlURL:   cfg.TailnetControlURL,
+		HTTPSEnabled: cfg.TailnetHTTPSEnabled,
+		ServerName:   identity.Name,
+	}); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("app: seeding tailnet settings: %w", err)
+	}
+	// The state machine every path funnels through. It is built unconditionally
+	// because it is inert until asked — with the feature off it starts no goroutine,
+	// creates no state directory, and makes no outbound contact of any kind — while
+	// existing unconditionally is what lets the settings screen answer questions
+	// about a feature that is off, on a build that may not even have it linked in.
+	tailnetAuthKey := o.tailnetAuthKey
+	if tailnetAuthKey == nil {
+		tailnetAuthKey = tailnet.EnvAuthKey
+	}
+	tailnetManager := tailnet.NewManager(db, o.tailnetNode, tailnet.ManagerOptions{
+		StateDir: cfg.TailnetStateDir(),
+		AuthKey:  tailnetAuthKey,
+		// Every transition nudges connected Admins to refetch, so the login URL
+		// appears without anybody reloading the page (ADR-0043).
+		OnChange: broker.PublishTailscaleState,
+	})
+
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
 	// scheduled enrich both feed one worker via enrichQueue; the worker AND the
@@ -574,6 +654,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		enrichReschedule: make(chan struct{}, 1),
 		keyRotator:       keyRot,
 		rotationWake:     make(chan struct{}, 1),
+		tailnetMgr:       tailnetManager,
 	}
 	app.enrichQueue = make(chan enrichRequest, 64)
 
@@ -615,6 +696,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		SubFetch:                subFetchSvc,
 		SubtitleProviders:       db,
 		SubtitleProviderManager: subtitleManager,
+
+		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
+		TailnetSettings: db,
+		Tailnet:         tailnetManager,
 
 		// Which upstreams may assert a client address / original scheme
 		// (OBELO_TRUSTED_PROXIES). Empty trusts nothing — see api/forwarded.go.
@@ -688,6 +773,29 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		}
 	}
 
+	// An ENABLED Tailnet node connects at boot (ADR-0043). This is the whole point
+	// of persisting the desire rather than treating connect as a live-only action:
+	// otherwise a power cut strands the operator outside a house they cannot reach,
+	// which is precisely the failure this feature exists to prevent.
+	//
+	// Nothing here can fail the boot. Apply returns only a settings-read failure —
+	// a node that will not start is logged as a warning inside it and recorded in
+	// its status — and even that is logged rather than returned, because the LAN
+	// listener must come up regardless. `acme` mode's posture, restated
+	// (cmd/obelo/tls.go): a coordination server that is down is the world being
+	// unavailable, not the operator's mistake.
+	//
+	// The attempt is bounded and synchronous, mirroring resolveBackend: a join is
+	// milliseconds of local work plus a request, an INTERACTIVE join settles into
+	// "needs login" without waiting for the human, and doing it here rather than in
+	// a goroutine means the boot log tells the truth about the state the server
+	// started in. With the feature off it reads one row and does nothing.
+	tailnetCtx, cancelTailnet := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelTailnet()
+	if err := app.tailnetMgr.Apply(tailnetCtx); err != nil {
+		log.Printf("obelo: tailnet: WARNING — reading the remote-access settings: %v", err)
+	}
+
 	return app, nil
 }
 
@@ -695,6 +803,17 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 // cancelled, ending any whose last progress report is older than idle. Errors
 // are impossible here (the sweep is a pure in-memory map walk); the goroutine
 // simply runs until shutdown.
+// Tailnet is the Tailnet node's state machine (ADR-0043). It is exposed for one
+// caller and one reason: cmd/obelo binds the tailnet listener, and only cmd/obelo
+// owns listeners — the same split that puts the mDNS advertiser and the TLS
+// servers there rather than here, because the test harness drives the handler
+// through httptest and must not bind anything.
+//
+// Never nil. On a build with no Tailnet support linked in it answers every
+// operation with an error naming the build, which is what lets the caller wire the
+// same code in both builds.
+func (a *App) Tailnet() *tailnet.Manager { return a.tailnetMgr }
+
 func (a *App) runSessionReaper(ctx context.Context, idle, every time.Duration) {
 	defer close(a.reaperDone)
 	ticker := time.NewTicker(every)
@@ -1006,6 +1125,13 @@ func (a *App) Close() error {
 			<-a.rotationDone
 		}
 		a.cancel = nil
+	}
+	// Stop the Tailnet node and its watcher before the Broker goes, so the last
+	// transitions have somewhere to go and nothing is left publishing into a closed
+	// Broker. The SETTINGS are untouched: an enabled node must come back up on the
+	// next boot, which is the difference between shutting down and disconnecting.
+	if a.tailnetMgr != nil {
+		_ = a.tailnetMgr.Close()
 	}
 	if a.Events != nil {
 		a.Events.Close()

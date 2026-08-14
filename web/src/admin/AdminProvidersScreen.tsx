@@ -43,6 +43,35 @@ interface SettingsDraft {
   enrichIntervalMinutes: string;
 }
 
+/** kindStatus is what the per-kind badge says, built from the TWO server fields
+ * rather than one. `enablement` is the server's gated answer — what it will
+ * actually do — so it alone decides "on". When it is off but the kind IS
+ * configured, the reason is the consent decision (ADR-0032), and saying so is far
+ * more useful than "off": the consent control is at the top of this same screen.
+ * Never re-derive "on" from the provider rows; that is what made this screen
+ * announce "Enrichment on" while the server was correctly calling nothing. */
+function kindStatus(
+  view: MetadataProvidersView,
+  kind: string,
+): { on: boolean; blocked: boolean; label: string } {
+  const on = kind === "video" ? view.enablement.video : view.enablement.music;
+  const configured =
+    kind === "video" ? view.configuredEnablement.video : view.configuredEnablement.music;
+  const blocked = !on && configured && view.consentState !== "granted";
+  if (on) return { on, blocked: false, label: "Enrichment on" };
+  if (blocked) {
+    return {
+      on,
+      blocked,
+      label:
+        view.consentState === "declined"
+          ? "Configured — consent declined"
+          : "Configured — waiting on consent",
+    };
+  }
+  return { on, blocked: false, label: "Enrichment off" };
+}
+
 function settingsDraftFromView(view: MetadataProvidersView): SettingsDraft {
   return {
     language: view.metadataLanguage,
@@ -216,7 +245,10 @@ export default function AdminProvidersScreen() {
 
       {/* The master consent switch (ADR-0032): the operator's off switch for all
           outbound metadata calls, above the per-provider configuration. */}
-      <EnrichmentConsentControl />
+      {/* Re-read the settings after a consent decision: the per-kind badges below
+          are the server's GATED enablement, so they change the moment this switch
+          does — with no restart and no page reload. */}
+      <EnrichmentConsentControl onDecision={() => void load()} />
 
       {KIND_GROUPS.map(({ kind, label }) => {
         const inGroup = view.providers.filter((p) => p.kinds.includes(kind));
@@ -230,7 +262,7 @@ export default function AdminProvidersScreen() {
           authIdx > 0
             ? [inGroup[authIdx], ...inGroup.filter((_, i) => i !== authIdx)]
             : inGroup;
-        const kindOn = kind === "video" ? view.enablement.video : view.enablement.music;
+        const status = kindStatus(view, kind);
         return (
           <div
             key={kind}
@@ -242,9 +274,10 @@ export default function AdminProvidersScreen() {
               <span
                 className="provider-kind-status"
                 data-testid={`provider-kind-status-${kind}`}
-                data-enabled={kindOn ? "true" : "false"}
+                data-enabled={status.on ? "true" : "false"}
+                data-consent-blocked={status.blocked ? "true" : undefined}
               >
-                {kindOn ? "Enrichment on" : "Enrichment off"}
+                {status.label}
               </span>
             </div>
 

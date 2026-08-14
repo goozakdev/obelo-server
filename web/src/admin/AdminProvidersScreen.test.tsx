@@ -19,12 +19,19 @@ import type { MetadataProvider, MetadataProvidersView } from "../api/types";
 // ok/error; and the server-wide language/behavior knobs keep their own Save. A
 // separate block exercises the tab in the Admin hub and the RequireAdmin gate.
 
-const { getMetadataProviders, updateMetadataProviders, testMetadataProvider } =
-  vi.hoisted(() => ({
-    getMetadataProviders: vi.fn(),
-    updateMetadataProviders: vi.fn(),
-    testMetadataProvider: vi.fn(),
-  }));
+const {
+  getMetadataProviders,
+  updateMetadataProviders,
+  testMetadataProvider,
+  getEnrichmentConsent,
+  setEnrichmentConsent,
+} = vi.hoisted(() => ({
+  getMetadataProviders: vi.fn(),
+  updateMetadataProviders: vi.fn(),
+  testMetadataProvider: vi.fn(),
+  getEnrichmentConsent: vi.fn(),
+  setEnrichmentConsent: vi.fn(),
+}));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -34,10 +41,12 @@ vi.mock("../api/client", async () => {
       getMetadataProviders: (...a: unknown[]) => getMetadataProviders(...a),
       updateMetadataProviders: (...a: unknown[]) => updateMetadataProviders(...a),
       testMetadataProvider: (...a: unknown[]) => testMetadataProvider(...a),
-      // The embedded EnrichmentConsentControl (ADR-0032) fetches on mount; stub it
-      // to a settled state so this screen's tests don't exercise the consent flow.
-      getEnrichmentConsent: () => Promise.resolve({ state: "granted" }),
-      setEnrichmentConsent: () => Promise.resolve({ state: "granted" }),
+      // The embedded EnrichmentConsentControl (ADR-0032) fetches on mount; it
+      // defaults to a settled granted state (beforeEach) so this screen's other
+      // tests don't exercise the consent flow, and the consent-gate tests below
+      // drive it explicitly.
+      getEnrichmentConsent: (...a: unknown[]) => getEnrichmentConsent(...a),
+      setEnrichmentConsent: (...a: unknown[]) => setEnrichmentConsent(...a),
     },
   };
 });
@@ -96,7 +105,12 @@ function view(over: Partial<MetadataProvidersView> = {}): MetadataProvidersView 
       }),
     ],
     metadataLanguage: "en-US",
+    // enablement is the server's CONSENT-GATED answer; configuredEnablement is the
+    // ungated capability. The default fixture is a consented server with nothing
+    // configured, so the two agree.
     enablement: { video: false, music: false },
+    configuredEnablement: { video: false, music: false },
+    consentState: "granted",
     autoEnrichAfterScan: true,
     enrichIntervalSeconds: 21600, // 360 minutes
     musicBrainzRateLimitMs: 1000,
@@ -116,6 +130,10 @@ beforeEach(() => {
   getMetadataProviders.mockReset();
   updateMetadataProviders.mockReset();
   testMetadataProvider.mockReset();
+  getEnrichmentConsent.mockReset();
+  setEnrichmentConsent.mockReset();
+  getEnrichmentConsent.mockResolvedValue({ state: "granted" });
+  setEnrichmentConsent.mockResolvedValue({ state: "granted" });
 });
 
 describe("AdminProvidersScreen", () => {
@@ -142,6 +160,91 @@ describe("AdminProvidersScreen", () => {
       /authoritative/i,
     );
     expect(screen.queryByTestId("provider-role-coverart")).toBeNull();
+  });
+
+  // The per-kind badge is the screen's one claim about behaviour, and it must
+  // track the server's GATED enablement. With consent withheld the server makes
+  // no calls, so "Enrichment on" — sitting a screen-height under the consent
+  // control's "no external metadata calls are made" — is the contradiction these
+  // tests exist to prevent.
+  it("never says Enrichment on while consent is withheld, and names consent as the reason", async () => {
+    for (const [consentState, wanted] of [
+      ["unset", /waiting on consent/i],
+      ["declined", /consent declined/i],
+    ] as const) {
+      getMetadataProviders.mockResolvedValue(
+        view({
+          // A TMDB key IS configured — this is the state the bug needs — but the
+          // server reports enrichment off because consent is not granted.
+          enablement: { video: false, music: false },
+          configuredEnablement: { video: true, music: false },
+          consentState,
+        }),
+      );
+      const { unmount } = renderWithAuth(<AdminProvidersScreen />, {
+        initialEntries: ["/admin/providers"],
+      });
+      const badge = await screen.findByTestId("provider-kind-status-video");
+      expect(badge).not.toHaveTextContent(/enrichment on/i);
+      expect(badge).toHaveTextContent(wanted);
+      expect(badge).toHaveAttribute("data-enabled", "false");
+      expect(badge).toHaveAttribute("data-consent-blocked", "true");
+      unmount();
+    }
+  });
+
+  it("says a plain Enrichment off when nothing is configured, consent or not", async () => {
+    getMetadataProviders.mockResolvedValue(
+      view({
+        enablement: { video: false, music: false },
+        configuredEnablement: { video: false, music: false },
+        consentState: "unset",
+      }),
+    );
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    const badge = await screen.findByTestId("provider-kind-status-video");
+    expect(badge).toHaveTextContent(/enrichment off/i);
+    expect(badge).not.toHaveAttribute("data-consent-blocked");
+  });
+
+  it("granting consent flips the badge with no reload", async () => {
+    const user = userEvent.setup();
+    getEnrichmentConsent.mockResolvedValue({ state: "declined" });
+    setEnrichmentConsent.mockResolvedValue({ state: "granted" });
+    // First read: configured but gated off. After the decision the screen re-reads
+    // and the server now reports video on.
+    getMetadataProviders
+      .mockResolvedValueOnce(
+        view({
+          enablement: { video: false, music: false },
+          configuredEnablement: { video: true, music: false },
+          consentState: "declined",
+        }),
+      )
+      .mockResolvedValue(
+        view({
+          enablement: { video: true, music: false },
+          configuredEnablement: { video: true, music: false },
+          consentState: "granted",
+        }),
+      );
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    expect(await screen.findByTestId("provider-kind-status-video")).toHaveTextContent(
+      /consent declined/i,
+    );
+
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-kind-status-video")).toHaveTextContent(
+        /enrichment on/i,
+      ),
+    );
+    expect(screen.getByTestId("provider-kind-status-video")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+    expect(setEnrichmentConsent).toHaveBeenCalledWith(true);
   });
 
   it("enabling a provider's checkbox persists immediately (save-per-action)", async () => {

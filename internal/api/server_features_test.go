@@ -33,6 +33,22 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 	// step with Metadata.Features: a flag here that has no route, or a route that
 	// no flag advertises, is the bug this test exists to catch.
 	//
+	// TWO FLAGS ARE DELIBERATELY ABSENT, and neither is an oversight:
+	//
+	//   - transcode — see TestTranscodeFlagFollowsFFmpegAvailability below. It
+	//     advertises a delivery TIER that depends on the host's ffmpeg, while
+	//     /transcoding (the admin snapshot) is served either way.
+	//   - tailscale — see TestTailscaleFeatureFollowsTheBuild in tailnet_feature_*
+	//     _test.go. It advertises whether `tailscale.com` is LINKED IN
+	//     (`-tags tailscale`, ADR-0043), while the /settings/tailscale routes are
+	//     served in both builds on purpose, answering with an error that names the
+	//     build rather than a 404 that reads like a typo. A probe of the route table
+	//     would report true on a binary that cannot join a Tailnet at all.
+	//
+	// Both are build/host capabilities rather than route existence, which is the one
+	// thing this test can measure. Anyone tempted to "complete the table" by adding
+	// either would be asserting the opposite of what the flag means.
+	//
 	// method is the verb the probe uses, defaulting to GET. It exists for exactly
 	// one flag — see streamToken below, whose routes answer 404 to a GET on purpose.
 	probes := []struct {

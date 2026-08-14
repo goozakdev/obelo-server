@@ -1,5 +1,31 @@
 # Native TLS is optional, and runs alongside the plain-HTTP listener
 
+> **Amended by [ADR-0043](./0043-tailnet-remote-access-via-embedded-tsnet.md)** — the last bullet
+> below ("This says nothing about Tailscale") has come due. The tailnet path is now built: the
+> server can join a tailnet as its own node and serve at a stable name with a real certificate,
+> from the LAN and from away, with no port-forward and no DNS.
+>
+> **Nothing in this ADR is retired.** Both remote-access paths stay, and the reasoning for keeping
+> them both is the same sentence that deferred the tailnet in the first place: it is optional and
+> cannot be the only path to TLS. A household that wants to hand a URL to someone who will not
+> install a VPN client still needs the port-forward and the public certificate described here.
+>
+> Two things below extend to the tailnet unchanged, and are worth knowing before touching either:
+>
+> - **The cookie split already covers it.** ADR-0043 adds tailnet `:80` and tailnet `:443` — plain
+>   HTTP and HTTPS on one hostname, the exact pair whose collision cost browser media in
+>   production. It costs nothing this time because `internal/api/cookie.go` keys the name on
+>   `r.TLS` rather than on which listener accepted the connection, so `__Secure-ms_media` /
+>   `ms_media_plain` generalizes. Do not add a third name.
+> - **A certificate problem costs HTTPS, not the server.** Tailnet `:443` is opt-in for a reason
+>   this ADR would recognize — it requires MagicDNS and HTTPS certificates enabled in the
+>   Tailscale console, a prerequisite outside our own UI — and when it fails, tailnet `:80` keeps
+>   serving. Same posture, third listener.
+>
+> One thing below is deliberately *not* extended: TLS configuration stays boot-time and
+> environment-driven, while the tailnet's is database-backed and live. ADR-0043 argues the
+> asymmetry rather than reconciling it.
+
 The server can terminate TLS itself. It is **opt-in and off by default**, and when it is on the HTTPS listener is an **addition**, not a replacement: the plain-HTTP listener keeps serving on `ListenAddr` exactly as before.
 
 Two modes, selected by `OBELO_TLS_MODE`:
@@ -34,7 +60,7 @@ So the LAN keeps the transport it has, discovery keeps working untouched, and TL
 - **The media cookie needs one NAME per scheme, not just the right `Secure` flag** — discovered in production after this ADR shipped, and the cost of two listeners on one hostname that the `Secure` flag alone does not cover. A cookie jar is partitioned by neither scheme nor port, so while both listeners wrote `ms_media` at `Path=/api/v1` they contended for a single entry, and [RFC 6265bis §5.7](https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis) ("leave secure cookies alone") resolves that contention by discarding the *non-secure* origin's `Set-Cookie`. One HTTPS login therefore killed browser media on the plain-HTTP origin permanently and silently, and re-logging-in over HTTP was the very write being refused. The listeners now write `__Secure-ms_media` and `ms_media_plain`; the pre-split name is read for compatibility and never written. See `internal/api/cookie.go` and `TestMediaCookieNamesDoNotCollideAcrossListeners`. The general lesson for anything else this server may one day set on both listeners: **plain HTTP and HTTPS on one hostname are separate web origins that share a cookie jar**, and any state keyed by name alone will collide.
 - **HSTS stays off**, for the reason given when the security headers landed: it is sticky per hostname, and the plain-HTTP LAN path still exists. It becomes correct only for a deployment that is HTTPS-only, which this ADR does not create. `upgrade-insecure-requests` stays out of the CSP for the same reason.
 - **Discovery must say which scheme it is advertising**, or a client that finds the server by mDNS cannot know whether to speak TLS to the advertised port. This is an [ADR-0034](./0034-server-identity-and-mdns-advertisement.md) amendment, not a change here.
-- **HTTP/2 arrives for free** on the TLS listener, which suits HLS: many small segment fetches multiplex over one connection instead of queueing against the per-origin limit. The plain-HTTP listener stays HTTP/1.1.
+- **HTTP/2 arrives for free** on the TLS listener, which suits HLS: many small segment fetches multiplex over one connection instead of queueing against the per-origin limit. The plain-HTTP listener stays HTTP/1.1. **This is a property of a listener WE build, and it does not generalize** — it holds because `http.Server.ServeTLS` negotiates `h2` when `TLSNextProto` is left alone. The tailnet TLS listener of [ADR-0043](./0043-tailnet-remote-access-via-embedded-tsnet.md) is handed its `tls.Config` by `tsnet` with an empty `NextProtos`, so it gets HTTP/1.1 only, and the remote path — the one that benefits most — is the one that loses it. See that ADR's consequences.
 - **A certificate is now a thing that can expire in production.** `files` mode must reload from disk — a renewal rewrites the files and a server that read them once at boot will serve a dead chain until somebody restarts it. `acme` mode owns its own renewal.
 - **The dependency cost is near zero**: `golang.org/x/crypto` is already a direct dependency, so `acme/autocert` adds its `acme` package plus `x/net` (already indirect) and `x/text`.
 - This says nothing about Tailscale. A tailnet would supply a name and a certificate that work identically on the LAN and remotely, which is a strictly better answer to the problem above — but it is an optional feature and cannot be the only path to TLS.

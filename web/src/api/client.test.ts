@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ApiClient } from "./client";
+import { ApiClient, EVENT_TYPES } from "./client";
 import { memoryTokenStore } from "./token";
 
 describe("ApiClient.directFileDownloadUrl", () => {
@@ -122,5 +122,71 @@ describe("ApiClient artwork upload (multipart)", () => {
     // The browser sets the multipart Content-Type/boundary; we must not force JSON.
     expect(headers.get("Content-Type")).not.toBe("application/json");
     expect(headers.get("Authorization")).toBe("Bearer tok-1");
+  });
+});
+
+describe("ApiClient Tailnet remote access (ADR-0043)", () => {
+  // One response shape for all five routes, so the only thing worth pinning here
+  // is that each verb is the right method on the right path — a screen that
+  // POSTed disconnect at the forget route would wipe an identity the operator
+  // meant to keep, and nothing in the payload would show it.
+  function capturing() {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method, body: init.body as string });
+      return new Response(
+        JSON.stringify({
+          enabled: true,
+          hostname: "obelo",
+          controlURL: "",
+          httpsEnabled: false,
+          status: { state: "needsLogin", keyExpiry: null, loginURL: "https://login.test/a/1" },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    return {
+      calls,
+      client: new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl }),
+    };
+  }
+
+  it("GETs the settings and carries the live status through", async () => {
+    const { calls, client } = capturing();
+    const v = await client.getTailnet();
+    expect(calls[0].url).toContain("/api/v1/settings/tailscale");
+    expect(calls[0].method).toBe("GET");
+    // keyExpiry null is "no expiry", not a missing field — it must survive.
+    expect(v.status).toMatchObject({ state: "needsLogin", keyExpiry: null });
+    expect(v.status.loginURL).toBe("https://login.test/a/1");
+  });
+
+  it("PUTs a partial settings update (omitted = unchanged)", async () => {
+    const { calls, client } = capturing();
+    await client.updateTailnet({ hostname: "cinema" });
+    expect(calls[0].url).toContain("/api/v1/settings/tailscale");
+    expect(calls[0].method).toBe("PUT");
+    expect(JSON.parse(calls[0].body!)).toEqual({ hostname: "cinema" });
+  });
+
+  it("POSTs each verb at its own route", async () => {
+    const { calls, client } = capturing();
+    await client.connectTailnet();
+    await client.disconnectTailnet();
+    await client.forgetTailnet();
+    expect(calls.map((c) => c.method)).toEqual(["POST", "POST", "POST"]);
+    expect(calls[0].url).toContain("/api/v1/settings/tailscale/connect");
+    expect(calls[1].url).toContain("/api/v1/settings/tailscale/disconnect");
+    expect(calls[2].url).toContain("/api/v1/settings/tailscale/forget");
+  });
+});
+
+describe("EVENT_TYPES", () => {
+  it("registers tailscaleState, or the Tailnet nudge never reaches the browser", () => {
+    // EventSource only delivers events whose NAME has a registered listener, so
+    // an unregistered type is not a missing feature — it is a silent one: the
+    // admin screen would sit on a stale state forever and the login link would
+    // only ever appear on a manual reload.
+    expect(EVENT_TYPES).toContain("tailscaleState");
   });
 });

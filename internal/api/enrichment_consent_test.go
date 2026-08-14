@@ -108,6 +108,86 @@ func TestEnrichmentConsentGate(t *testing.T) {
 	}
 }
 
+// TestEnrichmentConsentGatesTheDisplayPaths is the acceptance test for issue 05:
+// the settings GET and the per-Library policy GET — the two reads that exist ONLY
+// to tell the admin UI what is enabled — report enrichment OFF whenever consent is
+// not granted, for a server with a provider key configured. It walks all three
+// consent states in ONE running server, so the flip is proven live: unanswered →
+// declined → granted, no restart, no reconstruction.
+//
+// The combination that matters (and that nothing covered before) is configured AND
+// not-granted: with no key at all the response would read off for an unrelated
+// reason, which is why the harness supplies a TMDB key throughout and the test
+// asserts configuredEnablement stays ON in every state.
+func TestEnrichmentConsentGatesTheDisplayPaths(t *testing.T) {
+	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
+	srv := testharness.New(t,
+		testharness.WithProviderBuilder(countingBuilder(prov)), // the real Manager path
+		testharness.WithEnrichmentKey("test-key"),              // TMDB configured → video WOULD be on
+		testharness.WithoutEnrichmentConsent(),                 // …and consent has never been answered
+	)
+	token := adminToken(t, srv)
+	libID := createMovieLibrary(t, srv, token, t.TempDir())
+
+	// assertOff checks both display reads at once: what the server will DO is off,
+	// what is CONFIGURED is unchanged, and the consent decision explains the gap.
+	assertOff := func(wantState string) {
+		t.Helper()
+		pv := getProviders(t, srv, token)
+		if pv.Enablement.Video || pv.Enablement.Music {
+			t.Errorf("consent %s: settings enablement = %+v, want off (the server makes no calls)", wantState, pv.Enablement)
+		}
+		if !pv.ConfiguredEnablement.Video {
+			t.Errorf("consent %s: configuredEnablement = %+v, want video on (a key IS on file)", wantState, pv.ConfiguredEnablement)
+		}
+		if pv.ConsentState != wantState {
+			t.Errorf("consent %s: settings consentState = %q", wantState, pv.ConsentState)
+		}
+		lv := getPolicy(t, srv, token, libID)
+		if lv.Effective.Video || lv.Effective.Music {
+			t.Errorf("consent %s: policy effective = %+v, want off for a Library whose policy would enable it", wantState, lv.Effective)
+		}
+		if !lv.Configured.Video {
+			t.Errorf("consent %s: policy configured = %+v, want video on (the policy inherits an enabled global)", wantState, lv.Configured)
+		}
+		if lv.InheritedEnrichEnabled {
+			t.Errorf("consent %s: inheritedEnrichEnabled = true, want false — \"Inherit (currently On)\" would promise calls consent forbids", wantState)
+		}
+		if lv.ConsentState != wantState {
+			t.Errorf("consent %s: policy consentState = %q", wantState, lv.ConsentState)
+		}
+	}
+
+	// 1. Never answered. A fresh install is NOT a grant.
+	assertOff("unset")
+
+	// 2. Explicitly declined — a different decision, the same reported enablement.
+	putConsent(t, srv, token, false)
+	assertOff("declined")
+
+	// 3. Granted: both reads flip on with no restart, on the same server object.
+	putConsent(t, srv, token, true)
+	pv := getProviders(t, srv, token)
+	if !pv.Enablement.Video || pv.ConsentState != "granted" {
+		t.Errorf("after grant: settings view enablement = %+v state = %q, want video on + granted", pv.Enablement, pv.ConsentState)
+	}
+	lv := getPolicy(t, srv, token, libID)
+	if !lv.Effective.Video || !lv.InheritedEnrichEnabled || lv.ConsentState != "granted" {
+		t.Errorf("after grant: policy effective = %+v inherited = %v state = %q, want video on + inherited on + granted",
+			lv.Effective, lv.InheritedEnrichEnabled, lv.ConsentState)
+	}
+
+	// 4. And back off again: revoking re-closes the gate on the display paths too,
+	//    so the screen tracks the decision in both directions.
+	putConsent(t, srv, token, false)
+	assertOff("declined")
+
+	// Nothing in this test should have contacted a provider: it only reads settings.
+	if prov.calls() != 0 {
+		t.Errorf("provider called %d times by settings/policy reads, want 0", prov.calls())
+	}
+}
+
 // TestEnrichmentConsentRequiresGrantedField rejects a PUT that omits the decision,
 // so a malformed client can never silently flip consent.
 func TestEnrichmentConsentRequiresGrantedField(t *testing.T) {

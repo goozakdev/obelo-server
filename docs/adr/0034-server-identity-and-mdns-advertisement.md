@@ -172,3 +172,33 @@ So: no TXT key, no second service type, no scheme field. If a concrete client ne
 a TXT key (`https=1`, `tlsport=…`) is the additive shape to reach for, since older clients ignore
 unknown keys — but it must land with the client that reads it, or it is churn advertising a fact
 nobody consumes.
+
+## Amendment (2026-08-13) — a third listener, still one record, and the one address mDNS cannot carry
+
+[ADR-0043](./0043-tailnet-remote-access-via-embedded-tsnet.md) adds an optional tailnet listener,
+so the count in the note above goes from two to three. **The record is unchanged**, for the reason
+already given and one new one.
+
+The old reason: this record describes the **LAN**, and the port it names is the port a LAN client
+should use. The new one is stronger — **a tailnet is not a local link at all.** mDNS is
+link-local by definition; a tailnet peer is reachable over an overlay whose whole purpose is that
+it does not care what link anyone is on. There is nothing here to advertise even in principle.
+`internal/discovery/mdns.go` was already right about this before the feature existed: `tailscale*`
+is in `virtualLinkPrefixes`, and the multicast-capability check excludes tunnels ahead of it.
+
+**What changes is where remote clients get an address from.** The scope note above says "manual
+entry stays the permanent path for remote access, not a stopgap." That is now qualified rather
+than overturned. A client still cannot *discover* a remote server — but once it has paired on the
+LAN, it can **learn** the server's MagicDNS name from an authenticated response and keep it as the
+address to try when the LAN one fails. The user types an address exactly once, on the LAN, which
+is the case discovery already covers. Nothing about first contact from outside the house changes:
+that is still manual entry.
+
+The FQDN travels over the authenticated API, never over mDNS and never over the unauthenticated
+`GET /server` — see ADR-0043 for why an open endpoint that names your tailnet is a worse trade
+than it looks.
+
+**And this ADR's own rule applies to it.** *"It must land with the client that reads it, or it is
+churn advertising a fact nobody consumes."* A published FQDN that no client stores or falls back
+to is decoration. The Apple TV and iPad clients owe the other half of this, and it should land
+close behind — the same obligation the `https=1` TXT key was refused for.

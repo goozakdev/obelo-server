@@ -3214,6 +3214,15 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
   background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
+/* Configured but held off by the consent decision (ADR-0032): amber, the standing-
+   caution colour — nothing has failed and the sources are set up, one switch above
+   is what stops the calls. Deliberately NOT the enabled green (it is off) and not
+   error red (nothing is broken). */
+.provider-kind-status[data-consent-blocked="true"] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
 
 .provider-list {
   list-style: none;
@@ -4229,4 +4238,144 @@ textarea.metadata-input {
   gap: 0.75rem;
   padding: 1rem clamp(1rem, 3vw, 1.5rem);
   border-top: 1px solid var(--border);
+}
+
+/* --- Remote access / Tailnet node (ADR-0043) ------------------------------ */
+/* The lifecycle panel: one hairline card whose content is whichever of the six
+   states the node is in, with the two things an operator acts on — the login
+   link and the address — as the largest text on the screen. Nothing here spins:
+   a waiting state that hides its link is a waiting state with no content. */
+.admin-remote-access {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.tailnet-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.1rem clamp(0.85rem, 2vw, 1.35rem);
+}
+
+.tailnet-headline {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.tailnet-label {
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.tailnet-body {
+  margin: 0;
+  color: var(--text);
+  max-width: 62ch;
+}
+
+.tailnet-hint {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.tailnet-cost strong {
+  color: var(--text);
+}
+
+/* The address is the single object the operator came for, so it outweighs
+   everything else on the panel and wraps rather than truncating. */
+.tailnet-address-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.tailnet-address {
+  font-size: clamp(1.25rem, 3vw, 1.7rem);
+  font-weight: 700;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+/* The login link is the CONTENT of the waiting state, not a footnote to it. */
+.tailnet-login-link {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+/* Amber, like the Degraded backend badge: a standing caution the operator has
+   time to act on (a key expiry approaching, an address about to change), which
+   is a different thing from the red of something that has already failed. */
+.tailnet-warning {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+  max-width: 62ch;
+}
+
+.tailnet-error {
+  margin: 0;
+  color: var(--error);
+  max-width: 62ch;
+  overflow-wrap: anywhere;
+}
+
+.tailnet-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.tailnet-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.tailnet-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* The HTTPS opt-in's OUTCOME, beside the toggle that asked for it. Amber (it
+   reuses .tailnet-warning) rather than red: the node is up and the Tailnet's
+   http:// address is serving, so an unbound :443 is a caution with time on it,
+   not an outage. */
+.tailnet-https-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.tailnet-https-panel p {
+  margin: 0;
+}
+
+/* The server's own paragraph, quoted verbatim: smaller than the summary above it
+   and free to wrap anywhere, because it carries console paths and URLs. */
+.tailnet-https-detail {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.tailnet-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }

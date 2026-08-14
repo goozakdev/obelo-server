@@ -1757,7 +1757,19 @@ export interface MetadataProvider {
 export interface MetadataProvidersView {
   providers: MetadataProvider[];
   metadataLanguage: string;
+  /** What the server will ACTUALLY enrich — the configured enablement with the
+   * ADR-0032 consent gate applied. This is the only field that may be rendered as
+   * a statement about behaviour ("Enrichment on"). */
   enablement: { video: boolean; music: boolean };
+  /** The same enablement WITHOUT the consent gate: what `enablement` becomes the
+   * moment consent is granted. Rendering this as behaviour is the bug the pair
+   * exists to prevent; it is here so the screen can distinguish "nothing
+   * configured" from "configured, waiting on consent". */
+  configuredEnablement: { video: boolean; music: boolean };
+  /** The ADR-0032 consent decision in force — it explains a configured-but-not-
+   * effective view. "unset" is a fresh install that has never been asked, and is
+   * NOT a grant. */
+  consentState: EnrichmentConsentState;
   /** Whether a completed scan enqueues a background Enrichment pass. */
   autoEnrichAfterScan: boolean;
   /** The scheduled safety-net enrich cadence, in seconds (0 disables the sweep).
@@ -1823,8 +1835,18 @@ export interface SupplementControl {
 
 export interface EnrichmentPolicy {
   enrichEnabled: boolean | null;
+  /** What "inherit" currently resolves to — CONSENT-GATED, so it reads Off while
+   * consent is withheld however the global providers are configured. */
   inheritedEnrichEnabled: boolean;
+  /** What this Library will ACTUALLY enrich: its policy resolved over the global
+   * config, with the ADR-0032 consent gate applied. */
   effective: { video: boolean; music: boolean };
+  /** The same resolution WITHOUT the consent gate — what `effective` becomes once
+   * consent is granted, so the panel can say "configured, waiting on consent"
+   * instead of a bare "will not enrich". */
+  configured: { video: boolean; music: boolean };
+  /** The ADR-0032 consent decision in force; explains an effective/configured gap. */
+  consentState: EnrichmentConsentState;
   /** The STORED metadata-language override — `null` means inherit (the key tracks
    * the global language live), so `null`-vs-value reads as inherited-vs-overridden. */
   metadataLanguage: string | null;
@@ -1944,4 +1966,101 @@ export interface TranscodingSnapshot {
   backend: TranscodingBackend;
   load: TranscodingLoad;
   gpu: TranscodingGpu | null;
+}
+
+// --- Tailnet remote access (ADR-0043) ---------------------------------------
+
+/** The closed set of states a Tailnet node can be in (`internal/tailnet.State`).
+ * The admin screen BRANCHES on this, so the spellings are the server's exactly:
+ * `stopped` (resting — the feature is off), `starting` (asked to come up, has
+ * settled with nobody yet), `needsLogin` (the interactive join is waiting on a
+ * human — `loginURL` carries the link), `running` (up and reachable), `error`
+ * (tried and failed — `lastError` says why, in words for a person). The open
+ * union tolerates a state a future server might report. */
+export type TailnetState =
+  | "stopped"
+  | "starting"
+  | "needsLogin"
+  /** The node was joined, it worked, and its key has since LAPSED. Distinct from
+   * `needsLogin` on purpose: both want a fresh login link, but one is "finish
+   * setting this up" and the other is "the thing that was working stopped six
+   * months later", which ADR-0043 frames as re-authorization rather than an
+   * error. The server asserts this on positive evidence and checks it BEFORE the
+   * ordinary state mapping, so a lapsed key never arrives as `needsLogin`. */
+  | "keyExpired"
+  | "running"
+  | "error"
+  | (string & {});
+
+/** The live condition of the Tailnet node — never persisted, always read from
+ * the running state machine (`GET /settings/tailscale` → `status`). */
+export interface TailnetStatus {
+  state: TailnetState;
+  /** The MagicDNS name clients reach this Server at, absent until it is running.
+   * Authenticated responses only — the handshake never carries it (ADR-0043). */
+  fqdn?: string;
+  /** The node's own Tailnet IPs, so an operator whose MagicDNS is off still has
+   * something to type. Absent until the node is running. */
+  addresses?: string[];
+  /** When this node's membership lapses, RFC3339 — or `null` for "never
+   * expires" (a node joined with a tagged auth key), which is a genuinely
+   * different and better state than "expires soon". Explicitly nullable rather
+   * than omitted, so an absent field can never be mistaken for no expiry. */
+  keyExpiry: string | null;
+  /** The interactive-join link, present while the node waits on a human (and
+   * again once a key has lapsed). It is the CONTENT of the waiting state. */
+  loginURL?: string;
+  /** Why the node is in `error`, in the server's own words. Rendered verbatim:
+   * it names console settings and addresses a paraphrase would lose. */
+  lastError?: string;
+  /** Whether tailnet `:443` is ACCEPTING CONNECTIONS RIGHT NOW.
+   *
+   * This is not `httpsEnabled`. That one is the operator's REQUEST — a saved
+   * setting, which saves successfully whether or not it can work. This one is
+   * what the server ACHIEVED, and the two come apart in exactly the case this
+   * feature is most likely to be misconfigured in: tailnet HTTPS additionally
+   * needs MagicDNS and HTTPS certificates enabled in the Tailscale console, which
+   * the server can neither set nor detect ahead of time.
+   *
+   * **The scheme of the address shown to an operator comes from this field and
+   * never from the setting.** Reading the request as though it were the outcome
+   * is what sent people to an `https://` address that refuses connections while
+   * `:80` served perfectly — a worse failure than a plain error, because it sends
+   * them to debug their client, their browser or their tailnet.
+   *
+   * Never omitted by the server: `false` is the case that matters. */
+  httpsBound: boolean;
+  /** Why it is not bound, in the server's own words — the same paragraph the
+   * server log carries, naming BOTH console settings. Rendered verbatim, like
+   * `lastError`: it is the only actionable part. Absent while HTTPS is off and
+   * once it is bound. */
+  httpsError?: string;
+}
+
+/** The `GET/PUT /settings/tailscale` view and the body every verb answers with:
+ * the persisted settings joined with the live status, so a client that has just
+ * connected needs no second request to learn what happened. */
+export interface TailnetSettingsView {
+  enabled: boolean;
+  hostname: string;
+  /** Empty = Tailscale's own coordination server; a URL = the operator's own
+   * Headscale (ADR-0001's escape hatch). */
+  controlURL: string;
+  /** Tailnet `:443` with a MagicDNS certificate — opt-in, because it needs
+   * MagicDNS + HTTPS certificates enabled in the Tailscale console.
+   *
+   * THE REQUEST, NOT THE OUTCOME. Whether it is actually serving is
+   * `status.httpsBound`; this field only says the operator asked. */
+  httpsEnabled: boolean;
+  status: TailnetStatus;
+}
+
+/** The `PUT /settings/tailscale` body: a PARTIAL update. Every field is optional
+ * and omitted = unchanged, so a hostname can be saved without also restating
+ * whether the node should be up. */
+export interface UpdateTailnetInput {
+  enabled?: boolean;
+  hostname?: string;
+  controlURL?: string;
+  httpsEnabled?: boolean;
 }

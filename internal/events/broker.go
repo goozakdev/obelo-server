@@ -42,6 +42,18 @@ const (
 	TypeSessionStarted = "sessionStarted"
 	TypeNowPlaying     = "nowPlaying"
 	TypeSessionEnded   = "sessionEnded"
+	// TypeTailscaleState tells the Admin UI that the Tailnet node's condition
+	// changed (ADR-0043): it connected, it stopped, it is waiting on a login, its
+	// login URL arrived, its membership lapsed. It is a "go refetch" nudge in the
+	// libraryUpdated idiom and carries NO state — GET /settings/tailscale stays the
+	// source of truth — because the alternative is two descriptions of the node's
+	// condition that can disagree, and the one on the screen would be the stale one.
+	//
+	// It exists so the login URL appears WITHOUT the Admin reloading the page,
+	// which is the difference between "click Connect, then click the link" and
+	// "click Connect, wait, guess, refresh". Admin-only (AudienceAdmin): remote
+	// access is the operator's configuration and a Member's stream never receives it.
+	TypeTailscaleState = "tailscaleState"
 )
 
 // AudienceKind is the closed set of "who may receive this Event" forms. It is a
@@ -290,6 +302,24 @@ func (b *Broker) PublishSessionEvent(eventType string, p SessionEvent) {
 	b.Publish(Event{
 		Type:     eventType,
 		Data:     p,
+		Audience: Audience{Kind: AudienceAdmin},
+	})
+}
+
+// PublishTailscaleState nudges connected Admins to refetch the Tailnet settings
+// (ADR-0043). AudienceAdmin is non-negotiable, so a Member's stream never
+// receives it; producers publish through this typed helper so they cannot set the
+// wrong audience, exactly as with the session events.
+//
+// It carries an empty payload ON PURPOSE. Everything a client would want — state,
+// FQDN, addresses, key expiry, login URL, last error — is on the GET, and the
+// node's condition changes are exactly the moments when a second copy of it would
+// be wrong. This is the libraryUpdated bargain: the event says "look again", the
+// resource says what is true.
+func (b *Broker) PublishTailscaleState() {
+	b.Publish(Event{
+		Type:     TypeTailscaleState,
+		Data:     struct{}{},
 		Audience: Audience{Kind: AudienceAdmin},
 	})
 }
