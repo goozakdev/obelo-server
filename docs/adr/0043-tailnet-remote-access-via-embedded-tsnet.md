@@ -273,6 +273,13 @@ Tailscale console, which is the actual fix and lives somewhere we cannot reach.
   already wraps in a better message than `tsnet`'s own (theirs names only the prerequisite it
   noticed first).
 
+  **Verified on a live tailnet 2026-08-14**, which is the only way this could be believed: a client
+  offering `h2, http/1.1` to the real `:443` listener now gets **`h2`** selected, `curl` reports
+  `http_version 2`, the Let's Encrypt certificate still verifies for the MagicDNS name, and tailnet
+  `:80` still answers 200 alongside it. Measure it that way if you re-check — a `curl` whose TLS
+  verification fails reports `1.1` regardless, so a broken handshake is indistinguishable from a
+  confirmation of the old behaviour.
+
   **The lesson is not about ALPN.** "Unfixable without private API" was asserted from the shape of
   a convenience wrapper rather than from reading its five-line body, and it survived two rounds of
   cross-repo review because it sounded like the kind of thing that would be true. The generalizable
