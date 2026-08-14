@@ -334,6 +334,43 @@ Tailscale console, which is the actual fix and lives somewhere we cannot reach.
   failover would fail closed as "that is a different server", inexplicably and silently.** Anything
   that makes a listener's handler or metadata listener-specific breaks a client in another
   repository, and this bullet is the only warning it will get.
+- **An Apple app cannot reach the tailnet `:80` listener at all, and that listener is our default.**
+  Measured 2026-08-13 by the obelo-apple session on iOS 26.5 and tvOS 26.5, with the shipped ATS
+  dictionary embedded in the probe's `__TEXT,__info_plist` so the process saw exactly the keys the
+  app ships:
+
+  | request from a native app | shipped ATS config | with a `ts.net` exception |
+  |---|---|---|
+  | `http://<host>.tail….ts.net` | **-1022 (refused)** | 200 |
+  | `http://100.x.y.z` (tailnet IP literal) | **-1022 (refused)** | **-1022 (refused)** |
+  | `http://10.0.0.75` (LAN, control) | 200 | 200 |
+  | `http://127.0.0.1` (loopback, control) | 200 | 200 |
+
+  `-1022` is `NSURLErrorAppTransportSecurityRequiresSecureConnection`: the request never leaves the
+  process. The two controls are what make it a measurement rather than a guess — they return 200
+  under *both* configs, proving the plist is genuinely read and `NSAllowsLocalNetworking` is in
+  force, so the `ts.net` row differs by exactly the one variable.
+
+  **This is a consequence of a decision in this ADR.** Tailnet `:443` is opt-in because it needs
+  two Tailscale console toggles this server can neither set nor detect (see above), which makes
+  plain HTTP on a globally-resolvable name the *default* published shape — and that is precisely
+  the shape App Transport Security refuses. `NSAllowsLocalNetworking` relaxes cleartext for `.local`
+  names and private-range literals; a `ts.net` name is neither. The remedy is a narrow per-domain
+  exception in the client, which is the Apple side's to make and which they have verified works.
+
+  Three things worth carrying:
+
+  - **A browser cannot detect this.** ATS governs a native app's `URLSession`, not Safari. An
+    iPhone loading the tailnet address in Safari — which was checked, and worked — proves MagicDNS
+    resolution and network reachability and says nothing at all about whether an app can connect.
+  - **The failure splits the client in half.** libmpv uses its own sockets and never consults ATS,
+    so without the exception **media plays while JSON is blocked**. From this side that presents as
+    a client that authenticates, then cannot list a library, while streaming works — which looks
+    like a server bug from every angle except the right one. If that report ever arrives, read this
+    bullet before debugging anything here.
+  - **There is no IP-literal escape hatch**, which is a third independent argument for publishing
+    the name and never the addresses: `NSAllowsLocalNetworking` does not treat `100.64.0.0/10` as
+    local either, so a client cannot route around the name by using a tailnet IP.
 - **The web app does not roam.** `https://obelo.tail1a2b.ts.net` and `http://192.168.1.50:8080` are
   different web origins, so a browser user signs in once per origin. Native clients carry bearer
   tokens bound to a Device row and are unaffected. This is inherent to origins, not a bug to fix.
