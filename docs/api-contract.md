@@ -168,7 +168,8 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
     "mediaCookieRefresh": true, "streamToken": true, "transcode": true,
     "tailscale": false
   },
-  "setupRequired": false
+  "setupRequired": false,
+  "tailnetURL": null
 }
 ```
 
@@ -176,6 +177,15 @@ Every flag above reads `true` on a normally-provisioned server except the two th
 
 - **`transcode`** varies by host — `false` on a deployment with no usable ffmpeg (see the handshake note in Part 1).
 - **`tailscale`** varies by **build** ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)): `true` only in a binary compiled with `-tags tailscale`, which is what the Docker image and the release binaries are and what a plain `go build` is not. It says whether this server *can* join a Tailnet, **not** whether remote access is switched on — that is `GET /settings/tailscale` (§3.9). A client that sees `false` should explain that remote access is unavailable in this build rather than offer a control that can only fail; the `/settings/tailscale` routes are served either way, answering with an error that names the build, precisely so the failure is not a bare `404` that reads like a mistyped path.
+
+`tailnetURL` is the origin a signed-in client should use to reach this server **from away** — `"https://obelo.tail1a2b.ts.net"` — or `null` ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)). Four rules, and each exists because getting it wrong is silent:
+
+- **It is authenticated-only, but the ROUTE stays unauthenticated.** A request with no bearer, or with a malformed, expired or revoked one, gets `200` with `tailnetURL: null` — **never `401`**. The handshake has never answered `401` and must not start: clients drive token-drop from that status, so a `401` here presents as a revoked token and signs the user out. Only the field is gated. (An unauthenticated caller must not learn the name either: a scanner reaching a port-forward would learn that a tailnet exists and what it is called.)
+- **`null` or absent OBLIGES the client to CLEAR its stored address.** Not "keep the last value you saw" — that is the natural implementation and it is wrong in the case that matters: an operator who switches remote access off would otherwise leave every paired client probing a dead name on every cold start, forever, with no way to stop it.
+- **It is an ORIGIN and it carries the scheme the server ACHIEVED**, never the one the operator requested: scheme + host, no path, no trailing slash, and no port (the tailnet listeners are `:80`/`:443`, the defaults for their schemes). `http://` means tailnet HTTPS is not bound — do not "upgrade" it, because `:443` is not listening.
+- **It is the MagicDNS name, never a tailnet IP.** The addresses are what the name exists to replace and they move; no certificate can match an IP literal; and Apple's App Transport Security refuses cleartext to a `100.64.0.0/10` literal regardless, so an IP is not even a workaround.
+
+Because `tailnetURL` is explicitly nullable and never omitted, `null` is this server *saying* it has no tailnet address. An older server omits the key entirely — decode both the same way and take the same action.
 
 `id` and `name` are the **Server identity** ([ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)). Both are `omitempty` and both are **additive** — a server predating ADR-0034 omits them, so treat them as optional rather than as an error.
 

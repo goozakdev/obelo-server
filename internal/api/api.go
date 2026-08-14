@@ -180,7 +180,7 @@ func Handler(deps Deps) http.Handler {
 	// a catch-all "/" route (below) would otherwise shadow ServeMux's built-in
 	// 405 handling, so requireMethod gives us an enveloped 405 with an Allow
 	// header for non-GET requests to a known path.
-	mux.HandleFunc("/server", requireMethod(http.MethodGet, handleServerInfo(deps.Meta)))
+	mux.HandleFunc("/server", requireMethod(http.MethodGet, handleServerInfo(deps.Meta, deps.Auth, deps.Tailnet)))
 
 	// Authentication spine (ADR-0013, ADR-0015). Setup and login are public;
 	// logout and the devices endpoints sit behind the bearer-auth middleware,
