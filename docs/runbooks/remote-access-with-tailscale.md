@@ -90,11 +90,27 @@ Install the Tailscale app on every device that will reach the server, and sign e
 There is no per-device configuration beyond signing in. A device on the tailnet reaches
 `obelo.tail1a2b.ts.net`; a device not on it does not, which is the point.
 
-## 5. Optional: a real certificate on the tailnet
+## 5. Turn on HTTPS for the tailnet — recommended, not optional
 
-The tailnet is already encrypted end to end — that is what WireGuard does — so this step is about
-browsers, not confidentiality. Turning it on gets you `https://` with no warning and no exception
-to click.
+This step used to be described as optional cosmetics. It is not. **Do it.**
+
+The tailnet is already encrypted end to end — that is what WireGuard does — so this is not about
+confidentiality. Three other things hang off it:
+
+- **HTTP/2, which is a real speed difference.** HTTP/2 is negotiated during the TLS handshake, so
+  **plain HTTP can never have it** — there is no cleartext path to it that browsers or the Apple
+  clients speak. With HTTPS on, the tailnet multiplexes many small requests over one connection;
+  without it, they queue against the browser's per-origin connection limit. A poster grid or an HLS
+  playlist is dozens of small fetches, and the remote path is where latency is highest, so this is
+  precisely where it hurts most.
+- **Apple apps cannot use the plain-HTTP address at all.** App Transport Security refuses cleartext
+  to a globally-resolvable name like a `.ts.net` one — the request never leaves the app. Safari is
+  exempt, which is why the web app can work while the Obelo app cannot. HTTPS sidesteps it.
+- **No browser warning, and no exception to click.**
+
+The address Obelo publishes to clients follows what actually bound. **Leave this off and every
+client gets the `http://` address and stays on HTTP/1.1 permanently, with nothing telling you what
+you left behind.**
 
 It requires two things in the **Tailscale admin console**, both outside Obelo:
 
@@ -112,6 +128,9 @@ Two things to know before you do it:
   shown to you stays `http://` rather than promising an `https://` that would refuse connections.
   The reason appears on this settings page and in the server log, in the same words. It is not an
   outage, and it retries on its own once you fix the console settings — no restart.
+
+If you skip this step, everything still works — you simply keep the slower transport and the Obelo
+app cannot use the tailnet address. It is reversible either way: untick it and the listener goes.
 
 ## 6. Point the clients at it
 
