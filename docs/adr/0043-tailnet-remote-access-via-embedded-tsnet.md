@@ -91,9 +91,21 @@ whole setup: click Connect, click the link, done.
 
 Two costs come with that and neither is small:
 
-- **Media traverses a userspace network stack.** gVisor's netstack is fast enough for HLS on any
-  modern host, but it is not the kernel, and this is the streaming path. Measure it on real
-  hardware when the adapter lands rather than assuming.
+- **Media traverses a userspace network stack, and it costs about two orders of magnitude.**
+  Measured 2026-08-13 against a live tailnet, serving a 570 MB file through the real
+  `/files/{id}/download` path on an M-series MacBook Pro:
+
+  | path | throughput |
+  |---|---|
+  | loopback (kernel, no WireGuard) | ~76 Gbps |
+  | tailnet, **direct** (userspace WireGuard + gVisor) | **~500 Mbps** (501/504/504 Mbps) |
+
+  A 4K direct-play stream runs 25–100 Mbps, so this is roughly 5–20 concurrent 4K streams —
+  adequate, and a real ceiling. Read the number with its caveats: both nodes were on one machine,
+  so it isolates *stack* cost with zero network latency and is therefore a **best case**, not a
+  prediction. A remote client is lower, and a DERP-relayed one dramatically lower (`tailscale
+  status` reported `direct` throughout — if it had said `relay`, the number would mean nothing).
+  It is also CPU-bound userspace crypto, so it is a property of the host, not of this code.
 - **The dependency graph explodes.** Measured, on this machine:
 
   | | today | `tsnet` hello-world alone | **this server, `-tags tailscale`** |
@@ -239,6 +251,12 @@ Tailscale console, which is the actual fix and lives somewhere we cannot reach.
   leave `TLSNextProto` alone. Here `tsnet` owns the `tls.Config` and its `NextProtos` is empty, so
   ALPN agrees on nothing and every connection is HTTP/1.1. It is not fixable from above the seam —
   only by reimplementing `ListenTLS` against unexported internals, which is not worth owning.
+
+  **Confirmed on a live tailnet (2026-08-13)**, not merely reasoned from the source: a client
+  offering `h2, http/1.1` to the real `:443` listener gets no ALPN selection back at all, and the
+  connection is HTTP/1.1. Measure it that way if you ever re-check — a `curl` whose TLS
+  verification fails reports `1.1` regardless, so a failed handshake looks identical to a
+  confirmation of this bullet.
 
   **The consequence points the wrong way, which is why it is written down rather than filed as a
   detail.** ADR-0041 wanted HTTP/2 specifically for HLS: many small segment fetches multiplexing
