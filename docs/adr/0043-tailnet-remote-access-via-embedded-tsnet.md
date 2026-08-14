@@ -246,11 +246,54 @@ Tailscale console, which is the actual fix and lives somewhere we cannot reach.
 
 - **A third listener.** Graceful shutdown covers it, as it already covers two. Nothing in the
   request path learns which listener it arrived on except through `r.TLS`.
-- **Tailnet `:443` gets no HTTP/2, and ADR-0041's "HTTP/2 arrives for free" does NOT generalize to
-  it.** That claim was true of a listener we build: `http.Server.ServeTLS` negotiates `h2` when we
-  leave `TLSNextProto` alone. Here `tsnet` owns the `tls.Config` and its `NextProtos` is empty, so
-  ALPN agrees on nothing and every connection is HTTP/1.1. It is not fixable from above the seam —
-  only by reimplementing `ListenTLS` against unexported internals, which is not worth owning.
+- **Tailnet `:443` gets no HTTP/2 from `tsnet.ListenTLS` — so we stopped calling it.**
+  `http.Server.ServeTLS` negotiates `h2` when we leave `TLSNextProto` alone, which is why
+  ADR-0041's listener got HTTP/2 for free. `tsnet.ListenTLS` returns
+  `tls.NewListener(ln, &tls.Config{GetCertificate: s.getCert})` — **`NextProtos` empty** — so ALPN
+  agreed on nothing, and because that listener arrives already TLS-wrapped the caller must
+  `Serve()` rather than `ServeTLS()` it, leaving `net/http` no opportunity to add `h2` either.
+
+  **CORRECTION (2026-08-14). This bullet previously said it was "not fixable from above the seam —
+  only by reimplementing `ListenTLS` against unexported internals". That was wrong, it was wrong
+  when written, and it was repeated to the Apple client team, who recorded it in their spec as a
+  known limitation.** `tsnet`'s own hook is
+
+  ```go
+  func (s *Server) getCert(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+      lc, err := s.LocalClient()   // exported
+      return lc.GetCertificate(hi) // exported
+  }
+  ```
+
+  and `local.Client.GetCertificate` documents itself as *"the right signature to use as the value
+  of `tls.Config.GetCertificate`"* with *"API maturity: this is considered a stable API"*.
+  `internal/tailnet` now builds that config itself with
+  `NextProtos: []string{"h2", "http/1.1"}`, using no private API at all. The cost is re-doing
+  `tsnet`'s two console prerequisite checks, which is a handful of lines and which `cmd/obelo`
+  already wraps in a better message than `tsnet`'s own (theirs names only the prerequisite it
+  noticed first).
+
+  **The lesson is not about ALPN.** "Unfixable without private API" was asserted from the shape of
+  a convenience wrapper rather than from reading its five-line body, and it survived two rounds of
+  cross-repo review because it sounded like the kind of thing that would be true. The generalizable
+  rule: before recording a limitation as inherent, read the implementation of the thing you are
+  calling — a wrapper's constraints are almost never the library's constraints.
+
+  **Why it mattered enough to fix.** The consequence pointed the wrong way. ADR-0041 wanted HTTP/2
+  specifically so many small requests multiplex instead of queueing against the per-origin limit,
+  and the path that needs that most is the *remote* one, where latency is highest. So the tailnet —
+  the headline remote path — was the one deployment that could not have it, while the
+  port-forwarded deployment kept it. Observed in practice on a phone browsing an artwork grid: the
+  workload is dozens of small images, which is exactly the shape ALPN was being left on the table
+  for.
+
+  **This makes tailnet HTTPS a performance decision and not only a browser-warning one**, which
+  changes the advice: `tailnetURL` publishes the scheme actually achieved, so an operator who never
+  enables tailnet HTTPS publishes `http://`, every client uses it, and that household is on
+  HTTP/1.1 permanently with nothing indicating what was left behind. Plain HTTP can never carry
+  HTTP/2 here — h2c is not spoken by browsers, by Apple's `URLSession`, or by this server — so
+  HTTPS is the only route to it. The runbook should recommend enabling it rather than presenting it
+  as an optional extra.
 
   **Confirmed on a live tailnet (2026-08-13)**, not merely reasoned from the source: a client
   offering `h2, http/1.1` to the real `:443` listener gets no ALPN selection back at all, and the

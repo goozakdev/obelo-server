@@ -18,6 +18,7 @@ package tailnet
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -213,12 +214,75 @@ func (n *tsnetNode) Listen(network, addr string) (net.Listener, error) {
 // additionally requires MagicDNS and HTTPS certificates to be enabled in the
 // Tailscale console — a prerequisite outside this web UI — so its failure costs
 // HTTPS on the Tailnet and nothing else.
+//
+// IT DELIBERATELY DOES NOT CALL tsnet's OWN ListenTLS, AND THE REASON IS HTTP/2.
+//
+// `tsnet.Server.ListenTLS` is a convenience wrapper that returns
+// `tls.NewListener(ln, &tls.Config{GetCertificate: s.getCert})` — a config whose
+// NextProtos is EMPTY. ALPN therefore agrees on nothing, and every connection to
+// tailnet :443 is HTTP/1.1. Because that listener arrives already TLS-wrapped, the
+// caller must Serve() rather than ServeTLS() it, so net/http never gets the chance
+// to negotiate h2 for us either. The result was that the REMOTE path — the one
+// with the highest latency, where multiplexing many small artwork and HLS segment
+// requests matters most — was the one path that could not have HTTP/2, while the
+// port-forwarded deployment of ADR-0041 got it for free.
+//
+// ADR-0043 originally recorded that as unfixable "without reimplementing ListenTLS
+// against unexported internals". That was wrong. tsnet's own getCert is
+//
+//	lc, err := s.LocalClient(); return lc.GetCertificate(hi)
+//
+// and BOTH of those are exported — `local.Client.GetCertificate` documents itself
+// as "the right signature to use as the value of tls.Config.GetCertificate" and
+// carries "API maturity: this is considered a stable API". So we build the same
+// config tsnet would, add NextProtos, and get HTTP/2 with no private API at all.
+//
+// What we give up is tsnet's two prerequisite checks, which produce the errors an
+// operator needs when the console half is not done. We re-do them here rather than
+// lose them: MagicDNS off and no cert domains are the two failures this path
+// actually has, and cmd/obelo wraps whatever comes back in a message naming BOTH
+// console toggles (tsnet's own error names only the one it noticed first).
 func (n *tsnetNode) ListenTLS(network, addr string) (net.Listener, error) {
 	srv := n.server()
 	if srv == nil {
 		return nil, ErrNotRunning
 	}
-	return srv.ListenTLS(network, addr)
+	if network != "tcp" {
+		return nil, fmt.Errorf("tailnet: ListenTLS(%q): only tcp is supported", network)
+	}
+
+	// Up() rather than Start(): the prerequisites below are read off the node's
+	// status, which is not populated until it is up. tsnet's ListenTLS does the
+	// same thing first, for the same reason.
+	st, err := srv.Up(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	// The two console prerequisites, checked in the same order and reported in
+	// tsnet's own words so an operator searching for the message still finds
+	// Tailscale's documentation for it.
+	if st.CurrentTailnet == nil || !st.CurrentTailnet.MagicDNSEnabled {
+		return nil, errors.New("tsnet: you must enable MagicDNS in the DNS page of the admin panel to proceed. See https://tailscale.com/s/https")
+	}
+	if len(st.CertDomains) == 0 {
+		return nil, errors.New("tsnet: you must enable HTTPS in the admin panel to proceed. See https://tailscale.com/s/https")
+	}
+
+	lc, err := srv.LocalClient()
+	if err != nil {
+		return nil, err
+	}
+	ln, err := srv.Listen(network, addr)
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(ln, &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		GetCertificate: lc.GetCertificate,
+		// The whole point of not using tsnet's wrapper. "h2" first so a client
+		// offering both gets HTTP/2; "http/1.1" stays for anything that does not.
+		NextProtos: []string{"h2", "http/1.1"},
+	}), nil
 }
 
 // Close stops the node and releases its listeners, KEEPING the state directory so
