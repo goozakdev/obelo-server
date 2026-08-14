@@ -67,13 +67,39 @@ type Manager struct {
 	// (InvalidateLibrary), so it never serves a stale effective config.
 	libCache map[string]providerSnapshot
 
-	// consentGranted caches the first-run consent decision (ADR-0032) from the last
-	// Reload. It is ANDed into every Enablement the Manager emits (consentGate), so
-	// a server whose operator has not granted consent enriches NOTHING no matter
-	// which path — global snapshot or per-Library pass — reads it. Guarded by mu
-	// (set in Reload, read in resolveLibrary). False until the first Reload, so the
-	// server is gated off until settings (and consent) are loaded at boot.
-	consentGranted bool
+	// consent caches the first-run consent decision (ADR-0032) from the last Reload.
+	// Its Granted bit is ANDed into every Enablement the Manager emits (consentGate),
+	// so a server whose operator has not granted consent enriches NOTHING no matter
+	// which path — global snapshot, per-Library pass, or a DISPLAY accessor — reads
+	// it. The full decision (not just the bit) is kept because the two not-granted
+	// states are different messages on screen: "declined" is an answer, "unset" is a
+	// fresh install that has not been asked yet — and neither is granted. Guarded by
+	// mu (set in Reload, read in resolveLibrary and the *View accessors). The zero
+	// value is UNDECIDED, so the server is gated off until settings (and consent) are
+	// loaded at boot.
+	consent store.EnrichmentConsent
+}
+
+// EnablementView is the DISPLAY answer to "what will enrichment actually do?",
+// carried as the two facts a screen needs to say something true rather than the
+// one boolean that cannot. Every admin-facing enablement read goes through this
+// type, and it is derived in exactly one place per scope (GlobalEnablementView /
+// EffectiveEnablementView), both of which apply consentGate.
+type EnablementView struct {
+	// Effective is the per-kind Enablement the runtime will ACTUALLY use — the
+	// configured enablement with the ADR-0032 consent gate applied. This, and only
+	// this, may be rendered as a statement about behavior ("enrichment is on").
+	Effective Enablement
+	// Configured is the same enablement WITHOUT the gate: what Effective becomes the
+	// moment consent is granted, with no other change. It exists so a screen can tell
+	// "no provider configured" from "configured, waiting on consent" — the more useful
+	// message, and the one a single boolean cannot express. It is a statement about
+	// CAPABILITY; rendering it as behavior is the bug this type exists to prevent.
+	Configured Enablement
+	// ConsentState is the ADR-0032 decision as the wire string the SPA branches on:
+	// "unset" (never answered — a fresh install, and NOT granted), "granted", or
+	// "declined". It explains a Configured-but-not-Effective view.
+	ConsentState string
 }
 
 // NewManager wires a Manager over the settings store, the running Service, and the
@@ -122,7 +148,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("enrich: manager reload: %w", err)
 	}
-	m.consentGranted = consent.Granted
+	m.consent = consent
 
 	cfg := SettingsToProviderConfig(rows, lang, fixed)
 	provider, enablement := m.build(cfg)
@@ -143,14 +169,20 @@ func (m *Manager) Reload(ctx context.Context) error {
 }
 
 // consentGate returns e unchanged when the first-run consent decision (ADR-0032)
-// is Granted, or the all-off Enablement when it is not. It is the SINGLE point
-// where consent is folded into what the Service sees: applied to the global
-// snapshot in Reload and to every per-Library snapshot in resolveLibrary, so a
-// withheld or declined consent yields ZERO outbound calls through every enrich
-// path — no scattered per-call checks. Callers hold m.mu (consentGranted is
-// written under it in Reload).
+// is Granted, or the all-off Enablement when it is not (declined AND undecided —
+// a fresh install is not a grant). It is the SINGLE point where consent is folded
+// into any Enablement this Manager emits, on both kinds of path:
+//
+//   - RUNTIME — the global snapshot in Reload and every per-Library snapshot in
+//     resolveLibrary, so a withheld consent yields ZERO outbound calls through
+//     every enrich path, with no scattered per-call checks; and
+//   - DISPLAY — GlobalEnablementView and EffectiveEnablementView, so what the
+//     admin UI is told matches what the runtime will do. (These used to bypass it
+//     and reported "Enrichment on" while the server correctly made no calls.)
+//
+// Callers hold m.mu (m.consent is written under it in Reload).
 func (m *Manager) consentGate(e Enablement) Enablement {
-	if !m.consentGranted {
+	if !m.consent.Granted {
 		return Enablement{}
 	}
 	return e
@@ -166,13 +198,22 @@ func (m *Manager) EnablePerLibraryResolution() {
 	m.svc.resolveLibrary = m.resolveLibrary
 }
 
-// GlobalEnablement returns the server-wide per-kind Enablement (the base a
-// Library inherits when its enrich-on/off key is unset). The API reports it so the
-// Admin sees what "inherit" currently resolves to next to the override control.
-func (m *Manager) GlobalEnablement() Enablement {
+// GlobalEnablementView returns the server-wide per-kind Enablement for DISPLAY
+// (the base a Library inherits when its enrich-on/off key is unset). The API
+// reports it so the Admin sees what "inherit" currently resolves to next to the
+// override control — which is why Effective is CONSENT-GATED here exactly as it is
+// in Reload: the screen must describe what the server will do, not what the
+// provider rows alone would allow. Configured carries the ungated capability so
+// the screen can also say "configured, waiting on consent".
+func (m *Manager) GlobalEnablementView() EnablementView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return DeriveEnablement(m.global.Config)
+	configured := DeriveEnablement(m.global.Config)
+	return EnablementView{
+		Effective:    m.consentGate(configured),
+		Configured:   configured,
+		ConsentState: m.consent.State(),
+	}
 }
 
 // GlobalMetadataLanguage returns the server-wide preferred metadata language (the
@@ -226,7 +267,7 @@ type SupplementRef struct {
 // inherits. The UI renders an inherit/on/off control per entry; the current
 // override (if any) is read from the stored policy alongside.
 func (m *Manager) SupplementProviders(ctx context.Context, libraryID, kind string) ([]SupplementRef, error) {
-	res, err := m.resolvePolicy(libraryID)
+	res, err := m.resolvePolicyUngated(libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +297,7 @@ func (m *Manager) SupplementProviders(ctx context.Context, libraryID, kind strin
 // "" when the authoritative resolved normally. Read fresh each call (independent of
 // the pass cache), so it never depends on invalidation ordering.
 func (m *Manager) EffectiveAuthoritative(ctx context.Context, libraryID, kind string) (slug, fallbackFrom string, err error) {
-	res, err := m.resolvePolicy(libraryID)
+	res, err := m.resolvePolicyUngated(libraryID)
 	if err != nil {
 		return "", "", err
 	}
@@ -266,10 +307,16 @@ func (m *Manager) EffectiveAuthoritative(ctx context.Context, libraryID, kind st
 	return res.Config.videoAuthoritativeSlug(), res.AuthoritativeFallback, nil
 }
 
-// resolvePolicy reads a Library's policy fresh and resolves it over the current
-// global config — the shared read used by the display accessors (enablement,
-// authoritative). It never touches the pass cache.
-func (m *Manager) resolvePolicy(libraryID string) (Resolution, error) {
+// resolvePolicyUngated reads a Library's policy fresh and resolves it over the
+// current global config — the shared read used by the display accessors
+// (enablement, authoritative). It never touches the pass cache.
+//
+// UNGATED, as the name says: the Resolution it returns has NOT been through
+// consentGate, so its Enablement describes the policy, not what the server will
+// do. Every caller that reports enablement must gate it (EffectiveEnablementView
+// does). Its near-namesake resolveLibrary is the gated one — that one-letter gap
+// is how the display paths came to skip consent in the first place.
+func (m *Manager) resolvePolicyUngated(libraryID string) (Resolution, error) {
 	m.mu.Lock()
 	global := m.global
 	m.mu.Unlock()
@@ -280,7 +327,9 @@ func (m *Manager) resolvePolicy(libraryID string) (Resolution, error) {
 	return ResolveLibraryEnrichment(global, policy), nil
 }
 
-// resolveLibrary returns a Library's EFFECTIVE provider + enablement, memoized in
+// resolveLibrary is the GATED per-Library path (its ungated namesake, used only by
+// the display accessors, is resolvePolicyUngated). It returns a Library's EFFECTIVE
+// provider + enablement, memoized in
 // libCache. On a miss it reads the Library's policy, resolves it over globalCfg
 // (ResolveLibraryEnrichment), and builds the effective provider through the same
 // BuildProvider seam the global path uses — pairing it with the resolved
@@ -318,17 +367,29 @@ func (m *Manager) InvalidateLibrary(libraryID string) {
 	delete(m.libCache, libraryID)
 }
 
-// EffectiveEnablement returns a Library's effective per-kind Enablement for
+// EffectiveEnablementView returns a Library's effective per-kind Enablement for
 // DISPLAY (the API reports it so the Admin sees what a Library will enrich under
 // its policy). It reads the Library's policy FRESH each call and resolves over the
 // current globalCfg — independent of the pass cache, so it never depends on
 // invalidation ordering. Cheap: no provider is built.
-func (m *Manager) EffectiveEnablement(ctx context.Context, libraryID string) (Enablement, error) {
-	res, err := m.resolvePolicy(libraryID)
+//
+// Effective is CONSENT-GATED through the same consentGate the pass path applies in
+// resolveLibrary, so this view can never claim a Library will enrich while the
+// runtime is (correctly) making no calls. Configured is the pre-gate policy result,
+// so the screen can distinguish "this Library's policy turns it off" from
+// "configured, waiting on consent".
+func (m *Manager) EffectiveEnablementView(ctx context.Context, libraryID string) (EnablementView, error) {
+	res, err := m.resolvePolicyUngated(libraryID)
 	if err != nil {
-		return Enablement{}, err
+		return EnablementView{}, err
 	}
-	return res.Enablement, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return EnablementView{
+		Effective:    m.consentGate(res.Enablement),
+		Configured:   res.Enablement,
+		ConsentState: m.consent.State(),
+	}, nil
 }
 
 // SeedInput is the first-boot seed source, decoupled from config.Config (ADR-0006

@@ -1757,7 +1757,19 @@ export interface MetadataProvider {
 export interface MetadataProvidersView {
   providers: MetadataProvider[];
   metadataLanguage: string;
+  /** What the server will ACTUALLY enrich — the configured enablement with the
+   * ADR-0032 consent gate applied. This is the only field that may be rendered as
+   * a statement about behaviour ("Enrichment on"). */
   enablement: { video: boolean; music: boolean };
+  /** The same enablement WITHOUT the consent gate: what `enablement` becomes the
+   * moment consent is granted. Rendering this as behaviour is the bug the pair
+   * exists to prevent; it is here so the screen can distinguish "nothing
+   * configured" from "configured, waiting on consent". */
+  configuredEnablement: { video: boolean; music: boolean };
+  /** The ADR-0032 consent decision in force — it explains a configured-but-not-
+   * effective view. "unset" is a fresh install that has never been asked, and is
+   * NOT a grant. */
+  consentState: EnrichmentConsentState;
   /** Whether a completed scan enqueues a background Enrichment pass. */
   autoEnrichAfterScan: boolean;
   /** The scheduled safety-net enrich cadence, in seconds (0 disables the sweep).
@@ -1823,8 +1835,18 @@ export interface SupplementControl {
 
 export interface EnrichmentPolicy {
   enrichEnabled: boolean | null;
+  /** What "inherit" currently resolves to — CONSENT-GATED, so it reads Off while
+   * consent is withheld however the global providers are configured. */
   inheritedEnrichEnabled: boolean;
+  /** What this Library will ACTUALLY enrich: its policy resolved over the global
+   * config, with the ADR-0032 consent gate applied. */
   effective: { video: boolean; music: boolean };
+  /** The same resolution WITHOUT the consent gate — what `effective` becomes once
+   * consent is granted, so the panel can say "configured, waiting on consent"
+   * instead of a bare "will not enrich". */
+  configured: { video: boolean; music: boolean };
+  /** The ADR-0032 consent decision in force; explains an effective/configured gap. */
+  consentState: EnrichmentConsentState;
   /** The STORED metadata-language override — `null` means inherit (the key tracks
    * the global language live), so `null`-vs-value reads as inherited-vs-overridden. */
   metadataLanguage: string | null;

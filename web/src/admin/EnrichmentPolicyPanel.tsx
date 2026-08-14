@@ -40,6 +40,40 @@ function choiceOfOverride(override: boolean | null): EnrichChoice {
   return override ? "on" : "off";
 }
 
+// kindList renders a per-kind enablement as the prose fragment the hints use.
+function kindList(en: { video: boolean; music: boolean }): string {
+  return [en.video ? "video" : null, en.music ? "music" : null].filter(Boolean).join(" + ");
+}
+
+// blockedByConsent: this Library's policy and the global providers WOULD enrich it,
+// and the only thing stopping them is the ADR-0032 consent decision. It is read
+// from the server's two fields (`effective` is gated, `configured` is not) and
+// never re-derived from the policy — the panel used to promise "this library will
+// enrich" from an ungated field while the server made no calls at all.
+function blockedByConsent(policy: EnrichmentPolicy): boolean {
+  const effectiveOff = !policy.effective.video && !policy.effective.music;
+  const configuredOn = policy.configured.video || policy.configured.music;
+  return effectiveOff && configuredOn && policy.consentState !== "granted";
+}
+
+// effectiveSentence states what the Library will ACTUALLY do. Only `effective`
+// can say "will enrich"; when consent is what is holding it back, say that
+// instead of a bare "will not enrich", since the fix is one setting away and the
+// configuration is intact.
+function effectiveSentence(policy: EnrichmentPolicy): string {
+  if (policy.effective.video || policy.effective.music) {
+    return `This library will enrich (${kindList(policy.effective)}).`;
+  }
+  if (blockedByConsent(policy)) {
+    const waiting =
+      policy.consentState === "declined"
+        ? "external metadata enrichment is switched off for the whole server"
+        : "external metadata enrichment has not been allowed yet for this server";
+    return `This library is configured to enrich (${kindList(policy.configured)}), but ${waiting} — no outbound calls are made. Allow it under Settings → Metadata Providers.`;
+  }
+  return "This library will not enrich — no outbound calls are made.";
+}
+
 export default function EnrichmentPolicyPanel({ library }: { library: Library }) {
   const [policy, setPolicy] = useState<EnrichmentPolicy | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -167,15 +201,12 @@ export default function EnrichmentPolicyPanel({ library }: { library: Library })
                 </button>
               ))}
             </div>
-            <p className="field-hint" data-testid="enrich-effective">
-              {policy.effective.video || policy.effective.music
-                ? `This library will enrich (${[
-                    policy.effective.video ? "video" : null,
-                    policy.effective.music ? "music" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" + ")}).`
-                : "This library will not enrich — no outbound calls are made."}
+            <p
+              className="field-hint"
+              data-testid="enrich-effective"
+              data-consent-blocked={blockedByConsent(policy) ? "true" : undefined}
+            >
+              {effectiveSentence(policy)}
             </p>
           </div>
 

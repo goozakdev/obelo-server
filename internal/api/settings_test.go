@@ -38,9 +38,17 @@ type providersView struct {
 		Video bool `json:"video"`
 		Music bool `json:"music"`
 	} `json:"enablement"`
-	AutoEnrichAfterScan    bool `json:"autoEnrichAfterScan"`
-	EnrichIntervalSeconds  int  `json:"enrichIntervalSeconds"`
-	MusicBrainzRateLimitMs int  `json:"musicBrainzRateLimitMs"`
+	// ConfiguredEnablement is the UNGATED capability and ConsentState the ADR-0032
+	// decision — the two fields that let the screen tell "nothing configured" from
+	// "configured, waiting on consent" (issue 05).
+	ConfiguredEnablement struct {
+		Video bool `json:"video"`
+		Music bool `json:"music"`
+	} `json:"configuredEnablement"`
+	ConsentState           string `json:"consentState"`
+	AutoEnrichAfterScan    bool   `json:"autoEnrichAfterScan"`
+	EnrichIntervalSeconds  int    `json:"enrichIntervalSeconds"`
+	MusicBrainzRateLimitMs int    `json:"musicBrainzRateLimitMs"`
 }
 
 const providersPath = "/api/v1/settings/metadata-providers"

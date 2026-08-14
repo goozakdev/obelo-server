@@ -18,6 +18,10 @@ type fakeManagerStore struct {
 	// consentDeclined withholds first-run consent (ADR-0032) when true; the zero
 	// value grants it, so existing Manager tests see enrichment enabled as before.
 	consentDeclined bool
+	// consentUndecided models the FRESH-INSTALL state — the operator has not been
+	// asked yet. It is distinct from declined (both are not-granted, but only one is
+	// an answer) and it wins over consentDeclined when set.
+	consentUndecided bool
 }
 
 func (f *fakeManagerStore) MetadataProviders() ([]store.MetadataProviderRow, error) {
@@ -32,6 +36,9 @@ func (f *fakeManagerStore) LibraryEnrichmentPolicy(libraryID string) (store.Libr
 	return f.policies[libraryID], nil
 }
 func (f *fakeManagerStore) EnrichmentConsent() (store.EnrichmentConsent, error) {
+	if f.consentUndecided {
+		return store.EnrichmentConsent{}, nil // never answered — NOT a grant
+	}
 	return store.EnrichmentConsent{Decided: true, Granted: !f.consentDeclined}, nil
 }
 
@@ -172,6 +179,115 @@ func TestManagerReloadConsentGate(t *testing.T) {
 	}
 }
 
+// TestManagerDisplayViewsAreConsentGated is the unit-level core of issue 05: the
+// two DISPLAY accessors — the ones that feed the admin screens and never call a
+// provider — report the SAME gated fact the runtime uses. With a provider
+// configured and consent not granted, Effective is off (global and per-Library)
+// while Configured stays on, so a screen can say "configured, waiting on consent"
+// rather than either lying ("Enrichment on") or hiding the configuration ("off").
+// Both not-granted states are exercised: a fresh install that has never answered
+// is not a grant, and neither is a decline.
+func TestManagerDisplayViewsAreConsentGated(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		undecided bool
+		declined  bool
+		wantState string
+	}{
+		{name: "never answered", undecided: true, wantState: "unset"},
+		{name: "declined", declined: true, wantState: "declined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &fakeManagerStore{
+				rows:             []store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}},
+				lang:             "en-US",
+				consentUndecided: tc.undecided,
+				consentDeclined:  tc.declined,
+				policies:         map[string]store.LibraryEnrichmentPolicy{}, // "lib" inherits
+			}
+			svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
+			mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+				return CompositeProvider{}, DeriveEnablement(cfg)
+			}))
+			if err := mgr.Reload(context.Background()); err != nil {
+				t.Fatalf("Reload: %v", err)
+			}
+			mgr.EnablePerLibraryResolution()
+
+			gv := mgr.GlobalEnablementView()
+			if gv.Effective.Video || gv.Effective.Music {
+				t.Errorf("global effective = %+v, want all off (consent %s)", gv.Effective, tc.wantState)
+			}
+			if !gv.Configured.Video || !gv.Configured.Music {
+				t.Errorf("global configured = %+v, want video+music on (a key IS configured)", gv.Configured)
+			}
+			if gv.ConsentState != tc.wantState {
+				t.Errorf("global consent state = %q, want %q", gv.ConsentState, tc.wantState)
+			}
+
+			lv, err := mgr.EffectiveEnablementView(context.Background(), "lib")
+			if err != nil {
+				t.Fatalf("EffectiveEnablementView: %v", err)
+			}
+			if lv.Effective.Video || lv.Effective.Music {
+				t.Errorf("library effective = %+v, want all off (consent %s)", lv.Effective, tc.wantState)
+			}
+			if !lv.Configured.Video || !lv.Configured.Music {
+				t.Errorf("library configured = %+v, want video+music on (policy inherits an enabled global)", lv.Configured)
+			}
+			if lv.ConsentState != tc.wantState {
+				t.Errorf("library consent state = %q, want %q", lv.ConsentState, tc.wantState)
+			}
+
+			// The runtime agrees with what the display now says — the point of the fix is
+			// that these were the ones already right.
+			if svc.EnrichmentEnabled() || svc.EnrichmentEnabledForLibrary(context.Background(), "lib") {
+				t.Errorf("runtime enrichment enabled with consent %s, want off", tc.wantState)
+			}
+
+			// Granting consent flips BOTH views live, on the next Reload and with no
+			// restart or reconstruction — same Manager, same Service, same settings.
+			st.consentUndecided, st.consentDeclined = false, false
+			if err := mgr.Reload(context.Background()); err != nil {
+				t.Fatalf("Reload after granting consent: %v", err)
+			}
+			if gv := mgr.GlobalEnablementView(); !gv.Effective.Video || !gv.Effective.Music || gv.ConsentState != "granted" {
+				t.Errorf("global view after grant = %+v, want video+music on and granted", gv)
+			}
+			lv, err = mgr.EffectiveEnablementView(context.Background(), "lib")
+			if err != nil {
+				t.Fatalf("EffectiveEnablementView after grant: %v", err)
+			}
+			if !lv.Effective.Video || !lv.Effective.Music || lv.ConsentState != "granted" {
+				t.Errorf("library view after grant = %+v, want video+music on and granted", lv)
+			}
+		})
+	}
+}
+
+// TestManagerDisplayViewsSeparateConsentFromConfiguration pins the OTHER half of
+// the two-field shape: with consent granted but nothing configured, Configured is
+// off too. Without this, a screen could show "configured, waiting on consent" for
+// a server that has no provider at all — the same class of false statement in the
+// opposite direction.
+func TestManagerDisplayViewsSeparateConsentFromConfiguration(t *testing.T) {
+	st := &fakeManagerStore{lang: "en-US"} // no provider rows; consent granted
+	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
+	mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+		return CompositeProvider{}, DeriveEnablement(cfg)
+	}))
+	if err := mgr.Reload(context.Background()); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	v := mgr.GlobalEnablementView()
+	if v.Configured.Video || v.Configured.Music || v.Effective.Video || v.Effective.Music {
+		t.Errorf("unconfigured view = %+v, want everything off", v)
+	}
+	if v.ConsentState != "granted" {
+		t.Errorf("consent state = %q, want granted (the decision is unrelated to configuration)", v.ConsentState)
+	}
+}
+
 // TestManagerReloadRateLimit proves the MusicBrainz throttle is DB-authoritative:
 // the Manager reads it from the store on each Reload, so a changed rate limit is
 // threaded into the very next rebuild's ProviderConfig (no restart, no config
@@ -241,16 +357,16 @@ func TestManagerPerLibraryResolution(t *testing.T) {
 	mgr.EnablePerLibraryResolution()
 
 	// An un-overriding Library inherits the global enablement (video+music on).
-	if en, err := mgr.EffectiveEnablement(context.Background(), "lib-inherit"); err != nil || !en.Video || !en.Music {
-		t.Errorf("inherit library enablement = %+v (err %v), want video+music on", en, err)
+	if v, err := mgr.EffectiveEnablementView(context.Background(), "lib-inherit"); err != nil || !v.Effective.Video || !v.Effective.Music {
+		t.Errorf("inherit library enablement = %+v (err %v), want video+music on", v, err)
 	}
 	if !svc.EnrichmentEnabledForLibrary(context.Background(), "lib-inherit") {
 		t.Errorf("EnrichmentEnabledForLibrary(inherit) = false, want true")
 	}
 
 	// A switched-off Library resolves to all-off even though the server is enabled.
-	if en, err := mgr.EffectiveEnablement(context.Background(), "lib-off"); err != nil || en.Video || en.Music {
-		t.Errorf("off library enablement = %+v (err %v), want all off", en, err)
+	if v, err := mgr.EffectiveEnablementView(context.Background(), "lib-off"); err != nil || v.Effective.Video || v.Effective.Music {
+		t.Errorf("off library enablement = %+v (err %v), want all off", v, err)
 	}
 	if svc.EnrichmentEnabledForLibrary(context.Background(), "lib-off") {
 		t.Errorf("EnrichmentEnabledForLibrary(off) = true, want false (enrich_enabled=false)")
