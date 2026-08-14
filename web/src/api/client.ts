@@ -101,6 +101,8 @@ import type {
   SubtitleCandidate,
   SubtitleProvidersView,
   SubtitleTrack,
+  TailnetSettingsView,
+  UpdateTailnetInput,
   TitleDetail,
   TitleDetailRaw,
   TitlesPage,
@@ -143,6 +145,10 @@ export const EVENT_TYPES = [
   "sessionStarted",
   "nowPlaying",
   "sessionEnded",
+  // The Tailnet node's condition changed (ADR-0043) — Admin-only, and a bare
+  // nudge: it carries no payload because the settings GET is the truth. It is
+  // what makes the login link appear without a reload.
+  "tailscaleState",
 ] as const;
 
 export interface ApiClientOptions {
@@ -1564,6 +1570,72 @@ export class ApiClient {
     );
   }
 
+  // --- Admin: Tailnet remote access (ADR-0043, tailscale/01) -------------
+  //
+  // Admin scope, server-enforced. One response shape for all five routes — the
+  // persisted settings joined with the live node status — so a verb's answer
+  // already says what happened and no second request is needed. A node that
+  // fails to come up is a 200 whose status is `error` with the reason in
+  // `lastError`, NOT an HTTP error: an unreachable coordination server is the
+  // world being unavailable, not a request that failed. The refusals that ARE
+  // errors are the ones the operator can act on — 422 TAILNET_INVALID_HOSTNAME /
+  // TAILNET_INVALID_CONTROL_URL, and 503 SERVICE_UNAVAILABLE on a build with no
+  // Tailnet support linked in.
+
+  /** `GET /api/v1/settings/tailscale` (Admin) — the Tailnet settings joined with
+   * the live node status (state, MagicDNS name, addresses, key expiry, login
+   * URL, last error). This is the truth the `tailscaleState` SSE nudge sends the
+   * screen back to. A Member gets a 403. */
+  getTailnet(signal?: AbortSignal): Promise<TailnetSettingsView> {
+    return this.request<TailnetSettingsView>("/settings/tailscale", { signal });
+  }
+
+  /** `PUT /api/v1/settings/tailscale` (Admin) — a PARTIAL update (omitted =
+   * unchanged). Applied with no restart: a changed hostname re-joins under the
+   * new name. Returns the fresh view. */
+  updateTailnet(
+    input: UpdateTailnetInput,
+    signal?: AbortSignal,
+  ): Promise<TailnetSettingsView> {
+    return this.request<TailnetSettingsView>("/settings/tailscale", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/tailscale/connect` (Admin) — bring the node up (and
+   * remember that it should be up, so a restart puts it back). The interactive
+   * join settles in `needsLogin` with a link seconds later, which arrives over
+   * SSE rather than in this response. */
+  connectTailnet(signal?: AbortSignal): Promise<TailnetSettingsView> {
+    return this.request<TailnetSettingsView>("/settings/tailscale/connect", {
+      method: "POST",
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/tailscale/disconnect` (Admin) — stop the node but
+   * KEEP its identity, so reconnecting is instant and needs no re-authorization.
+   * Reversible, which is why the UI asks for no confirmation. */
+  disconnectTailnet(signal?: AbortSignal): Promise<TailnetSettingsView> {
+    return this.request<TailnetSettingsView>("/settings/tailscale/disconnect", {
+      method: "POST",
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/tailscale/forget` (Admin) — stop the node AND wipe
+   * its identity, so the next connect is a fresh join. Not reversible from here,
+   * and it cannot finish the job: the now-dead node row stays in the operator's
+   * Tailscale console for them to delete. */
+  forgetTailnet(signal?: AbortSignal): Promise<TailnetSettingsView> {
+    return this.request<TailnetSettingsView>("/settings/tailscale/forget", {
+      method: "POST",
+      signal,
+    });
+  }
+
   // --- Playback surface (issue 04) ---------------------------------------
 
   /** `POST /api/v1/titles/{id}/playback` — negotiate playback. The body carries
@@ -1844,6 +1916,10 @@ export type {
   ScanMode,
   ScanState,
   ScanStatus,
+  TailnetSettingsView,
+  TailnetState,
+  TailnetStatus,
+  UpdateTailnetInput,
   TargetedScanEntity,
   Season,
   SeasonEpisodes,

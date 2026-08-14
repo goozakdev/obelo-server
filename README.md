@@ -218,6 +218,11 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | `OBELO_METADATA_LANGUAGE`         | `en-US`   | Preferred language/region for fetched metadata.               |
 | `OBELO_ADVERTISE_IP`              | auto      | IPs to publish in the mDNS records (comma-separated).          |
 | `OBELO_MDNS_INTERFACE`            | auto      | Interface the mDNS responder listens on (e.g. `eth0`).         |
+| `OBELO_TAILSCALE_ENABLED`         | `false`   | Join a Tailnet at boot. **First boot only** — see below.       |
+| `OBELO_TAILSCALE_HOSTNAME`        | server name | MagicDNS name to join under (a single DNS label).            |
+| `OBELO_TAILSCALE_CONTROL_URL`     | Tailscale | Coordination server; set it to your own Headscale.             |
+| `OBELO_TAILSCALE_HTTPS`           | `false`   | Also serve HTTPS on the Tailnet (needs console prerequisites). |
+| `OBELO_TAILSCALE_AUTHKEY`         | —         | Pre-authorized join key for a headless first join. Never stored. |
 
 ### HTTPS
 
@@ -259,6 +264,20 @@ And about `files` mode:
 
 - **Renewals are picked up without a restart.** The certificate files are re-read when they change, so a certbot renewal takes effect on the next connection. If a renewal leaves a file half-written, the previous certificate keeps serving and the problem is logged rather than taking the listener down.
 - **A broken certificate stops the boot.** If you turn `files` mode on and the certificate is missing, unreadable, or does not match the key, the server refuses to start and says which path is wrong. That is deliberate, and it is the opposite of the `acme` behaviour above for a reason: a path that is wrong is a typo you can fix in ten seconds, and starting anyway would leave you on plain HTTP believing you had TLS. A CA being down is nobody's typo.
+
+### Remote access over a Tailnet
+
+Obelo can join your **Tailnet** as a node of its own and serve the same API and web app there, reached at a stable name like `obelo.tail1a2b.ts.net` from any device that is also on the Tailnet ([ADR-0043](./docs/adr/0043-tailnet-remote-access-via-embedded-tsnet.md)). There is no port to forward, no DNS record to keep current, no domain to buy, and nothing exposed to the open internet.
+
+The honest cost, up front: **every client device must also join the Tailnet** — Tailscale installed and signed in on the iPhone, the iPad, the Apple TV, and any laptop whose browser you use. That is a worse first run than typing an address and a better everything after. It is why this does not replace the HTTPS setup above: a household that wants to hand a URL to someone who will not install a VPN client still needs the port-forward.
+
+**It is configured from the web UI**, not from these variables: Settings → Remote access has Connect, the login link, the address, the node's state, and Disconnect / Forget. The `OBELO_TAILSCALE_*` variables above **seed the settings on first boot only** — after that the database is authoritative and they are ignored, so a value you change in the UI is not undone by a restart. Connect and disconnect take effect immediately, with no restart.
+
+**It needs the release build.** The embedded Tailscale node is compiled in only under `-tags tailscale`, which the Docker image and the release binaries carry and a plain `go build` does not — that keeps ~550 dependencies out of a development build. `GET /api/v1/server` reports `features.tailscale`, and a build without it answers the remote-access endpoints with an error that names the build rather than a confusing `404`. Nothing about the container changes for this: no extra capabilities, no `/dev/net/tun`, and it still runs as the unprivileged `obelo` user, because the node runs in userspace inside the server process.
+
+**Node keys expire — by default after 180 days**, and the symptom is "remote access stopped working" six months after you last touched the box. The expiry appears in the settings panel and in the boot log, and the log warns under 14 days. The real fix is to disable key expiry for this node in the Tailscale console; nothing in Obelo can extend it.
+
+For a first-time setup end to end, follow [docs/runbooks/remote-access-with-tailscale.md](./docs/runbooks/remote-access-with-tailscale.md).
 
 ### Running behind a reverse proxy
 

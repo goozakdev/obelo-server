@@ -40,8 +40,12 @@ type EnrichmentPolicyStore interface {
 // inherited (global) baseline the unset keys track. *enrich.Manager satisfies it;
 // the interface keeps the handler unit-testable without a live provider Manager.
 type EnrichmentPolicyResolver interface {
-	EffectiveEnablement(ctx context.Context, libraryID string) (enrich.Enablement, error)
-	GlobalEnablement() enrich.Enablement
+	// The two enablement reads are *View accessors on purpose: they carry the
+	// CONSENT-GATED effective enablement (ADR-0032) alongside the ungated configured
+	// one, so this handler never re-derives either. A plain Enablement here would be
+	// a fact with the gate silently missing — the bug these replaced.
+	EffectiveEnablementView(ctx context.Context, libraryID string) (enrich.EnablementView, error)
+	GlobalEnablementView() enrich.EnablementView
 	// GlobalMetadataLanguage is the server-wide preferred metadata language the
 	// language key inherits when unset — reported so the UI can label the inherit
 	// option with what "inherit" currently resolves to.
@@ -66,10 +70,19 @@ type EnrichmentPolicyResolver interface {
 // globally), so the UI can label the inherit option "(currently On/Off)". effective
 // is the derived per-kind enablement the Library will actually enrich under this
 // policy.
+//
+// effective and inheritedEnrichEnabled are CONSENT-GATED (ADR-0032): with consent
+// declined or unanswered they are off however the policy and providers are
+// configured, because that is what the Library will do. configured is the same
+// resolution WITHOUT the gate, and consentState says why the two differ — together
+// they let the UI say "configured, waiting on consent" instead of a bare "off"
+// (or, as it used to, "this library will enrich" while nothing was being called).
 type enrichmentPolicyResponse struct {
 	EnrichEnabled          *bool          `json:"enrichEnabled"`
 	InheritedEnrichEnabled bool           `json:"inheritedEnrichEnabled"`
 	Effective              enablementJSON `json:"effective"`
+	Configured             enablementJSON `json:"configured"`
+	ConsentState           string         `json:"consentState"`
 	// MetadataLanguage is the STORED language override (null = inherit; the UI reads
 	// null-vs-value as inherited-vs-overridden). InheritedMetadataLanguage is the
 	// global language the unset key tracks live, so the UI can label "Inherit
@@ -371,15 +384,22 @@ func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (e
 		InheritedAuthoritative: providerRef(enrich.DefaultAuthoritativeForKind(kind)),
 	}
 	if deps.PolicyResolver != nil {
-		eff, err := deps.PolicyResolver.EffectiveEnablement(ctx, id)
+		eff, err := deps.PolicyResolver.EffectiveEnablementView(ctx, id)
 		if err != nil {
 			return enrichmentPolicyResponse{}, err
 		}
-		global := deps.PolicyResolver.GlobalEnablement()
-		resp.Effective = enablementJSON{Video: eff.Video, Music: eff.Music}
+		global := deps.PolicyResolver.GlobalEnablementView()
+		// Effective is the resolver's GATED answer and configured its ungated one; both
+		// are taken as given — deriving either here is what produced the contradiction
+		// this response used to render.
+		resp.Effective = enablementJSON{Video: eff.Effective.Video, Music: eff.Effective.Music}
+		resp.Configured = enablementJSON{Video: eff.Configured.Video, Music: eff.Configured.Music}
+		resp.ConsentState = eff.ConsentState
 		// "Enrich this library" resolves on/off; inheriting it means "enrich iff the
-		// server enriches any kind" (the global baseline the unset key tracks live).
-		resp.InheritedEnrichEnabled = global.Video || global.Music
+		// server enriches any kind" (the global baseline the unset key tracks live) —
+		// from the gated Effective, so "Inherit (currently On)" cannot promise calls a
+		// withheld consent forbids.
+		resp.InheritedEnrichEnabled = global.Effective.Video || global.Effective.Music
 		resp.InheritedMetadataLanguage = deps.PolicyResolver.GlobalMetadataLanguage()
 
 		effSlug, fallbackFrom, err := deps.PolicyResolver.EffectiveAuthoritative(ctx, id, kind)

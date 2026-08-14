@@ -42,7 +42,11 @@ function policy(over: Partial<EnrichmentPolicy> = {}): EnrichmentPolicy {
   return {
     enrichEnabled: null,
     inheritedEnrichEnabled: true,
+    // effective is the server's CONSENT-GATED answer, configured the ungated one;
+    // the default fixture is a consented server, so they agree.
     effective: { video: true, music: true },
+    configured: { video: true, music: true },
+    consentState: "granted",
     metadataLanguage: null,
     inheritedMetadataLanguage: "en-US",
     authoritativeProvider: null,
@@ -112,6 +116,71 @@ describe("EnrichmentPolicyPanel", () => {
     );
     expect(screen.getByTestId("enrich-enabled-control")).toHaveTextContent("Overridden");
     expect(screen.getByTestId("enrich-effective")).toHaveTextContent(/will not enrich/);
+  });
+
+  // Consent (ADR-0032) gates the server's `effective`, and this panel's two claims
+  // — "this library will enrich" and "Inherit (currently On)" — are the ones that
+  // used to contradict it. The negation of the first is very nearly the sentence
+  // the consent control shows at the same moment.
+  it("never says the library will enrich while consent is withheld — it says what is waiting", async () => {
+    for (const [consentState, wanted] of [
+      ["unset", /has not been allowed yet/i],
+      ["declined", /switched off for the whole server/i],
+    ] as const) {
+      getEnrichmentPolicy.mockResolvedValue(
+        policy({
+          // The policy inherits, the providers are configured — only consent is off.
+          effective: { video: false, music: false },
+          configured: { video: true, music: true },
+          inheritedEnrichEnabled: false,
+          consentState,
+        }),
+      );
+      const { unmount } = render(<EnrichmentPolicyPanel library={lib()} />);
+
+      const hint = await screen.findByTestId("enrich-effective");
+      expect(hint).not.toHaveTextContent(/will enrich/);
+      expect(hint).toHaveTextContent(/configured to enrich \(video \+ music\)/);
+      expect(hint).toHaveTextContent(wanted);
+      expect(hint).toHaveTextContent(/no outbound calls are made/);
+      expect(hint).toHaveAttribute("data-consent-blocked", "true");
+      // …and the inherit label follows the same gated fact, so it cannot offer an
+      // "Inherit (currently On)" that would make no calls.
+      expect(screen.getByTestId("enrich-enabled-inherit")).toHaveTextContent(
+        /Inherit \(currently Off\)/,
+      );
+      unmount();
+    }
+  });
+
+  // The panel holds no cached derivation of its own: a consent grant landing
+  // between two server views flips the claim on the next one, with no reload.
+  it("takes its claim from the server's fresh view, so a grant in between flips it", async () => {
+    const user = userEvent.setup();
+    getEnrichmentPolicy.mockResolvedValue(
+      policy({
+        effective: { video: false, music: false },
+        configured: { video: true, music: true },
+        inheritedEnrichEnabled: false,
+        consentState: "unset",
+      }),
+    );
+    // The server returns the fresh view on the next save; consent having been
+    // granted elsewhere in the meantime, the same policy now resolves ON.
+    updateEnrichmentPolicy.mockResolvedValue(policy({ enrichEnabled: null }));
+    render(<EnrichmentPolicyPanel library={lib()} />);
+
+    expect(await screen.findByTestId("enrich-effective")).toHaveTextContent(
+      /configured to enrich/,
+    );
+    await user.click(screen.getByTestId("enrich-enabled-on"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("enrich-effective")).toHaveTextContent(
+        /will enrich \(video \+ music\)/,
+      ),
+    );
+    expect(screen.getByTestId("enrich-effective")).not.toHaveAttribute("data-consent-blocked");
   });
 
   it("shows the metadata-language control inheriting by default with the global as placeholder", async () => {

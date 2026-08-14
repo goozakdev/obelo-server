@@ -11,7 +11,17 @@ import type { EnrichmentConsentState } from "../api/types";
 //
 // Rendered as a card at the top of the Metadata Providers screen.
 
-export default function EnrichmentConsentControl() {
+export default function EnrichmentConsentControl({
+  // onDecision fires after a saved decision. The enclosing screen re-reads the
+  // provider settings with it, because consent gates the per-kind enablement that
+  // screen renders (ADR-0032) — without it, toggling this switch would leave
+  // "Enrichment on" sitting a few centimetres below "no external metadata calls
+  // are made" until a reload, which is the contradiction this control exists to
+  // prevent.
+  onDecision,
+}: {
+  onDecision?: (state: EnrichmentConsentState) => void;
+} = {}) {
   const [state, setState] = useState<EnrichmentConsentState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +41,7 @@ export default function EnrichmentConsentControl() {
     try {
       const c = await apiClient.setEnrichmentConsent(granted);
       setState(c.state);
+      onDecision?.(c.state);
     } catch {
       setError("Couldn't save the change. Please try again.");
     } finally {

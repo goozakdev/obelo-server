@@ -47,7 +47,10 @@ function policy(over: Partial<EnrichmentPolicy> = {}): EnrichmentPolicy {
   return {
     enrichEnabled: null,
     inheritedEnrichEnabled: true,
+    // effective is consent-gated, configured is not; a consented server agrees.
     effective: { video: true, music: true },
+    configured: { video: true, music: true },
+    consentState: "granted",
     metadataLanguage: null,
     inheritedMetadataLanguage: "en-US",
     authoritativeProvider: null,

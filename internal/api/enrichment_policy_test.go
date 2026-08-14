@@ -24,6 +24,14 @@ type enrichmentPolicyView struct {
 		Video bool `json:"video"`
 		Music bool `json:"music"`
 	} `json:"effective"`
+	// Configured is the UNGATED resolution and ConsentState the ADR-0032 decision
+	// (issue 05): effective is what the Library WILL do, configured is what its
+	// policy + the providers allow, and they differ exactly when consent is withheld.
+	Configured struct {
+		Video bool `json:"video"`
+		Music bool `json:"music"`
+	} `json:"configured"`
+	ConsentState              string  `json:"consentState"`
 	MetadataLanguage          *string `json:"metadataLanguage"`
 	InheritedMetadataLanguage string  `json:"inheritedMetadataLanguage"`
 	AuthoritativeProvider     *string `json:"authoritativeProvider"`

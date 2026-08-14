@@ -35,7 +35,7 @@ RUN npm run build
 # Stage 2 — build: compile the Go binary for linux/amd64 with the embedded SPA.
 # Runs on the native build platform and cross-compiles (pure Go, CGO disabled).
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Module deps first (cached until go.mod/go.sum change).
@@ -67,11 +67,22 @@ ARG OBELO_ROTATION_URL=""
 
 # Static amd64 binary. -trimpath + -ldflags "-s -w" shrink it; no CGO needed. The
 # -X flags inject the resolved default credentials (empty unless the args are set).
+#
+# `-tags tailscale` (ADR-0043) links the embedded Tailnet node, so the SHIPPED
+# image can join the operator's Tailnet; a plain `go build` cannot, and that is
+# deliberate. Nothing else about this image changes for it, and that is the point
+# of choosing `tsnet` over an external daemon:
+#
+#   NO new capabilities. NO /dev/net/tun. NO NET_ADMIN. `USER obelo` stays.
+#
+# The node runs userspace WireGuard over a gVisor network stack inside the server
+# process, which needs none of those. If a future change appears to need any of
+# them, the approach is wrong — not this Dockerfile.
 RUN CONFIG_PKG=github.com/marioquake/obelo-server/internal/config; \
     TMDB_OBF=$(printf %s "$OBELO_BOOTSTRAP_TMDB_KEY" | base64 | tr -d '\n'); \
     FANART_OBF=$(printf %s "$OBELO_BOOTSTRAP_FANART_KEY" | base64 | tr -d '\n'); \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w \
+    go build -trimpath -tags tailscale -ldflags="-s -w \
       -X ${CONFIG_PKG}.bootstrapTMDBKey=${TMDB_OBF} \
       -X ${CONFIG_PKG}.bootstrapFanartKey=${FANART_OBF} \
       -X ${CONFIG_PKG}.kAppEncKey=${OBELO_APP_ENC_KEY} \
