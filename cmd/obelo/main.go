@@ -22,6 +22,7 @@ import (
 	"github.com/marioquake/obelo-server/internal/app"
 	"github.com/marioquake/obelo-server/internal/config"
 	"github.com/marioquake/obelo-server/internal/discovery"
+	"github.com/marioquake/obelo-server/internal/tailnet"
 )
 
 func main() {
@@ -44,7 +45,17 @@ func run() error {
 		return err
 	}
 
-	application, err := app.New(cfg)
+	// The Tailnet node (ADR-0043) is constructed HERE rather than inside app.New,
+	// for the same reason the mDNS advertiser is: this is the layer that owns
+	// listeners and the network, and app.New is also the test harness's entry point.
+	// A harness that silently built a real node would have every test in the suite
+	// one enabled setting away from trying to join somebody's Tailnet.
+	//
+	// tailnet.NewNode is defined in both builds. Without `-tags tailscale` it returns
+	// a node that answers every operation with an error naming the build, so the
+	// wiring below is identical in the two variants and the settings screen can
+	// explain the situation instead of 404ing at it.
+	application, err := app.New(cfg, app.WithTailnet(tailnet.NewNode()))
 	if err != nil {
 		return err
 	}
@@ -80,10 +91,32 @@ func run() error {
 	// two URLs that carry a credential — the stream token in
 	// /stream/{streamToken}/… and the ?token= on the direct-file download — because
 	// a request logger is the most likely way either reaches a file on disk.
-	servers, err := newServers(cfg, api.LogRequests(application.Handler), application.Events.Close)
+	handler := api.LogRequests(application.Handler)
+	servers, err := newServers(cfg, handler, application.Events.Close)
 	if err != nil {
 		return err
 	}
+
+	// The third listener (ADR-0043), and the only one whose lifetime is shorter than
+	// this process's: it binds tailnet :80 whenever the node is up and drops it when
+	// the node goes away, driven by the state machine's transitions rather than by a
+	// restart. It binds tailnet :443 as well when the operator has opted into HTTPS,
+	// and a certificate it cannot get costs that listener and nothing else. With the
+	// feature off — the default — it reconciles once, finds a stopped node, and parks
+	// on a channel. See tailnet.go for why stopping it at runtime and stopping it at
+	// shutdown are deliberately different calls, and tailnet_tls.go for the failure
+	// posture of the HTTPS half.
+	tailnetSrv := newTailnetListener(application.Tailnet(), cfg, handler, application.Events.Close)
+	application.Tailnet().Subscribe(tailnetSrv.Wake)
+	tailnetSrv.start()
+	// Belt and braces for the paths that do not go through the signal handler (a
+	// listener failing at boot returns from run() directly): Shutdown is idempotent,
+	// so the graceful path below still owns the real drain.
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = tailnetSrv.Shutdown(ctx)
+	}()
 
 	// Serve in the background so we can react to OS signals for graceful stop.
 	// The channel is buffered per server so that a second listener failing after
@@ -114,7 +147,7 @@ func run() error {
 		log.Printf("obelo: shutting down")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return shutdownAll(ctx, servers)
+		return shutdownAll(ctx, servers, tailnetSrv)
 	}
 }
 
@@ -204,16 +237,35 @@ func serve(srv *http.Server) error {
 	return srv.ListenAndServe()
 }
 
+// shutdownable is anything run() has to drain: the two (or three) http.Servers
+// and the Tailnet listener supervisor, which is not an http.Server because it
+// wraps one that may not exist yet, may exist later, and must be stopped in a way
+// that does not run its close hook (see tailnet.go).
+type shutdownable interface {
+	Shutdown(ctx context.Context) error
+}
+
 // shutdownAll gracefully stops every listener and joins whatever they report.
 //
 // Concurrently, not in sequence: the caller gives all of this one 10s budget, so
 // draining the listeners one after another would hand the second whatever the
 // first left over — and the slow case (a client mid-download) is precisely when
-// both are busy at once.
-func shutdownAll(ctx context.Context, servers []*http.Server) error {
-	errs := make([]error, len(servers))
+// both are busy at once. With the Tailnet listener that is three, and a third
+// share of one budget is still the right shape.
+//
+// extra is variadic because the Tailnet listener is optional in exactly the way
+// the HTTPS one is not: it is a supervisor rather than a server, and the tests
+// that predate it call this with servers alone.
+func shutdownAll(ctx context.Context, servers []*http.Server, extra ...shutdownable) error {
+	all := make([]shutdownable, 0, len(servers)+len(extra))
+	for _, srv := range servers {
+		all = append(all, srv)
+	}
+	all = append(all, extra...)
+
+	errs := make([]error, len(all))
 	var wg sync.WaitGroup
-	for i, srv := range servers {
+	for i, srv := range all {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

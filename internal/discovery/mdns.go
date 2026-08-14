@@ -461,6 +461,27 @@ func osHostname() string {
 // because their hostname is already "something.local"; Linux hosts do not, which
 // is one more reason this used to work on a Mac and not on a server.
 func localHostName(raw string) string {
+	name := DNSLabel(raw)
+	if name == "" {
+		name = fallbackHost
+	}
+	return name + ".local."
+}
+
+// DNSLabel reduces an arbitrary operator-supplied name to a single legal DNS
+// label: the first dotted component, with every character that is not a letter,
+// digit, or hyphen replaced by a hyphen, stripped of leading/trailing hyphens and
+// capped at the 63-octet label limit. It returns "" when nothing legal survives —
+// the CALLER supplies the fallback, because two callers that want the same
+// sanitizing rule are not obliged to want the same replacement name.
+//
+// It is exported for the Tailnet node's MagicDNS hostname (ADR-0043), which is
+// the same problem this function already solved for the `.local` name: an
+// operator-typed server name becoming a DNS label. A second, subtly different
+// copy of this rule is precisely how the two names drift apart — and the symptom
+// is an operator who corrected their server's name in one place and is now
+// debugging why the house reaches it under two spellings.
+func DNSLabel(raw string) string {
 	// Keep only the first label: "nuc.lan" and "nuc.local" are both the host "nuc"
 	// as far as the link is concerned, and re-appending .local to an existing
 	// suffix would publish "nuc.local.local.".
@@ -483,10 +504,7 @@ func localHostName(raw string) string {
 	if len(name) > 63 {
 		name = strings.TrimRight(name[:63], "-")
 	}
-	if name == "" {
-		name = fallbackHost
-	}
-	return name + ".local."
+	return name
 }
 
 // portFrom extracts the port from a bind address. ":8080" and "0.0.0.0:8099" both
