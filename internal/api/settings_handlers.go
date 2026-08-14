@@ -70,10 +70,20 @@ type enablementJSON struct {
 
 // providersResponse is the GET/PUT body: the joined provider list, the global
 // language, and the derived per-kind enablement summary.
+//
+// enablement is CONSENT-GATED (ADR-0032) — it is the running server's own answer,
+// read from the provider Manager, so it reports off whenever consent is declined
+// or unanswered no matter what the provider rows say. configuredEnablement is the
+// ungated capability (what enablement becomes the instant consent is granted) and
+// consentState says which of the three decisions is in force, so the screen can
+// render "configured, waiting on consent" rather than a bare "off" — or, as it
+// used to, "Enrichment on" while the server was correctly making no calls.
 type providersResponse struct {
-	Providers        []providerJSON `json:"providers"`
-	MetadataLanguage string         `json:"metadataLanguage"`
-	Enablement       enablementJSON `json:"enablement"`
+	Providers            []providerJSON `json:"providers"`
+	MetadataLanguage     string         `json:"metadataLanguage"`
+	Enablement           enablementJSON `json:"enablement"`
+	ConfiguredEnablement enablementJSON `json:"configuredEnablement"`
+	ConsentState         string         `json:"consentState"`
 	// Server-wide Enrichment behavior knobs (enrichment-runtime-settings), flat
 	// siblings of metadataLanguage. autoEnrichAfterScan toggles the post-scan
 	// background pass; enrichIntervalSeconds is the scheduled-sweep cadence (0 =
@@ -522,9 +532,12 @@ func enrichmentConsentJSON(c store.EnrichmentConsent) enrichmentConsentResponse 
 // --- Shared view builder ----------------------------------------------------
 
 // buildProvidersResponse joins the static registry with the current DB settings
-// into the masked GET/PUT response, and derives the per-kind enablement summary
-// the same way the running Service does (via the builder), so the screen reflects
-// what enrichment will actually do.
+// into the masked GET/PUT response, and takes the per-kind enablement summary FROM
+// the running provider Manager, so the screen reflects what enrichment will
+// actually do — including the ADR-0032 consent gate. It deliberately does not
+// derive enablement from the rows it reads: that second derivation is exactly how
+// this response came to report "Enrichment on" for a configured server whose
+// consent was declined or never answered.
 func buildProvidersResponse(deps Deps) (providersResponse, error) {
 	rows, err := deps.Providers.MetadataProviders()
 	if err != nil {
@@ -576,16 +589,17 @@ func buildProvidersResponse(deps Deps) (providersResponse, error) {
 		})
 	}
 
-	// Derive the enablement summary through the same mapping the manager uses, so
-	// the API view matches the running server exactly — including the DB-sourced
-	// MusicBrainz throttle (read above), so the composed ProviderConfig is identical
-	// to what Manager.Reload builds.
-	fixed := enrich.FixedProviderInputs{
-		MusicBrainzRateLimit: time.Duration(behavior.RateLimitMs()) * time.Millisecond,
+	// The enablement summary is the Manager's, not ours: it is the snapshot the
+	// Service is running with (every write path Reloads before building this
+	// response), gate and all. With no Manager wired there is no running provider to
+	// describe, so the honest report is all-off with the consent decision unread —
+	// never a locally re-derived "on".
+	if deps.ProviderManager != nil {
+		view := deps.ProviderManager.GlobalEnablementView()
+		out.Enablement = enablementJSON{Video: view.Effective.Video, Music: view.Effective.Music}
+		out.ConfiguredEnablement = enablementJSON{Video: view.Configured.Video, Music: view.Configured.Music}
+		out.ConsentState = view.ConsentState
 	}
-	cfg := enrich.SettingsToProviderConfig(rows, lang, fixed)
-	enablement := enrich.DeriveEnablement(cfg)
-	out.Enablement = enablementJSON{Video: enablement.Video, Music: enablement.Music}
 	return out, nil
 }
 

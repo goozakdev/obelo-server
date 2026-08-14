@@ -3214,6 +3214,15 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
   background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
+/* Configured but held off by the consent decision (ADR-0032): amber, the standing-
+   caution colour — nothing has failed and the sources are set up, one switch above
+   is what stops the calls. Deliberately NOT the enabled green (it is off) and not
+   error red (nothing is broken). */
+.provider-kind-status[data-consent-blocked="true"] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
 
 .provider-list {
   list-style: none;
