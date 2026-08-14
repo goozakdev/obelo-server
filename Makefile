@@ -44,7 +44,7 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
            -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
-.PHONY: all build build-release web go-build go-build-release keytool run test test-go test-go-tailscale test-e2e check check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free fmt clean
+.PHONY: all build build-release web go-build go-build-release keytool run test test-go test-go-tailscale test-web test-e2e check check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
 
 all: build
 
@@ -84,8 +84,9 @@ keytool:
 run: build
 	$(BIN)
 
-## test: the whole suite — Go tests then the Playwright E2E (which builds+boots the binary).
-test: test-go test-e2e
+## test: the whole suite — Go tests, the web component suite, then the Playwright
+## E2E (which builds+boots the binary).
+test: test-go test-web test-e2e
 
 ## test-go: Go unit/integration tests (uses the committed placeholder bundle).
 test-go:
@@ -95,6 +96,10 @@ test-go:
 ## half of the matrix, and the variant that actually ships (ADR-0043).
 test-go-tailscale:
 	$(MAKE) test-go TAGS="$(RELEASE_TAGS)"
+
+## test-web: the vitest component suite. An alias for check-web (below), which is
+## the single implementation, so the gate and the developer-facing name cannot drift.
+test-web: check-web
 
 ## test-e2e: Playwright browser smoke (builds the frontend + real binary, boots it).
 test-e2e:
@@ -115,7 +120,11 @@ test-e2e:
 ## automated side reported success throughout. If only one variant is exercised
 ## here, it will be the one users do not run: the shipped Docker image carries the
 ## tag, and a plain `go test ./...` does not.
-check: check-fmt vet vet-tailscale check-placeholder check-credentials-free test-go test-go-tailscale
+##
+## IT ALSO RUNS THE WEB SUITE (check-web), as of 2026-08-14. It did not before, and
+## that was the same mistake in a third place: 775 vitest tests that ran only when a
+## human remembered to. See check-web below for why it is placed where it is.
+check: check-fmt vet vet-tailscale check-placeholder check-credentials-free check-web test-go test-go-tailscale
 
 ## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.
 ## This exists because nothing enforced formatting and it silently drifted to
@@ -176,6 +185,48 @@ check-credentials-free:
 	@if grep -nE '(bootstrapTMDBKey|bootstrapFanartKey|kAppEncKey)[[:space:]]+string[[:space:]]*=[[:space:]]*"[^"]' internal/config/bootstrap.go; then \
 	  echo "ERROR: a bundled-credential var has a non-empty literal in source (ADR-0032)"; exit 1; \
 	else echo "ok: bundled-credential vars are empty in source"; fi
+
+## check-web: run the web component suite (vitest, ~775 tests) as part of the gate.
+##
+## Until 2026-08-14 NOTHING automated ran this suite: there is no CI in this repo,
+## and `check` ran the Go suite twice while the TypeScript half was guarded not at
+## all. A test there executed only when a human typed `npm test`, which is how a
+## flake failed twice and left no evidence of WHICH test failed
+## (.scratch/web-app/issues/08-...).
+##
+## It sits AFTER the static guards and BEFORE the Go suite on purpose: ~7s of
+## typecheck+vitest fails faster than ~4min of `go test` run twice, so a broken web
+## test arrives while you are still looking at the terminal. Same "cheap guards
+## first" rule the rest of this target list follows. Measured: `make check-web` is
+## 7.2s, and a cold `make check` went 4:17 -> ~4:20 by adding it.
+##
+## It runs `npm run typecheck` as well, and that is a SECOND unwired guard found
+## while fixing the first — drop this one line if you disagree, nothing else
+## depends on it. The script was defined in package.json and invoked by nothing:
+## vitest strips types with esbuild and never typechecks, so a type error passes
+## all 775 tests and surfaces only at `make web`/`make build` — release time. That
+## is once again "two guards, only the release side automated", which is the exact
+## shape CLAUDE.md records. It costs ~4s and is green today.
+##
+## A failing run names the failing test twice over — once on stdout after the
+## summary, once in web/test-results/vitest-last-run.txt, which survives the
+## terminal. See web/vitest-failure-log.ts. There is deliberately no vitest
+## `retry`: a retried flake would make THIS TARGET REPORT SUCCESS, which is the
+## precise failure this repo already paid for once (CLAUDE.md, "Build artifacts").
+##
+## The missing-node_modules case FAILS rather than skipping, for the same reason:
+## a guard that passes because it did not run is worse than no guard, since it
+## reports green. `npm ci` is not run automatically — it is a network operation
+## and a pre-commit gate should not silently mutate the toolchain.
+check-web:
+	@[ -d $(WEB_DIR)/node_modules ] || { \
+	  echo "ERROR: $(WEB_DIR)/node_modules is missing, so the web suite cannot run."; \
+	  echo "       This FAILS rather than skipping — a guard that passes without"; \
+	  echo "       running is exactly the shape CLAUDE.md records as having rotted."; \
+	  echo "       Install the toolchain once with:  cd $(WEB_DIR) && npm ci"; \
+	  exit 1; }
+	cd $(WEB_DIR) && npm run typecheck
+	cd $(WEB_DIR) && npm test
 
 ## fmt: gofmt the Go tree.
 fmt:

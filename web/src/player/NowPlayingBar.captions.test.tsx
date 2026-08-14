@@ -219,7 +219,25 @@ describe("NowPlayingBar — captions menu", () => {
     seedAndRender([entryFromTitle(movieSummary("t1", "Sub Movie"))]);
     const btn = await screen.findByTestId("now-playing-captions");
     // The forced track is selected on load — the button reads active.
-    expect(btn).toHaveAttribute("aria-pressed", "true");
+    //
+    // This waits, and the wait is load-bearing rather than cosmetic. The button is
+    // rendered by the commit that first sets status="ready", and in THAT commit
+    // selectedSubId is still null: the forced track is chosen by a passive effect
+    // that runs after the commit, so there is necessarily one paint where the
+    // button exists reading aria-pressed="false". findByTestId resolves on the
+    // element EXISTING, which is that first commit — it does not wait for the
+    // effect. RTL's asyncWrapper turns the act environment off for the duration of
+    // a findBy/waitFor and then drains with a single setTimeout(0), so a bare
+    // synchronous assertion here is betting on that drain beating React's
+    // scheduler, which is a race it loses occasionally under machine load. That is
+    // the flake recorded in issue 08 — caught 2026-08-14 failing exactly here with
+    // aria-pressed="false", 15ms in.
+    //
+    // This is NOT a loosened assertion: the assertion is unchanged, and if the
+    // forced track were never auto-displayed, waitFor would time out and fail. The
+    // sibling test above ("burns in an image track…") already waits for this same
+    // attribute for the same reason.
+    await waitFor(() => expect(btn).toHaveAttribute("aria-pressed", "true"));
     await act(async () => {
       fireEvent.click(btn);
     });

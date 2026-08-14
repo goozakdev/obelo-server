@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { FailureLogReporter } from "./vitest-failure-log";
 
 // Vite build config for the SPA.
 //
@@ -42,5 +43,18 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     css: false,
+    // The default reporter for humans watching, plus FailureLogReporter, which
+    // writes test-results/vitest-last-run.txt every run. That file is the whole
+    // point: this suite failed twice with `1 failed | 774 passed` and the name of
+    // the failing test was lost both times, because the output was captured with
+    // a summary-only grep. Now the run names itself whether or not anyone thought
+    // to capture stdout. See vitest-failure-log.ts and
+    // .scratch/web-app/issues/08-an-unidentified-flaky-web-test-and-a-suite-nothing-runs.md.
+    //
+    // NOTE the deliberate absence of `retry`. Retrying would convert a flake into
+    // a green run, and `make check` going green while a test is broken is the
+    // exact failure mode CLAUDE.md's "Build artifacts" scar records. A flake has
+    // to fail the gate; the reporter is what makes it cheap to diagnose when it does.
+    reporters: ["default", new FailureLogReporter()],
   },
 });
