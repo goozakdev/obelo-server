@@ -300,31 +300,77 @@ body {
   font-size: 0.9rem;
 }
 
-.auth-submit {
-  margin-top: 0.3rem;
-  padding: 0.65rem 1rem;
-  border: none;
+/* --- Buttons -------------------------------------------------------------- */
+/* One geometry, three intents, so an action reads as a button wherever it lands
+   and a row of them lines up: `.auth-submit` (filled accent — the primary
+   action, and the name this codebase already carries on ~30 call sites),
+   `.button-secondary` (outlined neutral — the safe way out of a dialog, or a
+   reversible action sitting beside a destructive one), and `.button-danger`
+   (filled red — destructive). A destructive action especially must not be bare
+   text with a red wash behind it: that reads as a rendering accident rather
+   than a deliberate button. */
+.auth-submit,
+.button-secondary,
+.button-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  /* 0.6rem + the 1px border ≈ the 0.65rem this button used to pad by. */
+  padding: 0.6rem 1rem;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--accent-ink);
+  font: inherit;
   font-size: 1rem;
   font-weight: 650;
+  line-height: 1.25;
+  text-decoration: none;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.auth-submit {
+  margin-top: 0.3rem;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 .auth-submit:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-.auth-submit:disabled {
-  opacity: 0.6;
-  cursor: progress;
+/* Neutral companion to the primary button: a filled surface with a hairline so
+   it still reads as a control, without competing with the accent next to it. */
+.button-secondary {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.button-secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--text-dim);
 }
 
-/* Danger variant of the primary button: same padded/rounded shape as
-   `.auth-submit`, but red — used for the destructive "Replace" action. */
+/* Danger button. `.auth-submit-danger` is the same thing spelled as a modifier
+   on the primary button (the destructive "Replace" action). */
+.button-danger,
 .auth-submit-danger {
-  background: var(--danger, #b3261e);
+  background: var(--danger);
+  border-color: var(--danger);
   color: #fff;
+}
+.button-danger:hover:not(:disabled),
+.auth-submit-danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.auth-submit:disabled,
+.button-secondary:disabled,
+.button-danger:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 /* --- Authed nav (Home/Admin header). -------------------------------------- */
@@ -3651,14 +3697,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   color: var(--danger, #b3261e);
   opacity: 0.95;
 }
-.nav-link-danger {
-  color: #fff;
-  background: var(--danger, #b3261e);
-  border-color: var(--danger, #b3261e);
-}
-.nav-link-danger:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
 .enrichment-override-picker .field {
   flex-direction: row;
   align-items: center;
@@ -4337,6 +4375,11 @@ textarea.metadata-input {
   gap: 0.75rem;
   flex-wrap: wrap;
   margin-top: 0.25rem;
+}
+/* `.auth-submit` carries a form-submit's top margin; here it sits in a row of
+   peer buttons, so drop it or Connect rides low against Forget. */
+.tailnet-actions .auth-submit {
+  margin-top: 0;
 }
 
 .tailnet-settings {

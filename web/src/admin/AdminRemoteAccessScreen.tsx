@@ -357,7 +357,7 @@ export default function AdminRemoteAccessScreen() {
             // instant to undo (the node keeps its identity), and a dialog on a
             // reversible action teaches people to dismiss dialogs.
             <button
-              className="nav-link"
+              className="button-secondary"
               type="button"
               data-testid="tailnet-disconnect"
               onClick={() =>
@@ -369,7 +369,7 @@ export default function AdminRemoteAccessScreen() {
             </button>
           )}
           <button
-            className="nav-link nav-link-danger"
+            className="button-danger"
             type="button"
             data-testid="tailnet-forget"
             onClick={() => setConfirmForget(true)}
