@@ -68,6 +68,70 @@ export function EditIcon({ className }: IconProps) {
   );
 }
 
+/** Trash can — "Delete". Same artwork as the queue's per-entry remove glyph. */
+export function TrashIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <g fill="currentColor">
+        <path d="M 67.692 90 H 22.308 c -3.042 0 -5.518 -2.476 -5.518 -5.518 v -61 c 0 -1.104 0.896 -2 2 -2 h 52.42 c 1.104 0 2 0.896 2 2 v 61 C 73.21 87.524 70.734 90 67.692 90 z M 20.79 25.482 v 59 c 0 0.837 0.681 1.518 1.518 1.518 h 45.385 c 0.837 0 1.518 -0.681 1.518 -1.518 v -59 H 20.79 z" />
+        <path d="M 73.196 25.482 H 16.804 c -3.042 0 -5.518 -2.475 -5.518 -5.518 v -4.335 c 0 -3.042 2.475 -5.518 5.518 -5.518 h 56.393 c 3.042 0 5.518 2.475 5.518 5.518 v 4.335 C 78.714 23.007 76.238 25.482 73.196 25.482 z M 16.804 14.112 c -0.837 0 -1.518 0.681 -1.518 1.518 v 4.335 c 0 0.837 0.681 1.518 1.518 1.518 h 56.393 c 0.837 0 1.518 -0.681 1.518 -1.518 v -4.335 c 0 -0.837 -0.681 -1.518 -1.518 -1.518 H 16.804 z" />
+        <path d="M 57.197 14.112 H 32.803 c -1.104 0 -2 -0.896 -2 -2 V 5.518 C 30.803 2.476 33.278 0 36.321 0 h 17.358 c 3.043 0 5.519 2.476 5.519 5.518 v 6.594 C 59.197 13.216 58.302 14.112 57.197 14.112 z M 34.803 10.112 h 20.395 V 5.518 C 55.197 4.681 54.516 4 53.679 4 H 36.321 c -0.837 0 -1.518 0.681 -1.518 1.518 V 10.112 z" />
+        <path d="M 45 78.624 c -1.104 0 -2 -0.896 -2 -2 V 34.856 c 0 -1.104 0.896 -2 2 -2 s 2 0.896 2 2 v 41.768 C 47 77.729 46.104 78.624 45 78.624 z" />
+        <path d="M 58.222 78.624 c -1.104 0 -2 -0.896 -2 -2 V 34.856 c 0 -1.104 0.896 -2 2 -2 s 2 0.896 2 2 v 41.768 C 60.222 77.729 59.326 78.624 58.222 78.624 z" />
+        <path d="M 31.779 78.624 c -1.104 0 -2 -0.896 -2 -2 V 34.856 c 0 -1.104 0.896 -2 2 -2 s 2 0.896 2 2 v 41.768 C 33.779 77.729 32.883 78.624 31.779 78.624 z" />
+      </g>
+    </Svg>
+  );
+}
+
+// The two admin-row action glyphs below are drawn on a plain 24×24 grid as
+// strokes, not on the 90-unit filled artwork grid the icons above share — a
+// hairline wrench and tick stay legible at the 1em size a row button renders at,
+// where filled silhouettes turn to mud.
+function Svg24({ children, className }: IconProps & { children: React.ReactNode }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="presentation"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+/** Wrench — "Fix" (an identity or a metadata match). */
+export function WrenchIcon({ className }: IconProps) {
+  return (
+    <Svg24 className={className}>
+      {/* Head: a ring left open across the top-right. The mouth is deliberately
+          wide (~100°) — narrower gaps read as a magnifying glass once the icon
+          is down at row size. */}
+      <path d="M14.9 2.6 A5.2 5.2 0 1 0 21.4 9" />
+      {/* Handle, running from the head down to the bottom-left corner. */}
+      <path d="M12.8 11.2 L4.6 19.4" />
+    </Svg24>
+  );
+}
+
+/** Tick — "Mark reviewed". */
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <Svg24 className={className}>
+      <path d="M4.5 12.8 L9.5 17.8 L19.5 6.5" />
+    </Svg24>
+  );
+}
+
 /** Three vertical dots — the overflow menu. */
 export function MoreIcon({ className }: IconProps) {
   return (
