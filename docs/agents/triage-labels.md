@@ -9,7 +9,10 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 | `ready-for-agent`          | `ready-for-agent`            | Fully specified, ready for an AFK agent  |
 | `ready-for-human`          | `ready-for-human`            | Requires human implementation            |
 | `wontfix`                  | `wontfix`                    | Will not be actioned                     |
+| —                          | `done`                       | Landed; no further action                |
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), write the corresponding `Status:` string from this table.
+
+`done` is local to this repo and has no counterpart in the skill vocabulary, because every role above is a *pre-implementation* triage state and none of them can say "this shipped". A skill will therefore never ask for it — but without it, a landed issue has to keep wearing the label it had while it was still work, which reads as a backlog that never drains. Set it when the work is merged.
 
 Edit the right-hand column to match whatever vocabulary you actually use.

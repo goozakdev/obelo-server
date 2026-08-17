@@ -1,12 +1,5 @@
 # Runbook: reach your server from anywhere with Tailscale
 
-> **STATUS: NOT BUILT YET.** This describes the feature decided in
-> [ADR-0043](../adr/0043-tailnet-remote-access-via-embedded-tsnet.md) and specified in
-> `.scratch/tailscale/PRD.md`, written alongside the decision so the operator-facing shape was
-> argued before the code. **Nothing below works today.** Delete this banner when phases 1–4 land,
-> and check every step against what actually shipped rather than trusting this file — ADR-0034
-> records exactly how much damage a doc that reads like a kept promise can do.
-
 **When:** you want to watch your library from outside the house and you would rather not forward a
 port, buy a domain, run dynamic DNS, or expose the server to the internet at all. Governing
 decision: [ADR-0043](../adr/0043-tailnet-remote-access-via-embedded-tsnet.md).
