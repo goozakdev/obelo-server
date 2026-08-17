@@ -12,12 +12,15 @@ import type {
 } from "../api/types";
 import { useAsync } from "../browse/useAsync";
 import { useNeedsReview } from "./useNeedsReview";
+import AdminListPanel from "./AdminListPanel";
+import { CheckIcon, WrenchIcon } from "../browse/ActionIcons";
 import FixMatchForm, { folderOf } from "./FixMatchForm";
 import EnrichmentMatchForm from "./EnrichmentMatchForm";
 
 // The admin attention surfaces (issue 07), behind RequireAdmin (App.tsx) and
-// still server-enforced. Three lists, all scoped to one Library the Admin picks
-// from a selector (these endpoints are per-library):
+// still server-enforced. Each list is an AdminListPanel — the shared header bar +
+// framed body every Admin tab wears — titled and counted, all scoped to one
+// Library the Admin picks from a selector (these endpoints are per-library):
 //   - needs-review Titles: collected client-side by paging the library's titles
 //     and filtering to `needsReview` (see useNeedsReview), each linking to its
 //     detail so the Admin can confirm/fix it,
@@ -42,8 +45,8 @@ export default function AdminAttentionScreen() {
 
   return (
     <section className="admin-attention" data-testid="admin-attention">
-      <h2 className="section-title">Attention</h2>
-
+      {/* No page heading: the nav rail already names the tab, and each panel
+          carries its own title (same as Libraries / Devices / Users). */}
       {libs.status === "loading" && (
         <p className="status status-loading" data-testid="attention-libraries-loading">
           Loading libraries&hellip;
@@ -264,265 +267,325 @@ function LibraryAttention({ libraryId }: { libraryId: string }) {
   return (
     <div className="attention-lists">
       {/* --- needs-review ------------------------------------------------ */}
-      <h3 className="subsection-title">Needs review</h3>
-      {needsReview.loading && (
-        <p className="status status-loading" data-testid="needs-review-loading">
-          Loading needs review&hellip;
-        </p>
-      )}
-      {needsReview.error && (
-        <p className="status status-error" data-testid="needs-review-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {needsReview.error}
-        </p>
-      )}
-      {reviewError && (
-        <p className="status status-error" data-testid="needs-review-action-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {reviewError}
-        </p>
-      )}
-      {applyingFix && (
-        <p className="status status-loading" data-testid="needs-review-applying">
-          Applying correction (rescanning library)&hellip;
-        </p>
-      )}
-      {!needsReview.loading && !needsReview.error && needsReview.items.length === 0 && (
-        <p className="status status-empty" data-testid="needs-review-empty">
-          Nothing needs review.
-        </p>
-      )}
-      {!needsReview.loading && needsReview.items.length > 0 && (
-        <ul className="needs-review-list" data-testid="needs-review-list">
-          {needsReview.items.map((t) => {
-            const detailPath = t.kind === "show" ? `/shows/${t.id}` : `/titles/${t.id}`;
-            const canFix = t.folderPath !== "";
-            const fixOpen = canFix && activeReviewItem === t.id;
-            return (
+      <AdminListPanel
+        title="Needs review"
+        count={needsReview.loading ? undefined : String(needsReview.items.length)}
+        countTestId="needs-review-count"
+      >
+        {needsReview.loading && (
+          <p className="status status-loading" data-testid="needs-review-loading">
+            Loading needs review&hellip;
+          </p>
+        )}
+        {needsReview.error && (
+          <p className="status status-error" data-testid="needs-review-error" role="alert">
+            <span className="dot dot-error" aria-hidden="true" />
+            {needsReview.error}
+          </p>
+        )}
+        {reviewError && (
+          <p
+            className="status status-error"
+            data-testid="needs-review-action-error"
+            role="alert"
+          >
+            <span className="dot dot-error" aria-hidden="true" />
+            {reviewError}
+          </p>
+        )}
+        {applyingFix && (
+          <p className="status status-loading" data-testid="needs-review-applying">
+            Applying correction (rescanning library)&hellip;
+          </p>
+        )}
+        {!needsReview.loading && !needsReview.error && needsReview.items.length === 0 && (
+          <p className="status status-empty" data-testid="needs-review-empty">
+            Nothing needs review.
+          </p>
+        )}
+        {!needsReview.loading && needsReview.items.length > 0 && (
+          <ul className="needs-review-list" data-testid="needs-review-list">
+            {needsReview.items.map((t) => {
+              const detailPath = t.kind === "show" ? `/shows/${t.id}` : `/titles/${t.id}`;
+              const canFix = t.folderPath !== "";
+              const fixOpen = canFix && activeReviewItem === t.id;
+              return (
+                <li
+                  key={t.id}
+                  className="needs-review-item admin-panel-row"
+                  data-testid="needs-review-item"
+                  data-title-id={t.id}
+                  data-kind={t.kind}
+                >
+                  {/* No "needs review" flag: the panel's own title already says
+                      so for every row in it. */}
+                  <Link className="needs-review-link" to={detailPath}>
+                    {t.title}
+                    {t.year > 0 ? ` (${t.year})` : ""}
+                  </Link>
+                  <div className="admin-row-actions is-persistent">
+                    <button
+                      className="icon-button"
+                      type="button"
+                      data-testid="needs-review-mark-button"
+                      title={reviewing.has(t.id) ? "Marking…" : "Mark reviewed"}
+                      aria-label={`Mark ${t.title} reviewed`}
+                      disabled={reviewing.has(t.id)}
+                      onClick={() => void markReviewed(t)}
+                    >
+                      <CheckIcon />
+                    </button>
+                    {canFix && (
+                      <button
+                        className={`icon-button${fixOpen ? " is-active" : ""}`}
+                        type="button"
+                        data-testid="needs-review-fix-button"
+                        title={fixOpen ? "Close" : "Fix identity"}
+                        aria-label={`Fix identity for ${t.title}`}
+                        aria-expanded={fixOpen}
+                        onClick={() =>
+                          setActiveReviewItem((cur) => (cur === t.id ? null : t.id))
+                        }
+                      >
+                        <WrenchIcon />
+                      </button>
+                    )}
+                  </div>
+                  {fixOpen && (
+                    <FixMatchForm
+                      libraryId={libraryId}
+                      folderPath={t.folderPath}
+                      // Only a Movie has a title-scoped enrichment match to refresh
+                      // immediately; a Show/Track relies on the post-fix rescan +
+                      // auto-enrich instead, so its form skips that step.
+                      titleId={t.kind === "movie" ? t.id : undefined}
+                      onApplied={() => void resolveReviewFix(t)}
+                      onCancel={() => setActiveReviewItem(null)}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </AdminListPanel>
+
+      {/* --- Unmatched --------------------------------------------------- */}
+      <AdminListPanel
+        title="Unmatched files"
+        count={unmatchedState === "ready" ? String(unmatched.length) : undefined}
+        countTestId="unmatched-count"
+      >
+        {unmatchedState === "loading" && (
+          <p className="status status-loading" data-testid="unmatched-loading">
+            Loading unmatched&hellip;
+          </p>
+        )}
+        {unmatchedState === "error" && (
+          <p className="status status-error" data-testid="unmatched-error" role="alert">
+            <span className="dot dot-error" aria-hidden="true" />
+            {unmatchedError}
+          </p>
+        )}
+        {unmatchedState === "ready" && unmatched.length === 0 && (
+          <p className="status status-empty" data-testid="unmatched-empty">
+            No unmatched files.
+          </p>
+        )}
+        {unmatchedState === "ready" && unmatched.length > 0 && (
+          <ul className="unmatched-list" data-testid="unmatched-list">
+            {unmatched.map((f) => {
+              const folder = folderOf(f.path);
+              return (
+                <li
+                  key={f.id}
+                  className="unmatched-item admin-panel-row"
+                  data-testid="unmatched-item"
+                  data-folder-path={folder}
+                >
+                  <code className="unmatched-path" data-testid="unmatched-path">
+                    {f.path}
+                  </code>
+                  <div className="admin-row-actions is-persistent">
+                    {f.reason && (
+                      <span className="unmatched-reason" data-testid="unmatched-reason">
+                        {f.reason}
+                      </span>
+                    )}
+                    <button
+                      className={`icon-button${
+                        activeFolder === folder ? " is-active" : ""
+                      }`}
+                      type="button"
+                      data-testid="unmatched-fix-button"
+                      title={activeFolder === folder ? "Close" : "Fix match"}
+                      aria-label={`Fix match for ${f.path}`}
+                      aria-expanded={activeFolder === folder}
+                      onClick={() =>
+                        setActiveFolder((cur) => (cur === folder ? null : folder))
+                      }
+                    >
+                      <WrenchIcon />
+                    </button>
+                  </div>
+                  {activeFolder === folder && (
+                    <FixMatchForm
+                      libraryId={libraryId}
+                      folderPath={folder}
+                      onApplied={onApplied}
+                      onCancel={() => setActiveFolder(null)}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </AdminListPanel>
+
+      {/* --- Overrides --------------------------------------------------- */}
+      <AdminListPanel
+        title="Match overrides"
+        count={overridesState === "ready" ? String(overrides.length) : undefined}
+        countTestId="overrides-count"
+      >
+        {overridesState === "loading" && (
+          <p className="status status-loading" data-testid="overrides-loading">
+            Loading overrides&hellip;
+          </p>
+        )}
+        {overridesState === "error" && (
+          <p className="status status-error" data-testid="overrides-error" role="alert">
+            <span className="dot dot-error" aria-hidden="true" />
+            {overridesError}
+          </p>
+        )}
+        {overridesState === "ready" && overrides.length === 0 && (
+          <p className="status status-empty" data-testid="overrides-empty">
+            No overrides yet.
+          </p>
+        )}
+        {overridesState === "ready" && overrides.length > 0 && (
+          <ul className="overrides-list" data-testid="overrides-list">
+            {overrides.map((o) => (
+              <li
+                key={o.id}
+                className={`override-item admin-panel-row${
+                  o.orphaned ? " override-item-orphaned" : ""
+                }`}
+                data-testid="override-item"
+                data-orphaned={o.orphaned ? "true" : "false"}
+              >
+                <span className="override-title" data-testid="override-title">
+                  {o.title}
+                  {o.year > 0 ? ` (${o.year})` : ""}
+                </span>
+                <code className="override-folder" data-testid="override-folder">
+                  {o.folderPath}
+                </code>
+                {(o.tmdbId || o.imdbId) && (
+                  <span className="override-ids">
+                    {o.tmdbId ? `tmdb:${o.tmdbId}` : ""}
+                    {o.tmdbId && o.imdbId ? " " : ""}
+                    {o.imdbId ? `imdb:${o.imdbId}` : ""}
+                  </span>
+                )}
+                {o.createdAt && (
+                  <span className="override-created">{formatDate(o.createdAt)}</span>
+                )}
+                {o.orphaned && (
+                  <span className="override-orphaned-badge" data-testid="override-orphaned">
+                    orphaned
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </AdminListPanel>
+
+      {/* --- Enrichment attention (issue 05) ----------------------------- */}
+      <AdminListPanel
+        title="Metadata match"
+        count={enrichmentState === "ready" ? String(enrichment.length) : undefined}
+        countTestId="enrichment-attention-count"
+      >
+        {enrichmentState === "loading" && (
+          <p
+            className="status status-loading"
+            data-testid="enrichment-attention-loading"
+          >
+            Loading metadata matches&hellip;
+          </p>
+        )}
+        {enrichmentState === "error" && (
+          <p
+            className="status status-error"
+            data-testid="enrichment-attention-error"
+            role="alert"
+          >
+            <span className="dot dot-error" aria-hidden="true" />
+            {enrichmentError}
+          </p>
+        )}
+        {enrichmentState === "ready" && enrichment.length === 0 && (
+          <p className="status status-empty" data-testid="enrichment-attention-empty">
+            Nothing to match.
+          </p>
+        )}
+        {enrichmentState === "ready" && enrichment.length > 0 && (
+          <ul
+            className="enrichment-attention-list"
+            data-testid="enrichment-attention-list"
+          >
+            {enrichment.map((t) => (
               <li
                 key={t.id}
-                className="needs-review-item card"
-                data-testid="needs-review-item"
+                className="enrichment-attention-item admin-panel-row"
+                data-testid="enrichment-attention-item"
                 data-title-id={t.id}
-                data-kind={t.kind}
               >
-                <Link className="needs-review-link" to={detailPath}>
+                <Link className="enrichment-attention-link" to={`/titles/${t.id}`}>
                   {t.title}
                   {t.year > 0 ? ` (${t.year})` : ""}
                 </Link>
-                <span className="needs-review-flag">needs review</span>
-                <button
-                  className="nav-link"
-                  type="button"
-                  data-testid="needs-review-mark-button"
-                  disabled={reviewing.has(t.id)}
-                  onClick={() => void markReviewed(t)}
-                >
-                  {reviewing.has(t.id) ? "Marking…" : "Mark reviewed"}
-                </button>
-                {canFix && (
+                <div className="admin-row-actions is-persistent">
+                  <span
+                    className="enrichment-attention-status"
+                    data-testid="enrichment-attention-status"
+                  >
+                    {t.enrichmentStatus}
+                  </span>
                   <button
-                    className="nav-link"
+                    className={`icon-button${
+                      activeMatchTitle === t.id ? " is-active" : ""
+                    }`}
                     type="button"
-                    data-testid="needs-review-fix-button"
+                    data-testid="enrichment-match-button"
+                    title={
+                      activeMatchTitle === t.id ? "Close" : "Fix metadata match"
+                    }
+                    aria-label={`Fix metadata match for ${t.title}`}
+                    aria-expanded={activeMatchTitle === t.id}
                     onClick={() =>
-                      setActiveReviewItem((cur) => (cur === t.id ? null : t.id))
+                      setActiveMatchTitle((cur) => (cur === t.id ? null : t.id))
                     }
                   >
-                    {fixOpen ? "Close" : "Fix identity"}
+                    <WrenchIcon />
                   </button>
-                )}
-                {fixOpen && (
-                  <FixMatchForm
-                    libraryId={libraryId}
-                    folderPath={t.folderPath}
-                    // Only a Movie has a title-scoped enrichment match to refresh
-                    // immediately; a Show/Track relies on the post-fix rescan +
-                    // auto-enrich instead, so its form skips that step.
-                    titleId={t.kind === "movie" ? t.id : undefined}
-                    onApplied={() => void resolveReviewFix(t)}
-                    onCancel={() => setActiveReviewItem(null)}
+                </div>
+                {activeMatchTitle === t.id && (
+                  <EnrichmentMatchForm
+                    titleId={t.id}
+                    onApplied={onMatchApplied}
+                    onCancel={() => setActiveMatchTitle(null)}
                   />
                 )}
               </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {/* --- Unmatched --------------------------------------------------- */}
-      <h3 className="subsection-title">Unmatched files</h3>
-      {unmatchedState === "loading" && (
-        <p className="status status-loading" data-testid="unmatched-loading">
-          Loading unmatched&hellip;
-        </p>
-      )}
-      {unmatchedState === "error" && (
-        <p className="status status-error" data-testid="unmatched-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {unmatchedError}
-        </p>
-      )}
-      {unmatchedState === "ready" && unmatched.length === 0 && (
-        <p className="status status-empty" data-testid="unmatched-empty">
-          No unmatched files.
-        </p>
-      )}
-      {unmatchedState === "ready" && unmatched.length > 0 && (
-        <ul className="unmatched-list" data-testid="unmatched-list">
-          {unmatched.map((f) => {
-            const folder = folderOf(f.path);
-            return (
-              <li
-                key={f.id}
-                className="unmatched-item card"
-                data-testid="unmatched-item"
-                data-folder-path={folder}
-              >
-                <code className="unmatched-path" data-testid="unmatched-path">
-                  {f.path}
-                </code>
-                {f.reason && (
-                  <span className="unmatched-reason" data-testid="unmatched-reason">
-                    {f.reason}
-                  </span>
-                )}
-                <button
-                  className="nav-link"
-                  type="button"
-                  data-testid="unmatched-fix-button"
-                  onClick={() =>
-                    setActiveFolder((cur) => (cur === folder ? null : folder))
-                  }
-                >
-                  {activeFolder === folder ? "Close" : "Fix match"}
-                </button>
-                {activeFolder === folder && (
-                  <FixMatchForm
-                    libraryId={libraryId}
-                    folderPath={folder}
-                    onApplied={onApplied}
-                    onCancel={() => setActiveFolder(null)}
-                  />
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {/* --- Overrides --------------------------------------------------- */}
-      <h3 className="subsection-title">Match overrides</h3>
-      {overridesState === "loading" && (
-        <p className="status status-loading" data-testid="overrides-loading">
-          Loading overrides&hellip;
-        </p>
-      )}
-      {overridesState === "error" && (
-        <p className="status status-error" data-testid="overrides-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {overridesError}
-        </p>
-      )}
-      {overridesState === "ready" && overrides.length === 0 && (
-        <p className="status status-empty" data-testid="overrides-empty">
-          No overrides yet.
-        </p>
-      )}
-      {overridesState === "ready" && overrides.length > 0 && (
-        <ul className="overrides-list" data-testid="overrides-list">
-          {overrides.map((o) => (
-            <li
-              key={o.id}
-              className={`override-item card${o.orphaned ? " override-item-orphaned" : ""}`}
-              data-testid="override-item"
-              data-orphaned={o.orphaned ? "true" : "false"}
-            >
-              <span className="override-title" data-testid="override-title">
-                {o.title}
-                {o.year > 0 ? ` (${o.year})` : ""}
-              </span>
-              <code className="override-folder" data-testid="override-folder">
-                {o.folderPath}
-              </code>
-              {(o.tmdbId || o.imdbId) && (
-                <span className="override-ids">
-                  {o.tmdbId ? `tmdb:${o.tmdbId}` : ""}
-                  {o.tmdbId && o.imdbId ? " " : ""}
-                  {o.imdbId ? `imdb:${o.imdbId}` : ""}
-                </span>
-              )}
-              {o.createdAt && (
-                <span className="override-created">{formatDate(o.createdAt)}</span>
-              )}
-              {o.orphaned && (
-                <span className="override-orphaned-badge" data-testid="override-orphaned">
-                  orphaned
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {/* --- Enrichment attention (issue 05) ----------------------------- */}
-      <h3 className="subsection-title">Metadata match</h3>
-      {enrichmentState === "loading" && (
-        <p className="status status-loading" data-testid="enrichment-attention-loading">
-          Loading metadata matches&hellip;
-        </p>
-      )}
-      {enrichmentState === "error" && (
-        <p className="status status-error" data-testid="enrichment-attention-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {enrichmentError}
-        </p>
-      )}
-      {enrichmentState === "ready" && enrichment.length === 0 && (
-        <p className="status status-empty" data-testid="enrichment-attention-empty">
-          Nothing to match.
-        </p>
-      )}
-      {enrichmentState === "ready" && enrichment.length > 0 && (
-        <ul className="enrichment-attention-list" data-testid="enrichment-attention-list">
-          {enrichment.map((t) => (
-            <li
-              key={t.id}
-              className="enrichment-attention-item card"
-              data-testid="enrichment-attention-item"
-              data-title-id={t.id}
-            >
-              <Link className="enrichment-attention-link" to={`/titles/${t.id}`}>
-                {t.title}
-                {t.year > 0 ? ` (${t.year})` : ""}
-              </Link>
-              <span
-                className="enrichment-attention-status"
-                data-testid="enrichment-attention-status"
-              >
-                {t.enrichmentStatus}
-              </span>
-              <button
-                className="nav-link"
-                type="button"
-                data-testid="enrichment-match-button"
-                onClick={() =>
-                  setActiveMatchTitle((cur) => (cur === t.id ? null : t.id))
-                }
-              >
-                {activeMatchTitle === t.id ? "Close" : "Fix metadata match"}
-              </button>
-              {activeMatchTitle === t.id && (
-                <EnrichmentMatchForm
-                  titleId={t.id}
-                  onApplied={onMatchApplied}
-                  onCancel={() => setActiveMatchTitle(null)}
-                />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+            ))}
+          </ul>
+        )}
+      </AdminListPanel>
     </div>
   );
 }

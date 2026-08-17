@@ -334,10 +334,11 @@ describe("AdminAttentionScreen — needs-review", () => {
     expect(screen.getAllByTestId("fix-match-form")).toHaveLength(1);
     expect(within(items[0]).getByTestId("fix-match-form")).toBeInTheDocument();
     expect(within(items[1]).queryByTestId("fix-match-form")).not.toBeInTheDocument();
-    // The other item's button still reads "Fix identity" (not "Close").
-    expect(within(items[1]).getByTestId("needs-review-fix-button")).toHaveTextContent(
-      "Fix identity",
-    );
+    // The other item's fix action is still closed: its tooltip reads "Fix
+    // identity" (not "Close"), and it isn't marked expanded.
+    const otherFix = within(items[1]).getByTestId("needs-review-fix-button");
+    expect(otherFix).toHaveAttribute("title", "Fix identity");
+    expect(otherFix).toHaveAttribute("aria-expanded", "false");
   });
 });
 

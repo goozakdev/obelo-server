@@ -118,7 +118,7 @@ export default function LibraryAdminRow({
 
   return (
     <li
-      className="admin-library-row card"
+      className="admin-library-row admin-panel-row"
       data-testid="admin-library-row"
       data-library-id={library.id}
     >
@@ -159,9 +159,9 @@ export default function LibraryAdminRow({
         </span>
 
         {/* Keep the cluster visible while the menu is open, so moving the mouse off
-            the row doesn't collapse an open dropdown (`.admin-library-actions`
+            the row doesn't collapse an open dropdown (`.admin-row-actions`
             reveals on hover/focus otherwise). */}
-        <div className={`admin-library-actions${menuOpen ? " is-active" : ""}`}>
+        <div className={`admin-row-actions${menuOpen ? " is-active" : ""}`}>
           <div className="row-menu admin-library-menu" ref={menuRef}>
             <button
               type="button"

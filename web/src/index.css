@@ -2607,37 +2607,11 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  max-width: 35rem;
+  max-width: var(--admin-panel-max);
 }
 
-/* Top bar: the "N libraries" count on the left, actions pinned right. */
-.admin-libraries-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  background: #3f4245;
-  padding: 5px 5px 5px 13px;
-}
-.admin-libraries-count {
-  font-size: 0.9rem;
-}
-.admin-libraries-bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-/* The primary "Add Library" button borrows the accent submit look but sits inline
-   in the bar (no top margin, tighter padding than a form submit). */
-.admin-libraries-add {
-  margin-top: 0;
-  padding: 0.5rem 0.9rem;
-  font-size: 0.9rem;
-}
-
-/* "Scan All Libraries" sits in its own band above the list, separate from the
-   top bar's per-library count + Add action. */
+/* "Scan All Libraries" sits in its own band above the panel, separate from the
+   header bar's per-library count + Add action. */
 .admin-libraries-scan-all {
   display: flex;
   justify-content: flex-end;
@@ -2659,7 +2633,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.85rem 1rem;
 }
 .admin-library-identity {
   display: flex;
@@ -2702,24 +2675,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 .scan-counts {
   color: var(--text-dim);
   font-weight: 400;
-}
-
-.admin-library-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  /* Reveal on hover / focus-within; keep laid out (visibility, not display) so the
-     row height never jumps. */
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.admin-library-row:hover .admin-library-actions,
-.admin-library-row:focus-within .admin-library-actions,
-.admin-library-actions.is-active {
-  opacity: 1;
-}
-.admin-library-actions button {
-  cursor: pointer;
 }
 
 /* The row's ⋮ actions menu (Edit / Scan / Full scan / Delete). Reuses the shared
@@ -2842,6 +2797,19 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 .library-dialog-footer-end {
   justify-content: flex-end;
 }
+/* A footer that splits: a destructive action pinned left (the Edit-User dialog's
+   "Delete user") and the Cancel / Save pair kept together on the right. */
+.library-dialog-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+/* `.auth-submit` carries a top margin for its usual home at the foot of a form,
+   which in a footer ROW pushes the primary button below the buttons beside it.
+   A dialog footer aligns its buttons itself, so drop it here. */
+.library-dialog-footer .auth-submit {
+  margin-top: 0;
+}
 
 /* Add-wizard: one page at a time. */
 .wizard-page {
@@ -2919,7 +2887,147 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   word-break: break-all;
 }
 
-/* --- Admin: users (access-control-admin-ui issue 01) ---------------------- */
+/* --- Admin: the list panel ------------------------------------------------ */
+/* Every list in the Admin section (Libraries, Attention, Devices, Users) wears
+   this: a filled header bar — title and/or count on the left, primary action
+   pinned right — over a wireframe body holding the list. The loading / error /
+   empty lines live in that same frame, so a panel keeps its shape in every state.
+   `--admin-panel-max` is the measure; a tab whose rows carry long content (file
+   paths, inline forms) widens it for itself rather than every list growing. */
+.admin-content {
+  --admin-panel-max: 35rem;
+}
+.admin-panel {
+  max-width: var(--admin-panel-max);
+}
+.admin-panel + .admin-panel {
+  margin-top: 1.5rem;
+}
+
+.admin-panel-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: #3f4245;
+  padding: 5px 5px 5px 13px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.admin-panel-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.admin-panel-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.admin-panel-count {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+/* A bar action borrows the accent submit look but sits inline: no form-submit top
+   margin, tighter padding. */
+.admin-panel-action {
+  margin-top: 0;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.9rem;
+}
+
+.admin-panel-body {
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  /* Deliberately NOT `overflow: hidden`: a row's ⋮ dropdown is positioned inside
+     the body and would be clipped to the frame. The bottom row rounds its own
+     corners instead (below), which is all the clipping the hover wash needed. */
+}
+/* The loading / error / empty lines sit in the same frame as the list, so give
+   them the padding the rows carry themselves. */
+.admin-panel-body > .status,
+.admin-panel-body > .card {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+}
+
+/* One band per row, separated by a hairline. A row's own class still owns its
+   internal layout; this is only the geometry every list shares. */
+.admin-panel-row {
+  padding: 0.6rem 0.85rem;
+  border-radius: 0;
+}
+/* The frame's own corners are rounded only at the bottom (the header bar closes
+   the top), so the last row follows suit and its hover wash stops short of the
+   corner. */
+.admin-panel-row:last-child {
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+/* Lift the row being acted on above the rows after it. Without this, a ⋮ dropdown
+   hanging past its own row is painted UNDER the following rows' content — they
+   come later in the document, and the menu's z-index only orders it within its
+   own row once the action cluster's opacity animation makes that row a stacking
+   context. :focus-within (not just :hover) keeps the lift while a menu is open
+   and the pointer has moved away — the toggle still holds focus. */
+.admin-panel-row:hover,
+.admin-panel-row:focus-within {
+  position: relative;
+  z-index: 1;
+}
+.admin-panel-row + .admin-panel-row {
+  border-top: 1px solid var(--border);
+}
+.admin-panel-row:hover {
+  background: var(--surface-hover);
+}
+/* The row action cluster: laid out always (opacity, not display) so the row never
+   changes height, revealed on hover or keyboard focus. Coarse pointers have no
+   hover, so it stays visible there. */
+.admin-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.admin-panel-row:hover .admin-row-actions,
+.admin-panel-row:focus-within .admin-row-actions,
+/* An open dropdown keeps its cluster visible even once the mouse leaves the row. */
+.admin-row-actions.is-active,
+/* A work queue (the Attention lists) shows its actions unconditionally: acting on
+   the rows IS the point of the list, and the cluster carries a status label the
+   Admin must be able to read without hovering. */
+.admin-row-actions.is-persistent {
+  opacity: 1;
+}
+/* A cluster mid-fade (0 < opacity < 1) is its own stacking context, which would
+   trap an open dropdown inside the row. These two states are always fully
+   opaque, so skip the animation entirely and never form one. */
+.admin-row-actions.is-active,
+.admin-row-actions.is-persistent {
+  transition: none;
+}
+@media (hover: none) {
+  .admin-row-actions {
+    opacity: 1;
+  }
+}
+.admin-row-actions button {
+  cursor: pointer;
+}
+/* The destructive icon action reads as danger on hover, matching .button-danger. */
+.icon-button-danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* --- Admin: users --------------------------------------------------------- */
+/* The roster reads as a scannable list: one row per User carrying identity plus
+   two icon actions. Everything editable lives in the Add / Edit dialogs, so no
+   row ever expands in place. */
 
 .admin-user-list {
   list-style: none;
@@ -2927,19 +3035,20 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
 }
 
 .admin-user-row {
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-.admin-user-head {
+.admin-user-identity {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
+  min-width: 0;
 }
 .user-username {
   font-weight: 600;
@@ -2951,49 +3060,6 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   letter-spacing: 0.03em;
 }
 
-.admin-user-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.admin-user-actions button {
-  cursor: pointer;
-}
-.admin-user-confirm {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.admin-user-confirm .confirm-prompt {
-  color: var(--text-dim);
-}
-
-.admin-user-access {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.admin-user-access-head {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.user-access-label {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.user-access-summary {
-  font-weight: 550;
-}
-.library-access-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
 .library-checklist {
   list-style: none;
   margin: 0;
@@ -3007,6 +3073,11 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   align-items: center;
   gap: 0.4rem;
   cursor: pointer;
+}
+/* Tick in the app's accent rather than the browser's stock blue (same treatment
+   as the other checkbox lists). */
+.library-checklist-item input {
+  accent-color: var(--accent);
 }
 
 /* --- Admin: attention surfaces & devices (issue 07) ----------------------- */
@@ -3077,18 +3148,18 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   }
 }
 
-.subsection-title {
-  margin: 1.5rem 0 0.75rem;
-  font-size: 1.05rem;
-  font-weight: 650;
+/* Attention rows carry file paths and open inline match forms inside the band, so
+   this tab alone widens the shared panel measure rather than every list growing
+   to fit the worst case. */
+.admin-attention {
+  --admin-panel-max: 52rem;
 }
 
 .admin-attention,
 .admin-devices {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  max-width: 60rem;
+  gap: 1rem;
 }
 
 .attention-library-picker {
@@ -3103,54 +3174,66 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
 .needs-review-list,
 .unmatched-list,
 .overrides-list,
-.devices-list {
+.devices-list,
+.enrichment-attention-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
 }
 
+/* These rows wrap (a path, a badge, an action, and sometimes a whole inline form
+   on the next line) rather than sitting on one line like a Library or User row.
+   The identity comes first and takes the slack, so every action cluster lands on
+   the row's right edge no matter how short the name is. */
 .needs-review-item,
 .unmatched-item,
 .override-item,
-.device-item {
+.device-item,
+.enrichment-attention-item {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.85rem 1rem;
 }
-
-/* Bare admin rows: these row-shaped items carry the .card class in markup, but
-   read as list rows, not boxes — strip the wireframe frame and separate them with
-   spacing plus a hover wash instead. */
-.admin-library-row.card,
-.admin-user-row.card,
-.device-item.card,
-.needs-review-item.card,
-.unmatched-item.card,
-.override-item.card,
-.enrichment-attention-item.card {
-  border: none;
-  background: transparent;
-  border-radius: var(--radius);
+.needs-review-link,
+.enrichment-attention-link,
+.unmatched-path,
+.override-title {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
-.admin-library-row.card:hover,
-.admin-user-row.card:hover,
-.device-item.card:hover,
-.needs-review-item.card:hover,
-.unmatched-item.card:hover,
-.override-item.card:hover,
-.enrichment-attention-item.card:hover {
-  background: var(--surface-hover);
-}
-
-.needs-review-flag {
-  color: var(--accent);
-  font-size: 0.8rem;
+/* These two were unstyled anchors, so they rendered in the browser's default blue
+   underline — the only raw links in the app. Give them the row-title treatment the
+   rest of the admin lists use: plain text, accent on hover. */
+.needs-review-link,
+.enrichment-attention-link {
+  color: var(--text);
   font-weight: 600;
+  text-decoration: none;
+}
+.needs-review-link:hover,
+.enrichment-attention-link:hover {
+  color: var(--accent);
+}
+.needs-review-item > .admin-row-actions,
+.unmatched-item > .admin-row-actions,
+.enrichment-attention-item > .admin-row-actions {
+  gap: 0.6rem;
+}
+/* An inline fix form drops onto its own full-width line below the row. */
+.needs-review-item > .fix-match-form,
+.unmatched-item > .fix-match-form,
+.enrichment-attention-item > .enrichment-match-form {
+  flex: 1 0 100%;
+}
+
+/* The metadata-match state ("unmatched", "failed") rides in the row's right-hand
+   cluster beside the fix action, reading as a status rather than a title suffix. */
+.enrichment-attention-status {
+  color: var(--text-dim);
+  font-size: 0.85rem;
 }
 
 .unmatched-path,
@@ -3166,11 +3249,15 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-size: 0.85rem;
 }
 
-/* An orphaned override keeps a visible error frame even though normal override
-   rows are bare. */
-.override-item-orphaned,
-.override-item-orphaned.card {
-  border: 1px solid var(--error);
+/* An orphaned override keeps a visible error edge even though normal rows are
+   separated by a plain hairline. */
+.override-item-orphaned.admin-panel-row,
+.override-item-orphaned.admin-panel-row + .admin-panel-row,
+.admin-panel-row + .override-item-orphaned.admin-panel-row {
+  border-top: 1px solid var(--error);
+}
+.override-item-orphaned.admin-panel-row {
+  border-left: 2px solid var(--error);
 }
 .override-orphaned-badge {
   color: var(--error);
@@ -3202,9 +3289,10 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   color: var(--text-dim);
   font-size: 0.85rem;
 }
-.device-revoke {
+/* Push the action cluster to the row's right edge; the identity fields keep their
+   natural widths on the left. */
+.device-actions {
   margin-left: auto;
-  cursor: pointer;
 }
 
 /* --- Metadata Providers admin (metadata-providers 02). -------------------- */

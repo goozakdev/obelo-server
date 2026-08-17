@@ -3,6 +3,8 @@ import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import { formatDateTime } from "../time";
 import type { Device } from "../api/types";
+import AdminListPanel from "./AdminListPanel";
+import { TrashIcon } from "../browse/ActionIcons";
 
 // The Devices surface (issue 07), behind RequireAdmin (App.tsx). Lists the
 // signed-in User's registered Devices (name / platform / last-seen) and lets the
@@ -40,43 +42,48 @@ export default function AdminDevicesScreen() {
     return () => ctrl.abort();
   }, [load]);
 
+  const count = state.status === "ready" ? state.devices.length : 0;
+
   return (
     <section className="admin-devices" data-testid="admin-devices">
-      <h2 className="section-title">Devices</h2>
-
-      {state.status === "loading" && (
-        <p className="status status-loading" data-testid="devices-loading">
-          Loading devices&hellip;
-        </p>
-      )}
-      {state.status === "error" && (
-        <p className="status status-error" data-testid="devices-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {state.message}
-        </p>
-      )}
-      {state.status === "ready" && state.devices.length === 0 && (
-        <p className="status status-empty" data-testid="devices-empty">
-          No devices registered.
-        </p>
-      )}
-      {state.status === "ready" && state.devices.length > 0 && (
-        <ul className="devices-list" data-testid="devices-list">
-          {state.devices.map((d) => (
-            <DeviceRow
-              key={d.id}
-              device={d}
-              onRevoked={() =>
-                setState((cur) =>
-                  cur.status === "ready"
-                    ? { ...cur, devices: cur.devices.filter((x) => x.id !== d.id) }
-                    : cur,
-                )
-              }
-            />
-          ))}
-        </ul>
-      )}
+      <AdminListPanel
+        count={`${count} ${count === 1 ? "device" : "devices"}`}
+        countTestId="admin-devices-count"
+      >
+        {state.status === "loading" && (
+          <p className="status status-loading" data-testid="devices-loading">
+            Loading devices&hellip;
+          </p>
+        )}
+        {state.status === "error" && (
+          <p className="status status-error" data-testid="devices-error" role="alert">
+            <span className="dot dot-error" aria-hidden="true" />
+            {state.message}
+          </p>
+        )}
+        {state.status === "ready" && state.devices.length === 0 && (
+          <p className="status status-empty" data-testid="devices-empty">
+            No devices registered.
+          </p>
+        )}
+        {state.status === "ready" && state.devices.length > 0 && (
+          <ul className="devices-list" data-testid="devices-list">
+            {state.devices.map((d) => (
+              <DeviceRow
+                key={d.id}
+                device={d}
+                onRevoked={() =>
+                  setState((cur) =>
+                    cur.status === "ready"
+                      ? { ...cur, devices: cur.devices.filter((x) => x.id !== d.id) }
+                      : cur,
+                  )
+                }
+              />
+            ))}
+          </ul>
+        )}
+      </AdminListPanel>
     </section>
   );
 }
@@ -107,7 +114,11 @@ function DeviceRow({
   const lastSeen = formatDateTime(device.lastSeenAt);
 
   return (
-    <li className="device-item card" data-testid="device-item" data-device-id={device.id}>
+    <li
+      className="device-item admin-panel-row"
+      data-testid="device-item"
+      data-device-id={device.id}
+    >
       <span className="device-name" data-testid="device-name">
         {device.name}
       </span>
@@ -119,15 +130,21 @@ function DeviceRow({
           last seen {lastSeen}
         </span>
       )}
-      <button
-        className="nav-link nav-logout"
-        type="button"
-        data-testid="device-revoke"
-        onClick={onRevoke}
-        disabled={revoking}
-      >
-        {revoking ? "Revoking…" : "Revoke"}
-      </button>
+      {/* The row's one action, carried the way a User row carries its own: an
+          icon button in the right-hand cluster that reveals on hover / focus. */}
+      <div className="admin-row-actions device-actions">
+        <button
+          className="icon-button icon-button-danger"
+          type="button"
+          data-testid="device-revoke"
+          aria-label={`Revoke ${device.name}`}
+          title={revoking ? "Revoking…" : "Revoke"}
+          onClick={onRevoke}
+          disabled={revoking}
+        >
+          <TrashIcon />
+        </button>
+      </div>
       {error && (
         <p className="status status-error" data-testid="device-revoke-error" role="alert">
           <span className="dot dot-error" aria-hidden="true" />

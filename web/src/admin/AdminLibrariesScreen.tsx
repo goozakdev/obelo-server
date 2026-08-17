@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library } from "../api/types";
+import AdminListPanel from "./AdminListPanel";
 import LibraryAdminRow from "./LibraryAdminRow";
 import AddLibraryWizard from "./AddLibraryWizard";
 import EditLibraryDialog from "./EditLibraryDialog";
@@ -75,58 +76,57 @@ export default function AdminLibrariesScreen() {
         </div>
       )}
 
-      <div className="admin-libraries-bar">
-        <span className="admin-libraries-count" data-testid="admin-libraries-count">
-          {count} {count === 1 ? "library" : "libraries"}
-        </span>
-        <div className="admin-libraries-bar-actions">
+      <AdminListPanel
+        count={`${count} ${count === 1 ? "library" : "libraries"}`}
+        countTestId="admin-libraries-count"
+        action={
           <button
-            className="auth-submit admin-libraries-add"
+            className="auth-submit admin-panel-action"
             type="button"
             data-testid="add-library-button"
             onClick={() => setAddOpen(true)}
           >
             Add Library
           </button>
-        </div>
-      </div>
+        }
+      >
+        {state.status === "loading" && (
+          <p className="status status-loading" data-testid="admin-libraries-loading">
+            Loading libraries&hellip;
+          </p>
+        )}
 
-      {state.status === "loading" && (
-        <p className="status status-loading" data-testid="admin-libraries-loading">
-          Loading libraries&hellip;
-        </p>
-      )}
+        {state.status === "error" && (
+          <p
+            className="status status-error"
+            data-testid="admin-libraries-error"
+            role="alert"
+          >
+            <span className="dot dot-error" aria-hidden="true" />
+            {state.message}
+          </p>
+        )}
 
-      {state.status === "error" && (
-        <p
-          className="status status-error"
-          data-testid="admin-libraries-error"
-          role="alert"
-        >
-          <span className="dot dot-error" aria-hidden="true" />
-          {state.message}
-        </p>
-      )}
+        {state.status === "ready" && count === 0 && (
+          <p className="status status-empty" data-testid="admin-libraries-empty">
+            No libraries configured. Click “Add Library” to get started.
+          </p>
+        )}
 
-      {state.status === "ready" && count === 0 && (
-        <p className="status status-empty" data-testid="admin-libraries-empty">
-          No libraries configured. Click “Add Library” to get started.
-        </p>
-      )}
-
-      {state.status === "ready" && count > 0 && (
-        <ul className="admin-library-list" data-testid="admin-library-list">
-          {libraries.map((lib) => (
-            <LibraryAdminRow
-              key={lib.id}
-              library={lib}
-              onEdit={setEditing}
-              onDeleted={reload}
-              scanAllSignal={scanAllSignal}
-            />
-          ))}
-        </ul>
-      )}
+        {state.status === "ready" && count > 0 && (
+          <ul className="admin-library-list" data-testid="admin-library-list">
+            {libraries.map((lib) => (
+              <LibraryAdminRow
+                key={lib.id}
+                library={lib}
+                onEdit={setEditing}
+                onDeleted={reload}
+                scanAllSignal={scanAllSignal}
+              />
+            ))}
+          </ul>
+        )}
+      </AdminListPanel>
 
       {addOpen && (
         <AddLibraryWizard

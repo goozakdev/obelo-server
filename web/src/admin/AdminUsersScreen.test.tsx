@@ -7,22 +7,38 @@ import { AuthProvider } from "../auth/session";
 import { RequireAdmin } from "../auth/guards";
 import { ApiError } from "../api/errors";
 import type { ApiClient } from "../api/client";
-import type { User } from "../api/types";
+import type { Library, User } from "../api/types";
 
 // AdminUsersScreen end-to-end through the faked API client (the one seam — exactly
-// as AdminLibrariesScreen.test.tsx fakes apiClient): the list renders Users with
-// their role; creating a Member calls createUser with the chosen fields and the
-// new User appears (list refetched); an admin role is selectable; a USERNAME_TAKEN
-// create shows a readable inline error and preserves the typed input (no crash);
-// delete asks to confirm, calls deleteUser, and drops the row; a LAST_ADMIN
-// rejection shows a readable inline error and keeps the User; in-flight create and
-// delete show pending/disabled states. A separate block exercises the tab in the
-// Admin hub (it renders beside the existing tabs) and the RequireAdmin gate.
+// as AdminLibrariesScreen.test.tsx fakes apiClient). The redesigned hub is a list
+// plus three dialogs, so the coverage follows those paths:
+//   - the list renders one row per User with their role and no inline editors;
+//   - "Add User" opens the create dialog; creating a Member sends the chosen
+//     fields AND grants every Library (the default access set), an Admin skips the
+//     grant, and a USERNAME_TAKEN create shows a readable inline error preserving
+//     the typed input;
+//   - a grant that fails after the create is stated plainly (the User exists) with
+//     a Retry that re-runs only the grant;
+//   - the row's delete icon confirms before deleting, drops the row on success,
+//     and keeps the User with a readable message on LAST_ADMIN;
+//   - the row's edit icon opens the Edit dialog, whose "Delete user" button routes
+//     into the same one confirmation.
+// A separate block exercises the tab in the Admin hub and the RequireAdmin gate.
 
-const { listUsers, createUser, deleteUser } = vi.hoisted(() => ({
+const {
+  listUsers,
+  createUser,
+  deleteUser,
+  listLibraries,
+  setLibraryAccess,
+  getUser,
+} = vi.hoisted(() => ({
   listUsers: vi.fn(),
   createUser: vi.fn(),
   deleteUser: vi.fn(),
+  listLibraries: vi.fn(),
+  setLibraryAccess: vi.fn(),
+  getUser: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -33,6 +49,9 @@ vi.mock("../api/client", async () => {
       listUsers: (...a: unknown[]) => listUsers(...a),
       createUser: (...a: unknown[]) => createUser(...a),
       deleteUser: (...a: unknown[]) => deleteUser(...a),
+      listLibraries: (...a: unknown[]) => listLibraries(...a),
+      setLibraryAccess: (...a: unknown[]) => setLibraryAccess(...a),
+      getUser: (...a: unknown[]) => getUser(...a),
     },
   };
 });
@@ -43,6 +62,12 @@ import AdminScreen from "../screens/AdminScreen";
 function usr(over: Partial<User>): User {
   return { id: "u1", username: "ada", role: "member", ...over };
 }
+
+function lib(id: string, name: string): Library {
+  return { id, name, kind: "movie", rootFolders: [] };
+}
+
+const ALL_LIBS = [lib("l1", "Movies"), lib("l2", "TV")];
 
 // A deferred promise so a test can hold a call "in flight" and assert pending UI.
 function deferred<T>() {
@@ -59,10 +84,15 @@ beforeEach(() => {
   listUsers.mockReset();
   createUser.mockReset();
   deleteUser.mockReset();
+  listLibraries.mockReset();
+  setLibraryAccess.mockReset();
+  getUser.mockReset();
+  listLibraries.mockResolvedValue(ALL_LIBS);
+  setLibraryAccess.mockResolvedValue(undefined);
 });
 
-describe("AdminUsersScreen", () => {
-  it("renders every user with username and role", async () => {
+describe("AdminUsersScreen — the roster list", () => {
+  it("renders every user with username and role, and no inline editor", async () => {
     listUsers.mockResolvedValue([
       usr({ id: "u1", username: "operator", role: "admin" }),
       usr({ id: "u2", username: "ada", role: "member" }),
@@ -80,6 +110,14 @@ describe("AdminUsersScreen", () => {
     expect(within(rows[0]).getByTestId("admin-user-role")).toHaveTextContent("admin");
     expect(within(rows[1]).getByTestId("admin-user-username")).toHaveTextContent("ada");
     expect(within(rows[1]).getByTestId("admin-user-role")).toHaveTextContent("member");
+
+    // Each row carries exactly the two icon actions; nothing is editable in place.
+    expect(within(rows[1]).getByTestId("edit-user-button")).toBeInTheDocument();
+    expect(within(rows[1]).getByTestId("delete-user-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("library-checklist")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-password-input")).not.toBeInTheDocument();
+
+    expect(screen.getByTestId("admin-users-count")).toHaveTextContent("2 users");
   });
 
   it("shows a clean empty state with no users", async () => {
@@ -88,9 +126,34 @@ describe("AdminUsersScreen", () => {
     await waitFor(() =>
       expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
     );
+    // The add action is still reachable from the empty state.
+    expect(screen.getByTestId("add-user-button")).toBeInTheDocument();
   });
 
-  it("creates a Member (role defaults to member) and shows it after reload", async () => {
+  it("surfaces a failed load as a readable error", async () => {
+    listUsers.mockRejectedValue(new ApiError(403, "FORBIDDEN", "admin only"));
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    expect(await screen.findByTestId("admin-users-error")).toHaveTextContent(
+      /admin only/i,
+    );
+  });
+});
+
+describe("AdminUsersScreen — adding a user", () => {
+  it("opens the create dialog only when Add User is clicked", async () => {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([]);
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("add-user-button"));
+    expect(screen.getByTestId("create-user-dialog")).toBeInTheDocument();
+  });
+
+  it("creates a Member (role defaults to member), grants ALL libraries, and shows it after reload", async () => {
     const user = userEvent.setup();
     listUsers
       .mockResolvedValueOnce([])
@@ -102,6 +165,7 @@ describe("AdminUsersScreen", () => {
       expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
     );
 
+    await user.click(screen.getByTestId("add-user-button"));
     await user.type(screen.getByTestId("user-username-input"), "ada");
     await user.type(screen.getByTestId("user-password-input"), "s3cret!");
     // Role left untouched → defaults to member.
@@ -114,10 +178,18 @@ describe("AdminUsersScreen", () => {
         role: "member",
       }),
     );
-    await waitFor(() => expect(screen.getByText("ada")).toBeInTheDocument());
+    // Every Library is granted by default, as the full replace-set.
+    await waitFor(() =>
+      expect(setLibraryAccess).toHaveBeenCalledWith("u2", ["l1", "l2"]),
+    );
+    // The dialog closes and the refetched list shows the new User.
+    await waitFor(() =>
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("ada")).toBeInTheDocument();
   });
 
-  it("creates an Admin when the role is selected", async () => {
+  it("does not grant libraries to a created Admin (they are all-access by role)", async () => {
     const user = userEvent.setup();
     listUsers
       .mockResolvedValueOnce([])
@@ -129,6 +201,7 @@ describe("AdminUsersScreen", () => {
       expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
     );
 
+    await user.click(screen.getByTestId("add-user-button"));
     await user.type(screen.getByTestId("user-username-input"), "boss");
     await user.type(screen.getByTestId("user-password-input"), "pw");
     await user.selectOptions(screen.getByTestId("user-role-select"), "admin");
@@ -141,15 +214,40 @@ describe("AdminUsersScreen", () => {
         role: "admin",
       }),
     );
+    await waitFor(() =>
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
+    );
+    expect(setLibraryAccess).not.toHaveBeenCalled();
+  });
+
+  it("skips the grant when the server has no libraries yet", async () => {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([]);
+    listLibraries.mockResolvedValue([]);
+    createUser.mockResolvedValue(usr({ id: "u2", username: "ada" }));
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("add-user-button"));
+    await user.type(screen.getByTestId("user-username-input"), "ada");
+    await user.type(screen.getByTestId("user-password-input"), "pw");
+    await user.click(screen.getByTestId("create-user-submit"));
+
+    await waitFor(() => expect(createUser).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
+    );
+    expect(setLibraryAccess).not.toHaveBeenCalled();
   });
 
   it("renders a readable inline error on USERNAME_TAKEN and preserves input (no crash)", async () => {
     const user = userEvent.setup();
     listUsers.mockResolvedValue([]);
-    createUser.mockImplementation(() =>
-      Promise.reject(
-        new ApiError(409, "USERNAME_TAKEN", "username ada is already taken"),
-      ),
+    createUser.mockRejectedValue(
+      new ApiError(409, "USERNAME_TAKEN", "username ada is already taken"),
     );
 
     renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
@@ -157,6 +255,7 @@ describe("AdminUsersScreen", () => {
       expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
     );
 
+    await user.click(screen.getByTestId("add-user-button"));
     await user.type(screen.getByTestId("user-username-input"), "ada");
     await user.type(screen.getByTestId("user-password-input"), "pw");
     await user.click(screen.getByTestId("create-user-submit"));
@@ -164,10 +263,44 @@ describe("AdminUsersScreen", () => {
     const err = await screen.findByTestId("create-user-error");
     expect(err).toHaveTextContent(/already taken/i);
     expect(err).toHaveAttribute("data-taken", "true");
-    // Form still mounted and the typed username is preserved (not cleared).
-    expect(screen.getByTestId("create-user-form")).toBeInTheDocument();
+    // The dialog stays open and the typed values survive.
+    expect(screen.getByTestId("create-user-dialog")).toBeInTheDocument();
     expect(screen.getByTestId("user-username-input")).toHaveValue("ada");
     expect(screen.getByTestId("user-password-input")).toHaveValue("pw");
+  });
+
+  it("states plainly when the User was created but the default grant failed, and retries only the grant", async () => {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([]);
+    createUser.mockResolvedValue(usr({ id: "u2", username: "ada" }));
+    setLibraryAccess.mockRejectedValueOnce(
+      new ApiError(422, "UNKNOWN_LIBRARY", "library l2 does not exist"),
+    );
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("add-user-button"));
+    await user.type(screen.getByTestId("user-username-input"), "ada");
+    await user.type(screen.getByTestId("user-password-input"), "pw");
+    await user.click(screen.getByTestId("create-user-submit"));
+
+    const err = await screen.findByTestId("create-user-error");
+    expect(err).toHaveTextContent(/was created/i);
+    expect(err).toHaveTextContent(/does not exist/i);
+    // The create is not offered again (the User exists) — Retry / Close instead.
+    expect(screen.queryByTestId("create-user-submit")).not.toBeInTheDocument();
+
+    // Retry re-runs only the grant.
+    setLibraryAccess.mockResolvedValue(undefined);
+    await user.click(screen.getByTestId("create-user-retry-grant"));
+    await waitFor(() => expect(setLibraryAccess).toHaveBeenCalledTimes(2));
+    expect(createUser).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
+    );
   });
 
   it("disables the create button while the create is in flight", async () => {
@@ -181,11 +314,11 @@ describe("AdminUsersScreen", () => {
       expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
     );
 
+    await user.click(screen.getByTestId("add-user-button"));
     await user.type(screen.getByTestId("user-username-input"), "ada");
     await user.type(screen.getByTestId("user-password-input"), "pw");
     await user.click(screen.getByTestId("create-user-submit"));
 
-    // The submit shows a pending label and is disabled until the call settles.
     await waitFor(() =>
       expect(screen.getByTestId("create-user-submit")).toBeDisabled(),
     );
@@ -193,11 +326,29 @@ describe("AdminUsersScreen", () => {
 
     pending.resolve(usr({ id: "u2", username: "ada" }));
     await waitFor(() =>
-      expect(screen.getByTestId("create-user-submit")).toBeEnabled(),
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
     );
   });
 
-  it("deletes a user after confirmation and removes the row", async () => {
+  it("cancels the create dialog without calling the API", async () => {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([]);
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("add-user-button"));
+    await user.type(screen.getByTestId("user-username-input"), "ada");
+    await user.click(screen.getByTestId("create-user-cancel"));
+
+    expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument();
+    expect(createUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("AdminUsersScreen — deleting a user", () => {
+  it("asks to confirm, deletes, and removes the row", async () => {
     const user = userEvent.setup();
     listUsers
       .mockResolvedValueOnce([
@@ -216,21 +367,25 @@ describe("AdminUsersScreen", () => {
       .getAllByTestId("admin-user-row")
       .find((r) => within(r).queryByText("ada"))!;
 
-    // First click reveals the confirm step; no call yet.
+    // The icon opens a confirmation; nothing is deleted yet.
     await user.click(within(adaRow).getByTestId("delete-user-button"));
     expect(deleteUser).not.toHaveBeenCalled();
-    expect(within(adaRow).getByTestId("delete-user-confirm")).toBeInTheDocument();
+    const dialog = screen.getByTestId("confirm-dialog");
+    expect(within(dialog).getByTestId("confirm-dialog-message")).toHaveTextContent(
+      "ada",
+    );
 
-    await user.click(within(adaRow).getByTestId("delete-user-confirm-button"));
+    await user.click(screen.getByTestId("confirm-dialog-confirm"));
     await waitFor(() => expect(deleteUser).toHaveBeenCalledWith("u2"));
     await waitFor(() =>
       expect(screen.getAllByTestId("admin-user-row")).toHaveLength(1),
     );
     expect(screen.queryByText("ada")).not.toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
   });
 
-  it("can cancel the delete confirmation without calling delete", async () => {
+  it("can cancel the confirmation without calling delete", async () => {
     const user = userEvent.setup();
     listUsers.mockResolvedValue([usr({ id: "u2", username: "ada" })]);
 
@@ -240,9 +395,10 @@ describe("AdminUsersScreen", () => {
     );
 
     await user.click(screen.getByTestId("delete-user-button"));
-    await user.click(screen.getByTestId("delete-user-cancel-button"));
+    await user.click(screen.getByTestId("confirm-dialog-cancel"));
     expect(deleteUser).not.toHaveBeenCalled();
-    expect(screen.getByTestId("delete-user-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("admin-user-row")).toBeInTheDocument();
   });
 
   it("keeps the user and shows a readable error on LAST_ADMIN", async () => {
@@ -250,10 +406,8 @@ describe("AdminUsersScreen", () => {
     listUsers.mockResolvedValue([
       usr({ id: "u1", username: "operator", role: "admin" }),
     ]);
-    deleteUser.mockImplementation(() =>
-      Promise.reject(
-        new ApiError(409, "LAST_ADMIN", "cannot delete the last admin"),
-      ),
+    deleteUser.mockRejectedValue(
+      new ApiError(409, "LAST_ADMIN", "cannot delete the last admin"),
     );
 
     renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
@@ -262,16 +416,16 @@ describe("AdminUsersScreen", () => {
     );
 
     await user.click(screen.getByTestId("delete-user-button"));
-    await user.click(screen.getByTestId("delete-user-confirm-button"));
+    await user.click(screen.getByTestId("confirm-dialog-confirm"));
 
-    const err = await screen.findByTestId("delete-user-error");
+    const err = await screen.findByTestId("confirm-dialog-error");
     expect(err).toHaveTextContent(/last admin/i);
-    // The User survives a refused delete.
-    expect(screen.getByTestId("admin-user-row")).toBeInTheDocument();
+    // The dialog stays open and the User survives a refused delete.
+    expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
   });
 
-  it("disables the confirm-delete button while the delete is in flight", async () => {
+  it("disables confirm while the delete is in flight", async () => {
     const user = userEvent.setup();
     listUsers.mockResolvedValue([usr({ id: "u2", username: "ada" })]);
     const pending = deferred<void>();
@@ -283,16 +437,76 @@ describe("AdminUsersScreen", () => {
     );
 
     await user.click(screen.getByTestId("delete-user-button"));
-    await user.click(screen.getByTestId("delete-user-confirm-button"));
+    await user.click(screen.getByTestId("confirm-dialog-confirm"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("delete-user-confirm-button")).toBeDisabled(),
+      expect(screen.getByTestId("confirm-dialog-confirm")).toBeDisabled(),
     );
-    expect(screen.getByTestId("delete-user-confirm-button")).toHaveTextContent(
+    expect(screen.getByTestId("confirm-dialog-confirm")).toHaveTextContent(
       /deleting/i,
     );
 
     pending.resolve();
+  });
+});
+
+describe("AdminUsersScreen — editing a user", () => {
+  it("opens the Edit dialog from the row's edit icon", async () => {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([usr({ id: "u2", username: "ada" })]);
+    getUser.mockResolvedValue({
+      id: "u2",
+      username: "ada",
+      role: "member",
+      libraryIds: ["l1"],
+      ratingCeiling: "PG",
+    });
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-user-row")).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByTestId("edit-user-dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("edit-user-button"));
+    expect(screen.getByTestId("edit-user-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("edit-user-username")).toHaveTextContent("ada");
+    await waitFor(() => expect(getUser).toHaveBeenCalledWith("u2"));
+  });
+
+  it("routes the Edit dialog's Delete user button into the same confirmation", async () => {
+    const user = userEvent.setup();
+    listUsers
+      .mockResolvedValueOnce([usr({ id: "u2", username: "ada" })])
+      .mockResolvedValue([]);
+    getUser.mockResolvedValue({
+      id: "u2",
+      username: "ada",
+      role: "member",
+      libraryIds: [],
+      ratingCeiling: "",
+    });
+    deleteUser.mockResolvedValue(undefined);
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-user-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("edit-user-button"));
+    await screen.findByTestId("library-checklist");
+    await user.click(screen.getByTestId("edit-user-delete"));
+
+    // The Edit dialog steps aside so the confirmation is the only modal open.
+    expect(screen.queryByTestId("edit-user-dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+    expect(deleteUser).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("confirm-dialog-confirm"));
+    await waitFor(() => expect(deleteUser).toHaveBeenCalledWith("u2"));
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
   });
 });
 
