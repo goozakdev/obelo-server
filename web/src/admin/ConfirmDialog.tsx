@@ -70,7 +70,7 @@ export default function ConfirmDialog({
 
         <footer className="library-dialog-footer library-dialog-footer-end">
           <button
-            className="nav-link"
+            className="button-secondary"
             type="button"
             data-testid="confirm-dialog-cancel"
             onClick={onCancel}
@@ -79,7 +79,7 @@ export default function ConfirmDialog({
             Cancel
           </button>
           <button
-            className="nav-link nav-link-danger"
+            className="button-danger"
             type="button"
             data-testid="confirm-dialog-confirm"
             onClick={onConfirm}
