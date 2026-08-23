@@ -7,7 +7,7 @@ import {
   rememberUser,
   rosterStorageKey,
   rosterUsers,
-  seedKnownUsers,
+  syncKnownUsers,
 } from "./roster";
 
 // The pure roster store (appletv-parity/10): remembered Users per server, keyed by
@@ -49,7 +49,7 @@ describe("roster store", () => {
 
   it("seeds Known entries for unknown server Users without clobbering a Signed-in token", () => {
     rememberUser(storage(), SERVER, { id: "u1", username: "ana", role: "admin" }, "tok-ana");
-    seedKnownUsers(storage(), SERVER, [
+    syncKnownUsers(storage(), SERVER, [
       { id: "u1", username: "ana", role: "admin" }, // already present, untouched
       { id: "u3", username: "cy", role: "member" }, // new → Known
     ]);
@@ -59,6 +59,42 @@ describe("roster store", () => {
       rosterUsers(storage(), SERVER).map((u) => [u.userId, u.signedIn]),
     );
     expect(byId).toEqual({ u1: true, u3: false });
+  });
+
+  it("prunes entries the server no longer knows, so a deleted User stops being a switch target", () => {
+    rememberUser(storage(), SERVER, { id: "u1", username: "ana", role: "admin" }, "tok-ana");
+    rememberUser(storage(), SERVER, { id: "u2", username: "ben", role: "member" }, "tok-ben");
+    // ben was deleted server-side; the list is the authority on who exists.
+    syncKnownUsers(storage(), SERVER, [{ id: "u1", username: "ana", role: "admin" }]);
+    expect(rosterUsers(storage(), SERVER).map((u) => u.userId)).toEqual(["u1"]);
+    expect(getRosterEntry(storage(), SERVER, "u2")).toBeNull();
+    // Surviving entries keep their retained token — reconciling is not a demotion.
+    expect(getRosterEntry(storage(), SERVER, "u1")?.token).toBe("tok-ana");
+  });
+
+  it("refreshes a surviving entry's username and role from the server list", () => {
+    rememberUser(storage(), SERVER, { id: "u1", username: "ana", role: "member" }, "tok-ana");
+    syncKnownUsers(storage(), SERVER, [{ id: "u1", username: "ana-renamed", role: "admin" }]);
+    expect(rosterUsers(storage(), SERVER)).toEqual([
+      { userId: "u1", username: "ana-renamed", role: "admin", signedIn: true },
+    ]);
+  });
+
+  it("drops a dead twin sharing the username when that username signs in again", () => {
+    // A deleted-then-recreated User: the stale entry carries the OLD id, so an
+    // id-keyed upsert would leave two rows for one person — the dead one shadowing
+    // the live one in the switch-user menu forever.
+    rememberUser(storage(), SERVER, { id: "old-id", username: "ben", role: "member" }, null);
+    rememberUser(storage(), SERVER, { id: "new-id", username: "ben", role: "member" }, "tok-ben");
+    expect(rosterUsers(storage(), SERVER)).toEqual([
+      { userId: "new-id", username: "ben", role: "member", signedIn: true },
+    ]);
+  });
+
+  it("keeps distinct Users whose usernames differ only by case (the server's UNIQUE is exact)", () => {
+    rememberUser(storage(), SERVER, { id: "u1", username: "Ben", role: "member" }, null);
+    rememberUser(storage(), SERVER, { id: "u2", username: "ben", role: "member" }, null);
+    expect(rosterUsers(storage(), SERVER).map((u) => u.userId).sort()).toEqual(["u1", "u2"]);
   });
 
   it("demotes a Signed-in entry to Known (drops the token, keeps the user)", () => {

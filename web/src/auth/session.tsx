@@ -20,7 +20,7 @@ import {
   rememberUser,
   rosterUsers,
   saveServerId,
-  seedKnownUsers,
+  syncKnownUsers,
   type RosterUser,
 } from "./roster";
 
@@ -279,14 +279,16 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       // Remember me is on, else Known.
       rememberUser(window.localStorage, sid, res.user, remember ? res.token : null);
       bumpRoster();
-      // Admin roster seeding (best-effort): pre-populate Known entries for the
-      // other server Users so they appear as switch targets (Admin scope; the web
-      // app already has it). Guarded for stub clients in tests.
+      // Admin roster reconciliation (best-effort): pre-populate Known entries for
+      // the other server Users so they appear as switch targets, and prune the ones
+      // the server no longer knows — this login is the only moment the app holds an
+      // authoritative User list (Admin scope; the web app already has it). Guarded
+      // for stub clients in tests.
       if (hasRole(res.user.role, "admin") && typeof client.listUsers === "function") {
         void client
           .listUsers()
           .then((users) => {
-            seedKnownUsers(window.localStorage, sid, users);
+            syncKnownUsers(window.localStorage, sid, users);
             bumpRoster();
           })
           .catch(() => {

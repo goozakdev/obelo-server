@@ -3229,8 +3229,14 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   flex: 1 0 100%;
 }
 
-/* The metadata-match state ("unmatched", "failed") rides in the row's right-hand
-   cluster beside the fix action, reading as a status rather than a title suffix. */
+/* A row's own state rides in its right-hand cluster beside the fix action,
+   reading as a status rather than a title suffix: the needs-review flag in the
+   accent (it marks work still outstanding), the metadata-match state dim. */
+.needs-review-flag {
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
 .enrichment-attention-status {
   color: var(--text-dim);
   font-size: 0.85rem;

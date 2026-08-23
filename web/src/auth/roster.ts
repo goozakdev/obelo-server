@@ -95,14 +95,25 @@ export interface RosterIdentity {
 
 /** Remember a User who just signed in. `token` is the retained durable token when
  * Remember me was on (→ Signed-in), or `null` to record a Known entry (Remember me
- * off, or an explicit demotion). The username/role are refreshed either way. */
+ * off, or an explicit demotion). The username/role are refreshed either way.
+ *
+ * Also drops any OTHER entry carrying this exact username. `users.username` is
+ * `NOT NULL UNIQUE` (0001_init.sql, binary collation), so at most one live User
+ * holds a given username string — a second entry with the same name is therefore a
+ * deleted identity whose id will never come back. Left in place it shows up as a
+ * duplicate row in the switch-user menu, and (because the roster excludes the
+ * active user BY ID) the dead twin keeps listing the person you are signed in as.
+ * This is the id-independent half of the repair, so it heals a Member's browser
+ * too — only an Admin can reconcile against {@link syncKnownUsers}. */
 export function rememberUser(
   storage: Storage,
   serverId: string | null,
   user: RosterIdentity,
   token: string | null,
 ): void {
-  const entries = loadRoster(storage, serverId);
+  const entries = loadRoster(storage, serverId).filter(
+    (e) => e.userId === user.id || e.username !== user.username,
+  );
   const next: RosterEntry = {
     userId: user.id,
     username: user.username,
@@ -115,24 +126,44 @@ export function rememberUser(
   saveRoster(storage, serverId, entries);
 }
 
-/** Add Known entries for server Users not already remembered (Admin seeding via
- * GET /users). Never touches an existing entry, so it can neither clobber a
- * Signed-in entry's token nor demote a remembered user. */
-export function seedKnownUsers(
+/** Reconcile the roster against the server's own User list (Admin seeding via
+ * GET /users): add Known entries for Users not yet remembered, refresh the
+ * username/role of those that are, and DROP entries whose id the server no longer
+ * knows.
+ *
+ * The pruning matters as much as the seeding. Nothing else in a long-lived browser
+ * ever removes a remembered User, so a User deleted server-side lingered forever —
+ * and re-creating that username minted a new id, leaving two entries for one
+ * person (one Known, one Signed-in). GET /users is the authority on who exists, so
+ * this is the one place that can say "that id is gone."
+ *
+ * A retained token is preserved for every surviving entry: reconciling must not
+ * demote a Signed-in User to Known. */
+export function syncKnownUsers(
   storage: Storage,
   serverId: string | null,
   users: RosterIdentity[],
 ): void {
   const entries = loadRoster(storage, serverId);
-  const known = new Set(entries.map((e) => e.userId));
-  let changed = false;
+  const live = new Map(users.map((u) => [u.id, u]));
+  // Keep only entries the server still knows, refreshed from its copy — the token
+  // rides along untouched so a Signed-in entry stays Signed-in.
+  const next: RosterEntry[] = entries.flatMap((e) => {
+    const u = live.get(e.userId);
+    if (!u) return [];
+    return [{ ...e, username: u.username, role: u.role }];
+  });
+  const known = new Set(next.map((e) => e.userId));
   for (const u of users) {
     if (known.has(u.id)) continue;
-    entries.push({ userId: u.id, username: u.username, role: u.role });
+    next.push({ userId: u.id, username: u.username, role: u.role });
     known.add(u.id);
-    changed = true;
   }
-  if (changed) saveRoster(storage, serverId, entries);
+  // Only write when something actually moved, so a steady-state login doesn't
+  // churn storage (and doesn't bump the roster version for nothing).
+  if (JSON.stringify(next) !== JSON.stringify(entries)) {
+    saveRoster(storage, serverId, next);
+  }
 }
 
 /** Demote a Signed-in entry to Known by dropping its retained token, keeping the
