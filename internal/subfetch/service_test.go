@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // fakeProvider is a canned SubtitleProvider: it returns preset candidates and

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/auth"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Service-level tests for the Device authorization grant (ADR-0036).

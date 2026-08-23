@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/subfetch"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/subfetch"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Issue subtitles/05 integration test: external subtitle fetching through the real

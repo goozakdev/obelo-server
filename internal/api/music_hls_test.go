@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Regression for the "music never plays on Safari — segments 404" bug. An

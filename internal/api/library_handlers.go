@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/library"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/library"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Wire shapes for the Library endpoints (docs/api-contract.md): camelCase, the

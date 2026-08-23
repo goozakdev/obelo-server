@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/gpu"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/gpu"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // transcodingResponse is the camelCase JSON shape of GET /api/v1/transcoding

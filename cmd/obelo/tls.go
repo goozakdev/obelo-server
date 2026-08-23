@@ -12,7 +12,7 @@ import (
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 
-	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/config"
 )
 
 // certReloader owns the operator-supplied certificate on disk (ADR-0041,

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/catalog"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Wire shapes + handlers for the Music browse hierarchy (issue tv-music/03,

@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/rotation"
-	"github.com/marioquake/obelo-server/internal/server"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/rotation"
+	"github.com/goozakdev/obelo-server/internal/server"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // rotationFetchTimeout bounds a single rotation fetch so a hung endpoint never

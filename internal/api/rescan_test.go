@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Issue-06 black-box tests: drive incremental rescan, soft-delete of Missing,

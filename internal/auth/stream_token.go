@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Session stream tokens (.scratch/session-stream-tokens): the server's SECOND

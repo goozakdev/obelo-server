@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // artwork-management issue 04 black-box tests: the per-session candidate cache —

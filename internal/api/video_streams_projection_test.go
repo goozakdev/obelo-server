@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // White-box unit tests for the video-Stream API projection (selectable-video/01):

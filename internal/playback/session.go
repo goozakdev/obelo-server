@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // Session is one active Playback session: a single stream from the server to one

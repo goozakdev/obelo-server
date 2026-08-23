@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // item-editing issue 04 black-box tests: the "Wrong item" destructive identity

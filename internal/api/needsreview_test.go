@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Black-box tests for the identity needs-review attention surface (resolvable).

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // --- pure helpers ---

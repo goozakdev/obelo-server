@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Black-box tests for the Targeted scan (ADR-0030): POST /titles/{id}/scan

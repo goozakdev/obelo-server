@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/tailnet"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // The tag-less half of the feature-flag pair (ADR-0043). Its twin is

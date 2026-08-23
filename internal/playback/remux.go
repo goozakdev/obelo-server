@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // hlsRuntime owns the on-demand HLS job for one directStream OR transcode

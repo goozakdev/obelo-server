@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/scanner"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/scanner"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Domain errors, mapped to HTTP by the api layer.

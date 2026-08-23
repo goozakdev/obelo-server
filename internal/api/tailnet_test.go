@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/tailnet"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Admin-scope Tailnet remote-access black-box tests (ADR-0043): the five

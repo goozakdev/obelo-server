@@ -3,7 +3,7 @@ package store_test
 import (
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // TestMultiEpisodeIncrementalReuseCollision reproduces the scheduled-scan crash:

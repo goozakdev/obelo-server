@@ -15,7 +15,7 @@ package access
 import (
 	"errors"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // roleAdmin is the Admin role string (mirrors the value the auth/store layers

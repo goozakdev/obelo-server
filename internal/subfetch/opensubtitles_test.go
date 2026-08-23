@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/safefetch"
 )
 
 // The OpenSubtitles provider's HTTP guards, against an httptest stub — no live

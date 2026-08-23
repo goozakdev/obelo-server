@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/rotation"
+	"github.com/goozakdev/obelo-server/internal/rotation"
 )
 
 // testEncKey returns a fresh base64 AES-256 key.

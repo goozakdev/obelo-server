@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // LibraryAndRatingOfFile is the access guard behind the sessionless direct-file

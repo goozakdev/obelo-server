@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/safefetch"
 )
 
 // The metadata-provider image proxy: GET /providerImage?ref=<signed reference>.

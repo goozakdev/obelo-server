@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Issue subtitles/03 integration test: in-band TEXT subtitle delivery on the

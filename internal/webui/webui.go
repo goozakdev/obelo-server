@@ -28,7 +28,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/api"
+	"github.com/goozakdev/obelo-server/internal/api"
 )
 
 // dist holds the built SPA assets. The Vite build writes here before `go build`

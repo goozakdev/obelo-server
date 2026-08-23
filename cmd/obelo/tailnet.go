@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // tailnetListenAddr is where the third listener binds on the Tailnet (ADR-0043).

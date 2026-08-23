@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/auth"
 )
 
 // The Device authorization grant's HTTP surface (ADR-0036, docs/api-contract.md

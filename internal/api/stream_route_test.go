@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/api"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/api"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Black-box tests for the path-carried media routes (.scratch/session-stream-tokens,

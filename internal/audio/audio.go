@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/subtitle"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 )
 
 // NormalizeLang folds a raw audio-stream language tag to one canonical ISO-639-1

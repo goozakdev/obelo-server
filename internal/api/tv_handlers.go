@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/catalog"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // withArtworkVersion appends an opaque per-entity cache-bust token to an artwork

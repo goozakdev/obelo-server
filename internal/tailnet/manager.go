@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // ManagerStore is the persistence the Manager reads the desired state from and

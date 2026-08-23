@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // debugHLSBoundaries is the `obelo debug-hls-boundaries <file>` diagnostic:

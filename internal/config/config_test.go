@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/config"
 )
 
 // TestScanIntervalFromEnv: the scheduled-scan cadence is env-overridable and a

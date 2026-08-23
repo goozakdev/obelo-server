@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/safefetch"
 )
 
 // providerClient is the one place the JSON metadata clients (tmdb.go, musicbrainz.go,

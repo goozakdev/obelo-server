@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Unit tests for the image-subtitle burn-in negotiation (ADR-0020, subtitles/04):

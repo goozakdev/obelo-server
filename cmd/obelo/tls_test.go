@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // TestNewServersPlainHTTPOnlyByDefault: with TLS unset the command builds exactly

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // TestLibraryUpdatedSSE: a connected client on GET /api/v1/events observes a

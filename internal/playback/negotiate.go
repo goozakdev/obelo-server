@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/audio"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/subtitle"
+	"github.com/goozakdev/obelo-server/internal/audio"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 )
 
 // Tier is the chosen playback tier (ADR-0003). Negotiation picks the cheapest

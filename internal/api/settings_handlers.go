@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Admin-scope metadata-provider settings (metadata-providers 02). An Admin views

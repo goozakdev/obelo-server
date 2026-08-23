@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/discovery"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/discovery"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // Admin-scope Tailnet remote-access settings (ADR-0043), the shape the
