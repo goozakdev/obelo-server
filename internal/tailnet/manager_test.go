@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // The state machine (ADR-0043). Boot, the settings PUT, and the three verbs all

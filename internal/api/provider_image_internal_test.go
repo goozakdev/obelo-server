@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/safefetch"
 )
 
 // White-box tests for the two provider-image rules that cannot be observed from

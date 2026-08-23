@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/access"
-	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/access"
+	"github.com/goozakdev/obelo-server/internal/auth"
 )
 
 // Admin-scope user management (docs/api-contract.md). These handlers let an

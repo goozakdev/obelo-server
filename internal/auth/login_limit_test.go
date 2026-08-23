@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/auth"
 )
 
 // Service-level tests for the login brute-force limiter (login_limit.go).

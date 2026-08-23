@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/audio"
-	"github.com/marioquake/obelo-server/internal/catalog"
-	"github.com/marioquake/obelo-server/internal/playback"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/subtitle"
+	"github.com/goozakdev/obelo-server/internal/audio"
+	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/playback"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 )
 
 // HTTP transport for the direct-play tier (ADR-0003 tier 1, ADR-0004 progressive

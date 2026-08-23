@@ -28,7 +28,7 @@ import (
 
 	"golang.org/x/crypto/acme"
 
-	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/config"
 )
 
 // acmeTestDomain is the name every test here obtains a certificate for. A

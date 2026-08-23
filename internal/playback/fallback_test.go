@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // Per-session hardware→CPU fallback (ADR-0009, issue 03). These exercise the

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Admin-only session events (realtime-events issue 03). The session lifecycle

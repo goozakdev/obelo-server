@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/marioquake/obelo-server/internal/events"
+	"github.com/goozakdev/obelo-server/internal/events"
 )
 
 // handleEvents serves the single Server-Sent Events stream (ADR-0016):

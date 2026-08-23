@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // targeted.go implements the Targeted scan (ADR-0030, ADR-0031): a scan restricted

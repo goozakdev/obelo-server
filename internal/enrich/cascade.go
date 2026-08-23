@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Cascade — apply a parent Enrichment override to its children (item-editing/05,

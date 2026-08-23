@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Black-box HTTP tests for collections-playlists issue 01: the Admin-curated,

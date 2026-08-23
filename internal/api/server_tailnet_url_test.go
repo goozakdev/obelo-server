@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/tailnet"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // The Tailnet address on the handshake (ADR-0043). The field is gated on

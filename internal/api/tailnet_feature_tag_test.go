@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/tailnet"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // The tagged half of the feature-flag pair (ADR-0043). See its twin,

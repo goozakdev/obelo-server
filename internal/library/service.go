@@ -15,8 +15,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/obelo-server/internal/access"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/access"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // The media kinds a Library can hold (CONTEXT.md). Movie was the v1 slice; TV

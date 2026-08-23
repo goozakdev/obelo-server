@@ -18,11 +18,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/api"
-	"github.com/marioquake/obelo-server/internal/app"
-	"github.com/marioquake/obelo-server/internal/config"
-	"github.com/marioquake/obelo-server/internal/discovery"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/api"
+	"github.com/goozakdev/obelo-server/internal/app"
+	"github.com/goozakdev/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/discovery"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 func main() {

@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/tailnet"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // The third listener (ADR-0043) — the first one in this server whose lifetime is

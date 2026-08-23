@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // Black-box tests for the per-Library Enrichment policy (ADR-0027, slice 01):

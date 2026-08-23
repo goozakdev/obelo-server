@@ -3,7 +3,7 @@ package enrich
 import (
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // The provider registry is the STATIC code catalog of the external metadata

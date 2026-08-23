@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/safefetch"
-	"github.com/marioquake/obelo-server/internal/subtitle"
+	"github.com/goozakdev/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 )
 
 // OpenSubtitlesProvider is the first concrete SubtitleProvider (ADR-0021): it owns

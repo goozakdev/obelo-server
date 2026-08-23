@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // The first-boot seed and the source-of-truth handoff (ADR-0043). The black-box

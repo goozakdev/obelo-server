@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/catalog"
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/events"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/events"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Edit-item on the browse PARENTS — Show / Artist / Album (item-editing/02,

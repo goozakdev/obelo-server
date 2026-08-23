@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // fakeManagerStore is an in-memory ManagerStore + SeedStore for driving Reload and

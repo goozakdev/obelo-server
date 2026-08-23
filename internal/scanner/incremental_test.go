@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // countingProber counts Probe calls so a test can assert that an unchanged file

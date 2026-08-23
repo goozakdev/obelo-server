@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // The node key's expiry in the BOOT LOG (ADR-0043). The settings panel is issue

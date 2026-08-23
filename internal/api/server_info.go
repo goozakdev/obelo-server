@@ -3,9 +3,9 @@ package api
 import (
 	"net/http"
 
-	"github.com/marioquake/obelo-server/internal/auth"
-	"github.com/marioquake/obelo-server/internal/server"
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/server"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // serverInfoResponse is the camelCase JSON shape of GET /api/v1/server defined

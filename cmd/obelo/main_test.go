@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/config"
 )
 
 // TestNewHTTPServerTimeouts pins the connection timeouts the server binds with.

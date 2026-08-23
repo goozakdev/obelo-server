@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/auth"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Wire shapes for the authentication endpoints (docs/api-contract.md). All

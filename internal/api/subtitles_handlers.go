@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/catalog"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/subtitle"
+	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 )
 
 // Out-of-band text-subtitle delivery (ADR-0020, subtitles/02): a text Subtitle

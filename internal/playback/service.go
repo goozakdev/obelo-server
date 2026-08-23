@@ -6,10 +6,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/access"
-	"github.com/marioquake/obelo-server/internal/audio"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/access"
+	"github.com/goozakdev/obelo-server/internal/audio"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // ErrTitleNotFound means the requested Title does not exist (or, per the

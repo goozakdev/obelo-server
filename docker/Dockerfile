@@ -78,7 +78,7 @@ ARG OBELO_ROTATION_URL=""
 # The node runs userspace WireGuard over a gVisor network stack inside the server
 # process, which needs none of those. If a future change appears to need any of
 # them, the approach is wrong — not this Dockerfile.
-RUN CONFIG_PKG=github.com/marioquake/obelo-server/internal/config; \
+RUN CONFIG_PKG=github.com/goozakdev/obelo-server/internal/config; \
     TMDB_OBF=$(printf %s "$OBELO_BOOTSTRAP_TMDB_KEY" | base64 | tr -d '\n'); \
     FANART_OBF=$(printf %s "$OBELO_BOOTSTRAP_FANART_KEY" | base64 | tr -d '\n'); \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \

@@ -40,7 +40,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/mdns"
-	"github.com/marioquake/obelo-server/internal/server"
+	"github.com/goozakdev/obelo-server/internal/server"
 )
 
 // ServiceType is the DNS-SD service this server advertises under. Clients browse

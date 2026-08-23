@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
 
 // The tag-less half of the CI matrix (ADR-0043). This file only compiles in the

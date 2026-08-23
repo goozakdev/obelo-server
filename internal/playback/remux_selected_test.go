@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/access"
-	"github.com/marioquake/obelo-server/internal/store"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/access"
+	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // Unit tests for the lean single-track remux (PRD remux-selected): the client

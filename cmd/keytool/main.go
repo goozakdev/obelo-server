@@ -26,7 +26,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/marioquake/obelo-server/internal/rotation"
+	"github.com/goozakdev/obelo-server/internal/rotation"
 )
 
 // options are the resolved inputs for one keytool run.

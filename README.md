@@ -148,7 +148,7 @@ More detail lives in [`docker/README.md`](./docker/README.md).
 Prerequisites: **Go 1.25+**, **Node.js 22+**, and **`ffmpeg`** on `PATH`.
 
 ```sh
-git clone https://github.com/marioquake/obelo-server.git
+git clone https://github.com/goozakdev/obelo-server.git
 cd obelo
 make build      # builds the web bundle first, then the Go binary that embeds it
 ./bin/obelo

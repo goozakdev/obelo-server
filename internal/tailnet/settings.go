@@ -1,8 +1,8 @@
 package tailnet
 
 import (
-	"github.com/marioquake/obelo-server/internal/discovery"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/discovery"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // FallbackHostname is the MagicDNS hostname a Server joins under when nothing

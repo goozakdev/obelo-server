@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // TV folder resolution (issue tv-music/01). The scanner branches on the owning

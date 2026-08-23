@@ -31,14 +31,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/marioquake/obelo-server/internal/app"
-	"github.com/marioquake/obelo-server/internal/auth"
-	"github.com/marioquake/obelo-server/internal/config"
-	"github.com/marioquake/obelo-server/internal/enrich"
-	"github.com/marioquake/obelo-server/internal/gpu"
-	"github.com/marioquake/obelo-server/internal/subfetch"
-	"github.com/marioquake/obelo-server/internal/tailnet"
-	"github.com/marioquake/obelo-server/internal/transcode"
+	"github.com/goozakdev/obelo-server/internal/app"
+	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/gpu"
+	"github.com/goozakdev/obelo-server/internal/subfetch"
+	"github.com/goozakdev/obelo-server/internal/tailnet"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // Server is a running test server plus the handles a test needs to drive and

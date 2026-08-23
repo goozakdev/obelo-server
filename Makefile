@@ -36,7 +36,7 @@ TAGS ?=
 GOTAGS := $(if $(TAGS),-tags $(TAGS),)
 RELEASE_TAGS := tailscale
 
-CONFIG_PKG := github.com/marioquake/obelo-server/internal/config
+CONFIG_PKG := github.com/goozakdev/obelo-server/internal/config
 BOOTSTRAP_TMDB_OBF   := $(shell printf %s "$(OBELO_BOOTSTRAP_TMDB_KEY)" | base64 | tr -d '\n')
 BOOTSTRAP_FANART_OBF := $(shell printf %s "$(OBELO_BOOTSTRAP_FANART_KEY)" | base64 | tr -d '\n')
 LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \

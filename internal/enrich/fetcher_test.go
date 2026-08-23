@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/safefetch"
 )
 
 // The production HTTPArtworkFetcher's guards, exercised against an httptest

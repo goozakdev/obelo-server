@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marioquake/obelo-server/internal/organize"
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/organize"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Wire shapes + handlers for the Collections surface (collections-playlists

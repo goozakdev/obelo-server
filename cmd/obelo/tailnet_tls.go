@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marioquake/obelo-server/internal/config"
+	"github.com/goozakdev/obelo-server/internal/config"
 )
 
 // Tailnet :443 — the MagicDNS certificate (ADR-0043, tailscale/03).

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/subtitle"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 )
 
 // TestMasterPlaylistCarriesAudioGroup: a demuxed multi-audio master advertises one

@@ -3,7 +3,7 @@ package enrich
 import (
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // TestPinnedProviderPrecedenceHelpers locks in the pure decisions behind per-item

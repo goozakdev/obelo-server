@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/marioquake/obelo-server/internal/webui"
+	"github.com/goozakdev/obelo-server/internal/webui"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/marioquake/obelo-server
+module github.com/goozakdev/obelo-server
 
 go 1.26.5
 

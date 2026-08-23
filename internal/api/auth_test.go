@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/marioquake/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
 // These are black-box tests: they drive the fully wired server over HTTP and

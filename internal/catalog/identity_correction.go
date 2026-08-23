@@ -1,6 +1,6 @@
 package catalog
 
-import "github.com/marioquake/obelo-server/internal/store"
+import "github.com/goozakdev/obelo-server/internal/store"
 
 // Wrong-item identity correction (item-editing/04, ADR-0019). The catalog side of
 // the destructive Match-override apply: derive the fix-match folder anchor for a
