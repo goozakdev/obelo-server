@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../api/client";
+import { useAuth } from "../auth/session";
 import { errorMessage } from "../screens/errorMessage";
 import type { User } from "../api/types";
 import AdminListPanel from "./AdminListPanel";
@@ -36,6 +37,7 @@ type ListState =
   | { status: "ready"; users: User[] };
 
 export default function AdminUsersScreen() {
+  const { forgetRosterUser } = useAuth();
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
@@ -77,6 +79,11 @@ export default function AdminUsersScreen() {
     setDeleteError(null);
     try {
       await apiClient.deleteUser(deleting.id);
+      // Drop them from this browser's remembered-Users roster too, so the deleted
+      // User stops offering itself as a switch target in the header menu. Without
+      // this the entry survives until the next Admin login reconciles it away, and
+      // re-creating the same username (a new id) shows the person twice.
+      forgetRosterUser(deleting.id);
       setDeleting(null);
       setDeleteBusy(false);
       reload();

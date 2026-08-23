@@ -317,13 +317,20 @@ function LibraryAttention({ libraryId }: { libraryId: string }) {
                   data-title-id={t.id}
                   data-kind={t.kind}
                 >
-                  {/* No "needs review" flag: the panel's own title already says
-                      so for every row in it. */}
                   <Link className="needs-review-link" to={detailPath}>
                     {t.title}
                     {t.year > 0 ? ` (${t.year})` : ""}
                   </Link>
                   <div className="admin-row-actions is-persistent">
+                    {/* The row's own flag. It reads as redundant against the
+                        panel title until a row is acted on: marking one reviewed
+                        or fixing its identity resolves THAT row, and the flag is
+                        what says which rows are still outstanding. It rides in
+                        the cluster beside the actions, exactly like the
+                        metadata-match status. */}
+                    <span className="needs-review-flag" data-testid="needs-review-flag">
+                      needs review
+                    </span>
                     <button
                       className="icon-button"
                       type="button"

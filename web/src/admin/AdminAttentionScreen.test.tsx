@@ -136,6 +136,12 @@ describe("AdminAttentionScreen — needs-review", () => {
     expect(within(items[0]).getByTestId("needs-review-fix-button")).toBeInTheDocument();
     expect(within(items[1]).queryByTestId("needs-review-fix-button")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("needs-review-mark-button")).toHaveLength(3);
+    // Every row flags itself: once some rows are resolved, the flag is what says
+    // which ones are still outstanding.
+    expect(screen.getAllByTestId("needs-review-flag")).toHaveLength(3);
+    expect(within(items[0]).getByTestId("needs-review-flag")).toHaveTextContent(
+      "needs review",
+    );
   });
 
   it("shows an empty state when nothing needs review", async () => {
