@@ -8,7 +8,7 @@ The server repo ships a multi-stage Dockerfile building a static linux binary wi
 
 ```bash
 # from a checkout of the obelo-server repo:
-docker build -f docker/Dockerfile -t obelo .
+docker build --platform linux/amd64 -f docker/Dockerfile -t obelo .
 
 docker run --rm -p 8099:8080 \
   -v "$PWD/harness/data:/data" -v "$PWD/harness/media:/media" \
