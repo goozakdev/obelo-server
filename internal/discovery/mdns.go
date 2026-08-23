@@ -39,8 +39,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/mdns"
 	"github.com/goozakdev/obelo-server/internal/server"
+	"github.com/hashicorp/mdns"
 )
 
 // ServiceType is the DNS-SD service this server advertises under. Clients browse
