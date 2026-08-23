@@ -112,8 +112,34 @@ OBELO_ROTATION_URL="https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys" 
 OBELO_APP_ENC_KEY="<same base64 key>" \
 OBELO_BOOTSTRAP_TMDB_KEY="<tmdb key>" \
 OBELO_BOOTSTRAP_FANART_KEY="<fanart key>" \
-  make build                   # or --build-arg for Docker
+  make build-release
 ```
+
+For **Docker**, the three credentials go in as BuildKit secrets rather than build
+args — `--build-arg` writes them into the build stage's metadata and into any
+exported build cache:
+
+```sh
+export OBELO_APP_ENC_KEY="<same base64 key>"
+export OBELO_BOOTSTRAP_TMDB_KEY="<tmdb key>"
+export OBELO_BOOTSTRAP_FANART_KEY="<fanart key>"
+
+docker build --platform linux/amd64 -f docker/Dockerfile \
+  --secret id=tmdb_key,env=OBELO_BOOTSTRAP_TMDB_KEY \
+  --secret id=fanart_key,env=OBELO_BOOTSTRAP_FANART_KEY \
+  --secret id=app_enc_key,env=OBELO_APP_ENC_KEY \
+  --build-arg OBELO_ROTATION_URL="https://obelo-key-rotation.<subdomain>.workers.dev/v1/keys" \
+  --build-arg CACHE_EPOCH=$(date +%Y-%m-%d) \
+  -t obelo .
+```
+
+The URL stays a build arg — it is not a secret. `--platform linux/amd64` is required:
+without it an arm64 build host labels the manifest `linux/arm64` even though the content
+is amd64, and amd64 hosts then refuse to pull it. `CACHE_EPOCH` must change whenever a
+credential does, or BuildKit reuses the cached `go build` layer and ships the old key
+silently. Both are covered by the pre-push checklist in
+[`docker/README.md`](../../docker/README.md#publishing-an-official-image); see also
+[the runbook](../../docs/runbooks/metadata-key-rotation.md).
 
 Operators can override the baked default at runtime with `OBELO_KEY_ROTATION_URL`.
 

@@ -69,7 +69,7 @@ Build the image (the build context is the repository root, not the `docker/`
 directory):
 
 ```sh
-docker build -f docker/Dockerfile -t obelo .
+docker build --platform linux/amd64 -f docker/Dockerfile -t obelo .
 ```
 
 Run it, mounting a writable data directory and your media (read-only):
@@ -92,12 +92,24 @@ Run it with `--network host` instead of `-p` — mDNS is link-local multicast an
 does not cross a Docker bridge. See
 [`docker/README.md`](./docker/README.md#lan-discovery-bonjour-_obelo_tcp).
 
-Building on Apple Silicon still produces a `linux/amd64` image (the Go binary is
-pure-Go and cross-compiles). If your Docker can't run amd64 locally, use buildx:
+Building on Apple Silicon produces a `linux/amd64` image (the Go binary is
+pure-Go and cross-compiles) — but **keep the `--platform linux/amd64` flag**. The
+image content is amd64 either way; without the flag the manifest gets *labelled*
+`linux/arm64`, which local `docker run` ignores but `docker push`/`docker pull`
+honour. Check the `└─` line before trusting a build:
+
+```sh
+docker image ls --tree obelo      # must read: └─ linux/amd64
+```
+
+If your Docker can't run amd64 images locally you can still build them:
 
 ```sh
 docker buildx build --platform linux/amd64 -f docker/Dockerfile -t obelo . --load
 ```
+
+Full details, plus the maintainer publish checklist, are in
+[`docker/README.md`](./docker/README.md#build).
 
 ### GPU-accelerated transcoding
 
