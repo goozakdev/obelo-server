@@ -49,7 +49,7 @@ interface SettingsDraft {
  * configured, the reason is the consent decision (ADR-0032), and saying so is far
  * more useful than "off": the consent control is at the top of this same screen.
  * Never re-derive "on" from the provider rows; that is what made this screen
- * announce "Enrichment on" while the server was correctly calling nothing. */
+ * announce "Enabled" while the server was correctly calling nothing. */
 function kindStatus(
   view: MetadataProvidersView,
   kind: string,
@@ -58,18 +58,18 @@ function kindStatus(
   const configured =
     kind === "video" ? view.configuredEnablement.video : view.configuredEnablement.music;
   const blocked = !on && configured && view.consentState !== "granted";
-  if (on) return { on, blocked: false, label: "Enrichment on" };
+  if (on) return { on, blocked: false, label: "Enabled" };
   if (blocked) {
     return {
       on,
       blocked,
       label:
         view.consentState === "declined"
-          ? "Configured — consent declined"
+          ? "Configured — Disabled"
           : "Configured — waiting on consent",
     };
   }
-  return { on, blocked: false, label: "Enrichment off" };
+  return { on, blocked: false, label: "Disabled" };
 }
 
 function settingsDraftFromView(view: MetadataProvidersView): SettingsDraft {
