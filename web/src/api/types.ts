@@ -22,11 +22,23 @@ export interface ServerInfo {
  * the server makes no outbound enrichment calls until a decision is recorded. */
 export type EnrichmentConsentState = "unset" | "granted" | "declined";
 
+/** Which layer of ADR-0032's default-credential precedence chain supplies the
+ * metadata API key this server would use: `operator` is the key the operator
+ * supplied themselves (BYOK), `bootstrap` / `rotation` are default credentials
+ * that shipped with an official binary or Docker image, and `none` means this
+ * build has no keys at all. The consent prompt branches on it so it can say whose
+ * key the operator is being asked to authorize — on a pre-compiled build, that is
+ * a key they never registered. */
+export type MetadataCredentialSource = "operator" | "rotation" | "bootstrap" | "none";
+
 /** Response of `GET`/`PUT /api/v1/settings/enrichment-consent` (Admin). */
 export interface EnrichmentConsent {
   state: EnrichmentConsentState;
   /** RFC3339 timestamp of the decision; absent while `unset`. */
   grantedAt?: string;
+  /** Whose API key the decision covers. Absent from an older server, in which
+   * case the prompt falls back to source-neutral wording. */
+  credentialSource?: MetadataCredentialSource;
 }
 
 /** A user's role. The backend is single-Admin today (Members deferred), but the

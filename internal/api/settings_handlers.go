@@ -455,9 +455,21 @@ func handleTestProvider(deps Deps, slug string) http.HandlerFunc {
 // enrichmentConsentResponse is the GET/PUT body: the decision as a wire state the
 // SPA branches on ("unset" → show the first-run prompt; "granted"/"declined" →
 // reflect the settings toggle), plus when it was recorded (omitted while unset).
+//
+// credentialSource names WHICH key the operator would be consenting to use
+// (ADR-0032's precedence chain: "operator" | "rotation" | "bootstrap" | "none").
+// The consent prompt needs it because the honest sentence differs per build: an
+// official binary or Docker image carries default TMDB/fanart.tv credentials the
+// operator never chose, a build-from-source binary carries none, and an operator
+// who set OBELO_TMDB_API_KEY is using their own. Asking "enable metadata?" without
+// saying whose key answers the call is the same failure ADR-0032 already recorded
+// once — the UI asserting something about enrichment that the server has not
+// confirmed. Omitted (empty) when the wiring is absent, in which case the SPA
+// falls back to source-neutral copy rather than guessing.
 type enrichmentConsentResponse struct {
-	State     string `json:"state"`
-	GrantedAt string `json:"grantedAt,omitempty"`
+	State            string `json:"state"`
+	GrantedAt        string `json:"grantedAt,omitempty"`
+	CredentialSource string `json:"credentialSource,omitempty"`
 }
 
 // updateEnrichmentConsentRequest is the PUT body: the operator's decision. Granted
@@ -474,7 +486,7 @@ func handleGetEnrichmentConsent(deps Deps) http.HandlerFunc {
 				"failed to read enrichment consent", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, enrichmentConsentJSON(c))
+		writeJSON(w, http.StatusOK, enrichmentConsentJSON(deps, c))
 	}
 }
 
@@ -516,15 +528,23 @@ func handleUpdateEnrichmentConsent(deps Deps) http.HandlerFunc {
 				"failed to read enrichment consent", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, enrichmentConsentJSON(c))
+		writeJSON(w, http.StatusOK, enrichmentConsentJSON(deps, c))
 	}
 }
 
-// enrichmentConsentJSON shapes a stored decision into the wire response.
-func enrichmentConsentJSON(c store.EnrichmentConsent) enrichmentConsentResponse {
+// enrichmentConsentJSON shapes a stored decision into the wire response, joined
+// with the credential provenance the prompt has to be able to state (see the
+// response type). The source is READ FROM THE WIRING (deps), never re-derived
+// here: the precedence chain lives in config.Config.ResolveTMDBKey and this
+// response reports its answer, so there is exactly one place that decides which
+// key wins.
+func enrichmentConsentJSON(deps Deps, c store.EnrichmentConsent) enrichmentConsentResponse {
 	out := enrichmentConsentResponse{State: c.State()}
 	if !c.At.IsZero() {
 		out.GrantedAt = c.At.UTC().Format(time.RFC3339)
+	}
+	if deps.MetadataCredentialSource != nil {
+		out.CredentialSource = deps.MetadataCredentialSource()
 	}
 	return out
 }

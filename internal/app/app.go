@@ -687,6 +687,18 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		ProviderManager: providerManager,
 		SettingsChanged: app.notifyEnrichReschedule,
 
+		// Which credential the first-run consent prompt is actually asking about
+		// (ADR-0032). Same resolver, same rotation-cache snapshot, as the boot posture
+		// log above — so the sentence the operator reads in the browser and the line
+		// in the server log can never disagree about whose API key this server would
+		// use. Bootstrap and rotation are the same fact to the operator ("a default
+		// key that came with this build"), which is why a later rotation swap does not
+		// need to reach back into this closure.
+		MetadataCredentialSource: func() string {
+			_, src := cfg.ResolveTMDBKey(rotKeys)
+			return src.String()
+		},
+
 		// Per-Library Enrichment policy (ADR-0027): persistence + the derived-
 		// enablement resolver + the immediate-re-enrich trigger.
 		EnrichmentPolicy: db,

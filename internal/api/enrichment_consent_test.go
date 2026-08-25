@@ -215,3 +215,76 @@ func TestEnrichmentConsentAdminOnly(t *testing.T) {
 		t.Fatalf("PUT consent as member = %d, want 403", status)
 	}
 }
+
+// enrichmentConsentSourceView decodes the consent GET including the credential
+// provenance the first-run prompt renders from.
+type enrichmentConsentSourceView struct {
+	State            string `json:"state"`
+	CredentialSource string `json:"credentialSource"`
+}
+
+// TestEnrichmentConsentReportsCredentialSource covers the half of the first-run
+// prompt that is not the gate: WHOSE key the operator is being asked to authorize.
+// It matters because pre-compiled binaries and Docker images ship default TMDB /
+// fanart.tv credentials (ADR-0032) the operator never registered — so "enable
+// metadata?" is really "may this server call TMDB with the project's key?", and a
+// prompt that cannot tell the two builds apart would have to either invent a
+// provenance or say nothing. The wire field is what lets the SPA say the true one.
+//
+// The two states a test binary can actually reach are covered here (no ldflags are
+// injected into `go test`, so the bootstrap layer is empty by construction — which
+// is exactly what makes 'none' the honest answer for a build-from-source install).
+// The precedence chain itself is config's, and is tested there.
+func TestEnrichmentConsentReportsCredentialSource(t *testing.T) {
+	t.Run("no keys anywhere reports none", func(t *testing.T) {
+		srv := testharness.New(t, testharness.WithoutEnrichmentConsent())
+		token := adminToken(t, srv)
+		var v enrichmentConsentSourceView
+		if status, body := srv.AuthGET(consentPath, token, &v); status != http.StatusOK {
+			t.Fatalf("GET consent = %d, want 200; body: %s", status, body)
+		}
+		// A build-from-source binary bundles nothing, and the prompt must say so
+		// rather than offering credentials that do not exist.
+		if v.CredentialSource != "none" {
+			t.Fatalf("credentialSource = %q on a keyless build, want none", v.CredentialSource)
+		}
+		if v.State != "unset" {
+			t.Fatalf("state = %q, want unset", v.State)
+		}
+	})
+
+	t.Run("an operator key reports operator", func(t *testing.T) {
+		srv := testharness.New(t,
+			testharness.WithEnrichmentKey("operator-supplied-key"),
+			testharness.WithoutEnrichmentConsent(),
+		)
+		token := adminToken(t, srv)
+		var v enrichmentConsentSourceView
+		if status, body := srv.AuthGET(consentPath, token, &v); status != http.StatusOK {
+			t.Fatalf("GET consent = %d, want 200; body: %s", status, body)
+		}
+		// BYOK: the calls would go out under the operator's own account, which is a
+		// materially different thing to consent to than using a shared default key.
+		if v.CredentialSource != "operator" {
+			t.Fatalf("credentialSource = %q with a BYOK key set, want operator", v.CredentialSource)
+		}
+	})
+
+	// The provenance must survive the decision: the settings screen reads the same
+	// endpoint after consent is recorded, and reports the same source.
+	t.Run("survives the decision", func(t *testing.T) {
+		srv := testharness.New(t,
+			testharness.WithEnrichmentKey("operator-supplied-key"),
+			testharness.WithoutEnrichmentConsent(),
+		)
+		token := adminToken(t, srv)
+		putConsent(t, srv, token, true)
+		var v enrichmentConsentSourceView
+		if status, body := srv.AuthGET(consentPath, token, &v); status != http.StatusOK {
+			t.Fatalf("GET consent = %d, want 200; body: %s", status, body)
+		}
+		if v.State != "granted" || v.CredentialSource != "operator" {
+			t.Fatalf("after grant = %+v, want granted + operator", v)
+		}
+	})
+}
