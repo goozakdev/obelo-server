@@ -164,13 +164,13 @@ describe("AdminProvidersScreen", () => {
 
   // The per-kind badge is the screen's one claim about behaviour, and it must
   // track the server's GATED enablement. With consent withheld the server makes
-  // no calls, so "Enrichment on" — sitting a screen-height under the consent
+  // no calls, so "Enabled" — sitting a screen-height under the consent
   // control's "no external metadata calls are made" — is the contradiction these
   // tests exist to prevent.
-  it("never says Enrichment on while consent is withheld, and names consent as the reason", async () => {
+  it("never says enabled while consent is withheld, and names consent as the reason", async () => {
     for (const [consentState, wanted] of [
       ["unset", /waiting on consent/i],
-      ["declined", /consent declined/i],
+      ["declined", /Disabled/i],
     ] as const) {
       getMetadataProviders.mockResolvedValue(
         view({
@@ -185,7 +185,7 @@ describe("AdminProvidersScreen", () => {
         initialEntries: ["/admin/providers"],
       });
       const badge = await screen.findByTestId("provider-kind-status-video");
-      expect(badge).not.toHaveTextContent(/enrichment on/i);
+      expect(badge).not.toHaveTextContent(/Enabled/i);
       expect(badge).toHaveTextContent(wanted);
       expect(badge).toHaveAttribute("data-enabled", "false");
       expect(badge).toHaveAttribute("data-consent-blocked", "true");
@@ -203,7 +203,7 @@ describe("AdminProvidersScreen", () => {
     );
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     const badge = await screen.findByTestId("provider-kind-status-video");
-    expect(badge).toHaveTextContent(/enrichment off/i);
+    expect(badge).toHaveTextContent(/Disabled/i);
     expect(badge).not.toHaveAttribute("data-consent-blocked");
   });
 
@@ -230,14 +230,14 @@ describe("AdminProvidersScreen", () => {
       );
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     expect(await screen.findByTestId("provider-kind-status-video")).toHaveTextContent(
-      /consent declined/i,
+      /Disabled/i,
     );
 
     await user.click(await screen.findByTestId("enrichment-consent-toggle"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-kind-status-video")).toHaveTextContent(
-        /enrichment on/i,
+        /Enabled/i,
       ),
     );
     expect(screen.getByTestId("provider-kind-status-video")).toHaveAttribute(
