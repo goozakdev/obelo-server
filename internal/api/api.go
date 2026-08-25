@@ -113,6 +113,19 @@ type Deps struct {
 	// settings save (metadata-providers 02). The PUT handler calls Reload; nil
 	// leaves persistence working without the runtime swap.
 	ProviderManager *enrich.Manager
+	// MetadataCredentialSource reports WHICH layer of ADR-0032's default-credential
+	// precedence chain currently supplies the metadata key — "operator" (the
+	// operator's own BYOK key), "rotation" / "bootstrap" (a default credential that
+	// shipped with an official build), or "none" (a build-from-source binary with no
+	// keys at all). It exists for the first-run consent prompt, which must be able to
+	// say whose key it is about to use: on a pre-compiled binary or Docker image the
+	// answer is "ours, baked in", and an operator consenting to external calls
+	// deserves to be told that and pointed at BYOK. The app wires it to a closure
+	// over config.Config.ResolveTMDBKey so the precedence chain is derived in ONE
+	// place; nil (every narrow unit test) omits the field and the SPA renders
+	// source-neutral copy.
+	MetadataCredentialSource func() string
+
 	// SettingsChanged, when set, is poked by the settings PUT after a successful
 	// save + Manager.Reload to wake the scheduled-enrich goroutine so a changed
 	// EnrichInterval applies promptly (enrichment-runtime-settings). Nil-safe: a
