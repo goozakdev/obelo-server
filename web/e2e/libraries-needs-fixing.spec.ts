@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// End-to-end admin ATTENTION + DEVICES flow (issue 07 acceptance criteria)
-// against the REAL embedded Go server. As an Admin: see a needs-review Title and
-// an Unmatched file, apply a fix-match and confirm the override appears AND
-// survives a rescan; then list the user's devices and revoke one, asserting via
-// the API that the revoked device's token is rejected.
+// End-to-end admin NEEDS-FIXING + DEVICES flow against the REAL embedded Go
+// server. As an Admin: see a needs-review Title and an Unmatched file in one
+// queue, fix the Unmatched file by SEARCHING the provider (never by typing an id
+// — that was the old screen's only tool), and confirm the correction is recorded
+// AND survives a rescan; then list the user's devices and revoke one, asserting
+// via the API that the revoked device's token is rejected.
 //
 // FOLDER_OVERLAP avoidance + fixtures: the Playwright webServer is reused for the
 // whole run, so libraries created by other specs PERSIST and own the checked-in
@@ -90,7 +91,7 @@ async function uiLogin(page: Page): Promise<void> {
   await expect(page.getByTestId("home-screen")).toBeVisible();
 }
 
-test.describe.serial("admin: attention surfaces & devices", () => {
+test.describe.serial("admin: the Needs-Fixing queue & devices", () => {
   test.beforeAll(async ({ playwright, baseURL }) => {
     const request = await playwright.request.newContext({ baseURL });
     await ensureAdmin(request);
@@ -98,7 +99,7 @@ test.describe.serial("admin: attention surfaces & devices", () => {
 
     // Unique temp fixtures: a yearless folder (→ needs-review) and a bare
     // quality-token file (→ Unmatched). Both are tiny checked-in fixtures.
-    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-attention-fixtures-"));
+    fixturesDir = mkdtempSync(join(tmpdir(), "obelo-needs-fixing-fixtures-"));
     cpSync(
       join(NAMING, "Yearless Movie"),
       join(fixturesDir, "Yearless Movie"),
@@ -112,7 +113,7 @@ test.describe.serial("admin: attention surfaces & devices", () => {
     if (fixturesDir) {
       try {
         const request = await playwright.request.newContext({ baseURL });
-        const { token } = await apiLogin(request, "attention-cleanup", "cleanup");
+        const { token } = await apiLogin(request, "needs-fixing-cleanup", "cleanup");
         const libs = await (
           await request.get("/api/v1/libraries", {
             headers: { Authorization: `Bearer ${token}` },
@@ -166,55 +167,60 @@ test.describe.serial("admin: attention surfaces & devices", () => {
     const libId = await row.getAttribute("data-library-id");
     expect(libId).toBeTruthy();
 
+    // Scan lives in the row's ⋮ menu (it moved there in the Libraries redesign).
+    await row.getByTestId("library-menu-toggle").click();
     await row.getByTestId("scan-button").click();
     // Wait for the scan to actually FIND titles (not just for the indicator to
     // read idle — a never-scanned row already shows idle on mount, so polling
     // data-state alone races the scan). titlesFound > 0 means the catalog is
-    // populated, so the attention queries that follow won't see a stale empty.
+    // populated, so the queue's reads that follow won't see a stale empty.
     await expect
-      .poll(async () => Number(await row.getByTestId("scan-titles-found").innerText()), {
+      .poll(async () => Number(await row.getByTestId("scan-title-count").innerText()), {
         timeout: 15000,
       })
       .toBeGreaterThan(0);
 
-    // Attention tab: the needs-review Title (yearless) and the Unmatched file
-    // (1080p.mkv) both surface for the selected library.
-    await page.getByTestId("admin-tab-attention").click();
-    await expect(page.getByTestId("admin-attention")).toBeVisible();
+    // Needs Fixing tab: the needs-review Title (yearless) and the Unmatched file
+    // (1080p.mkv) both surface, in ONE queue rather than in two separate lists.
+    await page.getByTestId("admin-tab-needs-fixing").click();
+    await expect(page.getByTestId("admin-needs-fixing")).toBeVisible();
     // The picker defaults to the first library; select ours explicitly by id.
-    await page.getByTestId("attention-library-select").selectOption(libId!);
+    await page.getByTestId("needs-fixing-library-select").selectOption(libId!);
 
-    await expect(page.getByTestId("needs-review-list")).toBeVisible();
+    await expect(page.getByTestId("needs-fixing-list")).toBeVisible();
     await expect(
-      page.getByTestId("needs-review-item").filter({ hasText: "Yearless Movie" }),
+      page.getByTestId("fix-item").filter({ hasText: "Yearless Movie" }),
     ).toBeVisible();
 
-    await expect(page.getByTestId("unmatched-list")).toBeVisible();
-    const unmatchedItem = page
-      .getByTestId("unmatched-item")
-      .filter({ hasText: "1080p.mkv" });
-    await expect(unmatchedItem).toBeVisible();
+    // Every row names the file it is about — the Unmatched row by its path.
+    const unmatchedRow = page.getByTestId("fix-item").filter({ hasText: "1080p" });
+    await expect(unmatchedRow).toBeVisible();
+    await expect(unmatchedRow).toHaveAttribute("data-problem", "unidentified");
+    await expect(unmatchedRow.getByTestId("fix-item-path")).toContainText("1080p.mkv");
 
-    // Apply a fix-match on the Unmatched file: give it a real identity. The form
-    // anchors to the file's FOLDER (the temp dir for a bare file at the root).
-    await unmatchedItem.getByTestId("unmatched-fix-button").click();
-    const form = unmatchedItem.getByTestId("fix-match-form");
-    await expect(form).toBeVisible();
-    await expect(form).toHaveAttribute("data-folder-path", fixturesDir);
-    await form.getByTestId("fix-match-title").fill("Fixed By E2E");
-    await form.getByTestId("fix-match-year").fill("2021");
-    await form.getByTestId("fix-match-submit").click();
+    // Fix it by SEARCHING, not by typing an id: opening the row runs the provider
+    // search on its own (the TMDB stub answers /search/movie with "Dune"), and one
+    // click applies the best guess as a folder-keyed correction.
+    await unmatchedRow.getByTestId("fix-item-toggle").click();
+    await expect(unmatchedRow.getByTestId("fix-best-guess")).toBeVisible();
+    await expect(unmatchedRow.getByTestId("fix-candidate-title")).toContainText("Dune");
+    await unmatchedRow.getByTestId("fix-use-best-guess").click();
 
-    // The override appears in the overrides list.
-    await expect(page.getByTestId("overrides-list")).toBeVisible();
-    const overrideItem = page
-      .getByTestId("override-item")
-      .filter({ hasText: "Fixed By E2E" });
-    await expect(overrideItem).toBeVisible();
+    // The correction is recorded, and the queue says it lands on the next scan
+    // rather than pretending the file is already re-filed (a Match override is read
+    // by the scanner — ADR-0002/0014).
+    await expect(page.getByTestId("needs-fixing-rescan")).toBeVisible();
 
-    // Persists across a rescan: trigger a full scan, then the override is still
-    // listed (server-owned, survives rescans — ADR-0002/0014).
+    // It shows up under the corrections log, which is kept out of the work queue.
+    await page.getByTestId("needs-fixing-corrections-toggle").click();
+    await expect(
+      page.getByTestId("override-item").filter({ hasText: "Dune" }),
+    ).toBeVisible();
+
+    // Persists across a rescan: trigger a full scan, then the correction is still
+    // recorded (server-owned, survives rescans — ADR-0002/0014).
     await page.getByTestId("admin-tab-libraries").click();
+    await row.getByTestId("library-menu-toggle").click();
     await row.getByTestId("full-scan-button").click();
     await expect
       .poll(async () => row.getByTestId("scan-status").getAttribute("data-state"), {
@@ -222,11 +228,11 @@ test.describe.serial("admin: attention surfaces & devices", () => {
       })
       .toBe("idle");
 
-    await page.getByTestId("admin-tab-attention").click();
-    await page.getByTestId("attention-library-select").selectOption(libId!);
-    await expect(page.getByTestId("overrides-list")).toBeVisible();
+    await page.getByTestId("admin-tab-needs-fixing").click();
+    await page.getByTestId("needs-fixing-library-select").selectOption(libId!);
+    await page.getByTestId("needs-fixing-corrections-toggle").click();
     await expect(
-      page.getByTestId("override-item").filter({ hasText: "Fixed By E2E" }),
+      page.getByTestId("override-item").filter({ hasText: "Dune" }),
     ).toBeVisible();
   });
 

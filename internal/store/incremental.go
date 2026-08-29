@@ -304,6 +304,25 @@ func (db *DB) SetMatchOverrideOrphaned(id string, orphaned bool) error {
 	return nil
 }
 
+// DeleteMatchOverride removes one override by id. The Admin surface uses it to
+// discard an ORPHANED override — a correction whose anchor folder was renamed or
+// deleted, so it can never match anything again and is pure noise. ErrNotFound
+// when no such override, so the caller answers 404 rather than a silent success.
+func (db *DB) DeleteMatchOverride(id string) error {
+	res, err := db.Exec(`DELETE FROM match_overrides WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("store: deleting match override: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: deleting match override rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func scanMatchOverride(s scanner) (MatchOverride, error) {
 	var o MatchOverride
 	var year sql.NullInt64

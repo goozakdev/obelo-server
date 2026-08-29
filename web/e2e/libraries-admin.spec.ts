@@ -170,7 +170,7 @@ test.describe.serial("admin: libraries & scanning", () => {
       .toBe("idle");
     await expect
       .poll(async () =>
-        Number(await row.getByTestId("scan-titles-found").innerText()),
+        Number(await row.getByTestId("scan-title-count").innerText()),
       )
       .toBeGreaterThan(0);
 
@@ -193,6 +193,8 @@ test.describe.serial("admin: libraries & scanning", () => {
       .getByTestId("admin-library-row")
       .filter({ has: page.getByTestId("admin-library-name").filter({ hasText: name }) });
     await expect(sameRow).toBeVisible();
+    // Edit lives in the row's ⋮ menu too, so the menu has to be opened first.
+    await sameRow.getByTestId("library-menu-toggle").click();
     await sameRow.getByTestId("edit-library-button").click();
     const dialog = page.getByTestId("edit-library-dialog");
     await expect(dialog).toBeVisible();

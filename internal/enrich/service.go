@@ -449,6 +449,138 @@ func (s *Service) SearchCandidates(ctx context.Context, kind, query string, opts
 	return cands, nil
 }
 
+// SeriesSeasons lists the seasons of a series an Admin has picked, and
+// SeasonEpisodes lists one season's episodes — the data behind choosing WHICH
+// provider episode decorates a file.
+//
+// This is what makes an episode fixable when the provider numbers a series
+// differently from the files on disk. Pinning the right series alone never helped:
+// the lookup still asked for the season/episode parsed from the filename, so a file
+// the provider counts in the next season stayed unmatchable no matter what was
+// picked. Reads only — the pin is written by the apply.
+//
+// ErrSearchUnavailable when the kind's enrichment is off or the configured
+// provider cannot list episodes, so the picker says why instead of hanging.
+func (s *Service) SeriesSeasons(ctx context.Context, showExternalID string) ([]SeasonSummary, error) {
+	lister, err := s.episodeLister()
+	if err != nil {
+		return nil, err
+	}
+	return lister.SeriesSeasons(ctx, showExternalID)
+}
+
+func (s *Service) SeasonEpisodes(ctx context.Context, showExternalID string, season int) ([]EpisodeCandidate, error) {
+	lister, err := s.episodeLister()
+	if err != nil {
+		return nil, err
+	}
+	return lister.SeasonEpisodes(ctx, showExternalID, season)
+}
+
+// episodeLister resolves the configured provider to the optional EpisodeLister
+// capability, gated on video enrichment being on at all (an episode list is a
+// video notion). A provider that doesn't implement it is ErrSearchUnavailable.
+func (s *Service) episodeLister() (EpisodeLister, error) {
+	snap := s.snapshot()
+	if !snap.enablement.enabledFor("episode") {
+		return nil, ErrSearchUnavailable
+	}
+	lister, ok := snap.provider.(EpisodeLister)
+	if !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister, nil
+}
+
+// EpisodePicker is everything the "which episode is this?" chooser needs: the
+// series' season list (sent once), the season being shown, and its episodes.
+type EpisodePicker struct {
+	// Seasons is populated only when the caller did not name a season — the client
+	// fetches the list once, then pages episodes within it.
+	Seasons  []SeasonSummary
+	Season   int
+	Episodes []EpisodeCandidate
+}
+
+// EpisodePickerData lists the episodes of `showExternalID` for the season the
+// Admin is looking at. A nil season means "the one this file is already filed
+// under", which is the season they are most likely to want: the common shape of
+// this problem is a right-season/wrong-episode or an end-of-season run that the
+// provider counts in the next season.
+//
+// The store read also owns the ErrNotFound for an unknown Title, so the HTTP layer
+// needs no separate lookup just to learn the season.
+func (s *Service) EpisodePickerData(ctx context.Context, titleID, showExternalID string, season *int) (EpisodePicker, error) {
+	t, err := s.store.TitleForEnrichmentByID(titleID)
+	if err != nil {
+		return EpisodePicker{}, err // ErrNotFound flows through
+	}
+	out := EpisodePicker{Season: t.SeasonNumber}
+	if season != nil {
+		out.Season = *season
+	} else {
+		seasons, sErr := s.SeriesSeasons(ctx, showExternalID)
+		if sErr != nil {
+			return EpisodePicker{}, sErr
+		}
+		out.Seasons = seasons
+		// The file's own season is the best default only when the chosen series
+		// HAS it. It often won't: the reason an Admin is here is that the disk and
+		// the provider disagree, and the record they want may live in a different
+		// series altogether (a re-numbered continuation like The New Batman
+		// Adventures, which has no season 3 for a file filed as S03). Opening on an
+		// empty list in that case would look like "this series has no episodes".
+		out.Season = defaultSeason(seasons, t.SeasonNumber)
+	}
+	eps, err := s.SeasonEpisodes(ctx, showExternalID, out.Season)
+	if err != nil {
+		return EpisodePicker{}, err
+	}
+	out.Episodes = eps
+	return out, nil
+}
+
+// defaultSeason picks the season the chooser opens on: the file's own when the
+// series has it, otherwise the first real season (preferring a numbered one over
+// Specials, which is rarely what someone is looking for). Falls back to `want`
+// when the series lists no seasons at all, so the caller still asks for something
+// and surfaces the provider's own answer.
+func defaultSeason(seasons []SeasonSummary, want int) int {
+	first := -1
+	for _, s := range seasons {
+		if s.Season == want {
+			return want
+		}
+		if s.Season > 0 && (first < 0 || s.Season < first) {
+			first = s.Season
+		}
+	}
+	if first >= 0 {
+		return first
+	}
+	if len(seasons) > 0 {
+		return seasons[0].Season
+	}
+	return want
+}
+
+// ApplyEpisodeOverride pins BOTH the series and the exact provider episode that
+// decorates a leaf Episode, then re-enriches just it. The season/episode pinned
+// here replace the parsed numbers for the LOOKUP ONLY: identity_key, the Title's
+// own season/episode, its place in the library, and every User's watch state are
+// untouched (ADR-0002/0014) — the file keeps its history and simply gains the right
+// details. store.ErrNotFound for an unknown Title flows to the handler as a 404.
+func (s *Service) ApplyEpisodeOverride(ctx context.Context, titleID, showExternalID string, season, episode int) error {
+	if episode <= 0 {
+		return fmt.Errorf("%w: an episode number is required", ErrExternalRefInvalid)
+	}
+	return s.MatchTitle(ctx, titleID, store.ExternalMatch{
+		TMDBID:        showExternalID,
+		EpisodeSeason: season,
+		EpisodeNumber: episode,
+	})
+}
+
 // ExternalMatchForKind maps a picked candidate's authoritative external id onto
 // the right id column for the entity kind: music leaves (track) pin a MusicBrainz
 // id, video leaves (movie/episode) a TMDB id. It is the small adapter the apply-
@@ -535,6 +667,15 @@ func (s *Service) SearchEntityCandidates(ctx context.Context, entityType, entity
 // (item-editing/search-improvements). Reads only.
 func (s *Service) PreviewEntityExternal(ctx context.Context, entityType, entityID, pastedRef string) (Candidate, error) {
 	return s.previewExternal(ctx, entityKind(entityType), pastedRef)
+}
+
+// PreviewExternalForKind resolves a pasted MusicBrainz/TMDB id-or-URL for a bare
+// entity KIND rather than an existing item — the Unmatched-file case, where no
+// Title exists yet to derive the kind from, so the caller (which knows the
+// Library's media kind) supplies it. Same parse/lookup/error contract as
+// PreviewTitleExternal; reads only.
+func (s *Service) PreviewExternalForKind(ctx context.Context, kind, pastedRef string) (Candidate, error) {
+	return s.previewExternal(ctx, kind, pastedRef)
 }
 
 // previewExternal is the shared core of the paste-an-id escape hatch: parse + kind-
@@ -1277,7 +1418,7 @@ func pinnedProviderFor(t store.Title) (string, bool) {
 // refFor builds the provider lookup reference from a stored Title. External ids
 // (parsed from a {tmdb-…} token or assigned by fix-match) drive a by-id lookup.
 func refFor(t store.Title) TitleRef {
-	return TitleRef{
+	ref := TitleRef{
 		Kind:          t.Kind,
 		Title:         t.Title,
 		Year:          t.Year,
@@ -1288,6 +1429,15 @@ func refFor(t store.Title) TitleRef {
 		EpisodeNumber: t.EpisodeNumber,
 		EpisodeLabel:  t.EpisodeLabel,
 	}
+	// An Admin-pinned provider episode overrides the parsed numbers FOR THE LOOKUP
+	// ONLY — the one and only place the pin takes effect. It is what makes a file
+	// fixable when the provider numbers the series differently from the disk; the
+	// Title's own SeasonNumber/EpisodeNumber (and so its place in the library, its
+	// identity_key and its watch state) are untouched (ADR-0002/0014).
+	if season, episode, ok := t.EpisodePin(); ok {
+		ref.SeasonNumber, ref.EpisodeNumber = season, episode
+	}
+	return ref
 }
 
 func toStoreCredits(in []Credit) []store.Credit {

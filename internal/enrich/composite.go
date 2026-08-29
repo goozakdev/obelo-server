@@ -71,3 +71,26 @@ func (c CompositeProvider) ArtworkCandidates(ctx context.Context, ref TitleRef, 
 		return nil, ErrSearchUnavailable
 	}
 }
+
+// SeriesSeasons / SeasonEpisodes forward the optional EpisodeLister capability to
+// the VIDEO sub-provider — an episode list is a video notion, and the music side
+// has no analogue. A sub-provider that doesn't implement it (a build with a
+// non-TMDB authoritative source, or no video provider at all) yields
+// ErrSearchUnavailable, so the picker reports "no episode list here" instead of
+// hanging or pretending. This is the same graceful degradation the rest of
+// enrichment uses (ADR-0001).
+func (c CompositeProvider) SeriesSeasons(ctx context.Context, showID string) ([]SeasonSummary, error) {
+	lister, ok := c.Video.(EpisodeLister)
+	if c.Video == nil || !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister.SeriesSeasons(ctx, showID)
+}
+
+func (c CompositeProvider) SeasonEpisodes(ctx context.Context, showID string, season int) ([]EpisodeCandidate, error) {
+	lister, ok := c.Video.(EpisodeLister)
+	if c.Video == nil || !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister.SeasonEpisodes(ctx, showID, season)
+}

@@ -659,3 +659,74 @@ func (p *TMDBProvider) getJSON(ctx context.Context, path string, q url.Values, o
 	}
 	return nil
 }
+
+// --- EpisodeLister: picking WHICH provider episode decorates a file ----------
+
+// SeriesSeasons lists a TMDB series' seasons so an Admin can choose the one their
+// file actually belongs to. It exists because a provider's numbering and the
+// numbering on disk can disagree — the run of episodes a provider moved into the
+// next season being the common case — and enrichment otherwise looks the episode
+// up by the on-disk numbers and fails forever.
+func (p *TMDBProvider) SeriesSeasons(ctx context.Context, showID string) ([]SeasonSummary, error) {
+	q := url.Values{}
+	q.Set("api_key", p.APIKey)
+	q.Set("language", p.Language)
+
+	var out struct {
+		Seasons []struct {
+			SeasonNumber int `json:"season_number"`
+			EpisodeCount int `json:"episode_count"`
+		} `json:"seasons"`
+	}
+	if err := p.getJSON(ctx, "/tv/"+showID, q, &out); err != nil {
+		return nil, err
+	}
+	seasons := make([]SeasonSummary, 0, len(out.Seasons))
+	for _, s := range out.Seasons {
+		seasons = append(seasons, SeasonSummary{Season: s.SeasonNumber, EpisodeCount: s.EpisodeCount})
+	}
+	return seasons, nil
+}
+
+// SeasonEpisodes lists one season's episodes in episode order, each with enough to
+// recognize it on sight (name, air date, overview, still).
+func (p *TMDBProvider) SeasonEpisodes(ctx context.Context, showID string, season int) ([]EpisodeCandidate, error) {
+	q := url.Values{}
+	q.Set("api_key", p.APIKey)
+	q.Set("language", p.Language)
+
+	var out struct {
+		Episodes []struct {
+			EpisodeNumber int    `json:"episode_number"`
+			SeasonNumber  int    `json:"season_number"`
+			Name          string `json:"name"`
+			Overview      string `json:"overview"`
+			AirDate       string `json:"air_date"`
+			StillPath     string `json:"still_path"`
+		} `json:"episodes"`
+	}
+	if err := p.getJSON(ctx, "/tv/"+showID+"/season/"+strconv.Itoa(season), q, &out); err != nil {
+		return nil, err
+	}
+	eps := make([]EpisodeCandidate, 0, len(out.Episodes))
+	for _, e := range out.Episodes {
+		ep := EpisodeCandidate{
+			Season:   e.SeasonNumber,
+			Episode:  e.EpisodeNumber,
+			Name:     e.Name,
+			Overview: e.Overview,
+			AirDate:  e.AirDate,
+		}
+		// TMDB reports the season on each episode, but a malformed payload could
+		// omit it; fall back to the season we asked for so a pin is never written
+		// against season 0 by accident.
+		if ep.Season == 0 && season != 0 {
+			ep.Season = season
+		}
+		if e.StillPath != "" {
+			ep.StillURL = p.ImageBaseURL + e.StillPath
+		}
+		eps = append(eps, ep)
+	}
+	return eps, nil
+}

@@ -1,7 +1,7 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import AppHeader from "../browse/AppHeader";
 import AdminLibrariesScreen from "../admin/AdminLibrariesScreen";
-import AdminAttentionScreen from "../admin/AdminAttentionScreen";
+import AdminNeedsFixingScreen from "../admin/AdminNeedsFixingScreen";
 import AdminDevicesScreen from "../admin/AdminDevicesScreen";
 import AdminUsersScreen from "../admin/AdminUsersScreen";
 import AdminProvidersScreen from "../admin/AdminProvidersScreen";
@@ -14,7 +14,9 @@ import { useOptionalFeature } from "../serverInfoContext";
 // attention surfaces (needs-review / Unmatched / fix-match / overrides) and the
 // devices management, as tabbed sub-routes that share this chrome:
 //   /admin           libraries + scanning  (issue 06, unchanged)
-//   /admin/attention needs-review / Unmatched / fix-match / overrides
+//   /admin/needs-fixing  the one queue of everything wrong in a library, with the
+//                    provider search that fixes it (was /admin/attention, which
+//                    still redirects here)
 //   /admin/devices   the signed-in user's devices, with revoke
 //   /admin/users     manage Users — list + create Member + delete
 //                    (access-control-admin-ui issue 01)
@@ -52,11 +54,11 @@ export default function AdminScreen() {
               Libraries
             </NavLink>
             <NavLink
-              to="/admin/attention"
+              to="/admin/needs-fixing"
               className="admin-tab"
-              data-testid="admin-tab-attention"
+              data-testid="admin-tab-needs-fixing"
             >
-              Attention
+              Needs Fixing
             </NavLink>
             <NavLink
               to="/admin/devices"
@@ -107,7 +109,13 @@ export default function AdminScreen() {
           <div className="admin-content">
             <Routes>
               <Route index element={<AdminLibrariesScreen />} />
-              <Route path="attention" element={<AdminAttentionScreen />} />
+              <Route path="needs-fixing" element={<AdminNeedsFixingScreen />} />
+              {/* The tab was called "Attention" through issue 07; keep its path
+                  working so a bookmark or an old link still lands somewhere. */}
+              <Route
+                path="attention"
+                element={<Navigate to="/admin/needs-fixing" replace />}
+              />
               <Route path="devices" element={<AdminDevicesScreen />} />
               <Route path="users" element={<AdminUsersScreen />} />
               <Route path="providers" element={<AdminProvidersScreen />} />

@@ -80,7 +80,10 @@ export default function Poster({ titleId, title, role = "poster", version, src }
   );
 }
 
-function initials(title: string): string {
+/** Two-letter stand-in for missing artwork. Exported so any surface that has to
+ * render its OWN placeholder — the Needs-Fixing queue, whose Unmatched rows have no
+ * entity to fetch an image for — shows the same thing this component would. */
+export function initials(title: string): string {
   const words = title.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "?";
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();

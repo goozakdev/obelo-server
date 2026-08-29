@@ -545,6 +545,13 @@ func handleTitleExternalPreview(enrichSvc *enrich.Service, images *providerImage
 type enrichmentOverrideRequest struct {
 	ExternalID string `json:"externalId"`
 	Cascade    bool   `json:"cascade"`
+	// Season / Episode pin WHICH provider episode decorates an Episode, for the
+	// lookup only. Sent when the Admin picked a specific episode after picking the
+	// series — the fix for a file the provider numbers differently from the disk.
+	// Omitted (Episode 0) leaves any existing pin alone; identity and watch state
+	// are never touched either way (ADR-0002/0014).
+	Season  int `json:"season,omitempty"`
+	Episode int `json:"episode,omitempty"`
 }
 
 // handleEnrichmentOverride applies a picked candidate as a durable Enrichment
@@ -583,7 +590,14 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 
 		// The service derives the id column from the Title's own kind (lean read) and
 		// re-enriches; an unknown Title is store.ErrNotFound → 404 (hide existence).
-		err := enrichSvc.ApplyOverride(r.Context(), titleID, externalID)
+		// When the Admin picked a specific episode, pin it too — that is the whole
+		// point on a series whose provider numbering doesn't match the files.
+		var err error
+		if req.Episode > 0 {
+			err = enrichSvc.ApplyEpisodeOverride(r.Context(), titleID, externalID, req.Season, req.Episode)
+		} else {
+			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID)
+		}
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
@@ -850,4 +864,209 @@ func toEnrichEvent(p enrich.Progress, complete bool) events.EnrichProgress {
 		Disabled:  p.Disabled,
 		Complete:  complete,
 	}
+}
+
+// --- Library-scoped candidate search (the Unmatched-file case) --------------
+
+// searchKindForLibrary maps a Library's media kind onto the entity kind a
+// library-scoped provider search should look up. It is the same mapping
+// handleFixMatch already uses to resolve an id-only fix (movie → movie, tv →
+// show), extended with music → album, because a Music fix-match is anchored to an
+// album folder and an album is what the Admin is identifying. "" for an unknown
+// kind, which the callers turn into a 404.
+func searchKindForLibrary(libraryKind string) string {
+	switch libraryKind {
+	case "movie":
+		return "movie"
+	case "tv":
+		return "show"
+	case "music":
+		return "album"
+	default:
+		return ""
+	}
+}
+
+// handleLibraryEnrichmentCandidates searches the authoritative provider for a
+// Library rather than for an existing item (GET
+// /libraries/{id}/enrichmentCandidates?q=…, Admin-only).
+//
+// It exists for the one row type that cannot use the per-item search: an
+// **Unmatched** file has, by definition, no Title to anchor
+// /titles/{id}/enrichmentCandidates to. That is why its only correction tool used
+// to be a raw-id form — the row that most needs a search was the one row that
+// could not have one. The searched kind comes from the Library's media kind.
+//
+// Everything else matches the per-item route: blank query → empty 200, capped page
+// size, same-origin thumbnail rewrite, 503 SEARCH_UNAVAILABLE when the provider is
+// unconfigured or unreachable, unknown Library → 404 (hide-existence). Reads only.
+func handleLibraryEnrichmentCandidates(enrichSvc *enrich.Service, images *providerImageProxy, cat *catalog.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		libraryID := pathParam(r.URL.Path, "/libraries/", "/enrichmentCandidates")
+		kind, ok := librarySearchKind(w, cat, libraryID)
+		if !ok {
+			return
+		}
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		cands, err := enrichSvc.SearchCandidates(r.Context(), kind, query, searchOptionsFrom(r))
+		switch {
+		case errors.Is(err, enrich.ErrSearchUnavailable):
+			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+				"metadata provider search is unavailable for this library — the provider is unconfigured or disabled", nil)
+			return
+		case err != nil:
+			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+				"metadata provider search failed — the source may be unreachable", nil)
+			return
+		}
+		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+	}
+}
+
+// handleLibraryExternalPreview is the paste-an-id escape hatch for the same
+// Library-scoped case (GET /libraries/{id}/externalPreview?ref=…, Admin-only), so
+// an Unmatched row accepts a pasted provider URL exactly like every per-item
+// picker does. Reads only; the apply still goes through fix-match.
+func handleLibraryExternalPreview(enrichSvc *enrich.Service, images *providerImageProxy, cat *catalog.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		libraryID := pathParam(r.URL.Path, "/libraries/", "/externalPreview")
+		kind, ok := librarySearchKind(w, cat, libraryID)
+		if !ok {
+			return
+		}
+		ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+		c, err := enrichSvc.PreviewExternalForKind(r.Context(), kind, ref)
+		writeExternalPreview(w, images, c, err)
+	}
+}
+
+// librarySearchKind resolves the Library's searchable entity kind, writing the 404
+// itself when the id is absent, unknown, or of a kind with no provider search. The
+// bool reports whether the caller may continue.
+func librarySearchKind(w http.ResponseWriter, cat *catalog.Service, libraryID string) (string, bool) {
+	if libraryID == "" {
+		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+		return "", false
+	}
+	libKind, err := cat.LibraryKind(libraryID)
+	switch {
+	case errors.Is(err, catalog.ErrNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
+		return "", false
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to search", nil)
+		return "", false
+	}
+	kind := searchKindForLibrary(libKind)
+	if kind == "" {
+		writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
+		return "", false
+	}
+	return kind, true
+}
+
+// --- Episode picking (which provider episode decorates this file) -----------
+
+type seasonSummaryJSON struct {
+	Season       int `json:"season"`
+	EpisodeCount int `json:"episodeCount"`
+}
+
+type episodeCandidateJSON struct {
+	Season   int    `json:"season"`
+	Episode  int    `json:"episode"`
+	Name     string `json:"name"`
+	Overview string `json:"overview,omitempty"`
+	AirDate  string `json:"airDate,omitempty"`
+	// StillURL is a same-origin /providerImage reference, never the provider's own
+	// host — the same rule every other candidate thumbnail follows (ADR-0001).
+	StillURL string `json:"stillUrl,omitempty"`
+}
+
+type episodeCandidatesJSON struct {
+	// Seasons is sent only on the first request (no explicit `season`), so a client
+	// fetches the season list once and then pages episodes within it.
+	Seasons  []seasonSummaryJSON    `json:"seasons,omitempty"`
+	Season   int                    `json:"season"`
+	Episodes []episodeCandidateJSON `json:"episodes"`
+}
+
+// handleEpisodeCandidates lists a picked series' episodes so an Admin can choose
+// the exact one a file should be decorated from (GET
+// /titles/{id}/episodeCandidates?externalId=&season=, Admin-only).
+//
+// This is the second half of correcting a TV episode. Picking the series alone was
+// never enough: the lookup is /tv/{show}/season/{S}/episode/{E} with S and E taken
+// from the FILENAME, so a file the provider counts in a different season stayed
+// unmatchable however many times the series was re-picked. Choosing the episode
+// here writes a lookup-only pin; identity and watch state are untouched.
+//
+// `season` defaults to the Title's own parsed season, so the common case — right
+// season, wrong episode — opens on the right list. 503 SEARCH_UNAVAILABLE when the
+// provider cannot list episodes; unknown Title → 404.
+func handleEpisodeCandidates(enrichSvc *enrich.Service, images *providerImageProxy) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		titleID := pathParam(r.URL.Path, "/titles/", "/episodeCandidates")
+		if titleID == "" {
+			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		showID := strings.TrimSpace(r.URL.Query().Get("externalId"))
+		if showID == "" {
+			writeError(w, http.StatusBadRequest, codeBadRequest,
+				"externalId (the series to list episodes from) is required", nil)
+			return
+		}
+
+		// A season the caller names wins; otherwise the service defaults to the one
+		// this file is already filed under — the list the Admin most likely wants.
+		var season *int
+		if explicit := strings.TrimSpace(r.URL.Query().Get("season")); explicit != "" {
+			n, convErr := strconv.Atoi(explicit)
+			if convErr != nil {
+				writeError(w, http.StatusBadRequest, codeBadRequest, "season must be a number", nil)
+				return
+			}
+			season = &n
+		}
+
+		picker, err := enrichSvc.EpisodePickerData(r.Context(), titleID, showID, season)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
+			return
+		case err != nil:
+			writeEpisodeCandidatesError(w, err)
+			return
+		}
+
+		out := episodeCandidatesJSON{Season: picker.Season}
+		for _, sn := range picker.Seasons {
+			out.Seasons = append(out.Seasons, seasonSummaryJSON{Season: sn.Season, EpisodeCount: sn.EpisodeCount})
+		}
+		out.Episodes = make([]episodeCandidateJSON, 0, len(picker.Episodes))
+		for _, e := range picker.Episodes {
+			out.Episodes = append(out.Episodes, episodeCandidateJSON{
+				Season:   e.Season,
+				Episode:  e.Episode,
+				Name:     e.Name,
+				Overview: e.Overview,
+				AirDate:  e.AirDate,
+				StillURL: images.proxyURL(e.StillURL),
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// writeEpisodeCandidatesError maps a listing failure onto the same statuses the
+// other picker reads use, so the box reports why rather than hanging.
+func writeEpisodeCandidatesError(w http.ResponseWriter, err error) {
+	if errors.Is(err, enrich.ErrSearchUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+			"this metadata provider cannot list episodes — episode picking is unavailable", nil)
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+		"listing episodes failed — the metadata provider may be unreachable", nil)
 }

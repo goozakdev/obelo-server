@@ -114,3 +114,24 @@ func (p *VideoChainProvider) lookup(ctx context.Context, src MetadataProvider, r
 	}
 	return meta, true
 }
+
+// SeriesSeasons / SeasonEpisodes forward the optional EpisodeLister capability to
+// the AUTHORITATIVE source only. The fill-only supplements never own a list — they
+// decorate a record the authoritative source chose (ADR-0027) — so an episode list
+// comes from the same place the episode lookup will. An authoritative source that
+// can't list episodes yields ErrSearchUnavailable rather than a partial answer.
+func (v *VideoChainProvider) SeriesSeasons(ctx context.Context, showID string) ([]SeasonSummary, error) {
+	lister, ok := v.Authoritative.(EpisodeLister)
+	if !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister.SeriesSeasons(ctx, showID)
+}
+
+func (v *VideoChainProvider) SeasonEpisodes(ctx context.Context, showID string, season int) ([]EpisodeCandidate, error) {
+	lister, ok := v.Authoritative.(EpisodeLister)
+	if !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister.SeasonEpisodes(ctx, showID, season)
+}

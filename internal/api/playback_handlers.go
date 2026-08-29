@@ -333,6 +333,19 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				requireAuth(deps.Auth, requireAdmin(handleEnrichmentCandidates(deps.Enrich, deps.providerImages))))(w, r)
 			return
 		}
+		// GET {id}/episodeCandidates?externalId=&season=: list a picked series'
+		// episodes so an Admin can choose the exact one this file is decorated from
+		// (Admin). The fix for a series the provider numbers differently from the
+		// files on disk; read-only, never touches identity or watch state.
+		if id, ok := strings.CutSuffix(rest, "/episodeCandidates"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireAuth(deps.Auth, requireAdmin(handleEpisodeCandidates(deps.Enrich, deps.providerImages))))(w, r)
+			return
+		}
 		// GET {id}/externalPreview?ref=: preview a pasted MusicBrainz/TMDB id-or-URL
 		// before applying it (the paste escape hatch, item-editing/search-improvements).
 		// Matched before /enrichmentOverride (distinct suffix); read-only.

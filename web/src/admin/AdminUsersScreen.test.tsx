@@ -525,7 +525,7 @@ describe("Users tab in the Admin hub", () => {
     // The new tab plus the existing tabs are all present (no regression).
     expect(screen.getByTestId("admin-tab-users")).toBeInTheDocument();
     expect(screen.getByTestId("admin-tab-libraries")).toBeInTheDocument();
-    expect(screen.getByTestId("admin-tab-attention")).toBeInTheDocument();
+    expect(screen.getByTestId("admin-tab-needs-fixing")).toBeInTheDocument();
     expect(screen.getByTestId("admin-tab-devices")).toBeInTheDocument();
 
     // /admin/users mounts AdminUsersScreen.

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/access"
@@ -473,7 +476,12 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// segments) and audio-only.
 	var boundaries []float64
 	if !dec.AudioOnly && (dec.VideoCopy || dec.Tier == TierDirectStream) {
-		boundaries = s.probeSegmentBoundaries(dec.File)
+		// A MULTI-PART Edition is copied from every part as one concatenated input, so
+		// its boundaries must span that whole timeline. Probing only the playing File
+		// would synthesize a playlist covering just part 1 — and because the SERVER's
+		// synthesized playlist is what clients are served, the stream would end at the
+		// part boundary even though ffmpeg had faithfully written every segment.
+		boundaries = s.probeEditionBoundaries(dec.Edition, dec.File)
 	}
 
 	// CreateGoverned enforces the transcode cap atomically (ADR-0009): only a
@@ -776,6 +784,15 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 	if fmp4 {
 		cutTimes = nil
 	}
+	// A MULTI-PART Edition is repackaged from ALL of its parts as one continuous
+	// stream. Without this the HLS tiers fed ffmpeg only the first File, so the
+	// second half of a two-part episode was never delivered to any client — it
+	// simply ended early, which reads as a corrupt file rather than a missing
+	// feature. `parts` resolves to "" for the ordinary single-File Edition, leaving
+	// every existing arg vector byte-for-byte unchanged. It is evaluated per build
+	// because only the call knows the scratch dir the list must be written into (and
+	// a realignment rebuilds args against that same dir).
+	parts := func(outputDir string) string { return concatListFor(dec.Edition, outputDir) }
 	switch dec.Tier {
 	case TierDirectStream:
 		src := dec.File.Path
@@ -786,9 +803,9 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 		if demuxed {
 			// Video-only variant; the audio is delivered as renditions.
 			build := func(outputDir string, seek transcode.SeekOffset) []string {
-				return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoOnly: true, VideoStreamIndex: videoIdx, FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
+				return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, ConcatListPath: parts(outputDir), OutputDir: outputDir, Seek: seek, VideoOnly: true, VideoStreamIndex: videoIdx, FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
 			}
-			return build, nil, s.audioRenditionBuilder(profile, constraints, dec.File, fmp4)
+			return build, nil, s.audioRenditionBuilder(profile, constraints, dec.File, fmp4, parts)
 		}
 		// Pin the negotiated audio Stream into the copied output on a multi-audio File
 		// (nil for single-audio → byte-for-byte the original copy-everything remux),
@@ -804,7 +821,7 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 			audioIdx = forcedAudioMapIndex(dec.File, dec.AudioStream)
 		}
 		return func(outputDir string, seek transcode.SeekOffset) []string {
-			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, AudioSourceChannels: effectiveAudioChannels(dec), FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: src, ConcatListPath: parts(outputDir), OutputDir: outputDir, Seek: seek, VideoStreamIndex: videoIdx, AudioStreamIndex: audioIdx, AudioSourceChannels: effectiveAudioChannels(dec), FMP4: fmp4, SegmentTimes: segmentTimesFor(cutTimes, seek)})
 		}, nil, nil
 	case TierTranscode:
 		plan := transcodeJobPlan(profile, constraints, dec)
@@ -822,16 +839,16 @@ func (s *Service) hlsArgsBuilders(profile DeviceProfile, constraints Constraints
 		// transcodeArgsBuilder closes over a COPY of the plan with a chosen backend, so
 		// the hardware and CPU-fallback builders are independent — flipping one's Accel
 		// never mutates the other.
-		primary = transcodeArgsBuilder(plan, s.accel, planCuts)
+		primary = transcodeArgsBuilder(plan, s.accel, planCuts, parts)
 		// Arm the per-session hardware→CPU fallback ONLY when the configured backend is
 		// genuinely hardware AND we are actually re-encoding the video; a video-COPY
 		// transcode (ADR-0024) runs no video encoder, so it has nothing to fall back
 		// from and stays ineligible.
 		if transcode.IsHardware(s.accel) && !plan.Video.Copy {
-			cpuFallback = transcodeArgsBuilder(plan, transcode.AccelCPU, nil)
+			cpuFallback = transcodeArgsBuilder(plan, transcode.AccelCPU, nil, parts)
 		}
 		if demuxed {
-			audioRendition = s.audioRenditionBuilder(profile, constraints, dec.File, fmp4)
+			audioRendition = s.audioRenditionBuilder(profile, constraints, dec.File, fmp4, parts)
 		}
 		return primary, cpuFallback, audioRendition
 	default:
@@ -899,7 +916,10 @@ func audioStreamCount(f store.File) int {
 // false keeps them MPEG-TS. Only AAC is ever copied (planAudioRendition), and AAC
 // rides both containers, so the copy decision is unaffected — the flag only reshapes
 // the output filenames.
-func (s *Service) audioRenditionBuilder(profile DeviceProfile, constraints Constraints, f store.File, fmp4 bool) func(streamID, outputDir string, seek transcode.SeekOffset) []string {
+// concatList mirrors the video variant's: an audio rendition of a MULTI-PART
+// Edition must span the same parts, or the audio would run out partway through the
+// video. Nil (or a "" result) leaves the single-File input unchanged.
+func (s *Service) audioRenditionBuilder(profile DeviceProfile, constraints Constraints, f store.File, fmp4 bool, concatList func(string) string) func(streamID, outputDir string, seek transcode.SeekOffset) []string {
 	src := f.Path
 	return func(streamID, outputDir string, seek transcode.SeekOffset) []string {
 		idx, _, found := audioRelIndex(f, streamID)
@@ -913,6 +933,7 @@ func (s *Service) audioRenditionBuilder(profile DeviceProfile, constraints Const
 		copyStream, maxChannels := planAudioRendition(profile, stream, f)
 		job := transcode.AudioRenditionJob{
 			SourcePath:       src,
+			ConcatListPath:   concatListPathOrEmpty(concatList, outputDir),
 			OutputDir:        outputDir,
 			AudioStreamIndex: idx,
 			Copy:             copyStream,
@@ -987,6 +1008,64 @@ func audioStreamByID(f store.File, streamID string) (store.Stream, bool) {
 // falls back to ffmpeg's own playlist.
 const keyframeProbeTimeout = 15 * time.Second
 
+// probeEditionBoundaries returns the copy-mode HLS segment boundaries for the whole
+// Edition: for the ordinary single-File Edition simply that File's, and for a
+// MULTI-PART one every part's, each offset by the running start of its part so the
+// result describes the single concatenated timeline ffmpeg is actually writing.
+//
+// It must mirror the concat input exactly. The synthesized playlist is what the api
+// layer serves (ffmpeg's own appears only once the whole copy finishes, which is why
+// it is synthesized at all), so boundaries covering one part would cut the stream at
+// that part's end regardless of what ffmpeg produced — the silent truncation, moved
+// one layer up.
+//
+// Best-effort like the single-File probe: if ANY part fails to probe, it returns nil
+// so the runtime falls back to ffmpeg's own playlist. A partial boundary list would
+// be worse than none — it would describe a timeline that does not exist.
+func (s *Service) probeEditionBoundaries(ed store.Edition, playing store.File) []float64 {
+	parts := ed.PresentFiles()
+	if len(parts) < 2 {
+		return s.probeSegmentBoundaries(playing)
+	}
+	perPart := make([][]float64, 0, len(parts))
+	durations := make([]float64, 0, len(parts))
+	for _, part := range parts {
+		b := s.probeSegmentBoundaries(part)
+		if b == nil {
+			return nil // one unprobeable part invalidates the whole timeline
+		}
+		perPart = append(perPart, b)
+		durations = append(durations, float64(part.DurationMs)/1000)
+	}
+	return joinPartBoundaries(perPart, durations)
+}
+
+// joinPartBoundaries lays each part's cut points onto the concatenated timeline by
+// offsetting them with the running start of their part.
+//
+// Every part's own list runs 0..itsDuration, because SegmentBoundaries emits cut
+// POINTS rather than segment starts. Offsetting all of them would therefore repeat
+// the seam — the previous part's closing boundary and this part's opening 0 name the
+// same instant — and a repeated cut point renders as a ZERO-LENGTH segment, which
+// players treat as a broken stream. So every part after the first contributes its
+// cuts from the second onward.
+func joinPartBoundaries(perPart [][]float64, durations []float64) []float64 {
+	var out []float64
+	var offset float64
+	for i, b := range perPart {
+		if i > 0 && len(b) > 0 {
+			b = b[1:]
+		}
+		for _, t := range b {
+			out = append(out, offset+t)
+		}
+		if i < len(durations) {
+			offset += durations[i]
+		}
+	}
+	return out
+}
+
 // probeSegmentBoundaries returns the exact copy-mode HLS segment boundaries for a File
 // (transcode.KeyframeBoundaries), or nil on any failure. Best-effort by design — a nil
 // result degrades to serving ffmpeg's own playlist, which is correct for short files —
@@ -1050,12 +1129,18 @@ func planVideoFor(profile DeviceProfile, constraints Constraints, dec Decision) 
 // fallback sibling never share mutable state.
 // cutBoundaries, when non-nil, dictates the segment cut times per seek for a
 // video-COPY transcode (see segmentTimesFor); nil for every re-encode.
-func transcodeArgsBuilder(job transcode.TranscodeJob, accel transcode.Accel, cutBoundaries []float64) func(string, transcode.SeekOffset) []string {
+// concatList, when non-nil, resolves the MULTI-PART concat list for the scratch dir
+// the build is targeting; it returns "" for an ordinary single-File Edition, leaving
+// the job's SourcePath input untouched.
+func transcodeArgsBuilder(job transcode.TranscodeJob, accel transcode.Accel, cutBoundaries []float64, concatList func(string) string) func(string, transcode.SeekOffset) []string {
 	job.Accel = accel
 	return func(outputDir string, seek transcode.SeekOffset) []string {
 		job.OutputDir = outputDir
 		job.Seek = seek
 		job.SegmentTimes = segmentTimesFor(cutBoundaries, seek)
+		if concatList != nil {
+			job.ConcatListPath = concatList(outputDir)
+		}
 		return transcode.TranscodeArgs(job)
 	}
 }
@@ -1642,4 +1727,54 @@ func (s *Service) hlsRuntimeFor(userID, sessionID string) (*hlsRuntime, error) {
 		return nil, ErrNotHLS
 	}
 	return rt, nil
+}
+
+// --- Multi-part Editions ------------------------------------------------------
+
+// concatListFileName is the ffmpeg concat-demuxer list written into a session's
+// scratch dir. It sits beside the segments so the Manager's existing scratch
+// cleanup removes it with everything else.
+const concatListFileName = "parts.concat"
+
+// concatListFor writes the ffmpeg concat-demuxer list for a MULTI-PART Edition into
+// outputDir and returns its path. It returns "" for an ordinary single-part Edition
+// — the overwhelmingly normal case — so every existing arg vector is unchanged.
+//
+// Why a list file rather than N jobs: the parts of a multi-part Edition are ONE
+// work (`- part1`/`- cd1`, naming-convention.md), and a viewer expects one
+// continuous stream. Handing ffmpeg the ordered list makes it a single input with a
+// single timeline, so segment numbering, the emitted duration, and seek/realignment
+// all keep working untouched — where stitching N separate jobs into one playlist
+// would have to reinvent every one of those.
+//
+// A write failure returns "", which degrades to the previous single-file behaviour
+// rather than failing the session outright; it is logged so it is not silent.
+func concatListFor(ed store.Edition, outputDir string) string {
+	parts := ed.PresentFiles()
+	if len(parts) < 2 || outputDir == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, f := range parts {
+		// The concat demuxer reads `file '<path>'`; a literal quote inside a path is
+		// escaped as '\'' (close, escaped quote, reopen). Paths here are absolute,
+		// which is why the args carry -safe 0.
+		b.WriteString("file '")
+		b.WriteString(strings.ReplaceAll(f.Path, "'", `'\''`))
+		b.WriteString("'\n")
+	}
+	path := filepath.Join(outputDir, concatListFileName)
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		log.Printf("obelo: playback: writing concat list for edition %s: %v — falling back to the first part only", ed.ID, err)
+		return ""
+	}
+	return path
+}
+
+// concatListPathOrEmpty is the nil-safe call of a concat-list resolver.
+func concatListPathOrEmpty(concatList func(string) string, outputDir string) string {
+	if concatList == nil {
+		return ""
+	}
+	return concatList(outputDir)
 }

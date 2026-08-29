@@ -30,8 +30,11 @@ import type {
   EditionRaw,
   EnrichmentAttentionTitle,
   EnrichmentAttentionTitleRaw,
+  FixContext,
+  FixContextRaw,
   NeedsReviewItem,
   NeedsReviewItemRaw,
+  NeedsReviewReason,
   EpisodeSummary,
   EpisodeSummaryRaw,
   HomeResponseRaw,
@@ -168,6 +171,7 @@ export function normalizeUnmatchedFile(raw: UnmatchedFileRaw): UnmatchedFile {
   return {
     id: raw.id,
     path: raw.path,
+    folderPath: raw.folderPath ?? "",
     reason: raw.reason ?? "",
     addedAt: raw.addedAt,
   };
@@ -201,7 +205,38 @@ export function normalizeEnrichmentAttentionTitle(
     title: raw.title,
     year: raw.year ?? 0,
     enrichmentStatus: raw.enrichmentStatus,
+    ...normalizeFixContext(raw),
   };
+}
+
+/** Fill the shared "which item / which file" context both attention lists carry
+ * (strings → "", numbers → 0). A row renders its breadcrumb unconditionally, so
+ * these must be present values rather than optional holes. */
+export function normalizeFixContext(raw: FixContextRaw): FixContext {
+  return {
+    path: raw.path ?? "",
+    showTitle: raw.showTitle ?? "",
+    seasonNumber: raw.seasonNumber ?? 0,
+    episodeNumber: raw.episodeNumber ?? 0,
+    episodeLabel: raw.episodeLabel ?? "",
+    artistName: raw.artistName ?? "",
+    albumTitle: raw.albumTitle ?? "",
+    discNumber: raw.discNumber ?? 0,
+    trackNumber: raw.trackNumber ?? 0,
+    showId: raw.showId ?? "",
+    albumId: raw.albumId ?? "",
+    enrichedTitle: raw.enrichedTitle ?? "",
+    releaseDate: raw.releaseDate ?? "",
+  };
+}
+
+/** The reason the scanner flags an item is decided by its kind (see the server's
+ * needsReviewReason), so an older server that omits the field still yields the
+ * right sentence rather than a blank one. */
+function reasonForKind(kind: string): NeedsReviewReason {
+  if (kind === "episode") return "episode-numbering";
+  if (kind === "track") return "untagged";
+  return "no-year";
 }
 
 /** Fill a needs-review item's holes (year → 0, folderPath → ""). */
@@ -214,6 +249,9 @@ export function normalizeNeedsReviewItem(
     title: raw.title,
     year: raw.year ?? 0,
     folderPath: raw.folderPath ?? "",
+    reason: raw.reason ?? reasonForKind(raw.kind),
+    enrichmentStatus: raw.enrichmentStatus ?? "pending",
+    ...normalizeFixContext(raw),
   };
 }
 

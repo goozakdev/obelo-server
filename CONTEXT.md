@@ -82,7 +82,7 @@ The separate, optional step that fetches descriptive metadata (artwork, descript
 _Avoid_: Matching (that's identity), Agent.
 
 **Needs-review**:
-State of a Title or Show filed from a partial best-effort parse (e.g. a movie with no year, or a TV episode with non-SxxExx numbering). Browsable, but surfaced in an Admin attention list for confirmation. The Admin resolves an entry by dismissing it (mark reviewed — confirms the parse is fine; sticky across rescans) or, for a Movie, correcting its identity via a folder-keyed fix-match.
+State of a Title or Show filed from a partial best-effort parse (e.g. a movie with no year, or a TV episode with non-SxxExx numbering). Browsable, but surfaced in the Admin's Needs-Fixing queue for confirmation. The Admin resolves an entry by dismissing it (mark reviewed — confirms the parse is fine; sticky across rescans) or, where a folder override can anchor (Movie, Show, Track), correcting its identity via a folder-keyed fix-match chosen from a provider search.
 _Avoid_: Pending, Unconfirmed.
 
 **Unmatched**:
@@ -101,12 +101,16 @@ _Avoid_: Remap, Manual match.
 An Admin's correction of *which external provider record* an entity is enriched from, overruling enrichment's automatic match — without changing identity or watch state. The common "edit item" correction: the item is filed correctly but was decorated from the wrong record (wrong poster, wrong overview), so the Admin re-points it at the right one and it re-enriches. The identity sibling of Match override; the two are distinct operations with different blast radii (see [ADR-0002](./docs/adr/0002-naming-convention-is-identity-authority.md), [ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)). Operates on one entity's matched record; contrast the per-Library Enrichment policy, which selects *providers*, not records.
 _Avoid_: Match (reserved for identity), enrichment match (the old code name), Enrichment policy (that's the per-Library provider layer).
 
+**Episode pin**:
+The Episode-shaped Enrichment override: *which provider episode* decorates a file, chosen by the Admin instead of derived from its filename. Enrichment resolves an Episode by its parsed season+episode numbers (ADR-0002), so a provider that numbers a series differently from the files on disk — the standard case being a run of episodes the provider counts in the next season, or in a re-numbered continuation series — leaves those files permanently unmatchable: pinning the right Show still asks for the wrong episode. The pin redirects **the lookup only**. The Episode keeps its parsed numbers, its place in the library, its identity_key and every User's watch state ([ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)); it simply gains the right title, overview and still. Set from the Needs-Fixing queue by picking a series and then the episode within it.
+_Avoid_: Episode remap, Renumber (nothing is renumbered — the file does not move), Episode match override.
+
 **Edit item**:
 The Admin affordance for correcting a browsable item, exposing three separated actions ([ADR-0019](./docs/adr/0019-item-editing-preserves-local-identity.md)): **Fix info** (search a provider for the right record → Enrichment override; the common case), **Wrong item** (the file is a genuinely different work → Match override, Movie/Show only, resets watch state and clears Locked fields), and **Fix label** (hand-edit fields or pick an image → Locked field, per-item). The admin's choice of action, not inference, decides whether identity changes.
 _Avoid_: Match editor, Metadata editor (too narrow — it also corrects identity).
 
 **Cascade**:
-Applying a Fix-info or Wrong-item correction to a parent's children as well ("apply to children" — opt-in). Album→tracks and Show→episodes map positionally; Artist→albums map by title, then recurse into tracks. Best-effort: a child's own Enrichment override or Locked field wins, and children that don't line up are surfaced in the Admin attention list, never silently changed.
+Applying a Fix-info or Wrong-item correction to a parent's children as well ("apply to children" — opt-in). Album→tracks and Show→episodes map positionally; Artist→albums map by title, then recurse into tracks. Best-effort: a child's own Enrichment override or Locked field wins, and children that don't line up are surfaced in the Needs-Fixing queue, never silently changed.
 _Avoid_: Propagate, Recurse.
 
 ## Metadata providers

@@ -3080,7 +3080,7 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   accent-color: var(--accent);
 }
 
-/* --- Admin: attention surfaces & devices (issue 07) ----------------------- */
+/* --- Admin: the Needs-Fixing queue & devices ------------------------------ */
 
 .status-empty {
   color: var(--text-dim);
@@ -3148,34 +3148,33 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   }
 }
 
-/* Attention rows carry file paths and open inline match forms inside the band, so
+/* Needs-Fixing rows carry file paths and open a provider search inside the band, so
    this tab alone widens the shared panel measure rather than every list growing
    to fit the worst case. */
-.admin-attention {
+.admin-needs-fixing {
   --admin-panel-max: 52rem;
 }
 
-.admin-attention,
+.admin-needs-fixing,
 .admin-devices {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-.attention-library-picker {
-  max-width: 24rem;
+.needs-fixing-library-picker {
+  max-width: 28rem;
 }
 
-.attention-lists {
+.needs-fixing {
   display: flex;
   flex-direction: column;
+  gap: 1.25rem;
 }
 
-.needs-review-list,
-.unmatched-list,
+.needs-fixing-list,
 .overrides-list,
-.devices-list,
-.enrichment-attention-list {
+.devices-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -3183,111 +3182,469 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   flex-direction: column;
 }
 
-/* These rows wrap (a path, a badge, an action, and sometimes a whole inline form
-   on the next line) rather than sitting on one line like a Library or User row.
-   The identity comes first and takes the slack, so every action cluster lands on
-   the row's right edge no matter how short the name is. */
-.needs-review-item,
-.unmatched-item,
 .override-item,
-.device-item,
-.enrichment-attention-item {
+.device-item {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
 }
-.needs-review-link,
-.enrichment-attention-link,
-.unmatched-path,
 .override-title {
   flex: 1 1 12rem;
   min-width: 0;
 }
-/* These two were unstyled anchors, so they rendered in the browser's default blue
-   underline — the only raw links in the app. Give them the row-title treatment the
-   rest of the admin lists use: plain text, accent on hover. */
-.needs-review-link,
-.enrichment-attention-link {
-  color: var(--text);
-  font-weight: 600;
-  text-decoration: none;
+
+/* --- The Needs-Fixing queue ---------------------------------------------- */
+
+/* Filter chips. A chip whose count is zero stays visible but recedes, so the set
+   of things that can go wrong reads as a fixed, learnable list rather than one
+   that appears and vanishes under the Admin. */
+.needs-fixing-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.25rem 0 0.75rem;
 }
-.needs-review-link:hover,
-.enrichment-attention-link:hover {
+.needs-fixing-chip {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.3rem 0.75rem;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background-color 0.12s ease;
+}
+.needs-fixing-chip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.needs-fixing-chip.is-active {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.needs-fixing-chip.is-empty:not(.is-active) {
+  opacity: 0.5;
+}
+.needs-fixing-chip-count {
+  color: var(--text-dim);
+  font-weight: 700;
+  margin-left: 0.15rem;
+}
+.needs-fixing-chip.is-active .needs-fixing-chip-count {
   color: var(--accent);
 }
-.needs-review-item > .admin-row-actions,
-.unmatched-item > .admin-row-actions,
-.enrichment-attention-item > .admin-row-actions {
+
+/* The "you have corrections waiting on a scan" banner. Identity corrections are
+   read by the scanner, so saying so — once, with the scan attached — is the
+   difference between a queue that looks broken and one that is obviously working. */
+.needs-fixing-rescan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.75rem;
+}
+.needs-fixing-rescan .status {
+  flex: 1 1 18rem;
+  margin: 0;
+}
+
+/* A queue row is a small stacked card, not a single line: it has to carry a
+   breadcrumb, a sentence, a path and an action cluster, and cramming those onto
+   one line is what made the old rows unreadable. The poster sits to its left, so
+   the row is a two-column grid whose second column holds that stack. */
+.fix-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  column-gap: 0.85rem;
+  padding-top: 0.85rem;
+  padding-bottom: 0.85rem;
+}
+.fix-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+/* Big enough to actually RECOGNIZE the artwork, which is the entire reason it is
+   here: a thumbnail you have to squint at confirms nothing, and confirming at a
+   glance is the whole job of this column. Sized to roughly match the row's own
+   text block so neither drives the row height, and stepped down on narrow
+   viewports where the text needs the width more. */
+.fix-item-art {
+  flex: none;
+  width: 5.5rem;
+}
+.fix-item-art .poster {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  display: block;
+}
+/* The no-artwork slot keeps the row's alignment and shows the item's initials
+   rather than sitting as a dead grey rectangle — the bigger the poster column
+   gets, the more conspicuous an empty one is. */
+.fix-item-art .poster-placeholder {
+  background: var(--surface);
+  height: auto;
+}
+.fix-item-art .poster-initials {
+  font-size: 1.1rem;
+}
+@media (max-width: 760px) {
+  .fix-item-art {
+    width: 3.75rem;
+  }
+  .fix-item-art .poster-initials {
+    font-size: 0.9rem;
+  }
+}
+/* The picker spans both columns so its search box isn't squeezed beside a poster. */
+.fix-item > .fix-picker {
+  grid-column: 1 / -1;
+}
+.fix-item.is-open {
+  border-left: 2px solid var(--accent);
+  padding-left: 0.75rem;
+}
+.fix-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   gap: 0.6rem;
 }
-/* An inline fix form drops onto its own full-width line below the row. */
-.needs-review-item > .fix-match-form,
-.unmatched-item > .fix-match-form,
-.enrichment-attention-item > .enrichment-match-form {
-  flex: 1 0 100%;
+/* The kind badge is the row's first fact — a reader scanning the left edge learns
+   what KIND of thing each row is before reading any of it. */
+.fix-item-kind {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.35rem;
+  text-transform: uppercase;
 }
-
-/* A row's own state rides in its right-hand cluster beside the fix action,
-   reading as a status rather than a title suffix: the needs-review flag in the
-   accent (it marks work still outstanding), the metadata-match state dim. */
-.needs-review-flag {
-  color: var(--accent);
-  font-size: 0.8rem;
+.fix-item-identity {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+/* Dim breadcrumb, bright name: the parent context is what makes the name legible,
+   but the name is still the thing being named. */
+.fix-item-breadcrumb {
+  color: var(--text-dim);
+}
+.fix-item-name {
+  color: var(--text);
   font-weight: 600;
 }
-.enrichment-attention-status {
+.fix-item-toggle {
+  flex: none;
+}
+.fix-item-toggle.is-active {
+  color: var(--accent);
+}
+.fix-item-problem {
   color: var(--text-dim);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  margin: 0;
+}
+/* The matched record reads as an assertion about the item, so it gets the body
+   colour and a dim label — brighter than the problem sentence, because it is what
+   the Admin is actually checking when they press "Looks right". */
+.fix-item-matched {
+  color: var(--text);
+  font-size: 0.9rem;
+  margin: 0;
+}
+.fix-item-matched-label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fix-item-matched.is-unmatched {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.fix-item-path {
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+.fix-item-path-missing {
+  font-family: inherit;
+  font-style: italic;
+}
+.fix-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.9rem;
 }
 
-.unmatched-path,
-.override-folder,
-.fix-match-folder {
+/* --- The inline picker ---------------------------------------------------- */
+
+.fix-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+  padding-top: 0.85rem;
+}
+/* The best guess is the point of the whole screen, so it gets the only framed,
+   accented block on the row — the eye should land on it, not on the search box. */
+.fix-best-guess {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+.fix-best-guess-label {
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex: 0 0 100%;
+}
+.fix-best-guess > .fix-candidate {
+  flex: 1 1 16rem;
+}
+.fix-best-guess-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.fix-apply-hint {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin: 0;
+  max-width: 16rem;
+}
+
+.fix-picker-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.fix-picker-search .field {
+  flex: 1 1 20rem;
+}
+.fix-picker-search-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.fix-candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.fix-candidate {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0.5rem;
+  text-align: left;
+  width: 100%;
+}
+.fix-candidate:hover,
+.fix-candidate:focus-visible {
+  border-color: var(--text-dim);
+}
+.fix-candidate.is-selected {
+  border-color: var(--accent);
+}
+.fix-candidate-thumb {
+  flex: none;
+  width: 2.5rem;
+  border-radius: 3px;
+}
+.fix-candidate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.fix-candidate-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.fix-candidate-type,
+.fix-candidate-hint {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+.fix-picker-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* --- Step two: which episode is this? ------------------------------------- */
+
+.episode-chooser {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.episode-chooser-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.episode-chooser-series {
+  flex: 1 1 12rem;
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+.episode-chooser-label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.episode-chooser-season {
+  max-width: 18rem;
+}
+
+/* The episode list is the working surface of this step, so it scrolls in place
+   rather than pushing the rest of the queue off screen — a season can be 25+
+   episodes and the Admin still needs the rows below it. */
+.episode-choice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+.episode-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.5rem;
+  text-align: left;
+}
+.episode-choice:hover,
+.episode-choice:focus-visible {
+  border-color: var(--accent);
+}
+.episode-choice:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* A still is 16:9, not a poster — it is a frame from the episode, and it is what
+   makes "is this the right one?" answerable at a glance. */
+.episode-choice-still {
+  flex: none;
+  width: 5.5rem;
+  aspect-ratio: 16 / 9;
+  border-radius: 3px;
+  object-fit: cover;
+}
+.episode-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+.episode-choice-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.episode-choice-code {
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+.episode-choice-meta {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+/* Two lines of synopsis is enough to tell two episodes apart without turning the
+   list into a wall of text. */
+.episode-choice-overview {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.episode-choice-action {
+  flex: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* The corrections log sits below the queue, collapsed: it is finished work, and a
+   queue whose entries are already done stops reading as a queue. */
+.needs-fixing-corrections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.needs-fixing-corrections-toggle {
+  align-self: flex-start;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.override-folder {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   word-break: break-all;
 }
 
-.unmatched-reason {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-}
-
-/* An orphaned override keeps a visible error edge even though normal rows are
-   separated by a plain hairline. */
-.override-item-orphaned.admin-panel-row,
-.override-item-orphaned.admin-panel-row + .admin-panel-row,
-.admin-panel-row + .override-item-orphaned.admin-panel-row {
-  border-top: 1px solid var(--error);
-}
-.override-item-orphaned.admin-panel-row {
-  border-left: 2px solid var(--error);
-}
-.override-orphaned-badge {
-  color: var(--error);
-  font-weight: 700;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
+/* An orphaned correction is no longer styled as a variant row here: it is a real
+   problem, so it is promoted into the queue as a fix-item like any other. */
 .override-ids,
 .override-created {
   color: var(--text-dim);
   font-size: 0.8rem;
-}
-
-.fix-match-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  width: 100%;
-  margin-top: 0.5rem;
-}
-.fix-match-actions {
-  display: flex;
-  gap: 0.5rem;
 }
 
 .device-platform,

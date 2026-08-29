@@ -255,13 +255,31 @@ test.describe.serial("home: continue watching + recently added", () => {
       cw.getByTestId("poster-tile").filter({ hasText: "Pinned Movie" }),
     ).toHaveCount(0);
 
-    // Recently Added lists the freshly-scanned titles (Extras Movie among them).
+    // Recently Added lists the freshly-scanned titles. Which titles those ARE is not
+    // this spec's to decide: the row is recency-ordered and capped, and every other
+    // spec in the run adds titles to the same shared catalog, so demanding a
+    // particular title stay in it is a race against the rest of the suite (it lost
+    // once the admin specs were repaired and began scanning to completion). Assert
+    // the UI is FAITHFUL to the server instead — the same ground-truth technique
+    // the empty-state test below uses, and the property actually under test.
     const ra = page.getByTestId("home-recently-added");
     await expect(ra).toBeVisible();
     await expect(ra.getByTestId("poster-tile").first()).toBeVisible();
-    await expect(
-      ra.getByTestId("poster-tile").filter({ hasText: "Extras Movie" }),
-    ).toBeVisible();
+
+    const recentTitles = await page.evaluate(async () => {
+      const token = window.localStorage.getItem("obelo.token");
+      const res = await fetch("/api/v1/home", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const body = (await res.json()) as { recentlyAdded?: { title?: string }[] };
+      return (body.recentlyAdded ?? []).map((t) => t.title ?? "");
+    });
+    const extras = ra.getByTestId("poster-tile").filter({ hasText: "Extras Movie" });
+    if (recentTitles.some((t) => t.includes("Extras Movie"))) {
+      await expect(extras).toBeVisible();
+    } else {
+      await expect(extras).toHaveCount(0);
+    }
 
     // A card links to the title's detail page (reuses the grid's PosterTile).
     await inProgress.getByRole("link").first().click();

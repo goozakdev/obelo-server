@@ -53,6 +53,7 @@ import type {
   EnrichmentAttentionTitleRaw,
   EnrichmentCandidate,
   EnrichmentCandidatesResult,
+  EpisodeCandidatesResult,
   EnrichmentSearchOptions,
   EntityEnrichmentDetail,
   EnrichmentMatchInput,
@@ -894,6 +895,57 @@ export class ApiClient {
     return normalizeMatchOverride(res);
   }
 
+  /** `DELETE /api/v1/libraries/{id}/overrides/{overrideId}` (Admin) — discard one
+   * Match override. Offered on an ORPHANED correction, whose anchor folder was
+   * renamed or deleted so it can never match anything again. Removing it restores
+   * that folder's convention-derived parse and touches no Title and no watch state
+   * (ADR-0002/0014). 204 on success; unknown override is 404. */
+  deleteOverride(
+    libraryId: string,
+    overrideId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.request<void>(
+      `/libraries/${encodeURIComponent(libraryId)}/overrides/${encodeURIComponent(overrideId)}`,
+      { method: "DELETE", signal },
+    );
+  }
+
+  /** `GET /api/v1/libraries/{id}/enrichmentCandidates?q=…` (Admin) — the same
+   * provider search the Edit-item picker uses, anchored to the LIBRARY instead of
+   * an item. It exists for the Unmatched file, which by definition has no Title to
+   * anchor the per-item route to — the row that most needs a search was the one
+   * row that could not have one. The searched kind comes from the Library's media
+   * kind (movie → movie, tv → show, music → album). Read-only. */
+  async searchLibraryEnrichmentCandidates(
+    libraryId: string,
+    query: string,
+    opts: EnrichmentSearchOptions = {},
+    signal?: AbortSignal,
+  ): Promise<EnrichmentCandidatesResult> {
+    const params = enrichmentSearchParams(query, opts);
+    const res = await this.request<EnrichmentCandidatesResult>(
+      `/libraries/${encodeURIComponent(libraryId)}/enrichmentCandidates?${params.toString()}`,
+      { signal },
+    );
+    return { candidates: res.candidates ?? [], hasMore: res.hasMore ?? false };
+  }
+
+  /** `GET /api/v1/libraries/{id}/externalPreview?ref=…` (Admin) — the paste-an-id
+   * counterpart of {@link searchLibraryEnrichmentCandidates}, so an Unmatched row
+   * accepts a pasted provider URL/id like every per-item picker. Read-only; the
+   * apply still goes through fix-match. */
+  previewLibraryExternalCandidate(
+    libraryId: string,
+    ref: string,
+    signal?: AbortSignal,
+  ): Promise<EnrichmentCandidate> {
+    return this.request<EnrichmentCandidate>(
+      `/libraries/${encodeURIComponent(libraryId)}/externalPreview?ref=${encodeURIComponent(ref)}`,
+      { signal },
+    );
+  }
+
   /** `GET /api/v1/libraries/{id}/enrichment-attention` (Admin) — the Library's
    * Titles whose Enrichment could not settle on a record (status unmatched/
    * failed), awaiting a hand-match. A NEW attention dimension, distinct from the
@@ -984,6 +1036,26 @@ export class ApiClient {
     return { candidates: res.candidates ?? [], hasMore: res.hasMore ?? false };
   }
 
+  /** `GET /api/v1/titles/{id}/episodeCandidates?externalId=&season=` (Admin) —
+   * list a picked series' episodes so the Admin can choose which one decorates this
+   * file. Omit `season` to get the series' season list plus the episodes of the
+   * season the file is already filed under (the one they most likely want).
+   * Read-only; the pin is written by {@link applyEnrichmentOverride}. */
+  async listEpisodeCandidates(
+    titleId: string,
+    externalId: string,
+    season?: number,
+    signal?: AbortSignal,
+  ): Promise<EpisodeCandidatesResult> {
+    const params = new URLSearchParams({ externalId });
+    if (season !== undefined) params.set("season", String(season));
+    const res = await this.request<EpisodeCandidatesResult>(
+      `/titles/${encodeURIComponent(titleId)}/episodeCandidates?${params.toString()}`,
+      { signal },
+    );
+    return { seasons: res.seasons, season: res.season, episodes: res.episodes ?? [] };
+  }
+
   /** `POST /api/v1/titles/{id}/subtitles/search` — "search online" for a subtitle
    * in a language the Title lacks (ADR-0021). Available to any User (Members
    * included). Returns the provider candidates (empty when the provider is
@@ -1045,10 +1117,17 @@ export class ApiClient {
     titleId: string,
     externalId: string,
     signal?: AbortSignal,
+    /** Pin WHICH provider episode decorates this file, for the lookup only. Pass
+     * both when the Admin picked a specific episode after picking the series;
+     * identity, the file's place in the library, and watch state are untouched. */
+    episode?: { season: number; episode: number },
   ): Promise<TitleDetail> {
+    const body = episode
+      ? { externalId, season: episode.season, episode: episode.episode }
+      : { externalId };
     const res = await this.request<TitleDetailRaw>(
       `/titles/${encodeURIComponent(titleId)}/enrichmentOverride`,
-      { method: "PUT", body: { externalId }, signal },
+      { method: "PUT", body, signal },
     );
     return normalizeTitleDetail(res);
   }

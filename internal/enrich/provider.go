@@ -266,6 +266,43 @@ type MetadataProvider interface {
 	ArtworkCandidates(ctx context.Context, ref TitleRef, role string) ([]ArtworkCandidate, error)
 }
 
+// EpisodeCandidate is one episode offered when an Admin picks WHICH provider
+// episode should decorate a file — the second step of correcting a TV episode
+// whose on-disk numbering doesn't line up with the provider's.
+type EpisodeCandidate struct {
+	Season   int
+	Episode  int
+	Name     string
+	Overview string
+	AirDate  string
+	// StillURL is the provider's own episode-still URL (the API layer rewrites it
+	// to the same-origin image proxy before it reaches a browser).
+	StillURL string
+}
+
+// SeasonSummary is one season of a series, for the season chooser.
+type SeasonSummary struct {
+	Season       int
+	EpisodeCount int
+}
+
+// EpisodeLister is an OPTIONAL provider capability: listing a series' seasons and
+// the episodes within one, so an Admin can pick the exact episode a file should be
+// decorated from.
+//
+// It is deliberately NOT part of MetadataProvider. Only the authoritative video
+// source can answer it, and folding it into the main interface would force eight
+// providers that have no notion of an episode list — the music chain, the artwork-
+// only supplements — to carry a stub. Callers type-assert and degrade to "no
+// episode picking" when the provider doesn't implement it, which is the same
+// graceful posture the rest of enrichment takes (ADR-0001).
+type EpisodeLister interface {
+	// SeriesSeasons lists the seasons of the series named by its provider id.
+	SeriesSeasons(ctx context.Context, showExternalID string) ([]SeasonSummary, error)
+	// SeasonEpisodes lists one season's episodes, in episode order.
+	SeasonEpisodes(ctx context.Context, showExternalID string, season int) ([]EpisodeCandidate, error)
+}
+
 // ArtworkFetcher downloads image bytes for a remote URL the provider returned,
 // with content-type + size guards. The enrich service writes the bytes into the
 // on-disk artwork cache (ADR-0007).
