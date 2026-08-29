@@ -434,7 +434,8 @@ func (db *DB) EpisodesForSeason(seasonID string) ([]Title, error) {
 		`SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
 		        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
 		        season_number, episode_number, episode_label,
-		        overview, enrichment_status, enriched_title
+		        overview, enrichment_status, enriched_title,
+		        enrichment_season, enrichment_episode
 		   FROM titles WHERE season_id = ? AND hidden = 0
 		  ORDER BY episode_number ASC, sort_title ASC, id ASC`, seasonID)
 	if err != nil {
@@ -538,14 +539,24 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 	var t Title
 	var year sql.NullInt64
 	var needsReview, ambiguous, hidden int
+	var pinSeason, pinEpisode sql.NullInt64
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
-		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle); err != nil {
+		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
+		&pinSeason, &pinEpisode); err != nil {
 		return Title{}, err
 	}
 	if year.Valid {
 		t.Year = int(year.Int64)
+	}
+	// The episode pin travels with the listing because two files pinned to ONE
+	// provider episode are exactly what the browse list has to tell apart — see
+	// Title.EpisodePin and the part labelling in the API layer. NULL is "unpinned";
+	// -1 is the in-memory sentinel (season 0 is Specials, so 0 cannot mean unset).
+	t.EnrichmentSeason, t.EnrichmentEpisode = NoEpisodePin, NoEpisodePin
+	if pinSeason.Valid && pinEpisode.Valid {
+		t.EnrichmentSeason, t.EnrichmentEpisode = int(pinSeason.Int64), int(pinEpisode.Int64)
 	}
 	t.NeedsReview = needsReview != 0
 	t.Ambiguous = ambiguous != 0

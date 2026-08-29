@@ -25,14 +25,23 @@ import (
 // sessions idle for more than N seconds without reshaping this record; issue 08
 // adds a positionMs/state field and the reaper goroutine.
 type Session struct {
-	ID         string
-	UserID     string
-	DeviceID   string
-	TitleID    string
-	EditionID  string
-	FileID     string
-	FilePath   string
-	DurationMs int64 // chosen File's duration; the Watched threshold measures positionMs against it (issue 08)
+	ID        string
+	UserID    string
+	DeviceID  string
+	TitleID   string
+	EditionID string
+	FileID    string
+	FilePath  string
+	// DurationMs is the chosen EDITION's whole playable duration — the sum of its
+	// parts, which for the ordinary single-File Edition is simply that File's
+	// duration. The Watched threshold and the resume position are both measured
+	// against it (issue 08).
+	//
+	// It must be the whole Edition, not the playing File: on a two-part Edition a
+	// per-File duration would put the ~90% ceiling at the end of PART ONE, so
+	// finishing the first half would mark the whole episode watched and clear the
+	// resume — losing the viewer's place and moving the Up Next anchor (ADR-0028).
+	DurationMs int64
 	Tier       Tier
 	// VideoCopy marks a TierTranscode session that copies the video and transcodes
 	// only the audio (ADR-0024). It was NOT counted against the transcode cap (no
@@ -60,6 +69,24 @@ type Session struct {
 	// play (which streams the File's bytes and needs no scratch). The Manager
 	// creates it on Create and removes it (with any ffmpeg output) on End/Reap.
 	ScratchDir string
+}
+
+// sessionDurationMs is the duration the Watched threshold and resume are measured
+// against: the whole Edition (the sum of its parts), falling back to the playing
+// File's own duration.
+//
+// The fallback is not defensive noise. A Decision does not always arrive with its
+// Edition's Files populated — some callers build one from a chosen File alone — and
+// without the fallback such a session would report duration 0, which disables the
+// threshold entirely and silently stops recording resume positions. Falling back
+// keeps every single-File session exactly as it was, while a genuine multi-part
+// Edition (which always carries its parts, having been selected from them) gets the
+// whole-work duration it needs.
+func sessionDurationMs(d Decision) int64 {
+	if total := d.Edition.TotalDurationMs(); total > 0 {
+		return total
+	}
+	return d.File.DurationMs
 }
 
 // SessionEventKind is the closed set of Playback session lifecycle transitions an
@@ -264,7 +291,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		EditionID:     d.Edition.ID,
 		FileID:        d.File.ID,
 		FilePath:      d.File.Path,
-		DurationMs:    d.File.DurationMs,
+		DurationMs:    sessionDurationMs(d),
 		Tier:          d.Tier,
 		VideoCopy:     d.VideoCopy,
 		FMP4:          d.UsesFMP4(),

@@ -183,6 +183,7 @@ export interface DeviceApprovalResponse {
 export interface UnmatchedFileRaw {
   id: string;
   path: string;
+  folderPath?: string;
   reason?: string;
   addedAt?: string;
 }
@@ -193,9 +194,42 @@ export interface UnmatchedFileRaw {
 export interface UnmatchedFile {
   id: string;
   path: string;
+  /** The folder a fix-match for this file must be keyed to, derived server-side
+   * from the Library's kind — the file's own directory is the right answer only in
+   * a Movie library (a TV file's directory is a Season folder, not the Show). "" on
+   * an older server that did not send it. */
+  folderPath: string;
   reason: string;
   /** RFC3339, or undefined when the server omitted it. */
   addedAt?: string;
+}
+
+/** One season of a picked series, for the episode chooser's season list. */
+export interface SeasonSummary {
+  season: number;
+  episodeCount: number;
+}
+
+/** One episode an Admin can pin a file to. This is the second step of correcting a
+ * TV episode: picking the series alone never sufficed, because the lookup uses the
+ * season/episode parsed from the FILENAME, so a file the provider counts in a
+ * different season stayed unmatchable however often the series was re-picked. */
+export interface EpisodeCandidate {
+  season: number;
+  episode: number;
+  name: string;
+  overview?: string;
+  airDate?: string;
+  /** A same-origin `/providerImage` URL, never the provider's host. */
+  stillUrl?: string;
+}
+
+/** `GET /titles/{id}/episodeCandidates` — a season's episodes, plus (on the first
+ * request only) the series' season list, so a client fetches that list once. */
+export interface EpisodeCandidatesResult {
+  seasons?: SeasonSummary[];
+  season: number;
+  episodes: EpisodeCandidate[];
 }
 
 /** Raw `GET /libraries/{id}/overrides` entry / the `POST .../fix-match` result.
@@ -246,7 +280,7 @@ export interface FixMatchInput {
 /** Raw `GET /libraries/{id}/enrichment-attention` entry: one Title whose
  * Enrichment could not settle on a record (status unmatched/failed), awaiting a
  * hand-match. `year` is absent when 0 (server `omitempty`). */
-export interface EnrichmentAttentionTitleRaw {
+export interface EnrichmentAttentionTitleRaw extends FixContextRaw {
   id: string;
   kind: string;
   title: string;
@@ -254,11 +288,56 @@ export interface EnrichmentAttentionTitleRaw {
   enrichmentStatus: EnrichmentStatus;
 }
 
+/** The "which item is this, and where is it on disk" fields both Admin attention
+ * lists carry, flat on the wire. They are what lets a row read
+ * `The Wire > Season 1 > Episode 3` rather than the bare episode name two Shows
+ * could share. Every field is `omitempty`; `seasonNumber` absent means 0, which IS
+ * the Specials season, so the default is the meaning rather than a fallback. */
+export interface FixContextRaw {
+  path?: string;
+  showTitle?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  episodeLabel?: string;
+  artistName?: string;
+  albumTitle?: string;
+  discNumber?: number;
+  trackNumber?: number;
+  showId?: string;
+  albumId?: string;
+  enrichedTitle?: string;
+  releaseDate?: string;
+}
+
+/** {@link FixContextRaw} with its holes filled (strings → "", numbers → 0). */
+export interface FixContext {
+  /** A representative PRESENT file, or "" when every File of the item is Missing. */
+  path: string;
+  showTitle: string;
+  /** 0 is Specials, not "absent". */
+  seasonNumber: number;
+  episodeNumber: number;
+  episodeLabel: string;
+  artistName: string;
+  albumTitle: string;
+  discNumber: number;
+  trackNumber: number;
+  /** The parent whose artwork represents this row — an Episode has no poster of
+   * its own, and a Track's cover belongs to its Album. "" when not that kind. */
+  showId: string;
+  albumId: string;
+  /** What Enrichment matched the item to: the canonical display title and the
+   * release date it came with. The release date supplies the year a `no-year` item
+   * is missing, which is what makes confirming the filing possible at all. */
+  enrichedTitle: string;
+  releaseDate: string;
+}
+
 /** An enrichment-attention Title with its `omitempty` holes filled (year → 0):
  * a browsable Title missing its descriptive metadata, listed for the Admin to
  * correct via {@link ApiClient.setEnrichmentMatch}. Distinct from the identity
  * Unmatched files and needs-review Titles. */
-export interface EnrichmentAttentionTitle {
+export interface EnrichmentAttentionTitle extends FixContext {
   id: string;
   kind: string;
   title: string;
@@ -271,19 +350,27 @@ export interface EnrichmentAttentionTitle {
  * Track / Show the scanner flagged as an uncertain identity parse (no year, or
  * non-SxxExx episode numbering). `folderPath` is present only for a Movie (so a
  * folder-keyed fix-match can be offered); `year` is absent when 0. */
-export interface NeedsReviewItemRaw {
+export interface NeedsReviewItemRaw extends FixContextRaw {
   id: string;
   kind: string;
   title: string;
   year?: number;
   folderPath?: string;
+  reason?: NeedsReviewReason;
+  enrichmentStatus?: EnrichmentStatus;
 }
+
+/** Why the scanner flagged an item, as a stable code the client turns into a
+ * sentence: `no-year` (a Movie/Show whose name carried no year), `episode-numbering`
+ * (an Episode numbered by date or absolute number rather than SxxExx), `untagged`
+ * (a Track whose identity came from its path because it had no usable tags). */
+export type NeedsReviewReason = "no-year" | "episode-numbering" | "untagged";
 
 /** A needs-review item with its `omitempty` holes filled (year → 0, folderPath →
  * ""). The Admin resolves it by dismissing it (mark reviewed) or, for a Movie,
  * correcting the identity via a folder-keyed fix-match. Distinct from the
  * enrichment metadata-match list. */
-export interface NeedsReviewItem {
+export interface NeedsReviewItem extends FixContext {
   id: string;
   /** "movie" | "episode" | "track" | "show". */
   kind: string;
@@ -292,6 +379,11 @@ export interface NeedsReviewItem {
   year: number;
   /** The Movie folder a fix-match targets, or "" when fix-match does not apply. */
   folderPath: string;
+  /** Why it was flagged; defaults to the kind's rule when the server omits it. */
+  reason: NeedsReviewReason;
+  /** Whether there is a matched provider record to confirm the filing against.
+   * "pending" on an older server that did not send it. */
+  enrichmentStatus: EnrichmentStatus;
 }
 
 /** Body of `PUT /api/v1/titles/{id}/enrichmentMatch`: the external id an Admin

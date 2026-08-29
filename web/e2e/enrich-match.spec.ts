@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// End-to-end enrichment-match correction + attention surface (external-metadata-
-// enrichment issue 05) against the REAL embedded Go server with its TMDB stub. A
-// Title the stub cannot match ("Nomatch Movie") surfaces on the admin attention
-// "Metadata match" list; the Admin enters a correcting TMDB id, the server
-// re-enriches just that Title (the stub resolves it BY ID), and the Title leaves
-// the list with its enriched overview now showing. Identity/watch state are
-// preserved server-side (asserted by the Go black-box tests); here we drive the
-// correct-match flow through the BROWSER.
+// End-to-end enrichment-match correction on the Needs-Fixing queue against the
+// REAL embedded Go server with its TMDB stub. A Title the stub cannot match
+// ("Nomatch Movie") surfaces as a `no-metadata` row; the Admin SEARCHES the
+// provider for the right record and applies it (never typing a raw id — that was
+// the old attention screen's only tool), the server re-enriches just that Title,
+// and it leaves the queue with its enriched overview now showing. Identity/watch
+// state are preserved server-side (asserted by the Go black-box tests); here we
+// drive the correct-match flow through the BROWSER.
 //
 // Like libraries-attention.spec.ts, this builds its OWN unique temp fixtures dir
 // (one movie folder whose title the stub no-matches) so it never collides with
@@ -146,30 +146,33 @@ test.describe.serial("enrichment match: attention surface + correct a no-match",
   }) => {
     await uiLogin(page);
 
-    // Attention tab → select our library → the "Metadata match" list shows the
-    // unmatched Title.
+    // The old /admin/attention path still resolves — to the renamed queue.
     await page.goto("/admin/attention");
-    await expect(page.getByTestId("admin-attention")).toBeVisible();
-    await page.getByTestId("attention-library-select").selectOption(libId);
+    await expect(page.getByTestId("admin-needs-fixing")).toBeVisible();
+    await page.getByTestId("needs-fixing-library-select").selectOption(libId);
 
-    await expect(page.getByTestId("enrichment-attention-list")).toBeVisible();
-    const item = page
-      .getByTestId("enrichment-attention-item")
-      .filter({ hasText: "Nomatch Movie" });
+    await expect(page.getByTestId("needs-fixing-list")).toBeVisible();
+    const item = page.getByTestId("fix-item").filter({ hasText: "Nomatch Movie" });
     await expect(item).toBeVisible();
-    await expect(item.getByTestId("enrichment-attention-status")).toHaveText("unmatched");
+    await expect(item).toHaveAttribute("data-problem", "no-metadata");
+    // The row states the problem rather than printing a status word.
+    await expect(item.getByTestId("fix-item-problem")).toContainText("No metadata match");
 
-    // Open the match form, enter the correcting TMDB id (the stub resolves /movie/
-    // {id}), and apply.
-    await item.getByTestId("enrichment-match-button").click();
-    const form = item.getByTestId("enrichment-match-form");
-    await expect(form).toBeVisible();
-    await form.getByTestId("enrichment-match-tmdb").fill("777");
-    await form.getByTestId("enrichment-match-submit").click();
+    // Open the row: it searches on its own with the Title's own name, which the stub
+    // deliberately no-matches — so this is the "the guess is wrong" path.
+    await item.getByTestId("fix-item-toggle").click();
+    await expect(item.getByTestId("fix-picker-no-candidates")).toBeVisible();
 
-    // The corrected Title re-enriches and leaves the attention list.
+    // Search for the right record instead of typing a raw id, then apply the best
+    // guess (the stub answers /search/movie with the id 777 record).
+    await item.getByTestId("fix-picker-input").fill("Dune");
+    await item.getByTestId("fix-picker-search-button").click();
+    await expect(item.getByTestId("fix-best-guess")).toBeVisible();
+    await item.getByTestId("fix-use-best-guess").click();
+
+    // The corrected Title re-enriches and leaves the queue.
     await expect(
-      page.getByTestId("enrichment-attention-item").filter({ hasText: "Nomatch Movie" }),
+      page.getByTestId("fix-item").filter({ hasText: "Nomatch Movie" }),
     ).toHaveCount(0);
 
     // The Title now carries its enriched overview on the detail page.

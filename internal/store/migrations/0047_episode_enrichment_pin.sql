@@ -1,0 +1,21 @@
+-- Pin WHICH provider episode decorates an Episode Title, independently of the
+-- season/episode numbers parsed from its filename.
+--
+-- Enrichment resolves an Episode as /tv/{show}/season/{S}/episode/{E}, where S and
+-- E come from the FILENAME (ADR-0002: local naming is the identity authority).
+-- That breaks whenever a provider numbers a series differently from the files on
+-- disk — the common real case being a run of episodes the provider moved into the
+-- next season (Batman: The Animated Series' last five season-3 episodes are season
+-- 4 on TVDB/TMDB). Before this, an Admin could pin the right SHOW and the lookup
+-- would still ask for the wrong episode, so those files were unfixable from the UI.
+--
+-- These columns are an ENRICHMENT override, not an identity one: they change only
+-- which record is fetched. identity_key, season_id, season_number, episode_number
+-- and every User's watch state are untouched (ADR-0014), so the file keeps its
+-- place in the library and its watch history while gaining the right details.
+--
+-- NULL means "not pinned — use the parsed numbers", which is the default and the
+-- behaviour for every existing row. NULL rather than a sentinel because season 0
+-- is a real value (Specials), so 0 cannot mean "unset".
+ALTER TABLE titles ADD COLUMN enrichment_season INTEGER;
+ALTER TABLE titles ADD COLUMN enrichment_episode INTEGER;

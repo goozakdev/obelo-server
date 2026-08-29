@@ -30,6 +30,12 @@ type NeedsReviewItem struct {
 	Year   int
 	Path   string
 	Anchor string
+	// Context is the identifying breadcrumb the Admin needs to tell one flagged
+	// item from another on sight — the Show/season/episode behind a bare episode
+	// name, the Artist/Album behind a bare track name, and a representative file
+	// path for every kind. Filled by the catalog service from TitleFixContexts /
+	// ShowFixContexts, not by the queries above (see fixcontext.go).
+	Context FixContext
 }
 
 // TitlesNeedingReview returns the visible Titles (Movies, Episodes, Tracks) of a

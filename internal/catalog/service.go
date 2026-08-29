@@ -62,6 +62,11 @@ type Store interface {
 	// right (sticky across rescans, migration 0012).
 	TitlesNeedingReview(libraryID string) ([]store.NeedsReviewItem, error)
 	ShowsNeedingReview(libraryID string) ([]store.NeedsReviewItem, error)
+	// TitleFixContexts / ShowFixContexts batch-read the breadcrumb + representative
+	// file each Needs-Fixing row shows so the Admin can tell one flagged item from
+	// another without opening it (store/fixcontext.go).
+	TitleFixContexts(ids []string) (map[string]store.FixContext, error)
+	ShowFixContexts(ids []string) (map[string]store.FixContext, error)
 	MarkTitleReviewed(id string) error
 	MarkShowReviewed(id string) error
 	ArtworkByTitleRole(titleID, role string) (store.Artwork, error)
@@ -525,22 +530,68 @@ func (s *Service) LibraryOfEntity(entityType, entityID string) (string, error) {
 
 // ListUnmatched returns a Library's Unmatched files (the Admin attention
 // surface). ErrNotFound for an unknown Library so the caller answers 404.
-func (s *Service) ListUnmatched(libraryID string) ([]store.UnmatchedFile, error) {
-	exists, err := s.store.LibraryExists(libraryID)
+func (s *Service) ListUnmatched(libraryID string) ([]UnmatchedFileItem, error) {
+	lib, err := s.store.LibraryByID(libraryID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, ErrNotFound
+	files, err := s.store.ListUnmatched(libraryID)
+	if err != nil {
+		return nil, err
 	}
-	return s.store.ListUnmatched(libraryID)
+	roots := make([]string, 0, len(lib.Roots))
+	for _, r := range lib.Roots {
+		roots = append(roots, r.Path)
+	}
+	// Derive the fix-match anchor the same way the scanner keys an override for this
+	// Library's kind, so the client never has to guess it from the path. Guessing is
+	// wrong precisely where it matters: an unmatched episode's own folder is a SEASON
+	// folder, and an override keyed there would never match the Show the scanner
+	// resolves. store.NeedsReviewAnchor already encodes the per-kind rule.
+	anchorKind := overrideAnchorKind(lib.Kind)
+	out := make([]UnmatchedFileItem, 0, len(files))
+	for _, f := range files {
+		out = append(out, UnmatchedFileItem{
+			UnmatchedFile: f,
+			Anchor:        store.NeedsReviewAnchor(anchorKind, f.Path, roots),
+		})
+	}
+	return out, nil
+}
+
+// UnmatchedFileItem is an Unmatched file plus the folder a fix-match for it must be
+// keyed to — the one thing the Admin needs to correct it that the file row itself
+// cannot say, because the answer depends on the Library's kind.
+type UnmatchedFileItem struct {
+	store.UnmatchedFile
+	// Anchor is the fix-match override key, or "" when none applies.
+	Anchor string
+}
+
+// overrideAnchorKind maps a Library's media kind onto the entity kind whose
+// override-anchor rule applies to a file in it: a Movie library anchors like a
+// Movie (its folder, or the file itself when loose at a root), a TV library like a
+// Show (the top-level folder under a root, since episodes nest in Season folders),
+// and a Music library like a Track (its album folder).
+func overrideAnchorKind(libraryKind string) string {
+	switch libraryKind {
+	case "tv":
+		return "show"
+	case "music":
+		return "track"
+	default:
+		return "movie"
+	}
 }
 
 // TitlesNeedingMatch returns the Library's Titles whose Enrichment could not
 // settle on a record (status unmatched/failed) — the Admin attention surface for
 // hand-matching, kept distinct from the identity Unmatched bucket and the
 // needs-review list. ErrNotFound for an unknown Library so the caller answers 404.
-func (s *Service) TitlesNeedingMatch(libraryID string) ([]store.Title, error) {
+func (s *Service) TitlesNeedingMatch(libraryID string) ([]NeedsMatchItem, error) {
 	exists, err := s.store.LibraryExists(libraryID)
 	if err != nil {
 		return nil, err
@@ -548,7 +599,33 @@ func (s *Service) TitlesNeedingMatch(libraryID string) ([]store.Title, error) {
 	if !exists {
 		return nil, ErrNotFound
 	}
-	return s.store.TitlesNeedingMatch(libraryID)
+	titles, err := s.store.TitlesNeedingMatch(libraryID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(titles))
+	for _, t := range titles {
+		ids = append(ids, t.ID)
+	}
+	ctxs, err := s.store.TitleFixContexts(ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NeedsMatchItem, 0, len(titles))
+	for _, t := range titles {
+		out = append(out, NeedsMatchItem{Title: t, Context: ctxs[t.ID]})
+	}
+	return out, nil
+}
+
+// NeedsMatchItem is one entry on the metadata half of the Admin Needs-Fixing
+// queue: a Title whose Enrichment could not settle on a record, paired with the
+// context that says WHICH item it is. Without the context an Episode row reads as
+// a bare episode name ("Pilot") with no Show, no numbering, and no file — which is
+// not enough to act on, and was the old attention screen's central defect.
+type NeedsMatchItem struct {
+	Title   store.Title
+	Context store.FixContext
 }
 
 // NeedsReview returns every still-flagged needs-review item of a Library — the
@@ -573,6 +650,33 @@ func (s *Service) NeedsReview(libraryID string) ([]store.NeedsReviewItem, error)
 		return nil, err
 	}
 	items := append(titles, shows...)
+
+	// Decorate each item with the breadcrumb + representative file that says which
+	// item it is (fixcontext.go). Titles and Shows are separate reads because a
+	// Show is not a Title; both are batched, so the whole list costs two queries.
+	titleIDs := make([]string, 0, len(titles))
+	for _, it := range titles {
+		titleIDs = append(titleIDs, it.ID)
+	}
+	showIDs := make([]string, 0, len(shows))
+	for _, it := range shows {
+		showIDs = append(showIDs, it.ID)
+	}
+	titleCtxs, err := s.store.TitleFixContexts(titleIDs)
+	if err != nil {
+		return nil, err
+	}
+	showCtxs, err := s.store.ShowFixContexts(showIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if items[i].Kind == "show" {
+			items[i].Context = showCtxs[items[i].ID]
+		} else {
+			items[i].Context = titleCtxs[items[i].ID]
+		}
+	}
 
 	// Derive each item's fix-match anchor from its file path + the Library roots,
 	// per kind — a Movie's folder (or the file itself when loose), a Show's

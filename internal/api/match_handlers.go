@@ -76,12 +76,10 @@ func handleFixMatch(svc *match.Service, enr *enrich.Service, cat *catalog.Servic
 		// tags, so it is skipped (the Admin gives an album title there). Best-effort:
 		// if enrichment is off / the id doesn't resolve / the provider is unreachable,
 		// we proceed with whatever was given (the id still anchors identity).
-		var kind string
-		switch k, _ := cat.LibraryKind(id); k {
-		case "movie":
-			kind = "movie"
-		case "tv":
-			kind = "show"
+		libKind, _ := cat.LibraryKind(id)
+		kind := searchKindForLibrary(libKind)
+		if kind == "album" {
+			kind = "" // Music identity is its tags, not a provider id — skip the lookup.
 		}
 		if kind != "" && enr != nil && strings.TrimSpace(req.Title) == "" && (req.TMDBID != "" || req.IMDBID != "") {
 			if title, year, ok, err := enr.ResolveIdentity(r.Context(), enrich.TitleRef{
@@ -113,6 +111,25 @@ func handleFixMatch(svc *match.Service, enr *enrich.Service, cat *catalog.Servic
 			return
 		}
 		writeJSON(w, http.StatusOK, toMatchOverride(ov))
+	}
+}
+
+// handleDeleteOverride discards one Match override (DELETE
+// /libraries/{id}/overrides/{overrideId}, Admin-only) — the action behind an
+// ORPHANED correction on the Needs-Fixing queue, whose anchor folder is gone so it
+// can never apply again. Removing it restores that folder's convention-derived
+// parse and touches no Title and no watch state (ADR-0002/0014). 204 on success;
+// unknown override → 404.
+func handleDeleteOverride(svc *match.Service, overrideID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch err := svc.Delete(overrideID); {
+		case errors.Is(err, match.ErrNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "override not found", nil)
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to delete override", nil)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
 	}
 }
 

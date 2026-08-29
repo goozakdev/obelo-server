@@ -62,23 +62,49 @@ type ExternalMatch struct {
 	TMDBID        string
 	IMDBID        string
 	MusicbrainzID string
+	// EpisodeSeason / EpisodeNumber pin WHICH provider episode decorates an Episode,
+	// overriding the numbers parsed from its filename for the lookup only (see
+	// Title.EpisodePin). Set together, and only when the Admin picked a specific
+	// episode; EpisodeNumber <= 0 means "don't change the pin". ClearEpisodePin
+	// removes an existing one — needed because "leave unchanged" and "unset" cannot
+	// both be expressed by a zero.
+	EpisodeSeason   int
+	EpisodeNumber   int
+	ClearEpisodePin bool
 }
 
 // SetTitleExternalMatch writes the supplied external id(s) onto a Title and
 // resets its enrichment_status to 'pending' so the next lookup re-resolves by the
-// new id. It touches ONLY the external-id columns + status — never identity_key,
-// season/episode numbers, or any identity field — so the Title keeps its parsed
-// identity and watch state (ADR-0002/0014). An empty id leaves that column
-// unchanged. Returns ErrNotFound for an unknown Title.
+// new id. It touches ONLY the external-id columns, the enrichment episode pin, and
+// status — never identity_key, the Title's own season/episode numbers, or any
+// identity field — so the Title keeps its parsed identity, its place in the
+// library, and every User's watch state (ADR-0002/0014). An empty id leaves that
+// column unchanged. Returns ErrNotFound for an unknown Title.
 func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch) error {
+	// The episode pin is three-state: set it, clear it, or leave it alone. NULL is
+	// "not pinned", so a clear writes NULL rather than a number.
+	pinSeason, pinEpisode := any(nil), any(nil)
+	setPin := 0
+	if m.EpisodeNumber > 0 {
+		pinSeason, pinEpisode, setPin = m.EpisodeSeason, m.EpisodeNumber, 1
+	}
+	clearPin := 0
+	if m.ClearEpisodePin {
+		clearPin = 1
+	}
 	res, err := db.Exec(
 		`UPDATE titles SET
 		     tmdb_id        = CASE WHEN ? <> '' THEN ? ELSE tmdb_id END,
 		     imdb_id        = CASE WHEN ? <> '' THEN ? ELSE imdb_id END,
 		     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END,
+		     enrichment_season  = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_season END,
+		     enrichment_episode = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_episode END,
 		     enrichment_status = 'pending'
 		   WHERE id = ?`,
-		m.TMDBID, m.TMDBID, m.IMDBID, m.IMDBID, m.MusicbrainzID, m.MusicbrainzID, titleID,
+		m.TMDBID, m.TMDBID, m.IMDBID, m.IMDBID, m.MusicbrainzID, m.MusicbrainzID,
+		setPin, pinSeason, clearPin,
+		setPin, pinEpisode, clearPin,
+		titleID,
 	)
 	if err != nil {
 		return fmt.Errorf("store: setting external match: %w", err)

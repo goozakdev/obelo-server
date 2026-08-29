@@ -876,10 +876,16 @@ func handleListTitles(svc *catalog.Service) http.HandlerFunc {
 // --- Unmatched (Admin attention surface) ------------------------------------
 
 type unmatchedFileJSON struct {
-	ID      string `json:"id"`
-	Path    string `json:"path"`
-	Reason  string `json:"reason,omitempty"`
-	AddedAt string `json:"addedAt,omitempty"`
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	// FolderPath is the anchor a fix-match for this file must be keyed to, derived
+	// server-side from the Library's kind (a Movie library anchors to the movie
+	// folder, a TV library to the Show folder above the Season folder, a Music
+	// library to the album folder). The client cannot derive it: the file's own
+	// directory is the right answer only for a Movie.
+	FolderPath string `json:"folderPath,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	AddedAt    string `json:"addedAt,omitempty"`
 }
 
 type unmatchedResponse struct {
@@ -908,10 +914,11 @@ func handleListUnmatched(svc *catalog.Service) http.HandlerFunc {
 		out := unmatchedResponse{Files: make([]unmatchedFileJSON, 0, len(files))}
 		for _, f := range files {
 			out.Files = append(out.Files, unmatchedFileJSON{
-				ID:      f.ID,
-				Path:    f.Path,
-				Reason:  f.Reason,
-				AddedAt: formatTimestamp(f.AddedAt),
+				ID:         f.ID,
+				Path:       f.Path,
+				FolderPath: f.Anchor,
+				Reason:     f.Reason,
+				AddedAt:    formatTimestamp(f.AddedAt),
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -930,6 +937,58 @@ type enrichmentAttentionTitleJSON struct {
 	Title            string `json:"title"`
 	Year             int    `json:"year,omitempty"`
 	EnrichmentStatus string `json:"enrichmentStatus"`
+	fixContextJSON
+}
+
+// fixContextJSON is the "which item is this, and where is it on disk" bundle every
+// Needs-Fixing row carries, embedded FLAT into both attention rows so the two lists
+// present identically. It is what lets a row name `The Wire > Season 1 > Episode 3`
+// instead of the bare episode title two different Shows might share.
+//
+// SeasonNumber's omitempty is lossless rather than lax: season 0 IS Specials, and a
+// reader that defaults an absent value to 0 lands on exactly that meaning.
+type fixContextJSON struct {
+	Path          string `json:"path,omitempty"`
+	ShowTitle     string `json:"showTitle,omitempty"`
+	SeasonNumber  int    `json:"seasonNumber,omitempty"`
+	EpisodeNumber int    `json:"episodeNumber,omitempty"`
+	EpisodeLabel  string `json:"episodeLabel,omitempty"`
+	ArtistName    string `json:"artistName,omitempty"`
+	AlbumTitle    string `json:"albumTitle,omitempty"`
+	DiscNumber    int    `json:"discNumber,omitempty"`
+	TrackNumber   int    `json:"trackNumber,omitempty"`
+	// ShowID / AlbumID name the parent whose ARTWORK represents this row: an
+	// Episode has no poster of its own (its Show's is the recognizable image) and a
+	// Track's cover belongs to its Album. Sent so a client can address
+	// /shows/{id}/artwork and /albums/{id}/artwork without a second lookup.
+	ShowID  string `json:"showId,omitempty"`
+	AlbumID string `json:"albumId,omitempty"`
+	// EnrichedTitle / ReleaseDate are what Enrichment actually matched the item to.
+	// They are the evidence a confirm ("looks right") needs: a needs-review item is
+	// flagged for an uncertain parse, so its own parsed name cannot say whether the
+	// filing is right, and ReleaseDate carries the very year a `no-year` item lacks.
+	EnrichedTitle string `json:"enrichedTitle,omitempty"`
+	ReleaseDate   string `json:"releaseDate,omitempty"`
+}
+
+// toFixContextJSON maps the store bundle onto the wire, dropping the internal ids
+// (a row links by the Title/Show id it already has).
+func toFixContextJSON(c store.FixContext) fixContextJSON {
+	return fixContextJSON{
+		Path:          c.Path,
+		ShowTitle:     c.ShowTitle,
+		SeasonNumber:  c.SeasonNumber,
+		EpisodeNumber: c.EpisodeNumber,
+		EpisodeLabel:  c.EpisodeLabel,
+		ArtistName:    c.ArtistName,
+		AlbumTitle:    c.AlbumTitle,
+		DiscNumber:    c.DiscNumber,
+		TrackNumber:   c.TrackNumber,
+		ShowID:        c.ShowID,
+		AlbumID:       c.AlbumID,
+		EnrichedTitle: c.EnrichedTitle,
+		ReleaseDate:   c.ReleaseDate,
+	}
 }
 
 type enrichmentAttentionResponse struct {
@@ -961,11 +1020,12 @@ func handleListEnrichmentAttention(svc *catalog.Service) http.HandlerFunc {
 		out := enrichmentAttentionResponse{Titles: make([]enrichmentAttentionTitleJSON, 0, len(titles))}
 		for _, t := range titles {
 			out.Titles = append(out.Titles, enrichmentAttentionTitleJSON{
-				ID:               t.ID,
-				Kind:             t.Kind,
-				Title:            t.Title,
-				Year:             t.Year,
-				EnrichmentStatus: t.EnrichmentStatus,
+				ID:               t.Title.ID,
+				Kind:             t.Title.Kind,
+				Title:            t.Title.Title,
+				Year:             t.Title.Year,
+				EnrichmentStatus: t.Title.EnrichmentStatus,
+				fixContextJSON:   toFixContextJSON(t.Context),
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -989,6 +1049,39 @@ type needsReviewItemJSON struct {
 	Title      string `json:"title"`
 	Year       int    `json:"year,omitempty"`
 	FolderPath string `json:"folderPath,omitempty"`
+	// Reason names WHY the scanner flagged this item, so the client can state the
+	// problem in one sentence instead of the bare word "needs review". See
+	// needsReviewReason.
+	Reason string `json:"reason,omitempty"`
+	// EnrichmentStatus says whether there is a matched provider record to show the
+	// Admin at all — without it, a row offering "looks right" is asking them to
+	// confirm a filing against nothing. Carried here rather than on fixContextJSON
+	// so it never shadows the enrichment list's own top-level field.
+	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
+	fixContextJSON
+}
+
+// needsReviewReason maps a flagged item's kind onto the reason the scanner set the
+// flag. It is a lookup, not a guess: `needs_review` is written at exactly four
+// sites, and each one is decided by kind —
+//
+//   - movie: scanner.go sets it from `!id.HasYear()` — the name carried no year
+//   - show:  tv_resolve.go, same `!id.HasYear()` rule on the Show folder
+//   - episode: tv_resolve.go sets it from `tok.Kind != "sxxexx"` — the episode was
+//     numbered by date or absolute number, which only Enrichment can map canonically
+//   - track: music_resolve.go sets it from `!id.FromTags` — identity came from the
+//     path because the file had no usable embedded tags
+//
+// The codes are stable and machine-readable; the client owns the wording.
+func needsReviewReason(kind string) string {
+	switch kind {
+	case "episode":
+		return "episode-numbering"
+	case "track":
+		return "untagged"
+	default: // movie, show
+		return "no-year"
+	}
 }
 
 type needsReviewResponse struct {
@@ -1021,11 +1114,14 @@ func handleListNeedsReview(svc *catalog.Service) http.HandlerFunc {
 		out := needsReviewResponse{Items: make([]needsReviewItemJSON, 0, len(items))}
 		for _, it := range items {
 			out.Items = append(out.Items, needsReviewItemJSON{
-				ID:         it.ID,
-				Kind:       it.Kind,
-				Title:      it.Title,
-				Year:       it.Year,
-				FolderPath: it.Anchor,
+				ID:               it.ID,
+				Kind:             it.Kind,
+				Title:            it.Title,
+				Year:             it.Year,
+				FolderPath:       it.Anchor,
+				Reason:           needsReviewReason(it.Kind),
+				EnrichmentStatus: it.Context.EnrichmentStatus,
+				fixContextJSON:   toFixContextJSON(it.Context),
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -1175,6 +1271,17 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			// Admin attention surface: the Unmatched list is Admin-only.
 			requireMethod(http.MethodGet, requireAdmin(handleListUnmatched(deps.Catalog)))(w, r)
 			return
+		case strings.Contains(rest, "/overrides/"):
+			// Admin: discard ONE Match override — the action behind an orphaned
+			// correction on the Needs-Fixing queue. Matched before the list route
+			// below, which is a suffix match and would not see the trailing id.
+			_, overrideID, _ := strings.Cut(rest, "/overrides/")
+			if overrideID == "" || strings.Contains(overrideID, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodDelete, requireAdmin(handleDeleteOverride(deps.Match, overrideID)))(w, r)
+			return
 		case strings.HasSuffix(rest, "/overrides"):
 			// Admin attention surface: Match overrides (orphans surfaced here).
 			requireMethod(http.MethodGet, requireAdmin(handleListOverrides(deps.Match)))(w, r)
@@ -1189,6 +1296,17 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			// flagged as an uncertain parse, each resolvable via mark-reviewed (or a
 			// Movie fix-match). Server-side so it works for TV/Music too.
 			requireMethod(http.MethodGet, requireAdmin(handleListNeedsReview(deps.Catalog)))(w, r)
+			return
+		case strings.HasSuffix(rest, "/enrichmentCandidates"):
+			// Admin: provider search anchored to the LIBRARY, not an item — the only
+			// search an Unmatched file (which has no Title) can use.
+			requireMethod(http.MethodGet, requireAdmin(
+				handleLibraryEnrichmentCandidates(deps.Enrich, deps.providerImages, deps.Catalog)))(w, r)
+			return
+		case strings.HasSuffix(rest, "/externalPreview"):
+			// Admin: the paste-an-id counterpart of the above, same Library anchor.
+			requireMethod(http.MethodGet, requireAdmin(
+				handleLibraryExternalPreview(deps.Enrich, deps.providerImages, deps.Catalog)))(w, r)
 			return
 		case strings.HasSuffix(rest, "/fix-match"):
 			// Admin identity correction (fix-match), keyed to a folder path. An id-only

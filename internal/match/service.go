@@ -30,6 +30,9 @@ type Store interface {
 	LibraryByID(id string) (store.Library, error)
 	UpsertMatchOverride(o store.MatchOverride) (store.MatchOverride, error)
 	MatchOverridesByLibrary(libraryID string) ([]store.MatchOverride, error)
+	// DeleteMatchOverride discards one override by id — the Admin's way to clear an
+	// orphaned correction that can no longer match anything.
+	DeleteMatchOverride(id string) error
 }
 
 // Service implements fix-match and the override attention surface.
@@ -101,6 +104,22 @@ func (s *Service) List(libraryID string) ([]store.MatchOverride, error) {
 		return nil, err
 	}
 	return s.store.MatchOverridesByLibrary(libraryID)
+}
+
+// Delete discards one Match override by id — the Admin's "this correction is dead"
+// action, offered on an ORPHANED override whose anchor folder no longer exists.
+// Deleting is safe precisely because an override is folder-keyed and additive: it
+// only ever redirects a future scan of that folder, so removing it restores the
+// convention-derived parse (ADR-0002) and touches no Title and no watch state.
+// ErrNotFound for an unknown override so the caller answers 404.
+func (s *Service) Delete(overrideID string) error {
+	if err := s.store.DeleteMatchOverride(overrideID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // TODO(issue-06+): merge (collapse two parsed Titles into one identity) and

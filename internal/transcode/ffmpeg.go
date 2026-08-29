@@ -57,11 +57,37 @@ const (
 	SegmentSeconds = 4
 )
 
+// inputArgs renders the ffmpeg input for a job: normally `-i <path>`, but
+// `-f concat -safe 0 -i <list>` for a MULTI-PART Edition, whose parts must play as
+// one continuous stream.
+//
+// The concat demuxer is what makes multi-part work at all. A multi-part Edition is
+// several files that are one work (`- part1`/`- cd1`, naming-convention.md), and
+// the HLS tiers previously repackaged only the first — so the second half of a
+// two-part episode simply did not exist as far as any client was concerned. Feeding
+// ffmpeg the ordered list instead gives ONE input with ONE continuous timeline, so
+// the emitted playlist spans every part and every downstream notion (segment
+// numbering, duration, seek) keeps working unchanged.
+//
+// `-safe 0` is required because the list holds absolute paths. The list itself is
+// written by the playback layer into the session scratch dir.
+func inputArgs(concatListPath, sourcePath string) []string {
+	if concatListPath != "" {
+		return []string{"-f", "concat", "-safe", "0", "-i", concatListPath}
+	}
+	return []string{"-i", sourcePath}
+}
+
 // RemuxJob describes one remux (direct-stream) operation: copy the source File's
 // streams unchanged into an HLS media playlist + TS segments under OutputDir.
 type RemuxJob struct {
-	// SourcePath is the absolute path of the File to repackage.
+	// SourcePath is the absolute path of the File to repackage. Ignored when
+	// ConcatListPath is set.
 	SourcePath string
+	// ConcatListPath, when non-empty, is an ffmpeg concat-demuxer list file naming
+	// the Edition's parts in play order. Set for a MULTI-PART Edition so the output
+	// spans all of its parts as one continuous stream rather than just the first.
+	ConcatListPath string
 	// OutputDir is the session scratch directory ffmpeg writes the playlist +
 	// segments into. The caller has already created it.
 	OutputDir string
@@ -264,7 +290,7 @@ func RemuxArgs(job RemuxJob) []string {
 	args := []string{"-nostdin", "-y"}
 	// Input seek (realignment) goes BEFORE -i; empty for the from-the-top launch.
 	args = append(args, job.Seek.inputSeekArgs()...)
-	args = append(args, "-i", job.SourcePath)
+	args = append(args, inputArgs(job.ConcatListPath, job.SourcePath)...)
 	switch {
 	case job.VideoOnly:
 		// Demuxed multi-audio session (audio-streams/03): copy ONLY the video track;
@@ -851,8 +877,13 @@ var forceKeyFramesExpr = "expr:gte(t,n_forced*" + itoa(SegmentSeconds) + ")"
 // otherwise re-encode. TranscodeArgs trusts those flags — it does not re-derive
 // the policy — so the decision stays in one pure, unit-tested place.
 type TranscodeJob struct {
-	// SourcePath is the absolute path of the File to transcode.
+	// SourcePath is the absolute path of the File to transcode. Ignored when
+	// ConcatListPath is set.
 	SourcePath string
+	// ConcatListPath, when non-empty, is an ffmpeg concat-demuxer list file naming a
+	// MULTI-PART Edition's parts in play order, so the encode covers the whole work
+	// rather than only its first file. See inputArgs.
+	ConcatListPath string
 	// OutputDir is the session scratch directory (already created by the caller).
 	OutputDir string
 
@@ -1123,7 +1154,7 @@ func TranscodeArgs(job TranscodeJob) []string {
 	// the INPUT, so the encode resumes near the target without decoding from 0;
 	// empty for the from-the-top launch.
 	args = append(args, job.Seek.inputSeekArgs()...)
-	args = append(args, "-i", job.SourcePath)
+	args = append(args, inputArgs(job.ConcatListPath, job.SourcePath)...)
 
 	// A SIDECAR burn adds the subtitle file as a SECOND input, overlaid via
 	// [1:s] (subtitles/04). The same input seek is applied to it so its cues stay
@@ -1247,8 +1278,13 @@ func TranscodeArgs(job TranscodeJob) []string {
 // variant + the other renditions in the shared session scratch dir. It is the audio
 // analogue of RemuxJob/TranscodeJob — a pure arg description the Runner executes.
 type AudioRenditionJob struct {
-	// SourcePath is the absolute path of the multi-audio File.
+	// SourcePath is the absolute path of the multi-audio File. Ignored when
+	// ConcatListPath is set.
 	SourcePath string
+	// ConcatListPath mirrors RemuxJob/TranscodeJob for a MULTI-PART Edition: the
+	// rendition must span the same parts as the video variant it accompanies, or the
+	// audio would run out partway through. See inputArgs.
+	ConcatListPath string
 	// OutputDir is the session scratch directory (shared with the video variant and
 	// the other renditions); PlaylistName/SegmentPattern namespace this rendition's
 	// files within it.
@@ -1298,7 +1334,7 @@ func AudioRenditionArgs(job AudioRenditionJob) []string {
 	args := []string{"-nostdin", "-y"}
 	// Input seek (realignment) goes BEFORE -i; empty for the from-the-top launch.
 	args = append(args, job.Seek.inputSeekArgs()...)
-	args = append(args, "-i", job.SourcePath)
+	args = append(args, inputArgs(job.ConcatListPath, job.SourcePath)...)
 	// Audio-only: drop video, map exactly the chosen audio Stream.
 	args = append(args, "-vn", "-map", "0:a:"+itoa(job.AudioStreamIndex))
 	// A realigned rendition has the same mid-stream-entry problem as the muxed paths

@@ -404,8 +404,14 @@ func negotiateAudioStreams(profile DeviceProfile, constraints Constraints, ed st
 //     reason → transcode, surfaced as TRANSCODE_REQUIRED this slice).
 //
 // Missing Files (soft-deleted, ADR-0008) are skipped: an Edition whose File is
-// absent from disk cannot be streamed. Multi-part Editions are out of scope this
-// slice, so only the first present File of an Edition is considered.
+// absent from disk cannot be streamed.
+//
+// A MULTI-PART Edition (parts joined by a `- part1`/`- cd1` suffix,
+// naming-convention.md) is negotiated from its FIRST present File — the parts of one
+// work share codecs and container, so the first is representative — but it is never
+// allowed to direct play, because direct play can only deliver one File's bytes.
+// It escalates to the HLS tiers, which repackage every part into one continuous
+// stream through the concat demuxer.
 func SelectEdition(profile DeviceProfile, constraints Constraints, editions []store.Edition, editionID string) (Decision, *Unsupported) {
 	var firstReason *Unsupported
 	var best *Decision          // best direct-play Decision
@@ -424,6 +430,27 @@ func SelectEdition(profile DeviceProfile, constraints Constraints, editions []st
 			continue
 		}
 		dec, unsup := Negotiate(profile, constraints, ed, f)
+		if unsup == nil && ed.IsMultiPart() {
+			// A MULTI-PART Edition can never DIRECT PLAY: direct play hands the client
+			// one File's bytes over one response, and raw parts cannot be joined that
+			// way. Serving part 1 as though it were the whole work is precisely the bug
+			// this guards — the episode just stopped halfway with nothing to say so.
+			//
+			// So it escalates one tier: the HLS paths repackage every part through the
+			// concat demuxer into one continuous stream (see concatListFor). Remux is a
+			// stream COPY, so this costs no re-encode — the same bytes, repackaged.
+			// The escalation is visible in the reported tier rather than silent.
+			if rdec, rUnsup := negotiateRemux(profile, constraints, ed, f); rUnsup == nil {
+				if bestRemux == nil || better(rdec, *bestRemux) {
+					d := rdec
+					bestRemux = &d
+				}
+				continue
+			}
+			// Remux refused (it re-runs every non-container gate): fall through to the
+			// transcode fallback below with the honest blocking reason.
+			unsup = &Unsupported{Reason: ReasonContainer, Detail: "multi-part edition must be repackaged"}
+		}
 		if unsup == nil {
 			// Keep the highest-resolution direct-play Edition (bitrate breaks ties).
 			if best == nil || better(dec, *best) {

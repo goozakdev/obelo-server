@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -243,6 +244,13 @@ type episodeSummaryJSON struct {
 	Overview         string `json:"overview,omitempty"`
 	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
 	StillURL         string `json:"stillUrl,omitempty"`
+	// PartNumber / PartCount mark one of several FILES that share a single provider
+	// episode — a double-length finale shipped as two files, say. Both omitted for
+	// an ordinary episode. Title already carries the same fact as a "(1 of 2)"
+	// suffix so every client benefits without changing; these are here for a client
+	// that would rather render it as a badge. See episodePartLabels.
+	PartNumber int `json:"partNumber,omitempty"`
+	PartCount  int `json:"partCount,omitempty"`
 }
 
 type episodesResponse struct {
@@ -250,11 +258,92 @@ type episodesResponse struct {
 	Episodes []episodeSummaryJSON `json:"episodes"`
 }
 
-func toEpisodeSummary(t store.Title, ws store.WatchState, version string) episodeSummaryJSON {
+// episodePart is one Episode's position among the files that share its provider
+// episode. The zero value means "not part of such a group", which is the norm.
+type episodePart struct {
+	Number int
+	Count  int
+}
+
+// episodePartLabels groups a Season's Episodes by the provider episode each one is
+// actually decorated from, and numbers the members of any group larger than one.
+//
+// The case it exists for: a double-length episode the provider lists once but which
+// ships as two files. Parks and Recreation's season 6 finale is one 44-minute record
+// on TMDB and two files on disk, so both files end up pointing at that one record —
+// correctly, and deliberately, via the episode pin. They then render as two rows with
+// the same title, the same synopsis and the same still, and nothing says which half
+// is which.
+//
+// The grouping key is the EFFECTIVE provider episode: the pinned season/episode when
+// an Admin set one, otherwise the numbers parsed from the filename, alongside the
+// series id so two shows can never collide. That is precisely the tuple the metadata
+// lookup uses (see enrich.refFor), so two Episodes share a key exactly when they are
+// decorated from the same record — which is the thing worth telling the viewer about.
+//
+// Two deliberate exclusions:
+//   - An effective episode number of 0 never groups. A Season can hold several
+//     episodes the scanner could not number (date-named files), and they are not
+//     parts of one another — they are simply unnumbered.
+//   - A multi-episode FILE (S01E05-E06) is untouched, because its two Episodes carry
+//     DIFFERENT numbers (5 and 6) and so land in different groups. That is the mirror
+//     case — one file, two episodes — and it is already handled by the scanner
+//     (docs/naming-convention.md).
+//
+// Order within a group is the caller's order, which is the store's
+// episode_number ASC — so part 1 is the file that plays first.
+func episodePartLabels(titles []store.Title) map[string]episodePart {
+	type key struct {
+		series  string
+		season  int
+		episode int
+	}
+	groups := map[key][]string{}
+	order := make([]key, 0, len(titles))
+	for _, t := range titles {
+		season, episode := t.SeasonNumber, t.EpisodeNumber
+		if s, e, pinned := t.EpisodePin(); pinned {
+			season, episode = s, e
+		}
+		if episode <= 0 {
+			continue // unnumbered: nothing to be a part OF
+		}
+		k := key{series: t.TMDBID, season: season, episode: episode}
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], t.ID)
+	}
+	out := map[string]episodePart{}
+	for _, k := range order {
+		ids := groups[k]
+		if len(ids) < 2 {
+			continue // the overwhelmingly normal case: one file, one episode
+		}
+		for i, id := range ids {
+			out[id] = episodePart{Number: i + 1, Count: len(ids)}
+		}
+	}
+	return out
+}
+
+// partSuffix renders " (1 of 2)" for a part, "" otherwise. It is appended to the
+// DISPLAY title only — never to the stored title, the identity, or anything a
+// rescan reads (ADR-0002).
+func partSuffix(p episodePart) string {
+	if p.Count < 2 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d of %d)", p.Number, p.Count)
+}
+
+func toEpisodeSummary(t store.Title, ws store.WatchState, version string, part episodePart) episodeSummaryJSON {
 	js := episodeSummaryJSON{
 		ID:               t.ID,
 		Kind:             t.Kind,
-		Title:            displayTitle(t),
+		Title:            displayTitle(t) + partSuffix(part),
+		PartNumber:       part.Number,
+		PartCount:        part.Count,
 		SeasonNumber:     t.SeasonNumber,
 		EpisodeNumber:    t.EpisodeNumber,
 		EpisodeLabel:     t.EpisodeLabel,
@@ -614,12 +703,16 @@ func handleSeasonEpisodes(svc *catalog.Service) http.HandlerFunc {
 		// Episode stills are title-keyed artwork, so their cache-bust versions come
 		// from the title artwork table (one bulk read, no N+1).
 		versions, _ := svc.ArtworkVersionsForTitles(ids)
+		// Files that share ONE provider episode (a double-length finale shipped as
+		// two files) are otherwise indistinguishable in this list — same title, same
+		// synopsis, same still. Number them so the viewer can tell which half is which.
+		parts := episodePartLabels(episodes)
 		out := episodesResponse{
 			Season:   toSeasonJSON(season),
 			Episodes: make([]episodeSummaryJSON, 0, len(episodes)),
 		}
 		for _, e := range episodes {
-			out.Episodes = append(out.Episodes, toEpisodeSummary(e, states[e.ID], versions[e.ID]))
+			out.Episodes = append(out.Episodes, toEpisodeSummary(e, states[e.ID], versions[e.ID], parts[e.ID]))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

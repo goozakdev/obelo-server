@@ -24,7 +24,7 @@ All main video files in a movie folder belong to the one Title. They are sorted 
 
 - **Named cut** — explicit tag `Dune (2021) {edition-Director's Cut}.mkv` → an Edition named "Director's Cut".
 - **Quality-distinguished Edition** — with no edition tag, the Edition is inferred from parsed tokens: `Dune (2021) - 2160p.mkv` and `Dune (2021) - 1080p.mkv` → two Editions auto-labeled by resolution/source. Distinct resolution/source automatically creates a distinct Edition; no explicit tag required.
-- **Multi-part** — a part suffix joins multiple Files into *one* Edition that plays back-to-back: `… - part1` / `… - part2` (aliases `cd1`/`pt1`).
+- **Multi-part** — a part suffix joins multiple Files into *one* Edition that plays back-to-back: `… - part1` / `… - part2` (aliases `cd1`/`pt1`, and `disc`/`disk`). The parts are delivered as a single continuous stream: because direct play can only hand a client ONE File's bytes, a multi-part Edition never direct-plays — it escalates to the HLS tiers, which repackage every part through ffmpeg's concat demuxer into one timeline. Remux is a stream copy, so the escalation costs no re-encode. Watch state follows that same whole-Edition timeline: the ~90% Watched threshold and the resume position are measured against the SUM of the parts, so finishing part 1 of two does not mark the work watched. The same applies to a multi-part TV Episode.
 - **Collision rule** — two files that parse to the same Edition identity and are not parts are flagged ambiguous in the web app, never silently guessed.
 
 ## Extras and ignored files
@@ -74,7 +74,7 @@ Local on-disk assets are honored before, and instead of, external Enrichment. **
 
 A recognized-extension file that doesn't cleanly match is never silently dropped. Two tiers:
 
-- **Filed + needs-review** — a best-effort parse extracts enough for an identity (a title without a year; partial music tags). Filed as a Title, browsable, and marked **needs-review** in an Admin attention list. A yearless movie is filed title-only and flagged (Enrichment may mismatch without a year).
+- **Filed + needs-review** — a best-effort parse extracts enough for an identity (a title without a year; partial music tags). Filed as a Title, browsable, and marked **needs-review** in the Admin's Needs-Fixing queue. A yearless movie is filed title-only and flagged (Enrichment may mismatch without a year).
 - **Unmatched** — no minimal identity can be extracted. The File goes to an Unmatched list: visible to the Admin, manually matchable (writing a Match override), but not a browsable Title and never auto-guessed into one.
 
 Determinism is preserved: best-effort parsing only ever yields a local flagged result or the Unmatched bucket — a low-confidence *external* guess is never committed as identity.
@@ -87,4 +87,4 @@ Watch state is keyed to the **parsed Title identity** (per-Title, not per-Editio
 - Swapping a 1080p rip for a 4K one is a new Edition under the same Title → history survives.
 - Moving the whole library changes only paths, not identities → history survives.
 
-Match overrides stay keyed to the folder path; renaming/moving a folder drops its override (the user is re-asserting identity), and orphaned overrides are surfaced in the Admin attention list.
+Match overrides stay keyed to the folder path; renaming/moving a folder drops its override (the user is re-asserting identity), and orphaned overrides are surfaced in the Needs-Fixing queue, where the Admin can discard them.

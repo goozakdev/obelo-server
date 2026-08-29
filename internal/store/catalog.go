@@ -72,6 +72,19 @@ type Title struct {
 	// Genres is the enriched genre list (loaded by the enriched read paths; empty
 	// otherwise). Cast lives on TitleDetail (heavier, detail-only).
 	Genres []string
+	// EnrichmentSeason / EnrichmentEpisode pin WHICH provider episode decorates this
+	// Episode, overriding the season/episode numbers parsed from its filename for
+	// the LOOKUP ONLY. They exist because a provider may number a series differently
+	// from the files on disk (a run of episodes moved into the next season), which
+	// otherwise leaves those files permanently unmatchable: pinning the right show
+	// still asks for the wrong episode.
+	//
+	// This is an Enrichment override, not an identity one (CONTEXT.md): identity_key,
+	// season_id, SeasonNumber, EpisodeNumber and watch state are all untouched, so
+	// the Episode keeps its place in the library and its history. Both are
+	// NoEpisodePin when unset, which is the default.
+	EnrichmentSeason  int
+	EnrichmentEpisode int
 	// EnrichedTitle is the canonical DISPLAY title an Episode/Track may gain from
 	// Enrichment (e.g. a real episode name for a date-based episode) — DISPLAY
 	// ONLY, never identity (the parsed Title and identity_key are untouched,
@@ -162,6 +175,88 @@ type File struct {
 	// soft-delete so it (and its Title) can return on a later scan (ADR-0008).
 	Present bool
 	Streams []Stream
+}
+
+// PresentFiles returns the Edition's on-disk Files in stored order — the parts of a
+// multi-part Edition, in play order. Missing Files are skipped: they cannot be
+// streamed (soft delete, ADR-0008).
+//
+// Order is the caller's stored order, which the scanner writes in part order
+// (filename.go partNumber), so parts[0] is part 1.
+func (e Edition) PresentFiles() []File {
+	out := make([]File, 0, len(e.Files))
+	for _, f := range e.Files {
+		if f.Present {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// IsMultiPart reports whether the Edition is a multi-part one: more than one
+// PRESENT File, joined by a part suffix (`- part1` / `cd1`, naming-convention.md).
+// One File plus one Missing sibling is NOT multi-part — there is nothing to join.
+func (e Edition) IsMultiPart() bool { return len(e.PresentFiles()) > 1 }
+
+// TotalDurationMs is the Edition's whole playable duration: the sum of its present
+// parts. For an ordinary single-File Edition it is simply that File's duration.
+//
+// This is the duration the Watched threshold and the resume position must be
+// measured against. Measuring against ONE PART instead is not a cosmetic error: a
+// viewer who finishes part 1 of a two-part episode would cross the ~90% ceiling of
+// that part and have the whole episode marked watched at its halfway point, with
+// the resume cleared (CONTEXT.md "Watched threshold", ADR-0028 — a wrong watched
+// flag also moves the Up Next anchor). Returns 0 when no part reports a duration,
+// which callers already treat as "unknown, best-effort".
+func (e Edition) TotalDurationMs() int64 {
+	var total int64
+	for _, f := range e.PresentFiles() {
+		total += f.DurationMs
+	}
+	return total
+}
+
+// PartAt maps a whole-Edition position onto the part that contains it, returning
+// that part and the offset WITHIN it. It is the inverse of the running offset the
+// parts are laid out on, and is what turns a stored resume position (which is
+// whole-Edition, see TotalDurationMs) back into "open part 2 at 3m12s".
+//
+// A position past the end clamps to the last part so a resume can never dangle.
+// ok is false only for an Edition with no present part at all.
+func (e Edition) PartAt(positionMs int64) (part File, offsetMs int64, ok bool) {
+	parts := e.PresentFiles()
+	if len(parts) == 0 {
+		return File{}, 0, false
+	}
+	if positionMs < 0 {
+		positionMs = 0
+	}
+	var start int64
+	for _, f := range parts {
+		// A part with an unknown duration cannot be spanned; treat the position as
+		// landing inside it rather than skipping past it on bad data.
+		if f.DurationMs <= 0 || positionMs < start+f.DurationMs {
+			return f, positionMs - start, true
+		}
+		start += f.DurationMs
+	}
+	last := parts[len(parts)-1]
+	return last, last.DurationMs, true
+}
+
+// PartStartMs is the whole-Edition offset at which `index` (0-based) begins — the
+// value added to a position reported within that part to get the whole-Edition
+// position. Out-of-range indexes clamp to 0.
+func (e Edition) PartStartMs(index int) int64 {
+	parts := e.PresentFiles()
+	var start int64
+	for i, f := range parts {
+		if i >= index {
+			break
+		}
+		start += f.DurationMs
+	}
+	return start
 }
 
 // Stream is an elementary stream inside a File's container (video/audio/subtitle).
@@ -1045,10 +1140,42 @@ func scanTitle(s scanner) (Title, error) {
 // match scanTitle's order (reused by search/home/incremental, which don't need
 // the enrichment fields); the enrichment columns are appended so a single
 // scanEnrichedTitle populates them. Keep this in lockstep with scanEnrichedTitle.
+//
+// season_number / episode_number / episode_label are here because they were MISSING,
+// and their absence was a live bug rather than a tidiness issue: every single-Title
+// re-enrich reads through TitleForEnrichmentByID, so an Episode corrected by hand
+// (enrichmentMatch, enrichmentOverride) was looked up as season 0, episode 0 — a
+// guaranteed 404 — while a full-library pass, which collects its own leaves with the
+// numbers attached, resolved the same Episode correctly. Any read that builds a
+// Title for a lookup must carry the fields the lookup is keyed on.
 const enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sort_title, added_at,
 	        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
-	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title`
+	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title,
+	        enrichment_season, enrichment_episode,
+	        season_number, episode_number, episode_label`
+
+// EpisodePin reports the provider season/episode this Episode is pinned to, and
+// whether it is pinned at all.
+//
+// The test is `EnrichmentEpisode > 0`, NOT the NoEpisodePin sentinel, and
+// deliberately so: only the enriched projection reads these columns, so a Title
+// built by any leaner read (scanTitle, and every struct literal in tests) carries
+// a zero value. Testing against the sentinel would make every one of those look
+// like "pinned to season 0, episode 0" and silently redirect its lookup. Episode
+// numbers start at 1 in every provider, so a pin is only ever real above zero —
+// while season 0 stays valid, because it is Specials.
+func (t Title) EpisodePin() (season, episode int, ok bool) {
+	if t.EnrichmentEpisode <= 0 {
+		return 0, 0, false
+	}
+	return t.EnrichmentSeason, t.EnrichmentEpisode, true
+}
+
+// NoEpisodePin marks an Episode with no pinned provider season/episode — the
+// default, meaning "look the episode up by the numbers parsed from its filename".
+// It is -1 rather than 0 because season 0 is the real Specials season.
+const NoEpisodePin = -1
 
 // scanEnrichedTitle scans a row selected with enrichedTitleColumns: the base
 // Title plus its descriptive Enrichment fields. Genres/Cast are loaded
@@ -1057,14 +1184,23 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 	var t Title
 	var year sql.NullInt64
 	var needsReview, ambiguous, hidden int
+	var pinSeason, pinEpisode sql.NullInt64
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
-		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle); err != nil {
+		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
+		&pinSeason, &pinEpisode,
+		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {
 		return Title{}, err
 	}
 	if year.Valid {
 		t.Year = int(year.Int64)
+	}
+	// NULL means "not pinned"; -1 is the in-memory sentinel because season 0 is a
+	// real value (Specials) and so cannot mean "unset".
+	t.EnrichmentSeason, t.EnrichmentEpisode = NoEpisodePin, NoEpisodePin
+	if pinSeason.Valid && pinEpisode.Valid {
+		t.EnrichmentSeason, t.EnrichmentEpisode = int(pinSeason.Int64), int(pinEpisode.Int64)
 	}
 	t.NeedsReview = needsReview != 0
 	t.Ambiguous = ambiguous != 0
