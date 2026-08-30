@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/goozakdev/obelo-server/internal/naming"
 )
 
 // This file holds the filename-detail grammar from docs/naming-convention.md
@@ -94,10 +96,6 @@ var junkRe = regexp.MustCompile(`(?i)(^sample$|[-_. ]sample$)`)
 // auto-distinguish Editions when no explicit {edition-…} tag is present.
 var qualityTokenRe = regexp.MustCompile(`(?i)\b(\d{3,4}p|2160p|1080p|720p|480p|bluray|blu-ray|remux|web-?dl|webrip|hdtv|dvd|uhd|4k)\b`)
 
-// partRe matches a multi-part suffix: part1/part 1, cd1, pt1, disc1, disk1
-// (naming-convention.md aliases). Returns the part number.
-var partRe = regexp.MustCompile(`(?i)[-_. ](?:part|pt|cd|disc|disk)[ _]?(\d+)\b`)
-
 // editionTagRe is reused from identity.go for {edition-Name}.
 
 // isMedia reports whether name has a recognized media (video) extension.
@@ -172,17 +170,13 @@ func extraTypeFromFolder(dir string) string {
 
 // partNumber returns the multi-part number parsed from a filename (1-based), or
 // 0 when the file is not a part.
-func partNumber(name string) int {
-	base := strings.TrimSuffix(name, filepath.Ext(name))
-	if m := partRe.FindStringSubmatch(base); m != nil {
-		n := 0
-		for _, r := range m[1] {
-			n = n*10 + int(r-'0')
-		}
-		return n
-	}
-	return 0
-}
+//
+// The rule itself lives in internal/naming because the STORE has to apply it too:
+// migration 0049's part_ordinal is 0 on every row written before it, so an Edition
+// read back from an install that has not rescanned since can only tell a genuine
+// multi-part Edition from an ambiguous collision by re-reading the names
+// (store.Edition.Parts). One implementation, two readers.
+func partNumber(name string) int { return naming.PartNumber(name) }
 
 // editionName derives the Edition label for a main video file. An explicit
 // {edition-Name} tag wins; otherwise a quality token (resolution/source) labels

@@ -1023,7 +1023,10 @@ const keyframeProbeTimeout = 15 * time.Second
 // so the runtime falls back to ffmpeg's own playlist. A partial boundary list would
 // be worse than none — it would describe a timeline that does not exist.
 func (s *Service) probeEditionBoundaries(ed store.Edition, playing store.File) []float64 {
-	parts := ed.PresentFiles()
+	// Parts, not every present File: an AMBIGUOUS Edition (two files claiming one
+	// Edition identity, naming-convention.md's collision rule) plays only its first
+	// File, so a timeline spanning both would describe a stream nobody is writing.
+	parts := ed.Parts()
 	if len(parts) < 2 {
 		return s.probeSegmentBoundaries(playing)
 	}
@@ -1750,7 +1753,11 @@ const concatListFileName = "parts.concat"
 // A write failure returns "", which degrades to the previous single-file behaviour
 // rather than failing the session outright; it is logged so it is not silent.
 func concatListFor(ed store.Edition, outputDir string) string {
-	parts := ed.PresentFiles()
+	// Parts is what makes this list the JOINED work rather than "every file that
+	// happens to sit in this Edition": an ambiguous collision would otherwise be
+	// spliced end to end here — `S01E05-E06` then `S01E06` again — which is the
+	// concatenation the collision rule exists to prevent (store.Edition.Parts).
+	parts := ed.Parts()
 	if len(parts) < 2 || outputDir == "" {
 		return ""
 	}

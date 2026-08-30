@@ -11,6 +11,7 @@ import type {
   EnrichmentAttentionTitle,
   MatchOverride,
   NeedsReviewItem,
+  ShowProblems,
   UnmatchedFile,
 } from "../api/types";
 
@@ -36,18 +37,46 @@ const emptyContext = {
   releaseDate: "",
 };
 
+/** An identity-attention fixture may leave the two flags out: they default the way
+ * the list itself does — an uncertain PARSE with no file collision, which is what
+ * every item on it meant before the collision rule was surfaced. A test about a
+ * collision opts in with `ambiguous` + `collidingPaths`. */
+type ReviewFixture = Omit<NeedsReviewItem, "needsReview" | "ambiguous" | "collidingPaths"> &
+  Partial<Pick<NeedsReviewItem, "needsReview" | "ambiguous" | "collidingPaths">>;
+
+function reviewItem(f: ReviewFixture): NeedsReviewItem {
+  return { needsReview: true, ambiguous: false, collidingPaths: [], ...f };
+}
+
 function build(over: {
   unmatched?: UnmatchedFile[];
-  needsReview?: NeedsReviewItem[];
+  needsReview?: ReviewFixture[];
   enrichment?: EnrichmentAttentionTitle[];
   overrides?: MatchOverride[];
+  showProblems?: ShowProblems[];
 }): FixItem[] {
   return buildFixItems({
     unmatched: over.unmatched ?? [],
-    needsReview: over.needsReview ?? [],
+    needsReview: (over.needsReview ?? []).map(reviewItem),
     enrichment: over.enrichment ?? [],
     overrides: over.overrides ?? [],
+    showProblems: over.showProblems ?? [],
   });
+}
+
+/** One Show's server-side unsettled counts, zeroed unless a test says otherwise. */
+function showProblems(over: Partial<ShowProblems> & { showId: string }): ShowProblems {
+  return {
+    title: "",
+    year: 0,
+    path: "",
+    unassigned: 0,
+    unidentified: 0,
+    unmatchedPaths: [],
+    orphaned: 0,
+    orphanedPath: "",
+    ...over,
+  };
 }
 
 describe("buildFixItems — naming the item", () => {
@@ -167,16 +196,29 @@ describe("buildFixItems — choosing the fix route", () => {
     expect(noMetadata.route).toBe("enrichment-override");
   });
 
-  it("gives an Episode the metadata pin, the only correction it can have", () => {
-    // An Episode has no folder to anchor an identity override to, but it CAN be
-    // pointed at the right series+episode — which is what repairs a file whose
-    // on-disk numbering doesn't line up with the provider's.
+  it("gives an Episode the matcher instead of a provider search it cannot use", () => {
+    // An Episode has no folder to anchor an identity override to, and re-picking its
+    // SERIES was never the fix either: a file the provider numbers differently has
+    // the right series and the wrong arrangement. So the row offers no search at all
+    // — offering one is exactly the button-that-cannot-work this queue exists to end
+    // — and its action is the matcher, where the arrangement is expressible.
     const [row] = build({
       needsReview: [
-        { ...emptyContext, id: "e", kind: "episode", title: "Ep", year: 0, folderPath: "", reason: "episode-numbering" },
+        {
+          ...emptyContext,
+          id: "e",
+          kind: "episode",
+          title: "Ep",
+          year: 0,
+          folderPath: "",
+          reason: "episode-numbering",
+          showId: "sh1",
+          showTitle: "The Wire",
+        },
       ],
     });
-    expect(row.route).toBe("enrichment-override");
+    expect(row.route).toBe("none");
+    expect(row.sortPath).toBe("/admin/shows/sh1/matcher");
     // It is still dismissible — the parse may simply be right.
     expect(row.canDismiss).toBe(true);
   });
@@ -235,7 +277,31 @@ describe("buildFixItems — evidence for a confirmation", () => {
     expect(row.artworkUrl).toBe("/api/v1/titles/m/artwork/poster");
   });
 
-  it("prefers the enriched display title, which is the whole point for an episode", () => {
+  it("prefers the enriched display title over the parsed one", () => {
+    // The parsed name of a badly-named file says nothing; the record it resolved to
+    // is the evidence a confirmation is actually made against.
+    const [row] = build({
+      needsReview: [
+        {
+          ...emptyContext,
+          id: "m",
+          kind: "movie",
+          title: "arrival.2016.1080p",
+          year: 0,
+          folderPath: "/media/movies/arrival",
+          reason: "no-year",
+          enrichmentStatus: "matched",
+          enrichedTitle: "Arrival",
+          releaseDate: "2016-11-11",
+        },
+      ],
+    });
+    expect(row.matchedAs).toBe("Arrival (2016)");
+  });
+
+  it("shows a collapsed Show row its Show's poster", () => {
+    // An Episode has no poster of its own; its Show's is the recognizable image, and
+    // the collapsed row is about the Show anyway.
     const [row] = build({
       needsReview: [
         {
@@ -248,14 +314,9 @@ describe("buildFixItems — evidence for a confirmation", () => {
           reason: "episode-numbering",
           showId: "sh1",
           showTitle: "The Wire",
-          enrichmentStatus: "matched",
-          enrichedTitle: "The Target",
-          releaseDate: "2002-06-02",
         },
       ],
     });
-    expect(row.matchedAs).toBe("The Target (2002)");
-    // An Episode has no poster of its own; its Show's is the recognizable image.
     expect(row.artworkUrl).toBe("/api/v1/shows/sh1/artwork/poster");
   });
 
@@ -388,93 +449,372 @@ describe("buildFixItems — evidence for a confirmation", () => {
   });
 });
 
-describe("buildFixItems — an Episode is always fixable", () => {
-  it("offers the fix even when the on-disk numbering is unreadable", () => {
-    // Enrichment looks an Episode up by the season/episode parsed from its FILENAME,
-    // so a file with unreadable numbering (or numbering the provider disagrees with)
-    // used to be permanently unmatchable — `/tv/{show}/season/0/episode/0` 404s
-    // whatever series is picked. Pinning the series AND the episode addresses the
-    // lookup directly, which is what makes such a file fixable at all.
+// The second collapse (ADR-0044, file-matcher/07): a Show's episode-level problems
+// are ONE problem, so they are one row.
+//
+// The Batman case is what these are about. Five files at the end of season 3 are,
+// per the provider, season 1 of a re-numbered continuation series. Every one
+// surfaced as its own row with its own "Use this", and every one of those buttons
+// was inert: the row offered to fix the SERIES, and the series was never the part
+// that was wrong. Five rows, one problem, zero working fixes.
+describe("buildFixItems — a Show's episode problems are one row", () => {
+  const episode = (id: string, over: Partial<EnrichmentAttentionTitle> = {}) => ({
+    ...emptyContext,
+    id,
+    kind: "episode",
+    title: `Ep ${id}`,
+    year: 0,
+    enrichmentStatus: "unmatched" as const,
+    showId: "sh1",
+    showTitle: "Batman: The Animated Series",
+    seasonNumber: 3,
+    episodeNumber: 61,
+    path: `/media/tv/Batman/Season 03/batman.${id}.mkv`,
+    ...over,
+  });
+
+  it("shows one row for five broken episodes, not five", () => {
+    const rows = build({
+      enrichment: ["a", "b", "c", "d", "e"].map((id) => episode(id)),
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("show");
+    expect(rows[0].name).toBe("Batman: The Animated Series");
+  });
+
+  it("names the actual problem and its count, not just 'problems'", () => {
     const [row] = build({
-      enrichment: [
+      enrichment: ["a", "b", "c", "d", "e"].map((id) => episode(id)),
+    });
+    // "5 problems" would answer none of the queue's four questions; the noun is
+    // what says which problem was counted.
+    expect(row.problemText).toContain("5 episodes have no metadata match");
+  });
+
+  it("answers all four questions: what, which file, what's wrong, how to fix it", () => {
+    const [row] = build({ enrichment: [episode("a")] });
+    expect(row.kind).toBe("show"); // what is it
+    expect(row.name).toBe("Batman: The Animated Series");
+    expect(row.path).toBe("/media/tv/Batman/Season 03/batman.a.mkv"); // which file
+    expect(row.problemText).toContain("1 episode has no metadata match"); // what's wrong
+    expect(row.sortPath).toBe("/admin/shows/sh1/matcher"); // how do I fix it
+  });
+
+  it("offers no fix that cannot work", () => {
+    // Nothing here is fixed by naming a work — the Show is already identified. A
+    // provider search on this row would be the inert "Use this" all over again.
+    const [row] = build({ enrichment: [episode("a")] });
+    expect(row.route).toBe("none");
+    expect(row.folderPath).toBe("");
+    expect(row.titleId).toBe("");
+  });
+
+  it("counts each kind of problem separately in one sentence", () => {
+    const [row] = build({
+      needsReview: [
         {
           ...emptyContext,
-          id: "t",
+          id: "n1",
           kind: "episode",
-          title: "The Target",
+          title: "2002-06-02",
           year: 0,
-          enrichmentStatus: "failed",
-          showTitle: "The Wire",
-          seasonNumber: 1,
-          episodeNumber: 0,
-          episodeLabel: "2002-06-02",
+          folderPath: "",
+          reason: "episode-numbering",
+          showId: "sh1",
+          showTitle: "Batman: The Animated Series",
+        },
+      ],
+      enrichment: [episode("a"), episode("b")],
+      showProblems: [
+        showProblems({
+          showId: "sh1",
+          title: "Batman: The Animated Series",
+          unassigned: 3,
+          path: "/media/tv/Batman/Season 03/loose.mkv",
+        }),
+      ],
+    });
+    expect(row.problemText).toContain("3 files aren’t assigned to an episode");
+    expect(row.problemText).toContain("1 episode was filed on a guess");
+    expect(row.problemText).toContain("2 episodes have no metadata match");
+    // Every class it holds, so no chip can hide it.
+    expect(row.problems).toEqual(["unassigned", "uncertain-parse", "no-metadata"]);
+    // The server's representative file is one of the COUNTED ones.
+    expect(row.path).toBe("/media/tv/Batman/Season 03/loose.mkv");
+  });
+
+  it("uses singular wording for a single file or episode", () => {
+    const [row] = build({
+      showProblems: [showProblems({ showId: "sh1", title: "Batman", unassigned: 1 })],
+    });
+    expect(row.problemText).toContain("1 file isn’t assigned to an episode");
+  });
+
+  it("keeps a Show queued for an unassigned file — undecided is not settled", () => {
+    // CONTEXT.md "Unassigned": the state exists precisely so a file the Admin took
+    // off its Slot is not silently forgotten. Settling it is placing or ignoring it,
+    // both one gesture in the matcher.
+    const rows = build({
+      showProblems: [showProblems({ showId: "sh1", title: "Batman", unassigned: 2 })],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].problem).toBe("unassigned");
+    expect(rows[0].sortPath).toBe("/admin/shows/sh1/matcher");
+  });
+
+  it("clears the row once every file is assigned or ignored", () => {
+    // The server drops a Show with nothing unsettled, and no flagged Episode is
+    // left to re-create it. A count the matcher cannot clear would make the whole
+    // queue decoration.
+    expect(build({ showProblems: [] })).toHaveLength(0);
+    expect(
+      build({ showProblems: [showProblems({ showId: "sh1", title: "Batman" })] }),
+    ).toHaveLength(0);
+  });
+
+  it("does not list an unmatched file twice — as a row and as a Show's count", () => {
+    const rows = build({
+      unmatched: [
+        { id: "u1", path: "/media/tv/Batman/Season 03/stray.mkv", folderPath: "", reason: "" },
+        { id: "u2", path: "/media/tv/loose-at-the-root.mkv", folderPath: "", reason: "" },
+      ],
+      showProblems: [
+        showProblems({
+          showId: "sh1",
+          title: "Batman",
+          unidentified: 1,
+          unmatchedPaths: ["/media/tv/Batman/Season 03/stray.mkv"],
+          path: "/media/tv/Batman/Season 03/stray.mkv",
+        }),
+      ],
+    });
+    const paths = rows.map((r) => r.path);
+    expect(rows.filter((r) => r.kind === "file")).toHaveLength(1);
+    // The file under the Show folder is counted by the Show row; the one outside any
+    // Show folder is nobody's, and stays a row of its own.
+    expect(paths).toContain("/media/tv/loose-at-the-root.mkv");
+    expect(rows.filter((r) => r.path === "/media/tv/Batman/Season 03/stray.mkv")).toHaveLength(1);
+  });
+
+  it("promotes an orphaned Placement into a row of its own", () => {
+    // A correction pointing at a file that is gone is BROKEN rather than done
+    // (CONTEXT.md "Orphaned correction"), exactly like an orphaned folder override.
+    // It is not folded in with the undecided files: an undecided file can be placed,
+    // and an orphan cannot, because there is nothing left to place.
+    const rows = build({
+      showProblems: [
+        showProblems({
+          showId: "sh1",
+          title: "Batman",
+          unassigned: 1,
+          path: "/media/tv/Batman/Season 03/loose.mkv",
+          orphaned: 2,
+          orphanedPath: "/media/tv/Batman/Season 03/gone.mkv",
+        }),
+      ],
+    });
+    const orphan = rows.find((r) => r.problem === "orphaned-correction");
+    expect(orphan).toBeDefined();
+    expect(orphan!.path).toBe("/media/tv/Batman/Season 03/gone.mkv");
+    expect(orphan!.problemText).toContain("2 corrections point at files that are no longer on disk");
+    expect(orphan!.sortPath).toBe("/admin/shows/sh1/matcher");
+    // And it is a SEPARATE row from the Show's undecided files.
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+  });
+
+  it("dismisses the whole set a collapsed row stands for, in one call", () => {
+    const [row] = build({
+      needsReview: [
+        {
+          ...emptyContext,
+          id: "n1",
+          kind: "episode",
+          title: "2002-06-02",
+          year: 0,
+          folderPath: "",
+          reason: "episode-numbering",
+          showId: "sh1",
+          showTitle: "Batman",
         },
       ],
     });
-    expect(row.route).toBe("enrichment-override");
+    expect(row.canDismiss).toBe(true);
+    expect(row.dismissEpisodes).toBe(true);
   });
 
-  it("lists an Episode once, on the row that carries the fix", () => {
-    // The needs-review row already offers the same series+episode pin PLUS a
-    // dismissal, so a second row for the same file would be a strict subset of it.
-    const episode = {
+  it("offers no dismissal when there is no uncertain parse to dismiss", () => {
+    // "Looks right" has always meant "the PARSE is fine". It settles nothing about a
+    // missing metadata record or an unplaced file, so it is not offered for them.
+    const [row] = build({
+      showProblems: [showProblems({ showId: "sh1", title: "Batman", unassigned: 1 })],
+    });
+    expect(row.canDismiss).toBe(false);
+  });
+
+  it("counts one Episode once even when both lists flag it", () => {
+    const shared = {
       ...emptyContext,
       id: "t",
       kind: "episode",
       title: "The Target",
       year: 0,
+      showId: "sh1",
       showTitle: "The Wire",
-      seasonNumber: 1,
-      episodeNumber: 0,
-      episodeLabel: "2002-06-02",
     };
-    const rows = build({
-      needsReview: [{ ...episode, folderPath: "", reason: "episode-numbering" as const }],
-      enrichment: [{ ...episode, enrichmentStatus: "failed" as const }],
-    });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].problem).toBe("uncertain-parse");
-    expect(rows[0].route).toBe("enrichment-override");
-  });
-
-  it("still lists the metadata row on its own when there is no numbering row", () => {
-    const rows = build({
-      enrichment: [
-        {
-          ...emptyContext,
-          id: "t",
-          kind: "episode",
-          title: "The Target",
-          year: 0,
-          enrichmentStatus: "failed",
-          showTitle: "The Wire",
-          seasonNumber: 1,
-          episodeNumber: 0,
-        },
-      ],
-    });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].problem).toBe("no-metadata");
-    expect(rows[0].route).toBe("enrichment-override");
-  });
-
-  it("still offers the search for an Episode that IS numbered", () => {
     const [row] = build({
+      needsReview: [{ ...shared, folderPath: "", reason: "episode-numbering" as const }],
+      enrichment: [{ ...shared, enrichmentStatus: "failed" as const }],
+    });
+    expect(row.problemText).toContain("1 episode was filed on a guess");
+    expect(row.problemText).not.toContain("metadata match");
+  });
+
+  it("collapses per Show, not across the library", () => {
+    const rows = build({
       enrichment: [
+        episode("a"),
+        episode("b", { showId: "sh2", showTitle: "The Wire" }),
+      ],
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.name).sort()).toEqual([
+      "Batman: The Animated Series",
+      "The Wire",
+    ]);
+  });
+});
+
+describe("buildFixItems — a file collision", () => {
+  // docs/naming-convention.md: "two files that parse to the same Edition identity
+  // and are not parts are flagged ambiguous in the web app, never silently
+  // guessed". The flag was written, stored, serialized and normalized — and then
+  // rendered nowhere, so the promise was half kept. These are the half that was
+  // missing, plus the reason it matters: only the first of the colliding files
+  // plays, so a queue that says nothing leaves an Admin to find that out by
+  // watching something.
+
+  const collidingMovie = {
+    ...emptyContext,
+    id: "m1",
+    kind: "movie",
+    title: "Dune",
+    year: 2021,
+    folderPath: "/media/movies/Dune (2021)",
+    reason: "no-year" as const,
+    path: "/media/movies/Dune (2021)/Dune (2021).mkv",
+    needsReview: false,
+    ambiguous: true,
+    collidingPaths: [
+      "/media/movies/Dune (2021)/Dune (2021).mkv",
+      "/media/movies/Dune (2021)/Dune (2021) (repack).mkv",
+    ],
+  };
+
+  it("gives an ambiguous Movie a row that names the colliding files", () => {
+    const [row] = build({ needsReview: [collidingMovie] });
+    expect(row.problems).toEqual(["ambiguous"]);
+    expect(row.problem).toBe("ambiguous");
+    expect(row.collidingPaths).toEqual(collidingMovie.collidingPaths);
+    // The consequence, stated: the Admin should not have to discover it by playing
+    // the film and finding half of it missing.
+    expect(row.problemText).toMatch(/only the first one plays/i);
+    // And what to do about it — a Movie has no matcher, so the fix is the
+    // convention's own escape hatch.
+    expect(row.problemText).toMatch(/edition tag|part suffix/i);
+  });
+
+  it("offers neither a dismissal nor a provider search for a collision", () => {
+    const [row] = build({ needsReview: [collidingMovie] });
+    // "Looks right" answers a question about the PARSE. Both files are still there
+    // afterwards and one still does not play, so dismissing would hide a real
+    // conflict.
+    expect(row.canDismiss).toBe(false);
+    // Naming the work again cannot say WHICH file is it — the inert "Use this" this
+    // queue exists to replace.
+    expect(row.route).toBe("none");
+  });
+
+  it("keeps both problems on one row when an item is flagged twice", () => {
+    // One item, two genuinely different problems with two different fixes. Two rows
+    // would be the five-rows-one-problem shape at a smaller scale; `problems` is
+    // exactly the field that lets one row hold both.
+    const [row] = build({
+      needsReview: [{ ...collidingMovie, needsReview: true, year: 0 }],
+    });
+    expect(row.problems).toEqual(["ambiguous", "uncertain-parse"]);
+    expect(row.problemText).toMatch(/only the first one plays/i);
+    expect(row.problemText).toMatch(/no year/i);
+    // The parse half IS dismissible and IS searchable; the collision half is not,
+    // and does not take those away.
+    expect(row.canDismiss).toBe(true);
+    expect(row.route).toBe("fix-match");
+  });
+
+  it("folds an ambiguous Episode into its Show's row, with the matcher as the fix", () => {
+    const [row] = build({
+      needsReview: [
         {
           ...emptyContext,
-          id: "t",
+          id: "e1",
           kind: "episode",
-          title: "Pilot",
+          title: "System",
           year: 0,
-          enrichmentStatus: "unmatched",
-          showTitle: "The Wire",
-          seasonNumber: 1,
-          episodeNumber: 3,
+          folderPath: "",
+          reason: "no-year" as const,
+          showId: "sh1",
+          showTitle: "The Bear",
+          path: "/media/tv/The Bear/Season 1/The Bear - S01E05-E06.mkv",
+          needsReview: false,
+          ambiguous: true,
+          collidingPaths: [
+            "/media/tv/The Bear/Season 1/The Bear - S01E05-E06.mkv",
+            "/media/tv/The Bear/Season 1/The Bear - S01E06.mkv",
+          ],
         },
       ],
     });
-    expect(row.route).toBe("enrichment-override");
+    // One row per Show (file-matcher/07) — a collision must not reintroduce a row
+    // per episode.
+    expect(row.kind).toBe("show");
+    expect(row.name).toBe("The Bear");
+    expect(row.problems).toContain("ambiguous");
+    expect(row.problemText).toContain("1 episode has two files claiming to be it");
+    expect(row.collidingPaths).toHaveLength(2);
+    // The matcher is the screen that can settle it.
+    expect(row.sortPath).toBe("/admin/shows/sh1/matcher");
+    // Nothing here is an uncertain parse, so there is nothing to call "right".
+    expect(row.canDismiss).toBe(false);
+  });
+
+  it("counts collisions separately from uncertain parses on one Show row", () => {
+    const base = {
+      ...emptyContext,
+      kind: "episode",
+      year: 0,
+      folderPath: "",
+      showId: "sh1",
+      showTitle: "The Bear",
+    };
+    const [row] = build({
+      needsReview: [
+        {
+          ...base,
+          id: "e1",
+          title: "System",
+          reason: "no-year" as const,
+          needsReview: false,
+          ambiguous: true,
+          collidingPaths: ["/a.mkv", "/b.mkv"],
+        },
+        { ...base, id: "e2", title: "2002-06-02", reason: "episode-numbering" as const },
+      ],
+    });
+    expect(row.problems).toEqual(["ambiguous", "uncertain-parse"]);
+    expect(row.problemText).toContain("1 episode has two files claiming to be it");
+    expect(row.problemText).toContain("1 episode was filed on a guess");
+    // "Looks right" can still clear the parse half — and only that half.
+    expect(row.canDismiss).toBe(true);
   });
 });
 

@@ -63,7 +63,7 @@ func TestEnrichedReadCarriesTheEpisodePin(t *testing.T) {
 	// Pin it to the provider's numbering, then read it back.
 	if err := db.SetTitleExternalMatch("ep1", store.ExternalMatch{
 		TMDBID: "2098", EpisodeSeason: 4, EpisodeNumber: 1,
-	}); err != nil {
+	}, store.OriginChosen); err != nil {
 		t.Fatalf("SetTitleExternalMatch: %v", err)
 	}
 	got, err = db.TitleForEnrichmentByID("ep1")

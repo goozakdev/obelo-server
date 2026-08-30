@@ -3,11 +3,14 @@ import { apiClient } from "../api/client";
 import type { NeedsReviewItem } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 
-// Loads a Library's needs-review items (issue 07, fixed). These are the
+// Loads a Library's identity-attention items (issue 07, fixed). These are the
 // Movies / Episodes / Tracks / Shows the scanner filed from an uncertain identity
-// parse (no year, or non-SxxExx episode numbering). The server now answers this
-// in one Admin-only call — GET /libraries/{id}/needs-review — which descends into
-// TV/Music for us and tags each Movie with its folder for inline fix-match.
+// parse (no year, or non-SxxExx episode numbering) — plus the Titles it flagged
+// AMBIGUOUS, where two Files claim one Edition and the convention refuses to guess
+// (tv-episode-editions/02). Each item says which flags it carries. The server
+// answers this in one Admin-only call — GET /libraries/{id}/needs-review — which
+// descends into TV/Music for us and tags each Movie with its folder for inline
+// fix-match.
 //
 // This replaces an earlier client-side page-walk that filtered the *browse*
 // listing on `needsReview`. That walk silently returned NOTHING for TV and Music
@@ -16,7 +19,7 @@ import { errorMessage } from "../screens/errorMessage";
 // every TV/Music library reported "Nothing needs review" regardless of state.
 
 export interface NeedsReviewState {
-  /** The Library's still-flagged needs-review items. */
+  /** The Library's still-flagged identity-attention items. */
   items: NeedsReviewItem[];
   /** True while the list is loading. */
   loading: boolean;

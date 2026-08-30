@@ -190,3 +190,101 @@ describe("EVENT_TYPES", () => {
     expect(EVENT_TYPES).toContain("tailscaleState");
   });
 });
+
+describe("ApiClient file matcher (ADR-0044)", () => {
+  function stub(payload: unknown) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    return { calls, client: new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl }) };
+  }
+
+  it("omits ?group entirely on the cheap first load", async () => {
+    // Opening a ten-season Show must cost ONE round-trip, not ten: the group
+    // parameter names the single group whose provider records are fetched.
+    const { calls, client } = stub({ containerId: "s1" });
+    await client.getShowMatcher("s1");
+    expect(calls[0].url).toBe("/api/v1/shows/s1/matcher");
+  });
+
+  it("names one group on expand", async () => {
+    const { calls, client } = stub({ containerId: "s1" });
+    await client.getShowMatcher("s1", 4);
+    expect(calls[0].url).toBe("/api/v1/shows/s1/matcher?group=4");
+  });
+
+  it("sends the whole arrangement as a PUT body", async () => {
+    const { calls, client } = stub({ containerId: "s1", applied: { rearranged: 1 } });
+    const doc = await client.applyShowMatcher("s1", {
+      files: [{ path: "/tv/a.mkv", state: "placed", placements: [{ group: 4, slot: 1, ordinal: 1 }] }],
+    });
+    expect(calls[0].init.method).toBe("PUT");
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      files: [{ path: "/tv/a.mkv", state: "placed", placements: [{ group: 4, slot: 1, ordinal: 1 }] }],
+    });
+    // The answer is the RE-READ document plus `applied`, normalized.
+    expect(doc.applied).toEqual({ rearranged: 1, displaced: [], deferred: [] });
+  });
+
+  it("asks another series for its slots by external id", async () => {
+    const { calls, client } = stub({ externalId: "tmdb:5", groups: [{ number: 1, slotCount: 5 }] });
+    const res = await client.listSeriesSlots("s1", "tmdb:5", 1);
+    expect(calls[0].url).toBe("/api/v1/shows/s1/seriesSeasons?externalId=tmdb%3A5&group=1");
+    expect(res.groups).toEqual([{ number: 1, slotCount: 5 }]);
+    expect(res.slots).toEqual([]);
+  });
+});
+
+describe("ApiClient Needs-Fixing show rows (file-matcher/07)", () => {
+  function stub(payload: unknown) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    return { calls, client: new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl }) };
+  }
+
+  it("fills a show-problems entry's holes so a row can add its counts", async () => {
+    // Absent means ZERO here, not "unknown": a Show with nothing unsettled is simply
+    // not in the list, so every field the server omitted is a real zero.
+    const { calls, client } = stub({ shows: [{ showId: "sh1", title: "Batman", unassigned: 3 }] });
+    const shows = await client.listShowProblems("lib1");
+    expect(calls[0].url).toBe("/api/v1/libraries/lib1/show-problems");
+    expect(shows).toEqual([
+      {
+        showId: "sh1",
+        title: "Batman",
+        year: 0,
+        path: "",
+        unassigned: 3,
+        unidentified: 0,
+        unmatchedPaths: [],
+        orphaned: 0,
+        orphanedPath: "",
+      },
+    ]);
+  });
+
+  it("answers an empty list for a Library with no Shows", async () => {
+    const { client } = stub({});
+    expect(await client.listShowProblems("lib1")).toEqual([]);
+  });
+
+  it("dismisses a Show's flagged Episodes in ONE call", async () => {
+    // A collapsed row stands for the whole set it counted; N calls could
+    // half-succeed and leave a count the Admin has no way to explain.
+    const { calls, client } = stub({});
+    await client.reviewShowEpisodes("sh 1");
+    expect(calls[0].url).toBe("/api/v1/shows/sh%201/reviewEpisodes");
+    expect(calls[0].init.method).toBe("POST");
+  });
+});

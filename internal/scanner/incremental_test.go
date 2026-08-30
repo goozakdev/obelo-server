@@ -38,6 +38,7 @@ type statefulStore struct {
 	files     map[string]store.File // path → stored File (with streams)
 	keyByPath map[string]string     // path → owning Title identity_key
 	overrides []store.MatchOverride
+	decisions map[string]store.FileDecisions // path → the Admin's file-anchored record
 }
 
 func newStatefulStore(root string) *statefulStore {
@@ -137,6 +138,23 @@ func (s *statefulStore) SetMatchOverrideOrphaned(id string, orphaned bool) error
 		if s.overrides[i].ID == id {
 			s.overrides[i].Orphaned = orphaned
 		}
+	}
+	return nil
+}
+
+// The file-anchored half (ADR-0044). decisions is nil unless a test sets it, so
+// the incremental tests keep following the filenames.
+func (s *statefulStore) FileDecisionsByLibrary(string) (map[string]store.FileDecisions, error) {
+	return s.decisions, nil
+}
+func (s *statefulStore) SetPlacementOrphaned(id string, orphaned bool) error {
+	for path, ds := range s.decisions {
+		for i := range ds {
+			if ds[i].ID == id {
+				ds[i].Orphaned = orphaned
+			}
+		}
+		s.decisions[path] = ds
 	}
 	return nil
 }

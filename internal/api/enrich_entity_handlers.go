@@ -76,8 +76,13 @@ func runEntityCascade(r *http.Request, enrichSvc *enrich.Service, cascade bool, 
 // entityOverride builds the active-override view of a parent's enrichment, or nil
 // when no durable override is pinned. Shared by the parent detail read and the
 // browse-detail decorators.
+//
+// It asks Locked(), not OwnChoice(): a record an Artist's Cascade pinned on an
+// Album IS the Album's active override — the Admin chose it, one level up — and the
+// edit screen must show it. Only the Cascade's skip rules care whose it is
+// (ADR-0046).
 func entityOverride(e store.EntityEnrichment) *entityOverrideJSON {
-	if !e.ExternalIDLocked || e.ExternalID == "" {
+	if !e.ExternalIDOrigin.Locked() || e.ExternalID == "" {
 		return nil
 	}
 	return &entityOverrideJSON{ExternalID: e.ExternalID, Source: e.Source, Status: e.Status}
@@ -170,7 +175,7 @@ func handleEntityExternalPreview(enrichSvc *enrich.Service, images *providerImag
 // handleEntityEnrichmentOverride applies a picked candidate as a durable Enrichment
 // override on a browse parent and re-enriches just it (PUT
 // /shows|artists|albums/{id}/enrichmentOverride, Admin-only). It pins the
-// authoritative external id (persisted, external_id_locked — so future passes look
+// authoritative external id (persisted, external_id_origin — so future passes look
 // up BY it) and refreshes the unlocked fields/artwork from that record. Identity and
 // watch state are NEVER touched (ADR-0002/0014); Locked fields are honored. Emits a
 // libraryUpdated SSE nudge and returns the updated parent detail. Missing externalId

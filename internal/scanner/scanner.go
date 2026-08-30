@@ -92,6 +92,17 @@ type Store interface {
 	// Match overrides (fix-match), keyed to the folder path.
 	MatchOverridesByLibrary(libraryID string) ([]store.MatchOverride, error)
 	SetMatchOverrideOrphaned(id string, orphaned bool) error
+
+	// File decisions (ADR-0044): the file-anchored sibling of the two methods
+	// above. FileDecisionsByLibrary is what the Admin has said about each File
+	// inside an already-identified work — which Slot(s) it fills (its Placement),
+	// that it is Unassigned, or that it is Ignored — keyed by absolute path and
+	// read once per scan, because resolve consults it per walked file.
+	// SetPlacementOrphaned is SetMatchOverrideOrphaned's finer-anchored twin: a
+	// Placement whose file is gone is a broken correction, surfaced rather than
+	// dropped.
+	FileDecisionsByLibrary(libraryID string) (map[string]store.FileDecisions, error)
+	SetPlacementOrphaned(id string, orphaned bool) error
 }
 
 // Mode selects how much a scan re-derives.
@@ -152,6 +163,20 @@ func (s *Service) endScan(libraryID string) {
 	s.mu.Unlock()
 }
 
+// LockLibrary / UnlockLibrary expose that same in-flight slot to the OTHER writer
+// of catalog rows: the Placement Apply (catalog/placement.go, ADR-0044), which
+// rearranges a Show's Titles directly rather than through a scan.
+//
+// It shares this lock rather than taking one of its own because ADR-0031's rule
+// is about the rows, not about scans: one writer per Library at a time, so there
+// are no row races to reason about. An Apply that finds a scan in flight is
+// refused the same way a second scan is — idempotently, with nothing written —
+// and a scan that starts while an Apply is committing is likewise made to wait
+// its turn rather than rebuild the Show from underneath it.
+func (s *Service) LockLibrary(libraryID string) bool { return s.beginScan(libraryID) }
+
+func (s *Service) UnlockLibrary(libraryID string) { s.endScan(libraryID) }
+
 // Result summarizes a completed scan.
 type Result struct {
 	TitlesFound int
@@ -185,13 +210,20 @@ type Progress struct {
 // scanCtx carries the per-scan state threaded through folder/file resolution:
 // the mode, the prior on-disk snapshot used to skip re-probing unchanged files,
 // the set of paths seen on this walk (for soft-deleting the rest), and the
-// folder-anchored Match overrides to apply.
+// Admin corrections to replay — the folder-anchored Match overrides and the
+// file-anchored decisions (Placement / Unassigned / Ignored).
 type scanCtx struct {
 	mode      Mode
 	snapshots map[string]store.FileSnapshot  // path → prior state (empty in ModeFull)
 	seen      map[string]bool                // every present media path seen this walk
 	overrides map[string]store.MatchOverride // folder path → override
-	probes    int                            // ffprobe invocations (instrumentation/tests)
+	// decisions is the file-anchored half of the same idea (ADR-0044): absolute
+	// path → what the Admin said about that File. A path ABSENT from the map is
+	// the common case and means "nothing was said, follow the parse" — sparse
+	// storage spends absence on that answer, which is exactly why taking a File
+	// off its Slot has to be a recorded Unassigned decision rather than no row.
+	decisions map[string]store.FileDecisions
+	probes    int // ffprobe invocations (instrumentation/tests)
 	// unresolved are directories whose contents could not be read this walk (a
 	// transient network-FS read failure that outlasted retries). The soft-delete
 	// pass skips anything beneath them: an unreadable subtree is not evidence of
@@ -310,6 +342,7 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 		seen:      map[string]bool{},
 		snapshots: map[string]store.FileSnapshot{},
 		overrides: map[string]store.MatchOverride{},
+		decisions: map[string]store.FileDecisions{},
 	}
 	// Incremental: load the prior snapshot so unchanged files skip ffprobe. Full:
 	// leave snapshots empty so every file is treated as changed and re-probed.
@@ -327,6 +360,15 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 	for _, o := range overrides {
 		sc.overrides[o.FolderPath] = o
 	}
+	// The file-anchored decisions, loaded beside the folder-anchored overrides and
+	// for the same reason: both are Admin corrections that outrank the parse and
+	// must be replayed at resolve time, or the next scheduled scan rebuilds the
+	// tree from filenames and silently undoes them (ADR-0044).
+	decisions, err := s.store.FileDecisionsByLibrary(lib.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	sc.decisions = decisions
 
 	var folders []string // movie folders (subdirectories of a root)
 	var bareFiles []string
@@ -498,6 +540,24 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 		}
 	}
 
+	// The same pass for the finer anchor: a Placement whose file was renamed,
+	// moved or deleted points at nothing, which is BROKEN rather than done, so it
+	// is flagged and surfaced in the Needs-Fixing queue instead of being dropped.
+	// Only placed rows orphan — a settled decision (Ignored) about a File that has
+	// gone is not a broken correction, and re-surfacing it would un-settle an
+	// ignore that correctly re-applies if the File ever returns.
+	for _, ds := range decisions {
+		for _, d := range ds.Placements() {
+			_, statErr := os.Stat(d.Path)
+			orphaned := os.IsNotExist(statErr)
+			if orphaned != d.Orphaned {
+				if err := s.store.SetPlacementOrphaned(d.ID, orphaned); err != nil {
+					return Result{}, err
+				}
+			}
+		}
+	}
+
 	return Result{TitlesFound: titlesFound, FilesFound: filesFound, UnresolvedDirs: sc.unresolved}, nil
 }
 
@@ -562,6 +622,14 @@ type classifiedFile struct {
 	name      string
 	extraType string // non-empty ⇒ this is an Extra
 	part      int    // >0 ⇒ multi-part member
+	// jointEdition forces this file into the single unnamed Edition rather than
+	// letting its filename's quality token label one. It is set only where the
+	// Admin PLACED several Files on one Slot (ADR-0044): they are one multi-part
+	// Edition because the Admin said so, and splitting them by whatever the two
+	// filenames happen to say about resolution would turn one episode into two
+	// Editions of one part each — which plays half the episode and measures the
+	// Watched threshold against it.
+	jointEdition bool
 }
 
 // resolveFolder resolves one movie folder into a TitleTree. It walks the folder
@@ -744,6 +812,10 @@ type probedFile struct {
 	mtime  string
 	reused bool
 	stored store.File
+	// size is the on-disk stat size, carried alongside mtime so groupEditions
+	// stays free of disk access — the caller supplies both, from a stat during the
+	// walk or from the stored row when nothing is probed at all (Apply).
+	size int64
 }
 
 // fileMtime returns a file's modification time as RFC3339 UTC, "" on error.
@@ -805,8 +877,8 @@ func (s *Service) assembleTitle(
 		if sc.unchanged(cf.path, size, mtime) {
 			if stored, err := s.store.LoadStoredFile(cf.path); err == nil {
 				ps = append(ps, probedFile{
-					cf: cf, mtime: mtime, reused: true, stored: stored,
-					ed: editionName(cf.name, stored.Height),
+					cf: cf, mtime: mtime, size: size, reused: true, stored: stored,
+					ed: editionNameFor(cf, stored.Height),
 				})
 				continue
 			}
@@ -822,67 +894,13 @@ func (s *Service) assembleTitle(
 			continue
 		}
 		video, _ := media.PrimaryVideo()
-		ps = append(ps, probedFile{cf: cf, media: media, mtime: mtime, ed: editionName(cf.name, video.Height)})
+		ps = append(ps, probedFile{cf: cf, media: media, mtime: mtime, size: size, ed: editionNameFor(cf, video.Height)})
 	}
 	if len(ps) == 0 {
 		return store.TitleTree{}, fmt.Errorf("scanner: no probeable main video for %q", id.Title)
 	}
 
-	// Group by Edition name. Parts of the same Edition join (multiple Files);
-	// two non-part files in the same Edition flag the Title ambiguous.
-	var order []string
-	groups := map[string]*editionGroup{}
-	for _, p := range ps {
-		g, ok := groups[p.ed]
-		if !ok {
-			g = &editionGroup{name: p.ed}
-			groups[p.ed] = g
-			order = append(order, p.ed)
-		}
-		g.probes = append(g.probes, p)
-	}
-
-	ambiguous := false
-	var editions []store.Edition
-	for _, name := range order {
-		g := groups[name]
-		sort.Slice(g.probes, func(i, j int) bool {
-			pi, pj := g.probes[i].cf.part, g.probes[j].cf.part
-			if pi != pj {
-				return pi < pj
-			}
-			return g.probes[i].cf.path < g.probes[j].cf.path
-		})
-		// Collision: >1 file in one Edition that are NOT all parts → ambiguous.
-		if len(g.probes) > 1 && !g.allParts() {
-			ambiguous = true
-		}
-
-		editionID := uuid.NewString()
-		var files []store.File
-		for _, p := range g.probes {
-			var f store.File
-			if p.reused {
-				// Reuse the stored attributes/streams verbatim; only re-key the
-				// edition membership (UpsertTitleTree preserves the row id by path).
-				f = p.stored
-				f.EditionID = editionID
-				f.Streams = rekeyStreams(f.ID, f.Streams)
-			} else {
-				f = buildFile(editionID, p.cf.path, p.media)
-			}
-			f.Mtime = p.mtime
-			f.Present = true
-			// SizeBytes is the change-detection key alongside mtime, so it must be
-			// the on-disk stat size (authoritative and matching the snapshot),
-			// not ffprobe's reported format size which can be absent/approximate.
-			if sz := fileSize(p.cf.path); sz > 0 {
-				f.SizeBytes = sz
-			}
-			files = append(files, f)
-		}
-		editions = append(editions, store.Edition{ID: editionID, Name: name, Files: files})
-	}
+	editions, ambiguous := groupEditions(ps)
 
 	var storeExtras []store.Extra
 	for _, cf := range extras {
@@ -930,6 +948,95 @@ func (s *Service) assembleTitle(
 		Extras:   storeExtras,
 		Artwork:  storeArt,
 	}, nil
+}
+
+// groupEditions turns already-resolved Files into the Title's Editions: it groups
+// them by Edition name (parts of one Edition join into a multi-File Edition, in
+// part order) and reports whether the Title is Ambiguous — more than one File in
+// one Edition that are NOT all parts, i.e. two cuts the convention cannot tell
+// apart.
+//
+// It is deliberately free of disk access and of ffprobe: everything it needs
+// already sits on the probedFile (a fresh MediaInfo, or a stored File row reused
+// verbatim). That is what lets the SECOND writer of Title structure — Apply,
+// which never probes — reach byte-identical Editions through
+// BuildEpisodeEditions rather than growing a grouping rule of its own
+// (ADR-0044's "two writers" risk).
+func groupEditions(ps []probedFile) ([]store.Edition, bool) {
+	// Group by Edition name. Parts of the same Edition join (multiple Files);
+	// two non-part files in the same Edition flag the Title ambiguous.
+	var order []string
+	groups := map[string]*editionGroup{}
+	for _, p := range ps {
+		g, ok := groups[p.ed]
+		if !ok {
+			g = &editionGroup{name: p.ed}
+			groups[p.ed] = g
+			order = append(order, p.ed)
+		}
+		g.probes = append(g.probes, p)
+	}
+
+	ambiguous := false
+	var editions []store.Edition
+	for _, name := range order {
+		g := groups[name]
+		sort.Slice(g.probes, func(i, j int) bool {
+			pi, pj := g.probes[i].cf.part, g.probes[j].cf.part
+			if pi != pj {
+				return pi < pj
+			}
+			return g.probes[i].cf.path < g.probes[j].cf.path
+		})
+		// Collision: >1 file in one Edition that are NOT all parts → ambiguous.
+		if len(g.probes) > 1 && !g.allParts() {
+			ambiguous = true
+		}
+
+		editionID := uuid.NewString()
+		var files []store.File
+		for _, p := range g.probes {
+			var f store.File
+			if p.reused {
+				// Reuse the stored attributes/streams verbatim; only re-key the
+				// edition membership (UpsertTitleTree preserves the row id by path).
+				f = p.stored
+				f.EditionID = editionID
+				f.Streams = rekeyStreams(f.ID, f.Streams)
+			} else {
+				f = buildFile(editionID, p.cf.path, p.media)
+			}
+			f.Mtime = p.mtime
+			f.Present = true
+			// Persist the part order rather than leaving it to be re-derived from
+			// the filename on read (migration 0049). For a parse-numbered part this
+			// is partNumber(); for a placed one it is the Admin's ordinal, which no
+			// filename carries.
+			f.PartOrdinal = p.cf.part
+			// SizeBytes is the change-detection key alongside mtime, so it must be
+			// the on-disk stat size (authoritative and matching the snapshot),
+			// not ffprobe's reported format size which can be absent/approximate.
+			// It rides in on the probedFile so this function needs no disk of its
+			// own; 0 means "unknown", which leaves whatever the row already had.
+			if p.size > 0 {
+				f.SizeBytes = p.size
+			}
+			files = append(files, f)
+		}
+		editions = append(editions, store.Edition{ID: editionID, Name: name, Files: files})
+	}
+
+	return editions, ambiguous
+}
+
+// editionNameFor is editionName with the Placement exception: a file the Admin
+// placed alongside others on one Slot belongs to the joint (unnamed) Edition, so
+// its filename never gets to split it off into one of its own.
+func editionNameFor(cf classifiedFile, videoHeight int) string {
+	if cf.jointEdition {
+		return ""
+	}
+	return editionName(cf.name, videoHeight)
 }
 
 func buildFile(editionID, path string, media MediaInfo) store.File {

@@ -8,6 +8,7 @@ import AdminProvidersScreen from "../admin/AdminProvidersScreen";
 import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen";
 import AdminTranscodingScreen from "../admin/AdminTranscodingScreen";
 import AdminRemoteAccessScreen from "../admin/AdminRemoteAccessScreen";
+import ShowMatcherScreen from "../admin/ShowMatcherScreen";
 import { useOptionalFeature } from "../serverInfoContext";
 
 // The /admin hub. Issue 06 built the libraries + scanning view; issue 07 adds the
@@ -116,6 +117,12 @@ export default function AdminScreen() {
                 path="attention"
                 element={<Navigate to="/admin/needs-fixing" replace />}
               />
+              {/* The file matcher (ADR-0044): one Show's Files laid against its
+                  Slots. Reached from the Needs Fixing queue and from a Show's own
+                  detail page. It lives under /admin because it is an Admin
+                  correction surface, and it keeps the admin chrome so the way back
+                  to the queue is always on screen. */}
+              <Route path="shows/:showId/matcher" element={<ShowMatcherScreen />} />
               <Route path="devices" element={<AdminDevicesScreen />} />
               <Route path="users" element={<AdminUsersScreen />} />
               <Route path="providers" element={<AdminProvidersScreen />} />

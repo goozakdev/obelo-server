@@ -25,16 +25,26 @@ import (
 // Durability: a mapped leaf child is pinned via the same durable primitives slice
 // 01/02 established — a track/episode gets its external-id column written
 // (SetTitleExternalMatch, honored by the next collectMusicLeaves/collectTVLeaves
-// pass), a mapped album gets entity_enrichment.external_id_locked. So a later
-// enrichment pass or rescan resolves the child BY the cascaded id rather than
-// re-auto-matching it back to the wrong record.
+// pass), a mapped album gets entity_enrichment.external_id. So a later enrichment
+// pass or rescan resolves the child BY the cascaded id rather than re-auto-matching
+// it back to the wrong record.
 //
-// Skip rule (a child's OWN prior correction always wins): a child that already
-// carries its own Enrichment override (a non-empty pinned external id — a track's
-// musicbrainz_id / an episode's tmdb_id, or an album's locked external_id) OR any
-// Locked field is SKIPPED, never clobbered. A normal enrichment pass never writes
-// those external-id columns (WriteTitleEnrichment leaves them untouched), so a
-// non-empty id reliably means an explicit prior override rather than an auto-match.
+// EVERYTHING THE CASCADE WRITES IS RECORDED AS THE PARENT'S CHOICE
+// (store.OriginCascaded), not the child's — a leaf through matchTitle, an Album
+// through applyEntityOverride. The child was never looked at; it was mapped under
+// the parent's record. Both are durable, and only a Cascade from the SAME parent
+// may overwrite them, which is that parent revising its own decision (ADR-0046).
+// Writing them as the child's own is what made a second Cascade skip every child
+// the first one reached (.../issues/04).
+//
+// Skip rule (a child's OWN prior correction always wins): a child whose record the
+// ADMIN CHOSE ON IT — store.Title.EnrichmentIDOrigin.OwnChoice() for a leaf,
+// EntityEnrichment.ExternalIDOrigin.OwnChoice() for an album — OR which carries any
+// Locked field is SKIPPED, never clobbered. The skip reads that recorded origin; it
+// does NOT infer a choice from "the id column is non-empty", which is what it used
+// to do and which excluded auto-matched children from a cascade nobody asked to
+// exclude them from (.../issues/03, ADR-0045), and it does not read a record this
+// same Cascade wrote as the child's (.../issues/04, ADR-0046).
 //
 // Best-effort + attention backstop: a child that does not line up — a count/number
 // mismatch, a Missing file (a hidden track is simply not enumerated), or no title
@@ -78,7 +88,9 @@ func (s *Service) CascadeEntity(ctx context.Context, entityType, entityID, exter
 // re-resolves them positionally (each Episode already carries its own season+episode
 // number, which the provider maps under the corrected show). A matched Episode is
 // updated; one the corrected show has no record for lands in the attention list. An
-// Episode with its own prior override (a pinned tmdb_id) or a Locked field is skipped.
+// Episode whose record the Admin chose ON IT (enrichment_id_origin = 'chosen') or
+// which carries a Locked field is skipped — an Episode this Show's PREVIOUS Cascade
+// wrote is not, so re-correcting the Show corrects its Episodes again (ADR-0046).
 func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalID string) (CascadeSummary, error) {
 	seasons, err := s.store.SeasonsForShow(showID)
 	if err != nil {
@@ -91,7 +103,7 @@ func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalI
 			return sum, err
 		}
 		for _, ep := range eps {
-			skip, err := s.childHasOwnOverride(ep.ID, ep.TMDBID)
+			skip, err := s.childHasOwnOverride(ep)
 			if err != nil {
 				return sum, err
 			}
@@ -127,8 +139,12 @@ func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalI
 // resolves the right episode. Returns whether the episode settled on a record
 // (otherwise the re-enrich left it 'unmatched' → in the attention list). Durable: the
 // pinned tmdb_id is honored by the next collectTVLeaves pass.
+//
+// The pin is recorded as store.OriginCascaded — the SHOW's choice, held by the
+// Episode. That keeps it durable against every pass while leaving the Episode
+// eligible for its Show's next "apply to children" (ADR-0046).
 func (s *Service) reenrichEpisode(ctx context.Context, ep store.Title, showExternalID string) (bool, error) {
-	if err := s.store.SetTitleExternalMatch(ep.ID, store.ExternalMatch{TMDBID: showExternalID}); err != nil {
+	if err := s.store.SetTitleExternalMatch(ep.ID, store.ExternalMatch{TMDBID: showExternalID}, store.OriginCascaded); err != nil {
 		return false, err
 	}
 	// Serialize against a concurrent pass over the same Library (as MatchTitle does).
@@ -201,7 +217,11 @@ func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (Cas
 		}
 		// A matched album: pin it (durable entity override + re-enrich) and recurse
 		// into its tracks positionally.
-		if err := s.ApplyEntityOverride(ctx, store.EntityAlbum, al.ID, cand.ExternalID); err != nil {
+		// OriginCascaded: the pin is the ARTIST's choice held by the Album. Recording
+		// it as the Album's own is what made the next Artist Cascade skip every Album
+		// this one pinned — and its Tracks with it, since the recursion never enters a
+		// skipped Album (ADR-0046).
+		if err := s.applyEntityOverride(ctx, store.EntityAlbum, al.ID, cand.ExternalID, store.OriginCascaded); err != nil {
 			attn, aerr := s.routeAlbumTracksToAttention(al.ID)
 			if aerr != nil {
 				return sum, aerr
@@ -236,7 +256,7 @@ func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Cand
 	}
 	var sum CascadeSummary
 	for _, tr := range tracks {
-		skip, err := s.childHasOwnOverride(tr.ID, tr.MusicbrainzID)
+		skip, err := s.childHasOwnOverride(tr)
 		if err != nil {
 			return sum, err
 		}
@@ -253,7 +273,7 @@ func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Cand
 			sum.Attention++
 			continue
 		}
-		if err := s.ApplyOverride(ctx, tr.ID, tc.ExternalID); err != nil {
+		if err := s.applyOverride(ctx, tr.ID, tc.ExternalID, store.OriginCascaded); err != nil {
 			if serr := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched"); serr != nil {
 				return sum, serr
 			}
@@ -275,7 +295,7 @@ func (s *Service) routeAlbumTracksToAttention(albumID string) (int, error) {
 	}
 	n := 0
 	for _, tr := range tracks {
-		skip, err := s.childHasOwnOverride(tr.ID, tr.MusicbrainzID)
+		skip, err := s.childHasOwnOverride(tr)
 		if err != nil {
 			return n, err
 		}
@@ -321,13 +341,45 @@ func (s *Service) findAlbumCandidate(ctx context.Context, title string, year int
 }
 
 // childHasOwnOverride reports whether a leaf child (Episode/Track) should be SKIPPED
-// by the cascade because it carries its OWN prior Enrichment override — a non-empty
-// pinned external id (a normal pass never writes these columns) — or any Locked field.
-func (s *Service) childHasOwnOverride(titleID, pinnedExternalID string) (bool, error) {
-	if strings.TrimSpace(pinnedExternalID) != "" {
+// by the cascade because it carries the Admin's OWN prior correction: an Enrichment
+// override the Admin chose ON THIS CHILD (EnrichmentIDOrigin.OwnChoice()) or any
+// Locked field.
+//
+// It reads the recorded origin rather than "the record id is non-empty". That older
+// guess was wrong in one direction only, and silently: a leaf acquires a record id
+// nobody chose all the time — an enrichment pass persists the record it resolved so
+// the artwork-candidate lookup has an anchor (store.TitleEnrichment.ExternalIDs,
+// fill-only), a split's co-File sibling inherits the survivor's series
+// (store.TitleTree.RecordTMDBID), and clearing an Episode pin writes the Show's own
+// series back — and every one of those made the child permanently immune to "apply
+// to children" with nothing told to the Admin (.../issues/03, ADR-0045).
+//
+// It asks OwnChoice() rather than Locked() for the same reason one level on: a
+// record THIS PARENT'S PREVIOUS CASCADE wrote is durable — nothing re-auto-matches
+// it — but it is the parent's choice, not the child's, so it must not exclude the
+// child from the parent's next correction. Reading it as the child's own made a
+// second "apply to children" report Updated: 0 on exactly the children the first
+// one fixed (.../issues/04, ADR-0046). An override the Admin applied DIRECTLY to
+// the child still wins, which is the promise the rule exists for.
+//
+// The origin is namespace-neutral, so a Track's musicbrainz_id is covered by the
+// same test as an Episode's record. The id itself is deliberately NOT re-checked
+// alongside it (as albumHasOwnOverride checks external_id, where the two columns
+// are independent): the origin is only ever set together with an id, and a leaf's
+// record spans two namespaces, so an imdb-only override would read as unchosen if
+// this insisted on a TMDB id being present — the same guess again in a smaller hat.
+//
+// On a library that predates migration 0050 EVERY row that had a record was
+// backfilled locked, and 0051 reads every such lock as 'chosen' — after the fact
+// nothing could tell an Admin's pick from an id a pass echoed back, or from a
+// Cascade's own write — so those rows keep the old behaviour (skipped) rather than
+// being retroactively demoted into something a Cascade may overwrite. The
+// improvement applies to every record written since the upgrade.
+func (s *Service) childHasOwnOverride(t store.Title) (bool, error) {
+	if t.EnrichmentIDOrigin.OwnChoice() {
 		return true, nil
 	}
-	locks, err := s.store.LockedFields(titleID)
+	locks, err := s.store.LockedFields(t.ID)
 	if err != nil {
 		return false, err
 	}
@@ -335,14 +387,27 @@ func (s *Service) childHasOwnOverride(titleID, pinnedExternalID string) (bool, e
 }
 
 // albumHasOwnOverride reports whether an Album child (under an Artist cascade) should
-// be SKIPPED because it carries its own durable Enrichment override (a locked
-// external_id) or any Locked field.
+// be SKIPPED because it carries a durable Enrichment override the Admin chose ON THE
+// ALBUM (ExternalIDOrigin.OwnChoice()) or any Locked field.
+//
+// The parent recursion has the leaf rule's shape and had its defect: an Artist
+// cascade pins each mapped Album through SetEntityExternalMatch, so before ADR-0046
+// every Album the first run reached read back as carrying "its own" override and the
+// second run skipped it — and skipped its Tracks too, since a skipped Album is never
+// recursed into, which makes the blast radius larger here than at the leaf. Asking
+// OwnChoice() lets an Artist re-correct its discography while an Album the Admin
+// fixed by hand still wins (.../issues/04).
+//
+// The external_id is still checked alongside the origin, unlike the leaf rule: here
+// the two columns really are independent (a row can be written by a pass with an
+// origin left empty, or carry an origin with no id), and a parent has exactly one
+// Authoritative provider, so there is no second namespace for the check to misread.
 func (s *Service) albumHasOwnOverride(albumID string) (bool, error) {
 	e, err := s.store.EntityEnrichmentByID(store.EntityAlbum, albumID)
 	if err != nil {
 		return false, err
 	}
-	if e.ExternalIDLocked && strings.TrimSpace(e.ExternalID) != "" {
+	if e.ExternalIDOrigin.OwnChoice() && strings.TrimSpace(e.ExternalID) != "" {
 		return true, nil
 	}
 	locks, err := s.store.EntityLockedFields(store.EntityAlbum, albumID)

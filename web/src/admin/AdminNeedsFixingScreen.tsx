@@ -7,6 +7,7 @@ import type {
   Library,
   MatchOverride,
   NeedsReviewItem,
+  ShowProblems,
   UnmatchedFile,
 } from "../api/types";
 import { useAsync } from "../browse/useAsync";
@@ -18,6 +19,7 @@ import {
   buildFixItems,
   EMPTY_BY_PROBLEM,
   FIX_PROBLEMS,
+  hasProblem,
   type FixItem,
   type FixProblem,
 } from "./needsFixing";
@@ -39,6 +41,11 @@ import type { Provider } from "./searchRef";
 // so it is obvious where the work is; and the corrections log moves below the queue,
 // out of the way — except for ORPHANED corrections, which are genuinely broken and
 // so are promoted into the queue as rows.
+//
+// A Show's episode-level problems are ONE row, not one per file (ADR-0044,
+// file-matcher/07), and its action opens the file matcher. Chips, the row count and
+// the library selector's badge all count those collapsed rows, so the queue counts
+// problems rather than symptoms.
 //
 // Applying an identity correction only takes effect on the next scan (a Match
 // override is folder-keyed and read by the scanner — ADR-0002/0014). Rather than
@@ -144,6 +151,13 @@ function LibraryQueue({ libraryId, libraryKind }: { libraryId: string; libraryKi
   const [enrichmentState, setEnrichmentState] = useState<"loading" | "error" | "ready">("loading");
   const [enrichmentError, setEnrichmentError] = useState<string | null>(null);
 
+  // The per-Show unsettled counts — the half of a collapsed Show row that is in no
+  // list above (an unassigned File produces neither a Title nor an Unmatched row).
+  // Best-effort on purpose: the collapse itself is driven by the flagged Episodes,
+  // which already name their Show, so a failure here costs the unassigned counts
+  // and nothing else. Blanking the queue over it would be a much worse trade.
+  const [showProblems, setShowProblems] = useState<ShowProblems[]>([]);
+
   // "All" until the Admin narrows to one class of problem.
   const [filter, setFilter] = useState<FixProblem | "all">("all");
   // Identity corrections applied since the last scan — a Match override is read by
@@ -207,20 +221,36 @@ function LibraryQueue({ libraryId, libraryKind }: { libraryId: string; libraryKi
     [libraryId],
   );
 
+  const loadShowProblems = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const shows = await apiClient.listShowProblems(libraryId, signal);
+        if (signal?.aborted) return;
+        setShowProblems(shows);
+      } catch {
+        // Best-effort: the Show rows still collapse from the flagged Episodes.
+        if (!signal?.aborted) setShowProblems([]);
+      }
+    },
+    [libraryId],
+  );
+
   useEffect(() => {
     const ctrl = new AbortController();
     void loadUnmatched(ctrl.signal);
     void loadOverrides(ctrl.signal);
     void loadEnrichment(ctrl.signal);
+    void loadShowProblems(ctrl.signal);
     return () => ctrl.abort();
-  }, [loadUnmatched, loadOverrides, loadEnrichment]);
+  }, [loadUnmatched, loadOverrides, loadEnrichment, loadShowProblems]);
 
   const reloadAll = useCallback(() => {
     void loadUnmatched();
     void loadOverrides();
     void loadEnrichment();
+    void loadShowProblems();
     needsReview.reload();
-  }, [loadUnmatched, loadOverrides, loadEnrichment, needsReview]);
+  }, [loadUnmatched, loadOverrides, loadEnrichment, loadShowProblems, needsReview]);
 
   const loading =
     needsReview.loading ||
@@ -244,17 +274,24 @@ function LibraryQueue({ libraryId, libraryKind }: { libraryId: string; libraryKi
         needsReview: needsReview.items as NeedsReviewItem[],
         enrichment,
         overrides,
+        showProblems,
       }),
-    [unmatched, needsReview.items, enrichment, overrides],
+    [unmatched, needsReview.items, enrichment, overrides, showProblems],
   );
 
+  // Chips count ROWS, following the collapsed shape: a Show with five broken
+  // episodes contributes one, because it is one problem. A row holding several
+  // classes counts under each of them, so the chips never hide work — which means
+  // the chip counts can exceed the total, and honestly so.
   const counts = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const it of items) out[it.problem] = (out[it.problem] ?? 0) + 1;
+    for (const it of items) {
+      for (const p of it.problems) out[p] = (out[p] ?? 0) + 1;
+    }
     return out;
   }, [items]);
 
-  const shown = filter === "all" ? items : items.filter((it) => it.problem === filter);
+  const shown = filter === "all" ? items : items.filter((it) => hasProblem(it, filter));
 
   // A bare id pasted into a picker is provider-specific, and a Library's kind is
   // what decides which provider its records come from.

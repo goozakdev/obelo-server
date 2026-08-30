@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "../api/client";
 import type { EpisodeCandidate, SeasonSummary } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 
-// Step two of correcting a TV episode: having picked the series, pick the episode
-// within it that this file actually is.
+// Step two of pointing something at a provider episode: having picked the series,
+// pick the episode within it.
 //
 // It exists because picking the series alone could never fix a whole class of file.
 // Enrichment resolves an Episode as /tv/{show}/season/{S}/episode/{E}, where S and
@@ -14,23 +13,50 @@ import { errorMessage } from "../screens/errorMessage";
 // start of the next one — re-picking the series just asks for the same wrong
 // episode again. The Admin was stuck with a button that looked like it worked.
 //
-// Choosing here writes a lookup-only pin: the file keeps its place in the library,
-// its parsed numbers, and every User's watch history, and simply gains the right
-// title, overview and still (ADR-0014).
+// WHERE THIS IS USED. Inside the file matcher, as step two of repointing a Slot's
+// RECORD (CONTEXT.md "Episode pin", ADR-0044): ShowMatcherScreen's record picker
+// searches a series and then mounts this to pick within it.
+//
+// It used to live in the Needs-Fixing queue, one flagged Episode at a time, in a
+// place where the Admin could not see the season they were fixing. That flow
+// retired with file-matcher/07 — a Show's episode problems are one row now, and
+// their fix is the matcher — and the pin came with it, narrowed to its real job.
+//
+// Its one change for that move: it no longer knows WHERE the episodes come from.
+// The queue anchored the fetch on a Title; the matcher anchors it on a Show and a
+// chosen series (`listSeriesSlots`). So the fetch arrives as `load` and the
+// component stays anchor-agnostic — which is also what lets the matcher fill a
+// whole run from one pick, since the caller owns the page it loaded.
+//
+// Choosing here writes a lookup-only pin: the Slot keeps its position, so the
+// Episode keeps its place in the library, its identity_key and every User's watch
+// history, and simply gains the right title, overview and still (ADR-0014).
+
+/** One page of a series' episode list: the season just loaded, its episodes, and —
+ * on the first call only — the series' whole season list. */
+export interface EpisodeChooserPage {
+  /** Sent once, on the first load; keep it thereafter. */
+  seasons?: SeasonSummary[];
+  season: number;
+  episodes: EpisodeCandidate[];
+}
+
+/** Fetch one season's episodes. `which` undefined asks for the caller's default —
+ * the season the thing being pinned is already filed under, which is the list the
+ * Admin is most likely looking for. */
+export type EpisodeChooserLoad = (which?: number) => Promise<EpisodeChooserPage>;
 
 export default function EpisodeChooser({
-  titleId,
   seriesTitle,
-  externalId,
+  load: loadPage,
   onPick,
   onBack,
 }: {
-  titleId: string;
   /** The series just picked, named so the Admin can see what they are inside. */
   seriesTitle: string;
-  /** That series' provider id — what the episode list is fetched against. */
-  externalId: string;
-  /** Apply: pin this file to the chosen provider episode. */
+  /** Where the episodes come from. See {@link EpisodeChooserLoad}. */
+  load: EpisodeChooserLoad;
+  /** Apply: pin to the chosen provider episode. */
   onPick: (candidate: EpisodeCandidate) => Promise<void>;
   /** Return to the series list (they picked the wrong show). */
   onBack: () => void;
@@ -42,15 +68,12 @@ export default function EpisodeChooser({
   const [applying, setApplying] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // `which` undefined asks the server for its default — the season this file is
-  // already filed under, which is the list the Admin is most likely looking for
-  // (right season / wrong episode, or a run that slipped into the next season).
   const load = useCallback(
     async (which?: number) => {
       setLoading(true);
       setError(null);
       try {
-        const res = await apiClient.listEpisodeCandidates(titleId, externalId, which);
+        const res = await loadPage(which);
         // The season list comes back only on the first request; keep it thereafter.
         if (res.seasons) setSeasons(res.seasons);
         setSeason(res.season);
@@ -61,7 +84,7 @@ export default function EpisodeChooser({
         setLoading(false);
       }
     },
-    [titleId, externalId],
+    [loadPage],
   );
 
   useEffect(() => {
@@ -171,8 +194,8 @@ export default function EpisodeChooser({
       )}
 
       <p className="fix-apply-hint">
-        Pins which episode&rsquo;s details this file shows. It stays where it is in
-        your library and keeps its watch history.
+        Pins which episode&rsquo;s details this shows. It stays where it is in your
+        library and keeps its watch history.
       </p>
 
       {error && (

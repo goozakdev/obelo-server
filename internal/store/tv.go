@@ -117,7 +117,7 @@ func (db *DB) UpsertShowTree(tree ShowTree) error {
 			return err
 		}
 		for _, ep := range st.Episodes {
-			if err := upsertEpisodeTitle(tx, seasonID, ep, written); err != nil {
+			if _, err := upsertEpisodeTitle(tx, seasonID, ep, written); err != nil {
 				return err
 			}
 		}
@@ -230,7 +230,12 @@ func upsertSeason(tx *sql.Tx, showID string, st SeasonTree) (string, error) {
 // It reuses the exact Movie subtree-rewrite logic (writeTitleSubtree) so a File
 // keeps its id/added_at by path across rescans; it then sets the Season linkage
 // and episode ordering onto the titles row.
-func upsertEpisodeTitle(tx *sql.Tx, seasonID string, ep EpisodeTree, written map[string]bool) error {
+//
+// It returns the Title row the tree landed on — resolved by (library_id,
+// identity_key), so it may be a row that already existed. Apply needs that answer
+// to tell a Title the arrangement emptied apart from one it emptied and then
+// resolved straight back onto by key (reclaimEmptiedFilesTx).
+func upsertEpisodeTitle(tx *sql.Tx, seasonID string, ep EpisodeTree, written map[string]bool) (string, error) {
 	titleID, err := writeTitleRow(tx, ep.TitleTree, episodeColumns{
 		seasonID:      seasonID,
 		seasonNumber:  ep.SeasonNumber,
@@ -238,9 +243,12 @@ func upsertEpisodeTitle(tx *sql.Tx, seasonID string, ep EpisodeTree, written map
 		episodeLabel:  ep.EpisodeLabel,
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	return writeTitleSubtree(tx, titleID, ep.TitleTree, written)
+	if err := writeTitleSubtree(tx, titleID, ep.TitleTree, written); err != nil {
+		return "", err
+	}
+	return titleID, nil
 }
 
 // --- Browse reads ----------------------------------------------------------
@@ -432,10 +440,10 @@ func (db *DB) EpisodesForSeason(seasonID string) ([]Title, error) {
 	}
 	rows, err := db.Query(
 		`SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
-		        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
+		        `+recordExternalIDs("")+`, needs_review, ambiguous, hidden,
 		        season_number, episode_number, episode_label,
 		        overview, enrichment_status, enriched_title,
-		        enrichment_season, enrichment_episode
+		        enrichment_season, enrichment_episode, enrichment_id_origin
 		   FROM titles WHERE season_id = ? AND hidden = 0
 		  ORDER BY episode_number ASC, sort_title ASC, id ASC`, seasonID)
 	if err != nil {
@@ -539,14 +547,16 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 	var t Title
 	var year sql.NullInt64
 	var needsReview, ambiguous, hidden int
+	var idOrigin string
 	var pinSeason, pinEpisode sql.NullInt64
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
-		&pinSeason, &pinEpisode); err != nil {
+		&pinSeason, &pinEpisode, &idOrigin); err != nil {
 		return Title{}, err
 	}
+	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)
 	}
@@ -562,4 +572,36 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 	t.Ambiguous = ambiguous != 0
 	t.Hidden = hidden != 0
 	return t, nil
+}
+
+// ShowsByLibrary returns every visible Show of a Library, in the same order the
+// browse grid uses.
+//
+// It is deliberately unpaged and unfiltered, unlike ListShows: its one caller is
+// the Admin Needs-Fixing queue, which folds a Library's episode-level problems
+// onto the Show that owns them (file-matcher/07) and therefore has to look at
+// every Show, not a page of them. Access scoping does not apply — the queue is
+// Admin-only, and an Admin resolves to all-access anyway. Hidden Shows (every
+// File Missing) are excluded, because a Show with nothing on disk is not work an
+// Admin can do anything about here.
+func (db *DB) ShowsByLibrary(libraryID string) ([]Show, error) {
+	rows, err := db.Query(
+		`SELECT id, library_id, title, year, identity_key, sort_title,
+		        tmdb_id, imdb_id, needs_review, hidden, added_at
+		   FROM shows
+		  WHERE library_id = ? AND hidden = 0
+		  ORDER BY sort_title ASC, id ASC`, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing shows of library: %w", err)
+	}
+	defer rows.Close()
+	var out []Show
+	for rows.Next() {
+		sh, err := scanShow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sh)
+	}
+	return out, rows.Err()
 }

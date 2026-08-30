@@ -44,7 +44,7 @@ A specific version of a Title at a given quality or cut (e.g. "1080p", "4K", "Di
 _Avoid_: Version, Media (Plex's term — we don't use it).
 
 **File**:
-One physical file on disk. An Edition has one or more Files (more than one only for multi-part media, e.g. CD1/CD2). Carries technical attributes: container, codecs, resolution, bitrate, duration.
+One physical file on disk. An Edition has one or more Files (more than one only for multi-part media, e.g. CD1/CD2). Carries technical attributes: container, codecs, resolution, bitrate, duration. An Edition plays its Files back-to-back only when every one of them is NUMBERED — by a part suffix on disk, or by the order an Admin gave them in the file matcher; more than one File without that is Ambiguous, not multi-part.
 _Avoid_: Part, Asset.
 
 **Stream**:
@@ -81,12 +81,16 @@ _Avoid_: Deleted, Removed, Orphaned.
 The separate, optional step that fetches descriptive metadata (artwork, descriptions, cast) from external Metadata providers to decorate a Title. Never affects identity; degrades gracefully when offline. Provider selection is server-wide by default but overridable per Library through its Enrichment policy ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)).
 _Avoid_: Matching (that's identity), Agent.
 
+**Ambiguous**:
+State of a Title whose Files collide: two or more parsed to the same Edition identity and are not parts, so the naming convention refuses to guess which is the real one. Both Files are kept and the Title stays browsable, but only the FIRST of them plays until an Admin settles it — joining unrelated Files would play one work and then another as a single timeline. Surfaced in the Needs-Fixing queue, which names the colliding Files; an ambiguous Episode is settled in the file matcher, a Movie by renaming on disk. Distinct from Needs-review, which is an uncertain parse the Admin can simply confirm — an Ambiguous Title cannot be dismissed, because the conflict is real.
+_Avoid_: Duplicate, Conflict.
+
 **Needs-review**:
 State of a Title or Show filed from a partial best-effort parse (e.g. a movie with no year, or a TV episode with non-SxxExx numbering). Browsable, but surfaced in the Admin's Needs-Fixing queue for confirmation. The Admin resolves an entry by dismissing it (mark reviewed — confirms the parse is fine; sticky across rescans) or, where a folder override can anchor (Movie, Show, Track), correcting its identity via a folder-keyed fix-match chosen from a provider search.
 _Avoid_: Pending, Unconfirmed.
 
 **Unmatched**:
-A recognized media File from which no minimal identity could be extracted. Listed for the Admin to match manually; not a browsable Title and never auto-guessed. Distinct from Missing (which is about absence from disk).
+A recognized media File from which no minimal identity could be extracted. Listed for the Admin to match manually; not a browsable Title and never auto-guessed. Distinct from Missing (which is about absence from disk). Within a work the Scanner *did* identify — a Show whose folder parsed but one of whose files carries no episode token — an Unmatched File is simply Unassigned, and is matched by giving it a Placement rather than by naming a work.
 _Avoid_: Unidentified, Unknown.
 
 **Locked field**:
@@ -94,23 +98,43 @@ A descriptive field an Admin has edited by hand. Re-enrichment refreshes only un
 _Avoid_: Pinned, Override (override means identity, below).
 
 **Match override**:
-An Admin's identity correction — fix-match, merge, or split — that overrules the convention-derived guess and persists across rescans (so the next scan doesn't undo it).
+An Admin's identity correction — fix-match, merge, or split — that overrules the convention-derived guess and persists across rescans (so the next scan doesn't undo it). Comes with one of two anchors, which decide what it corrects: **folder-anchored** names the work a folder holds (a Movie, a Show, an Album), and **file-anchored** names one File's Placement within a work already identified. Both are replayed by the Scanner at resolve time, and both are surfaced rather than dropped when their anchor disappears from disk (see Orphaned correction).
 _Avoid_: Remap, Manual match.
 
 **Enrichment override**:
-An Admin's correction of *which external provider record* an entity is enriched from, overruling enrichment's automatic match — without changing identity or watch state. The common "edit item" correction: the item is filed correctly but was decorated from the wrong record (wrong poster, wrong overview), so the Admin re-points it at the right one and it re-enriches. The identity sibling of Match override; the two are distinct operations with different blast radii (see [ADR-0002](./docs/adr/0002-naming-convention-is-identity-authority.md), [ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)). Operates on one entity's matched record; contrast the per-Library Enrichment policy, which selects *providers*, not records.
+An Admin's correction of *which external provider record* an entity is enriched from, overruling enrichment's automatic match — without changing identity or watch state. The common "edit item" correction: the item is filed correctly but was decorated from the wrong record (wrong poster, wrong overview), so the Admin re-points it at the right one and it re-enriches. The identity sibling of Match override; the two are distinct operations with different blast radii (see [ADR-0002](./docs/adr/0002-naming-convention-is-identity-authority.md), [ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)). Operates on one entity's matched record; contrast the per-Library Enrichment policy, which selects *providers*, not records. **Outranks the id local naming asserts** — an embedded `{tmdb-12345}` decides identity, never decoration, so an override survives every later scan and is stored in its own column rather than the identity one ([ADR-0045](./docs/adr/0045-enrichment-record-is-its-own-column.md)). Each override records **whose** choice it is — chosen on the item itself, or cascaded onto it by a parent ([ADR-0046](./docs/adr/0046-a-cascaded-record-is-the-parents-choice.md)) — because only the first outranks a Cascade. An Admin who means the *file* is wrong uses Wrong item instead.
 _Avoid_: Match (reserved for identity), enrichment match (the old code name), Enrichment policy (that's the per-Library provider layer).
 
 **Episode pin**:
-The Episode-shaped Enrichment override: *which provider episode* decorates a file, chosen by the Admin instead of derived from its filename. Enrichment resolves an Episode by its parsed season+episode numbers (ADR-0002), so a provider that numbers a series differently from the files on disk — the standard case being a run of episodes the provider counts in the next season, or in a re-numbered continuation series — leaves those files permanently unmatchable: pinning the right Show still asks for the wrong episode. The pin redirects **the lookup only**. The Episode keeps its parsed numbers, its place in the library, its identity_key and every User's watch state ([ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)); it simply gains the right title, overview and still. Set from the Needs-Fixing queue by picking a series and then the episode within it.
-_Avoid_: Episode remap, Renumber (nothing is renumbered — the file does not move), Episode match override.
+The Slot-shaped Enrichment override: *which provider episode record* decorates a Slot, chosen by the Admin instead of taken from the Show's own series at that Slot's position. Needed only when the record is somewhere else — the standard case being a run of episodes the provider counts in a re-numbered continuation series, where borrowing the foreign numbering would collide with the Show's own ([ADR-0044](./docs/adr/0044-file-anchored-placement-override-replayed-by-the-scanner.md)). The pin redirects **the lookup only**: the Slot keeps its position, so the Episode keeps its place in the library, its identity_key and every User's watch state ([ADR-0014](./docs/adr/0014-watch-state-keyed-to-parsed-identity.md)); it simply gains the right title, overview and still. Distinct from Placement, which decides *where the file sits*; the pin decides only *what decorates it*.
+_Avoid_: Episode remap, Renumber (a pin never moves a file — that's Placement), Episode match override.
+
+**Slot**:
+One numbered position within a browsable parent that a File can fill: `S06E05` in a Show, or disc 1 track 4 in an Album. Has two independent halves — its **position**, which is always the local library's own numbering, and its **record**, the provider episode/track that decorates it (by default the parent's own series/release at that position; repointable via an Episode pin). A Slot with no File is real but invisible: it appears in the matcher and never in browse.
+_Avoid_: Episode number (that's half of a position), Track number, Placeholder.
+
+**Placement**:
+Which Slot(s) a File fills, and in what order when several Files share one. Derived from local information by default (ADR-0002) — the `SxxExx` token, the embedded disc/track tags — and correctable by the Admin as a file-anchored Match override. Placement is the axis every irregular arrangement moves along: several Files on one Slot become a multi-part Edition, one File across several Slots becomes co-File sibling Titles, and a File on no Slot is unassigned. Placement decides *where a File sits*, never what decorates it (that's the Episode pin) and never anything on disk — nothing is renamed, moved or deleted, ever.
+_Avoid_: Assignment (overloaded), Mapping, Sort order, Renumbering.
+
+**Unassigned**:
+The state of a recognized media File with no Placement — known to the server, listed in the matcher, and part of no Title, so invisible in browse. Reached two ways: the Scanner could not number the File and no one has said where it goes (see Unmatched), or the Admin deliberately took it off its Slot, which is a decision in its own right and is recorded as one — otherwise the next scan would simply re-derive the Placement from the filename. Undecided, not settled: an unassigned File keeps its parent in the Needs-Fixing queue until it is placed or ignored.
+_Avoid_: Orphan (that's a correction whose anchor is gone), Unplaced.
+
+**Ignored file**:
+A File the Admin has deliberately excluded — a sample, a stray rip, anything that corresponds to no Slot. Invisible in browse, absent from the Needs-Fixing queue, and skipped by every future scan, so ignoring is how an unassigned File becomes settled. Recoverable at any time and never destructive: the file stays exactly where it is on disk.
+_Avoid_: Deleted, Excluded file, Hidden (hidden is the derived all-Files-Missing state).
+
+**Orphaned correction**:
+A Match override whose anchor no longer exists on disk — the folder was renamed, or the file a Placement was keyed to is gone. Never silently dropped: it is promoted into the Needs-Fixing queue as a problem in its own right, because a correction pointing at nothing is broken rather than done.
+_Avoid_: Stale override, Dangling match.
 
 **Edit item**:
 The Admin affordance for correcting a browsable item, exposing three separated actions ([ADR-0019](./docs/adr/0019-item-editing-preserves-local-identity.md)): **Fix info** (search a provider for the right record → Enrichment override; the common case), **Wrong item** (the file is a genuinely different work → Match override, Movie/Show only, resets watch state and clears Locked fields), and **Fix label** (hand-edit fields or pick an image → Locked field, per-item). The admin's choice of action, not inference, decides whether identity changes.
 _Avoid_: Match editor, Metadata editor (too narrow — it also corrects identity).
 
 **Cascade**:
-Applying a Fix-info or Wrong-item correction to a parent's children as well ("apply to children" — opt-in). Album→tracks and Show→episodes map positionally; Artist→albums map by title, then recurse into tracks. Best-effort: a child's own Enrichment override or Locked field wins, and children that don't line up are surfaced in the Needs-Fixing queue, never silently changed.
+Applying a Fix-info or Wrong-item correction to a parent's children as well ("apply to children" — opt-in). Album→tracks and Show→episodes map positionally; Artist→albums map by title, then recurse into tracks. Best-effort: a child's own Enrichment override or Locked field wins, and children that don't line up are surfaced in the Needs-Fixing queue, never silently changed. **"Its own" means chosen *on that child*** — a record a Cascade itself wrote is the *parent's* choice held by the child, so it follows the parent and the next Cascade re-applies over it ([ADR-0046](./docs/adr/0046-a-cascaded-record-is-the-parents-choice.md)); it stays durable against enrichment passes and rescans all the same, which is what "durable per-child override" ever meant. Repeatable by design: correcting the same parent twice corrects its children twice.
 _Avoid_: Propagate, Recurse.
 
 ## Metadata providers

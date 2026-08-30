@@ -1,21 +1,38 @@
--- Pin WHICH provider episode decorates an Episode Title, independently of the
--- season/episode numbers parsed from its filename.
+-- Pin WHICH provider episode record decorates a Slot, independently of the Slot's
+-- own position in the library.
 --
 -- Enrichment resolves an Episode as /tv/{show}/season/{S}/episode/{E}, where S and
--- E come from the FILENAME (ADR-0002: local naming is the identity authority).
--- That breaks whenever a provider numbers a series differently from the files on
--- disk — the common real case being a run of episodes the provider moved into the
--- next season (Batman: The Animated Series' last five season-3 episodes are season
--- 4 on TVDB/TMDB). Before this, an Admin could pin the right SHOW and the lookup
--- would still ask for the wrong episode, so those files were unfixable from the UI.
+-- E come from the Slot the File fills — by default the numbers parsed from its
+-- filename (ADR-0002: local naming is the identity authority). That breaks
+-- whenever a provider numbers a series differently from the files on disk — the
+-- common real case being a run of episodes the provider moved into the next
+-- season, or into a re-numbered continuation series (Batman: The Animated Series'
+-- last five season-3 episodes are season 1 of The New Batman Adventures on TMDB).
+-- Before this, an Admin could pin the right SHOW and the lookup would still ask
+-- for the wrong episode, so those files were unfixable from the UI.
 --
 -- These columns are an ENRICHMENT override, not an identity one: they change only
--- which record is fetched. identity_key, season_id, season_number, episode_number
--- and every User's watch state are untouched (ADR-0014), so the file keeps its
--- place in the library and its watch history while gaining the right details.
+-- which record is fetched. They redirect the LOOKUP ONLY — identity_key,
+-- season_id, season_number, episode_number and every User's watch state are
+-- untouched (ADR-0014), so the Slot keeps its position and its watch history while
+-- gaining the right title, overview and still.
 --
--- NULL means "not pinned — use the parsed numbers", which is the default and the
--- behaviour for every existing row. NULL rather than a sentinel because season 0
--- is a real value (Specials), so 0 cannot mean "unset".
+-- WHERE A FILE SITS IS A DIFFERENT DECISION, and this pin is not it (ADR-0044). A
+-- Slot has two independent halves: its POSITION, which is always the local
+-- library's own numbering, and its RECORD, which is what these columns repoint. An
+-- Admin who wants the five files to actually BE season 4 — a different position,
+-- a different identity_key, a different place in the browse list — makes a
+-- Placement correction (0048_file_decisions.sql), which the Scanner replays at resolve
+-- time. A Slot must never simply inherit its record's numbering: the motivating
+-- case borrows records from a series numbered from 1, so those five files would
+-- land on top of the Show's real Season 1 and collide with it.
+--
+-- The pin therefore exists solely for that minority case — the right record lives
+-- in another series — rather than as the mechanism for rearranging files, which is
+-- what it was briefly asked to be.
+--
+-- NULL means "not pinned — use the Slot's own numbers", which is the default and
+-- the behaviour for every existing row. NULL rather than a sentinel because season
+-- 0 is a real value (Specials), so 0 cannot mean "unset".
 ALTER TABLE titles ADD COLUMN enrichment_season INTEGER;
 ALTER TABLE titles ADD COLUMN enrichment_episode INTEGER;

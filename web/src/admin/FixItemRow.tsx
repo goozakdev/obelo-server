@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
-import type { EnrichmentCandidate, EpisodeCandidate } from "../api/types";
+import type { EnrichmentCandidate } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import Poster, { initials } from "../browse/Poster";
-import EpisodeChooser from "./EpisodeChooser";
 import FixItemPicker from "./FixItemPicker";
 import { kindLabel, type FixItem } from "./needsFixing";
 import type { Provider } from "./searchRef";
@@ -21,6 +20,13 @@ import type { Provider } from "./searchRef";
 // Opening a row mounts the picker, which is what triggers its search: search is a
 // live, rate-limited provider call, so it happens when the Admin actually looks at
 // a row, never for the whole list at once.
+//
+// Not every row has a search, and that is the point rather than an omission. A
+// collapsed Show row's problem is an ARRANGEMENT — which file is which episode —
+// and no provider record can answer it, so its action is "Sort episodes…", opening
+// the file matcher (ADR-0044). The per-episode pin picker that used to sit here
+// offered to re-pick the series for a file whose series was already right; it moved
+// into the matcher, where the Admin can see the season they are fixing.
 
 export default function FixItemRow({
   item,
@@ -78,20 +84,6 @@ export default function FixItemRow({
     await apiClient.applyEnrichmentOverride(item.titleId, candidate.externalId);
   }
 
-  // An Episode additionally pins WHICH episode of the picked series it is. Without
-  // this the lookup falls back to the season/episode parsed from the filename, so a
-  // file the provider numbers differently — a run moved into the next season — can
-  // never be matched however often the series is re-picked. Still metadata only:
-  // the file keeps its place in the library and its watch history.
-  async function applyEpisode(series: EnrichmentCandidate, ep: EpisodeCandidate) {
-    await apiClient.applyEnrichmentOverride(item.titleId, series.externalId, undefined, {
-      season: ep.season,
-      episode: ep.episode,
-    });
-    setOpen(false);
-    onResolved();
-  }
-
   async function onApply(candidate: EnrichmentCandidate) {
     if (item.route === "fix-match") await applyIdentity(candidate);
     else await applyMetadata(candidate);
@@ -114,11 +106,17 @@ export default function FixItemRow({
     }
   }
 
+  // "Looks right" settles exactly what the row stands for. A collapsed Show row
+  // stands for every flagged Episode under it, so it dismisses the whole set in one
+  // call — N calls could half-succeed and leave a row whose remaining count the
+  // Admin has no way to explain.
   const dismiss = () =>
     run(() =>
-      item.showId !== ""
-        ? apiClient.reviewShow(item.showId)
-        : apiClient.reviewTitle(item.titleId),
+      item.dismissEpisodes
+        ? apiClient.reviewShowEpisodes(item.showId)
+        : item.showId !== ""
+          ? apiClient.reviewShow(item.showId)
+          : apiClient.reviewTitle(item.titleId),
     );
 
   const discard = () => run(() => apiClient.deleteOverride(libraryId, item.overrideId));
@@ -218,7 +216,10 @@ export default function FixItemRow({
           <span className="fix-item-matched-label">Matched to</span> {item.matchedAs}
         </p>
       )}
-      {item.matchedAs === "" && !item.hasMatch && item.canDismiss && (
+      {/* Only about ONE item's own record. A collapsed Show row stands for many, and
+          says nothing about whether the Show itself matched — claiming it did not
+          would be a fact the row never established. */}
+      {item.matchedAs === "" && !item.hasMatch && item.canDismiss && !item.dismissEpisodes && (
         <p className="fix-item-matched is-unmatched" data-testid="fix-item-matched">
           Not matched to any provider record yet — there is nothing to check this
           against.
@@ -238,6 +239,26 @@ export default function FixItemRow({
         <span className="fix-item-path fix-item-path-missing" data-testid="fix-item-path">
           No file on disk — every file for this item is missing.
         </span>
+      )}
+
+      {/* WHICH files collide. The sentence above says two files claim one title;
+          without the names the Admin has nothing to go and look at, and the
+          convention's promise that a collision is "flagged in the web app" is only
+          half kept. The first is the one that plays, which is why the list is
+          ordered and labelled rather than a bare set. */}
+      {item.collidingPaths.length > 0 && (
+        <ul className="fix-item-collisions" data-testid="fix-item-collisions">
+          {item.collidingPaths.map((p, i) => (
+            <li key={p}>
+              <code className="fix-item-path" title={p}>
+                {p}
+              </code>
+              {i === 0 && (
+                <span className="fix-item-collision-note"> — plays</span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       <div className="fix-item-actions">
@@ -265,6 +286,14 @@ export default function FixItemRow({
             {busy ? "Working…" : "Discard correction"}
           </button>
         )}
+        {/* The primary action of a collapsed Show row, and the only one that can
+            fix an arrangement: the matcher lays every File against every Slot, so
+            five misnumbered files are one pass rather than five inert buttons. */}
+        {item.sortPath !== "" && (
+          <Link className="nav-link" to={item.sortPath} data-testid="fix-item-sort">
+            Sort episodes&hellip;
+          </Link>
+        )}
         {item.detailPath !== "" && (
           <Link className="nav-link" to={item.detailPath} data-testid="fix-item-open">
             Open item
@@ -291,22 +320,6 @@ export default function FixItemRow({
           preview={preview}
           onApply={onApply}
           onCancel={() => setOpen(false)}
-          chooseEpisode={
-            // Only an Episode needs the second step: for every other kind the picked
-            // record IS the answer. A metadata row is the one that can pin an
-            // episode — an identity fix-match re-files a whole folder, not a file.
-            item.kind === "episode" && item.route === "enrichment-override"
-              ? (series, back) => (
-                  <EpisodeChooser
-                    titleId={item.titleId}
-                    seriesTitle={series.title}
-                    externalId={series.externalId}
-                    onPick={(ep) => applyEpisode(series, ep)}
-                    onBack={back}
-                  />
-                )
-              : undefined
-          }
         />
       )}
     </li>

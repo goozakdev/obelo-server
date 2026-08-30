@@ -204,6 +204,53 @@ export interface UnmatchedFile {
   addedAt?: string;
 }
 
+/** Raw `GET /libraries/{id}/show-problems` entry: one Show's unsettled Files, the
+ * half of a collapsed Show row the client cannot compute for itself. */
+export interface ShowProblemsRaw {
+  showId: string;
+  title: string;
+  year?: number;
+  path?: string;
+  unassigned?: number;
+  unidentified?: number;
+  unmatchedPaths?: string[];
+  orphaned?: number;
+  orphanedPath?: string;
+}
+
+/** {@link ShowProblemsRaw} with its `omitempty` holes filled.
+ *
+ * The queue collapses a Show's episode-level problems into ONE row (ADR-0044,
+ * file-matcher/07), and it can count two of the three sources itself: the flagged
+ * Episodes are in the needs-review and enrichment-attention lists, and both name
+ * their Show. The other two it cannot see at all — which flat Unmatched paths fall
+ * under this Show's folders (only the Show's folders decide that), and Files the
+ * Admin explicitly left unassigned, which by design produce neither a Title nor an
+ * Unmatched row. Those come from here. */
+export interface ShowProblems {
+  showId: string;
+  title: string;
+  /** 0 when the Show has no year. */
+  year: number;
+  /** A representative UNSETTLED file — one of the counted ones, so the row's
+   * "which file?" points at the problem rather than near it. "" when the Show's
+   * only problem is an orphaned Placement. */
+  path: string;
+  /** Files the Admin deliberately took off a Slot. Undecided is not settled
+   * (CONTEXT.md "Unassigned"), so these keep the Show in the queue. */
+  unassigned: number;
+  /** Files nothing could number and nobody has decided about. */
+  unidentified: number;
+  /** The Library Unmatched rows this Show absorbed. The queue drops them from its
+   * own flat list so a file is never both a count and a row of its own. */
+  unmatchedPaths: string[];
+  /** Placements whose anchor file is gone — a broken correction, not an undecided
+   * file, so the queue gives it its own row. */
+  orphaned: number;
+  /** One of the gone files, named so the row can say which correction is broken. */
+  orphanedPath: string;
+}
+
 /** One season of a picked series, for the episode chooser's season list. */
 export interface SeasonSummary {
   season: number;
@@ -358,6 +405,11 @@ export interface NeedsReviewItemRaw extends FixContextRaw {
   folderPath?: string;
   reason?: NeedsReviewReason;
   enrichmentStatus?: EnrichmentStatus;
+  /** Sent even when false, so an older server that omits it is distinguishable
+   * from one saying "this row is not a needs-review row". */
+  needsReview?: boolean;
+  ambiguous?: boolean;
+  collidingPaths?: string[];
 }
 
 /** Why the scanner flagged an item, as a stable code the client turns into a
@@ -366,10 +418,12 @@ export interface NeedsReviewItemRaw extends FixContextRaw {
  * (a Track whose identity came from its path because it had no usable tags). */
 export type NeedsReviewReason = "no-year" | "episode-numbering" | "untagged";
 
-/** A needs-review item with its `omitempty` holes filled (year → 0, folderPath →
- * ""). The Admin resolves it by dismissing it (mark reviewed) or, for a Movie,
- * correcting the identity via a folder-keyed fix-match. Distinct from the
- * enrichment metadata-match list. */
+/** An identity-attention item with its `omitempty` holes filled (year → 0,
+ * folderPath → ""): a Title/Show whose parse was a guess, whose Files collide, or
+ * both. The Admin resolves an uncertain parse by dismissing it (mark reviewed) or,
+ * for a Movie, correcting the identity via a folder-keyed fix-match; a collision is
+ * resolved by arranging the files (a Show) or changing what is on disk. Distinct
+ * from the enrichment metadata-match list. */
 export interface NeedsReviewItem extends FixContext {
   id: string;
   /** "movie" | "episode" | "track" | "show". */
@@ -379,8 +433,22 @@ export interface NeedsReviewItem extends FixContext {
   year: number;
   /** The Movie folder a fix-match targets, or "" when fix-match does not apply. */
   folderPath: string;
-  /** Why it was flagged; defaults to the kind's rule when the server omits it. */
+  /** Why the PARSE was flagged; defaults to the kind's rule when the server omits
+   * it. Only meaningful when {@link needsReview} — an item on this list purely for
+   * a file collision has no uncertain parse to explain. */
   reason: NeedsReviewReason;
+  /** Whether the scanner flagged the parse itself as a guess. An item can be on
+   * this list for {@link ambiguous} alone, so this is what says whether there is an
+   * uncertain parse to state — and to dismiss. */
+  needsReview: boolean;
+  /** Whether two or more Files claim ONE Edition of this item — the naming
+   * convention's collision rule, which refuses to guess which is the real one
+   * (docs/naming-convention.md). Only the first of them plays until it is settled.
+   * Not dismissible: the files really do collide. */
+  ambiguous: boolean;
+  /** The colliding Files, in play order — the first is the one that plays. Empty
+   * unless {@link ambiguous}. */
+  collidingPaths: string[];
   /** Whether there is a matched provider record to confirm the filing against.
    * "pending" on an older server that did not send it. */
   enrichmentStatus: EnrichmentStatus;
@@ -2167,4 +2235,233 @@ export interface UpdateTailnetInput {
   hostname?: string;
   controlURL?: string;
   httpsEnabled?: boolean;
+}
+
+// --- The file matcher (ADR-0044) -----------------------------------------
+//
+// Everything here is KIND-NEUTRAL on purpose: `groups`, `slots`, `files`,
+// addressed by container id, positions as `{ group, slot }`. The Album matcher is
+// meant to be the same contract at `/albums/{id}/matcher` and the same component
+// with different labels, so nothing in these types may be named after a season or
+// an episode — the TV wording lives in the adapter (ShowMatcherScreen), never here.
+
+/** Why a Slot has no record. Each reason is a DIFFERENT thing to go fix, so the
+ * screen states which one rather than saying "no titles available". */
+export type SlotsUnavailableReason =
+  | "no-series-match"
+  | "enrichment-disabled"
+  | "provider-cannot-list"
+  | "provider-unreachable";
+
+/** The Admin's decision about one File: on a Slot, deliberately off one, or
+ * excluded entirely. Absence of a decision is the meaningful fourth answer
+ * ("follow the filename") and is expressed by omitting the File from an Apply. */
+export type MatcherFileState = "placed" | "unassigned" | "ignored";
+
+/** One Slot's position, always in the local library's own numbering. */
+export interface SlotPosition {
+  group: number;
+  slot: number;
+}
+
+/** The provider record decorating a Slot when it is NOT the container's own record
+ * at that position — the Episode pin. Present even for a same-series pin, which is
+ * the motivating case (a run the provider counts in the next season).
+ *
+ * `group`/`slot` are the record's position IN ITS OWN series — provenance, never a
+ * position the Slot takes on. The words come with it so the screen can show the
+ * borrowed title while still printing the Slot's own local code, and so clearing
+ * the pin falls back to the Slot's own `name` with no second fetch. They arrive
+ * only for the group that was expanded. */
+export interface MatcherSlotRecord {
+  externalId?: string;
+  group: number;
+  slot: number;
+  name?: string;
+  overview?: string;
+  airDate?: string;
+  /** A same-origin `/providerImage` URL, never the provider's host. */
+  stillUrl?: string;
+}
+
+export interface MatcherSlot {
+  group: number;
+  slot: number;
+  titleId?: string;
+  name?: string;
+  overview?: string;
+  airDate?: string;
+  /** A same-origin `/providerImage` URL, never the provider's host. */
+  stillUrl?: string;
+  record?: MatcherSlotRecord;
+}
+
+/** One Slot a File fills, with its order among the Files sharing that Slot
+ * (1-based; several Files on one Slot is a multi-part Edition). */
+export interface MatcherPlacement {
+  group: number;
+  slot: number;
+  ordinal: number;
+}
+
+export interface MatcherGroup {
+  number: number;
+  /** `provider` = the provider knows this group; `local` = its Slots are only the
+   * positions local Files claim. */
+  source: string;
+  /** The provider's own Slot count — what a COLLAPSED group renders. */
+  slotCount: number;
+  /** Whether this group's provider records have been fetched (`?group=N`). */
+  slotsLoaded: boolean;
+  slotsUnavailable?: SlotsUnavailableReason;
+  fileCount: number;
+  placedCount: number;
+  unassignedCount: number;
+  ignoredCount: number;
+  slots: MatcherSlot[];
+}
+
+export interface MatcherFile {
+  path: string;
+  state: MatcherFileState;
+  titleId?: string;
+  /** What the FILENAME claims, with every decision ignored. */
+  parsed: SlotPosition[];
+  /** Where the File sits NOW. */
+  placements: MatcherPlacement[];
+  /** True when a stored decision put the File here, false when the parse did.
+   * This is what Revert and a sparse Apply both need. */
+  decided: boolean;
+  /** A Placement whose anchor file is gone (an Orphaned correction). */
+  orphaned?: boolean;
+  reason?: string;
+}
+
+/** What the server made of a submitted arrangement.
+ *
+ * `deferred` is not a detail: a Placement onto a File the catalog has never probed
+ * is stored but cannot become an Episode until the next scan builds it, so a screen
+ * that ignored this would look like it had silently dropped the correction. */
+export interface MatcherApplied {
+  rearranged: number;
+  displaced: string[];
+  deferred: string[];
+}
+
+/** One container's whole working set. */
+export interface MatcherDocument {
+  containerId: string;
+  containerType: string;
+  libraryId: string;
+  title: string;
+  year?: number;
+  seriesExternalId?: string;
+  slotsUnavailable?: SlotsUnavailableReason;
+  groups: MatcherGroup[];
+  files: MatcherFile[];
+  applied?: MatcherApplied;
+}
+
+/** The Apply body: the WHOLE arrangement, not a delta. A File absent from `files`
+ * carries no decision at all. */
+export interface MatcherApplyFile {
+  path: string;
+  state: MatcherFileState;
+  placements?: MatcherPlacement[];
+}
+
+/** One Slot's record in an Apply. `record: null` CLEARS the pin, returning the
+ * Slot to its default record — this series, this position.
+ *
+ * Unlike `files`, `slots` is SPARSE: a Slot the Admin did not touch is absent and
+ * keeps whatever record it has. Absence has no second meaning to spend here (no
+ * record is ever derived from a filename), which is why omitting the list entirely
+ * cannot disturb a pin. */
+export interface MatcherApplySlot {
+  group: number;
+  slot: number;
+  record: MatcherSlotRecord | null;
+}
+
+export interface MatcherApplyInput {
+  files: MatcherApplyFile[];
+  slots?: MatcherApplySlot[];
+}
+
+/** `409 SLOT_COLLISION` details: the contested Slot and every File claiming it. */
+export interface SlotCollisionDetails {
+  slot: SlotPosition;
+  paths: string[];
+}
+
+/** Another series' groups, and one group's Slots on request — the record side
+ * only, for the case where the right record lives in a different series. */
+export interface SeriesSlots {
+  externalId: string;
+  groups: { number: number; slotCount: number }[];
+  group?: { number: number };
+  slots: MatcherSlot[];
+}
+
+export interface MatcherSlotRaw {
+  group?: number;
+  slot?: number;
+  titleId?: string;
+  name?: string;
+  overview?: string;
+  airDate?: string;
+  stillUrl?: string;
+  record?: {
+    externalId?: string;
+    group?: number;
+    slot?: number;
+    name?: string;
+    overview?: string;
+    airDate?: string;
+    stillUrl?: string;
+  };
+}
+
+export interface MatcherGroupRaw {
+  number?: number;
+  source?: string;
+  slotCount?: number;
+  slotsLoaded?: boolean;
+  slotsUnavailable?: string;
+  fileCount?: number;
+  placedCount?: number;
+  unassignedCount?: number;
+  ignoredCount?: number;
+  slots?: MatcherSlotRaw[];
+}
+
+export interface MatcherFileRaw {
+  path?: string;
+  state?: string;
+  titleId?: string;
+  parsed?: { group?: number; slot?: number }[];
+  placements?: { group?: number; slot?: number; ordinal?: number }[];
+  decided?: boolean;
+  orphaned?: boolean;
+  reason?: string;
+}
+
+export interface MatcherDocumentRaw {
+  containerId?: string;
+  containerType?: string;
+  libraryId?: string;
+  title?: string;
+  year?: number;
+  seriesExternalId?: string;
+  slotsUnavailable?: string;
+  groups?: MatcherGroupRaw[];
+  files?: MatcherFileRaw[];
+  applied?: { rearranged?: number; displaced?: string[]; deferred?: string[] };
+}
+
+export interface SeriesSlotsRaw {
+  externalId?: string;
+  groups?: { number?: number; slotCount?: number }[];
+  group?: { number?: number };
+  slots?: MatcherSlotRaw[];
 }

@@ -62,6 +62,10 @@ type Store interface {
 	// right (sticky across rescans, migration 0012).
 	TitlesNeedingReview(libraryID string) ([]store.NeedsReviewItem, error)
 	ShowsNeedingReview(libraryID string) ([]store.NeedsReviewItem, error)
+	// CollidingFilePaths names the Files behind an `ambiguous` Title — the two (or
+	// more) that claim one Edition. Without them the flag is unactionable: the
+	// Admin is told a title is ambiguous and given nothing to go and look at.
+	CollidingFilePaths(titleIDs []string) (map[string][]string, error)
 	// TitleFixContexts / ShowFixContexts batch-read the breadcrumb + representative
 	// file each Needs-Fixing row shows so the Admin can tell one flagged item from
 	// another without opening it (store/fixcontext.go).
@@ -105,6 +109,28 @@ type Store interface {
 	ClearTitleFieldLocks(titleID string) error
 	ClearEntityFieldLocks(entityType, entityID string) error
 	AnyFilePathForShow(showID string) (string, error)
+	// Placement Apply (file-matcher/03, ADR-0044): the file-anchored, NON-destructive
+	// sibling of the corrections above — the Admin says a File was filed in the wrong
+	// place, so watch state is kept rather than reset. ShowFiles / EpisodeTitleIDs are
+	// the "before" picture Apply plans against, LoadStoredFile supplies the already-
+	// probed File rows it rebuilds Editions from (Apply never probes), and
+	// ApplyShowArrangement commits the whole rearrangement in one transaction.
+	ShowFiles(showID string) ([]store.ShowFile, error)
+	EpisodeTitleIDs(showID string) (map[string]string, error)
+	LoadStoredFile(path string) (store.File, error)
+	ApplyShowArrangement(a store.ShowArrangement) error
+	// The matcher READ (file-matcher/05): the same three states the Scanner replays,
+	// plus the Slots the Show's Episode Titles already hold and the record each is
+	// pinned to. FileDecisionsByLibrary is one read for the whole Library because
+	// that is how the Scanner consumes it too — one map, consulted per file.
+	FileDecisionsByLibrary(libraryID string) (map[string]store.FileDecisions, error)
+	ShowEpisodeSlots(showID string) ([]store.EpisodeSlot, error)
+	// The Needs-Fixing queue's collapsed Show row (file-matcher/07): every Show of
+	// a Library, so the queue can count each one's unsettled Files the way the
+	// matcher counts them, and a bulk dismiss that settles the whole set one row
+	// stands for.
+	ShowsByLibrary(libraryID string) ([]store.Show, error)
+	MarkShowEpisodesReviewed(showID string) (int, error)
 	// TV browse (issue tv-music/01): the explicit Show → Season → Episode
 	// hierarchy. ListShows is the top-level grid for a TV Library; the rest drill
 	// down. EpisodeContextForTitle attaches parent context to an Episode detail.
@@ -174,6 +200,17 @@ type Store interface {
 // Service implements the browse operations.
 type Service struct {
 	store Store
+	// libraryLock is the per-Library scan lock (ADR-0031), shared with the Scanner
+	// so a Placement Apply and a scan can never write the same catalog rows at
+	// once. nil when no scanner is wired (tests, one-shot tools).
+	libraryLock LibraryLock
+	// reenricher queues the post-commit re-enrichment a rearrangement asks for. nil
+	// simply leaves the moved Titles 'pending' for the next scheduled pass.
+	reenricher Reenricher
+	// slotLister fills a Slot's provider record for the matcher. nil is the
+	// DEGRADED path, not a missing dependency: the matcher then serves bare
+	// numbered Slots, which is all offline renumbering needs (ADR-0044).
+	slotLister SlotLister
 	// artworkDir is the on-disk root of the app's own artwork cache
 	// (config.ArtworkCacheDir). Fetched/uploaded artwork rows store a path
 	// RELATIVE to this dir so the DB survives a data-dir move/rename; ResolveArtworkPath
@@ -675,6 +712,27 @@ func (s *Service) NeedsReview(libraryID string) ([]store.NeedsReviewItem, error)
 			items[i].Context = showCtxs[items[i].ID]
 		} else {
 			items[i].Context = titleCtxs[items[i].ID]
+		}
+	}
+
+	// Name the colliding Files on every ambiguous item. One batch read, and only
+	// when something is actually flagged — the overwhelmingly common case is a
+	// Library with no collisions at all, which costs no query.
+	var ambiguousIDs []string
+	for _, it := range items {
+		if it.Ambiguous {
+			ambiguousIDs = append(ambiguousIDs, it.ID)
+		}
+	}
+	if len(ambiguousIDs) > 0 {
+		colliding, err := s.store.CollidingFilePaths(ambiguousIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i := range items {
+			if items[i].Ambiguous {
+				items[i].CollidingPaths = colliding[items[i].ID]
+			}
 		}
 	}
 

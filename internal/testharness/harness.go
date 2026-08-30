@@ -776,6 +776,28 @@ func (s *Server) RefreshRotationKeys() {
 	}
 }
 
+// HoldLibraryScanLock claims a Library's per-Library scan lock (ADR-0031) and
+// returns the release. It is the deterministic stand-in for "a scan is running":
+// the lock is what a scan actually holds, and what a Placement Apply refuses on
+// (ADR-0044), so holding it directly proves the refusal without racing a real
+// scan that may finish before the request lands.
+//
+// A direct seam (like SetTitleHidden) for a state no HTTP route can hold open.
+func (s *Server) HoldLibraryScanLock(libraryID string) func() {
+	s.t.Helper()
+	if !s.app.Scanner.LockLibrary(libraryID) {
+		s.t.Fatalf("testharness: library %q is already locked", libraryID)
+	}
+	released := false
+	return func() {
+		if released {
+			return
+		}
+		released = true
+		s.app.Scanner.UnlockLibrary(libraryID)
+	}
+}
+
 // TestdataPath joins parts onto the calling package's testdata directory.
 func TestdataPath(parts ...string) string {
 	return filepath.Join(append([]string{"testdata"}, parts...)...)

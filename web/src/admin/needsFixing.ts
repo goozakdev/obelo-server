@@ -2,10 +2,11 @@ import type {
   EnrichmentAttentionTitle,
   MatchOverride,
   NeedsReviewItem,
+  ShowProblems,
   UnmatchedFile,
 } from "../api/types";
 import { API_PREFIX } from "../api/client";
-import { folderOf } from "./paths";
+import { folderOf, matcherPath } from "./paths";
 
 // The row model behind the Admin "Needs Fixing" queue.
 //
@@ -24,13 +25,40 @@ import { folderOf } from "./paths";
 // what's wrong (one sentence), and how do I fix it (an apply route). Rendering and
 // the network live elsewhere; everything here is a pure mapping, so the wording and
 // the fix routing are testable without a DOM.
+//
+// It then collapses a second time, along a different axis (ADR-0044,
+// file-matcher/07). A Show's episode-level problems are ONE problem, not one per
+// file: five files the provider counts in a re-numbered continuation series used to
+// be five rows, each offering to re-pick the series — a fix inert by construction,
+// because the series was never the part that was wrong. They become one Show row
+// whose action opens the file matcher, the only screen that can express what is
+// actually wrong. The row still answers all four questions: it names the Show, a
+// representative file, and each problem WITH ITS COUNT, because "5 problems" would
+// answer none of them.
+//
+// The counts have to be able to reach zero, or the queue is decoration. A Show
+// stays queued while any of its files is unsettled — which is deliberately not the
+// same as "has no metadata": an UNASSIGNED file is undecided, and settling it means
+// placing or ignoring it, both one gesture in the matcher (CONTEXT.md
+// "Unassigned"). The unassigned and unidentified halves of that count come from the
+// server, which reads them off the very arrangement the matcher renders, so the
+// number a row shows is exactly the number that screen can clear.
 
-/** What is wrong with a row — the axis the queue's filter chips segment on. */
+/** What is wrong with a row — the axis the queue's filter chips segment on.
+ *
+ * A row may carry SEVERAL of these: a Show's episode-level problems collapse into
+ * one row (ADR-0044, file-matcher/07), and one Show can easily have unassigned
+ * files and unmatched metadata at once. {@link FixItem.problem} is the one it leads
+ * with; {@link FixItem.problems} is every class it holds, and is what the chips
+ * filter on — a Show hidden from the "No metadata" chip because unassigned files
+ * happened to sort first would be a lie about what is in the library. */
 export type FixProblem =
   | "unidentified" // an Unmatched file: no Title was derived at all
+  | "unassigned" // a File the Admin took off its Slot: undecided, not settled
+  | "ambiguous" // two Files claim ONE Edition, so only the first of them plays
   | "uncertain-parse" // needs-review: a Title exists but the parse was a guess
   | "no-metadata" // enrichment could not settle on a provider record
-  | "orphaned-correction"; // a Match override whose anchor folder is gone
+  | "orphaned-correction"; // a Match override or Placement whose anchor is gone
 
 /** How a row's fix is applied once the Admin picks a provider record. The two
  * routes are deliberately different operations with different blast radii
@@ -47,9 +75,14 @@ export type FixRoute = "fix-match" | "enrichment-override" | "none";
 /** One row of the queue: everything needed to identify the item, say what is wrong
  * with it, and apply a fix — regardless of which server list it came from. */
 export interface FixItem {
-  /** Stable, unique across all four sources (ids can repeat between lists). */
+  /** Stable, unique across every source (ids can repeat between lists). */
   key: string;
+  /** The problem the row LEADS with — its badge-level answer to "what's wrong?".
+   * For a collapsed Show row this is the most-stuck class it holds. */
   problem: FixProblem;
+  /** Every problem class this row holds, for the filter chips. A single-problem
+   * row carries exactly `[problem]`. */
+  problems: FixProblem[];
   /** "movie" | "episode" | "track" | "show" | "file". */
   kind: string;
   /** The item's own name — an episode/track name, a movie title, a filename. */
@@ -62,6 +95,11 @@ export interface FixItem {
   /** The on-disk file (or, for an orphaned correction, the folder it points at).
    * "" only when every File of the item is Missing. */
   path: string;
+  /** The Files that claim ONE Edition between them, in play order — the evidence
+   * behind an `ambiguous` row, and the only thing that makes it actionable. The
+   * first is the one that actually plays; the rest are not being played at all.
+   * Empty on every other row. */
+  collidingPaths: string[];
   /** One sentence stating what is actually wrong, in the Admin's terms. */
   problemText: string;
   /** How to apply a picked record for this row. */
@@ -71,6 +109,12 @@ export interface FixItem {
   /** In-app route to the item's own page, or "" when it has none (a file that
    * never became a Title). */
   detailPath: string;
+  /** In-app route to the file matcher, or "" when this row is not fixed there.
+   * This is the collapsed Show row's PRIMARY action: five broken episodes are one
+   * arrangement problem, and the matcher is the only screen that can express the
+   * fix (ADR-0044). The old per-episode rows offered to re-pick the series, which
+   * was never the part that was wrong — a button inert by construction. */
+  sortPath: string;
   /** The Title this row is about, or "" for an Unmatched file / a Show. */
   titleId: string;
   /** The Show this row is about, or "" — dismissal posts to a different route. */
@@ -84,6 +128,10 @@ export interface FixItem {
    * positive. Only a needs-review row can be dismissed; the others describe a
    * real gap that dismissing would not fill. */
   canDismiss: boolean;
+  /** True when dismissing means "every flagged Episode of this Show", not one
+   * Title — the collapsed row stands for the whole set it counted, so its
+   * dismissal has to settle the same set in one call. */
+  dismissEpisodes: boolean;
   /** The artwork to show beside the row, or "" when the item has no entity to
    * fetch one for. A poster is the fastest possible confirmation that a flagged
    * item was filed correctly — far faster than reading a path. */
@@ -271,12 +319,16 @@ function artworkUrlFor(item: {
 }
 
 /** Which correction a needs-review row can actually apply. A folder anchor means
- * an identity fix-match; an Episode has no folder, so its correction is a metadata
- * pin at series+episode grain — the only thing that can repair a file the provider
- * numbers differently. Anything else has no search to offer. */
+ * an identity fix-match; anything else has no search to offer.
+ *
+ * An Episode has no folder, and — since file-matcher/07 — no provider search
+ * either. Re-picking the SERIES was never the fix for a file the provider numbers
+ * differently: the series was right, the arrangement was wrong. That row's action
+ * is the matcher (`sortPath`), and offering a search beside it would be exactly the
+ * button-that-cannot-work this queue exists to end. */
 function episodeFixRoute(item: { kind: string; folderPath: string }): FixRoute {
   if (item.folderPath !== "") return "fix-match";
-  return item.kind === "episode" ? "enrichment-override" : "none";
+  return "none";
 }
 
 /** Why the scanner flagged an uncertain parse, in one sentence. Each maps to the
@@ -295,6 +347,29 @@ function uncertainParseText(reason: string, kind: string): string {
   }
 }
 
+/** What a file collision means, in the Admin's terms, and what to do about it.
+ *
+ * The naming convention refuses to guess between two files that parse to the same
+ * Edition and are not parts ("flagged ambiguous in the web app, never silently
+ * guessed"), so the consequence is concrete and worth stating plainly: only the
+ * first of them plays. Saying "ambiguous" and stopping would leave the Admin to
+ * discover the missing file by watching something.
+ *
+ * The fix differs by kind because the app can only reach one of them. An Episode's
+ * files are arranged in the matcher — the screen that can say which file is which
+ * Slot, or that two of them are parts of one episode. A Movie has no such screen:
+ * the collision lives in the filenames, and the convention's own escape hatches
+ * (an `{edition-…}` tag, or a `- part1`/`- part2` suffix when they really are one
+ * work) are what settle it. */
+function ambiguousText(kind: string, count: number): string {
+  const noun = kind === "episode" ? "episode" : kind === "track" ? "track" : "title";
+  const files = count > 2 ? `${count} files claim` : "Two files claim";
+  const lead = `${files} to be this ${noun}, and nothing in their names says which — so only the first one plays.`;
+  return kind === "episode"
+    ? `${lead} Sort this show’s episodes to say which file is which.`
+    : `${lead} Rename one of them with an edition tag ({edition-Director’s Cut}), or with a part suffix (- part1 / - part2) if they are two halves of one work, then rescan.`;
+}
+
 /** Build the queue rows for one Library from the four server lists.
  *
  * Ordering is by how stuck the Admin is, not by list: a file that produced nothing
@@ -311,57 +386,166 @@ export function buildFixItems(input: {
   needsReview: NeedsReviewItem[];
   enrichment: EnrichmentAttentionTitle[];
   overrides: MatchOverride[];
+  /** The per-Show unsettled counts the client cannot compute (see
+   * {@link ShowProblems}). Optional so a failed fetch degrades to "collapse what I
+   * can see" rather than blanking the queue — the collapse itself never depends on
+   * it, because every flagged Episode already names its Show. */
+  showProblems?: ShowProblems[];
 }): FixItem[] {
-  const unidentified: FixItem[] = input.unmatched.map((f) => ({
-    key: `unmatched:${f.id}`,
-    problem: "unidentified" as const,
-    kind: "file",
-    name: fileStem(f.path),
-    year: 0,
-    breadcrumb: [],
-    path: f.path,
-    problemText: f.reason
-      ? `Not recognized as a title — ${f.reason}.`
-      : "Not recognized as a title — no name or year could be read from this file.",
-    route: "fix-match" as const,
-    searchSeed: searchableStem(f.path),
-    detailPath: "",
-    titleId: "",
-    showId: "",
-    // The server derives the anchor from the Library's kind; folderOf is the
-    // fallback for a server that predates that field, and is only ever right for a
-    // Movie library (a TV file's own directory is a Season folder, not the Show).
-    folderPath: f.folderPath || folderOf(f.path),
-    overrideId: "",
-    canDismiss: false,
-    // No Title was derived, so there is no entity to fetch artwork for and nothing
-    // Enrichment could have matched.
-    artworkUrl: "",
-    artworkVersion: "",
-    matchedAs: "",
-    hasMatch: false,
-  }));
+  const showProblems = input.showProblems ?? [];
+
+  // --- the collapse ----------------------------------------------------------
+  //
+  // A Show's episode-level problems become ONE row. The Batman case — five files
+  // the provider counts in a re-numbered continuation series — used to be five
+  // rows, each with a "Use this" that offered to fix the SERIES, which was never
+  // the part that was wrong. One problem, five rows, no working fix.
+  //
+  // The grouping is driven by the Episodes themselves, not by the server's
+  // show-problems list, so it holds even when that fetch fails: every flagged
+  // Episode already names its Show.
+  const shows = new Map<string, ShowRowCounts>();
+  const showFor = (showId: string, title: string) => {
+    let row = shows.get(showId);
+    if (row === undefined) {
+      row = {
+        showId,
+        title,
+        year: 0,
+        path: "",
+        unidentified: 0,
+        unassigned: 0,
+        ambiguous: 0,
+        collidingPaths: [],
+        uncertainParse: 0,
+        noMetadata: 0,
+      };
+      shows.set(showId, row);
+    }
+    if (row.title === "") row.title = title;
+    return row;
+  };
+
+  // An identity-attention item carries EITHER flag or both, and the two are
+  // counted separately: an uncertain parse is a guess the Admin can confirm, a
+  // collision is two files one of which is not being played. Folding them into one
+  // number would produce a row whose "Looks right" cannot clear its own count.
+  for (const t of input.needsReview) {
+    if (t.kind !== "episode" || t.showId === "") continue;
+    const row = showFor(t.showId, t.showTitle);
+    if (t.needsReview) row.uncertainParse++;
+    if (t.ambiguous) {
+      row.ambiguous++;
+      row.collidingPaths.push(...t.collidingPaths);
+    }
+    if (row.path === "") row.path = t.path;
+  }
+  // An Episode blocked by its own numbering is ONE problem with one root cause, so
+  // it is counted once — exactly as the flat rows deduplicated it before. Only the
+  // uncertain-parse flag does that: a collision says nothing about whether the
+  // provider had a record, so an ambiguous Episode with no metadata has two
+  // genuinely different problems.
+  const flaggedTitles = new Set(
+    input.needsReview.filter((t) => t.needsReview).map((t) => t.id),
+  );
+  for (const t of input.enrichment) {
+    if (t.kind !== "episode" || t.showId === "") continue;
+    if (flaggedTitles.has(t.id)) continue;
+    const row = showFor(t.showId, t.showTitle);
+    row.noMetadata++;
+    if (row.path === "") row.path = t.path;
+  }
+
+  // The server's half: files that are in NO list the client already holds. An
+  // explicitly unassigned File produces neither a Title nor an Unmatched row, and
+  // an Unmatched row is a flat path until the Show's folders say whose it is.
+  const orphanRows: FixItem[] = [];
+  const foldedPaths = new Set<string>();
+  for (const p of showProblems) {
+    for (const path of p.unmatchedPaths) foldedPaths.add(path);
+    if (p.unassigned > 0 || p.unidentified > 0) {
+      const row = showFor(p.showId, p.title);
+      row.unassigned += p.unassigned;
+      row.unidentified += p.unidentified;
+      row.year = p.year;
+      // The server's representative path is one of the COUNTED files, so it beats
+      // a flagged Episode's path at answering "which file?".
+      if (p.path !== "") row.path = p.path;
+    }
+    if (p.orphaned > 0) orphanRows.push(orphanedPlacementRow(p));
+  }
+  for (const p of showProblems) {
+    const row = shows.get(p.showId);
+    if (row !== undefined && row.year === 0) row.year = p.year;
+  }
+
+  const showRows: FixItem[] = [];
+  for (const row of shows.values()) showRows.push(showFixItem(row));
+
+  // --- the flat rows ---------------------------------------------------------
+
+  const unidentified: FixItem[] = input.unmatched
+    // A file counted inside a Show row must not also be a row of its own: that is
+    // the five-rows-one-problem shape returning by the back door.
+    .filter((f) => !foldedPaths.has(f.path))
+    .map((f) => ({
+      key: `unmatched:${f.id}`,
+      problem: "unidentified" as const,
+      problems: ["unidentified"] as FixProblem[],
+      kind: "file",
+      name: fileStem(f.path),
+      year: 0,
+      breadcrumb: [],
+      path: f.path,
+      collidingPaths: [],
+      problemText: f.reason
+        ? `Not recognized as a title — ${f.reason}.`
+        : "Not recognized as a title — no name or year could be read from this file.",
+      route: "fix-match" as const,
+      searchSeed: searchableStem(f.path),
+      detailPath: "",
+      sortPath: "",
+      titleId: "",
+      showId: "",
+      // The server derives the anchor from the Library's kind; folderOf is the
+      // fallback for a server that predates that field, and is only ever right for a
+      // Movie library (a TV file's own directory is a Season folder, not the Show).
+      folderPath: f.folderPath || folderOf(f.path),
+      overrideId: "",
+      canDismiss: false,
+      dismissEpisodes: false,
+      // No Title was derived, so there is no entity to fetch artwork for and nothing
+      // Enrichment could have matched.
+      artworkUrl: "",
+      artworkVersion: "",
+      matchedAs: "",
+      hasMatch: false,
+    }));
 
   const orphaned: FixItem[] = input.overrides
     .filter((o) => o.orphaned)
     .map((o) => ({
       key: `override:${o.id}`,
       problem: "orphaned-correction" as const,
+      problems: ["orphaned-correction"] as FixProblem[],
       kind: "file",
       name: o.title,
       year: o.year,
       breadcrumb: [],
       path: o.folderPath,
+      collidingPaths: [],
       problemText:
         "This correction points at a folder that no longer exists, so it can never apply again. Discard it, or restore the folder.",
       route: "none" as const,
       searchSeed: o.title,
       detailPath: "",
+      sortPath: "",
       titleId: "",
       showId: "",
       folderPath: o.folderPath,
       overrideId: o.id,
       canDismiss: false,
+      dismissEpisodes: false,
       artworkUrl: "",
       artworkVersion: "",
       // The correction itself records the identity it asserts, which is exactly
@@ -371,68 +555,94 @@ export function buildFixItems(input: {
       hasMatch: true,
     }));
 
-  const uncertain: FixItem[] = input.needsReview.map((t) => ({
-    key: `review:${t.kind}:${t.id}`,
-    problem: "uncertain-parse" as const,
-    kind: t.kind,
-    name: displayNameFor(t),
-    year: t.year,
-    breadcrumb: breadcrumbFor(t),
-    path: t.path,
-    problemText: uncertainParseText(t.reason, t.kind),
-    // A folder override is the fix only where one can anchor. An Episode has no
-    // folder of its own — but it can still be pointed at the right provider record
-    // (series + episode), which is the only correction an Episode has and the one
-    // that fixes a file whose numbering doesn't line up with the provider's.
-    route: episodeFixRoute(t),
-    searchSeed: searchSeedFor(t),
-    detailPath: t.kind === "show" ? `/shows/${t.id}` : `/titles/${t.id}`,
-    titleId: t.kind === "show" ? "" : t.id,
-    showId: t.kind === "show" ? t.id : "",
-    folderPath: t.folderPath,
-    overrideId: "",
-    canDismiss: true,
-    // This is the row that asks the Admin to CONFIRM a filing, so it is the row
-    // that most needs the evidence: the poster and the record it matched to.
-    artworkUrl: artworkUrlFor(t),
-    artworkVersion: t.enrichmentStatus,
-    matchedAs: matchedAsFor(t, displayedNameFor(displayNameFor(t), t.year)),
-    hasMatch: t.enrichmentStatus === "matched",
-  }));
-
-  // Titles that already have a needs-review row. An Episode blocked by its own
-  // numbering would otherwise appear TWICE — once for the numbering, once for the
-  // metadata that numbering blocks — same file, same root cause, and only the first
-  // row actionable. One row with one action beats two rows and a riddle.
-  const flaggedTitles = new Set(input.needsReview.map((t) => t.id));
+  // The identity-attention rows: an uncertain parse, a file collision, or both.
+  // BOTH is one row rather than two — the item is one thing, and `problems` is
+  // exactly the field that lets a row hold more than one class. Two rows for one
+  // Movie would be the five-rows-one-problem shape at a smaller scale.
+  const uncertain: FixItem[] = input.needsReview
+    // Collapsed into their Show's row above.
+    .filter((t) => !(t.kind === "episode" && shows.has(t.showId)))
+    .map((t) => {
+      const problems: FixProblem[] = [];
+      if (t.ambiguous) problems.push("ambiguous");
+      if (t.needsReview) problems.push("uncertain-parse");
+      const sentences = [
+        t.ambiguous ? ambiguousText(t.kind, t.collidingPaths.length) : "",
+        t.needsReview ? uncertainParseText(t.reason, t.kind) : "",
+      ].filter((line) => line !== "");
+      return {
+        key: `review:${t.kind}:${t.id}`,
+        problem: problems[0] ?? "uncertain-parse",
+        problems,
+        kind: t.kind,
+        name: displayNameFor(t),
+        year: t.year,
+        breadcrumb: breadcrumbFor(t),
+        path: t.path,
+        collidingPaths: t.collidingPaths,
+        problemText: sentences.join(" "),
+        // A folder override is the fix only where one can anchor. An Episode has none
+        // — and an Episode's real fix is an arrangement, not a name, so it is offered
+        // the matcher rather than a provider search that cannot reach the problem.
+        //
+        // A row flagged ONLY for a collision gets no search either, for the same
+        // reason: naming the work again cannot settle which of two files is it. The
+        // fix is on disk (or, for an Episode, in the matcher), and an inert "Use
+        // this" is exactly what this queue replaced.
+        route: t.needsReview ? episodeFixRoute(t) : "none",
+        searchSeed: searchSeedFor(t),
+        detailPath: t.kind === "show" ? `/shows/${t.id}` : `/titles/${t.id}`,
+        sortPath: t.kind === "episode" && t.showId !== "" ? matcherPath(t.showId) : "",
+        titleId: t.kind === "show" ? "" : t.id,
+        showId: t.kind === "show" ? t.id : "",
+        folderPath: t.folderPath,
+        overrideId: "",
+        // "Looks right" settles an uncertain PARSE. It has no answer for a
+        // collision — the two files are still both there, and one of them still
+        // does not play — so a row flagged only for that is not dismissible.
+        canDismiss: t.needsReview,
+        dismissEpisodes: false,
+        // This is the row that asks the Admin to CONFIRM a filing, so it is the row
+        // that most needs the evidence: the poster and the record it matched to.
+        artworkUrl: artworkUrlFor(t),
+        artworkVersion: t.enrichmentStatus,
+        matchedAs: matchedAsFor(t, displayedNameFor(displayNameFor(t), t.year)),
+        hasMatch: t.enrichmentStatus === "matched",
+      };
+    });
 
   const noMetadata: FixItem[] = input.enrichment.flatMap((t) => {
-    // One file, one row. An Episode flagged for its numbering already appears above
-    // as a needs-review row, and that row now carries the same series+episode fix
-    // (see episodeFixRoute) plus a "looks right" dismissal — so a second row for the
-    // same file would offer a subset of the same actions. Dismiss the first and this
-    // one returns, still fixable.
+    // Collapsed into their Show's row above.
+    if (t.kind === "episode" && shows.has(t.showId)) return [];
+    // One file, one row: an Episode flagged for its numbering already appears as a
+    // needs-review row carrying the same actions.
     if (t.kind === "episode" && flaggedTitles.has(t.id)) return [];
     return {
       key: `enrichment:${t.id}`,
       problem: "no-metadata" as const,
+      problems: ["no-metadata"] as FixProblem[],
       kind: t.kind,
       name: displayNameFor(t),
       year: t.year,
       breadcrumb: breadcrumbFor(t),
       path: t.path,
+      collidingPaths: [],
       problemText:
         t.enrichmentStatus === "failed"
           ? "The metadata lookup failed — the provider was unreachable, or it has no episode at this season and number."
           : "No metadata match — the provider had no record for this name, so there is no artwork or description.",
-      route: "enrichment-override" as const,
+      // An Episode's metadata problem is not fixed by naming a work — see
+      // episodeFixRoute. Every other kind IS, so it keeps its search.
+      route: (t.kind === "episode" ? "none" : "enrichment-override") as FixRoute,
       searchSeed: searchSeedFor(t),
       detailPath: `/titles/${t.id}`,
+      sortPath: t.kind === "episode" && t.showId !== "" ? matcherPath(t.showId) : "",
       titleId: t.id,
       showId: "",
       folderPath: "",
       overrideId: "",
       canDismiss: false,
+      dismissEpisodes: false,
       artworkUrl: artworkUrlFor(t),
       artworkVersion: t.enrichmentStatus,
       // Nothing matched — that IS this row's problem — so there is no record to
@@ -442,7 +652,168 @@ export function buildFixItems(input: {
     };
   });
 
-  return [...unidentified, ...orphaned, ...uncertain, ...noMetadata];
+  return [...unidentified, ...orphaned, ...orphanRows, ...showRows, ...uncertain, ...noMetadata];
+}
+
+/** The tallied problems behind one collapsed Show row, before it becomes a row. */
+interface ShowRowCounts {
+  showId: string;
+  title: string;
+  year: number;
+  path: string;
+  unidentified: number;
+  unassigned: number;
+  ambiguous: number;
+  /** Every colliding File under this Show, across all of its ambiguous Episodes —
+   * the row has to name them, not just count them. */
+  collidingPaths: string[];
+  uncertainParse: number;
+  noMetadata: number;
+}
+
+/** The problem classes a Show row holds, most-stuck first. The order is the same
+ * "how stuck is the Admin" order the queue itself sorts by, so the class a row
+ * LEADS with is the worst thing wrong with it. */
+function showRowProblems(c: ShowRowCounts): FixProblem[] {
+  const out: FixProblem[] = [];
+  if (c.unidentified > 0) out.push("unidentified");
+  if (c.unassigned > 0) out.push("unassigned");
+  if (c.ambiguous > 0) out.push("ambiguous");
+  if (c.uncertainParse > 0) out.push("uncertain-parse");
+  if (c.noMetadata > 0) out.push("no-metadata");
+  return out;
+}
+
+/** One clause per problem class, counted and in the Admin's terms. A row that said
+ * only "5 problems" would answer none of the queue's four questions: the count is
+ * useless without the noun that says what was counted. */
+function showRowClauses(c: ShowRowCounts): string[] {
+  const out: string[] = [];
+  if (c.unidentified > 0) {
+    out.push(
+      c.unidentified === 1
+        ? "1 file isn’t recognized as an episode"
+        : `${c.unidentified} files aren’t recognized as episodes`,
+    );
+  }
+  if (c.unassigned > 0) {
+    out.push(
+      c.unassigned === 1
+        ? "1 file isn’t assigned to an episode"
+        : `${c.unassigned} files aren’t assigned to an episode`,
+    );
+  }
+  if (c.ambiguous > 0) {
+    out.push(
+      c.ambiguous === 1
+        ? "1 episode has two files claiming to be it, so only one of them plays"
+        : `${c.ambiguous} episodes have two files claiming to be them, so only one of each plays`,
+    );
+  }
+  if (c.uncertainParse > 0) {
+    out.push(
+      c.uncertainParse === 1
+        ? "1 episode was filed on a guess about its numbering"
+        : `${c.uncertainParse} episodes were filed on a guess about their numbering`,
+    );
+  }
+  if (c.noMetadata > 0) {
+    out.push(
+      c.noMetadata === 1
+        ? "1 episode has no metadata match"
+        : `${c.noMetadata} episodes have no metadata match`,
+    );
+  }
+  return out;
+}
+
+/** Join clauses into one readable sentence. */
+export function joinClauses(clauses: string[]): string {
+  if (clauses.length === 0) return "";
+  if (clauses.length === 1) return clauses[0];
+  return `${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}`;
+}
+
+/** One Show's episode-level problems as a single queue row.
+ *
+ * It answers the queue's four questions exactly as every other row does — kind
+ * badge and Show title (what), a representative file (which), a sentence naming
+ * each problem and its count (what's wrong), and an action that can actually
+ * perform the fix (how). The action is the matcher, because arranging files onto
+ * Slots is the only operation that can express what is wrong here. */
+function showFixItem(c: ShowRowCounts): FixItem {
+  const problems = showRowProblems(c);
+  return {
+    key: `show:${c.showId}`,
+    problem: problems[0] ?? "no-metadata",
+    problems,
+    kind: "show",
+    name: c.title,
+    year: c.year,
+    breadcrumb: [],
+    path: c.path,
+    collidingPaths: c.collidingPaths,
+    problemText: `${joinClauses(showRowClauses(c))}. Sort this show’s episodes to place, renumber or ignore its files in one pass.`,
+    // Nothing here is fixed by naming a work: the Show is already identified, and
+    // the fix is an arrangement. Offering a provider search would be exactly the
+    // inert "Use this" this row exists to replace.
+    route: "none",
+    searchSeed: c.title,
+    detailPath: `/shows/${c.showId}`,
+    sortPath: matcherPath(c.showId),
+    titleId: "",
+    showId: c.showId,
+    folderPath: "",
+    overrideId: "",
+    // "Looks right" still means what it always meant: the uncertain PARSE is fine.
+    // It settles nothing else, so it is offered only where there is an uncertain
+    // parse to dismiss.
+    canDismiss: c.uncertainParse > 0,
+    dismissEpisodes: true,
+    artworkUrl: `${API_PREFIX}/shows/${encodeURIComponent(c.showId)}/artwork/poster`,
+    artworkVersion: "",
+    matchedAs: "",
+    hasMatch: false,
+  };
+}
+
+/** A Show's orphaned Placements as their own row.
+ *
+ * A correction pointing at a file that is gone is BROKEN rather than done, so it is
+ * promoted into the queue in its own right (CONTEXT.md "Orphaned correction") —
+ * exactly as an orphaned folder override already is. It is deliberately not folded
+ * into the Show's own row: an undecided file is placed, and an orphan cannot be,
+ * because there is nothing left to place. */
+function orphanedPlacementRow(p: ShowProblems): FixItem {
+  return {
+    key: `orphaned-placement:${p.showId}`,
+    problem: "orphaned-correction",
+    problems: ["orphaned-correction"],
+    kind: "show",
+    name: p.title,
+    year: p.year,
+    breadcrumb: [],
+    path: p.orphanedPath,
+    collidingPaths: [],
+    problemText:
+      p.orphaned === 1
+        ? "1 correction points at a file that is no longer on disk, so it can never apply again. Sort this show’s episodes to drop it, or put the file back."
+        : `${p.orphaned} corrections point at files that are no longer on disk, so they can never apply again. Sort this show’s episodes to drop them, or put the files back.`,
+    route: "none",
+    searchSeed: p.title,
+    detailPath: `/shows/${p.showId}`,
+    sortPath: matcherPath(p.showId),
+    titleId: "",
+    showId: p.showId,
+    folderPath: "",
+    overrideId: "",
+    canDismiss: false,
+    dismissEpisodes: false,
+    artworkUrl: `${API_PREFIX}/shows/${encodeURIComponent(p.showId)}/artwork/poster`,
+    artworkVersion: "",
+    matchedAs: "",
+    hasMatch: false,
+  };
 }
 
 /** The filename without its directory or extension — what a never-identified file
@@ -482,14 +853,25 @@ export function searchableStem(path: string): string {
 export const FIX_PROBLEMS: { problem: FixProblem; label: string }[] = [
   { problem: "unidentified", label: "Not identified" },
   { problem: "orphaned-correction", label: "Broken corrections" },
+  { problem: "unassigned", label: "Not sorted" },
+  { problem: "ambiguous", label: "Conflicting files" },
   { problem: "uncertain-parse", label: "Filed on a guess" },
   { problem: "no-metadata", label: "No metadata" },
 ];
+
+/** Whether a row belongs under a chip. A collapsed Show row holds several problem
+ * classes at once, and belongs under every one of them: filtering to "No metadata"
+ * must not hide a Show whose unassigned files merely sorted first. */
+export function hasProblem(item: FixItem, problem: FixProblem): boolean {
+  return item.problems.includes(problem);
+}
 
 /** Per-chip empty-state copy: specific about what is fine, since "nothing here" on
  * a filtered view otherwise reads as a failed load. */
 export const EMPTY_BY_PROBLEM: Record<FixProblem, string> = {
   unidentified: "Every media file in this library was recognized as a title.",
+  unassigned: "Every file in this library is assigned to an episode, or ignored.",
+  ambiguous: "No two files in this library claim to be the same title.",
   "orphaned-correction": "Every correction still points at a folder that exists.",
   "uncertain-parse": "Nothing in this library was filed from an uncertain parse.",
   "no-metadata": "Every title in this library has its metadata.",

@@ -36,7 +36,8 @@ const {
   searchLibraryEnrichmentCandidates,
   previewExternalCandidate,
   previewLibraryExternalCandidate,
-  listEpisodeCandidates,
+  listShowProblems,
+  reviewShowEpisodes,
   deleteOverride,
   scanLibrary,
 } = vi.hoisted(() => ({
@@ -53,7 +54,8 @@ const {
   searchLibraryEnrichmentCandidates: vi.fn(),
   previewExternalCandidate: vi.fn(),
   previewLibraryExternalCandidate: vi.fn(),
-  listEpisodeCandidates: vi.fn(),
+  listShowProblems: vi.fn(),
+  reviewShowEpisodes: vi.fn(),
   deleteOverride: vi.fn(),
   scanLibrary: vi.fn(),
 }));
@@ -78,7 +80,8 @@ vi.mock("../api/client", async () => {
       previewExternalCandidate: (...a: unknown[]) => previewExternalCandidate(...a),
       previewLibraryExternalCandidate: (...a: unknown[]) =>
         previewLibraryExternalCandidate(...a),
-      listEpisodeCandidates: (...a: unknown[]) => listEpisodeCandidates(...a),
+      listShowProblems: (...a: unknown[]) => listShowProblems(...a),
+      reviewShowEpisodes: (...a: unknown[]) => reviewShowEpisodes(...a),
       deleteOverride: (...a: unknown[]) => deleteOverride(...a),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
     },
@@ -121,6 +124,11 @@ function reviewItem(over: Partial<NeedsReviewItem> = {}): NeedsReviewItem {
     year: 0,
     folderPath: "/media/movies/Yearless Movie",
     reason: "no-year",
+    // Flagged for its parse, not for a file collision — the default shape of this
+    // list. A test that wants a collision passes `ambiguous` + `collidingPaths`.
+    needsReview: true,
+    ambiguous: false,
+    collidingPaths: [],
     enrichmentStatus: "matched",
     path: "/media/movies/Yearless Movie/Yearless Movie.mp4",
     ...over,
@@ -140,6 +148,21 @@ function enrichmentItem(over: Partial<EnrichmentAttentionTitle> = {}): Enrichmen
     path: "/media/tv/The Wire/S01/the.wire.103.mkv",
     ...over,
   };
+}
+/** A metadata-attention row whose fix IS a provider record — a Movie. An Episode's
+ * is not: its Show is already identified and its problem is an arrangement, so its
+ * row offers the matcher rather than a search (file-matcher/07). */
+function movieEnrichmentItem(over: Partial<EnrichmentAttentionTitle> = {}): EnrichmentAttentionTitle {
+  return enrichmentItem({
+    kind: "movie",
+    title: "Arrival",
+    showTitle: "",
+    showId: "",
+    seasonNumber: 0,
+    episodeNumber: 0,
+    path: "/media/movies/arrival.mkv",
+    ...over,
+  });
 }
 function unmatchedFile(over: Partial<UnmatchedFile> = {}): UnmatchedFile {
   return {
@@ -187,7 +210,8 @@ beforeEach(() => {
     searchLibraryEnrichmentCandidates,
     previewExternalCandidate,
     previewLibraryExternalCandidate,
-    listEpisodeCandidates,
+    listShowProblems,
+    reviewShowEpisodes,
     deleteOverride,
     scanLibrary,
   ]) {
@@ -198,6 +222,8 @@ beforeEach(() => {
   listOverrides.mockResolvedValue([]);
   listEnrichmentAttention.mockResolvedValue([]);
   listNeedsReview.mockResolvedValue([]);
+  listShowProblems.mockResolvedValue([]);
+  reviewShowEpisodes.mockResolvedValue(undefined);
   reviewTitle.mockResolvedValue(undefined);
   reviewShow.mockResolvedValue(undefined);
   fixMatch.mockResolvedValue(override());
@@ -206,14 +232,6 @@ beforeEach(() => {
   scanLibrary.mockResolvedValue({ state: "idle" });
   searchEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
   searchLibraryEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
-  listEpisodeCandidates.mockResolvedValue({
-    seasons: [
-      { season: 3, episodeCount: 20 },
-      { season: 4, episodeCount: 10 },
-    ],
-    season: 3,
-    episodes: [{ season: 3, episode: 11, name: "Sideshow", airDate: "1995-09-04" }],
-  });
 });
 
 function render() {
@@ -246,6 +264,35 @@ describe("AdminNeedsFixingScreen — the queue", () => {
     );
   });
 
+  it("shows an ambiguous item, names the files that collide, and offers no inert search", async () => {
+    // The convention promises a collision is "flagged ambiguous IN THE WEB APP"
+    // (docs/naming-convention.md). Until now the flag reached the browser and was
+    // rendered nowhere at all — so this asserts the whole chain: a row exists, it
+    // is filed under the collision chip, it prints both paths, and it does not
+    // pretend a provider search or a dismissal could settle it.
+    listNeedsReview.mockResolvedValue([
+      reviewItem({
+        needsReview: false,
+        ambiguous: true,
+        collidingPaths: [
+          "/media/movies/Dune (2021)/Dune (2021).mkv",
+          "/media/movies/Dune (2021)/Dune (2021) (repack).mkv",
+        ],
+      }),
+    ]);
+    render();
+
+    const row = await screen.findByTestId("fix-item");
+    expect(row).toHaveAttribute("data-problem", "ambiguous");
+    expect(within(row).getByTestId("fix-item-problem")).toHaveTextContent(/only the first one plays/i);
+    const collisions = within(row).getByTestId("fix-item-collisions");
+    expect(collisions).toHaveTextContent("/media/movies/Dune (2021)/Dune (2021).mkv");
+    expect(collisions).toHaveTextContent("/media/movies/Dune (2021)/Dune (2021) (repack).mkv");
+    expect(within(row).queryByTestId("fix-item-dismiss")).toBeNull();
+    expect(within(row).queryByTestId("fix-item-toggle")).toBeNull();
+    expect(screen.getByTestId("needs-fixing-chip-ambiguous")).toHaveTextContent("1");
+  });
+
   it("states what is wrong in a sentence rather than a status word", async () => {
     listEnrichmentAttention.mockResolvedValue([enrichmentItem({ enrichmentStatus: "failed" })]);
     render();
@@ -274,21 +321,20 @@ describe("AdminNeedsFixingScreen — the queue", () => {
 
 describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
   it("searches on open and offers the top hit as the best guess", async () => {
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
+    listEnrichmentAttention.mockResolvedValue([movieEnrichmentItem()]);
     searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ title: "The Wire", year: 2002 })],
+      candidates: [candidate({ title: "Arrival", year: 2016 })],
       hasMore: false,
     });
     render();
 
     await userEvent.click(await screen.findByTestId("fix-item-toggle"));
 
-    // The seed is the SHOW, since that is what the provider resolves an episode by.
     await waitFor(() =>
-      expect(searchEnrichmentCandidates).toHaveBeenCalledWith("e1", "The Wire", { page: 0 }),
+      expect(searchEnrichmentCandidates).toHaveBeenCalledWith("e1", "Arrival", { page: 0 }),
     );
     expect(await screen.findByTestId("fix-best-guess")).toBeInTheDocument();
-    expect(screen.getByTestId("fix-candidate-title")).toHaveTextContent("The Wire (2002)");
+    expect(screen.getByTestId("fix-candidate-title")).toHaveTextContent("Arrival (2016)");
   });
 
   it("applies a metadata correction with one click, never touching identity", async () => {
@@ -362,7 +408,7 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
   });
 
   it("lets the Admin search again when the guess is wrong", async () => {
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
+    listEnrichmentAttention.mockResolvedValue([movieEnrichmentItem()]);
     searchEnrichmentCandidates.mockResolvedValue({ candidates: [candidate()], hasMore: false });
     render();
 
@@ -378,7 +424,7 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
   });
 
   it("routes a pasted provider id to the by-id preview instead of a search", async () => {
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
+    listEnrichmentAttention.mockResolvedValue([movieEnrichmentItem()]);
     searchEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
     previewExternalCandidate.mockResolvedValue(candidate({ externalId: "1438" }));
     render();
@@ -393,112 +439,181 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
   });
 });
 
-describe("AdminNeedsFixingScreen — picking the right episode", () => {
-  // The case this exists for: a file whose on-disk season/episode disagrees with the
-  // provider's (a run of episodes the provider counts in the NEXT season). Picking
-  // the series alone never fixed it, because the lookup uses the numbers parsed from
-  // the filename — so the series had to be followed by an explicit episode choice.
+describe("AdminNeedsFixingScreen — one row per Show", () => {
+  // The Batman case, on screen. Five files the provider counts in a re-numbered
+  // continuation series used to be five rows, each with a "Use this" that offered
+  // to fix the SERIES — the one part that was already right. One problem, five
+  // rows, no working fix. They are one row now, and its action is the matcher.
 
-  it("asks which episode after the series is picked, instead of applying the series", async () => {
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
-    searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438", title: "The Wire" })],
-      hasMore: false,
+  const brokenEpisode = (id: string) =>
+    enrichmentItem({
+      id,
+      title: `Ep ${id}`,
+      showId: "sh1",
+      showTitle: "Batman: The Animated Series",
+      seasonNumber: 3,
+      path: `/media/tv/Batman/Season 03/batman.${id}.mkv`,
     });
-    render();
 
-    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
-    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
-
-    // Step two, NOT an apply — the series alone cannot identify the record.
-    expect(await screen.findByTestId("episode-chooser")).toBeInTheDocument();
-    expect(applyEnrichmentOverride).not.toHaveBeenCalled();
-    expect(screen.getByTestId("episode-chooser-series")).toHaveTextContent("The Wire");
-  });
-
-  it("opens on the season the file is already filed under", async () => {
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
-    searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438" })],
-      hasMore: false,
-    });
-    render();
-
-    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
-    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
-    await screen.findByTestId("episode-chooser");
-
-    // No season argument: the server defaults to the file's own, which is the list
-    // the Admin most likely wants (right season, wrong episode).
-    expect(listEpisodeCandidates).toHaveBeenCalledWith("e1", "1438", undefined);
-  });
-
-  it("pins the chosen episode, carrying its season — not the file's", async () => {
-    // The whole point: the file says S03, the provider says S04. What gets pinned
-    // must be the PROVIDER's numbers, or nothing is fixed.
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
-    searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438" })],
-      hasMore: false,
-    });
-    listEpisodeCandidates.mockResolvedValue({
-      seasons: [{ season: 4, episodeCount: 10 }],
-      season: 4,
-      episodes: [{ season: 4, episode: 1, name: "Holiday Knights" }],
-    });
-    render();
-
-    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
-    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
-    await userEvent.click(await screen.findByTestId("episode-choice"));
-
-    await waitFor(() =>
-      expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438", undefined, {
-        season: 4,
-        episode: 1,
-      }),
+  it("shows one row for five broken episodes, naming the problem and its count", async () => {
+    listEnrichmentAttention.mockResolvedValue(
+      ["a", "b", "c", "d", "e"].map(brokenEpisode),
     );
-    // Still metadata only — the file is not re-filed, so no rescan is offered.
-    expect(fixMatch).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("needs-fixing-rescan")).not.toBeInTheDocument();
-  });
-
-  it("returns to the SERIES search on 'wrong series', not out of the row", async () => {
-    // The likeliest mistake here is picking the wrong show — and a provider may
-    // model the episodes under a different series entirely (a spin-off, a
-    // re-numbered continuation), so re-searching is part of the normal path.
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
-    searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438", title: "The Wire" })],
-      hasMore: false,
-    });
     render();
 
-    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
-    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
-    await screen.findByTestId("episode-chooser");
-
-    await userEvent.click(screen.getByTestId("episode-chooser-back"));
-
-    // Back on the search, with the row still open.
-    expect(await screen.findByTestId("fix-picker-input")).toBeInTheDocument();
-    expect(screen.queryByTestId("episode-chooser")).not.toBeInTheDocument();
+    await screen.findByTestId("needs-fixing-list");
+    const rows = screen.getAllByTestId("fix-item");
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]).getByTestId("fix-item-name")).toHaveTextContent(
+      "Batman: The Animated Series",
+    );
+    expect(within(rows[0]).getByTestId("fix-item-problem")).toHaveTextContent(
+      "5 episodes have no metadata match",
+    );
+    // And it still answers "which file?" — a count with no file is not actionable.
+    expect(within(rows[0]).getByTestId("fix-item-path")).toHaveTextContent("batman.a.mkv");
   });
 
-  it("lets the Admin switch seasons to find the episode", async () => {
-    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
-    searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438" })],
-      hasMore: false,
-    });
+  it("offers the matcher, and no fix that cannot work", async () => {
+    listEnrichmentAttention.mockResolvedValue([brokenEpisode("a")]);
     render();
 
-    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
-    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
-    await screen.findByTestId("episode-chooser");
+    const row = await screen.findByTestId("fix-item");
+    expect(within(row).getByTestId("fix-item-sort")).toHaveAttribute(
+      "href",
+      "/admin/shows/sh1/matcher",
+    );
+    // No provider search: nothing here is fixed by naming a work.
+    expect(within(row).queryByTestId("fix-item-toggle")).not.toBeInTheDocument();
+  });
 
-    await userEvent.selectOptions(screen.getByTestId("episode-chooser-season-select"), "4");
-    await waitFor(() => expect(listEpisodeCandidates).toHaveBeenCalledWith("e1", "1438", 4));
+  it("keeps a Show queued for a file the Admin merely left unassigned", async () => {
+    // Undecided is not settled (CONTEXT.md "Unassigned"). This is the count no
+    // client-side list can see: an unassigned file is neither a Title nor an
+    // Unmatched row.
+    listShowProblems.mockResolvedValue([
+      {
+        showId: "sh1",
+        title: "Batman: The Animated Series",
+        year: 1992,
+        path: "/media/tv/Batman/Season 03/loose.mkv",
+        unassigned: 3,
+        unidentified: 0,
+        unmatchedPaths: [],
+        orphaned: 0,
+        orphanedPath: "",
+      },
+    ]);
+    render();
+
+    const row = await screen.findByTestId("fix-item");
+    expect(within(row).getByTestId("fix-item-problem")).toHaveTextContent(
+      "3 files aren’t assigned to an episode",
+    );
+    expect(within(row).getByTestId("fix-item-sort")).toBeInTheDocument();
+  });
+
+  it("counts the collapsed rows in the chips and the total, not the symptoms", async () => {
+    listEnrichmentAttention.mockResolvedValue(
+      ["a", "b", "c", "d", "e"].map(brokenEpisode),
+    );
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    // One problem, so one. The old queue said five.
+    expect(screen.getByTestId("needs-fixing-count")).toHaveTextContent("1");
+    expect(screen.getByTestId("needs-fixing-chip-no-metadata")).toHaveTextContent("1");
+  });
+
+  it("counts the library selector's badge the same collapsed way", async () => {
+    // The badge and the queue must agree. A badge that summed the raw lists would
+    // say "5 to fix" over a queue showing one row, and leave the Admin to work out
+    // which of the two numbers was lying.
+    listEnrichmentAttention.mockResolvedValue(
+      ["a", "b", "c", "d", "e"].map(brokenEpisode),
+    );
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    await waitFor(() =>
+      expect(screen.getByTestId("needs-fixing-library-select")).toHaveTextContent(
+        "Movies — 1 to fix",
+      ),
+    );
+  });
+
+  it("lists an orphaned Placement as its own row", async () => {
+    listShowProblems.mockResolvedValue([
+      {
+        showId: "sh1",
+        title: "Batman: The Animated Series",
+        year: 0,
+        path: "/media/tv/Batman/Season 03/loose.mkv",
+        unassigned: 1,
+        unidentified: 0,
+        unmatchedPaths: [],
+        orphaned: 1,
+        orphanedPath: "/media/tv/Batman/Season 03/gone.mkv",
+      },
+    ]);
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    const rows = screen.getAllByTestId("fix-item");
+    expect(rows).toHaveLength(2);
+    const orphan = rows.find(
+      (r) => r.getAttribute("data-problem") === "orphaned-correction",
+    );
+    expect(orphan).toBeDefined();
+    expect(within(orphan!).getByTestId("fix-item-path")).toHaveTextContent("gone.mkv");
+  });
+
+  it("dismisses every flagged Episode of the Show in one call", async () => {
+    listNeedsReview.mockResolvedValue([
+      reviewItem({
+        id: "ep1",
+        kind: "episode",
+        title: "Ep",
+        folderPath: "",
+        reason: "episode-numbering",
+        showId: "sh1",
+        showTitle: "Batman: The Animated Series",
+      }),
+    ]);
+    render();
+
+    const row = await screen.findByTestId("fix-item");
+    await userEvent.click(within(row).getByTestId("fix-item-dismiss"));
+
+    // One call, for the whole set the row stands for — N calls could half-succeed
+    // and leave a count the Admin cannot explain.
+    await waitFor(() => expect(reviewShowEpisodes).toHaveBeenCalledWith("sh1"));
+    expect(reviewTitle).not.toHaveBeenCalled();
+  });
+
+  it("does not list a file both inside a Show row and as a row of its own", async () => {
+    listUnmatched.mockResolvedValue([
+      unmatchedFile({ id: "u1", path: "/media/tv/Batman/Season 03/stray.mkv" }),
+    ]);
+    listShowProblems.mockResolvedValue([
+      {
+        showId: "sh1",
+        title: "Batman: The Animated Series",
+        year: 0,
+        path: "/media/tv/Batman/Season 03/stray.mkv",
+        unassigned: 0,
+        unidentified: 1,
+        unmatchedPaths: ["/media/tv/Batman/Season 03/stray.mkv"],
+        orphaned: 0,
+        orphanedPath: "",
+      },
+    ]);
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    const rows = screen.getAllByTestId("fix-item");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-kind")).toBe("show");
   });
 });
 
@@ -599,9 +714,10 @@ describe("AdminNeedsFixingScreen — the non-search resolutions", () => {
     await waitFor(() => expect(deleteOverride).toHaveBeenCalledWith("lib1", "o1"));
   });
 
-  it("offers an Episode both a fix and a dismissal, even with no folder anchor", async () => {
-    // An Episode has no folder to anchor an identity override to, but it can still
-    // be pointed at the right series+episode — so it gets a fix, not just a shrug.
+  it("gives an Episode the matcher and a dismissal, never a search it cannot use", async () => {
+    // An Episode has no folder to anchor an identity override to, and re-picking its
+    // series was never the fix — the series was right and the arrangement was wrong.
+    // So the row offers no provider search at all; its action is the matcher.
     listNeedsReview.mockResolvedValue([
       reviewItem({
         id: "ep1",
@@ -609,12 +725,18 @@ describe("AdminNeedsFixingScreen — the non-search resolutions", () => {
         title: "Ep",
         folderPath: "",
         reason: "episode-numbering",
+        showId: "sh1",
+        showTitle: "The Wire",
       }),
     ]);
     render();
 
     const row = await screen.findByTestId("fix-item");
-    expect(within(row).getByTestId("fix-item-toggle")).toBeInTheDocument();
+    expect(within(row).queryByTestId("fix-item-toggle")).not.toBeInTheDocument();
+    expect(within(row).getByTestId("fix-item-sort")).toHaveAttribute(
+      "href",
+      "/admin/shows/sh1/matcher",
+    );
     expect(within(row).getByTestId("fix-item-dismiss")).toBeInTheDocument();
   });
 });

@@ -219,7 +219,7 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 	args = append(args, limit)
 	rows, err := db.Query(
 		`SELECT t.id, t.library_id, t.kind, t.title, t.year, t.identity_key, t.sort_title,
-		        t.added_at, t.tmdb_id, t.imdb_id, t.needs_review, t.ambiguous, t.hidden,
+		        t.added_at, `+recordExternalIDs("t.")+`, t.needs_review, t.ambiguous, t.hidden,
 		        w.resume_position_ms, w.updated_at,
 		        (SELECT MAX(f.duration_ms) FROM editions ed
 		           JOIN files f ON f.edition_id = ed.id
@@ -429,7 +429,7 @@ func resumePointCTE(showFilter, rateClause string) string {
 	 episodes AS (
 	     SELECT st.show_id, st.last_at, sh.title AS show_title,
 	            t.id, t.library_id, t.kind, t.title, t.year, t.identity_key,
-	            t.sort_title, t.added_at, t.tmdb_id, t.imdb_id,
+	            t.sort_title, t.added_at, ` + recordExternalIDs("t.") + `,
 	            t.needs_review, t.ambiguous, t.hidden, t.content_rating,
 	            t.season_id, t.season_number, t.episode_number, t.episode_label,
 	            t.overview, t.enrichment_status, t.enriched_title,
@@ -595,7 +595,7 @@ func (db *DB) RecentlyAdded(limit int, filter AccessFilter) ([]Title, error) {
 	args = append(args, limit)
 	rows, err := db.Query(
 		`SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
-		        tmdb_id, imdb_id, needs_review, ambiguous, hidden
+		        `+recordExternalIDs("")+`, needs_review, ambiguous, hidden
 		   FROM titles WHERE hidden = 0`+clause+` ORDER BY added_at DESC, id DESC LIMIT ?`,
 		args...)
 	if err != nil {

@@ -186,3 +186,43 @@ func TestDefaultSeasonFallsBackWhenTheSeriesLacksIt(t *testing.T) {
 		t.Errorf("got %d, want 5", got)
 	}
 }
+
+// TestALibraryPassHonorsTheEpisodePin closes the gap that made the matcher's
+// repoint useless in practice.
+//
+// There are two ways a leaf reaches a lookup: refFor, for a single-Title
+// re-enrich, and collectTVLeaves, which a LIBRARY pass uses to build its own refs.
+// A pass is exactly what runs after a matcher Apply (ADR-0044's post-commit
+// re-enrich), so a pass that ignored the pin would look every freshly repointed
+// Slot up by the numbers it had just been pinned AWAY from — and the Batman files
+// would stay bare however carefully the Admin borrowed their records.
+func TestALibraryPassHonorsTheEpisodePin(t *testing.T) {
+	pinned := store.Title{
+		Kind: "episode", TMDBID: "1438",
+		SeasonNumber: 3, EpisodeNumber: 61,
+		EnrichmentSeason: 1, EnrichmentEpisode: 1,
+	}
+	// The ref a pass builds before the pin is applied: the Title's own numbers.
+	ref := TitleRef{
+		Kind: "episode", Title: pinned.Title, TMDBID: pinned.TMDBID,
+		SeasonNumber: pinned.SeasonNumber, EpisodeNumber: pinned.EpisodeNumber,
+	}
+	got := withEpisodePin(ref, pinned)
+	if got.SeasonNumber != 1 || got.EpisodeNumber != 1 {
+		t.Errorf("pass lookup = S%02dE%02d, want the PINNED S01E01",
+			got.SeasonNumber, got.EpisodeNumber)
+	}
+	// The two paths must agree, or a Title's record would depend on which one
+	// happened to touch it.
+	if single := refFor(pinned); single.SeasonNumber != got.SeasonNumber ||
+		single.EpisodeNumber != got.EpisodeNumber {
+		t.Errorf("refFor = S%02dE%02d but a pass = S%02dE%02d; the two must not disagree",
+			single.SeasonNumber, single.EpisodeNumber, got.SeasonNumber, got.EpisodeNumber)
+	}
+	// An unpinned Title is untouched by the same call.
+	plain := store.Title{Kind: "episode", TMDBID: "1438", SeasonNumber: 3, EpisodeNumber: 61}
+	if out := withEpisodePin(ref, plain); out.SeasonNumber != 3 || out.EpisodeNumber != 61 {
+		t.Errorf("unpinned lookup = S%02dE%02d, want the parsed S03E61",
+			out.SeasonNumber, out.EpisodeNumber)
+	}
+}

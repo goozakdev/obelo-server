@@ -148,6 +148,27 @@ func ParseEpisodeToken(name string, seasonHint int) (EpisodeToken, bool) {
 	return EpisodeToken{}, false
 }
 
+// trailingPartRe matches a multi-part suffix sitting at the END of an episode's
+// title tail — "part1", "- part 2", "cd1". It is the same grammar as partRe with
+// the leading separator made optional (the tail has already had it trimmed off)
+// and anchored to the end.
+var trailingPartRe = regexp.MustCompile(`(?i)(?:^|[-_. ])(?:part|pt|cd|disc|disk)[ _]?\d+$`)
+
+// episodeTitleTail cleans one candidate title tail: a trailing part suffix is
+// Edition detail, not identity — `- part1` and `- part2` are ONE Episode
+// (naming-convention.md "Multi-part") — so it must not end up in the Episode's
+// name. Without this, a two-part Episode is named after whichever part sorts
+// first ("Sheridan - part1"), or simply "part1" when the file carries no title.
+// Returns "" when nothing meaningful is left.
+func episodeTitleTail(tail string) string {
+	t := strings.TrimSpace(strings.TrimLeft(tail, " -._"))
+	t = strings.TrimRight(strings.TrimSpace(trailingPartRe.ReplaceAllString(t, "")), " -._")
+	if !hasTitleContent(t) {
+		return ""
+	}
+	return t
+}
+
 // episodeTitleName derives the human display title for an Episode from its
 // filename, stripping the Show prefix and the episode token. The canonical
 // `Show (Year) - S01E05 - The Title.ext` yields "The Title"; when no trailing
@@ -156,18 +177,14 @@ func ParseEpisodeToken(name string, seasonHint int) (EpisodeToken, bool) {
 func episodeTitleName(base string, tok EpisodeToken) string {
 	// Prefer the segment AFTER the episode token (the canonical " - Title" tail).
 	if loc := sxxexxRe.FindStringIndex(base); loc != nil && tok.Kind == "sxxexx" {
-		tail := strings.TrimSpace(base[loc[1]:])
-		tail = strings.TrimLeft(tail, " -._")
-		if t := strings.TrimSpace(tail); hasTitleContent(t) {
+		if t := episodeTitleTail(base[loc[1]:]); t != "" {
 			return t
 		}
 	}
 	// Date / absolute: take the tail after the raw token if present and meaningful.
 	if tok.Raw != "" {
 		if i := strings.LastIndex(base, tok.Raw); i >= 0 {
-			tail := strings.TrimSpace(base[i+len(tok.Raw):])
-			tail = strings.TrimLeft(tail, " -._")
-			if t := strings.TrimSpace(tail); hasTitleContent(t) {
+			if t := episodeTitleTail(base[i+len(tok.Raw):]); t != "" {
 				return t
 			}
 		}

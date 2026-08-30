@@ -3390,6 +3390,20 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   font-family: inherit;
   font-style: italic;
 }
+/* The files behind a collision. A plain list rather than a table: it is two or
+   three paths, and the row's job is to let the Admin recognize them on disk. */
+.fix-item-collisions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fix-item-collision-note {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
 .fix-item-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4872,4 +4886,342 @@ textarea.metadata-input {
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+/* ── The file matcher (ADR-0044) ────────────────────────────────────────────
+   One Show's Files laid against its Slots. Two columns per season — unassigned
+   Files on the left, Slots on the right — with an Unsorted tray pinned above.
+
+   TOUCH IS A FIRST-CLASS INPUT HERE (PRD user story 16), which is why every
+   draggable card carries `touch-action: none`: without it the browser claims the
+   gesture as a scroll and a finger drag never reaches the pointer handlers. The
+   click-then-click path needs none of this, and is the one the keyboard uses. */
+
+.file-matcher {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.matcher-header {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.matcher-header .poster,
+.matcher-header .poster-placeholder {
+  width: 6rem;
+  flex: 0 0 auto;
+}
+
+.matcher-header-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.matcher-title {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.matcher-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+/* The toolbar is sticky: Apply/Revert/Cancel must stay reachable however far down
+   a 65-file Show the Admin has scrolled. */
+.matcher-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.matcher-toolbar-hint {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.matcher-selection,
+.matcher-applied,
+.matcher-collision,
+.matcher-confirm-leave,
+.matcher-occupied-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.matcher-selection {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  border-color: var(--accent);
+}
+
+.matcher-collision {
+  border-color: var(--error);
+}
+
+.matcher-collision-paths {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.matcher-collision-paths code {
+  overflow-wrap: anywhere;
+}
+
+.matcher-unsorted {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+}
+
+.matcher-unsorted-title {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.matcher-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.matcher-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.matcher-group-toggle:hover {
+  background: var(--surface-hover);
+}
+
+.matcher-group-counts {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+/* Two columns on a desktop; one on a tablet in portrait, where a side-by-side
+   pair would make both halves too narrow to read a filename in. */
+.matcher-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 60rem) {
+  .matcher-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.matcher-column-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.matcher-file-list,
+.matcher-slot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.matcher-file,
+.matcher-slot {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 0.4rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.matcher-file.is-selected,
+.matcher-part.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.matcher-file-pick,
+.matcher-part-name,
+.matcher-slot-target {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  /* See the block comment above: without this a finger drag becomes a scroll. */
+  touch-action: none;
+}
+
+.matcher-file-name {
+  overflow-wrap: anywhere;
+}
+
+.matcher-file-claim,
+.matcher-file-note,
+.matcher-part-claim,
+.matcher-part-shared,
+/* Provenance for a repointed Slot: where its record was borrowed from. Set apart
+   from the Slot's own code deliberately — the borrowed numbering is a fact ABOUT
+   the record, never the Slot's position (ADR-0044). */
+.matcher-slot-pin {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.matcher-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+
+.matcher-fill-records {
+  margin-left: 0.8rem;
+}
+
+/* The record picker, opened over the arrangement rather than beside it: choosing
+   a record is a whole two-step act and the Admin should not lose their place. */
+.matcher-repoint {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.9rem;
+  margin: 0.8rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.matcher-repoint-target {
+  margin: 0;
+  font-weight: 600;
+}
+
+.matcher-repoint-note {
+  margin: 0.6rem 0;
+}
+
+.matcher-slot-code {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* The numbers disagree. Hard on BOTH sides — the Slot's code and the file's claim
+   — because the disagreement is the decision being made, not a warning. */
+.matcher-slot.is-mismatch,
+.matcher-slot-code.is-mismatch,
+.matcher-part-claim.is-mismatch {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.matcher-slot-name.is-bare {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.matcher-part {
+  border-top: 1px dashed var(--border);
+  padding-top: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  touch-action: none;
+}
+
+.matcher-part-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.matcher-part-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* The character diff. Only the runs that differ are marked; the shared runs are
+   plain, so a one-letter disagreement reads as one letter. */
+.matcher-title-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.8rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.matcher-diff-mark {
+  background: var(--warn);
+  color: var(--accent-ink);
+  border-radius: 2px;
+}
+
+.matcher-ignored {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+/* The ghost follows the pointer during a drag and must never itself be a drop
+   target, or elementFromPoint would only ever find the thing being dragged. */
+.matcher-drag-ghost {
+  position: fixed;
+  z-index: 40;
+  transform: translate(0.75rem, 0.75rem);
+  pointer-events: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.8rem;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
 }

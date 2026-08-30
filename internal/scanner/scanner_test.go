@@ -31,6 +31,13 @@ type captureStore struct {
 	trees     []store.TitleTree
 	showTrees []store.ShowTree
 	unmatched []store.UnmatchedFile
+	// decisions is the file-anchored Admin record the resolver replays
+	// (ADR-0044), keyed by absolute path. Nil by default — nothing was said, so
+	// every file follows its filename, which is what the pre-existing tests
+	// assume. orphanedPlacements records the post-walk orphan pass: placement row
+	// id → the flag the scan wrote.
+	decisions          map[string]store.FileDecisions
+	orphanedPlacements map[string]bool
 }
 
 func (c *captureStore) LibraryByID(string) (store.Library, error) { return c.lib, nil }
@@ -79,6 +86,16 @@ func (c *captureStore) MatchOverridesByLibrary(string) ([]store.MatchOverride, e
 	return nil, nil
 }
 func (c *captureStore) SetMatchOverrideOrphaned(string, bool) error { return nil }
+func (c *captureStore) FileDecisionsByLibrary(string) (map[string]store.FileDecisions, error) {
+	return c.decisions, nil
+}
+func (c *captureStore) SetPlacementOrphaned(id string, orphaned bool) error {
+	if c.orphanedPlacements == nil {
+		c.orphanedPlacements = map[string]bool{}
+	}
+	c.orphanedPlacements[id] = orphaned
+	return nil
+}
 
 func writeFile(t *testing.T, path string) {
 	t.Helper()

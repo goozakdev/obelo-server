@@ -70,11 +70,11 @@ func (db *DB) LoadStoredFile(path string) (File, error) {
 	var present int
 	row := db.QueryRow(
 		`SELECT id, edition_id, path, container, video_codec, audio_codec, width, height,
-		        bitrate, duration_ms, size_bytes, added_at, mtime, present
+		        bitrate, duration_ms, size_bytes, added_at, mtime, present, part_ordinal
 		   FROM files WHERE path = ?`, path)
 	if err := row.Scan(&f.ID, &f.EditionID, &f.Path, &f.Container, &f.VideoCodec,
 		&f.AudioCodec, &f.Width, &f.Height, &f.Bitrate, &f.DurationMs, &f.SizeBytes,
-		&f.AddedAt, &f.Mtime, &present); err != nil {
+		&f.AddedAt, &f.Mtime, &present, &f.PartOrdinal); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return File{}, ErrNotFound
 		}
@@ -349,7 +349,7 @@ func (db *DB) TitleByFolderPath(libraryID, folderPath string) (Title, error) {
 	prefix := strings.TrimRight(folderPath, "/") + "/"
 	row := db.QueryRow(
 		`SELECT t.id, t.library_id, t.kind, t.title, t.year, t.identity_key, t.sort_title,
-		        t.added_at, t.tmdb_id, t.imdb_id, t.needs_review, t.ambiguous, t.hidden
+		        t.added_at, `+recordExternalIDs("t.")+`, t.needs_review, t.ambiguous, t.hidden
 		   FROM titles t
 		   JOIN editions e ON e.title_id = t.id
 		   JOIN files    f ON f.edition_id = e.id

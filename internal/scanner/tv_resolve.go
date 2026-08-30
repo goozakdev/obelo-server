@@ -20,6 +20,16 @@ import (
 // Determinism + the attention surface generalize from Movies: a Show folder whose
 // name yields no identity, or a media file with no recognized episode token, goes
 // to Unmatched (never auto-guessed). A yearless Show is filed + needs-review.
+//
+// The resolve step is also where the Admin's FILE-ANCHORED corrections are
+// replayed (ADR-0044). It has to be here and nowhere else: the three arrangements
+// an Admin can express — one File per Slot, several Files on one Slot (a
+// multi-part Edition), one File across several Slots (co-File sibling Titles) —
+// all decide HOW MANY Title rows exist, and only resolve creates, merges and
+// splits Title rows. writeTitleRow rewrites season_id, season_number,
+// episode_number and episode_label from whatever resolve produced on every single
+// upsert, so a correction applied to live rows alone would be undone by the next
+// scheduled scan.
 
 // resolveShowFolder resolves one on-disk Show folder into a store.ShowTree plus
 // any Unmatched files. ok=false (with the unmatched files) when the folder has no
@@ -53,84 +63,23 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		unmatched = append(unmatched, unmatchedFile(path, reason))
 	}
 
-	// Group resolved Episodes by season number.
-	seasonEpisodes := map[int][]store.EpisodeTree{}
-	var seasonOrder []int
-	seenSeason := map[int]bool{}
-
-	addSeason := func(n int) {
-		if !seenSeason[n] {
-			seenSeason[n] = true
-			seasonOrder = append(seasonOrder, n)
-		}
-	}
-
-	// Resolve one media file under a known season into one or two Episode trees.
-	resolveEpisodeFile := func(path string, seasonHint int) {
-		base := stripKnownExt(filepath.Base(path))
-		if isJunk(filepath.Base(path), fileSize(path)) {
-			return // sample/junk ignored entirely
-		}
-		tok, ok := ParseEpisodeToken(base, seasonHint)
-		if !ok {
-			addUnmatched(path, "no recognized episode token (SxxExx / date / absolute)")
-			return
-		}
-		season := tok.Season
-		addSeason(season)
-
-		// Build the Edition→File→Stream subtree for this single file, reusing the
-		// EXACT Movie edition logic (quality/part/{edition-…}); an Episode carries
-		// its own Editions/Files/Streams just like a Movie.
-		cf := classifiedFile{path: path, name: filepath.Base(path), part: partNumber(filepath.Base(path))}
-
-		// One File → two Episode Titles for a range (S01E05-E06): both get the same
-		// physical File subtree (plays once); watch state is per-Title so marking
-		// one watched is propagated to the other by the playback layer.
-		episodes := []int{tok.Episode}
-		if tok.IsRange() {
-			episodes = nil
-			for e := tok.Episode; e <= tok.EpisodeEnd; e++ {
-				episodes = append(episodes, e)
-			}
-		}
-
-		for _, epNum := range episodes {
-			epTok := tok
-			epTok.Episode = epNum
-			epTok.EpisodeEnd = epNum
-			displayName := episodeTitleName(base, tok)
-			if tok.IsRange() {
-				// Disambiguate the two Titles of a range so each is browsable.
-				displayName = displayName + " (" + episodeCode(season, epNum, epNum) + ")"
-			}
-
-			identityKey := episodeIdentityKey(id, season, epTok)
-			tree, err := s.assembleTitle(ctx, sc, lib, Identity{
-				Title: displayName, Year: 0, Key: identityKey,
-			}, []classifiedFile{cf}, nil, nil, nil)
-			if err != nil {
-				addUnmatched(path, "could not probe episode file: "+err.Error())
-				continue
-			}
-			// assembleTitle stamps kind = lib.Kind ("tv"); an Episode leaf is "episode".
-			tree.Title.Kind = "episode"
-			tree.Title.IdentityKey = identityKey
-			tree.Title.SortTitle = sortTitle(displayName)
-			tree.Title.NeedsReview = tok.Kind != "sxxexx" // date/absolute need Enrichment to map canonically
-			et := store.EpisodeTree{
-				TitleTree:     tree,
-				SeasonNumber:  season,
-				EpisodeNumber: epTok.Episode,
-				EpisodeLabel:  episodeLabelFor(tok),
-			}
-			seasonEpisodes[season] = append(seasonEpisodes[season], et)
-		}
+	// The walk's only job is to hand the resolver every candidate media File plus
+	// the two facts only disk can supply — the season its folder suggests, and the
+	// sample/junk verdict. Deciding what those Files ADD UP TO (which Slots exist,
+	// how many Title rows, their keys and names) belongs to ResolveEpisodes, which
+	// Apply runs too; see arrangement.go for why that must be one function.
+	var inputs []EpisodeInput
+	addInput := func(path string) {
+		inputs = append(inputs, EpisodeInput{
+			Path:       path,
+			SeasonHint: SeasonHintForPath(path),
+			Junk:       isJunk(filepath.Base(path), fileSize(path)),
+		})
 	}
 
 	// Walk: subfolders that are Season/Specials folders hold episodes; recognized
 	// media directly in the Show folder (no Season subfolder) is filed under a
-	// season inferred from its own SxxExx token (seasonHint = -1).
+	// season inferred from its own SxxExx token.
 	var subdirs []os.DirEntry
 	var topFiles []os.DirEntry
 	for _, e := range entries {
@@ -172,14 +121,13 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		if !isMedia(e.Name()) {
 			continue
 		}
-		resolveEpisodeFile(filepath.Join(folder, e.Name()), -1)
+		addInput(filepath.Join(folder, e.Name()))
 	}
 
 	// Season subfolders.
 	sort.Slice(subdirs, func(i, j int) bool { return subdirs[i].Name() < subdirs[j].Name() })
 	for _, e := range subdirs {
-		season, isSeason := ParseSeasonFolder(e.Name())
-		if !isSeason {
+		if _, isSeason := ParseSeasonFolder(e.Name()); !isSeason {
 			continue // a non-season subfolder (extras etc.) is ignored this slice
 		}
 		sub := filepath.Join(folder, e.Name())
@@ -191,8 +139,53 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 			if se.IsDir() || !isMedia(se.Name()) {
 				continue
 			}
-			resolveEpisodeFile(filepath.Join(sub, se.Name()), season)
+			addInput(filepath.Join(sub, se.Name()))
 		}
+	}
+
+	// The single derivation, shared with Apply (ADR-0044).
+	arrangement := ResolveEpisodes(id, inputs, sc.decisions)
+	for _, u := range arrangement.Unresolved {
+		addUnmatched(u.Path, u.Reason)
+	}
+
+	// Group resolved Episodes by season number. Seasons come from the numbers the
+	// resolved Episodes CLAIM, never from the folders on disk — which is what lets
+	// a Placement conjure a Season row with no folder behind it and leave a Season
+	// emptied by reassignment uncreated (ADR-0044).
+	seasonEpisodes := map[int][]store.EpisodeTree{}
+	seasonOrder := arrangement.Seasons
+
+	for _, re := range arrangement.Episodes {
+		cfs := make([]classifiedFile, 0, len(re.Files))
+		for _, rf := range re.Files {
+			cfs = append(cfs, classifiedFile{
+				path: rf.Path, name: filepath.Base(rf.Path),
+				part: rf.PartOrdinal, jointEdition: rf.JointEdition,
+			})
+		}
+		tree, err := s.assembleTitle(ctx, sc, lib, Identity{
+			Title: re.DisplayName, Year: 0, Key: re.IdentityKey,
+		}, cfs, nil, nil, nil)
+		if err != nil {
+			// A probe failure is a real failure, not a decision, so it surfaces as
+			// Unmatched exactly as it does on the parsed path.
+			for _, rf := range re.Files {
+				addUnmatched(rf.Path, "could not probe episode file: "+err.Error())
+			}
+			continue
+		}
+		// assembleTitle stamps kind = lib.Kind ("tv"); an Episode leaf is "episode".
+		tree.Title.Kind = "episode"
+		tree.Title.IdentityKey = re.IdentityKey
+		tree.Title.SortTitle = re.SortTitle
+		tree.Title.NeedsReview = re.NeedsReview
+		seasonEpisodes[re.SeasonNumber] = append(seasonEpisodes[re.SeasonNumber], store.EpisodeTree{
+			TitleTree:     tree,
+			SeasonNumber:  re.SeasonNumber,
+			EpisodeNumber: re.EpisodeNumber,
+			EpisodeLabel:  re.EpisodeLabel,
+		})
 	}
 
 	if !idOK {
@@ -213,7 +206,6 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		return store.ShowTree{}, unmatched, false, nil
 	}
 
-	sort.Ints(seasonOrder)
 	show := store.Show{
 		ID:          uuid.NewString(),
 		LibraryID:   lib.ID,
@@ -230,18 +222,12 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		tree.Artwork = append(tree.Artwork, store.EntityArtworkRow{Role: role, Path: showArt[role]})
 	}
 	for _, n := range seasonOrder {
-		eps := seasonEpisodes[n]
-		// Stable episode order within a season.
-		sort.Slice(eps, func(i, j int) bool {
-			if eps[i].EpisodeNumber != eps[j].EpisodeNumber {
-				return eps[i].EpisodeNumber < eps[j].EpisodeNumber
-			}
-			return eps[i].Title.SortTitle < eps[j].Title.SortTitle
-		})
+		// Episode order within a season is already fixed by ResolveEpisodes, so both
+		// writers lay a Season out identically.
 		st := store.SeasonTree{
 			SeasonNumber: n,
-			IdentityKey:  id.Key + "|s" + pad2(n),
-			Episodes:     eps,
+			IdentityKey:  SeasonIdentityKey(id.Key, n),
+			Episodes:     seasonEpisodes[n],
 		}
 		// A `Season NN.jpg` naming a season with no episodes is ignored: seasonOrder
 		// holds only seasons that resolved episodes, and a poster must not conjure a
@@ -252,6 +238,82 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		tree.Seasons = append(tree.Seasons, st)
 	}
 	return tree, unmatched, true, nil
+}
+
+// slotKey names one Slot within the Show being resolved: the assigned group
+// (season) and slot (episode) numbers, always in the local library's OWN
+// numbering — a borrowed provider record's numbering would collide with it,
+// which is the Episode pin's separate job (ADR-0044).
+type slotKey struct {
+	season  int
+	episode int
+}
+
+// placedFile is one File the Admin placed on one Slot, with the ordinal that
+// orders it among the Files sharing that Slot (1-based; 1 for the ordinary
+// one-File-per-Slot case).
+type placedFile struct {
+	path    string
+	ordinal int
+}
+
+// parsedFile is one File whose FILENAME claims a Slot, carrying the per-file
+// facts the Episode is named and labeled from. Several can share one Slot — two
+// parts, two quality-distinguished rips, or a range file overlapping a standalone
+// — which is why they are collected before any Episode is built.
+type parsedFile struct {
+	path    string
+	ordinal int
+	season  int
+	episode int
+	// displayName / label / needsReview are derived from THIS file's token. Every
+	// File on a Slot agrees on the last two (they share an identity key, so they
+	// share a token kind); the name is taken from the leading File.
+	displayName string
+	label       string
+	needsReview bool
+}
+
+// parsedEpisode accumulates the Files whose filenames claim one Slot.
+type parsedEpisode struct {
+	files []parsedFile
+}
+
+// sortedSlots returns the assigned Slots in (season, episode) order so a scan is
+// deterministic regardless of map iteration order.
+func sortedSlots(slots map[slotKey][]placedFile) []slotKey {
+	keys := make([]slotKey, 0, len(slots))
+	for k := range slots {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].season != keys[j].season {
+			return keys[i].season < keys[j].season
+		}
+		return keys[i].episode < keys[j].episode
+	})
+	return keys
+}
+
+// placedEpisodeName names an Episode built from a Placement. The Slot decides the
+// numbering, but the filename still carries the only human title available with
+// no provider — so the parsed " - Title" tail is preferred and the Slot's
+// canonical code is the fallback, and an Episode is never nameless.
+//
+// disambiguate suffixes the Slot's code, for a File spread across several Slots:
+// its Titles would otherwise be identically named and indistinguishable in
+// browse. It is the same treatment a range file (S01E05-E06) already gets.
+func placedEpisodeName(path string, k slotKey, disambiguate bool) string {
+	code := episodeCode(k.season, k.episode, k.episode)
+	name := code
+	base := stripKnownExt(filepath.Base(path))
+	if tok, ok := ParseEpisodeToken(base, k.season); ok {
+		name = episodeTitleName(base, tok)
+	}
+	if disambiguate && name != code {
+		name += " (" + code + ")"
+	}
+	return name
 }
 
 // episodeIdentityKey derives the stable identity key for an Episode Title within
