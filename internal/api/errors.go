@@ -29,6 +29,32 @@ const (
 	codeUnauthorized     = "UNAUTHORIZED"
 	codeForbidden        = "FORBIDDEN"
 	codeFolderOverlap    = "FOLDER_OVERLAP"
+	// The file matcher's four refusals (ADR-0044). All three are ACTIONABLE by
+	// contract, because the screen they serve is a screen full of pending work and
+	// a bare status leaves the Admin with no move:
+	//   codeScanRunning   (409) — a scan holds the Library's lock (ADR-0031), so the
+	//                             Apply refused and wrote NOTHING. Retry when it ends.
+	//   codeSlotCollision (409) — the arrangement would resolve two distinct Titles
+	//                             onto one Slot. details carries { slot: {group, slot},
+	//                             paths: [...] } naming the Slot and every File
+	//                             claiming it, so the screen can offer the three
+	//                             fixes: merge them as parts, move one, unassign one.
+	//                             Only ever a parse-vs-parse collision the matcher
+	//                             did not create — a Placement's own collision is
+	//                             settled by displacing the parsed File.
+	//   codeOutsideShow   (422) — a decision named a File that does not live under
+	//                             the container being rearranged. Refused whole: a
+	//                             decision is stored per (library, path) with no
+	//                             container on it, so accepting one would let an
+	//                             Apply on one Show silently claim another's File.
+	//   codeEmptySlot     (422) — a record was pinned onto a Slot no File fills. A
+	//                             record decorates something, and an empty Slot has
+	//                             no Title to carry the pin — so accepting it would
+	//                             report success and store nothing.
+	codeScanRunning   = "SCAN_RUNNING"
+	codeSlotCollision = "SLOT_COLLISION"
+	codeOutsideShow   = "OUTSIDE_SHOW"
+	codeEmptySlot     = "EMPTY_SLOT"
 	// codeNoFiles (409): a Targeted scan (ADR-0030) of an entity whose Files are all
 	// Missing — there is nothing on disk to walk (hidden-entity resurrection is out
 	// of scope for v1).

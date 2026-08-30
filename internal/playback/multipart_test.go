@@ -192,9 +192,12 @@ func TestConcatListSkippedForOneFile(t *testing.T) {
 // literal quote in a path, and film titles contain apostrophes constantly
 // ("Ocean's Eleven"). An unescaped one would make ffmpeg read a garbage path.
 func TestConcatListEscapesQuotes(t *testing.T) {
+	// The names carry the `- cd1`/`- cd2` suffix the convention actually defines
+	// (partRe requires the separator), so this is a real multi-part Edition rather
+	// than two files that merely landed in one — see store.Edition.Parts.
 	ed := store.Edition{ID: "e1", Files: []store.File{
-		partFile("f1", "/media/Ocean's Eleven/cd1.mkv", 1000),
-		partFile("f2", "/media/Ocean's Eleven/cd2.mkv", 1000),
+		partFile("f1", "/media/Ocean's Eleven/Ocean's Eleven - cd1.mkv", 1000),
+		partFile("f2", "/media/Ocean's Eleven/Ocean's Eleven - cd2.mkv", 1000),
 	}}
 	body, err := os.ReadFile(concatListFor(ed, t.TempDir()))
 	if err != nil {

@@ -12,6 +12,8 @@ import {
   normalizeHome,
   normalizeLibrary,
   normalizeMatchOverride,
+  normalizeMatcher,
+  normalizeSeriesSlots,
   normalizePlaylist,
   normalizePlaylistDetail,
   normalizePlaylistSummary,
@@ -21,6 +23,7 @@ import {
   normalizeShowsPage,
   normalizeTitleDetail,
   normalizeTitlesPage,
+  normalizeShowProblems,
   normalizeUnmatchedFile,
   normalizeUserDetail,
   normalizeWatchState,
@@ -69,6 +72,11 @@ import type {
   LoginResult,
   MatchOverride,
   MatchOverrideRaw,
+  MatcherApplyInput,
+  MatcherDocument,
+  MatcherDocumentRaw,
+  SeriesSlots,
+  SeriesSlotsRaw,
   MetadataEditInput,
   MetadataProvidersView,
   UpdateMetadataProvidersInput,
@@ -94,6 +102,8 @@ import type {
   ServerInfo,
   SetupRequest,
   SetupResult,
+  ShowProblems,
+  ShowProblemsRaw,
   ShowSeasons,
   ShowSeasonsResponseRaw,
   ShowsPage,
@@ -988,6 +998,33 @@ export class ApiClient {
     );
   }
 
+  /** `GET /api/v1/libraries/{id}/show-problems` (Admin) — the per-Show unsettled
+   * File counts behind the Needs-Fixing queue's one-row-per-Show collapse. A
+   * Library with no Shows answers an empty list, never an error: the queue asks
+   * every Library the same question. */
+  async listShowProblems(
+    libraryId: string,
+    signal?: AbortSignal,
+  ): Promise<ShowProblems[]> {
+    const res = await this.request<{ shows?: ShowProblemsRaw[] }>(
+      `/libraries/${encodeURIComponent(libraryId)}/show-problems`,
+      { signal },
+    );
+    return (res?.shows ?? []).map(normalizeShowProblems);
+  }
+
+  /** `POST /api/v1/shows/{id}/reviewEpisodes` (Admin) — dismiss the needs_review
+   * flag on EVERY flagged Episode of a Show: the "Looks right" behind one
+   * collapsed Show row, which stands for the whole set the row counted. One call
+   * rather than N, so it cannot half-succeed and leave a row whose remaining count
+   * the Admin cannot explain. 204 on success; unknown Show is 404. */
+  reviewShowEpisodes(showId: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/shows/${encodeURIComponent(showId)}/reviewEpisodes`,
+      { method: "POST", signal },
+    );
+  }
+
   /** `POST /api/v1/shows/{id}/review` (Admin) — dismiss a Show's needs_review
    * flag. 204 on success; unknown Show is 404. */
   reviewShow(showId: string, signal?: AbortSignal): Promise<void> {
@@ -1054,6 +1091,76 @@ export class ApiClient {
       { signal },
     );
     return { seasons: res.seasons, season: res.season, episodes: res.episodes ?? [] };
+  }
+
+  /** `GET /api/v1/shows/{id}/matcher[?group=N]` (Admin) — one Show's whole working
+   * set for the file matcher (ADR-0044): every File under it and every Slot, so an
+   * Admin can lay one against the other.
+   *
+   * `group` names the ONE group whose provider records are fetched; omit it for
+   * the cheap first load. The LOCAL half — every File, every decision, every group
+   * with its counts — is complete in EVERY response, so the screen renders before
+   * any provider call returns, and renders at all when none can.
+   *
+   * A provider that cannot answer is a STATE, not an error: the response is still
+   * 200 with bare numbered Slots and a `slotsUnavailable` reason. */
+  async getShowMatcher(
+    showId: string,
+    group?: number,
+    signal?: AbortSignal,
+  ): Promise<MatcherDocument> {
+    const params = new URLSearchParams();
+    if (group !== undefined) params.set("group", String(group));
+    const query = params.toString();
+    const res = await this.request<MatcherDocumentRaw>(
+      `/shows/${encodeURIComponent(showId)}/matcher${query ? `?${query}` : ""}`,
+      { signal },
+    );
+    return normalizeMatcher(res);
+  }
+
+  /** `PUT /api/v1/shows/{id}/matcher` (Admin) — commit a rearrangement.
+   *
+   * The body is the WHOLE arrangement, not a delta: a File absent from `files`
+   * carries no decision at all, which is the meaningful third answer ("follow the
+   * filename"). Storage is sparse (ADR-0027's precedent), so taking a File off its
+   * Slot can only be said by sending it `unassigned`, and taking a correction BACK
+   * can only be said by omitting it.
+   *
+   * Answers with the RE-READ document plus `applied`, so the screen never has to
+   * guess what the server made of its payload. `409 SCAN_RUNNING` (nothing was
+   * written — retry), `409 SLOT_COLLISION` (details name the Slot and every path)
+   * and `422 OUTSIDE_SHOW` all surface as typed ApiErrors. */
+  async applyShowMatcher(
+    showId: string,
+    input: MatcherApplyInput,
+    signal?: AbortSignal,
+  ): Promise<MatcherDocument> {
+    const res = await this.request<MatcherDocumentRaw>(
+      `/shows/${encodeURIComponent(showId)}/matcher`,
+      { method: "PUT", body: input, signal },
+    );
+    return normalizeMatcher(res);
+  }
+
+  /** `GET /api/v1/shows/{id}/seriesSeasons?externalId=[&group=N]` (Admin) — another
+   * series' groups, and one group's Slots on request, so a group can be filled from
+   * a foreign record (the Batman → New Batman Adventures case). The Slot's POSITION
+   * stays local; only its RECORD changes. `503 SEARCH_UNAVAILABLE` when the provider
+   * cannot list — unlike the matcher, this route has nothing else to return. */
+  async listSeriesSlots(
+    showId: string,
+    externalId: string,
+    group?: number,
+    signal?: AbortSignal,
+  ): Promise<SeriesSlots> {
+    const params = new URLSearchParams({ externalId });
+    if (group !== undefined) params.set("group", String(group));
+    const res = await this.request<SeriesSlotsRaw>(
+      `/shows/${encodeURIComponent(showId)}/seriesSeasons?${params.toString()}`,
+      { signal },
+    );
+    return normalizeSeriesSlots(res);
   }
 
   /** `POST /api/v1/titles/{id}/subtitles/search` — "search online" for a subtitle
@@ -1976,6 +2083,19 @@ export type {
   LoginRequest,
   LoginResult,
   MatchOverride,
+  MatcherApplied,
+  MatcherApplyFile,
+  MatcherApplyInput,
+  MatcherDocument,
+  MatcherFile,
+  MatcherFileState,
+  MatcherGroup,
+  MatcherPlacement,
+  MatcherSlot,
+  SeriesSlots,
+  SlotCollisionDetails,
+  SlotPosition,
+  SlotsUnavailableReason,
   MediaFile,
   MetadataProvider,
   MetadataProvidersView,

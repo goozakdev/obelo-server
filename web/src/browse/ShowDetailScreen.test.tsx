@@ -50,7 +50,7 @@ function QueueProbe() {
   );
 }
 
-function renderDetail() {
+function renderDetail(user: { id: string; username: string; role: string } = MEMBER) {
   return renderWithAuth(
     <Routes>
       <Route
@@ -63,9 +63,11 @@ function renderDetail() {
         }
       />
     </Routes>,
-    { initialEntries: ["/shows/sh1"], user: MEMBER },
+    { initialEntries: ["/shows/sh1"], user },
   );
 }
+
+const ADMIN = { id: "u1", username: "operator", role: "admin" };
 
 const showSummary = {
   id: "sh1",
@@ -258,5 +260,31 @@ describe("ShowDetailScreen — resume-point modes", () => {
 
     await waitFor(() => expect(screen.getByTestId("queue-current-id")).toHaveTextContent("ep1"));
     expect(screen.getByTestId("queue-current-resume")).toHaveTextContent("0");
+  });
+});
+
+// The file matcher (ADR-0044) is reachable from the Show's own page as well as
+// from the Needs Fixing queue, because an Admin often knows a Show is mis-sorted
+// before anything flags it (PRD user story 15).
+describe("ShowDetailScreen — Sort episodes (the file matcher)", () => {
+  it("offers an Admin a link into the matcher for this Show", async () => {
+    getShowSeasons.mockResolvedValue(seasonsResponse(null));
+    renderDetail(ADMIN);
+    await waitFor(() => expect(screen.getByTestId("show-detail")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId("overflow-menu-button"));
+    expect(screen.getByTestId("sort-episodes-item")).toHaveAttribute(
+      "href",
+      "/admin/shows/sh1/matcher",
+    );
+  });
+
+  it("does not offer it to a Member", async () => {
+    getShowSeasons.mockResolvedValue(seasonsResponse(null));
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("show-detail")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByTestId("overflow-menu-button"));
+    expect(screen.queryByTestId("sort-episodes-item")).toBeNull();
   });
 });

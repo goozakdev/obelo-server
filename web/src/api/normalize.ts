@@ -12,6 +12,21 @@
 import type {
   Album,
   AlbumRaw,
+  MatcherApplied,
+  MatcherDocument,
+  MatcherDocumentRaw,
+  MatcherFile,
+  MatcherFileRaw,
+  MatcherFileState,
+  MatcherGroup,
+  MatcherGroupRaw,
+  MatcherPlacement,
+  MatcherSlot,
+  MatcherSlotRaw,
+  SeriesSlots,
+  SeriesSlotsRaw,
+  SlotPosition,
+  SlotsUnavailableReason,
   AlbumTracks,
   AlbumTracksResponseRaw,
   ArtistAlbums,
@@ -60,6 +75,8 @@ import type {
   SeasonEpisodes,
   SeasonEpisodesResponseRaw,
   SeasonRaw,
+  ShowProblems,
+  ShowProblemsRaw,
   ShowSeasons,
   ShowSeasonsResponseRaw,
   ShowSummary,
@@ -167,6 +184,23 @@ export function normalizeWatchState(raw: WatchStateResult): WatchStateResult {
 
 /** Fill an Unmatched file's `omitempty` holes (reason → ""): the attention list
  * renders the reason unconditionally, so it must always be a string. */
+/** Fill a Show-problems entry's holes (numbers → 0, strings → "", lists → []), so
+ * a row can add its counts without guarding every field. An absent count means
+ * zero, which is the meaning rather than a fallback. */
+export function normalizeShowProblems(raw: ShowProblemsRaw): ShowProblems {
+  return {
+    showId: raw.showId,
+    title: raw.title,
+    year: raw.year ?? 0,
+    path: raw.path ?? "",
+    unassigned: raw.unassigned ?? 0,
+    unidentified: raw.unidentified ?? 0,
+    unmatchedPaths: raw.unmatchedPaths ?? [],
+    orphaned: raw.orphaned ?? 0,
+    orphanedPath: raw.orphanedPath ?? "",
+  };
+}
+
 export function normalizeUnmatchedFile(raw: UnmatchedFileRaw): UnmatchedFile {
   return {
     id: raw.id,
@@ -239,7 +273,12 @@ function reasonForKind(kind: string): NeedsReviewReason {
   return "no-year";
 }
 
-/** Fill a needs-review item's holes (year → 0, folderPath → ""). */
+/** Fill an identity-attention item's holes (year → 0, folderPath → "").
+ *
+ * `needsReview` defaults to TRUE rather than false: the list carried nothing but
+ * needs-review items before the flag was sent, so an absent field means "an older
+ * server", not "not a needs-review row". Defaulting it the other way would silently
+ * stop every row on such a server from stating its problem. */
 export function normalizeNeedsReviewItem(
   raw: NeedsReviewItemRaw,
 ): NeedsReviewItem {
@@ -250,6 +289,9 @@ export function normalizeNeedsReviewItem(
     year: raw.year ?? 0,
     folderPath: raw.folderPath ?? "",
     reason: raw.reason ?? reasonForKind(raw.kind),
+    needsReview: raw.needsReview !== false,
+    ambiguous: raw.ambiguous ?? false,
+    collidingPaths: raw.collidingPaths ?? [],
     enrichmentStatus: raw.enrichmentStatus ?? "pending",
     ...normalizeFixContext(raw),
   };
@@ -623,5 +665,128 @@ export function normalizePlaylistDetail(
     kind: raw.kind ?? "",
     memberCount: raw.memberCount ?? 0,
     members: (raw?.members ?? []).map(normalizePlaylistMember),
+  };
+}
+
+// --- The file matcher (ADR-0044) -----------------------------------------
+//
+// The matcher document is pruned hard on the wire (every count and every array is
+// `omitempty`), and the screen's whole job is comparing two lists — so an absent
+// `parsed` reaching a component as `undefined` would be a bug factory. Everything
+// arrives here as a present array with present numbers.
+
+const SLOTS_UNAVAILABLE_REASONS: SlotsUnavailableReason[] = [
+  "no-series-match",
+  "enrichment-disabled",
+  "provider-cannot-list",
+  "provider-unreachable",
+];
+
+/** Keep only a reason this client knows how to explain. A reason it does not is
+ * dropped rather than printed raw, because the point of the field is a SENTENCE
+ * naming what to go fix; an unknown token names nothing. */
+function normalizeSlotsUnavailable(raw?: string): SlotsUnavailableReason | undefined {
+  const found = SLOTS_UNAVAILABLE_REASONS.find((r) => r === raw);
+  return found;
+}
+
+function normalizeFileState(raw?: string): MatcherFileState {
+  return raw === "placed" || raw === "ignored" ? raw : "unassigned";
+}
+
+function normalizeSlotPosition(raw?: { group?: number; slot?: number }): SlotPosition {
+  return { group: raw?.group ?? 0, slot: raw?.slot ?? 0 };
+}
+
+export function normalizeMatcherSlot(raw: MatcherSlotRaw): MatcherSlot {
+  const slot: MatcherSlot = {
+    group: raw.group ?? 0,
+    slot: raw.slot ?? 0,
+    titleId: raw.titleId,
+    name: raw.name,
+    overview: raw.overview,
+    airDate: raw.airDate,
+    stillUrl: raw.stillUrl,
+  };
+  if (raw.record) {
+    slot.record = {
+      externalId: raw.record.externalId,
+      group: raw.record.group ?? 0,
+      slot: raw.record.slot ?? 0,
+      name: raw.record.name,
+      overview: raw.record.overview,
+      airDate: raw.record.airDate,
+      stillUrl: raw.record.stillUrl,
+    };
+  }
+  return slot;
+}
+
+export function normalizeMatcherGroup(raw: MatcherGroupRaw): MatcherGroup {
+  return {
+    number: raw.number ?? 0,
+    source: raw.source ?? "local",
+    slotCount: raw.slotCount ?? 0,
+    slotsLoaded: raw.slotsLoaded ?? false,
+    slotsUnavailable: normalizeSlotsUnavailable(raw.slotsUnavailable),
+    fileCount: raw.fileCount ?? 0,
+    placedCount: raw.placedCount ?? 0,
+    unassignedCount: raw.unassignedCount ?? 0,
+    ignoredCount: raw.ignoredCount ?? 0,
+    slots: (raw.slots ?? []).map(normalizeMatcherSlot),
+  };
+}
+
+export function normalizeMatcherFile(raw: MatcherFileRaw): MatcherFile {
+  // `ordinal` is omitempty, so the single-File case arrives with no ordinal at
+  // all; 1 is what "the only part" means and what a later merge counts from.
+  const placements: MatcherPlacement[] = (raw.placements ?? []).map((p) => ({
+    group: p.group ?? 0,
+    slot: p.slot ?? 0,
+    ordinal: p.ordinal ?? 1,
+  }));
+  return {
+    path: raw.path ?? "",
+    state: normalizeFileState(raw.state),
+    titleId: raw.titleId,
+    parsed: (raw.parsed ?? []).map(normalizeSlotPosition),
+    placements,
+    decided: raw.decided ?? false,
+    orphaned: raw.orphaned ?? false,
+    reason: raw.reason ?? "",
+  };
+}
+
+export function normalizeMatcher(raw: MatcherDocumentRaw): MatcherDocument {
+  const applied: MatcherApplied | undefined = raw.applied
+    ? {
+        rearranged: raw.applied.rearranged ?? 0,
+        displaced: raw.applied.displaced ?? [],
+        deferred: raw.applied.deferred ?? [],
+      }
+    : undefined;
+  return {
+    containerId: raw.containerId ?? "",
+    containerType: raw.containerType ?? "",
+    libraryId: raw.libraryId ?? "",
+    title: raw.title ?? "",
+    year: raw.year,
+    seriesExternalId: raw.seriesExternalId,
+    slotsUnavailable: normalizeSlotsUnavailable(raw.slotsUnavailable),
+    groups: (raw.groups ?? []).map(normalizeMatcherGroup),
+    files: (raw.files ?? []).map(normalizeMatcherFile),
+    applied,
+  };
+}
+
+export function normalizeSeriesSlots(raw: SeriesSlotsRaw): SeriesSlots {
+  return {
+    externalId: raw.externalId ?? "",
+    groups: (raw.groups ?? []).map((g) => ({
+      number: g.number ?? 0,
+      slotCount: g.slotCount ?? 0,
+    })),
+    group: raw.group ? { number: raw.group.number ?? 0 } : undefined,
+    slots: (raw.slots ?? []).map(normalizeMatcherSlot),
   };
 }

@@ -129,6 +129,7 @@ func (s *Service) scanScope(ctx context.Context, lib store.Library, scope Target
 		seen:      map[string]bool{},
 		snapshots: map[string]store.FileSnapshot{},
 		overrides: map[string]store.MatchOverride{},
+		decisions: map[string]store.FileDecisions{},
 	}
 	snaps, err := s.store.ListFileSnapshots(lib.ID)
 	if err != nil {
@@ -142,6 +143,17 @@ func (s *Service) scanScope(ctx context.Context, lib store.Library, scope Target
 	for _, o := range overrides {
 		sc.overrides[o.FolderPath] = o
 	}
+	// The file-anchored decisions too (ADR-0044). A Targeted scan runs the SAME
+	// resolvers as a full one, so if it did not load these it would rebuild a
+	// hand-sorted Show from its filenames and silently undo the arrangement — and
+	// a Targeted scan is exactly what runs right after the Admin presses Apply.
+	// (The orphan-surfacing pass stays out, as it does for match overrides: it is
+	// a whole-Library operation a narrow scan has no business rewriting.)
+	decisions, err := s.store.FileDecisionsByLibrary(lib.ID)
+	if err != nil {
+		return TargetedResult{}, err
+	}
+	sc.decisions = decisions
 
 	// Reachability pre-check (ADR-0031): a scope folder we cannot stat — an
 	// unmounted share (ENOENT) or a transient network-FS blip — is skipped

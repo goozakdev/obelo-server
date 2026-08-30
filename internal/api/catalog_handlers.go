@@ -925,6 +925,91 @@ func handleListUnmatched(svc *catalog.Service) http.HandlerFunc {
 	}
 }
 
+// --- Show problems (the Needs-Fixing queue's collapsed Show row) -------------
+
+// showProblemsJSON is one Show's unsettled Files: the counts one collapsed queue
+// row stands for, plus the paths it absorbed.
+//
+// It is the half of a Show row the client cannot compute. The flagged Episodes it
+// already has (needs-review and enrichment-attention both name their Show); what it
+// has no way to see is which flat Unmatched paths fall under this Show's folders,
+// and which Files the Admin explicitly left unassigned — those produce no Title and
+// no Unmatched row at all (ADR-0044's third state), so they appear in none of the
+// lists the queue fetches.
+type showProblemsJSON struct {
+	ShowID string `json:"showId"`
+	Title  string `json:"title"`
+	Year   int    `json:"year,omitempty"`
+	// Path is one of the counted Files, so the row's "which file?" points at the
+	// problem rather than merely near it.
+	Path         string `json:"path,omitempty"`
+	Unassigned   int    `json:"unassigned,omitempty"`
+	Unidentified int    `json:"unidentified,omitempty"`
+	// UnmatchedPaths are the Library Unmatched rows this Show absorbed, so the queue
+	// can drop them from its flat list instead of showing them twice.
+	UnmatchedPaths []string `json:"unmatchedPaths,omitempty"`
+	Orphaned       int      `json:"orphaned,omitempty"`
+	OrphanedPath   string   `json:"orphanedPath,omitempty"`
+}
+
+type showProblemsResponse struct {
+	Shows []showProblemsJSON `json:"shows"`
+}
+
+// handleListShowProblems returns the per-Show unsettled counts behind the queue's
+// collapsed Show rows (Admin-only). A Library with no Shows answers an empty list,
+// not an error: the queue asks every Library the same question and a Movie Library
+// simply has nothing to say. Unknown Library -> 404 (hide-existence).
+func handleListShowProblems(svc *catalog.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := pathParam(r.URL.Path, "/libraries/", "/show-problems")
+		if id == "" {
+			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		problems, err := svc.ShowProblems(id)
+		switch {
+		case errors.Is(err, catalog.ErrNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list show problems", nil)
+			return
+		}
+		out := showProblemsResponse{Shows: make([]showProblemsJSON, 0, len(problems))}
+		for _, p := range problems {
+			out.Shows = append(out.Shows, showProblemsJSON{
+				ShowID: p.ShowID, Title: p.Title, Year: p.Year, Path: p.Path,
+				Unassigned: p.Unassigned, Unidentified: p.Unidentified,
+				UnmatchedPaths: p.UnmatchedPaths,
+				Orphaned:       p.Orphaned, OrphanedPath: p.OrphanedPath,
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// handleReviewShowEpisodes dismisses the needs-review flag on every flagged
+// Episode of a Show — the "Looks right" behind a COLLAPSED Show row, which stands
+// for the whole set the row counted.
+//
+// It is deliberately not N calls from the browser: a five-episode Show would then
+// be five requests that can half-succeed, leaving a row that says "3 episodes" for
+// reasons the Admin cannot see. A Show with nothing flagged is a no-op, not a 404 —
+// dismissing an empty set is a success.
+func handleReviewShowEpisodes(svc *catalog.Service, showID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch _, err := svc.MarkShowEpisodesReviewed(showID); {
+		case errors.Is(err, catalog.ErrNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "show not found", nil)
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to mark reviewed", nil)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}
+}
+
 // --- Enrichment attention (Admin attention surface) -------------------------
 
 // enrichmentAttentionTitleJSON is one Title that Enrichment could not match — a
@@ -1034,9 +1119,10 @@ func handleListEnrichmentAttention(svc *catalog.Service) http.HandlerFunc {
 
 // --- Needs-review attention (Admin attention surface) -----------------------
 
-// needsReviewItemJSON is one entry on the identity needs-review list: a Title
+// needsReviewItemJSON is one entry on the identity attention list: a Title
 // (Movie / Episode / Track) or a Show the scanner flagged as an uncertain parse
-// (no year, non-SxxExx episode numbering, or a tag-less Track). FolderPath is the
+// (no year, non-SxxExx episode numbering, or a tag-less Track), as AMBIGUOUS (two
+// Files claiming one Edition — the collision rule), or as both. FolderPath is the
 // path a fix-match override must be keyed to, set for the kinds a folder override
 // can fix — a Movie (its folder / the file itself), a Show (its top-level folder),
 // and a Track (its album folder) — so the client can offer fix-identity. It is
@@ -1049,8 +1135,21 @@ type needsReviewItemJSON struct {
 	Title      string `json:"title"`
 	Year       int    `json:"year,omitempty"`
 	FolderPath string `json:"folderPath,omitempty"`
+	// NeedsReview and Ambiguous say which flags put this item on the list. Both can
+	// be set. NeedsReview is sent even when false — unlike every other flag here it
+	// must be distinguishable from absent, because a client that read an absent
+	// field as false would silently stop stating the uncertain-parse problem on
+	// every row of an older server.
+	NeedsReview bool `json:"needsReview"`
+	Ambiguous   bool `json:"ambiguous,omitempty"`
+	// CollidingPaths are the Files that claim one Edition between them, in play
+	// order — the evidence behind Ambiguous. The first is the one that actually
+	// plays; the rest are the ones the collision rule refuses to guess about
+	// (store.Edition.Parts). Absent unless Ambiguous.
+	CollidingPaths []string `json:"collidingPaths,omitempty"`
 	// Reason names WHY the scanner flagged this item, so the client can state the
-	// problem in one sentence instead of the bare word "needs review". See
+	// problem in one sentence instead of the bare word "needs review". Absent on an
+	// item flagged only as ambiguous — nothing said its parse was a guess. See
 	// needsReviewReason.
 	Reason string `json:"reason,omitempty"`
 	// EnrichmentStatus says whether there is a matched provider record to show the
@@ -1088,9 +1187,13 @@ type needsReviewResponse struct {
 	Items []needsReviewItemJSON `json:"items"`
 }
 
-// handleListNeedsReview returns a Library's still-flagged needs-review items —
-// Movies, Episodes, Tracks, and Shows whose needs_review is set and which an Admin
-// has not yet dismissed. This is the server-side replacement for the old client
+// handleListNeedsReview returns a Library's still-flagged identity-attention items
+// — Movies, Episodes, Tracks and Shows whose needs_review is set and which an Admin
+// has not yet dismissed, plus the Titles flagged AMBIGUOUS by the collision rule
+// (two Files claiming one Edition, docs/naming-convention.md). An ambiguous Title
+// is listed whether or not its parse was also uncertain, and stays listed through a
+// "looks right" dismissal: confirming a parse says nothing about two files
+// colliding. This is the server-side replacement for the old client
 // page-walk: it works uniformly across Movie / TV / Music libraries (the walk
 // silently returned nothing for TV/Music, whose listings are Shows/Artists, not
 // Titles) and hands back the Movie folder so a fix-match can be driven inline.
@@ -1113,13 +1216,23 @@ func handleListNeedsReview(svc *catalog.Service) http.HandlerFunc {
 		}
 		out := needsReviewResponse{Items: make([]needsReviewItemJSON, 0, len(items))}
 		for _, it := range items {
+			// A reason only ever explains the needs_review flag, so an item carrying
+			// only `ambiguous` sends none rather than a kind-derived guess about a
+			// flag it does not have.
+			reason := ""
+			if it.NeedsReview {
+				reason = needsReviewReason(it.Kind)
+			}
 			out.Items = append(out.Items, needsReviewItemJSON{
 				ID:               it.ID,
 				Kind:             it.Kind,
 				Title:            it.Title,
 				Year:             it.Year,
 				FolderPath:       it.Anchor,
-				Reason:           needsReviewReason(it.Kind),
+				NeedsReview:      it.NeedsReview,
+				Ambiguous:        it.Ambiguous,
+				CollidingPaths:   it.CollidingPaths,
+				Reason:           reason,
 				EnrichmentStatus: it.Context.EnrichmentStatus,
 				fixContextJSON:   toFixContextJSON(it.Context),
 			})
@@ -1290,6 +1403,12 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			// Admin attention surface: Titles whose Enrichment is unmatched/failed,
 			// awaiting a hand-match (distinct from the identity Unmatched bucket).
 			requireMethod(http.MethodGet, requireAdmin(handleListEnrichmentAttention(deps.Catalog)))(w, r)
+			return
+		case strings.HasSuffix(rest, "/show-problems"):
+			// Admin: the per-Show unsettled counts behind the queue's collapsed Show
+			// rows (file-matcher/07). The client cannot derive these — an explicitly
+			// unassigned File is in none of the four lists it already fetches.
+			requireMethod(http.MethodGet, requireAdmin(handleListShowProblems(deps.Catalog)))(w, r)
 			return
 		case strings.HasSuffix(rest, "/needs-review"):
 			// Admin attention surface: Movies/Episodes/Tracks/Shows the scanner

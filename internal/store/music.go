@@ -331,9 +331,9 @@ func (db *DB) TracksForAlbum(albumID string) ([]Title, error) {
 	}
 	rows, err := db.Query(
 		`SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
-		        tmdb_id, imdb_id, musicbrainz_id, needs_review, ambiguous, hidden,
+		        `+recordExternalIDs("")+`, musicbrainz_id, needs_review, ambiguous, hidden,
 		        disc_number, track_number,
-		        overview, enrichment_status, enriched_title
+		        overview, enrichment_status, enriched_title, enrichment_id_origin
 		   FROM titles WHERE album_id = ? AND hidden = 0
 		  ORDER BY disc_number ASC, track_number ASC, sort_title ASC, id ASC`, albumID)
 	if err != nil {
@@ -493,12 +493,14 @@ func scanTrackTitle(s scanner) (Title, error) {
 	var t Title
 	var year sql.NullInt64
 	var needsReview, ambiguous, hidden int
+	var idOrigin string
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &t.MusicbrainzID, &needsReview, &ambiguous, &hidden,
 		&t.DiscNumber, &t.TrackNumber,
-		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle); err != nil {
+		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle, &idOrigin); err != nil {
 		return Title{}, err
 	}
+	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)
 	}

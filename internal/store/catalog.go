@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
+	"github.com/goozakdev/obelo-server/internal/naming"
 )
 
 // The catalog rows produced by a scan: Title → Edition → File → Stream
@@ -24,10 +26,26 @@ type Title struct {
 	IdentityKey string
 	SortTitle   string
 	AddedAt     string
-	// TMDBID / IMDBID are the embedded external ids parsed from the folder name
-	// (empty when absent); recorded as identity authority + Enrichment hook.
+	// TMDBID / IMDBID are the external ids of the RECORD this Title resolves
+	// against: the Admin's Enrichment override when there is one, else the id the
+	// folder name asserts (ADR-0045). Every read path selects them through
+	// recordExternalIDs, so a reader never has to know which of the two answered.
+	//
+	// On the WRITE side — a TitleTree the Scanner hands to writeTitleRow — they are
+	// the identity id and nothing else: the embedded {tmdb-…}/{imdb-tt…} token or a
+	// folder-anchored Match override. A tree that wants to seed the enrichment
+	// record instead sets TitleTree.RecordTMDBID.
 	TMDBID string
 	IMDBID string
+	// EnrichmentIDOrigin says WHOSE choice this Title's enrichment record is: nobody's
+	// (an id a pass resolved), the Admin's own on this Title (Fix info, an Episode
+	// pin), or its parent's, applied by a Cascade (ADR-0045, ADR-0046). Both choices
+	// are durable — .Locked() is the old enrichment_id_locked bit — but only
+	// .OwnChoice() outranks a Cascade. The per-Title twin of
+	// entity_enrichment.external_id_origin. Populated only by the reads that feed
+	// enrichment (enrichedTitleColumns, EpisodesForSeason, TracksForAlbum);
+	// OriginDerived elsewhere.
+	EnrichmentIDOrigin RecordOrigin
 	// NeedsReview flags a Title filed from a partial best-effort parse (e.g. no
 	// year) — browsable, but surfaced in the Admin attention list (CONTEXT.md).
 	NeedsReview bool
@@ -174,7 +192,14 @@ type File struct {
 	// Present is false when the File is Missing — absent from disk but kept as a
 	// soft-delete so it (and its Title) can return on a later scan (ADR-0008).
 	Present bool
-	Streams []Stream
+	// PartOrdinal is this File's 1-based position among the parts of its Edition,
+	// 0 when nothing numbered it. It is the STORED play order (migration 0049):
+	// Edition.Files is read back in (part_ordinal, path) order, so a multi-part
+	// Edition an Admin assembled by Placement plays in the order they chose rather
+	// than in filename order (ADR-0044). It mirrors file_decisions.ordinal for a
+	// placed File and filename.go's partNumber() for a parse-numbered one.
+	PartOrdinal int
+	Streams     []Stream
 }
 
 // PresentFiles returns the Edition's on-disk Files in stored order — the parts of a
@@ -193,13 +218,79 @@ func (e Edition) PresentFiles() []File {
 	return out
 }
 
+// Parts returns the Files that make up this Edition's ONE playback timeline, in
+// play order: every present File of a genuine multi-part Edition, and just the
+// first present File of anything else. It is the single definition of "what plays"
+// that TotalDurationMs, PartAt, PartStartMs, the HLS escalation and the concat list
+// all read, so none of them can disagree about it.
+//
+// A multi-part Edition is one whose Files are NUMBERED — that is what the
+// convention means by a part suffix joining several Files into one Edition
+// (`- part1` / `- cd1`). More-than-one-File is NOT the same test, and the
+// difference is the collision rule: two files that parse to the same Edition
+// identity and are not parts are "flagged ambiguous in the web app, never silently
+// guessed" (naming-convention.md). Concatenating THOSE plays `S01E05-E06` followed
+// by `S01E06` again, or the same episode twice from two equal rips — an unrelated
+// second work spliced onto the first, presented as one timeline. So an unsettled
+// Edition plays its first File and nothing else, and the Ambiguous flag on its
+// Title is what tells the Admin why (needsreview.go).
+//
+// Numbered means, in order:
+//
+//   - part_ordinal > 0 on EVERY present File — the stored order, written by the
+//     scanner from the filename and by Placement from the Admin's own choice
+//     (migration 0049). Some-but-not-all numbered is a collision, not a part set:
+//     `Movie - part1.mkv` beside a bare `Movie.mkv` is exactly the ambiguous case.
+//   - failing that — NO present File carries an ordinal at all — the FILENAMES.
+//     part_ordinal was added with no backfill, so every File row written before
+//     migration 0049 sits at 0 until a scan rewrites it. Reading only the column
+//     would make every legitimate multi-part Movie and Episode on an install that
+//     has not rescanned play its first part and stop, and would put the ~90%
+//     Watched threshold back on that one part — a far worse regression than the bug
+//     this rule fixes (see internal/playback/multipart_test.go). Before 0049 the
+//     ONLY way to get a multi-part Edition was to name the files for it, so the
+//     names still carry the answer for exactly the rows the column cannot.
+func (e Edition) Parts() []File {
+	present := e.PresentFiles()
+	if len(present) < 2 || !numberedParts(present) {
+		if len(present) == 0 {
+			return nil
+		}
+		return present[:1:1]
+	}
+	return present
+}
+
+// numberedParts reports whether these Files are a numbered part set — see Parts
+// for the rule and for why the filename fallback exists.
+func numberedParts(present []File) bool {
+	stored := 0
+	for _, f := range present {
+		if f.PartOrdinal > 0 {
+			stored++
+		}
+	}
+	if stored > 0 {
+		return stored == len(present)
+	}
+	for _, f := range present {
+		if naming.PartNumber(f.Path) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // IsMultiPart reports whether the Edition is a multi-part one: more than one
 // PRESENT File, joined by a part suffix (`- part1` / `cd1`, naming-convention.md).
-// One File plus one Missing sibling is NOT multi-part — there is nothing to join.
-func (e Edition) IsMultiPart() bool { return len(e.PresentFiles()) > 1 }
+// One File plus one Missing sibling is NOT multi-part — there is nothing to join —
+// and neither is a pair of unnumbered Files claiming one Edition, which is the
+// ambiguous collision Parts describes.
+func (e Edition) IsMultiPart() bool { return len(e.Parts()) > 1 }
 
-// TotalDurationMs is the Edition's whole playable duration: the sum of its present
-// parts. For an ordinary single-File Edition it is simply that File's duration.
+// TotalDurationMs is the Edition's whole playable duration: the sum of the parts it
+// actually plays (Parts). For an ordinary single-File Edition it is simply that
+// File's duration.
 //
 // This is the duration the Watched threshold and the resume position must be
 // measured against. Measuring against ONE PART instead is not a cosmetic error: a
@@ -210,7 +301,7 @@ func (e Edition) IsMultiPart() bool { return len(e.PresentFiles()) > 1 }
 // which callers already treat as "unknown, best-effort".
 func (e Edition) TotalDurationMs() int64 {
 	var total int64
-	for _, f := range e.PresentFiles() {
+	for _, f := range e.Parts() {
 		total += f.DurationMs
 	}
 	return total
@@ -224,7 +315,7 @@ func (e Edition) TotalDurationMs() int64 {
 // A position past the end clamps to the last part so a resume can never dangle.
 // ok is false only for an Edition with no present part at all.
 func (e Edition) PartAt(positionMs int64) (part File, offsetMs int64, ok bool) {
-	parts := e.PresentFiles()
+	parts := e.Parts()
 	if len(parts) == 0 {
 		return File{}, 0, false
 	}
@@ -248,7 +339,7 @@ func (e Edition) PartAt(positionMs int64) (part File, offsetMs int64, ok bool) {
 // value added to a position reported within that part to get the whole-Edition
 // position. Out-of-range indexes clamp to 0.
 func (e Edition) PartStartMs(index int) int64 {
-	parts := e.PresentFiles()
+	parts := e.Parts()
 	var start int64
 	for i, f := range parts {
 		if i >= index {
@@ -336,9 +427,22 @@ type TitleDetail struct {
 // atomically. Callers supply pre-generated ids on the children.
 type TitleTree struct {
 	Title
-	Editions []Edition
-	Extras   []Extra
-	Artwork  []Artwork
+	// RecordTMDBID seeds the ENRICHMENT record of a Title this tree INSERTS, as
+	// opposed to Title.TMDBID, which on a tree is the identity id (ADR-0045). It is
+	// set by exactly one caller — the file matcher's Apply, carrying a Show's pinned
+	// series onto the co-File sibling rows a split creates, which have no prior row
+	// to keep it on. The Scanner leaves it empty, and writeTitleRow honors it on
+	// INSERT only: an existing row's enrichment columns are never written by a tree.
+	//
+	// It carries the record and NOT enrichment_id_origin, so an inherited record
+	// reads as one nobody chose: the sibling keeps its anchor and stays eligible for
+	// its Show's next Cascade. Carrying the origin too would be more faithful when
+	// the survivor's record really was the Admin's pick, and wants ShowEpisodeSlots
+	// to report it first.
+	RecordTMDBID string
+	Editions     []Edition
+	Extras       []Extra
+	Artwork      []Artwork
 	// Subtitles are the Sidecar Subtitle tracks the scanner found next to the
 	// media. They are local rows: a rescan rewrites them and leaves any Fetched
 	// (source='fetched') track intact.
@@ -398,8 +502,35 @@ type episodeColumns struct {
 // writeTitleRow resolves the Title id by (library_id, identity_key) — reusing the
 // existing row on a rescan, else inserting — and writes its descriptive fields
 // plus the (optional) TV linkage. It is shared by the Movie path
-// (UpsertTitleTree) and the Episode path (upsertEpisodeTitle) so identity
-// stability is identical for both kinds. Returns the resolved Title id.
+// (UpsertTitleTree), the Episode path (upsertEpisodeTitle) and the Track path
+// (upsertTrackTitle) so identity stability is identical for all three. Returns
+// the resolved Title id.
+//
+// THE TREE OWNS tmdb_id/imdb_id AND NOTHING ELSE (ADR-0045). Those two columns
+// carry one claim and have one writer class: the id LOCAL NAMING asserts — an
+// embedded `{tmdb-…}`/`{imdb-tt…}` token or a folder-anchored Match override. That
+// is an identity claim (ADR-0002), and it is the SAME claim identity_key already
+// carries: whenever a tree arrives with a TMDBID the key IS "tmdb:<id>"
+// (scanner.identityKey), so the row this update finds was keyed by that very id.
+// They are therefore written unconditionally, insert and update alike.
+//
+// The record an Admin chose — "Fix info" on a Movie or Track, an Episode pin's
+// series, a Cascade — and the record an enrichment pass resolved live in
+// enrichment_tmdb_id / enrichment_imdb_id / musicbrainz_id, which this function
+// NEVER writes on an existing row. That is what makes an Enrichment override
+// durable across a scan (ADR-0019, CONTEXT.md): not a guard that has to be
+// remembered, but a column the Scanner has no statement to make about.
+//
+// Before ADR-0045 the two claims shared one column, and writing `tmdb_id = ?`
+// unconditionally made every scan assert "" — nothing — over the Admin's answer.
+// The damage was worse than loss: an Episode pin is a PAIR (which series, plus
+// enrichment_season/enrichment_episode within it), and blanking only the series
+// half silently re-aimed the lookup at the Show's own series at the borrowed
+// numbering — a real record, confidently wrong (ADR-0044).
+//
+// The INSERT branch additionally seeds enrichment_tmdb_id from tree.RecordTMDBID,
+// which only the file matcher's Apply sets (see TitleTree.RecordTMDBID); a
+// brand-new row has no override of its own to protect.
 func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error) {
 	var seasonID any
 	if ep.seasonID != "" {
@@ -421,12 +552,12 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 		if _, err := tx.Exec(
 			`INSERT INTO titles
 			   (id, library_id, kind, title, year, identity_key, sort_title,
-			    tmdb_id, imdb_id, needs_review, ambiguous, hidden,
+			    tmdb_id, imdb_id, enrichment_tmdb_id, needs_review, ambiguous, hidden,
 			    season_id, season_number, episode_number, episode_label,
 			    album_id, disc_number, track_number)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
 			titleID, tree.LibraryID, tree.Kind, tree.Title.Title, nullableYear(tree.Year),
-			tree.IdentityKey, tree.SortTitle, tree.TMDBID, tree.IMDBID,
+			tree.IdentityKey, tree.SortTitle, tree.TMDBID, tree.IMDBID, tree.RecordTMDBID,
 			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
 			albumID, ep.discNumber, ep.trackNumber,
@@ -450,7 +581,8 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			    album_id = ?, disc_number = ?, track_number = ?
 			  WHERE id = ?`,
 			tree.Title.Title, nullableYear(tree.Year), tree.SortTitle,
-			tree.TMDBID, tree.IMDBID, boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
+			tree.TMDBID, tree.IMDBID,
+			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
 			albumID, ep.discNumber, ep.trackNumber,
 			titleID,
@@ -569,20 +701,22 @@ func writeTitleSubtree(tx *sql.Tx, titleID string, tree TitleTree, written map[s
 				if _, err := tx.Exec(
 					`INSERT INTO files
 					   (id, edition_id, path, container, video_codec, audio_codec, width, height,
-					    bitrate, duration_ms, size_bytes, mtime, present)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+					    bitrate, duration_ms, size_bytes, mtime, present, part_ordinal)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 					fileID, ed.ID, f.Path, f.Container, f.VideoCodec, f.AudioCodec,
 					f.Width, f.Height, f.Bitrate, f.DurationMs, f.SizeBytes, f.Mtime,
+					f.PartOrdinal,
 				); err != nil {
 					return fmt.Errorf("store: inserting file %q: %w", f.Path, err)
 				}
 			} else if _, err := tx.Exec(
 				`INSERT INTO files
 				   (id, edition_id, path, container, video_codec, audio_codec, width, height,
-				    bitrate, duration_ms, size_bytes, mtime, present, added_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+				    bitrate, duration_ms, size_bytes, mtime, present, added_at, part_ordinal)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
 				fileID, ed.ID, f.Path, f.Container, f.VideoCodec, f.AudioCodec,
 				f.Width, f.Height, f.Bitrate, f.DurationMs, f.SizeBytes, f.Mtime, addedAt,
+				f.PartOrdinal,
 			); err != nil {
 				return fmt.Errorf("store: re-inserting file %q: %w", f.Path, err)
 			}
@@ -1000,11 +1134,11 @@ func (db *DB) FileByID(id string) (File, error) {
 	var present int
 	row := db.QueryRow(
 		`SELECT id, edition_id, path, container, video_codec, audio_codec, width, height,
-		        bitrate, duration_ms, size_bytes, added_at, mtime, present
+		        bitrate, duration_ms, size_bytes, added_at, mtime, present, part_ordinal
 		   FROM files WHERE id = ?`, id)
 	if err := row.Scan(&f.ID, &f.EditionID, &f.Path, &f.Container, &f.VideoCodec,
 		&f.AudioCodec, &f.Width, &f.Height, &f.Bitrate, &f.DurationMs, &f.SizeBytes,
-		&f.AddedAt, &f.Mtime, &present); err != nil {
+		&f.AddedAt, &f.Mtime, &present, &f.PartOrdinal); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return File{}, ErrNotFound
 		}
@@ -1051,10 +1185,15 @@ func (db *DB) LibraryAndRatingOfFile(fileID string) (libraryID, contentRating st
 }
 
 func (db *DB) filesForEdition(editionID string) ([]File, error) {
+	// (part_ordinal, path), not path alone: Edition.Files is a PLAY order, and once
+	// an Admin can assemble a multi-part Edition by Placement the filenames no
+	// longer carry the part order (ADR-0044, migration 0049). part_ordinal is 0 on
+	// every File nothing numbered, so a filename-derived Edition still falls
+	// through to path exactly as before.
 	rows, err := db.Query(
 		`SELECT id, edition_id, path, container, video_codec, audio_codec, width, height,
-		        bitrate, duration_ms, size_bytes, added_at, mtime, present
-		   FROM files WHERE edition_id = ? ORDER BY path`, editionID)
+		        bitrate, duration_ms, size_bytes, added_at, mtime, present, part_ordinal
+		   FROM files WHERE edition_id = ? ORDER BY part_ordinal, path`, editionID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing files: %w", err)
 	}
@@ -1066,7 +1205,7 @@ func (db *DB) filesForEdition(editionID string) ([]File, error) {
 		var present int
 		if err := rows.Scan(&f.ID, &f.EditionID, &f.Path, &f.Container, &f.VideoCodec,
 			&f.AudioCodec, &f.Width, &f.Height, &f.Bitrate, &f.DurationMs, &f.SizeBytes,
-			&f.AddedAt, &f.Mtime, &present); err != nil {
+			&f.AddedAt, &f.Mtime, &present, &f.PartOrdinal); err != nil {
 			return nil, fmt.Errorf("store: scanning file: %w", err)
 		}
 		f.Present = present != 0
@@ -1148,12 +1287,36 @@ func scanTitle(s scanner) (Title, error) {
 // guaranteed 404 — while a full-library pass, which collects its own leaves with the
 // numbers attached, resolved the same Episode correctly. Any read that builds a
 // Title for a lookup must carry the fields the lookup is keyed on.
-const enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sort_title, added_at,
-	        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
+var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sort_title, added_at,
+	        ` + recordExternalIDs("") + `, needs_review, ambiguous, hidden,
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
 	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title,
-	        enrichment_season, enrichment_episode,
+	        enrichment_season, enrichment_episode, enrichment_id_origin,
 	        season_number, episode_number, episode_label`
+
+// recordExternalIDs is the ONE spelling of "which external record does this Title
+// resolve against", as a pair of SELECT expressions in the order (tmdb, imdb) that
+// every read scans into Title.TMDBID / Title.IMDBID.
+//
+// The Admin's Enrichment override wins over the id the folder name asserts
+// (ADR-0045); with no override the two columns hold the same value or the
+// enrichment one is empty, so the COALESCE is the whole rule. alias is the table
+// alias with its dot ("t.") or "" for an unaliased `FROM titles`.
+//
+// Selecting the raw `tmdb_id, imdb_id` into a Title instead is a silent bug: it
+// yields the folder's id and drops the correction an Admin made on top of it.
+// The expressions are named back to `tmdb_id` / `imdb_id` so a CTE that projects
+// them keeps the column names its outer SELECT already uses.
+func recordExternalIDs(alias string) string {
+	return recordTMDBID(alias) + " AS tmdb_id, " +
+		"COALESCE(NULLIF(" + alias + "enrichment_imdb_id, ''), " + alias + "imdb_id) AS imdb_id"
+}
+
+// recordTMDBID is recordExternalIDs' first half alone, for the reads that only
+// need the series/record id (ShowEpisodeSlots).
+func recordTMDBID(alias string) string {
+	return "COALESCE(NULLIF(" + alias + "enrichment_tmdb_id, ''), " + alias + "tmdb_id)"
+}
 
 // EpisodePin reports the provider season/episode this Episode is pinned to, and
 // whether it is pinned at all.
@@ -1184,15 +1347,17 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 	var t Title
 	var year sql.NullInt64
 	var needsReview, ambiguous, hidden int
+	var idOrigin string
 	var pinSeason, pinEpisode sql.NullInt64
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
 		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
-		&pinSeason, &pinEpisode,
+		&pinSeason, &pinEpisode, &idOrigin,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {
 		return Title{}, err
 	}
+	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)
 	}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type {
   EpisodeSummary,
@@ -28,6 +28,7 @@ import { EditIcon, MoreIcon } from "./ActionIcons";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
 import EditItemDialog from "../admin/EditItemDialog";
+import { matcherPath } from "../admin/paths";
 import { useAuth } from "../auth/session";
 import { errorMessage } from "../screens/errorMessage";
 import { formatTimecode } from "../time";
@@ -392,6 +393,13 @@ export default function ShowDetailScreen() {
                       isAdmin ? () => runScan("shows", state.data.show.id) : undefined
                     }
                     scanning={scanning}
+                    /* The file matcher (ADR-0044), Admin-only. Reachable from
+                       here as well as from the Needs Fixing queue, because an
+                       Admin often knows a Show is mis-sorted before anything
+                       flags it (PRD user story 15). */
+                    matcherPath={
+                      isAdmin ? matcherPath(state.data.show.id) : undefined
+                    }
                   />
                 </div>
 
@@ -615,12 +623,15 @@ function ShowOverflowMenu({
   onPlayNext,
   onScan,
   scanning,
+  matcherPath,
 }: {
   onAddToQueue: () => void;
   onPlayNext: () => void;
   /** Present only for an Admin: a Targeted scan of this Show's folder (ADR-0030). */
   onScan?: () => void;
   scanning: boolean;
+  /** Present only for an Admin: the file matcher for this Show (ADR-0044). */
+  matcherPath?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -683,6 +694,18 @@ function ShowOverflowMenu({
           >
             Play Next
           </button>
+          {matcherPath && (
+            <Link
+              className="overflow-menu-item sort-episodes-item"
+              role="menuitem"
+              data-testid="sort-episodes-item"
+              to={matcherPath}
+              title="Lay this show's files against its episode slots and fix the arrangement"
+              onClick={() => setOpen(false)}
+            >
+              Sort episodes&hellip;
+            </Link>
+          )}
           {onScan && (
             <button
               className="overflow-menu-item scan-item"

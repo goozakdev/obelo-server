@@ -54,11 +54,16 @@ export default function FixItemPicker({
   onApply: (candidate: EnrichmentCandidate) => Promise<void>;
   /** Close the picker without applying. */
   onCancel: () => void;
-  /** For an Episode row: after the Admin picks a SERIES, they must still pick WHICH
-   * episode within it this file is, because the lookup would otherwise use the
-   * numbers parsed from the filename — the whole reason a mis-numbered file is
-   * unfixable. Rendered instead of applying the series directly. Omitted for every
-   * other kind, where picking the record IS the fix. */
+  /** A second step after the Admin picks a SERIES: which episode within it. It is
+   * needed wherever the series is only half the answer, because the lookup would
+   * otherwise use the numbers parsed from the filename — the whole reason a
+   * mis-numbered file is unfixable. Rendered instead of applying the series
+   * directly; omitted where picking the record IS the fix.
+   *
+   * No queue row passes it: the per-episode pin flow it served moved into the file
+   * matcher with file-matcher/07. Its caller is now the matcher's record picker
+   * (ShowMatcherScreen), which repoints a Slot's record at another series — that
+   * flow is search-a-series-then-pick-an-episode exactly as written here. */
   chooseEpisode?: (candidate: EnrichmentCandidate, back: () => void) => ReactNode;
 }) {
   const [query, setQuery] = useState(seed);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
+import { buildFixItems } from "./needsFixing";
 
 // How many things need fixing in each Library, for the queue's Library selector.
 //
@@ -7,11 +8,19 @@ import { apiClient } from "../api/client";
 // turn to discover which one actually has work in it. With it, "where is the work?"
 // is answered before the first click.
 //
-// It costs four reads per Library (the same four lists the queue folds together —
-// there is no server-side count endpoint, and adding one to save a badge is not
-// worth the API surface). That is fine here and nowhere else: this is an Admin
-// screen on a household server with a handful of Libraries, the reads are already
-// the ones the queue makes, and it runs exactly once per mount.
+// THE BADGE IS THE QUEUE'S OWN ROW COUNT, by construction: it fetches the same
+// lists the queue does and runs the same buildFixItems over them. That is not
+// laziness. Since a Show's episode-level problems collapse into ONE row
+// (file-matcher/07), a badge that summed the raw lists would say "12 to fix" over a
+// queue showing three rows — and the Admin would be left to work out which of the
+// two numbers was lying. Adding the lists is exactly the arithmetic the collapse
+// exists to stop doing.
+//
+// It costs five reads per Library (there is no server-side count endpoint, and
+// adding one to save a badge is not worth the API surface). That is fine here and
+// nowhere else: this is an Admin screen on a household server with a handful of
+// Libraries, the reads are already the ones the queue makes, and it runs exactly
+// once per mount.
 //
 // Every part of it is best-effort. A Library whose counts fail to load is simply
 // absent from the map and renders with no badge — a failed count must never stop
@@ -34,19 +43,21 @@ export function useFixCounts(libraryIds: string[]): FixCounts {
     void Promise.all(
       ids.map(async (id) => {
         try {
-          const [unmatched, review, enrichment, overrides] = await Promise.all([
-            apiClient.listUnmatched(id, ctrl.signal),
-            apiClient.listNeedsReview(id, ctrl.signal),
-            apiClient.listEnrichmentAttention(id, ctrl.signal),
-            apiClient.listOverrides(id, ctrl.signal),
-          ]);
-          // Only ORPHANED corrections count as problems; the rest are finished work
-          // (the queue makes the same split — see buildFixItems).
-          const total =
-            unmatched.length +
-            review.length +
-            enrichment.length +
-            overrides.filter((o) => o.orphaned).length;
+          const [unmatched, needsReview, enrichment, overrides, showProblems] =
+            await Promise.all([
+              apiClient.listUnmatched(id, ctrl.signal),
+              apiClient.listNeedsReview(id, ctrl.signal),
+              apiClient.listEnrichmentAttention(id, ctrl.signal),
+              apiClient.listOverrides(id, ctrl.signal),
+              apiClient.listShowProblems(id, ctrl.signal),
+            ]);
+          const total = buildFixItems({
+            unmatched,
+            needsReview,
+            enrichment,
+            overrides,
+            showProblems,
+          }).length;
           if (!ctrl.signal.aborted) {
             setCounts((cur) => ({ ...cur, [id]: total }));
           }

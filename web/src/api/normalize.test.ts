@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeHome,
   normalizeMatchOverride,
+  normalizeMatcher,
   normalizeScanStatus,
   normalizeTitleSummary,
   normalizeTitlesPage,
@@ -182,5 +183,69 @@ describe("normalize (omitempty holes filled)", () => {
       createdAt: "2026-06-23T10:00:00Z",
     });
     expect(orphan).toMatchObject({ orphaned: true, year: 2021, tmdbId: "123" });
+  });
+});
+
+describe("normalizeMatcher (the file matcher document)", () => {
+  it("fills every pruned array, so the screen never compares against undefined", () => {
+    // The matcher document is pruned hard: counts, `parsed`, `placements`,
+    // `slots` and `groups` are all omitempty. The screen's whole job is comparing
+    // two lists, so an absent one reaching a component would be a bug factory.
+    const m = normalizeMatcher({
+      containerId: "show1",
+      containerType: "show",
+      libraryId: "lib1",
+      title: "Show",
+      groups: [{ number: -1 }],
+      files: [{ path: "/tv/Show/a.mkv" }],
+    });
+    expect(m.groups[0]).toMatchObject({
+      number: -1,
+      source: "local",
+      slotCount: 0,
+      slotsLoaded: false,
+      fileCount: 0,
+      slots: [],
+    });
+    expect(m.files[0]).toMatchObject({
+      state: "unassigned",
+      parsed: [],
+      placements: [],
+      decided: false,
+      orphaned: false,
+    });
+    expect(m.applied).toBeUndefined();
+  });
+
+  it("defaults a placement's pruned ordinal to 1, which is what 'the only part' means", () => {
+    const m = normalizeMatcher({
+      files: [
+        { path: "/a.mkv", state: "placed", placements: [{ group: 3, slot: 1 }] },
+      ],
+    });
+    expect(m.files[0].placements).toEqual([{ group: 3, slot: 1, ordinal: 1 }]);
+  });
+
+  it("keeps a slotsUnavailable reason it can explain and drops one it cannot", () => {
+    // The point of the field is a SENTENCE naming what to go fix; an unknown
+    // token names nothing, so it is better dropped than printed raw.
+    expect(normalizeMatcher({ slotsUnavailable: "provider-unreachable" }).slotsUnavailable).toBe(
+      "provider-unreachable",
+    );
+    expect(normalizeMatcher({ slotsUnavailable: "who-knows" }).slotsUnavailable).toBeUndefined();
+  });
+
+  it("carries `applied` through, because deferred placements must be reported", () => {
+    const m = normalizeMatcher({ applied: { rearranged: 2, deferred: ["/a.mkv"] } });
+    expect(m.applied).toEqual({ rearranged: 2, displaced: [], deferred: ["/a.mkv"] });
+  });
+
+  it("reports an Episode pin, including one inside the show's own series", () => {
+    // A same-series pin is the motivating case (a run the provider counts in the
+    // next season), so hiding it would hide the case the feature exists for.
+    const m = normalizeMatcher({
+      groups: [{ number: 3, slots: [{ group: 3, slot: 61, record: { group: 1, slot: 1 } }] }],
+    });
+    expect(m.groups[0].slots[0].record).toEqual({ externalId: undefined, group: 1, slot: 1 });
   });
 });

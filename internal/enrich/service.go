@@ -29,8 +29,9 @@ type Store interface {
 	// Single-Title match correction (issue 05): an Admin re-points a Title's
 	// external metadata id, then it re-enriches just that Title. SetTitleExternalMatch
 	// writes the external id WITHOUT touching identity_key; TitleForEnrichmentByID
-	// reads the one Title back to re-resolve it.
-	SetTitleExternalMatch(titleID string, m store.ExternalMatch) error
+	// reads the one Title back to re-resolve it. The store.RecordOrigin says whose
+	// choice the record is — the item's own or its parent's Cascade (ADR-0046).
+	SetTitleExternalMatch(titleID string, m store.ExternalMatch, origin store.RecordOrigin) error
 	TitleForEnrichmentByID(titleID string) (store.Title, error)
 
 	// TV/Music browse-parent entities (issue 03): the pass walks Shows → Seasons →
@@ -51,7 +52,7 @@ type Store interface {
 	// a durable Enrichment override on a Show/Artist/Album (SetEntityExternalMatch)
 	// and the parent enrich path honors its hand-set Locked fields (EntityLockedFields).
 	// LibraryOfEntity gives the single-parent re-enrich the Library to serialize on.
-	SetEntityExternalMatch(entityType, entityID, externalID string) error
+	SetEntityExternalMatch(entityType, entityID, externalID string, origin store.RecordOrigin) error
 	EntityLockedFields(entityType, entityID string) (map[string]bool, error)
 	LibraryOfEntity(entityType, entityID string) (string, error)
 
@@ -152,6 +153,14 @@ type Service struct {
 	// zero TTL disables it with no behavior change.
 	candidates *candidateCache
 
+	// slotGroups / slotLists cache the two EpisodeLister reads (a series' season
+	// list, and one season's episodes). The file matcher loads a Show's Slots one
+	// season at a time (ADR-0044), so collapsing and re-expanding a season would
+	// otherwise be a provider round-trip per toggle. Cleared on a provider swap;
+	// see episode_cache.go.
+	slotGroups *listCache[[]SeasonSummary]
+	slotLists  *listCache[[]EpisodeCandidate]
+
 	// Per-Library pass serialization: a Library is enriched by at most one pass at
 	// a time, so the auto-after-scan trigger and a manual/scheduled pass can never
 	// run concurrently over the same Library (which would double-fetch artwork and
@@ -173,6 +182,8 @@ func NewService(s Store, provider MetadataProvider, fetcher ArtworkFetcher, enab
 		store: s, fetcher: fetcher,
 		cacheDir: cacheDir, libMus: map[string]*sync.Mutex{},
 		candidates: newCandidateCache(candidateTTL),
+		slotGroups: newListCache[[]SeasonSummary](DefaultEpisodeListCacheTTL),
+		slotLists:  newListCache[[]EpisodeCandidate](DefaultEpisodeListCacheTTL),
 	}
 	svc.current.Store(&providerSnapshot{provider: provider, enablement: enablement})
 	return svc
@@ -186,6 +197,12 @@ func NewService(s Store, provider MetadataProvider, fetcher ArtworkFetcher, enab
 // a half-applied mix. The next lookup / enablement check reads the new snapshot.
 func (s *Service) SetProvider(provider MetadataProvider, enablement Enablement) {
 	s.current.Store(&providerSnapshot{provider: provider, enablement: enablement})
+	// The cached episode listings are the OLD provider's answers (and its
+	// language's). Serving them from the new one would be a silent wrong answer
+	// lasting a whole TTL, which is exactly the class of bug a cache must not
+	// introduce, so a swap empties them.
+	s.slotGroups.clear()
+	s.slotLists.clear()
 }
 
 // snapshot returns the current GLOBAL provider + enablement snapshot. Callers read
@@ -389,8 +406,20 @@ func (s *Service) ResolveIdentity(ctx context.Context, ref TitleRef) (title stri
 // Title 'disabled' (ADR-0001). Returns store.ErrNotFound for an unknown Title
 // (the handler maps it to 404). The Title leaves the attention surface on a
 // successful match (its status becomes 'matched').
+//
+// This is an ADMIN-FACING entry point: the record it writes is the Admin's choice
+// made ON THIS TITLE (store.OriginChosen), so it outranks any later Cascade from
+// the Title's parent (ADR-0046). A Cascade must NOT come through here — it goes
+// through matchTitle with store.OriginCascaded, because the record it writes is
+// the parent's and has to follow the parent.
 func (s *Service) MatchTitle(ctx context.Context, titleID string, m store.ExternalMatch) error {
-	if err := s.store.SetTitleExternalMatch(titleID, m); err != nil {
+	return s.matchTitle(ctx, titleID, m, store.OriginChosen)
+}
+
+// matchTitle is MatchTitle with the record's origin spelled out — the one seam
+// through which a Cascade writes a leaf child.
+func (s *Service) matchTitle(ctx context.Context, titleID string, m store.ExternalMatch, origin store.RecordOrigin) error {
+	if err := s.store.SetTitleExternalMatch(titleID, m, origin); err != nil {
 		return err // ErrNotFound flows through to the handler
 	}
 	t, err := s.store.TitleForEnrichmentByID(titleID)
@@ -466,7 +495,15 @@ func (s *Service) SeriesSeasons(ctx context.Context, showExternalID string) ([]S
 	if err != nil {
 		return nil, err
 	}
-	return lister.SeriesSeasons(ctx, showExternalID)
+	if cached, ok := s.slotGroups.get(showExternalID); ok {
+		return cached, nil
+	}
+	out, err := lister.SeriesSeasons(ctx, showExternalID)
+	if err != nil {
+		return nil, err
+	}
+	s.slotGroups.put(showExternalID, out)
+	return out, nil
 }
 
 func (s *Service) SeasonEpisodes(ctx context.Context, showExternalID string, season int) ([]EpisodeCandidate, error) {
@@ -474,7 +511,47 @@ func (s *Service) SeasonEpisodes(ctx context.Context, showExternalID string, sea
 	if err != nil {
 		return nil, err
 	}
-	return lister.SeasonEpisodes(ctx, showExternalID, season)
+	key := seasonEpisodesKey(showExternalID, season)
+	if cached, ok := s.slotLists.get(key); ok {
+		return cached, nil
+	}
+	out, err := lister.SeasonEpisodes(ctx, showExternalID, season)
+	if err != nil {
+		return nil, err
+	}
+	s.slotLists.put(key, out)
+	return out, nil
+}
+
+// Why episode listing is unavailable, when it is. ErrSearchUnavailable answers
+// "not now" for both reasons at once, which is enough for a picker that can only
+// hang or say so — and not enough for the file matcher, where a provider that
+// cannot list episodes is a FIRST-CLASS state (bare numbered Slots, ADR-0044)
+// rather than an error, and the screen has to explain which of the two it is
+// before an Admin can do anything about it.
+const (
+	// EpisodeListingDisabled: video Enrichment is off for this server — switched
+	// off, unconfigured, or consent not granted. Nothing about the provider.
+	EpisodeListingDisabled = "disabled"
+	// EpisodeListingUnsupported: Enrichment is on, but the Authoritative provider
+	// does not implement EpisodeLister (only TMDB does). Turning enrichment on
+	// again will not help; changing provider will.
+	EpisodeListingUnsupported = "unsupported"
+)
+
+// EpisodeListingUnavailable reports why a provider episode list cannot be fetched
+// — EpisodeListingDisabled or EpisodeListingUnsupported — or "" when one can. It
+// asks the same two questions episodeLister asks, in the same order, and is the
+// only way to tell them apart from outside the package.
+func (s *Service) EpisodeListingUnavailable() string {
+	snap := s.snapshot()
+	if !snap.enablement.enabledFor("episode") {
+		return EpisodeListingDisabled
+	}
+	if _, ok := snap.provider.(EpisodeLister); !ok {
+		return EpisodeListingUnsupported
+	}
+	return ""
 }
 
 // episodeLister resolves the configured provider to the optional EpisodeLister
@@ -570,6 +647,9 @@ func defaultSeason(seasons []SeasonSummary, want int) int {
 // own season/episode, its place in the library, and every User's watch state are
 // untouched (ADR-0002/0014) — the file keeps its history and simply gains the right
 // details. store.ErrNotFound for an unknown Title flows to the handler as a 404.
+//
+// Admin-facing: an Episode pin is the Slot's OWN choice (store.OriginChosen via
+// MatchTitle), so it outranks its Show's Cascade (ADR-0046).
 func (s *Service) ApplyEpisodeOverride(ctx context.Context, titleID, showExternalID string, season, episode int) error {
 	if episode <= 0 {
 		return fmt.Errorf("%w: an episode number is required", ErrExternalRefInvalid)
@@ -630,12 +710,20 @@ func (s *Service) PreviewTitleExternal(ctx context.Context, titleID, pastedRef s
 // reuses MatchTitle. Like SearchTitleCandidates it owns the lean kind read, so the
 // HTTP layer needs no separate detail fetch to map the id. store.ErrNotFound for an
 // unknown Title flows to the handler as a 404. Identity/watch state are untouched.
+//
+// Admin-facing, like MatchTitle: the record is the Title's OWN choice. The Cascade
+// uses applyOverride with store.OriginCascaded (ADR-0046).
 func (s *Service) ApplyOverride(ctx context.Context, titleID, externalID string) error {
+	return s.applyOverride(ctx, titleID, externalID, store.OriginChosen)
+}
+
+// applyOverride is ApplyOverride with the record's origin spelled out.
+func (s *Service) applyOverride(ctx context.Context, titleID, externalID string, origin store.RecordOrigin) error {
 	t, err := s.store.TitleForEnrichmentByID(titleID)
 	if err != nil {
 		return err // ErrNotFound flows through
 	}
-	return s.MatchTitle(ctx, titleID, ExternalMatchForKind(t.Kind, externalID))
+	return s.matchTitle(ctx, titleID, ExternalMatchForKind(t.Kind, externalID), origin)
 }
 
 // entityKind maps a browse-parent entity type onto the fine search/lookup kind:
@@ -787,16 +875,26 @@ func externalIDForKind(kind, pasted string) (string, error) {
 // ApplyEntityOverride pins a picked candidate's authoritative external id on a
 // browse-parent entity as a durable Enrichment override and re-enriches just that
 // parent (Fix-info on a Show/Artist/Album, ADR-0019). It persists the pin
-// (SetEntityExternalMatch — external_id + external_id_locked, so future passes look
+// (SetEntityExternalMatch — external_id + external_id_origin, so future passes look
 // up BY it) then runs the single-parent enrich path honoring the parent's Locked
 // fields. Identity and watch state are untouched. store.ErrNotFound for an unknown
 // parent flows to the handler as a 404.
+//
+// Admin-facing: the record is this parent's OWN choice. The Artist→Albums
+// recursion writes its Albums through applyEntityOverride with
+// store.OriginCascaded instead, so a second Artist Cascade re-applies to them
+// rather than reading its own last pin as the Album's correction (ADR-0046).
 func (s *Service) ApplyEntityOverride(ctx context.Context, entityType, entityID, externalID string) error {
+	return s.applyEntityOverride(ctx, entityType, entityID, externalID, store.OriginChosen)
+}
+
+// applyEntityOverride is ApplyEntityOverride with the record's origin spelled out.
+func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID, externalID string, origin store.RecordOrigin) error {
 	libraryID, err := s.store.LibraryOfEntity(entityType, entityID)
 	if err != nil {
 		return err // ErrNotFound flows through
 	}
-	if err := s.store.SetEntityExternalMatch(entityType, entityID, externalID); err != nil {
+	if err := s.store.SetEntityExternalMatch(entityType, entityID, externalID, origin); err != nil {
 		return err
 	}
 	// Serialize against a concurrent full pass over the same Library so the single-
@@ -1163,18 +1261,28 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 					continue
 				}
 				// Episode durability (ADR-0019, closing the gap deferred from slice 01):
-				// an Episode Enrichment override pins the CORRECTED show id on the episode's
-				// own tmdb_id, so honor that per-episode anchor over the show-derived id — a
-				// pinned episode survives a full pass instead of being re-derived from its
-				// Show. An un-pinned episode still resolves under the Show's resolved id.
+				// an Episode's OWN record wins over the one derived from its Show, so a
+				// pinned episode survives a full pass instead of being re-derived. ep.TMDBID
+				// is the record (enrichment_tmdb_id first, ADR-0045), which is the right
+				// question here — WHICH record decorates this leaf — and deliberately not
+				// "did the Admin choose it": a co-File sibling inheriting a split's series
+				// and a cleared pin's series-write are both legitimate anchors that carry no
+				// lock. (The skip rule in cascade.go asks the other question and reads
+				// EnrichmentIDOrigin; do not confuse the two.) An Episode with no record of
+				// its own resolves under the Show's resolved id.
 				epShowID := showExtID
 				if ep.TMDBID != "" {
 					epShowID = ep.TMDBID
 				}
-				leaves = append(leaves, leafWork{title: ep, ref: TitleRef{
+				ref := TitleRef{
 					Kind: "episode", Title: ep.Title, TMDBID: epShowID,
 					SeasonNumber: ep.SeasonNumber, EpisodeNumber: ep.EpisodeNumber, EpisodeLabel: ep.EpisodeLabel,
-				}})
+				}
+				// The Episode pin, honored here as well as in refFor. A library pass
+				// collects its own leaves, so without this the pass would quietly look a
+				// repointed Slot up by the numbers it was pinned AWAY from — and a pass is
+				// exactly what runs after a matcher Apply, which is where the pin is now set.
+				leaves = append(leaves, leafWork{title: ep, ref: withEpisodePin(ref, ep)})
 			}
 		}
 	}
@@ -1253,7 +1361,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id
 	// every pass (New or Full) rather than re-searching by name, so the correction
 	// survives later passes and rescans exactly like a leaf's pinned id.
-	if cur.ExternalIDLocked && cur.ExternalID != "" {
+	if cur.ExternalIDOrigin.Locked() && cur.ExternalID != "" {
 		ref = refWithPinnedEntityID(ref, cur.ExternalID)
 	}
 
@@ -1293,7 +1401,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	// A pinned override keeps its id even if the provider echoes a different one;
 	// otherwise the resolved id is stored (and threaded to children).
 	externalID := meta.ExternalID
-	if cur.ExternalIDLocked && cur.ExternalID != "" {
+	if cur.ExternalIDOrigin.Locked() && cur.ExternalID != "" {
 		externalID = cur.ExternalID
 	}
 	if err := s.store.WriteEntityEnrichment(entityType, entityID, store.EntityEnrichmentWrite{
@@ -1394,9 +1502,9 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 	return name, true
 }
 
-// pinnedProviderFor reports the registry slug of the provider a Title is pinned to
-// by a per-item Enrichment override (or an embedded id token) and whether it is
-// pinned at all: a video Title with a TMDB id resolves against TMDB's record, a
+// pinnedProviderFor reports the registry slug of the provider a Title's RECORD
+// lives with — an Enrichment override's, or the embedded id token's when nothing
+// overrode it (ADR-0045) — and whether there is such a record at all: a video Title with a TMDB id resolves against TMDB's record, a
 // music Track with a MusicBrainz id against MusicBrainz's. It is how the pass
 // recognizes an override whose record provider may differ from the Library's current
 // Authoritative provider (issue 06). A Title with no external id is not pinned (its
@@ -1415,8 +1523,25 @@ func pinnedProviderFor(t store.Title) (string, bool) {
 	return "", false
 }
 
+// withEpisodePin redirects a lookup reference onto the provider episode an Admin
+// pinned — the one and only place the pin takes effect. The Title's own
+// SeasonNumber/EpisodeNumber (and so its place in the library, its identity_key
+// and every User's watch state) are untouched (ADR-0002/0014).
+//
+// It is a free function rather than a step inside refFor because the two ways a
+// leaf reaches a lookup — refFor for a single-Title re-enrich, collectTVLeaves for
+// a library pass — must not be able to disagree about it.
+func withEpisodePin(ref TitleRef, t store.Title) TitleRef {
+	if season, episode, ok := t.EpisodePin(); ok {
+		ref.SeasonNumber, ref.EpisodeNumber = season, episode
+	}
+	return ref
+}
+
 // refFor builds the provider lookup reference from a stored Title. External ids
-// (parsed from a {tmdb-…} token or assigned by fix-match) drive a by-id lookup.
+// drive a by-id lookup; they are the RECORD ids, so an Admin's Enrichment override
+// is what resolves when there is one and the id a folder name asserts otherwise
+// (ADR-0045, resolved in store.recordExternalIDs).
 func refFor(t store.Title) TitleRef {
 	ref := TitleRef{
 		Kind:          t.Kind,
@@ -1430,14 +1555,9 @@ func refFor(t store.Title) TitleRef {
 		EpisodeLabel:  t.EpisodeLabel,
 	}
 	// An Admin-pinned provider episode overrides the parsed numbers FOR THE LOOKUP
-	// ONLY — the one and only place the pin takes effect. It is what makes a file
-	// fixable when the provider numbers the series differently from the disk; the
-	// Title's own SeasonNumber/EpisodeNumber (and so its place in the library, its
-	// identity_key and its watch state) are untouched (ADR-0002/0014).
-	if season, episode, ok := t.EpisodePin(); ok {
-		ref.SeasonNumber, ref.EpisodeNumber = season, episode
-	}
-	return ref
+	// ONLY. It is what makes a file fixable when the provider numbers the series
+	// differently from the disk.
+	return withEpisodePin(ref, t)
 }
 
 func toStoreCredits(in []Credit) []store.Credit {

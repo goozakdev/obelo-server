@@ -76,7 +76,7 @@ func (db *DB) searchTitles(kind, pattern string, limit int, filter AccessFilter)
 	args = append(args, limit)
 	rows, err := db.Query(
 		`SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
-		        tmdb_id, imdb_id, needs_review, ambiguous, hidden
+		        `+recordExternalIDs("")+`, needs_review, ambiguous, hidden
 		   FROM titles
 		  WHERE kind = ? AND hidden = 0 AND title LIKE ? ESCAPE '\'`+clause+`
 		  ORDER BY sort_title ASC, id ASC LIMIT ?`, args...)

@@ -53,6 +53,51 @@ func (db *DB) TitlesForEnrichment(libraryID string, sel EnrichSelect) ([]Title, 
 	return out, rows.Err()
 }
 
+// RecordOrigin says WHOSE choice an entity's Enrichment record is (ADR-0046). It
+// is the stored value of titles.enrichment_id_origin and
+// entity_enrichment.external_id_origin, and it answers TWO different questions
+// that used to share one bit:
+//
+//   - Locked() — "is this record anybody's decision?", i.e. is it durable against
+//     an enrichment pass. That was the whole of enrichment_id_locked /
+//     external_id_locked (ADR-0045), and it is unchanged for both kinds of choice.
+//   - OwnChoice() — "did the Admin choose this record ON THIS ITEM?" A Cascade
+//     writes its children through the same Admin paths, so a child pinned by
+//     "apply to children" answered yes to the first question and was therefore
+//     read as answering yes to this one too — which made a SECOND Cascade from the
+//     same parent skip every child the first one reached
+//     (.scratch/enrichment-override-durability/issues/04).
+//
+// The Cascade's two skip rules are the only readers that ask the second question.
+type RecordOrigin string
+
+const (
+	// OriginDerived is the zero value: nobody chose this record. An enrichment pass
+	// resolved it and stored it fill-only as the artwork anchor, a split's co-File
+	// sibling inherited it, or clearing an Episode pin wrote the Show's own series
+	// back. It carries no protection from anything.
+	OriginDerived RecordOrigin = ""
+	// OriginChosen is the Admin's choice made ON THIS ITEM — Fix info or Wrong item
+	// on the leaf, an Episode pin on the Slot, Fix info on the Album. It outranks a
+	// parent's Cascade, which skips it.
+	OriginChosen RecordOrigin = "chosen"
+	// OriginCascaded is the PARENT's choice, applied to this item by "apply to
+	// children". Durable exactly as OriginChosen is — no pass or rescan re-matches
+	// it — but it follows the parent: the next Cascade from that parent re-applies
+	// over it, because the parent is revising its own decision (ADR-0046).
+	OriginCascaded RecordOrigin = "cascaded"
+)
+
+// Locked reports whether anyone chose this record, i.e. whether it is a durable
+// Enrichment override rather than an id a pass resolved. The successor of the
+// enrichment_id_locked / external_id_locked bit, with the same meaning.
+func (o RecordOrigin) Locked() bool { return o != OriginDerived }
+
+// OwnChoice reports whether the record was chosen ON the item that carries it, as
+// opposed to cascaded onto it by a parent. The question the Cascade's skip rules
+// ask, and the one Locked() cannot answer.
+func (o RecordOrigin) OwnChoice() bool { return o == OriginChosen }
+
 // ExternalMatch is the external id an Admin assigns to re-point a Title's
 // Enrichment lookup (PUT /titles/{id}/enrichmentMatch). Only the non-empty ids
 // are written; identity_key and watch state are NEVER touched (ADR-0002/0014) —
@@ -73,14 +118,27 @@ type ExternalMatch struct {
 	ClearEpisodePin bool
 }
 
-// SetTitleExternalMatch writes the supplied external id(s) onto a Title and
-// resets its enrichment_status to 'pending' so the next lookup re-resolves by the
-// new id. It touches ONLY the external-id columns, the enrichment episode pin, and
-// status — never identity_key, the Title's own season/episode numbers, or any
-// identity field — so the Title keeps its parsed identity, its place in the
-// library, and every User's watch state (ADR-0002/0014). An empty id leaves that
-// column unchanged. Returns ErrNotFound for an unknown Title.
-func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch) error {
+// SetTitleExternalMatch writes the supplied external id(s) onto a Title as an
+// Admin's Enrichment override and resets its enrichment_status to 'pending' so the
+// next lookup re-resolves by the new id. It touches ONLY the ENRICHMENT external-id
+// columns, the enrichment episode pin, and status — never identity_key, never
+// tmdb_id/imdb_id, never the Title's own season/episode numbers — so the Title
+// keeps its parsed identity, its place in the library, and every User's watch state
+// (ADR-0002/0014). An empty id leaves that column unchanged. Returns ErrNotFound
+// for an unknown Title.
+//
+// Writing the enrichment columns rather than the identity ones is what makes the
+// override outrank the id a folder name asserts and survive every later scan
+// (ADR-0045): the Scanner owns tmdb_id/imdb_id and has no statement to make about
+// these.
+//
+// origin records WHOSE choice the record is — OriginChosen when the Admin picked
+// it on this Title, OriginCascaded when a parent's "apply to children" mapped it
+// onto the Title (ADR-0046). Both are durable; only the first outranks a later
+// Cascade. It is a parameter rather than a field of ExternalMatch precisely so no
+// caller can leave it to a default: getting it wrong is silent in both directions.
+// A call that supplies no id is a pin-only edit and leaves the origin alone.
+func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch, origin RecordOrigin) error {
 	// The episode pin is three-state: set it, clear it, or leave it alone. NULL is
 	// "not pinned", so a clear writes NULL rather than a number.
 	pinSeason, pinEpisode := any(nil), any(nil)
@@ -92,16 +150,25 @@ func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch) error {
 	if m.ClearEpisodePin {
 		clearPin = 1
 	}
+	// A call that supplies no id at all is a pin-only edit (or a pin clear), which
+	// is not itself a statement about WHICH RECORD decorates the Title — so it must
+	// not claim an origin for a record nobody picked.
+	setOrigin := 0
+	if m.TMDBID != "" || m.IMDBID != "" || m.MusicbrainzID != "" {
+		setOrigin = 1
+	}
 	res, err := db.Exec(
 		`UPDATE titles SET
-		     tmdb_id        = CASE WHEN ? <> '' THEN ? ELSE tmdb_id END,
-		     imdb_id        = CASE WHEN ? <> '' THEN ? ELSE imdb_id END,
-		     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END,
+		     enrichment_tmdb_id = CASE WHEN ? <> '' THEN ? ELSE enrichment_tmdb_id END,
+		     enrichment_imdb_id = CASE WHEN ? <> '' THEN ? ELSE enrichment_imdb_id END,
+		     musicbrainz_id     = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END,
+		     enrichment_id_origin = CASE WHEN ? = 1 THEN ? ELSE enrichment_id_origin END,
 		     enrichment_season  = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_season END,
 		     enrichment_episode = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_episode END,
 		     enrichment_status = 'pending'
 		   WHERE id = ?`,
 		m.TMDBID, m.TMDBID, m.IMDBID, m.IMDBID, m.MusicbrainzID, m.MusicbrainzID,
+		setOrigin, string(origin),
 		setPin, pinSeason, clearPin,
 		setPin, pinEpisode, clearPin,
 		titleID,
@@ -617,11 +684,16 @@ type TitleEnrichment struct {
 	// each carries Role + Path. Source is forced to 'fetched' on write.
 	Artwork []Artwork
 	// ExternalIDs carries the id(s) of the provider record this result was
-	// resolved FROM, persisted onto the Title's external-id columns FILL-ONLY: a
-	// column that already has an id keeps it — a {tmdb-…} token is identity
-	// authority (ADR-0002) and a Fix-info pin is an Admin's durable override, and
-	// neither may be rewritten by whatever a provider response reports. The leaf
-	// analogue of EntityEnrichmentWrite.ExternalID: without it a search-resolved
+	// resolved FROM, persisted onto the Title's ENRICHMENT external-id columns
+	// (ADR-0045) FILL-ONLY, and fill-only against BOTH halves of the split: an id
+	// already recorded EITHER as the Admin's override OR by the folder's own name
+	// keeps it. An echoed id is nobody's decision — it is what a lookup happened to
+	// come back with — so it ranks below both, and the identity columns are never
+	// written here at all.
+	//
+	// It leaves enrichment_id_origin alone, which is the whole point of that column:
+	// an id landing here is the pass's own answer, not the Admin's. The leaf
+	// analogue of EntityEnrichmentWrite.ExternalID — without it a search-resolved
 	// Title has no stored id for the LIVE artwork-candidate lookup to key on, and
 	// every Edit-item image tab comes back empty.
 	ExternalIDs ExternalMatch
@@ -678,9 +750,11 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 		`UPDATE titles SET overview = ?, tagline = ?, content_rating = ?, release_date = ?,
 		     runtime_minutes = ?, studio = ?, enriched_title = ?, enrichment_status = 'matched',
 		     enriched_at = ?, enrichment_source = ?,
-		     tmdb_id        = CASE WHEN ? <> '' AND IFNULL(tmdb_id, '') = '' THEN ? ELSE tmdb_id END,
-		     imdb_id        = CASE WHEN ? <> '' AND IFNULL(imdb_id, '') = '' THEN ? ELSE imdb_id END,
-		     musicbrainz_id = CASE WHEN ? <> '' AND IFNULL(musicbrainz_id, '') = '' THEN ? ELSE musicbrainz_id END
+		     enrichment_tmdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_tmdb_id, '') = ''
+		                                AND IFNULL(tmdb_id, '') = '' THEN ? ELSE enrichment_tmdb_id END,
+		     enrichment_imdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_imdb_id, '') = ''
+		                                AND IFNULL(imdb_id, '') = '' THEN ? ELSE enrichment_imdb_id END,
+		     musicbrainz_id     = CASE WHEN ? <> '' AND IFNULL(musicbrainz_id, '') = '' THEN ? ELSE musicbrainz_id END
 		   WHERE id = ?`,
 		overview, tagline, contentRating, releaseDate, runtime, studio, enrichedTitle,
 		time.Now().UTC().Format(time.RFC3339), e.Source,

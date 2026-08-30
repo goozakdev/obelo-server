@@ -454,6 +454,19 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntityShow, id, role))))(w, r)
 			return
 		}
+		// POST {id}/reviewEpisodes: dismiss the needs_review flag on every flagged
+		// Episode of this Show (Admin) — the "Looks right" behind the queue's ONE
+		// collapsed Show row (file-matcher/07). Matched before /review, whose suffix
+		// it does not share but whose neighbourhood it does.
+		if id, ok := strings.CutSuffix(rest, "/reviewEpisodes"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireAdmin(handleReviewShowEpisodes(deps.Catalog, id))))(w, r)
+			return
+		}
 		// POST {id}/review: dismiss this Show's needs_review flag (Admin).
 		if id, ok := strings.CutSuffix(rest, "/review"); ok {
 			if id == "" || strings.Contains(id, "/") {
@@ -475,6 +488,38 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 			}
 			requireMethod(http.MethodPut,
 				requireAuth(deps.Auth, requireAdmin(handleShowIdentityCorrection(deps, id))))(w, r)
+			return
+		}
+		// {id}/matcher: the file matcher (Admin, ADR-0044) — GET the Show's whole
+		// working set (every Slot, every File), PUT an arrangement of it. Matched
+		// before the shared Edit-item routes and the seasons fall-through, and
+		// method-dispatched here because the two verbs are one resource.
+		if id, ok := strings.CutSuffix(rest, "/matcher"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			switch r.Method {
+			case http.MethodGet:
+				requireAuth(deps.Auth, requireAdmin(handleShowMatcher(deps, id)))(w, r)
+			case http.MethodPut:
+				requireAuth(deps.Auth, requireAdmin(handleApplyShowMatcher(deps, id)))(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+					"method not allowed", nil)
+			}
+			return
+		}
+		// GET {id}/seriesSeasons: another series' Slots, so a group can be filled from
+		// a foreign record (the Batman → New Batman Adventures case, ADR-0044).
+		if id, ok := strings.CutSuffix(rest, "/seriesSeasons"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireAuth(deps.Auth, requireAdmin(handleShowSeriesSeasons(deps, id))))(w, r)
 			return
 		}
 		// POST {id}/scan: Targeted scan of this Show's folder (Admin, ADR-0030).

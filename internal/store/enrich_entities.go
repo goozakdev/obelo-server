@@ -41,12 +41,16 @@ type EntityEnrichment struct {
 	Status        string
 	Source        string
 	ExternalID    string
-	// ExternalIDLocked is true when ExternalID is an Admin-pinned durable
-	// Enrichment override (Fix-info on a Show/Artist/Album, ADR-0019) rather than a
-	// transient auto-resolved id. The enrich pass then looks the parent up BY it
-	// every pass and never re-searches, so the correction survives later passes and
-	// rescans (item-editing/02). The detail read surfaces it as the active override.
-	ExternalIDLocked bool
+	// ExternalIDOrigin says WHOSE choice ExternalID is (ADR-0046). .Locked() is the
+	// old external_id_locked bit — the id is an Admin-pinned durable Enrichment
+	// override (Fix-info on a Show/Artist/Album, ADR-0019) rather than a transient
+	// auto-resolved id, so the enrich pass looks the parent up BY it every pass and
+	// never re-searches, and the detail read surfaces it as the active override
+	// (item-editing/02). .OwnChoice() narrows that to "chosen on this parent",
+	// which is what an Artist Cascade must ask before skipping one of its Albums:
+	// an Album the SAME Artist Cascade pinned last time is the Artist's choice, not
+	// the Album's, and must take the correction again.
+	ExternalIDOrigin RecordOrigin
 	Genres           []string
 }
 
@@ -86,7 +90,7 @@ type EntityArtworkRow struct {
 // the hand-edit wins), rebuilds genres wholesale unless 'genres' is Locked,
 // replaces the fetched artwork rows per role unless that role is Locked (a local
 // Album cover lives in albums.artwork_path and is untouched, so it still wins),
-// and marks the entity matched. external_id_locked is never touched here, so a
+// and marks the entity matched. external_id_origin is never touched here, so a
 // durable Fix-info override survives the re-enrich it triggers. Identity untouched.
 func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichmentWrite, locks map[string]bool) error {
 	tx, err := db.Begin()
@@ -231,13 +235,13 @@ func (db *DB) EntityEnrichmentStatus(entityType, entityID string) (string, error
 // detail reads to decorate a Show/Artist/Album.
 func (db *DB) EntityEnrichmentByID(entityType, entityID string) (EntityEnrichment, error) {
 	e := EntityEnrichment{Status: "pending"}
-	var externalIDLocked int
+	var externalIDOrigin string
 	err := db.QueryRow(
-		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id, external_id_locked
+		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id, external_id_origin
 		   FROM entity_enrichment WHERE entity_type = ? AND entity_id = ?`,
 		entityType, entityID,
-	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID, &externalIDLocked)
-	e.ExternalIDLocked = externalIDLocked != 0
+	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID, &externalIDOrigin)
+	e.ExternalIDOrigin = RecordOrigin(externalIDOrigin)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return EntityEnrichment{}, fmt.Errorf("store: reading entity enrichment: %w", err)
 	}
@@ -529,21 +533,26 @@ func (db *DB) EntityArtworkVersionsForMany(entityType string, ids []string) (map
 
 // SetEntityExternalMatch pins an Admin-chosen authoritative external id on a
 // browse-parent entity as a durable Enrichment override (Fix-info on a Show/
-// Artist/Album, ADR-0019). It sets external_id + external_id_locked=1 and resets
+// Artist/Album, ADR-0019). It sets external_id + external_id_origin and resets
 // enrichment_status to 'pending' so the next lookup re-resolves BY the pinned id —
 // touching ONLY the override/bookkeeping columns, never identity (the parent's
 // identity_key and the catalog hierarchy are untouched, ADR-0002/0014). A row is
 // created if the parent was never enriched. The follow-on re-enrich (enrichParent)
-// preserves external_id_locked, so the pin is durable across later passes.
-func (db *DB) SetEntityExternalMatch(entityType, entityID, externalID string) error {
+// preserves external_id_origin, so the pin is durable across later passes.
+//
+// origin says WHOSE choice the id is: OriginChosen when the Admin picked it on
+// this parent, OriginCascaded when an Artist's "apply to children" pinned this
+// Album (ADR-0046). Both are durable; only the first makes the next Artist Cascade
+// skip the Album. Explicit for the same reason SetTitleExternalMatch's is.
+func (db *DB) SetEntityExternalMatch(entityType, entityID, externalID string, origin RecordOrigin) error {
 	if _, err := db.Exec(
 		`INSERT INTO entity_enrichment
-		   (entity_type, entity_id, external_id, external_id_locked, enrichment_status, enriched_at)
-		 VALUES (?, ?, ?, 1, 'pending', ?)
+		   (entity_type, entity_id, external_id, external_id_origin, enrichment_status, enriched_at)
+		 VALUES (?, ?, ?, ?, 'pending', ?)
 		 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-		    external_id = excluded.external_id, external_id_locked = 1,
+		    external_id = excluded.external_id, external_id_origin = excluded.external_id_origin,
 		    enrichment_status = 'pending', enriched_at = excluded.enriched_at`,
-		entityType, entityID, externalID, time.Now().UTC().Format(time.RFC3339),
+		entityType, entityID, externalID, string(origin), time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("store: setting entity external match: %w", err)
 	}

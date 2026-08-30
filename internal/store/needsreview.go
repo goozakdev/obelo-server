@@ -7,16 +7,33 @@ import (
 	"strings"
 )
 
-// needsreview.go is the Admin needs-review attention surface (the resolvable
-// successor to the per-page client walk). `needs_review` is set by the scanner
-// when a folder parsed without a year, or a TV Episode used non-SxxExx numbering
-// (it browses fine, but the parse is uncertain). These reads collect every still-
-// flagged item of a Library in one query each; the writes let an Admin dismiss a
-// flag the parse got right (`reviewed = 1`, migration 0012), which sticks across
-// rescans (see writeTitleRow / upsertShow).
+// needsreview.go is the Admin IDENTITY attention surface (the resolvable successor
+// to the per-page client walk). It collects the two flags the scanner raises about
+// how a Title was FILED — as opposed to how it was decorated, which is enrich.go's
+// list:
+//
+//   - `needs_review` — the parse was a guess: a folder with no year, a TV Episode
+//     numbered by date or absolute number, a Track with no usable tags. It browses
+//     fine, but the identity is uncertain. An Admin can dismiss it (`reviewed = 1`,
+//     migration 0012), which sticks across rescans (writeTitleRow / upsertShow).
+//   - `ambiguous` — the collision rule: two Files parsed to the same Edition
+//     identity and are not parts, so the convention refuses to guess which is the
+//     real one ("flagged ambiguous in the web app, never silently guessed",
+//     docs/naming-convention.md). It is NOT dismissible: the files really do
+//     collide, one of them is not being played (store.Edition.Parts), and only
+//     changing what is on disk — or, for an Episode, arranging the files in the
+//     matcher — settles it.
+//
+// The two ride one list because they are one question for the Admin ("is this
+// filed right?"), they are raised by the same scanner pass, and a Title can carry
+// both at once. Each item says which flags it carries, so a reader never has to
+// infer one from the other.
+//
+// These reads collect every still-flagged item of a Library in one query each.
 
-// NeedsReviewItem is one entry on the needs-review attention list: a Title
-// (Movie / Episode / Track) or a Show whose `needs_review` flag is still set. Path
+// NeedsReviewItem is one entry on the identity attention list: a Title
+// (Movie / Episode / Track) or a Show carrying a `needs_review` or `ambiguous`
+// flag (see the file comment for what each means and how each is settled). Path
 // is a representative present on-disk file path, populated only for a Movie (whose
 // files live directly in its folder); it is "" for Episodes/Tracks (whose file
 // folder is a Season/Album subfolder, not the override key) and Shows. Anchor is
@@ -30,6 +47,19 @@ type NeedsReviewItem struct {
 	Year   int
 	Path   string
 	Anchor string
+	// NeedsReview and Ambiguous say WHICH flags put this item on the list; at least
+	// one is always set, and both can be. They are separate because they mean
+	// different things and are settled differently — needs-review is a guess an
+	// Admin can confirm ("looks right"), ambiguous is a real conflict that only a
+	// change on disk or an arrangement can resolve.
+	NeedsReview bool
+	Ambiguous   bool
+	// CollidingPaths are the Files that claim one Edition between them — the
+	// evidence behind Ambiguous, and the only thing that makes the flag actionable:
+	// "this title is ambiguous" without the two paths tells the Admin nothing they
+	// can go and look at. Empty unless Ambiguous (and for a Show, which carries no
+	// Files of its own).
+	CollidingPaths []string
 	// Context is the identifying breadcrumb the Admin needs to tell one flagged
 	// item from another on sight — the Show/season/episode behind a bare episode
 	// name, the Artist/Album behind a bare track name, and a representative file
@@ -39,18 +69,25 @@ type NeedsReviewItem struct {
 }
 
 // TitlesNeedingReview returns the visible Titles (Movies, Episodes, Tracks) of a
-// Library still flagged needs_review and not yet dismissed (reviewed = 0). Hidden
-// (all-Files-Missing) Titles are excluded; ordered by sort title for stability. A
-// Movie carries a representative present file path so the caller can offer a
-// folder-keyed fix-match; other kinds leave Path empty.
+// Library flagged for identity attention: still needs_review and not yet dismissed
+// (reviewed = 0), or ambiguous. Hidden (all-Files-Missing) Titles are excluded;
+// ordered by sort title for stability. A Movie carries a representative present
+// file path so the caller can offer a folder-keyed fix-match; other kinds leave
+// Path empty.
+//
+// The `reviewed` dismissal deliberately gates only the needs_review half. An Admin
+// saying "looks right" about an uncertain parse has said nothing about two files
+// colliding, so an ambiguous Title stays listed until the collision itself is gone.
 func (db *DB) TitlesNeedingReview(libraryID string) ([]NeedsReviewItem, error) {
 	rows, err := db.Query(
 		`SELECT t.id, t.kind, t.title, t.year,
+		        t.needs_review AND NOT t.reviewed AS flagged, t.ambiguous,
 		        (SELECT f.path FROM editions e JOIN files f ON f.edition_id = e.id
 		          WHERE e.title_id = t.id AND f.present = 1
 		          ORDER BY f.path LIMIT 1) AS path
 		   FROM titles t
-		  WHERE t.library_id = ? AND t.needs_review = 1 AND t.reviewed = 0 AND t.hidden = 0
+		  WHERE t.library_id = ? AND t.hidden = 0
+		    AND ((t.needs_review = 1 AND t.reviewed = 0) OR t.ambiguous = 1)
 		  ORDER BY t.sort_title, t.id`, libraryID)
 	if err != nil {
 		return nil, fmt.Errorf("store: selecting titles needing review: %w", err)
@@ -61,7 +98,8 @@ func (db *DB) TitlesNeedingReview(libraryID string) ([]NeedsReviewItem, error) {
 		var it NeedsReviewItem
 		var year sql.NullInt64
 		var path sql.NullString
-		if err := rows.Scan(&it.ID, &it.Kind, &it.Title, &year, &path); err != nil {
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Title, &year,
+			&it.NeedsReview, &it.Ambiguous, &path); err != nil {
 			return nil, fmt.Errorf("store: scanning title needing review: %w", err)
 		}
 		it.Year = int(year.Int64)
@@ -100,7 +138,9 @@ func (db *DB) ShowsNeedingReview(libraryID string) ([]NeedsReviewItem, error) {
 	defer rows.Close()
 	var out []NeedsReviewItem
 	for rows.Next() {
-		it := NeedsReviewItem{Kind: "show"}
+		// A Show has no Files and no Edition, so it can never be ambiguous; it is on
+		// this list for its needs_review flag alone.
+		it := NeedsReviewItem{Kind: "show", NeedsReview: true}
 		var year sql.NullInt64
 		var path sql.NullString
 		if err := rows.Scan(&it.ID, &it.Title, &year, &path); err != nil {
@@ -113,6 +153,72 @@ func (db *DB) ShowsNeedingReview(libraryID string) ([]NeedsReviewItem, error) {
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// CollidingFilePaths returns, per Title id, the on-disk Files that CLAIM ONE
+// EDITION between them — the evidence behind the `ambiguous` flag. Titles with no
+// collision are simply absent from the map.
+//
+// It is a read rather than a stored list because the collision is a property of
+// the Files, and store.Edition.Parts is already the one definition of it: an
+// Edition with more than one present File that is not a numbered part set. Reading
+// it here rather than recording it at scan time means the queue and the playback
+// tiers can never disagree about which files are the problem — the row names
+// exactly the Files that Parts is refusing to join.
+//
+// Ordered by (edition, part_ordinal, path), matching filesForEdition, so the first
+// path listed is the one that actually plays.
+func (db *DB) CollidingFilePaths(titleIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(titleIDs) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(titleIDs)), ",")
+	args := make([]any, len(titleIDs))
+	for i, id := range titleIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		`SELECT e.title_id, e.id, f.path, f.part_ordinal
+		   FROM editions e JOIN files f ON f.edition_id = e.id
+		  WHERE e.title_id IN (`+placeholders+`) AND f.present = 1
+		  ORDER BY e.title_id, e.id, f.part_ordinal, f.path`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading colliding files: %w", err)
+	}
+	defer rows.Close()
+
+	// Accumulate one Edition at a time, then ask Parts whether it is a genuine
+	// multi-part set. Files is all Parts needs (path + ordinal + present).
+	var curTitle, curEdition string
+	var files []File
+	flush := func() {
+		if len(files) > 1 && len(Edition{Files: files}.Parts()) < len(files) {
+			paths := make([]string, 0, len(files))
+			for _, f := range files {
+				paths = append(paths, f.Path)
+			}
+			out[curTitle] = append(out[curTitle], paths...)
+		}
+		files = nil
+	}
+	for rows.Next() {
+		var titleID, editionID, path string
+		var ordinal int
+		if err := rows.Scan(&titleID, &editionID, &path, &ordinal); err != nil {
+			return nil, fmt.Errorf("store: scanning colliding file: %w", err)
+		}
+		if editionID != curEdition {
+			flush()
+			curTitle, curEdition = titleID, editionID
+		}
+		files = append(files, File{Path: path, PartOrdinal: ordinal, Present: true})
+	}
+	flush()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: reading colliding files: %w", err)
+	}
+	return out, nil
 }
 
 // MarkTitleReviewed dismisses a Title's needs_review flag: an Admin confirmed the
@@ -213,4 +319,33 @@ func showFolder(path string, roots []string) string {
 		return clean // directly under the root (loose) → the file itself
 	}
 	return filepath.Dir(clean)
+}
+
+// MarkShowEpisodesReviewed dismisses the needs-review flag on every still-flagged
+// Episode of one Show, returning how many it cleared.
+//
+// It exists because the Needs-Fixing queue no longer has a row per flagged
+// Episode: a Show's episode-level problems collapse into ONE row
+// (file-matcher/07), so its "Looks right" has to settle the same set the row
+// counted. Doing that as N calls from the browser would make a five-episode Show
+// five requests that can half-succeed, leaving a row that says "3 episodes" for
+// reasons the Admin cannot see.
+//
+// The semantics are exactly MarkTitleReviewed's, applied to a set: reviewed = 1
+// (sticky across rescans) and needs_review cleared now. A Show with nothing
+// flagged is not an error — it reports 0, which is the honest answer to "dismiss
+// what is flagged" when nothing is.
+func (db *DB) MarkShowEpisodesReviewed(showID string) (int, error) {
+	res, err := db.Exec(
+		`UPDATE titles SET reviewed = 1, needs_review = 0
+		  WHERE needs_review = 1 AND reviewed = 0
+		    AND season_id IN (SELECT id FROM seasons WHERE show_id = ?)`, showID)
+	if err != nil {
+		return 0, fmt.Errorf("store: marking show episodes reviewed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: marking show episodes reviewed rows affected: %w", err)
+	}
+	return int(n), nil
 }

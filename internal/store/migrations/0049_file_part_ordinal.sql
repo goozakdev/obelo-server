@@ -1,0 +1,30 @@
+-- Part order within an Edition, stored rather than inferred from the filename.
+--
+-- Edition.Files is a PLAY ORDER, not a listing order: Edition.TotalDurationMs sums
+-- the parts in slice order, Edition.PartAt walks that same order to turn a stored
+-- whole-Edition resume position back into "open part 2 at 3m12s", and
+-- Edition.PartStartMs is its inverse. Get the order wrong and a resume lands in
+-- the wrong half of a two-part episode.
+--
+-- Until now that order was recoverable from the filenames: the only way to get a
+-- multi-part Edition was to name the files for it (`- part1` / `cd1`,
+-- naming-convention.md), so filesForEdition's `ORDER BY path` reproduced what the
+-- scanner had written. Placement (ADR-0044) breaks that assumption. An Admin can
+-- now drop any two files on one Slot and say which plays first, and neither
+-- filename need mention a part at all — `Finale (b).mkv` can legitimately be part
+-- 1 and `Finale (a).mkv` part 2. Sorting those by path plays the halves backwards,
+-- and no amount of re-parsing the names can recover the Admin's decision, because
+-- the decision is not in the names. So the order has to be a stored column.
+--
+-- part_ordinal is the 1-based part number, mirroring file_decisions.ordinal for a
+-- placed File and filename.go's partNumber() for one the parse numbered. Reads
+-- order by (part_ordinal, path).
+--
+-- DEFAULT 0 is what makes this migration a no-op for everything that already
+-- exists: every stored row starts at 0, so every existing Edition still sorts by
+-- path alone, exactly as it did before, until a scan rewrites its files with real
+-- ordinals. 0 also stays the value for a File the parse found no part suffix on,
+-- which sorts it ahead of numbered parts — the same relative order assembleTitle
+-- already produces in memory (it sorts by part ascending, path as tiebreak), so
+-- the stored order and the resolved order agree.
+ALTER TABLE files ADD COLUMN part_ordinal INTEGER NOT NULL DEFAULT 0;

@@ -658,6 +658,23 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	}
 	app.enrichQueue = make(chan enrichRequest, 64)
 
+	// The Placement Apply (ADR-0044) is the second writer of catalog rows, so it
+	// takes the SAME per-Library scan lock a scan does (ADR-0031) — one writer per
+	// Library at a time, and an Apply during a scan is refused idempotently rather
+	// than racing it. Its post-commit re-enrich rides the existing non-blocking
+	// enrich queue: the rearranged Titles were marked 'pending' inside the
+	// transaction, so a ModeNew pass picks up exactly them, and a provider timeout
+	// can never fail an Apply that already committed.
+	catalogSvc.SetLibraryLock(scannerSvc)
+	catalogSvc.SetReenricher(reenricherFunc(app.enqueueEnrich))
+
+	// The matcher's Slot RECORDS come from the Enrichment provider's optional
+	// episode-listing capability. Wiring it is optional by design: unwired (or
+	// unavailable) the matcher serves bare numbered Slots and says why, which is
+	// all pure renumbering needs and is the offline-first posture ADR-0044
+	// requires (ADR-0001).
+	catalogSvc.SetSlotLister(enrichSlotLister{enrichSvc})
+
 	// The scan handler's auto-after-scan hook, wired unconditionally: it enqueues a
 	// non-blocking background pass only when AutoEnrichAfterScan is CURRENTLY on
 	// (live DB read) AND a kind is currently enabled, so a toggle in the UI applies
@@ -981,6 +998,64 @@ type enrichRequest struct {
 // scan/sweep triggers — only never-enriched Titles).
 func (a *App) enqueueEnrich(libraryID string) {
 	a.enqueue(enrichRequest{libraryID: libraryID, mode: enrich.ModeNew})
+}
+
+// reenricherFunc adapts App.enqueueEnrich to catalog.Reenricher — the seam the
+// Placement Apply asks for re-enrichment through. The queue is non-blocking and
+// drops rather than stalls, which is exactly the "must not fail the Apply"
+// posture the domain wants.
+type reenricherFunc func(libraryID string)
+
+func (f reenricherFunc) ReenrichLibrary(libraryID string) { f(libraryID) }
+
+// enrichSlotLister adapts the enrich service to catalog.SlotLister — the seam the
+// file matcher fills a Slot's provider record through (ADR-0044).
+//
+// The adapter lives here rather than in either package because the two speak
+// deliberately different vocabularies: catalog is kind-neutral (groups and slots,
+// so the Album matcher is the same contract) while enrich is TV-shaped (seasons
+// and episodes, which is what TMDB's API actually is). Translating in the wiring
+// keeps the browse domain from importing a metadata provider's world view.
+type enrichSlotLister struct{ svc *enrich.Service }
+
+// Unavailable maps enrich's two "cannot list" answers onto the reasons the
+// matcher's UI explains. They are distinct because the fixes are: one is a
+// switch, the other is a different provider.
+func (l enrichSlotLister) Unavailable() string {
+	switch l.svc.EpisodeListingUnavailable() {
+	case enrich.EpisodeListingDisabled:
+		return catalog.SlotsEnrichmentDisabled
+	case enrich.EpisodeListingUnsupported:
+		return catalog.SlotsProviderCannotList
+	}
+	return ""
+}
+
+func (l enrichSlotLister) ListGroups(ctx context.Context, seriesID string) ([]catalog.SlotGroupSummary, error) {
+	seasons, err := l.svc.SeriesSeasons(ctx, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalog.SlotGroupSummary, 0, len(seasons))
+	for _, s := range seasons {
+		out = append(out, catalog.SlotGroupSummary{Number: s.Season, SlotCount: s.EpisodeCount})
+	}
+	return out, nil
+}
+
+func (l enrichSlotLister) ListSlots(ctx context.Context, seriesID string, group int) ([]catalog.SlotRecord, error) {
+	eps, err := l.svc.SeasonEpisodes(ctx, seriesID, group)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalog.SlotRecord, 0, len(eps))
+	for _, e := range eps {
+		out = append(out, catalog.SlotRecord{
+			Group: e.Season, Slot: e.Episode, Name: e.Name,
+			Overview: e.Overview, AirDate: e.AirDate, StillURL: e.StillURL,
+		})
+	}
+	return out, nil
 }
 
 // enqueueEnrichFull requests a background ModeFull re-enrich (every Title) — the

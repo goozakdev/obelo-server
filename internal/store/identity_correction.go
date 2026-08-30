@@ -27,9 +27,15 @@ import (
 // for an unknown Title.
 func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identityKey string) error {
 	res, err := db.Exec(
+		// The enrichment record is cleared alongside the identity id: a genuinely
+		// different work is a clean slate (watch state and Locked fields go too), so a
+		// prior Fix-info override must not outlive it and re-decorate the new work
+		// from the old one's record (ADR-0045). The caller's ApplyOverride re-pins the
+		// picked record immediately after.
 		`UPDATE titles SET
 		     title = ?, year = ?, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = '', enriched_title = '',
+		     enrichment_tmdb_id = '', enrichment_imdb_id = '', enrichment_id_origin = '',
 		     enrichment_status = 'pending', enrichment_source = ''
 		   WHERE id = ?`,
 		title, nullableYear(year), sortKey(title), identityKey, tmdbID, titleID,
