@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { StrictMode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { usePaginatedList, type Page } from "./usePaginatedList";
 
@@ -18,6 +19,51 @@ function page(ids: string[], nextCursor: string | null): Page<Item> {
 }
 
 describe("usePaginatedList", () => {
+  // THE REGRESSION THIS FILE EXISTS TO PREVENT A SECOND TIME.
+  //
+  // React may call a state updater more than once per update, and StrictMode
+  // does it deliberately — so an updater that reads and writes state OUTSIDE
+  // itself gives a different answer the second time, and React keeps the second.
+  // This hook's de-dup set used to live in a ref, which made every page after
+  // the first append nothing: the first invocation marked the page's ids seen,
+  // the second then skipped all of them as duplicates. The list stalled at page
+  // one while the scroll sentinel happily walked the cursor to the end of the
+  // library — visible only in a development build, and invisible to every test
+  // here, because Testing Library does not wrap renders in StrictMode.
+  //
+  // Rendering the hook inside StrictMode is what makes that class of bug fail
+  // loudly instead of shipping.
+  it("appends every page even when React double-invokes the updater (StrictMode)", async () => {
+    const fetchPage = (cursor: string | null) =>
+      Promise.resolve(
+        cursor === null
+          ? page(["a", "b"], "c1")
+          : cursor === "c1"
+            ? page(["c", "d"], "c2")
+            : page(["e", "f"], null),
+      );
+
+    const { result } = renderHook(() => usePaginatedList(fetchPage, getId), {
+      wrapper: StrictMode,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "b"]);
+
+    await act(async () => {
+      result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.items.length).toBe(4));
+
+    await act(async () => {
+      result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.items.length).toBe(6));
+
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "b", "c", "d", "e", "f"]);
+    expect(result.current.hasMore).toBe(false);
+  });
+
   it("loads page one, then appends the next page on loadMore with no dupes", async () => {
     const fetchPage = (cursor: string | null) =>
       Promise.resolve(cursor === "c1" ? page(["c", "d"], null) : page(["a", "b"], "c1"));
