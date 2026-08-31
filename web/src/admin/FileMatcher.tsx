@@ -1285,6 +1285,23 @@ function SlotCard({
         </span>
       )}
 
+      {/* An empty Slot is a PLACE, not a missing name. Left to itself it collapsed
+          to the height of its own title, so a column of them read as a list of
+          names with gaps between them and nothing said what the gaps were FOR. It
+          carries the outline of the card a File would make instead — and it is the
+          click target for the click-to-place half of the gesture, because the
+          outline is the part of an empty Slot an Admin actually aims at. */}
+      {parts.length === 0 && (
+        <button
+          className="matcher-slot-empty"
+          type="button"
+          data-testid="matcher-slot-empty"
+          onClick={() => onClickTarget({ kind: "slot", ...position })}
+        >
+          {selection ? "Place it here" : "Drag a file here"}
+        </button>
+      )}
+
       {parts.map((file, index) => (
         <PartRow
           key={file.path}
