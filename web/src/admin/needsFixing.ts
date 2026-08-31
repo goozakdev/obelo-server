@@ -54,6 +54,7 @@ import { folderOf, matcherPath } from "./paths";
  * happened to sort first would be a lie about what is in the library. */
 export type FixProblem =
   | "unidentified" // an Unmatched file: no Title was derived at all
+  | "unreadable" // ffprobe refused the file's bytes: named fine, cannot be read
   | "unassigned" // a File the Admin took off its Slot: undecided, not settled
   | "ambiguous" // two Files claim ONE Edition, so only the first of them plays
   | "uncertain-parse" // needs-review: a Title exists but the parse was a guess
@@ -461,7 +462,16 @@ export function buildFixItems(input: {
   // an Unmatched row is a flat path until the Show's folders say whose it is.
   const orphanRows: FixItem[] = [];
   const foldedPaths = new Set<string>();
+  // Which Show an UNREADABLE file belongs to. It is deliberately not folded into that Show's
+  // row (the matcher cannot settle it, so counting it there would hide an unclearable file
+  // behind a screen that says the Show is fine — ADR-0047), but the row still has to say where
+  // to go: the matcher is where Ignore lives, and ignoring is the one gesture that settles a
+  // file the Admin does not intend to replace.
+  const unreadableShow = new Map<string, { showId: string; title: string }>();
   for (const p of showProblems) {
+    for (const path of p.unreadablePaths) {
+      unreadableShow.set(path, { showId: p.showId, title: p.title });
+    }
     for (const path of p.unmatchedPaths) foldedPaths.add(path);
     if (p.unassigned > 0 || p.unidentified > 0) {
       const row = showFor(p.showId, p.title);
@@ -484,43 +494,93 @@ export function buildFixItems(input: {
 
   // --- the flat rows ---------------------------------------------------------
 
+  // An UNREADABLE file is a row of its own kind, and the difference is not cosmetic. Every
+  // other row here ends in a provider search: the Admin names the work and the next scan files
+  // it. This one cannot. Its name was never the problem — the file matcher even shows it
+  // sitting correctly on its Slot, because the filename numbered it — and ffprobe still refuses
+  // the bytes, so no Episode was built and none will be until the FILE is replaced. Offered the
+  // search, an Admin presses "Use this", writes an identity correction for an identity that was
+  // already right, and watches the row come back on the next scan (the server withholds
+  // `folderPath` for these, so the offer cannot even be assembled). ADR-0047.
+  const unreadableFileRow = (f: UnmatchedFile): FixItem => {
+    const show = unreadableShow.get(f.path);
+    return {
+      key: `unmatched:${f.id}`,
+      problem: "unreadable" as const,
+      problems: ["unreadable"] as FixProblem[],
+      kind: "file",
+      name: fileStem(f.path),
+      year: 0,
+      breadcrumb: show ? [show.title] : [],
+      path: f.path,
+      collidingPaths: [],
+      problemText: f.reason
+        ? `This file could not be read — ${f.reason}. Replace it on disk and rescan, or ignore it in the file matcher.`
+        : "This file could not be read — it may be corrupt or incomplete. Replace it on disk and rescan, or ignore it in the file matcher.",
+      // Nothing to search for: naming the work is not what is wrong.
+      route: "none" as const,
+      searchSeed: "",
+      detailPath: "",
+      // The one action that settles it without touching the disk, offered only where the
+      // server could say which Show the file is under.
+      sortPath: show ? matcherPath(show.showId) : "",
+      titleId: "",
+      showId: show?.showId ?? "",
+      folderPath: "",
+      overrideId: "",
+      canDismiss: false,
+      dismissEpisodes: false,
+      artworkUrl: show
+        ? `${API_PREFIX}/shows/${encodeURIComponent(show.showId)}/artwork/poster`
+        : "",
+      artworkVersion: "",
+      matchedAs: "",
+      hasMatch: false,
+    };
+  };
+
+  // A file nothing could NAME: the original meaning of the Unmatched list, and the one the
+  // provider search is for.
+  const unidentifiedFileRow = (f: UnmatchedFile): FixItem => ({
+    key: `unmatched:${f.id}`,
+    problem: "unidentified" as const,
+    problems: ["unidentified"] as FixProblem[],
+    kind: "file",
+    name: fileStem(f.path),
+    year: 0,
+    breadcrumb: [],
+    path: f.path,
+    collidingPaths: [],
+    problemText: f.reason
+      ? `Not recognized as a title — ${f.reason}.`
+      : "Not recognized as a title — no name or year could be read from this file.",
+    route: "fix-match" as const,
+    searchSeed: searchableStem(f.path),
+    detailPath: "",
+    sortPath: "",
+    titleId: "",
+    showId: "",
+    // The server derives the anchor from the Library's kind; folderOf is the
+    // fallback for a server that predates that field, and is only ever right for a
+    // Movie library (a TV file's own directory is a Season folder, not the Show).
+    folderPath: f.folderPath || folderOf(f.path),
+    overrideId: "",
+    canDismiss: false,
+    dismissEpisodes: false,
+    // No Title was derived, so there is no entity to fetch artwork for and nothing
+    // Enrichment could have matched.
+    artworkUrl: "",
+    artworkVersion: "",
+    matchedAs: "",
+    hasMatch: false,
+  });
+
   const unidentified: FixItem[] = input.unmatched
     // A file counted inside a Show row must not also be a row of its own: that is
     // the five-rows-one-problem shape returning by the back door.
     .filter((f) => !foldedPaths.has(f.path))
-    .map((f) => ({
-      key: `unmatched:${f.id}`,
-      problem: "unidentified" as const,
-      problems: ["unidentified"] as FixProblem[],
-      kind: "file",
-      name: fileStem(f.path),
-      year: 0,
-      breadcrumb: [],
-      path: f.path,
-      collidingPaths: [],
-      problemText: f.reason
-        ? `Not recognized as a title — ${f.reason}.`
-        : "Not recognized as a title — no name or year could be read from this file.",
-      route: "fix-match" as const,
-      searchSeed: searchableStem(f.path),
-      detailPath: "",
-      sortPath: "",
-      titleId: "",
-      showId: "",
-      // The server derives the anchor from the Library's kind; folderOf is the
-      // fallback for a server that predates that field, and is only ever right for a
-      // Movie library (a TV file's own directory is a Season folder, not the Show).
-      folderPath: f.folderPath || folderOf(f.path),
-      overrideId: "",
-      canDismiss: false,
-      dismissEpisodes: false,
-      // No Title was derived, so there is no entity to fetch artwork for and nothing
-      // Enrichment could have matched.
-      artworkUrl: "",
-      artworkVersion: "",
-      matchedAs: "",
-      hasMatch: false,
-    }));
+    // The two kinds share a list and must not share a fix (ADR-0047).
+    .map((f) => (f.kind === "unreadable" ? unreadableFileRow(f) : unidentifiedFileRow(f)));
 
   const orphaned: FixItem[] = input.overrides
     .filter((o) => o.orphaned)
@@ -852,6 +912,7 @@ export function searchableStem(path: string): string {
  * is stable and learnable rather than appearing and vanishing. */
 export const FIX_PROBLEMS: { problem: FixProblem; label: string }[] = [
   { problem: "unidentified", label: "Not identified" },
+  { problem: "unreadable", label: "Unreadable files" },
   { problem: "orphaned-correction", label: "Broken corrections" },
   { problem: "unassigned", label: "Not sorted" },
   { problem: "ambiguous", label: "Conflicting files" },
@@ -870,6 +931,7 @@ export function hasProblem(item: FixItem, problem: FixProblem): boolean {
  * a filtered view otherwise reads as a failed load. */
 export const EMPTY_BY_PROBLEM: Record<FixProblem, string> = {
   unidentified: "Every media file in this library was recognized as a title.",
+  unreadable: "Every media file in this library could be read.",
   unassigned: "Every file in this library is assigned to an episode, or ignored.",
   ambiguous: "No two files in this library claim to be the same title.",
   "orphaned-correction": "Every correction still points at a folder that exists.",

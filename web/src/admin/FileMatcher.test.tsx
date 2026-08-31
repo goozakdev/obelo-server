@@ -47,6 +47,7 @@ function file(over: Partial<MatcherFile> & { path: string }): MatcherFile {
     placements: [],
     decided: false,
     orphaned: false,
+    unreadable: false,
     reason: "",
     ...over,
   };
@@ -931,5 +932,47 @@ describe("repointing a slot's record", () => {
     expect(within(slotEl(4, 1)).getByTestId("matcher-slot-name")).toHaveTextContent("Borrowed One");
     expect(within(slotEl(4, 1)).getByTestId("matcher-slot-code")).toHaveTextContent("V4-01");
     expect(within(slotEl(4, 1)).getByTestId("matcher-slot-pin")).toHaveTextContent("Record from V1-01");
+  });
+});
+
+// A file the container's own filenames place perfectly and ffprobe cannot read.
+//
+// This is the one disagreement between this screen and the catalog that placing cannot
+// resolve: the name numbers it, so it sits on its Slot looking finished, and no Title was ever
+// built from it. A screen that stayed silent would report the one file in the library that
+// needs a human as the most correct thing on it — which is exactly what an Admin saw while the
+// Needs-Fixing queue told them the same file was "not recognized as a title" (ADR-0047).
+describe("a file that could not be read", () => {
+  it("says so on the slot it is placed on", async () => {
+    const user = userEvent.setup();
+    setup({
+      files: [
+        file({
+          path: A,
+          parsed: [{ group: 3, slot: 1 }],
+          placements: [{ group: 3, slot: 1, ordinal: 1 }],
+          unreadable: true,
+          reason: "ffprobe: Invalid data found when processing input",
+        }),
+        file({
+          path: B,
+          parsed: [{ group: 3, slot: 2 }],
+          placements: [{ group: 3, slot: 2, ordinal: 1 }],
+        }),
+      ],
+    });
+    await user.click(groupToggle(3));
+
+    expect(within(partEl(A)).getByTestId("matcher-part-unreadable")).toBeInTheDocument();
+    // The readable file beside it carries no such claim.
+    expect(within(partEl(B)).queryByTestId("matcher-part-unreadable")).toBeNull();
+  });
+
+  it("says so in the tray when it is not placed", () => {
+    setup({
+      files: [file({ path: LOOSE, state: "unassigned", unreadable: true, reason: "broken" })],
+    });
+    const tray = screen.getByTestId("matcher-unsorted");
+    expect(within(tray).getByTestId("matcher-file-unreadable")).toBeInTheDocument();
   });
 });

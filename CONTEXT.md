@@ -90,8 +90,12 @@ State of a Title or Show filed from a partial best-effort parse (e.g. a movie wi
 _Avoid_: Pending, Unconfirmed.
 
 **Unmatched**:
-A recognized media File from which no minimal identity could be extracted. Listed for the Admin to match manually; not a browsable Title and never auto-guessed. Distinct from Missing (which is about absence from disk). Within a work the Scanner *did* identify — a Show whose folder parsed but one of whose files carries no episode token — an Unmatched File is simply Unassigned, and is matched by giving it a Placement rather than by naming a work.
+A recognized media File from which no minimal identity could be extracted. Listed for the Admin to match manually; not a browsable Title and never auto-guessed. Distinct from Missing (which is about absence from disk) and from Unreadable (which is about the bytes, not the name). Within a work the Scanner *did* identify — a Show whose folder parsed but one of whose files carries no episode token — an Unmatched File is simply Unassigned, and is matched by giving it a Placement rather than by naming a work.
 _Avoid_: Unidentified, Unknown.
+
+**Unreadable**:
+A recognized media File whose NAME parsed and whose BYTES ffprobe refused — truncated, corrupt, or not the container its extension claims. It shares the Unmatched list (both end on disk and in no Title) and is a distinct **kind** on it, because the two have opposite fixes: an Unmatched File is resolved by *naming the work*, an Unreadable one only by *replacing the file*. Nothing may offer it an identity correction — the server withholds the fix-match anchor for exactly that reason ([ADR-0047](./docs/adr/0047-an-unreadable-file-is-its-own-attention-kind.md)). Its trap is that everything else about it looks right: the filename numbers it, so the file matcher shows it correctly placed on its Slot while no Title exists behind it, which is why both that screen and the queue name it explicitly. An Admin who does not want to replace it settles it by ignoring it, which is a decision like any other. It is **not counted as seen by a scan** — a File the server cannot serve is soft-deleted like any other it cannot serve, which is what stops it from holding a dead Title, and a whole re-identified Show, visible in the grid forever. Distinct from Missing (absent from disk) and Unmatched (present, readable, unnamed).
+_Avoid_: Corrupt (says why, not what), Broken, Bad file.
 
 **Locked field**:
 A descriptive field an Admin has edited by hand. Re-enrichment refreshes only unlocked fields and never overwrites a locked one; a lock is releasable back to auto.

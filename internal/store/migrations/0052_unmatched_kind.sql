@@ -1,0 +1,24 @@
+-- WHY an Unmatched row could not become a Title, as a column rather than as prose.
+--
+-- The Unmatched list has always held two different failures under one sentence.
+-- One is what the name says: nothing in the file's name yielded an identity, so
+-- the Admin has to say what the work IS. The other is a file whose name parsed
+-- perfectly and whose bytes ffprobe refused — a truncated download, a corrupt
+-- remux. Nothing about its identity is wrong, and no amount of naming a work will
+-- ever clear it.
+--
+-- Told apart only by their reason prose, the two shared a row type, a sentence
+-- ("Not recognized as a title") and an action (search a provider, press "Use
+-- this") — and for the unreadable half that action is inert by construction: it
+-- writes an identity correction for a problem that is not about identity, and the
+-- row returns on the very next scan. The Admin is left pressing a button that
+-- cannot work, on a file the file matcher shows as correctly placed, because the
+-- matcher resolves from the FILENAME and the filename was never the problem.
+--
+-- kind is that distinction, stored so every layer above can branch on it without
+-- parsing English: 'unidentified' (the original meaning) or 'unreadable'.
+--
+-- DEFAULT 'unidentified' makes this a no-op for existing rows, which is correct
+-- twice over: it is what they meant, and the list is rebuilt wholesale by the next
+-- full scan anyway (ReplaceUnmatched), which re-derives every kind from scratch.
+ALTER TABLE unmatched_files ADD COLUMN kind TEXT NOT NULL DEFAULT 'unidentified';

@@ -591,10 +591,17 @@ func (s *Service) ListUnmatched(libraryID string) ([]UnmatchedFileItem, error) {
 	anchorKind := overrideAnchorKind(lib.Kind)
 	out := make([]UnmatchedFileItem, 0, len(files))
 	for _, f := range files {
-		out = append(out, UnmatchedFileItem{
-			UnmatchedFile: f,
-			Anchor:        store.NeedsReviewAnchor(anchorKind, f.Path, roots),
-		})
+		item := UnmatchedFileItem{UnmatchedFile: f}
+		// An UNREADABLE file gets no anchor, because there is no identity correction
+		// to key there. Its name was never the problem — ffprobe refused its bytes —
+		// so a fix-match on its Show folder would rewrite the identity of a Show that
+		// is already right and leave the file exactly as broken as it was. Withholding
+		// the anchor is what stops the offer from being makeable at all, rather than
+		// only unwise (CONTEXT.md "Unreadable").
+		if !f.Unreadable() {
+			item.Anchor = store.NeedsReviewAnchor(anchorKind, f.Path, roots)
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }

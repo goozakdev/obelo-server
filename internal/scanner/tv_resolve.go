@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,6 +62,15 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		}
 		unmatchedSeen[path] = true
 		unmatched = append(unmatched, unmatchedFile(path, reason))
+	}
+	// addUnreadable is addUnmatched for the file ffprobe refused: same list, same
+	// once-only rule, different kind.
+	addUnreadable := func(path, reason string) {
+		if unmatchedSeen[path] {
+			return
+		}
+		unmatchedSeen[path] = true
+		unmatched = append(unmatched, unreadableFile(path, reason))
 	}
 
 	// The walk's only job is to hand the resolver every candidate media File plus
@@ -168,8 +178,29 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 			Title: re.DisplayName, Year: 0, Key: re.IdentityKey,
 		}, cfs, nil, nil, nil)
 		if err != nil {
-			// A probe failure is a real failure, not a decision, so it surfaces as
-			// Unmatched exactly as it does on the parsed path.
+			// A probe failure is a real failure, not a decision, so it surfaces on the
+			// attention list exactly as a parse failure does — but as its OWN kind.
+			// Nothing about this file's identity is wrong (its name numbered it, which
+			// is how it got this far), so the fix is to replace the file, and an
+			// attention row that offered to re-name the work would be inert forever
+			// (CONTEXT.md "Unreadable").
+			var ue *UnreadableError
+			if errors.As(err, &ue) {
+				broken := map[string]bool{}
+				for _, p := range ue.Paths {
+					broken[p] = true
+				}
+				for _, rf := range re.Files {
+					if broken[rf.Path] {
+						addUnreadable(rf.Path, ue.Error())
+					} else {
+						// A readable file that lost the Episode its broken sibling was half
+						// of. It is not corrupt, so it is not marked as though it were.
+						addUnmatched(rf.Path, "part of an episode whose other file could not be read")
+					}
+				}
+				continue
+			}
 			for _, rf := range re.Files {
 				addUnmatched(rf.Path, "could not probe episode file: "+err.Error())
 			}

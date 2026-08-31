@@ -884,8 +884,14 @@ type unmatchedFileJSON struct {
 	// library to the album folder). The client cannot derive it: the file's own
 	// directory is the right answer only for a Movie.
 	FolderPath string `json:"folderPath,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	AddedAt    string `json:"addedAt,omitempty"`
+	// Kind is WHY this file produced no Title: "unidentified" (nothing named the
+	// work) or "unreadable" (ffprobe refused the bytes). A client must branch on
+	// it rather than on `reason`, which is prose: an unreadable file's fix is to
+	// replace the file, so offering it the identity search every unidentified row
+	// gets is offering a button that cannot work.
+	Kind    string `json:"kind,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	AddedAt string `json:"addedAt,omitempty"`
 }
 
 type unmatchedResponse struct {
@@ -917,6 +923,7 @@ func handleListUnmatched(svc *catalog.Service) http.HandlerFunc {
 				ID:         f.ID,
 				Path:       f.Path,
 				FolderPath: f.Anchor,
+				Kind:       f.KindOrDefault(),
 				Reason:     f.Reason,
 				AddedAt:    formatTimestamp(f.AddedAt),
 			})
@@ -950,6 +957,11 @@ type showProblemsJSON struct {
 	UnmatchedPaths []string `json:"unmatchedPaths,omitempty"`
 	Orphaned       int      `json:"orphaned,omitempty"`
 	OrphanedPath   string   `json:"orphanedPath,omitempty"`
+	// UnreadablePaths are this Show's files ffprobe refused: attributed, never
+	// counted (ADR-0047). The queue keeps each as its own flat row — the matcher
+	// cannot settle one — and uses this only to say WHICH Show the row belongs to,
+	// so it can offer the one gesture that does settle it: ignore it there.
+	UnreadablePaths []string `json:"unreadablePaths,omitempty"`
 }
 
 type showProblemsResponse struct {
@@ -983,6 +995,7 @@ func handleListShowProblems(svc *catalog.Service) http.HandlerFunc {
 				Unassigned: p.Unassigned, Unidentified: p.Unidentified,
 				UnmatchedPaths: p.UnmatchedPaths,
 				Orphaned:       p.Orphaned, OrphanedPath: p.OrphanedPath,
+				UnreadablePaths: p.UnreadablePaths,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)

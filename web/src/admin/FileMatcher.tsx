@@ -1317,6 +1317,17 @@ function PartRow({
         {basename(file.path)}
       </button>
 
+      {file.unreadable && (
+        // The one thing this screen cannot show by placing the file, and the one thing an
+        // Admin looking at a tidy row of slots most needs to know: the filename numbered it,
+        // so it sits here looking finished, and no Episode was built because ffprobe cannot
+        // read the bytes (ADR-0047).
+        <span className="matcher-part-unreadable" data-testid="matcher-part-unreadable" role="alert">
+          This file could not be read, so nothing plays from this {labels.slotNoun}. Replace it
+          on disk and rescan, or ignore it.
+        </span>
+      )}
+
       {shared && (
         <span className="matcher-part-shared" data-testid="matcher-part-shared">
           Shared with {labels.slotNounPlural}{" "}
@@ -1471,6 +1482,11 @@ function FileCard({
       {file.orphaned && (
         <span className="matcher-file-note" data-testid="matcher-file-orphaned">
           This correction points at a file that is no longer on disk.
+        </span>
+      )}
+      {file.unreadable && (
+        <span className="matcher-file-unreadable" data-testid="matcher-file-unreadable" role="alert">
+          This file could not be read. Replace it on disk and rescan, or ignore it.
         </span>
       )}
       <button

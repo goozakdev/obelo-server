@@ -39,6 +39,10 @@ export interface ArrangedFile {
    * state. Carried for display; the Apply payload is derived from the parse. */
   decided: boolean;
   orphaned: boolean;
+  /** ffprobe refused this file. Unlike every other field here it is true of files that are
+   * correctly PLACED: the name numbered it and the bytes are broken, so the screen has to say
+   * so or it reports the one unplayable file as fine (ADR-0047). */
+  unreadable: boolean;
   reason: string;
 }
 
@@ -60,6 +64,7 @@ export function arrangementFromFiles(files: readonly MatcherFile[]): Arrangement
       titleId: f.titleId,
       decided: f.decided,
       orphaned: f.orphaned ?? false,
+      unreadable: f.unreadable ?? false,
       reason: f.reason ?? "",
     });
   }

@@ -75,6 +75,7 @@ function showProblems(over: Partial<ShowProblems> & { showId: string }): ShowPro
     unmatchedPaths: [],
     orphaned: 0,
     orphanedPath: "",
+    unreadablePaths: [],
     ...over,
   };
 }
@@ -885,6 +886,97 @@ describe("buildFixItems — the fix anchor for an unmatched file", () => {
       unmatched: [{ id: "u", path: "/media/movies/x.mkv", folderPath: "", reason: "" }],
     });
     expect(row.folderPath).toBe("/media/movies");
+  });
+});
+
+// A corrupt file is not a naming problem, and the queue used to say it was.
+//
+// The scanner lists it beside the files it could not name, because both end the same way: on
+// disk, in no Title. But its name parsed perfectly — the file matcher even shows it correctly
+// placed on its Slot — and ffprobe refused the bytes, so no Episode was built and none can be
+// until the FILE is replaced. Told "not recognized as a title", an Admin searches the provider,
+// presses "Use this", writes an identity correction for an identity that was already right, and
+// the row returns on the next scan. Forever. (ADR-0047.)
+describe("buildFixItems — a file that cannot be read", () => {
+  const corrupt = {
+    id: "u1",
+    path: "/media/tv/The Marlow Murder Club/Season 1/S01E01.mkv",
+    // The server withholds the anchor for these: there is no fix-match to key.
+    folderPath: "",
+    kind: "unreadable" as const,
+    reason: "ffprobe: Invalid data found when processing input",
+  };
+
+  it("says the file could not be read, and quotes what ffprobe said", () => {
+    const [row] = build({ unmatched: [corrupt] });
+    expect(row.problem).toBe("unreadable");
+    expect(row.problemText).toContain("could not be read");
+    expect(row.problemText).toContain("Invalid data found when processing input");
+    // The old sentence is a lie about this file: its name was never the problem.
+    expect(row.problemText).not.toContain("Not recognized as a title");
+  });
+
+  it("offers no provider search, because naming the work cannot fix it", () => {
+    const [row] = build({ unmatched: [corrupt] });
+    expect(row.route).toBe("none");
+    expect(row.searchSeed).toBe("");
+    expect(row.folderPath).toBe("");
+  });
+
+  it("still routes an unidentified file to the search", () => {
+    // The two kinds share a list and must not share a fix.
+    const [row] = build({
+      unmatched: [
+        {
+          id: "u2",
+          path: "/media/movies/mystery.mkv",
+          folderPath: "/media/movies",
+          kind: "unidentified" as const,
+          reason: "",
+        },
+      ],
+    });
+    expect(row.problem).toBe("unidentified");
+    expect(row.route).toBe("fix-match");
+  });
+
+  it("points at the Show it belongs to, so the Admin can go and ignore it", () => {
+    // Attributed, never counted: no Show row exists, and the flat row still knows where the
+    // one gesture that settles this file lives.
+    const rows = build({
+      unmatched: [corrupt],
+      showProblems: [
+        showProblems({
+          showId: "sh1",
+          title: "The Marlow Murder Club",
+          unreadablePaths: [corrupt.path],
+        }),
+      ],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].problem).toBe("unreadable");
+    expect(rows[0].sortPath).toContain("sh1");
+    expect(rows[0].breadcrumb).toEqual(["The Marlow Murder Club"]);
+  });
+
+  it("keeps its own row rather than being counted inside a Show", () => {
+    // The server does not fold an unreadable path into a Show row, so the client never drops
+    // it: a file that needs a human must not vanish behind a matcher screen that reports the
+    // Show as already sorted.
+    const rows = build({
+      unmatched: [corrupt],
+      showProblems: [
+        showProblems({
+          showId: "sh1",
+          title: "The Marlow Murder Club",
+          unassigned: 1,
+          path: "/x.mkv",
+          unreadablePaths: [corrupt.path],
+        }),
+      ],
+    });
+    expect(rows.some((r) => r.problem === "unreadable")).toBe(true);
+    expect(rows.some((r) => r.problem === "unassigned")).toBe(true);
   });
 });
 

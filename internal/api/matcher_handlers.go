@@ -111,7 +111,12 @@ type matcherFileJSON struct {
 	Placements []matcherPlacementJSON `json:"placements,omitempty"`
 	Decided    bool                   `json:"decided"`
 	Orphaned   bool                   `json:"orphaned,omitempty"`
-	Reason     string                 `json:"reason,omitempty"`
+	// Unreadable is set when ffprobe refused this file. It travels even on a PLACED
+	// file, where every other reason is suppressed: the placement is real (the name
+	// numbered it) and still no Title exists, which is the one disagreement between
+	// this screen and the catalog that the screen cannot otherwise show.
+	Unreadable bool   `json:"unreadable,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // matcherAppliedJSON reports what the server made of a submitted arrangement.
@@ -505,7 +510,8 @@ func toMatcherJSON(deps Deps, m catalog.Matcher) matcherJSON {
 	for _, f := range m.Files {
 		fj := matcherFileJSON{
 			Path: f.Path, State: f.State, TitleID: f.TitleID,
-			Decided: f.Decided, Orphaned: f.Orphaned, Reason: f.Reason,
+			Decided: f.Decided, Orphaned: f.Orphaned,
+			Unreadable: f.Unreadable, Reason: f.Reason,
 		}
 		for _, p := range f.Parsed {
 			fj.Parsed = append(fj.Parsed, slotPositionJSON{Group: p.Group, Slot: p.Slot})
