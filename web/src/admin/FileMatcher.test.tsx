@@ -309,6 +309,26 @@ describe("the drop onto an occupied slot", () => {
   });
 });
 
+describe("the per-file actions", () => {
+  it("names both icons in the Slot's own vocabulary", async () => {
+    // The words are gone from the row, so the tooltip and the accessible name are
+    // the only place they survive — and they are still the adapter's nouns, never
+    // "episode" hard-coded into a component that also sorts chapters.
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(3));
+    const part = within(partEl(A));
+
+    const share = part.getByTestId("matcher-part-share");
+    expect(share).toHaveAttribute("title", "Include this file in an additional chapter");
+    expect(share).toHaveAccessibleName("Include this file in an additional chapter");
+
+    const unlink = part.getByTestId("matcher-part-unassign");
+    expect(unlink).toHaveAttribute("title", "Unlink this file from chapter");
+    expect(unlink).toHaveAccessibleName("Unlink this file from chapter");
+  });
+});
+
 describe("one file across several slots", () => {
   it("shows on both, marked shared", async () => {
     const user = userEvent.setup();

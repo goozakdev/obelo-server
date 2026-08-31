@@ -1,8 +1,9 @@
-// Inline SVG icons for the Title detail action toolbar (watchlist 01). Each renders
-// at 1em and inherits the button's text color via fill="currentColor", so a single
-// CSS rule sizes/themes them and an active (e.g. watched) state is just a color
-// change. The paths are the provided 256×256 artwork, wrapped in the original
-// translate/scale group that maps the 0–90 design space into the viewBox.
+// The app's inline SVG icons: the Title detail action toolbar (watchlist 01) and
+// the file matcher's per-file actions. Each renders at 1em and inherits the
+// button's text color via fill="currentColor", so a single CSS rule sizes/themes
+// them and an active (e.g. watched) state is just a color change. The paths are
+// the provided 256×256 artwork, wrapped in the original translate/scale group that
+// maps the 0–90 design space into the viewBox.
 
 type IconProps = { className?: string };
 
@@ -139,6 +140,48 @@ export function MoreIcon({ className }: IconProps) {
       <circle cx="45" cy="18" r="9" fill="currentColor" />
       <circle cx="45" cy="45" r="9" fill="currentColor" />
       <circle cx="45" cy="72" r="9" fill="currentColor" />
+    </Svg>
+  );
+}
+
+/** Arrow curving back out of a circle — "unlink this file", on the file matcher. */
+export function UnlinkIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path
+        fill="currentColor"
+        fillRule="nonzero"
+        d="M 45 90 c 24.813 0 45 -20.187 45 -45 C 90 20.187 69.813 0 45 0 C 20.187 0 0 20.187 0 45 C 0 69.813 20.187 90 45 90 z M 45 4 c 22.607 0 41 18.393 41 41 S 67.607 86 45 86 S 4 67.607 4 45 S 22.393 4 45 4 z"
+      />
+      <path
+        fill="currentColor"
+        fillRule="nonzero"
+        d="M 69.271 65.409 c 0.217 0 0.437 -0.035 0.651 -0.109 c 0.807 -0.277 1.349 -1.037 1.349 -1.891 c 0 -15.427 -11.287 -28.105 -25.547 -29.197 v -7.621 c 0 -0.769 -0.441 -1.47 -1.134 -1.803 c -0.692 -0.334 -1.516 -0.24 -2.116 0.242 L 19.479 43.439 c -0.474 0.379 -0.75 0.954 -0.75 1.561 s 0.276 1.182 0.75 1.562 l 22.993 18.409 c 0.6 0.48 1.421 0.576 2.116 0.241 c 0.693 -0.333 1.134 -1.034 1.134 -1.803 v -7.961 c 10.713 0.31 17.162 3.037 21.971 9.192 C 68.081 65.135 68.667 65.409 69.271 65.409 z M 43.723 51.418 c -0.53 0 -1.038 0.21 -1.413 0.585 c -0.376 0.375 -0.587 0.884 -0.587 1.415 v 5.828 L 23.93 45 l 17.793 -14.246 v 5.381 c 0 1.104 0.896 2 2 2 c 11.96 0 20.587 9.422 22.917 19.737 c -6.863 -5.567 -15.295 -6.442 -22.914 -6.455 C 43.725 51.418 43.724 51.418 43.723 51.418 z"
+      />
+    </Svg>
+  );
+}
+
+/** Thin plus-in-a-circle — "also place this file", on the file matcher. Distinct
+ * artwork from WatchlistIcon above, which is the same gesture drawn solid. */
+export function AlsoPlaceIcon({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path
+        fill="currentColor"
+        fillRule="nonzero"
+        d="M 45 69.478 c -1.657 0 -3 -1.343 -3 -3 V 23.523 c 0 -1.657 1.343 -3 3 -3 c 1.657 0 3 1.343 3 3 v 42.955 C 48 68.135 46.657 69.478 45 69.478 z"
+      />
+      <path
+        fill="currentColor"
+        fillRule="nonzero"
+        d="M 66.478 48 H 23.523 c -1.657 0 -3 -1.343 -3 -3 c 0 -1.657 1.343 -3 3 -3 h 42.955 c 1.657 0 3 1.343 3 3 C 69.478 46.657 68.135 48 66.478 48 z"
+      />
+      <path
+        fill="currentColor"
+        fillRule="nonzero"
+        d="M 45 90 C 20.187 90 0 69.813 0 45 C 0 20.187 20.187 0 45 0 c 24.813 0 45 20.187 45 45 C 90 69.813 69.813 90 45 90 z M 45 6 C 23.495 6 6 23.495 6 45 s 17.495 39 39 39 s 39 -17.495 39 -39 S 66.505 6 45 6 z"
+      />
     </Svg>
   );
 }

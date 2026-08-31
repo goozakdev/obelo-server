@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError } from "../api/client";
+import { AlsoPlaceIcon, UnlinkIcon } from "../browse/ActionIcons";
 import type {
   MatcherApplyInput,
   MatcherDocument,
@@ -1595,22 +1596,32 @@ function PartRow({
         {/* One File across several Slots. Deliberately its own control rather than
             a modifier on the drag: dragging a placed File MOVES it, which is what
             an Admin expects, and "this file is also the next episode" is rare
-            enough to be worth a word. */}
+            enough to be worth its own act.
+
+            Both acts are icons: they repeat on every placed File, and as sentences
+            they were the widest thing in the column — two lines of prose restating
+            what the row already shows. The words survive as the tooltip and as the
+            accessible name, which is where a rarely-used control's explanation
+            belongs. */}
         <button
-          className="nav-link"
+          className="matcher-part-action"
           type="button"
           data-testid="matcher-part-share"
+          title={`Include this file in an additional ${labels.slotNoun}`}
+          aria-label={`Include this file in an additional ${labels.slotNoun}`}
           onClick={() => onPick(file.path, "share")}
         >
-          Also place on another {labels.slotNoun}…
+          <AlsoPlaceIcon />
         </button>
         <button
-          className="nav-link"
+          className="matcher-part-action"
           type="button"
           data-testid="matcher-part-unassign"
+          title={`Unlink this file from ${labels.slotNoun}`}
+          aria-label={`Unlink this file from ${labels.slotNoun}`}
           onClick={() => onUnassign(file.path)}
         >
-          Take off this {labels.slotNoun}
+          <UnlinkIcon />
         </button>
       </span>
     </div>
