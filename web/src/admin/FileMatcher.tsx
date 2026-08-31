@@ -1221,37 +1221,50 @@ function SlotCard({
       data-slot={position.slot}
       data-position-mismatch={mismatch ? "true" : "false"}
     >
-      <button
-        className="matcher-slot-target"
-        type="button"
-        data-testid="matcher-slot-target"
-        onClick={() => onClickTarget({ kind: "slot", ...position })}
-        aria-label={`${labels.slotCode(position.group, position.slot)}${shownName ? ` ${shownName}` : ""}`}
-      >
-        {/* Code, separator, words — on ONE line, punctuated the way a filename
-            punctuates the same three things, so the Slot's label and the label of
-            the File placed under it can be read against each other as two lines of
-            the same shape rather than compared item by item. */}
-        <span
-          className={`matcher-slot-code${mismatch ? " is-mismatch" : ""}`}
-          data-testid="matcher-slot-code"
+      {/* Code — title on the left, the record actions hard right, on ONE line. */}
+      <div className="matcher-slot-head">
+        <button
+          className="matcher-slot-target"
+          type="button"
+          data-testid="matcher-slot-target"
+          onClick={() => onClickTarget({ kind: "slot", ...position })}
+          aria-label={`${labels.slotCode(position.group, position.slot)}${shownName ? ` ${shownName}` : ""}`}
         >
-          {labels.slotCode(position.group, position.slot)}
-        </span>
-        {/* The spaces are IN the separator, not a flex gap: this line is text an
-            Admin copies and a screen reader reads, and " - " is how the filename
-            beside it punctuates the same join. */}
-        <span className="matcher-slot-sep">{" - "}</span>
-        {shownName ? (
-          <span className="matcher-slot-name" data-testid="matcher-slot-name" title={shownName}>
-            {shownName}
+          {/* Code, separator, words — on ONE line, punctuated the way a filename
+              punctuates the same three things, so the Slot's label and the label of
+              the File placed under it can be read against each other as two lines of
+              the same shape rather than compared item by item. */}
+          <span
+            className={`matcher-slot-code${mismatch ? " is-mismatch" : ""}`}
+            data-testid="matcher-slot-code"
+          >
+            {labels.slotCode(position.group, position.slot)}
           </span>
-        ) : (
-          <span className="matcher-slot-name is-bare" data-testid="matcher-slot-bare">
-            no title
-          </span>
+          {/* The spaces are IN the separator, not a flex gap: this line is text an
+              Admin copies and a screen reader reads, and " - " is how the filename
+              beside it punctuates the same join. */}
+          <span className="matcher-slot-sep">{" - "}</span>
+          {shownName ? (
+            <span className="matcher-slot-name" data-testid="matcher-slot-name" title={shownName}>
+              {shownName}
+            </span>
+          ) : (
+            <span className="matcher-slot-name is-bare" data-testid="matcher-slot-bare">
+              no title
+            </span>
+          )}
+        </button>
+
+        {repointable && (
+          <SlotActionsMenu
+            slotCode={labels.slotCode(position.group, position.slot)}
+            pinned={pinned !== null}
+            slotNoun={labels.slotNoun}
+            onRepoint={() => onRepoint(position.group, [position])}
+            onClearRecord={() => onClearRecord(position)}
+          />
         )}
-      </button>
+      </div>
 
       {/* Provenance, and only provenance. The borrowed position is stated here so
           the Admin can see where the words came from; it is never the code above,
@@ -1269,29 +1282,6 @@ function SlotCard({
           {pinned.externalId && pinned.externalId !== ownSeries
             ? ` of ${labels.seriesNoun} ${pinned.externalId}`
             : ` of this ${labels.seriesNoun}`}
-        </span>
-      )}
-
-      {repointable && (
-        <span className="matcher-slot-actions">
-          <button
-            className="nav-link"
-            type="button"
-            data-testid="matcher-slot-repoint"
-            onClick={() => onRepoint(position.group, [position])}
-          >
-            {pinned ? "Use a different record\u2026" : "Take the record from elsewhere\u2026"}
-          </button>
-          {pinned && (
-            <button
-              className="nav-link"
-              type="button"
-              data-testid="matcher-slot-clear-record"
-              onClick={() => onClearRecord(position)}
-            >
-              Use this {labels.slotNoun}&rsquo;s own record
-            </button>
-          )}
         </span>
       )}
 
@@ -1347,6 +1337,95 @@ function SlotCard({
         </div>
       )}
     </li>
+  );
+}
+
+/* The two record actions used to sit under the Slot as bare links, on a row of
+   their own, on EVERY filled Slot — a permanent second line of text competing with
+   the one line that matters (code — title) and doubling the height of the column.
+   They are corrections, reached rarely and deliberately, so they belong behind a
+   kebab on the title line itself. Same shell as the browse list's
+   EpisodeActionsMenu: click-outside and Escape close it, the parent owns the acts. */
+function SlotActionsMenu({
+  slotCode,
+  pinned,
+  slotNoun,
+  onRepoint,
+  onClearRecord,
+}: {
+  slotCode: string;
+  pinned: boolean;
+  slotNoun: string;
+  onRepoint: () => void;
+  onClearRecord: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocPointer(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="row-menu matcher-slot-menu" ref={ref}>
+      <button
+        type="button"
+        className="row-menu-toggle"
+        data-testid="matcher-slot-menu-toggle"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Record actions for ${slotCode}`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        ⋮
+      </button>
+      {open && (
+        <ul className="row-menu-list" role="menu" data-testid="matcher-slot-menu">
+          <li className="row-menu-item" role="none">
+            <button
+              type="button"
+              className="row-menu-button"
+              role="menuitem"
+              data-testid="matcher-slot-repoint"
+              onClick={() => {
+                setOpen(false);
+                onRepoint();
+              }}
+            >
+              {pinned ? "Use a different record\u2026" : "Take the record from elsewhere\u2026"}
+            </button>
+          </li>
+          {pinned && (
+            <li className="row-menu-item" role="none">
+              <button
+                type="button"
+                className="row-menu-button"
+                role="menuitem"
+                data-testid="matcher-slot-clear-record"
+                onClick={() => {
+                  setOpen(false);
+                  onClearRecord();
+                }}
+              >
+                Use this {slotNoun}&rsquo;s own record
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
   );
 }
 
