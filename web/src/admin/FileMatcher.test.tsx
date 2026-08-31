@@ -801,6 +801,16 @@ function fakePicker(records: MatcherSlot[], externalId = "77777") {
   return { held, render };
 }
 
+// The record actions live behind the Slot's kebab now, so every one of them is a
+// two-step reach: open the menu, then pick the item.
+async function openSlotMenu(
+  user: ReturnType<typeof userEvent.setup>,
+  group: number,
+  slot: number,
+) {
+  await user.click(within(slotEl(group, slot)).getByTestId("matcher-slot-menu-toggle"));
+}
+
 const BORROWED: MatcherSlot[] = [
   { group: 1, slot: 1, name: "Borrowed One", overview: "first" },
   { group: 1, slot: 2, name: "Borrowed Two" },
@@ -835,9 +845,9 @@ describe("repointing a slot's record", () => {
     await user.click(groupToggle(4));
     await waitFor(() => expect(slotEl(4, 1)).toBeInTheDocument());
 
-    expect(within(slotEl(4, 1)).queryByTestId("matcher-slot-repoint")).toBeNull();
+    expect(within(slotEl(4, 1)).queryByTestId("matcher-slot-menu-toggle")).toBeNull();
     await user.click(groupToggle(3));
-    expect(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint")).toBeInTheDocument();
+    expect(within(slotEl(3, 1)).getByTestId("matcher-slot-menu-toggle")).toBeInTheDocument();
   });
 
   it("puts the picker OVER the page, not above it", async () => {
@@ -847,7 +857,8 @@ describe("repointing a slot's record", () => {
     const user = userEvent.setup();
     setupRepoint();
     await user.click(groupToggle(3));
-    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+    await openSlotMenu(user, 3, 1);
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
 
     const picker = screen.getByTestId("matcher-repoint");
     expect(picker.tagName).toBe("DIALOG");
@@ -862,7 +873,8 @@ describe("repointing a slot's record", () => {
     const user = userEvent.setup();
     const { apply } = setupRepoint();
     await user.click(groupToggle(3));
-    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+    await openSlotMenu(user, 3, 1);
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
 
     await user.click(screen.getByTestId("matcher-repoint-close"));
     expect(screen.queryByTestId("matcher-repoint")).toBeNull();
@@ -879,7 +891,8 @@ describe("repointing a slot's record", () => {
     const user = userEvent.setup();
     setupRepoint();
     await user.click(groupToggle(3));
-    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+    await openSlotMenu(user, 3, 1);
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
 
     fireEvent(screen.getByTestId("matcher-repoint"), new Event("cancel", { cancelable: true }));
     await waitFor(() => expect(screen.queryByTestId("matcher-repoint")).toBeNull());
@@ -950,7 +963,8 @@ describe("repointing a slot's record", () => {
     const user = userEvent.setup();
     const { picker } = setupRepoint();
     await user.click(groupToggle(3));
-    await user.click(within(slotEl(3, 2)).getByTestId("matcher-slot-repoint"));
+    await openSlotMenu(user, 3, 2);
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
 
     expect(picker.held.request?.targets).toEqual([{ group: 3, slot: 2 }]);
     await user.click(screen.getByTestId("fake-picker-pick"));
@@ -961,13 +975,54 @@ describe("repointing a slot's record", () => {
     );
   });
 
+  it("offers the record actions on the title line, behind one kebab", async () => {
+    // The actions are corrections, reached rarely — they belong behind a menu on the
+    // Slot's own line, not on a permanent second row under every filled Slot. And
+    // "use this chapter's own record" is meaningless until one has been borrowed.
+    const user = userEvent.setup();
+    setupRepoint();
+    await user.click(groupToggle(3));
+
+    expect(screen.queryByTestId("matcher-slot-menu")).toBeNull();
+    await openSlotMenu(user, 3, 1);
+    expect(screen.getByTestId("matcher-slot-repoint")).toHaveTextContent(
+      "Take the record from elsewhere",
+    );
+    expect(screen.queryByTestId("matcher-slot-clear-record")).toBeNull();
+
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
+    await user.click(screen.getByTestId("fake-picker-pick"));
+
+    // Borrowed: the same item now offers to REPLACE the record, and giving it back
+    // has joined the menu beneath it.
+    await openSlotMenu(user, 3, 1);
+    expect(screen.getByTestId("matcher-slot-repoint")).toHaveTextContent(
+      "Use a different record",
+    );
+    expect(screen.getByTestId("matcher-slot-clear-record")).toBeInTheDocument();
+  });
+
+  it("closes the kebab on Escape without touching the record", async () => {
+    const user = userEvent.setup();
+    const { apply } = setupRepoint();
+    await user.click(groupToggle(3));
+    await openSlotMenu(user, 3, 1);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("matcher-slot-menu")).toBeNull();
+    expect(screen.getByTestId("matcher-apply")).toBeDisabled();
+    expect(apply).not.toHaveBeenCalled();
+  });
+
   it("clears a record back to the container's own", async () => {
     const user = userEvent.setup();
     const { apply } = setupRepoint();
     await user.click(groupToggle(3));
-    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+    await openSlotMenu(user, 3, 1);
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
     await user.click(screen.getByTestId("fake-picker-pick"));
-    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-clear-record"));
+    await openSlotMenu(user, 3, 1);
+    await user.click(screen.getByTestId("matcher-slot-clear-record"));
 
     // Back to this container's own record at this position.
     expect(within(slotEl(3, 1)).getByTestId("matcher-slot-name")).toHaveTextContent(
@@ -1029,7 +1084,8 @@ describe("repointing a slot's record", () => {
     await user.click(groupToggle(4));
     expect(within(slotEl(4, 1)).getByTestId("matcher-slot-bare")).toBeInTheDocument();
 
-    await user.click(within(slotEl(4, 1)).getByTestId("matcher-slot-repoint"));
+    await openSlotMenu(user, 4, 1);
+    await user.click(screen.getByTestId("matcher-slot-repoint"));
     await user.click(screen.getByTestId("fake-picker-pick"));
 
     expect(within(slotEl(4, 1)).getByTestId("matcher-slot-name")).toHaveTextContent("Borrowed One");

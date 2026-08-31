@@ -5088,8 +5088,7 @@ textarea.metadata-input {
 }
 
 .matcher-slot-target,
-.matcher-slot-pin,
-.matcher-slot-actions {
+.matcher-slot-pin {
   padding-left: var(--part-inset);
 }
 
@@ -5182,19 +5181,49 @@ textarea.metadata-input {
   font-style: normal;
 }
 
-.matcher-slot-actions {
+/* The title line: code — words on the left, the record actions hard right, on the
+   SAME row. The actions were two bare links on a permanent second line under every
+   filled Slot, which doubled the column's height and put rarely-used corrections
+   in the reading path of the one line an Admin actually scans. */
+.matcher-slot-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  font-size: 0.8rem;
+  align-items: center;
+  gap: 0.4rem;
+}
+.matcher-slot-head .matcher-slot-target {
+  /* Takes the row. The min-width:0 already on .matcher-slot-target is what lets
+     the title ellipsize instead of shoving the kebab off the edge. */
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* The shared .row-menu is built for the absolutely-placed corner of a browse tile.
+   Here it is an ordinary flex item on the title line, and it stays visible rather
+   than appearing on hover: an Admin correcting a record is hunting for this, and a
+   dense admin list gives no artwork for a hover affordance to sit on. */
+.matcher-slot-menu {
+  position: relative;
+  top: auto;
+  right: auto;
+  flex: none;
+}
+.matcher-slot-menu .row-menu-toggle {
+  padding: 0 0.35rem;
+  background: none;
+  font-size: 1rem;
+  opacity: 0.55;
+}
+.matcher-slot-menu .row-menu-toggle:hover,
+.matcher-slot-menu .row-menu-toggle:focus-visible,
+.matcher-slot-menu .row-menu-toggle[aria-expanded="true"] {
+  background: var(--surface-hover);
+  opacity: 1;
 }
 
 .matcher-fill-records {
   margin-left: 0.8rem;
 }
 
-/* The record picker, opened over the arrangement rather than beside it: choosing
-   a record is a whole two-step act and the Admin should not lose their place. */
 /* The record picker is a MODAL (RepointDialog), not a panel above the groups:
    repointing starts from a Slot far down the grid, and a panel above the fold is
    one the Admin never scrolls back up to see. Same chrome as .edit-item-dialog —
