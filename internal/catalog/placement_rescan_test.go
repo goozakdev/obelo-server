@@ -93,6 +93,15 @@ type rescanFixture struct {
 // Scanner would leave, or the invariant is measured against a fiction.
 func newRescanFixture(t *testing.T, files ...string) *rescanFixture {
 	t.Helper()
+	return newRescanFixtureWith(t, rescanProber{}, files...)
+}
+
+// newRescanFixtureWith is newRescanFixture with the ffprobe seam chosen by the
+// caller, for the tests whose subject is a file the prober REFUSES. It has to be
+// in play for the seeding scan: an incremental rescan does not re-probe an
+// unchanged file, so a prober swapped in afterwards is never asked.
+func newRescanFixtureWith(t *testing.T, prober scanner.Prober, files ...string) *rescanFixture {
+	t.Helper()
 	root := t.TempDir()
 	show := filepath.Join(root, rescanShowFolder)
 	for _, rel := range files {
@@ -108,7 +117,7 @@ func newRescanFixture(t *testing.T, files ...string) *rescanFixture {
 	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u2','u2','member')`)
 
 	f := &rescanFixture{t: t, db: db, root: root, show: show}
-	f.scan = scanner.NewService(db, rescanProber{})
+	f.scan = scanner.NewService(db, prober)
 	f.cat = catalog.NewService(db, t.TempDir())
 	// The real per-Library lock, not a fake: Apply is a catalog writer like a scan
 	// and takes the same one (ADR-0031).

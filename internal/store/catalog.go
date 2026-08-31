@@ -786,8 +786,8 @@ func (db *DB) ReplaceUnmatched(libraryID string, files []UnmatchedFile) error {
 	}
 	for _, f := range files {
 		if _, err := tx.Exec(
-			`INSERT INTO unmatched_files (id, library_id, path, reason) VALUES (?, ?, ?, ?)`,
-			f.ID, libraryID, f.Path, f.Reason,
+			`INSERT INTO unmatched_files (id, library_id, path, reason, kind) VALUES (?, ?, ?, ?, ?)`,
+			f.ID, libraryID, f.Path, f.Reason, f.KindOrDefault(),
 		); err != nil {
 			return fmt.Errorf("store: inserting unmatched %q: %w", f.Path, err)
 		}
@@ -798,19 +798,53 @@ func (db *DB) ReplaceUnmatched(libraryID string, files []UnmatchedFile) error {
 	return nil
 }
 
-// UnmatchedFile is a recognized-media File with no extractable identity, listed
-// for the Admin (CONTEXT.md "Unmatched").
+// The two ways a recognized media File can fail to become a Title. They share a
+// list because they share a consequence — the file is on disk and in no Title —
+// but they are different problems with different fixes, and only one of them is
+// about identity at all.
+const (
+	// UnmatchedUnidentified: nothing in the file's name yielded an identity. The
+	// Admin says what the work is, and it resolves (CONTEXT.md "Unmatched").
+	UnmatchedUnidentified = "unidentified"
+	// UnmatchedUnreadable: the name parsed; the BYTES did not. ffprobe could not
+	// read the file — truncated, corrupt, not really the container it claims. No
+	// identity correction can fix it, so nothing above this layer may offer one
+	// (CONTEXT.md "Unreadable").
+	UnmatchedUnreadable = "unreadable"
+)
+
+// UnmatchedFile is a recognized-media File that produced no Title, listed for the
+// Admin (CONTEXT.md "Unmatched", "Unreadable").
 type UnmatchedFile struct {
-	ID      string
-	Path    string
+	ID   string
+	Path string
+	// Kind is why: UnmatchedUnidentified or UnmatchedUnreadable. Empty reads as
+	// unidentified, which is what every row written before the distinction existed
+	// meant.
+	Kind    string
 	Reason  string
 	AddedAt string
 }
 
+// KindOrDefault is Kind with the empty value resolved to unidentified, so a caller
+// that predates the distinction (or a test that does not care) still writes a
+// meaningful row.
+func (u UnmatchedFile) KindOrDefault() string {
+	if u.Kind == "" {
+		return UnmatchedUnidentified
+	}
+	return u.Kind
+}
+
+// Unreadable reports whether this row is the ffprobe failure rather than the
+// naming one — the question every layer above asks, so none of them has to know
+// how it is spelled.
+func (u UnmatchedFile) Unreadable() bool { return u.Kind == UnmatchedUnreadable }
+
 // ListUnmatched returns the Library's Unmatched files, ordered by path.
 func (db *DB) ListUnmatched(libraryID string) ([]UnmatchedFile, error) {
 	rows, err := db.Query(
-		`SELECT id, path, reason, added_at FROM unmatched_files
+		`SELECT id, path, reason, kind, added_at FROM unmatched_files
 		   WHERE library_id = ? ORDER BY path`, libraryID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing unmatched: %w", err)
@@ -820,7 +854,7 @@ func (db *DB) ListUnmatched(libraryID string) ([]UnmatchedFile, error) {
 	var out []UnmatchedFile
 	for rows.Next() {
 		var u UnmatchedFile
-		if err := rows.Scan(&u.ID, &u.Path, &u.Reason, &u.AddedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Path, &u.Reason, &u.Kind, &u.AddedAt); err != nil {
 			return nil, fmt.Errorf("store: scanning unmatched: %w", err)
 		}
 		out = append(out, u)

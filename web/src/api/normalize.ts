@@ -198,6 +198,7 @@ export function normalizeShowProblems(raw: ShowProblemsRaw): ShowProblems {
     unmatchedPaths: raw.unmatchedPaths ?? [],
     orphaned: raw.orphaned ?? 0,
     orphanedPath: raw.orphanedPath ?? "",
+    unreadablePaths: raw.unreadablePaths ?? [],
   };
 }
 
@@ -206,6 +207,7 @@ export function normalizeUnmatchedFile(raw: UnmatchedFileRaw): UnmatchedFile {
     id: raw.id,
     path: raw.path,
     folderPath: raw.folderPath ?? "",
+    kind: raw.kind === "unreadable" ? "unreadable" : "unidentified",
     reason: raw.reason ?? "",
     addedAt: raw.addedAt,
   };
@@ -753,6 +755,7 @@ export function normalizeMatcherFile(raw: MatcherFileRaw): MatcherFile {
     placements,
     decided: raw.decided ?? false,
     orphaned: raw.orphaned ?? false,
+    unreadable: raw.unreadable ?? false,
     reason: raw.reason ?? "",
   };
 }

@@ -226,9 +226,16 @@ type MatcherFile struct {
 	// correction is broken rather than done and is surfaced, never dropped
 	// (CONTEXT.md "Orphaned correction").
 	Orphaned bool
-	// Reason is why an unnumbered File could not be placed, from the Unmatched row
-	// or from the parse itself. Empty when the File parses.
+	// Reason is why this File is not (or not fully) part of a Title: the Unmatched
+	// row's reason, or the parse's own. Empty when the File parses and probes.
 	Reason string
+	// Unreadable is true when ffprobe refused this file's bytes. It is the one
+	// state the screen must show on a PLACED File: the name numbered it, so it sits
+	// on its Slot looking finished, while no Title was ever built from it and none
+	// can be until the file itself is replaced. Without this the matcher reports
+	// the library's most broken file as its most correct one (CONTEXT.md
+	// "Unreadable").
+	Unreadable bool
 }
 
 // Matcher is one container's whole working set — the response to "let me sort
@@ -611,6 +618,7 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 	// nowhere else — and it is the file in the worst shape, which is exactly what
 	// the matcher is for (PRD user story 7).
 	reasons := map[string]string{}
+	unreadable := map[string]bool{}
 	for _, u := range unmatched {
 		if !folders[showFolderOf(u.Path)] {
 			continue
@@ -618,6 +626,7 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 		candidates[u.Path] = true
 		present[u.Path] = true
 		reasons[u.Path] = u.Reason
+		unreadable[u.Path] = u.Unreadable()
 	}
 
 	// Source three: paths carrying an explicit decision. An Unassigned or Ignored
@@ -681,6 +690,7 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 			Parsed:     parsedOf[path],
 			Placements: placements[path],
 			Reason:     reasons[path],
+			Unreadable: unreadable[path],
 		}
 		decision := decisions[path]
 		f.Decided = len(decision) > 0
@@ -705,7 +715,10 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 				f.State = store.DecisionUnassigned
 			}
 		}
-		if f.State == store.DecisionPlaced {
+		// A placed File has no reason to explain — its Slot is the answer — unless
+		// the reason is that the file cannot be read, which its Slot says nothing
+		// about and which placing it will never fix.
+		if f.State == store.DecisionPlaced && !f.Unreadable {
 			f.Reason = ""
 		}
 		out.files = append(out.files, f)

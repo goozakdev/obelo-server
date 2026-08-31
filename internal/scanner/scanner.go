@@ -214,8 +214,18 @@ type Progress struct {
 // file-anchored decisions (Placement / Unassigned / Ignored).
 type scanCtx struct {
 	mode      Mode
-	snapshots map[string]store.FileSnapshot  // path → prior state (empty in ModeFull)
-	seen      map[string]bool                // every present media path seen this walk
+	snapshots map[string]store.FileSnapshot // path → prior state (empty in ModeFull)
+	// seen is every media path this walk turned into a live catalog row — a file it
+	// probed, or reused an unchanged row for. It drives the soft-delete pass, and
+	// the distinction that matters is at its edge: a main video ffprobe REFUSED is
+	// on disk and is NOT seen, because a row nothing rebuilt is a row nothing can
+	// ever clean up. Counting it kept the File present forever, which kept its old
+	// Title visible, which — after an identity correction moved the work to a new
+	// Show — left the ORIGINAL Show in the library beside it, unremovable, with an
+	// episode count made entirely of files the scanner had already given up on
+	// (ADR-0047). Marking it Missing is the honest answer: it is a File the server
+	// cannot serve, and the soft-delete is undone the moment a scan can read it.
+	seen      map[string]bool
 	overrides map[string]store.MatchOverride // folder path → override
 	// decisions is the file-anchored half of the same idea (ADR-0044): absolute
 	// path → what the Admin said about that File. A path ABSENT from the map is
@@ -795,7 +805,13 @@ func (s *Service) resolveBareFile(ctx context.Context, sc *scanCtx, lib store.Li
 	cf := classifiedFile{path: path, name: name, part: partNumber(name)}
 	tree, err := s.assembleTitle(ctx, sc, lib, id, []classifiedFile{cf}, nil, nil, nil)
 	if err != nil {
-		// A bare file we can't probe goes to Unmatched rather than vanishing.
+		// A bare file we can't probe is listed rather than vanishing — as Unreadable
+		// when ffprobe refused it, which is the only way this can fail for a file
+		// whose name already parsed.
+		var ue *UnreadableError
+		if errors.As(err, &ue) {
+			return store.TitleTree{}, []store.UnmatchedFile{unreadableFile(path, ue.Error())}, false, nil
+		}
 		return store.TitleTree{}, []store.UnmatchedFile{unmatched(path, "could not probe file: "+err.Error())}, false, nil
 	}
 	return tree, nil, true, nil
@@ -867,8 +883,11 @@ func (s *Service) assembleTitle(
 	mains, extras []classifiedFile, artwork map[string]string, artworkOrder []string,
 ) (store.TitleTree, error) {
 	var ps []probedFile
+	// The mains ffprobe refused, and its verdict on the first of them. Kept rather
+	// than dropped: they are the whole diagnosis when no Title comes out of this.
+	var unreadable []string
+	var unreadableDetail string
 	for _, cf := range mains {
-		sc.seen[cf.path] = true // present on disk this walk (drives soft-delete)
 		size := fileSize(cf.path)
 		mtime := fileMtime(cf.path)
 
@@ -876,6 +895,7 @@ func (s *Service) assembleTitle(
 		// NOT re-ffprobed (the expensive step — skipping it is the whole point).
 		if sc.unchanged(cf.path, size, mtime) {
 			if stored, err := s.store.LoadStoredFile(cf.path); err == nil {
+				sc.seen[cf.path] = true
 				ps = append(ps, probedFile{
 					cf: cf, mtime: mtime, size: size, reused: true, stored: stored,
 					ed: editionNameFor(cf, stored.Height),
@@ -888,15 +908,28 @@ func (s *Service) assembleTitle(
 		sc.probes++
 		media, err := s.prober.Probe(ctx, cf.path)
 		if err != nil {
-			// One unprobeable main in a multi-file folder is dropped here; the
-			// bare-file caller turns a probe failure on the only file into
-			// Unmatched (nothing recognized silently vanishes there).
+			// One unprobeable main in a multi-file folder is dropped here; a Title
+			// that ends up with NO probeable main at all fails below, carrying these
+			// paths, so nothing recognized silently vanishes.
+			unreadable = append(unreadable, cf.path)
+			if unreadableDetail == "" {
+				unreadableDetail = probeDetail(err)
+			}
 			continue
 		}
+		sc.seen[cf.path] = true
 		video, _ := media.PrimaryVideo()
 		ps = append(ps, probedFile{cf: cf, media: media, mtime: mtime, size: size, ed: editionNameFor(cf, video.Height)})
 	}
 	if len(ps) == 0 {
+		// A probe failure is its own answer, not a naming one. Saying so here is what
+		// lets the callers file these paths as Unreadable rather than Unmatched — the
+		// difference between "tell me what this is" and "this file is broken", which
+		// is the difference between an action that works and one that cannot
+		// (CONTEXT.md "Unreadable").
+		if len(unreadable) > 0 {
+			return store.TitleTree{}, &UnreadableError{Paths: unreadable, Detail: unreadableDetail}
+		}
 		return store.TitleTree{}, fmt.Errorf("scanner: no probeable main video for %q", id.Title)
 	}
 
@@ -1097,7 +1130,37 @@ func rekeyStreams(fileID string, streams []store.Stream) []store.Stream {
 }
 
 func unmatched(path, reason string) store.UnmatchedFile {
-	return store.UnmatchedFile{ID: uuid.NewString(), Path: path, Reason: reason}
+	return store.UnmatchedFile{
+		ID: uuid.NewString(), Path: path,
+		Kind: store.UnmatchedUnidentified, Reason: reason,
+	}
+}
+
+// UnreadableError is assembleTitle's answer when a Title has main video files and
+// ffprobe could read none of them.
+//
+// Paths are the files that actually failed, so a caller listing them for the
+// Admin marks exactly those. A readable file that merely shared a Title with a
+// broken one is NOT one of them: it has nothing wrong with it, and telling the
+// Admin their good file is corrupt sends them to replace the wrong thing.
+type UnreadableError struct {
+	Paths  []string
+	Detail string
+}
+
+// Error reads as a CLAUSE, not a sentence: every surface that shows it introduces
+// it ("This file could not be read — …"), so a second "could not read this file"
+// here would be printed twice in a row to the Admin.
+func (e *UnreadableError) Error() string { return "ffprobe: " + e.Detail }
+
+// unreadableFile is the Unmatched row for a file ffprobe refused: same list, a
+// different KIND, because the fix is to replace the file rather than to name the
+// work (CONTEXT.md "Unreadable").
+func unreadableFile(path, reason string) store.UnmatchedFile {
+	return store.UnmatchedFile{
+		ID: uuid.NewString(), Path: path,
+		Kind: store.UnmatchedUnreadable, Reason: reason,
+	}
 }
 
 // countShowTree returns (#Episode Titles, #Files) in a resolved Show subtree, so

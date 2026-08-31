@@ -5117,6 +5117,18 @@ textarea.metadata-input {
   font-style: italic;
 }
 
+/* An unreadable file states a FAULT, not a nuance: it is the one note on this
+   screen that survives being correctly placed, and it must not read as the dim
+   italic asides around it (which describe arrangement, something the Admin can
+   change here). Amber, because the file is intact enough to list and broken
+   enough that nothing plays. */
+.matcher-part-unreadable,
+.matcher-file-unreadable {
+  font-size: 0.8rem;
+  color: var(--warn);
+  font-style: normal;
+}
+
 .matcher-slot-actions {
   display: flex;
   flex-wrap: wrap;

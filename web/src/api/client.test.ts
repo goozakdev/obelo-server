@@ -270,6 +270,7 @@ describe("ApiClient Needs-Fixing show rows (file-matcher/07)", () => {
         unmatchedPaths: [],
         orphaned: 0,
         orphanedPath: "",
+        unreadablePaths: [],
       },
     ]);
   });

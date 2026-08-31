@@ -184,6 +184,7 @@ export interface UnmatchedFileRaw {
   id: string;
   path: string;
   folderPath?: string;
+  kind?: string;
   reason?: string;
   addedAt?: string;
 }
@@ -199,6 +200,14 @@ export interface UnmatchedFile {
    * a Movie library (a TV file's directory is a Season folder, not the Show). "" on
    * an older server that did not send it. */
   folderPath: string;
+  /** WHY no Title came out of this file, and the only thing that decides what the queue may
+   * offer to do about it:
+   *
+   *  - `"unidentified"`: nothing named the work. The Admin says what it is.
+   *  - `"unreadable"`: the name was fine and ffprobe refused the bytes — corrupt, truncated,
+   *    unreadable mount. No identity correction can ever clear it, so the row must not offer
+   *    one (the server withholds `folderPath` for these). See ADR-0047. */
+  kind: "unidentified" | "unreadable";
   reason: string;
   /** RFC3339, or undefined when the server omitted it. */
   addedAt?: string;
@@ -216,6 +225,7 @@ export interface ShowProblemsRaw {
   unmatchedPaths?: string[];
   orphaned?: number;
   orphanedPath?: string;
+  unreadablePaths?: string[];
 }
 
 /** {@link ShowProblemsRaw} with its `omitempty` holes filled.
@@ -249,6 +259,11 @@ export interface ShowProblems {
   orphaned: number;
   /** One of the gone files, named so the row can say which correction is broken. */
   orphanedPath: string;
+  /** This Show's files ffprobe refused: ATTRIBUTED, never counted (ADR-0047). Each stays a
+   * flat `unmatched` row — the matcher cannot settle one, it shows them as correctly placed —
+   * and this only says which Show a row belongs to, so it can offer the gesture that does
+   * settle it: ignore it in the matcher. */
+  unreadablePaths: string[];
 }
 
 /** One season of a picked series, for the episode chooser's season list. */
@@ -2334,6 +2349,11 @@ export interface MatcherFile {
   decided: boolean;
   /** A Placement whose anchor file is gone (an Orphaned correction). */
   orphaned?: boolean;
+  /** ffprobe refused this file's bytes. It arrives even on a PLACED file, where every other
+   * reason is suppressed, because the placement is real and the Episode still does not exist:
+   * the filename numbered it, so the screen would otherwise show the library's one broken
+   * file as its most correct one (ADR-0047). */
+  unreadable?: boolean;
   reason?: string;
 }
 
@@ -2443,6 +2463,7 @@ export interface MatcherFileRaw {
   placements?: { group?: number; slot?: number; ordinal?: number }[];
   decided?: boolean;
   orphaned?: boolean;
+  unreadable?: boolean;
   reason?: string;
 }
 

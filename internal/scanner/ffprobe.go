@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -100,6 +101,27 @@ type FFprobe struct {
 	Binary string
 }
 
+// ProbeError is a probe that failed on a file that IS there: ffprobe ran and
+// refused the bytes. Detail is ffprobe's own verdict, which is the only part of
+// this an Admin can act on ("Invalid data found when processing input" means
+// replace the file; "Permission denied" means fix the mount).
+//
+// It is a type rather than a formatted string because the scanner has to tell
+// this failure from every other reason a Title might not assemble: an unreadable
+// File is not an Unmatched one (store.UnmatchedUnreadable), and no identity
+// correction will ever clear it.
+type ProbeError struct {
+	Path   string
+	Detail string
+	Err    error
+}
+
+func (e *ProbeError) Error() string {
+	return fmt.Sprintf("scanner: ffprobe %q: %s", e.Path, e.Detail)
+}
+
+func (e *ProbeError) Unwrap() error { return e.Err }
+
 // Probe runs ffprobe against path and maps its JSON onto a MediaInfo.
 func (f FFprobe) Probe(ctx context.Context, path string) (MediaInfo, error) {
 	bin := f.Binary
@@ -107,7 +129,10 @@ func (f FFprobe) Probe(ctx context.Context, path string) (MediaInfo, error) {
 		bin = "ffprobe"
 	}
 	cmd := exec.CommandContext(ctx, bin,
-		"-v", "quiet",
+		// -v error, not -v quiet: on a file ffprobe refuses, its complaint is the
+		// whole diagnosis, and quiet threw it away and left an Admin with nothing but
+		// "exit status 1". Errors go to stderr, so stdout stays the JSON this parses.
+		"-v", "error",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
@@ -115,9 +140,34 @@ func (f FFprobe) Probe(ctx context.Context, path string) (MediaInfo, error) {
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		return MediaInfo{}, fmt.Errorf("scanner: ffprobe %q: %w", path, err)
+		return MediaInfo{}, &ProbeError{Path: path, Detail: probeDetail(err), Err: err}
 	}
 	return parseFFprobe(out)
+}
+
+// probeDetail is the one line of a failed probe worth showing an Admin.
+//
+// ffprobe writes its verdict LAST ("...: Invalid data found when processing
+// input"); the lines above it are demuxer-internal noise carrying a memory
+// address that changes every run. The verdict is prefixed with the file's own
+// path, which is stripped: every surface that shows this reason already names the
+// file, and repeating it truncates the part that matters.
+func probeDetail(err error) string {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		lines := strings.Split(strings.TrimSpace(string(ee.Stderr)), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			if _, rest, found := strings.Cut(line, ": "); found && rest != "" {
+				return rest
+			}
+			return line
+		}
+	}
+	return err.Error()
 }
 
 // ffprobe JSON shapes — only the fields we consume. Numeric fields arrive as
@@ -259,3 +309,9 @@ func parseInt64(s string) int64 {
 	}
 	return n
 }
+
+// ProbeDetailForTest exposes probeDetail to the catalog-side test that pins what
+// an Admin reads when ffprobe refuses a file. It is here rather than in an
+// export_test.go because the assertion belongs beside the rest of the unreadable
+// behaviour, which spans both packages.
+func ProbeDetailForTest(err error) string { return probeDetail(err) }

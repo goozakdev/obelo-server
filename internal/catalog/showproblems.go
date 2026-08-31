@@ -65,6 +65,14 @@ type ShowProblems struct {
 	// own row.
 	Orphaned     int
 	OrphanedPath string
+	// UnreadablePaths are this Show's files ffprobe refused (CONTEXT.md
+	// "Unreadable"). They are ATTRIBUTED but never COUNTED, and that split is the
+	// whole point of the field: an unreadable file is not work the matcher can
+	// settle, so it stays a flat row of its own rather than becoming a number in
+	// this Show's row — and the row still needs to know which Show it belongs to,
+	// or it can only tell the Admin what is broken and not where to go about it
+	// (ADR-0047).
+	UnreadablePaths []string
 }
 
 // Unsettled is how many Files keep this Show queued. Orphaned Placements are
@@ -138,12 +146,29 @@ func (s *Service) ShowProblems(libraryID string) ([]ShowProblems, error) {
 		// The Unmatched rows this Show absorbed, attributed by the SAME folder set
 		// the matcher scopes its file list with, so a path counted here is a path the
 		// matcher will offer.
+		//
+		// An UNREADABLE file is deliberately not absorbed. Absorbing a path is a
+		// promise that the matcher can settle it, and the matcher cannot: the file's
+		// name numbers it, so the screen shows it correctly placed on its Slot while
+		// ffprobe still refuses the bytes and no Title is ever built. Folded in, it
+		// would vanish from the queue's flat list into a Show row that says nothing
+		// about it — the one file in the library that needs a human, hidden behind a
+		// screen that reports it as already fine. It keeps its own row instead
+		// (CONTEXT.md "Unreadable").
 		for _, u := range lib.unmatched {
-			if local.folders[showFolderOf(u.Path)] {
-				p.UnmatchedPaths = append(p.UnmatchedPaths, u.Path)
+			if !local.folders[showFolderOf(u.Path)] {
+				continue
 			}
+			if u.Unreadable() {
+				p.UnreadablePaths = append(p.UnreadablePaths, u.Path)
+				continue
+			}
+			p.UnmatchedPaths = append(p.UnmatchedPaths, u.Path)
 		}
-		if p.Empty() {
+		// A Show whose ONLY trouble is an unreadable file is still reported, and still
+		// reports nothing to do: every count is zero, so no client builds a Show row
+		// from it, and the attribution the flat row needs is there all the same.
+		if p.Empty() && len(p.UnreadablePaths) == 0 {
 			continue
 		}
 		if p.Path == "" {
