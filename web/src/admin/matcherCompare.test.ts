@@ -168,16 +168,42 @@ describe("comparePosition", () => {
 // depends on: whatever survives must start where the Slot's own label starts, so
 // the position and the title line up between the two rows without being read.
 describe("elideContainerPrefix", () => {
-  it("replaces the container's name, keeping the separator that followed it", () => {
+  it("cuts everything before the position, so the label starts on the position", () => {
     expect(elideContainerPrefix("/m/Show/Show - S03E01 - Holiday Knights.mkv", "Show")).toBe(
-      "… - S03E01 - Holiday Knights.mkv",
+      "…S03E01 - Holiday Knights.mkv",
     );
   });
 
   it("takes an abbreviated prefix, which is the one a filename usually carries", () => {
     expect(
       elideContainerPrefix("/m/Parks.and.Rec.S06E06.1080p.mkv", "Parks and Recreation"),
-    ).toBe("….S06E06.1080p.mkv");
+    ).toBe("…S06E06.1080p.mkv");
+  });
+
+  it("takes the punctuation the name ended in, and anything else in the way", () => {
+    // A container whose name carries a mark the tokenizer drops — the mark is as
+    // fixed across the container as the name it belongs to.
+    expect(elideContainerPrefix("/m/Series Name! - S01E01 - Title.mkv", "Series Name!")).toBe(
+      "…S01E01 - Title.mkv",
+    );
+    // A year between the name and the position goes the same way.
+    expect(elideContainerPrefix("/m/Show.2019.S01E01.Title.mkv", "Show")).toBe(
+      "…S01E01.Title.mkv",
+    );
+  });
+
+  it("cuts only as far as the name when the filename numbers nothing", () => {
+    expect(elideContainerPrefix("/m/Show - Holiday Knights.mkv", "Show")).toBe(
+      "…Holiday Knights.mkv",
+    );
+  });
+
+  it("keeps a title that happens to sit before the position", () => {
+    // The search for the position starts only AFTER the container's name matched,
+    // so a filename that never names its container keeps every word of its title.
+    expect(elideContainerPrefix("/m/Holiday Knights S01E01.mkv", "Show")).toBe(
+      "Holiday Knights S01E01.mkv",
+    );
   });
 
   it("leaves a filename that does not start with the container's name alone", () => {
@@ -195,7 +221,7 @@ describe("elideContainerPrefix", () => {
     // The container's name is usually the FOLDER too, and cutting the folder
     // would leave the ellipsis standing for something the Admin never saw.
     expect(elideContainerPrefix("/m/Show/Season 3/Show - S03E01.mkv", "Show")).toBe(
-      "… - S03E01.mkv",
+      "…S03E01.mkv",
     );
   });
 
@@ -203,11 +229,11 @@ describe("elideContainerPrefix", () => {
     expect(elideContainerPrefix("/m/Show - S03E01.mkv", "")).toBe("Show - S03E01.mkv");
   });
 
-  it("cuts so that what is read starts on a word, separator and all going with the ellipsis", () => {
+  it("cuts so that what is read starts on the position, everything else going with the ellipsis", () => {
     // The screen dims the first half. A separator left on the second half would
-    // put every filename one or three characters out from the Slot code above it.
+    // put every filename three characters out from the Slot code above it.
     expect(splitContainerPrefix("/m/Show - S03E01 - Holiday Knights.mkv", "Show")).toEqual({
-      elided: "… - ",
+      elided: "…",
       rest: "S03E01 - Holiday Knights.mkv",
     });
     expect(splitContainerPrefix("/m/holiday-knights.mkv", "Show")).toEqual({

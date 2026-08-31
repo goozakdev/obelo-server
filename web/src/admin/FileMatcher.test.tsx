@@ -357,7 +357,7 @@ describe("the two labels", () => {
     const name = within(partEl(A)).getByTestId("matcher-part-pick");
     // "Show - S03E01 - Holiday Knights.mkv", with the "Show" every file in this
     // container repeats replaced by the one character that stands for it.
-    expect(name).toHaveTextContent("… - S03E01 - Holiday Knights.mkv");
+    expect(name).toHaveTextContent("…S03E01 - Holiday Knights.mkv");
     // Nothing is actually hidden: the whole filename is still there to be had.
     expect(name).toHaveAttribute("title", "Show - S03E01 - Holiday Knights.mkv");
   });
