@@ -75,11 +75,10 @@ export function usePaginatedList<T>(
   const [error, setError] = useState<string | null>(null);
 
   // Refs the async callback reads without being a dependency (so loadMore is a
-  // stable identity the scroll observer can hold). seenIds is the de-dup set.
+  // stable identity the scroll observer can hold).
   const cursorRef = useRef<string | null>(null);
   const hasMoreRef = useRef(true);
   const inFlight = useRef(false);
-  const seenIds = useRef<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   // The accumulated items, mirrored to a ref so refresh() can read how far the
   // user has loaded (the window to re-fetch) without being a callback dependency.
@@ -110,13 +109,24 @@ export function usePaginatedList<T>(
       try {
         const page = await fetchPage(useCursor, ctrl.signal);
         if (ctrl.signal.aborted) return;
+        // PURE UPDATER. The de-dup set is derived from `prev` on every call
+        // rather than carried in a ref, because React may invoke an updater more
+        // than once for a single update — StrictMode does it deliberately, in
+        // development only. A ref-based set made this updater order-dependent:
+        // the first invocation added the page's ids to the ref and returned the
+        // grown list, then the second invocation saw every id already "seen",
+        // appended nothing, and React kept THAT result. Every page after the
+        // first was fetched and silently dropped, so an infinite scroll walked
+        // the whole library and displayed only page one. Page one survived only
+        // because it cleared the set at the top of each invocation.
         setItems((prev) => {
-          const next = isFirst ? [] : prev.slice();
-          if (isFirst) seenIds.current = new Set();
+          const base = isFirst ? [] : prev;
+          const seen = new Set(base.map((item) => getIdRef.current(item)));
+          const next = base.slice();
           for (const item of page.items) {
             const id = getIdRef.current(item);
-            if (seenIds.current.has(id)) continue; // no duplicates across pages
-            seenIds.current.add(id);
+            if (seen.has(id)) continue; // no duplicates across pages
+            seen.add(id);
             next.push(item);
           }
           return next;
@@ -146,7 +156,6 @@ export function usePaginatedList<T>(
   // state here (not inside load) keeps the reset atomic with the effect that
   // owns the lifecycle.
   useEffect(() => {
-    seenIds.current = new Set();
     cursorRef.current = null;
     hasMoreRef.current = true;
     // We're about to abort whatever was in flight and start over, so this is the
@@ -205,7 +214,6 @@ export function usePaginatedList<T>(
       // existing order, so nothing the user had scrolled to vanishes.
       const tail = prev.filter((item) => !ids.has(getIdRef.current(item)));
       for (const item of tail) ids.add(getIdRef.current(item));
-      seenIds.current = ids;
       setItems(fresh.concat(tail));
       cursorRef.current = cursor;
       setCursor(cursor);
