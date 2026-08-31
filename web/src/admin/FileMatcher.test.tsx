@@ -336,6 +336,40 @@ describe("one file across several slots", () => {
   });
 });
 
+// The two labels are read AGAINST each other, so what matters is that they come
+// out as two lines of the same shape: position, separator, title. Anything that
+// makes a placed File's label start with something other than its position puts
+// the two columns of characters out of step and the comparison back on the Admin.
+describe("the two labels", () => {
+  it("writes a Slot's label as one line, code then title", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(3));
+    expect(slotEl(3, 1).querySelector(".matcher-slot-target")).toHaveTextContent(
+      "V3-01 - Holiday Nights",
+    );
+  });
+
+  it("cuts the container's name off a placed file, leaving the position first", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(3));
+    const name = within(partEl(A)).getByTestId("matcher-part-pick");
+    // "Show - S03E01 - Holiday Knights.mkv", with the "Show" every file in this
+    // container repeats replaced by the one character that stands for it.
+    expect(name).toHaveTextContent("… - S03E01 - Holiday Knights.mkv");
+    // Nothing is actually hidden: the whole filename is still there to be had.
+    expect(name).toHaveAttribute("title", "Show - S03E01 - Holiday Knights.mkv");
+  });
+
+  it("leaves the Files column showing whole filenames", async () => {
+    // The unplaced side has no Slot label to line up against, and a file there is
+    // often being identified rather than compared.
+    setup();
+    expect(within(screen.getByTestId("matcher-unsorted")).getByText("sample.mkv")).toBeInTheDocument();
+  });
+});
+
 describe("the comparison", () => {
   it("says nothing about a correctly-matched dotted filename", async () => {
     const user = userEvent.setup();

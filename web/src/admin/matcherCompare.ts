@@ -269,3 +269,65 @@ export function comparePosition(
   const slotDiffers = claimed.slot !== target.slot;
   return { claimed, groupDiffers, slotDiffers, differs: groupDiffers || slotDiffers };
 }
+
+/** The word runs of a string, with where each one sat. The breaks are exactly
+ * `tokenize`'s; the offsets are what lets the ORIGINAL text be cut, so an elided
+ * filename keeps its own punctuation instead of being rebuilt from tokens. */
+function tokenSpans(text: string): { token: string; start: number; end: number }[] {
+  const spans: { token: string; start: number; end: number }[] = [];
+  const re = /[a-z0-9]+/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    spans.push({ token: m[0].toLowerCase(), start: m.index, end: m.index + m[0].length });
+  }
+  return spans;
+}
+
+/** What stands in for the container's name at the front of a filename. */
+export const ELISION = "…";
+
+/** A filename with the container's own name cut off the front and replaced by an
+ * ellipsis: `Show - S03E01 - Holiday Knights.mkv` becomes
+ * `… - S03E01 - Holiday Knights.mkv`.
+ *
+ * DISPLAY ONLY — nothing is ever compared against this. Its whole job is to bring
+ * the part of the filename that VARIES to the front, so it can be read against
+ * the Slot's own one-line label directly above it. Every File in a container
+ * repeats the same prefix, which makes that prefix the one run of characters that
+ * can never tell the Admin anything, while costing the most horizontal room.
+ *
+ * The prefix is found by the same token rules the title comparison uses, so an
+ * abbreviated one (`Parks.and.Rec` for *Parks and Recreation*) goes too. The
+ * separator that followed it is KEPT, which is what leaves the ellipsis reading as
+ * a stand-in for the name rather than as a truncated word. */
+export function elideContainerPrefix(path: string, containerTitle: string): string {
+  const { elided, rest } = splitContainerPrefix(path, containerTitle);
+  return elided + rest;
+}
+
+/** The same label, cut where the elision ends, so the two halves can be given
+ * different weight: the stand-in is identical on every File in the container and
+ * is there only to say "a name was here", while `rest` is the half being read.
+ * `elided` is "" when nothing was cut. */
+export function splitContainerPrefix(
+  path: string,
+  containerTitle: string,
+): { elided: string; rest: string } {
+  const name = basename(path);
+  // The extension is not part of the name being elided — it is not a word the
+  // prefix could eat, and counting it would let `Show.mkv` elide down to `….mkv`.
+  const stem = name.replace(/\.[a-z0-9]{1,5}$/i, "");
+  const spans = tokenSpans(stem);
+  const container = tokenize(containerTitle);
+  let i = 0;
+  while (i < spans.length && i < container.length && tokensAlike(spans[i].token, container[i])) i++;
+  // Nothing matched, or the filename is nothing BUT the container's name: show it
+  // whole. An ellipsis and an extension would name no file at all.
+  if (i === 0 || i >= spans.length) return { elided: "", rest: name };
+  // The separator that followed the name goes with the ellipsis, so what is left
+  // starts on a word — which is the whole point of cutting here.
+  return {
+    elided: ELISION + name.slice(spans[i - 1].end, spans[i].start),
+    rest: name.slice(spans[i].start),
+  };
+}

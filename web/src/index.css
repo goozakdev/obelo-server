@@ -5100,6 +5100,42 @@ textarea.metadata-input {
   touch-action: none;
 }
 
+/* A Slot's label is ONE line — code, separator, words — because the File placed
+   under it is one line of the same shape, and two single lines with the same left
+   edge can be compared without being read. A long title gives up its tail to an
+   ellipsis rather than wrapping, which would break that alignment for every row
+   below it. */
+.matcher-slot-target {
+  flex-direction: row;
+  align-items: baseline;
+  /* No gap: the separator carries its own spaces, so the line spaces itself the
+     way the filename under it does. */
+  gap: 0;
+  white-space: pre;
+  min-width: 0;
+}
+
+/* Plain text in a box, not a flex row: `text-overflow` has nothing to clip on an
+   anonymous flex item. */
+.matcher-part-name {
+  display: block;
+  white-space: nowrap;
+}
+
+.matcher-slot-name,
+.matcher-part-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.matcher-slot-sep,
+/* The stand-in for the container's name. Dim, because it is the same characters
+   on every File here and its only job is to say a name was cut. */
+.matcher-part-elision {
+  color: var(--text-dim);
+}
+
 .matcher-file-name {
   overflow-wrap: anywhere;
 }
@@ -5180,9 +5216,20 @@ textarea.metadata-input {
   font-style: italic;
 }
 
+/* A File PLACED on a Slot, not merely listed beneath it. It is a card of its own
+   — its own lighter surface, its own edge, its own small shadow — because "this
+   Slot is filled" is the single fact an Admin reads off this column, and a dashed
+   rule made a placed File look like one more line of the Slot's own description.
+   The negative inline margin against an equal padding is what keeps the filename's
+   first character exactly under the Slot code's first character: the card sits
+   PROUD of the label it belongs to, while its text stays in the same column. */
 .matcher-part {
-  border-top: 1px dashed var(--border);
-  padding-top: 0.3rem;
+  margin: 0.15rem calc(-0.4rem - 1px) 0;
+  padding: 0.3rem 0.4rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;

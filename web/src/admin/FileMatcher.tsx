@@ -37,7 +37,13 @@ import {
   type ArrangedFile,
   type PlaceMode,
 } from "./matcherArrangement";
-import { basename, compareTitles, comparePosition, type DiffSegment } from "./matcherCompare";
+import {
+  basename,
+  compareTitles,
+  comparePosition,
+  splitContainerPrefix,
+  type DiffSegment,
+} from "./matcherCompare";
 import {
   NO_PINS,
   changedSlots,
@@ -1142,14 +1148,22 @@ function SlotCard({
         onClick={() => onClickTarget({ kind: "slot", ...position })}
         aria-label={`${labels.slotCode(position.group, position.slot)}${shownName ? ` ${shownName}` : ""}`}
       >
+        {/* Code, separator, words — on ONE line, punctuated the way a filename
+            punctuates the same three things, so the Slot's label and the label of
+            the File placed under it can be read against each other as two lines of
+            the same shape rather than compared item by item. */}
         <span
           className={`matcher-slot-code${mismatch ? " is-mismatch" : ""}`}
           data-testid="matcher-slot-code"
         >
           {labels.slotCode(position.group, position.slot)}
         </span>
+        {/* The spaces are IN the separator, not a flex gap: this line is text an
+            Admin copies and a screen reader reads, and " - " is how the filename
+            beside it punctuates the same join. */}
+        <span className="matcher-slot-sep">{" - "}</span>
         {shownName ? (
-          <span className="matcher-slot-name" data-testid="matcher-slot-name">
+          <span className="matcher-slot-name" data-testid="matcher-slot-name" title={shownName}>
             {shownName}
           </span>
         ) : (
@@ -1288,6 +1302,7 @@ function PartRow({
   const numbers = comparePosition(file.parsed, position);
   const titles = compareTitles(slotName, file.path, containerTitle);
   const shared = isShared(file);
+  const label = splitContainerPrefix(file.path, containerTitle);
 
   return (
     <div
@@ -1306,15 +1321,27 @@ function PartRow({
           Part {index + 1}
         </span>
       )}
+      {/* One line, and the container's name cut off the front of it: what is left
+          starts with the position, directly under the Slot's own position, which is
+          the comparison this whole screen exists to make. The stand-in is dimmed
+          rather than removed — it has to be visible enough to say a name was cut,
+          and quiet enough that the eye lands on the position behind it. The full
+          name is on the title, so nothing is hidden from an Admin who wants it. */}
       <button
         className="matcher-part-name"
         type="button"
         data-testid="matcher-part-pick"
         aria-pressed={selected}
+        title={basename(file.path)}
         onPointerDown={(e) => onDragStart(file.path, e)}
         onClick={() => onPick(file.path, "move")}
       >
-        {basename(file.path)}
+        {label.elided && (
+          <span className="matcher-part-elision" data-testid="matcher-part-elision">
+            {label.elided}
+          </span>
+        )}
+        {label.rest}
       </button>
 
       {file.unreadable && (
