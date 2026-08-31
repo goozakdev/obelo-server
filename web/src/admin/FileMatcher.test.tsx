@@ -223,7 +223,10 @@ describe("the click path", () => {
 
     expect(partEl(A)).toBeNull();
     const files = document.querySelector('[data-testid="matcher-files"][data-group="3"]') as HTMLElement;
-    expect(within(files).getByText("Show - S03E01 - Holiday Knights.mkv")).toBeInTheDocument();
+    // Found by its FULL name (kept on the title attribute), shown elided.
+    expect(within(files).getByTitle("Show - S03E01 - Holiday Knights.mkv")).toHaveTextContent(
+      "…S03E01 - Holiday Knights.mkv",
+    );
 
     await user.click(screen.getByTestId("matcher-apply"));
     // Unassigned has to be SAID: a sparse store spends "no row" on the parse, so
@@ -300,7 +303,9 @@ describe("the drop onto an occupied slot", () => {
 
     expect(within(slotEl(3, 2)).getAllByTestId("matcher-part").map((p) => p.dataset.path)).toEqual([A]);
     const files = document.querySelector('[data-testid="matcher-files"][data-group="3"]') as HTMLElement;
-    expect(within(files).getByText("Show.S03E02.1080p.WEB-DL.x264-GRP.mkv")).toBeInTheDocument();
+    expect(
+      within(files).getByTitle("Show.S03E02.1080p.WEB-DL.x264-GRP.mkv"),
+    ).toHaveTextContent("…S03E02.1080p.WEB-DL.x264-GRP.mkv");
   });
 });
 
@@ -362,9 +367,25 @@ describe("the two labels", () => {
     expect(name).toHaveAttribute("title", "Show - S03E01 - Holiday Knights.mkv");
   });
 
-  it("leaves the Files column showing whole filenames", async () => {
-    // The unplaced side has no Slot label to line up against, and a file there is
-    // often being identified rather than compared.
+  it("cuts the container's name in the Files column too", async () => {
+    // The unplaced column is the one an Admin reads WHILE dragging, against the
+    // Slots beside it, and every file in it repeats the same prefix. Take a file
+    // off its Slot and it should read the same way there as it did on the Slot.
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(3));
+    await user.click(within(partEl(A)).getByTestId("matcher-part-unassign"));
+
+    const card = document.querySelector(
+      `[data-testid="matcher-file"][data-path="${CSS.escape(A)}"]`,
+    ) as HTMLElement;
+    expect(within(card).getByTestId("matcher-file-pick")).toHaveTextContent(
+      "…S03E01 - Holiday Knights.mkv",
+    );
+  });
+
+  it("leaves a file the container's name does not open alone", async () => {
+    // "sample.mkv" never names the Show, so there is no prefix to stand in for.
     setup();
     expect(within(screen.getByTestId("matcher-unsorted")).getByText("sample.mkv")).toBeInTheDocument();
   });
@@ -668,7 +689,10 @@ describe("dragging", () => {
     dragTo(within(partEl(A)).getByTestId("matcher-part-pick"), files);
 
     expect(partEl(A)).toBeNull();
-    expect(within(files).getByText("Show - S03E01 - Holiday Knights.mkv")).toBeInTheDocument();
+    // Found by its FULL name (kept on the title attribute), shown elided.
+    expect(within(files).getByTitle("Show - S03E01 - Holiday Knights.mkv")).toHaveTextContent(
+      "…S03E01 - Holiday Knights.mkv",
+    );
   });
 });
 

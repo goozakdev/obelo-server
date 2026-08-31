@@ -715,6 +715,7 @@ export default function FileMatcher({
               key={f.path}
               file={f}
               labels={labels}
+              containerTitle={matcher.title}
               selected={selection?.path === f.path}
               onPick={() => setSelection((s) => (s?.path === f.path ? null : { path: f.path, mode: "move" }))}
               onDragStart={(e) => startDrag(f.path, e)}
@@ -991,6 +992,7 @@ function GroupSection({
                   key={f.path}
                   file={f}
                   labels={labels}
+                  containerTitle={containerTitle}
                   selected={selection?.path === f.path}
                   onPick={() => onPick(f.path, "move")}
                   onDragStart={(e) => onDragStart(f.path, e)}
@@ -1462,6 +1464,7 @@ function renderDiff(segments: DiffSegment[], side: "removed" | "added"): ReactNo
 function FileCard({
   file,
   labels,
+  containerTitle,
   selected,
   onPick,
   onDragStart,
@@ -1469,11 +1472,16 @@ function FileCard({
 }: {
   file: ArrangedFile;
   labels: MatcherLabels;
+  containerTitle: string;
   selected: boolean;
   onPick: () => void;
   onDragStart: (e: { clientX: number; clientY: number; button?: number }) => void;
   onIgnore: () => void;
 }) {
+  // Elided exactly like a placed File. Every File in this column belongs to the
+  // same container, so the prefix is as repetitive here as it is on a Slot — and
+  // this is the column an Admin reads WHILE dragging, against the Slots beside it.
+  const label = splitContainerPrefix(file.path, containerTitle);
   return (
     <li
       className={`matcher-file${selected ? " is-selected" : ""}`}
@@ -1489,7 +1497,14 @@ function FileCard({
         onPointerDown={onDragStart}
         onClick={onPick}
       >
-        <span className="matcher-file-name">{basename(file.path)}</span>
+        <span className="matcher-file-name" title={basename(file.path)}>
+          {label.elided && (
+            <span className="matcher-part-elision" data-testid="matcher-file-elision">
+              {label.elided}
+            </span>
+          )}
+          {label.rest}
+        </span>
         {file.parsed.length > 0 && (
           <span className="matcher-file-claim" data-testid="matcher-file-claim">
             {file.parsed.map((p) => labels.slotCode(p.group, p.slot)).join(", ")}

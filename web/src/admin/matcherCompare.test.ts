@@ -198,6 +198,33 @@ describe("elideContainerPrefix", () => {
     );
   });
 
+  it("does not stop dead on a leading article only one side carries", () => {
+    // The real report: a Show filed WITHOUT the article, files named WITH it.
+    // The walk compared "the" against "fresh", failed on token one, and kept the
+    // whole name — for one Show out of a library, which is what made it look like
+    // the missing hyphen before S05E01 rather than the article at the front.
+    const file = "/m/The Fresh Prince of Bel-Air S05E01 - What's Will Got to do With It.mp4";
+    expect(elideContainerPrefix(file, "Fresh Prince of Bel-Air")).toBe(
+      "…S05E01 - What's Will Got to do With It.mp4",
+    );
+    // And the other way round: the article on the Show, not on the file.
+    expect(elideContainerPrefix("/m/Wire S01E01 - The Target.mkv", "The Wire")).toBe(
+      "…S01E01 - The Target.mkv",
+    );
+    // Both sides carrying it still matches on token one, as it always did.
+    expect(elideContainerPrefix("/m/The Wire S01E01 - The Target.mkv", "The Wire")).toBe(
+      "…S01E01 - The Target.mkv",
+    );
+  });
+
+  it("still needs a real name match, article or no article", () => {
+    // "The" alone is not a match: an article is skipped, never counted as the
+    // one token that licenses cutting the whole front off a filename.
+    expect(elideContainerPrefix("/m/The Sopranos S01E01 - Pilot.mkv", "Deadwood")).toBe(
+      "The Sopranos S01E01 - Pilot.mkv",
+    );
+  });
+
   it("keeps a title that happens to sit before the position", () => {
     // The search for the position starts only AFTER the container's name matched,
     // so a filename that never names its container keeps every word of its title.
