@@ -5395,6 +5395,41 @@ textarea.metadata-input {
   flex-wrap: wrap;
 }
 
+/* The two per-file acts, as icons. NOT .icon-button: that is a 2.25rem control
+   built for a detail-page toolbar, and this row is the second of the two rows the
+   empty-Slot outline is measured against (see --part-row on .matcher-slot). A
+   button exactly one line box tall keeps a placed card and the outline standing in
+   for it the same height. */
+.matcher-part-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--part-row);
+  height: var(--part-row);
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 1em; /* drives the 1em SVG inside */
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+.matcher-part-action:hover,
+.matcher-part-action:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+/* The glyph is sized here rather than by the button's font-size, because that is
+   what --part-row above is measured in: growing the font would grow the button,
+   and the button's height is the row's height. */
+.matcher-part-action svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+
 /* The character diff. Only the runs that differ are marked; the shared runs are
    plain, so a one-letter disagreement reads as one letter. */
 .matcher-title-diff {
