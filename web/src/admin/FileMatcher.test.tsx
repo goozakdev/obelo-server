@@ -613,6 +613,47 @@ describe("the degraded path", () => {
   });
 });
 
+describe("an empty slot", () => {
+  it("holds the outline of the file it is waiting for", async () => {
+    // An empty Slot that shrinks to its title line says only that a name exists.
+    // The outline says the Slot is somewhere a file GOES, which is the whole job of
+    // this screen — and a Slot that already has one has nothing left to ask for.
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(4));
+    await waitFor(() => expect(slotEl(4, 1)).toBeInTheDocument());
+
+    expect(within(slotEl(4, 1)).getByTestId("matcher-slot-empty")).toHaveTextContent(
+      "Drag a file here",
+    );
+
+    await user.click(groupToggle(3));
+    expect(within(slotEl(3, 1)).queryByTestId("matcher-slot-empty")).toBeNull();
+  });
+
+  it("is the click target for the second half of a click-to-place", async () => {
+    // The outline is the part of an empty Slot an Admin aims at, so it has to take
+    // the click — landing a selected file exactly as the title line does. It says
+    // so, too: mid-gesture the prompt is the act being finished, not the other one.
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(3));
+    await user.click(within(partEl(A)).getByTestId("matcher-part-pick"));
+    await user.click(groupToggle(4));
+    await waitFor(() => expect(slotEl(4, 1)).toBeInTheDocument());
+
+    const outline = within(slotEl(4, 1)).getByTestId("matcher-slot-empty");
+    expect(outline).toHaveTextContent("Place it here");
+    await user.click(outline);
+
+    expect(within(slotEl(4, 1)).getByTestId("matcher-part-pick")).toHaveTextContent(
+      "Holiday Knights.mkv",
+    );
+    // Filled now, so there is no outline left to offer.
+    expect(within(slotEl(4, 1)).queryByTestId("matcher-slot-empty")).toBeNull();
+  });
+});
+
 describe("adding a slot", () => {
   it("extends a group past the highest number anything claims", async () => {
     const user = userEvent.setup();

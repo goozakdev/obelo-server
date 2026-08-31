@@ -5305,6 +5305,34 @@ textarea.metadata-input {
   font-style: italic;
 }
 
+/* The outline of the card a File would make, drawn on a Slot that has none: the
+   same box at the same inset as .matcher-part below, dashed instead of drawn and
+   unfilled. Without it an empty Slot shrank to its title line, and a season of
+   them read as a list of episode names rather than a row of places waiting for a
+   file. It is a button, so the click-to-place gesture can land on the obvious
+   target and not only on the title above it. */
+.matcher-slot-empty {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2rem;
+  margin: 0.15rem 0 0;
+  padding: 0.3rem 0.4rem;
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+.matcher-slot-empty:hover,
+.matcher-slot-empty:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 /* A File PLACED on a Slot, not merely listed beneath it. It is a card of its own
    — its own lighter surface, its own edge, its own small shadow — because "this
    Slot is filled" is the single fact an Admin reads off this column, and a dashed
