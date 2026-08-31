@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "../api/client";
 import type { MatcherDocument, MatcherFile, MatcherGroup, MatcherSlot } from "../api/types";
@@ -838,6 +838,51 @@ describe("repointing a slot's record", () => {
     expect(within(slotEl(4, 1)).queryByTestId("matcher-slot-repoint")).toBeNull();
     await user.click(groupToggle(3));
     expect(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint")).toBeInTheDocument();
+  });
+
+  it("puts the picker OVER the page, not above it", async () => {
+    // Repointing starts from a Slot far down the grid. A panel spliced in above the
+    // groups is one the Admin never scrolls back to, so the click reads as a no-op —
+    // the picker has to be a modal that arrives wherever they are standing.
+    const user = userEvent.setup();
+    setupRepoint();
+    await user.click(groupToggle(3));
+    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+
+    const picker = screen.getByTestId("matcher-repoint");
+    expect(picker.tagName).toBe("DIALOG");
+    expect(picker).toHaveAttribute("open");
+    // ...and the picker itself is inside it, not left behind in the page flow.
+    expect(within(picker).getByTestId("fake-picker-pick")).toBeInTheDocument();
+  });
+
+  it("closes the picker without repointing anything", async () => {
+    // The modal covers the page, so backing out has to be reachable from the modal
+    // itself — and backing out must leave the Slot exactly as it was.
+    const user = userEvent.setup();
+    const { apply } = setupRepoint();
+    await user.click(groupToggle(3));
+    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+
+    await user.click(screen.getByTestId("matcher-repoint-close"));
+    expect(screen.queryByTestId("matcher-repoint")).toBeNull();
+    expect(within(slotEl(3, 1)).getByTestId("matcher-slot-name")).toHaveTextContent(
+      "Holiday Nights",
+    );
+    expect(screen.getByTestId("matcher-apply")).toBeDisabled();
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("closes the picker on ESC", async () => {
+    // ESC reaches the dialog as a native cancel event; it must clear the draft
+    // rather than leaving a dialog that closed itself behind the component's back.
+    const user = userEvent.setup();
+    setupRepoint();
+    await user.click(groupToggle(3));
+    await user.click(within(slotEl(3, 1)).getByTestId("matcher-slot-repoint"));
+
+    fireEvent(screen.getByTestId("matcher-repoint"), new Event("cancel", { cancelable: true }));
+    await waitFor(() => expect(screen.queryByTestId("matcher-repoint")).toBeNull());
   });
 
   it("borrows a whole group's records in ONE gesture, in order", async () => {
