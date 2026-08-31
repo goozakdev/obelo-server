@@ -5084,7 +5084,19 @@ textarea.metadata-input {
    whether the words belong to the Slot or to the File on it. */
 .matcher-slot {
   padding: 0.4rem;
-  --part-inset: calc(0.4rem + 1px);
+  /* The metrics of the card a placed File makes. They live on the Slot, not on
+     .matcher-part, because TWO things are built from them: the card itself, and
+     the dashed outline an empty Slot draws in its place. The outline has to be
+     exactly as tall as the card — one row for the filename, one for the two links
+     under it — so the numbers cannot belong to only one of them.
+     --part-row is one line box: `line-height: 1.5` off :root, in the Slot's own
+     font size. Both rows inside the card are exactly that tall, which is why
+     .matcher-part-name gives up its UA button padding below. */
+  --part-pad-y: 0.3rem;
+  --part-pad-x: 0.4rem;
+  --part-gap: 0.2rem;
+  --part-row: 1.5em;
+  --part-inset: calc(var(--part-pad-x) + 1px);
 }
 
 .matcher-slot-target,
@@ -5132,10 +5144,15 @@ textarea.metadata-input {
 }
 
 /* Plain text in a box, not a flex row: `text-overflow` has nothing to clip on an
-   anonymous flex item. */
+   anonymous flex item. Padding zeroed with the border and background the shared
+   rule above already drops: a UA button's 1px/6px is the difference between this
+   row being one line box and being one line box plus two pixels, and the empty
+   Slot's outline is sized from the assumption that it is exactly one. It also
+   squares the filename up with the links beneath it. */
 .matcher-part-name {
   display: block;
   white-space: nowrap;
+  padding: 0;
 }
 
 .matcher-slot-name,
@@ -5315,15 +5332,20 @@ textarea.metadata-input {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 2rem;
+  /* The card's height, derived rather than guessed: its two rows, the gap between
+     them, its padding top and bottom, and its two borders. An outline even
+     slightly shorter than a filled card makes a season of Slots ripple as the eye
+     runs down it, which is the opposite of what the outline is for. */
+  min-height: calc(
+    2 * var(--part-row) + var(--part-gap) + 2 * var(--part-pad-y) + 2px
+  );
   margin: 0.15rem 0 0;
-  padding: 0.3rem 0.4rem;
+  padding: var(--part-pad-y) var(--part-pad-x);
   background: none;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   font: inherit;
-  font-size: 0.8rem;
   text-align: left;
   cursor: pointer;
 }
@@ -5345,14 +5367,14 @@ textarea.metadata-input {
    works if they start at the same x. */
 .matcher-part {
   margin: 0.15rem 0 0;
-  padding: 0.3rem 0.4rem;
+  padding: var(--part-pad-y) var(--part-pad-x);
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--part-gap);
   touch-action: none;
 }
 
