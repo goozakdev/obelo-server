@@ -19,11 +19,16 @@ import (
 // THE FILE LIST MUST BE COMPLETE. The screen's promise is "here is everything on
 // disk under this Show"; a File it omits is a File the Admin cannot place, and
 // they have no way to tell an omission from an absence. The Files are therefore
-// gathered from every place the ingestion path can leave one — the Files of the
-// Show's Episode Titles, the Library's Unmatched rows under the Show's folders,
-// and the paths carrying an explicit decision, which by design produce NEITHER a
-// Title NOR an Unmatched row (see scanner/arrangement.go: a recorded decision is
-// not a parse failure).
+// gathered from every place the ingestion path can leave one — the on-disk Files
+// of the Show's Episode Titles, the Library's Unmatched rows under the Show's
+// folders, and the paths carrying an explicit decision, which by design produce
+// NEITHER a Title NOR an Unmatched row (see scanner/arrangement.go: a recorded
+// decision is not a parse failure).
+//
+// COMPLETE, not longer than the disk. The mirror-image failure is a File the
+// Admin cannot ACT on: a soft-deleted row whose path no longer exists (a rename,
+// most often) is unplaceable by construction, so listing it manufactures work that
+// no amount of sorting can finish. Only a decision brings such a path back.
 //
 // THE DERIVATION IS NOT REPEATED HERE. What the Files add up to — which Slots
 // exist, which File fills which — is decided by scanner.ResolveEpisodes, the same
@@ -582,7 +587,23 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 		if _, ok := titleOf[f.Path]; !ok {
 			titleOf[f.Path] = f.TitleID
 		}
-		candidates[f.Path] = true
+	}
+	// Source one: the Files of the Show's Episode Titles that are still ON DISK.
+	//
+	// A Missing row is NOT one of them, and that exclusion is the whole difference
+	// between a file the Admin can act on and a ghost they cannot. ShowFiles returns
+	// Missing rows on purpose (a File taken off its Slot is soft-deleted, not gone —
+	// store/placement.go), but the same soft-delete catches a file that was RENAMED
+	// on disk: its old path keeps its row, present=0, forever. Offered here it would
+	// be unplaceable — resolve refuses to build a Slot from a file that is not there
+	// (placementInputs) — so it would sit in the matcher as an unassigned File that
+	// no amount of sorting can settle, and keep its Show in the Needs-Fixing queue
+	// for good. A soft-deleted File the Admin actually decided about still arrives,
+	// through source three, which is where that row's second life belongs.
+	for path, isPresent := range present {
+		if isPresent {
+			candidates[path] = true
+		}
 	}
 
 	// Source two: the Library's Unmatched rows under those folders. A file the
