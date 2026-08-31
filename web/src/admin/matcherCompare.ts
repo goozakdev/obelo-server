@@ -286,6 +286,19 @@ function tokenSpans(text: string): { token: string; start: number; end: number }
 /** What stands in for the container's name at the front of a filename. */
 export const ELISION = "…";
 
+/** Words a title carries at the front and a filename may not (or the other way
+ * round). Matches the backend's sort key and the browse letter-jump. */
+const LEADING_ARTICLES = new Set(["the", "a", "an"]);
+
+/** How many tokens to skip on `tokens` before comparing it against `other`: one,
+ * when `tokens` opens with an article and `other` does not open with the SAME
+ * one. Both sides keep their article when both have it, so `The Wire` still
+ * matches `The Wire` on token one. */
+function leadingArticles(tokens: string[], other: string[]): number {
+  if (tokens.length === 0 || !LEADING_ARTICLES.has(tokens[0])) return 0;
+  return other.length > 0 && other[0] === tokens[0] ? 0 : 1;
+}
+
 /** A filename with the container's own name cut off the front and replaced by an
  * ellipsis: `Show - S03E01 - Holiday Knights.mkv` becomes
  * `… - S03E01 - Holiday Knights.mkv`.
@@ -319,8 +332,25 @@ export function splitContainerPrefix(
   const stem = name.replace(/\.[a-z0-9]{1,5}$/i, "");
   const spans = tokenSpans(stem);
   const container = tokenize(containerTitle);
+  // A leading article is dropped from EACH side independently, because the two
+  // sides disagree about it constantly and the walk below stops dead at the first
+  // token that does not match. A Show filed as `Fresh Prince of Bel-Air` against a
+  // file named `The Fresh Prince of Bel-Air S05E01…` failed on token one and kept
+  // the whole name. This is the same article rule the backend's sort key and the
+  // browse letter-jump already apply, so all three agree on where a name starts.
+  const fileStart = leadingArticles(spans.map((s) => s.token), container);
+  const nameStart = leadingArticles(container, spans.map((s) => s.token));
   let i = 0;
-  while (i < spans.length && i < container.length && tokensAlike(spans[i].token, container[i])) i++;
+  while (
+    fileStart + i < spans.length &&
+    nameStart + i < container.length &&
+    tokensAlike(spans[fileStart + i].token, container[nameStart + i])
+  ) {
+    i++;
+  }
+  // Everything matched is measured from the front of the FILE, article included:
+  // the article was never the point, and it belongs to the name being hidden.
+  i = i === 0 ? 0 : fileStart + i;
   // Nothing matched, or the filename is nothing BUT the container's name: show it
   // whole. An ellipsis and an extension would name no file at all.
   if (i === 0 || i >= spans.length) return { elided: "", rest: name };
