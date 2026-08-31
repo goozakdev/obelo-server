@@ -36,26 +36,50 @@ export default function LibraryGridScreen() {
     [libraryId],
   );
 
-  const libraryName = lib.status === "ready" ? lib.data.name : "Library";
-  const kind = lib.status === "ready" ? lib.data.kind : "movie";
-
   // A music library belongs to the separate music experience — redirect so the
   // URL, shell, and theme all match (keeps old /libraries/{id} links working).
   if (lib.status === "ready" && lib.data.kind === "music") {
     return <Navigate to={`/music/libraries/${libraryId}`} replace />;
   }
 
+  // NEITHER GRID MOUNTS UNTIL THE KIND IS KNOWN. Mounting one is not free: each
+  // grid opens by fetching its own first page, so guessing "movie" while the
+  // library was still loading made every TV library view fire a Movie page-one
+  // request whose `{shows: …}` answer the Movie grid cannot even read, purely to
+  // unmount it a moment later when the real kind arrived. One wasted round-trip
+  // per view, against the endpoint the browse experience most depends on.
+  //
+  // The cost of waiting is only that the grid's own skeleton appears a beat
+  // later than the shell, which is what the status line below is for.
   return (
-    <div className="app-shell" data-testid="library-grid-screen" data-kind={kind}>
+    <div
+      className="app-shell"
+      data-testid="library-grid-screen"
+      data-kind={lib.status === "ready" ? lib.data.kind : ""}
+    >
       <AppHeader />
       <main className="app-main app-main-wide">
+        {lib.status === "loading" && (
+          <p className="status status-loading" data-testid="library-loading">
+            Loading library&hellip;
+          </p>
+        )}
+
+        {lib.status === "error" && (
+          <p className="status status-error" data-testid="library-error" role="alert">
+            <span className="dot dot-error" aria-hidden="true" />
+            {lib.message}
+          </p>
+        )}
+
         {/* Branch on kind: TV → Show grid, else Movie grid. (Music has its own
             experience under /music — see the redirect above.) */}
-        {kind === "tv" ? (
-          <ShowGrid libraryId={libraryId} libraryName={libraryName} />
-        ) : (
-          <MovieGrid libraryId={libraryId} libraryName={libraryName} />
-        )}
+        {lib.status === "ready" &&
+          (lib.data.kind === "tv" ? (
+            <ShowGrid libraryId={libraryId} libraryName={lib.data.name} />
+          ) : (
+            <MovieGrid libraryId={libraryId} libraryName={lib.data.name} />
+          ))}
       </main>
     </div>
   );

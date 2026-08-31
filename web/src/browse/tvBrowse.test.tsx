@@ -16,10 +16,12 @@ import type {
 // Episodes with watched/resume markers; an Episode's detail shows its
 // Show/Season parent context. All driven through the single typed client seam.
 
-const { getLibrary, listShows, getShowSeasons, getSeasonEpisodes, getTitle } =
+const { getLibrary, listShows, listTitles, getShowSeasons, getSeasonEpisodes, getTitle } =
   vi.hoisted(() => ({
     getLibrary: vi.fn(),
     listShows: vi.fn(),
+    // Spied so a TV library can assert it is NEVER called — see the test below.
+    listTitles: vi.fn(),
     getShowSeasons: vi.fn(),
     getSeasonEpisodes: vi.fn(),
     getTitle: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("../api/client", async () => {
     apiClient: {
       getLibrary: (...a: unknown[]) => getLibrary(...a),
       listShows: (...a: unknown[]) => listShows(...a),
+      listTitles: (...a: unknown[]) => listTitles(...a),
       getShowSeasons: (...a: unknown[]) => getShowSeasons(...a),
       getSeasonEpisodes: (...a: unknown[]) => getSeasonEpisodes(...a),
       getTitle: (...a: unknown[]) => getTitle(...a),
@@ -108,6 +111,26 @@ describe("TV library browse", () => {
     expect(bear).toHaveAttribute("href", "/shows/sh1");
     // The TV branch was taken: listShows was called, listTitles was not needed.
     expect(listShows).toHaveBeenCalledWith("lib1", { cursor: null }, expect.anything());
+  });
+
+  it("never asks for Titles on the way to a Show grid", async () => {
+    // Mounting a grid is not free — each one opens by fetching its first page.
+    // The screen used to assume "movie" while GET /libraries/{id} was still in
+    // flight, so every TV library view fired a Movie page-one request whose
+    // `{shows: …}` answer that grid cannot even read, and then unmounted it. One
+    // wasted round-trip per view, against the busiest endpoint in browse.
+    renderWithAuth(
+      <Routes>
+        <Route path="/libraries/:libraryId" element={<LibraryGridScreen />} />
+      </Routes>,
+      { initialEntries: ["/libraries/lib1"] },
+    );
+
+    // Asserted from the very first paint through to the settled grid, because
+    // the wasted call happened in between and left no trace afterwards.
+    expect(listTitles).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId("poster-grid")).toBeInTheDocument());
+    expect(listTitles).not.toHaveBeenCalled();
   });
 
   it("shows the unwatched-episode count badge on a Show poster (and omits it when 0)", async () => {
