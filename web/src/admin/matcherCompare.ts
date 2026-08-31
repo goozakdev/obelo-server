@@ -297,9 +297,9 @@ export const ELISION = "…";
  * can never tell the Admin anything, while costing the most horizontal room.
  *
  * The prefix is found by the same token rules the title comparison uses, so an
- * abbreviated one (`Parks.and.Rec` for *Parks and Recreation*) goes too. The
- * separator that followed it is KEPT, which is what leaves the ellipsis reading as
- * a stand-in for the name rather than as a truncated word. */
+ * abbreviated one (`Parks.and.Rec` for *Parks and Recreation*) goes too, and the
+ * cut then runs on to the position, taking the separators and stray punctuation
+ * between them with it — everything up to `S03E01`, and nothing after. */
 export function elideContainerPrefix(path: string, containerTitle: string): string {
   const { elided, rest } = splitContainerPrefix(path, containerTitle);
   return elided + rest;
@@ -324,10 +324,21 @@ export function splitContainerPrefix(
   // Nothing matched, or the filename is nothing BUT the container's name: show it
   // whole. An ellipsis and an extension would name no file at all.
   if (i === 0 || i >= spans.length) return { elided: "", rest: name };
-  // The separator that followed the name goes with the ellipsis, so what is left
-  // starts on a word — which is the whole point of cutting here.
-  return {
-    elided: ELISION + name.slice(spans[i - 1].end, spans[i].start),
-    rest: name.slice(spans[i].start),
-  };
+  // Having found the name, the cut runs FORWARD to the position, so that whatever
+  // sits between the two goes with it: the punctuation the name ended in, a year,
+  // a separator, an edition marker. All of it is as fixed across the container as
+  // the name itself, and every character of it pushes the position — the one thing
+  // being read — further from the left edge.
+  //
+  // The search starts AFTER the name, and only runs at all because the name
+  // matched: a filename that never names its container keeps every word, or
+  // `Holiday Knights S01E01.mkv` would lose the title to the elision.
+  let cut = i;
+  for (let j = i; j < spans.length; j++) {
+    if (POSITION_RES.some((re) => re.test(spans[j].token))) {
+      cut = j;
+      break;
+    }
+  }
+  return { elided: ELISION, rest: name.slice(spans[cut].start) };
 }

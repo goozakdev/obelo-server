@@ -5076,6 +5076,23 @@ textarea.metadata-input {
   gap: 0.2rem;
 }
 
+/* Uniform padding, because a Slot holds a card: the gutter left and right of a
+   placed File has to be the one already under it, or the card reads as something
+   that overflowed the panel rather than something set down on it.
+   `--part-inset` is that card's own border and padding — everything the Slot says
+   in its own voice is indented by it, so one column of text runs down the panel
+   whether the words belong to the Slot or to the File on it. */
+.matcher-slot {
+  padding: 0.4rem;
+  --part-inset: calc(0.4rem + 1px);
+}
+
+.matcher-slot-target,
+.matcher-slot-pin,
+.matcher-slot-actions {
+  padding-left: var(--part-inset);
+}
+
 .matcher-file.is-selected,
 .matcher-part.is-selected {
   border-color: var(--accent);
@@ -5220,11 +5237,14 @@ textarea.metadata-input {
    — its own lighter surface, its own edge, its own small shadow — because "this
    Slot is filled" is the single fact an Admin reads off this column, and a dashed
    rule made a placed File look like one more line of the Slot's own description.
-   The negative inline margin against an equal padding is what keeps the filename's
-   first character exactly under the Slot code's first character: the card sits
-   PROUD of the label it belongs to, while its text stays in the same column. */
+
+   It sits INSIDE the Slot's padding on every side, so the same gutter runs down
+   its left and right as under its bottom edge. Its own padding then pushes the
+   filename in from the Slot's content edge, which is why the Slot's label is
+   indented to match: the two lines are read as one column of text, and that only
+   works if they start at the same x. */
 .matcher-part {
-  margin: 0.15rem calc(-0.4rem - 1px) 0;
+  margin: 0.15rem 0 0;
   padding: 0.3rem 0.4rem;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
