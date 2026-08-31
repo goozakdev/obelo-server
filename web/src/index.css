@@ -5195,19 +5195,62 @@ textarea.metadata-input {
 
 /* The record picker, opened over the arrangement rather than beside it: choosing
    a record is a whole two-step act and the Admin should not lose their place. */
-.matcher-repoint {
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  padding: 0.9rem;
-  margin: 0.8rem 0;
+/* The record picker is a MODAL (RepointDialog), not a panel above the groups:
+   repointing starts from a Slot far down the grid, and a panel above the fold is
+   one the Admin never scrolls back up to see. Same chrome as .edit-item-dialog —
+   transparent native <dialog>, painted panel inside, dimmed ::backdrop — but
+   wider, because the picker carries a search grid and a record list. */
+.matcher-repoint-dialog {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  max-width: min(880px, 94vw);
+  width: 94vw;
+  max-height: 90vh;
+  overflow: visible;
+}
+.matcher-repoint-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+}
+.matcher-repoint-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  max-height: 90vh;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.matcher-repoint-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 3vw, 1.5rem);
+  border-bottom: 1px solid var(--border);
 }
 
 .matcher-repoint-target {
   margin: 0;
+  font-size: 1.05rem;
   font-weight: 600;
+}
+
+.matcher-repoint-close {
+  flex: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+}
+
+/* The body scrolls on its own so a tall picker never pushes the header off. */
+.matcher-repoint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow-y: auto;
 }
 
 .matcher-repoint-note {

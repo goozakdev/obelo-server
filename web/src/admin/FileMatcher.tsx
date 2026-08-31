@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -570,24 +571,28 @@ export default function FileMatcher({
       )}
 
       {repointing && repointRecord && (
-        <div className="matcher-repoint" data-testid="matcher-repoint" role="dialog">
-          <p className="matcher-repoint-target" data-testid="matcher-repoint-target">
-            {repointing.targets.length === 1
+        <RepointDialog
+          title={
+            repointing.targets.length === 1
               ? `Choose the record that should decorate ${labels.slotCode(
                   repointing.targets[0].group,
                   repointing.targets[0].slot,
                 )}.`
               : `Choose where ${labels.groupName(repointing.group)}'s records come from. The ${
                   repointing.targets.length
-                } filled ${labels.slotNounPlural} take them in order, starting at the one you pick.`}
-          </p>
-          <p className="matcher-hint">
-            This changes only what {repointing.targets.length === 1 ? "it is" : "they are"}{" "}
-            decorated with. The {labels.slotNounPlural} keep their own numbering, their
-            place in the library and their watch history — the borrowed{" "}
-            {labels.slotNounPlural}&rsquo; numbers stay with the {labels.seriesNoun} they
-            came from.
-          </p>
+                } filled ${labels.slotNounPlural} take them in order, starting at the one you pick.`
+          }
+          hint={
+            <>
+              This changes only what {repointing.targets.length === 1 ? "it is" : "they are"}{" "}
+              decorated with. The {labels.slotNounPlural} keep their own numbering, their
+              place in the library and their watch history — the borrowed{" "}
+              {labels.slotNounPlural}&rsquo; numbers stay with the {labels.seriesNoun} they
+              came from.
+            </>
+          }
+          onCancel={() => setRepointing(null)}
+        >
           {repointRecord({
             targets: repointing.targets,
             group: repointing.group,
@@ -595,7 +600,7 @@ export default function FileMatcher({
             onPicked: takeRepoint,
             onCancel: () => setRepointing(null),
           })}
-        </div>
+        </RepointDialog>
       )}
 
       {applyState.kind === "error" && (
@@ -825,6 +830,79 @@ export default function FileMatcher({
         </div>
       )}
     </section>
+  );
+}
+
+// --- Repoint dialog ---------------------------------------------------------
+
+/* Borrowing a record is started from a Slot, and a Slot is almost always far down
+   a long grid — so a panel spliced in ABOVE the groups is a panel the Admin never
+   sees. They click "Take the record from elsewhere", the viewport does not move,
+   and the screen looks like the click did nothing. A native <dialog> puts the
+   choice over the page wherever they happen to be standing, and comes with focus
+   trapping, a dimmed backdrop and ESC already wired. Chrome mirrors
+   .edit-item-dialog: a transparent dialog with a painted panel inside, the body
+   scrolling on its own because the picker carries a search grid AND a record list.
+*/
+function RepointDialog({
+  title,
+  hint,
+  onCancel,
+  children,
+}: {
+  title: string;
+  hint: ReactNode;
+  onCancel: () => void;
+  children: ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="matcher-repoint-dialog"
+      data-testid="matcher-repoint"
+      aria-labelledby="matcher-repoint-title"
+      onCancel={(e) => {
+        // ESC fires a native cancel; route it through the caller so the draft
+        // state clears with it rather than leaving a closed-but-open dialog.
+        e.preventDefault();
+        onCancel();
+      }}
+      onClick={(e) => {
+        if (e.target === dialogRef.current) onCancel();
+      }}
+    >
+      <div className="matcher-repoint-panel">
+        <header className="matcher-repoint-header">
+          <h2
+            className="matcher-repoint-target"
+            id="matcher-repoint-title"
+            data-testid="matcher-repoint-target"
+          >
+            {title}
+          </h2>
+          <button
+            className="button-secondary matcher-repoint-close"
+            type="button"
+            data-testid="matcher-repoint-close"
+            aria-label="Close"
+            onClick={onCancel}
+          >
+            ×
+          </button>
+        </header>
+        <div className="matcher-repoint-body">
+          <p className="matcher-hint">{hint}</p>
+          {children}
+        </div>
+      </div>
+    </dialog>
   );
 }
 
