@@ -4953,6 +4953,56 @@ textarea.metadata-input {
   font-size: 0.85rem;
 }
 
+/* The notice dock: fixed to the bottom of the viewport, spanning the same column
+   the screen itself runs in (.app-main-wide). Every notice this screen raises
+   answers something the Admin just did somewhere far down a season, so none of
+   them can afford to be rendered where the document happens to start.
+
+   z-index clears the now-playing bar (50); the record picker is a native <dialog>
+   and sits in the top layer above both, which is right — it is modal and these
+   are not. */
+.matcher-notices {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 2.5rem) clamp(1rem, 4vw, 2.5rem);
+  /* The dock spans the whole column but is mostly empty air. Only the notices
+     themselves may take a pointer, or the room beside them would swallow every
+     click and every drop on the page behind. */
+  pointer-events: none;
+}
+
+/* A notice sits ON the page now rather than in it, so it needs to be opaque and
+   to cast a shadow — otherwise the groups scroll through it. */
+.matcher-notices > * {
+  pointer-events: auto;
+  margin: 0;
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.45);
+}
+
+/* The two notices that are bare <p>s carry no box of their own; give them the one
+   the panels beside them already have, so the dock reads as one kind of thing. */
+.matcher-notices > .status {
+  padding: 0.75rem;
+  border: 1px solid var(--border-strong);
+}
+
+/* Clear the player when there is one, and sit flush to the bottom when there is
+   not — it is only mounted while something is queued. */
+.app-shell:has(.now-playing-bar) .matcher-notices {
+  bottom: var(--now-playing-bar-height);
+}
+
 .matcher-selection,
 .matcher-applied,
 .matcher-collision,
@@ -5306,9 +5356,6 @@ textarea.metadata-input {
   overflow-y: auto;
 }
 
-.matcher-repoint-note {
-  margin: 0.6rem 0;
-}
 
 .matcher-slot-code {
   font-variant-numeric: tabular-nums;

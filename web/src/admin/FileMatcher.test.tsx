@@ -687,6 +687,38 @@ describe("an empty slot", () => {
   });
 });
 
+describe("the notice dock", () => {
+  it("raises every transient notice into it, not into the page", async () => {
+    // The dock is fixed to the viewport. What matters here is that the notices are
+    // INSIDE it — a notice rendered as a sibling is a notice in the document, which
+    // is the thing an Admin standing at season 4 never sees.
+    const user = userEvent.setup();
+    setup();
+    const dock = () => screen.getByTestId("matcher-notices");
+
+    // Empty until something is said.
+    expect(within(dock()).queryByTestId("matcher-selection")).toBeNull();
+
+    await user.click(groupToggle(3));
+    await user.click(within(partEl(A)).getByTestId("matcher-part-pick"));
+    expect(within(dock()).getByTestId("matcher-selection")).toHaveTextContent(
+      "choose a chapter to place it on",
+    );
+
+    // Finish the gesture on an empty chapter: the prompt has been answered, so it
+    // leaves the dock.
+    await user.click(groupToggle(4));
+    await waitFor(() => expect(slotEl(4, 1)).toBeInTheDocument());
+    await user.click(within(slotEl(4, 1)).getByTestId("matcher-slot-target"));
+    expect(within(dock()).queryByTestId("matcher-selection")).toBeNull();
+
+    // And the leave confirmation, which is the other thing that used to appear a
+    // scroll away from the button that raised it.
+    await user.click(screen.getByTestId("matcher-cancel"));
+    expect(within(dock()).getByTestId("matcher-confirm-leave")).toBeInTheDocument();
+  });
+});
+
 describe("adding a slot", () => {
   it("extends a group past the highest number anything claims", async () => {
     const user = userEvent.setup();
