@@ -33,6 +33,18 @@ type MusicBrainzProvider struct {
 	// operator-configurable (config.MusicBrainzRateLimit) since a mirror may permit
 	// more; zero disables throttling (a self-hosted mirror with no policy, or tests).
 	MinInterval time.Duration
+	// RetryBackoff is the base delay after a 503 that carried no usable
+	// Retry-After: attempt N waits N x this, on top of whatever MinInterval the
+	// throttle then imposes. Zero or negative uses defaultMusicBrainzRetryBackoff;
+	// only a test sets it low.
+	//
+	// It is deliberately INDEPENDENT of MinInterval. A 503 is the host telling us
+	// to back off, which it means whether or not we opted into client-side pacing.
+	// Deriving the delay from MinInterval (as this once did) meant MinInterval=0 --
+	// the documented setting for a mirror with no rate policy -- computed a delay
+	// of zero and burst all four attempts back-to-back, turning the one signal a
+	// struggling host can send into a hammering.
+	RetryBackoff time.Duration
 
 	mu   sync.Mutex
 	next time.Time // earliest instant the next request may start
@@ -40,16 +52,23 @@ type MusicBrainzProvider struct {
 
 const defaultMusicBrainzInterval = time.Second // MusicBrainz allows ~1 req/sec.
 
+// defaultMusicBrainzRetryBackoff is the base 503 delay when the response carries
+// no Retry-After. One second matches the public host's ~1 req/sec policy, and is
+// a floor a mirror inherits too: a mirror that answers 503 wants a pause even
+// though it set no rate policy for the steady state.
+const defaultMusicBrainzRetryBackoff = time.Second
+
 // NewMusicBrainzProvider builds a provider from config. A nil HTTP client gets a
 // default with a sane timeout (a slow lookup must not hang a pass).
 func NewMusicBrainzProvider(baseURL, coverArtURL, language string) *MusicBrainzProvider {
 	return &MusicBrainzProvider{
-		BaseURL:     baseURL,
-		CoverArtURL: coverArtURL,
-		Language:    language,
-		UserAgent:   DefaultUserAgent,
-		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
-		MinInterval: defaultMusicBrainzInterval,
+		BaseURL:      baseURL,
+		CoverArtURL:  coverArtURL,
+		Language:     language,
+		UserAgent:    DefaultUserAgent,
+		HTTPClient:   &http.Client{Timeout: 15 * time.Second},
+		MinInterval:  defaultMusicBrainzInterval,
+		RetryBackoff: defaultMusicBrainzRetryBackoff,
 	}
 }
 
@@ -858,7 +877,7 @@ func (p *MusicBrainzProvider) getJSON(ctx context.Context, path string, q url.Va
 		// off and retry a few times rather than dropping the lookup.
 		if resp.StatusCode == http.StatusServiceUnavailable && attempt < maxAttempts {
 			resp.Body.Close()
-			if err := sleepCtx(ctx, retryAfter(resp.Header, time.Duration(attempt)*p.MinInterval)); err != nil {
+			if err := sleepCtx(ctx, retryAfter(resp.Header, time.Duration(attempt)*p.retryBackoff())); err != nil {
 				return err
 			}
 			continue
@@ -900,6 +919,15 @@ func (p *MusicBrainzProvider) throttle(ctx context.Context) error {
 	p.next = start.Add(p.MinInterval)
 	p.mu.Unlock()
 	return sleepCtx(ctx, time.Until(start))
+}
+
+// retryBackoff is the base 503 delay, never zero: a provider built as a bare
+// struct literal, or one whose operator disabled throttling, still backs off.
+func (p *MusicBrainzProvider) retryBackoff() time.Duration {
+	if p.RetryBackoff > 0 {
+		return p.RetryBackoff
+	}
+	return defaultMusicBrainzRetryBackoff
 }
 
 // sleepCtx waits for d (no-op when d<=0), returning early if ctx is cancelled.

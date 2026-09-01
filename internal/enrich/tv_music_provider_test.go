@@ -178,7 +178,10 @@ func TestMusicBrainzRetriesOn503(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	p := NewMusicBrainzProvider(srv.URL, "https://coverart", "en-US")
-	p.MinInterval = time.Millisecond // tiny throttle + back-off so the test stays fast
+	// Tiny throttle AND tiny back-off so the test stays fast. The two are separate
+	// knobs: the 503 back-off no longer rides on MinInterval (see retryBackoff).
+	p.MinInterval = time.Millisecond
+	p.RetryBackoff = time.Millisecond
 
 	got, err := p.Lookup(context.Background(), TitleRef{Kind: "artist", Title: "Radiohead"})
 	if err != nil {
