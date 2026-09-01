@@ -78,7 +78,7 @@ func NewAniDBProvider(client, baseURL, language string) *AniDBProvider {
 		Client:      client,
 		BaseURL:     baseURL,
 		Language:    language,
-		UserAgent:   "obelo/1.0 (self-hosted)",
+		UserAgent:   DefaultUserAgent,
 		HTTPClient:  &http.Client{Timeout: 20 * time.Second},
 		minInterval: defaultAniDBThrottle,
 		cache:       map[string]anidbResult{},

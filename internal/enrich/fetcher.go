@@ -60,6 +60,13 @@ type HTTPArtworkFetcher struct {
 	HTTPClient *http.Client
 	// MaxBytes caps a downloaded image; 0 uses defaultMaxArtworkBytes.
 	MaxBytes int64
+	// UserAgent identifies Obelo on the image download itself; empty uses
+	// DefaultUserAgent. The bytes behind a Cover Art Archive cover come from here,
+	// not from the MusicBrainz provider's own request, so leaving this unset sent
+	// every cover fetch out as Go's "Go-http-client/1.1" — precisely the anonymous
+	// agent MusicBrainz throttles hardest — while the manifest request beside it was
+	// properly identified.
+	UserAgent string
 }
 
 const defaultMaxArtworkBytes = 16 << 20 // 16 MiB — generous for a poster/backdrop.
@@ -82,6 +89,11 @@ func (f HTTPArtworkFetcher) Fetch(ctx context.Context, url string) ([]byte, stri
 	if err != nil {
 		return nil, "", fmt.Errorf("enrich: building artwork request: %w", err)
 	}
+	ua := f.UserAgent
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	req.Header.Set("User-Agent", ua)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("enrich: artwork request: %w", err)
