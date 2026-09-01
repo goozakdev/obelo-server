@@ -127,7 +127,7 @@ func (db *DB) searchArtists(pattern string, limit int, filter AccessFilter) ([]A
 	args = append(args, libArgs...)
 	args = append(args, limit)
 	rows, err := db.Query(
-		`SELECT id, library_id, name, identity_key, sort_name, hidden, added_at
+		`SELECT id, library_id, name, identity_key, sort_name, hidden, added_at, musicbrainz_id
 		   FROM artists
 		  WHERE hidden = 0 AND name LIKE ? ESCAPE '\'`+libClause+`
 		  ORDER BY sort_name ASC, id ASC LIMIT ?`, args...)
@@ -160,7 +160,7 @@ func (db *DB) searchAlbums(pattern string, limit int, filter AccessFilter) ([]Al
 	args = append(args, limit)
 	rows, err := db.Query(
 		`SELECT a.id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
-		        a.artwork_path, a.release_type, a.hidden, a.added_at,
+		        a.artwork_path, a.release_type, a.hidden, a.added_at, a.musicbrainz_id,
 		        (SELECT COUNT(*) FROM titles t WHERE t.album_id = a.id AND t.hidden = 0) AS track_count
 		   FROM albums a`+join+`
 		  WHERE a.hidden = 0 AND a.title LIKE ? ESCAPE '\'`+libClause+`

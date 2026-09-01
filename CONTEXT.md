@@ -79,6 +79,7 @@ _Avoid_: Deleted, Removed, Orphaned.
 
 **Enrichment**:
 The separate, optional step that fetches descriptive metadata (artwork, descriptions, cast) from external Metadata providers to decorate a Title. Never affects identity; degrades gracefully when offline. Provider selection is server-wide by default but overridable per Library through its Enrichment policy ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)). A lookup that **could not be made** — an unreachable host, a 5xx, a rate-limit — is not an answer about the item and does not settle it: the item keeps its metadata and is re-tried on a lengthening backoff, reaching the Admin's attention list only once the trouble has outlived every timescale a blip plausibly lasts ([ADR-0048](./docs/adr/0048-a-transient-enrichment-failure-is-retried-not-parked.md)).
+Where a file's tags already name the provider record — a MusicBrainz recording, release-group or artist MBID written by a tagger — Enrichment resolves **by that id** rather than by searching for the name ([ADR-0049](./docs/adr/0049-tagged-music-resolves-by-lookup-not-search.md)): exact, cheaper, and independent of the search service that a text query depends on. The id a file asserts is decoration only, never identity, and an Admin's Enrichment override outranks it.
 _Avoid_: reading `enrichment_status = 'failed'` as "needs a human" — that is only true when no retry is scheduled.
 _Avoid_: Matching (that's identity), Agent.
 

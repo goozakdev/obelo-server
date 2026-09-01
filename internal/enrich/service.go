@@ -1334,7 +1334,8 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 	var leaves []leafWork
 	for _, ar := range artists {
 		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
-			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name}); err != nil {
+			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
+				MusicbrainzID: ar.MusicbrainzID}); err != nil {
 			return nil, err
 		}
 		albums, err := s.store.AlbumsForArtist(ar.ID)
@@ -1343,7 +1344,8 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 		}
 		for _, al := range albums {
 			if _, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
-				TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name}); err != nil {
+				TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name,
+					MusicbrainzID: al.MusicbrainzID}); err != nil {
 				return nil, err
 			}
 			tracks, err := s.store.TracksForAlbum(al.ID)
@@ -1356,12 +1358,33 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 				}
 				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, ref: TitleRef{
 					Kind: "track", Title: tr.Title, Track: tr.Title,
-					Artist: ar.Name, Album: al.Title, MusicbrainzID: tr.MusicbrainzID,
+					Artist: ar.Name, Album: al.Title, MusicbrainzID: trackRecordID(tr),
 				}})
 			}
 		}
 	}
 	return leaves, nil
+}
+
+// trackRecordID answers "which MusicBrainz recording should decorate this Track?"
+// in precedence order (ADR-0049):
+//
+//  1. MusicbrainzID — the enrichment RECORD. Either the Admin's Fix-info choice or
+//     an id a previous pass resolved and stored. A human's correction outranks
+//     anything a file claims, and a resolved id spares a second search.
+//  2. MusicbrainzRecordingID — what the FILE's tags assert. Exact, free, and
+//     re-derived from disk each scan.
+//  3. "" — neither; the provider falls back to a name+artist search.
+//
+// The distinction matters more than it looks. Tier 3 is `/ws/2/recording?query=`,
+// MusicBrainz's SEARCH service — a separate cluster that sheds load globally under
+// pressure and answers 503 while the lookup endpoints are perfectly healthy. For a
+// tagged library, tiers 1 and 2 remove that dependency almost entirely.
+func trackRecordID(t store.Title) string {
+	if id := strings.TrimSpace(t.MusicbrainzID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(t.MusicbrainzRecordingID)
 }
 
 // shouldProcessLeaf reports whether a leaf Title is in scope for this pass: every
@@ -1648,12 +1671,15 @@ func withEpisodePin(ref TitleRef, t store.Title) TitleRef {
 // (ADR-0045, resolved in store.recordExternalIDs).
 func refFor(t store.Title) TitleRef {
 	ref := TitleRef{
-		Kind:          t.Kind,
-		Title:         t.Title,
-		Year:          t.Year,
-		TMDBID:        t.TMDBID,
-		IMDBID:        t.IMDBID,
-		MusicbrainzID: t.MusicbrainzID,
+		Kind:   t.Kind,
+		Title:  t.Title,
+		Year:   t.Year,
+		TMDBID: t.TMDBID,
+		IMDBID: t.IMDBID,
+		// Same precedence as the library pass: the record wins, the file's tag id is
+		// the fallback, a search is the last resort (ADR-0049). Without this a
+		// single-Track re-enrich would search where a full pass looked up.
+		MusicbrainzID: trackRecordID(t),
 		SeasonNumber:  t.SeasonNumber,
 		EpisodeNumber: t.EpisodeNumber,
 		EpisodeLabel:  t.EpisodeLabel,

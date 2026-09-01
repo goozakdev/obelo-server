@@ -28,6 +28,10 @@ type Artist struct {
 	SortName    string
 	Hidden      bool
 	AddedAt     string
+	// MusicbrainzID is the artist MBID the FILES assert (from their album-artist
+	// tag) — a lookup anchor for Enrichment, re-derived from disk on every scan and
+	// never identity (ADR-0049). Empty for an untagged library.
+	MusicbrainzID string
 	// AlbumCount is computed for the browse list (not stored).
 	AlbumCount int
 }
@@ -49,6 +53,10 @@ type Album struct {
 	ReleaseType string
 	Hidden      bool
 	AddedAt     string
+	// MusicbrainzID is the release-group MBID the FILES assert. It already does an
+	// identity job inside the album's identity_key (ADR-0038); stored here it also
+	// serves as Enrichment's lookup anchor (ADR-0049).
+	MusicbrainzID string
 	// TrackCount is computed for the browse list (not stored).
 	TrackCount int
 }
@@ -72,7 +80,9 @@ type AlbumTree struct {
 	SortTitle   string
 	ArtworkPath string
 	ReleaseType string
-	Tracks      []TrackTree
+	// MusicbrainzID is the release-group MBID from the files' tags (ADR-0049).
+	MusicbrainzID string
+	Tracks        []TrackTree
 }
 
 // ArtistTree is the complete result of resolving one Artist grouping: the Artist
@@ -132,9 +142,9 @@ func upsertArtist(tx *sql.Tx, a Artist) (string, error) {
 	case errors.Is(err, sql.ErrNoRows):
 		artistID = a.ID
 		if _, err := tx.Exec(
-			`INSERT INTO artists (id, library_id, name, identity_key, sort_name, hidden)
-			 VALUES (?, ?, ?, ?, ?, 0)`,
-			artistID, a.LibraryID, a.Name, a.IdentityKey, a.SortName,
+			`INSERT INTO artists (id, library_id, name, identity_key, sort_name, hidden, musicbrainz_id)
+			 VALUES (?, ?, ?, ?, ?, 0, ?)`,
+			artistID, a.LibraryID, a.Name, a.IdentityKey, a.SortName, a.MusicbrainzID,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting artist: %w", err)
 		}
@@ -142,8 +152,10 @@ func upsertArtist(tx *sql.Tx, a Artist) (string, error) {
 		return "", fmt.Errorf("store: resolving artist identity: %w", err)
 	default:
 		if _, err := tx.Exec(
-			`UPDATE artists SET name = ?, sort_name = ?, hidden = 0 WHERE id = ?`,
-			a.Name, a.SortName, artistID,
+			`UPDATE artists SET name = ?, sort_name = ?, hidden = 0,
+			     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END
+			   WHERE id = ?`,
+			a.Name, a.SortName, a.MusicbrainzID, a.MusicbrainzID, artistID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating artist: %w", err)
 		}
@@ -161,9 +173,10 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 	case errors.Is(err, sql.ErrNoRows):
 		albumID = uuid.NewString()
 		if _, err := tx.Exec(
-			`INSERT INTO albums (id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+			`INSERT INTO albums (id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, musicbrainz_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 			albumID, artistID, at.Title, nullableYear(at.Year), at.IdentityKey, at.SortTitle, at.ArtworkPath, at.ReleaseType,
+			at.MusicbrainzID,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting album: %w", err)
 		}
@@ -171,8 +184,11 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 		return "", fmt.Errorf("store: resolving album: %w", err)
 	default:
 		if _, err := tx.Exec(
-			`UPDATE albums SET title = ?, year = ?, sort_title = ?, artwork_path = ?, release_type = ?, hidden = 0 WHERE id = ?`,
-			at.Title, nullableYear(at.Year), at.SortTitle, at.ArtworkPath, at.ReleaseType, albumID,
+			`UPDATE albums SET title = ?, year = ?, sort_title = ?, artwork_path = ?, release_type = ?, hidden = 0,
+			     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END
+			   WHERE id = ?`,
+			at.Title, nullableYear(at.Year), at.SortTitle, at.ArtworkPath, at.ReleaseType,
+			at.MusicbrainzID, at.MusicbrainzID, albumID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating album: %w", err)
 		}
@@ -223,7 +239,7 @@ func (db *DB) ListArtists(libraryID string, cursor *TitleCursor, limit int, genr
 		where += " AND (sort_name, id) > (?, ?)"
 		args = append(args, cursor.SortKey, cursor.ID)
 	}
-	query := `SELECT id, library_id, name, identity_key, sort_name, hidden, added_at
+	query := `SELECT id, library_id, name, identity_key, sort_name, hidden, added_at, musicbrainz_id
 	            FROM artists WHERE ` + where + ` ORDER BY sort_name ASC, id ASC LIMIT ?`
 	args = append(args, limit+1)
 
@@ -258,7 +274,7 @@ func (db *DB) ListArtists(libraryID string, cursor *TitleCursor, limit int, genr
 // to the caller is hidden as 404 — and uses this for the albums listing.
 func (db *DB) ArtistByID(id string) (Artist, error) {
 	row := db.QueryRow(
-		`SELECT id, library_id, name, identity_key, sort_name, hidden, added_at
+		`SELECT id, library_id, name, identity_key, sort_name, hidden, added_at, musicbrainz_id
 		   FROM artists WHERE id = ?`, id)
 	a, err := scanArtist(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -279,7 +295,7 @@ func (db *DB) AlbumsForArtist(artistID string) ([]Album, error) {
 	}
 	rows, err := db.Query(
 		`SELECT a.id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
-		        a.artwork_path, a.release_type, a.hidden, a.added_at,
+		        a.artwork_path, a.release_type, a.hidden, a.added_at, a.musicbrainz_id,
 		        (SELECT COUNT(*) FROM titles t WHERE t.album_id = a.id AND t.hidden = 0) AS track_count
 		   FROM albums a WHERE a.artist_id = ? AND a.hidden = 0
 		  ORDER BY a.year ASC, a.sort_title ASC, a.id ASC`, artistID)
@@ -334,7 +350,7 @@ func (db *DB) TracksForAlbum(albumID string) ([]Title, error) {
 		        `+recordExternalIDs("")+`, musicbrainz_id, needs_review, ambiguous, hidden,
 		        disc_number, track_number,
 		        overview, enrichment_status, enriched_title, enrichment_id_origin,
-		        enrichment_attempts, enrichment_retry_at
+		        enrichment_attempts, enrichment_retry_at, musicbrainz_recording_id
 		   FROM titles WHERE album_id = ? AND hidden = 0
 		  ORDER BY disc_number ASC, track_number ASC, sort_title ASC, id ASC`, albumID)
 	if err != nil {
@@ -465,7 +481,7 @@ func scanArtist(s scanner) (Artist, error) {
 	var a Artist
 	var hidden int
 	if err := s.Scan(&a.ID, &a.LibraryID, &a.Name, &a.IdentityKey, &a.SortName,
-		&hidden, &a.AddedAt); err != nil {
+		&hidden, &a.AddedAt, &a.MusicbrainzID); err != nil {
 		return Artist{}, err
 	}
 	a.Hidden = hidden != 0
@@ -477,7 +493,8 @@ func scanAlbum(s scanner) (Album, error) {
 	var year sql.NullInt64
 	var hidden int
 	if err := s.Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey,
-		&al.SortTitle, &al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.TrackCount); err != nil {
+		&al.SortTitle, &al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.MusicbrainzID,
+		&al.TrackCount); err != nil {
 		return Album{}, err
 	}
 	if year.Valid {
@@ -499,7 +516,7 @@ func scanTrackTitle(s scanner) (Title, error) {
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &t.MusicbrainzID, &needsReview, &ambiguous, &hidden,
 		&t.DiscNumber, &t.TrackNumber,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle, &idOrigin,
-		&t.EnrichmentAttempts, &t.EnrichmentRetryAt); err != nil {
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.MusicbrainzRecordingID); err != nil {
 		return Title{}, err
 	}
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)

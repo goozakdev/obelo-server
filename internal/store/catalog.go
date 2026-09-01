@@ -82,6 +82,14 @@ type Title struct {
 	RuntimeMinutes int
 	Studio         string
 	MusicbrainzID  string
+	// MusicbrainzRecordingID is the recording MBID the FILE asserts, read from its
+	// tags by the Scanner and re-derived on every scan (ADR-0049). It is the LOCAL
+	// claim, the music twin of TMDBID — decoration only, never identity — and it
+	// loses to MusicbrainzID above, which is the enrichment RECORD (a pass's own
+	// result, or the Admin's Fix info). Enrichment prefers either over a text
+	// search: a lookup by id is exact and hits a far healthier MusicBrainz endpoint
+	// than `/ws/2/recording?query=`.
+	MusicbrainzRecordingID string
 	// EnrichmentStatus ∈ pending|matched|unmatched|failed|disabled (CONTEXT.md
 	// "Enrichment"). EnrichedAt / EnrichmentSource record the last successful pass.
 	EnrichmentStatus string
@@ -563,13 +571,13 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			   (id, library_id, kind, title, year, identity_key, sort_title,
 			    tmdb_id, imdb_id, enrichment_tmdb_id, needs_review, ambiguous, hidden,
 			    season_id, season_number, episode_number, episode_label,
-			    album_id, disc_number, track_number)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+			    album_id, disc_number, track_number, musicbrainz_recording_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			titleID, tree.LibraryID, tree.Kind, tree.Title.Title, nullableYear(tree.Year),
 			tree.IdentityKey, tree.SortTitle, tree.TMDBID, tree.IMDBID, tree.RecordTMDBID,
 			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
-			albumID, ep.discNumber, ep.trackNumber,
+			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting title: %w", err)
 		}
@@ -587,13 +595,19 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
 			    ambiguous = ?, hidden = 0,
 			    season_id = ?, season_number = ?, episode_number = ?, episode_label = ?,
-			    album_id = ?, disc_number = ?, track_number = ?
+			    album_id = ?, disc_number = ?, track_number = ?,
+			    -- The recording id the file currently asserts. Written unconditionally
+			    -- for the same reason tmdb_id is: it is the LOCAL claim, re-derived
+			    -- from the file's tags on every scan, so a retagged file must be able
+			    -- to change it and a de-tagged one to withdraw it. The Admin's record
+			    -- lives in musicbrainz_id and is untouched here (ADR-0045/0049).
+			    musicbrainz_recording_id = ?
 			  WHERE id = ?`,
 			tree.Title.Title, nullableYear(tree.Year), tree.SortTitle,
 			tree.TMDBID, tree.IMDBID,
 			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
-			albumID, ep.discNumber, ep.trackNumber,
+			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 			titleID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating title: %w", err)
