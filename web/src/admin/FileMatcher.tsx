@@ -43,8 +43,8 @@ import {
   basename,
   compareTitles,
   comparePosition,
+  markFilename,
   splitContainerPrefix,
-  type DiffSegment,
 } from "./matcherCompare";
 import {
   NO_PINS,
@@ -1265,10 +1265,11 @@ function SlotCard({
               punctuates the same three things, so the Slot's label and the label of
               the File placed under it can be read against each other as two lines of
               the same shape rather than compared item by item. */}
-          <span
-            className={`matcher-slot-code${mismatch ? " is-mismatch" : ""}`}
-            data-testid="matcher-slot-code"
-          >
+          {/* Never marked. The Slot's words are what the file is being measured
+              AGAINST; colouring both sides left an Admin comparing two highlighted
+              strings instead of reading one. The card's border still carries the
+              disagreement, which is what says "look at this row". */}
+          <span className="matcher-slot-code" data-testid="matcher-slot-code">
             {labels.slotCode(position.group, position.slot)}
           </span>
           {/* The spaces are IN the separator, not a flex gap: this line is text an
@@ -1537,6 +1538,7 @@ function PartRow({
   const titles = compareTitles(slotName, file.path, containerTitle);
   const shared = isShared(file);
   const label = splitContainerPrefix(file.path, containerTitle);
+  const marks = markFilename(label.rest, file.path, containerTitle);
 
   return (
     <div
@@ -1581,7 +1583,25 @@ function PartRow({
               {label.elided}
             </span>
           )}
-          {label.rest}
+          {/* The disagreement is coloured ON the filename, on the characters it is
+              about: the position it claims when that is not where it now sits, the
+              title it claims when the record says otherwise. Nothing is restated
+              underneath — the file's own name is the only text an Admin has to
+              read to decide. */}
+          {marks.map((mark, i) =>
+            (mark.kind === "position" && numbers.differs) ||
+            (mark.kind === "title" && titles.differs) ? (
+              <span
+                key={i}
+                className="matcher-part-mark"
+                data-testid={`matcher-part-mark-${mark.kind}`}
+              >
+                {mark.text}
+              </span>
+            ) : (
+              <span key={i}>{mark.text}</span>
+            ),
+          )}
         </button>
         <span className="matcher-part-actions">
           {total > 1 && (
@@ -1671,17 +1691,6 @@ function PartRow({
         </span>
       )}
 
-      {titles.differs && (
-        <span className="matcher-title-diff" data-testid="matcher-title-diff">
-          <span className="matcher-title-diff-side" data-testid="matcher-title-diff-slot">
-            {renderDiff(titles.segments, "removed")}
-          </span>
-          <span className="matcher-title-diff-side" data-testid="matcher-title-diff-file">
-            {renderDiff(titles.segments, "added")}
-          </span>
-        </span>
-      )}
-
       {file.orphaned && (
         <span className="matcher-part-orphaned" data-testid="matcher-part-orphaned">
           This correction points at a file that is no longer on disk.
@@ -1689,22 +1698,6 @@ function PartRow({
       )}
     </div>
   );
-}
-
-/** Render one side of a character diff: the shared runs plus the runs that belong
- * to this side only, which are the ones highlighted. */
-function renderDiff(segments: DiffSegment[], side: "removed" | "added"): ReactNode {
-  return segments
-    .filter((s) => s.kind === "same" || s.kind === side)
-    .map((s, i) =>
-      s.kind === "same" ? (
-        <span key={i}>{s.text}</span>
-      ) : (
-        <mark key={i} className="matcher-diff-mark" data-testid="matcher-diff-mark">
-          {s.text}
-        </mark>
-      ),
-    );
 }
 
 // --- File card --------------------------------------------------------------

@@ -420,21 +420,28 @@ describe("the comparison", () => {
     // numbers agree and the filename carries no title, so the row is silent.
     expect(partEl(B).dataset.titleMismatch).toBe("false");
     expect(slotEl(3, 2).dataset.positionMismatch).toBe("false");
-    expect(within(partEl(B)).queryByTestId("matcher-title-diff")).toBeNull();
+    expect(within(partEl(B)).queryByTestId("matcher-part-mark-title")).toBeNull();
+    expect(within(partEl(B)).queryByTestId("matcher-part-mark-position")).toBeNull();
   });
 
-  it("shows a one-letter title disagreement as a character diff", async () => {
+  it("marks the disagreeing TITLE, on the filename and nowhere else", async () => {
     const user = userEvent.setup();
     setup();
     await user.click(groupToggle(3));
-    const diff = within(partEl(A)).getByTestId("matcher-title-diff");
-    // The provider's "Holiday Nights" against the file's "Holiday Knights".
-    expect(within(diff).getAllByTestId("matcher-diff-mark").map((m) => m.textContent)).toContain("k");
-    expect(within(diff).getByTestId("matcher-title-diff-slot")).toHaveTextContent("holiday nights");
-    expect(within(diff).getByTestId("matcher-title-diff-file")).toHaveTextContent("holiday knights");
+
+    // The provider's "Holiday Nights" against the file's "Holiday Knights". The
+    // whole claimed title is marked, in place, inside the name it belongs to —
+    // there is no second copy of the text to read it against.
+    const marks = within(partEl(A)).getAllByTestId("matcher-part-mark-title");
+    expect(marks.map((m) => m.textContent).join("")).toBe("Holiday Knights");
+    // The numbers agree here, so the position it claims is left alone...
+    expect(within(partEl(A)).queryByTestId("matcher-part-mark-position")).toBeNull();
+    // ...and the Slot's own words are never marked, whatever disagrees.
+    expect(within(slotEl(3, 1)).getByTestId("matcher-slot-name")).not.toHaveClass("is-mismatch");
+    expect(within(slotEl(3, 1)).getByTestId("matcher-slot-code")).not.toHaveClass("is-mismatch");
   });
 
-  it("highlights disagreeing numbers on BOTH sides", async () => {
+  it("marks the disagreeing POSITION, on the filename and nowhere else", async () => {
     const user = userEvent.setup();
     setup();
     await user.click(groupToggle(3));
@@ -443,8 +450,14 @@ describe("the comparison", () => {
     await waitFor(() => expect(slotEl(4, 1)).toBeInTheDocument());
     await user.click(within(slotEl(4, 1)).getByTestId("matcher-slot-target"));
 
+    // The file is named S03E01 and now sits on V4-01, so its own S03E01 is marked.
+    const marks = within(slotEl(4, 1)).getAllByTestId("matcher-part-mark-position");
+    expect(marks.map((m) => m.textContent).join("")).toBe("S03E01");
+    // The row is still findable at a glance: the disagreement is on the Slot's edge.
     expect(slotEl(4, 1).dataset.positionMismatch).toBe("true");
-    expect(within(slotEl(4, 1)).getByTestId("matcher-slot-code")).toHaveClass("is-mismatch");
+    // But the Slot's own code is NOT marked — it is what the file is measured
+    // against, and marking both sides is the thing this replaced.
+    expect(within(slotEl(4, 1)).getByTestId("matcher-slot-code")).not.toHaveClass("is-mismatch");
     expect(within(slotEl(4, 1)).getByTestId("matcher-position-mismatch")).toHaveTextContent(
       "the filename says V3-01",
     );
