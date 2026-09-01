@@ -4,7 +4,7 @@ import {
   compareTitles,
   comparePosition,
   comparableTitle,
-  diffChars,
+  markFilename,
   elideContainerPrefix,
   splitContainerPrefix,
   titleFromFilename,
@@ -84,27 +84,6 @@ describe("comparableTitle", () => {
   });
 });
 
-describe("diffChars", () => {
-  it("finds a one-character disagreement with no similarity threshold", () => {
-    const segments = diffChars("fillibuster", "filibuster");
-    expect(segments.filter((s) => s.kind === "removed").map((s) => s.text).join("")).toBe("l");
-    expect(segments.filter((s) => s.kind === "added")).toHaveLength(0);
-    // Both sides still read as the whole word.
-    expect(segments.filter((s) => s.kind !== "added").map((s) => s.text).join("")).toBe(
-      "fillibuster",
-    );
-    expect(segments.filter((s) => s.kind !== "removed").map((s) => s.text).join("")).toBe(
-      "filibuster",
-    );
-  });
-
-  it("says nothing about identical strings", () => {
-    expect(diffChars("filibuster", "filibuster")).toEqual([
-      { text: "filibuster", kind: "same" },
-    ]);
-  });
-});
-
 describe("compareTitles", () => {
   it("shows a provider typo against the filename", () => {
     const c = compareTitles(
@@ -113,7 +92,9 @@ describe("compareTitles", () => {
       SHOW,
     );
     expect(c.differs).toBe(true);
-    expect(c.segments.some((s) => s.kind === "removed")).toBe(true);
+    // Both sides said something, and what they said is not the same word.
+    expect(c.slotTitle).toBe("fillibuster");
+    expect(c.fileTitle).toBe("filibuster");
   });
 
   it("stays silent on a correctly-matched dotted filename", () => {
@@ -123,7 +104,7 @@ describe("compareTitles", () => {
       SHOW,
     );
     expect(c.differs).toBe(false);
-    expect(c.segments).toHaveLength(0);
+    expect(c.fileTitle).toBe("");
   });
 
   it("stays silent when the Slot has no record at all (the degraded path)", () => {
@@ -267,5 +248,62 @@ describe("elideContainerPrefix", () => {
       elided: "",
       rest: "holiday-knights.mkv",
     });
+  });
+});
+
+describe("markFilename", () => {
+  const SHOW = "/media/Show/Vol 03/Show - S03E01 - Holiday Knights.mkv";
+
+  const run = (label: string, path: string, container = "Show") =>
+    markFilename(label, path, container)
+      .filter((m) => m.kind !== "plain")
+      .map((m) => `${m.kind}:${m.text}`);
+
+  it("finds the position and the title in an elided label", () => {
+    // What the screen shows for SHOW, once the container's name is cut off it.
+    expect(run("S03E01 - Holiday Knights.mkv", SHOW)).toEqual([
+      "position:S03E01",
+      "title:Holiday Knights",
+    ]);
+  });
+
+  it("finds them with the container's name still on the front", () => {
+    // Nothing was elided (the filename never names its container), so the walk has
+    // to skip the prefix itself rather than assume it is gone.
+    const path = "/media/Show/Show - S03E01 - Holiday Knights.mkv";
+    expect(run("Show - S03E01 - Holiday Knights.mkv", path)).toEqual([
+      "position:S03E01",
+      "title:Holiday Knights",
+    ]);
+  });
+
+  it("does not strip the prefix twice off an already-elided label", () => {
+    // The trap this function exists to avoid: Batman's episode is *Batman Begins*,
+    // and re-deriving the title from the elided label alone would eat the first
+    // word because it matches the Show's name.
+    const path = "/media/Batman/Batman - S01E01 - Batman Begins.mkv";
+    expect(run("S01E01 - Batman Begins.mkv", path, "Batman")).toEqual([
+      "position:S01E01",
+      "title:Batman Begins",
+    ]);
+  });
+
+  it("marks no title on a scene release, which claims none", () => {
+    const path = "/media/Show/Show.S03E02.1080p.WEB-DL.x264-GRP.mkv";
+    expect(run("S03E02.1080p.WEB-DL.x264-GRP.mkv", path)).toEqual(["position:S03E02"]);
+  });
+
+  it("keeps a separator inside one position claim", () => {
+    const path = "/media/Show/Show.S03.E01.Holiday.Knights.mkv";
+    expect(run("S03.E01.Holiday.Knights.mkv", path)).toEqual([
+      "position:S03.E01",
+      "title:Holiday.Knights",
+    ]);
+  });
+
+  it("returns the label whole, in order, whatever it marks", () => {
+    // Every character survives exactly once: this is the name an Admin reads.
+    const label = "S03E01 - Holiday Knights.mkv";
+    expect(markFilename(label, SHOW, "Show").map((m) => m.text).join("")).toBe(label);
   });
 });

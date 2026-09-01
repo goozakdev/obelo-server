@@ -9,16 +9,22 @@
 //
 // Two comparisons, with different rules:
 //
-//   * NUMBERS are compared AS NUMBERS, and disagreement is highlighted hard on
-//     both sides — because that disagreement IS the decision being made (PRD user
+//   * NUMBERS are compared AS NUMBERS — `S3` and `Season 03` are the same season,
+//     and only a real numeric disagreement is worth an Admin's attention (PRD user
 //     story 2: assigning against the filename must be conscious, never a slip).
 //
 //   * TITLES are compared only after normalizing away everything that is not the
 //     title: the container-name prefix, the extension, the release tags, the case
-//     and the punctuation. What survives is diffed CHARACTER BY CHARACTER with no
-//     similarity threshold — so a provider's `Fillibuster` shows against a file's
-//     `Filibuster`, while `Parks.and.Rec.S06E06.1080p.WEB-DL.x264-GRP` normalizes
-//     to nothing at all and therefore lights up no row.
+//     and the punctuation. What survives is compared whole — so a provider's
+//     `Fillibuster` disagrees with a file's `Filibuster`, while
+//     `Parks.and.Rec.S06E06.1080p.WEB-DL.x264-GRP` normalizes to nothing at all
+//     and therefore lights up no row.
+//
+// Both answers are yes-or-no. Neither produces a second copy of the text to set
+// beside the first: what the screen shows is the FILENAME, with the run that
+// disagrees coloured in place (see `markFilename`). The Slot's own words are never
+// marked — they are what the file is being measured against, and marking both
+// sides left an Admin comparing two highlighted strings instead of reading one.
 //
 // Nothing here is named after a season or an episode: the Album matcher compares a
 // track filename against a track title by exactly these rules.
@@ -140,70 +146,6 @@ export function titleFromFilename(path: string, containerTitle = ""): string {
   return stripContainerPrefix(kept, containerTitle).join(" ");
 }
 
-export type DiffKind = "same" | "removed" | "added";
-
-/** One run of characters and where it lives: in both strings, only in the first
- * (`removed`), or only in the second (`added`). Rendering the first side uses
- * `same` + `removed`; the second uses `same` + `added`. */
-export interface DiffSegment {
-  text: string;
-  kind: DiffKind;
-}
-
-/** A character-level diff with NO similarity threshold — the point being that a
- * one-letter disagreement is exactly the case a threshold would hide, and it is
- * also the case an Admin most needs to see (`Fillibuster` / `Filibuster`).
- *
- * Plain LCS. The inputs are normalized titles, so tens of characters; the guard
- * below is only there so a pathological input degrades to "wholly different"
- * instead of allocating a huge table. */
-export function diffChars(a: string, b: string): DiffSegment[] {
-  if (a === b) return a === "" ? [] : [{ text: a, kind: "same" }];
-  if (a === "") return [{ text: b, kind: "added" }];
-  if (b === "") return [{ text: a, kind: "removed" }];
-  if (a.length > 400 || b.length > 400) {
-    return [
-      { text: a, kind: "removed" },
-      { text: b, kind: "added" },
-    ];
-  }
-
-  const n = a.length;
-  const m = b.length;
-  // lcs[i][j] = length of the longest common subsequence of a[i:] and b[j:].
-  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
-  }
-
-  const out: DiffSegment[] = [];
-  const push = (text: string, kind: DiffKind) => {
-    const last = out[out.length - 1];
-    if (last && last.kind === kind) last.text += text;
-    else out.push({ text, kind });
-  };
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      push(a[i], "same");
-      i++;
-      j++;
-    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-      push(a[i], "removed");
-      i++;
-    } else {
-      push(b[j], "added");
-      j++;
-    }
-  }
-  if (i < n) push(a.slice(i), "removed");
-  if (j < m) push(b.slice(j), "added");
-  return out;
-}
-
 /** The result of comparing one File against one Slot. */
 export interface TitleComparison {
   /** The normalized provider title, "" when there is no record (degraded path). */
@@ -213,7 +155,6 @@ export interface TitleComparison {
   /** True only when BOTH sides said something and the two disagree. Everything
    * else — a bare Slot, a scene release, an exact match — is silence. */
   differs: boolean;
-  segments: DiffSegment[];
 }
 
 export function compareTitles(
@@ -226,10 +167,11 @@ export function compareTitles(
   // Either side empty means there is nothing to compare, NOT a disagreement.
   // Getting this backwards is what would light up every scene-named file in the
   // library, which is most of them.
-  if (slotTitle === "" || fileTitle === "" || slotTitle === fileTitle) {
-    return { slotTitle, fileTitle, differs: false, segments: [] };
-  }
-  return { slotTitle, fileTitle, differs: true, segments: diffChars(slotTitle, fileTitle) };
+  return {
+    slotTitle,
+    fileTitle,
+    differs: slotTitle !== "" && fileTitle !== "" && slotTitle !== fileTitle,
+  };
 }
 
 /** The result of comparing the numbers a filename claims against a Slot's own. */
@@ -371,4 +313,82 @@ export function splitContainerPrefix(
     }
   }
   return { elided: ELISION, rest: name.slice(spans[cut].start) };
+}
+
+/** What one run of a displayed filename is: the position it claims, the title it
+ * claims, or neither. */
+export type LabelMarkKind = "plain" | "position" | "title";
+
+export interface LabelMark {
+  text: string;
+  kind: LabelMarkKind;
+}
+
+/** Cut a displayed filename into those runs, so a disagreement can be coloured on
+ * the characters it is about instead of restated underneath as a second string.
+ *
+ * `label` is what is on screen (usually elided, see splitContainerPrefix); `path`
+ * is the real file, which is what the comparisons were made against. Both are
+ * needed: the label is where the offsets live, and only the path can say how many
+ * words of it survived into the title that was actually compared — the elided
+ * label has already lost the container prefix that `titleFromFilename` strips, so
+ * re-deriving the title from the label alone would strip a second time and eat a
+ * real word off a Show like *Batman* whose episode is *Batman Begins*.
+ *
+ * The title is the TAIL of the kept words (the prefix goes off the front, a
+ * technical tag truncates the end), so taking the last n is exact either way. */
+export function markFilename(label: string, path: string, containerTitle = ""): LabelMark[] {
+  const stem = label.replace(/\.[a-z0-9]{1,5}$/i, "");
+  // Channel layouts are deleted before tokenizing over in titleFromFilename; here
+  // the characters have to stay put, so the spans inside one are skipped instead.
+  const layouts: { start: number; end: number }[] = [];
+  for (const m of stem.matchAll(CHANNEL_LAYOUT_RE)) {
+    if (m.index !== undefined) layouts.push({ start: m.index, end: m.index + m[0].length });
+  }
+  const inLayout = (span: { start: number; end: number }) =>
+    layouts.some((l) => span.start >= l.start && span.end <= l.end);
+
+  const position: { start: number; end: number }[] = [];
+  const kept: { start: number; end: number }[] = [];
+  for (const span of tokenSpans(stem)) {
+    if (inLayout(span)) continue;
+    // The same walk titleFromFilename does, keeping the offsets it throws away.
+    if (TECHNICAL_TAGS.has(span.token)) break;
+    if (POSITION_RES.some((re) => re.test(span.token))) {
+      position.push(span);
+      continue;
+    }
+    if (YEAR_RE.test(span.token)) continue;
+    if (PART_RE.test(span.token)) continue;
+    kept.push(span);
+  }
+
+  const compared = titleFromFilename(path, containerTitle);
+  const words = compared === "" ? 0 : compared.split(" ").length;
+  const title = words === 0 ? [] : kept.slice(Math.max(0, kept.length - words));
+
+  const kinds: LabelMarkKind[] = new Array(label.length).fill("plain");
+  if (title.length > 0) {
+    for (let c = title[0].start; c < title[title.length - 1].end; c++) kinds[c] = "title";
+  }
+  for (const span of position) {
+    for (let c = span.start; c < span.end; c++) kinds[c] = "position";
+  }
+  // `S03.E01` is one claim written with a separator in it, so the separator joins
+  // the run rather than leaving a plain gap between two coloured halves.
+  for (let i = 1; i < position.length; i++) {
+    const from = position[i - 1].end;
+    const to = position[i].start;
+    if (/^[^a-z0-9]*$/i.test(label.slice(from, to))) {
+      for (let c = from; c < to; c++) kinds[c] = "position";
+    }
+  }
+
+  const out: LabelMark[] = [];
+  for (let c = 0; c < label.length; c++) {
+    const last = out[out.length - 1];
+    if (last && last.kind === kinds[c]) last.text += label[c];
+    else out.push({ text: label[c], kind: kinds[c] });
+  }
+  return out;
 }

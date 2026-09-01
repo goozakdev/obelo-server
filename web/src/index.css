@@ -5315,13 +5315,23 @@ textarea.metadata-input {
   font-weight: 600;
 }
 
-/* The numbers disagree. Hard on BOTH sides — the Slot's code and the file's claim
-   — because the disagreement is the decision being made, not a warning. */
-.matcher-slot.is-mismatch,
-.matcher-slot-code.is-mismatch,
+/* Something disagrees. The Slot's EDGE carries it — that is what makes the row
+   findable while the eye runs down a season — and the disagreement is then spelled
+   out on the filename itself (.matcher-part-mark below). The Slot's own words are
+   deliberately left alone: they are what the file is being measured against, and
+   marking both sides left an Admin comparing two highlighted strings. */
+.matcher-slot.is-mismatch {
+  border-color: var(--warn);
+}
 .matcher-part-claim.is-mismatch {
   color: var(--warn);
-  border-color: var(--warn);
+}
+
+/* The run of the FILENAME a comparison disagreed about: the position it claims,
+   or the title it claims. Colour only — no background, no box — because it has to
+   read as part of the name it is inside, not as an annotation stuck onto it. */
+.matcher-part-mark {
+  color: var(--warn);
 }
 
 .matcher-slot-name.is-bare {
@@ -5451,22 +5461,6 @@ textarea.metadata-input {
 .matcher-part-action svg {
   width: 1.15em;
   height: 1.15em;
-}
-
-/* The character diff. Only the runs that differ are marked; the shared runs are
-   plain, so a one-letter disagreement reads as one letter. */
-.matcher-title-diff {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  font-size: 0.8rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.matcher-diff-mark {
-  background: var(--warn);
-  color: var(--accent-ink);
-  border-radius: 2px;
 }
 
 .matcher-ignored {
