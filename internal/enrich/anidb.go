@@ -209,15 +209,15 @@ func (p *AniDBProvider) fetch(ctx context.Context, aid string) (anidbResult, err
 	req.Header.Set("User-Agent", p.UserAgent)
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return anidbResult{}, fmt.Errorf("enrich: anidb request: %w", err)
+		return anidbResult{}, requestError("anidb", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return anidbResult{}, fmt.Errorf("enrich: anidb: status %d", resp.StatusCode)
+		return anidbResult{}, statusError("anidb", "", resp.StatusCode)
 	}
 	var a anidbAnime
 	if err := xml.NewDecoder(resp.Body).Decode(&a); err != nil {
-		return anidbResult{}, fmt.Errorf("enrich: decoding anidb response: %w", err)
+		return anidbResult{}, decodeError("anidb", err)
 	}
 	if a.XMLName.Local == "error" {
 		msg := strings.TrimSpace(a.RootText)

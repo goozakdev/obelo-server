@@ -950,7 +950,12 @@ export interface Credit {
 
 /** A Title's enrichment status (external-metadata-enrichment): pending (scanned,
  * not yet enriched), matched, unmatched (no external record), failed (provider
- * errored), disabled (no provider configured). Absent on an un-enriched server. */
+ * errored), disabled (no provider configured). Absent on an un-enriched server.
+ *
+ * `failed` does NOT mean the item needs a human. A transient provider failure is
+ * recorded `failed` with a retry scheduled, and the server keeps only the parked
+ * and the escalated ones on the attention list (ADR-0048) — so read the list, not
+ * this field, to decide whether something is waiting on the Admin. */
 export type EnrichmentStatus =
   | "pending"
   | "matched"

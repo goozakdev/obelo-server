@@ -648,14 +648,14 @@ func (p *TMDBProvider) getJSON(ctx context.Context, path string, q url.Values, o
 	}
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return fmt.Errorf("enrich: tmdb request: %w", err)
+		return requestError("tmdb", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("enrich: tmdb %s: status %d", path, resp.StatusCode)
+		return statusError("tmdb", path, resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("enrich: decoding tmdb response: %w", err)
+		return decodeError("tmdb", err)
 	}
 	return nil
 }

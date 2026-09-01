@@ -19,25 +19,58 @@ import (
 type EnrichSelect int
 
 const (
-	// EnrichPending selects only Titles never successfully enriched
-	// (enrichment_status='pending') — the only-new pass + the auto-after-scan path.
+	// EnrichPending selects the Titles an only-new pass should look at: those never
+	// successfully enriched ('pending'), plus those whose last failure was transient
+	// and has come due for a retry (ADR-0048). The auto-after-scan and sweep paths.
 	EnrichPending EnrichSelect = iota
 	// EnrichAll selects every visible Title for a full refresh (still unlocked-only).
 	EnrichAll
 )
 
+// EnrichRetryEscalateAfter is how many consecutive failed lookups an item may
+// accumulate before it appears on the Admin's attention list ALONGSIDE still being
+// retried (ADR-0048). It is the length of the enrich package's backoff schedule:
+// an item escalates exactly when its backoff has reached the daily ceiling, i.e.
+// when the failure has outlived every timescale a blip plausibly lasts.
+//
+// Escalating does not stop the retries. The item is surfaced because six straight
+// failures is worth an Admin's attention, not because the server has given up —
+// if the cause clears on its own, the next pass settles it and it leaves the list
+// with nobody having touched it.
+const EnrichRetryEscalateAfter = 6
+
+// clearEnrichmentRetry is the SET fragment that drops a row's retry bookkeeping
+// (ADR-0048). Every statement that SETTLES a Title — matched, unmatched, disabled
+// — or hands it back to the pass as 'pending' includes it, so exactly one rule
+// governs when a failure streak survives: only a transient failure keeps it, and
+// only SetTitleEnrichmentRetry writes one.
+const clearEnrichmentRetry = `enrichment_attempts = 0, enrichment_retry_at = ''`
+
+// retryDueClause matches a 'failed' Title whose scheduled retry has come due. A
+// row is due when it carries a retry instant at all (non-empty = "we intend to try
+// again") and that instant is not in the future. Timestamps are RFC3339 UTC, which
+// sorts lexicographically, so a string comparison is a chronological one.
+const retryDueClause = `(enrichment_status = 'failed'
+	    AND enrichment_retry_at <> '' AND enrichment_retry_at <= ?)`
+
 // TitlesForEnrichment returns the visible (non-hidden) Titles of a Library that
 // a pass should consider, oldest-added first for a stable order. Hidden
 // (all-Files-Missing) Titles are skipped — enrichment doesn't spend calls on
 // soft-deleted media (ADR-0008); they re-enter as 'pending' when they return.
-func (db *DB) TitlesForEnrichment(libraryID string, sel EnrichSelect) ([]Title, error) {
+//
+// now is the clock the retry window is measured against, supplied by the caller
+// so a pass and its tests agree on "due" (the service owns the clock; the store
+// only compares).
+func (db *DB) TitlesForEnrichment(libraryID string, sel EnrichSelect, now time.Time) ([]Title, error) {
 	where := "library_id = ? AND hidden = 0"
+	args := []any{libraryID}
 	if sel == EnrichPending {
-		where += " AND enrichment_status = 'pending'"
+		where += " AND (enrichment_status = 'pending' OR " + retryDueClause + ")"
+		args = append(args, now.UTC().Format(time.RFC3339))
 	}
 	rows, err := db.Query(
 		`SELECT `+enrichedTitleColumns+`
-		   FROM titles WHERE `+where+` ORDER BY added_at, id`, libraryID)
+		   FROM titles WHERE `+where+` ORDER BY added_at, id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: selecting titles for enrichment: %w", err)
 	}
@@ -165,7 +198,7 @@ func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch, origin Reco
 		     enrichment_id_origin = CASE WHEN ? = 1 THEN ? ELSE enrichment_id_origin END,
 		     enrichment_season  = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_season END,
 		     enrichment_episode = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_episode END,
-		     enrichment_status = 'pending'
+		     enrichment_status = 'pending', `+clearEnrichmentRetry+`
 		   WHERE id = ?`,
 		m.TMDBID, m.TMDBID, m.IMDBID, m.IMDBID, m.MusicbrainzID, m.MusicbrainzID,
 		setOrigin, string(origin),
@@ -201,19 +234,35 @@ func (db *DB) TitleForEnrichmentByID(titleID string) (Title, error) {
 }
 
 // TitlesNeedingMatch returns the visible Titles of a Library whose Enrichment
-// could not settle on a record — enrichment_status 'unmatched' or 'failed' — the
-// Admin attention surface for hand-matching (CONTEXT.md). It is deliberately
-// distinct from the identity Unmatched files (recognized media with no Title) and
-// from needs-review Titles; here the Title browses fine but its descriptive
-// metadata is missing. Hidden (all-Files-Missing) Titles are excluded; ordered by
-// sort title for a stable list.
+// could not settle on a record — the Admin attention surface for hand-matching
+// (CONTEXT.md). It is deliberately distinct from the identity Unmatched files
+// (recognized media with no Title) and from needs-review Titles; here the Title
+// browses fine but its descriptive metadata is missing. Hidden (all-Files-Missing)
+// Titles are excluded; ordered by sort title for a stable list.
+//
+// Three populations qualify (ADR-0048):
+//
+//   - 'unmatched' — the provider answered and had no record. Nothing but a human
+//     will change that.
+//   - 'failed' with no scheduled retry — a permanent provider error (a rejected
+//     key, a malformed request). Parked, exactly as every failure used to be.
+//   - 'failed' with a retry scheduled but EnrichRetryEscalateAfter consecutive
+//     failures behind it. Still being retried, but long enough that the Admin
+//     should know. Leaving these off the list entirely would trade one silent
+//     failure mode (parked forever) for another (retrying forever, invisibly).
+//
+// A transient failure below the escalation threshold is deliberately absent: it is
+// in-flight work, not an attention item, and putting it here would fill the queue
+// with rows that clear themselves before anyone reads them.
 func (db *DB) TitlesNeedingMatch(libraryID string) ([]Title, error) {
 	rows, err := db.Query(
 		`SELECT `+enrichedTitleColumns+`
 		   FROM titles
 		  WHERE library_id = ? AND hidden = 0
-		    AND enrichment_status IN ('unmatched', 'failed')
-		  ORDER BY sort_title, id`, libraryID)
+		    AND (enrichment_status = 'unmatched'
+		         OR (enrichment_status = 'failed'
+		             AND (enrichment_retry_at = '' OR enrichment_attempts >= ?)))
+		  ORDER BY sort_title, id`, libraryID, EnrichRetryEscalateAfter)
 	if err != nil {
 		return nil, fmt.Errorf("store: selecting titles needing match: %w", err)
 	}
@@ -229,16 +278,56 @@ func (db *DB) TitlesNeedingMatch(libraryID string) ([]Title, error) {
 	return out, rows.Err()
 }
 
-// SetTitleEnrichmentStatus records a terminal non-matched outcome for a Title
-// (unmatched / failed / disabled) without touching its descriptive fields — the
-// Title keeps whatever metadata it had and stays browsable (graceful
-// degradation, ADR-0001).
+// SetTitleEnrichmentStatus records a SETTLED outcome for a Title (unmatched /
+// failed / disabled) without touching its descriptive fields — the Title keeps
+// whatever metadata it had and stays browsable (graceful degradation, ADR-0001).
+//
+// Settled means "nobody is coming back for this on their own", so it clears the
+// retry bookkeeping: no scheduled retry, and the consecutive-failure streak resets
+// to zero. That reset is what makes a recovered item start over — an item that
+// failed five times, then matched, then fails again months later is at the
+// beginning of a new streak, not one step from the daily ceiling. A transient
+// failure does NOT come through here; it goes to SetTitleEnrichmentRetry.
 func (db *DB) SetTitleEnrichmentStatus(titleID, status string) error {
 	if _, err := db.Exec(
-		`UPDATE titles SET enrichment_status = ?, enriched_at = ? WHERE id = ?`,
+		`UPDATE titles SET enrichment_status = ?, enriched_at = ?, `+
+			clearEnrichmentRetry+`
+		   WHERE id = ?`,
 		status, time.Now().UTC().Format(time.RFC3339), titleID,
 	); err != nil {
 		return fmt.Errorf("store: setting enrichment status: %w", err)
+	}
+	return nil
+}
+
+// SetTitleEnrichmentRetry records a TRANSIENT failure for a Title: the status is
+// 'failed' exactly as before, but the row also carries the streak length and the
+// instant from which the next only-new pass may pick it up again (ADR-0048).
+//
+// attempts is the new consecutive-failure count (1 for the first failure of a
+// streak) and retryAt the computed due time; the caller owns both, because the
+// backoff schedule is enrichment policy and the store is only its ledger.
+//
+// Descriptive fields are untouched: a Title that was enriched last month and hit a
+// 503 today keeps its overview and artwork and stays browsable. The only thing
+// that changed is that the server now knows to ask again.
+func (db *DB) SetTitleEnrichmentRetry(titleID string, attempts int, retryAt time.Time) error {
+	res, err := db.Exec(
+		`UPDATE titles SET enrichment_status = 'failed', enriched_at = ?,
+		     enrichment_attempts = ?, enrichment_retry_at = ?
+		   WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), attempts,
+		retryAt.UTC().Format(time.RFC3339), titleID,
+	)
+	if err != nil {
+		return fmt.Errorf("store: scheduling title enrichment retry: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: title enrichment retry rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -749,7 +838,7 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	if _, err := tx.Exec(
 		`UPDATE titles SET overview = ?, tagline = ?, content_rating = ?, release_date = ?,
 		     runtime_minutes = ?, studio = ?, enriched_title = ?, enrichment_status = 'matched',
-		     enriched_at = ?, enrichment_source = ?,
+		     enriched_at = ?, enrichment_source = ?, `+clearEnrichmentRetry+`,
 		     enrichment_tmdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_tmdb_id, '') = ''
 		                                AND IFNULL(tmdb_id, '') = '' THEN ? ELSE enrichment_tmdb_id END,
 		     enrichment_imdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_imdb_id, '') = ''

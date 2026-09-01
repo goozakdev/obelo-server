@@ -33,6 +33,10 @@ type enrichResultJSON struct {
 	Unmatched int    `json:"unmatched"`
 	Failed    int    `json:"failed"`
 	Disabled  int    `json:"disabled"`
+	// Retrying is the count of leaves left scheduled for another attempt after a
+	// transient provider failure (ADR-0048) — not parked, and not the Admin's
+	// problem unless the streak escalates.
+	Retrying int `json:"retrying"`
 }
 
 // handleEnrich triggers an Enrichment pass over a Library (Admin). By default it
@@ -83,7 +87,8 @@ func handleEnrich(svc *enrich.Service, broker *events.Broker) http.HandlerFunc {
 			broker.PublishEnrichProgress(events.EnrichProgress{
 				LibraryID: id, Total: res.Total, Done: res.Total,
 				Matched: res.Matched, Unmatched: res.Unmatched,
-				Failed: res.Failed, Disabled: res.Disabled, Complete: true,
+				Failed: res.Failed, Disabled: res.Disabled, Retrying: res.Retrying,
+				Complete: true,
 			})
 			// An enrichment pass changes a Library's metadata/artwork, so it is
 			// also a content-change point: nudge clients to refetch (library-scoped).
@@ -96,6 +101,7 @@ func handleEnrich(svc *enrich.Service, broker *events.Broker) http.HandlerFunc {
 			Unmatched: res.Unmatched,
 			Failed:    res.Failed,
 			Disabled:  res.Disabled,
+			Retrying:  res.Retrying,
 		})
 	}
 }
@@ -862,6 +868,7 @@ func toEnrichEvent(p enrich.Progress, complete bool) events.EnrichProgress {
 		Unmatched: p.Unmatched,
 		Failed:    p.Failed,
 		Disabled:  p.Disabled,
+		Retrying:  p.Retrying,
 		Complete:  complete,
 	}
 }

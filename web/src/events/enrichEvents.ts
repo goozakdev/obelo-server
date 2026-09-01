@@ -27,6 +27,11 @@ export interface EnrichProgress {
   unmatched: number;
   failed: number;
   disabled: number;
+  /** Leaves whose lookup failed transiently and are scheduled to be tried again
+   * rather than parked (ADR-0048). Reported apart from `failed` because the two
+   * need different words in front of an operator: `failed` is work for them,
+   * `retrying` is work the server has already taken on. */
+  retrying: number;
   complete: boolean;
 }
 

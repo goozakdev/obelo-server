@@ -801,7 +801,7 @@ func (p *MusicBrainzProvider) ArtworkCandidates(ctx context.Context, ref TitleRe
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("enrich: cover-art request: %w", err)
+		return nil, requestError("cover-art", err)
 	}
 	defer resp.Body.Close()
 	// A 404 is the normal "this release-group has no cover art" outcome — no images.
@@ -809,7 +809,7 @@ func (p *MusicBrainzProvider) ArtworkCandidates(ctx context.Context, ref TitleRe
 		return nil, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("enrich: cover-art release-group: status %d", resp.StatusCode)
+		return nil, statusError("cover-art", "release-group", resp.StatusCode)
 	}
 	var out struct {
 		Images []struct {
@@ -819,7 +819,7 @@ func (p *MusicBrainzProvider) ArtworkCandidates(ctx context.Context, ref TitleRe
 		} `json:"images"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("enrich: decoding cover-art response: %w", err)
+		return nil, decodeError("cover-art", err)
 	}
 	cands := make([]ArtworkCandidate, 0, len(out.Images))
 	for _, im := range out.Images {
@@ -871,7 +871,7 @@ func (p *MusicBrainzProvider) getJSON(ctx context.Context, path string, q url.Va
 		req.Header.Set("Accept", "application/json")
 		resp, err := p.client().Do(req)
 		if err != nil {
-			return fmt.Errorf("enrich: musicbrainz request: %w", err)
+			return requestError("musicbrainz", err)
 		}
 		// 503 means we were throttled (or MusicBrainz is briefly unavailable): back
 		// off and retry a few times rather than dropping the lookup.
@@ -892,12 +892,12 @@ func (p *MusicBrainzProvider) getJSON(ctx context.Context, path string, q url.Va
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
-			return fmt.Errorf("enrich: musicbrainz %s: status %d", path, resp.StatusCode)
+			return statusError("musicbrainz", path, resp.StatusCode)
 		}
 		err = json.NewDecoder(resp.Body).Decode(out)
 		resp.Body.Close()
 		if err != nil {
-			return fmt.Errorf("enrich: decoding musicbrainz response: %w", err)
+			return decodeError("musicbrainz", err)
 		}
 		return nil
 	}

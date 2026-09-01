@@ -443,7 +443,8 @@ func (db *DB) EpisodesForSeason(seasonID string) ([]Title, error) {
 		        `+recordExternalIDs("")+`, needs_review, ambiguous, hidden,
 		        season_number, episode_number, episode_label,
 		        overview, enrichment_status, enriched_title,
-		        enrichment_season, enrichment_episode, enrichment_id_origin
+		        enrichment_season, enrichment_episode, enrichment_id_origin,
+		        enrichment_attempts, enrichment_retry_at
 		   FROM titles WHERE season_id = ? AND hidden = 0
 		  ORDER BY episode_number ASC, sort_title ASC, id ASC`, seasonID)
 	if err != nil {
@@ -553,7 +554,8 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
-		&pinSeason, &pinEpisode, &idOrigin); err != nil {
+		&pinSeason, &pinEpisode, &idOrigin,
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt); err != nil {
 		return Title{}, err
 	}
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)

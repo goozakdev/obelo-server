@@ -52,6 +52,13 @@ type EntityEnrichment struct {
 	// the Album's, and must take the correction again.
 	ExternalIDOrigin RecordOrigin
 	Genres           []string
+	// Attempts / RetryAt are the retry bookkeeping for a 'failed' parent, the exact
+	// twin of Title.EnrichmentAttempts / EnrichmentRetryAt (ADR-0048). A parent
+	// whose lookup failed transiently is re-resolved by the next only-new pass once
+	// RetryAt has passed, instead of holding every child under it un-enriched behind
+	// a settled-looking status.
+	Attempts int
+	RetryAt  string
 }
 
 // EntityEnrichmentWrite is a resolved parent result ready to persist. Genres and
@@ -125,7 +132,8 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 		    overview = excluded.overview, content_rating = excluded.content_rating,
 		    network = excluded.network, external_id = excluded.external_id,
 		    enrichment_status = 'matched',
-		    enriched_at = excluded.enriched_at, enrichment_source = excluded.enrichment_source`,
+		    enriched_at = excluded.enriched_at, enrichment_source = excluded.enrichment_source, `+
+			clearEnrichmentRetry,
 		entityType, entityID, overview, contentRating, network, e.ExternalID,
 		time.Now().UTC().Format(time.RFC3339), e.Source,
 	); err != nil {
@@ -198,17 +206,47 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 	return nil
 }
 
-// SetEntityEnrichmentStatus records a terminal non-matched outcome (unmatched /
-// failed / disabled) for a parent entity without touching its descriptive fields.
+// SetEntityEnrichmentStatus records a SETTLED outcome (unmatched / failed /
+// disabled) for a parent entity without touching its descriptive fields. Like the
+// leaf twin it clears the retry bookkeeping — settled means nobody is coming back
+// on their own, and the next failure starts a fresh streak (ADR-0048). A transient
+// failure goes to SetEntityEnrichmentRetry instead.
 func (db *DB) SetEntityEnrichmentStatus(entityType, entityID, status string) error {
 	if _, err := db.Exec(
 		`INSERT INTO entity_enrichment (entity_type, entity_id, enrichment_status, enriched_at)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-		    enrichment_status = excluded.enrichment_status, enriched_at = excluded.enriched_at`,
+		    enrichment_status = excluded.enrichment_status, enriched_at = excluded.enriched_at, `+
+			clearEnrichmentRetry,
 		entityType, entityID, status, time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("store: setting entity enrichment status: %w", err)
+	}
+	return nil
+}
+
+// SetEntityEnrichmentRetry records a TRANSIENT failure for a parent entity: status
+// 'failed', plus the streak length and the instant the next only-new pass may try
+// again (ADR-0048). The parent twin of SetTitleEnrichmentRetry.
+//
+// It matters more here than on a leaf. enrichParent returns early for any parent
+// that is not 'pending', so a Show parked by one 503 stopped its Seasons and every
+// Episode under it from resolving too — one unlucky call could leave a whole show
+// un-enriched with nothing on any list saying why.
+func (db *DB) SetEntityEnrichmentRetry(entityType, entityID string, attempts int, retryAt time.Time) error {
+	if _, err := db.Exec(
+		`INSERT INTO entity_enrichment
+		     (entity_type, entity_id, enrichment_status, enriched_at,
+		      enrichment_attempts, enrichment_retry_at)
+		 VALUES (?, ?, 'failed', ?, ?, ?)
+		 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+		    enrichment_status = 'failed', enriched_at = excluded.enriched_at,
+		    enrichment_attempts = excluded.enrichment_attempts,
+		    enrichment_retry_at = excluded.enrichment_retry_at`,
+		entityType, entityID, time.Now().UTC().Format(time.RFC3339),
+		attempts, retryAt.UTC().Format(time.RFC3339),
+	); err != nil {
+		return fmt.Errorf("store: scheduling entity enrichment retry: %w", err)
 	}
 	return nil
 }
@@ -237,10 +275,12 @@ func (db *DB) EntityEnrichmentByID(entityType, entityID string) (EntityEnrichmen
 	e := EntityEnrichment{Status: "pending"}
 	var externalIDOrigin string
 	err := db.QueryRow(
-		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id, external_id_origin
+		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id, external_id_origin,
+		        enrichment_attempts, enrichment_retry_at
 		   FROM entity_enrichment WHERE entity_type = ? AND entity_id = ?`,
 		entityType, entityID,
-	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID, &externalIDOrigin)
+	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID, &externalIDOrigin,
+		&e.Attempts, &e.RetryAt)
 	e.ExternalIDOrigin = RecordOrigin(externalIDOrigin)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return EntityEnrichment{}, fmt.Errorf("store: reading entity enrichment: %w", err)
