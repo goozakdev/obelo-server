@@ -21,10 +21,14 @@ import (
 // narrow interface keeps the seam explicit and the service testable.
 type Store interface {
 	LibraryByID(id string) (store.Library, error)
-	TitlesForEnrichment(libraryID string, sel store.EnrichSelect) ([]store.Title, error)
+	TitlesForEnrichment(libraryID string, sel store.EnrichSelect, now time.Time) ([]store.Title, error)
 	LockedFields(titleID string) (map[string]bool, error)
 	WriteTitleEnrichment(titleID string, e store.TitleEnrichment, locks map[string]bool) error
 	SetTitleEnrichmentStatus(titleID, status string) error
+	// SetTitleEnrichmentRetry is the TRANSIENT-failure twin of the settle above: it
+	// records 'failed' with a scheduled retry instead of parking the Title, so an
+	// item lost to a provider outage comes back on its own (ADR-0048).
+	SetTitleEnrichmentRetry(titleID string, attempts int, retryAt time.Time) error
 
 	// Single-Title match correction (issue 05): an Admin re-points a Title's
 	// external metadata id, then it re-enriches just that Title. SetTitleExternalMatch
@@ -46,6 +50,7 @@ type Store interface {
 	TracksForAlbum(albumID string) ([]store.Title, error)
 	WriteEntityEnrichment(entityType, entityID string, e store.EntityEnrichmentWrite, locks map[string]bool) error
 	SetEntityEnrichmentStatus(entityType, entityID, status string) error
+	SetEntityEnrichmentRetry(entityType, entityID string, attempts int, retryAt time.Time) error
 	EntityEnrichmentByID(entityType, entityID string) (store.EntityEnrichment, error)
 
 	// Parent-entity Fix-info + Locked fields (issue item-editing/02): an Admin pins
@@ -153,6 +158,11 @@ type Service struct {
 	// zero TTL disables it with no behavior change.
 	candidates *candidateCache
 
+	// now is the Service's clock, injectable so a test can drive the retry window
+	// (ADR-0048) without sleeping. nil means time.Now — read through clock(), never
+	// directly, so a Service built by a struct literal in a test still works.
+	now func() time.Time
+
 	// slotGroups / slotLists cache the two EpisodeLister reads (a series' season
 	// list, and one season's episodes). The file matcher loads a Show's Slots one
 	// season at a time (ADR-0044), so collapsing and re-expanding a season would
@@ -208,6 +218,21 @@ func (s *Service) SetProvider(provider MetadataProvider, enablement Enablement) 
 // snapshot returns the current GLOBAL provider + enablement snapshot. Callers read
 // it once per use so a concurrent SetProvider swap is picked up on the next read.
 func (s *Service) snapshot() providerSnapshot { return *s.current.Load() }
+
+// clock returns the Service's time source (time.Now unless a test replaced it).
+// Every read of "now" in the retry path goes through here so one pass measures
+// scheduling and due-ness against a single, substitutable clock.
+func (s *Service) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// SetClock replaces the Service's time source. Test-only seam for the retry
+// backoff (ADR-0048): production never calls it, and nothing else in the Service
+// reads the clock, so a fixed clock changes only when retries come due.
+func (s *Service) SetClock(now func() time.Time) { s.now = now }
 
 // snapshotFor returns the EFFECTIVE provider + enablement snapshot for a Library:
 // its Enrichment policy (ADR-0027) resolved over the global config when a
@@ -273,6 +298,12 @@ type Progress struct {
 	Unmatched int
 	Failed    int
 	Disabled  int
+	// Retrying counts the leaves whose lookup failed TRANSIENTLY and are scheduled
+	// to be tried again (ADR-0048). Split out from Failed on purpose: the two need
+	// different words in front of an operator — "8 failed" invites them to go and
+	// fix eight things, "8 will be retried" tells them to wait — and collapsing them
+	// would have made the fix invisible on every surface that reports a pass.
+	Retrying int
 }
 
 // Result summarizes a completed pass.
@@ -282,6 +313,9 @@ type Result struct {
 	Unmatched int
 	Failed    int
 	Disabled  int
+	// Retrying is the Progress counter of the same name: leaves left scheduled for
+	// another attempt rather than parked (ADR-0048).
+	Retrying int
 }
 
 // EnrichLibrary runs one Enrichment pass over a Library's visible Titles. It
@@ -339,7 +373,7 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 			sel = store.EnrichAll
 		}
 		var titles []store.Title
-		titles, err = s.store.TitlesForEnrichment(libraryID, sel)
+		titles, err = s.store.TitlesForEnrichment(libraryID, sel, s.clock())
 		for _, t := range titles {
 			leaves = append(leaves, leafWork{title: t, ref: refFor(t)})
 		}
@@ -355,7 +389,7 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 			onProgress(Progress{
 				LibraryID: libraryID, Total: res.Total, Done: done,
 				Matched: res.Matched, Unmatched: res.Unmatched,
-				Failed: res.Failed, Disabled: res.Disabled,
+				Failed: res.Failed, Disabled: res.Disabled, Retrying: res.Retrying,
 			})
 		}
 	}
@@ -1156,10 +1190,10 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		res.Unmatched++
 		return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched")
 	case err != nil:
-		// Non-fatal: log + record failed, keep going (story 36).
-		log.Printf("obelo: enrich %q (%s): provider error: %v", t.Title, t.ID, err)
-		res.Failed++
-		return s.store.SetTitleEnrichmentStatus(t.ID, "failed")
+		// Non-fatal: log + record the failure, keep going (story 36). Whether that
+		// failure parks the Title or schedules a retry is the classification in
+		// recordLeafFailure (ADR-0048).
+		return s.recordLeafFailure(t, err, res)
 	}
 
 	// A canonical display title applies to an Episode always; to a Track only when
@@ -1257,7 +1291,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 				return nil, err
 			}
 			for _, ep := range eps {
-				if !s.shouldProcessLeaf(snap, mode, ep.Kind, ep.EnrichmentStatus) {
+				if !s.shouldProcessLeaf(snap, mode, ep) {
 					continue
 				}
 				// Episode durability (ADR-0019, closing the gap deferred from slice 01):
@@ -1317,7 +1351,7 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 				return nil, err
 			}
 			for _, tr := range tracks {
-				if !s.shouldProcessLeaf(snap, mode, tr.Kind, tr.EnrichmentStatus) {
+				if !s.shouldProcessLeaf(snap, mode, tr) {
 					continue
 				}
 				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, ref: TitleRef{
@@ -1330,16 +1364,87 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 	return leaves, nil
 }
 
-// shouldProcessLeaf reports whether a leaf Title of the given kind + enrichment_
-// status is in scope for this pass: every leaf in ModeFull (or when its kind is
-// disabled in the resolved snapshot, so it still gets marked 'disabled'); only
-// never-enriched ('pending') leaves in ModeNew. Enablement is read from the pass's
-// resolved snapshot (the Library's effective policy), not the global one.
-func (s *Service) shouldProcessLeaf(snap providerSnapshot, mode Mode, kind, status string) bool {
-	if mode == ModeFull || !snap.enablement.enabledFor(kind) {
+// shouldProcessLeaf reports whether a leaf Title is in scope for this pass: every
+// leaf in ModeFull (or when its kind is disabled in the resolved snapshot, so it
+// still gets marked 'disabled'); in ModeNew, the never-enriched ('pending') leaves
+// plus any whose transient failure has come due for another try (ADR-0048).
+// Enablement is read from the pass's resolved snapshot (the Library's effective
+// policy), not the global one.
+//
+// This is the TV/Music twin of the SQL in store.TitlesForEnrichment — the Movie
+// path selects its leaves with a query, these two walk their parent trees — so the
+// two must agree on what "due" means. Both defer to the same clock and the same
+// retryDue rule.
+func (s *Service) shouldProcessLeaf(snap providerSnapshot, mode Mode, t store.Title) bool {
+	if mode == ModeFull || !snap.enablement.enabledFor(t.Kind) {
 		return true
 	}
-	return status == "pending"
+	return t.EnrichmentStatus == "pending" || s.retryDue(t.EnrichmentStatus, t.EnrichmentRetryAt)
+}
+
+// retryDue reports whether a 'failed' item's scheduled retry has arrived. An empty
+// retryAt means no retry was scheduled — a permanent failure, parked — so it is
+// never due.
+//
+// An unparseable timestamp counts as DUE. It can only be a corrupted write, and
+// the two ways to be wrong are not symmetric: retrying an item early costs one
+// provider call, while never retrying it strands the item in the exact state this
+// whole mechanism exists to prevent — and invisibly, since a row with a retry
+// scheduled is kept off the attention list until it escalates.
+func (s *Service) retryDue(status, retryAt string) bool {
+	if status != "failed" || retryAt == "" {
+		return false
+	}
+	due, err := time.Parse(time.RFC3339, retryAt)
+	if err != nil {
+		return true
+	}
+	return !s.clock().Before(due)
+}
+
+// recordLeafFailure files a provider error against a leaf Title, choosing between
+// the two outcomes a failed lookup can have (ADR-0048):
+//
+//   - transient — the provider could not be reached or could not answer. The Title
+//     keeps whatever metadata it has, and a retry is scheduled on the backoff
+//     schedule. It does NOT go on the attention list until the streak escalates:
+//     there is nothing for an Admin to do about a 503.
+//   - anything else — parked as 'failed' and surfaced for hand-matching, which is
+//     what every failure did before the distinction existed.
+//
+// Either way the pass continues; one bad lookup never starves the rest.
+func (s *Service) recordLeafFailure(t store.Title, lookupErr error, res *Result) error {
+	if !IsTransient(lookupErr) {
+		log.Printf("obelo: enrich %q (%s): provider error: %v", t.Title, t.ID, lookupErr)
+		res.Failed++
+		return s.store.SetTitleEnrichmentStatus(t.ID, "failed")
+	}
+	attempts := t.EnrichmentAttempts + 1
+	delay := retryDelay(attempts)
+	log.Printf("obelo: enrich %q (%s): %v — attempt %d, retrying in %s",
+		t.Title, t.ID, lookupErr, attempts, delay)
+	res.Retrying++
+	return s.store.SetTitleEnrichmentRetry(t.ID, attempts, s.clock().Add(delay))
+}
+
+// recordParentFailure is recordLeafFailure for a browse parent (Show / Season /
+// Artist / Album). Parent outcomes are not counted in the pass Result — a parent
+// is a decoration, not a leaf — so it takes no *Result.
+//
+// The stakes are higher than for a leaf. enrichParent returns early for any parent
+// that is not 'pending', so before this a single 503 on a Show parked it, and with
+// it every Season and Episode underneath, none of which appeared anywhere as a
+// problem. A transient parent failure now expires.
+func (s *Service) recordParentFailure(entityType, entityID string, cur store.EntityEnrichment, lookupErr error) error {
+	if !IsTransient(lookupErr) {
+		log.Printf("obelo: enrich %s %q: provider error: %v", entityType, entityID, lookupErr)
+		return s.store.SetEntityEnrichmentStatus(entityType, entityID, "failed")
+	}
+	attempts := cur.Attempts + 1
+	delay := retryDelay(attempts)
+	log.Printf("obelo: enrich %s %q: %v — attempt %d, retrying in %s",
+		entityType, entityID, lookupErr, attempts, delay)
+	return s.store.SetEntityEnrichmentRetry(entityType, entityID, attempts, s.clock().Add(delay))
 }
 
 // enrichParent enriches one browse-parent entity (Show/Season/Artist/Album) into
@@ -1355,7 +1460,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	if err != nil {
 		return "", err
 	}
-	if mode != ModeFull && cur.Status != "pending" {
+	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) {
 		return cur.ExternalID, nil // already settled; reuse its resolved id
 	}
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id
@@ -1375,8 +1480,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
 	case err != nil:
-		log.Printf("obelo: enrich %s %q: provider error: %v", entityType, entityID, err)
-		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "failed")
+		return "", s.recordParentFailure(entityType, entityID, cur, err)
 	}
 
 	var fetched []store.EntityArtworkRow

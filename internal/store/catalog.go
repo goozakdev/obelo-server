@@ -87,6 +87,15 @@ type Title struct {
 	EnrichmentStatus string
 	EnrichedAt       string
 	EnrichmentSource string
+	// EnrichmentAttempts / EnrichmentRetryAt are the retry bookkeeping for a
+	// 'failed' Title (ADR-0048). Attempts counts CONSECUTIVE failed lookups (reset
+	// by any settled outcome); RetryAt is the RFC3339 instant from which the next
+	// only-new pass will pick the Title up again, or "" when nothing will — the
+	// difference between a transient failure the server is coming back for and a
+	// permanent one parked on the Admin's attention list. Both are zero for every
+	// non-failed status. Populated only by the reads that feed enrichment.
+	EnrichmentAttempts int
+	EnrichmentRetryAt  string
 	// Genres is the enriched genre list (loaded by the enriched read paths; empty
 	// otherwise). Cast lives on TitleDetail (heavier, detail-only).
 	Genres []string
@@ -1326,6 +1335,7 @@ var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sor
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
 	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title,
 	        enrichment_season, enrichment_episode, enrichment_id_origin,
+	        enrichment_attempts, enrichment_retry_at,
 	        season_number, episode_number, episode_label`
 
 // recordExternalIDs is the ONE spelling of "which external record does this Title
@@ -1388,6 +1398,7 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
 		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {
 		return Title{}, err
 	}

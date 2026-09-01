@@ -139,7 +139,7 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
 
 | Event | Audience | Payload | Poll fallback |
 | --- | --- | --- | --- |
-| `enrichProgress` | broadcast | `{ "libraryId", "total", "done", "matched", "unmatched", "failed", "disabled", "complete" }` | `/libraries`, `/libraries/{id}/titles` |
+| `enrichProgress` | broadcast | `{ "libraryId", "total", "done", "matched", "unmatched", "failed", "disabled", "retrying", "complete" }` | `/libraries`, `/libraries/{id}/titles` |
 | `scanProgress` | library-scoped | `{ "libraryId", "titlesFound", "filesFound", "complete", "scope"?, "added"?, "removed"? }` — `scope` is the Targeted-scan entity label (absent for full scans); `added`/`removed` only on the terminal targeted event | `GET /libraries/{id}/scan` |
 | `libraryUpdated` | library-scoped | `{ "libraryId" }` — a refetch nudge, not a diff | `/libraries`, `/libraries/{id}/titles` |
 | `sessionStarted` | admin-only | `{ "sessionId", "userId", "titleId" }` | — (no session list yet) |
@@ -383,7 +383,7 @@ All bearer + admin. Non-admin → `403 FORBIDDEN`.
   "runtimeMinutes"?, "studio"?, "genres"?: [], "enrichmentStatus"?, "artworkVersion"? }
 ```
 
-`resumePositionMs`/`watched` are the **calling User's** watch state. `enrichmentStatus` ∈ `pending|matched|unmatched|failed|disabled`. `artworkVersion` is an opaque cache-bust token.
+`resumePositionMs`/`watched` are the **calling User's** watch state. `enrichmentStatus` ∈ `pending|matched|unmatched|failed|disabled` — note `failed` does **not** imply the item needs a human: a transient provider failure is recorded `failed` with a retry scheduled, and only a `failed` item with no retry (or one that has escalated) reaches the attention list ([ADR-0048](./adr/0048-a-transient-enrichment-failure-is-retried-not-parked.md)). `artworkVersion` is an opaque cache-bust token.
 
 #### GET /libraries/{id}/titles — [Public]
 
@@ -618,7 +618,7 @@ The Admin curation surface behind Edit item ([ADR-0019](./adr/0019-item-editing-
 
 | Endpoint | Notes |
 | --- | --- |
-| `POST /libraries/{id}/enrich` — [Admin] | `?mode=full` or `{ "mode": "full" }` (default `new` = pending only). **Synchronous** — → `200` `{ "libraryId", "total", "matched", "unmatched", "failed", "disabled" }` (the completed pass's summary; `enrichProgress` SSE streams during it). Unconfigured enrichment no-ops with candidates counted `disabled`. |
+| `POST /libraries/{id}/enrich` — [Admin] | `?mode=full` or `{ "mode": "full" }` (default `new` = pending only). **Synchronous** — → `200` `{ "libraryId", "total", "matched", "unmatched", "failed", "disabled", "retrying" }` (the completed pass's summary; `enrichProgress` SSE streams during it). `retrying` counts leaves whose lookup failed transiently and are scheduled to be tried again rather than parked ([ADR-0048](./adr/0048-a-transient-enrichment-failure-is-retried-not-parked.md)); `failed` is now only the permanent kind. Unconfigured enrichment no-ops with candidates counted `disabled`. |
 | `GET /libraries/{id}/enrichment-policy` — [Admin] | → `200` policy view ([ADR-0027](./adr/0027-per-library-enrichment-policy-sparse-override.md)): `{ "enrichEnabled": bool\|null, "inheritedEnrichEnabled", "effective": { "video", "music" }, "configured": { "video", "music" }, "consentState": "unset"\|"granted"\|"declined", "metadataLanguage": string\|null, "inheritedMetadataLanguage", "authoritativeProvider": string\|null, "inheritedAuthoritative": { "slug", "name" }, "effectiveAuthoritative": { "slug", "name" }, "authoritativeUnreachable": string\|null, "authoritativeCandidates": [ { "slug", "name" } ], "supplements": [ { "slug", "name", "override": bool\|null, "inheritedEnabled" } ] }` — `null` = inherit the global setting. `effective` and `inheritedEnrichEnabled` are **consent-gated** ([ADR-0032](./adr/0032-optional-maintainer-key-rotation-endpoint.md)): both read off while consent is declined or unanswered, whatever the policy and providers say. `configured` is the same resolution WITHOUT the gate, and `consentState` says why they differ — the pair lets the UI say "configured, waiting on consent" rather than claiming enrichment that will not happen. |
 | `PUT /libraries/{id}/enrichment-policy` — [Admin] | Tri-state partial update: omit = unchanged, `null` = clear-to-inherit, value = override. Keys: `enrichEnabled`, `metadataLanguage`, `authoritativeProvider`, `providerOverrides` (`{ "slug": true\|false\|null }`). → `200` fresh policy view. `422 PROVIDER_NOT_AUTHORITATIVE` (validated before any write). Side effect: kicks a background re-enrich. |
 | `POST /libraries/{id}/fix-match` — [Admin] | `{ "folderPath", "title"?, "year"?, "tmdbId"?, "imdbId"? }` (folder + ≥1 identity signal) → `200` `{ "id", "folderPath", "title", "year"?, "tmdbId"?, "imdbId"?, "identityKey", "orphaned"?, "createdAt"? }`. Takes effect on the next scan; persists across rescans. |

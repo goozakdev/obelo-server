@@ -689,7 +689,12 @@ export function buildFixItems(input: {
       collidingPaths: [],
       problemText:
         t.enrichmentStatus === "failed"
-          ? "The metadata lookup failed — the provider was unreachable, or it has no episode at this season and number."
+          ? // The server retries a reachable-provider blip on its own and keeps it OFF
+            // this list until the streak escalates (ADR-0048), so anything that gets
+            // here is either a refusal the provider will keep making — a rejected API
+            // key, a request it cannot answer — or a failure that has already
+            // outlasted a day of retries.
+            "The metadata lookup failed repeatedly — the provider is refusing the request (check the API key in Settings), or it has no episode at this season and number."
           : "No metadata match — the provider had no record for this name, so there is no artwork or description.",
       // An Episode's metadata problem is not fixed by naming a work — see
       // episodeFixRoute. Every other kind IS, so it keeps its search.
