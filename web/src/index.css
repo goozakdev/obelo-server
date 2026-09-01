@@ -5097,6 +5097,13 @@ textarea.metadata-input {
   --part-gap: 0.2rem;
   --part-row: 1.5em;
   --part-inset: calc(var(--part-pad-x) + 1px);
+  /* The card's height, spelled once: its two rows, the gap between them, its
+     padding top and bottom, its two borders. The card now needs this as a floor
+     (its acts moved up onto the filename line, leaving it one row of content) and
+     the empty-Slot outline needs it as its whole height. */
+  --part-height: calc(
+    2 * var(--part-row) + var(--part-gap) + 2 * var(--part-pad-y) + 2px
+  );
 }
 
 .matcher-slot-target,
@@ -5340,9 +5347,7 @@ textarea.metadata-input {
      them, its padding top and bottom, and its two borders. An outline even
      slightly shorter than a filled card makes a season of Slots ripple as the eye
      runs down it, which is the opposite of what the outline is for. */
-  min-height: calc(
-    2 * var(--part-row) + var(--part-gap) + 2 * var(--part-pad-y) + 2px
-  );
+  min-height: var(--part-height);
   margin: 0.15rem 0 0;
   padding: var(--part-pad-y) var(--part-pad-x);
   background: none;
@@ -5371,6 +5376,12 @@ textarea.metadata-input {
    works if they start at the same x. */
 .matcher-part {
   margin: 0.15rem 0 0;
+  /* A card holding nothing but its filename row would be half the height of one
+     with something to say, and a column of Slots would ripple as the eye ran down
+     it. The floor is the two-row card this screen was measured on; anything the
+     file has to report still grows past it. */
+  min-height: var(--part-height);
+  justify-content: center;
   padding: var(--part-pad-y) var(--part-pad-x);
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
@@ -5389,10 +5400,22 @@ textarea.metadata-input {
   color: var(--accent);
 }
 
+/* Filename left, its acts hard right, on ONE line — the same shape as the Slot's
+   own title line above it. */
+.matcher-part-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.matcher-part-head .matcher-part-name {
+  flex: 1 1 auto;
+}
+
 .matcher-part-actions {
   display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  flex: none;
+  margin-left: auto;
+  gap: 0.25rem;
 }
 
 /* The two per-file acts, as icons. NOT .icon-button: that is a 2.25rem control

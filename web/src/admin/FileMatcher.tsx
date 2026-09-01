@@ -410,6 +410,22 @@ export default function FileMatcher({
     });
   }, []);
 
+  /* The other half of "+ add". A Slot added here is the Admin's own invention —
+     the provider never listed it — so it is the ONE Slot on this screen that can
+     be taken away again, and until now nothing could: Revert leaves extraSlots
+     alone, so a mis-click was permanent for the session. Provider Slots are not
+     removable and must not be: this screen cannot delete a record out of TMDB,
+     and pretending otherwise would be a button that lies. */
+  const removeSlot = useCallback((position: SlotPosition) => {
+    setExtraSlots((current) => {
+      const merged = new Map(current);
+      const left = (merged.get(position.group) ?? []).filter((n) => n !== position.slot);
+      if (left.length === 0) merged.delete(position.group);
+      else merged.set(position.group, left);
+      return merged;
+    });
+  }, []);
+
   // --- Applying ------------------------------------------------------------
 
   async function runApply() {
@@ -753,6 +769,7 @@ export default function FileMatcher({
           onClearRecord={dropRecord}
           onToggle={() => toggleGroup(group)}
           onAddSlot={(n) => addSlot(group, n)}
+          onRemoveSlot={removeSlot}
           onPick={(path, mode) =>
             setSelection((s) => (s?.path === path && s.mode === mode ? null : { path, mode }))
           }
@@ -957,6 +974,7 @@ function GroupSection({
   onClearRecord,
   onToggle,
   onAddSlot,
+  onRemoveSlot,
   onPick,
   onDragStart,
   onClickTarget,
@@ -985,6 +1003,7 @@ function GroupSection({
   onClearRecord: (position: SlotPosition) => void;
   onToggle: () => void;
   onAddSlot: (slot: number) => void;
+  onRemoveSlot: (position: SlotPosition) => void;
   onPick: (path: string, mode: PlaceMode) => void;
   onDragStart: (path: string, e: { clientX: number; clientY: number; button?: number }) => void;
   onClickTarget: (target: DropTarget) => void;
@@ -1107,7 +1126,9 @@ function GroupSection({
                   pinned={recordAt(pins, { group, slot }, storedRecordAt)}
                   ownSeries={ownSeries}
                   canRepoint={canRepoint}
+                  canRemove={extraSlots.includes(slot)}
                   onRepoint={onRepoint}
+                  onRemoveSlot={onRemoveSlot}
                   onClearRecord={onClearRecord}
                   arrangement={arrangement}
                   labels={labels}
@@ -1165,7 +1186,9 @@ function SlotCard({
   pinned,
   ownSeries,
   canRepoint,
+  canRemove,
   onRepoint,
+  onRemoveSlot,
   onClearRecord,
   arrangement,
   labels,
@@ -1188,7 +1211,10 @@ function SlotCard({
   pinned: MatcherSlotRecord | null;
   ownSeries?: string;
   canRepoint: boolean;
+  /** This Slot was added on this screen, so it can be taken away again. */
+  canRemove: boolean;
   onRepoint: (group: number, targets: SlotPosition[]) => void;
+  onRemoveSlot: (position: SlotPosition) => void;
   onClearRecord: (position: SlotPosition) => void;
   arrangement: Arrangement;
   labels: MatcherLabels;
@@ -1212,6 +1238,10 @@ function SlotCard({
   const shownName = pinned ? pinned.name : record?.name;
   // Only a Slot with a File has anything to decorate, or a Title to carry the pin.
   const repointable = canRepoint && parts.length > 0;
+  // ...and only an EMPTY one can be deleted. A Slot holding a file is holding the
+  // Admin's own work; taking the file off first is one click and says out loud
+  // where the file went, which deleting the Slot underneath it would not.
+  const removable = canRemove && parts.length === 0;
 
   return (
     <li
@@ -1256,13 +1286,16 @@ function SlotCard({
           )}
         </button>
 
-        {repointable && (
+        {(repointable || removable) && (
           <SlotActionsMenu
             slotCode={labels.slotCode(position.group, position.slot)}
             pinned={pinned !== null}
             slotNoun={labels.slotNoun}
+            canRepoint={repointable}
+            canRemove={removable}
             onRepoint={() => onRepoint(position.group, [position])}
             onClearRecord={() => onClearRecord(position)}
+            onRemove={() => onRemoveSlot(position)}
           />
         )}
       </div>
@@ -1368,14 +1401,20 @@ function SlotActionsMenu({
   slotCode,
   pinned,
   slotNoun,
+  canRepoint,
+  canRemove,
   onRepoint,
   onClearRecord,
+  onRemove,
 }: {
   slotCode: string;
   pinned: boolean;
   slotNoun: string;
+  canRepoint: boolean;
+  canRemove: boolean;
   onRepoint: () => void;
   onClearRecord: () => void;
+  onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -1411,21 +1450,23 @@ function SlotActionsMenu({
       </button>
       {open && (
         <ul className="row-menu-list" role="menu" data-testid="matcher-slot-menu">
-          <li className="row-menu-item" role="none">
-            <button
-              type="button"
-              className="row-menu-button"
-              role="menuitem"
-              data-testid="matcher-slot-repoint"
-              onClick={() => {
-                setOpen(false);
-                onRepoint();
-              }}
-            >
-              {pinned ? "Use a different record\u2026" : "Take the record from elsewhere\u2026"}
-            </button>
-          </li>
-          {pinned && (
+          {canRepoint && (
+            <li className="row-menu-item" role="none">
+              <button
+                type="button"
+                className="row-menu-button"
+                role="menuitem"
+                data-testid="matcher-slot-repoint"
+                onClick={() => {
+                  setOpen(false);
+                  onRepoint();
+                }}
+              >
+                {pinned ? "Use a different record\u2026" : "Take the record from elsewhere\u2026"}
+              </button>
+            </li>
+          )}
+          {canRepoint && pinned && (
             <li className="row-menu-item" role="none">
               <button
                 type="button"
@@ -1438,6 +1479,22 @@ function SlotActionsMenu({
                 }}
               >
                 Use this {slotNoun}&rsquo;s own record
+              </button>
+            </li>
+          )}
+          {canRemove && (
+            <li className="row-menu-item" role="none">
+              <button
+                type="button"
+                className="row-menu-button row-menu-button-danger"
+                role="menuitem"
+                data-testid="matcher-slot-delete"
+                onClick={() => {
+                  setOpen(false);
+                  onRemove();
+                }}
+              >
+                Delete this {slotNoun}
               </button>
             </li>
           )}
@@ -1503,23 +1560,86 @@ function PartRow({
           the comparison this whole screen exists to make. The stand-in is dimmed
           rather than removed — it has to be visible enough to say a name was cut,
           and quiet enough that the eye lands on the position behind it. The full
-          name is on the title, so nothing is hidden from an Admin who wants it. */}
-      <button
-        className="matcher-part-name"
-        type="button"
-        data-testid="matcher-part-pick"
-        aria-pressed={selected}
-        title={basename(file.path)}
-        onPointerDown={(e) => onDragStart(file.path, e)}
-        onClick={() => onPick(file.path, "move")}
-      >
-        {label.elided && (
-          <span className="matcher-part-elision" data-testid="matcher-part-elision">
-            {label.elided}
-          </span>
-        )}
-        {label.rest}
-      </button>
+          name is on the title, so nothing is hidden from an Admin who wants it.
+
+          The per-file acts ride on the END of that same line. They are two icons
+          and two arrows; giving them a row of their own put a band of controls
+          under every file, between the filename and whatever the file has to say
+          about itself. */}
+      <div className="matcher-part-head">
+        <button
+          className="matcher-part-name"
+          type="button"
+          data-testid="matcher-part-pick"
+          aria-pressed={selected}
+          title={basename(file.path)}
+          onPointerDown={(e) => onDragStart(file.path, e)}
+          onClick={() => onPick(file.path, "move")}
+        >
+          {label.elided && (
+            <span className="matcher-part-elision" data-testid="matcher-part-elision">
+              {label.elided}
+            </span>
+          )}
+          {label.rest}
+        </button>
+        <span className="matcher-part-actions">
+          {total > 1 && (
+            <>
+              <button
+                className="nav-link"
+                type="button"
+                data-testid="matcher-part-up"
+                disabled={index === 0}
+                aria-label={`Move ${basename(file.path)} earlier`}
+                onClick={() => onReorder(position, file.path, -1)}
+              >
+                ↑
+              </button>
+              <button
+                className="nav-link"
+                type="button"
+                data-testid="matcher-part-down"
+                disabled={index === total - 1}
+                aria-label={`Move ${basename(file.path)} later`}
+                onClick={() => onReorder(position, file.path, 1)}
+              >
+                ↓
+              </button>
+            </>
+          )}
+          {/* One File across several Slots. Deliberately its own control rather than
+              a modifier on the drag: dragging a placed File MOVES it, which is what
+              an Admin expects, and "this file is also the next episode" is rare
+              enough to be worth its own act.
+
+              Both acts are icons: they repeat on every placed File, and as sentences
+              they were the widest thing in the column — two lines of prose restating
+              what the row already shows. The words survive as the tooltip and as the
+              accessible name, which is where a rarely-used control's explanation
+              belongs. */}
+          <button
+            className="matcher-part-action"
+            type="button"
+            data-testid="matcher-part-share"
+            title={`Include this file in an additional ${labels.slotNoun}`}
+            aria-label={`Include this file in an additional ${labels.slotNoun}`}
+            onClick={() => onPick(file.path, "share")}
+          >
+            <AlsoPlaceIcon />
+          </button>
+          <button
+            className="matcher-part-action"
+            type="button"
+            data-testid="matcher-part-unassign"
+            title={`Unlink this file from ${labels.slotNoun}`}
+            aria-label={`Unlink this file from ${labels.slotNoun}`}
+            onClick={() => onUnassign(file.path)}
+          >
+            <UnlinkIcon />
+          </button>
+        </span>
+      </div>
 
       {file.unreadable && (
         // The one thing this screen cannot show by placing the file, and the one thing an
@@ -1567,63 +1687,6 @@ function PartRow({
           This correction points at a file that is no longer on disk.
         </span>
       )}
-
-      <span className="matcher-part-actions">
-        {total > 1 && (
-          <>
-            <button
-              className="nav-link"
-              type="button"
-              data-testid="matcher-part-up"
-              disabled={index === 0}
-              aria-label={`Move ${basename(file.path)} earlier`}
-              onClick={() => onReorder(position, file.path, -1)}
-            >
-              ↑
-            </button>
-            <button
-              className="nav-link"
-              type="button"
-              data-testid="matcher-part-down"
-              disabled={index === total - 1}
-              aria-label={`Move ${basename(file.path)} later`}
-              onClick={() => onReorder(position, file.path, 1)}
-            >
-              ↓
-            </button>
-          </>
-        )}
-        {/* One File across several Slots. Deliberately its own control rather than
-            a modifier on the drag: dragging a placed File MOVES it, which is what
-            an Admin expects, and "this file is also the next episode" is rare
-            enough to be worth its own act.
-
-            Both acts are icons: they repeat on every placed File, and as sentences
-            they were the widest thing in the column — two lines of prose restating
-            what the row already shows. The words survive as the tooltip and as the
-            accessible name, which is where a rarely-used control's explanation
-            belongs. */}
-        <button
-          className="matcher-part-action"
-          type="button"
-          data-testid="matcher-part-share"
-          title={`Include this file in an additional ${labels.slotNoun}`}
-          aria-label={`Include this file in an additional ${labels.slotNoun}`}
-          onClick={() => onPick(file.path, "share")}
-        >
-          <AlsoPlaceIcon />
-        </button>
-        <button
-          className="matcher-part-action"
-          type="button"
-          data-testid="matcher-part-unassign"
-          title={`Unlink this file from ${labels.slotNoun}`}
-          aria-label={`Unlink this file from ${labels.slotNoun}`}
-          onClick={() => onUnassign(file.path)}
-        >
-          <UnlinkIcon />
-        </button>
-      </span>
     </div>
   );
 }
