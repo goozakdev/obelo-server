@@ -75,7 +75,7 @@ func NewOMDbProvider(apiKey, baseURL string) *OMDbProvider {
 	return &OMDbProvider{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
-		UserAgent:   "obelo/1.0 (self-hosted)",
+		UserAgent:   DefaultUserAgent,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultOMDbThrottle,
 		cache:       map[string]omdbResult{},

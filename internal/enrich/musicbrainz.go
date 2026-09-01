@@ -47,7 +47,7 @@ func NewMusicBrainzProvider(baseURL, coverArtURL, language string) *MusicBrainzP
 		BaseURL:     baseURL,
 		CoverArtURL: coverArtURL,
 		Language:    language,
-		UserAgent:   "obelo/1.0 (self-hosted)",
+		UserAgent:   DefaultUserAgent,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		MinInterval: defaultMusicBrainzInterval,
 	}

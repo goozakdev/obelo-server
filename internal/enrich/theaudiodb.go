@@ -71,7 +71,7 @@ func NewTheAudioDBProvider(apiKey, baseURL, language string) *TheAudioDBProvider
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
 		Language:    language,
-		UserAgent:   "obelo/1.0 (self-hosted)",
+		UserAgent:   DefaultUserAgent,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultTheAudioDBThrottle,
 		cache:       map[string]audiodbArtist{},
