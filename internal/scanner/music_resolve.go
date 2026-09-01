@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -93,8 +94,6 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 		if isJunk(name, fileSize(path)) {
 			continue // sample/junk ignored entirely
 		}
-		sc.seen[path] = true // present on disk this walk (drives soft-delete)
-
 		// Probe via the existing Prober to read tags + technical attributes. Tags ARE
 		// the music identity authority (amended ADR-0002), so a Music scan always
 		// reads them from ffprobe rather than reusing a stored snapshot — the
@@ -103,9 +102,26 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 		sc.probes++
 		media, err := s.prober.Probe(ctx, path)
 		if err != nil {
+			// ffprobe refused the bytes: Unreadable, not Unmatched (ADR-0047). A Track
+			// takes its identity from TAGS, which live inside the very bytes that could
+			// not be read, so this is the one row the music path is GUARANTEED no
+			// naming correction can ever clear — offering it the fix-match action would
+			// be inert by construction. Anything else failing here is a probe that RAN
+			// and produced unusable output, which is not the file's fault.
+			var pe *ProbeError
+			if errors.As(err, &pe) {
+				unmatched = append(unmatched, unreadableFile(path, (&UnreadableError{Paths: []string{path}, Detail: pe.Detail}).Error()))
+				continue
+			}
 			unmatched = append(unmatched, unmatchedFile(path, "could not probe audio file: "+err.Error()))
 			continue
 		}
+		// Stamped only AFTER a successful probe, exactly as assembleTitle does: seen
+		// means "this walk produced a live catalog row for this path". A refused file
+		// left present=1 would hold its stale Track open, and with it the Album and the
+		// Artist above it, long past the point the file stopped being servable
+		// (ADR-0047; the soft-delete reverses itself once a scan can read it, ADR-0008).
+		sc.seen[path] = true
 
 		// A folder-anchored Match override on this track's ALBUM folder (the dir
 		// holding it) overrules the tag/path Album grouping and persists across
