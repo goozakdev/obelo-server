@@ -688,6 +688,58 @@ describe("adding a slot", () => {
     );
     expect(slotEl(3, 3)).toBeInTheDocument();
   });
+
+  it("takes it away again, which nothing else could", async () => {
+    // Revert does not touch extraSlots, so before this a mis-clicked "+ add" was
+    // permanent for the session. The Slot the Admin invented is the one this screen
+    // is allowed to remove.
+    const user = userEvent.setup();
+    setup();
+    await user.click(groupToggle(3));
+    await user.click(
+      within(document.querySelectorAll('[data-testid="matcher-slots"]')[0] as HTMLElement).getByTestId(
+        "matcher-add-slot",
+      ),
+    );
+
+    await openSlotMenu(user, 3, 3);
+    // Nothing to decorate on an empty Slot, so Delete is the whole menu.
+    expect(screen.queryByTestId("matcher-slot-repoint")).toBeNull();
+    await user.click(screen.getByTestId("matcher-slot-delete"));
+
+    expect(document.querySelector('[data-testid="matcher-slot"][data-slot="3"]')).toBeNull();
+    // Nothing was written: adding and removing a Slot of one's own is not a change.
+    expect(screen.getByTestId("matcher-apply")).toBeDisabled();
+  });
+
+  it("will not delete a slot the provider listed, nor one holding a file", async () => {
+    // Two different refusals, and both matter. A provider Slot is not this screen's
+    // to remove — there is no request that deletes a record out of TMDB. And an
+    // added Slot with a file on it is holding the Admin's own work: taking the file
+    // off first is one click, and it says out loud where the file went.
+    // (setupRepoint, because a Slot with no record actions has no menu at all.)
+    const user = userEvent.setup();
+    setupRepoint();
+    await user.click(groupToggle(3));
+
+    await openSlotMenu(user, 3, 1);
+    expect(screen.getByTestId("matcher-slot-repoint")).toBeInTheDocument();
+    expect(screen.queryByTestId("matcher-slot-delete")).toBeNull();
+    await user.keyboard("{Escape}");
+
+    // An added Slot, then the file moved onto it.
+    await user.click(
+      within(document.querySelectorAll('[data-testid="matcher-slots"]')[0] as HTMLElement).getByTestId(
+        "matcher-add-slot",
+      ),
+    );
+    await user.click(within(partEl(A)).getByTestId("matcher-part-pick"));
+    await user.click(within(slotEl(3, 3)).getByTestId("matcher-slot-target"));
+
+    await openSlotMenu(user, 3, 3);
+    expect(screen.getByTestId("matcher-slot-repoint")).toBeInTheDocument();
+    expect(screen.queryByTestId("matcher-slot-delete")).toBeNull();
+  });
 });
 
 // --- Dragging ---------------------------------------------------------------
