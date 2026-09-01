@@ -562,31 +562,6 @@ export default function FileMatcher({
         </span>
       </div>
 
-      {selected && (
-        <div className="matcher-selection" data-testid="matcher-selection" role="status">
-          <span>
-            <strong>{basename(selected.path)}</strong>{" "}
-            {selection?.mode === "share"
-              ? `— choose another ${labels.slotNoun} to ALSO place it on`
-              : `— choose a ${labels.slotNoun} to place it on, or a Files column to leave it unassigned`}
-          </span>
-          <button
-            className="nav-link"
-            type="button"
-            data-testid="matcher-selection-clear"
-            onClick={() => setSelection(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {repointNote && (
-        <p className="status matcher-repoint-note" data-testid="matcher-repoint-note" role="status">
-          {repointNote}
-        </p>
-      )}
-
       {repointing && repointRecord && (
         <RepointDialog
           title={
@@ -620,99 +595,135 @@ export default function FileMatcher({
         </RepointDialog>
       )}
 
-      {applyState.kind === "error" && (
-        <p className="status status-error" data-testid="matcher-apply-error" role="alert">
-          <span className="dot dot-error" aria-hidden="true" />
-          {applyState.message}
-        </p>
-      )}
+      {/* Every transient notice this screen raises, docked to the bottom of the
+          VIEWPORT rather than dropped into the document above the groups.
 
-      {applyState.kind === "scan-running" && (
-        <div className="status status-error matcher-scan-running" data-testid="matcher-scan-running" role="alert">
-          <p>{applyState.message}</p>
-          <button
-            className="auth-submit"
-            type="button"
-            data-testid="matcher-retry-apply"
-            onClick={() => void runApply()}
-          >
-            Try again
-          </button>
-        </div>
-      )}
+          All of them are answers to something the Admin just did, and the thing
+          they just did was almost certainly a long way down a season. Rendered in
+          the page, a notice appears where they are not looking: the viewport does
+          not move, so picking a file up and being told what to do with it next
+          looked exactly like the click doing nothing. Down here the instruction
+          arrives wherever they happen to be standing. */}
+      <div className="matcher-notices" data-testid="matcher-notices">
+        {selected && (
+          <div className="matcher-selection" data-testid="matcher-selection" role="status">
+            <span>
+              <strong>{basename(selected.path)}</strong>{" "}
+              {selection?.mode === "share"
+                ? `— choose another ${labels.slotNoun} to ALSO place it on`
+                : `— choose a ${labels.slotNoun} to place it on, or a Files column to leave it unassigned`}
+            </span>
+            <button
+              className="nav-link"
+              type="button"
+              data-testid="matcher-selection-clear"
+              onClick={() => setSelection(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
-      {applyState.kind === "collision" && (
-        <CollisionPanel
-          details={applyState.details}
-          message={applyState.message}
-          labels={labels}
-          onMerge={() => mergeCollision(applyState.details)}
-          onMove={(path) => {
-            setApplyState({ kind: "idle" });
-            setSelection({ path, mode: "move" });
-          }}
-          onUnassign={(path) => {
-            setApplyState({ kind: "idle" });
-            setArr((current) => unassignFile(current, path));
-          }}
-        />
-      )}
-
-      {applyState.kind === "applied" && (
-        <div className="matcher-applied" data-testid="matcher-applied" role="status">
-          <p>
-            {applyState.rearranged}{" "}
-            {applyState.rearranged === 1 ? "file was" : "files were"} rearranged.
+        {repointNote && (
+          <p className="status matcher-repoint-note" data-testid="matcher-repoint-note" role="status">
+            {repointNote}
           </p>
-          {applyState.displaced.length > 0 && (
-            <p data-testid="matcher-applied-displaced">
-              Taken off {applyState.displaced.length === 1 ? "its" : "their"}{" "}
-              {labels.slotNoun} to make room, and now unassigned:{" "}
-              {applyState.displaced.map(basename).join(", ")}
-            </p>
-          )}
-          {applyState.deferred.length > 0 && (
-            <p data-testid="matcher-applied-deferred">
-              Stored, but not yet playable: {applyState.deferred.map(basename).join(", ")}.
-              These files have never been probed, so the {labels.slotNoun} appears after the
-              next scan.
-            </p>
-          )}
-          <button
-            className="auth-submit"
-            type="button"
-            data-testid="matcher-applied-done"
-            onClick={onClose}
-          >
-            Done
-          </button>
-        </div>
-      )}
+        )}
 
-      {leaving && (
-        <div className="matcher-confirm-leave" data-testid="matcher-confirm-leave" role="alertdialog">
-          <p>
-            You have {changeCount} unsaved{" "}
-            {changeCount === 1 ? "change" : "changes"}. Leaving now writes nothing.
+        {applyState.kind === "error" && (
+          <p className="status status-error" data-testid="matcher-apply-error" role="alert">
+            <span className="dot dot-error" aria-hidden="true" />
+            {applyState.message}
           </p>
-          <button
-            className="auth-submit"
-            type="button"
-            data-testid="matcher-confirm-leave-discard"
-            onClick={onClose}
-          >
-            Discard and leave
-          </button>
-          <button
-            className="nav-link"
-            type="button"
-            data-testid="matcher-confirm-leave-stay"
-            onClick={() => setLeaving(false)}
-          >
-            Keep sorting
-          </button>
-        </div>
-      )}
+        )}
+
+        {applyState.kind === "scan-running" && (
+          <div className="status status-error matcher-scan-running" data-testid="matcher-scan-running" role="alert">
+            <p>{applyState.message}</p>
+            <button
+              className="auth-submit"
+              type="button"
+              data-testid="matcher-retry-apply"
+              onClick={() => void runApply()}
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {applyState.kind === "collision" && (
+          <CollisionPanel
+            details={applyState.details}
+            message={applyState.message}
+            labels={labels}
+            onMerge={() => mergeCollision(applyState.details)}
+            onMove={(path) => {
+              setApplyState({ kind: "idle" });
+              setSelection({ path, mode: "move" });
+            }}
+            onUnassign={(path) => {
+              setApplyState({ kind: "idle" });
+              setArr((current) => unassignFile(current, path));
+            }}
+          />
+        )}
+
+        {applyState.kind === "applied" && (
+          <div className="matcher-applied" data-testid="matcher-applied" role="status">
+            <p>
+              {applyState.rearranged}{" "}
+              {applyState.rearranged === 1 ? "file was" : "files were"} rearranged.
+            </p>
+            {applyState.displaced.length > 0 && (
+              <p data-testid="matcher-applied-displaced">
+                Taken off {applyState.displaced.length === 1 ? "its" : "their"}{" "}
+                {labels.slotNoun} to make room, and now unassigned:{" "}
+                {applyState.displaced.map(basename).join(", ")}
+              </p>
+            )}
+            {applyState.deferred.length > 0 && (
+              <p data-testid="matcher-applied-deferred">
+                Stored, but not yet playable: {applyState.deferred.map(basename).join(", ")}.
+                These files have never been probed, so the {labels.slotNoun} appears after the
+                next scan.
+              </p>
+            )}
+            <button
+              className="auth-submit"
+              type="button"
+              data-testid="matcher-applied-done"
+              onClick={onClose}
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {leaving && (
+          <div className="matcher-confirm-leave" data-testid="matcher-confirm-leave" role="alertdialog">
+            <p>
+              You have {changeCount} unsaved{" "}
+              {changeCount === 1 ? "change" : "changes"}. Leaving now writes nothing.
+            </p>
+            <button
+              className="auth-submit"
+              type="button"
+              data-testid="matcher-confirm-leave-discard"
+              onClick={onClose}
+            >
+              Discard and leave
+            </button>
+            <button
+              className="nav-link"
+              type="button"
+              data-testid="matcher-confirm-leave-stay"
+              onClick={() => setLeaving(false)}
+            >
+              Keep sorting
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* The Unsorted tray: Files in no group folder and Files nothing could
           number. Pinned above the groups and ALWAYS visible, so it can be dragged
