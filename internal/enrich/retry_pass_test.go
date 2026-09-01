@@ -2,8 +2,11 @@ package enrich
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,5 +261,58 @@ func TestTransientParentFailureIsRetried(t *testing.T) {
 	if got.Attempts != 0 || got.RetryAt != "" {
 		t.Errorf("a recovered Show still carries retry bookkeeping (attempts=%d, retryAt=%q)",
 			got.Attempts, got.RetryAt)
+	}
+}
+
+// The payoff of ADR-0049: a tagged library resolves by LOOKUP, never touching the
+// search endpoint that is the thing actually falling over. This asserts the URL
+// path, because "it still matched" would pass just as well with a search.
+func TestTaggedTracksResolveByLookupNotSearch(t *testing.T) {
+	const recording = "b9ad642e-b012-41c7-b72a-42cf4911a0f1"
+	var paths []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		fmt.Fprint(w, `{"id":"`+recording+`","title":"Roygbiv"}`)
+	}))
+	defer srv.Close()
+
+	p := NewMusicBrainzProvider(srv.URL, srv.URL, "en")
+	p.MinInterval = 0
+
+	// A Track whose file carried a recording id in its tags.
+	_, err := p.Lookup(context.Background(), TitleRef{
+		Kind: "track", Track: "Roygbiv", Artist: "Boards of Canada",
+		MusicbrainzID: trackRecordID(store.Title{MusicbrainzRecordingID: recording}),
+	})
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	mu.Lock()
+	got := paths
+	mu.Unlock()
+	if len(got) != 1 || got[0] != "/recording/"+recording {
+		t.Fatalf("requested %v, want a single /recording/<mbid> lookup — a tagged library is "+
+			"still going through /recording?query=, the search cluster that sheds load", got)
+	}
+}
+
+// The precedence between the two ids a Track can carry. Getting this backwards
+// would let a rescan's tag id quietly overrule the Admin's Fix-info correction.
+func TestTrackRecordIDPrefersTheAdminsRecordOverTheTag(t *testing.T) {
+	const record = "11111111-1111-4111-8111-111111111111"
+	const tagged = "22222222-2222-4222-8222-222222222222"
+
+	if got := trackRecordID(store.Title{MusicbrainzID: record, MusicbrainzRecordingID: tagged}); got != record {
+		t.Errorf("got %q, want the enrichment record %q — the file's tag is overruling a "+
+			"human's correction, which every scan would then re-apply", got, record)
+	}
+	if got := trackRecordID(store.Title{MusicbrainzRecordingID: tagged}); got != tagged {
+		t.Errorf("got %q, want the tag id %q", got, tagged)
+	}
+	if got := trackRecordID(store.Title{}); got != "" {
+		t.Errorf("got %q, want empty so the provider falls back to a search", got)
 	}
 }

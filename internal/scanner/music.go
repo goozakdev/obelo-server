@@ -44,6 +44,18 @@ type MusicIdentity struct {
 	Track int
 	// Genre is the "genre" tag, "" when absent (descriptive only).
 	Genre string
+	// ArtistMBID / ReleaseGroupMBID / RecordingMBID are the MusicBrainz ids the
+	// FILE asserts, read straight from its tags (ADR-0049). They are DECORATION
+	// anchors: Enrichment resolves the artist / album / track by id — a lookup —
+	// instead of guessing with a text search. Empty for an untagged file, which
+	// falls back to the search exactly as before.
+	//
+	// They are not identity. The release-group id separately does an identity job
+	// inside AlbumKey (ADR-0038); these fields never enter a key, and an Admin's
+	// Enrichment override outranks all three (ADR-0045).
+	ArtistMBID       string
+	ReleaseGroupMBID string
+	RecordingMBID    string
 	// ReleaseType is the album's normalized primary release type from the
 	// release-type tag ("album", "single", "ep", "compilation", …), "" when
 	// untagged. Descriptive: the browse UI badges non-album types
@@ -212,6 +224,9 @@ func MusicIdentityFromTags(tags map[string]string, path string) (MusicIdentity, 
 		ReleaseType: releaseTypeTag(tags),
 		FromTags:    fromTags,
 	}
+	id.ArtistMBID = artistMBID(tags)
+	id.ReleaseGroupMBID = releaseGroupID(tags)
+	id.RecordingMBID = recordingMBID(tags)
 	id.ArtistKey = artistIdentityKey(albumArtist)
 	// Album identity is (album artist, album title) ONLY — deliberately NOT the
 	// year. A compilation ("Greatest Hits") commonly tags each track with its
@@ -247,6 +262,71 @@ func releaseGroupID(tags map[string]string) string {
 	for _, k := range []string{"musicbrainz_releasegroupid", "musicbrainz release group id"} {
 		if v := strings.TrimSpace(tags[k]); v != "" {
 			return strings.ToLower(v)
+		}
+	}
+	return ""
+}
+
+// recordingMBID returns the file's MusicBrainz RECORDING id — the one
+// `/ws/2/recording/<mbid>` resolves — lower-cased, "" when untagged or malformed.
+//
+// The spelling is a genuine trap. Picard stores the RECORDING id under the key
+// named "track":
+//
+//	recording id  →  Vorbis MUSICBRAINZ_TRACKID, MP4/ID3 "MusicBrainz Track Id"
+//	track id      →  Vorbis MUSICBRAINZ_RELEASETRACKID, "MusicBrainz Release Track Id"
+//
+// The second is the release-specific track, and it is NOT a recording: handing it
+// to /recording/ returns 404, which the pass would file as "no such record" and
+// park the Track as unmatched. So the keys are matched EXACTLY — never by prefix
+// or substring, which would happily swallow "musicbrainz_releasetrackid".
+//
+// ID3's canonical home for the recording id is the binary UFID frame, which
+// ffprobe does not surface; MP3s tagged only that way have no id here and fall
+// back to the search, as before.
+func recordingMBID(tags map[string]string) string {
+	return firstMBID(tags, "musicbrainz_trackid", "musicbrainz track id")
+}
+
+// artistMBID returns the file's MusicBrainz ARTIST id, preferring the ALBUM
+// artist's — the Artist entity an Album files under is the album-artist
+// (MusicIdentityFromTags), so the id has to describe the same one, or a
+// compilation would decorate its "Various Artists" row from the first track
+// artist it happened to see.
+func artistMBID(tags map[string]string) string {
+	if id := firstMBID(tags, "musicbrainz_albumartistid", "musicbrainz album artist id"); id != "" {
+		return id
+	}
+	return firstMBID(tags, "musicbrainz_artistid", "musicbrainz artist id")
+}
+
+// mbidRe matches a bare UUID, the shape every MusicBrainz id has.
+var mbidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// firstMBID reads the first well-formed MusicBrainz id from the first of keys
+// that is present, lower-cased; "" when none is.
+//
+// Two defences, both load-bearing:
+//
+//   - MULTI-VALUED tags. A collaboration carries several artist ids, which ffprobe
+//     hands over joined by ";" or "/". The first is the primary credit; the joined
+//     string is not an id at all.
+//   - VALIDATION. Only a real UUID is used. An unvalidated id is worse than no id:
+//     the lookup 404s, the provider maps that to ErrNoMatch, and the item is filed
+//     as "no such record" — a confident wrong answer, where no id at all would have
+//     produced a correct search.
+func firstMBID(tags map[string]string, keys ...string) string {
+	for _, k := range keys {
+		v, ok := tags[k]
+		if !ok {
+			continue
+		}
+		for _, part := range strings.FieldsFunc(v, func(r rune) bool {
+			return r == ';' || r == '/' || r == ',' || r == ' '
+		}) {
+			if id := strings.ToLower(strings.TrimSpace(part)); mbidRe.MatchString(id) {
+				return id
+			}
 		}
 	}
 	return ""

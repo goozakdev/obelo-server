@@ -953,7 +953,7 @@ func (db *DB) ListAllShows(libraryID string) ([]Show, error) {
 // for an Enrichment pass to walk the whole library.
 func (db *DB) ListAllArtists(libraryID string) ([]Artist, error) {
 	rows, err := db.Query(
-		`SELECT id, library_id, name, identity_key, sort_name, hidden, added_at
+		`SELECT id, library_id, name, identity_key, sort_name, hidden, added_at, musicbrainz_id
 		   FROM artists WHERE library_id = ? AND hidden = 0 ORDER BY sort_name, id`, libraryID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing all artists: %w", err)

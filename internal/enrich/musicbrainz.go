@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -45,9 +44,6 @@ type MusicBrainzProvider struct {
 	// of zero and burst all four attempts back-to-back, turning the one signal a
 	// struggling host can send into a hammering.
 	RetryBackoff time.Duration
-
-	mu   sync.Mutex
-	next time.Time // earliest instant the next request may start
 }
 
 const defaultMusicBrainzInterval = time.Second // MusicBrainz allows ~1 req/sec.
@@ -873,15 +869,6 @@ func (p *MusicBrainzProvider) getJSON(ctx context.Context, path string, q url.Va
 		if err != nil {
 			return requestError("musicbrainz", err)
 		}
-		// 503 means we were throttled (or MusicBrainz is briefly unavailable): back
-		// off and retry a few times rather than dropping the lookup.
-		if resp.StatusCode == http.StatusServiceUnavailable && attempt < maxAttempts {
-			resp.Body.Close()
-			if err := sleepCtx(ctx, retryAfter(resp.Header, time.Duration(attempt)*p.retryBackoff())); err != nil {
-				return err
-			}
-			continue
-		}
 		// A 404 is a definitive "no such record" (e.g. a pasted id that names a
 		// different entity type, or a stale/merged MBID) — NOT a connectivity
 		// failure. Map it to ErrNoMatch so callers surface "no record found" rather
@@ -891,8 +878,26 @@ func (p *MusicBrainzProvider) getJSON(ctx context.Context, path string, q url.Va
 			return ErrNoMatch
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			refusal := readRefusal(resp)
 			resp.Body.Close()
-			return statusError("musicbrainz", path, resp.StatusCode)
+			// Retry HERE, inside the one lookup, only when waiting a second or two can
+			// plausibly change the answer — which means only when the refusal is about
+			// OUR usage, or the host named a Retry-After.
+			//
+			// It used to retry any 503 four times. Against MusicBrainz's global search
+			// shedding that is worse than useless: a shed lasts minutes, so all four
+			// attempts fail, the pass is delayed ~6s per track, and three extra requests
+			// are added to a host that is already dropping load. Failing fast hands the
+			// item to the cross-pass backoff (ADR-0048), which is measured in minutes and
+			// is the mechanism that actually recovers this.
+			wait, retryHere := p.inRequestRetry(refusal, attempt, maxAttempts)
+			if retryHere {
+				if err := sleepCtx(ctx, wait); err != nil {
+					return err
+				}
+				continue
+			}
+			return refusalError("musicbrainz", path, refusal)
 		}
 		err = json.NewDecoder(resp.Body).Decode(out)
 		resp.Body.Close()
@@ -903,22 +908,39 @@ func (p *MusicBrainzProvider) getJSON(ctx context.Context, path string, q url.Va
 	}
 }
 
-// throttle blocks until the provider's minimum inter-request interval has elapsed
-// since the previous request, serializing callers so the whole process stays
-// within MusicBrainz's ~1 req/sec policy. It reserves its slot under the lock and
-// waits outside it, honoring context cancellation.
+// throttle blocks until this HOST's minimum inter-request interval has elapsed,
+// so the whole process — every Library's provider instance, and the global one —
+// stays within MusicBrainz's ~1 req/sec policy together (ADR-0049). The limiter is
+// keyed by host rather than held on the provider, because that is what the host
+// counts; see hostthrottle.go for what the per-instance version got wrong.
 func (p *MusicBrainzProvider) throttle(ctx context.Context) error {
 	if p.MinInterval <= 0 {
 		return nil
 	}
-	p.mu.Lock()
-	start := time.Now()
-	if p.next.After(start) {
-		start = p.next
+	return throttleFor(p.BaseURL, p.MinInterval).wait(ctx)
+}
+
+// inRequestRetry decides whether to retry this refusal inside the current lookup,
+// and how long to wait first.
+//
+// Two things are worth waiting out in-request, because both are short:
+//
+//   - our own rate limit — we went too fast, and a pause fixes it;
+//   - an explicit Retry-After — the host named a duration, so honor it.
+//
+// Everything else (notably a global load shed) is handed straight back. The
+// distinction is the host's, read from its response, not guessed from the status.
+func (p *MusicBrainzProvider) inRequestRetry(r ProviderRefusal, attempt, maxAttempts int) (time.Duration, bool) {
+	if attempt >= maxAttempts || !retryableStatus(r.Status) {
+		return 0, false
 	}
-	p.next = start.Add(p.MinInterval)
-	p.mu.Unlock()
-	return sleepCtx(ctx, time.Until(start))
+	if after := retryAfter(r.Header, 0); after > 0 {
+		return after, true
+	}
+	if r.ourQuota() {
+		return time.Duration(attempt) * p.retryBackoff(), true
+	}
+	return 0, false
 }
 
 // retryBackoff is the base 503 delay, never zero: a provider built as a bare
