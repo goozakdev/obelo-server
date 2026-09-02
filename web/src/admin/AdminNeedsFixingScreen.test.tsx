@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -1118,6 +1120,142 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         release: "Braveheart",
       }),
     );
+  });
+
+  it("renders a disclosed track as a COMPACT row, not a second full queue row", async () => {
+    // album-resolves-its-tracks/18. The disclosure was built out of complete rows —
+    // artwork column, kind badge, breadcrumb, the lot — so an 18-track album grew
+    // eighteen full rows inside one row, and the 106-track `Unknown Album` grew a
+    // page of them. A child drops what its parent already says one line above and
+    // keeps only what is its own.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched", { trackNumber: 4, title: "Wallace Courts Murron" }),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-children-toggle"));
+    const children = within(screen.getByTestId("fix-item-child-list")).getAllByTestId("fix-item");
+    const child = children[0];
+
+    // Gone: the album cover repeated per track, the `James Horner › Braveheart`
+    // breadcrumb the album row is already headed with, and a "Track" badge under a
+    // toggle that just said "the 2 tracks".
+    expect(within(child).queryByTestId("fix-item-art")).not.toBeInTheDocument();
+    expect(within(child).queryByTestId("fix-item-breadcrumb")).not.toBeInTheDocument();
+    expect(within(child).queryByTestId("fix-item-kind")).not.toBeInTheDocument();
+    expect(child).toHaveAttribute("data-compact", "true");
+
+    // Kept: WHICH track (number and name), what is wrong with it, which file, and
+    // its own action — the four things the album row cannot say per track.
+    expect(within(child).getByTestId("fix-item-name")).toHaveTextContent(
+      "4. Wallace Courts Murron",
+    );
+    expect(within(child).getByTestId("fix-item-problem")).toHaveTextContent(
+      "The album Braveheart has no metadata match",
+    );
+    // The file NAME, with the whole path on hover: its siblings differ only in the
+    // name, and the folder is the album row's own path repeated.
+    const path = within(child).getByTestId("fix-item-path");
+    expect(path).toHaveTextContent("1.flac");
+    expect(path.textContent).not.toContain("/media/music");
+    expect(path).toHaveAttribute("title", "/media/music/James Horner/Braveheart/1.flac");
+    expect(within(child).getByTestId("fix-item-toggle")).toBeInTheDocument();
+
+    // And the parent album row is untouched — this issue is only about what its
+    // disclosure renders. Exactly one artwork column on screen: the album's.
+    const parent = screen.getAllByTestId("fix-item")[0];
+    expect(parent).toHaveAttribute("data-compact", "false");
+    expect(screen.getAllByTestId("fix-item-art")).toHaveLength(1);
+    expect(within(parent).getByTestId("fix-item-kind")).toHaveTextContent("Album");
+    expect(within(parent).getByTestId("fix-item-breadcrumb")).toHaveTextContent("James Horner");
+  });
+
+  it("lifts the disclosed list's height cap while a child's picker is open", async () => {
+    // The cap that makes 106 tracks a panel would otherwise trap the picker inside
+    // it: a search box, a page of candidates and the apply button are together
+    // taller than the cap, so they would land in a scroller nested inside the
+    // page's own. The list therefore un-caps for the one child being worked on and
+    // re-caps the moment its picker closes.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-children-toggle"));
+    const list = screen.getByTestId("fix-item-child-list");
+    expect(list).toHaveAttribute("data-expanded", "false");
+
+    const children = within(list).getAllByTestId("fix-item");
+    await userEvent.click(within(children[1]).getByTestId("fix-item-toggle"));
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "true");
+
+    // Closing that child's picker — by its own toggle — puts the cap back.
+    await userEvent.click(
+      within(within(screen.getByTestId("fix-item-child-list")).getAllByTestId("fix-item")[1])
+        .getByTestId("fix-item-toggle"),
+    );
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "false");
+  });
+
+  it("re-caps the list when the picker is cancelled, and when the disclosure is hidden", async () => {
+    // The two ways out that are NOT the toggle. Cancel closes the picker from
+    // inside the picker; hiding the disclosure unmounts the child before it can
+    // report anything, so re-opening must not show an already-uncapped list.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-children-toggle"));
+    const open = async () => {
+      const list = screen.getByTestId("fix-item-child-list");
+      await userEvent.click(
+        within(within(list).getAllByTestId("fix-item")[0]).getByTestId("fix-item-toggle"),
+      );
+    };
+
+    await open();
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "true");
+    await userEvent.click(await screen.findByTestId("fix-picker-cancel"));
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "false");
+
+    await open();
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "true");
+    await userEvent.click(screen.getByTestId("fix-item-children-toggle"));
+    await userEvent.click(screen.getByTestId("fix-item-children-toggle"));
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "false");
+  });
+
+  // The cap itself is a stylesheet fact — jsdom has no layout, so nothing rendered
+  // can be measured — but it is the fact the issue is about, and deleting it would
+  // otherwise be invisible to every test in this file. So the rule is read from the
+  // stylesheet directly.
+  //
+  // Read from the runner's cwd (`web/`, where vitest.config lives) rather than from
+  // `import.meta.url`, which under jsdom is an http: URL that `readFileSync` refuses.
+  // A wrong cwd would fail loudly with ENOENT, never quietly pass.
+  const cssRule = (selector: string): string => {
+    const css = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+    const at = css.indexOf(`\n${selector} {`);
+    expect(at, `no CSS rule for ${selector}`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf("}", at));
+  };
+
+  it("bounds the disclosed list, and gives a short one no scrollbar it does not need", () => {
+    const list = cssRule(".fix-item-child-list");
+    expect(list).toMatch(/max-height:\s*[\d.]/);
+    // `auto`, never `scroll`: a 2-track album must not be handed a scrollbar for a
+    // list that fits, which is the other half of "bounded".
+    expect(list).toMatch(/overflow-y:\s*auto/);
+    expect(list).not.toMatch(/overflow-y:\s*scroll/);
+    // And the cap lifts rather than nesting a scroller inside a scroller.
+    expect(cssRule(".fix-item-child-list.is-expanded")).toMatch(/max-height:\s*none/);
   });
 
   it("does not collapse a blank reason — an un-re-passed library is untouched", async () => {
