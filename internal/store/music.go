@@ -325,6 +325,38 @@ func (db *DB) AlbumsForArtist(artistID string) ([]Album, error) {
 	return out, rows.Err()
 }
 
+// ArtistHasMatchedAlbum reports whether at least one of an Artist's visible
+// Albums enriched to 'matched' — the one fact ADR-0053's amendment reads to
+// decide that a `matched` Artist is worth doubting.
+//
+// It is deliberately a COUNT-shaped read and not a walk. The caller
+// (enrich.collectMusicLeaves) already holds the Artist's Albums from
+// AlbumsForArtist and can see whether there are any at all; the only thing it
+// cannot see from that list is each Album's enrichment status, which lives in
+// entity_enrichment keyed by (entity_type, entity_id). So this answers exactly
+// that, in one EXISTS, for one Artist, and leaves the policy — "matched, has
+// Albums, none of them matched" — to the pass.
+//
+// hidden = 0 to agree with AlbumsForArtist: an Album the pass never walks can
+// neither corroborate its Artist nor be counted against it. An Album with no
+// entity_enrichment row at all (never enriched) is not matched, which the inner
+// join says without a special case.
+func (db *DB) ArtistHasMatchedAlbum(artistID string) (bool, error) {
+	var found int
+	err := db.QueryRow(
+		`SELECT EXISTS(
+		          SELECT 1 FROM albums a
+		            JOIN entity_enrichment e
+		              ON e.entity_type = ? AND e.entity_id = a.id
+		           WHERE a.artist_id = ? AND a.hidden = 0
+		             AND e.enrichment_status = 'matched')`,
+		EntityAlbum, artistID).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("store: checking artist album matches: %w", err)
+	}
+	return found != 0, nil
+}
+
 // AlbumByID returns one Album, or ErrNotFound.
 func (db *DB) AlbumByID(id string) (Album, error) {
 	var al Album

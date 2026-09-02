@@ -95,6 +95,15 @@ func (p *albumTierProvider) Lookup(_ context.Context, ref TitleRef) (TitleMetada
 			}
 			return TitleMetadata{Matched: true, Name: title, ExternalID: id, Source: "musicbrainz"}, nil
 		}
+		if strings.TrimSpace(ref.Track) == "" {
+			// The real MusicBrainzProvider refuses a blank track name before it opens a
+			// socket: trackDetails returns ErrNoMatch and NOTHING is logged, because
+			// nothing was sent. Modelling that here is what lets this fake falsify the
+			// claim that a single-Title re-enrich searches like a pass — with the terms
+			// missing (issue 17's defect) the ref arrives blank, and a fake that searched
+			// anyway would report a request the server never made.
+			return TitleMetadata{}, ErrNoMatch
+		}
 		p.note("search:" + ref.Track)
 		if p.searchErr != nil {
 			return TitleMetadata{}, p.searchErr

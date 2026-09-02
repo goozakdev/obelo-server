@@ -1351,10 +1351,20 @@ func scanTitle(s scanner) (Title, error) {
 // guaranteed 404 — while a full-library pass, which collects its own leaves with the
 // numbers attached, resolved the same Episode correctly. Any read that builds a
 // Title for a lookup must carry the fields the lookup is keyed on.
+//
+// musicbrainz_recording_id is here for EXACTLY THE SAME REASON, one media kind
+// later. It is ADR-0049's tag tier — the recording MBID the FILE asserts, the second
+// step of the music precedence — and TracksForAlbum (the read a library pass
+// collects its leaves through) has always carried it while this one did not. So a
+// Picard-tagged Track re-enriched on its own ignored the exact id in its own file
+// and resolved as though untagged, which is the one outcome ADR-0049 exists to
+// prevent. The rule in the paragraph above is not a style note; this is its second
+// violation.
 var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sort_title, added_at,
 	        ` + recordExternalIDs("") + `, needs_review, ambiguous, hidden,
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
-	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title,
+	        musicbrainz_id, musicbrainz_recording_id,
+	        enrichment_status, enriched_at, enrichment_source, enriched_title,
 	        enrichment_season, enrichment_episode, enrichment_id_origin,
 	        enrichment_attempts, enrichment_retry_at, enrichment_reason,
 	        season_number, episode_number, episode_label`
@@ -1417,7 +1427,8 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
-		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
+		&t.MusicbrainzID, &t.MusicbrainzRecordingID,
+		&t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
 		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.EnrichmentReason,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {

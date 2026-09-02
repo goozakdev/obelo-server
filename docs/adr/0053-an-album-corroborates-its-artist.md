@@ -111,3 +111,28 @@ wrong. The two bands are told apart by their discographies, and Obelo is holding
 
 - **Artist metadata quality rises where it was quietly wrong.** The artist photo, bio and
   genres on those rows were another band's.
+
+## Amendment: corroboration also works as doubt (2026-09-02)
+
+This ADR stops NEW wrong matches and said so, leaving the sixteen already in the
+motivating library as "a separate cleanup". That cleanup has no mechanism: those rows
+read `matched`, and a recheck pass ([ADR-0051](./0051-a-settled-non-answer-is-re-asked-when-the-question-changes.md))
+only re-asks settled NON-answers. A confidently wrong Artist is reachable only by a
+full pass over the whole library, or by a human noticing.
+
+But the same fact this ADR uses to *resolve* an Artist also identifies a bad one. An
+Artist whose every Album failed to match is an Artist that could name none of its own
+records — which is precisely what being the wrong band looks like, and what "The
+Eagles" looked like while reading `matched`.
+
+**So a recheck also re-asks a `matched` Artist under which no Album matched.** It is a
+narrow, self-limiting signal: it fires only on the shape that means "this cannot be
+right", it costs one lookup per such Artist, and corroboration then answers with the
+album evidence that was there all along. An Artist whose albums are genuinely
+unidentifiable — a soundtrack under the film's name — is re-asked and re-fails, at one
+request per recheck.
+
+The general rule is worth naming, because it applies past this case: **a match no
+child corroborates is a match worth doubting.** Doubt is not a diagnosis, so nothing
+is unmatched or cleared on the strength of it; the Artist is simply asked again, by a
+better method than the one that got it wrong.

@@ -52,6 +52,11 @@ type Store interface {
 	EpisodesForSeason(seasonID string) ([]store.Title, error)
 	ListAllArtists(libraryID string) ([]store.Artist, error)
 	AlbumsForArtist(artistID string) ([]store.Album, error)
+	// ArtistHasMatchedAlbum is the corroboration ADR-0053's amendment reads
+	// BACKWARDS: an Artist under which not one Album matched is an Artist that
+	// could name none of its own records, which is what being the wrong band looks
+	// like. A narrow count, not a walk — see uncorroboratedMatch.
+	ArtistHasMatchedAlbum(artistID string) (bool, error)
 	AlbumByID(albumID string) (store.Album, error)
 	TracksForAlbum(albumID string) ([]store.Title, error)
 	// TrackContextForTitle walks a Track UP to its Album — the one direction the
@@ -140,6 +145,40 @@ const (
 func settledNonAnswer(status, retryAt string) bool {
 	return status == "unmatched" || (status == "failed" && retryAt == "")
 }
+
+// uncorroboratedMatch reports whether a parent's `matched` answer is contradicted
+// by its own children — the SECOND population ModeRecheck re-asks (ADR-0053's
+// amendment, "corroboration also works as doubt"), OR-ed with settledNonAnswer.
+//
+// ADR-0053 fixed how an Artist is RESOLVED and left the wrong matches already in
+// the library alone, because there was no mechanism to reach them: they read
+// `matched`, and a recheck re-asks only settled NON-answers. Sixteen artists in
+// the motivating library carry the signature — matched, with not one matched
+// Album beneath them — including "The Eagles", pointing at a 1960s UK
+// instrumental group while every album under it failed to match.
+//
+// That signature is the same fact ADR-0053 resolves with, read in the other
+// direction: an Artist that could name none of its own records is one worth
+// doubting. So:
+//
+//   - `matched` only. A settled non-answer is already covered by the rule above,
+//     and 'pending' / 'disabled' are not answers to doubt.
+//   - doubted is the CALLER's fact, because only the Music walk has children whose
+//     match state means anything here (a Season under a Show does not corroborate
+//     it, and a parent kind with no children must never be doubted into a re-ask).
+//
+// Doubt is not a diagnosis: nothing is unmatched or cleared on the strength of it.
+// It only makes the parent DUE, and whatever the re-ask returns is written by the
+// ordinary path — including the same failure it recorded before.
+func uncorroboratedMatch(status string, doubted bool) bool {
+	return doubted && status == "matched"
+}
+
+// parentTrusted names enrichParent's `doubted` argument at every call site that
+// has no such evidence to offer — a bare `false` at four call sites says nothing
+// about which question is being answered. Only the Music walk's Artist ever passes
+// anything else, and it passes a value it computed.
+const parentTrusted = false
 
 // providerSnapshot bundles the MetadataProvider with its derived per-kind
 // Enablement so the two are always swapped as a unit — an in-flight pass that
@@ -1043,7 +1082,7 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID 
 		return err
 	}
 	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, pin.ExternalID)
-	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref)
+	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref, parentTrusted)
 	return err
 }
 
@@ -1446,7 +1485,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 	for _, sh := range shows {
 		showExtID := sh.TMDBID // embedded {tmdb-…} fallback
 		extID, err := s.enrichParent(ctx, snap, mode, store.EntityShow, sh.ID,
-			TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year, TMDBID: sh.TMDBID})
+			TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year, TMDBID: sh.TMDBID}, parentTrusted)
 		if err != nil {
 			return nil, err
 		}
@@ -1460,7 +1499,8 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 		}
 		for _, se := range seasons {
 			if _, err := s.enrichParent(ctx, snap, mode, store.EntitySeason, se.ID,
-				TitleRef{Kind: "season", TMDBID: showExtID, SeasonNumber: se.SeasonNumber}); err != nil {
+				TitleRef{Kind: "season", TMDBID: showExtID, SeasonNumber: se.SeasonNumber},
+				parentTrusted); err != nil {
 				return nil, err
 			}
 			eps, err := s.store.EpisodesForSeason(se.ID)
@@ -1525,16 +1565,20 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 		if err != nil {
 			return nil, err
 		}
+		doubted, err := s.artistLacksCorroboration(mode, ar.ID, albums)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
 			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
 				MusicbrainzID: ar.MusicbrainzID,
-				AlbumHints:    musicAlbumHints(albums)}); err != nil {
+				AlbumHints:    musicAlbumHints(albums)}, doubted); err != nil {
 			return nil, err
 		}
 		for _, al := range albums {
 			albumRecordID, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
 				TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name,
-					MusicbrainzID: al.MusicbrainzID})
+					MusicbrainzID: al.MusicbrainzID}, parentTrusted)
 			if err != nil {
 				return nil, err
 			}
@@ -1558,6 +1602,37 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 		}
 	}
 	return leaves, nil
+}
+
+// artistLacksCorroboration answers the doubt half of ADR-0053 for one Artist:
+// does it hold Albums, and did not one of them match? A true here only reaches
+// enrichParent as `doubted`, which pairs it with the Artist's own status — the
+// signature that means "this cannot be right" is matched AND uncorroborated, and
+// only the two together make the Artist due.
+//
+// Three things it deliberately is not:
+//
+//   - Not a walk. The Albums the caller already read answer "are there any at
+//     all", and one EXISTS over entity_enrichment answers the rest. An Artist
+//     with no Albums is never doubted: there is nothing to corroborate WITH, and
+//     re-asking would spend a request to receive the same name search's answer.
+//   - Not a cost in the other modes. ModeNew and ModeFull return before the read,
+//     so this adds no query to a scan's pass and nothing to a refresh, which
+//     re-asks everything anyway.
+//   - Not a status. Nothing is written here; see uncorroboratedMatch.
+//
+// The read happens BEFORE this pass enriches the Albums, so it sees the PREVIOUS
+// pass's verdict on them — which is exactly the evidence wanted: an Artist whose
+// discography has failed to match up to now.
+func (s *Service) artistLacksCorroboration(mode Mode, artistID string, albums []store.Album) (bool, error) {
+	if mode != ModeRecheck || len(albums) == 0 {
+		return false, nil
+	}
+	matched, err := s.store.ArtistHasMatchedAlbum(artistID)
+	if err != nil {
+		return false, err
+	}
+	return !matched, nil
 }
 
 // maxAlbumHints caps how many Albums travel on an Artist's ref as corroboration.
@@ -1754,18 +1829,61 @@ func (s *Service) albumTrackAnchors(ctx context.Context, snap providerSnapshot,
 
 // singleLeafWork builds the leafWork for a re-enrich of ONE Title — the
 // single-Title path (MatchTitle, PUT /titles/{id}/enrichmentMatch, a Cascade's
-// per-child applyOverride) — which is refFor's three tiers plus ADR-0050's fourth,
-// the one refFor cannot supply because a Track's Album is not on its row.
+// per-child applyOverride) — which is refFor's tiers plus the two things refFor
+// cannot supply because they are not on the Title's own row: ADR-0050's album
+// tier (tier three) and, when that tier does not answer, the SEARCH TERMS a
+// library pass gets for free from the Artist/Album it walked through (tier four).
+// Both come out of the one trackAlbumAnchor read, so neither costs a query the
+// tier was not already making.
 //
 // For every non-Music leaf, and for every Track that already has a record or a tag
 // id, this is exactly refFor and nothing else: trackAlbumAnchor returns before it
 // reads anything, and trackAnchorID's first tier answers. A Movie or Episode
 // re-enrich is byte-identical on the wire to what it was before this existed.
 func (s *Service) singleLeafWork(ctx context.Context, snap providerSnapshot, t store.Title) leafWork {
-	fromTracklist, outcome := s.trackAlbumAnchor(ctx, snap, t)
+	tc, fromTracklist, outcome := s.trackAlbumAnchor(ctx, snap, t)
 	ref := refFor(t)
 	ref.MusicbrainzID = trackAnchorID(t, fromTracklist)
+	ref = withMusicSearchTerms(ref, t, tc)
 	return leafWork{title: t, ref: ref, sparseTitle: t.Kind == "track", tracklist: outcome}
+}
+
+// withMusicSearchTerms fills in the terms ADR-0049's LAST tier searches on — the
+// track name, its Artist and its Album — for a Track re-enriched on its own, from
+// the parent context the album tier above it already read.
+//
+// It exists because the two paths disagreed here. refFor sets TitleRef.Title but
+// not Track/Artist, and MusicBrainzProvider.Lookup routes a track with no id to
+// trackDetails(ref.Track, ref.Artist), which refuses a blank track name outright.
+// So an unanchored Track re-enriched alone DECLINED WITH ZERO REQUESTS where a
+// pass — which arrives through Artist → Album → Tracks and so always has the
+// names — would have searched and often matched. Album travels for the same
+// reason the pass carries it: it is the release-narrowing term musicQuery takes,
+// and a term one path can use and the other cannot is the next disagreement.
+//
+// THIS DELIBERATELY TURNS A ZERO-CALL NO-OP INTO ONE REQUEST ON THE SEARCH
+// CLUSTER — the endpoint ADR-0049 measured shedding load globally, and adding to
+// it is a decision, not a detail. It is the right trade here because the
+// alternative is not "fewer requests", it is A WRONG ANSWER RECORDED FOR FREE:
+// the Track settles as a failure with a search reason for a search nobody made,
+// when a pass over the very same Library would have resolved it. One request
+// against a row that lies. ADR-0049's own ordering still holds above this — a
+// record, a tag id or the Album's tracklist all answer first, and each of them
+// makes this tier's terms inert, so the traffic added is only for the Tracks
+// nothing exact can name. The volume is bounded by construction too: this is one
+// Track, re-enriched by hand, not a pass.
+//
+// Absent the parent context — a non-Track, an id already in hand, a Library with
+// Music enrichment off, or an unreadable album linkage — the ref is returned
+// untouched. A pass cannot reach such a Track either (it walks Albums), and
+// searching on a title with no artist to narrow it is the noise ADR-0050's
+// acceptance test exists to keep out of the database.
+func withMusicSearchTerms(ref TitleRef, t store.Title, tc store.TrackContext) TitleRef {
+	if t.Kind != "track" || tc.AlbumID == "" {
+		return ref
+	}
+	ref.Track, ref.Artist, ref.Album = t.Title, tc.ArtistName, tc.AlbumTitle
+	return ref
 }
 
 // trackAlbumAnchor is ADR-0050's album tier for ONE Track, re-enriched on its own:
@@ -1798,31 +1916,43 @@ func (s *Service) singleLeafWork(ctx context.Context, snap providerSnapshot, t s
 // Every read failure yields no anchor and tracklistUnavailable: a bookkeeping read
 // must not be able to fail a re-enrich, and an outcome nothing was learned from must
 // not diagnose the Track.
+//
+// It also HANDS BACK THE PARENT CONTEXT it read, because the tier below it wants the
+// same fact. The search a pass makes is narrowed by the Artist and Album it walked
+// through to reach the Track; the single-Title path has neither on the Title's row,
+// and this read is the only place they are fetched. Returning them is what lets
+// withMusicSearchTerms complete the last tier without a second query. It is the zero
+// TrackContext wherever the tier returned early or the linkage was unreadable — the
+// four cases where either no search happens at all or a pass could not have reached
+// this Track to make one.
 func (s *Service) trackAlbumAnchor(ctx context.Context, snap providerSnapshot,
-	t store.Title) (string, tracklistOutcome) {
+	t store.Title) (store.TrackContext, string, tracklistOutcome) {
 
 	if t.Kind != "track" || trackRecordID(t) != "" {
-		return "", tracklistUnavailable
+		return store.TrackContext{}, "", tracklistUnavailable
 	}
 	if !snap.enablement.enabledFor(t.Kind) {
 		// processLeaf is about to write 'disabled' with no diagnosis and no call. Asking
 		// the Album anything would be three store reads spent on an answer nobody reads.
-		return "", tracklistUnavailable
+		return store.TrackContext{}, "", tracklistUnavailable
 	}
 	tc, err := s.store.TrackContextForTitle(t.ID)
 	if err != nil {
-		return "", tracklistUnavailable // no album linkage (or an unreadable one)
+		return store.TrackContext{}, "", tracklistUnavailable // no album linkage (or an unreadable one)
 	}
+	// From here the parent context travels even when the tier itself learns nothing:
+	// the Artist and Album are facts about the Track, and a failure to map the Album's
+	// tracklist is no reason to send the search below with less than a pass sends.
 	al, err := s.store.AlbumByID(tc.AlbumID)
 	if err != nil {
-		return "", tracklistUnavailable
+		return tc, "", tracklistUnavailable
 	}
 	tracks, err := s.store.TracksForAlbum(al.ID)
 	if err != nil {
-		return "", tracklistUnavailable
+		return tc, "", tracklistUnavailable
 	}
 	ids, outcome := s.albumTrackAnchors(ctx, snap, al, s.albumRecordID(al.ID), tracks)
-	return ids[t.ID], outcome
+	return tc, ids[t.ID], outcome
 }
 
 // albumRecordID is the enrichment record an Album already holds — the id
@@ -2018,7 +2148,12 @@ func (s *Service) recordParentFailure(entityType, entityID string, cur store.Ent
 // child can resolve under it). It honors the same disabled / no-match / failed
 // degradation as a leaf, and skips an already-matched parent in ModeNew (reusing
 // its stored external id). Parent enrichment is not counted in the pass Result.
-func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef) (string, error) {
+//
+// doubted is the caller's answer to "do this parent's own children contradict its
+// stored `matched` answer?" (ADR-0053's amendment). Every other caller passes
+// parentTrusted; only the Music walk's Artist computes one, and it is consulted
+// in ModeRecheck alone. See uncorroboratedMatch.
+func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, doubted bool) (string, error) {
 	if !snap.enablement.enabledFor(ref.Kind) {
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "disabled")
 	}
@@ -2033,8 +2168,14 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	// it still short-circuits here to its stored id — which is what makes a recheck
 	// free for the albums that are already fine, and what still hands ADR-0050's
 	// tracklist tier its anchor.
+	//
+	// UNLESS its own children contradict it (ADR-0053's amendment): a `matched`
+	// parent that nothing beneath it corroborates is re-asked too, which is the
+	// only mechanism that ever reaches an Artist matched to the wrong band. A
+	// healthy library doubts nothing, so the zero-provider-calls floor holds.
 	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) &&
-		!(mode == ModeRecheck && settledNonAnswer(cur.Status, cur.RetryAt)) {
+		!(mode == ModeRecheck && (settledNonAnswer(cur.Status, cur.RetryAt) ||
+			uncorroboratedMatch(cur.Status, doubted))) {
 		return cur.ExternalID, nil // already settled; reuse its resolved id
 	}
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id
@@ -2223,16 +2364,19 @@ func withEpisodePin(ref TitleRef, t store.Title) TitleRef {
 //
 // It is PURE, and it reaches only the tiers that are on the Title's own row. The
 // music precedence is four tiers — record → tag → the ALBUM's tracklist → search
-// (ADR-0049 as ADR-0050 narrowed it) — and the third of those is not on the row: it
-// takes the Track's Album, that Album's record or tag release-group, its chosen
-// edition, its whole local track list and a provider read. So refFor supplies tiers
-// one, two and four, and singleLeafWork splices the album tier in on top of it
-// through the same albumTrackAnchors a library pass uses.
+// (ADR-0049 as ADR-0050 narrowed it) — and neither of the last two is wholly on the
+// row. The album tier takes the Track's Album, that Album's record or tag
+// release-group, its chosen edition, its whole local track list and a provider read;
+// the search tier takes the Artist and Album names, which live on the parent rows a
+// pass walks through and a Title does not carry. So refFor supplies tiers one and
+// two outright, and singleLeafWork completes the other two — the album tier through
+// the same albumTrackAnchors a library pass uses, the search terms through
+// withMusicSearchTerms — from one read of the Track's parent context.
 //
 // This comment used to claim the precedence was the pass's, in full. It was true
 // when it was written and it stopped being true the day the tier was added — which
 // is what a comment asserting parity between two code paths is worth without a test
-// holding them to it. There is one now (issue 14).
+// holding them to it. There is one now, and it covers all four tiers (issues 14, 17).
 func refFor(t store.Title) TitleRef {
 	ref := TitleRef{
 		Kind:   t.Kind,
@@ -2241,8 +2385,9 @@ func refFor(t store.Title) TitleRef {
 		TMDBID: t.TMDBID,
 		IMDBID: t.IMDBID,
 		// Tiers one and two of the music precedence: the record wins, the file's tag id
-		// is the fallback (ADR-0049). Tier three (the Album's tracklist, ADR-0050) is
-		// added by singleLeafWork; a search is still the last resort.
+		// is the fallback (ADR-0049). Tier three (the Album's tracklist, ADR-0050) and
+		// tier four's search TERMS are added by singleLeafWork; a search is still the
+		// last resort, and it is still the only tier that does not resolve by an id.
 		MusicbrainzID: trackRecordID(t),
 		SeasonNumber:  t.SeasonNumber,
 		EpisodeNumber: t.EpisodeNumber,
