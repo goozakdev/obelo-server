@@ -3459,14 +3459,64 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   margin-top: 0.35rem;
   font-size: 0.9rem;
 }
+/* BOUNDED (album-resolves-its-tracks/18). The library's `Unknown Album` holds 106
+   flagged tracks; disclosing them full-length pushes every row after it a page
+   down, which puts back the very pile the album row collapsed. So the list is a
+   panel: capped, scrolling inside itself, with `auto` rather than `scroll` so a
+   two-track album is never given a scrollbar it has no use for.
+
+   `overscroll-behavior: contain` stops a flick that reaches the end of this panel
+   from carrying on and scrolling the whole queue out from under the Admin. */
 .fix-item-child-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0;
   margin: 0.5rem 0 0;
   padding: 0 0 0 0.85rem;
   border-left: 2px solid var(--border);
   list-style: none;
+  max-height: 26rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The cap LIFTS while one child's picker is open, and the reasoning is in
+   FixItemRow beside `is-expanded`: a picker is taller than the cap on its own, so
+   capping it would nest a scroller inside a scroller and bury "Use this" under a
+   fold. Only one child can be open at a time, so the list is only ever this tall
+   for the one row the Admin is actually working on. */
+.fix-item-child-list.is-expanded {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* A DISCLOSED row (album-resolves-its-tracks/18). It has no artwork column, so it
+   is a single-column row rather than the queue's poster-plus-body pair, and it is
+   tuned down throughout: what it must carry is which track, what is wrong with it
+   and its own picker — the rest was already said by the album row above. */
+.fix-item.fix-item-compact {
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+.fix-item.fix-item-compact > .fix-item-body {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  gap: 0.2rem;
+}
+.fix-item-compact .fix-item-problem {
+  font-size: 0.85rem;
+}
+/* The file name alone (the element still carries the whole path as its title). The
+   PRD's second promise — always show which file — is kept, but the folder half of
+   it is the album row's own path repeated per track, and `word-break: break-all`
+   wrapping a long absolute path over three lines is most of what made the
+   disclosure tall. */
+.fix-item-compact .fix-item-path {
+  font-size: 0.75rem;
+}
+.fix-item-compact .fix-item-actions {
+  font-size: 0.85rem;
+  gap: 0.6rem;
 }
 
 /* --- The inline picker ---------------------------------------------------- */
