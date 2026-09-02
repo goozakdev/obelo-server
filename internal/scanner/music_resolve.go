@@ -173,6 +173,10 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 				ArtworkPath:   albumArt[filepath.Dir(path)],
 				ReleaseType:   id.ReleaseType,
 				MusicbrainzID: id.ReleaseGroupMBID,
+				// The exact edition the file names, so the Album can resolve its own
+				// Tracks off that release's tracklist rather than searching for each
+				// one by name (ADR-0050).
+				MusicbrainzReleaseID: id.ReleaseMBID,
 			}
 			acc.albums[id.AlbumKey] = at
 			acc.order = append(acc.order, id.AlbumKey)
@@ -187,6 +191,9 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 		}
 		if at.MusicbrainzID == "" {
 			at.MusicbrainzID = id.ReleaseGroupMBID
+		}
+		if at.MusicbrainzReleaseID == "" {
+			at.MusicbrainzReleaseID = id.ReleaseMBID
 		}
 		if acc.artist.MusicbrainzID == "" {
 			acc.artist.MusicbrainzID = id.ArtistMBID

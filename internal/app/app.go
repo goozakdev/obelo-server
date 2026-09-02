@@ -11,6 +11,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/access"
@@ -64,10 +66,23 @@ type App struct {
 	providerManager *enrich.Manager
 
 	// enrichQueue feeds the enrich worker; the scan auto-trigger, the scheduled
-	// enrich, and a policy change enqueue (Library id + Mode) onto it. A policy
-	// change enqueues ModeFull (re-enrich every Title so the change is visible); the
-	// scan/sweep triggers enqueue ModeNew. Nil when no enrich worker runs.
+	// enrich, a policy change and the Admin's manual POST enqueue (Library id +
+	// Mode) onto it. A policy change enqueues ModeFull (re-enrich every Title so the
+	// change is visible); the scan/sweep triggers enqueue ModeNew; the manual pass
+	// carries whichever mode was asked for. Nil when no enrich worker runs.
 	enrichQueue chan enrichRequest
+	// enrichWorkerUp reports whether runEnrichWorker is actually draining that
+	// queue. Without it "enqueue" is a silent no-op on a server with no worker — the
+	// operator presses the button and nothing happens, forever, with no message
+	// (ADR-0051 amendment). Read by every start; flipped by the worker itself, so a
+	// shut-down App answers honestly too.
+	enrichWorkerUp atomic.Bool
+	// enrichPasses is the IN-MEMORY status of Enrichment passes, keyed by Library
+	// (enrich_pass.go): what is running, how far along, and what the last finished
+	// pass came to. Deliberately not a table — see enrich.PassStatus. Guarded by
+	// enrichMu.
+	enrichMu     sync.Mutex
+	enrichPasses map[string]*enrichPassState
 	// enrichReschedule wakes the scheduled-enrich goroutine so a saved
 	// EnrichInterval change applies promptly (enabling from 0, or shrinking a long
 	// interval, takes effect immediately rather than on the next tick). Buffered
@@ -154,6 +169,16 @@ type options struct {
 	// from trying to join somebody's Tailnet, so this stays nil unless a caller says
 	// otherwise — and a nil node answers ErrNoNode exactly as the stub does.
 	tailnetNode tailnet.Node
+	// noEnrichWorker suppresses the background enrich worker, and enrichQueueSize
+	// overrides its queue depth (default enrichQueueDepth). Both exist for ONE
+	// reason: the two states in which starting a pass cannot become a pass —
+	// "nobody is draining the queue" and "the queue is full" — are unreachable in a
+	// running server, and both used to be answered with silence. ADR-0051's
+	// amendment says an operator who presses a button must be told what happened,
+	// which makes those branches load-bearing; a branch nobody can run is a promise
+	// nobody has checked. Production sets neither.
+	noEnrichWorker  bool
+	enrichQueueSize int
 	// tailnetAuthKey overrides where the pre-authorized join key comes from
 	// (default: tailnet.EnvAuthKey, i.e. OBELO_TAILSCALE_AUTHKEY read at join time).
 	// A test injects a known value so it can then prove that value reaches no table,
@@ -209,6 +234,23 @@ func WithFFmpegAvailability(p transcode.AvailabilityProbe) Option {
 // NVENC-without-nvidia-smi, and non-NVENC states without a real GPU.
 func WithGPUProbe(p gpu.Probe) Option {
 	return func(o *options) { o.gpuProbe = p }
+}
+
+// WithoutEnrichWorker boots the App with NO background enrich worker, so nothing
+// ever drains the enrich queue. It models the server on which starting a pass can
+// never become a pass — the state POST /libraries/{id}/enrich must report plainly
+// rather than accept and forget (ADR-0051 amendment). No configuration produces
+// it today, which is exactly why the branch needs a seam: the alternative is an
+// unreachable answer nobody has ever seen the server give.
+func WithoutEnrichWorker() Option {
+	return func(o *options) { o.noEnrichWorker = true }
+}
+
+// WithEnrichQueueCapacity overrides the background enrich queue's depth (default
+// enrichQueueDepth). A test sets it to 1 to reach the queue-FULL refusal in three
+// requests instead of sixty-six; production leaves the default.
+func WithEnrichQueueCapacity(n int) Option {
+	return func(o *options) { o.enrichQueueSize = n }
 }
 
 // WithKeyRotation pins the rotation endpoint URL and its base64 AES-256-GCM
@@ -634,7 +676,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// gates on the live per-kind enablement (enqueueEnrichIfEnabled), so a fully
 	// unconfigured server enqueues nothing and the idle worker just blocks on its
 	// queue — no outbound call is ever made (ADR-0001 offline-first).
-	runEnrichWorker := true
+	runEnrichWorker := !o.noEnrichWorker
 
 	app := &App{
 		Config:           cfg,
@@ -656,7 +698,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		rotationWake:     make(chan struct{}, 1),
 		tailnetMgr:       tailnetManager,
 	}
-	app.enrichQueue = make(chan enrichRequest, 64)
+	queueDepth := enrichQueueDepth
+	if o.enrichQueueSize > 0 {
+		queueDepth = o.enrichQueueSize
+	}
+	app.enrichQueue = make(chan enrichRequest, queueDepth)
 
 	// The Placement Apply (ADR-0044) is the second writer of catalog rows, so it
 	// takes the SAME per-Library scan lock a scan does (ADR-0031) — one writer per
@@ -681,6 +727,13 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// to the next scan with no restart and a disabled server does no background work.
 	enrichTrigger := app.enqueueEnrichAfterScan
 
+	// The Admin's manual pass (ADR-0051 amendment). Handed to the API layer as two
+	// functions, exactly as enrichTrigger is, rather than letting a handler reach
+	// into App: the transport gets "start one" and "what is happening", and stays
+	// ignorant of queues, workers and locks.
+	enrichStart := app.StartEnrichPass
+	enrichStatus := app.EnrichPassStatus
+
 	apiHandler := api.Handler(api.Deps{
 		Meta:            meta,
 		Auth:            authSvc,
@@ -696,6 +749,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Organize:        organizeSvc,
 		Events:          broker,
 		EnrichTrigger:   enrichTrigger,
+		EnrichStart:     enrichStart,
+		EnrichStatus:    enrichStatus,
 		ScanStatus:      db,
 		Libraries:       db,
 		TitleCounts:     db,
@@ -987,11 +1042,17 @@ func (a *App) notifyEnrichReschedule() {
 	}
 }
 
-// enrichRequest is one queued background pass: a Library and how much to re-enrich
-// (ModeNew for the scan/sweep triggers; ModeFull for a policy change).
+// enrichRequest is one queued background pass: a Library, how much to re-enrich
+// (ModeNew for the scan/sweep triggers; ModeFull for a policy change; whatever the
+// Admin asked for on a manual pass), and an optional settled-callback.
+//
+// done, when set, fires once no pass is in flight for that Library any more — the
+// affordance scanner.StartScan takes for the same reason, so a test can await a
+// background job deterministically. The automatic triggers pass nil.
 type enrichRequest struct {
 	libraryID string
 	mode      enrich.Mode
+	done      func(enrich.Result, error)
 }
 
 // enqueueEnrich requests a background ModeNew Enrichment pass for a Library (the
@@ -1064,43 +1125,62 @@ func (a *App) enqueueEnrichFull(libraryID string) {
 	a.enqueue(enrichRequest{libraryID: libraryID, mode: enrich.ModeFull})
 }
 
-// enqueue is the shared non-blocking enqueue: if no worker is running (enrichment
-// off) it is a no-op, and a full queue drops the request (the scheduled sweep / a
-// later scan will catch it) rather than stalling the caller.
+// enqueue is the shared non-blocking enqueue used by the AUTOMATIC triggers
+// (auto-after-scan, the scheduled sweep, a policy change, a Placement Apply).
+// Their posture is unchanged and deliberately so: they are best-effort background
+// work nobody is watching, they never refuse on account of a pass already
+// running, and a start that cannot happen is logged rather than surfaced — there
+// is no caller to surface it to. The Admin's manual pass goes through
+// StartEnrichPass instead, which answers all three failures out loud.
 func (a *App) enqueue(req enrichRequest) {
-	if a.enrichQueue == nil {
-		return
-	}
-	select {
-	case a.enrichQueue <- req:
-	default:
-		log.Printf("obelo: enrich queue full, dropping %q", req.libraryID)
+	if err := a.dispatchEnrichPass(req, false); err != nil && !errors.Is(err, enrich.ErrPassQueueFull) {
+		// A full queue already logged itself in dispatchEnrichPass; anything else
+		// (no worker) is worth one line, because it means this trigger is inert.
+		log.Printf("obelo: not enqueuing a %s enrich pass of %q: %v", req.mode, req.libraryID, err)
 	}
 }
 
 // runEnrichWorker drains enrichQueue until ctx is cancelled, running one
-// background ModeNew Enrichment pass per enqueued Library. Serialized by the
-// enrich service's per-Library lock, so it never races a concurrent pass.
+// background Enrichment pass per enqueued Library in the mode it carries.
+// Serialized by the enrich service's per-Library lock, so it never races a
+// concurrent pass.
+//
+// ctx is the APPLICATION's background context, never a request's. That is the
+// whole point of routing the manual pass through here (ADR-0051 amendment): a
+// fifteen-minute recheck cannot be killed by the operator reloading the page that
+// started it.
 func (a *App) runEnrichWorker(ctx context.Context) {
-	defer close(a.enrichDone)
+	a.enrichWorkerUp.Store(true)
+	defer func() {
+		a.enrichWorkerUp.Store(false)
+		close(a.enrichDone)
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case req := <-a.enrichQueue:
-			a.runEnrichPass(ctx, req.libraryID, req.mode)
+			res, err := a.runEnrichPass(ctx, req.libraryID, req.mode)
+			a.settleEnrichPass(req.libraryID, res, err, true)
 		}
 	}
 }
 
 // runEnrichPass runs one pass (in the given mode) and publishes enrichProgress
 // (per-Title) plus a terminal Complete event. Errors are logged, never fatal —
-// enrichment is the optional decorator step (ADR-0001/0002).
-func (a *App) runEnrichPass(ctx context.Context, libID string, mode enrich.Mode) {
+// enrichment is the optional decorator step (ADR-0001/0002) — and returned so the
+// caller can settle the Library's status with them.
+//
+// Every progress tick is recorded on the in-memory status as well as published,
+// so a client that was not connected when the tick went out (a page reloaded
+// mid-pass) can still ask where the pass has got to.
+func (a *App) runEnrichPass(ctx context.Context, libID string, mode enrich.Mode) (enrich.Result, error) {
 	cb := func(p enrich.Progress) {
+		a.noteEnrichProgress(libID, p)
 		a.Events.PublishEnrichProgress(events.EnrichProgress{
 			LibraryID: p.LibraryID, Total: p.Total, Done: p.Done,
-			Matched: p.Matched, Unmatched: p.Unmatched, Failed: p.Failed, Disabled: p.Disabled,
+			Matched: p.Matched, Unmatched: p.Unmatched, Failed: p.Failed,
+			Disabled: p.Disabled, Retrying: p.Retrying,
 		})
 	}
 	res, err := a.Enrich.EnrichLibraryProgress(ctx, libID, mode, cb)
@@ -1108,16 +1188,22 @@ func (a *App) runEnrichPass(ctx context.Context, libID string, mode enrich.Mode)
 		if ctx.Err() == nil {
 			log.Printf("obelo: enrich pass of %q: %v", libID, err)
 		}
-		return
+		// Terminal-on-error, mirroring handleScan's done callback: a failed pass
+		// never reaches the success event below, and a client left showing
+		// "Re-checking…" forever is the same silence this ADR exists to end.
+		a.Events.PublishEnrichProgress(events.EnrichProgress{LibraryID: libID, Complete: true})
+		return enrich.Result{}, err
 	}
 	a.Events.PublishEnrichProgress(events.EnrichProgress{
 		LibraryID: libID, Total: res.Total, Done: res.Total,
 		Matched: res.Matched, Unmatched: res.Unmatched,
-		Failed: res.Failed, Disabled: res.Disabled, Complete: true,
+		Failed: res.Failed, Disabled: res.Disabled, Retrying: res.Retrying,
+		Complete: true,
 	})
 	// The pass changed the Library's metadata/artwork: nudge clients to refetch
 	// (library-scoped), mirroring the manual enrich handler (PRD story 6).
 	a.Events.PublishLibraryUpdated(libID)
+	return res, nil
 }
 
 // runScheduledEnrich is the always-on safety-net sweep, reworked to be dynamically

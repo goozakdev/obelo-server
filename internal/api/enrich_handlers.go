@@ -20,10 +20,26 @@ import (
 // pass result is a small summary the Admin sees after triggering enrichment.
 
 // enrichRequest is the optional JSON body of POST /libraries/{id}/enrich. mode
-// "full" re-enriches every visible Title (unlocked-only); absent/"new" enriches
-// only Titles never successfully enriched.
+// "full" re-enriches every visible Title (unlocked-only); "recheck" adds the
+// settled non-answers to the only-new population (ADR-0051); absent/"new"
+// enriches only Titles never successfully enriched.
 type enrichRequest struct {
 	Mode string `json:"mode"`
+}
+
+// enrichMode maps a wire mode string onto an enrich.Mode. An UNRECOGNIZED value
+// (including "" and "new") falls back to the default only-new pass rather than
+// 400-ing: this handler has always been best-effort about the mode — a malformed
+// body leaves the default too — and an older client naming a mode this build does
+// not have should get the safe, cheap pass, not an error.
+func enrichMode(s string) enrich.Mode {
+	switch {
+	case strings.EqualFold(s, "full"):
+		return enrich.ModeFull
+	case strings.EqualFold(s, "recheck"):
+		return enrich.ModeRecheck
+	}
+	return enrich.ModeNew
 }
 
 type enrichResultJSON struct {
@@ -37,72 +53,226 @@ type enrichResultJSON struct {
 	// transient provider failure (ADR-0048) — not parked, and not the Admin's
 	// problem unless the streak escalates.
 	Retrying int `json:"retrying"`
+	// Mode / FinishedAt describe WHICH pass this summary came from, and are set only
+	// where the summary is reported detached from the request that caused it — i.e.
+	// as the `lastPass` of a status read.
+	Mode       string `json:"mode,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
 }
 
-// handleEnrich triggers an Enrichment pass over a Library (Admin). By default it
-// is the only-new mode (Titles with status 'pending'); pass {"mode":"full"} or
-// ?mode=full for a full refresh. The pass runs to completion and the response is
-// its summary. An unknown Library is 404 (api-contract.md hide-existence). When
-// enrichment is unconfigured the pass is a no-op that reports the candidates as
-// 'disabled' (ADR-0001) — it still returns 200 with the disabled count.
+// enrichProgressJSON is how far a running pass has got: the same done/total and
+// running counts the enrichProgress SSE stream carries (ADR-0016), so a client
+// that missed the ticks — a page reloaded mid-pass — can catch up with one read.
+type enrichProgressJSON struct {
+	Total     int `json:"total"`
+	Done      int `json:"done"`
+	Matched   int `json:"matched"`
+	Unmatched int `json:"unmatched"`
+	Failed    int `json:"failed"`
+	Disabled  int `json:"disabled"`
+	Retrying  int `json:"retrying"`
+}
+
+// Pass states on the wire. A Library is "running" while a pass is queued or
+// executing for it and "idle" otherwise; there is no third value, because a pass
+// that ended is described by lastPass rather than by a state of its own.
+const (
+	enrichStateIdle    = "idle"
+	enrichStateRunning = "running"
+)
+
+// enrichPassJSON is the body of BOTH POST (202) and GET /libraries/{id}/enrich —
+// one shape, so "what did my press do?" and "what is happening now?" are answered
+// in the same words, exactly as the scan surface answers both with a scan status.
+type enrichPassJSON struct {
+	LibraryID string `json:"libraryId"`
+	State     string `json:"state"`
+	// Mode / StartedAt describe the pass in flight; absent when idle.
+	Mode      string `json:"mode,omitempty"`
+	StartedAt string `json:"startedAt,omitempty"`
+	// Started is true on the POST that actually started this pass, and false when
+	// the reply is reporting one that was ALREADY running — the difference between
+	// "off it goes" and "you already asked". Omitted from a status read.
+	Started  bool                `json:"started,omitempty"`
+	Progress *enrichProgressJSON `json:"progress,omitempty"`
+	// LastPass is the most recent FINISHED pass over this Library, or absent if none
+	// has finished since the server started. In-memory: see enrich.PassStatus.
+	LastPass *enrichResultJSON `json:"lastPass,omitempty"`
+}
+
+// toEnrichPassJSON projects the in-memory pass status onto the wire shape.
+func toEnrichPassJSON(libraryID string, st enrich.PassStatus) enrichPassJSON {
+	out := enrichPassJSON{LibraryID: libraryID, State: enrichStateIdle}
+	if st.Running {
+		out.State = enrichStateRunning
+		out.Mode = st.Mode.String()
+		out.StartedAt = formatInstant(st.StartedAt)
+		out.Progress = &enrichProgressJSON{
+			Total: st.Progress.Total, Done: st.Progress.Done,
+			Matched: st.Progress.Matched, Unmatched: st.Progress.Unmatched,
+			Failed: st.Progress.Failed, Disabled: st.Progress.Disabled,
+			Retrying: st.Progress.Retrying,
+		}
+	}
+	if st.Last != nil {
+		out.LastPass = &enrichResultJSON{
+			LibraryID: libraryID,
+			Total:     st.Last.Total, Matched: st.Last.Matched,
+			Unmatched: st.Last.Unmatched, Failed: st.Last.Failed,
+			Disabled: st.Last.Disabled, Retrying: st.Last.Retrying,
+			Mode: st.LastMode.String(), FinishedAt: formatInstant(st.LastFinishedAt),
+		}
+	}
+	return out
+}
+
+// enrichPassStatusOf reads a Library's pass status through the wired reader,
+// answering "idle, nothing has finished" when none is wired (a narrow unit test).
+func enrichPassStatusOf(deps Deps, libraryID string) enrich.PassStatus {
+	if deps.EnrichStatus == nil {
+		return enrich.PassStatus{}
+	}
+	return deps.EnrichStatus(libraryID)
+}
+
+// libraryMustExist validates a Library id for the enrich surface, writing the 404
+// itself when it is absent or unknown (api-contract.md hide-existence). It runs
+// BEFORE anything is queued, so an unknown Library is a 404 rather than a 202 for
+// a pass that will fail somewhere else five seconds later — the same ordering
+// handleScan gets from StartScan validating first.
+func libraryMustExist(w http.ResponseWriter, deps Deps, libraryID string) bool {
+	if libraryID == "" {
+		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+		return false
+	}
+	if deps.Libraries == nil {
+		return true // narrow unit test: nothing to validate against
+	}
+	ok, err := deps.Libraries.LibraryExists(libraryID)
+	switch {
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to read library", nil)
+		return false
+	case !ok:
+		writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
+		return false
+	}
+	return true
+}
+
+// handleEnrich STARTS an Enrichment pass over a Library (Admin) and returns 202
+// Accepted immediately. By default it is the only-new mode (Titles with status
+// 'pending'); pass {"mode":"full"} or ?mode=full for a full refresh, or
+// {"mode":"recheck"} / ?mode=recheck to re-ask the settled non-answers as well
+// (ADR-0051) — the mode the Needs Fixing screen's "Re-check unmatched items"
+// button uses after a matching improvement ships.
 //
-// While the pass runs it publishes enrichProgress events over the SSE Broker
-// (ADR-0016) so a connected client can show an "enriching" indicator and live-
-// update its grid, plus a terminal Complete event when the pass finishes. broker
-// may be nil (events simply aren't published).
-func handleEnrich(svc *enrich.Service, broker *events.Broker) http.HandlerFunc {
+// It used to run the pass INSIDE the request, and the doc comment here said so.
+// That was harmless while the only caller was a human with curl and immediately
+// fatal once a browser pointed at it: a recheck of a real library is ~15 minutes
+// of provider calls, the fetch hung, the operator reloaded the page, and the
+// reload cancelled r.Context() and with it the pass. All 724 flagged rows still
+// carried a blank enrichment_reason afterwards, which is how we know not one leaf
+// had been processed. So: **a pass is started, not awaited** (ADR-0051's
+// amendment). The pass runs on the application's background worker — the same one
+// the auto-after-scan trigger and the policy-change re-enrich use, serialized by
+// the same per-Library lock — so cancelling this request cannot cancel it, and
+// progress arrives on the enrichProgress SSE stream (ADR-0016) that already
+// existed. This is exactly handleScan's shape, which enrichment could have had
+// all along; only the endpoint was holding the request open.
+//
+// The reply names the mode it started and whether THIS request started it. Three
+// answers that used to be silence are now said out loud:
+//   - no worker is running (nothing would ever pick the pass up) → 503;
+//   - the queue is full → 503, rather than a dropped request and a log line;
+//   - a pass is already running for this Library → 202 with started=false and the
+//     in-flight status, rather than a duplicate queued behind the same lock.
+//
+// An unknown Library is 404 (api-contract.md hide-existence), validated before
+// anything is queued. When enrichment is unconfigured the pass still runs and
+// marks its candidates 'disabled' (ADR-0001) — that is a finished pass, not a
+// refusal.
+func handleEnrich(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := pathParam(r.URL.Path, "/libraries/", "/enrich")
-		if id == "" {
-			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+		if !libraryMustExist(w, deps, id) {
 			return
 		}
 
-		mode := enrich.ModeNew
-		if strings.EqualFold(r.URL.Query().Get("mode"), "full") {
-			mode = enrich.ModeFull
-		} else if r.ContentLength > 0 {
+		// The query string wins when it names a mode this build knows; otherwise the
+		// body is consulted. Both spellings select the same three modes.
+		mode := enrichMode(r.URL.Query().Get("mode"))
+		if mode == enrich.ModeNew && r.ContentLength > 0 {
 			var req enrichRequest
 			// Best-effort: a malformed body just leaves the default mode.
-			if json.NewDecoder(r.Body).Decode(&req) == nil && strings.EqualFold(req.Mode, "full") {
-				mode = enrich.ModeFull
+			if json.NewDecoder(r.Body).Decode(&req) == nil {
+				mode = enrichMode(req.Mode)
 			}
 		}
 
-		var onProgress func(enrich.Progress)
-		if broker != nil {
-			onProgress = func(p enrich.Progress) { broker.PublishEnrichProgress(toEnrichEvent(p, false)) }
+		if deps.EnrichStart == nil {
+			writeError(w, http.StatusServiceUnavailable, codeEnrichUnavailable,
+				"this server is not running background enrichment passes, so there is nothing to start", nil)
+			return
 		}
-		res, err := svc.EnrichLibraryProgress(r.Context(), id, mode, onProgress)
+		// done is deliberately nil here: nothing about the HTTP reply waits on the
+		// pass. The callback exists for callers that want to await one (tests), which
+		// is the same reason StartScan takes one.
+		err := deps.EnrichStart(id, mode, nil)
 		switch {
-		case errors.Is(err, store.ErrNotFound):
-			writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
+		case errors.Is(err, enrich.ErrPassInProgress):
+			// Idempotent, exactly like a second POST /scan: report the pass that IS
+			// running rather than queueing a second one behind the same lock.
+			out := toEnrichPassJSON(id, enrichPassStatusOf(deps, id))
+			writeJSON(w, http.StatusAccepted, out)
+			return
+		case errors.Is(err, enrich.ErrPassWorkerUnavailable):
+			writeError(w, http.StatusServiceUnavailable, codeEnrichUnavailable,
+				"this server is not running background enrichment passes, so there is nothing to start", nil)
+			return
+		case errors.Is(err, enrich.ErrPassQueueFull):
+			writeError(w, http.StatusServiceUnavailable, codeEnrichBusy,
+				"too many enrichment passes are already queued — try again in a moment", nil)
 			return
 		case err != nil:
-			writeError(w, http.StatusInternalServerError, codeInternal, "enrichment failed", nil)
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to start the enrichment pass", nil)
 			return
 		}
-		if broker != nil {
-			// Terminal event: clients hide the indicator + do a final refetch.
-			broker.PublishEnrichProgress(events.EnrichProgress{
-				LibraryID: id, Total: res.Total, Done: res.Total,
-				Matched: res.Matched, Unmatched: res.Unmatched,
-				Failed: res.Failed, Disabled: res.Disabled, Retrying: res.Retrying,
-				Complete: true,
-			})
-			// An enrichment pass changes a Library's metadata/artwork, so it is
-			// also a content-change point: nudge clients to refetch (library-scoped).
-			broker.PublishLibraryUpdated(id)
+
+		// Report the pass we just started. Reading the status back (rather than
+		// synthesizing a reply) means the 202 and the pollable GET can never describe
+		// the same pass differently — and by the time this runs the worker may
+		// already be publishing progress, which is fine: both are the truth.
+		out := toEnrichPassJSON(id, enrichPassStatusOf(deps, id))
+		out.State = enrichStateRunning
+		if out.Mode == "" {
+			out.Mode = mode.String()
 		}
-		writeJSON(w, http.StatusOK, enrichResultJSON{
-			LibraryID: id,
-			Total:     res.Total,
-			Matched:   res.Matched,
-			Unmatched: res.Unmatched,
-			Failed:    res.Failed,
-			Disabled:  res.Disabled,
-			Retrying:  res.Retrying,
-		})
+		out.Started = true
+		writeJSON(w, http.StatusAccepted, out)
+	}
+}
+
+// handleEnrichStatus answers whether an Enrichment pass is running over a Library
+// — its mode, how far it has got, and the summary of the most recent finished one
+// (GET /libraries/{id}/enrich, Admin-only; unknown Library → 404).
+//
+// It is what lets a RELOADED page rejoin a pass instead of showing an idle button,
+// which is the failure ADR-0051's amendment was written from: the operator saw
+// nothing happen, reloaded, and killed their own pass. Progress still streams over
+// SSE; this is the "I just arrived, what did I miss?" read, and the SSE stream is
+// how the answer stays current afterwards.
+//
+// The status is held IN MEMORY (see enrich.PassStatus), so a Library reads idle
+// with no lastPass after a restart. That is the honest answer: a status that
+// survived the process would be claiming a pass had.
+func handleEnrichStatus(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := pathParam(r.URL.Path, "/libraries/", "/enrich")
+		if !libraryMustExist(w, deps, id) {
+			return
+		}
+		writeJSON(w, http.StatusOK, toEnrichPassJSON(id, enrichPassStatusOf(deps, id)))
 	}
 }
 
@@ -335,6 +505,12 @@ type enrichmentCandidateJSON struct {
 	// so an Admin can confirm the positional map before applying (ADR-0019). Absent
 	// for every non-album kind.
 	Tracklist []candidateTrackJSON `json:"tracklist,omitempty"`
+	// ReleaseID is the exact EDITION a pasted MusicBrainz /release/ URL named
+	// (ADR-0052). The preview resolves that release to its parent release-group —
+	// externalId, which is what an album IS — and returns the release here so the
+	// apply can keep both. The client sends it straight back as the override's
+	// releaseId; absent means the Admin named no edition. Album previews only.
+	ReleaseID string `json:"releaseId,omitempty"`
 }
 
 // candidateTrackJSON is one track in an album candidate's tracklist preview.
@@ -370,6 +546,7 @@ func toCandidateJSON(p *providerImageProxy, c enrich.Candidate) enrichmentCandid
 		Disambiguation: c.Disambiguation,
 		TypeLabel:      c.TypeLabel,
 		Kind:           c.Kind,
+		ReleaseID:      c.ReleaseID,
 	}
 	for _, tr := range c.Tracklist {
 		jc.Tracklist = append(jc.Tracklist, candidateTrackJSON{
@@ -379,11 +556,14 @@ func toCandidateJSON(p *providerImageProxy, c enrich.Candidate) enrichmentCandid
 	return jc
 }
 
-// searchOptionsFrom reads the optional artist-narrowing + paging query params the
-// Edit-item picker sends (item-editing/search-improvements): `artist` AND-narrows a
+// searchOptionsFrom reads the optional narrowing + paging query params the pickers
+// send (item-editing/search-improvements, needs-fixing/06): `artist` AND-narrows a
 // music album/track search to a specific artist (pre-filled from the item's parsed
-// artist), and `page` (0-based) offsets a broad query by whole pages so "show more"
-// works. The page size is SearchCandidateLimit — the same cap the service applies.
+// artist), `release` AND-narrows a TRACK search to the album the recording sits on,
+// and `page` (0-based) offsets a broad query by whole pages so "show more" works.
+// Each is blank when absent, which is exactly "no narrowing", so a video search —
+// which sends neither — is unchanged. The page size is SearchCandidateLimit — the
+// same cap the service applies.
 func searchOptionsFrom(r *http.Request) enrich.SearchOptions {
 	q := r.URL.Query()
 	page := 0
@@ -391,9 +571,10 @@ func searchOptionsFrom(r *http.Request) enrich.SearchOptions {
 		page = n
 	}
 	return enrich.SearchOptions{
-		Artist: strings.TrimSpace(q.Get("artist")),
-		Limit:  enrich.SearchCandidateLimit,
-		Offset: page * enrich.SearchCandidateLimit,
+		Artist:  strings.TrimSpace(q.Get("artist")),
+		Release: strings.TrimSpace(q.Get("release")),
+		Limit:   enrich.SearchCandidateLimit,
+		Offset:  page * enrich.SearchCandidateLimit,
 	}
 }
 
@@ -551,6 +732,16 @@ func handleTitleExternalPreview(enrichSvc *enrich.Service, images *providerImage
 type enrichmentOverrideRequest struct {
 	ExternalID string `json:"externalId"`
 	Cascade    bool   `json:"cascade"`
+	// ReleaseID pins WHICH EDITION of an Album decorates its tracks (ADR-0052): the
+	// MusicBrainz release a pasted /release/ URL names, carried back by the preview
+	// beside the release-group it resolved to. Album only, and never identity — the
+	// release-group remains what an album IS (ADR-0038), so pinning an edition re-keys
+	// nothing. OMITTED CLEARS a previously chosen edition, because a picked search
+	// candidate or a pasted /release-group/ URL is the Admin naming a less specific
+	// thing, and a stale edition under a new group would decorate from a stranger's
+	// tracklist. Ignored on a leaf Title and on a Show/Artist — a Track has no
+	// tracklist of its own, and neither of those kinds has editions.
+	ReleaseID string `json:"releaseId,omitempty"`
 	// Season / Episode pin WHICH provider episode decorates an Episode, for the
 	// lookup only. Sent when the Admin picked a specific episode after picking the
 	// series — the fix for a file the provider numbers differently from the disk.
@@ -857,21 +1048,11 @@ func handleUploadTitleArtwork(enrichSvc *enrich.Service, cat *catalog.Service, b
 	}
 }
 
-// toEnrichEvent maps an enrich.Progress snapshot onto the SSE payload shape,
-// shared by the manual handler and (via the app worker) the auto/scheduled path.
-func toEnrichEvent(p enrich.Progress, complete bool) events.EnrichProgress {
-	return events.EnrichProgress{
-		LibraryID: p.LibraryID,
-		Total:     p.Total,
-		Done:      p.Done,
-		Matched:   p.Matched,
-		Unmatched: p.Unmatched,
-		Failed:    p.Failed,
-		Disabled:  p.Disabled,
-		Retrying:  p.Retrying,
-		Complete:  complete,
-	}
-}
+// (The enrich.Progress → events.EnrichProgress mapping used to live here, for a
+// manual pass this handler ran itself. There is exactly ONE producer of
+// enrichProgress now — app.runEnrichPass, on the background worker every trigger
+// including this one feeds — so the mapping lives there and cannot drift between
+// a manual pass and an automatic one.)
 
 // --- Library-scoped candidate search (the Unmatched-file case) --------------
 

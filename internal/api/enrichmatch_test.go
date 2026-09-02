@@ -26,6 +26,10 @@ type attentionTitleResp struct {
 	Title            string `json:"title"`
 	Year             int    `json:"year"`
 	EnrichmentStatus string `json:"enrichmentStatus"`
+	// EnrichmentReason is ADR-0050's WHY, omitted when empty. It is the field the
+	// queue keys its per-reason copy off, so a handler that stops sending it turns
+	// four distinct actions back into one sentence with nothing failing.
+	EnrichmentReason string `json:"enrichmentReason"`
 }
 
 type attentionResp struct {
@@ -96,6 +100,16 @@ func TestEnrichmentMatchCorrectsAndLeavesAttention(t *testing.T) {
 	}
 	if sm, ok := attentionHas(att, "Sample Movie"); !ok || sm.EnrichmentStatus != "failed" {
 		t.Fatalf("Sample Movie not failed on attention list: %+v", att.Titles)
+	}
+	// Neither row carries an ADR-0050 reason. A Movie has none by design — the five
+	// values are Music-shaped, and 'search-no-match' in front of an Admin looking at
+	// a film would be worse than the generic sentence — and a 'failed' row has none
+	// because a provider error is not a diagnosis about the item (ADR-0048). Both
+	// render the copy this screen already had.
+	if br.EnrichmentReason != "" {
+		t.Errorf("an unmatched MOVIE carried reason %q, want none — the reason set is "+
+			"Music-shaped and every one of its values would misdescribe a film",
+			br.EnrichmentReason)
 	}
 	if _, ok := attentionHas(att, "Dune"); ok {
 		t.Errorf("matched Title Dune leaked onto the attention list: %+v", att.Titles)

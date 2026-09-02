@@ -1,0 +1,33 @@
+-- 0055_album_release_id: read the MusicBrainz RELEASE id a tagger already wrote
+-- into the files, so a matched Album can resolve the Tracks underneath it from
+-- the tracklist of the exact edition the FILE names (ADR-0050). Purely additive:
+-- one ADD COLUMN with a constant default, no rebuild, no existing row touched.
+--
+-- ADR-0049 harvested three ids out of the tags and left this one. It is the
+-- fourth, and it matters for the population ADR-0049 could not help: Picard
+-- writes the RECORDING id to ID3's binary UFID frame, which ffprobe does not
+-- surface, so a Picard-tagged MP3 library keeps searching. Picard writes the
+-- RELEASE id to a TXXX frame, which ffprobe does surface — and which
+-- musicbrainz_releasegroupid (already read, already stored) is a sibling of.
+--
+-- What this column IS: the exact edition — the pressing whose tracklist has the
+-- numbering this album's files were ripped and numbered against. A release-GROUP
+-- names the work; only a release names the deluxe edition, the remaster, or the
+-- Japanese pressing whose bonus tracks shift every position after the eighth.
+--
+-- What this column is NOT, three ways:
+--
+--   * NOT identity (ADR-0002/0038). identity_key is untouched. The
+--     release-GROUP id already does the album identity job inside AlbumKey; a
+--     release id in a key would re-key an album the moment its owner retagged it
+--     from the standard pressing to the remaster, which is the same album.
+--   * NOT an enrichment record (ADR-0045). This holds what the FILE asserts. It
+--     is scanner-owned and re-derived from disk on every scan; the pass's own
+--     result and an Admin's Fix info live in their own columns and outrank it.
+--   * NOT authoritative on its own (ADR-0050). A tag's release is used only when
+--     its parent release-group is the Album's, so a mis-tagged file cannot
+--     renumber a whole album against a stranger's edition.
+--
+-- No backfill is possible or wanted: the id is in the files, so it appears on
+-- the next scan or not at all — same as ADR-0049's three, for the same reason.
+ALTER TABLE albums ADD COLUMN musicbrainz_release_id TEXT NOT NULL DEFAULT '';

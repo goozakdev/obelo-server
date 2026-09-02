@@ -70,7 +70,7 @@ func TestOnlyNewPassCollectsADueRetry(t *testing.T) {
 // request forever would replace one silent failure with another.
 func TestPermanentFailureIsNeverCollected(t *testing.T) {
 	db := seedTitle(t, "m1")
-	if err := db.SetTitleEnrichmentStatus("m1", "failed"); err != nil {
+	if err := db.SetTitleEnrichmentStatus("m1", "failed", store.EnrichmentReasonNone); err != nil {
 		t.Fatalf("SetTitleEnrichmentStatus: %v", err)
 	}
 	far := time.Now().AddDate(10, 0, 0)
@@ -94,7 +94,7 @@ func TestAttentionListSeparatesRetryingFromParked(t *testing.T) {
 		                 VALUES (?, 'lib', 'movie', ?, ?, ?)`, id, id, id, id)
 	}
 	soon := time.Now().Add(time.Hour)
-	if err := db.SetTitleEnrichmentStatus("parked", "failed"); err != nil {
+	if err := db.SetTitleEnrichmentStatus("parked", "failed", store.EnrichmentReasonNone); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.SetTitleEnrichmentRetry("retrying", 1, soon); err != nil {
@@ -103,7 +103,7 @@ func TestAttentionListSeparatesRetryingFromParked(t *testing.T) {
 	if err := db.SetTitleEnrichmentRetry("escalated", store.EnrichRetryEscalateAfter, soon); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetTitleEnrichmentStatus("nomatch", "unmatched"); err != nil {
+	if err := db.SetTitleEnrichmentStatus("nomatch", "unmatched", store.EnrichmentReasonSearchNoMatch); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +167,7 @@ func TestSettlingResetsTheFailureStreak(t *testing.T) {
 	if err := db.SetTitleEnrichmentRetry("m1", 4, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetTitleEnrichmentStatus("m1", "unmatched"); err != nil {
+	if err := db.SetTitleEnrichmentStatus("m1", "unmatched", store.EnrichmentReasonSearchNoMatch); err != nil {
 		t.Fatal(err)
 	}
 	got, err = db.TitleForEnrichmentByID("m1")

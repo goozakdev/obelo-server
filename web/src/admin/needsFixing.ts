@@ -43,6 +43,27 @@ import { folderOf, matcherPath } from "./paths";
 // "Unassigned"). The unassigned and unidentified halves of that count come from the
 // server, which reads them off the very arrangement the matcher renders, so the
 // number a row shows is exactly the number that screen can clear.
+//
+// And a THIRD time, on the Album axis (ADR-0050, album-resolves-its-tracks/09).
+// Measured on the developer's library after a full recheck, 557 flagged tracks were
+// 90 album problems: `Braveheart` alone was 18 identical rows, every one of them
+// correctly saying "fix the album's match" and every one of them offering a
+// RECORDING search that cannot perform it. Those rows are one Album row whose
+// picker searches albums and whose apply cascades, so one pick resolves the whole
+// tracklist — the exact gesture that cleared the *She* album by hand.
+//
+// The difference from the Show collapse is what qualifies. There, EVERY
+// episode-level problem folded in, because re-picking the series was inert for all
+// of them. Here only the ALBUM-SCOPED reasons fold: a `search-no-match`,
+// `search-rejected` or `tag-id-unresolved` track genuinely is fixed by picking a
+// recording on its own row, and folding those into an Album row would take a
+// working action away. A blank or unknown reason folds nowhere either — a library
+// not re-passed since the reason column shipped carries "" on every row, and it
+// must keep behaving exactly as it did.
+//
+// The Album row does not HIDE the tracks it stands for: it counts them in its
+// heading, and discloses them (collapsed) as their own rows, so a track the cascade
+// could not place is still reachable without hunting.
 
 /** What is wrong with a row — the axis the queue's filter chips segment on.
  *
@@ -70,8 +91,17 @@ export type FixProblem =
  *  - `enrichment-override`: a durable pin of which provider record decorates the
  *    Title. Used where the item is filed correctly and only its metadata is wrong;
  *    identity and every User's watch state stay untouched.
+ *  - `album-enrichment-override`: the same pin applied to the ALBUM, cascading onto
+ *    its Tracks. Used where the tracks are filed correctly and every one of them is
+ *    stuck on the same missing fact — the album's record (ADR-0050). It is a
+ *    separate route rather than a flag because it searches a different provider
+ *    kind (albums, not recordings) and applies to a different entity.
  *  - `none`: an orphaned correction, resolved by discarding it, not by searching. */
-export type FixRoute = "fix-match" | "enrichment-override" | "none";
+export type FixRoute =
+  | "fix-match"
+  | "enrichment-override"
+  | "album-enrichment-override"
+  | "none";
 
 /** One row of the queue: everything needed to identify the item, say what is wrong
  * with it, and apply a fix — regardless of which server list it came from. */
@@ -84,7 +114,7 @@ export interface FixItem {
   /** Every problem class this row holds, for the filter chips. A single-problem
    * row carries exactly `[problem]`. */
   problems: FixProblem[];
-  /** "movie" | "episode" | "track" | "show" | "file". */
+  /** "movie" | "episode" | "track" | "show" | "album" | "file". */
   kind: string;
   /** The item's own name — an episode/track name, a movie title, a filename. */
   name: string;
@@ -107,6 +137,16 @@ export interface FixItem {
   route: FixRoute;
   /** Pre-filled provider query — the thing the Admin would have typed. */
   searchSeed: string;
+  /** Pre-filled, EDITABLE artist narrowing for a music row's search; `undefined`
+   * on a row with no artist axis (every video row), which renders no box and sends
+   * no param. It is editable rather than silent because the tag it comes from can
+   * itself be the thing that is wrong — a silently-narrowed search would then
+   * return nothing with no way to widen it. */
+  artistScope?: string;
+  /** The album counterpart of {@link artistScope}, narrowing a recording search to
+   * the release the track sits on. Same rules: editable, blank widens, absent on a
+   * row with no release axis. */
+  albumScope?: string;
   /** In-app route to the item's own page, or "" when it has none (a file that
    * never became a Title). */
   detailPath: string;
@@ -120,6 +160,11 @@ export interface FixItem {
   titleId: string;
   /** The Show this row is about, or "" — dismissal posts to a different route. */
   showId: string;
+  /** The Album this row is about, or "" — the entity an
+   * `album-enrichment-override` searches and applies against. Only a collapsed
+   * Album row carries one; a Track row's album is context (a breadcrumb and a
+   * narrowing term), not the thing its fix acts on. */
+  albumId: string;
   /** The folder a fix-match anchors to, or "" when a folder override can't fix it
    * (an Episode's numbering is a problem only Enrichment maps). */
   folderPath: string;
@@ -152,6 +197,15 @@ export interface FixItem {
   /** Whether Enrichment settled on a record at all. False is what justifies telling
    * the Admin there is nothing to check the filing against. */
   hasMatch: boolean;
+  /** The rows this one COLLAPSED, each still carrying its own fix — disclosed under
+   * the row, collapsed by default. Absent on a row that stands only for itself.
+   *
+   * A collapsed row must never be a dead end: the Album cascade places most of an
+   * album's tracks and declines the rest (ADR-0050), and a declined track has to
+   * stay reachable without the Admin hunting for it. The Show collapse needs no
+   * such list — every row it folded was inert, so there was nothing under it worth
+   * reaching. */
+  children?: FixItem[];
 }
 
 /** Human labels for the kind badge. A never-identified file is its own "kind" here
@@ -161,6 +215,7 @@ const KIND_LABELS: Record<string, string> = {
   episode: "Episode",
   track: "Track",
   show: "Show",
+  album: "Album",
   file: "File",
 };
 
@@ -209,18 +264,37 @@ function breadcrumbFor(item: {
   return [];
 }
 
-/** The query to seed the provider search with. For an Episode this is the SHOW,
- * not the episode: TMDB resolves an episode through its show (`/search/tv`), so
- * the show title is both what the search wants and what the Admin would type. */
-function searchSeedFor(item: {
-  kind: string;
-  title: string;
-  showTitle: string;
-  albumTitle: string;
-}): string {
+/** The query to seed the provider search with — the thing the Admin would have
+ * typed, which is whatever the searched PROVIDER ENDPOINT takes as its subject.
+ *
+ * For an Episode that is the SHOW, not the episode: TMDB resolves an episode
+ * through its show (`/search/tv`), so the show title is both what the search wants
+ * and what the Admin would type.
+ *
+ * A Track is the opposite case, and reading the Episode rule onto it was the bug
+ * (ADR-0050): a Track row searches `/ws/2/recording`, whose subject is the
+ * RECORDING. Seeding it with the album made every row for a track on *She* search
+ * for every recording ever called "She". The album is not a subject there — it is a
+ * narrowing term, and it is carried as one by {@link musicScopeFor}. */
+function searchSeedFor(item: { kind: string; title: string; showTitle: string }): string {
   if (item.kind === "episode") return item.showTitle || item.title;
-  if (item.kind === "track") return item.albumTitle || item.title;
   return item.title;
+}
+
+/** The pre-filled narrowing terms for a music row's picker: the artist and album
+ * the scanner already read off the file, AND-ed into the recording search so a
+ * common title ("Intro", "She") is answerable.
+ *
+ * `undefined` — not "" — on a row with no such axis, because the picker renders a
+ * box for a term that is defined and blank (a music item whose tags name no artist
+ * can still be narrowed by hand) and no box at all for one that is undefined (a
+ * Movie/Episode/Show has no artist or release axis to narrow on). */
+function musicScopeFor(item: { kind: string; artistName: string; albumTitle: string }): {
+  artistScope?: string;
+  albumScope?: string;
+} {
+  if (item.kind !== "track") return {};
+  return { artistScope: item.artistName, albumScope: item.albumTitle };
 }
 
 /** The name to print for a leaf, prefixed with the number the Admin actually
@@ -346,6 +420,95 @@ function uncertainParseText(reason: string, kind: string): string {
         ? "The show folder carried no year, so this may have matched the wrong show."
         : "Filed from a name with no year, so this may have matched the wrong release.";
   }
+}
+
+/** The generic "nothing matched" sentence — what every no-metadata row said before
+ * the server could tell the four cases apart, and what a row still says when it
+ * carries no reason or one this build does not know (ADR-0050). Naming it once
+ * makes the fallback a deliberate destination rather than a `default:` nobody
+ * looked at. */
+const NO_METADATA_GENERIC =
+  "No metadata match — the provider had no record for this name, so there is no artwork or description.";
+
+/** Why a track's metadata lookup settled without a record, in one sentence that
+ * names the ACTION — the point of the whole reason column (ADR-0050).
+ *
+ * All four Music cases used to render {@link NO_METADATA_GENERIC}, which told the
+ * Admin nothing the row's existence had not already told them, and pointed all four
+ * at the same per-track recording search. Only one of the four is actually fixed
+ * that way. In the developer's library 365 of 730 unmatched tracks are
+ * `album-unmatched` — half the queue being sent to a search box that cannot fix
+ * them, when the one gesture that clears all 365 is matching their albums.
+ *
+ * `album` is the album's title when the row carries one, so the biggest bucket can
+ * NAME the thing to go and fix instead of gesturing at it; the sentence still reads
+ * correctly without it.
+ *
+ * An unknown or blank reason falls back to the generic sentence, deliberately: a
+ * library that has not been re-passed since the column shipped carries "" on every
+ * row, and a value a newer server invents must degrade to what this screen said
+ * before rather than to a blank. */
+function noMetadataText(reason: string, album: string): string {
+  const theAlbum = album === "" ? "This track’s album" : `The album ${album}`;
+  switch (reason) {
+    case "album-unmatched":
+      // The action is on the ALBUM, and it is one gesture for every track under it —
+      // which is exactly what a per-track search box cannot say.
+      return `${theAlbum} has no metadata match, so it could name none of its tracks. Fix the album’s match and its tracks resolve from the album’s own track list.`;
+    case "not-in-tracklist":
+      // The album matched something; the evidence says it matched the wrong EDITION.
+      return `${theAlbum} matched, but this track is not on that release’s track list — so the album is probably matched to the wrong edition. Fix the album’s match to the release these files were ripped from.`;
+    case "tag-id-unresolved":
+      // The name was never the problem, so searching by it is the wrong offer.
+      return "The exact recording id on this track resolved to nothing — the id is wrong, not the name. Retag the file with a working id, or pick the recording by hand.";
+    case "search-rejected":
+      // A near miss: something came back and was refused rather than stored blind, so
+      // the picker's own list is likely to hold the right answer.
+      return "The search found recordings, but none of their titles matched this track closely enough to accept automatically. Pick the right recording by hand — the near miss is probably in the list.";
+    case "search-no-match":
+      // The honest empty answer: no id anywhere, and the search really did find
+      // nothing.
+      return "No id named this recording, so it was searched for by name and artist — and nothing came back under that title. Pick the recording by hand.";
+    default:
+      return NO_METADATA_GENERIC;
+  }
+}
+
+/** The settled-failure reasons whose fix is on the ALBUM rather than on the track,
+ * and which therefore collapse into one Album row (ADR-0050, issue 09).
+ *
+ * The membership test is the whole design. `album-unmatched` and `not-in-tracklist`
+ * both name a fact the ALBUM is missing — a record, or the right release — and one
+ * album pick supplies it for every track underneath. The other three
+ * (`tag-id-unresolved`, `search-rejected`, `search-no-match`) name a fact about ONE
+ * recording, and the per-track picker already fixes them: folding those in would
+ * remove a working action, which is the opposite of what the Show collapse did.
+ *
+ * "" is deliberately not a member. A library not re-passed since the reason column
+ * shipped carries it on every row, and such a row must keep behaving exactly as it
+ * does today rather than being swept into a collapse on a diagnosis nobody made. */
+const ALBUM_SCOPED_REASONS = new Set(["album-unmatched", "not-in-tracklist"]);
+
+/** Whether an enrichment-attention row is one an Album row can stand for.
+ *
+ * `albumId` is required, not incidental: the row's whole action is a search-and-pin
+ * against that album entity, so a track whose album the server could not name has
+ * nothing to collapse INTO and keeps its own row. A `failed` status is excluded for
+ * the same reason it is answered first in the sentence below — a provider refusing
+ * requests is not a diagnosis about the album (ADR-0048/0050), and hiding it behind
+ * an album pick would make the row promise a fix it cannot perform. */
+function collapsesIntoAlbum(t: {
+  kind: string;
+  albumId: string;
+  enrichmentStatus: string;
+  enrichmentReason: string;
+}): boolean {
+  return (
+    t.kind === "track" &&
+    t.albumId !== "" &&
+    t.enrichmentStatus !== "failed" &&
+    ALBUM_SCOPED_REASONS.has(t.enrichmentReason)
+  );
 }
 
 /** What a file collision means, in the Admin's terms, and what to do about it.
@@ -526,6 +689,7 @@ export function buildFixItems(input: {
       sortPath: show ? matcherPath(show.showId) : "",
       titleId: "",
       showId: show?.showId ?? "",
+      albumId: "",
       folderPath: "",
       overrideId: "",
       canDismiss: false,
@@ -560,6 +724,7 @@ export function buildFixItems(input: {
     sortPath: "",
     titleId: "",
     showId: "",
+    albumId: "",
     // The server derives the anchor from the Library's kind; folderOf is the
     // fallback for a server that predates that field, and is only ever right for a
     // Movie library (a TV file's own directory is a Season folder, not the Show).
@@ -602,6 +767,7 @@ export function buildFixItems(input: {
       sortPath: "",
       titleId: "",
       showId: "",
+      albumId: "",
       folderPath: o.folderPath,
       overrideId: o.id,
       canDismiss: false,
@@ -651,10 +817,12 @@ export function buildFixItems(input: {
         // this" is exactly what this queue replaced.
         route: t.needsReview ? episodeFixRoute(t) : "none",
         searchSeed: searchSeedFor(t),
+        ...musicScopeFor(t),
         detailPath: t.kind === "show" ? `/shows/${t.id}` : `/titles/${t.id}`,
         sortPath: t.kind === "episode" && t.showId !== "" ? matcherPath(t.showId) : "",
         titleId: t.kind === "show" ? "" : t.id,
         showId: t.kind === "show" ? t.id : "",
+        albumId: "",
         folderPath: t.folderPath,
         overrideId: "",
         // "Looks right" settles an uncertain PARSE. It has no answer for a
@@ -671,50 +839,108 @@ export function buildFixItems(input: {
       };
     });
 
+  // One enrichment-attention item as its own row. It is a named function rather
+  // than an inline literal because the Album collapse needs exactly this row twice:
+  // once as a CHILD the Album row discloses, and once in the queue itself for every
+  // track the Album row does not stand for.
+  const enrichmentFixItem = (t: EnrichmentAttentionTitle): FixItem => ({
+    key: `enrichment:${t.id}`,
+    problem: "no-metadata" as const,
+    problems: ["no-metadata"] as FixProblem[],
+    kind: t.kind,
+    name: displayNameFor(t),
+    year: t.year,
+    breadcrumb: breadcrumbFor(t),
+    path: t.path,
+    collidingPaths: [],
+    problemText:
+      t.enrichmentStatus === "failed"
+        ? // The server retries a reachable-provider blip on its own and keeps it OFF
+          // this list until the streak escalates (ADR-0048), so anything that gets
+          // here is either a refusal the provider will keep making — a rejected API
+          // key, a request it cannot answer — or a failure that has already
+          // outlasted a day of retries.
+          "The metadata lookup failed repeatedly — the provider is refusing the request (check the API key in Settings), or it has no episode at this season and number."
+        : // 'failed' is answered above and carries no reason (a provider error is not a
+          // diagnosis, ADR-0048/0050); everything else is a settled 'unmatched', where
+          // the reason — when there is one — says which of four different things to go
+          // and fix.
+          noMetadataText(t.enrichmentReason, t.albumTitle),
+    // An Episode's metadata problem is not fixed by naming a work — see
+    // episodeFixRoute. Every other kind IS, so it keeps its search.
+    route: (t.kind === "episode" ? "none" : "enrichment-override") as FixRoute,
+    searchSeed: searchSeedFor(t),
+    ...musicScopeFor(t),
+    detailPath: `/titles/${t.id}`,
+    sortPath: t.kind === "episode" && t.showId !== "" ? matcherPath(t.showId) : "",
+    titleId: t.id,
+    showId: "",
+    albumId: "",
+    folderPath: "",
+    overrideId: "",
+    canDismiss: false,
+    dismissEpisodes: false,
+    artworkUrl: artworkUrlFor(t),
+    artworkVersion: t.enrichmentStatus,
+    // Nothing matched — that IS this row's problem — so there is no record to
+    // print; the problem sentence already says so.
+    matchedAs: "",
+    hasMatch: false,
+  });
+
+  // --- the album collapse ----------------------------------------------------
+  //
+  // The Braveheart case: 18 tracks, 18 rows, one missing fact. Every one of those
+  // rows said "fix the album's match" and then offered a RECORDING search, which is
+  // not the gesture the sentence names. They are one row whose picker searches
+  // albums and whose apply cascades onto the tracklist.
+  //
+  // Only the album-scoped reasons qualify (see collapsesIntoAlbum); everything else
+  // keeps the per-track row it can actually be fixed on.
+  const albums = new Map<string, AlbumRowCounts>();
+  for (const t of input.enrichment) {
+    if (!collapsesIntoAlbum(t)) continue;
+    let row = albums.get(t.albumId);
+    if (row === undefined) {
+      row = {
+        albumId: t.albumId,
+        title: "",
+        artist: "",
+        path: "",
+        unmatched: 0,
+        notInTracklist: 0,
+        children: [],
+      };
+      albums.set(t.albumId, row);
+    }
+    if (row.title === "") row.title = t.albumTitle;
+    if (row.artist === "") row.artist = t.artistName;
+    if (row.path === "") row.path = t.path;
+    if (t.enrichmentReason === "album-unmatched") row.unmatched++;
+    else row.notInTracklist++;
+    // The row it replaces, kept whole: the cascade will decline some of these, and a
+    // declined track has to stay one disclosure away rather than one recheck away.
+    row.children.push(enrichmentFixItem(t));
+  }
+
+  const emittedAlbums = new Set<string>();
+
   const noMetadata: FixItem[] = input.enrichment.flatMap((t) => {
     // Collapsed into their Show's row above.
     if (t.kind === "episode" && shows.has(t.showId)) return [];
     // One file, one row: an Episode flagged for its numbering already appears as a
     // needs-review row carrying the same actions.
     if (t.kind === "episode" && flaggedTitles.has(t.id)) return [];
-    return {
-      key: `enrichment:${t.id}`,
-      problem: "no-metadata" as const,
-      problems: ["no-metadata"] as FixProblem[],
-      kind: t.kind,
-      name: displayNameFor(t),
-      year: t.year,
-      breadcrumb: breadcrumbFor(t),
-      path: t.path,
-      collidingPaths: [],
-      problemText:
-        t.enrichmentStatus === "failed"
-          ? // The server retries a reachable-provider blip on its own and keeps it OFF
-            // this list until the streak escalates (ADR-0048), so anything that gets
-            // here is either a refusal the provider will keep making — a rejected API
-            // key, a request it cannot answer — or a failure that has already
-            // outlasted a day of retries.
-            "The metadata lookup failed repeatedly — the provider is refusing the request (check the API key in Settings), or it has no episode at this season and number."
-          : "No metadata match — the provider had no record for this name, so there is no artwork or description.",
-      // An Episode's metadata problem is not fixed by naming a work — see
-      // episodeFixRoute. Every other kind IS, so it keeps its search.
-      route: (t.kind === "episode" ? "none" : "enrichment-override") as FixRoute,
-      searchSeed: searchSeedFor(t),
-      detailPath: `/titles/${t.id}`,
-      sortPath: t.kind === "episode" && t.showId !== "" ? matcherPath(t.showId) : "",
-      titleId: t.id,
-      showId: "",
-      folderPath: "",
-      overrideId: "",
-      canDismiss: false,
-      dismissEpisodes: false,
-      artworkUrl: artworkUrlFor(t),
-      artworkVersion: t.enrichmentStatus,
-      // Nothing matched — that IS this row's problem — so there is no record to
-      // print; the problem sentence already says so.
-      matchedAs: "",
-      hasMatch: false,
-    };
+    const album = collapsesIntoAlbum(t) ? albums.get(t.albumId) : undefined;
+    if (album !== undefined) {
+      // Emitted at the position of the FIRST track it stands for, so it keeps its
+      // place in the queue's how-stuck-is-the-Admin ordering rather than being
+      // floated to one end as a special case.
+      if (emittedAlbums.has(album.albumId)) return [];
+      emittedAlbums.add(album.albumId);
+      return [albumFixItem(album)];
+    }
+    return [enrichmentFixItem(t)];
   });
 
   return [...unidentified, ...orphaned, ...orphanRows, ...showRows, ...uncertain, ...noMetadata];
@@ -828,6 +1054,7 @@ function showFixItem(c: ShowRowCounts): FixItem {
     sortPath: matcherPath(c.showId),
     titleId: "",
     showId: c.showId,
+    albumId: "",
     folderPath: "",
     overrideId: "",
     // "Looks right" still means what it always meant: the uncertain PARSE is fine.
@@ -839,6 +1066,123 @@ function showFixItem(c: ShowRowCounts): FixItem {
     artworkVersion: "",
     matchedAs: "",
     hasMatch: false,
+  };
+}
+
+/** The tallied problems behind one collapsed Album row, before it becomes a row.
+ * `children` are the very Track rows it replaces, kept so the row can disclose
+ * them. */
+interface AlbumRowCounts {
+  albumId: string;
+  title: string;
+  artist: string;
+  path: string;
+  /** Tracks whose album has no record at all (`album-unmatched`). */
+  unmatched: number;
+  /** Tracks the matched release's track list has no room for (`not-in-tracklist`). */
+  notInTracklist: number;
+  children: FixItem[];
+}
+
+/** `18 tracks have` / `1 track has` — the count with the noun that says what was
+ * counted, in the tense the heading needs. */
+function trackCountHave(n: number): string {
+  return n === 1 ? "1 track has" : `${n} tracks have`;
+}
+
+/** `18 tracks are` / `1 track is` — the same count for the problem sentence. */
+function trackCountAre(n: number): string {
+  return n === 1 ? "1 track is" : `${n} tracks are`;
+}
+
+/** The Album row's heading: the album, then the size of the pile it stands for.
+ *
+ * The count is in the HEADING and not only in the sentence because the collapse's
+ * whole risk is hiding work. `Braveheart` with no number beside it looks like one
+ * problem; `Braveheart · 18 tracks have no metadata match` says what it is standing
+ * in for before the Admin has read anything else. */
+function albumRowName(c: AlbumRowCounts): string {
+  const total = c.unmatched + c.notInTracklist;
+  const prefix = c.title === "" ? "" : `${c.title} · `;
+  return `${prefix}${trackCountHave(total)} no metadata match`;
+}
+
+/** Why an Album's tracks are stuck, phrased for the SET rather than for one track,
+ * and naming the gesture this row actually offers.
+ *
+ * The lead is the most-stuck reason the row holds: `album-unmatched` outranks
+ * `not-in-tracklist`, because an album with no record at all is further from being
+ * fixed than one pinned to the wrong edition — and a row holding both still says so
+ * rather than silently dropping the smaller half. */
+function albumRowText(c: AlbumRowCounts): string {
+  const theAlbum = c.title === "" ? "This album" : `The album ${c.title}`;
+  const action =
+    "Fix the album’s match here and its tracks resolve from that release’s own track list, in one go.";
+  if (c.unmatched > 0) {
+    const counts =
+      c.notInTracklist > 0
+        ? `${trackCountAre(c.unmatched)} waiting on that match, and ${trackCountAre(
+            c.notInTracklist,
+          )} missing from the track list of a release it was matched to.`
+        : `${trackCountAre(c.unmatched)} waiting on it.`;
+    return `${theAlbum} has no metadata match, so it could name none of its tracks — ${counts} ${action}`;
+  }
+  return `${theAlbum} matched, but ${trackCountAre(
+    c.notInTracklist,
+  )} not on that release’s track list — so the album is probably matched to the wrong edition. ${action}`;
+}
+
+/** One Album's album-scoped track problems as a single queue row (ADR-0050,
+ * issue 09).
+ *
+ * It answers the queue's four questions the way every other row does — an `Album`
+ * badge under `Artist › Album` (what), a representative file (which), one sentence
+ * naming the reasons and their counts (what's wrong) — and its action is the one
+ * the sentence has always named and never offered: a search of the ALBUM kind,
+ * seeded with the album's title and narrowed by its artist, applied with
+ * `cascade: true` so `mapAlbumTracks` maps the picked release's track list onto
+ * these very tracks. One pick, fourteen tracks, no recheck pass. */
+function albumFixItem(c: AlbumRowCounts): FixItem {
+  return {
+    key: `album:${c.albumId}`,
+    problem: "no-metadata",
+    problems: ["no-metadata"],
+    kind: "album",
+    name: albumRowName(c),
+    // MusicBrainz release-group years are not on this row, and inventing one from a
+    // track would be a claim nothing established.
+    year: 0,
+    breadcrumb: c.artist === "" ? [] : [c.artist],
+    path: c.path,
+    collidingPaths: [],
+    problemText: albumRowText(c),
+    route: "album-enrichment-override",
+    // The subject of an ALBUM search is the album, so the seed is its title — the
+    // narrowing term on a track row is the search term here.
+    searchSeed: c.title,
+    // Editable, blank widens, exactly as on a track row: the artist tag can itself
+    // be the thing that is wrong, and a silent narrowing would strand the row.
+    artistScope: c.artist,
+    // No album axis to narrow an album search BY — that is the thing being searched
+    // for — so the picker renders no release box.
+    detailPath: `/music/albums/${c.albumId}`,
+    sortPath: "",
+    titleId: "",
+    showId: "",
+    albumId: c.albumId,
+    folderPath: "",
+    overrideId: "",
+    // "Looks right" settles an uncertain PARSE, and there is none here: nothing
+    // about these tracks' filing is in doubt, only the record above them.
+    canDismiss: false,
+    dismissEpisodes: false,
+    artworkUrl: `${API_PREFIX}/albums/${encodeURIComponent(c.albumId)}/artwork/cover`,
+    artworkVersion: "",
+    // Whether the album matched differs BY REASON within one row, so a single
+    // "Matched to" line could only be right for half of it. The sentence says which.
+    matchedAs: "",
+    hasMatch: false,
+    children: c.children,
   };
 }
 
@@ -870,6 +1214,7 @@ function orphanedPlacementRow(p: ShowProblems): FixItem {
     sortPath: matcherPath(p.showId),
     titleId: "",
     showId: p.showId,
+    albumId: "",
     folderPath: "",
     overrideId: "",
     canDismiss: false,

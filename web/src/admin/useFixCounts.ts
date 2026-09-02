@@ -29,7 +29,14 @@ import { buildFixItems } from "./needsFixing";
 /** Open-problem counts keyed by Library id. A missing key means "not counted". */
 export type FixCounts = Record<string, number>;
 
-export function useFixCounts(libraryIds: string[]): FixCounts {
+/**
+ * @param libraryIds the Libraries to count.
+ * @param reloadToken bump it to re-count. The badge is a snapshot taken at mount,
+ *   and an action that CHANGES the queue — a recheck pass (ADR-0051) — would
+ *   otherwise leave a stale number sitting next to a queue that has just moved,
+ *   which is worse than no badge at all.
+ */
+export function useFixCounts(libraryIds: string[], reloadToken = 0): FixCounts {
   const [counts, setCounts] = useState<FixCounts>({});
   // Depend on the ids' identity, not the array's: the caller rebuilds the array on
   // every render, and re-running this effect per render would loop the network.
@@ -68,7 +75,7 @@ export function useFixCounts(libraryIds: string[]): FixCounts {
     );
 
     return () => ctrl.abort();
-  }, [key]);
+  }, [key, reloadToken]);
 
   return counts;
 }

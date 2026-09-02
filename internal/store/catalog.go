@@ -104,6 +104,13 @@ type Title struct {
 	// non-failed status. Populated only by the reads that feed enrichment.
 	EnrichmentAttempts int
 	EnrichmentRetryAt  string
+	// EnrichmentReason names WHY a SETTLED failure settled, as one of the closed set
+	// in EnrichmentReason* below (ADR-0050). It answers the question the status
+	// cannot — what should the Admin DO — and is empty for every outcome that has no
+	// diagnosis to offer: a match, a transient failure still being retried, a Title
+	// settled before this column existed, and every non-Music kind. A reader must
+	// treat an unrecognized value exactly as it treats the empty one.
+	EnrichmentReason string
 	// Genres is the enriched genre list (loaded by the enriched read paths; empty
 	// otherwise). Cast lives on TitleDetail (heavier, detail-only).
 	Genres []string
@@ -1349,7 +1356,7 @@ var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sor
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
 	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title,
 	        enrichment_season, enrichment_episode, enrichment_id_origin,
-	        enrichment_attempts, enrichment_retry_at,
+	        enrichment_attempts, enrichment_retry_at, enrichment_reason,
 	        season_number, episode_number, episode_label`
 
 // recordExternalIDs is the ONE spelling of "which external record does this Title
@@ -1412,7 +1419,7 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
 		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
-		&t.EnrichmentAttempts, &t.EnrichmentRetryAt,
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.EnrichmentReason,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {
 		return Title{}, err
 	}

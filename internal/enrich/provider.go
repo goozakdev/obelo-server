@@ -23,6 +23,21 @@ import (
 // fatal error. The pass records the Title as 'unmatched' and moves on.
 var ErrNoMatch = errors.New("enrich: no external match")
 
+// ErrMatchRejected is the other half of "no match": the source ANSWERED, and its
+// best answer is not this item. A relevance-ranked text search essentially always
+// returns something, so its top hit only becomes a record when it passes an
+// acceptance test — its normalized title must be the local one's (ADR-0050). A hit
+// that fails is discarded rather than stored, because a confident wrong overview is
+// worse than an empty one (ADR-0049).
+//
+// It WRAPS ErrNoMatch, so every errors.Is(err, ErrNoMatch) caller is unaffected —
+// the pass still files the item 'unmatched' and moves on. The distinction exists so
+// a settled failure can eventually say WHY: 'search-rejected' ("MusicBrainz has
+// candidates, none of them is this song — pick one by hand") is a different next
+// action from 'search-no-match' ("it found nothing at all"), and without the
+// separate value both render as the same useless sentence.
+var ErrMatchRejected = fmt.Errorf("%w: no candidate passed the title check", ErrNoMatch)
+
 // ErrSearchUnavailable is the "this kind cannot be searched right now" outcome of
 // Search — the authoritative provider for the kind is unconfigured (no key /
 // disabled) or absent. It is distinct from a successful search with zero
@@ -79,6 +94,14 @@ type SearchOptions struct {
 	// artist; blank means no narrowing. Kinds with no artist axis (video, the artist
 	// search itself) ignore it.
 	Artist string
+	// Release optionally narrows a TRACK search to the album the recording sits on,
+	// AND-ed in as `release:"<release>"` — the same relevance-safe field-scoped
+	// pattern Artist uses, and verified against the live recording index before it
+	// was built on (needs-fixing/06). It is pre-filled from the item's parsed album;
+	// blank means no narrowing. Kinds with no release axis (video, album, artist)
+	// ignore it. It is what makes a recording title that a hundred releases share —
+	// "Intro", "She" — answerable from one row.
+	Release string
 	// Limit caps the candidate page the provider returns (0 → the source default).
 	// Offset skips that many results, so the picker can page through a broad query
 	// ("show more") instead of only ever seeing the first page.
@@ -113,6 +136,14 @@ type Candidate struct {
 	// preview in the picker; consumed by slice 05's positional cascade — ADR-0019).
 	// Nil for every non-album kind.
 	Tracklist []TrackCandidate
+	// ReleaseID is the exact EDITION this candidate came from, when the Admin named
+	// one: a pasted MusicBrainz /release/ URL resolves to its parent release-group
+	// (ExternalID, which is what an album IS — ADR-0038) and carries the release here
+	// rather than dropping it (ADR-0052). Empty for a search hit, for a pasted
+	// /release-group/ URL, and for every non-album kind — and an empty value applied
+	// to an album CLEARS any edition it had, because the Admin just named a less
+	// specific thing.
+	ReleaseID string
 }
 
 // TrackCandidate is one track in an album candidate's tracklist preview: its
@@ -160,6 +191,39 @@ type TitleRef struct {
 	// a pasted /release/ URL identifies the album. Empty for the normal release-group
 	// path (MusicbrainzID).
 	ReleaseMBID string
+
+	// AlbumHints are a few of the Albums this library files under an ARTIST, carried
+	// on an artist ref so the provider can identify the artist through its
+	// DISCOGRAPHY instead of through its name (ADR-0053). They are evidence, not a
+	// pin: the provider is free to use none of them and fall back to the name search.
+	//
+	// They exist because every discriminator built out of an artist's name fails on
+	// the case that motivated them. MusicBrainz holds a 1958 British instrumental
+	// group literally named "The Eagles"; the American band is named "Eagles". An
+	// exact-phrase name search finds the British one, a name acceptance test accepts
+	// it, and an exact match scores 100. The two are told apart by what they
+	// recorded, and the library is holding one of those records.
+	//
+	// Capped and deterministically ordered by the caller so two passes ask the same
+	// question of the same album (collectMusicLeaves' musicAlbumHints). Empty for
+	// every non-artist ref, and for an artist whose albums are unidentifiable — a
+	// soundtrack filed under the film's name, an "Unknown Artist" pile — which is
+	// exactly where corroboration has nothing to offer.
+	AlbumHints []AlbumHint
+}
+
+// AlbumHint is one local Album offered as corroboration for its Artist (ADR-0053):
+// the title the library holds for it, plus the release-group MBID the FILES assert
+// when they assert one.
+//
+// The id is the better half by a distance — it resolves with a single
+// /release-group/<id> LOOKUP and no search at all, which is ADR-0049's
+// lookup-beats-search preference applied one level up. The title is the fallback,
+// and it is searched for UNNARROWED: narrowing that search by the artist would
+// reintroduce the very name corroboration exists not to trust.
+type AlbumHint struct {
+	Title            string
+	ReleaseGroupMBID string
 }
 
 // ArtworkRef points at a remote image the provider found for a role
@@ -301,6 +365,118 @@ type EpisodeLister interface {
 	SeriesSeasons(ctx context.Context, showExternalID string) ([]SeasonSummary, error)
 	// SeasonEpisodes lists one season's episodes, in episode order.
 	SeasonEpisodes(ctx context.Context, showExternalID string, season int) ([]EpisodeCandidate, error)
+}
+
+// ErrNoTracklist is the AlbumTracklister's "this album has no tracklist" outcome:
+// the album named no release-group, the release-group holds no releases, or the
+// release it does hold carries no tracks. It is DELIBERATELY distinct from an
+// empty tracklist, because the caller's two failures need different words
+// (ADR-0050): "this album has no tracklist" points at the Album — fix the Album,
+// or its release — while "this tracklist has no room for this track" points at the
+// one file. A provider that returns (nil, nil) collapses them into the same
+// silence, so AlbumTracklist never does: a nil error always means at least one
+// track.
+//
+// Every OTHER error (a transport failure, a 503 load shed — ADR-0049) flows out as
+// itself and does NOT match this sentinel, so a caller that wants to retry a
+// transient failure can still tell it apart from a settled "there is nothing here".
+var ErrNoTracklist = errors.New("enrich: album has no tracklist")
+
+// TracklistRequest names the album whose tracklist is wanted. Two ids and a count,
+// because that is exactly what choosing the right RELEASE takes (ADR-0050):
+//
+//   - ReleaseGroupID is the album itself — required, and the authority the tagged
+//     release is checked against. Empty means the album is unresolved, which is
+//     "no tracklist" without a single call.
+//   - ReleaseID is the exact edition to read: the one an ADMIN chose
+//     (entity_enrichment.external_release_id, ADR-0052) or, failing that, the one
+//     the FILES name (albums.musicbrainz_release_id, from the musicbrainz_albumid
+//     tag). Empty for an untagged album nobody has pinned. It is used ONLY when its
+//     parent release-group is ReleaseGroupID: neither a mis-tagged file nor a stale
+//     pin naming a stranger's release may renumber the album.
+//   - ReleaseIDChosen says WHOSE assertion ReleaseID is — a human's, or a file's.
+//     It does not change how the release is fetched or checked. It changes what
+//     happens when the release does not apply: a file's release falls through to
+//     fit-selection silently, while a human's is reported as ErrNoTracklist so the
+//     caller can re-ask WITHOUT the pin and know that the tracklist it finally got
+//     is not the one the human asserted. That distinction is the whole licence
+//     ADR-0052 grants position-alone mapping, and it is not recoverable from a
+//     tracklist after the fact — every release's tracklist looks the same.
+//   - LocalTrackCount is how many Tracks the LOCAL album holds. It is an input
+//     rather than something the provider could derive, and it is what separates a
+//     12-track standard edition from its 15-track deluxe. Zero means "unknown",
+//     which selects the earliest release rather than guessing.
+type TracklistRequest struct {
+	ReleaseGroupID  string
+	ReleaseID       string
+	ReleaseIDChosen bool
+	LocalTrackCount int
+}
+
+// AlbumTracklister is an OPTIONAL provider capability: the ordered tracks of the
+// release an Album actually IS, so a matched Album can name the recording behind
+// each of its own Tracks instead of every Track paying a text search (ADR-0050).
+//
+// Like EpisodeLister it is deliberately NOT part of MetadataProvider — only the
+// authoritative MUSIC source can answer it, and folding it in would force the video
+// providers and the artwork-only supplements to carry a stub. Callers type-assert
+// and degrade to "no tracklist" when the provider doesn't implement it, the same
+// graceful posture the rest of enrichment takes (ADR-0001).
+//
+// It is NOT the album-candidate preview. The preview (Candidate.Tracklist) wants a
+// cheap, roughly-right sample for a page of search results and pays one call per
+// candidate; this wants the RIGHT edition for one album and may pay two.
+type AlbumTracklister interface {
+	// AlbumTracklist returns the album's ordered tracks: never empty with a nil
+	// error, ErrNoTracklist when the album has none, and any other error as itself.
+	// An entry the source gave no recording id keeps its position (it still claims
+	// that position for the caller's match rule) with an empty ExternalID.
+	AlbumTracklist(ctx context.Context, req TracklistRequest) ([]TrackCandidate, error)
+}
+
+// ReleaseEdition is ONE edition of an album — a MusicBrainz release under the
+// album's release-group — described with exactly the five facts an Admin needs to
+// tell two editions apart at a glance (ADR-0052): when it came out, where, on what
+// medium, how many tracks it holds, and whatever the source says to disambiguate
+// it ("deluxe edition", "reissue").
+//
+// TrackCount is the one that does the work. The whole reason an operator is
+// looking at this list is that the album's tracks did not line up, and the edition
+// whose count equals the local album's is the one that will — which is why the
+// picker states the local count beside the list rather than making them subtract.
+//
+// It is deliberately NOT a Candidate: a Candidate is a record to PIN as the
+// album's identity, and an edition is never that (album identity stays the
+// release-group, ADR-0038). An edition is a DECORATION refinement, applied through
+// the album's existing override carrying this ReleaseID.
+type ReleaseEdition struct {
+	ReleaseID      string
+	Date           string
+	Country        string
+	Format         string
+	TrackCount     int
+	Disambiguation string
+}
+
+// AlbumEditionLister is an OPTIONAL provider capability: the editions (releases) a
+// release-group holds, so an Admin can choose the one their files actually are
+// WITHOUT leaving Obelo (ADR-0052).
+//
+// It is the listing half of the browse AlbumTracklist already pays for. Choosing
+// by track-count fit is what the automatic path does; this is the same information
+// handed to the human, whose choice then outranks the fit and licenses
+// position-alone mapping (ADR-0052, issue 11).
+//
+// Like EpisodeLister and AlbumTracklister it is deliberately NOT part of
+// MetadataProvider — only the authoritative MUSIC source can answer it. A provider
+// that does not implement it answers ErrSearchUnavailable, and the picker degrades
+// to the pasted-URL escape hatch rather than an error page.
+type AlbumEditionLister interface {
+	// ReleaseGroupEditions lists the release-group's editions, best-effort ordered
+	// as the source returns them. A release-group with no releases is (nil, nil) —
+	// an empty list, not an error: "this album has exactly no editions to choose
+	// from" is an answer, and the caller renders it as one.
+	ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error)
 }
 
 // ArtworkFetcher downloads image bytes for a remote URL the provider returned,

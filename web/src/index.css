@@ -3166,6 +3166,24 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   max-width: 28rem;
 }
 
+/* The library selector and the Re-check button share a row: "which library?" and
+   "re-ask this library's settled rows" are one thought (ADR-0051). The button
+   aligns to the selector's INPUT rather than to its label, hence the baseline of
+   the flex row being end rather than centre. */
+.needs-fixing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.needs-fixing-toolbar .needs-fixing-library-picker {
+  flex: 1 1 18rem;
+}
+.needs-fixing-recheck-button {
+  flex: 0 0 auto;
+  width: auto;
+}
+
 .needs-fixing {
   display: flex;
   flex-direction: column;
@@ -3409,6 +3427,23 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   flex-wrap: wrap;
   gap: 0.75rem;
   font-size: 0.9rem;
+}
+
+/* The tracks a collapsed Album row stands for (album-resolves-its-tracks/09).
+   Indented and rule-marked so a disclosed sub-row reads as belonging to the album
+   above it rather than as another top-level item in the queue. */
+.fix-item-children {
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
+}
+.fix-item-child-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  padding: 0 0 0 0.85rem;
+  border-left: 2px solid var(--border);
+  list-style: none;
 }
 
 /* --- The inline picker ---------------------------------------------------- */
@@ -5528,4 +5563,60 @@ textarea.metadata-input {
   color: var(--accent-ink);
   font-size: 0.8rem;
   box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+/* --- Album edition picker (ADR-0052, album-resolves-its-tracks/12) -----------
+   The "Edition" section under a matched album, in Fix info and on the queue's
+   collapsed album row: which pressing of this release-group these files are. The
+   row in USE reads with the accent ring the selected search candidate uses, and the
+   one whose track count matches the local album is nudged forward — that count is
+   the fact the whole decision turns on. */
+.album-editions {
+  margin-top: 1rem;
+}
+.album-edition-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.album-edition {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.6rem;
+}
+.album-edition.is-in-use {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.album-edition-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.album-edition-line {
+  font-variant-numeric: tabular-nums;
+}
+.album-edition.is-fitting .album-edition-line {
+  font-weight: 600;
+}
+.album-edition-hint,
+.album-edition-fits,
+.album-edition-in-use {
+  font-size: 0.82em;
+  opacity: 0.8;
+}
+.album-edition-in-use {
+  opacity: 0.95;
+  color: var(--accent);
+}
+.album-edition-use {
+  flex: 0 0 auto;
 }

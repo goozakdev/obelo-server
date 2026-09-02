@@ -36,7 +36,8 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 		     title = ?, year = ?, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = '', enriched_title = '',
 		     enrichment_tmdb_id = '', enrichment_imdb_id = '', enrichment_id_origin = '',
-		     enrichment_status = 'pending', enrichment_source = '', `+clearEnrichmentRetry+`
+		     enrichment_status = 'pending', enrichment_source = '', `+clearEnrichmentRetry+`,
+		     `+clearEnrichmentReason+`
 		   WHERE id = ?`,
 		title, nullableYear(year), sortKey(title), identityKey, tmdbID, titleID,
 	)

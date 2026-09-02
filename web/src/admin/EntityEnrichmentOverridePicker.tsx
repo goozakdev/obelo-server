@@ -6,6 +6,7 @@ import type {
   EntityEnrichmentDetail,
 } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
+import AlbumEditionPicker from "./AlbumEditionPicker";
 import { looksLikeRef, type Provider } from "./searchRef";
 
 // Edit-item unified "Search" tab on a browse PARENT — Show / Artist / Album
@@ -145,6 +146,10 @@ export default function EntityEnrichmentOverridePicker({
               entityId,
               selected.externalId,
               cascade,
+              // The EDITION, when the Admin pasted a /release/ URL (ADR-0052). A
+              // search hit carries none, and applying one CLEARS any edition the
+              // album had — which is right: they just named a less specific thing.
+              selected.releaseId,
             );
       onApplied(detail);
       setSummary(detail.cascade ?? null);
@@ -174,6 +179,16 @@ export default function EntityEnrichmentOverridePicker({
         <p className="detail-hint" data-testid="entity-enrichment-override-current">
           Current record: <code>{currentExternalId}</code>
         </p>
+      )}
+
+      {/* The EDITION section (ADR-0052, issue 12), under the matched album. An album
+          is a release-group and a release-group holds editions; this is where one is
+          chosen, which is the correction that previously required a trip to
+          musicbrainz.org and a pasted URL. It renders nothing for an unmatched album
+          (there is nothing to choose) and a quiet hint when the provider cannot list
+          — the paste box above is still the escape hatch it always was. */}
+      {entityType === "albums" && (
+        <AlbumEditionPicker albumId={entityId} onApplied={onApplied} />
       )}
 
       <form className="field" onSubmit={submit}>

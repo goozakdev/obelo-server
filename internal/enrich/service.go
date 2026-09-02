@@ -24,10 +24,16 @@ type Store interface {
 	TitlesForEnrichment(libraryID string, sel store.EnrichSelect, now time.Time) ([]store.Title, error)
 	LockedFields(titleID string) (map[string]bool, error)
 	WriteTitleEnrichment(titleID string, e store.TitleEnrichment, locks map[string]bool) error
-	SetTitleEnrichmentStatus(titleID, status string) error
+	// SetTitleEnrichmentStatus settles a Title AND records why in one statement
+	// (ADR-0050). reason is one of store.EnrichmentReason*, or the empty string where
+	// the outcome has no diagnosis to give — which is a real value, not a skip: it
+	// wipes whatever the last failure said, and a reason that outlives its failure is
+	// worse than none.
+	SetTitleEnrichmentStatus(titleID, status, reason string) error
 	// SetTitleEnrichmentRetry is the TRANSIENT-failure twin of the settle above: it
 	// records 'failed' with a scheduled retry instead of parking the Title, so an
-	// item lost to a provider outage comes back on its own (ADR-0048).
+	// item lost to a provider outage comes back on its own (ADR-0048). It carries no
+	// reason and clears none: an outage is not a diagnosis.
 	SetTitleEnrichmentRetry(titleID string, attempts int, retryAt time.Time) error
 
 	// Single-Title match correction (issue 05): an Admin re-points a Title's
@@ -57,7 +63,7 @@ type Store interface {
 	// a durable Enrichment override on a Show/Artist/Album (SetEntityExternalMatch)
 	// and the parent enrich path honors its hand-set Locked fields (EntityLockedFields).
 	// LibraryOfEntity gives the single-parent re-enrich the Library to serialize on.
-	SetEntityExternalMatch(entityType, entityID, externalID string, origin store.RecordOrigin) error
+	SetEntityExternalMatch(entityType, entityID string, pin store.EntityRecordPin) error
 	EntityLockedFields(entityType, entityID string) (map[string]bool, error)
 	LibraryOfEntity(entityType, entityID string) (string, error)
 
@@ -97,7 +103,36 @@ const (
 	ModeNew Mode = iota
 	// ModeFull re-enriches every visible Title (still unlocked-only) — a refresh.
 	ModeFull
+	// ModeRecheck enriches everything ModeNew would, PLUS the settled non-answers
+	// (ADR-0051): 'unmatched' items, and 'failed' ones with no scheduled retry.
+	// It is the mode for "the question changed" — a matching improvement shipped,
+	// and the rows it was written for will otherwise never be asked again.
+	//
+	// It re-asks; it does NOT reset. No status is lowered to 'pending' and nothing
+	// is cleared in advance, so an item that is still unmatched afterwards is simply
+	// written unmatched again with a fresh reason (ADR-0050). And it never widens to
+	// ModeFull: a 'matched' parent still short-circuits to its stored id, so a
+	// recheck over a healthy Library costs zero provider calls.
+	ModeRecheck
 )
+
+// settledNonAnswer reports whether an item's Enrichment SETTLED without a record
+// and nothing is coming back for it on its own — the population ModeRecheck
+// re-asks (ADR-0051). Two states qualify:
+//
+//   - 'unmatched' — the provider answered and had no record.
+//   - 'failed' with no scheduled retry — a permanent refusal, parked.
+//
+// A 'failed' item WITH a retry in the future is deliberately excluded: that is
+// in-flight work the server already owns (ADR-0048), and re-asking it early
+// would collapse the distinction between "no record" and "could not reach the
+// provider" that the retry column exists to keep. It is also not a resolution
+// improvement's problem — the same question is already scheduled.
+//
+// This is the Go twin of store.settledNonAnswerClause; they change together.
+func settledNonAnswer(status, retryAt string) bool {
+	return status == "unmatched" || (status == "failed" && retryAt == "")
+}
 
 // providerSnapshot bundles the MetadataProvider with its derived per-kind
 // Enablement so the two are always swapped as a unit — an in-flight pass that
@@ -171,6 +206,18 @@ type Service struct {
 	slotGroups *listCache[[]SeasonSummary]
 	slotLists  *listCache[[]EpisodeCandidate]
 
+	// tracklists caches an Album's resolved tracklist (ADR-0050) so the pass and a
+	// Cascade over the same album inside one sitting cost one provider call between
+	// them, at the host ADR-0049 watched shed load. Keyed by the whole request, not
+	// the album; cleared on a provider swap. See album_tracklist.go.
+	tracklists *listCache[[]TrackCandidate]
+
+	// editionLists caches a release-group's editions (ADR-0052) so an Admin toggling
+	// the edition section while they decide costs ONE provider call, not one per
+	// look. Keyed by the release-group alone — the answer does not depend on the
+	// album asking — and cleared on a provider swap. See album_editions.go.
+	editionLists *listCache[[]ReleaseEdition]
+
 	// Per-Library pass serialization: a Library is enriched by at most one pass at
 	// a time, so the auto-after-scan trigger and a manual/scheduled pass can never
 	// run concurrently over the same Library (which would double-fetch artwork and
@@ -191,9 +238,11 @@ func NewService(s Store, provider MetadataProvider, fetcher ArtworkFetcher, enab
 	svc := &Service{
 		store: s, fetcher: fetcher,
 		cacheDir: cacheDir, libMus: map[string]*sync.Mutex{},
-		candidates: newCandidateCache(candidateTTL),
-		slotGroups: newListCache[[]SeasonSummary](DefaultEpisodeListCacheTTL),
-		slotLists:  newListCache[[]EpisodeCandidate](DefaultEpisodeListCacheTTL),
+		candidates:   newCandidateCache(candidateTTL),
+		slotGroups:   newListCache[[]SeasonSummary](DefaultEpisodeListCacheTTL),
+		slotLists:    newListCache[[]EpisodeCandidate](DefaultEpisodeListCacheTTL),
+		tracklists:   newListCache[[]TrackCandidate](DefaultAlbumTracklistCacheTTL),
+		editionLists: newListCache[[]ReleaseEdition](DefaultAlbumEditionCacheTTL),
 	}
 	svc.current.Store(&providerSnapshot{provider: provider, enablement: enablement})
 	return svc
@@ -213,6 +262,14 @@ func (s *Service) SetProvider(provider MetadataProvider, enablement Enablement) 
 	// introduce, so a swap empties them.
 	s.slotGroups.clear()
 	s.slotLists.clear()
+	// Same reasoning for the album tracklists: they name the OLD provider's recording
+	// ids, and pinning a track to an id the new provider never chose is the silent
+	// wrong answer a cache must not introduce.
+	s.tracklists.clear()
+	// And the edition listings, for the same reason at one tier up: they name the OLD
+	// provider's release ids, and offering an Admin a release the new provider never
+	// listed is a pin that cannot resolve.
+	s.editionLists.clear()
 }
 
 // snapshot returns the current GLOBAL provider + enablement snapshot. Callers read
@@ -369,8 +426,11 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 		leaves, err = s.collectMusicLeaves(ctx, snap, libraryID, mode)
 	default:
 		sel := store.EnrichPending
-		if mode == ModeFull {
+		switch mode {
+		case ModeFull:
 			sel = store.EnrichAll
+		case ModeRecheck:
+			sel = store.EnrichRecheck
 		}
 		var titles []store.Title
 		titles, err = s.store.TitlesForEnrichment(libraryID, sel, s.clock())
@@ -850,6 +910,12 @@ func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (
 	if meta.ExternalID != "" {
 		c.ExternalID = meta.ExternalID
 	}
+	// The pasted EDITION rides back with the release-group it resolved to (ADR-0052).
+	// This is the one moment a human names a release, and the preview→apply round trip
+	// is where it used to be dropped: the preview answered with the parent group, the
+	// client applied that, and the release existed nowhere. A pasted /release-group/
+	// URL leaves this empty, which is what CLEARS a previously chosen edition.
+	c.ReleaseID = releaseMBID
 	if c.Year == 0 && len(meta.ReleaseDate) >= 4 {
 		if y, err := strconv.Atoi(meta.ReleaseDate[:4]); err == nil && y > 0 {
 			c.Year = y
@@ -906,29 +972,51 @@ func externalIDForKind(kind, pasted string) (string, error) {
 	}
 }
 
+// EntityPin is the correction an Admin applied to a browse parent: the record they
+// picked, and — for an Album — the exact EDITION of it they named (ADR-0052).
+//
+// A struct rather than a second string parameter because the two are same-typed
+// MusicBrainz ids one level apart, and because it makes the clearing rule
+// unmissable at every call site: ReleaseID is ALWAYS decided, and deciding it is
+// empty is what a picked search candidate, a pasted /release-group/ URL, and a
+// Cascade all mean.
+type EntityPin struct {
+	ExternalID string
+	// ReleaseID is the release (one edition) the Admin named, when they named one —
+	// a pasted /release/ URL, which resolves to its parent release-group for
+	// ExternalID and keeps the release here. Empty CLEARS any edition the parent had.
+	ReleaseID string
+}
+
 // ApplyEntityOverride pins a picked candidate's authoritative external id on a
 // browse-parent entity as a durable Enrichment override and re-enriches just that
 // parent (Fix-info on a Show/Artist/Album, ADR-0019). It persists the pin
-// (SetEntityExternalMatch — external_id + external_id_origin, so future passes look
-// up BY it) then runs the single-parent enrich path honoring the parent's Locked
-// fields. Identity and watch state are untouched. store.ErrNotFound for an unknown
-// parent flows to the handler as a 404.
+// (SetEntityExternalMatch — external_id + external_id_origin + external_release_id,
+// so future passes look up BY it and decorate from the edition the Admin named)
+// then runs the single-parent enrich path honoring the parent's Locked fields.
+// Identity and watch state are untouched — an edition is a decoration refinement and
+// never enters a key (ADR-0038/0052). store.ErrNotFound for an unknown parent flows
+// to the handler as a 404.
 //
 // Admin-facing: the record is this parent's OWN choice. The Artist→Albums
 // recursion writes its Albums through applyEntityOverride with
 // store.OriginCascaded instead, so a second Artist Cascade re-applies to them
 // rather than reading its own last pin as the Album's correction (ADR-0046).
-func (s *Service) ApplyEntityOverride(ctx context.Context, entityType, entityID, externalID string) error {
-	return s.applyEntityOverride(ctx, entityType, entityID, externalID, store.OriginChosen)
+func (s *Service) ApplyEntityOverride(ctx context.Context, entityType, entityID string, pin EntityPin) error {
+	return s.applyEntityOverride(ctx, entityType, entityID, pin, store.OriginChosen)
 }
 
 // applyEntityOverride is ApplyEntityOverride with the record's origin spelled out.
-func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID, externalID string, origin store.RecordOrigin) error {
+func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID string,
+	pin EntityPin, origin store.RecordOrigin) error {
+
 	libraryID, err := s.store.LibraryOfEntity(entityType, entityID)
 	if err != nil {
 		return err // ErrNotFound flows through
 	}
-	if err := s.store.SetEntityExternalMatch(entityType, entityID, externalID, origin); err != nil {
+	if err := s.store.SetEntityExternalMatch(entityType, entityID, store.EntityRecordPin{
+		ExternalID: pin.ExternalID, ReleaseID: pin.ReleaseID, Origin: origin,
+	}); err != nil {
 		return err
 	}
 	// Serialize against a concurrent full pass over the same Library so the single-
@@ -941,7 +1029,7 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID,
 	if err != nil {
 		return err
 	}
-	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, externalID)
+	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, pin.ExternalID)
 	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref)
 	return err
 }
@@ -1137,6 +1225,65 @@ type leafWork struct {
 	title       store.Title
 	ref         TitleRef
 	sparseTitle bool
+	// tracklist is what the Track's ALBUM was able to say about its own contents
+	// (ADR-0050). It is stamped here, at collection time, because that is the only
+	// moment it is known: an Album that never matched and an Album whose tracklist
+	// declined this Track both leave ref.MusicbrainzID empty, so by the time the
+	// lookup comes back the two are indistinguishable — and they want opposite
+	// actions from the Admin. Zero (tracklistUnavailable) for every non-Music leaf,
+	// which is correct: no Album had anything to say about a Movie.
+	tracklist tracklistOutcome
+}
+
+// unmatchedReason is ADR-0050's reason table, evaluated for a leaf the provider
+// declined to match. err is the lookup's error (nil when the provider answered
+// "no record" without one, which is an empty answer and not a rejection).
+//
+// The order is the classification, and each step is checked before the next
+// because a later one would otherwise absorb it:
+//
+//  1. A NON-EMPTY ref id means an exact id was available and the provider had no
+//     recording behind it. It never reached the search, so nothing further down
+//     can be true of it. This is the file's tag id (the common case, ADR-0049), a
+//     stored record id that has since gone away, and a tracklist-supplied id the
+//     provider then declined — one bucket because the action is one action: the id
+//     is the broken part.
+//
+//  2. The ALBUM tier outranks the search outcome, and that is a deliberate choice
+//     rather than an accident of ordering. A Track under an unmatched Album goes
+//     to the search too, and that search fails or gets rejected like any other —
+//     but "fix the Album" is the action that clears it, and in a real library this
+//     is 365 of 730 rows. Letting `search-rejected` win here would rename the
+//     largest actionable bucket in the queue after the least useful thing that
+//     happened to it last.
+//
+//  3. Only then the search's own two answers, rejection FIRST: ErrMatchRejected
+//     wraps ErrNoMatch one-directionally (issue 05), so testing the plain
+//     ErrNoMatch first would silently collapse the two into one reason.
+//
+// A non-Music leaf gets EnrichmentReasonNone and the generic sentence. The five
+// values are Music-shaped by construction — four of them name an Album, a
+// tracklist or a recording id — and stamping `search-no-match` on an unmatched
+// Movie would put the word "recording" in front of an Admin looking at a film. A
+// Movie's own failure taxonomy is a different question with different answers, and
+// the empty reason leaves today's copy exactly where it is until someone asks it.
+func (lw leafWork) unmatchedReason(err error) string {
+	if lw.title.Kind != "track" {
+		return store.EnrichmentReasonNone
+	}
+	if strings.TrimSpace(lw.ref.MusicbrainzID) != "" {
+		return store.EnrichmentReasonTagIDUnresolved
+	}
+	switch lw.tracklist {
+	case tracklistNoAlbumRecord:
+		return store.EnrichmentReasonAlbumUnmatched
+	case tracklistRead:
+		return store.EnrichmentReasonNotInTracklist
+	}
+	if errors.Is(err, ErrMatchRejected) {
+		return store.EnrichmentReasonSearchRejected
+	}
+	return store.EnrichmentReasonSearchNoMatch
 }
 
 // processLeaf enriches one leaf Title into res using the caller-resolved snapshot
@@ -1146,7 +1293,12 @@ type leafWork struct {
 func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw leafWork, res *Result) error {
 	t := lw.title
 	if !snap.enablement.enabledFor(t.Kind) {
-		if err := s.store.SetTitleEnrichmentStatus(t.ID, "disabled"); err != nil {
+		// 'disabled' is a settled outcome with nothing to diagnose — nobody asked a
+		// provider anything — so it writes the EMPTY reason, which also wipes whatever
+		// a previous failure said. Leaving a stale sentence on a row the operator has
+		// since switched enrichment off for is the exact stale-reason failure ADR-0050
+		// calls worse than none.
+		if err := s.store.SetTitleEnrichmentStatus(t.ID, "disabled", store.EnrichmentReasonNone); err != nil {
 			return err
 		}
 		res.Disabled++
@@ -1173,7 +1325,11 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		if leader := snap.config.authoritativeSlugFor(t.Kind); pinSlug != leader {
 			if !snap.config.providerReachable(pinSlug) {
 				res.Unmatched++
-				return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched") // orphaned → attention
+				// An ORPHANED override is a policy problem, not one of ADR-0050's five
+				// diagnoses: nothing was asked and nothing was learned about the item. The
+				// empty reason renders the generic sentence and, just as importantly,
+				// clears any diagnosis from before the provider went unreachable.
+				return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched", store.EnrichmentReasonNone)
 			}
 			// Reachable but no longer the leader: resolve via the pinned provider alone
 			// so the override still wins (the chain leads a different source that can't
@@ -1188,7 +1344,7 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		res.Unmatched++
-		return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched")
+		return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched", lw.unmatchedReason(err))
 	case err != nil:
 		// Non-fatal: log + record the failure, keep going (story 36). Whether that
 		// failure parks the Title or schedules a retry is the classification in
@@ -1259,7 +1415,8 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 // the Show and Season parents (the generic entity tables) and returns the Episode
 // leaves to enrich in phase B. The resolved Show external id is threaded down to
 // the Season/Episode refs so they resolve under the right show. In ModeNew only
-// pending parents/episodes are touched; ModeFull re-does all.
+// pending parents/episodes are touched; ModeRecheck adds the settled non-answers
+// (ADR-0051); ModeFull re-does all.
 func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, libraryID string, mode Mode) ([]leafWork, error) {
 	shows, err := s.store.ListAllShows(libraryID)
 	if err != nil {
@@ -1326,6 +1483,12 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 // collectMusicLeaves walks a Music Library's Artists → Albums → Tracks: it
 // enriches the Artist and Album parents and returns the Track leaves. Tracks
 // carry sparseTitle so a canonical title only fills a missing tag title.
+//
+// It is also where ADR-0050's tracklist tier lives, because that tier is
+// ALBUM-grained: "the one local Track and the one tracklist position both still
+// unclaimed are each other" cannot be decided one Track at a time. The Album's
+// resolved record id — which enrichParent has always returned and this call site
+// used to discard — is the anchor the whole tier hangs from.
 func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot, libraryID string, mode Mode) ([]leafWork, error) {
 	artists, err := s.store.ListAllArtists(libraryID)
 	if err != nil {
@@ -1333,37 +1496,94 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 	}
 	var leaves []leafWork
 	for _, ar := range artists {
-		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
-			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
-				MusicbrainzID: ar.MusicbrainzID}); err != nil {
-			return nil, err
-		}
+		// The Albums are read BEFORE the Artist is enriched, not after, so a few of
+		// them can ride the Artist's ref as corroboration (ADR-0053). The order used to
+		// be the other way round, which is why the Artist could only ever be resolved
+		// by its name — and a name is exactly what cannot tell the American "Eagles"
+		// from the 1958 British group literally named "The Eagles".
 		albums, err := s.store.AlbumsForArtist(ar.ID)
 		if err != nil {
 			return nil, err
 		}
+		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
+			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
+				MusicbrainzID: ar.MusicbrainzID,
+				AlbumHints:    musicAlbumHints(albums)}); err != nil {
+			return nil, err
+		}
 		for _, al := range albums {
-			if _, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
+			albumRecordID, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
 				TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name,
-					MusicbrainzID: al.MusicbrainzID}); err != nil {
+					MusicbrainzID: al.MusicbrainzID})
+			if err != nil {
 				return nil, err
 			}
 			tracks, err := s.store.TracksForAlbum(al.ID)
 			if err != nil {
 				return nil, err
 			}
+			// Computed once for the whole Album, over its WHOLE local track list, and
+			// empty whenever no call was worth making (or the read failed).
+			fromTracklist, outcome := s.albumTracklistIDs(ctx, snap, mode, al, albumRecordID, tracks)
 			for _, tr := range tracks {
 				if !s.shouldProcessLeaf(snap, mode, tr) {
 					continue
 				}
-				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, ref: TitleRef{
+				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, tracklist: outcome, ref: TitleRef{
 					Kind: "track", Title: tr.Title, Track: tr.Title,
-					Artist: ar.Name, Album: al.Title, MusicbrainzID: trackRecordID(tr),
+					Artist: ar.Name, Album: al.Title,
+					MusicbrainzID: trackAnchorID(tr, fromTracklist[tr.ID]),
 				}})
 			}
 		}
 	}
 	return leaves, nil
+}
+
+// maxAlbumHints caps how many Albums travel on an Artist's ref as corroboration.
+// Three is plenty: the provider makes exactly ONE corroborating call, and the
+// hints exist so it can pick the best evidence available — an album the files
+// identify by id, else an album with a title worth searching for — not so it can
+// try them one after another. Carrying the whole discography would put an
+// unbounded slice on a ref for no gain.
+const maxAlbumHints = 3
+
+// musicAlbumHints selects the Albums an Artist is corroborated by (ADR-0053).
+//
+// Two rules, and both are about asking the SAME question twice rather than about
+// which album is nicest. Albums that carry a release-group MBID from their tags
+// come first, because the provider can resolve one of those with a lookup and no
+// search at all. Within each group the store's order is preserved — AlbumsForArtist
+// orders by year, then sort title, then id — so a second pass hints the same albums
+// in the same order, asks MusicBrainz the same question, and gets the answer from a
+// cache rather than from the search cluster.
+//
+// An album with neither an id nor a title cannot corroborate anything and is
+// dropped; an artist whose albums are all like that hints nothing, and its Lookup
+// is exactly what it was before this existed.
+func musicAlbumHints(albums []store.Album) []AlbumHint {
+	hints := make([]AlbumHint, 0, maxAlbumHints)
+	for _, al := range albums {
+		if id := strings.TrimSpace(al.MusicbrainzID); id != "" {
+			hints = append(hints, AlbumHint{Title: al.Title, ReleaseGroupMBID: id})
+			if len(hints) == maxAlbumHints {
+				return hints
+			}
+		}
+	}
+	for _, al := range albums {
+		if strings.TrimSpace(al.MusicbrainzID) != "" || strings.TrimSpace(al.Title) == "" {
+			continue
+		}
+		hints = append(hints, AlbumHint{Title: al.Title})
+		if len(hints) == maxAlbumHints {
+			return hints
+		}
+	}
+	if len(hints) == 0 {
+		return nil
+	}
+	return hints
 }
 
 // trackRecordID answers "which MusicBrainz recording should decorate this Track?"
@@ -1387,22 +1607,216 @@ func trackRecordID(t store.Title) string {
 	return strings.TrimSpace(t.MusicbrainzRecordingID)
 }
 
+// trackAnchorID is trackRecordID with ADR-0050's tier spliced in between the tag
+// and the search: record → tag → ALBUM TRACKLIST → search. fromTracklist is what
+// the Album's own tracklist says this Track is, or "" when the tracklist declined
+// it, was not fetched, or claimed it with no recording id behind it.
+//
+// The order is the whole point and it is the same order ADR-0049 gave: a human's
+// correction outranks what the file asserts, which outranks what the Album asserts
+// about its contents, which outranks a text search. The tracklist's product is an
+// ID and nothing more — the leaf still resolves through the ordinary
+// /recording/<mbid> lookup, so exactly one thing turns an id into a record.
+func trackAnchorID(t store.Title, fromTracklist string) string {
+	if id := trackRecordID(t); id != "" {
+		return id
+	}
+	return strings.TrimSpace(fromTracklist)
+}
+
+// albumTracklistIDs is ADR-0050's tier, computed once for one Album: the recording
+// MBID the Album's own tracklist names for each of its local Tracks, keyed by Track
+// (Title) id. An empty map means "this Album has nothing to say", and is the answer
+// for every case in which no provider call was made at all.
+//
+// It makes a call ONLY when both halves hold:
+//
+//   - at least one in-scope Track still needs an anchor (albumNeedsTracklist).
+//     Otherwise there is nothing a tracklist could resolve, and an album of fully
+//     tagged Tracks — the population ADR-0049 already fixed — must not start paying
+//     a call per album to learn that.
+//   - an anchor exists: the Album's enrichment record id (what enrichParent just
+//     resolved, an Admin's Fix-info choice included), else the release-group id the
+//     FILES assert. An Album that is neither matched nor tagged knows nothing about
+//     its contents and is not asked.
+//
+// WHICH EDITION that anchor resolves to is ADR-0052's precedence, applied by
+// albumTracklistFor: the release an ADMIN chose (chosenAlbumEdition), then the
+// release the FILES name (al.MusicbrainzReleaseID), then best fit by track count.
+// The result carries FromChosenEdition — the licence issue 11 consumes — because
+// the tracklist alone cannot say which of the three answered.
+//
+// tracks must be the Album's WHOLE local list — mapTracks is album-grained, and a
+// Track the pass intends to skip still occupies its position on the release. The
+// RESULT is filtered by scope, never the input.
+//
+// A failed read is not a leaf failure. ErrNoTracklist is the settled "this album has
+// no tracklist"; anything else is a transient failure (a 503 shed, a transport
+// error) and must NOT settle the Album's Tracks either. Both return the empty map,
+// and the Tracks fall through to the search path exactly as they did before this
+// tier existed — where, if the search also fails transiently, recordLeafFailure's
+// ADR-0048 classification schedules the retry that brings them back. The tracklist
+// itself gets no retry machinery of its own: the next pass re-reads it for free.
+// It returns its OUTCOME alongside the map, because that outcome is the only
+// place the difference between "the Album never matched" and "the Album matched
+// and its tracklist has no room for this Track" survives (ADR-0050). Both leave a
+// Track with no anchor and an empty ref id, so nothing downstream can recover it:
+// processLeaf would see two identical leaves wanting two different actions from
+// the Admin — fix the ALBUM versus fix the Album's RELEASE.
+func (s *Service) albumTracklistIDs(ctx context.Context, snap providerSnapshot, mode Mode,
+	al store.Album, albumRecordID string, tracks []store.Title) (map[string]string, tracklistOutcome) {
+
+	if !s.albumNeedsTracklist(snap, mode, tracks) {
+		// Every in-scope Track already has an id, so no Track here can be diagnosed by
+		// the album tier: whatever settles them will have been an id that failed.
+		return nil, tracklistUnavailable
+	}
+	anchor := strings.TrimSpace(albumRecordID)
+	if anchor == "" {
+		anchor = strings.TrimSpace(al.MusicbrainzID)
+	}
+	if anchor == "" {
+		return nil, tracklistNoAlbumRecord
+	}
+	res, err := s.albumTracklistFor(ctx, snap, TracklistRequest{
+		ReleaseGroupID:  anchor,
+		ReleaseID:       al.MusicbrainzReleaseID,
+		LocalTrackCount: len(tracks),
+	}, s.chosenAlbumEdition(store.EntityAlbum, al.ID, anchor))
+	tl := res.Tracks
+	switch {
+	case errors.Is(err, ErrNoTracklist):
+		// Settled: the provider answered, and the Album has no tracklist to give. It
+		// could name none of its contents, which is the Admin's problem with the ALBUM.
+		return nil, tracklistNoAlbumRecord
+	case err != nil:
+		// Transient: say so, and leave the Tracks unsettled. Emphatically NOT
+		// tracklistNoAlbumRecord — the album is not unmatched, MusicBrainz was busy,
+		// and a reason recorded from an outage is the "confidently explains a problem
+		// that no longer exists" failure ADR-0050 exists to prevent.
+		log.Printf("obelo: enrich album %q (%s): tracklist unavailable: %v — its tracks fall "+
+			"back to search this pass", al.Title, al.ID, err)
+		return nil, tracklistUnavailable
+	}
+	ids := make(map[string]string, len(tracks))
+	// res.FromChosenEdition is the licence ADR-0052 grants position-alone mapping,
+	// live at exactly the point mapTracks is called and nowhere else. It is the fact
+	// that the ADMIN's edition produced THESE entries, not the stored intention: a pin
+	// that fell back to tag/fit arrives here false, and rule 4 stays off.
+	for titleID, tc := range mapTracks(tracks, tl, res.FromChosenEdition) {
+		// A matched entry carrying no recording id is still a match (issue 03) — it
+		// holds its position so a neighbour cannot claim it — but it is not an ANCHOR.
+		// Writing it into ref.MusicbrainzID would pin the empty string and send the
+		// leaf to a lookup of nothing.
+		if ext := strings.TrimSpace(tc.ExternalID); ext != "" {
+			ids[titleID] = ext
+		}
+	}
+	return ids, tracklistRead
+}
+
+// tracklistOutcome is what the Album tier learned about an Album as a whole, kept
+// because it is NOT recoverable from a leaf after the fact: an Album that never
+// matched and an Album whose tracklist declined a Track both leave that Track with
+// an empty ref id (ADR-0050, issue 04). It is carried on leafWork and read only by
+// the reason classification.
+type tracklistOutcome int
+
+const (
+	// tracklistUnavailable — the tier has nothing to say about this Album, and no
+	// leaf under it may be diagnosed from it. Three cases share this value because
+	// they share that consequence: no in-scope Track needed an anchor, the read
+	// failed TRANSIENTLY, or the Library's Music enrichment is off. The transient one
+	// is why this value must exist separately from tracklistNoAlbumRecord — a 503 is
+	// an outage, not a diagnosis, and its leaves fall through to search where a real
+	// diagnosis is still available.
+	tracklistUnavailable tracklistOutcome = iota
+	// tracklistNoAlbumRecord — the Album could name none of its contents: it has no
+	// record and no usable tag id, or the provider answered that it has no tracklist.
+	// A Track left unanchored by this is EnrichmentReasonAlbumUnmatched, and the
+	// action is on the Album.
+	tracklistNoAlbumRecord
+	// tracklistRead — a tracklist was fetched and mapped. A Track it left unanchored
+	// was DECLINED by the ADR-0050 match rule, which is
+	// EnrichmentReasonNotInTracklist: the Album is probably pinned to the wrong
+	// release, and that is where the action is.
+	tracklistRead
+)
+
+// chosenAlbumEdition returns the exact RELEASE an Admin pinned on this parent
+// (ADR-0052), or "" when nobody pinned one — and, crucially, "" whenever the pin
+// does not belong to the release-group the tracklist is about to be read under.
+//
+// That guard is what keeps the pin honest without a provider call. An edition is
+// only ever stored beside the release-group it was resolved under, so anchor ==
+// ExternalID is the normal case; anchor differs exactly when the Album's own record
+// was NOT available and the tier fell back to the release-group the FILES assert
+// (a transient parent-lookup failure, ADR-0048). Reading the Admin's edition under
+// somebody else's release-group is the stranger's-tracklist decoration ADR-0052
+// forbids, and it is cheaper to refuse here than to discover it a call later.
+//
+// A read failure yields "" — the album resolves by tag/fit exactly as it does with
+// no pin at all. A bookkeeping read must not be able to fail a pass.
+func (s *Service) chosenAlbumEdition(entityType, entityID, anchor string) string {
+	e, err := s.store.EntityEnrichmentByID(entityType, entityID)
+	if err != nil {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(e.ExternalID), strings.TrimSpace(anchor)) {
+		return ""
+	}
+	return e.ChosenReleaseID()
+}
+
+// albumNeedsTracklist reports whether any of the Album's in-scope Tracks still
+// needs an id — the question that decides whether a tracklist is fetched at all.
+//
+// It reads each Track's STATUS, not merely the presence of an id, and that is the
+// subtle part. SetTitleEnrichmentStatus writes the status and leaves musicbrainz_id
+// alone, so a Track that matched once and later failed carries a record AND reads
+// 'unmatched' (five such rows exist in the developer's library today, all on one
+// album). trackRecordID still returns that id and the next pass still looks it up
+// first, which is right — it either resolves and clears the row, or 404s and is
+// diagnosable. What must not happen is this tier reading a stale record as a live
+// one and deciding the Album has nothing left to resolve.
+//
+// A Track with an id and any other status is treated as anchored: 'pending' with a
+// tag id is the fully-tagged library that already resolves by lookup, and 'failed'
+// is a transient outage whose retry will use the same id regardless.
+func (s *Service) albumNeedsTracklist(snap providerSnapshot, mode Mode, tracks []store.Title) bool {
+	for _, tr := range tracks {
+		if !s.shouldProcessLeaf(snap, mode, tr) {
+			continue // out of scope for this pass; its state is not this pass's problem
+		}
+		if trackRecordID(tr) == "" || tr.EnrichmentStatus == "unmatched" {
+			return true
+		}
+	}
+	return false
+}
+
 // shouldProcessLeaf reports whether a leaf Title is in scope for this pass: every
 // leaf in ModeFull (or when its kind is disabled in the resolved snapshot, so it
 // still gets marked 'disabled'); in ModeNew, the never-enriched ('pending') leaves
-// plus any whose transient failure has come due for another try (ADR-0048).
+// plus any whose transient failure has come due for another try (ADR-0048); in
+// ModeRecheck, those PLUS the settled non-answers (ADR-0051).
 // Enablement is read from the pass's resolved snapshot (the Library's effective
 // policy), not the global one.
 //
 // This is the TV/Music twin of the SQL in store.TitlesForEnrichment — the Movie
 // path selects its leaves with a query, these two walk their parent trees — so the
-// two must agree on what "due" means. Both defer to the same clock and the same
-// retryDue rule.
+// two must agree on what "due" means, in every mode. Both defer to the same clock,
+// the same retryDue rule and the same settledNonAnswer rule; a third mode is a
+// third chance for them to drift, which is why they are asserted against each
+// other in one test (recheck_mode_test.go).
 func (s *Service) shouldProcessLeaf(snap providerSnapshot, mode Mode, t store.Title) bool {
 	if mode == ModeFull || !snap.enablement.enabledFor(t.Kind) {
 		return true
 	}
-	return t.EnrichmentStatus == "pending" || s.retryDue(t.EnrichmentStatus, t.EnrichmentRetryAt)
+	if t.EnrichmentStatus == "pending" || s.retryDue(t.EnrichmentStatus, t.EnrichmentRetryAt) {
+		return true
+	}
+	return mode == ModeRecheck && settledNonAnswer(t.EnrichmentStatus, t.EnrichmentRetryAt)
 }
 
 // retryDue reports whether a 'failed' item's scheduled retry has arrived. An empty
@@ -1436,11 +1850,18 @@ func (s *Service) retryDue(status, retryAt string) bool {
 //     what every failure did before the distinction existed.
 //
 // Either way the pass continues; one bad lookup never starves the rest.
+//
+// NEITHER branch records an ADR-0050 reason, for the same reason in two shapes. A
+// transient failure writes nothing at all: it is in-flight work, and a diagnosis
+// from an outage would outlive it. A parked one settles, so it must overwrite the
+// column — but with the EMPTY reason, because "the provider refused the request"
+// is not one of the five and is already the sentence the queue prints for a
+// 'failed' row.
 func (s *Service) recordLeafFailure(t store.Title, lookupErr error, res *Result) error {
 	if !IsTransient(lookupErr) {
 		log.Printf("obelo: enrich %q (%s): provider error: %v", t.Title, t.ID, lookupErr)
 		res.Failed++
-		return s.store.SetTitleEnrichmentStatus(t.ID, "failed")
+		return s.store.SetTitleEnrichmentStatus(t.ID, "failed", store.EnrichmentReasonNone)
 	}
 	attempts := t.EnrichmentAttempts + 1
 	delay := retryDelay(attempts)
@@ -1483,7 +1904,15 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	if err != nil {
 		return "", err
 	}
-	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) {
+	// ModeRecheck re-asks PARENTS as well as leaves (ADR-0051). It has to: on the
+	// motivating library 365 of 730 flagged Tracks hang under an Album that is
+	// itself unmatched, and no amount of re-asking a Track fixes an Album that can
+	// name none of its contents. A 'matched' parent is NOT a settled non-answer, so
+	// it still short-circuits here to its stored id — which is what makes a recheck
+	// free for the albums that are already fine, and what still hands ADR-0050's
+	// tracklist tier its anchor.
+	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) &&
+		!(mode == ModeRecheck && settledNonAnswer(cur.Status, cur.RetryAt)) {
 		return cur.ExternalID, nil // already settled; reuse its resolved id
 	}
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id
