@@ -3282,7 +3282,13 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
    the row is a two-column grid whose second column holds that stack. */
 .fix-item {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* minmax(0, 1fr), never a bare 1fr. A bare `1fr` is `minmax(auto, 1fr)`, whose
+     MINIMUM is the track's min-content width — so a wide child can force the column
+     past its share and shove the whole queue sideways. This row nests: expanding an
+     album row renders a full fix-item per track, each adding its own artwork column
+     and the child list's padding to the outer track's min-content. The floor of 0
+     is what lets the column refuse to grow and the content wrap instead. */
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   column-gap: 0.85rem;
   padding-top: 0.85rem;
