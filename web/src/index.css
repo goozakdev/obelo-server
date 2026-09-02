@@ -3335,9 +3335,26 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
     font-size: 0.9rem;
   }
 }
-/* The picker spans both columns so its search box isn't squeezed beside a poster. */
-.fix-item > .fix-picker {
+/* Only the poster and the body share the row's two columns. EVERY other block —
+   the search picker, the edition list, and whatever the next feature adds — spans
+   the full width, so the default is right and a new block cannot land in the
+   poster's column by accident.
+
+   That accident is why this is written as a default rather than a list: the rule
+   used to name `.fix-picker` alone, the edition list was added beside it without
+   one, and grid auto-placement put it in column 1. That column is `auto`, so it
+   grew to fit an entire list of releases and squeezed the row's text into a strip
+   down the right-hand side. */
+.fix-item > * {
   grid-column: 1 / -1;
+}
+.fix-item > .fix-item-art {
+  grid-column: 1;
+  grid-row: 1;
+}
+.fix-item > .fix-item-body {
+  grid-column: 2;
+  grid-row: 1;
 }
 .fix-item.is-open {
   border-left: 2px solid var(--accent);
