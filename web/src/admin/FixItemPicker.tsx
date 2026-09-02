@@ -27,8 +27,19 @@ import { looksLikeRef, type Provider } from "./searchRef";
 // fix is a metadata correction searches through its own Title. The two apply to
 // different things (ADR-0002/0014) and the row, not this component, decides which.
 
+/** Optional field-scoped narrowing AND-ed into a music search, in the shape the
+ * search callback forwards to the API client. A term is present only when its box
+ * is both rendered and non-blank, so a video row — and a row whose Admin blanked a
+ * box to widen — sends the same URL it always did. */
+export interface FixSearchScope {
+  artist?: string;
+  release?: string;
+}
+
 export default function FixItemPicker({
   seed,
+  artistScope,
+  albumScope,
   provider,
   applyLabel,
   applyHint,
@@ -40,14 +51,32 @@ export default function FixItemPicker({
 }: {
   /** The query to search with on open — what the Admin would otherwise have typed. */
   seed: string;
+  /** When defined (a music row), an artist box is rendered pre-filled with this and
+   * AND-ed into the search. Undefined on a video row, which has no artist axis.
+   *
+   * It is a BOX and not a silent narrowing: the value comes from the same tags that
+   * produced the row's problem, so it can itself be the thing that is wrong. Blank
+   * it and the search widens. This mirrors EnrichmentOverridePicker's `artistScope`
+   * exactly, so the queue and the detail page are one search UI to learn. */
+  artistScope?: string;
+  /** The album counterpart of {@link artistScope}, sent as `release` — a recording
+   * search narrowed to the release the track sits on, which is what makes "Intro"
+   * or "She" answerable at all. Same rules: editable, blank widens, undefined on a
+   * row with no release axis. */
+  albumScope?: string;
   /** Which provider a pasted bare id belongs to, so a UUID isn't read as a TMDB id. */
   provider: Provider;
   /** Label for the apply button ("Use this"), which differs by what applying means. */
   applyLabel: string;
   /** One line under the buttons saying what applying will actually do. */
   applyHint: string;
-  /** Run a free-text search (page is 0-based). */
-  search: (query: string, page: number) => Promise<EnrichmentCandidatesResult>;
+  /** Run a free-text search (page is 0-based), narrowed by whatever scope terms the
+   * Admin left filled in. `scope` is `{}` on every row with no narrowing axis. */
+  search: (
+    query: string,
+    page: number,
+    scope: FixSearchScope,
+  ) => Promise<EnrichmentCandidatesResult>;
   /** Resolve a pasted provider URL/id to a single candidate. */
   preview: (ref: string) => Promise<EnrichmentCandidate>;
   /** Apply the chosen record. Rejecting leaves the picker open with the error. */
@@ -67,6 +96,8 @@ export default function FixItemPicker({
   chooseEpisode?: (candidate: EnrichmentCandidate, back: () => void) => ReactNode;
 }) {
   const [query, setQuery] = useState(seed);
+  const [artist, setArtist] = useState(artistScope ?? "");
+  const [album, setAlbum] = useState(albumScope ?? "");
   const [candidates, setCandidates] = useState<EnrichmentCandidate[] | null>(null);
   const [selected, setSelected] = useState<EnrichmentCandidate | null>(null);
   const [page, setPage] = useState(0);
@@ -81,6 +112,17 @@ export default function FixItemPicker({
   // the provider (which is rate-limited and shared).
   const autoSearched = useRef(false);
 
+  // The narrowing terms as the wire wants them: a blank box is OMITTED rather than
+  // sent empty, so widening a search restores exactly the URL a video row sends.
+  const scope = useCallback((): FixSearchScope => {
+    const s: FixSearchScope = {};
+    const a = artist.trim();
+    const r = album.trim();
+    if (a !== "") s.artist = a;
+    if (r !== "") s.release = r;
+    return s;
+  }, [artist, album]);
+
   const runSearch = useCallback(
     async (q: string, nextPage: number, append: boolean) => {
       const term = q.trim();
@@ -88,7 +130,7 @@ export default function FixItemPicker({
       setSearching(true);
       setError(null);
       try {
-        const res = await search(term, nextPage);
+        const res = await search(term, nextPage, scope());
         setCandidates((prev) => (append && prev ? [...prev, ...res.candidates] : res.candidates));
         setHasMore(res.hasMore ?? false);
         setPage(nextPage);
@@ -98,7 +140,7 @@ export default function FixItemPicker({
         setSearching(false);
       }
     },
-    [search],
+    [search, scope],
   );
 
   const runPreview = useCallback(
@@ -244,6 +286,39 @@ export default function FixItemPicker({
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
+        {/* The narrowing boxes, on a music row only. They carry what the scanner
+            already read off the file, so the common case needs no typing — and they
+            are editable, so a wrong artist tag widens instead of stranding the row
+            with no results and no control (the whole reason a silent narrowing was
+            rejected). */}
+        {artistScope !== undefined && (
+          <label className="field">
+            <span className="field-label">Artist</span>
+            <input
+              className="field-input"
+              data-testid="fix-picker-artist"
+              type="text"
+              value={artist}
+              placeholder="Artist (optional, narrows results)"
+              disabled={searching || applying}
+              onChange={(e) => setArtist(e.target.value)}
+            />
+          </label>
+        )}
+        {albumScope !== undefined && (
+          <label className="field">
+            <span className="field-label">Album</span>
+            <input
+              className="field-input"
+              data-testid="fix-picker-album"
+              type="text"
+              value={album}
+              placeholder="Album (optional, narrows results)"
+              disabled={searching || applying}
+              onChange={(e) => setAlbum(e.target.value)}
+            />
+          </label>
+        )}
         <div className="fix-picker-search-actions">
           <button
             className="nav-link"

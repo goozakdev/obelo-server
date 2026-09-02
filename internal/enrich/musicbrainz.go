@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -79,7 +80,7 @@ func (p *MusicBrainzProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMe
 		if id := strings.TrimSpace(ref.MusicbrainzID); id != "" {
 			return p.artistByID(ctx, id)
 		}
-		return p.artistDetails(ctx, ref.Title)
+		return p.artistDetails(ctx, ref.Title, ref.AlbumHints)
 	case "album":
 		// A pinned MusicBrainz *release* (one edition) resolves to its parent
 		// release-group — the album we actually pin — so a pasted /release/ URL works.
@@ -137,12 +138,23 @@ func (p *MusicBrainzProvider) Search(ctx context.Context, kind, query string, op
 // zero records — e.g. `releasegroup:"Anastasia Soundtrack"` found nothing because the
 // canonical release-group title is just "Anastasia" (an Album with secondary-type
 // Soundtrack). Unscoped relevance-ranked terms let MusicBrainz score the right record
-// to the top instead. An optional artist term is AND-ed in as a field-scoped clause —
-// the verified relevance-safe narrowing pattern — to focus a broad common title.
-func musicQuery(terms, artist string) string {
+// to the top instead. Optional artist and release terms are AND-ed in as field-scoped
+// clauses — the verified relevance-safe narrowing pattern — to focus a broad common
+// title. A blank term adds no clause, so the common query is unchanged.
+//
+// `release` narrows a RECORDING search to the album the recording sits on
+// (needs-fixing/06), and it is the difference between one answer and a page of noise:
+// `Whisper Your Name AND artist:"Harry Connick"` returns nine recordings across
+// soundtracks and promos, and the same query with `AND release:"She"` returns exactly
+// the one on that album. Only the recording index has the field; the release-group
+// and artist searches pass "" for it.
+func musicQuery(terms, artist, release string) string {
 	q := escapeLucene(terms)
 	if a := strings.TrimSpace(artist); a != "" {
 		q += ` AND artist:"` + escapeLucene(a) + `"`
+	}
+	if r := strings.TrimSpace(release); r != "" {
+		q += ` AND release:"` + escapeLucene(r) + `"`
 	}
 	return q
 }
@@ -181,8 +193,9 @@ func (p *MusicBrainzProvider) searchRecordings(ctx context.Context, query string
 	q := url.Values{}
 	// Relevance-ranked terms (still Lucene-escaped so `AC/DC`, `"Heroes"`, `!!!` can't
 	// 4xx the parser), NOT an exact-phrase recording:"…" (item-editing/search-
-	// improvements). opts.Artist AND-narrows to a specific artist when supplied.
-	q.Set("query", musicQuery(query, opts.Artist))
+	// improvements). opts.Artist and opts.Release AND-narrow to a specific artist and
+	// album when supplied — a recording title alone is rarely distinguishing.
+	q.Set("query", musicQuery(query, opts.Artist, opts.Release))
 	setPaging(q, opts)
 	q.Set("fmt", "json")
 	var out struct {
@@ -256,7 +269,7 @@ func (p *MusicBrainzProvider) searchArtists(ctx context.Context, query string, o
 	// Relevance-ranked, Lucene-escaped terms — not an exact artist:"…" phrase — so a
 	// name typed with extra words or different order still scores the right artist to
 	// the top (item-editing/search-improvements). Artist scoping is N/A here.
-	q.Set("query", musicQuery(query, ""))
+	q.Set("query", musicQuery(query, "", ""))
 	setPaging(q, opts)
 	q.Set("fmt", "json")
 	var out struct {
@@ -306,8 +319,10 @@ func (p *MusicBrainzProvider) searchReleaseGroups(ctx context.Context, query str
 	// This is the headline fix (item-editing/search-improvements): the canonical
 	// release-group title is often just the name ("Anastasia") with the descriptor a
 	// secondary-TYPE (Soundtrack), so a phrase query carrying "Anastasia Soundtrack"
-	// matched nothing. opts.Artist AND-narrows to a specific artist when supplied.
-	q.Set("query", musicQuery(query, opts.Artist))
+	// matched nothing. opts.Artist AND-narrows to a specific artist when supplied;
+	// opts.Release is dropped, because a release-group search IS the album search —
+	// there is no release axis left to narrow on.
+	q.Set("query", musicQuery(query, opts.Artist, ""))
 	setPaging(q, opts)
 	q.Set("fmt", "json")
 	var out struct {
@@ -355,7 +370,14 @@ func (p *MusicBrainzProvider) searchReleaseGroups(ctx context.Context, query str
 }
 
 // releaseGroupTracklist fetches one release of a release-group and returns its
-// ordered tracks (disc + position + title) as the album candidate's preview.
+// ordered tracks (disc + position + title) as the album candidate's PREVIEW.
+//
+// It keeps taking whichever release MusicBrainz returns first, on purpose. This is
+// the search-results path: a page of album candidates each showing a sample of what
+// is on them, where roughly right is the whole requirement and paying two calls per
+// candidate to find the exact edition would be absurd. The path that needs the
+// right edition — one album, resolving its own tracks — is AlbumTracklist
+// (ADR-0050), which is a different question and answers it separately.
 func (p *MusicBrainzProvider) releaseGroupTracklist(ctx context.Context, rgID string) ([]TrackCandidate, error) {
 	q := url.Values{}
 	q.Set("release-group", rgID)
@@ -363,19 +385,7 @@ func (p *MusicBrainzProvider) releaseGroupTracklist(ctx context.Context, rgID st
 	q.Set("limit", "1")
 	q.Set("fmt", "json")
 	var out struct {
-		Releases []struct {
-			Media []struct {
-				Position int `json:"position"`
-				Tracks   []struct {
-					Number    string `json:"number"`
-					Position  int    `json:"position"`
-					Title     string `json:"title"`
-					Recording struct {
-						ID string `json:"id"`
-					} `json:"recording"`
-				} `json:"tracks"`
-			} `json:"media"`
-		} `json:"releases"`
+		Releases []mbRelease `json:"releases"`
 	}
 	if err := p.getJSON(ctx, "/release", q, &out); err != nil {
 		return nil, err
@@ -383,21 +393,333 @@ func (p *MusicBrainzProvider) releaseGroupTracklist(ctx context.Context, rgID st
 	if len(out.Releases) == 0 {
 		return nil, nil
 	}
+	return mbTracklist(out.Releases[0].Media), nil
+}
+
+// --- AlbumTracklister: the tracklist of the release an album actually is ------
+
+// releaseBrowseLimit caps the release browse behind fit-selection. MusicBrainz's
+// browse default is 25 and its maximum is 100; a release-group with more than a
+// hundred editions is a compilation nobody rips at home, and paging past the first
+// hundred to find a better fit is not worth a second call at a rate-limited host.
+const releaseBrowseLimit = 100
+
+// AlbumTracklist returns the ordered tracks of the release THIS album is, not of
+// whichever release the source happens to list first (ADR-0050).
+//
+// It costs one call for a tagged album and one for an untagged one; two only when
+// the tagged release turns out to belong to somebody else. The order is:
+//
+//  1. No release-group id — the album is unresolved. ErrNoTracklist, zero calls.
+//  2. A release id — ONE /release/<id>?inc=recordings+release-groups, which answers
+//     the tracklist and the parent release-group in the call the tracklist needed
+//     anyway. The parent check is therefore free, and it is what stops a mis-tagged
+//     file (or a stale pin) naming a stranger's release from renumbering the whole
+//     album. A stranger's release (or a stale id that 404s) is discarded and falls
+//     through to (3) — UNLESS a human chose it, see below.
+//  3. Fit-selection — browse the release-group's releases WITH their recordings and
+//     take the one whose track count equals the local album's, earliest date
+//     breaking ties, earliest release when nothing fits. One call, because the
+//     browse carries the tracklists too; picking by count and then fetching the
+//     winner would have cost two.
+//
+// A refusal in (2) is NOT retried as (3): against the load shedding ADR-0049
+// documented, a second request issued precisely during a failure is the wrong
+// direction to push a struggling host, and the fit path would fail the same way.
+//
+// A CHOSEN release that does not apply stops here with ErrNoTracklist instead of
+// falling through (ADR-0052). Falling through would answer with a fit tracklist
+// that the caller could not tell apart from the human's edition, and would then
+// license position-alone mapping (issue 11) against a release nobody asserted —
+// exactly the stranger's-tracklist decoration the parent check exists to prevent.
+// The caller re-asks without the pin, which is the same fall-through, made visible.
+func (p *MusicBrainzProvider) AlbumTracklist(ctx context.Context, req TracklistRequest) ([]TrackCandidate, error) {
+	rgID := strings.TrimSpace(req.ReleaseGroupID)
+	if rgID == "" {
+		return nil, ErrNoTracklist
+	}
+	if relID := strings.TrimSpace(req.ReleaseID); relID != "" {
+		tl, err := p.taggedReleaseTracklist(ctx, relID, rgID)
+		if err != nil {
+			return nil, err
+		}
+		if len(tl) > 0 {
+			return tl, nil
+		}
+		if req.ReleaseIDChosen {
+			return nil, ErrNoTracklist
+		}
+	}
+	return p.bestFitTracklist(ctx, rgID, req.LocalTrackCount)
+}
+
+// taggedReleaseTracklist reads the named release — the one the FILES assert or the
+// one an Admin chose — and returns its tracklist only if that release belongs to
+// rgID. The check is the same either way: a human's pin is better evidence about
+// WHICH edition, and no evidence at all that the edition is of this album. A
+// release of some other release-group, a
+// release with no tracks, and an unknown id (404 → ErrNoMatch) are all (nil, nil) —
+// "not usable, fall through to fit-selection" — because none of them says anything
+// about whether the album itself has a tracklist. A real failure is returned.
+func (p *MusicBrainzProvider) taggedReleaseTracklist(ctx context.Context, relID, rgID string) ([]TrackCandidate, error) {
+	q := url.Values{}
+	// SPACE-separated, not "+"-separated: url.Values.Encode percent-encodes a literal
+	// '+' to %2B (which MusicBrainz then reads as part of one nonsense inc name) and
+	// encodes a space as '+', which is exactly the canonical
+	// "inc=recordings+release-groups" the service documents.
+	q.Set("inc", "recordings release-groups")
+	q.Set("fmt", "json")
+	var rel mbRelease
+	if err := p.getJSON(ctx, "/release/"+url.PathEscape(relID), q, &rel); err != nil {
+		if errors.Is(err, ErrNoMatch) {
+			return nil, nil // stale or unknown release id — the album may still have one
+		}
+		return nil, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(rel.ReleaseGroup.ID), rgID) {
+		return nil, nil // a stranger's release: discard it rather than renumber the album
+	}
+	return mbTracklist(rel.Media), nil
+}
+
+// browseReleaseGroupReleases is THE listing of a release-group's editions, with
+// their tracks: one `/release?release-group=…&inc=recordings&limit=100`.
+//
+// Both callers that need to know what editions exist go through here — fit
+// selection (which reads the counts and takes one) and ReleaseGroupEditions (which
+// shows the same counts to a human and lets them take one, ADR-0052). They are the
+// automatic and the manual half of the SAME question, and asking it twice in two
+// spellings is how the two would come to disagree about which editions there are.
+func (p *MusicBrainzProvider) browseReleaseGroupReleases(ctx context.Context, rgID string) ([]mbRelease, error) {
+	q := url.Values{}
+	q.Set("release-group", rgID)
+	q.Set("inc", "recordings")
+	q.Set("limit", strconv.Itoa(releaseBrowseLimit))
+	q.Set("fmt", "json")
+	var out struct {
+		Releases []mbRelease `json:"releases"`
+	}
+	if err := p.getJSON(ctx, "/release", q, &out); err != nil {
+		return nil, err
+	}
+	return out.Releases, nil
+}
+
+// ReleaseGroupEditions lists the release-group's editions for the Admin's picker
+// (ADR-0052) — the AlbumEditionLister half of the browse fit-selection already
+// pays for. An unknown release-group (404 → ErrNoMatch) and a release-group with no
+// releases are both an empty list: "there is nothing to choose from" is an answer
+// the picker renders, not a failure it reports.
+func (p *MusicBrainzProvider) ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error) {
+	rgID := strings.TrimSpace(releaseGroupID)
+	if rgID == "" {
+		return nil, nil
+	}
+	rels, err := p.browseReleaseGroupReleases(ctx, rgID)
+	if err != nil {
+		if errors.Is(err, ErrNoMatch) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return mbEditions(rels), nil
+}
+
+// bestFitTracklist browses the release-group's releases and returns the tracklist of
+// the one that fits the local album. inc=recordings makes the browse carry every
+// candidate's tracks, so the count comparison and the answer come out of one call.
+func (p *MusicBrainzProvider) bestFitTracklist(ctx context.Context, rgID string, localCount int) ([]TrackCandidate, error) {
+	releases, err := p.browseReleaseGroupReleases(ctx, rgID)
+	if err != nil {
+		return nil, err
+	}
+	rel := pickReleaseByFit(releases, localCount)
+	if rel == nil {
+		return nil, ErrNoTracklist
+	}
+	tl := mbTracklist(rel.Media)
+	if len(tl) == 0 {
+		return nil, ErrNoTracklist
+	}
+	return tl, nil
+}
+
+// pickReleaseByFit chooses the release whose track count equals the local album's,
+// earliest date breaking ties, and falls back to the earliest release when nothing
+// fits (or when the local count is unknown). nil when there is nothing to choose.
+//
+// Count-fit is the cheapest rule that beats "whichever came back first": for an
+// album with a deluxe edition, a remaster or a Japanese pressing, an arbitrary
+// release is a wrong answer for every position after the first bonus track.
+//
+// The rule itself lives in pickEditionByFit, over the same ReleaseEdition view the
+// Admin's picker is shown (ADR-0052). One implementation on purpose: the picker
+// marks which edition is IN USE, and it would be marking the wrong row the moment
+// a second copy of "which one fits" drifted from this one.
+func pickReleaseByFit(releases []mbRelease, localCount int) *mbRelease {
+	i := pickEditionByFit(mbEditions(releases), localCount)
+	if i < 0 {
+		return nil
+	}
+	return &releases[i]
+}
+
+// pickEditionByFit returns the INDEX of the edition that fits localCount best —
+// equal track count first, then earliest date, then the id as a stable tiebreak —
+// or -1 when there is nothing to choose. An edition with no tracks is never chosen:
+// it cannot be anyone's tracklist.
+//
+// An undated release sorts after every dated one, and the id tiebreak is not
+// meaningful — it is there so a release-group holding two same-dated editions
+// resolves to the SAME one on every call rather than to whatever order the source
+// returned this time.
+func pickEditionByFit(eds []ReleaseEdition, localCount int) int {
+	best := -1
+	bestFits := false
+	for i := range eds {
+		e := eds[i]
+		if e.TrackCount == 0 {
+			continue
+		}
+		fits := localCount > 0 && e.TrackCount == localCount
+		switch {
+		case best < 0, fits && !bestFits:
+		case bestFits && !fits:
+			continue
+		case !earlierEdition(e, eds[best]):
+			continue
+		}
+		best, bestFits = i, fits
+	}
+	return best
+}
+
+// earlierEdition orders two editions: a dated one before an undated one, then by
+// date, then by id.
+func earlierEdition(a, b ReleaseEdition) bool {
+	ad, bd := strings.TrimSpace(a.Date), strings.TrimSpace(b.Date)
+	if (ad == "") != (bd == "") {
+		return bd == ""
+	}
+	if ad != bd {
+		return ad < bd
+	}
+	return a.ReleaseID < b.ReleaseID
+}
+
+// mbEditions projects the browse's releases onto the ReleaseEdition view, INDEX FOR
+// INDEX — pickReleaseByFit maps the chosen index straight back onto the release it
+// came from, so nothing may be dropped or reordered here.
+func mbEditions(releases []mbRelease) []ReleaseEdition {
+	out := make([]ReleaseEdition, 0, len(releases))
+	for i := range releases {
+		r := &releases[i]
+		out = append(out, ReleaseEdition{
+			ReleaseID:      r.ID,
+			Date:           strings.TrimSpace(r.Date),
+			Country:        strings.TrimSpace(r.Country),
+			Format:         releaseFormat(r),
+			TrackCount:     releaseTrackCount(r),
+			Disambiguation: strings.TrimSpace(r.Disambiguation),
+		})
+	}
+	return out
+}
+
+// releaseFormat summarizes what an edition is ON — "CD", "2×Vinyl", "CD + DVD" —
+// from its media. A release with several discs of one format collapses to a count
+// ("2×CD") because that is how a listener names it, and a mixed set keeps both
+// names in order. Empty when the source reports no format for any medium, which is
+// common for digital releases and is rendered as nothing rather than as "Unknown".
+func releaseFormat(r *mbRelease) string {
+	var names []string
+	counts := map[string]int{}
+	for _, m := range r.Media {
+		f := strings.TrimSpace(m.Format)
+		if f == "" {
+			continue
+		}
+		if counts[f] == 0 {
+			names = append(names, f)
+		}
+		counts[f]++
+	}
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		if counts[n] > 1 {
+			parts = append(parts, strconv.Itoa(counts[n])+"×"+n)
+			continue
+		}
+		parts = append(parts, n)
+	}
+	return strings.Join(parts, " + ")
+}
+
+// releaseTrackCount totals a release's tracks across every medium (disc), which is
+// the number a local album's track count is compared against.
+func releaseTrackCount(r *mbRelease) int {
+	n := 0
+	for _, m := range r.Media {
+		n += len(m.Tracks)
+	}
+	return n
+}
+
+// mbRelease is one MusicBrainz release (one edition of a release-group) as both the
+// candidate preview and AlbumTracklist read it. ReleaseGroup is populated only with
+// inc=release-groups; Media/Tracks only with inc=recordings. Country and
+// Disambiguation come back on the ordinary browse, so the edition picker costs no
+// extra inc (ADR-0052).
+type mbRelease struct {
+	ID             string     `json:"id"`
+	Date           string     `json:"date"`
+	Country        string     `json:"country"`
+	Disambiguation string     `json:"disambiguation"`
+	Media          []mbMedium `json:"media"`
+	ReleaseGroup   struct {
+		ID string `json:"id"`
+	} `json:"release-group"`
+}
+
+// mbMedium is one disc of a release; Position is the disc number, Format its medium
+// ("CD", "Vinyl", "Digital Media") as the edition picker names it.
+type mbMedium struct {
+	Position int       `json:"position"`
+	Format   string    `json:"format"`
+	Tracks   []mbTrack `json:"tracks"`
+}
+
+// mbTrack is one track of a medium. Recording.ID is the MusicBrainz RECORDING id —
+// the thing that resolves under /recording/ — as distinct from the track's own
+// release-specific id, which does not (ADR-0049).
+type mbTrack struct {
+	Number    string `json:"number"`
+	Position  int    `json:"position"`
+	Title     string `json:"title"`
+	Recording struct {
+		ID string `json:"id"`
+	} `json:"recording"`
+}
+
+// mbTracklist flattens a release's media into ordered TrackCandidates. A medium
+// with no position is disc 1 (the single-disc release MusicBrainz numbers from 1
+// anyway). An entry whose recording id is missing is KEPT, with an empty
+// ExternalID: it still occupies its position, and a caller pairing leftovers needs
+// to know the position is taken even though nothing can be pinned to it.
+func mbTracklist(media []mbMedium) []TrackCandidate {
 	var tl []TrackCandidate
-	for _, m := range out.Releases[0].Media {
+	for _, m := range media {
 		disc := m.Position
 		if disc == 0 {
 			disc = 1
 		}
 		for _, tr := range m.Tracks {
-			// The recording MBID (inc=recordings) is the per-track durable pin the
-			// slice-05 cascade writes so each mapped track survives a later pass.
 			tl = append(tl, TrackCandidate{
 				Disc: disc, Position: tr.Position, Title: tr.Title, ExternalID: tr.Recording.ID,
 			})
 		}
 	}
-	return tl, nil
+	return tl
 }
 
 // releaseGroupForRelease resolves a MusicBrainz release (one edition — the entity a
@@ -645,9 +967,33 @@ type mbTag struct {
 // mbCredit is one entry of a MusicBrainz artist-credit: an artist name plus the join
 // phrase that links it to the next (" & ", " feat. ", ", ", …). The last entry's phrase
 // is empty. See creditString.
+//
+// Artist is the credited artist ENTITY, and it is the whole product of ADR-0053's
+// corroboration: an album identifies its artist by id, which is a fact about the
+// discography rather than a guess about the name. It comes back on any response
+// carrying artist credits — a release-group lookup with inc=artist-credits, and the
+// release-group search, which includes them unasked.
 type mbCredit struct {
 	Name       string `json:"name"`
 	JoinPhrase string `json:"joinphrase"`
+	Artist     struct {
+		ID string `json:"id"`
+	} `json:"artist"`
+}
+
+// creditArtistID returns the MBID of the FIRST credited artist, empty when the
+// credit names none. First, for the reason ADR-0049 takes the first value of a
+// multi-valued tag: a collaboration credits several artists and the library files
+// the album under one of them, so any other choice needs a rule this has no way to
+// decide. A wrong pick here is a corroboration that fails to corroborate, and the
+// artist falls back to the name search.
+func creditArtistID(credits []mbCredit) string {
+	for _, c := range credits {
+		if id := strings.TrimSpace(c.Artist.ID); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // creditString joins an artist-credit into its full display string, preserving the
@@ -662,7 +1008,142 @@ func creditString(credits []mbCredit) string {
 	return strings.TrimSpace(b.String())
 }
 
-func (p *MusicBrainzProvider) artistDetails(ctx context.Context, name string) (TitleMetadata, error) {
+// artistDetails resolves an Artist that carries no id of its own — neither an
+// Admin's Fix-info pin nor the MBID its files assert (both handled in Lookup, and
+// both still ahead of everything here: ADR-0045/0046 and ADR-0049).
+//
+// It asks the artist's DISCOGRAPHY before it asks the artist's NAME (ADR-0053).
+// The name search below is confidently wrong on a real, common shape, and no
+// repair built out of the name reaches it: `artist:"The Eagles"` matches, exactly
+// and at score 100, a 1958 British instrumental group, because the American band
+// is named "Eagles". Article-insensitivity finds "Eagles" and leaves "The Eagles"
+// winning; a name acceptance test accepts identical names. The two are told apart
+// by what they recorded, and the caller is holding one of those albums.
+//
+// So: an album's release-group identifies the artist, and only if no hinted album
+// can be identified does the name search run — unchanged, as the last resort for
+// the artists corroboration has nothing to say about (a soundtrack filed under the
+// film's name, an "Unknown Artist" pile).
+//
+// COST. Corroboration REPLACES the name search, it never joins it: exactly one
+// identifying call is made either way, and when the album carries a tag
+// release-group id that call is a LOOKUP rather than a search — zero traffic on the
+// endpoint ADR-0049 measured shedding load globally. Resolving the artist id to its
+// metadata then goes through artistByID, the same by-id path a pinned artist uses.
+func (p *MusicBrainzProvider) artistDetails(ctx context.Context, name string, albums []AlbumHint) (TitleMetadata, error) {
+	id, err := p.artistIDFromAlbum(ctx, albums)
+	if err != nil {
+		return TitleMetadata{}, err
+	}
+	if id != "" {
+		return p.artistByID(ctx, id)
+	}
+	return p.artistByName(ctx, name)
+}
+
+// artistIDFromAlbum is ADR-0053's corroboration: it identifies ONE of the hinted
+// albums and reads the artist credit off it. It returns ("", nil) — "nothing to
+// corroborate with", the caller falls through to the name search — for every way
+// the evidence can come up short: no hints, no usable hint, a release-group id that
+// no longer resolves, a search that found nothing, or a top hit whose title is not
+// this album's. A transport failure or a host refusal is returned as an ERROR
+// instead, because the difference between "the discography says nothing" and
+// "MusicBrainz was busy" is the difference between an answer and an outage, and
+// silently answering by name during an outage is how the wrong Eagles gets stored.
+//
+// EXACTLY ONE CALL. The hints are ranked, not walked: the first that carries a
+// release-group id wins, else the first that carries a title. Trying the second
+// after the first declines would make an artist cost up to three requests to learn
+// what one request already told us, and the ADR's cost claim is that corroboration
+// replaces the name search one-for-one.
+func (p *MusicBrainzProvider) artistIDFromAlbum(ctx context.Context, albums []AlbumHint) (string, error) {
+	for _, h := range albums {
+		// ADR-0049: an id is validated as a UUID before it is used. An unvalidated id
+		// 404s, which here is indistinguishable from "this release-group is gone" and
+		// would silently spend the one corroborating call on a typo.
+		if isUUID(strings.TrimSpace(h.ReleaseGroupMBID)) {
+			return p.artistIDFromReleaseGroup(ctx, strings.TrimSpace(h.ReleaseGroupMBID))
+		}
+	}
+	for _, h := range albums {
+		if strings.TrimSpace(h.Title) != "" {
+			return p.artistIDFromAlbumSearch(ctx, h.Title)
+		}
+	}
+	return "", nil
+}
+
+// artistIDFromReleaseGroup reads the artist credit off a release-group the FILES
+// name — one lookup, no search (ADR-0053, and the lookup-beats-search preference of
+// ADR-0049 applied one level up). A stale or merged id 404s, which getJSON maps to
+// ErrNoMatch; that is "this album could not corroborate", not "this artist does not
+// exist", so it falls through to the name search rather than settling the Artist.
+func (p *MusicBrainzProvider) artistIDFromReleaseGroup(ctx context.Context, rgID string) (string, error) {
+	q := url.Values{}
+	q.Set("inc", "artist-credits")
+	q.Set("fmt", "json")
+	var rg struct {
+		ArtistCredit []mbCredit `json:"artist-credit"`
+	}
+	if err := p.getJSON(ctx, "/release-group/"+url.PathEscape(rgID), q, &rg); err != nil {
+		if errors.Is(err, ErrNoMatch) {
+			return "", nil
+		}
+		return "", err
+	}
+	return creditArtistID(rg.ArtistCredit), nil
+}
+
+// artistIDFromAlbumSearch searches release-groups for a local album title and reads
+// the artist credit off the top hit — but only if that hit is actually this album.
+//
+// THE SEARCH IS UNNARROWED, AND THAT IS THE POINT. musicQuery is called with no
+// artist and no release clause, so the wire query is the escaped album title and
+// nothing else. AND-ing `artist:"<name>"` in is the natural-looking improvement,
+// and it would silently undo this whole mechanism: the name is the thing being
+// refused, and a query narrowed by it can only ever return an album by the artist
+// the name already picked — which on the motivating library is a British
+// instrumental group that never recorded Hell Freezes Over. There is a test that
+// reads the query off the wire for exactly this reason.
+//
+// The top hit is accepted only when its title matches the local one under
+// normalizeMatchTitle — issue 03's matching normalizer, the same acceptance test
+// ADR-0050 put on the track search — and only the TOP hit is considered, for the
+// reason issue 05 gives: scanning down a ranked list is how a search quietly
+// becomes "find me anything plausible". A rejected hit corroborates nothing and the
+// artist falls back to its name.
+func (p *MusicBrainzProvider) artistIDFromAlbumSearch(ctx context.Context, album string) (string, error) {
+	q := url.Values{}
+	q.Set("query", musicQuery(album, "", ""))
+	q.Set("fmt", "json")
+	var out struct {
+		ReleaseGroups []struct {
+			ID           string     `json:"id"`
+			Title        string     `json:"title"`
+			ArtistCredit []mbCredit `json:"artist-credit"`
+		} `json:"release-groups"`
+	}
+	if err := p.getJSON(ctx, "/release-group", q, &out); err != nil {
+		if errors.Is(err, ErrNoMatch) {
+			return "", nil
+		}
+		return "", err
+	}
+	if len(out.ReleaseGroups) == 0 {
+		return "", nil
+	}
+	rg := out.ReleaseGroups[0]
+	if !acceptsTitle(album, rg.Title) {
+		return "", nil
+	}
+	return creditArtistID(rg.ArtistCredit), nil
+}
+
+// artistByName is the last tier of ADR-0053's precedence and is unchanged from the
+// behaviour that predates it: an exact-phrase name search, top hit taken. It is
+// only reached when nothing in the artist's discography could identify it, which is
+// where it was always the honest answer.
+func (p *MusicBrainzProvider) artistByName(ctx context.Context, name string) (TitleMetadata, error) {
 	if strings.TrimSpace(name) == "" {
 		return TitleMetadata{}, ErrNoMatch
 	}
@@ -746,16 +1227,43 @@ func (p *MusicBrainzProvider) albumDetails(ctx context.Context, album, artist st
 	return meta, nil
 }
 
+// trackDetails is the LAST tier of ADR-0050's precedence (record → tag → album
+// tracklist → search): nothing exact names this recording, so a text search is all
+// that is left.
+//
+// THE QUERY IS THE PICKER'S. musicQuery gives relevance-ranked, Lucene-ESCAPED
+// terms with the artist AND-narrowed as a field clause — not the exact-phrase
+// `recording:"<title>"` this sent before, unescaped. Two things were wrong with
+// that. It 4xx'd the Lucene parser on any title carrying a metacharacter (`AC/DC`,
+// `"Heroes"`, `!!!`), surfacing as a fake provider failure. And an exact phrase
+// misses on every punctuation MusicBrainz spells differently — the real case being
+// a bracketed title tagged `( I Could Only ) Whisper Your Name` against the
+// source's `(I Could Only) Whisper Your Name`, one of 170 bracketed titles among
+// the 730 unmatched tracks that prompted this. The interactive picker beside this
+// had already moved off that shape, so the automatic matcher was strictly worse
+// than the manual one it hands its failures to.
+//
+// THE ACCEPTANCE TEST IS WHAT MAKES THE SWAP PAYABLE. An exact phrase returning
+// zero rows is HONESTLY empty; a relevance query essentially always returns
+// something, so `Recordings[0]` applied blind would trade a queue row for a silent
+// wrong overview — the confident-wrong-answer ADR-0049 ruled is the worse outcome.
+// The top hit is therefore accepted only when its title matches the local track's
+// under normalizeMatchTitle, the same matching normalizer the album tracklist rule
+// uses (and deliberately NOT scanner.normalizeTitle, which serves identity keys).
+// A rejected hit is ErrMatchRejected, which wraps ErrNoMatch: the row that results
+// is exactly as honest as today's.
+//
+// ONE REQUEST, ALWAYS. No looser second query when the first comes back empty or
+// is rejected. ADR-0049 measured MusicBrainz shedding load globally on the search
+// cluster, and a retry issued precisely during those failures pushes the wrong
+// way; the album tier already removed most of the traffic that would have wanted
+// one.
 func (p *MusicBrainzProvider) trackDetails(ctx context.Context, track, artist string) (TitleMetadata, error) {
 	if strings.TrimSpace(track) == "" {
 		return TitleMetadata{}, ErrNoMatch
 	}
-	query := `recording:"` + track + `"`
-	if artist != "" {
-		query += ` AND artist:"` + artist + `"`
-	}
 	q := url.Values{}
-	q.Set("query", query)
+	q.Set("query", musicQuery(track, artist, ""))
 	q.Set("fmt", "json")
 	var out struct {
 		Recordings []struct {
@@ -767,12 +1275,30 @@ func (p *MusicBrainzProvider) trackDetails(ctx context.Context, track, artist st
 		return TitleMetadata{}, err
 	}
 	if len(out.Recordings) == 0 {
+		// The source looked and has nothing. Plain ErrNoMatch — a different failure,
+		// and a different remedy, from a hit we refused.
 		return TitleMetadata{}, ErrNoMatch
 	}
 	r := out.Recordings[0]
+	if !acceptsTitle(track, r.Title) {
+		return TitleMetadata{}, ErrMatchRejected
+	}
 	// MusicBrainz has no track synopsis; only the canonical title is offered. The
 	// service applies it as a display title ONLY where the tag title was sparse.
 	return TitleMetadata{Matched: true, Name: r.Title, ExternalID: r.ID, Source: "musicbrainz"}, nil
+}
+
+// acceptsTitle is the acceptance test a search hit must pass before it becomes a
+// Track's record: the candidate's title and the local one must be the same title
+// under normalizeMatchTitle (case, diacritics, punctuation, bracket padding and the
+// trailing decorations taggers and MusicBrainz disagree about all folded).
+//
+// A local title that normalizes to nothing — one that is punctuation only — never
+// accepts. It would otherwise be equal to every other degenerate title the source
+// holds, which is the same coin flip mapTracks refuses in rules 1 and 2.
+func acceptsTitle(local, candidate string) bool {
+	want := normalizeMatchTitle(local)
+	return want != "" && want == normalizeMatchTitle(candidate)
 }
 
 // ArtworkCandidates lists the cover images the Cover Art Archive holds for an

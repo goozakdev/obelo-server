@@ -57,6 +57,12 @@ type Album struct {
 	// identity job inside the album's identity_key (ADR-0038); stored here it also
 	// serves as Enrichment's lookup anchor (ADR-0049).
 	MusicbrainzID string
+	// MusicbrainzReleaseID is the RELEASE MBID the FILES assert (the
+	// "musicbrainz_albumid" tag) — the exact edition, whose tracklist is the one
+	// this album's numbering was ripped against (ADR-0050). Scanner-owned,
+	// re-derived from disk on every scan, never identity and never an enrichment
+	// record. Empty for an untagged album, which picks its release by fit instead.
+	MusicbrainzReleaseID string
 	// TrackCount is computed for the browse list (not stored).
 	TrackCount int
 }
@@ -82,7 +88,10 @@ type AlbumTree struct {
 	ReleaseType string
 	// MusicbrainzID is the release-group MBID from the files' tags (ADR-0049).
 	MusicbrainzID string
-	Tracks        []TrackTree
+	// MusicbrainzReleaseID is the RELEASE MBID from the files' tags — the exact
+	// edition the files name (ADR-0050).
+	MusicbrainzReleaseID string
+	Tracks               []TrackTree
 }
 
 // ArtistTree is the complete result of resolving one Artist grouping: the Artist
@@ -173,10 +182,10 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 	case errors.Is(err, sql.ErrNoRows):
 		albumID = uuid.NewString()
 		if _, err := tx.Exec(
-			`INSERT INTO albums (id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, musicbrainz_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			`INSERT INTO albums (id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, musicbrainz_id, musicbrainz_release_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 			albumID, artistID, at.Title, nullableYear(at.Year), at.IdentityKey, at.SortTitle, at.ArtworkPath, at.ReleaseType,
-			at.MusicbrainzID,
+			at.MusicbrainzID, at.MusicbrainzReleaseID,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting album: %w", err)
 		}
@@ -185,10 +194,12 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 	default:
 		if _, err := tx.Exec(
 			`UPDATE albums SET title = ?, year = ?, sort_title = ?, artwork_path = ?, release_type = ?, hidden = 0,
-			     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END
+			     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END,
+			     musicbrainz_release_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_release_id END
 			   WHERE id = ?`,
 			at.Title, nullableYear(at.Year), at.SortTitle, at.ArtworkPath, at.ReleaseType,
-			at.MusicbrainzID, at.MusicbrainzID, albumID,
+			at.MusicbrainzID, at.MusicbrainzID,
+			at.MusicbrainzReleaseID, at.MusicbrainzReleaseID, albumID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating album: %w", err)
 		}
@@ -295,7 +306,7 @@ func (db *DB) AlbumsForArtist(artistID string) ([]Album, error) {
 	}
 	rows, err := db.Query(
 		`SELECT a.id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
-		        a.artwork_path, a.release_type, a.hidden, a.added_at, a.musicbrainz_id,
+		        a.artwork_path, a.release_type, a.hidden, a.added_at, a.musicbrainz_id, a.musicbrainz_release_id,
 		        (SELECT COUNT(*) FROM titles t WHERE t.album_id = a.id AND t.hidden = 0) AS track_count
 		   FROM albums a WHERE a.artist_id = ? AND a.hidden = 0
 		  ORDER BY a.year ASC, a.sort_title ASC, a.id ASC`, artistID)
@@ -320,10 +331,11 @@ func (db *DB) AlbumByID(id string) (Album, error) {
 	var year sql.NullInt64
 	var hidden int
 	err := db.QueryRow(
-		`SELECT id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, added_at
+		`SELECT id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, added_at,
+		        musicbrainz_id, musicbrainz_release_id
 		   FROM albums WHERE id = ?`, id,
 	).Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey, &al.SortTitle,
-		&al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt)
+		&al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.MusicbrainzID, &al.MusicbrainzReleaseID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Album{}, ErrNotFound
 	}
@@ -494,7 +506,7 @@ func scanAlbum(s scanner) (Album, error) {
 	var hidden int
 	if err := s.Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey,
 		&al.SortTitle, &al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.MusicbrainzID,
-		&al.TrackCount); err != nil {
+		&al.MusicbrainzReleaseID, &al.TrackCount); err != nil {
 		return Album{}, err
 	}
 	if year.Valid {

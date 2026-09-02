@@ -56,6 +56,16 @@ type MusicIdentity struct {
 	ArtistMBID       string
 	ReleaseGroupMBID string
 	RecordingMBID    string
+	// ReleaseMBID is the MusicBrainz RELEASE id the file asserts — the exact
+	// edition, read from the "musicbrainz_albumid" tag (ADR-0050). Where
+	// ReleaseGroupMBID names the work, this names the pressing whose tracklist has
+	// the numbering these files were ripped against, so a matched Album can
+	// resolve its own Tracks instead of searching for each one by name.
+	//
+	// Like the three above it: a DECORATION anchor, re-derived from disk on every
+	// scan, never identity (the release-GROUP id already does that job inside
+	// AlbumKey, ADR-0038) and never an enrichment record (ADR-0045).
+	ReleaseMBID string
 	// ReleaseType is the album's normalized primary release type from the
 	// release-type tag ("album", "single", "ep", "compilation", …), "" when
 	// untagged. Descriptive: the browse UI badges non-album types
@@ -227,6 +237,7 @@ func MusicIdentityFromTags(tags map[string]string, path string) (MusicIdentity, 
 	id.ArtistMBID = artistMBID(tags)
 	id.ReleaseGroupMBID = releaseGroupID(tags)
 	id.RecordingMBID = recordingMBID(tags)
+	id.ReleaseMBID = releaseID(tags)
 	id.ArtistKey = artistIdentityKey(albumArtist)
 	// Album identity is (album artist, album title) ONLY — deliberately NOT the
 	// year. A compilation ("Greatest Hits") commonly tags each track with its
@@ -265,6 +276,34 @@ func releaseGroupID(tags map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// releaseID returns the file's MusicBrainz RELEASE id — the exact edition, the
+// one `/ws/2/release/<mbid>?inc=recordings` has a tracklist for — lower-cased,
+// "" when untagged or malformed.
+//
+// The tag Picard writes it to is named after the ALBUM, not the release:
+//
+//	release id        →  Vorbis MUSICBRAINZ_ALBUMID, ID3 TXXX / MP4 "MusicBrainz Album Id"
+//	release-group id  →  Vorbis MUSICBRAINZ_RELEASEGROUPID, "MusicBrainz Release Group Id"
+//	ALBUM ARTIST id   →  Vorbis MUSICBRAINZ_ALBUMARTISTID, "MusicBrainz Album Artist Id"
+//
+// The third is the trap, and it is the same trap recordingMBID documents: the
+// keys are matched EXACTLY, never by prefix or substring, because
+// "musicbrainz_albumartistid" begins with "musicbrainz_album" and an artist id
+// handed to /release/ 404s — a confident wrong answer where an empty id would
+// have left the album to pick its release honestly (ADR-0049, ADR-0050).
+//
+// Unlike releaseGroupID, which must stay byte-for-byte what AlbumKey has always
+// embedded (ADR-0038), this id is pure decoration and so is UUID-validated and
+// multi-value-split through firstMBID.
+//
+// This is the id an ID3 tag actually surfaces: Picard hides the recording id in
+// the binary UFID frame ffprobe cannot read, but writes this one to a TXXX frame
+// it can — so a Picard-tagged MP3 library, precisely the population ADR-0049 left
+// on the search path, has its exact anchor here.
+func releaseID(tags map[string]string) string {
+	return firstMBID(tags, "musicbrainz_albumid", "musicbrainz album id")
 }
 
 // recordingMBID returns the file's MusicBrainz RECORDING id — the one

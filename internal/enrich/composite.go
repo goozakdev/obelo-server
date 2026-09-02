@@ -94,3 +94,29 @@ func (c CompositeProvider) SeasonEpisodes(ctx context.Context, showID string, se
 	}
 	return lister.SeasonEpisodes(ctx, showID, season)
 }
+
+// AlbumTracklist forwards the optional AlbumTracklister capability to the MUSIC
+// sub-provider — an album's tracklist is a music notion, and the video side has no
+// analogue. A build with no music provider (or one that can't list a tracklist)
+// answers ErrNoTracklist, which is the same thing the caller does with an album
+// that has none: the tracks fall through to the tiers below (ADR-0050).
+func (c CompositeProvider) AlbumTracklist(ctx context.Context, req TracklistRequest) ([]TrackCandidate, error) {
+	lister, ok := c.Music.(AlbumTracklister)
+	if c.Music == nil || !ok {
+		return nil, ErrNoTracklist
+	}
+	return lister.AlbumTracklist(ctx, req)
+}
+
+// ReleaseGroupEditions forwards the optional AlbumEditionLister capability to the
+// MUSIC sub-provider, for the same reason AlbumTracklist does. A build with no
+// music provider (or one that cannot list editions) answers ErrSearchUnavailable —
+// the picker's "not now", which degrades to the pasted-URL escape hatch instead of
+// an error page (ADR-0052).
+func (c CompositeProvider) ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error) {
+	lister, ok := c.Music.(AlbumEditionLister)
+	if c.Music == nil || !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister.ReleaseGroupEditions(ctx, releaseGroupID)
+}

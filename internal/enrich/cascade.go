@@ -16,11 +16,13 @@ import (
 // the wrong song titles.
 //
 // Mapping rules (the single hardest correctness surface in this feature):
-//   - Album → tracks and Show → episodes map POSITIONALLY (disc+track /
-//     season+episode number).
+//   - Show → episodes map POSITIONALLY (season+episode number).
+//   - Album → tracks map by the shared ADR-0050 rule (mapTracks, track_match.go):
+//     position AND title, then title anywhere, then the one leftover pair, then
+//     decline — never position alone.
 //   - Artist → albums map by TITLE(+year) against the corrected artist's
 //     release-groups (obtained by searching the album kind and matching), then
-//     RECURSE into each matched album's tracks positionally.
+//     RECURSE into each matched album's tracks by that same rule.
 //
 // Durability: a mapped leaf child is pinned via the same durable primitives slice
 // 01/02 established — a track/episode gets its external-id column written
@@ -116,7 +118,9 @@ func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalI
 			// rather than aborting the whole cascade.
 			matched, err := s.reenrichEpisode(ctx, ep, showExternalID)
 			if err != nil {
-				if serr := s.store.SetTitleEnrichmentStatus(ep.ID, "unmatched"); serr != nil {
+				// An Episode, so none of ADR-0050's five reasons applies (they are
+				// Music-shaped); the empty reason also clears any prior one.
+				if serr := s.store.SetTitleEnrichmentStatus(ep.ID, "unmatched", store.EnrichmentReasonNone); serr != nil {
 					return sum, serr
 				}
 				sum.Attention++
@@ -221,7 +225,13 @@ func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (Cas
 		// it as the Album's own is what made the next Artist Cascade skip every Album
 		// this one pinned — and its Tracks with it, since the recursion never enters a
 		// skipped Album (ADR-0046).
-		if err := s.applyEntityOverride(ctx, store.EntityAlbum, al.ID, cand.ExternalID, store.OriginCascaded); err != nil {
+		// EntityPin with no ReleaseID: an Artist Cascade names a release-GROUP per
+		// album and never an edition, so it also clears one — correctly, since the
+		// album it is re-pointing may not be the album whose edition was chosen. The
+		// skip above means it never reaches an album whose record the Admin chose ON
+		// IT, which is the only way an edition can be stored (ADR-0046/0052).
+		if err := s.applyEntityOverride(ctx, store.EntityAlbum, al.ID,
+			EntityPin{ExternalID: cand.ExternalID}, store.OriginCascaded); err != nil {
 			attn, aerr := s.routeAlbumTracksToAttention(al.ID)
 			if aerr != nil {
 				return sum, aerr
@@ -240,19 +250,65 @@ func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (Cas
 }
 
 // mapAlbumTracks pins each of the Album's local tracks a durable recording override
-// from the candidate's positionally-matched tracklist entry; a track with no match is
-// routed to attention. A nil candidate (the album could not be resolved) routes every
-// non-skipped track to attention. A track with its own prior override/lock is skipped.
+// from the tracklist entry the ADR-0050 match rule pairs it with; a track with no
+// match is routed to attention. A nil candidate (the album could not be resolved)
+// routes every non-skipped track to attention. A track with its own prior
+// override/lock is skipped.
+//
+// The mapping is mapTracks — position-and-title, then title, then the leftover
+// pair, then position alone ONLY under a chosen edition (ADR-0052), then decline.
+// It replaced the unconditional position-only map this function used to carry,
+// which pinned the wrong recording to every track after a drift in a hand-numbered
+// album's numbering. A cascade therefore pins FEWER tracks than it once did on a
+// mis-numbered album nobody pinned an edition on, and queues the rest; the ones it
+// stops pinning are the ones it was getting wrong.
+//
+// Every track goes into mapTracks, including the ones this cascade will skip: a
+// skipped track still holds its position on the release, so leaving it out would
+// free its entry for a neighbour and let the leftover rule fire on a hole that is
+// not one. The skip is applied after, on the result.
 func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Candidate) (CascadeSummary, error) {
 	tracks, err := s.store.TracksForAlbum(albumID)
 	if err != nil {
 		return CascadeSummary{}, err
 	}
-	byPos := map[[2]int]TrackCandidate{}
+	var tracklist []TrackCandidate
 	if cand != nil {
-		for _, tc := range cand.Tracklist {
-			byPos[[2]int{discOrDefault(tc.Disc), tc.Position}] = tc
+		tracklist = cand.Tracklist
+	}
+	// ADR-0052: when an Admin has named the EDITION, the cascade decorates from that
+	// edition's tracklist rather than from the candidate's preview — which is the
+	// first release MusicBrainz happens to list (releaseGroupTracklist, limit=1) and
+	// is a wrong answer for every position after a deluxe edition's first bonus
+	// track. chosenEdition is the licence issue 11 reads here, the twin of the pass's
+	// res.FromChosenEdition; the two paths must agree on the rule AND on the licence.
+	//
+	// An album with no chosen edition takes none of this and behaves exactly as
+	// before: the cascade already had a tracklist in hand and does not start paying a
+	// call per album to re-fetch what it was given.
+	fromChosenEdition := false
+	if cand != nil {
+		if res, ok := s.chosenEditionTracklist(ctx, albumID, cand.ExternalID, len(tracks)); ok {
+			// res.FromChosenEdition is the flag rule 4 is gated on, the twin of the pass's
+			// (ADR-0052). ok says only that a pin was READ; the licence says the pin
+			// ANSWERED. A read that fell back to the tag release or to fit comes back ok
+			// with the licence withheld, and the cascade maps it exactly as it maps an
+			// album nobody pinned.
+			tracklist, fromChosenEdition = res.Tracks, res.FromChosenEdition
 		}
+	}
+	// One rule, both callers, licence included: the cascade and the pass must not
+	// differ on which tracks an album resolves (ADR-0050, ADR-0052).
+	matched := mapTracks(tracks, tracklist, fromChosenEdition)
+	// The same two reasons the PASS writes, decided the same way and from the same
+	// fact (ADR-0050): with no candidate the Album named none of its contents, which
+	// is the Admin's problem with the Album; with one, a tracklist was read and this
+	// Track was declined by the match rule, so the Album is probably the wrong
+	// release. One rule, both callers — the cascade must not invent a third
+	// vocabulary for the queue it fills.
+	declineReason := store.EnrichmentReasonNotInTracklist
+	if cand == nil {
+		declineReason = store.EnrichmentReasonAlbumUnmatched
 	}
 	var sum CascadeSummary
 	for _, tr := range tracks {
@@ -263,18 +319,22 @@ func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Cand
 		if skip {
 			continue
 		}
-		tc, ok := byPos[[2]int{discOrDefault(tr.DiscNumber), tr.TrackNumber}]
+		tc, ok := matched[tr.ID]
 		if !ok || strings.TrimSpace(tc.ExternalID) == "" {
-			// Count/number mismatch (or a tracklist entry that carried no recording id):
-			// route to the attention list, don't clobber the track.
-			if err := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched"); err != nil {
+			// The rule declined (no position+title, no unique title, no clean leftover
+			// pair), or the entry it paired with carried no recording id: route to the
+			// attention list, don't clobber the track.
+			if err := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched", declineReason); err != nil {
 				return sum, err
 			}
 			sum.Attention++
 			continue
 		}
 		if err := s.applyOverride(ctx, tr.ID, tc.ExternalID, store.OriginCascaded); err != nil {
-			if serr := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched"); serr != nil {
+			// The mapping SUCCEEDED and pinning it failed — a provider or store error,
+			// not a statement about this Track. None of the five fits, so the empty
+			// reason gives the generic sentence rather than a confident wrong one.
+			if serr := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched", store.EnrichmentReasonNone); serr != nil {
 				return sum, serr
 			}
 			sum.Attention++
@@ -288,6 +348,11 @@ func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Cand
 // routeAlbumTracksToAttention marks every non-skipped track of an album 'unmatched'
 // so it surfaces in the attention list — used when the album itself could not be
 // mapped (no title match), so the Admin sees each affected track. Returns the count.
+//
+// Every row it writes is EnrichmentReasonAlbumUnmatched, which is precisely true
+// here and is the whole point of the value: the Album is the thing that could not
+// be resolved, so a per-track recording search is the wrong offer to put in front
+// of the Admin (ADR-0050).
 func (s *Service) routeAlbumTracksToAttention(albumID string) (int, error) {
 	tracks, err := s.store.TracksForAlbum(albumID)
 	if err != nil {
@@ -302,7 +367,8 @@ func (s *Service) routeAlbumTracksToAttention(albumID string) (int, error) {
 		if skip {
 			continue
 		}
-		if err := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched"); err != nil {
+		if err := s.store.SetTitleEnrichmentStatus(tr.ID, "unmatched",
+			store.EnrichmentReasonAlbumUnmatched); err != nil {
 			return n, err
 		}
 		n++
@@ -384,6 +450,44 @@ func (s *Service) childHasOwnOverride(t store.Title) (bool, error) {
 		return false, err
 	}
 	return len(locks) > 0, nil
+}
+
+// chosenEditionTracklist resolves the tracklist of the EDITION an Admin named for
+// this Album, for the cascade path (ADR-0052). ok is false — and the caller keeps the
+// candidate's own preview tracklist — whenever there is nothing better to offer: no
+// edition was chosen, the edition was chosen under a different release-group than the
+// one being applied, or the read failed. A cascade is best-effort and must never fail
+// on a decoration read.
+//
+// The release-group it reads under is releaseGroupID, the record the cascade is
+// applying, NOT whatever the album's row happens to hold: an edition chosen under
+// some other release-group is a stranger to this correction and is ignored, exactly
+// as the pass's chosenAlbumEdition ignores it.
+//
+// This is the second of the two places ADR-0052's precedence is resolved. Both go
+// through albumTracklistFor, so the cascade and the pass cannot drift on which
+// edition decorates an album, nor on whether a human chose it.
+func (s *Service) chosenEditionTracklist(ctx context.Context, albumID, releaseGroupID string,
+	localCount int) (albumTracklistResult, bool) {
+
+	rgID := strings.TrimSpace(releaseGroupID)
+	chosen := s.chosenAlbumEdition(store.EntityAlbum, albumID, rgID)
+	if rgID == "" || chosen == "" {
+		return albumTracklistResult{}, false
+	}
+	al, err := s.store.AlbumByID(albumID)
+	if err != nil {
+		return albumTracklistResult{}, false
+	}
+	res, err := s.albumTracklistFor(ctx, s.snapshot(), TracklistRequest{
+		ReleaseGroupID:  rgID,
+		ReleaseID:       al.MusicbrainzReleaseID,
+		LocalTrackCount: localCount,
+	}, chosen)
+	if err != nil {
+		return albumTracklistResult{}, false
+	}
+	return res, true
 }
 
 // albumHasOwnOverride reports whether an Album child (under an Artist cascade) should

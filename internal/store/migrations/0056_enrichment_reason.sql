@@ -1,0 +1,50 @@
+-- 0056_enrichment_reason: a SETTLED Enrichment failure records WHY, so the row on
+-- the Admin's attention list names the action instead of restating its own
+-- existence (ADR-0050). Purely additive: one ADD COLUMN with a constant default,
+-- no rebuild, no existing row touched, no constraint moved.
+--
+-- enrichment_status already says WHAT happened ('unmatched') and
+-- enrichment_retry_at (0053) says what happens NEXT. Neither can say what the
+-- Admin should DO, and after ADR-0050 a Track reaches the queue four genuinely
+-- different ways wanting four different actions: fix the Album, fix the Album's
+-- RELEASE, fix the file's tags, or pick a recording by hand. All four rendered as
+-- one sentence — "no metadata match" — which tells the Admin nothing they did not
+-- already know from the row being there. In the developer's own library 365 of
+-- 730 unmatched Tracks are the first case, and their action is not the one the
+-- sentence implies.
+--
+-- The value is a CLOSED SET, not free text:
+--
+--   album-unmatched     the Album this Track belongs to has no record of its own,
+--                       so it could name none of its contents. Fix the ALBUM.
+--   not-in-tracklist    the Album matched, and its release's tracklist has no room
+--                       for this Track. The Album is probably the wrong RELEASE.
+--   tag-id-unresolved   an exact recording id — the file's tag, or a stored record
+--                       — did not resolve to a recording. The id is wrong.
+--   search-no-match     the fallback name+artist search found nothing.
+--   search-rejected     the search found something and it failed the title check
+--                       (ADR-0050). A near miss, not an empty answer.
+--
+-- Closed rather than free text for two reasons: the copy then lives in the client
+-- with the rest of the copy, and no failure path can invent a category nothing
+-- renders. A blank or unrecognized value renders the generic sentence, so an
+-- un-rescanned library and any value a later migration adds both degrade to what
+-- the screen says today.
+--
+-- Written on EVERY settled outcome and cleared on a match. A reason that outlives
+-- the failure it described is worse than none, because the row then confidently
+-- explains a problem that no longer exists — so it rides in the same statement
+-- that writes the status (SetTitleEnrichmentStatus) and is cleared by every
+-- statement that matches a Title or hands it back as 'pending'.
+--
+-- A TRANSIENT failure writes no reason and leaves any prior one alone
+-- (SetTitleEnrichmentRetry, ADR-0048). "I could not reach the provider" is
+-- in-flight work, not a diagnosis, and a 503 during a tracklist read must never be
+-- recorded as 'album-unmatched': the album is not unmatched, MusicBrainz was busy.
+--
+-- No backfill. Every existing row keeps '' and renders the generic sentence until
+-- the next pass settles it again, which is exactly the degradation the closed set
+-- was chosen for. Guessing a reason for a failure this schema could not record is
+-- the "confidently explains a problem that no longer exists" mistake, applied to
+-- history.
+ALTER TABLE titles ADD COLUMN enrichment_reason TEXT NOT NULL DEFAULT '';

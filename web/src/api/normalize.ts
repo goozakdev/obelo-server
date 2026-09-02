@@ -12,6 +12,12 @@
 import type {
   Album,
   AlbumRaw,
+  EnrichPassProgress,
+  EnrichPassProgressRaw,
+  EnrichPassState,
+  EnrichPassStateRaw,
+  EnrichPassSummary,
+  EnrichPassSummaryRaw,
   MatcherApplied,
   MatcherDocument,
   MatcherDocumentRaw,
@@ -124,6 +130,55 @@ export function normalizeScanStatus(raw: ScanStatusRaw): ScanStatus {
     startedAt: raw.startedAt,
     finishedAt: raw.finishedAt,
     scope: raw.scope,
+  };
+}
+
+/** Fill an enrichment pass summary's `omitempty` holes (counts → 0). The Needs
+ * Fixing screen reports every one of these numbers back to the operator, and the
+ * ONE that matters most — how many rows cleared — is a zero often enough that a
+ * missing field must not render as "undefined matched" (ADR-0051: the count that
+ * cleared is what separates "the improvement does not apply to my library" from
+ * "the improvement never ran"). */
+export function normalizeEnrichPassSummary(raw: EnrichPassSummaryRaw): EnrichPassSummary {
+  return {
+    libraryId: raw.libraryId ?? "",
+    total: raw.total ?? 0,
+    matched: raw.matched ?? 0,
+    unmatched: raw.unmatched ?? 0,
+    failed: raw.failed ?? 0,
+    disabled: raw.disabled ?? 0,
+    retrying: raw.retrying ?? 0,
+    mode: raw.mode,
+    finishedAt: raw.finishedAt,
+  };
+}
+
+/** Fill an enrichment-pass state's `omitempty` holes. `running` is derived from
+ * the server's `state` word rather than mirrored: the screen only ever asks "is a
+ * pass in flight?", and deriving it here means a state value this build has not
+ * heard of reads as idle instead of as a truthy string. */
+export function normalizeEnrichPassState(raw: EnrichPassStateRaw): EnrichPassState {
+  return {
+    libraryId: raw.libraryId ?? "",
+    running: raw.state === "running",
+    mode: raw.mode,
+    startedAt: raw.startedAt,
+    started: raw.started ?? false,
+    progress: raw.progress ? normalizeEnrichPassProgress(raw.progress) : undefined,
+    lastPass: raw.lastPass ? normalizeEnrichPassSummary(raw.lastPass) : undefined,
+  };
+}
+
+/** Fill a running pass's progress holes (counts → 0). */
+function normalizeEnrichPassProgress(raw: EnrichPassProgressRaw): EnrichPassProgress {
+  return {
+    total: raw.total ?? 0,
+    done: raw.done ?? 0,
+    matched: raw.matched ?? 0,
+    unmatched: raw.unmatched ?? 0,
+    failed: raw.failed ?? 0,
+    disabled: raw.disabled ?? 0,
+    retrying: raw.retrying ?? 0,
   };
 }
 
@@ -241,6 +296,10 @@ export function normalizeEnrichmentAttentionTitle(
     title: raw.title,
     year: raw.year ?? 0,
     enrichmentStatus: raw.enrichmentStatus,
+    // An older server sends no reason at all, and so does any outcome with no
+    // diagnosis. Both fill to "", which the row copy treats exactly as it treats a
+    // value it does not recognize: the generic sentence.
+    enrichmentReason: raw.enrichmentReason ?? "",
     ...normalizeFixContext(raw),
   };
 }

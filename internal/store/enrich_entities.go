@@ -51,7 +51,18 @@ type EntityEnrichment struct {
 	// an Album the SAME Artist Cascade pinned last time is the Artist's choice, not
 	// the Album's, and must take the correction again.
 	ExternalIDOrigin RecordOrigin
-	Genres           []string
+	// ExternalReleaseID is the exact EDITION an Admin named for an Album — the
+	// MusicBrainz release a pasted /release/ URL points at — stored beside the
+	// release-GROUP their choice resolved to (ADR-0052). Empty for every other
+	// entity kind and for an Album whose edition nobody chose.
+	//
+	// It is NOT identity (ADR-0038: the release-group still is, and this never
+	// enters a key) and NOT albums.musicbrainz_release_id (ADR-0045/0049: that one
+	// holds what the FILES assert and the Scanner rewrites it from disk on every
+	// scan). Read it through ChosenReleaseID, which is the question every caller
+	// actually has.
+	ExternalReleaseID string
+	Genres            []string
 	// Attempts / RetryAt are the retry bookkeeping for a 'failed' parent, the exact
 	// twin of Title.EnrichmentAttempts / EnrichmentRetryAt (ADR-0048). A parent
 	// whose lookup failed transiently is re-resolved by the next only-new pass once
@@ -59,6 +70,26 @@ type EntityEnrichment struct {
 	// a settled-looking status.
 	Attempts int
 	RetryAt  string
+}
+
+// ChosenReleaseID answers the one question ExternalReleaseID exists for: which
+// exact EDITION did a HUMAN name for this Album, and "" when none did (ADR-0052).
+//
+// It is the seam the position licence hangs from, so it is a named predicate
+// rather than an `!= ""` test at each call site — the mistake ADR-0045/0046 record
+// under "Cascade's childHasOwnOverride used to INFER a choice from a non-empty id".
+// The edition rides with the record it refines, so whose choice it is, is
+// ExternalIDOrigin's answer: an edition is only ever written by an Admin-facing
+// apply, in the same statement as the record, and a record nobody pinned cannot
+// have one. Locked() rather than OwnChoice() for the same reason the Edit screen's
+// active-override view uses it — a record an Artist Cascade pinned IS the Admin's
+// choice, made one level up — though a Cascade names no edition, so in practice
+// only a direct pin can put a value here at all.
+func (e EntityEnrichment) ChosenReleaseID() string {
+	if !e.ExternalIDOrigin.Locked() || e.ExternalID == "" {
+		return ""
+	}
+	return strings.TrimSpace(e.ExternalReleaseID)
 }
 
 // EntityEnrichmentWrite is a resolved parent result ready to persist. Genres and
@@ -97,8 +128,10 @@ type EntityArtworkRow struct {
 // the hand-edit wins), rebuilds genres wholesale unless 'genres' is Locked,
 // replaces the fetched artwork rows per role unless that role is Locked (a local
 // Album cover lives in albums.artwork_path and is untouched, so it still wins),
-// and marks the entity matched. external_id_origin is never touched here, so a
-// durable Fix-info override survives the re-enrich it triggers. Identity untouched.
+// and marks the entity matched. external_id_origin and external_release_id are
+// never touched here, so a durable Fix-info override — and the exact edition the
+// Admin named under it (ADR-0052) — survives the re-enrich it triggers. Identity
+// untouched.
 func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichmentWrite, locks map[string]bool) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -276,11 +309,11 @@ func (db *DB) EntityEnrichmentByID(entityType, entityID string) (EntityEnrichmen
 	var externalIDOrigin string
 	err := db.QueryRow(
 		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id, external_id_origin,
-		        enrichment_attempts, enrichment_retry_at
+		        external_release_id, enrichment_attempts, enrichment_retry_at
 		   FROM entity_enrichment WHERE entity_type = ? AND entity_id = ?`,
 		entityType, entityID,
 	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID, &externalIDOrigin,
-		&e.Attempts, &e.RetryAt)
+		&e.ExternalReleaseID, &e.Attempts, &e.RetryAt)
 	e.ExternalIDOrigin = RecordOrigin(externalIDOrigin)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return EntityEnrichment{}, fmt.Errorf("store: reading entity enrichment: %w", err)
@@ -571,28 +604,60 @@ func (db *DB) EntityArtworkVersionsForMany(entityType string, ids []string) (map
 	return out, rows.Err()
 }
 
+// EntityRecordPin is what an Admin's correction pins on a browse parent: the
+// authoritative record, and — for an Album — the exact EDITION of it they named
+// (ADR-0052). A struct rather than two adjacent string parameters because the two
+// are same-typed MusicBrainz ids one level apart, and swapping them would compile
+// and quietly pin an album to a release-group that does not exist.
+type EntityRecordPin struct {
+	// ExternalID is the authoritative record: a TMDB id for a Show, a MusicBrainz
+	// artist or release-GROUP id for an Artist/Album. Album identity is unchanged
+	// and stays the release-group (ADR-0038).
+	ExternalID string
+	// ReleaseID is the MusicBrainz RELEASE — one edition — the Admin named, when
+	// they named one: a pasted /release/ URL, or a picked edition. It must be an
+	// edition OF ExternalID; the paste path guarantees that by resolving the release
+	// to its own parent group and storing that as ExternalID.
+	//
+	// EMPTY CLEARS any stored edition, and that is the point rather than an
+	// omission. An apply that names no edition — a picked search candidate, a pasted
+	// /release-group/ URL, a Cascade — is the Admin naming a LESS specific thing,
+	// and an edition left behind under a new release-group would silently decorate
+	// the album from a stranger's tracklist.
+	ReleaseID string
+	// Origin says WHOSE choice the record is: OriginChosen when the Admin picked it
+	// on this parent, OriginCascaded when an Artist's "apply to children" pinned this
+	// Album (ADR-0046). Both are durable; only the first makes the next Artist
+	// Cascade skip the Album. Explicit for the same reason SetTitleExternalMatch's is.
+	Origin RecordOrigin
+}
+
 // SetEntityExternalMatch pins an Admin-chosen authoritative external id on a
 // browse-parent entity as a durable Enrichment override (Fix-info on a Show/
-// Artist/Album, ADR-0019). It sets external_id + external_id_origin and resets
-// enrichment_status to 'pending' so the next lookup re-resolves BY the pinned id —
-// touching ONLY the override/bookkeeping columns, never identity (the parent's
-// identity_key and the catalog hierarchy are untouched, ADR-0002/0014). A row is
-// created if the parent was never enriched. The follow-on re-enrich (enrichParent)
-// preserves external_id_origin, so the pin is durable across later passes.
+// Artist/Album, ADR-0019). It sets external_id + external_id_origin +
+// external_release_id and resets enrichment_status to 'pending' so the next lookup
+// re-resolves BY the pinned id — touching ONLY the override/bookkeeping columns,
+// never identity (the parent's identity_key and the catalog hierarchy are
+// untouched, ADR-0002/0014). A row is created if the parent was never enriched. The
+// follow-on re-enrich (enrichParent) preserves external_id_origin AND
+// external_release_id, so the pin is durable across later passes.
 //
-// origin says WHOSE choice the id is: OriginChosen when the Admin picked it on
-// this parent, OriginCascaded when an Artist's "apply to children" pinned this
-// Album (ADR-0046). Both are durable; only the first makes the next Artist Cascade
-// skip the Album. Explicit for the same reason SetTitleExternalMatch's is.
-func (db *DB) SetEntityExternalMatch(entityType, entityID, externalID string, origin RecordOrigin) error {
+// The record and its edition are written in ONE statement, always both, so they can
+// never disagree about which release-group the stored edition belongs under. That
+// is what makes the "an empty ReleaseID clears" rule safe to rely on: there is no
+// path that writes one without deciding the other.
+func (db *DB) SetEntityExternalMatch(entityType, entityID string, pin EntityRecordPin) error {
 	if _, err := db.Exec(
 		`INSERT INTO entity_enrichment
-		   (entity_type, entity_id, external_id, external_id_origin, enrichment_status, enriched_at)
-		 VALUES (?, ?, ?, ?, 'pending', ?)
+		   (entity_type, entity_id, external_id, external_id_origin, external_release_id,
+		    enrichment_status, enriched_at)
+		 VALUES (?, ?, ?, ?, ?, 'pending', ?)
 		 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
 		    external_id = excluded.external_id, external_id_origin = excluded.external_id_origin,
+		    external_release_id = excluded.external_release_id,
 		    enrichment_status = 'pending', enriched_at = excluded.enriched_at`,
-		entityType, entityID, externalID, string(origin), time.Now().UTC().Format(time.RFC3339),
+		entityType, entityID, pin.ExternalID, string(pin.Origin), strings.TrimSpace(pin.ReleaseID),
+		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("store: setting entity external match: %w", err)
 	}

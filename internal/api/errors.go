@@ -136,6 +136,17 @@ const (
 	// (503). Today only the subtitle-fetch handlers use it, when the SubFetch
 	// service is absent — a wiring gap, not a client fault.
 	codeServiceUnavailable = "SERVICE_UNAVAILABLE"
+	// Starting a background Enrichment pass (POST /libraries/{id}/enrich), both 503.
+	// They exist because both states used to be SILENT — the enqueue was a no-op
+	// with no worker and a log-and-drop when full — so an operator pressing the
+	// "Re-check unmatched items" button got a spinner and nothing else, forever.
+	// ADR-0051's amendment: a press that started nothing must say so.
+	//   codeEnrichUnavailable — no background pass worker is running on this server,
+	//                           so nothing would ever pick the pass up.
+	//   codeEnrichBusy        — the pass queue is at capacity. Retryable: the caller
+	//                           can press it again shortly.
+	codeEnrichUnavailable = "ENRICH_UNAVAILABLE"
+	codeEnrichBusy        = "ENRICH_BUSY"
 	// Metadata-provider settings (Admin-scope /settings/metadata-providers,
 	// metadata-providers 02). All 422 — the request was well-formed JSON but names
 	// an unknown provider or an invalid configuration:

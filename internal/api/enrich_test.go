@@ -157,12 +157,38 @@ func richMeta(genres ...string) enrich.TitleMetadata {
 // --- Test wire shapes (enrichment fields the issue adds) --------------------
 
 type enrichResultResp struct {
-	LibraryID string `json:"libraryId"`
-	Total     int    `json:"total"`
-	Matched   int    `json:"matched"`
-	Unmatched int    `json:"unmatched"`
-	Failed    int    `json:"failed"`
-	Disabled  int    `json:"disabled"`
+	LibraryID  string `json:"libraryId"`
+	Total      int    `json:"total"`
+	Matched    int    `json:"matched"`
+	Unmatched  int    `json:"unmatched"`
+	Failed     int    `json:"failed"`
+	Disabled   int    `json:"disabled"`
+	Retrying   int    `json:"retrying"`
+	Mode       string `json:"mode"`
+	FinishedAt string `json:"finishedAt"`
+}
+
+// enrichPassProgressResp is a running pass's done/total snapshot.
+type enrichPassProgressResp struct {
+	Total     int `json:"total"`
+	Done      int `json:"done"`
+	Matched   int `json:"matched"`
+	Unmatched int `json:"unmatched"`
+	Failed    int `json:"failed"`
+	Disabled  int `json:"disabled"`
+	Retrying  int `json:"retrying"`
+}
+
+// enrichPassResp is the body of BOTH POST (202) and GET /libraries/{id}/enrich:
+// what is running now, and what came of the last finished pass.
+type enrichPassResp struct {
+	LibraryID string                  `json:"libraryId"`
+	State     string                  `json:"state"`
+	Mode      string                  `json:"mode"`
+	StartedAt string                  `json:"startedAt"`
+	Started   bool                    `json:"started"`
+	Progress  *enrichPassProgressResp `json:"progress"`
+	LastPass  *enrichResultResp       `json:"lastPass"`
 }
 
 type enrichedArtworkResp struct {
@@ -211,18 +237,52 @@ type enrichedListResp struct {
 
 // --- Helpers ----------------------------------------------------------------
 
+// enrichLib runs one Enrichment pass over a Library and returns its summary —
+// the shape every enrichment test has always asserted on.
+//
+// The endpoint no longer holds the request open for the pass (ADR-0051's
+// amendment: a pass is STARTED, not awaited), so this helper is where the old
+// synchronous contract now lives. It waits for any pass already in flight, starts
+// its own, waits for THAT on the pass's settled signal — not a sleep, not a poll —
+// and reads the summary back off the status route. Every caller keeps its
+// assertions unchanged; the only thing that moved is who does the waiting.
 func enrichLib(t *testing.T, srv *testharness.Server, token, libID, mode string) enrichResultResp {
 	t.Helper()
 	path := "/api/v1/libraries/" + libID + "/enrich"
 	if mode != "" {
 		path += "?mode=" + mode
 	}
-	var res enrichResultResp
-	status, body := srv.JSON(http.MethodPost, path, token, nil, &res)
-	if status != http.StatusOK {
-		t.Fatalf("enrich = %d, want 200; body: %s", status, body)
+	// A background pass (auto-after-scan, the sweep) may still be running; let it
+	// finish so the pass this call starts is the one whose summary we read.
+	srv.AwaitEnrichPass(libID)
+
+	var ack enrichPassResp
+	status, body := srv.JSON(http.MethodPost, path, token, nil, &ack)
+	if status != http.StatusAccepted {
+		t.Fatalf("enrich = %d, want 202; body: %s", status, body)
 	}
-	return res
+	if !ack.Started {
+		t.Fatalf("enrich did not start a pass (a pass was already running); body: %s", body)
+	}
+	srv.AwaitEnrichPass(libID)
+
+	st := enrichStatus(t, srv, token, libID)
+	if st.LastPass == nil {
+		t.Fatalf("no finished pass reported for %q after one completed; status: %+v", libID, st)
+	}
+	return *st.LastPass
+}
+
+// enrichStatus reads GET /libraries/{id}/enrich — is a pass running, how far
+// along, and what came of the last one.
+func enrichStatus(t *testing.T, srv *testharness.Server, token, libID string) enrichPassResp {
+	t.Helper()
+	var st enrichPassResp
+	status, body := srv.AuthGET("/api/v1/libraries/"+libID+"/enrich", token, &st)
+	if status != http.StatusOK {
+		t.Fatalf("enrich status = %d, want 200; body: %s", status, body)
+	}
+	return st
 }
 
 func getEnrichedDetail(t *testing.T, srv *testharness.Server, token, titleID string) enrichedDetailResp {

@@ -719,8 +719,8 @@ func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger fu
 }
 
 // toScanEvent maps a scanner.Progress snapshot onto the SSE payload shape,
-// shared by the manual handler and (via the app loop) the scheduled scan path —
-// mirrors toEnrichEvent. The producer (scanner) stays free of any events import;
+// shared by the manual handler and (via the app loop) the scheduled scan path.
+// The producer (scanner) stays free of any events import;
 // the conversion happens here at the transport boundary.
 func toScanEvent(p scanner.Progress) events.ScanProgress {
 	return events.ScanProgress{
@@ -1035,6 +1035,20 @@ type enrichmentAttentionTitleJSON struct {
 	Title            string `json:"title"`
 	Year             int    `json:"year,omitempty"`
 	EnrichmentStatus string `json:"enrichmentStatus"`
+	// EnrichmentReason says WHY the match failed, as one of the closed set in
+	// store.EnrichmentReason* (ADR-0050) — `album-unmatched`, `not-in-tracklist`,
+	// `tag-id-unresolved`, `search-no-match`, `search-rejected`. The status says the
+	// row is stuck; only this says what the Admin should DO about it, and after
+	// ADR-0050 a Track gets here four genuinely different ways wanting four different
+	// actions.
+	//
+	// The value travels as a KEY, never a sentence: the copy lives in the client with
+	// the rest of the copy, and a closed set is what stops a failure path inventing a
+	// category nothing renders. Omitted when empty, and a client must render an
+	// absent OR unrecognized value as its existing generic sentence — that is what
+	// lets a library not yet re-passed since migration 0056, and any value a later
+	// server adds, both degrade to what the screen already said.
+	EnrichmentReason string `json:"enrichmentReason,omitempty"`
 	fixContextJSON
 }
 
@@ -1123,6 +1137,7 @@ func handleListEnrichmentAttention(svc *catalog.Service) http.HandlerFunc {
 				Title:            t.Title.Title,
 				Year:             t.Title.Year,
 				EnrichmentStatus: t.Title.EnrichmentStatus,
+				EnrichmentReason: t.Title.EnrichmentReason,
 				fixContextJSON:   toFixContextJSON(t.Context),
 			})
 		}
@@ -1446,8 +1461,20 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			requireMethod(http.MethodPost, requireAdmin(handleFixMatch(deps.Match, deps.Enrich, deps.Catalog)))(w, r)
 			return
 		case strings.HasSuffix(rest, "/enrich"):
-			// Admin: trigger an Enrichment pass over the Library (manual/re-enrich).
-			requireMethod(http.MethodPost, requireAdmin(handleEnrich(deps.Enrich, deps.Events)))(w, r)
+			// Admin: START a background Enrichment pass over the Library (POST, 202),
+			// or read whether one is running (GET). Both Admin-only. The pair mirrors
+			// /scan below for the same reason ADR-0051's amendment gives: a pass is
+			// started, never awaited, so there has to be somewhere to ask about it.
+			switch r.Method {
+			case http.MethodPost:
+				requireAdmin(handleEnrich(deps))(w, r)
+			case http.MethodGet:
+				requireAdmin(handleEnrichStatus(deps))(w, r)
+			default:
+				w.Header().Set("Allow", "GET, POST")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+					"method not allowed", nil)
+			}
 			return
 		case strings.HasSuffix(rest, "/enrichment-policy"):
 			// Admin: read / partially-update the Library's Enrichment policy (ADR-0027).

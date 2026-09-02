@@ -348,7 +348,33 @@ export interface EnrichmentAttentionTitleRaw extends FixContextRaw {
   title: string;
   year?: number;
   enrichmentStatus: EnrichmentStatus;
+  /** Why the match failed, as a key (never a sentence) — see
+   * {@link EnrichmentReason}. Absent on a row settled before the server recorded
+   * one, and on every outcome with no diagnosis to give. */
+  enrichmentReason?: string;
 }
+
+/** Why a settled Enrichment failure settled, as one of the server's closed set
+ * (ADR-0050). Each names a DIFFERENT next action, which is the entire reason the
+ * field exists: a Track reaches this queue four genuinely different ways, and
+ * without this they all render one sentence that tells the Admin nothing the row's
+ * existence did not already tell them.
+ *
+ *  - `album-unmatched` — the Album has no record, so it could name none of its
+ *    tracks. Fix the ALBUM. In a real library this is half the queue.
+ *  - `not-in-tracklist` — the Album matched but its release's tracklist has no room
+ *    for this track, so the Album is probably pinned to the wrong release.
+ *  - `tag-id-unresolved` — an exact recording id resolved to nothing; the id is
+ *    what is wrong.
+ *  - `search-no-match` — the fallback search found nothing.
+ *  - `search-rejected` — the search found something and it failed the title check.
+ *
+ * `""` is a real member, not a hole: it is what every outcome with no diagnosis
+ * writes, and what a library not re-passed since the column shipped carries. It
+ * and any UNRECOGNIZED value both render the generic sentence — the string is
+ * deliberately not narrowed to a union, so a value a newer server adds arrives as
+ * data rather than as a type error a client cannot resolve at runtime anyway. */
+export type EnrichmentReason = string;
 
 /** The "which item is this, and where is it on disk" fields both Admin attention
  * lists carry, flat on the wire. They are what lets a row read
@@ -406,6 +432,9 @@ export interface EnrichmentAttentionTitle extends FixContext {
   /** 0 when the Title has no year. */
   year: number;
   enrichmentStatus: EnrichmentStatus;
+  /** Why the match failed — the field that decides which sentence the queue row
+   * prints and which action it names. "" when the server gave none. */
+  enrichmentReason: EnrichmentReason;
 }
 
 /** Raw entry from `GET /api/v1/libraries/{id}/needs-review`: a Movie / Episode /
@@ -497,6 +526,12 @@ export interface EnrichmentCandidate {
   /** An ALBUM candidate's ordered track preview (disc/position/title), so an Admin
    * can confirm the positional map before applying (ADR-0019). Absent otherwise. */
   tracklist?: CandidateTrack[];
+  /** The exact EDITION a pasted MusicBrainz `/release/` URL named (ADR-0052). The
+   * preview resolves that release to its parent release-group — `externalId`, which
+   * is what an album IS — and returns the release here so the apply can keep both.
+   * Send it straight back as the override's `releaseId`; absent means the Admin named
+   * no edition, which CLEARS any edition the album had. Album previews only. */
+  releaseId?: string;
 }
 
 /** One track in an album candidate's tracklist preview. */
@@ -508,10 +543,16 @@ export interface CandidateTrack {
 
 /** Optional narrowing + paging for an Edit-item provider search (item-editing/
  * search-improvements): `artist` AND-narrows a music album/track search to a
- * specific artist (pre-filled from the item's parsed artist); `page` (0-based)
- * offsets a broad common-title query by whole pages so "show more" works. */
+ * specific artist (pre-filled from the item's parsed artist); `release` likewise
+ * narrows a TRACK search to the album the recording sits on, which is what makes a
+ * common recording title answerable at all (needs-fixing/06); `page` (0-based)
+ * offsets a broad common-title query by whole pages so "show more" works.
+ *
+ * Every field is optional and a blank one is omitted from the URL, so the search a
+ * video item sends is byte-for-byte the one it always sent. */
 export interface EnrichmentSearchOptions {
   artist?: string;
+  release?: string;
   page?: number;
 }
 
@@ -565,6 +606,50 @@ export interface EntityEnrichmentOverride {
   externalId: string;
   source?: string;
   status?: string;
+  /** The exact EDITION an Admin chose for an Album (ADR-0052) — a MusicBrainz
+   * release under the pinned release-group — or absent when nobody chose one. The
+   * edition picker reads it to mark which row is the human's own choice rather than
+   * the system's guess. Always absent for a Show/Artist. */
+  releaseId?: string;
+}
+
+/** One edition of an album — a MusicBrainz release under its release-group
+ * (`GET /albums/{id}/editions`, ADR-0052). `trackCount` is the field that decides
+ * it: the edition whose count equals the local album's is nearly always the one
+ * these files are. */
+export interface AlbumEdition {
+  releaseId: string;
+  date?: string;
+  country?: string;
+  format?: string;
+  trackCount: number;
+  disambiguation?: string;
+}
+
+/** Why the edition in use is the one in use — ADR-0052's precedence, which is what
+ * the picker's "in use" marker says out loud:
+ *  • `chosen` — an Admin named it, which also licenses position-alone mapping;
+ *  • `tagged` — nobody chose; the files' own tags name it;
+ *  • `fit`    — nobody chose and no usable tag, so the system guessed by track count.
+ * That last one is the state the operator was stuck in: *"It shows the best guess,
+ * but I cant choose a specific edition out of that release-group."* */
+export type EditionSource = "chosen" | "tagged" | "fit";
+
+/** The album edition picker's payload (`GET /albums/{id}/editions`, Admin-only).
+ *
+ * `localTrackCount` is the album's OWN track count, sent by the server rather than
+ * counted by the client — a queue row knows how many tracks are flagged, not how
+ * many the album holds, and comparing editions against the wrong number points at
+ * the wrong pressing. An album with no matched release-group comes back with an
+ * empty `editions` list and no `releaseGroupId`. */
+export interface AlbumEditions {
+  albumId: string;
+  releaseGroupId?: string;
+  chosenReleaseId?: string;
+  inUseReleaseId?: string;
+  inUseSource?: EditionSource;
+  localTrackCount: number;
+  editions: AlbumEdition[];
 }
 
 /** The "also apply to children" cascade summary (item-editing/05): how many child
@@ -648,6 +733,110 @@ export interface UpdateLibraryInput {
 /** Options for {@link ApiClient.scanLibrary}: `mode` "full" forces a full
  * re-derivation; absent/"incremental" is the server default (ADR-0008). */
 export type ScanMode = "incremental" | "full";
+
+/** Which population an Enrichment pass re-asks (`POST /libraries/{id}/enrich`):
+ *
+ * - `"new"` — the default. Titles never successfully enriched (`pending`), plus
+ *   any whose transient failure has come due for a retry (ADR-0048). This is what
+ *   a scan fires automatically, and it deliberately cannot see a settled row.
+ * - `"recheck"` — `new` PLUS the SETTLED NON-ANSWERS: `unmatched`, and `failed`
+ *   with no retry scheduled ([ADR-0051]). The mode for "the question changed" —
+ *   a matching improvement shipped and the rows it was written for will otherwise
+ *   never be asked again. A matched item is untouched, so a recheck over a
+ *   healthy Library costs nothing.
+ * - `"full"` — re-resolve every visible Title. Correct, and on a real library 16x
+ *   the requests of a recheck, against a provider that sheds load (ADR-0049).
+ */
+export type EnrichMode = "new" | "recheck" | "full";
+
+/** The summary of a FINISHED enrichment pass. The counts are LEAVES (Movies /
+ * Episodes / Tracks); browse parents are enriched as a side effect and not
+ * counted. `retrying` is separated from `failed` on purpose (ADR-0048): "8 failed"
+ * asks the operator to go and fix eight things, "8 will be retried" tells them to
+ * wait. The server omits zero counts (`omitempty`), so every field is optional on
+ * the wire.
+ *
+ * It no longer comes back from the POST. A pass is STARTED, not awaited
+ * (ADR-0051's amendment), so the summary arrives on the terminal `enrichProgress`
+ * SSE event, or as the `lastPass` of a status read. */
+export interface EnrichPassSummaryRaw {
+  libraryId?: string;
+  total?: number;
+  matched?: number;
+  unmatched?: number;
+  failed?: number;
+  disabled?: number;
+  retrying?: number;
+  /** Which mode that pass ran in, and when it finished. Present on a `lastPass`. */
+  mode?: EnrichMode;
+  finishedAt?: string;
+}
+
+/** An enrichment pass summary with the `omitempty` holes filled (counts → 0). */
+export interface EnrichPassSummary {
+  libraryId: string;
+  total: number;
+  matched: number;
+  unmatched: number;
+  failed: number;
+  disabled: number;
+  retrying: number;
+  mode?: EnrichMode;
+  finishedAt?: string;
+}
+
+/** How far a running pass has got — the same counters the `enrichProgress` SSE
+ * stream carries, so a page that arrives mid-pass can catch up with one read. */
+export interface EnrichPassProgressRaw {
+  total?: number;
+  done?: number;
+  matched?: number;
+  unmatched?: number;
+  failed?: number;
+  disabled?: number;
+  retrying?: number;
+}
+
+/** A library's enrichment-pass state, from `POST` (202) and `GET
+ * /libraries/{id}/enrich` — one shape for both, exactly as the scan surface uses
+ * one scan status for both.
+ *
+ * `state` is "running" while a pass is queued or executing and "idle" otherwise.
+ * `started` is true only on the POST that actually started the pass — false means
+ * one was ALREADY running and this press changed nothing. `lastPass` is the most
+ * recent finished pass, held in memory on the server and therefore absent after a
+ * restart (a status that outlived the process would be claiming a pass had). */
+export interface EnrichPassStateRaw {
+  libraryId?: string;
+  state?: string;
+  mode?: EnrichMode;
+  startedAt?: string;
+  started?: boolean;
+  progress?: EnrichPassProgressRaw;
+  lastPass?: EnrichPassSummaryRaw;
+}
+
+/** An enrichment-pass state with its `omitempty` holes filled. */
+export interface EnrichPassState {
+  libraryId: string;
+  running: boolean;
+  mode?: EnrichMode;
+  startedAt?: string;
+  started: boolean;
+  progress?: EnrichPassProgress;
+  lastPass?: EnrichPassSummary;
+}
+
+/** A running pass's progress with the `omitempty` holes filled (counts → 0). */
+export interface EnrichPassProgress {
+  total: number;
+  done: number;
+  matched: number;
+  unmatched: number;
+  failed: number;
+  disabled: number;
+  retrying: number;
+}
 
 /** The browsable entity a Targeted scan (ADR-0030) is launched from — the API
  * path segment its `/scan` route hangs off: a Movie Title, a Show, an Album, or
