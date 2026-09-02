@@ -54,6 +54,13 @@ type Store interface {
 	AlbumsForArtist(artistID string) ([]store.Album, error)
 	AlbumByID(albumID string) (store.Album, error)
 	TracksForAlbum(albumID string) ([]store.Title, error)
+	// TrackContextForTitle walks a Track UP to its Album — the one direction the
+	// pass never needs and a single-Track re-enrich cannot do without (issue 14).
+	// A pass arrives at a Track through its Album and has the whole album in hand;
+	// a re-enrich arrives with a Title row, and store.Title carries no album_id. It
+	// is how ADR-0050's tracklist tier reaches the one path that was missing it.
+	// store.ErrNotFound for a Title that is not a Track (no album linkage).
+	TrackContextForTitle(titleID string) (store.TrackContext, error)
 	WriteEntityEnrichment(entityType, entityID string, e store.EntityEnrichmentWrite, locks map[string]bool) error
 	SetEntityEnrichmentStatus(entityType, entityID, status string) error
 	SetEntityEnrichmentRetry(entityType, entityID string, attempts int, retryAt time.Time) error
@@ -533,13 +540,19 @@ func (s *Service) matchTitle(ctx context.Context, titleID string, m store.Extern
 		return err
 	}
 
+	// singleLeafWork is refFor plus ADR-0050's album tier — the same tier a library
+	// pass applies, through the same function, so a Track re-enriched alone reaches
+	// the record a pass would have given it instead of searching where a pass looked
+	// up (issue 14). It also carries the tier's outcome, which is what makes this path
+	// record `album-unmatched`/`not-in-tracklist` rather than a search reason.
+	//
 	// A Music leaf (Track) carries sparseTitle so a provider's canonical recording
 	// name only fills a MISSING tag title — embedded tags are the Music display/
 	// identity authority (ADR-0002), exactly as the album full-pass treats tracks.
 	// Without this, applying a Track override would overwrite the tag title with
 	// MusicBrainz's canonical name. A Movie/Episode display title is unaffected.
 	var res Result
-	return s.processLeaf(ctx, snap, leafWork{title: t, ref: refFor(t), sparseTitle: t.Kind == "track"}, &res)
+	return s.processLeaf(ctx, snap, s.singleLeafWork(ctx, snap, t), &res)
 }
 
 // SearchCandidateLimit caps a provider search result page so a broad query stays
@@ -1063,6 +1076,13 @@ func (s *Service) ArtworkCandidates(ctx context.Context, ref TitleRef, role stri
 // ListTitleArtworkCandidates lists the provider images offered for a leaf Title's
 // role, deriving the lookup ref (kind + pinned external id) from the Title itself.
 // store.ErrNotFound for an unknown Title flows to the handler as a 404. Reads only.
+//
+// It takes refFor plain — WITHOUT ADR-0050's album tier that the re-enrich path
+// gets (singleLeafWork). That is deliberate and it is not a gap: an image set is
+// release-group keyed at the Cover Art Archive, so a Track's ref lists no images at
+// any id it could be given. Resolving the Track's Album to fill in a recording MBID
+// would spend a store read and a provider call to hand the picker the same empty
+// list. A Track's cover is its Album's, and the Album's own picker is what lists it.
 func (s *Service) ListTitleArtworkCandidates(ctx context.Context, titleID, role string) ([]ArtworkCandidate, error) {
 	t, err := s.store.TitleForEnrichmentByID(titleID)
 	if err != nil {
@@ -1624,31 +1644,53 @@ func trackAnchorID(t store.Title, fromTracklist string) string {
 	return strings.TrimSpace(fromTracklist)
 }
 
-// albumTracklistIDs is ADR-0050's tier, computed once for one Album: the recording
-// MBID the Album's own tracklist names for each of its local Tracks, keyed by Track
-// (Title) id. An empty map means "this Album has nothing to say", and is the answer
-// for every case in which no provider call was made at all.
+// albumTracklistIDs is ADR-0050's tier AS A LIBRARY PASS ASKS FOR IT: the shared
+// tier below (albumTrackAnchors), behind the one question only a pass can answer —
+// whether any of this Album's IN-SCOPE Tracks still needs an anchor.
 //
-// It makes a call ONLY when both halves hold:
+// That gate is the pass's alone, which is why it is here and not in the shared
+// function. A pass walks whole albums under a Mode, so it can be looking at an
+// album none of whose Tracks it will even process; the single-Title path is looking
+// at one Track it already knows needs an anchor.
+func (s *Service) albumTracklistIDs(ctx context.Context, snap providerSnapshot, mode Mode,
+	al store.Album, albumRecordID string, tracks []store.Title) (map[string]string, tracklistOutcome) {
+
+	if !s.albumNeedsTracklist(snap, mode, tracks) {
+		// Every in-scope Track already has an id, so no Track here can be diagnosed by
+		// the album tier: whatever settles them will have been an id that failed. An
+		// album of fully tagged Tracks — the population ADR-0049 already fixed — must
+		// not start paying a call per album to learn that.
+		return nil, tracklistUnavailable
+	}
+	return s.albumTrackAnchors(ctx, snap, al, albumRecordID, tracks)
+}
+
+// albumTrackAnchors is ADR-0050's tier itself, computed once for one Album: the
+// recording MBID the Album's own tracklist names for each of its local Tracks,
+// keyed by Track (Title) id. An empty map means "this Album has nothing to say",
+// and is the answer for every case in which no provider call was made at all.
 //
-//   - at least one in-scope Track still needs an anchor (albumNeedsTracklist).
-//     Otherwise there is nothing a tracklist could resolve, and an album of fully
-//     tagged Tracks — the population ADR-0049 already fixed — must not start paying
-//     a call per album to learn that.
-//   - an anchor exists: the Album's enrichment record id (what enrichParent just
-//     resolved, an Admin's Fix-info choice included), else the release-group id the
-//     FILES assert. An Album that is neither matched nor tagged knows nothing about
-//     its contents and is not asked.
+// TWO CALLERS SHARE IT, and that is the point (issue 14): a library pass through
+// albumTracklistIDs, and a single-Track re-enrich through trackAlbumAnchor. They
+// must not be able to disagree about what a Track's anchor is — the last time this
+// path carried a COMMENT asserting that parity instead of a caller, the parity
+// quietly stopped being true when this tier was added and refFor was not.
+//
+// It makes a call only when an anchor exists: the Album's enrichment record id (an
+// Admin's Fix-info choice included), else the release-group id the FILES assert. An
+// Album that is neither matched nor tagged knows nothing about its contents and is
+// not asked.
 //
 // WHICH EDITION that anchor resolves to is ADR-0052's precedence, applied by
 // albumTracklistFor: the release an ADMIN chose (chosenAlbumEdition), then the
 // release the FILES name (al.MusicbrainzReleaseID), then best fit by track count.
-// The result carries FromChosenEdition — the licence issue 11 consumes — because
-// the tracklist alone cannot say which of the three answered.
+// The result carries FromChosenEdition — the licence — because the tracklist alone
+// cannot say which of the three answered.
 //
 // tracks must be the Album's WHOLE local list — mapTracks is album-grained, and a
-// Track the pass intends to skip still occupies its position on the release. The
-// RESULT is filtered by scope, never the input.
+// Track the caller intends to skip (or, on the single-Title path, every Track but
+// the one being re-enriched) still occupies its position on the release. The RESULT
+// is filtered, never the input.
 //
 // A failed read is not a leaf failure. ErrNoTracklist is the settled "this album has
 // no tracklist"; anything else is a transient failure (a 503 shed, a transport
@@ -1663,14 +1705,9 @@ func trackAnchorID(t store.Title, fromTracklist string) string {
 // Track with no anchor and an empty ref id, so nothing downstream can recover it:
 // processLeaf would see two identical leaves wanting two different actions from
 // the Admin — fix the ALBUM versus fix the Album's RELEASE.
-func (s *Service) albumTracklistIDs(ctx context.Context, snap providerSnapshot, mode Mode,
+func (s *Service) albumTrackAnchors(ctx context.Context, snap providerSnapshot,
 	al store.Album, albumRecordID string, tracks []store.Title) (map[string]string, tracklistOutcome) {
 
-	if !s.albumNeedsTracklist(snap, mode, tracks) {
-		// Every in-scope Track already has an id, so no Track here can be diagnosed by
-		// the album tier: whatever settles them will have been an id that failed.
-		return nil, tracklistUnavailable
-	}
 	anchor := strings.TrimSpace(albumRecordID)
 	if anchor == "" {
 		anchor = strings.TrimSpace(al.MusicbrainzID)
@@ -1713,6 +1750,91 @@ func (s *Service) albumTracklistIDs(ctx context.Context, snap providerSnapshot, 
 		}
 	}
 	return ids, tracklistRead
+}
+
+// singleLeafWork builds the leafWork for a re-enrich of ONE Title — the
+// single-Title path (MatchTitle, PUT /titles/{id}/enrichmentMatch, a Cascade's
+// per-child applyOverride) — which is refFor's three tiers plus ADR-0050's fourth,
+// the one refFor cannot supply because a Track's Album is not on its row.
+//
+// For every non-Music leaf, and for every Track that already has a record or a tag
+// id, this is exactly refFor and nothing else: trackAlbumAnchor returns before it
+// reads anything, and trackAnchorID's first tier answers. A Movie or Episode
+// re-enrich is byte-identical on the wire to what it was before this existed.
+func (s *Service) singleLeafWork(ctx context.Context, snap providerSnapshot, t store.Title) leafWork {
+	fromTracklist, outcome := s.trackAlbumAnchor(ctx, snap, t)
+	ref := refFor(t)
+	ref.MusicbrainzID = trackAnchorID(t, fromTracklist)
+	return leafWork{title: t, ref: ref, sparseTitle: t.Kind == "track", tracklist: outcome}
+}
+
+// trackAlbumAnchor is ADR-0050's album tier for ONE Track, re-enriched on its own:
+// the recording MBID this Track's Album names for it, and the tier's outcome so the
+// reason processLeaf records is the ALBUM-scoped one (`album-unmatched` /
+// `not-in-tracklist`) rather than a search reason for a search that never happened.
+//
+// It goes through the same albumTrackAnchors the pass does, over the Album's WHOLE
+// local track list — issue 03's contract, and not negotiable here: the match rule is
+// album-grained, so handing it the one Track being re-enriched would free every
+// other Track's position and let the leftover rule fire on a hole that is not one.
+// The RESULT is filtered to this Track. That is the whole reason this is an
+// extraction and not a second implementation: a Track resolved by a pass and the
+// same Track resolved alone must reach the same record.
+//
+// IT RETURNS BEFORE READING ANYTHING in the common case — a Track whose match
+// carries an id (an Admin picking a recording, and every child of a Cascade, which
+// passes one per child). Making that case fetch a tracklist would multiply one
+// album's cascade by its track count, for an id it already holds and would use
+// first anyway (trackAnchorID). A non-Track never gets here at all.
+//
+// Its three reads are the pass's three facts, minus the one a single Track may not
+// have: the Album's own enrichment is READ, never re-resolved. A pass may re-look-up
+// an Album parent (ModeFull) because a pass is what re-resolves parents; a re-enrich
+// of one Track is not licensed to spend a provider call on its Album, still less to
+// write the Album's record. So the anchor is the record the Album already has, else
+// the release-group id the FILES assert — which is exactly what the pass's own
+// anchor is in every mode but Full.
+//
+// Every read failure yields no anchor and tracklistUnavailable: a bookkeeping read
+// must not be able to fail a re-enrich, and an outcome nothing was learned from must
+// not diagnose the Track.
+func (s *Service) trackAlbumAnchor(ctx context.Context, snap providerSnapshot,
+	t store.Title) (string, tracklistOutcome) {
+
+	if t.Kind != "track" || trackRecordID(t) != "" {
+		return "", tracklistUnavailable
+	}
+	if !snap.enablement.enabledFor(t.Kind) {
+		// processLeaf is about to write 'disabled' with no diagnosis and no call. Asking
+		// the Album anything would be three store reads spent on an answer nobody reads.
+		return "", tracklistUnavailable
+	}
+	tc, err := s.store.TrackContextForTitle(t.ID)
+	if err != nil {
+		return "", tracklistUnavailable // no album linkage (or an unreadable one)
+	}
+	al, err := s.store.AlbumByID(tc.AlbumID)
+	if err != nil {
+		return "", tracklistUnavailable
+	}
+	tracks, err := s.store.TracksForAlbum(al.ID)
+	if err != nil {
+		return "", tracklistUnavailable
+	}
+	ids, outcome := s.albumTrackAnchors(ctx, snap, al, s.albumRecordID(al.ID), tracks)
+	return ids[t.ID], outcome
+}
+
+// albumRecordID is the enrichment record an Album already holds — the id
+// enrichParent would return for a settled parent, read rather than re-resolved.
+// "" when the Album has no record or the read fails; the tier then falls back to
+// the release-group id the files assert, exactly as the pass does.
+func (s *Service) albumRecordID(albumID string) string {
+	e, err := s.store.EntityEnrichmentByID(store.EntityAlbum, albumID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(e.ExternalID)
 }
 
 // tracklistOutcome is what the Album tier learned about an Album as a whole, kept
@@ -2098,6 +2220,19 @@ func withEpisodePin(ref TitleRef, t store.Title) TitleRef {
 // drive a by-id lookup; they are the RECORD ids, so an Admin's Enrichment override
 // is what resolves when there is one and the id a folder name asserts otherwise
 // (ADR-0045, resolved in store.recordExternalIDs).
+//
+// It is PURE, and it reaches only the tiers that are on the Title's own row. The
+// music precedence is four tiers — record → tag → the ALBUM's tracklist → search
+// (ADR-0049 as ADR-0050 narrowed it) — and the third of those is not on the row: it
+// takes the Track's Album, that Album's record or tag release-group, its chosen
+// edition, its whole local track list and a provider read. So refFor supplies tiers
+// one, two and four, and singleLeafWork splices the album tier in on top of it
+// through the same albumTrackAnchors a library pass uses.
+//
+// This comment used to claim the precedence was the pass's, in full. It was true
+// when it was written and it stopped being true the day the tier was added — which
+// is what a comment asserting parity between two code paths is worth without a test
+// holding them to it. There is one now (issue 14).
 func refFor(t store.Title) TitleRef {
 	ref := TitleRef{
 		Kind:   t.Kind,
@@ -2105,9 +2240,9 @@ func refFor(t store.Title) TitleRef {
 		Year:   t.Year,
 		TMDBID: t.TMDBID,
 		IMDBID: t.IMDBID,
-		// Same precedence as the library pass: the record wins, the file's tag id is
-		// the fallback, a search is the last resort (ADR-0049). Without this a
-		// single-Track re-enrich would search where a full pass looked up.
+		// Tiers one and two of the music precedence: the record wins, the file's tag id
+		// is the fallback (ADR-0049). Tier three (the Album's tracklist, ADR-0050) is
+		// added by singleLeafWork; a search is still the last resort.
 		MusicbrainzID: trackRecordID(t),
 		SeasonNumber:  t.SeasonNumber,
 		EpisodeNumber: t.EpisodeNumber,
