@@ -65,3 +65,48 @@ distinguished only by an "and" word.
 - A duplicate rip of one album under both spellings can collide two Tracks on one key; the
   migration leaves the second on its old key and the next rescan settles it, exactly as a
   duplicate rip under a single artist behaves today.
+
+## Amendment: the rule reaches the provider query too (2026-09-02)
+
+This ADR made a leading article irrelevant to how Obelo *identifies* an Artist, and stopped
+there. The provider query kept asking for the name exactly as tagged, so an operator whose
+files say "The Eagles" got nothing from an album search that MusicBrainz answers under
+"Eagles":
+
+```
+release-group?query=Hell Freezes Over AND artist:"The Eagles"                → 0
+release-group?query=Hell Freezes Over AND artist:("The Eagles" OR "Eagles")  → 3, by "Eagles"
+```
+
+Half a rule is worse than none here, because the half that shipped is invisible: the
+artist rows merge correctly, so nothing looks wrong, and the failure surfaces as albums
+that "just don't match".
+
+**The artist-narrowing clause therefore also tries the name with its leading English
+article REMOVED.** It is one clause in `musicQuery`, so it reaches every place the artist
+narrows a music search: the Edit-item and Needs-Fixing pickers, and the enrichment pass's
+own track search.
+
+Only removed — not added, which this amendment first claimed. `artist:"…"` is a phrase
+query over an *analyzed* credit field, so a one-token phrase already matches inside a
+longer credit:
+
+```
+release-group?query=Disintegration AND artist:"Cure"          → 4, credited "The Cure"
+release-group?query=Different Light AND artist:"The Bangles"  → 0
+release-group?query=Different Light AND artist:"Bangles"      → 2, credited "Bangles"
+```
+
+The matches of `artist:"The X"` are a strict subset of `artist:"X"`'s, so an
+article-*added* alternative cannot return a row the bare one misses. It would also cost
+the property that makes this safe: an artist with no article must emit exactly the
+single-phrase clause it emits today, and a name that always gained an `OR "The …"` never
+could.
+
+Deliberately NOT extended to the `release:` clause. An album's leading article is part of
+its title far more often than a band's is part of its name, and this ADR's evidence is
+about artists. Nothing here argues for guessing at album titles.
+
+Distinct from [ADR-0053](./0053-an-album-corroborates-its-artist.md), which is about
+resolving the Artist *entity* and deliberately never reads the name at all. That one fixes
+picking the wrong band; this one fixes narrowing a search by the right one.

@@ -102,18 +102,77 @@ func phraseAdmits(query, title string) bool {
 }
 
 // luceneParses is a crude stand-in for the query parser: every metacharacter in the
-// search TEXT must be backslash-escaped. The `AND artist:"…"` clause is query
-// structure rather than text, so only its contents are checked.
+// search TEXT must be backslash-escaped. The `AND artist:…` clause is query
+// structure rather than text, so only the contents of its phrases are checked.
 func luceneParses(query string) bool {
-	const clause = ` AND artist:"`
+	const clause = ` AND artist:`
 	terms := query
 	if i := strings.Index(query, clause); i >= 0 {
 		terms = query[:i]
-		if !luceneEscaped(strings.TrimSuffix(query[i+len(clause):], `"`)) {
-			return false
+		alts, ok := artistClausePhrases(query[i+len(clause):])
+		if !ok {
+			return false // malformed clause: the real parser would 400 too
+		}
+		for _, alt := range alts {
+			if !luceneEscaped(alt) {
+				return false
+			}
 		}
 	}
 	return luceneEscaped(terms)
+}
+
+// artistClausePhrases parses the artist clause the way the query parser sees it and
+// returns the phrase CONTENTS. Two shapes are legal, and only these two: the single
+// phrase `"X"` this always sent, and — since ADR-0037's amendment reached the
+// provider query — the disjunction `("X" OR "Y")` that makes the narrowing
+// article-insensitive. Quotes, parentheses and OR are structure, not text, so they
+// are not subject to escaping; everything between a pair of quotes is.
+//
+// (The pass's recording search never carries a release clause, so the artist clause
+// runs to the end of the query here.)
+func artistClausePhrases(clause string) ([]string, bool) {
+	inner, group := clause, false
+	if open, ok := strings.CutPrefix(clause, "("); ok {
+		closed, ok := strings.CutSuffix(open, ")")
+		if !ok {
+			return nil, false
+		}
+		inner, group = closed, true
+	}
+	var alts []string
+	for {
+		if !strings.HasPrefix(inner, `"`) {
+			return nil, false
+		}
+		var phrase strings.Builder
+		i := 1
+		for i < len(inner) && inner[i] != '"' {
+			if inner[i] == '\\' && i+1 < len(inner) {
+				phrase.WriteByte(inner[i]) // keep the escape for luceneEscaped
+				i++
+			}
+			phrase.WriteByte(inner[i])
+			i++
+		}
+		if i >= len(inner) {
+			return nil, false // unterminated phrase
+		}
+		alts = append(alts, phrase.String())
+		inner = inner[i+1:]
+		if inner == "" {
+			break
+		}
+		rest, ok := strings.CutPrefix(inner, " OR ")
+		if !group || !ok {
+			return nil, false // trailing junk, or an OR outside a group
+		}
+		inner = rest
+	}
+	if group && len(alts) < 2 {
+		return nil, false // a group is only ever emitted for real alternatives
+	}
+	return alts, true
 }
 
 func luceneEscaped(s string) bool {

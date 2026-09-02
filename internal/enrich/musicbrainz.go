@@ -148,15 +148,86 @@ func (p *MusicBrainzProvider) Search(ctx context.Context, kind, query string, op
 // soundtracks and promos, and the same query with `AND release:"She"` returns exactly
 // the one on that album. Only the recording index has the field; the release-group
 // and artist searches pass "" for it.
+//
+// The artist clause is ARTICLE-INSENSITIVE (ADR-0037's amendment). See artistClause;
+// the `release` clause deliberately gets no such treatment, because an album's leading
+// article is usually part of its title.
 func musicQuery(terms, artist, release string) string {
 	q := escapeLucene(terms)
 	if a := strings.TrimSpace(artist); a != "" {
-		q += ` AND artist:"` + escapeLucene(a) + `"`
+		q += ` AND artist:` + artistClause(a)
 	}
 	if r := strings.TrimSpace(release); r != "" {
 		q += ` AND release:"` + escapeLucene(r) + `"`
 	}
 	return q
+}
+
+// artistClause builds the artist-narrowing clause article-insensitively, because
+// ADR-0037 made a leading article irrelevant to how Obelo IDENTIFIES an Artist and
+// the provider query never got the rule. An operator whose files say "The Eagles"
+// got nothing from an album MusicBrainz credits to "Eagles":
+//
+//	release-group?query=Hell Freezes Over AND artist:"The Eagles"                → 0
+//	release-group?query=Hell Freezes Over AND artist:("The Eagles" OR "Eagles")  → 3
+//
+// The mechanism is that `artist:"…"` is a Lucene PHRASE query over the analyzed
+// artist-credit field, so its tokens must appear adjacent in the credit. A tagged
+// article adds a token the credit does not have and the match is lost.
+//
+// Hence the alternatives: the name as the Admin typed it, OR the same name with a
+// leading English article removed. Keeping the as-typed spelling is not redundant —
+// a credit matching both alternatives scores higher, so "The Eagles" still outranks
+// "Eagles" for an artist genuinely named with the article.
+//
+// THE OTHER DIRECTION IS DELIBERATELY ABSENT, against the letter of the amendment,
+// because phrase matching already covers it and the evidence for it was misread.
+// Verified live 2026-09-02:
+//
+//	Disintegration AND artist:"Cure"          → 4, top credited "The Cure"
+//	Different Light AND artist:"The Bangles"  → 0   (MusicBrainz credits "Bangles")
+//	Different Light AND artist:"Bangles"      → 2, the album
+//
+// A one-token phrase matches anywhere inside the credit, so `artist:"X"` already
+// finds a credit spelled "The X"; the match set of `artist:"The X"` is a SUBSET of
+// `artist:"X"`'s, and OR-ing it in cannot return one extra row. It would, however,
+// rewrite the URL of every article-less artist in the library — which is why the
+// alternatives collapsing to one emits today's plain single-phrase clause, byte for
+// byte. Issue 15's Bangles case reads as the reverse direction but is not one: that
+// release-group is credited "Bangles", and the OR query's two hits come entirely
+// from the bare alternative, which today's clause already sends.
+func artistClause(artist string) string {
+	alts := []string{artist}
+	if bare := withoutLeadingArticle(artist); bare != "" && bare != artist {
+		alts = append(alts, bare)
+	}
+	if len(alts) == 1 {
+		return `"` + escapeLucene(alts[0]) + `"`
+	}
+	quoted := make([]string, 0, len(alts))
+	for _, a := range alts {
+		quoted = append(quoted, `"`+escapeLucene(a)+`"`)
+	}
+	return "(" + strings.Join(quoted, " OR ") + ")"
+}
+
+// queryArticles are leading words dropped from an artist-narrowing alternative,
+// longest first so a more specific prefix wins. Each carries its trailing space, so
+// a bare article ("The") and words that merely begin with those letters ("Anthrax")
+// are untouched. The list mirrors scanner.sortArticles, which serves identity keys
+// on already-lower-cased text; this one matches case-insensitively because it runs
+// on the name as the Admin typed it.
+var queryArticles = []string{"the ", "an ", "a "}
+
+// withoutLeadingArticle drops one leading English article from a display name,
+// returning the name unchanged when it has none.
+func withoutLeadingArticle(name string) string {
+	for _, article := range queryArticles {
+		if len(name) > len(article) && strings.EqualFold(name[:len(article)], article) {
+			return strings.TrimSpace(name[len(article):])
+		}
+	}
+	return name
 }
 
 // setPaging applies the picker's limit/offset to a search request so a broad
