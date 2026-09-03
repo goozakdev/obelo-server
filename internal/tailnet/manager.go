@@ -224,6 +224,35 @@ func (m *Manager) ListenTLS(network, addr string) (net.Listener, error) {
 	return node.ListenTLS(network, addr)
 }
 
+// Dial opens an outbound connection over the Tailnet — the second of
+// ADR-0055 §5's two dialers, used by internal/link to reach another household's
+// Server that has been shared into this operator's Tailnet.
+//
+// The Manager rather than the Node is the thing to ask, for Listen's reason:
+// "is the node up?" has exactly one answer, and a caller holding a Node directly
+// could dial one this state machine is taking down.
+//
+// It does NOT hold mu across the dial, for ListenTLS's reason: a dial to an
+// unreachable peer can sit there until its context expires, and freezing the
+// settings panel behind somebody else's unreachable machine would be worse than
+// the race it avoids. The node itself answers if it is stopped in between.
+//
+// Both failures are ordinary: ErrNoNode on a build with no Tailnet support,
+// ErrNotRunning while the node is down. A linking caller reads either as "not
+// reachable that way" and tries the next origin.
+func (m *Manager) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	m.mu.Lock()
+	node, running := m.node, m.running
+	m.mu.Unlock()
+	if node == nil {
+		return nil, ErrNoNode
+	}
+	if !running {
+		return nil, ErrNotRunning
+	}
+	return node.Dial(ctx, network, addr)
+}
+
 // HTTPSEnabled reports whether the RUNNING node's settings opt into tailnet :443.
 //
 // It answers from the settings the node was started with rather than re-reading

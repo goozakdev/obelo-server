@@ -24,6 +24,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/events"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
+	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -667,6 +668,20 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		OnChange: broker.PublishTailscaleState,
 	})
 
+	// Linking, the receiving half (ADR-0055, ADR-0056; .scratch/linked-servers
+	// issue 06). It is handed the Tailnet MANAGER rather than the node, for
+	// Listen's reason: "is the node up?" must have exactly one answer, and the
+	// state machine is the only thing that has it. On a build or a deployment with
+	// no Tailnet this changes nothing — every origin then goes to the operating
+	// system, which is what a household with no Tailnet has always had.
+	//
+	// The identity closure is what the sharer records as the Device (ADR-0055 §4).
+	// It is read at each use rather than captured as a value so a re-key months
+	// later presents the CURRENT display name.
+	linkSvc := link.New(db, func() link.Identity {
+		return link.Identity{ID: identity.ID, Name: identity.Name}
+	}, link.Options{Tailnet: tailnetManager})
+
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
 	// scheduled enrich both feed one worker via enrichQueue; the worker AND the
@@ -756,6 +771,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		TitleCounts:     db,
 		ScanScope:       db,
 		Export:          db,
+		Links:           linkSvc,
 		Providers:       db,
 		ProviderManager: providerManager,
 		SettingsChanged: app.notifyEnrichReschedule,
