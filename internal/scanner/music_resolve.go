@@ -153,6 +153,9 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 					Name:        name,
 					IdentityKey: id.ArtistKey,
 					SortName:    sortTitle(name),
+					// The id the file asserts, so Enrichment resolves this Artist by
+					// lookup rather than by name search (ADR-0049).
+					MusicbrainzID: id.ArtistMBID,
 				},
 				albums: map[string]*store.AlbumTree{},
 			}
@@ -163,12 +166,17 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 		if at == nil {
 			albumTitle := uninvertTitle(id.Album)
 			at = &store.AlbumTree{
-				Title:       albumTitle,
-				Year:        id.AlbumYear,
-				IdentityKey: id.AlbumKey,
-				SortTitle:   sortTitle(albumTitle),
-				ArtworkPath: albumArt[filepath.Dir(path)],
-				ReleaseType: id.ReleaseType,
+				Title:         albumTitle,
+				Year:          id.AlbumYear,
+				IdentityKey:   id.AlbumKey,
+				SortTitle:     sortTitle(albumTitle),
+				ArtworkPath:   albumArt[filepath.Dir(path)],
+				ReleaseType:   id.ReleaseType,
+				MusicbrainzID: id.ReleaseGroupMBID,
+				// The exact edition the file names, so the Album can resolve its own
+				// Tracks off that release's tracklist rather than searching for each
+				// one by name (ADR-0050).
+				MusicbrainzReleaseID: id.ReleaseMBID,
 			}
 			acc.albums[id.AlbumKey] = at
 			acc.order = append(acc.order, id.AlbumKey)
@@ -180,6 +188,15 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 		}
 		if at.ReleaseType == "" {
 			at.ReleaseType = id.ReleaseType
+		}
+		if at.MusicbrainzID == "" {
+			at.MusicbrainzID = id.ReleaseGroupMBID
+		}
+		if at.MusicbrainzReleaseID == "" {
+			at.MusicbrainzReleaseID = id.ReleaseMBID
+		}
+		if acc.artist.MusicbrainzID == "" {
+			acc.artist.MusicbrainzID = id.ArtistMBID
 		}
 		if at.ArtworkPath == "" {
 			if art := albumArt[filepath.Dir(path)]; art != "" {
@@ -251,6 +268,10 @@ func (s *Service) buildTrackTree(lib store.Library, id MusicIdentity, path strin
 			Title:       id.Title,
 			IdentityKey: id.TrackKey,
 			SortTitle:   sortTitle(id.Title),
+			// The recording id the file asserts — a lookup anchor for Enrichment, never
+			// identity (ADR-0049). Distinct from MusicbrainzID, which is the enrichment
+			// RECORD and belongs to the pass and the Admin (ADR-0045).
+			MusicbrainzRecordingID: id.RecordingMBID,
 			// A path-fallback Track (no tags) is a best-effort parse → needs-review
 			// (naming-convention.md "Filed + needs-review").
 			NeedsReview: !id.FromTags,

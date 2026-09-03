@@ -3166,6 +3166,24 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   max-width: 28rem;
 }
 
+/* The library selector and the Re-check button share a row: "which library?" and
+   "re-ask this library's settled rows" are one thought (ADR-0051). The button
+   aligns to the selector's INPUT rather than to its label, hence the baseline of
+   the flex row being end rather than centre. */
+.needs-fixing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+.needs-fixing-toolbar .needs-fixing-library-picker {
+  flex: 1 1 18rem;
+}
+.needs-fixing-recheck-button {
+  flex: 0 0 auto;
+  width: auto;
+}
+
 .needs-fixing {
   display: flex;
   flex-direction: column;
@@ -3264,7 +3282,13 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
    the row is a two-column grid whose second column holds that stack. */
 .fix-item {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* minmax(0, 1fr), never a bare 1fr. A bare `1fr` is `minmax(auto, 1fr)`, whose
+     MINIMUM is the track's min-content width — so a wide child can force the column
+     past its share and shove the whole queue sideways. This row nests: expanding an
+     album row renders a full fix-item per track, each adding its own artwork column
+     and the child list's padding to the outer track's min-content. The floor of 0
+     is what lets the column refuse to grow and the content wrap instead. */
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   column-gap: 0.85rem;
   padding-top: 0.85rem;
@@ -3311,9 +3335,26 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
     font-size: 0.9rem;
   }
 }
-/* The picker spans both columns so its search box isn't squeezed beside a poster. */
-.fix-item > .fix-picker {
+/* Only the poster and the body share the row's two columns. EVERY other block —
+   the search picker, the edition list, and whatever the next feature adds — spans
+   the full width, so the default is right and a new block cannot land in the
+   poster's column by accident.
+
+   That accident is why this is written as a default rather than a list: the rule
+   used to name `.fix-picker` alone, the edition list was added beside it without
+   one, and grid auto-placement put it in column 1. That column is `auto`, so it
+   grew to fit an entire list of releases and squeezed the row's text into a strip
+   down the right-hand side. */
+.fix-item > * {
   grid-column: 1 / -1;
+}
+.fix-item > .fix-item-art {
+  grid-column: 1;
+  grid-row: 1;
+}
+.fix-item > .fix-item-body {
+  grid-column: 2;
+  grid-row: 1;
 }
 .fix-item.is-open {
   border-left: 2px solid var(--accent);
@@ -3409,6 +3450,73 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   flex-wrap: wrap;
   gap: 0.75rem;
   font-size: 0.9rem;
+}
+
+/* The tracks a collapsed Album row stands for (album-resolves-its-tracks/09).
+   Indented and rule-marked so a disclosed sub-row reads as belonging to the album
+   above it rather than as another top-level item in the queue. */
+.fix-item-children {
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
+}
+/* BOUNDED (album-resolves-its-tracks/18). The library's `Unknown Album` holds 106
+   flagged tracks; disclosing them full-length pushes every row after it a page
+   down, which puts back the very pile the album row collapsed. So the list is a
+   panel: capped, scrolling inside itself, with `auto` rather than `scroll` so a
+   two-track album is never given a scrollbar it has no use for.
+
+   `overscroll-behavior: contain` stops a flick that reaches the end of this panel
+   from carrying on and scrolling the whole queue out from under the Admin. */
+.fix-item-child-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0.5rem 0 0;
+  padding: 0 0 0 0.85rem;
+  border-left: 2px solid var(--border);
+  list-style: none;
+  max-height: 26rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The cap LIFTS while one child's picker is open, and the reasoning is in
+   FixItemRow beside `is-expanded`: a picker is taller than the cap on its own, so
+   capping it would nest a scroller inside a scroller and bury "Use this" under a
+   fold. Only one child can be open at a time, so the list is only ever this tall
+   for the one row the Admin is actually working on. */
+.fix-item-child-list.is-expanded {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* A DISCLOSED row (album-resolves-its-tracks/18). It has no artwork column, so it
+   is a single-column row rather than the queue's poster-plus-body pair, and it is
+   tuned down throughout: what it must carry is which track, what is wrong with it
+   and its own picker — the rest was already said by the album row above. */
+.fix-item.fix-item-compact {
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+.fix-item.fix-item-compact > .fix-item-body {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  gap: 0.2rem;
+}
+.fix-item-compact .fix-item-problem {
+  font-size: 0.85rem;
+}
+/* The file name alone (the element still carries the whole path as its title). The
+   PRD's second promise — always show which file — is kept, but the folder half of
+   it is the album row's own path repeated per track, and `word-break: break-all`
+   wrapping a long absolute path over three lines is most of what made the
+   disclosure tall. */
+.fix-item-compact .fix-item-path {
+  font-size: 0.75rem;
+}
+.fix-item-compact .fix-item-actions {
+  font-size: 0.85rem;
+  gap: 0.6rem;
 }
 
 /* --- The inline picker ---------------------------------------------------- */
@@ -5528,4 +5636,60 @@ textarea.metadata-input {
   color: var(--accent-ink);
   font-size: 0.8rem;
   box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+/* --- Album edition picker (ADR-0052, album-resolves-its-tracks/12) -----------
+   The "Edition" section under a matched album, in Fix info and on the queue's
+   collapsed album row: which pressing of this release-group these files are. The
+   row in USE reads with the accent ring the selected search candidate uses, and the
+   one whose track count matches the local album is nudged forward — that count is
+   the fact the whole decision turns on. */
+.album-editions {
+  margin-top: 1rem;
+}
+.album-edition-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.album-edition {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.6rem;
+}
+.album-edition.is-in-use {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.album-edition-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.album-edition-line {
+  font-variant-numeric: tabular-nums;
+}
+.album-edition.is-fitting .album-edition-line {
+  font-weight: 600;
+}
+.album-edition-hint,
+.album-edition-fits,
+.album-edition-in-use {
+  font-size: 0.82em;
+  opacity: 0.8;
+}
+.album-edition-in-use {
+  opacity: 0.95;
+  color: var(--accent);
+}
+.album-edition-use {
+  flex: 0 0 auto;
 }

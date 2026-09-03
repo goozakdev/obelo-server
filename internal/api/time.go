@@ -17,6 +17,18 @@ const sqliteDateTime = "2006-01-02 15:04:05"
 // fields drop), an already-RFC3339 value is returned in UTC, a SQLite
 // datetime value is interpreted as UTC, and anything unrecognized is returned
 // unchanged rather than discarded.
+// formatInstant is formatTimestamp's twin for a value that never went through a
+// column: an in-memory time.Time (the enrich pass status, ADR-0051's amendment —
+// deliberately not persisted). Same output format, same "absent stays absent"
+// rule, so a client cannot tell from the wire which side of the database a
+// timestamp came from.
+func formatInstant(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 func formatTimestamp(stored string) string {
 	if stored == "" {
 		return ""

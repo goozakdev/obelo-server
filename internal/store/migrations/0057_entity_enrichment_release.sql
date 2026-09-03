@@ -1,0 +1,46 @@
+-- 0057_entity_enrichment_release: keep the exact EDITION an Admin named. When an
+-- operator pastes a MusicBrainz /release/ URL into Fix info, the release resolves
+-- to its parent release-group (which is what an album IS, ADR-0038) and the
+-- release itself was discarded, because entity_enrichment had one external_id and
+-- nowhere else to put it (ADR-0052). Purely additive: one ADD COLUMN with a
+-- constant default, no rebuild, no existing row touched, no constraint moved.
+--
+-- What this column IS: the release — one pressing, one edition — an ADMIN chose
+-- for this Album, stored beside the release-GROUP their choice resolved to. It is
+-- a DECORATION refinement: it selects which tracklist decorates the Album's
+-- Tracks, and it is the one fact the automatic matcher never has, which is why
+-- ADR-0052 lets it license a mapping the automatic path is forbidden.
+--
+-- What this column is NOT, two ways, and both have already cost this codebase an
+-- ADR:
+--
+--   * NOT identity (ADR-0038/0002). identity_key is untouched and the
+--     release-GROUP remains what album identity is built from. This value never
+--     enters a key, so pinning a different edition of the same album re-keys
+--     nothing and costs no watch state — where a release id in a key would re-key
+--     an album the moment its owner preferred the remaster.
+--   * NOT albums.musicbrainz_release_id (ADR-0045/0049). That column holds what
+--     the FILES assert: it is scanner-owned, re-derived from disk on every scan,
+--     and written unconditionally. An Admin's choice written there is erased by
+--     the next scan — the precise bug ADR-0045 exists to prevent, refused once
+--     already in ADR-0049. Different owner, different lifetime, different column.
+--
+-- Lifetime, exactly: it is written ONLY by the Admin-facing apply that writes
+-- external_id (SetEntityExternalMatch), in the same statement, so the two can
+-- never disagree about which release-group the stored edition belongs under. An
+-- apply that names no edition — a picked search candidate, a pasted
+-- /release-group/ URL, a Cascade — writes the EMPTY string and so CLEARS any
+-- stored one: the Admin has just named a less specific thing, and a stale edition
+-- left under a new group would silently decorate the album from a stranger's
+-- tracklist. The enrichment pass's own write (WriteEntityEnrichment) never touches
+-- it, exactly as it never touches external_id_origin, so the pin survives every
+-- re-enrich it triggers.
+--
+-- Whose choice it is, is external_id_origin's answer, unchanged (ADR-0046): the
+-- edition rides with the record it refines. A non-empty release under a
+-- Locked() origin is an edition a human named.
+--
+-- No backfill. Every existing row keeps '', which reads as "no edition chosen" —
+-- the behavior of every album today — and the operator who already pasted a
+-- /release/ URL pastes it once more to record what the schema could not hold.
+ALTER TABLE entity_enrichment ADD COLUMN external_release_id TEXT NOT NULL DEFAULT '';

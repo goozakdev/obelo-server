@@ -289,3 +289,180 @@ describe("ApiClient Needs-Fixing show rows (file-matcher/07)", () => {
     expect(calls[0].init.method).toBe("POST");
   });
 });
+
+describe("ApiClient enrichment search narrowing (needs-fixing/06)", () => {
+  function stub() {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ candidates: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    return { urls, client: new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl }) };
+  }
+
+  it("sends artist and release as narrowing params for a music search", async () => {
+    const { urls, client } = stub();
+    await client.searchEnrichmentCandidates("t1", "(I Could Only) Whisper Your Name", {
+      artist: "Harry Connick, Jr.",
+      release: "She",
+      page: 0,
+    });
+    const url = new URL(urls[0], "http://x");
+    expect(url.pathname).toBe("/api/v1/titles/t1/enrichmentCandidates");
+    expect(url.searchParams.get("q")).toBe("(I Could Only) Whisper Your Name");
+    expect(url.searchParams.get("artist")).toBe("Harry Connick, Jr.");
+    expect(url.searchParams.get("release")).toBe("She");
+    // Page 0 is the default, so it stays out of the URL.
+    expect(url.searchParams.has("page")).toBe(false);
+  });
+
+  it("omits a blank artist/release, so the common URL is byte-for-byte unchanged", async () => {
+    // A video search sends neither, and a music search the Admin widened by clearing
+    // a box must send neither too — otherwise "blank widens" would narrow to "".
+    const { urls, client } = stub();
+    await client.searchEnrichmentCandidates("t1", "Arrival", { artist: "  ", release: "", page: 0 });
+    expect(urls[0]).toBe("/api/v1/titles/t1/enrichmentCandidates?q=Arrival");
+  });
+});
+
+// ADR-0051's client method — the app's FIRST call to POST /libraries/{id}/enrich.
+// Until this shipped, nothing in web/src invoked the endpoint at all, so the only
+// way an Admin could cause an enrichment pass was to scan, which fires the one
+// mode that cannot see a settled row.
+describe("ApiClient.enrichLibrary", () => {
+  async function captureRequest(
+    opts: Parameters<ApiClient["enrichLibrary"]>[1],
+    body: Record<string, unknown> = {},
+  ) {
+    let url = "";
+    let method = "";
+    const fetchImpl = (async (u: string, init: RequestInit) => {
+      url = u;
+      method = init.method ?? "GET";
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl });
+    const res = await client.enrichLibrary("lib 1", opts);
+    return { url, method, res };
+  }
+
+  it("POSTs ?mode=recheck for the recheck pass", async () => {
+    const { url, method } = await captureRequest({ mode: "recheck" });
+    expect(method).toBe("POST");
+    expect(url).toContain("/libraries/lib%201/enrich?mode=recheck");
+  });
+
+  it("sends no mode for the default only-new pass", async () => {
+    expect((await captureRequest({})).url).toMatch(/\/libraries\/lib%201\/enrich$/);
+    expect((await captureRequest({ mode: "new" })).url).toMatch(/\/enrich$/);
+  });
+
+  it("passes 'full' through, since the endpoint still has three modes", async () => {
+    expect((await captureRequest({ mode: "full" })).url).toContain("?mode=full");
+  });
+
+  it("resolves with the started-ack, not a summary — a pass is started, never awaited", async () => {
+    // ADR-0051's amendment. The POST returns 202 as soon as the pass is queued; the
+    // counts arrive later, on the SSE stream. A client that waited here is what let
+    // a page reload kill a fifteen-minute pass.
+    const { res } = await captureRequest(
+      { mode: "recheck" },
+      { libraryId: "lib1", state: "running", mode: "recheck", startedAt: "2026-09-01T12:00:00Z", started: true },
+    );
+    expect(res).toEqual({
+      libraryId: "lib1",
+      running: true,
+      mode: "recheck",
+      startedAt: "2026-09-01T12:00:00Z",
+      started: true,
+      progress: undefined,
+      lastPass: undefined,
+    });
+  });
+
+  it("reports started=false when a pass was ALREADY running, which is not an error", async () => {
+    const { res } = await captureRequest(
+      { mode: "recheck" },
+      { libraryId: "lib1", state: "running", mode: "recheck" },
+    );
+    expect(res.running).toBe(true);
+    expect(res.started).toBe(false);
+  });
+});
+
+describe("ApiClient.getEnrichPassState", () => {
+  async function readStatus(body: Record<string, unknown>) {
+    let url = "";
+    let method = "";
+    const fetchImpl = (async (u: string, init: RequestInit) => {
+      url = u;
+      method = init.method ?? "GET";
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl });
+    return { get: () => ({ url, method }), res: await client.getEnrichPassState("lib 1") };
+  }
+
+  it("GETs the same path the POST starts a pass on", async () => {
+    const { get } = await readStatus({ libraryId: "lib1", state: "idle" });
+    expect(get().method).toBe("GET");
+    expect(get().url).toMatch(/\/libraries\/lib%201\/enrich$/);
+  });
+
+  it("reads an idle library as not running", async () => {
+    const { res } = await readStatus({ libraryId: "lib1", state: "idle" });
+    expect(res.running).toBe(false);
+    expect(res.lastPass).toBeUndefined();
+  });
+
+  it("carries a running pass's progress, so a reloaded page can rejoin it", async () => {
+    const { res } = await readStatus({
+      libraryId: "lib1",
+      state: "running",
+      mode: "recheck",
+      progress: { total: 722, done: 13 },
+    });
+    expect(res.running).toBe(true);
+    expect(res.mode).toBe("recheck");
+    // The omitted counts fill in, exactly as they do for a summary.
+    expect(res.progress).toEqual({
+      total: 722,
+      done: 13,
+      matched: 0,
+      unmatched: 0,
+      failed: 0,
+      disabled: 0,
+      retrying: 0,
+    });
+  });
+
+  it("normalizes lastPass's omitted counts to 0, never undefined", async () => {
+    // "0 now matched" is the most important sentence the button can print
+    // (ADR-0051) — it must never render as "undefined now matched".
+    const { res } = await readStatus({
+      libraryId: "lib1",
+      state: "idle",
+      lastPass: { libraryId: "lib1", total: 3, mode: "recheck", finishedAt: "2026-09-01T12:05:00Z" },
+    });
+    expect(res.lastPass).toEqual({
+      libraryId: "lib1",
+      total: 3,
+      matched: 0,
+      unmatched: 0,
+      failed: 0,
+      disabled: 0,
+      retrying: 0,
+      mode: "recheck",
+      finishedAt: "2026-09-01T12:05:00Z",
+    });
+  });
+});

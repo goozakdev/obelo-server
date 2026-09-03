@@ -3,6 +3,7 @@ import {
   buildFixItems,
   episodeCode,
   fileStem,
+  hasProblem,
   releaseYear,
   searchableStem,
   type FixItem,
@@ -48,17 +49,28 @@ function reviewItem(f: ReviewFixture): NeedsReviewItem {
   return { needsReview: true, ambiguous: false, collidingPaths: [], ...f };
 }
 
+/** An enrichment-attention fixture may leave the REASON out, and it defaults to
+ * "" — which is a real state, not a hole: every row in a library that has not been
+ * re-passed since the server started recording one carries it, as does every
+ * outcome with no diagnosis to give. A test about a specific diagnosis opts in. */
+type EnrichmentFixture = Omit<EnrichmentAttentionTitle, "enrichmentReason"> &
+  Partial<Pick<EnrichmentAttentionTitle, "enrichmentReason">>;
+
+function enrichmentItem(f: EnrichmentFixture): EnrichmentAttentionTitle {
+  return { enrichmentReason: "", ...f };
+}
+
 function build(over: {
   unmatched?: UnmatchedFile[];
   needsReview?: ReviewFixture[];
-  enrichment?: EnrichmentAttentionTitle[];
+  enrichment?: EnrichmentFixture[];
   overrides?: MatchOverride[];
   showProblems?: ShowProblems[];
 }): FixItem[] {
   return buildFixItems({
     unmatched: over.unmatched ?? [],
     needsReview: (over.needsReview ?? []).map(reviewItem),
-    enrichment: over.enrichment ?? [],
+    enrichment: (over.enrichment ?? []).map(enrichmentItem),
     overrides: over.overrides ?? [],
     showProblems: over.showProblems ?? [],
   });
@@ -176,6 +188,98 @@ describe("buildFixItems — stating the problem", () => {
     expect(rows[0].problemText).toMatch(/no record/i);
     expect(rows[1].problemText).toMatch(/failed/i);
   });
+
+  // ADR-0050. A track reaches this queue four genuinely different ways wanting four
+  // different actions, and before the reason column all four rendered one sentence
+  // that told the Admin nothing the row's existence had not. These assertions are
+  // about the ACTION each sentence names, not its wording: what makes the column
+  // worth a migration is that `album-unmatched` sends the Admin to the ALBUM while
+  // `search-no-match` sends them to a recording picker.
+  const track = (enrichmentReason: string, albumTitle = "OK Computer") => ({
+    ...emptyContext,
+    id: "t",
+    kind: "track",
+    title: "Airbag",
+    year: 0,
+    artistName: "Radiohead",
+    albumTitle,
+    enrichmentStatus: "unmatched" as const,
+    enrichmentReason,
+  });
+
+  it("sends the largest bucket to the ALBUM, by name, and not to a recording search", () => {
+    // 365 of the developer's 730 unmatched tracks. Every one of them used to be
+    // offered a per-track recording search that could not have fixed any of them:
+    // the album is what has no record, and matching it resolves all of its tracks
+    // from the album's own track list.
+    const [row] = build({ enrichment: [track("album-unmatched")] });
+    expect(row.problemText).toContain("OK Computer");
+    expect(row.problemText).toMatch(/album/i);
+    expect(row.problemText).toMatch(/fix the album/i);
+    // And not the generic sentence, which claims the PROVIDER had no record for
+    // this track's name — a different, and here untrue, statement.
+    expect(row.problemText).not.toMatch(/no record for this name/i);
+  });
+
+  it("names the album even when the row does not carry its title", () => {
+    // The breadcrumb is empty for a track whose album context the server could not
+    // supply. The sentence still has to read, and still has to point at the album.
+    const [row] = build({ enrichment: [track("album-unmatched", "")] });
+    expect(row.problemText).toMatch(/this track.s album/i);
+    expect(row.problemText).toMatch(/fix the album/i);
+  });
+
+  it("blames the RELEASE when the album matched but its track list has no room", () => {
+    const [row] = build({ enrichment: [track("not-in-tracklist")] });
+    expect(row.problemText).toMatch(/track list/i);
+    expect(row.problemText).toMatch(/wrong edition|release/i);
+  });
+
+  it("blames the ID, not the name, when an exact recording id resolved to nothing", () => {
+    // The distinguishing claim: searching by name is the wrong offer here, because
+    // the name was never what failed.
+    const [row] = build({ enrichment: [track("tag-id-unresolved")] });
+    expect(row.problemText).toMatch(/id/i);
+    expect(row.problemText).toMatch(/retag/i);
+    expect(row.problemText).not.toMatch(/album/i);
+  });
+
+  it("tells an empty search apart from a rejected near miss", () => {
+    // Both end the pass identically in every column but this one. They are different
+    // things to tell an Admin: "MusicBrainz has nothing under this title" versus
+    // "something came back and was refused rather than stored blind, so the right
+    // answer is probably in the picker's list".
+    const [empty] = build({ enrichment: [track("search-no-match")] });
+    const [rejected] = build({ enrichment: [track("search-rejected")] });
+    expect(empty.problemText).not.toBe(rejected.problemText);
+    expect(empty.problemText).toMatch(/nothing came back/i);
+    expect(rejected.problemText).toMatch(/none of their titles matched/i);
+    expect(rejected.problemText).toMatch(/probably in the list/i);
+  });
+
+  it("falls back to the generic sentence for a blank or unrecognized reason", () => {
+    // The two degradations that must both work: a library not re-passed since the
+    // column shipped carries "", and a newer server may send a value this build has
+    // never heard of. Neither may blank the row or throw — both render exactly what
+    // this screen said before the reason existed.
+    const generic = build({
+      enrichment: [{ ...emptyContext, id: "m", kind: "movie", title: "A", year: 0,
+        enrichmentStatus: "unmatched" as const }],
+    })[0].problemText;
+    expect(build({ enrichment: [track("")] })[0].problemText).toBe(generic);
+    expect(build({ enrichment: [track("some-future-reason")] })[0].problemText).toBe(generic);
+  });
+
+  it("keeps the provider-error sentence for a failed row, whatever reason it carries", () => {
+    // A 'failed' row is ADR-0048's territory: the provider refused or the trouble has
+    // outlived a day of retries. Its reason column is stale by construction (a
+    // transient failure never rewrites it), so the status has to win.
+    const [row] = build({
+      enrichment: [{ ...track("album-unmatched"), enrichmentStatus: "failed" as const }],
+    });
+    expect(row.problemText).toMatch(/failed/i);
+    expect(row.problemText).not.toMatch(/fix the album/i);
+  });
 });
 
 describe("buildFixItems — choosing the fix route", () => {
@@ -231,6 +335,51 @@ describe("buildFixItems — choosing the fix route", () => {
       ],
     });
     expect(row.route).toBe("none");
+  });
+
+  it("seeds a track's search with the TRACK, and carries the album as a narrowing term", () => {
+    // The opposite of the Episode rule, and reading that rule onto music was the bug
+    // (ADR-0050, needs-fixing/06): a Track row searches MusicBrainz /recording, whose
+    // subject is the recording, so seeding it with the album searched for every
+    // recording ever called "She". The album narrows; it does not name the thing.
+    const [row] = build({
+      enrichment: [
+        {
+          ...emptyContext,
+          id: "t",
+          kind: "track",
+          title: "(I Could Only) Whisper Your Name",
+          year: 0,
+          enrichmentStatus: "unmatched",
+          artistName: "Harry Connick, Jr.",
+          albumTitle: "She",
+          trackNumber: 5,
+        },
+      ],
+    });
+    expect(row.searchSeed).toBe("(I Could Only) Whisper Your Name");
+    expect(row.artistScope).toBe("Harry Connick, Jr.");
+    expect(row.albumScope).toBe("She");
+  });
+
+  it("gives a video row no narrowing axis at all, so its picker shows no boxes", () => {
+    const [row] = build({
+      enrichment: [
+        {
+          ...emptyContext,
+          id: "m",
+          kind: "movie",
+          title: "Arrival",
+          year: 2016,
+          enrichmentStatus: "unmatched",
+        },
+      ],
+    });
+    expect(row.searchSeed).toBe("Arrival");
+    // undefined, not "": a blank box is a music row the Admin can still narrow by
+    // hand, while no box at all is a kind with no artist or release axis.
+    expect(row.artistScope).toBeUndefined();
+    expect(row.albumScope).toBeUndefined();
   });
 
   it("seeds an episode's search with its SHOW, because that is what the provider resolves", () => {
@@ -977,6 +1126,249 @@ describe("buildFixItems — a file that cannot be read", () => {
     });
     expect(rows.some((r) => r.problem === "unreadable")).toBe(true);
     expect(rows.some((r) => r.problem === "unassigned")).toBe(true);
+  });
+});
+
+describe("buildFixItems — one row per Album", () => {
+  // Braveheart, measured (ADR-0050, album-resolves-its-tracks/09). 557 flagged
+  // tracks in the developer's library were 90 album problems; that one album alone
+  // was 18 identical rows, every one of them saying "fix the album's match" and
+  // every one of them offering a RECORDING search that cannot perform it.
+  //
+  // The collapse is deliberately NARROWER than the Show one. There, every
+  // episode-level row folded because re-picking the series was inert for all of
+  // them. Here a `search-no-match` / `search-rejected` / `tag-id-unresolved` track
+  // is genuinely fixed by picking a recording on its own row, so folding those in
+  // would take a working action away — which is the assertion this whole suite
+  // exists around.
+
+  const albumTrack = (
+    id: string,
+    enrichmentReason: string,
+    over: Partial<EnrichmentAttentionTitle> = {},
+  ): EnrichmentFixture => ({
+    ...emptyContext,
+    id,
+    kind: "track",
+    title: `Track ${id}`,
+    year: 0,
+    enrichmentStatus: "unmatched",
+    enrichmentReason,
+    artistName: "James Horner",
+    albumTitle: "Braveheart",
+    albumId: "al-bh",
+    path: `/media/music/James Horner/Braveheart/${id}.flac`,
+    ...over,
+  });
+
+  it("collapses one album's album-scoped rows into a single Album row that counts them", () => {
+    const rows = build({
+      enrichment: [
+        albumTrack("1", "album-unmatched"),
+        albumTrack("2", "album-unmatched"),
+        albumTrack("3", "album-unmatched"),
+      ],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("album");
+    expect(rows[0].key).toBe("album:al-bh");
+    // The count is in the HEADING, because the collapse's only real risk is making
+    // a pile of eighteen look like one problem.
+    expect(rows[0].name).toBe("Braveheart · 3 tracks have no metadata match");
+    expect(rows[0].breadcrumb).toEqual(["James Horner"]);
+    expect(rows[0].artworkUrl).toBe("/api/v1/albums/al-bh/artwork/cover");
+    expect(rows[0].path).toBe("/media/music/James Horner/Braveheart/1.flac");
+  });
+
+  it("collapses per album, never across albums", () => {
+    // The measured ratio in miniature: N tracks over M albums are M rows, not one
+    // and not N.
+    const rows = build({
+      enrichment: [
+        albumTrack("1", "album-unmatched"),
+        albumTrack("2", "not-in-tracklist", { albumId: "al-ok", albumTitle: "OK Computer" }),
+        albumTrack("3", "album-unmatched"),
+        albumTrack("4", "not-in-tracklist", { albumId: "al-ok", albumTitle: "OK Computer" }),
+      ],
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.key)).toEqual(["album:al-bh", "album:al-ok"]);
+    expect(rows[0].name).toBe("Braveheart · 2 tracks have no metadata match");
+    expect(rows[1].name).toBe("OK Computer · 2 tracks have no metadata match");
+  });
+
+  it("does NOT collapse a reason the per-track picker can actually fix", () => {
+    // The central distinction. These three rows each offer a recording search that
+    // works; folding them into an album row would replace a working action with one
+    // that cannot reach their problem.
+    const rows = build({
+      enrichment: [
+        albumTrack("a", "search-no-match"),
+        albumTrack("b", "search-rejected"),
+        albumTrack("c", "tag-id-unresolved"),
+      ],
+    });
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.kind)).toEqual(["track", "track", "track"]);
+    expect(rows.map((r) => r.route)).toEqual([
+      "enrichment-override",
+      "enrichment-override",
+      "enrichment-override",
+    ]);
+    // Each still searches for its own RECORDING, narrowed by artist and album.
+    expect(rows.map((r) => r.searchSeed)).toEqual(["Track a", "Track b", "Track c"]);
+    expect(rows[0].albumScope).toBe("Braveheart");
+    expect(rows[0].titleId).toBe("a");
+  });
+
+  it("does NOT collapse a blank reason — an un-re-passed library behaves exactly as before", () => {
+    // Every row in a library not re-passed since the reason column shipped carries
+    // "". A collapse driven by a diagnosis nobody made would rewrite that library's
+    // whole queue on an assumption.
+    const blank = build({ enrichment: [albumTrack("1", ""), albumTrack("2", "")] });
+    expect(blank).toHaveLength(2);
+    expect(blank.map((r) => r.kind)).toEqual(["track", "track"]);
+    expect(blank[0].problemText).toMatch(/no record for this name/i);
+    // And the same for a value this build has never heard of.
+    const future = build({ enrichment: [albumTrack("1", "some-future-reason")] });
+    expect(future).toHaveLength(1);
+    expect(future[0].kind).toBe("track");
+  });
+
+  it("folds only the album-scoped rows out of a mixed album", () => {
+    const rows = build({
+      enrichment: [
+        albumTrack("1", "album-unmatched"),
+        albumTrack("2", "search-no-match"),
+        albumTrack("3", "album-unmatched"),
+      ],
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0].kind).toBe("album");
+    expect(rows[0].name).toBe("Braveheart · 2 tracks have no metadata match");
+    expect(rows[1].kind).toBe("track");
+    expect(rows[1].titleId).toBe("2");
+  });
+
+  it("leads with the album-unmatched sentence when it holds both reasons, and still counts both", () => {
+    const [row] = build({
+      enrichment: [
+        albumTrack("1", "not-in-tracklist"),
+        albumTrack("2", "album-unmatched"),
+        albumTrack("3", "album-unmatched"),
+      ],
+    });
+    // album-unmatched outranks not-in-tracklist: no record at all is further from
+    // fixed than a record of the wrong edition.
+    expect(row.problemText).toMatch(/^The album Braveheart has no metadata match/);
+    expect(row.problemText).toContain("2 tracks are waiting on that match");
+    expect(row.problemText).toContain("1 track is missing from the track list");
+    expect(row.name).toBe("Braveheart · 3 tracks have no metadata match");
+  });
+
+  it("blames the wrong edition when that is all it holds", () => {
+    const [row] = build({
+      enrichment: [albumTrack("1", "not-in-tracklist"), albumTrack("2", "not-in-tracklist")],
+    });
+    expect(row.problemText).toMatch(/wrong edition/i);
+    expect(row.problemText).toContain("2 tracks are not on that release’s track list");
+    expect(row.problemText).toMatch(/fix the album’s match/i);
+  });
+
+  it("offers the ALBUM search the sentence has always named: album kind, album seed, artist narrowing", () => {
+    // The gesture the row names is now the gesture the row offers. A track row
+    // searches recordings and carries the album as a narrowing term; this searches
+    // albums, so the album is the SUBJECT and there is no release axis to narrow by.
+    const [row] = build({ enrichment: [albumTrack("1", "album-unmatched")] });
+    expect(row.route).toBe("album-enrichment-override");
+    expect(row.albumId).toBe("al-bh");
+    expect(row.searchSeed).toBe("Braveheart");
+    expect(row.artistScope).toBe("James Horner");
+    expect(row.albumScope).toBeUndefined();
+    // It applies to the ALBUM, not to any one Title.
+    expect(row.titleId).toBe("");
+    expect(row.detailPath).toBe("/music/albums/al-bh");
+    expect(row.canDismiss).toBe(false);
+  });
+
+  it("discloses the track rows it collapsed, each still applying to its own track", () => {
+    // The cascade declines a track the picked release cannot place (ADR-0050), so
+    // the collapsed rows must stay reachable without a recheck pass.
+    const [row] = build({
+      enrichment: [albumTrack("1", "album-unmatched"), albumTrack("2", "not-in-tracklist")],
+    });
+    const children = row.children ?? [];
+    expect(children.map((c) => c.key)).toEqual(["enrichment:1", "enrichment:2"]);
+    expect(children.map((c) => c.kind)).toEqual(["track", "track"]);
+    expect(children.map((c) => c.route)).toEqual([
+      "enrichment-override",
+      "enrichment-override",
+    ]);
+    expect(children.map((c) => c.titleId)).toEqual(["1", "2"]);
+    expect(children[0].searchSeed).toBe("Track 1");
+    // And each keeps the per-track sentence, which is a different claim from the
+    // album row's: it is about THIS track's place on the release.
+    expect(children[1].problemText).toMatch(/not on that release’s track list/i);
+  });
+
+  it("keeps its place in the queue's most-stuck ordering rather than floating to one end", () => {
+    const rows = build({
+      unmatched: [{ id: "u", path: "/m/1080p.mkv", folderPath: "/m", reason: "" }],
+      enrichment: [
+        { ...emptyContext, id: "mA", kind: "movie", title: "A", year: 0, enrichmentStatus: "unmatched" },
+        albumTrack("1", "album-unmatched"),
+        { ...emptyContext, id: "mB", kind: "movie", title: "B", year: 0, enrichmentStatus: "unmatched" },
+      ],
+    });
+    expect(rows.map((r) => r.key)).toEqual([
+      "unmatched:u",
+      "enrichment:mA",
+      "album:al-bh",
+      "enrichment:mB",
+    ]);
+  });
+
+  it("leaves a track whose album the server could not name as its own row", () => {
+    // There is nothing to collapse INTO: the row's whole action is a search-and-pin
+    // against an album entity, and without an id there is no entity to pin.
+    const rows = build({ enrichment: [albumTrack("1", "album-unmatched", { albumId: "" })] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("track");
+    expect(rows[0].route).toBe("enrichment-override");
+  });
+
+  it("leaves a FAILED row alone, whatever reason it still carries", () => {
+    // A provider refusing requests is not a diagnosis about the album (ADR-0048),
+    // and hiding it behind an album pick would promise a fix that cannot work.
+    const rows = build({
+      enrichment: [albumTrack("1", "album-unmatched", { enrichmentStatus: "failed" })],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("track");
+    expect(rows[0].problemText).toMatch(/failed/i);
+  });
+
+  it("carries exactly the no-metadata class, so the chips keep agreeing with the queue", () => {
+    // The chips count rows and filter rows. An Album row that claimed a class it
+    // does not hold — or held one it does not claim — would make the "No metadata"
+    // chip disagree with the list it filters, which is the one thing the collapse
+    // must not do.
+    const rows = build({
+      enrichment: [
+        albumTrack("1", "album-unmatched"),
+        albumTrack("2", "album-unmatched"),
+        albumTrack("3", "search-no-match"),
+      ],
+    });
+    expect(rows.filter((r) => hasProblem(r, "no-metadata"))).toHaveLength(rows.length);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].problems).toEqual(["no-metadata"]);
+  });
+
+  it("says one track in the singular", () => {
+    const [row] = build({ enrichment: [albumTrack("1", "album-unmatched")] });
+    expect(row.name).toBe("Braveheart · 1 track has no metadata match");
+    expect(row.problemText).toContain("1 track is waiting on it");
   });
 });
 

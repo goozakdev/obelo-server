@@ -26,6 +26,12 @@ type entityOverrideJSON struct {
 	ExternalID string `json:"externalId"`
 	Source     string `json:"source,omitempty"`
 	Status     string `json:"status,omitempty"`
+	// ReleaseID is the exact EDITION an Admin named for an Album (ADR-0052), "" when
+	// nobody named one. It is the stored fact — store.EntityEnrichment.ChosenReleaseID,
+	// which asks whether a HUMAN chose it rather than whether the column is non-empty
+	// — and it is here so the edition picker can mark which edition is the Admin's own
+	// choice rather than the system's guess. Every other parent kind leaves it empty.
+	ReleaseID string `json:"releaseId,omitempty"`
 }
 
 // entityEnrichmentDetailJSON is the compact parent-enrichment detail the parent
@@ -85,7 +91,8 @@ func entityOverride(e store.EntityEnrichment) *entityOverrideJSON {
 	if !e.ExternalIDOrigin.Locked() || e.ExternalID == "" {
 		return nil
 	}
-	return &entityOverrideJSON{ExternalID: e.ExternalID, Source: e.Source, Status: e.Status}
+	return &entityOverrideJSON{ExternalID: e.ExternalID, Source: e.Source, Status: e.Status,
+		ReleaseID: e.ChosenReleaseID()}
 }
 
 // buildEntityDetail assembles a parent's enrichment detail (fields + lockedFields +
@@ -191,7 +198,13 @@ func handleEntityEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Serv
 			writeError(w, http.StatusBadRequest, codeBadRequest, "externalId is required", nil)
 			return
 		}
-		err := enrichSvc.ApplyEntityOverride(r.Context(), entityType, entityID, externalID)
+		// releaseId is the exact EDITION the Admin named, when they named one — the
+		// release a pasted /release/ URL points at, which the preview resolved to its
+		// parent release-group and carried back beside it (ADR-0052). Absent means "no
+		// edition", which is also what CLEARS a previously chosen one: a picked search
+		// candidate and a pasted /release-group/ URL both name a less specific thing.
+		err := enrichSvc.ApplyEntityOverride(r.Context(), entityType, entityID,
+			enrich.EntityPin{ExternalID: externalID, ReleaseID: strings.TrimSpace(req.ReleaseID)})
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)

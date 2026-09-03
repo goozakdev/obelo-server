@@ -269,6 +269,24 @@ func WithArtworkCandidateCacheTTL(d time.Duration) Option {
 	return func(b *builder) { b.cfg.ArtworkCandidateCacheTTL = d }
 }
 
+// WithoutEnrichWorker boots a server with NO background enrich worker, so nothing
+// ever drains the enrich queue. It is the only way to reach the state
+// POST /libraries/{id}/enrich must report plainly instead of accepting and
+// forgetting (ADR-0051's amendment): a press that can never become a pass. No
+// configuration produces it on a running server — which is exactly why the branch
+// needs a seam, because until it had one the endpoint's answer for that state had
+// never been seen by anybody.
+func WithoutEnrichWorker() Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithoutEnrichWorker()) }
+}
+
+// WithEnrichQueueCapacity sets how many background Enrichment passes may wait for
+// the worker (default 64). A test sets it to 1 so the queue-FULL refusal is three
+// requests away instead of sixty-six.
+func WithEnrichQueueCapacity(n int) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithEnrichQueueCapacity(n)) }
+}
+
 // WithMetadataProvider injects a fake Enrichment MetadataProvider (no network).
 func WithMetadataProvider(p enrich.MetadataProvider) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMetadataProvider(p)) }
@@ -774,6 +792,37 @@ func (s *Server) RefreshRotationKeys() {
 	if err := s.app.RefreshRotationKeysNow(context.Background()); err != nil {
 		s.t.Fatalf("testharness: refreshing rotation keys: %v", err)
 	}
+}
+
+// AwaitEnrichPass blocks until no background Enrichment pass is in flight for the
+// Library, and fails the test if that takes longer than a generous deadline.
+//
+// It is the deterministic counterpart of "the request used to return when the
+// pass was done". A pass is STARTED now (ADR-0051's amendment: POST returns 202
+// at once), so a test that asserts on what a pass DID has to wait for it — and
+// the honest way to wait is on the pass's own settled signal, which is the same
+// `done` affordance scanner.StartScan takes. The alternative, polling the status
+// route on a timer, is a sleep wearing a hat: it passes on a fast box and flakes
+// on a slow one.
+//
+// Calling it on an idle Library returns immediately, so it is also the way to say
+// "let any background pass finish before I start mine".
+func (s *Server) AwaitEnrichPass(libraryID string) {
+	s.t.Helper()
+	select {
+	case <-s.app.EnrichPassSettled(libraryID):
+	case <-time.After(60 * time.Second):
+		s.t.Fatalf("testharness: enrichment pass of %q did not finish within 60s", libraryID)
+	}
+}
+
+// EnrichPassRunning reports whether a background Enrichment pass is in flight for
+// the Library, without waiting. It exists for the one assertion the HTTP surface
+// cannot make about itself: that a handler RETURNED while its pass was still
+// going, which is the entire point of ADR-0051's amendment.
+func (s *Server) EnrichPassRunning(libraryID string) bool {
+	s.t.Helper()
+	return s.app.EnrichPassStatus(libraryID).Running
 }
 
 // HoldLibraryScanLock claims a Library's per-Library scan lock (ADR-0031) and

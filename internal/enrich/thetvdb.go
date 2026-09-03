@@ -355,7 +355,7 @@ func (p *TheTVDBProvider) login(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("enrich: thetvdb login: status %d", resp.StatusCode)
+		return "", statusError("thetvdb", "login", resp.StatusCode)
 	}
 	var out struct {
 		Data struct {
@@ -363,7 +363,7 @@ func (p *TheTVDBProvider) login(ctx context.Context) (string, error) {
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("enrich: decoding thetvdb login: %w", err)
+		return "", decodeError("thetvdb login", err)
 	}
 	if strings.TrimSpace(out.Data.Token) == "" {
 		return "", fmt.Errorf("enrich: thetvdb login returned no token")
@@ -397,7 +397,7 @@ func (p *TheTVDBProvider) getJSON(ctx context.Context, path string, q url.Values
 		req.Header.Set("Authorization", "Bearer "+tok)
 		resp, err := p.client().Do(req)
 		if err != nil {
-			return fmt.Errorf("enrich: thetvdb request: %w", err)
+			return requestError("thetvdb", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
 			resp.Body.Close()
@@ -410,12 +410,12 @@ func (p *TheTVDBProvider) getJSON(ctx context.Context, path string, q url.Values
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
-			return fmt.Errorf("enrich: thetvdb %s: status %d", path, resp.StatusCode)
+			return statusError("thetvdb", path, resp.StatusCode)
 		}
 		err = json.NewDecoder(resp.Body).Decode(out)
 		resp.Body.Close()
 		if err != nil {
-			return fmt.Errorf("enrich: decoding thetvdb response: %w", err)
+			return decodeError("thetvdb", err)
 		}
 		return nil
 	}

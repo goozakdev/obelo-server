@@ -19,25 +19,147 @@ import (
 type EnrichSelect int
 
 const (
-	// EnrichPending selects only Titles never successfully enriched
-	// (enrichment_status='pending') — the only-new pass + the auto-after-scan path.
+	// EnrichPending selects the Titles an only-new pass should look at: those never
+	// successfully enriched ('pending'), plus those whose last failure was transient
+	// and has come due for a retry (ADR-0048). The auto-after-scan and sweep paths.
 	EnrichPending EnrichSelect = iota
 	// EnrichAll selects every visible Title for a full refresh (still unlocked-only).
 	EnrichAll
+	// EnrichRecheck selects everything EnrichPending does PLUS the SETTLED
+	// NON-ANSWERS — 'unmatched', and 'failed' with no scheduled retry (ADR-0051).
+	// It is what an operator asks for after a matching improvement ships: the
+	// population that is stale relative to a CODE CHANGE, which is a strictly
+	// smaller set than EnrichAll and a strictly larger one than EnrichPending.
+	//
+	// It deliberately excludes 'matched' (nothing to re-ask), 'disabled' (the
+	// Library's policy answered, not the provider), and a 'failed' row whose retry
+	// is still in the future — that one is IN-FLIGHT work owned by the server
+	// (ADR-0048), and re-asking it early would erase the distinction between "the
+	// provider had no record" and "we could not reach the provider".
+	EnrichRecheck
 )
+
+// EnrichRetryEscalateAfter is how many consecutive failed lookups an item may
+// accumulate before it appears on the Admin's attention list ALONGSIDE still being
+// retried (ADR-0048). It is the length of the enrich package's backoff schedule:
+// an item escalates exactly when its backoff has reached the daily ceiling, i.e.
+// when the failure has outlived every timescale a blip plausibly lasts.
+//
+// Escalating does not stop the retries. The item is surfaced because six straight
+// failures is worth an Admin's attention, not because the server has given up —
+// if the cause clears on its own, the next pass settles it and it leaves the list
+// with nobody having touched it.
+const EnrichRetryEscalateAfter = 6
+
+// clearEnrichmentRetry is the SET fragment that drops a row's retry bookkeeping
+// (ADR-0048). Every statement that SETTLES a Title — matched, unmatched, disabled
+// — or hands it back to the pass as 'pending' includes it, so exactly one rule
+// governs when a failure streak survives: only a transient failure keeps it, and
+// only SetTitleEnrichmentRetry writes one.
+const clearEnrichmentRetry = `enrichment_attempts = 0, enrichment_retry_at = ''`
+
+// The closed set of values titles.enrichment_reason may hold (ADR-0050). Each one
+// names a DIFFERENT next action, which is the whole reason the column exists: a
+// row that only says "no metadata match" tells the Admin nothing they did not
+// already know from its presence on the list.
+//
+// It is a closed enum rather than free text so the copy lives in the client with
+// the rest of the copy, and so no failure path can invent a category nothing
+// renders. Every reader must treat an UNRECOGNIZED value exactly as it treats the
+// empty one — that is what lets a later value ship without breaking an older
+// client, and what lets a library that has not been re-passed since migration 0056
+// keep rendering the sentence it rendered before.
+const (
+	// EnrichmentReasonNone is the absence of a diagnosis, and the value written by
+	// every settled outcome that has none to offer: a match, an Admin's re-pin, an
+	// orphaned provider override, a Movie or an Episode (the set is Music-shaped),
+	// and any Title settled before this column existed. It is written EXPLICITLY on
+	// those paths rather than left alone, because a reason that outlives the failure
+	// it described is worse than no reason at all.
+	EnrichmentReasonNone = ""
+	// EnrichmentReasonAlbumUnmatched — the Album this Track hangs under has no record
+	// of its own (never matched, no usable tags), so it could name none of its
+	// contents. The action is to fix the ALBUM, not to pick a recording for this one
+	// Track: this is the single largest bucket in a real library (365 of 730), and
+	// every one of those rows used to send the Admin to a per-track search box.
+	EnrichmentReasonAlbumUnmatched = "album-unmatched"
+	// EnrichmentReasonNotInTracklist — the Album matched, its release's tracklist was
+	// read, and the ADR-0050 match rule found no room in it for this Track. The
+	// Album is then probably pinned to the WRONG RELEASE (a remaster, a deluxe
+	// edition, a different pressing), which is a diagnosis with an obvious action.
+	EnrichmentReasonNotInTracklist = "not-in-tracklist"
+	// EnrichmentReasonTagIDUnresolved — an EXACT recording id was available and the
+	// provider had no recording behind it. Usually the file's own musicbrainz
+	// recording tag (ADR-0049); also a stored record id that has since gone away, and
+	// a tracklist-supplied id the provider then declined. In every case the id is the
+	// broken part, so the action is to fix what asserts it rather than to search.
+	EnrichmentReasonTagIDUnresolved = "tag-id-unresolved"
+	// EnrichmentReasonSearchNoMatch — no id anywhere, so the pass fell back to a
+	// name+artist search, and the search came back empty. The honest last resort
+	// failed; a human picks the recording.
+	EnrichmentReasonSearchNoMatch = "search-no-match"
+	// EnrichmentReasonSearchRejected — the search DID return something and the top
+	// hit failed the title check (ADR-0050), so it was refused rather than stored as
+	// a confident wrong answer. Distinct from the empty result because it means
+	// something close exists and a human should look at it.
+	EnrichmentReasonSearchRejected = "search-rejected"
+)
+
+// clearEnrichmentReason is the SET fragment that drops a Title's settled-failure
+// diagnosis (ADR-0050). It is the twin of clearEnrichmentRetry and is included by
+// every statement that MATCHES a Title or hands it back to the pass as 'pending' —
+// the two moments at which the failure a reason described has stopped being true.
+//
+// It is deliberately NOT folded into clearEnrichmentRetry: that fragment is also
+// used on entity_enrichment, which carries no reason column, and merging the two
+// would make one of the sites fail to compile for the wrong reason.
+const clearEnrichmentReason = `enrichment_reason = ''`
+
+// retryDueClause matches a 'failed' Title whose scheduled retry has come due. A
+// row is due when it carries a retry instant at all (non-empty = "we intend to try
+// again") and that instant is not in the future. Timestamps are RFC3339 UTC, which
+// sorts lexicographically, so a string comparison is a chronological one.
+const retryDueClause = `(enrichment_status = 'failed'
+	    AND enrichment_retry_at <> '' AND enrichment_retry_at <= ?)`
+
+// settledNonAnswerClause matches a Title whose Enrichment SETTLED without a
+// record and which nothing is coming back for on its own (ADR-0051): the provider
+// answered "no such record" ('unmatched'), or it refused the request permanently
+// ('failed' with no retry scheduled). These are exactly the rows a matching
+// improvement can newly resolve and which no ordinary pass will ever revisit.
+//
+// It is the SQL half of enrich.settledNonAnswer, and the two must agree — the
+// Movie path selects its leaves with this query while the TV/Music paths walk
+// their parent trees calling that function (see shouldProcessLeaf's comment).
+const settledNonAnswerClause = `(enrichment_status = 'unmatched'
+	    OR (enrichment_status = 'failed' AND enrichment_retry_at = ''))`
 
 // TitlesForEnrichment returns the visible (non-hidden) Titles of a Library that
 // a pass should consider, oldest-added first for a stable order. Hidden
 // (all-Files-Missing) Titles are skipped — enrichment doesn't spend calls on
 // soft-deleted media (ADR-0008); they re-enter as 'pending' when they return.
-func (db *DB) TitlesForEnrichment(libraryID string, sel EnrichSelect) ([]Title, error) {
+//
+// now is the clock the retry window is measured against, supplied by the caller
+// so a pass and its tests agree on "due" (the service owns the clock; the store
+// only compares).
+func (db *DB) TitlesForEnrichment(libraryID string, sel EnrichSelect, now time.Time) ([]Title, error) {
 	where := "library_id = ? AND hidden = 0"
-	if sel == EnrichPending {
-		where += " AND enrichment_status = 'pending'"
+	args := []any{libraryID}
+	switch sel {
+	case EnrichPending:
+		where += " AND (enrichment_status = 'pending' OR " + retryDueClause + ")"
+		args = append(args, now.UTC().Format(time.RFC3339))
+	case EnrichRecheck:
+		// The only-new population PLUS the settled non-answers (ADR-0051). Written as
+		// EnrichPending's clause with one more alternative rather than as its own
+		// query, so a recheck can never select LESS than an only-new pass would.
+		where += " AND (enrichment_status = 'pending' OR " + retryDueClause +
+			" OR " + settledNonAnswerClause + ")"
+		args = append(args, now.UTC().Format(time.RFC3339))
 	}
 	rows, err := db.Query(
 		`SELECT `+enrichedTitleColumns+`
-		   FROM titles WHERE `+where+` ORDER BY added_at, id`, libraryID)
+		   FROM titles WHERE `+where+` ORDER BY added_at, id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: selecting titles for enrichment: %w", err)
 	}
@@ -165,7 +287,7 @@ func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch, origin Reco
 		     enrichment_id_origin = CASE WHEN ? = 1 THEN ? ELSE enrichment_id_origin END,
 		     enrichment_season  = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_season END,
 		     enrichment_episode = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_episode END,
-		     enrichment_status = 'pending'
+		     enrichment_status = 'pending', `+clearEnrichmentRetry+`, `+clearEnrichmentReason+`
 		   WHERE id = ?`,
 		m.TMDBID, m.TMDBID, m.IMDBID, m.IMDBID, m.MusicbrainzID, m.MusicbrainzID,
 		setOrigin, string(origin),
@@ -201,19 +323,41 @@ func (db *DB) TitleForEnrichmentByID(titleID string) (Title, error) {
 }
 
 // TitlesNeedingMatch returns the visible Titles of a Library whose Enrichment
-// could not settle on a record — enrichment_status 'unmatched' or 'failed' — the
-// Admin attention surface for hand-matching (CONTEXT.md). It is deliberately
-// distinct from the identity Unmatched files (recognized media with no Title) and
-// from needs-review Titles; here the Title browses fine but its descriptive
-// metadata is missing. Hidden (all-Files-Missing) Titles are excluded; ordered by
-// sort title for a stable list.
+// could not settle on a record — the Admin attention surface for hand-matching
+// (CONTEXT.md). It is deliberately distinct from the identity Unmatched files
+// (recognized media with no Title) and from needs-review Titles; here the Title
+// browses fine but its descriptive metadata is missing. Hidden (all-Files-Missing)
+// Titles are excluded; ordered by sort title for a stable list.
+//
+// Three populations qualify (ADR-0048):
+//
+//   - 'unmatched' — the provider answered and had no record. No ordinary pass
+//     will revisit it: an only-new pass looks only at 'pending' and due retries.
+//     What changes it is a HUMAN choosing a record, or a BETTER QUESTION — an
+//     improvement to how the pass resolves this kind of item, adopted by a
+//     ModeRecheck pass (ADR-0051, EnrichRecheck above). This comment used to say
+//     "nothing but a human will change that", and that sentence is what made
+//     ADR-0050's work unreachable: seven slices improved music matching and no
+//     mode existed that would re-ask the 722 rows they were written for.
+//   - 'failed' with no scheduled retry — a permanent provider error (a rejected
+//     key, a malformed request). Parked, exactly as every failure used to be.
+//   - 'failed' with a retry scheduled but EnrichRetryEscalateAfter consecutive
+//     failures behind it. Still being retried, but long enough that the Admin
+//     should know. Leaving these off the list entirely would trade one silent
+//     failure mode (parked forever) for another (retrying forever, invisibly).
+//
+// A transient failure below the escalation threshold is deliberately absent: it is
+// in-flight work, not an attention item, and putting it here would fill the queue
+// with rows that clear themselves before anyone reads them.
 func (db *DB) TitlesNeedingMatch(libraryID string) ([]Title, error) {
 	rows, err := db.Query(
 		`SELECT `+enrichedTitleColumns+`
 		   FROM titles
 		  WHERE library_id = ? AND hidden = 0
-		    AND enrichment_status IN ('unmatched', 'failed')
-		  ORDER BY sort_title, id`, libraryID)
+		    AND (enrichment_status = 'unmatched'
+		         OR (enrichment_status = 'failed'
+		             AND (enrichment_retry_at = '' OR enrichment_attempts >= ?)))
+		  ORDER BY sort_title, id`, libraryID, EnrichRetryEscalateAfter)
 	if err != nil {
 		return nil, fmt.Errorf("store: selecting titles needing match: %w", err)
 	}
@@ -229,16 +373,70 @@ func (db *DB) TitlesNeedingMatch(libraryID string) ([]Title, error) {
 	return out, rows.Err()
 }
 
-// SetTitleEnrichmentStatus records a terminal non-matched outcome for a Title
-// (unmatched / failed / disabled) without touching its descriptive fields — the
-// Title keeps whatever metadata it had and stays browsable (graceful
-// degradation, ADR-0001).
-func (db *DB) SetTitleEnrichmentStatus(titleID, status string) error {
+// SetTitleEnrichmentStatus records a SETTLED outcome for a Title (unmatched /
+// failed / disabled) without touching its descriptive fields — the Title keeps
+// whatever metadata it had and stays browsable (graceful degradation, ADR-0001).
+//
+// Settled means "nobody is coming back for this on their own", so it clears the
+// retry bookkeeping: no scheduled retry, and the consecutive-failure streak resets
+// to zero. That reset is what makes a recovered item start over — an item that
+// failed five times, then matched, then fails again months later is at the
+// beginning of a new streak, not one step from the daily ceiling. A transient
+// failure does NOT come through here; it goes to SetTitleEnrichmentRetry.
+//
+// reason is WHY it settled that way (ADR-0050) — one of the EnrichmentReason*
+// values, or EnrichmentReasonNone where there is no diagnosis to give. It is
+// written in the SAME statement as the status, and that is the point: the reason
+// and the status can never disagree, and a settled outcome with nothing to say
+// OVERWRITES whatever the last failure said rather than leaving it standing. A
+// reason that outlives the failure it described is worse than none, because the
+// row then confidently explains a problem that no longer exists.
+func (db *DB) SetTitleEnrichmentStatus(titleID, status, reason string) error {
 	if _, err := db.Exec(
-		`UPDATE titles SET enrichment_status = ?, enriched_at = ? WHERE id = ?`,
-		status, time.Now().UTC().Format(time.RFC3339), titleID,
+		`UPDATE titles SET enrichment_status = ?, enrichment_reason = ?, enriched_at = ?, `+
+			clearEnrichmentRetry+`
+		   WHERE id = ?`,
+		status, reason, time.Now().UTC().Format(time.RFC3339), titleID,
 	); err != nil {
 		return fmt.Errorf("store: setting enrichment status: %w", err)
+	}
+	return nil
+}
+
+// SetTitleEnrichmentRetry records a TRANSIENT failure for a Title: the status is
+// 'failed' exactly as before, but the row also carries the streak length and the
+// instant from which the next only-new pass may pick it up again (ADR-0048).
+//
+// attempts is the new consecutive-failure count (1 for the first failure of a
+// streak) and retryAt the computed due time; the caller owns both, because the
+// backoff schedule is enrichment policy and the store is only its ledger.
+//
+// Descriptive fields are untouched: a Title that was enriched last month and hit a
+// 503 today keeps its overview and artwork and stays browsable. The only thing
+// that changed is that the server now knows to ask again.
+//
+// enrichment_reason is untouched too, and takes no parameter (ADR-0050). An outage
+// is not a diagnosis — nothing was learned about the item — so there is nothing to
+// record, and clearing a prior reason would throw away a real diagnosis because
+// the network hiccupped on the way to re-confirming it. The reason moves only when
+// the item SETTLES.
+func (db *DB) SetTitleEnrichmentRetry(titleID string, attempts int, retryAt time.Time) error {
+	res, err := db.Exec(
+		`UPDATE titles SET enrichment_status = 'failed', enriched_at = ?,
+		     enrichment_attempts = ?, enrichment_retry_at = ?
+		   WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), attempts,
+		retryAt.UTC().Format(time.RFC3339), titleID,
+	)
+	if err != nil {
+		return fmt.Errorf("store: scheduling title enrichment retry: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: title enrichment retry rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -711,6 +909,11 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// A match is the one outcome that must leave NO reason behind (ADR-0050):
+	// clearEnrichmentReason rides in the UPDATE below beside clearEnrichmentRetry,
+	// so a Track that failed on one pass and matched on the next carries an empty
+	// reason rather than a sentence explaining a problem it no longer has.
+
 	// Read current scalar values so a locked field is preserved verbatim (the
 	// overlay: locked ? current : new). For an un-enriched Title these are empty.
 	var cur TitleEnrichment
@@ -749,7 +952,7 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	if _, err := tx.Exec(
 		`UPDATE titles SET overview = ?, tagline = ?, content_rating = ?, release_date = ?,
 		     runtime_minutes = ?, studio = ?, enriched_title = ?, enrichment_status = 'matched',
-		     enriched_at = ?, enrichment_source = ?,
+		     enriched_at = ?, enrichment_source = ?, `+clearEnrichmentRetry+`, `+clearEnrichmentReason+`,
 		     enrichment_tmdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_tmdb_id, '') = ''
 		                                AND IFNULL(tmdb_id, '') = '' THEN ? ELSE enrichment_tmdb_id END,
 		     enrichment_imdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_imdb_id, '') = ''

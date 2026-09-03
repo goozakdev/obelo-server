@@ -26,6 +26,9 @@ type entityOverrideResp struct {
 	ExternalID string `json:"externalId"`
 	Source     string `json:"source"`
 	Status     string `json:"status"`
+	// ReleaseID is the EDITION an Admin chose for an Album (ADR-0052), surfaced so
+	// the edition picker can mark which row is the human's own choice.
+	ReleaseID string `json:"releaseId"`
 }
 
 type entityDetailResp struct {

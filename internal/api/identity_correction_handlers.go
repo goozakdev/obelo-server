@@ -156,7 +156,10 @@ func handleShowIdentityCorrection(deps Deps, showID string) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to correct identity", nil)
 			return
 		}
-		if err := deps.Enrich.ApplyEntityOverride(r.Context(), store.EntityShow, showID, externalID); err != nil &&
+		// A Show has no edition to name (ADR-0052 is Album-shaped), so the pin carries
+		// the record alone.
+		if err := deps.Enrich.ApplyEntityOverride(r.Context(), store.EntityShow, showID,
+			enrich.EntityPin{ExternalID: externalID}); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to re-enrich corrected item", nil)
 			return

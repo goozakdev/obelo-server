@@ -170,11 +170,11 @@ func (p *OMDbProvider) fetch(ctx context.Context, q url.Values) (omdbResult, err
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return omdbResult{}, fmt.Errorf("enrich: omdb request: %w", err)
+		return omdbResult{}, requestError("omdb", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return omdbResult{}, fmt.Errorf("enrich: omdb: status %d", resp.StatusCode)
+		return omdbResult{}, statusError("omdb", "", resp.StatusCode)
 	}
 	var out struct {
 		Response string `json:"Response"`
@@ -183,7 +183,7 @@ func (p *OMDbProvider) fetch(ctx context.Context, q url.Values) (omdbResult, err
 		Genre    string `json:"Genre"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return omdbResult{}, fmt.Errorf("enrich: decoding omdb response: %w", err)
+		return omdbResult{}, decodeError("omdb", err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(out.Response), "true") {
 		return omdbResult{}, ErrNoMatch // {"Response":"False"} — no record

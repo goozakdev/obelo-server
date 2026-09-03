@@ -95,8 +95,31 @@ type Deps struct {
 	// enrich worker queue; it is a no-op when auto-enrich is off (or nil in unit
 	// tests), so the scan path never blocks on enrichment.
 	EnrichTrigger func(libraryID string)
-	ScanStatus    ScanStatusReader
-	Libraries     LibraryExister
+	// EnrichStart starts a BACKGROUND Enrichment pass over a Library and returns at
+	// once — the Admin's manual pass (POST /libraries/{id}/enrich). It is the
+	// counterpart of scanner.StartScan, and for the same reason: a recheck of a
+	// large Library is a fifteen-minute job, and a job that long must not be tied to
+	// the lifetime of the request that asked for it (ADR-0051 amendment — the
+	// operator reloaded the page and killed their own pass).
+	//
+	// `done`, when non-nil, fires once the Library has no pass in flight, with the
+	// summary and error. It is StartScan's done affordance: a test awaits a
+	// background job rather than sleeping.
+	//
+	// It returns enrich.ErrPassWorkerUnavailable, enrich.ErrPassQueueFull or
+	// enrich.ErrPassInProgress when the start cannot become a pass; the handler
+	// turns each into a reply the operator can read. Nil in narrow unit tests, and
+	// the endpoint then answers 503 rather than pretending it queued something.
+	EnrichStart func(libraryID string, mode enrich.Mode, done func(enrich.Result, error)) error
+	// EnrichStatus answers whether a pass is running over a Library, its mode and
+	// progress, and the summary of the most recent finished one (GET
+	// /libraries/{id}/enrich) — so a page reloaded mid-pass rejoins it instead of
+	// showing an idle button. In-memory on the App by design: a persisted status
+	// would claim a pass was running across a restart that killed it. Nil in narrow
+	// unit tests (every Library then reads idle).
+	EnrichStatus func(libraryID string) enrich.PassStatus
+	ScanStatus   ScanStatusReader
+	Libraries    LibraryExister
 	// TitleCounts reports a Library's top-level browsable entry count (Movies /
 	// Shows / Albums by kind) for the admin scan-status "N titles" summary. *store.DB
 	// satisfies it; may be nil in narrow unit tests (the count is then omitted).

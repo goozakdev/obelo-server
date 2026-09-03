@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
-import type { EnrichmentCandidate } from "../api/types";
+import type { CascadeSummary, EnrichmentCandidate } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import Poster, { initials } from "../browse/Poster";
-import FixItemPicker from "./FixItemPicker";
+import AlbumEditionPicker from "./AlbumEditionPicker";
+import { cascadeSummaryText } from "./cascadeSummary";
+import FixItemPicker, { type FixSearchScope } from "./FixItemPicker";
 import { kindLabel, type FixItem } from "./needsFixing";
 import type { Provider } from "./searchRef";
 
@@ -27,6 +29,14 @@ import type { Provider } from "./searchRef";
 // the file matcher (ADR-0044). The per-episode pin picker that used to sit here
 // offered to re-pick the series for a file whose series was already right; it moved
 // into the matcher, where the Admin can see the season they are fixing.
+//
+// A collapsed ALBUM row is the opposite case, and the reason it gets its own route
+// (ADR-0050, album-resolves-its-tracks/09). Its problem IS a provider record — the
+// album's — so it searches, but for an album rather than a recording, and it
+// applies with the cascade so the picked release's track list lands on the tracks
+// underneath. That apply is the row's whole promise, so the row REPORTS what the
+// cascade did: "12 of 14 tracks matched" is the proof, and a summary the Admin
+// never sees would make one album pick indistinguishable from fourteen.
 
 export default function FixItemRow({
   item,
@@ -34,6 +44,8 @@ export default function FixItemRow({
   provider,
   onResolved,
   onIdentityCorrected,
+  compact = false,
+  onPickerOpenChange,
 }: {
   item: FixItem;
   libraryId: string;
@@ -44,12 +56,45 @@ export default function FixItemRow({
   /** Called after an identity correction, which only takes effect on the next scan
    * — the screen collects these and offers ONE rescan rather than scanning per row. */
   onIdentityCorrected: () => void;
+  /** Render as a DISCLOSED row — a track under the Album row that collapsed it
+   * (album-resolves-its-tracks/18). It drops the facts its parent already states one
+   * line above (the artwork and the `Artist › Album` breadcrumb) and the kind badge
+   * that would say "Track" a hundred times under a row headed "106 tracks", keeping
+   * the track's name and number, its sentence, its file and its own picker.
+   *
+   * A disclosed row is not a lesser row: the reason the disclosure exists at all is
+   * that the album cascade DECLINES some tracks (ADR-0050), so the one thing that
+   * must survive compaction is the per-track action. */
+  compact?: boolean;
+  /** Told whenever this row's picker opens or closes. Only the disclosed list uses
+   * it — see the `is-expanded` note on the child list below — so the top-level
+   * queue passes nothing and pays nothing. */
+  onPickerOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the album cascade reported, kept on the row after the picker closes — the
+  // row's proof that one pick did the work of fourteen.
+  const [cascade, setCascade] = useState<CascadeSummary | null>(null);
+  // The track rows a collapsed Album row stands for. Collapsed by default: the
+  // whole point of the row is that the pile is one decision, and opening eighteen
+  // sub-rows by default would put the pile straight back.
+  const [childrenOpen, setChildrenOpen] = useState(false);
+  // Which disclosed track has its picker open, or null. The bounded list needs to
+  // know, because a picker opened INSIDE a capped scroller is a picker the Admin
+  // has to hunt for: see the `is-expanded` comment at the child list.
+  const [openChildKey, setOpenChildKey] = useState<string | null>(null);
 
   const canFix = item.route !== "none";
+  const children = item.children ?? [];
+
+  // Every path that opens or closes the picker goes through here, so the parent of
+  // a disclosed row is never told a stale answer.
+  function setPickerOpen(next: boolean) {
+    setOpen(next);
+    onPickerOpenChange?.(next);
+  }
 
   // --- applying a picked record ---------------------------------------------
 
@@ -84,10 +129,31 @@ export default function FixItemRow({
     await apiClient.applyEnrichmentOverride(item.titleId, candidate.externalId);
   }
 
+  // The ALBUM correction, and the reason this row exists (ADR-0050). Pinning the
+  // album's record with `cascade: true` runs CascadeEntity → mapAlbumTracks, which
+  // maps the picked release's track list onto this album's tracks under issue 03's
+  // rule — the exact gesture that cleared the *She* album by hand: one pick,
+  // fourteen tracks, no recheck pass. Identity and watch state are untouched, as on
+  // every other enrichment override.
+  async function applyAlbum(candidate: EnrichmentCandidate) {
+    const detail = await apiClient.applyEntityEnrichmentOverride(
+      "albums",
+      item.albumId,
+      candidate.externalId,
+      true,
+      // When the Admin pasted a MusicBrainz /release/ URL, that EDITION is what the
+      // cascade decorates from (ADR-0052) instead of picking one by track-count fit.
+      // A searched candidate carries none, which clears any edition previously named.
+      candidate.releaseId,
+    );
+    setCascade(detail.cascade ?? null);
+  }
+
   async function onApply(candidate: EnrichmentCandidate) {
     if (item.route === "fix-match") await applyIdentity(candidate);
+    else if (item.route === "album-enrichment-override") await applyAlbum(candidate);
     else await applyMetadata(candidate);
-    setOpen(false);
+    setPickerOpen(false);
     onResolved();
   }
 
@@ -123,67 +189,98 @@ export default function FixItemRow({
 
   // --- rendering -------------------------------------------------------------
 
-  const search = (query: string, page: number) =>
-    item.route === "enrichment-override"
-      ? apiClient.searchEnrichmentCandidates(item.titleId, query, { page })
-      : apiClient.searchLibraryEnrichmentCandidates(libraryId, query, { page });
+  // `scope` is the picker's live artist/album narrowing, already stripped of blanks,
+  // so a video row's request carries exactly `{ page }` as it always has.
+  const search = (query: string, page: number, scope: FixSearchScope) =>
+    item.route === "album-enrichment-override"
+      ? // The ALBUM kind, not the recording kind: the gesture the sentence names is
+        // the gesture the row now offers.
+        apiClient.searchEntityEnrichmentCandidates("albums", item.albumId, query, {
+          page,
+          ...scope,
+        })
+      : item.route === "enrichment-override"
+        ? apiClient.searchEnrichmentCandidates(item.titleId, query, { page, ...scope })
+        : apiClient.searchLibraryEnrichmentCandidates(libraryId, query, { page, ...scope });
 
   const preview = (ref: string) =>
-    item.route === "enrichment-override"
-      ? apiClient.previewExternalCandidate(item.titleId, ref)
-      : apiClient.previewLibraryExternalCandidate(libraryId, ref);
+    item.route === "album-enrichment-override"
+      ? apiClient.previewEntityExternalCandidate("albums", item.albumId, ref)
+      : item.route === "enrichment-override"
+        ? apiClient.previewExternalCandidate(item.titleId, ref)
+        : apiClient.previewLibraryExternalCandidate(libraryId, ref);
 
-  // Applying means genuinely different things on the two routes, and the hint is
+  // Applying means genuinely different things on the three routes, and the hint is
   // where that difference is stated — the Admin should never have to know the
   // vocabulary to predict the blast radius.
   const applyHint =
-    item.route === "enrichment-override"
-      ? "Updates artwork and details only — keeps watch history and your edits."
-      : "Re-files this item under the correct title on the next scan.";
+    item.route === "album-enrichment-override"
+      ? "Updates the album and re-resolves its tracks from that release’s track list — keeps watch history and your edits."
+      : item.route === "enrichment-override"
+        ? "Updates artwork and details only — keeps watch history and your edits."
+        : "Re-files this item under the correct title on the next scan.";
 
   return (
     <li
-      className={`fix-item admin-panel-row${open ? " is-open" : ""}`}
+      className={`fix-item admin-panel-row${compact ? " fix-item-compact" : ""}${open ? " is-open" : ""}`}
       data-testid="fix-item"
       data-problem={item.problem}
       data-kind={item.kind}
+      data-compact={compact ? "true" : "false"}
     >
       {/* The poster is the fastest confirmation there is: an Admin recognizes the
           right film or show at a glance, where a title and a path only tell them
           what the scanner already thought. Without it, "Looks right" is a guess.
           Poster falls back to a placeholder when the item has no image, so a row
-          never breaks over a missing one. */}
-      <div className="fix-item-art" data-testid="fix-item-art">
-        {item.artworkUrl !== "" ? (
-          <Poster
-            titleId={item.titleId || item.showId || item.key}
-            title={item.name}
-            src={item.artworkUrl}
-            version={item.artworkVersion}
-          />
-        ) : (
-          // No entity to fetch artwork for (an Unmatched file, an orphaned
-          // correction). Keep the slot so rows stay aligned, but show the item's
-          // initials the way every other placeholder in the app does.
-          <div
-            className="poster poster-placeholder"
-            role="img"
-            aria-label={`${item.name} (no artwork)`}
-          >
-            <span className="poster-initials" aria-hidden="true">
-              {initials(item.name)}
-            </span>
-          </div>
-        )}
-      </div>
+          never breaks over a missing one.
+
+          A DISCLOSED row has none. Its parent is showing the album's cover one line
+          above, every track under it would show that same cover again, and a column
+          of eighteen identical thumbnails confirms nothing while costing the whole
+          height of the list. */}
+      {!compact && (
+        <div className="fix-item-art" data-testid="fix-item-art">
+          {item.artworkUrl !== "" ? (
+            <Poster
+              titleId={item.titleId || item.showId || item.key}
+              title={item.name}
+              src={item.artworkUrl}
+              version={item.artworkVersion}
+            />
+          ) : (
+            // No entity to fetch artwork for (an Unmatched file, an orphaned
+            // correction). Keep the slot so rows stay aligned, but show the item's
+            // initials the way every other placeholder in the app does.
+            <div
+              className="poster poster-placeholder"
+              role="img"
+              aria-label={`${item.name} (no artwork)`}
+            >
+              <span className="poster-initials" aria-hidden="true">
+                {initials(item.name)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="fix-item-body">
       <div className="fix-item-head">
-        <span className="fix-item-kind" data-testid="fix-item-kind">
-          {kindLabel(item.kind)}
-        </span>
+        {/* The kind badge answers "what KIND of thing is this row?" for a reader
+            scanning the queue's left edge. Inside a disclosure headed "Show the 106
+            tracks" that question is already answered, and the badge would answer it
+            106 more times. */}
+        {!compact && (
+          <span className="fix-item-kind" data-testid="fix-item-kind">
+            {kindLabel(item.kind)}
+          </span>
+        )}
         <div className="fix-item-identity">
-          {item.breadcrumb.length > 0 && (
+          {/* The breadcrumb is `Artist › Album` for a track — the two facts the
+              parent Album row states in its own heading, one line above. Repeating
+              them per child pushes the one fact that DOES differ, the track's number
+              and name, off to the right of a line the Admin has already read. */}
+          {!compact && item.breadcrumb.length > 0 && (
             <span className="fix-item-breadcrumb" data-testid="fix-item-breadcrumb">
               {item.breadcrumb.join(" › ")}
               {" › "}
@@ -200,9 +297,13 @@ export default function FixItemRow({
             type="button"
             data-testid="fix-item-toggle"
             aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setPickerOpen(!open)}
           >
-            {open ? "Close" : "Fix this"}
+            {open
+              ? "Close"
+              : item.route === "album-enrichment-override"
+                ? "Fix the album"
+                : "Fix this"}
           </button>
         )}
       </div>
@@ -230,9 +331,15 @@ export default function FixItemRow({
         {item.problemText}
       </p>
 
+      {/* A disclosed row prints the FILE NAME and hovers the whole path. Its
+          siblings all live in the album's folder — the path the album row itself
+          prints — so the directory half is the one part of this line that is the
+          same on every child, and it is also the part that wraps a compact row
+          over three lines. What differs, and what the Admin would go and rename,
+          is the name. */}
       {item.path !== "" && (
         <code className="fix-item-path" data-testid="fix-item-path" title={item.path}>
-          {item.path}
+          {compact ? fileName(item.path) : item.path}
         </code>
       )}
       {item.path === "" && (
@@ -308,20 +415,122 @@ export default function FixItemRow({
         </p>
       )}
 
+      {/* What the cascade did. The row asked for ONE decision on behalf of many
+          tracks, so the count it moved is the only thing that distinguishes a fix
+          from a hopeful click. */}
+      {cascade && (
+        <p className="status" data-testid="fix-item-cascade" role="status">
+          {cascadeSummaryText(cascade)}
+        </p>
+      )}
+
+      {/* The rows this one collapsed. Collapsed by default — the pile being one
+          decision is the point — but never hidden: the cascade declines a track the
+          release's list cannot place, and that track's own picker is one click away
+          rather than a recheck pass away. */}
+      {children.length > 0 && (
+        <div className="fix-item-children">
+          <button
+            className="nav-link fix-item-children-toggle"
+            type="button"
+            data-testid="fix-item-children-toggle"
+            aria-expanded={childrenOpen}
+            onClick={() => {
+              // Hiding the list unmounts its rows, so none of them will ever report
+              // its picker closing. Forget it here, or re-opening the disclosure
+              // would show an uncapped list with nothing open in it.
+              if (childrenOpen) setOpenChildKey(null);
+              setChildrenOpen((v) => !v);
+            }}
+          >
+            {childrenOpen ? "▾" : "▸"} {childrenOpen ? "Hide" : "Show"} the{" "}
+            {children.length} {children.length === 1 ? "track" : "tracks"}
+          </button>
+          {childrenOpen && (
+            /* Bounded, and scrolling inside itself: `Unknown Album` holds 106
+               tracks, and a disclosure that pushes the rest of the queue 106 rows
+               down the page is not a disclosure, it IS the pile the album row
+               replaced. `overflow-y: auto` means a two-track album gets no
+               scrollbar it does not need.
+
+               `is-expanded` is the deliberate answer to "what happens when the
+               picker opens inside the cap?". A picker is a search box, a page of
+               candidate posters and an apply button — taller than the cap by
+               itself — so keeping it inside would nest a scroller inside a
+               scroller and hide "Use this" below a fold the Admin has to find. The
+               cap therefore LIFTS while a child's picker is open: exactly one can
+               be open, the row acted on is the one the Admin is looking at, and
+               the cap comes back the moment it closes.
+
+               The alternative — cap always, scroll the opened child into view —
+               was rejected because it only fixes where the picker STARTS. It would
+               still be a small window onto a tall control, still scroll-chaining
+               against the page, and still hiding the button that ends the task. */
+            <ul
+              className={`needs-fixing-list fix-item-child-list${openChildKey !== null ? " is-expanded" : ""}`}
+              data-testid="fix-item-child-list"
+              data-expanded={openChildKey !== null ? "true" : "false"}
+            >
+              {children.map((child) => (
+                <FixItemRow
+                  key={child.key}
+                  item={child}
+                  libraryId={libraryId}
+                  provider={provider}
+                  onResolved={onResolved}
+                  onIdentityCorrected={onIdentityCorrected}
+                  compact
+                  onPickerOpenChange={(isOpen) =>
+                    setOpenChildKey((cur) =>
+                      isOpen ? child.key : cur === child.key ? null : cur,
+                    )
+                  }
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       </div>
+
+      {/* The EDITION section (ADR-0052, issue 12). It mounts with the row's picker,
+          never with the list: listing a release-group's editions is a live,
+          rate-limited provider call, and the queue's rule is that such a call happens
+          when the Admin actually looks at a row.
+
+          It sits ABOVE the search picker because it is the cheaper question. The
+          picker asks "is this the right album?"; the edition list asks "which
+          pressing of the right album is this?" — and on the population that motivated
+          this feature the album was already right and only the pressing was wrong. */}
+      {open && item.route === "album-enrichment-override" && item.albumId !== "" && (
+        <AlbumEditionPicker albumId={item.albumId} onApplied={() => onResolved()} />
+      )}
 
       {open && canFix && (
         <FixItemPicker
           seed={item.searchSeed}
+          artistScope={item.artistScope}
+          albumScope={item.albumScope}
           provider={provider}
           applyLabel="Use this"
           applyHint={applyHint}
           search={search}
           preview={preview}
           onApply={onApply}
-          onCancel={() => setOpen(false)}
+          onCancel={() => setPickerOpen(false)}
         />
       )}
     </li>
   );
+}
+
+/** The last segment of a path — `05 Whisper Your Name.flac` out of the whole
+ * thing. Splits on both separators because a Windows library's paths arrive with
+ * backslashes, and falls back to the whole string rather than returning "" for a
+ * path that ends in a separator. */
+function fileName(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  const name = cut === -1 ? path : path.slice(cut + 1);
+  return name === "" ? path : name;
 }

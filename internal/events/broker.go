@@ -149,7 +149,11 @@ type EnrichProgress struct {
 	Unmatched int    `json:"unmatched"`
 	Failed    int    `json:"failed"`
 	Disabled  int    `json:"disabled"`
-	Complete  bool   `json:"complete"`
+	// Retrying counts leaves whose lookup failed transiently and are scheduled to be
+	// tried again rather than parked (ADR-0048). Reported apart from Failed so a
+	// client can say "will retry" instead of raising an alarm the Admin cannot act on.
+	Retrying int  `json:"retrying"`
+	Complete bool `json:"complete"`
 }
 
 // LibraryUpdated is the payload of a TypeLibraryUpdated event: just the affected
