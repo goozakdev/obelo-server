@@ -77,6 +77,17 @@ func WithScanInterval(d time.Duration) Option {
 	return func(b *builder) { b.cfg.ScanInterval = d }
 }
 
+// WithLinkSyncInterval turns the background refresh of linked Libraries on and
+// sets its cadence (0 disables it). The default harness disables it, for the
+// scheduled scan's reason and one more: a linked home Server holds a LONG-LIVED
+// /events subscription to its sharer, and httptest.Server.Close blocks on an
+// in-flight request — so a test that closes a sharer mid-run would hang on a
+// stream it never asked for. Tests that exercise the nudge, the timer or the
+// backoff opt in.
+func WithLinkSyncInterval(d time.Duration) Option {
+	return func(b *builder) { b.cfg.LinkSyncInterval = d }
+}
+
 // WithSessionIdleTimeout sets the Playback-session reaper's idle window (0
 // disables the reaper). The default harness disables it so unrelated tests stay
 // deterministic; the reaping test opts in with a short value to watch a silent
@@ -346,6 +357,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	b.cfg.SessionIdleTimeout = 0      // session reaper off by default; opt in with WithSessionIdleTimeout
 	b.cfg.AutoEnrichAfterScan = false // auto-after-scan enrich off by default; opt in with WithAutoEnrich
 	b.cfg.EnrichInterval = 0          // scheduled enrich off by default; opt in with WithEnrichInterval
+	b.cfg.LinkSyncInterval = 0        // linked-library refresh off by default; opt in with WithLinkSyncInterval
 	// First-run Enrichment consent (ADR-0032) is GRANTED by default so a harness
 	// represents an operator who has already opted in — existing enrichment tests
 	// enrich as before. A consent-gate test overrides this with WithEnrichmentConsent.

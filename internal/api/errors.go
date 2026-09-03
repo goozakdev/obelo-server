@@ -161,6 +161,11 @@ const (
 	//                                 separates it from every 4xx here. ADR-0056 §6
 	//                                 reuses it for a play against an unreachable
 	//                                 Link.
+	//   codeLinkRevoked       (409) — POST /links/{id}/sync reached the sharer and was
+	//                                 told the credential is dead (their 401). The
+	//                                 mirror stays; the fix is a fresh invite, not a
+	//                                 retry, which is why it is a conflict and not
+	//                                 the 503 an unreachable Link gets (ADR-0056 §6).
 	//   codeLinkServerMismatch (409) — POST /links/{id}/rekey was given an invite
 	//                                 for a DIFFERENT Server. A Link is bound to one
 	//                                 peer for its whole life (the mirror is keyed by
@@ -174,6 +179,7 @@ const (
 	codeInviteExpired      = "INVITE_EXPIRED"
 	codeLinkUnreachable    = "LINK_UNREACHABLE"
 	codeLinkServerMismatch = "LINK_SERVER_MISMATCH"
+	codeLinkRevoked        = "LINK_REVOKED"
 	// codeLinkedLibrary (409): a write aimed at a Library that is a MIRROR of
 	// another household's (ADR-0056 §1). Not 403 and not 404: the caller is an
 	// Admin, the Library is theirs to see and grant, and the resource plainly

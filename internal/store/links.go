@@ -194,6 +194,47 @@ func (db *DB) SetLinkState(id, state, lastError string) error {
 	return nil
 }
 
+// SetLinkSynced records a sweep that WORKED: the Link is connected, whatever
+// explained the last failure is cleared, and last_synced_at moves to the instant
+// the caller passed (RFC3339-UTC, like every other timestamp crossing this file).
+//
+// It is a separate writer from SetLinkState rather than a fourth argument to it,
+// because "the mirror is this fresh" is only ever true of a success and a caller
+// that could pass a stamp with `unreachable` would be recording a lie the admin
+// page then shows.
+func (db *DB) SetLinkSynced(id, syncedAt string) error {
+	return db.updateLink(
+		`UPDATE links SET state = ?, last_error = '', last_synced_at = ? WHERE id = ?`,
+		LinkStateConnected, syncedAt, id)
+}
+
+// SetLinkActiveOrigin records which address answered. The origins in an invite
+// are addresses to TRY (ADR-0055 §2) and which one works changes over a Link's
+// life — a friend's tailnet comes and goes, a port-forward is closed — so the
+// sweep walks them and remembers the winner here for the next call and for the
+// admin page, which shows an operator WHICH path is carrying their films.
+func (db *DB) SetLinkActiveOrigin(id, origin string) error {
+	return db.updateLink(`UPDATE links SET active_origin = ? WHERE id = ?`, origin, id)
+}
+
+// updateLink runs one single-row UPDATE and turns "no such row" into ErrNotFound,
+// so a Link deleted under a sweep in flight is reported as gone rather than as a
+// silent no-op.
+func (db *DB) updateLink(query string, args ...any) error {
+	res, err := db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("store: updating link: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: updating link: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // rowScanner is what *sql.Row and *sql.Rows have in common, so one scan serves
 // both the single reads and the listing.
 type rowScanner interface {

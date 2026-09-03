@@ -163,6 +163,50 @@ func TestOnlyTheThreeStatesAreStorable(t *testing.T) {
 	}
 }
 
+// TestTheSweepsTwoWriters covers what a sweep records (issue 08): a success
+// stamps the sync, returns the Link to connected and CLEARS the reason that
+// explained the last failure; a moved address is remembered on its own, without
+// disturbing anything else.
+func TestTheSweepsTwoWriters(t *testing.T) {
+	db := openTemp(t)
+	if err := db.InsertLink(aLink("l1", "amy-server-id")); err != nil {
+		t.Fatalf("InsertLink: %v", err)
+	}
+	if err := db.SetLinkState("l1", store.LinkStateUnreachable, "nobody answered"); err != nil {
+		t.Fatalf("SetLinkState: %v", err)
+	}
+
+	synced := rfc3339(time.Date(2026, 9, 4, 9, 30, 0, 0, time.UTC))
+	if err := db.SetLinkSynced("l1", synced); err != nil {
+		t.Fatalf("SetLinkSynced: %v", err)
+	}
+	l, err := db.LinkByID("l1")
+	if err != nil {
+		t.Fatalf("LinkByID: %v", err)
+	}
+	if l.State != store.LinkStateConnected || l.LastSyncedAt != synced || l.LastError != "" {
+		t.Fatalf("after a good sweep = %+v, want connected, stamped, with no error", l)
+	}
+
+	if err := db.SetLinkActiveOrigin("l1", "https://media.example.org"); err != nil {
+		t.Fatalf("SetLinkActiveOrigin: %v", err)
+	}
+	l, _ = db.LinkByID("l1")
+	if l.ActiveOrigin != "https://media.example.org" {
+		t.Errorf("activeOrigin = %q, want the address that answered", l.ActiveOrigin)
+	}
+	if l.LastSyncedAt != synced || l.Token == "" {
+		t.Errorf("moving the origin disturbed the rest of the row: %+v", l)
+	}
+
+	if err := db.SetLinkSynced("nope", synced); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetLinkSynced on an unknown Link = %v, want ErrNotFound", err)
+	}
+	if err := db.SetLinkActiveOrigin("nope", "https://x.example"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetLinkActiveOrigin on an unknown Link = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleteLink(t *testing.T) {
 	db := openTemp(t)
 	if err := db.InsertLink(aLink("l1", "amy-server-id")); err != nil {

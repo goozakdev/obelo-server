@@ -111,6 +111,12 @@ type App struct {
 	// enrich); each closes its done channel once it has fully exited, so Close
 	// shuts them down cleanly. A goroutine that was never started leaves its done
 	// channel nil (skipped by Close).
+	// linkSyncer keeps every linked Library's mirror fresh (ADR-0056 §4): one
+	// goroutine per Link holding that sharer's /events subscription and running the
+	// periodic sweep. Nil on a build wired without linking; Close stops it before
+	// the Broker goes, so a last state transition still has somewhere to land.
+	linkSyncer *link.Syncer
+
 	cancel          context.CancelFunc
 	schedDone       chan struct{}
 	reaperDone      chan struct{}
@@ -680,7 +686,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// later presents the CURRENT display name.
 	linkSvc := link.New(db, func() link.Identity {
 		return link.Identity{ID: identity.ID, Name: identity.Name}
-	}, link.Options{Tailnet: tailnetManager, Mirror: db})
+	}, link.Options{Tailnet: tailnetManager, Mirror: db, Events: broker})
 
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
@@ -880,6 +886,19 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			app.rotationDone = make(chan struct{})
 			go app.runKeyRotation(ctx)
 		}
+	}
+
+	// Linked-server freshness (ADR-0056 §4, §6). Started UNCONDITIONALLY and
+	// outside the block above: it owns the three link states as much as it owns the
+	// pulls, and a Server whose sync interval is 0 still has to park its Links as
+	// `unreachable` at boot and still holds their subscriptions. With no Links it
+	// starts no goroutines at all, which is every household that has never linked.
+	app.linkSyncer = link.NewSyncer(linkSvc, link.SyncerOptions{Interval: cfg.LinkSyncInterval})
+	if err := app.linkSyncer.Start(context.Background()); err != nil {
+		// Reading the Links failed. That is a database problem the rest of the boot
+		// will hit too; it must not be the thing that stops the living room working.
+		log.Printf("obelo: link: the linked servers could not be brought up (%v); "+
+			"their libraries stay, marked unavailable", err)
 	}
 
 	// An ENABLED Tailnet node connects at boot (ADR-0043). This is the whole point
@@ -1333,6 +1352,13 @@ func (a *App) Close() error {
 			<-a.rotationDone
 		}
 		a.cancel = nil
+	}
+	// Stop the per-Link sync goroutines and their outbound subscriptions before the
+	// Broker goes, for the Tailnet's reason: a transition published into a closed
+	// Broker is a panic, and a subscription left open is a goroutine leaked past
+	// the App that owned it.
+	if a.linkSyncer != nil {
+		a.linkSyncer.Stop()
 	}
 	// Stop the Tailnet node and its watcher before the Broker goes, so the last
 	// transitions have somewhere to go and nothing is left publishing into a closed

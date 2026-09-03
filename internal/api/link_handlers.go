@@ -125,7 +125,8 @@ func handleLinksCollection(deps Deps) http.HandlerFunc {
 	}
 }
 
-// handleLinkSubtree serves DELETE /links/{id} and POST /links/{id}/rekey.
+// handleLinkSubtree serves DELETE /links/{id}, POST /links/{id}/rekey and
+// POST /links/{id}/sync.
 func handleLinkSubtree(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/links/")
@@ -136,6 +137,14 @@ func handleLinkSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost, handleRekeyLink(deps, id))(w, r)
+			return
+		}
+		if id, ok := strings.CutSuffix(rest, "/sync"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost, handleSyncLink(deps, id))(w, r)
 			return
 		}
 		if rest == "" || strings.Contains(rest, "/") {
@@ -215,6 +224,34 @@ func handleRekeyLink(deps Deps, id string) http.HandlerFunc {
 	}
 }
 
+// handleSyncLink forces one sweep of a Link — the "try again now" the Linked
+// servers page offers beside an unreachable one (ADR-0056 §6).
+//
+// It is SYNCHRONOUS and answers with the Link as it stands afterwards, which is
+// the whole point: the operator pressed a button because they had just plugged
+// the other house's server back in, and "we will get to it" is not an answer to
+// that. It is also the one sweep a `revoked` Link gets — the background loop
+// never retries one, but a human asking is not a retry, and a sharer who
+// restored the User is exactly the case it exists for.
+//
+// A failed sweep is reported as the failure it was, not swallowed: the state on
+// the row has been recorded either way, so a client that only refetches is
+// correct too.
+func handleSyncLink(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Links == nil {
+			writeLinkUnwired(w)
+			return
+		}
+		l, err := deps.Links.SyncNow(r.Context(), id)
+		if err != nil {
+			writeLinkError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, linkWithLibraries(deps, l))
+	}
+}
+
 // handleDeleteLink unlinks: the sharer is told, then the Link goes.
 //
 // It answers 204 whether or not the sharer could be reached. That is the
@@ -267,6 +304,12 @@ func writeLinkError(w http.ResponseWriter, err error) {
 				"ours":    mismatch.Ours,
 				"upgrade": mismatch.Upgrade(),
 			})
+	case errors.Is(err, link.ErrCredentialDead):
+		// The sharer answered 401: the `remote` User or its Device is gone over
+		// there. Nothing here is lost and nothing will be retried — the fix is a
+		// fresh invite, which re-keys this Link in place (ADR-0056 §6).
+		writeError(w, http.StatusConflict, codeLinkRevoked,
+			"that server no longer accepts this server's credential; ask them for a fresh invite", nil)
 	case errors.Is(err, link.ErrServerMismatch):
 		writeError(w, http.StatusConflict, codeLinkServerMismatch,
 			"this invite is for a different server than the link you are re-keying", nil)

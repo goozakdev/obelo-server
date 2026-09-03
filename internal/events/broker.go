@@ -54,6 +54,19 @@ const (
 	// "click Connect, wait, guess, refresh". Admin-only (AudienceAdmin): remote
 	// access is the operator's configuration and a Member's stream never receives it.
 	TypeTailscaleState = "tailscaleState"
+	// TypeLinkState tells the Admin UI that a Link's condition changed
+	// (ADR-0056 §6): it connected, the sharing Server stopped answering, or the
+	// credential was revoked over there. Like tailscaleState it is a "go refetch"
+	// nudge in the libraryUpdated idiom — GET /links stays the source of truth for
+	// the state, the origin in use, the last sync and the last error — but it
+	// carries the LINK ID, because an operator may have several and only one of
+	// them moved.
+	//
+	// Admin-only (AudienceAdmin): a Link is the household's relationship with
+	// another household, which is the operator's configuration and not a Member's
+	// business. A Member still sees the consequence — `available` on the linked
+	// Library — through the ordinary reads.
+	TypeLinkState = "linkState"
 )
 
 // AudienceKind is the closed set of "who may receive this Event" forms. It is a
@@ -161,6 +174,15 @@ type EnrichProgress struct {
 // and /libraries/{id}/titles to pick up whatever changed.
 type LibraryUpdated struct {
 	LibraryID string `json:"libraryId"`
+}
+
+// LinkState is the payload of a TypeLinkState event: which Link moved. It
+// deliberately does NOT carry the new state, for the reason PublishTailscaleState
+// gives — a second copy of a condition is the one on the screen when they
+// disagree — and the id is here because a household can hold several Links and a
+// client should refetch without re-rendering the others.
+type LinkState struct {
+	LinkID string `json:"linkId"`
 }
 
 // ScanProgress is the payload of a TypeScanProgress event: a snapshot of an
@@ -324,6 +346,18 @@ func (b *Broker) PublishTailscaleState() {
 	b.Publish(Event{
 		Type:     TypeTailscaleState,
 		Data:     struct{}{},
+		Audience: Audience{Kind: AudienceAdmin},
+	})
+}
+
+// PublishLinkState nudges connected Admins to refetch the linked servers after a
+// Link changed state (ADR-0056 §6). AudienceAdmin is non-negotiable, exactly as
+// with PublishTailscaleState, and producers publish through this typed helper so
+// they cannot set the wrong audience.
+func (b *Broker) PublishLinkState(linkID string) {
+	b.Publish(Event{
+		Type:     TypeLinkState,
+		Data:     LinkState{LinkID: linkID},
 		Audience: Audience{Kind: AudienceAdmin},
 	})
 }

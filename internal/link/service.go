@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,11 @@ type Store interface {
 	InsertLink(l store.Link) error
 	UpdateLinkCredential(l store.Link) error
 	DeleteLink(id string) error
+	// The three writers of the ADR-0056 §6 state machine: what a sweep proved
+	// (SetLinkState / SetLinkSynced) and which address proved it.
+	SetLinkState(id, state, lastError string) error
+	SetLinkSynced(id, syncedAt string) error
+	SetLinkActiveOrigin(id, origin string) error
 }
 
 // Identity is this Server's own id and name (ADR-0034), presented to the sharer
@@ -56,6 +62,18 @@ type Service struct {
 	self   func() Identity
 	dialer *Dialer
 
+	// events is the realtime nudge (ADR-0016): `libraryUpdated` after a pull that
+	// changed a mirror, and the admin-only `linkState` on every state transition.
+	// Nil is a Service that publishes nothing, which is every narrow unit test and
+	// no deployment.
+	events Publisher
+
+	// mu guards attached, the running Syncer. It is written once at boot and read
+	// by every request that forces a sweep, so the lock is uncontended and exists
+	// to make that hand-off legal rather than to arbitrate anything.
+	mu       sync.Mutex
+	attached *Syncer
+
 	// version is the link-protocol version this build speaks. Injected rather than
 	// read from the server package at each use so a test can put the two sides on
 	// different versions without rebuilding either.
@@ -64,20 +82,17 @@ type Service struct {
 	newID   func() string
 	timeout time.Duration
 
-	// OnLinked and OnUnlinked are the SEAM FOR ISSUES 07 AND 08, and they are
-	// no-ops today.
+	// OnLinked and OnUnlinked are how the Syncer hears about a Link coming into
+	// being and going away (watch.go): the first starts the goroutine that keeps
+	// that Link's mirror fresh, the second stops it. They stay hooks rather than a
+	// direct call because a Service with no Syncer — every narrow unit test, and a
+	// Server whose sync interval is 0 — is a coherent thing that still links,
+	// pulls and unlinks.
 	//
-	// ADR-0056 says a Link's granted libraries become linked Library rows here and
-	// that the first sync follows immediately. Neither the `linked` Library source
-	// nor the mirror exists yet, so rather than guess at their shape this package
-	// announces the two moments they will need — a Link came into being, a Link
-	// went away — and builds nothing behind them. A Link with no Libraries is the
-	// correct state of this server until issue 07 lands, not a half-built one, and
-	// GET /links honestly reports an empty `libraries` list for it.
-	//
-	// Both run INSIDE the request that caused them and must not block on a network:
-	// issue 08 owns the timer and the backoff, and the first sync belongs on its
-	// queue, not on the Admin's paste.
+	// OnLinked fires on a new Link AND on a re-key (a re-key moves the addresses
+	// and may revive a `revoked` credential, both of which the watcher has to hear
+	// about). OnUnlinked fires after the row is gone. Both run INSIDE the request
+	// that caused them, so neither may block on a network.
 	OnLinked   func(l store.Link)
 	OnUnlinked func(l store.Link)
 }
@@ -100,6 +115,24 @@ type Options struct {
 	// Mirror is the catalog a pulled Export is written into (ADR-0056 §3).
 	// *store.DB satisfies it; nil leaves linking working and mirrors nothing.
 	Mirror MirrorStore
+	// Events is the realtime Broker (*events.Broker satisfies Publisher). Nil
+	// publishes nothing, which changes no outcome — every event this package sends
+	// is a nudge over a resource a client can poll (ADR-0016).
+	Events Publisher
+}
+
+// Publisher is the realtime spine as this package needs it: two nudges, both
+// carrying no state of their own. *events.Broker satisfies it. It is an
+// interface here rather than the Broker itself so a sweep can be tested for what
+// it ANNOUNCES without a transport, and so this package cannot reach the rest of
+// the event vocabulary.
+type Publisher interface {
+	// PublishLibraryUpdated tells clients a Library's contents changed. Published
+	// for a linked Library after a pull that applied anything.
+	PublishLibraryUpdated(libraryID string)
+	// PublishLinkState tells connected Admins a Link changed state. Published on
+	// the transition only, never on every sweep.
+	PublishLinkState(linkID string)
 }
 
 // New wires the Service.
@@ -107,6 +140,7 @@ func New(s Store, self func() Identity, opts Options) *Service {
 	svc := &Service{
 		store:   s,
 		mirror:  opts.Mirror,
+		events:  opts.Events,
 		self:    self,
 		dialer:  &Dialer{Node: opts.Tailnet},
 		version: opts.Version,
@@ -124,6 +158,31 @@ func New(s Store, self func() Identity, opts Options) *Service {
 		svc.newID = func() string { return uuid.NewString() }
 	}
 	return svc
+}
+
+// syncer returns the running Syncer, or nil on a Server that starts none.
+func (s *Service) syncer() *Syncer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attached
+}
+
+func (s *Service) attach(sy *Syncer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attached = sy
+}
+
+func (s *Service) publishLibraryUpdated(libraryID string) {
+	if s.events != nil {
+		s.events.PublishLibraryUpdated(libraryID)
+	}
+}
+
+func (s *Service) publishLinkState(linkID string) {
+	if s.events != nil {
+		s.events.PublishLinkState(linkID)
+	}
 }
 
 // Version is the link-protocol version this Server speaks. The API layer reads
@@ -284,6 +343,15 @@ func (s *Service) establish(ctx context.Context, id string, inv Invite) (store.L
 	syncCtx, syncCancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
 	defer syncCancel()
 	s.syncAfterLink(syncCtx, l)
+
+	// Read the row back: the first pull is what wrote `last_synced_at` and what
+	// settled the state, so the value assembled above is already stale by the time
+	// this returns. Answering with it would tell the Admin their brand-new Link has
+	// never synced — and would say `connected` for a sharer whose first pull did not
+	// finish. A read that fails is not fatal: the Link is real either way.
+	if fresh, err := s.store.LinkByID(l.ID); err == nil {
+		l = fresh
+	}
 
 	if s.OnLinked != nil {
 		s.OnLinked(l)
