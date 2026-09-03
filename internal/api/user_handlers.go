@@ -359,8 +359,9 @@ func handleSetRatingCeiling(svc *access.Service, id string) http.HandlerFunc {
 }
 
 // handleSetLibraryAccess replaces a Member's granted Library set (Admin scope).
-// The body carries the FULL desired set; granting to an Admin or naming an
-// unknown Library is rejected, leaving any prior set unchanged.
+// The body carries the FULL desired set; granting to an Admin, naming a linked
+// Library for a `remote` User, or naming an unknown Library is rejected, leaving
+// any prior set unchanged.
 func handleSetLibraryAccess(svc *access.Service, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req setLibraryAccessRequest
@@ -375,6 +376,10 @@ func handleSetLibraryAccess(svc *access.Service, id string) http.HandlerFunc {
 		case errors.Is(err, access.ErrAdminGrant):
 			writeError(w, http.StatusUnprocessableEntity, codeAdminGrant,
 				"cannot grant libraries to an admin (admins see all)", nil)
+			return
+		case errors.Is(err, access.ErrLinkedGrant):
+			writeError(w, http.StatusUnprocessableEntity, codeLinkedGrant,
+				"libraries provided by another server can't be shared onward", nil)
 			return
 		case errors.Is(err, access.ErrUnknownLibrary):
 			writeError(w, http.StatusUnprocessableEntity, codeUnknownLibrary,

@@ -195,6 +195,15 @@ const (
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"
 	codeUnknownLibrary = "UNKNOWN_LIBRARY"
+	// codeLinkedGrant (422): the target of a grant is a `remote` User (a linked
+	// Server) and the set names a Library that itself arrived over a Link. A
+	// mirror is never re-shared onward (ADR-0054 §4, ADR-0056 §7) — the owner of
+	// the files decided who sees them. Same shape as UNKNOWN_LIBRARY: the whole
+	// set is rejected and the prior grants stand. Distinct from LINKED_LIBRARY
+	// (409), which refuses a WRITE to the mirror itself; nothing is being written
+	// to the Library here, and the Library is not in conflict — the pairing of it
+	// with this User is what cannot exist.
+	codeLinkedGrant = "LINKED_GRANT"
 	// Rating ceiling (PUT /users/{id}/ratingCeiling), both 422: setting a ceiling
 	// on an Admin, and an unknown rating label.
 	codeAdminCeiling  = "ADMIN_CEILING"

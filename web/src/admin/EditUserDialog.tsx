@@ -16,7 +16,10 @@ import type { LinkInvite, Library, User, UserDetail } from "../api/types";
 //     for any NON-ADMIN role (a Member, and equally the `remote` role a linked
 //     Server holds — ADR-0054 §2 makes the ceiling general because the mechanism
 //     is: capping a kid's iPad at 720p is the same code path as capping a
-//     friend's Server),
+//     friend's Server) — with one difference for the `remote` role: the
+//     checklist offers this Server's OWN Libraries only, because a Library that
+//     arrived over a Link is never re-shared onward (ADR-0054 §4; the server
+//     refuses such a set with 422 LINKED_GRANT),
 //   - and a "Delete user" button in the footer, alongside the row's trash icon.
 //
 // An ADMIN is implicitly all-access and uncapped, so their body carries the
@@ -154,7 +157,21 @@ export default function EditUserDialog({
         if (cancelled) return;
         setDetail(d);
         setLibraries(libs);
-        setChecked(new Set(d.libraryIds));
+        // For a linked Server, a grant naming a Library that itself arrived over
+        // a Link cannot exist (the server refuses it with 422 LINKED_GRANT and
+        // never resolves one into the Scope). One CAN still be read back from a
+        // database written before that rule, so it is dropped here too — leaving
+        // it ticked would show a box that cannot be untied to any visible row and
+        // would make Save fail on a set the Admin never chose.
+        setChecked(
+          new Set(
+            isRemote
+              ? d.libraryIds.filter((id) =>
+                  libs.some((l) => l.id === id && l.linked !== true),
+                )
+              : d.libraryIds,
+          ),
+        );
         setCeiling(d.ratingCeiling);
         setMaxResolution(d.maxResolution);
         setMaxBitrate(bitsToMbps(d.maxBitrate));
@@ -168,7 +185,7 @@ export default function EditUserDialog({
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, user.id, reloadKey]);
+  }, [isAdmin, isRemote, user.id, reloadKey]);
 
   // Pre-fill the MagicDNS origin. Best-effort in every direction: a build with
   // no Tailnet support answers 503, a node that is not running has no `fqdn`,
@@ -236,6 +253,24 @@ export default function EditUserDialog({
       return next;
     });
   }
+
+  // What this User may be granted. A linked Server is never granted a Library
+  // that itself arrived over a Link (ADR-0054 §4): the owner of those files
+  // decided who sees them, and one hop later that decision would be made by
+  // somebody they never met. The server refuses such a set with 422
+  // LINKED_GRANT, so the checklist does not offer the row at all — an
+  // unavoidable error is not a choice. For every other role a mirror is an
+  // ordinary Library (ADR-0056 §2), which is what the household's own people
+  // are granted.
+  const grantableLibraries =
+    libraries === null
+      ? null
+      : isRemote
+        ? libraries.filter((lib) => lib.linked !== true)
+        : libraries;
+  /** True when rows were withheld above — the note explains the absence. */
+  const hasLinkedLibraries =
+    isRemote && (libraries?.some((lib) => lib.linked === true) ?? false);
 
   const accessDirty = detail !== null && !sameSet(checked, detail.libraryIds);
   const ceilingDirty = detail !== null && ceiling !== detail.ratingCeiling;
@@ -498,19 +533,21 @@ export default function EditUserDialog({
                 </p>
               )}
 
-              {!loading && !loadError && libraries && (
+              {!loading && !loadError && grantableLibraries && (
                 <div className="field">
                   <span className="field-label">Library access</span>
-                  {libraries.length === 0 ? (
+                  {grantableLibraries.length === 0 ? (
                     <p
                       className="status status-empty"
                       data-testid="library-access-empty"
                     >
-                      No libraries on this server yet.
+                      {hasLinkedLibraries
+                        ? "No libraries of this server's own yet."
+                        : "No libraries on this server yet."}
                     </p>
                   ) : (
                     <ul className="library-checklist" data-testid="library-checklist">
-                      {libraries.map((lib) => (
+                      {grantableLibraries.map((lib) => (
                         <li key={lib.id} className="library-checklist-item">
                           <label>
                             <input
@@ -526,7 +563,13 @@ export default function EditUserDialog({
                       ))}
                     </ul>
                   )}
-                  {checked.size === 0 && libraries.length > 0 && (
+                  {hasLinkedLibraries && (
+                    <p className="field-hint" data-testid="linked-not-grantable">
+                      Libraries provided by another server can&rsquo;t be shared
+                      onward.
+                    </p>
+                  )}
+                  {checked.size === 0 && grantableLibraries.length > 0 && (
                     <p className="field-hint" data-testid="no-libraries-hint">
                       No libraries ticked — this user sees no catalog.
                     </p>
