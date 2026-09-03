@@ -3060,6 +3060,69 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   letter-spacing: 0.03em;
 }
 
+/* The link badge a `remote` User's row carries: "Linked, seen 2h ago" or
+   "Never linked". Green when the other household has redeemed its invite, dim
+   when it never has — an UNLINKED row is not a fault (the invite may have been
+   sent five minutes ago), so it is quiet rather than red. */
+.user-link-state {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.user-link-state.is-linked {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+.user-link-state.is-unlinked {
+  color: var(--text-dim);
+}
+
+/* The Link section of the Edit-User dialog: the origins the Admin types into
+   the invite, then the minted string and its QR. */
+.origin-list {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.origin-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.origin-row .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.invite-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+/* The string is the mechanism; it must be selectable in full and never
+   truncated into something that pastes wrong. */
+.invite-string {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+}
+/* Black on white whatever the page theme is: a camera reading an inverted QR
+   is a coin flip, and this one has exactly one job. */
+.invite-qr {
+  width: 100%;
+  max-width: 15rem;
+  height: auto;
+  align-self: center;
+  background: #fff;
+  border-radius: var(--radius-sm);
+}
+
 .library-checklist {
   list-style: none;
   margin: 0;

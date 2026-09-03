@@ -60,9 +60,22 @@ export interface User {
   role: Role;
 }
 
+/** A User as the Admin roster lists them: the User plus when their Devices were
+ * last seen. A SEPARATE type from {@link User} because only `GET /users` carries
+ * it — no authentication response has any business reporting somebody's Devices.
+ *
+ * `lastSeenAt` is the most recent last-seen across ALL of this User's Devices,
+ * and is ABSENT when they have none. That absence is the whole signal for a
+ * `remote` User: a linked Server has no Device until it redeems its Invite and
+ * exactly one afterwards (ADR-0055 §4), so "no lastSeenAt" is "never linked" and
+ * a timestamp is "linked, and last heard from then". */
+export interface AdminUser extends User {
+  lastSeenAt?: string;
+}
+
 /** Response shape of `GET /api/v1/users` (Admin) — the list is wrapped. */
 export interface UsersResponse {
-  users: User[];
+  users: AdminUser[];
 }
 
 /** Raw `GET /api/v1/users/{id}` (Admin) — one User's full detail. The server

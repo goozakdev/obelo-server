@@ -23,8 +23,27 @@ type createUserRequest struct {
 	Role     string `json:"role"`
 }
 
+// adminUserJSON is the GET /users entry: the shared userJSON plus the one thing
+// the Admin roster needs that a login response has no business carrying — when
+// this User's Devices were last seen.
+//
+// A SEPARATE shape from userJSON on purpose. userJSON is the User as every
+// authentication response returns it (setup, login, device grant, link redeem),
+// and none of those callers is asking about somebody's Devices. The Users list
+// is Admin scope, and there it is the only way to tell a `remote` User that has
+// redeemed its Invite from one that never has (ADR-0055 §4).
+//
+// LastSeenAt is omitted — never "" — when the User has no Device at all, so
+// "never linked" is the absence of the field rather than a sentinel.
+type adminUserJSON struct {
+	ID         string `json:"id"`
+	Username   string `json:"username"`
+	Role       string `json:"role"`
+	LastSeenAt string `json:"lastSeenAt,omitempty"`
+}
+
 type usersResponse struct {
-	Users []userJSON `json:"users"`
+	Users []adminUserJSON `json:"users"`
 }
 
 // handleUsersCollection dispatches the collection-level methods on "/users":
@@ -77,9 +96,21 @@ func handleListUsers(svc *auth.Service) http.HandlerFunc {
 				"failed to list users", nil)
 			return
 		}
-		out := make([]userJSON, 0, len(users))
+		// Best-effort: a failure to read the Device last-seen leaves every entry
+		// without one (the list renders "never linked") rather than failing the
+		// whole roster over a decoration.
+		seen, err := svc.LastDeviceSeen()
+		if err != nil {
+			seen = nil
+		}
+		out := make([]adminUserJSON, 0, len(users))
 		for _, u := range users {
-			out = append(out, toUserJSON(u))
+			out = append(out, adminUserJSON{
+				ID:         u.ID,
+				Username:   u.Username,
+				Role:       u.Role,
+				LastSeenAt: formatTimestamp(seen[u.ID]),
+			})
 		}
 		writeJSON(w, http.StatusOK, usersResponse{Users: out})
 	}

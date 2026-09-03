@@ -37,6 +37,7 @@ import type {
   ArtistAlbumsResponseRaw,
   ArtistsPage,
   ArtistsResponseRaw,
+  AdminUser,
   DeviceApprovalResponse,
   ArtworkCandidate,
   ArtworkCandidatesResult,
@@ -1598,9 +1599,14 @@ export class ApiClient {
   // --- Admin: users (access-control-admin-ui issue 01) -------------------
 
   /** `GET /api/v1/users` (Admin) — every User on the server (`{ id, username,
-   * role }` each). Returns the unwrapped array. Admin scope: a Member gets a 403
-   * the UI surfaces as a readable error (the tab is also role-gated). */
-  async listUsers(signal?: AbortSignal): Promise<User[]> {
+   * role }` each, plus a `lastSeenAt` when they have a Device). Returns the
+   * unwrapped array. Admin scope: a Member gets a 403 the UI surfaces as a
+   * readable error (the tab is also role-gated).
+   *
+   * `lastSeenAt` is the newest last-seen across the User's Devices, absent when
+   * they have none — which is what tells a `remote` User that has redeemed its
+   * Invite from one that never has (ADR-0055 §4). */
+  async listUsers(signal?: AbortSignal): Promise<AdminUser[]> {
     const res = await this.request<UsersResponse>("/users", { signal });
     return res?.users ?? [];
   }
@@ -2184,6 +2190,7 @@ export class ApiClient {
 
 export { ApiError, NetworkError };
 export type {
+  AdminUser,
   Album,
   AlbumTracks,
   ArtistAlbums,

@@ -57,6 +57,7 @@ type Store interface {
 	DeleteUser(id string) error
 	UpsertDevice(newID, userID, clientID, name, platform string) (store.Device, error)
 	DevicesByUser(userID string) ([]store.Device, error)
+	LastDeviceSeenByUser() (map[string]string, error)
 	DeviceByID(id string) (store.Device, error)
 	DeleteDevice(id string) error
 	InsertToken(tokenHash, deviceID, userID string) error
@@ -495,6 +496,15 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 // Users lists every User (for the Admin user-management view).
 func (s *Service) Users() ([]store.User, error) {
 	return s.store.ListUsers()
+}
+
+// LastDeviceSeen reports, per User id, the most recent last-seen across that
+// User's Devices; a User with no Device is absent from the map. It is what lets
+// the Admin Users list say whether a `remote` User — a linked Server — has ever
+// redeemed its Invite, and when it last spoke (ADR-0055 §4: the redeeming Server
+// arrives as an ordinary Device with a real last-seen).
+func (s *Service) LastDeviceSeen() (map[string]string, error) {
+	return s.store.LastDeviceSeenByUser()
 }
 
 // User returns one User by id, or ErrUserNotFound.
