@@ -120,6 +120,23 @@ export interface PlaybackCeilingInput {
   maxStreams: number;
 }
 
+/** Response of `POST /api/v1/users/{id}/invite` (Admin) — the one-time invite a
+ * sharing Admin sends to link a Server (ADR-0055 §1, §2).
+ *
+ * `invite` is the WHOLE `obelo-link:<base64url(JSON)>` string: the sharer's
+ * server identity, the origins the Admin typed, a single-use code and its
+ * expiry, in one field so there is one thing to copy and one thing to paste.
+ * The raw code exists ONLY in this response — it is never stored unhashed and
+ * cannot be re-read — so a lost string is replaced by minting again, which also
+ * kills the one it replaced.
+ *
+ * `expiresAt` is the same instant the payload carries, hoisted out so a dialog
+ * can say when it lapses without decoding what it was just handed. */
+export interface LinkInvite {
+  invite: string;
+  expiresAt: string;
+}
+
 /** Request body for `POST /api/v1/users` (Admin): create a User. `role` is
  * optional and defaults to "member" server-side; pass "admin" to deliberately
  * mint another Admin. A blank username is rejected (400 BAD_REQUEST); a duplicate

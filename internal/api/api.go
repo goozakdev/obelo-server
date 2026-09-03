@@ -245,6 +245,15 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("/auth/device/approve",
 		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleDeviceApprove(deps.Auth))))
 
+	// Linking, the sharing side (ADR-0055): another household's Server redeems the
+	// one-time invite an Admin minted for a `remote` User, and receives an ordinary
+	// Device-bound bearer. Unauthenticated for the same reason the device grant's
+	// /token is — the caller has no credential here yet, which is what the invite
+	// is FOR — and rate-limited per client IP inside the service. Advertised via
+	// features.serverLinking, with the protocol version top-level on GET /server.
+	mux.HandleFunc("/auth/link/redeem",
+		requireMethod(http.MethodPost, handleRedeemLinkInvite(deps.Auth)))
+
 	// GET /devices lists the caller's Devices.
 	mux.HandleFunc("/devices",
 		requireMethod(http.MethodGet, requireAuth(deps.Auth, handleListDevices(deps.Auth))))

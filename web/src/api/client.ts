@@ -69,6 +69,7 @@ import type {
   HomeRows,
   LibrariesResponse,
   Library,
+  LinkInvite,
   ListTitlesOptions,
   LoginRequest,
   LoginResult,
@@ -1695,6 +1696,29 @@ export class ApiClient {
     return this.request<void>(
       `/users/${encodeURIComponent(id)}/playbackCeiling`,
       { method: "PUT", body: ceiling, signal },
+    );
+  }
+
+  /** `POST /api/v1/users/{id}/invite` (Admin) — mint the one-time invite that
+   * links another household's Server to this `remote` User (ADR-0055 §1–§2).
+   * `origins` are the addresses the Admin typed, tried in the order given by the
+   * Server that redeems; each must be a bare absolute http(s) origin with no path.
+   *
+   * 201 with the whole `obelo-link:` string, whose code is single-use and lapses
+   * in 24 hours. MINTING AGAIN INVALIDATES THE PREVIOUS INVITE — that is how a
+   * mis-sent or lapsed one is taken back, and why the caller must treat the
+   * returned string as the only live one. The refusals are NOT swallowed: 422
+   * `NOT_REMOTE_USER` (the target is not a linked Server — no other role has any
+   * use for an invite) and 422 `INVALID_ORIGIN` (an origin is not a bare absolute
+   * http(s) address, or none was given); an unknown user is 404. */
+  createLinkInvite(
+    id: string,
+    origins: string[],
+    signal?: AbortSignal,
+  ): Promise<LinkInvite> {
+    return this.request<LinkInvite>(
+      `/users/${encodeURIComponent(id)}/invite`,
+      { method: "POST", body: { origins }, signal },
     );
   }
 

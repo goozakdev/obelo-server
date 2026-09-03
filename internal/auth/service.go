@@ -71,6 +71,15 @@ type Store interface {
 	TouchDeviceAuthPoll(hash, now string) (string, error)
 	CountLiveDeviceAuthRequests(now string) (int, error)
 	DeleteExpiredDeviceAuthRequests(now string) error
+	// Link invites (ADR-0055 §1) — the `remote` role's one-time credential. A
+	// THIRD namespace, separate from both the bearer tokens above and the stream
+	// tokens below: an invite code can never authenticate as either, and neither
+	// can be redeemed as an invite.
+	InsertLinkInvite(inv store.LinkInvite) error
+	LinkInviteByCodeHash(hash string) (store.LinkInvite, error)
+	RedeemLinkInvite(hash, now string) (store.LinkInvite, error)
+	DeleteUnredeemedLinkInvites(userID string) error
+	DeleteExpiredLinkInvites(now string) error
 	// Session stream tokens (.scratch/session-stream-tokens). A SEPARATE namespace
 	// from InsertToken/LookupToken above, and deliberately so: nothing here reads
 	// or writes auth_tokens, so a stream token can never authenticate as a bearer
@@ -133,6 +142,9 @@ type Service struct {
 	//   loginUserFails    — password login failures, keyed by submitted username.
 	//   loginIPFails      — password login failures, keyed by client IP.
 	//   deviceStartQuota  — device-code starts that SUCCEEDED, keyed by client IP.
+	//   linkRedeemFails   — link-invite redemption FAILURES, keyed by client IP
+	//                       (that endpoint is unauthenticated by necessity, so
+	//                       there is no User to key on — see link_invite.go).
 	//
 	// The first three are free until somebody is wrong repeatedly. The fourth is a
 	// quota on a scarce resource rather than a penalty for being wrong, because a
@@ -146,6 +158,7 @@ type Service struct {
 	loginUserFails   *fixedWindowLimiter
 	loginIPFails     *fixedWindowLimiter
 	deviceStartQuota *fixedWindowLimiter
+	linkRedeemFails  *fixedWindowLimiter
 }
 
 // Option configures the Service. Present for the clock seam; NewService's
@@ -169,6 +182,7 @@ func NewService(s Store, opts ...Option) (*Service, error) {
 		loginUserFails:   newFixedWindowLimiter(loginUserFailureLimit, loginFailureWindow),
 		loginIPFails:     newFixedWindowLimiter(loginIPFailureLimit, loginFailureWindow),
 		deviceStartQuota: newFixedWindowLimiter(maxDeviceAuthStartsPerSource, deviceAuthStartWindow),
+		linkRedeemFails:  newFixedWindowLimiter(linkRedeemFailureLimit, linkRedeemFailureWindow),
 	}
 	for _, opt := range opts {
 		opt(svc)

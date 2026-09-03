@@ -26,6 +26,13 @@ type serverInfoResponse struct {
 	Features          map[string]bool `json:"features"`
 	SetupRequired     bool            `json:"setupRequired"`
 
+	// LinkProtocolVersion is the server-to-server linking contract's version
+	// (ADR-0055 §3), and it is TOP-LEVEL rather than a feature flag because it is
+	// not a boolean: features.serverLinking says the routes exist, this says which
+	// dialect they speak, and a redeeming Server checks both before it posts a
+	// code. Not omitempty — a zero would be a claim, and there is no version 0.
+	LinkProtocolVersion int `json:"linkProtocolVersion"`
+
 	// TailnetURL is the ORIGIN a signed-in client should use to reach this Server
 	// from away — "https://obelo.tail1a2b.ts.net" — or null (ADR-0043). It is the
 	// field that makes "no addresses to remember" true: a client that paired on the
@@ -65,13 +72,14 @@ func handleServerInfo(meta *server.Metadata, authSvc *auth.Service, node *tailne
 			return
 		}
 		writeJSON(w, http.StatusOK, serverInfoResponse{
-			ID:                info.Identity.ID,
-			Name:              info.Identity.Name,
-			Version:           info.Version,
-			SupportedVersions: info.SupportedVersions,
-			Features:          info.Features,
-			SetupRequired:     info.SetupRequired,
-			TailnetURL:        tailnetURLFor(r, authSvc, node),
+			ID:                  info.Identity.ID,
+			Name:                info.Identity.Name,
+			Version:             info.Version,
+			SupportedVersions:   info.SupportedVersions,
+			Features:            info.Features,
+			SetupRequired:       info.SetupRequired,
+			LinkProtocolVersion: info.LinkProtocolVersion,
+			TailnetURL:          tailnetURLFor(r, authSvc, node),
 		})
 	}
 }
