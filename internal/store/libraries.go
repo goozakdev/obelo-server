@@ -400,6 +400,33 @@ func (db *DB) IsLinkedLibrary(id string) (bool, error) {
 	return source == LibrarySourceLinked, nil
 }
 
+// LinkedLibraryIDs lists the ids of every Library that is a mirror of another
+// household's (source = linked), in a stable order. It is the read behind the
+// "sharing does not travel" invariant (ADR-0054 §4, ADR-0056 §7): the grant
+// surface refuses a set naming one of these for a `remote` User, and the access
+// resolver subtracts them from such a User's Scope.
+//
+// It answers the whole set rather than one id at a time because both callers ask
+// about a set, and on a Server that has never linked the answer is one empty
+// query rather than one query per granted Library.
+func (db *DB) LinkedLibraryIDs() ([]string, error) {
+	rows, err := db.Query(
+		`SELECT id FROM libraries WHERE source = ? ORDER BY id`, LibrarySourceLinked)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing linked libraries: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: scanning linked library id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // SetLibraryCheckpoint records how far the mirror has consumed the sharer's feed.
 func (db *DB) SetLibraryCheckpoint(id, checkpoint string) error {
 	if _, err := db.Exec(

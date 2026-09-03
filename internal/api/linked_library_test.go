@@ -789,7 +789,11 @@ func TestMirroredTitlesReachHomeSearchAndPlaylists(t *testing.T) {
 // wired now, and this is what it buys.
 func TestTheMirrorIsNeverReShared(t *testing.T) {
 	f := linkFixtures(t, "movie")
-	peer := linkedServerToken(t, f.home, f.homeAdmin, f.mirror["movie"])
+	// The peer is granted NOTHING: since issue 11 the grant itself is refused
+	// (422 LINKED_GRANT — linked_grant_test.go), which is the earlier of the two
+	// refusals. The export must still answer 404 on its own, which is what the
+	// Admin leg below — all Libraries in scope — actually proves.
+	peer := linkedServerToken(t, f.home, f.homeAdmin)
 
 	if status, body := f.home.AuthGET("/api/v1/libraries/"+f.mirror["movie"]+"/export", peer, nil); status != http.StatusNotFound {
 		t.Fatalf("exporting a mirrored Library = %d, want 404; body: %s", status, body)

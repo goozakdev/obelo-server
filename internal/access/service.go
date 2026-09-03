@@ -19,8 +19,14 @@ import (
 )
 
 // roleAdmin is the Admin role string (mirrors the value the auth/store layers
-// use); an Admin always resolves to an all-access Scope.
-const roleAdmin = "admin"
+// use); an Admin always resolves to an all-access Scope. roleRemote is the role
+// a linked Server holds here (ADR-0054 §1): it resolves a Scope exactly like a
+// Member, minus any Library that itself arrived over a Link (§4 — sharing does
+// not travel).
+const (
+	roleAdmin  = "admin"
+	roleRemote = "remote"
+)
 
 // Errors the api layer maps onto HTTP envelopes for the grant-management surface.
 var (
@@ -32,6 +38,13 @@ var (
 	// ErrUnknownLibrary: a library id in the grant set does not exist; the whole
 	// replace-set is rejected and the prior set is left unchanged (→ 422).
 	ErrUnknownLibrary = errors.New("access: unknown library in grant set")
+	// ErrLinkedGrant: the target is a `remote` User (a linked Server) and the
+	// grant set names a Library that itself arrived over a Link. A mirror is
+	// never re-shared — the owner of the files decided who sees them, and one hop
+	// later that decision would be made by somebody they never met (ADR-0054 §4,
+	// ADR-0056 §7). The whole set is rejected and the prior set is left unchanged,
+	// exactly as for an unknown id (→ 422).
+	ErrLinkedGrant = errors.New("access: cannot grant a linked library to a remote user")
 	// ErrAdminCeiling: a Rating ceiling cannot be set on an Admin — Admins are
 	// all-access and the ceiling is never consulted for them (→ 422).
 	ErrAdminCeiling = errors.New("access: cannot set a rating ceiling on an admin")
@@ -65,6 +78,9 @@ type Store interface {
 	// SetPlaybackCeiling stores a User's whole Playback ceiling (a zero field
 	// clears that dimension); store.ErrNotFound for an unknown User.
 	SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error
+	// LinkedLibraryIDs returns the ids of every Library that is a mirror of
+	// another household's (ADR-0056 §1); empty on a Server that has never linked.
+	LinkedLibraryIDs() ([]string, error)
 }
 
 // Scope is a User's resolved access over the catalog (the PRD's "AccessScope").
@@ -159,6 +175,19 @@ func (s *Service) Resolve(userID string) (Scope, error) {
 	if err != nil {
 		return Scope{}, err
 	}
+	// The one-hop invariant, enforced where the Scope is COMPUTED and not only
+	// where a grant is written (ADR-0054 §4, ADR-0056 §7). A grant row naming a
+	// linked Library can only reach a `remote` User behind the API — a restore of
+	// an older database, a hand-edit, a Library that became a mirror after it was
+	// granted — and this is the last place before the answer is used, so a row
+	// that should not exist buys nothing. A failed read fails the whole Resolve
+	// (fail closed): the alternative is silently re-sharing somebody else's files.
+	if u.Role == roleRemote && len(libs) > 0 {
+		libs, err = s.localLibrariesOnly(libs)
+		if err != nil {
+			return Scope{}, err
+		}
+	}
 	ceiling, err := s.store.RatingCeilingForUser(userID)
 	if err != nil {
 		return Scope{}, err
@@ -176,6 +205,43 @@ func (s *Service) Resolve(userID string) (Scope, error) {
 		MaxBitrate:    play.MaxBitrate,
 		MaxStreams:    play.MaxStreams,
 	}, nil
+}
+
+// localLibrariesOnly drops any Library that arrived over a Link from ids,
+// preserving order. It is the one place the "a mirror is never re-shared" filter
+// is spelled, shared by Resolve and SetLibraryAccess.
+func (s *Service) localLibrariesOnly(ids []string) ([]string, error) {
+	linked, err := s.linkedSet()
+	if err != nil {
+		return nil, err
+	}
+	if len(linked) == 0 {
+		return ids, nil
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !linked[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// linkedSet reads the mirrored Library ids as a set (nil when nothing here came
+// over a Link, which is every Server until one is linked).
+func (s *Service) linkedSet() (map[string]bool, error) {
+	ids, err := s.store.LinkedLibraryIDs()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set, nil
 }
 
 // RatingCeiling returns a User's stored ceiling label ("" = uncapped), for the
@@ -268,8 +334,13 @@ func (s *Service) LibraryAccess(userID string) ([]string, error) {
 
 // SetLibraryAccess replaces a Member's grant set with exactly libraryIDs. It
 // rejects an unknown User (ErrUserNotFound), an Admin target (ErrAdminGrant —
-// Admins are implicitly all-access), and an unknown library id in the set
-// (ErrUnknownLibrary, leaving the prior set unchanged).
+// Admins are implicitly all-access), a linked Library aimed at a `remote` User
+// (ErrLinkedGrant — sharing does not travel), and an unknown library id in the
+// set (ErrUnknownLibrary). Every refusal leaves the prior set unchanged.
+//
+// A Member is unaffected: a linked Library is granted to the household's own
+// people exactly like any other (ADR-0056 §2). It is the second hop that is
+// refused, not the first.
 func (s *Service) SetLibraryAccess(userID string, libraryIDs []string) error {
 	u, err := s.store.UserByID(userID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -280,6 +351,21 @@ func (s *Service) SetLibraryAccess(userID string, libraryIDs []string) error {
 	}
 	if u.Role == roleAdmin {
 		return ErrAdminGrant
+	}
+	if u.Role == roleRemote && len(libraryIDs) > 0 {
+		// Checked before the write, so the whole set is refused with the prior set
+		// intact — the same shape the unknown-id rejection has. A set that names
+		// both a linked Library and an unknown one is LINKED_GRANT: the two mean
+		// the same thing to the caller (nothing was applied, fix the set).
+		linked, err := s.linkedSet()
+		if err != nil {
+			return err
+		}
+		for _, id := range libraryIDs {
+			if linked[id] {
+				return ErrLinkedGrant
+			}
+		}
 	}
 	if err := s.store.ReplaceLibraryAccess(userID, libraryIDs); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

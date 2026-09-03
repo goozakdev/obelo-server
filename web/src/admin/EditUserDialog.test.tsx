@@ -271,6 +271,76 @@ describe("EditUserDialog — library grants (Member)", () => {
   });
 });
 
+describe("EditUserDialog — a linked Library is never re-shared", () => {
+  // linked-servers issue 11 / ADR-0054 §4: a Library that arrived over a Link is
+  // not offered to a linked Server, and the absence is explained rather than
+  // silent. Every other role is untouched — a mirror is an ordinary Library to
+  // the household's own people (ADR-0056 §2).
+  const WITH_MIRROR = [
+    lib("l1", "Kids Movies"),
+    { ...lib("l9", "Their Films"), linked: true, available: true },
+  ];
+
+  it("offers a linked server this Server's OWN libraries only, and says why", async () => {
+    listLibraries.mockResolvedValue(WITH_MIRROR);
+    getUser.mockResolvedValue(detail({ role: "remote", libraryIds: ["l1"] }));
+    renderDialog(usr({ role: "remote" }));
+
+    await screen.findByTestId("library-checklist");
+    expect(screen.getByTestId("library-checkbox-l1")).toBeChecked();
+    expect(screen.queryByTestId("library-checkbox-l9")).toBeNull();
+    expect(screen.getByTestId("linked-not-grantable")).toHaveTextContent(
+      /provided by another server can.t be shared onward/i,
+    );
+  });
+
+  it("still offers a Member the linked Library, with no note", async () => {
+    listLibraries.mockResolvedValue(WITH_MIRROR);
+    getUser.mockResolvedValue(detail({ libraryIds: ["l9"] }));
+    renderDialog(usr({}));
+
+    await screen.findByTestId("library-checklist");
+    expect(screen.getByTestId("library-checkbox-l9")).toBeChecked();
+    expect(screen.queryByTestId("linked-not-grantable")).toBeNull();
+  });
+
+  it("shows no note for a linked server when nothing here came over a Link", async () => {
+    getUser.mockResolvedValue(detail({ role: "remote" }));
+    renderDialog(usr({ role: "remote" }));
+
+    await screen.findByTestId("library-checklist");
+    expect(screen.queryByTestId("linked-not-grantable")).toBeNull();
+    expect(screen.getByTestId("library-checkbox-l3")).toBeInTheDocument();
+  });
+
+  it("never sends a linked Library, even if one was granted behind the API", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue(WITH_MIRROR);
+    // A grant row from before the rule (or written straight into the database).
+    getUser.mockResolvedValue(detail({ role: "remote", libraryIds: ["l1", "l9"] }));
+    renderDialog(usr({ role: "remote" }));
+
+    await screen.findByTestId("library-checklist");
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() => expect(setLibraryAccess).toHaveBeenCalledTimes(1));
+    expect(setLibraryAccess).toHaveBeenCalledWith("u2", ["l1"]);
+  });
+
+  it("says the server has none of its own when every Library is somebody else's", async () => {
+    listLibraries.mockResolvedValue([
+      { ...lib("l9", "Their Films"), linked: true, available: true },
+    ]);
+    getUser.mockResolvedValue(detail({ role: "remote" }));
+    renderDialog(usr({ role: "remote" }));
+
+    expect(await screen.findByTestId("library-access-empty")).toHaveTextContent(
+      /own/i,
+    );
+    expect(screen.getByTestId("linked-not-grantable")).toBeInTheDocument();
+  });
+});
+
 describe("EditUserDialog — rating ceiling (Member)", () => {
   it("offers G/PG/PG-13/R/NC-17 + No limit, preselecting the current ceiling", async () => {
     getUser.mockResolvedValue(detail({ ratingCeiling: "R" }));
