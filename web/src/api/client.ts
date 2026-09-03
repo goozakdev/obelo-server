@@ -17,6 +17,7 @@ import {
   normalizePlaylist,
   normalizePlaylistDetail,
   normalizePlaylistSummary,
+  normalizeEnrichPassState,
   normalizeScanStatus,
   normalizeSeasonEpisodes,
   normalizeShowSeasons,
@@ -29,6 +30,7 @@ import {
   normalizeWatchState,
 } from "./normalize";
 import type {
+  AlbumEditions,
   AlbumTracks,
   AlbumTracksResponseRaw,
   ArtistAlbums,
@@ -83,6 +85,9 @@ import type {
   UpdateSubtitleProvidersInput,
   TestProviderResult,
   EnrichmentPolicy,
+  EnrichMode,
+  EnrichPassState,
+  EnrichPassStateRaw,
   UpdateEnrichmentPolicyInput,
   EnrichmentConsent,
   Playlist,
@@ -189,8 +194,10 @@ interface RequestOptions {
 }
 
 /** enrichmentSearchParams builds the Edit-item search query string from the query
- * plus optional artist-narrowing + paging (item-editing/search-improvements). A blank
- * artist / page 0 are omitted so the URL stays clean for the common case. */
+ * plus optional artist/release narrowing + paging (item-editing/search-improvements,
+ * needs-fixing/06). A blank artist or release / page 0 are omitted so the URL stays
+ * clean for the common case — which includes every video search, where neither
+ * narrowing axis exists. */
 function enrichmentSearchParams(
   query: string,
   opts: EnrichmentSearchOptions,
@@ -198,6 +205,8 @@ function enrichmentSearchParams(
   const params = new URLSearchParams({ q: query });
   const artist = opts.artist?.trim();
   if (artist) params.set("artist", artist);
+  const release = opts.release?.trim();
+  if (release) params.set("release", release);
   if (opts.page && opts.page > 0) params.set("page", String(opts.page));
   return params;
 }
@@ -402,6 +411,57 @@ export class ApiClient {
       { method: "POST", signal },
     );
     return normalizeScanStatus(res);
+  }
+
+  /** `POST /api/v1/libraries/{id}/enrich` (Admin) — START an Enrichment pass.
+   * Resolves with the started-ack (202) as soon as the pass is queued; it does
+   * NOT wait for the pass, exactly like {@link scanLibrary}.
+   *
+   * It used to be synchronous, and that is the bug this signature exists to make
+   * impossible (ADR-0051's amendment). A recheck of a real library is fifteen
+   * minutes of provider calls: the fetch simply hung, the operator reloaded the
+   * page, and the reload aborted the request — killing the pass with it. Track a
+   * pass through the `enrichProgress` SSE stream (ADR-0016), whose terminal
+   * `complete` event carries the summary, and {@link getEnrichPassState} for the
+   * "what is running right now?" read a freshly-loaded page needs.
+   *
+   * `started: false` in the ack means a pass was ALREADY running for that library
+   * and this press started nothing — which is a normal outcome, not an error. A
+   * server running no background passes at all answers 503 `ENRICH_UNAVAILABLE`,
+   * and a full queue 503 `ENRICH_BUSY`; both surface as readable ApiErrors,
+   * deliberately, because both used to be silence.
+   *
+   * `mode: "recheck"` is the one an operator reaches for after a matching
+   * improvement ships (ADR-0051): it re-asks the settled non-answers — `unmatched`
+   * items and parked failures — on top of the never-enriched ones, and leaves
+   * everything already matched alone. `"full"` re-resolves the whole Library. */
+  async enrichLibrary(
+    id: string,
+    opts: { mode?: EnrichMode } = {},
+    signal?: AbortSignal,
+  ): Promise<EnrichPassState> {
+    const qs = opts.mode && opts.mode !== "new" ? `?mode=${encodeURIComponent(opts.mode)}` : "";
+    const res = await this.request<EnrichPassStateRaw>(
+      `/libraries/${encodeURIComponent(id)}/enrich${qs}`,
+      { method: "POST", signal },
+    );
+    return normalizeEnrichPassState(res);
+  }
+
+  /** `GET /api/v1/libraries/{id}/enrich` (Admin) — is an Enrichment pass running
+   * over this library, how far along, and what came of the last one.
+   *
+   * This is what lets a RELOADED page rejoin a pass in flight instead of showing
+   * an idle button, which is the whole reason the operator killed theirs: they saw
+   * nothing happening and reloaded. The status is in memory on the server, so a
+   * library reads idle with no `lastPass` after a restart — honest, because a
+   * status that survived the process would be claiming a pass had. */
+  async getEnrichPassState(id: string, signal?: AbortSignal): Promise<EnrichPassState> {
+    const res = await this.request<EnrichPassStateRaw>(
+      `/libraries/${encodeURIComponent(id)}/enrich`,
+      { signal },
+    );
+    return normalizeEnrichPassState(res);
   }
 
   /** `POST /api/v1/{titles|shows|albums|artists}/{id}/scan` (Admin) — a Targeted
@@ -1277,20 +1337,47 @@ export class ApiClient {
     );
   }
 
+  /** `GET /api/v1/albums/{id}/editions` (Admin) — the editions of an Album's matched
+   * release-group, so an Admin can choose the exact one their files are WITHOUT
+   * leaving Obelo (ADR-0052). Reads only: choosing one is
+   * `applyEntityEnrichmentOverride("albums", id, releaseGroupId, true, releaseId)`,
+   * the album's existing apply carrying the edition — there is no second apply path.
+   *
+   * An album with no matched release-group answers an empty list rather than an
+   * error, and a provider that cannot list answers 503 SEARCH_UNAVAILABLE, which the
+   * picker degrades to the paste-a-URL escape hatch on. */
+  async listAlbumEditions(albumId: string, signal?: AbortSignal): Promise<AlbumEditions> {
+    const res = await this.request<AlbumEditions>(
+      `/albums/${encodeURIComponent(albumId)}/editions`,
+      { signal },
+    );
+    return {
+      ...res,
+      localTrackCount: res.localTrackCount ?? 0,
+      editions: res.editions ?? [],
+    };
+  }
+
   /** `PUT /api/v1/{shows|artists|albums}/{id}/enrichmentOverride` (Admin) — apply a
    * picked candidate as a durable Enrichment override on a browse PARENT and
    * re-enrich just it (item-editing/02, ADR-0019). Identity/watch state untouched;
-   * Locked fields honored. Returns the updated parent enrichment detail. */
+   * Locked fields honored. Returns the updated parent enrichment detail.
+   *
+   * `releaseId` pins WHICH EDITION of an Album decorates its tracks (ADR-0052) —
+   * pass the previewed candidate's `releaseId` straight through. Omitting it CLEARS
+   * any edition the album had, which is what a picked search candidate and a pasted
+   * `/release-group/` URL both mean: the Admin named a less specific thing. */
   async applyEntityEnrichmentOverride(
     entityType: "shows" | "artists" | "albums",
     entityId: string,
     externalId: string,
     cascade = false,
+    releaseId?: string,
     signal?: AbortSignal,
   ): Promise<EntityEnrichmentDetail> {
     return this.request<EntityEnrichmentDetail>(
       `/${entityType}/${encodeURIComponent(entityId)}/enrichmentOverride`,
-      { method: "PUT", body: { externalId, cascade }, signal },
+      { method: "PUT", body: { externalId, cascade, releaseId: releaseId ?? "" }, signal },
     );
   }
 
@@ -2112,6 +2199,10 @@ export type {
   PlaybackState,
   PlaybackTier,
   Role,
+  EnrichMode,
+  EnrichPassProgress,
+  EnrichPassState,
+  EnrichPassSummary,
   ScanMode,
   ScanState,
   ScanStatus,

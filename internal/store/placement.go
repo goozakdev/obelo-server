@@ -268,7 +268,8 @@ func (db *DB) ApplyShowArrangement(a ShowArrangement) error {
 	}
 	for _, key := range a.PendingKeys {
 		if _, err := tx.Exec(
-			`UPDATE titles SET enrichment_status = 'pending'
+			`UPDATE titles SET enrichment_status = 'pending', `+clearEnrichmentRetry+`,
+			     `+clearEnrichmentReason+`
 			   WHERE library_id = ? AND identity_key = ?`, a.LibraryID, key); err != nil {
 			return fmt.Errorf("store: resetting enrichment for %q: %w", key, err)
 		}
@@ -307,7 +308,8 @@ func applyPinsTx(tx *sql.Tx, libraryID string, pins []SlotPin) error {
 			_, err = tx.Exec(
 				`UPDATE titles SET enrichment_tmdb_id = ?, enrichment_id_origin = '',
 				     enrichment_season = NULL,
-				     enrichment_episode = NULL, enrichment_status = 'pending'
+				     enrichment_episode = NULL, enrichment_status = 'pending', `+clearEnrichmentRetry+`,
+				     `+clearEnrichmentReason+`
 				   WHERE library_id = ? AND identity_key = ?`,
 				p.SeriesID, libraryID, p.IdentityKey)
 		} else {
@@ -316,7 +318,8 @@ func applyPinsTx(tx *sql.Tx, libraryID string, pins []SlotPin) error {
 				     enrichment_tmdb_id = CASE WHEN ? <> '' THEN ? ELSE enrichment_tmdb_id END,
 				     enrichment_id_origin = CASE WHEN ? <> '' THEN 'chosen' ELSE enrichment_id_origin END,
 				     enrichment_season = ?, enrichment_episode = ?,
-				     enrichment_status = 'pending'
+				     enrichment_status = 'pending', `+clearEnrichmentRetry+`,
+				     `+clearEnrichmentReason+`
 				   WHERE library_id = ? AND identity_key = ?`,
 				p.SeriesID, p.SeriesID, p.SeriesID, p.Season, p.Episode, libraryID, p.IdentityKey)
 		}

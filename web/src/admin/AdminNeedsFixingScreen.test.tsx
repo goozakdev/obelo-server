@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithAuth } from "../test/renderWithAuth";
+import type { EnrichProgress } from "../events/enrichEvents";
 import type {
   EnrichmentAttentionTitle,
+  EnrichPassState,
   Library,
   MatchOverride,
   NeedsReviewItem,
@@ -34,12 +38,19 @@ const {
   applyEnrichmentOverride,
   searchEnrichmentCandidates,
   searchLibraryEnrichmentCandidates,
+  searchEntityEnrichmentCandidates,
   previewExternalCandidate,
   previewLibraryExternalCandidate,
+  previewEntityExternalCandidate,
+  applyEntityEnrichmentOverride,
+  listAlbumEditions,
   listShowProblems,
   reviewShowEpisodes,
   deleteOverride,
   scanLibrary,
+  enrichLibrary,
+  getEnrichPassState,
+  subscribeEvents,
 } = vi.hoisted(() => ({
   listLibraries: vi.fn(),
   listUnmatched: vi.fn(),
@@ -52,12 +63,19 @@ const {
   applyEnrichmentOverride: vi.fn(),
   searchEnrichmentCandidates: vi.fn(),
   searchLibraryEnrichmentCandidates: vi.fn(),
+  searchEntityEnrichmentCandidates: vi.fn(),
   previewExternalCandidate: vi.fn(),
   previewLibraryExternalCandidate: vi.fn(),
+  previewEntityExternalCandidate: vi.fn(),
+  applyEntityEnrichmentOverride: vi.fn(),
+  listAlbumEditions: vi.fn(),
   listShowProblems: vi.fn(),
   reviewShowEpisodes: vi.fn(),
   deleteOverride: vi.fn(),
   scanLibrary: vi.fn(),
+  enrichLibrary: vi.fn(),
+  getEnrichPassState: vi.fn(),
+  subscribeEvents: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -77,13 +95,23 @@ vi.mock("../api/client", async () => {
       searchEnrichmentCandidates: (...a: unknown[]) => searchEnrichmentCandidates(...a),
       searchLibraryEnrichmentCandidates: (...a: unknown[]) =>
         searchLibraryEnrichmentCandidates(...a),
+      searchEntityEnrichmentCandidates: (...a: unknown[]) =>
+        searchEntityEnrichmentCandidates(...a),
       previewExternalCandidate: (...a: unknown[]) => previewExternalCandidate(...a),
       previewLibraryExternalCandidate: (...a: unknown[]) =>
         previewLibraryExternalCandidate(...a),
+      previewEntityExternalCandidate: (...a: unknown[]) =>
+        previewEntityExternalCandidate(...a),
+      applyEntityEnrichmentOverride: (...a: unknown[]) =>
+        applyEntityEnrichmentOverride(...a),
+      listAlbumEditions: (...a: unknown[]) => listAlbumEditions(...a),
       listShowProblems: (...a: unknown[]) => listShowProblems(...a),
       reviewShowEpisodes: (...a: unknown[]) => reviewShowEpisodes(...a),
       deleteOverride: (...a: unknown[]) => deleteOverride(...a),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
+      enrichLibrary: (...a: unknown[]) => enrichLibrary(...a),
+      getEnrichPassState: (...a: unknown[]) => getEnrichPassState(...a),
+      subscribeEvents: (...a: unknown[]) => subscribeEvents(...a),
     },
   };
 });
@@ -142,6 +170,9 @@ function enrichmentItem(over: Partial<EnrichmentAttentionTitle> = {}): Enrichmen
     title: "Pilot",
     year: 0,
     enrichmentStatus: "unmatched",
+    // No diagnosis by default — the state every row in an un-re-passed library is
+    // in, and the one that renders the sentence this screen has always rendered.
+    enrichmentReason: "",
     showTitle: "The Wire",
     seasonNumber: 1,
     episodeNumber: 3,
@@ -184,6 +215,33 @@ function override(over: Partial<MatchOverride> = {}): MatchOverride {
     ...over,
   };
 }
+/** The summary POST /libraries/{id}/enrich returns, normalized (counts never
+ * undefined). The Re-check button reports every one of these numbers. */
+/** The started-ack a POST resolves with now: queued, not finished. */
+function passState(over: Partial<EnrichPassState> = {}): EnrichPassState {
+  return { libraryId: "lib1", running: false, started: false, ...over };
+}
+/** One enrichProgress SSE payload, as the server publishes it. */
+function progressEvent(over: Partial<EnrichProgress> = {}): EnrichProgress {
+  return {
+    libraryId: "lib1",
+    total: 0,
+    done: 0,
+    matched: 0,
+    unmatched: 0,
+    failed: 0,
+    disabled: 0,
+    retrying: 0,
+    complete: false,
+    ...over,
+  };
+}
+/** The SSE callback the screen registered, rebound in beforeEach. */
+let emitEvent: (type: string, data: unknown) => void = () => {};
+/** Push one server event at the screen, inside act so React flushes it. */
+function emit(type: string, data: unknown) {
+  act(() => emitEvent(type, data));
+}
 function candidate(over: Record<string, unknown> = {}) {
   return {
     externalId: "438631",
@@ -208,15 +266,31 @@ beforeEach(() => {
     applyEnrichmentOverride,
     searchEnrichmentCandidates,
     searchLibraryEnrichmentCandidates,
+    searchEntityEnrichmentCandidates,
     previewExternalCandidate,
     previewLibraryExternalCandidate,
+    previewEntityExternalCandidate,
+    applyEntityEnrichmentOverride,
     listShowProblems,
     reviewShowEpisodes,
     deleteOverride,
     scanLibrary,
+    enrichLibrary,
+    getEnrichPassState,
+    subscribeEvents,
+    listAlbumEditions,
   ]) {
     fn.mockReset();
   }
+  // The screen subscribes to the enrichProgress SSE stream, which is where a pass's
+  // progress and its terminal summary now come from (ADR-0051's amendment: the POST
+  // no longer waits for either). Capture the callback so a test can push events as
+  // the server would.
+  emitEvent = () => {};
+  subscribeEvents.mockImplementation((onEvent: (type: string, data: unknown) => void) => {
+    emitEvent = onEvent;
+    return () => {};
+  });
   listLibraries.mockResolvedValue([lib()]);
   listUnmatched.mockResolvedValue([]);
   listOverrides.mockResolvedValue([]);
@@ -230,8 +304,15 @@ beforeEach(() => {
   applyEnrichmentOverride.mockResolvedValue({});
   deleteOverride.mockResolvedValue(undefined);
   scanLibrary.mockResolvedValue({ state: "idle" });
+  enrichLibrary.mockResolvedValue(passState({ running: true, started: true }));
+  getEnrichPassState.mockResolvedValue(passState());
   searchEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
   searchLibraryEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
+  searchEntityEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
+  applyEntityEnrichmentOverride.mockResolvedValue({ entityType: "albums", entityId: "al1" });
+  // An unmatched album has no release-group and therefore no editions (ADR-0052) —
+  // which is the state every row in this suite is in unless it says otherwise.
+  listAlbumEditions.mockResolvedValue({ albumId: "al-bh", localTrackCount: 0, editions: [] });
 });
 
 function render() {
@@ -297,6 +378,34 @@ describe("AdminNeedsFixingScreen — the queue", () => {
     listEnrichmentAttention.mockResolvedValue([enrichmentItem({ enrichmentStatus: "failed" })]);
     render();
     expect(await screen.findByTestId("fix-item-problem")).toHaveTextContent(/lookup failed/i);
+  });
+
+  it("sends an unmatched track to its ALBUM, by name, rather than to a recording search", async () => {
+    // ADR-0050 on the screen itself: the row for a track whose album never matched
+    // names the album as the thing to go and fix. It is the single largest bucket in
+    // a real library (365 of 730), and it used to render the same sentence as the
+    // three cases the recording picker CAN fix.
+    listEnrichmentAttention.mockResolvedValue([
+      enrichmentItem({
+        id: "tr1",
+        kind: "track",
+        title: "Airbag",
+        showTitle: "",
+        showId: "",
+        seasonNumber: 0,
+        episodeNumber: 0,
+        artistName: "Radiohead",
+        albumTitle: "OK Computer",
+        albumId: "al1",
+        path: "/media/music/Radiohead/OK Computer/01 Airbag.flac",
+        enrichmentStatus: "unmatched",
+        enrichmentReason: "album-unmatched",
+      }),
+    ]);
+    render();
+    const problem = await screen.findByTestId("fix-item-problem");
+    expect(problem).toHaveTextContent(/OK Computer/);
+    expect(problem).toHaveTextContent(/fix the album/i);
   });
 
   it("filters by problem with live counts", async () => {
@@ -436,6 +545,120 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
     await userEvent.click(screen.getByTestId("fix-picker-search-button"));
 
     await waitFor(() => expect(previewExternalCandidate).toHaveBeenCalledWith("e1", "1438"));
+  });
+});
+
+describe("AdminNeedsFixingScreen — a Track row searches for the TRACK", () => {
+  // The defect the operator hit (ADR-0050, needs-fixing/06). A Track row routes to
+  // searchEnrichmentCandidates, whose searched kind is the Title's own — `track`, so
+  // MusicBrainz /ws/2/recording, whose subject is the RECORDING. Seeding it with the
+  // album made opening the row for "(I Could Only) Whisper Your Name" search for
+  // every recording ever called "She". The album is a narrowing term there, not the
+  // search term, and the row now carries it as one.
+
+  const musicLib = () => lib({ id: "lib1", name: "Music", kind: "music" });
+
+  const trackItem = (over: Partial<EnrichmentAttentionTitle> = {}) =>
+    enrichmentItem({
+      id: "tr1",
+      kind: "track",
+      title: "(I Could Only) Whisper Your Name",
+      showTitle: "",
+      showId: "",
+      seasonNumber: 0,
+      episodeNumber: 0,
+      artistName: "Harry Connick, Jr.",
+      albumTitle: "She",
+      trackNumber: 5,
+      path: "/media/music/Harry Connick, Jr./She/05 Whisper Your Name.flac",
+      ...over,
+    });
+
+  it("seeds the search with the track title and narrows by artist and album", async () => {
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([trackItem()]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+
+    await waitFor(() =>
+      expect(searchEnrichmentCandidates).toHaveBeenCalledWith(
+        "tr1",
+        "(I Could Only) Whisper Your Name",
+        { page: 0, artist: "Harry Connick, Jr.", release: "She" },
+      ),
+    );
+    // The album is emphatically NOT the query: that is the whole bug.
+    expect(searchEnrichmentCandidates).not.toHaveBeenCalledWith("tr1", "She", expect.anything());
+  });
+
+  it("pre-fills both narrowing boxes so the common case needs no typing", async () => {
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([trackItem()]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+
+    expect(await screen.findByTestId("fix-picker-artist")).toHaveValue("Harry Connick, Jr.");
+    expect(screen.getByTestId("fix-picker-album")).toHaveValue("She");
+    expect(screen.getByTestId("fix-picker-input")).toHaveValue(
+      "(I Could Only) Whisper Your Name",
+    );
+  });
+
+  it("re-searches narrowed when the Admin edits a box", async () => {
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([trackItem()]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    const album = await screen.findByTestId("fix-picker-album");
+    await userEvent.clear(album);
+    await userEvent.type(album, "She (Deluxe)");
+    await userEvent.click(screen.getByTestId("fix-picker-search-button"));
+
+    await waitFor(() =>
+      expect(searchEnrichmentCandidates).toHaveBeenLastCalledWith(
+        "tr1",
+        "(I Could Only) Whisper Your Name",
+        { page: 0, artist: "Harry Connick, Jr.", release: "She (Deluxe)" },
+      ),
+    );
+  });
+
+  it("widens when a box is blanked — a wrong tag must not strand the row", async () => {
+    // The reason the narrowing is a BOX and not a silent AND clause: the artist tag
+    // is often itself the thing that is wrong, and a search narrowed to it would
+    // return nothing with no control to loosen.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([trackItem()]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    await userEvent.clear(await screen.findByTestId("fix-picker-artist"));
+    await userEvent.clear(screen.getByTestId("fix-picker-album"));
+    await userEvent.click(screen.getByTestId("fix-picker-search-button"));
+
+    await waitFor(() =>
+      expect(searchEnrichmentCandidates).toHaveBeenLastCalledWith(
+        "tr1",
+        "(I Could Only) Whisper Your Name",
+        { page: 0 },
+      ),
+    );
+  });
+
+  it("renders neither box on a video row, and sends neither param", async () => {
+    listEnrichmentAttention.mockResolvedValue([movieEnrichmentItem()]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+
+    await waitFor(() =>
+      expect(searchEnrichmentCandidates).toHaveBeenCalledWith("e1", "Arrival", { page: 0 }),
+    );
+    expect(screen.queryByTestId("fix-picker-artist")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("fix-picker-album")).not.toBeInTheDocument();
   });
 });
 
@@ -620,6 +843,435 @@ describe("AdminNeedsFixingScreen — one row per Show", () => {
   });
 });
 
+describe("AdminNeedsFixingScreen — one row per Album", () => {
+  // The Braveheart case, on screen (ADR-0050, album-resolves-its-tracks/09). 557
+  // flagged tracks in the developer's library were 90 album problems; Braveheart
+  // alone was 18 rows, each saying "fix the album's match" over a picker that
+  // searched RECORDINGS. One row now, and its picker searches the album.
+  //
+  // The distinction the screen must keep: a `search-no-match` track is still its
+  // own row with its own working recording picker.
+
+  const musicLib = () => lib({ id: "lib1", name: "Music", kind: "music" });
+
+  const albumTrack = (
+    id: string,
+    enrichmentReason: string,
+    over: Partial<EnrichmentAttentionTitle> = {},
+  ) =>
+    enrichmentItem({
+      id,
+      kind: "track",
+      title: `Track ${id}`,
+      showTitle: "",
+      showId: "",
+      seasonNumber: 0,
+      episodeNumber: 0,
+      artistName: "James Horner",
+      albumTitle: "Braveheart",
+      albumId: "al-bh",
+      path: `/media/music/James Horner/Braveheart/${id}.flac`,
+      enrichmentStatus: "unmatched",
+      enrichmentReason,
+      ...over,
+    });
+
+  it("renders one Album row for the album-scoped tracks and leaves a fixable one alone", async () => {
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+      albumTrack("3", "album-unmatched"),
+      albumTrack("4", "search-no-match"),
+    ]);
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    const rows = screen.getAllByTestId("fix-item");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].getAttribute("data-kind")).toBe("album");
+    expect(within(rows[0]).getByTestId("fix-item-kind")).toHaveTextContent("Album");
+    expect(within(rows[0]).getByTestId("fix-item-name")).toHaveTextContent(
+      "Braveheart · 3 tracks have no metadata match",
+    );
+    expect(within(rows[0]).getByTestId("fix-item-breadcrumb")).toHaveTextContent("James Horner");
+    // The one the recording picker can actually fix keeps its own row.
+    expect(rows[1].getAttribute("data-kind")).toBe("track");
+    expect(within(rows[1]).getByTestId("fix-item-name")).toHaveTextContent("Track 4");
+  });
+
+  it("keeps the chip count agreeing with the queue it filters", async () => {
+    // The collapse must not make the "No metadata" chip and the list it filters
+    // tell two different stories: the chip counts rows, and clicking it yields
+    // exactly that many.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+      albumTrack("3", "album-unmatched"),
+      albumTrack("4", "search-no-match"),
+    ]);
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    expect(screen.getByTestId("needs-fixing-chip-no-metadata")).toHaveTextContent("2");
+    expect(screen.getByTestId("needs-fixing-count")).toHaveTextContent("2");
+
+    await userEvent.click(screen.getByTestId("needs-fixing-chip-no-metadata"));
+    expect(screen.getAllByTestId("fix-item")).toHaveLength(2);
+  });
+
+  it("searches ALBUMS, seeded with the album title and narrowed by the artist", async () => {
+    // The gesture the sentence has always named, finally offered: the old row said
+    // "fix the album's match" and then searched MusicBrainz /recording.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+
+    await waitFor(() =>
+      expect(searchEntityEnrichmentCandidates).toHaveBeenCalledWith(
+        "albums",
+        "al-bh",
+        "Braveheart",
+        { page: 0, artist: "James Horner" },
+      ),
+    );
+    // The artist narrows and stays editable; there is no release axis to narrow an
+    // album search by, so no release box and no `release` param.
+    expect(screen.getByTestId("fix-picker-artist")).toHaveValue("James Horner");
+    expect(screen.queryByTestId("fix-picker-album")).not.toBeInTheDocument();
+    expect(searchEnrichmentCandidates).not.toHaveBeenCalled();
+  });
+
+  it("applies with the cascade and reports how many tracks it matched", async () => {
+    // The point of the whole row: one album pick runs CascadeEntity →
+    // mapAlbumTracks over the picked release's track list, which is the path that
+    // cleared the *She* album by hand. "12 of 14 tracks matched" is the proof.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    searchEntityEnrichmentCandidates.mockResolvedValue({
+      candidates: [candidate({ externalId: "mbid-bh", title: "Braveheart", year: 1995 })],
+      hasMore: false,
+    });
+    applyEntityEnrichmentOverride.mockResolvedValue({
+      entityType: "albums",
+      entityId: "al-bh",
+      cascade: { updated: 12, attention: 2 },
+    });
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    const loads = listEnrichmentAttention.mock.calls.length;
+    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
+
+    await waitFor(() =>
+      expect(applyEntityEnrichmentOverride).toHaveBeenCalledWith(
+        "albums",
+        "al-bh",
+        "mbid-bh",
+        true,
+        // A SEARCHED candidate names no edition (ADR-0052) — only a pasted
+        // /release/ URL does — so the apply carries none, and clears any stored one.
+        undefined,
+      ),
+    );
+    const summary = await screen.findByTestId("fix-item-cascade");
+    expect(summary).toHaveTextContent("12 of 14 tracks matched");
+    expect(summary).toHaveTextContent("2 still need attention");
+    // Identity is untouched — this is a metadata pin, so no re-file and no rescan.
+    expect(fixMatch).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("needs-fixing-rescan")).not.toBeInTheDocument();
+    // And the queue goes back to the server, because the cascade moved rows.
+    await waitFor(() =>
+      expect(listEnrichmentAttention.mock.calls.length).toBeGreaterThan(loads),
+    );
+  });
+
+  it("offers the Edition list on the album row, and only once opened", async () => {
+    // ADR-0052 on the queue itself. The row's album is already matched here — its
+    // tracks are `not-in-tracklist`, which is *Viaggio Italiano*'s exact state — so
+    // the correction is not "which album" but "which pressing of it".
+    //
+    // The list is a live, rate-limited provider call, so it must not fire for a
+    // whole screen of album rows: it mounts with the row's picker, on the click.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "not-in-tracklist"),
+      albumTrack("2", "not-in-tracklist"),
+    ]);
+    listAlbumEditions.mockResolvedValue({
+      albumId: "al-bh",
+      releaseGroupId: "rg-bh",
+      localTrackCount: 16,
+      inUseReleaseId: "rel-a",
+      inUseSource: "fit",
+      editions: [
+        { releaseId: "rel-a", date: "1995-05-23", country: "US", format: "CD", trackCount: 18 },
+        { releaseId: "rel-b", date: "1997-02-11", country: "IT", format: "CD", trackCount: 16 },
+      ],
+    });
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    expect(listAlbumEditions).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByTestId("fix-item-toggle"));
+
+    await waitFor(() => expect(listAlbumEditions).toHaveBeenCalledWith("al-bh", expect.anything()));
+    expect(screen.getByTestId("album-editions-local-count")).toHaveTextContent(
+      "This album has 16 tracks",
+    );
+    const eds = screen.getAllByTestId("album-edition");
+    expect(eds).toHaveLength(2);
+    expect(within(eds[0]).getByTestId("album-edition-in-use")).toHaveTextContent(
+      "In use — best guess",
+    );
+    // The 16-track pressing is the one that fits, and the row says so rather than
+    // leaving the Admin to compare it with a number that is not on screen.
+    expect(within(eds[1]).getByTestId("album-edition-fits")).toBeInTheDocument();
+  });
+
+  it("applies a chosen edition from the album row, with the cascade and its counts", async () => {
+    // The operator's whole workflow, on the row that stands for their tracks: pick
+    // the pressing, apply it through the album's existing override carrying the
+    // release id, and read what it moved.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "not-in-tracklist"),
+      albumTrack("2", "not-in-tracklist"),
+    ]);
+    listAlbumEditions.mockResolvedValue({
+      albumId: "al-bh",
+      releaseGroupId: "rg-bh",
+      localTrackCount: 16,
+      inUseReleaseId: "rel-a",
+      inUseSource: "fit",
+      editions: [
+        { releaseId: "rel-a", date: "1995-05-23", country: "US", format: "CD", trackCount: 18 },
+        { releaseId: "rel-b", date: "1997-02-11", country: "IT", format: "CD", trackCount: 16 },
+      ],
+    });
+    applyEntityEnrichmentOverride.mockResolvedValue({
+      entityType: "albums",
+      entityId: "al-bh",
+      cascade: { updated: 16, attention: 0 },
+    });
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    await screen.findByTestId("album-edition-list");
+    const loads = listEnrichmentAttention.mock.calls.length;
+    await userEvent.click(within(screen.getAllByTestId("album-edition")[1]).getByTestId("album-edition-use"));
+
+    await waitFor(() =>
+      expect(applyEntityEnrichmentOverride).toHaveBeenCalledWith(
+        "albums",
+        "al-bh",
+        // The release-GROUP stays the record (ADR-0038); the release is the edition.
+        "rg-bh",
+        true,
+        "rel-b",
+      ),
+    );
+    expect(await screen.findByTestId("album-edition-cascade")).toHaveTextContent(
+      "16 of 16 tracks matched",
+    );
+    // Identity is untouched, and the queue goes back to the server because the
+    // cascade moved rows.
+    expect(fixMatch).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(listEnrichmentAttention.mock.calls.length).toBeGreaterThan(loads),
+    );
+  });
+
+  it("discloses its track rows on demand, each with its own recording picker", async () => {
+    // Collapsed by default — the pile being one decision is the point — but a track
+    // the cascade declines must be reachable without a recheck pass.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    expect(screen.getAllByTestId("fix-item")).toHaveLength(1);
+    expect(screen.queryByTestId("fix-item-child-list")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("fix-item-children-toggle"));
+    const children = within(screen.getByTestId("fix-item-child-list")).getAllByTestId("fix-item");
+    expect(children).toHaveLength(2);
+    expect(within(children[0]).getByTestId("fix-item-name")).toHaveTextContent("Track 1");
+
+    // Each child still applies to its own TRACK, through the recording search.
+    await userEvent.click(within(children[0]).getByTestId("fix-item-toggle"));
+    await waitFor(() =>
+      expect(searchEnrichmentCandidates).toHaveBeenCalledWith("1", "Track 1", {
+        page: 0,
+        artist: "James Horner",
+        release: "Braveheart",
+      }),
+    );
+  });
+
+  it("renders a disclosed track as a COMPACT row, not a second full queue row", async () => {
+    // album-resolves-its-tracks/18. The disclosure was built out of complete rows —
+    // artwork column, kind badge, breadcrumb, the lot — so an 18-track album grew
+    // eighteen full rows inside one row, and the 106-track `Unknown Album` grew a
+    // page of them. A child drops what its parent already says one line above and
+    // keeps only what is its own.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched", { trackNumber: 4, title: "Wallace Courts Murron" }),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-children-toggle"));
+    const children = within(screen.getByTestId("fix-item-child-list")).getAllByTestId("fix-item");
+    const child = children[0];
+
+    // Gone: the album cover repeated per track, the `James Horner › Braveheart`
+    // breadcrumb the album row is already headed with, and a "Track" badge under a
+    // toggle that just said "the 2 tracks".
+    expect(within(child).queryByTestId("fix-item-art")).not.toBeInTheDocument();
+    expect(within(child).queryByTestId("fix-item-breadcrumb")).not.toBeInTheDocument();
+    expect(within(child).queryByTestId("fix-item-kind")).not.toBeInTheDocument();
+    expect(child).toHaveAttribute("data-compact", "true");
+
+    // Kept: WHICH track (number and name), what is wrong with it, which file, and
+    // its own action — the four things the album row cannot say per track.
+    expect(within(child).getByTestId("fix-item-name")).toHaveTextContent(
+      "4. Wallace Courts Murron",
+    );
+    expect(within(child).getByTestId("fix-item-problem")).toHaveTextContent(
+      "The album Braveheart has no metadata match",
+    );
+    // The file NAME, with the whole path on hover: its siblings differ only in the
+    // name, and the folder is the album row's own path repeated.
+    const path = within(child).getByTestId("fix-item-path");
+    expect(path).toHaveTextContent("1.flac");
+    expect(path.textContent).not.toContain("/media/music");
+    expect(path).toHaveAttribute("title", "/media/music/James Horner/Braveheart/1.flac");
+    expect(within(child).getByTestId("fix-item-toggle")).toBeInTheDocument();
+
+    // And the parent album row is untouched — this issue is only about what its
+    // disclosure renders. Exactly one artwork column on screen: the album's.
+    const parent = screen.getAllByTestId("fix-item")[0];
+    expect(parent).toHaveAttribute("data-compact", "false");
+    expect(screen.getAllByTestId("fix-item-art")).toHaveLength(1);
+    expect(within(parent).getByTestId("fix-item-kind")).toHaveTextContent("Album");
+    expect(within(parent).getByTestId("fix-item-breadcrumb")).toHaveTextContent("James Horner");
+  });
+
+  it("lifts the disclosed list's height cap while a child's picker is open", async () => {
+    // The cap that makes 106 tracks a panel would otherwise trap the picker inside
+    // it: a search box, a page of candidates and the apply button are together
+    // taller than the cap, so they would land in a scroller nested inside the
+    // page's own. The list therefore un-caps for the one child being worked on and
+    // re-caps the moment its picker closes.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-children-toggle"));
+    const list = screen.getByTestId("fix-item-child-list");
+    expect(list).toHaveAttribute("data-expanded", "false");
+
+    const children = within(list).getAllByTestId("fix-item");
+    await userEvent.click(within(children[1]).getByTestId("fix-item-toggle"));
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "true");
+
+    // Closing that child's picker — by its own toggle — puts the cap back.
+    await userEvent.click(
+      within(within(screen.getByTestId("fix-item-child-list")).getAllByTestId("fix-item")[1])
+        .getByTestId("fix-item-toggle"),
+    );
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "false");
+  });
+
+  it("re-caps the list when the picker is cancelled, and when the disclosure is hidden", async () => {
+    // The two ways out that are NOT the toggle. Cancel closes the picker from
+    // inside the picker; hiding the disclosure unmounts the child before it can
+    // report anything, so re-opening must not show an already-uncapped list.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([
+      albumTrack("1", "album-unmatched"),
+      albumTrack("2", "album-unmatched"),
+    ]);
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-children-toggle"));
+    const open = async () => {
+      const list = screen.getByTestId("fix-item-child-list");
+      await userEvent.click(
+        within(within(list).getAllByTestId("fix-item")[0]).getByTestId("fix-item-toggle"),
+      );
+    };
+
+    await open();
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "true");
+    await userEvent.click(await screen.findByTestId("fix-picker-cancel"));
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "false");
+
+    await open();
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "true");
+    await userEvent.click(screen.getByTestId("fix-item-children-toggle"));
+    await userEvent.click(screen.getByTestId("fix-item-children-toggle"));
+    expect(screen.getByTestId("fix-item-child-list")).toHaveAttribute("data-expanded", "false");
+  });
+
+  // The cap itself is a stylesheet fact — jsdom has no layout, so nothing rendered
+  // can be measured — but it is the fact the issue is about, and deleting it would
+  // otherwise be invisible to every test in this file. So the rule is read from the
+  // stylesheet directly.
+  //
+  // Read from the runner's cwd (`web/`, where vitest.config lives) rather than from
+  // `import.meta.url`, which under jsdom is an http: URL that `readFileSync` refuses.
+  // A wrong cwd would fail loudly with ENOENT, never quietly pass.
+  const cssRule = (selector: string): string => {
+    const css = readFileSync(resolve(process.cwd(), "src/index.css"), "utf8");
+    const at = css.indexOf(`\n${selector} {`);
+    expect(at, `no CSS rule for ${selector}`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf("}", at));
+  };
+
+  it("bounds the disclosed list, and gives a short one no scrollbar it does not need", () => {
+    const list = cssRule(".fix-item-child-list");
+    expect(list).toMatch(/max-height:\s*[\d.]/);
+    // `auto`, never `scroll`: a 2-track album must not be handed a scrollbar for a
+    // list that fits, which is the other half of "bounded".
+    expect(list).toMatch(/overflow-y:\s*auto/);
+    expect(list).not.toMatch(/overflow-y:\s*scroll/);
+    // And the cap lifts rather than nesting a scroller inside a scroller.
+    expect(cssRule(".fix-item-child-list.is-expanded")).toMatch(/max-height:\s*none/);
+  });
+
+  it("does not collapse a blank reason — an un-re-passed library is untouched", async () => {
+    // Every row of a library not re-passed since the reason column shipped carries
+    // "". Those rows must render exactly as they did before this collapse existed.
+    listLibraries.mockResolvedValue([musicLib()]);
+    listEnrichmentAttention.mockResolvedValue([albumTrack("1", ""), albumTrack("2", "")]);
+    render();
+
+    await screen.findByTestId("needs-fixing-list");
+    const rows = screen.getAllByTestId("fix-item");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.getAttribute("data-kind"))).toEqual(["track", "track"]);
+  });
+});
+
 describe("AdminNeedsFixingScreen — confirming a filing", () => {
   it("shows the matched record and a poster, so 'Looks right' is an informed click", async () => {
     listNeedsReview.mockResolvedValue([
@@ -756,5 +1408,183 @@ describe("AdminNeedsFixingScreen — corrections already made", () => {
 
     await userEvent.click(screen.getByTestId("needs-fixing-corrections-toggle"));
     expect(await screen.findByTestId("override-item")).toHaveTextContent("Dune");
+  });
+});
+
+// ADR-0051. The failure this block exists for was measured, not imagined: the
+// developer shipped six slices of music-matching improvements, rescanned a 10,550
+// track library, and the queue went 730 → 722. Nothing in the app could invoke an
+// enrichment pass — `POST /libraries/{id}/enrich` had NO client method anywhere in
+// web/src — and the one action the screen did offer (a rescan) fires the only-new
+// mode, which by construction cannot see a row that has already settled.
+describe("AdminNeedsFixingScreen — re-checking the settled rows", () => {
+  it("sits beside the library selector and re-checks the SELECTED library", async () => {
+    listLibraries.mockResolvedValue([lib(), lib({ id: "lib2", name: "Music", kind: "music" })]);
+    render();
+
+    const button = await screen.findByTestId("needs-fixing-recheck-button");
+    expect(button).toHaveTextContent("Re-check unmatched items");
+
+    await userEvent.selectOptions(screen.getByTestId("needs-fixing-library-select"), "lib2");
+    await userEvent.click(button);
+
+    await waitFor(() => expect(enrichLibrary).toHaveBeenCalled());
+    expect(enrichLibrary).toHaveBeenCalledWith("lib2", { mode: "recheck" });
+  });
+
+  // The load-bearing change. The POST resolves the moment the pass is QUEUED
+  // (ADR-0051's amendment), so a button that re-enabled when the promise settled
+  // would tell the operator the pass was over seconds after it began — and the
+  // operator who believes that is the one who reloads the page.
+  it("stays busy after the request returns, until the pass's terminal event", async () => {
+    render();
+    const button = await screen.findByTestId("needs-fixing-recheck-button");
+    await userEvent.click(button);
+
+    // The request has resolved (the ack), and the pass has not.
+    await waitFor(() => expect(enrichLibrary).toHaveBeenCalled());
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Re-checking…");
+    expect(screen.queryByTestId("needs-fixing-recheck-result")).not.toBeInTheDocument();
+
+    emit("enrichProgress", progressEvent({ total: 1, matched: 1, done: 1, complete: true }));
+    await waitFor(() => expect(button).not.toBeDisabled());
+    expect(button).toHaveTextContent("Re-check unmatched items");
+  });
+
+  it("reports how many rows CLEARED, which is the whole feedback loop", async () => {
+    render();
+    await userEvent.click(await screen.findByTestId("needs-fixing-recheck-button"));
+    await screen.findByTestId("needs-fixing-recheck-progress");
+
+    emit(
+      "enrichProgress",
+      progressEvent({ total: 722, matched: 14, unmatched: 708, done: 722, complete: true }),
+    );
+
+    const result = await screen.findByTestId("needs-fixing-recheck-result");
+    expect(result).toHaveTextContent("Re-checked 722 items: 14 now matched, 708 still unmatched.");
+  });
+
+  it("says 0 matched rather than going quiet, so 'ran and found nothing' is distinguishable from 'never ran'", async () => {
+    render();
+    await userEvent.click(await screen.findByTestId("needs-fixing-recheck-button"));
+    // The pass is queued and the button is busy; now it finishes.
+    await screen.findByTestId("needs-fixing-recheck-progress");
+
+    emit("enrichProgress", progressEvent({ total: 3, unmatched: 3, done: 3, complete: true }));
+    expect(await screen.findByTestId("needs-fixing-recheck-result")).toHaveTextContent(
+      "Re-checked 3 items: 0 now matched, 3 still unmatched.",
+    );
+  });
+
+  it("names the retrying count apart from the failed one", async () => {
+    render();
+    await userEvent.click(await screen.findByTestId("needs-fixing-recheck-button"));
+    await screen.findByTestId("needs-fixing-recheck-progress");
+
+    emit(
+      "enrichProgress",
+      progressEvent({ total: 5, matched: 1, unmatched: 1, failed: 1, retrying: 2, done: 5, complete: true }),
+    );
+    expect(await screen.findByTestId("needs-fixing-recheck-result")).toHaveTextContent(
+      "Re-checked 5 items: 1 now matched, 1 still unmatched, 1 failed, 2 will be retried.",
+    );
+  });
+
+  it("says plainly when there was nothing to re-check", async () => {
+    render();
+    await userEvent.click(await screen.findByTestId("needs-fixing-recheck-button"));
+    // The pass is queued and the button is busy; now it finishes.
+    await screen.findByTestId("needs-fixing-recheck-progress");
+
+    emit("enrichProgress", progressEvent({ complete: true }));
+    expect(await screen.findByTestId("needs-fixing-recheck-result")).toHaveTextContent(
+      /nothing to re-check/i,
+    );
+  });
+
+  it("shows how far the pass has got, so a long one is visibly working", async () => {
+    render();
+    await userEvent.click(await screen.findByTestId("needs-fixing-recheck-button"));
+
+    // Before the pass has counted its work there is nothing to count — a Music
+    // recheck re-asks every unmatched parent first (ADR-0051 leaves that unfixed
+    // and says so), and the honest thing is to say "working", not "0 of 0".
+    expect(await screen.findByTestId("needs-fixing-recheck-progress")).toHaveTextContent(
+      /working out what to ask about/i,
+    );
+
+    emit("enrichProgress", progressEvent({ total: 722, done: 13 }));
+    await waitFor(() =>
+      expect(screen.getByTestId("needs-fixing-recheck-progress")).toHaveTextContent(
+        "Re-checking… 13 of 722.",
+      ),
+    );
+  });
+
+  // The operator's reload, from the other side: the page comes back mid-pass and
+  // must rejoin it rather than offer a button that would start a second one.
+  it("rejoins a pass already running when the page loads", async () => {
+    getEnrichPassState.mockResolvedValue(
+      passState({ running: true, mode: "recheck", progress: { total: 722, done: 13, matched: 1, unmatched: 12, failed: 0, disabled: 0, retrying: 0 } }),
+    );
+    render();
+
+    const button = await screen.findByTestId("needs-fixing-recheck-button");
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(button).toHaveTextContent("Re-checking…");
+    expect(screen.getByTestId("needs-fixing-recheck-progress")).toHaveTextContent(
+      "Re-checking… 13 of 722.",
+    );
+    expect(getEnrichPassState).toHaveBeenCalledWith("lib1", expect.anything());
+    // Nothing was started by arriving: the pass was already the server's.
+    expect(enrichLibrary).not.toHaveBeenCalled();
+
+    emit("enrichProgress", progressEvent({ total: 722, matched: 14, unmatched: 708, done: 722, complete: true }));
+    await waitFor(() => expect(button).not.toBeDisabled());
+    expect(screen.getByTestId("needs-fixing-recheck-result")).toHaveTextContent(
+      "Re-checked 722 items: 14 now matched, 708 still unmatched.",
+    );
+  });
+
+  it("refetches the queue when the pass completes, since the pass is what changed it", async () => {
+    listEnrichmentAttention.mockResolvedValue([enrichmentItem()]);
+    render();
+
+    await waitFor(() => expect(screen.getAllByTestId("fix-item")).toHaveLength(1));
+    const before = listEnrichmentAttention.mock.calls.length;
+
+    // The row cleared server-side; the screen must go and find that out.
+    listEnrichmentAttention.mockResolvedValue([]);
+    await userEvent.click(screen.getByTestId("needs-fixing-recheck-button"));
+    // Still nothing to refetch — the pass has only been queued.
+    expect(listEnrichmentAttention.mock.calls.length).toBe(before);
+
+    emit("enrichProgress", progressEvent({ total: 1, matched: 1, done: 1, complete: true }));
+    await waitFor(() =>
+      expect(listEnrichmentAttention.mock.calls.length).toBeGreaterThan(before),
+    );
+    expect(await screen.findByTestId("needs-fixing-empty")).toBeInTheDocument();
+  });
+
+  it("surfaces a refused start instead of silently doing nothing", async () => {
+    // A server running no background passes answers 503 ENRICH_UNAVAILABLE — one of
+    // the three states that used to be answered with silence, which is precisely
+    // how an operator ends up staring at a button that will never do anything.
+    enrichLibrary.mockRejectedValue(
+      new Error("this server is not running background enrichment passes"),
+    );
+    render();
+
+    const button = await screen.findByTestId("needs-fixing-recheck-button");
+    await userEvent.click(button);
+
+    const err = await screen.findByTestId("needs-fixing-recheck-error");
+    expect(err).toHaveTextContent(/not running background enrichment passes/i);
+    expect(screen.queryByTestId("needs-fixing-recheck-result")).not.toBeInTheDocument();
+    // And the button goes back to being pressable, rather than sitting in a
+    // "Re-checking…" state for a pass that never started.
+    await waitFor(() => expect(button).not.toBeDisabled());
   });
 });

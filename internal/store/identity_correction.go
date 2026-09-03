@@ -36,7 +36,8 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 		     title = ?, year = ?, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = '', enriched_title = '',
 		     enrichment_tmdb_id = '', enrichment_imdb_id = '', enrichment_id_origin = '',
-		     enrichment_status = 'pending', enrichment_source = ''
+		     enrichment_status = 'pending', enrichment_source = '', `+clearEnrichmentRetry+`,
+		     `+clearEnrichmentReason+`
 		   WHERE id = ?`,
 		title, nullableYear(year), sortKey(title), identityKey, tmdbID, titleID,
 	)
@@ -79,7 +80,7 @@ func (db *DB) RekeyShowIdentity(showID, title string, year int, tmdbID, identity
 	// Reset the Show's entity enrichment to 'pending' so a re-enrich re-resolves the
 	// new record (idempotent no-op when the Show was never enriched).
 	if _, err := db.Exec(
-		`UPDATE entity_enrichment SET enrichment_status = 'pending'
+		`UPDATE entity_enrichment SET enrichment_status = 'pending', `+clearEnrichmentRetry+`
 		   WHERE entity_type = ? AND entity_id = ?`,
 		EntityShow, showID,
 	); err != nil {

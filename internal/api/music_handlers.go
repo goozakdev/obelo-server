@@ -442,6 +442,19 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "album", id))))(w, r)
 			return
 		}
+		// GET {id}/editions: the editions of this Album's matched release-group, so an
+		// Admin can choose the exact one their files are (ADR-0052). Album-only — a
+		// Show/Artist has no such notion — so it is wired here rather than in the
+		// shared parent Edit-item dispatcher.
+		if id, ok := strings.CutSuffix(rest, "/editions"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireAuth(deps.Auth, requireAdmin(handleAlbumEditions(deps.Enrich, deps.Catalog, id))))(w, r)
+			return
+		}
 		// Edit-item on an Album (item-editing/02), Admin-only, before the tracks listing.
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityAlbum, rest) {
 			return

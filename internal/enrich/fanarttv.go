@@ -208,14 +208,14 @@ func (p *FanartTVProvider) fetchArtistImages(ctx context.Context, mbid string) (
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return artistImages{}, fmt.Errorf("enrich: fanart.tv request: %w", err)
+		return artistImages{}, requestError("fanart.tv", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return artistImages{}, ErrNoMatch // unknown MBID — the normal "no record" outcome
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return artistImages{}, fmt.Errorf("enrich: fanart.tv music/%s: status %d", mbid, resp.StatusCode)
+		return artistImages{}, statusError("fanart.tv", "music/"+mbid, resp.StatusCode)
 	}
 	var out struct {
 		ArtistThumb      []fanartImage `json:"artistthumb"`
@@ -224,7 +224,7 @@ func (p *FanartTVProvider) fetchArtistImages(ctx context.Context, mbid string) (
 		MusicLogo        []fanartImage `json:"musiclogo"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return artistImages{}, fmt.Errorf("enrich: decoding fanart.tv response: %w", err)
+		return artistImages{}, decodeError("fanart.tv", err)
 	}
 	return artistImages{
 		thumbs:      out.ArtistThumb,
@@ -416,14 +416,14 @@ func (p *FanartTVProvider) videoArt(ctx context.Context, endpoint string) (fanar
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return fanartVideoArt{}, fmt.Errorf("enrich: fanart.tv request: %w", err)
+		return fanartVideoArt{}, requestError("fanart.tv", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return fanartVideoArt{}, ErrNoMatch // unknown id — the normal "no record" outcome
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fanartVideoArt{}, fmt.Errorf("enrich: fanart.tv %s: status %d", endpoint, resp.StatusCode)
+		return fanartVideoArt{}, statusError("fanart.tv", endpoint, resp.StatusCode)
 	}
 	var out struct {
 		// Movie payload field names.
@@ -434,7 +434,7 @@ func (p *FanartTVProvider) videoArt(ctx context.Context, endpoint string) (fanar
 		ShowBackground []fanartImage `json:"showbackground"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return fanartVideoArt{}, fmt.Errorf("enrich: decoding fanart.tv response: %w", err)
+		return fanartVideoArt{}, decodeError("fanart.tv", err)
 	}
 	poster := bestArtistThumb(out.MoviePoster)
 	if poster == "" {

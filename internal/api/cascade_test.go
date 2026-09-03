@@ -15,9 +15,10 @@ import (
 // children" (ADR-0019), the hardest correctness surface in the feature. Driven
 // through the HTTP API with the FAKE MetadataProvider (its Search seam answering
 // the parent kinds and carrying album tracklists with per-track recording ids),
-// zero network. Asserts observable behavior: positional Album→tracks mapping with a
-// count mismatch (matching tracks updated, mismatch to attention, no abort);
-// Show→episodes positional; Artist→albums by title then RECURSE to tracks;
+// zero network. Asserts observable behavior: Album→tracks mapping by the ADR-0050
+// rule (position AND title, then title, then the one leftover pair, never position
+// alone) with a count mismatch (matching tracks updated, mismatch to attention, no
+// abort); Show→episodes positional; Artist→albums by title then RECURSE to tracks;
 // durability across a later full pass; the skip rule for a child's own
 // override/lock; correct summary counts; cascade on BOTH Fix-info and Wrong-item;
 // Fix-label never cascades; and a childless leaf ignores the flag.
@@ -84,10 +85,12 @@ func okComputerAlbum(t *testing.T, srv *testharness.Server, token, libID string)
 // --- Album → tracks: positional map + count mismatch + durability -----------
 
 // TestCascadeAlbumTracksPositional applies an Album Fix-info override with cascade
-// on: the local tracks map positionally onto the corrected release's tracklist. Here
-// the tracklist carries only position 1 (Airbag) — a track-count mismatch — so Airbag
-// is updated durably and Paranoid Android (position 2, no counterpart) lands in the
-// attention list, without aborting. The summary reports updated=1, attention=1.
+// on: the local tracks map onto the corrected release's tracklist. Here the
+// tracklist carries only position 1 (Airbag) — a track-count mismatch — so Airbag is
+// updated durably (rule 1: its position AND its title agree, ADR-0050) and Paranoid
+// Android lands in the attention list, without aborting. Nothing on the release is
+// left over for it, so the leftover rule does not fire either. The summary reports
+// updated=1, attention=1.
 func TestCascadeAlbumTracksPositional(t *testing.T) {
 	requireMusicFixtures(t)
 	// A tracklist with ONLY position 1: position 2 (Paranoid) has no counterpart.
@@ -149,6 +152,134 @@ func TestCascadeAlbumTracksPositional(t *testing.T) {
 	prov.mu.Unlock()
 	if !sawPinned {
 		t.Errorf("full pass never resolved Airbag by its pinned recording id")
+	}
+}
+
+// --- Album → tracks: the ADR-0050 match rule, end to end --------------------
+
+// TestCascadeDoesNotPinATrackByPositionAlone: the Cascade maps its Album's
+// tracklist with the shared ADR-0050 rule — position AND title, then title, then
+// the one leftover pair — and NEVER by position alone.
+//
+// Here position 2 of the corrected release is some other recording entirely. The
+// old position-only map pinned it to Paranoid Android durably and silently; the
+// rule declines, and the track reaches the Admin's attention list instead. This is
+// a DECISION, not an accommodated regression: ADR-0050 accepts that a cascade pins
+// fewer tracks on a mis-numbered album precisely because the ones it stops pinning
+// are the ones it was getting wrong.
+//
+// The release carries a THIRD position on purpose. With exactly one free track and
+// one free position the leftover rule would pair them, which is correct and
+// deliberate — so a two-position fixture could not show anything about rule 1.
+func TestCascadeDoesNotPinATrackByPositionAlone(t *testing.T) {
+	requireMusicFixtures(t)
+	base := musicCascadeLookup()
+	prov := &fakeProvider{
+		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
+			return []enrich.Candidate{{
+				ExternalID: "alb-okc", Title: "OK Computer", Year: 1997, Kind: kind,
+				Tracklist: []enrich.TrackCandidate{
+					{Disc: 1, Position: 1, Title: "Airbag", ExternalID: "rec-airbag"},
+					{Disc: 1, Position: 2, Title: "Some Other Recording", ExternalID: "rec-other"},
+					{Disc: 1, Position: 3, Title: "A Third Recording", ExternalID: "rec-third"},
+				},
+			}}, nil
+		},
+		fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
+			m, err := base(ref)
+			if err == nil && ref.Kind == "track" && ref.MusicbrainzID == "rec-other" {
+				m.Overview = "WRONG recording."
+			}
+			return m, err
+		},
+	}
+	srv := testharness.New(t,
+		testharness.WithMusicBrainzEnabled(true),
+		testharness.WithMetadataProvider(prov),
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	libID := createMusicLibrary(t, srv, token, musicRoot(t))
+	scanLib(t, srv, token, libID, "")
+	enrichLib(t, srv, token, libID, "")
+
+	albumID, airbagID, paranoidID := okComputerAlbum(t, srv, token, libID)
+
+	// (AC) Airbag agrees on position AND title → pinned. Paranoid Android's number
+	// lands on a stranger → declined, not pinned.
+	applied := applyEntityOverrideCascade(t, srv, token, "albums", albumID, "alb-okc")
+	if applied.Cascade == nil || applied.Cascade.Updated != 1 || applied.Cascade.Attention != 1 {
+		t.Errorf("cascade summary = %+v, want {Updated:1, Attention:1} — a position that "+
+			"disagrees with the title is not evidence (ADR-0050)", applied.Cascade)
+	}
+	if d := getEnrichedDetail(t, srv, token, airbagID); d.Overview != "CASCADE Airbag" {
+		t.Errorf("Airbag overview = %q, want the cascaded recording's", d.Overview)
+	}
+	if d := getEnrichedDetail(t, srv, token, paranoidID); d.Overview == "WRONG recording." {
+		t.Errorf("Paranoid Android was pinned to position 2's recording by its NUMBER alone")
+	}
+	pa, ok := attentionHas(listEnrichmentAttention(t, srv, token, libID), "Paranoid Android")
+	if !ok || pa.ID != paranoidID {
+		t.Errorf("Paranoid Android (a title the release does not carry) not in the attention list")
+	}
+	// (AC, ADR-0050) The queue row says WHY, all the way out to the wire. This is the
+	// diagnosis with the most obvious action of the five: a track the album's own
+	// release does not carry means the ALBUM is on the wrong release. Before the
+	// reason column it rendered as "no metadata match" and sent the Admin to a
+	// per-track recording search that could never have fixed it — and the Cascade
+	// writes the same value the pass does, because the queue must not learn two
+	// vocabularies for one problem.
+	if pa.EnrichmentReason != "not-in-tracklist" {
+		t.Errorf("Paranoid Android's reason = %q, want \"not-in-tracklist\" — the row has to "+
+			"name the action, and this one's action is on the ALBUM's release", pa.EnrichmentReason)
+	}
+}
+
+// TestCascadeRescuesADriftedNumbering is the other half of ADR-0050, and the
+// reason the rule is worth its complexity: the local numbering is nothing like the
+// release's, so the OLD position-only map pinned neither track (or worse, the
+// wrong one). Rule 2 — a normalized title matching exactly one unclaimed entry
+// anywhere — recovers both.
+func TestCascadeRescuesADriftedNumbering(t *testing.T) {
+	requireMusicFixtures(t)
+	prov := &fakeProvider{
+		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
+			return []enrich.Candidate{{
+				ExternalID: "alb-okc", Title: "OK Computer", Year: 1997, Kind: kind,
+				Tracklist: []enrich.TrackCandidate{
+					// Neither number matches a local one, and the titles are spelled the
+					// way MusicBrainz spells them, not the way the files are tagged.
+					{Disc: 1, Position: 6, Title: "Paranoid Android (Remastered 2011)", ExternalID: "rec-para"},
+					{Disc: 1, Position: 7, Title: "AIRBAG", ExternalID: "rec-airbag"},
+				},
+			}}, nil
+		},
+		fn: musicCascadeLookup(),
+	}
+	srv := testharness.New(t,
+		testharness.WithMusicBrainzEnabled(true),
+		testharness.WithMetadataProvider(prov),
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	libID := createMusicLibrary(t, srv, token, musicRoot(t))
+	scanLib(t, srv, token, libID, "")
+	enrichLib(t, srv, token, libID, "")
+
+	albumID, airbagID, paranoidID := okComputerAlbum(t, srv, token, libID)
+
+	applied := applyEntityOverrideCascade(t, srv, token, "albums", albumID, "alb-okc")
+	if applied.Cascade == nil || applied.Cascade.Updated != 2 || applied.Cascade.Attention != 0 {
+		t.Errorf("cascade summary = %+v, want {Updated:2, Attention:0} — a title matching "+
+			"exactly one entry rescues an album whose numbering drifted (ADR-0050)", applied.Cascade)
+	}
+	if d := getEnrichedDetail(t, srv, token, airbagID); d.Overview != "CASCADE Airbag" {
+		t.Errorf("Airbag overview = %q, want the cascaded recording's (matched by title, "+
+			"case-folded, at a position nothing agreed on)", d.Overview)
+	}
+	if d := getEnrichedDetail(t, srv, token, paranoidID); d.Overview != "CASCADE Paranoid" {
+		t.Errorf("Paranoid Android overview = %q, want the cascaded recording's (matched "+
+			"by title with the release's \"(Remastered 2011)\" folded away)", d.Overview)
 	}
 }
 

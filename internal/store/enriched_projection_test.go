@@ -81,3 +81,44 @@ func TestEnrichedReadCarriesTheEpisodePin(t *testing.T) {
 			got.SeasonNumber, got.EpisodeNumber)
 	}
 }
+
+// TestEnrichedReadCarriesTheRecordingTagID is the same regression, one media kind
+// later, and it was found by the work that made it cost something (issue 17).
+//
+// enrichedTitleColumns did not select musicbrainz_recording_id, so
+// TitleForEnrichmentByID — again, the read behind EVERY single-Title re-enrich —
+// returned an empty tag id for a Track whose FILE names its recording exactly.
+// TracksForAlbum, the read a library pass collects its leaves through, has always
+// carried it. So ADR-0049's second tier existed on one path and not the other: a
+// Picard-tagged Track re-enriched on its own resolved as though untagged, spending
+// the search cluster on an id sitting in the file.
+func TestEnrichedReadCarriesTheRecordingTagID(t *testing.T) {
+	db := openTemp(t)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libm', 'Music', 'music')`)
+	mustExec(t, db, `INSERT INTO artists (id, library_id, name, identity_key, sort_name)
+	                 VALUES ('ar1', 'libm', 'Harry Connick Jr.', 'artist:hcj', 'harry connick jr')`)
+	mustExec(t, db, `INSERT INTO albums (id, artist_id, title, identity_key, sort_title)
+	                 VALUES ('al1', 'ar1', 'She', 'artist:hcj|album:she', 'she')`)
+	mustExec(t, db, `INSERT INTO titles
+	                   (id, library_id, kind, title, identity_key, sort_title,
+	                    album_id, disc_number, track_number, musicbrainz_recording_id)
+	                 VALUES ('t1', 'libm', 'track', 'Whisper Your Name', 'artist:hcj|album:she|d01t01',
+	                         'whisper your name', 'al1', 1, 1, 'rec-tag')`)
+
+	got, err := db.TitleForEnrichmentByID("t1")
+	if err != nil {
+		t.Fatalf("TitleForEnrichmentByID: %v", err)
+	}
+	if got.MusicbrainzRecordingID != "rec-tag" {
+		t.Fatalf("read back %q, want rec-tag — the enrichment read is dropping the exact "+
+			"recording id the file asserts, so a single-Track re-enrich falls past ADR-0049's "+
+			"tag tier and onto the search cluster the ADR took it off",
+			got.MusicbrainzRecordingID)
+	}
+	// The enrichment RECORD is a different column with a different owner (ADR-0045 /
+	// ADR-0049), and reading the tag must not have filled it in.
+	if got.MusicbrainzID != "" {
+		t.Errorf("musicbrainz_id = %q on a Track with only a tag id — the scanner's column "+
+			"and the enrichment record must not be conflated", got.MusicbrainzID)
+	}
+}

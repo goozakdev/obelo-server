@@ -340,17 +340,17 @@ func (p *TheAudioDBProvider) get(ctx context.Context, reqURL string, out any) er
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.client().Do(req)
 	if err != nil {
-		return fmt.Errorf("enrich: theaudiodb request: %w", err)
+		return requestError("theaudiodb", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNoMatch
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("enrich: theaudiodb: status %d", resp.StatusCode)
+		return statusError("theaudiodb", "", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("enrich: decoding theaudiodb response: %w", err)
+		return decodeError("theaudiodb", err)
 	}
 	return nil
 }

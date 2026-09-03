@@ -82,11 +82,35 @@ type Title struct {
 	RuntimeMinutes int
 	Studio         string
 	MusicbrainzID  string
+	// MusicbrainzRecordingID is the recording MBID the FILE asserts, read from its
+	// tags by the Scanner and re-derived on every scan (ADR-0049). It is the LOCAL
+	// claim, the music twin of TMDBID — decoration only, never identity — and it
+	// loses to MusicbrainzID above, which is the enrichment RECORD (a pass's own
+	// result, or the Admin's Fix info). Enrichment prefers either over a text
+	// search: a lookup by id is exact and hits a far healthier MusicBrainz endpoint
+	// than `/ws/2/recording?query=`.
+	MusicbrainzRecordingID string
 	// EnrichmentStatus ∈ pending|matched|unmatched|failed|disabled (CONTEXT.md
 	// "Enrichment"). EnrichedAt / EnrichmentSource record the last successful pass.
 	EnrichmentStatus string
 	EnrichedAt       string
 	EnrichmentSource string
+	// EnrichmentAttempts / EnrichmentRetryAt are the retry bookkeeping for a
+	// 'failed' Title (ADR-0048). Attempts counts CONSECUTIVE failed lookups (reset
+	// by any settled outcome); RetryAt is the RFC3339 instant from which the next
+	// only-new pass will pick the Title up again, or "" when nothing will — the
+	// difference between a transient failure the server is coming back for and a
+	// permanent one parked on the Admin's attention list. Both are zero for every
+	// non-failed status. Populated only by the reads that feed enrichment.
+	EnrichmentAttempts int
+	EnrichmentRetryAt  string
+	// EnrichmentReason names WHY a SETTLED failure settled, as one of the closed set
+	// in EnrichmentReason* below (ADR-0050). It answers the question the status
+	// cannot — what should the Admin DO — and is empty for every outcome that has no
+	// diagnosis to offer: a match, a transient failure still being retried, a Title
+	// settled before this column existed, and every non-Music kind. A reader must
+	// treat an unrecognized value exactly as it treats the empty one.
+	EnrichmentReason string
 	// Genres is the enriched genre list (loaded by the enriched read paths; empty
 	// otherwise). Cast lives on TitleDetail (heavier, detail-only).
 	Genres []string
@@ -554,13 +578,13 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			   (id, library_id, kind, title, year, identity_key, sort_title,
 			    tmdb_id, imdb_id, enrichment_tmdb_id, needs_review, ambiguous, hidden,
 			    season_id, season_number, episode_number, episode_label,
-			    album_id, disc_number, track_number)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
+			    album_id, disc_number, track_number, musicbrainz_recording_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			titleID, tree.LibraryID, tree.Kind, tree.Title.Title, nullableYear(tree.Year),
 			tree.IdentityKey, tree.SortTitle, tree.TMDBID, tree.IMDBID, tree.RecordTMDBID,
 			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
-			albumID, ep.discNumber, ep.trackNumber,
+			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting title: %w", err)
 		}
@@ -578,13 +602,19 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
 			    ambiguous = ?, hidden = 0,
 			    season_id = ?, season_number = ?, episode_number = ?, episode_label = ?,
-			    album_id = ?, disc_number = ?, track_number = ?
+			    album_id = ?, disc_number = ?, track_number = ?,
+			    -- The recording id the file currently asserts. Written unconditionally
+			    -- for the same reason tmdb_id is: it is the LOCAL claim, re-derived
+			    -- from the file's tags on every scan, so a retagged file must be able
+			    -- to change it and a de-tagged one to withdraw it. The Admin's record
+			    -- lives in musicbrainz_id and is untouched here (ADR-0045/0049).
+			    musicbrainz_recording_id = ?
 			  WHERE id = ?`,
 			tree.Title.Title, nullableYear(tree.Year), tree.SortTitle,
 			tree.TMDBID, tree.IMDBID,
 			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
-			albumID, ep.discNumber, ep.trackNumber,
+			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 			titleID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating title: %w", err)
@@ -1321,11 +1351,22 @@ func scanTitle(s scanner) (Title, error) {
 // guaranteed 404 — while a full-library pass, which collects its own leaves with the
 // numbers attached, resolved the same Episode correctly. Any read that builds a
 // Title for a lookup must carry the fields the lookup is keyed on.
+//
+// musicbrainz_recording_id is here for EXACTLY THE SAME REASON, one media kind
+// later. It is ADR-0049's tag tier — the recording MBID the FILE asserts, the second
+// step of the music precedence — and TracksForAlbum (the read a library pass
+// collects its leaves through) has always carried it while this one did not. So a
+// Picard-tagged Track re-enriched on its own ignored the exact id in its own file
+// and resolved as though untagged, which is the one outcome ADR-0049 exists to
+// prevent. The rule in the paragraph above is not a style note; this is its second
+// violation.
 var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sort_title, added_at,
 	        ` + recordExternalIDs("") + `, needs_review, ambiguous, hidden,
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
-	        musicbrainz_id, enrichment_status, enriched_at, enrichment_source, enriched_title,
+	        musicbrainz_id, musicbrainz_recording_id,
+	        enrichment_status, enriched_at, enrichment_source, enriched_title,
 	        enrichment_season, enrichment_episode, enrichment_id_origin,
+	        enrichment_attempts, enrichment_retry_at, enrichment_reason,
 	        season_number, episode_number, episode_label`
 
 // recordExternalIDs is the ONE spelling of "which external record does this Title
@@ -1386,8 +1427,10 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
-		&t.MusicbrainzID, &t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
+		&t.MusicbrainzID, &t.MusicbrainzRecordingID,
+		&t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.EnrichmentReason,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {
 		return Title{}, err
 	}

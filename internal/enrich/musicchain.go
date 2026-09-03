@@ -56,6 +56,32 @@ func (p *MusicChainProvider) Search(ctx context.Context, kind, query string, opt
 	return p.MusicBrainz.Search(ctx, kind, query, opts)
 }
 
+// AlbumTracklist forwards the optional AlbumTracklister capability to the
+// AUTHORITATIVE source only. The fill-only artist sources (fanart.tv/TheAudioDB)
+// have no notion of a release's tracklist, and one of them inventing an ordering
+// for an album MusicBrainz already numbers would be exactly the fill-only rule
+// broken. An authoritative source that can't answer yields ErrNoTracklist.
+func (p *MusicChainProvider) AlbumTracklist(ctx context.Context, req TracklistRequest) ([]TrackCandidate, error) {
+	lister, ok := p.MusicBrainz.(AlbumTracklister)
+	if !ok {
+		return nil, ErrNoTracklist
+	}
+	return lister.AlbumTracklist(ctx, req)
+}
+
+// ReleaseGroupEditions forwards the optional AlbumEditionLister capability to the
+// AUTHORITATIVE source only, for AlbumTracklist's reason: an album's editions are
+// MusicBrainz's catalogue, and a fill-only artist source listing editions it does
+// not have would be the fill-only rule broken (ADR-0002). A source that cannot
+// answer yields ErrSearchUnavailable, which the picker degrades on.
+func (p *MusicChainProvider) ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error) {
+	lister, ok := p.MusicBrainz.(AlbumEditionLister)
+	if !ok {
+		return nil, ErrSearchUnavailable
+	}
+	return lister.ReleaseGroupEditions(ctx, releaseGroupID)
+}
+
 // ArtworkCandidates lists the images the Edit-item picker offers for a Music role.
 // For an ALBUM (and anything else) it is exactly MusicBrainz's — the Cover Art
 // Archive covers. For an ARTIST, MusicBrainz has no images, so the chain composes
