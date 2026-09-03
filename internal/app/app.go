@@ -38,6 +38,13 @@ import (
 	"github.com/goozakdev/obelo-server/internal/webui"
 )
 
+// relayEndTimeout bounds the courtesy call that ends a relayed session on the
+// sharing Server (ADR-0056 §5). It is short on purpose: nobody is waiting for it,
+// the local session is already gone, and the sharer's own idle reaper ends the
+// stream anyway — so a friend's Server that has become unreachable must not hold
+// a goroutine here for anything like as long as a real request would.
+const relayEndTimeout = 10 * time.Second
+
 // App is a fully wired server: an http.Handler ready to serve, plus the
 // resources it owns so callers can shut it down cleanly.
 type App struct {
@@ -601,6 +608,12 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// producers below publish onto it.
 	broker := events.NewBroker()
 
+	// Declared before the session observer below because that observer must be able
+	// to end a RELAY session on the sharing Server (ADR-0056 §5), and the link
+	// Service itself cannot be built until the Tailnet manager exists further down.
+	// The closure reads the variable when a session ends, by which time it is set.
+	var linkSvc *link.Service
+
 	// Session lifecycle → realtime (issue 03): translate the Playback Manager's
 	// observer transitions into the Broker's Admin-only session events. Wired via
 	// the setter AFTER both the Service and Broker exist (the Broker is created
@@ -628,6 +641,23 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			// caller, and the DELETE has already succeeded).
 			if err := authSvc.RevokeStreamTokens(e.SessionID); err != nil {
 				log.Printf("obelo: revoking stream tokens for ended session %s: %v", e.SessionID, err)
+			}
+			// A RELAY session wraps one on another household's Server (ADR-0056 §5), and
+			// ending this one ends that one. It hangs off this observer for the same
+			// reason the revocation above does — the idle reaper fires the identical
+			// event, so an abandoned relay cannot leave a session, and possibly a
+			// transcode, running on somebody else's machine. Best effort in the
+			// background: the DELETE that triggered it has already answered, and the
+			// sharer's own reaper is the backstop.
+			if e.RelayLinkID != "" && e.RemoteSessionID != "" {
+				linkID, remoteID := e.RelayLinkID, e.RemoteSessionID
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), relayEndTimeout)
+					defer cancel()
+					if err := linkSvc.RelayEndSession(ctx, linkID, remoteID); err != nil {
+						log.Printf("obelo: link: ending the shared session %s: %v", remoteID, err)
+					}
+				}()
 			}
 		default:
 			return
@@ -684,9 +714,21 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// The identity closure is what the sharer records as the Device (ADR-0055 §4).
 	// It is read at each use rather than captured as a value so a re-key months
 	// later presents the CURRENT display name.
-	linkSvc := link.New(db, func() link.Identity {
+	linkSvc = link.New(db, func() link.Identity {
 		return link.Identity{ID: identity.ID, Name: identity.Name}
-	}, link.Options{Tailnet: tailnetManager, Mirror: db, Events: broker})
+	}, link.Options{
+		Tailnet:    tailnetManager,
+		Mirror:     db,
+		Events:     broker,
+		ArtworkDir: cfg.ArtworkCacheDir(),
+	})
+	// The one-hop playback relay (ADR-0056 §5; issue 09). It is installed on the
+	// playback Service rather than passed to NewService because the link Service
+	// needs the Tailnet manager and the mirror, both of which are built after
+	// playback — the same post-construction wiring the session observer uses. With
+	// it set, and ONLY with it set, a play on a Title in a linked Library is
+	// negotiated by the Server that holds the file.
+	playbackSvc.SetRelay(linkSvc)
 
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the

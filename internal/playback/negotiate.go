@@ -121,7 +121,17 @@ type Decision struct {
 	// has already happened by the time this is set, and the tiering sees only the
 	// resulting Constraints.
 	UserCeiling bool
+	// Relay, when non-nil, marks a Decision the SHARING Server made for a Title in
+	// a linked Library (ADR-0056 §5, relay.go). It carries the Link, the remote
+	// session this one wraps, and the sharer's whole answer for the api layer to
+	// re-serve with its URLs rewritten. Nothing local produced it: there is no
+	// ffmpeg job, no scratch dir and no transcode-cap slot behind such a Decision,
+	// because the re-encoding (if any) is happening on the other household's host.
+	Relay *Relayed
 }
+
+// IsRelay reports whether this Decision came from another Server (ADR-0056 §5).
+func (d Decision) IsRelay() bool { return d.Relay != nil }
 
 // UsesFMP4 reports whether the HLS session is delivered as fragmented-MP4 (.m4s +
 // an init segment) rather than MPEG-TS (ADR-0024). fMP4 is required when a COPIED

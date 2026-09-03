@@ -285,7 +285,7 @@ func handleArtistSubtree(deps Deps) http.HandlerFunc {
 			id := rest[:i]
 			role := rest[i+len("/artwork/"):]
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntityArtist, id, role))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntityArtist, id, role))))(w, r)
 			return
 		}
 		// POST {id}/scan: Targeted scan of this Artist's album folders (Admin, ADR-0030).
@@ -441,7 +441,7 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleAlbumArtwork(deps.Catalog, id))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleAlbumArtwork(deps, id))))(w, r)
 			return
 		}
 		// POST {id}/scan: Targeted scan of this Album's folder(s) (Admin, ADR-0030).
@@ -480,7 +480,8 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 // folder.jpg). Local-on-disk wins; no external fetch (ADR-0001). An Album with no
 // local cover → 404 (the client falls back to a placeholder; embedded cover art
 // extraction is a later concern).
-func handleAlbumArtwork(svc *catalog.Service, albumID string) http.HandlerFunc {
+func handleAlbumArtwork(deps Deps, albumID string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		if albumID == "" {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -493,6 +494,11 @@ func handleAlbumArtwork(svc *catalog.Service, albumID string) http.HandlerFunc {
 		art, err := svc.AlbumArtwork(scope, albumID)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
+			// A mirrored Album's cover, fetched from the sharer on first request
+			// (ADR-0056 §5). The role is the Album's single "cover".
+			if serveRelayArtwork(deps, w, r, scope, store.EntityAlbum, albumID, "cover") {
+				return
+			}
 			writeError(w, http.StatusNotFound, codeNotFound, "artwork not found", nil)
 			return
 		case err != nil:

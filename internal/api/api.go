@@ -403,6 +403,16 @@ func Handler(deps Deps) http.Handler {
 	// existence-hiding 404, not the 401 the bearer/cookie middlewares produce.
 	mux.HandleFunc("/stream/", handleStreamTokenSubtree(deps))
 
+	// GET /relay/{sessionId}/{the sharer's path tail}: the media of a session that
+	// is playing a Title from a LINKED Library (ADR-0056 §5). The bytes are on
+	// another household's Server; this Server negotiated with it under the Link's
+	// credential and rewrote every URL in its answer onto this route, preserving
+	// the remote path tail so relative playlist URIs keep resolving. Bearer or the
+	// media cookie, bound to the local Session's User — the same middleware the
+	// /sessions media GETs use; the stream token reaches the same bytes through its
+	// own route above. See relay_handlers.go.
+	mux.HandleFunc(relayRoutePrefix, handleRelaySubtree(deps))
+
 	// Collections (collections-playlists 01): Admin-curated, shared groupings of
 	// Titles. Writes (POST/PUT/DELETE on the Collection and its items) are Admin
 	// scope; reads (GET list/detail) are any authenticated User. A `/collections`

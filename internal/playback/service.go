@@ -159,6 +159,11 @@ type Service struct {
 	// unit tests) — in which case no User is treated as remote and every write
 	// proceeds, the pre-linked-servers behavior.
 	roles UserRoleStore
+	// relay is the one-hop playback relay for a mirrored Title (ADR-0056 §5,
+	// relay.go), installed by SetRelay after the link Service exists. Nil on every
+	// Server that holds no Links, and on every unit test — a mirrored Title is then
+	// negotiated like a local one, which is what this package did before issue 09.
+	relay Relayer
 	// sessions is the in-memory session Manager. Deliberately NOT behind the
 	// remote guard: a relay session still starts, ends and feeds nowPlaying, which
 	// is how the sharer sees its own transcode load. What a remote User writes
@@ -414,6 +419,16 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// tightens only this negotiation's copy.
 	clamped, ceilingBound := clampToCeiling(req.Constraints, req.Scope)
 	req.Constraints = clamped
+
+	// A Title in a LINKED Library is negotiated by the Server that holds its files
+	// (ADR-0056 §5). This is the only branch on `library.source` in the whole
+	// playback path: everything above it — the Scope check, the Rating ceiling, the
+	// Playback-ceiling clamp — has already run and is this household's own, and
+	// everything below it is about a File on this disk, which a mirrored Title does
+	// not have.
+	if s.relayed(detail.LibraryID) {
+		return s.negotiateRelay(req, detail)
+	}
 
 	dec, unsup := SelectEdition(req.Profile, req.Constraints, detail.Editions, req.EditionID)
 	if unsup != nil {
