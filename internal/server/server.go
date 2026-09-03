@@ -15,6 +15,23 @@ const Version = "0.1.0"
 // and the feature flags, not on the server version string.
 var SupportedAPIVersions = []int{1}
 
+// LinkProtocolVersion is the one small integer two Servers agree on before they
+// link (ADR-0055 §3). It stamps the invite, the redeem request, the export and
+// the relay, and it is checked for EQUALITY before anything is redeemed — so a
+// mismatch fails at paste time with "their server needs an upgrade" or "yours
+// does", never mid-sync and never mid-film.
+//
+// It is emphatically NOT a substitute for the feature flags. Clients branch on
+// features and never on a version string, and that rule has already earned its
+// keep once; this version exists only for the server-to-server contract, which
+// has no equivalent of a client's "hide the button" fallback — two Servers
+// either speak the same linking protocol or must not try.
+//
+// Bumping it is a deliberate act with a compatibility note, and it breaks every
+// existing Link until both sides are upgraded. That is the intended cost: the
+// alternative is a half-understood export silently mirroring the wrong thing.
+const LinkProtocolVersion = 1
+
 // Info is the payload behind the handshake. The api layer serializes it to the
 // camelCase JSON shape defined in docs/api-contract.md.
 type Info struct {
@@ -26,6 +43,11 @@ type Info struct {
 	SupportedVersions []int
 	Features          map[string]bool
 	SetupRequired     bool
+	// LinkProtocolVersion is the server-to-server linking contract's version
+	// (ADR-0055 §3). Additive to the handshake like Identity; a redeeming Server
+	// reads it alongside features.serverLinking BEFORE it posts an invite code, so
+	// a mismatch is refused at link time rather than discovered later.
+	LinkProtocolVersion int
 }
 
 // UserCounter reports how many Users exist. *store.DB satisfies it; tests can
@@ -133,6 +155,17 @@ func (m *Metadata) Features() map[string]bool {
 		// not as an error the app can catch. Every other credential path is unchanged,
 		// so an absent flag costs nothing else.
 		"streamToken": true,
+		// serverLinking advertises the SHARING half of linking (ADR-0055): POST
+		// /users/{id}/invite for the Admin and POST /auth/link/redeem for the Server
+		// that redeems it. A redeeming Server MUST branch on this rather than on a
+		// version — an older server has no such routes, and the correct behaviour
+		// there is to say "that server does not support linking" at paste time
+		// instead of posting a code into a 404.
+		//
+		// It is route existence and nothing else, so TestFeaturesMatchRoutes covers
+		// it like the rest. Whether the two sides can actually TALK is the separate
+		// question linkProtocolVersion answers, and a client checks both.
+		"serverLinking": true,
 		// transcode is the one flag that is NOT route-existence — which is why
 		// TestFeaturesMatchRoutes excludes it: /transcoding is only the admin
 		// observability snapshot (ADR-0029) and is served either way. It advertises the
@@ -171,10 +204,11 @@ func (m *Metadata) Info() (Info, error) {
 		return Info{}, err
 	}
 	return Info{
-		Identity:          m.identity,
-		Version:           Version,
-		SupportedVersions: SupportedAPIVersions,
-		Features:          m.Features(),
-		SetupRequired:     n == 0,
+		Identity:            m.identity,
+		Version:             Version,
+		SupportedVersions:   SupportedAPIVersions,
+		Features:            m.Features(),
+		SetupRequired:       n == 0,
+		LinkProtocolVersion: LinkProtocolVersion,
 	}, nil
 }

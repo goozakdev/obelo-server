@@ -765,6 +765,28 @@ func (s *Server) ExpireStreamTokensForSession(sessionID string) {
 	}
 }
 
+// ExpireLinkInvites ages every one of a User's link invites out, by backdating
+// expires_at an hour into the past (ADR-0055 §1).
+//
+// A direct-DB seam like ExpireStreamTokensForSession, and for the same reason:
+// the TTL is 24 hours, nothing in the API shortens it, and a test that waited
+// would wait a day. Expiry is enforced in the redeem's WHERE clause
+// (store.RedeemLinkInvite), so a backdated row is exactly what a genuinely
+// aged-out one looks like — the only difference is which clock got there first.
+func (s *Server) ExpireLinkInvites(userID string) {
+	s.t.Helper()
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	res, err := s.app.DB.Exec(
+		`UPDATE link_invites SET expires_at = ? WHERE user_id = ?`, past, userID,
+	)
+	if err != nil {
+		s.t.Fatalf("testharness: expiring link invites for user %q: %v", userID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		s.t.Fatalf("testharness: no link invites to expire for user %q", userID)
+	}
+}
+
 // CreateMember inserts a non-Admin (role "member") User directly into the
 // database with the given credentials. Prefer CreateUser (which drives the real
 // admin API); this direct-insert seam remains for the pre-API baseline — seeding

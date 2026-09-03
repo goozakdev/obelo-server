@@ -143,6 +143,7 @@ type userDetailJSON struct {
 //	PUT    /users/{id}/libraryAccess  → replace a Member's granted Libraries
 //	PUT    /users/{id}/ratingCeiling  → set/clear a Member's Rating ceiling
 //	PUT    /users/{id}/playbackCeiling → set/clear a Member's Playback ceiling
+//	POST   /users/{id}/invite         → mint a one-time link invite (remote only)
 //
 // Method is gated here (not via requireMethod) because the {id} subtree serves
 // more than one method, mirroring the /libraries single-resource dispatcher.
@@ -180,6 +181,14 @@ func handleUserSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut, handleSetPlaybackCeiling(deps.Access, id))(w, r)
+			return
+		}
+		if id, ok := strings.CutSuffix(rest, "/invite"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost, handleMintLinkInvite(deps, id))(w, r)
 			return
 		}
 

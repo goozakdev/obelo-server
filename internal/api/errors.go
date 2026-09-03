@@ -101,6 +101,35 @@ const (
 	// (auth.CheckRoleChange) ahead of the role-change endpoint that will need it,
 	// so the rule cannot be forgotten when that endpoint arrives.
 	codeRoleChange = "ROLE_CHANGE"
+	// Linking, the sharing side (ADR-0055, .scratch/linked-servers issue 03):
+	//
+	//   codeNotRemoteUser (422) — POST /users/{id}/invite named a User that is not
+	//                             a linked Server. An invite is the `remote` role's
+	//                             ONLY credential and no other role has any use for
+	//                             one; minting for a Member would hand out a second,
+	//                             passwordless way into a person's account.
+	//   codeInvalidOrigin (422) — an origin in the mint body is not a bare absolute
+	//                             http(s) address. Refused rather than repaired: a
+	//                             path prefix or a typo becomes an invite that can
+	//                             only fail on somebody else's machine, with nothing
+	//                             on this side to explain why.
+	//   codeInvalidInvite (400) — POST /auth/link/redeem presented a code that is
+	//                             unknown, expired or already spent. ONE answer for
+	//                             all three (and for a missing server id), so the
+	//                             live invite space cannot be mapped by watching
+	//                             which reply comes back — the same collapse
+	//                             INVALID_USER_CODE makes.
+	//   codeLinkProtocol  (409) — the two Servers stamp different
+	//                             linkProtocolVersions. details carries
+	//                             { supported, requested } — this server's and the
+	//                             caller's — so the redeeming side can say which of
+	//                             the two needs an upgrade (ADR-0055 §3). Checked
+	//                             BEFORE anything is redeemed, so a mismatch never
+	//                             costs the Admin their invite.
+	codeNotRemoteUser = "NOT_REMOTE_USER"
+	codeInvalidOrigin = "INVALID_ORIGIN"
+	codeInvalidInvite = "INVALID_INVITE"
+	codeLinkProtocol  = "LINK_PROTOCOL"
 	// Library-access grants (PUT /users/{id}/libraryAccess), both 422: granting to
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"
