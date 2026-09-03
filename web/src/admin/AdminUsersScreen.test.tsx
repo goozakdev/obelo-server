@@ -189,6 +189,45 @@ describe("AdminUsersScreen — adding a user", () => {
     expect(await screen.findByText("ada")).toBeInTheDocument();
   });
 
+  it("creates a linked server with NO password and grants it nothing (ADR-0054)", async () => {
+    const user = userEvent.setup();
+    const peer = usr({ id: "u9", username: "Brandon's server", role: "remote" });
+    listUsers.mockResolvedValueOnce([]).mockResolvedValue([peer]);
+    createUser.mockResolvedValue(peer);
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("add-user-button"));
+    await user.type(screen.getByTestId("user-username-input"), "Brandon's server");
+    await user.selectOptions(screen.getByTestId("user-role-select"), "remote");
+
+    // The role has no password, so the dialog offers no field for one — there is
+    // nothing to type, and a password sent with the role is a 400 server-side.
+    expect(screen.queryByTestId("user-password-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("create-user-linked-hint")).toBeInTheDocument();
+    expect(screen.queryByTestId("create-user-access-hint")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("create-user-submit"));
+
+    // No `password` key at all in the request.
+    await waitFor(() =>
+      expect(createUser).toHaveBeenCalledWith({
+        username: "Brandon's server",
+        role: "remote",
+      }),
+    );
+    // And no default grant: "all libraries" is a friendly default inside the
+    // household and a disclosure of the whole collection across a link.
+    await waitFor(() =>
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
+    );
+    expect(setLibraryAccess).not.toHaveBeenCalled();
+    expect(await screen.findByText("Brandon's server")).toBeInTheDocument();
+  });
+
   it("does not grant libraries to a created Admin (they are all-access by role)", async () => {
     const user = userEvent.setup();
     listUsers
