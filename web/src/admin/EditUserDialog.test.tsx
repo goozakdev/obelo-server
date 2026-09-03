@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "../api/errors";
-import type { Library, User, UserDetail } from "../api/types";
+import type {
+  Library,
+  TailnetSettingsView,
+  TailnetStatus,
+  User,
+  UserDetail,
+} from "../api/types";
 
 // EditUserDialog through the faked API client (the one seam — exactly as
 // AdminUsersScreen/AdminLibrariesScreen fake apiClient). This dialog is where all
@@ -26,6 +32,8 @@ const {
   setRatingCeiling,
   setPlaybackCeiling,
   setPassword,
+  getTailnet,
+  createLinkInvite,
 } = vi.hoisted(() => ({
   getUser: vi.fn(),
   listLibraries: vi.fn(),
@@ -33,6 +41,8 @@ const {
   setRatingCeiling: vi.fn(),
   setPlaybackCeiling: vi.fn(),
   setPassword: vi.fn(),
+  getTailnet: vi.fn(),
+  createLinkInvite: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -47,6 +57,8 @@ vi.mock("../api/client", async () => {
       setRatingCeiling: (...a: unknown[]) => setRatingCeiling(...a),
       setPlaybackCeiling: (...a: unknown[]) => setPlaybackCeiling(...a),
       setPassword: (...a: unknown[]) => setPassword(...a),
+      getTailnet: (...a: unknown[]) => getTailnet(...a),
+      createLinkInvite: (...a: unknown[]) => createLinkInvite(...a),
     },
   };
 });
@@ -109,6 +121,11 @@ beforeEach(() => {
   setRatingCeiling.mockReset();
   setPlaybackCeiling.mockReset();
   setPassword.mockReset();
+  getTailnet.mockReset();
+  createLinkInvite.mockReset();
+  // No Tailnet unless a test says otherwise: the pre-fill is best-effort and a
+  // build with the feature left out answers 503.
+  getTailnet.mockRejectedValue(new ApiError(503, "SERVICE_UNAVAILABLE", "no tailnet"));
   listLibraries.mockResolvedValue(ALL_LIBS);
   setLibraryAccess.mockResolvedValue(undefined);
   setRatingCeiling.mockResolvedValue(undefined);
@@ -538,3 +555,326 @@ describe("EditUserDialog — delete and dismiss", () => {
     expect(setPassword).not.toHaveBeenCalled();
   });
 });
+
+// --- The Link section (.scratch/linked-servers issue 04, ADR-0055 §2) -------
+//
+// A `remote` User is a linked Server, not a person. Its dialog is where the
+// sharing Admin turns "I granted them two libraries" into the one string they
+// send over iMessage.
+
+/** A running Tailnet node serving plain HTTP on :80 — the common case, since
+ * tailnet HTTPS additionally needs two things enabled in the Tailscale console. */
+function tailnetView(over: Partial<TailnetStatus> = {}): TailnetSettingsView {
+  return {
+    enabled: true,
+    hostname: "obelo",
+    controlURL: "",
+    httpsEnabled: false,
+    status: {
+      state: "running",
+      fqdn: "obelo.tail1a2b.ts.net",
+      keyExpiry: null,
+      httpsBound: false,
+      ...over,
+    },
+  };
+}
+
+const INVITE = {
+  invite:
+    "obelo-link:eyJ2IjoxLCJpZCI6InNydi0xIiwibmFtZSI6IkhvbWUiLCJvcmlnaW5z" +
+    "IjpbImh0dHBzOi8vbWVkaWEuZXhhbXBsZS5vcmciXSwiY29kZSI6ImFiYyIsImV4cCI6" +
+    "IjIwMjYtMDktMDNUMTI6MDA6MDBaIn0",
+  expiresAt: "2026-09-03T12:00:00Z",
+};
+
+function remoteUser(): User {
+  return { id: "u9", username: "Brandon's server", role: "remote" };
+}
+function remoteDetail(over: Partial<UserDetail> = {}): UserDetail {
+  return detail({ id: "u9", username: "Brandon's server", role: "remote", ...over });
+}
+
+describe("EditUserDialog — a linked server's invite", () => {
+  it("offers no password field, and says why", async () => {
+    getUser.mockResolvedValue(remoteDetail());
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    // The role carries no password at all — the schema refuses to give it one —
+    // so a "New password" box would be a field that cannot do anything.
+    expect(screen.queryByTestId("new-password-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("remote-no-password")).toBeInTheDocument();
+    // The grants and the Playback ceiling are still here: they are what the
+    // other household is actually allowed to see and how it may play it.
+    expect(await screen.findByTestId("library-checklist")).toBeInTheDocument();
+    expect(screen.getByTestId("playback-ceiling")).toBeInTheDocument();
+  });
+
+  it("shows no Link section for a Member or an Admin", async () => {
+    getUser.mockResolvedValue(detail({}));
+    const { unmount } = renderDialog(usr({}));
+    await screen.findByTestId("library-checklist");
+    expect(screen.queryByTestId("link-section")).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-password-input")).toBeInTheDocument();
+    unmount();
+
+    renderDialog(usr({ role: "admin" }));
+    expect(screen.queryByTestId("link-section")).not.toBeInTheDocument();
+    // And an Admin dialog never asks the Tailnet anything.
+    expect(getTailnet).not.toHaveBeenCalled();
+  });
+
+  it("pre-fills the MagicDNS origin with the scheme the node ACHIEVED", async () => {
+    getUser.mockResolvedValue(remoteDetail());
+    getTailnet.mockResolvedValue(tailnetView());
+    renderDialog(remoteUser());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("origin-input-0")).toHaveValue(
+        "http://obelo.tail1a2b.ts.net",
+      ),
+    );
+    // Plus the free-text row for a public address, left blank.
+    expect(screen.getByTestId("origin-input-1")).toHaveValue("");
+  });
+
+  it("uses https for the pre-filled origin only once :443 is actually bound", async () => {
+    // httpsEnabled is the operator's REQUEST; httpsBound is what the node
+    // achieved. Reading the request as the outcome is what put a confident
+    // https:// address in front of an operator whose :443 refused connections.
+    getUser.mockResolvedValue(remoteDetail());
+    getTailnet.mockResolvedValue({
+      ...tailnetView({ httpsBound: true }),
+      httpsEnabled: true,
+    });
+    renderDialog(remoteUser());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("origin-input-0")).toHaveValue(
+        "https://obelo.tail1a2b.ts.net",
+      ),
+    );
+  });
+
+  it("leaves one blank row when there is no Tailnet, and says the server cannot know its public address", async () => {
+    getUser.mockResolvedValue(remoteDetail());
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    expect(screen.getByTestId("origin-input-0")).toHaveValue("");
+    expect(screen.queryByTestId("origin-input-1")).not.toBeInTheDocument();
+    expect(screen.getByTestId("link-section")).toHaveTextContent(
+      /cannot know its own public address/i,
+    );
+    // A 503 from a build with no Tailnet support is not an error worth showing.
+    expect(screen.queryByTestId("invite-error")).not.toBeInTheDocument();
+  });
+
+  it("cannot generate an invite with no address (an invite with none could only fail on the other machine)", async () => {
+    getUser.mockResolvedValue(remoteDetail());
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    expect(screen.getByTestId("generate-invite")).toBeDisabled();
+  });
+
+  it("mints an invite from the typed origins, in order, and shows the string, its QR and the expiry", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    getTailnet.mockResolvedValue(tailnetView());
+    createLinkInvite.mockResolvedValue(INVITE);
+    renderDialog(remoteUser());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("origin-input-0")).toHaveValue(
+        "http://obelo.tail1a2b.ts.net",
+      ),
+    );
+    await user.type(
+      screen.getByTestId("origin-input-1"),
+      "  https://media.example.org  ",
+    );
+    await user.click(screen.getByTestId("generate-invite"));
+
+    // Trimmed, blanks dropped, ORDER PRESERVED — the redeeming Server tries them
+    // in the order given (ADR-0055 §2).
+    await waitFor(() =>
+      expect(createLinkInvite).toHaveBeenCalledWith("u9", [
+        "http://obelo.tail1a2b.ts.net",
+        "https://media.example.org",
+      ]),
+    );
+
+    const field = await screen.findByTestId("invite-string");
+    expect(field).toHaveValue(INVITE.invite);
+    expect(field).toHaveAttribute("readonly");
+    expect(screen.getByTestId("invite-qr")).toBeInTheDocument();
+    expect(screen.getByTestId("invite-expiry")).toHaveTextContent(/Expires/);
+    expect(screen.getByTestId("invite-warning")).toHaveTextContent(
+      /link once, within 24 hours/i,
+    );
+  });
+
+  it("encodes the QR from EXACTLY the string in the field", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    createLinkInvite.mockResolvedValue(INVITE);
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    await user.type(screen.getByTestId("origin-input-0"), "https://media.example.org");
+    await user.click(screen.getByTestId("generate-invite"));
+
+    const svg = await screen.findByTestId("invite-qr");
+    // The encoder's own round-trip is pinned in src/lib/qr.test.ts; what matters
+    // here is that the symbol drawn is the one for the string on screen, and
+    // that the two cannot drift apart.
+    const { encodeQr } = await import("../lib/qr");
+    const expected = encodeQr(INVITE.invite);
+    expect(svg.getAttribute("data-qr-modules")).toBe(String(expected.size));
+    expect(svg).toHaveAttribute("viewBox", `0 0 ${expected.size + 8} ${expected.size + 8}`);
+    expect(svg.querySelector("path")?.getAttribute("d")).toBe(
+      qrPath(expected.modules),
+    );
+  });
+
+  it("adds and removes origin rows", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    createLinkInvite.mockResolvedValue(INVITE);
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    // A lone row has no remove control — removing the only address would leave
+    // an invite nothing could redeem.
+    expect(screen.queryByTestId("origin-remove-0")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("origin-add"));
+    await user.type(screen.getByTestId("origin-input-0"), "https://a.example");
+    await user.type(screen.getByTestId("origin-input-1"), "https://b.example");
+    await user.click(screen.getByTestId("origin-remove-0"));
+
+    expect(screen.getByTestId("origin-input-0")).toHaveValue("https://b.example");
+    await user.click(screen.getByTestId("generate-invite"));
+    await waitFor(() =>
+      expect(createLinkInvite).toHaveBeenCalledWith("u9", ["https://b.example"]),
+    );
+  });
+
+  it("replaces the shown invite when a new one is generated", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    createLinkInvite
+      .mockResolvedValueOnce(INVITE)
+      .mockResolvedValue({ invite: "obelo-link:second", expiresAt: INVITE.expiresAt });
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    await user.type(screen.getByTestId("origin-input-0"), "https://media.example.org");
+    await user.click(screen.getByTestId("generate-invite"));
+    expect(await screen.findByTestId("invite-string")).toHaveValue(INVITE.invite);
+
+    // The button restates what pressing it again does: the previous invite dies
+    // server-side the moment this one is minted.
+    expect(screen.getByTestId("generate-invite")).toHaveTextContent(
+      "Generate a new invite",
+    );
+    await user.click(screen.getByTestId("generate-invite"));
+    await waitFor(() =>
+      expect(screen.getByTestId("invite-string")).toHaveValue("obelo-link:second"),
+    );
+  });
+
+  it("copies the string to the clipboard", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    getUser.mockResolvedValue(remoteDetail());
+    createLinkInvite.mockResolvedValue(INVITE);
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("link-section");
+    await user.type(screen.getByTestId("origin-input-0"), "https://media.example.org");
+    await user.click(screen.getByTestId("generate-invite"));
+    await screen.findByTestId("invite-string");
+
+    await user.click(screen.getByTestId("invite-copy"));
+    expect(writeText).toHaveBeenCalledWith(INVITE.invite);
+    await waitFor(() =>
+      expect(screen.getByTestId("invite-copy")).toHaveTextContent("Copied"),
+    );
+  });
+
+  it("surfaces a refused mint inline and keeps the dialog open", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    createLinkInvite.mockRejectedValue(
+      new ApiError(422, "INVALID_ORIGIN", "origins must be absolute http(s) origins"),
+    );
+    const onClose = vi.fn();
+    renderDialog(remoteUser(), { onClose });
+
+    await screen.findByTestId("link-section");
+    await user.type(screen.getByTestId("origin-input-0"), "media.example.org");
+    await user.click(screen.getByTestId("generate-invite"));
+
+    expect(await screen.findByTestId("invite-error")).toHaveTextContent(
+      /absolute http\(s\) origins/,
+    );
+    expect(screen.queryByTestId("invite-result")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not mint as a side effect of saving the grants", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    renderDialog(remoteUser());
+
+    await screen.findByTestId("library-checklist");
+    await user.click(screen.getByTestId("library-checkbox-l1"));
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() => expect(setLibraryAccess).toHaveBeenCalledWith("u9", ["l1"]));
+    expect(createLinkInvite).not.toHaveBeenCalled();
+  });
+
+  it("holds the dialog shut while a mint is in flight", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(remoteDetail());
+    const pending = deferred<typeof INVITE>();
+    createLinkInvite.mockReturnValue(pending.promise);
+    const onClose = vi.fn();
+    renderDialog(remoteUser(), { onClose });
+
+    await screen.findByTestId("link-section");
+    await user.type(screen.getByTestId("origin-input-0"), "https://media.example.org");
+    await user.click(screen.getByTestId("generate-invite"));
+
+    // The string exists only in that one response, and the invite it replaced is
+    // already dead — closing now would strand both households.
+    expect(screen.getByTestId("generate-invite")).toHaveTextContent("Generating…");
+    expect(screen.getByTestId("edit-user-cancel")).toBeDisabled();
+    expect(screen.getByTestId("edit-user-close-x")).toBeDisabled();
+
+    pending.resolve(INVITE);
+    expect(await screen.findByTestId("invite-string")).toHaveValue(INVITE.invite);
+    expect(screen.getByTestId("edit-user-cancel")).not.toBeDisabled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+/** The same one-path-of-1x1-boxes QrSvg draws, so the assertion above compares
+ * the drawing to the encoder rather than to itself. */
+function qrPath(modules: boolean[][]): string {
+  let d = "";
+  for (let y = 0; y < modules.length; y++) {
+    for (let x = 0; x < modules.length; x++) {
+      if (modules[y][x]) d += `M${x + 4} ${y + 4}h1v1h-1z`;
+    }
+  }
+  return d;
+}
