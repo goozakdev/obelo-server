@@ -160,6 +160,36 @@ func (m *memStore) UpdateLinkCredential(l store.Link) error {
 	return store.ErrNotFound
 }
 
+// The three state-machine writers (issue 08). They are the real table's
+// semantics and not a simplification of them: a success clears the last error
+// and stamps last_synced_at, a failure records the reason, and the active origin
+// moves on its own.
+func (m *memStore) SetLinkState(id, state, lastError string) error {
+	return m.update(id, func(l *store.Link) { l.State, l.LastError = state, lastError })
+}
+
+func (m *memStore) SetLinkSynced(id, syncedAt string) error {
+	return m.update(id, func(l *store.Link) {
+		l.State, l.LastError, l.LastSyncedAt = store.LinkStateConnected, "", syncedAt
+	})
+}
+
+func (m *memStore) SetLinkActiveOrigin(id, origin string) error {
+	return m.update(id, func(l *store.Link) { l.ActiveOrigin = origin })
+}
+
+func (m *memStore) update(id string, apply func(*store.Link)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.links {
+		if m.links[i].ID == id {
+			apply(&m.links[i])
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
 func (m *memStore) DeleteLink(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

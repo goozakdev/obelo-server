@@ -153,8 +153,12 @@ func TestTwoServersLink(t *testing.T) {
 	if got.ActiveOrigin != sharer.URL("") {
 		t.Errorf("activeOrigin = %q, want %q", got.ActiveOrigin, sharer.URL(""))
 	}
-	if got.LastSyncedAt != nil {
-		t.Errorf("lastSyncedAt = %v on a Link nothing has synced yet, want null", *got.LastSyncedAt)
+	// The first pull runs inside this POST and records itself (issue 08), so the
+	// response carries the stamp that pull left rather than the null this asserted
+	// while nothing wrote the column. This sharer grants nothing, which is a
+	// successful sweep of an empty granted set, not an absent one.
+	if got.LastSyncedAt == nil || *got.LastSyncedAt == "" {
+		t.Error("lastSyncedAt is null after the first pull; nothing recorded the sweep")
 	}
 	// Issue 07's seam: the mirror does not exist, so the list is EMPTY rather than
 	// absent. The field's shape does not change when issue 07 fills it in.

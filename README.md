@@ -220,6 +220,7 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | `OBELO_TRUSTED_PROXIES`           | —         | CIDRs whose `X-Forwarded-*` headers are believed. See below.   |
 | `OBELO_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
 | `OBELO_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
+| `OBELO_LINK_SYNC_INTERVAL`        | `1h`      | How often a linked server's libraries are pulled again (`0` turns background refresh off). |
 | `OBELO_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
 | `OBELO_MAX_CONCURRENT_TRANSCODES` | `3`       | Cap on simultaneous transcodes (`0` = unlimited).              |
 | `OBELO_TMDB_API_KEY`              | —         | Enables Movie/TV enrichment via TMDB.                          |

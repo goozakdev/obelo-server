@@ -25,6 +25,10 @@ type MirrorStore interface {
 	DeleteLibrariesForLink(linkID string) (int, error)
 	SetLibraryCheckpoint(id, checkpoint string) error
 	ApplyMirror(libraryID string, entities []store.MirrorEntity, full bool) error
+	// TombstoneMirror hides everything in a linked Library the sharer has stopped
+	// granting, without deleting any of it, and clears its checkpoint so a
+	// re-grant is a full pull (ADR-0056 §6).
+	TombstoneMirror(libraryID string) error
 }
 
 // ExportEntity is one row of a sharer's feed as it arrives. It is issue 05's

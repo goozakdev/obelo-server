@@ -199,6 +199,75 @@ func TestATombstoneHidesRatherThanDeletes(t *testing.T) {
 	}
 }
 
+// TestTombstoningAMirrorKeepsEverything is what happens when the sharer stops
+// granting a Library this Server had mirrored (.scratch/linked-servers issue 08).
+//
+// It is the opposite of an unlink, and the difference is the whole point: the
+// rows stay, this household's Watch state stays, and the shelf goes quiet by
+// being HIDDEN. It also clears the checkpoint, which is what makes coming back
+// work — the next pull is a full one, and a full pull rewrites `hidden` from the
+// feed, so a re-granted Library returns with the same local ids and the same
+// resume position.
+func TestTombstoningAMirrorKeepsEverything(t *testing.T) {
+	db := openTemp(t)
+	_, lib := mirrorLibrary(t, db, "movie")
+	if err := db.ApplyMirror(lib.ID, movieFeed(), true); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if err := db.SetLibraryCheckpoint(lib.ID, "cursor-42"); err != nil {
+		t.Fatalf("recording the checkpoint: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO users (id, username, role, password_hash) VALUES ('u1', 'brandon', 'admin', 'x')`); err != nil {
+		t.Fatalf("seeding a user: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO watch_state (user_id, title_id, resume_position_ms)
+		 SELECT 'u1', id, 42 FROM titles WHERE remote_id = 't1'`); err != nil {
+		t.Fatalf("seeding watch state: %v", err)
+	}
+	var titleID string
+	if err := db.QueryRow(`SELECT id FROM titles WHERE remote_id = 't1'`).Scan(&titleID); err != nil {
+		t.Fatalf("reading the mirrored title: %v", err)
+	}
+
+	if err := db.TombstoneMirror(lib.ID); err != nil {
+		t.Fatalf("tombstoning: %v", err)
+	}
+
+	if n := count(t, db, `SELECT hidden FROM titles WHERE remote_id = 't1'`); n != 1 {
+		t.Error("the mirrored Title is not hidden after the grant went away")
+	}
+	for _, table := range []string{"titles", "editions", "files", "streams", "watch_state"} {
+		if got := count(t, db, `SELECT COUNT(*) FROM `+table); got == 0 {
+			t.Errorf("tombstoning emptied %s; nothing may be deleted", table)
+		}
+	}
+	after, err := db.LibraryByID(lib.ID)
+	if err != nil {
+		t.Fatalf("reading the library back: %v", err)
+	}
+	if after.RemoteCheckpoint != "" {
+		t.Errorf("checkpoint = %q after a tombstone, want it cleared so the next pull is full",
+			after.RemoteCheckpoint)
+	}
+
+	// She shares it again: one full pull, and the shelf is itself again — same
+	// local id, same resume position.
+	if err := db.ApplyMirror(lib.ID, movieFeed(), true); err != nil {
+		t.Fatalf("re-apply: %v", err)
+	}
+	if n := count(t, db, `SELECT hidden FROM titles WHERE remote_id = 't1'`); n != 0 {
+		t.Error("the re-granted Title is still hidden")
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM titles WHERE id = ?`, titleID); n != 1 {
+		t.Error("the re-granted Title came back with a different local id")
+	}
+	if n := count(t, db, `SELECT resume_position_ms FROM watch_state WHERE title_id = ?`, titleID); n != 42 {
+		t.Errorf("resume position = %d after a tombstone and a re-grant, want 42", n)
+	}
+}
+
 // TestUnlinkingDeletesTheWholeMirror is ADR-0056 §6 at the store grain: one
 // DELETE and the schema's cascades take the catalog and the Watch state with it.
 func TestUnlinkingDeletesTheWholeMirror(t *testing.T) {

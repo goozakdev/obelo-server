@@ -120,6 +120,59 @@ func (db *DB) ApplyMirror(libraryID string, entities []MirrorEntity, full bool) 
 	return nil
 }
 
+// tombstoneHideTargets are the five mirrored tables that carry a `hidden` column
+// — the same column a Title tombstone from the feed lands in — reached through
+// whatever join the table needs to name its Library.
+var tombstoneHideTargets = []string{
+	`UPDATE shows SET hidden = 1 WHERE library_id = ? AND remote_id IS NOT NULL`,
+	`UPDATE seasons SET hidden = 1 WHERE remote_id IS NOT NULL AND show_id IN
+	   (SELECT id FROM shows WHERE library_id = ?)`,
+	`UPDATE artists SET hidden = 1 WHERE library_id = ? AND remote_id IS NOT NULL`,
+	`UPDATE albums SET hidden = 1 WHERE remote_id IS NOT NULL AND artist_id IN
+	   (SELECT id FROM artists WHERE library_id = ?)`,
+	`UPDATE titles SET hidden = 1 WHERE library_id = ? AND remote_id IS NOT NULL`,
+}
+
+// TombstoneMirror hides everything in a linked Library WITHOUT deleting any of
+// it — what happens when the sharer stops granting a Library this Server had
+// mirrored (ADR-0056 §6, .scratch/linked-servers issue 08).
+//
+// Hiding, not deleting, for exactly the reason ADR-0056 rejects "dropping
+// mirrored rows": a delete would take this household's Watch state with it, and
+// a friend who un-grants a library for a week and grants it back would return it
+// as a stranger. `hidden` is the same column the feed's own tombstone lands in
+// (mirrorHidden), so browse, Home rows and search exclude precisely these rows
+// and nothing else has to learn a new state.
+//
+// It also CLEARS the export checkpoint, which is what makes coming back correct:
+// the next pull of a re-granted Library is a full one, and a full pull rewrites
+// `hidden` from the feed on every row it carries — so the shelf un-hides itself
+// with the same Watch state, the same local ids and no operator action. An
+// incremental pull would carry only what changed since, and every unchanged
+// Title would stay hidden forever.
+func (db *DB) TombstoneMirror(libraryID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: begin mirror tombstone: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, q := range tombstoneHideTargets {
+		if _, err := tx.Exec(q, libraryID); err != nil {
+			return fmt.Errorf("store: tombstoning mirror: %w", err)
+		}
+	}
+	if _, err := tx.Exec(
+		`UPDATE libraries SET remote_checkpoint = '' WHERE id = ?`, libraryID,
+	); err != nil {
+		return fmt.Errorf("store: tombstoning mirror: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit mirror tombstone: %w", err)
+	}
+	return nil
+}
+
 // mirrorTx carries the one transaction and the remote→local id map for it.
 type mirrorTx struct {
 	tx        *sql.Tx

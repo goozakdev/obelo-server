@@ -167,6 +167,30 @@ func (d *Dialer) HTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// StreamClient is the client for the ONE call that is not a request/response: the
+// `/events` subscription a mirror holds open under its Link's token.
+//
+// It differs from HTTPClient in exactly one field and that field is the point:
+// there is no whole-call Timeout, because the call is meant to last for weeks. The
+// bounds that remain are the ones that still mean something for a stream — the
+// connect, the TLS handshake, and how long the peer may take to send its response
+// HEADERS — so an origin that accepts a connection and then says nothing is still
+// abandoned rather than held forever.
+func (d *Dialer) StreamClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			DialContext:           d.DialContext,
+			TLSHandshakeTimeout:   defaultDialTimeout,
+			ResponseHeaderTimeout: defaultRequestTimeout,
+			MaxIdleConnsPerHost:   1,
+			IdleConnTimeout:       30 * time.Second,
+		},
+	}
+}
+
 // originHost extracts the host of an already-validated origin.
 func originHost(origin string) string {
 	u, err := url.Parse(origin)
