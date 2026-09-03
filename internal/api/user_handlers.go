@@ -7,6 +7,7 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Admin-scope user management (docs/api-contract.md). These handlers let an
@@ -102,16 +103,36 @@ type setRatingCeilingRequest struct {
 	Rating string `json:"rating"`
 }
 
+// setPlaybackCeilingRequest is the body of PUT /users/{id}/playbackCeiling: the
+// User's WHOLE Playback ceiling (ADR-0054 §2), not a patch. Every omitted field
+// decodes to its zero value and clears that dimension to uncapped, exactly as the
+// libraryAccess PUT is a replace-set — so a caller always sends the ceiling it
+// means and re-sending the same body is idempotent.
+type setPlaybackCeilingRequest struct {
+	// MaxResolution is a settable rung ("720p", "1080p", "2160p"); "" = uncapped.
+	MaxResolution string `json:"maxResolution"`
+	// MaxBitrate is bits/sec; 0 = uncapped.
+	MaxBitrate int64 `json:"maxBitrate"`
+	// MaxStreams is concurrent Playback sessions; 0 = uncapped.
+	MaxStreams int `json:"maxStreams"`
+}
+
 // userDetailJSON is the GET /users/{id} shape: the User plus their granted
-// Library ids and Rating ceiling. libraryIds is empty for an Admin (all-access
-// by role); ratingCeiling is "" when uncapped — the client reads role to
-// interpret an Admin's empty fields as "all Libraries, no cap".
+// Library ids, Rating ceiling and Playback ceiling. libraryIds is empty for an
+// Admin (all-access by role); ratingCeiling is "" when uncapped — the client
+// reads role to interpret an Admin's empty fields as "all Libraries, no cap".
+// The three Playback-ceiling fields are zero when uncapped and always zero for an
+// Admin (who may not carry one), and are carried here so the Edit-User dialog can
+// render the current ceiling without a second endpoint.
 type userDetailJSON struct {
 	ID            string   `json:"id"`
 	Username      string   `json:"username"`
 	Role          string   `json:"role"`
 	LibraryIDs    []string `json:"libraryIds"`
 	RatingCeiling string   `json:"ratingCeiling"`
+	MaxResolution string   `json:"maxResolution"`
+	MaxBitrate    int64    `json:"maxBitrate"`
+	MaxStreams    int      `json:"maxStreams"`
 }
 
 // handleUserSubtree dispatches the single-User endpoints under "/users/":
@@ -120,6 +141,8 @@ type userDetailJSON struct {
 //	DELETE /users/{id}                → delete a User (last-Admin guarded)
 //	PUT    /users/{id}/password       → reset a User's password
 //	PUT    /users/{id}/libraryAccess  → replace a Member's granted Libraries
+//	PUT    /users/{id}/ratingCeiling  → set/clear a Member's Rating ceiling
+//	PUT    /users/{id}/playbackCeiling → set/clear a Member's Playback ceiling
 //
 // Method is gated here (not via requireMethod) because the {id} subtree serves
 // more than one method, mirroring the /libraries single-resource dispatcher.
@@ -149,6 +172,14 @@ func handleUserSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut, handleSetRatingCeiling(deps.Access, id))(w, r)
+			return
+		}
+		if id, ok := strings.CutSuffix(rest, "/playbackCeiling"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPut, handleSetPlaybackCeiling(deps.Access, id))(w, r)
 			return
 		}
 
@@ -196,13 +227,64 @@ func handleGetUser(deps Deps, id string) http.HandlerFunc {
 				"failed to get user", nil)
 			return
 		}
+		play, err := deps.Access.PlaybackCeiling(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to get user", nil)
+			return
+		}
 		writeJSON(w, http.StatusOK, userDetailJSON{
 			ID:            user.ID,
 			Username:      user.Username,
 			Role:          user.Role,
 			LibraryIDs:    grants,
 			RatingCeiling: ceiling,
+			MaxResolution: play.MaxResolution,
+			MaxBitrate:    play.MaxBitrate,
+			MaxStreams:    play.MaxStreams,
 		})
+	}
+}
+
+// handleSetPlaybackCeiling sets a non-Admin User's Playback ceiling (Admin
+// scope): how their sessions may play, never what they may see. The body is the
+// whole ceiling — an omitted dimension clears it — and the refusals mirror the
+// Rating ceiling's: an Admin target is 422 ADMIN_CEILING, an unsettable
+// resolution rung is 422 UNKNOWN_RESOLUTION, and a negative bitrate/stream count
+// is a 400 (0 already means uncapped).
+func handleSetPlaybackCeiling(svc *access.Service, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req setPlaybackCeilingRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		err := svc.SetPlaybackCeiling(id, store.PlaybackCeiling{
+			MaxResolution: req.MaxResolution,
+			MaxBitrate:    req.MaxBitrate,
+			MaxStreams:    req.MaxStreams,
+		})
+		switch {
+		case errors.Is(err, access.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "user not found", nil)
+			return
+		case errors.Is(err, access.ErrAdminCeiling):
+			writeError(w, http.StatusUnprocessableEntity, codeAdminCeiling,
+				"cannot set a playback ceiling on an admin (admins are uncapped)", nil)
+			return
+		case errors.Is(err, access.ErrUnknownResolution):
+			writeError(w, http.StatusUnprocessableEntity, codeUnknownResolution,
+				"maxResolution must be one of 720p, 1080p, 2160p (or omitted for no limit)", nil)
+			return
+		case errors.Is(err, access.ErrInvalidCeiling):
+			writeError(w, http.StatusBadRequest, codeBadRequest,
+				"maxBitrate and maxStreams must not be negative (0 means no limit)", nil)
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to set playback ceiling", nil)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

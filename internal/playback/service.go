@@ -383,6 +383,8 @@ func suggestBusyBitrate(estimated, requestedMax int64) int64 {
 //     direct-played and the failure is structural;
 //   - a non-nil *ServerBusy (mapped to 503 SERVER_BUSY) when the chosen tier is
 //     transcode and the concurrent-transcode cap is full (ADR-0009);
+//   - a *StreamLimitError (errors.Is ErrStreamLimit, mapped to 429 STREAM_LIMIT)
+//     when the User already holds maxStreams unended sessions (ADR-0054 §2);
 //   - otherwise the Decision and the created Session.
 //
 // The error return is reserved for genuine faults (store failures); negotiation
@@ -403,6 +405,15 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	if !req.Scope.AllowsLibrary(detail.LibraryID) || !req.Scope.AllowsRating(detail.ContentRating) {
 		return Decision{}, Session{}, nil, nil, ErrTitleNotFound
 	}
+
+	// The User's Playback ceiling (ADR-0054 §2) is applied HERE and nowhere else:
+	// by clamping it into the request's Constraints before a single tier decision
+	// is made, every downstream escalation (burn, audio, video, remux-selected) and
+	// every args builder sees one consistent set of limits, and the existing tiering
+	// transcodes a too-large File down instead of hiding it. req is a value, so this
+	// tightens only this negotiation's copy.
+	clamped, ceilingBound := clampToCeiling(req.Constraints, req.Scope)
+	req.Constraints = clamped
 
 	dec, unsup := SelectEdition(req.Profile, req.Constraints, detail.Editions, req.EditionID)
 	if unsup != nil {
@@ -523,6 +534,11 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// an hls.js client, fMP4 for Apple's native player.
 	dec.HevcInMpegTS = req.Profile.HevcInMpegTS
 
+	// Mark a Decision the USER's ceiling bound (not the client's own Constraints),
+	// after every escalation has settled so the flag rides the Decision that is
+	// actually delivered. The Session copies it in CreateGoverned.
+	dec.UserCeiling = ceilingBound
+
 	// A video COPY / REMUX serves a SERVER-SYNTHESIZED media playlist computed from the
 	// source's keyframes, because ffmpeg writes its own copy playlist only when the
 	// whole (feature-length) input finishes — so serving ffmpeg's would 404 the long
@@ -555,7 +571,17 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 		BuildHLSArgsCPU:         cpuFallback,
 		BuildAudioRenditionArgs: audioRendition,
 		SegmentBoundaries:       boundaries,
+		MaxStreams:              req.Scope.MaxStreams,
 	}, dec)
+	// The User's concurrent-stream ceiling (ADR-0054 §2) refuses BEFORE a session
+	// exists, so nothing has to be unwound. It travels as an error rather than as a
+	// fourth outcome pointer because it carries counts the api renders into the 429
+	// body — the LoginThrottledError shape — and errors.Is(err, ErrStreamLimit)
+	// keeps callers that only want the classification simple.
+	var limit *StreamLimitError
+	if errors.As(err, &limit) {
+		return Decision{}, Session{}, nil, nil, limit
+	}
 	if errors.Is(err, ErrTranscodeCapFull) {
 		return Decision{}, Session{}, nil, &ServerBusy{
 			SuggestedMaxBitrate: suggestBusyBitrate(dec.EstimatedBitrate, req.Constraints.MaxBitrate),

@@ -370,6 +370,11 @@ export function normalizeUserDetail(raw: UserDetailRaw): UserDetail {
     role: raw.role,
     libraryIds: raw.libraryIds ?? [],
     ratingCeiling: raw.ratingCeiling ?? "",
+    // The Playback ceiling's three holes fill the same way ("" / 0 = no limit),
+    // so the dialog can compare them for dirtiness without null-guarding.
+    maxResolution: raw.maxResolution ?? "",
+    maxBitrate: raw.maxBitrate ?? 0,
+    maxStreams: raw.maxStreams ?? 0,
   };
 }
 

@@ -590,6 +590,20 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			// rather than silently delivering the default video (selectable-video/02).
 			writeError(w, http.StatusNotFound, codeNotFound, "video stream not found", nil)
 			return
+		case errors.Is(err, playback.ErrStreamLimit):
+			// 429 STREAM_LIMIT (ADR-0054 §2): the User is at their concurrent-stream
+			// ceiling. NOT retryable at a lower quality (that is SERVER_BUSY's cure) —
+			// only ending one of their own streams frees a slot — so the body carries the
+			// counts rather than a suggestion.
+			var limit *playback.StreamLimitError
+			details := map[string]any{}
+			if errors.As(err, &limit) {
+				details["active"] = limit.Active
+				details["limit"] = limit.Limit
+			}
+			writeError(w, http.StatusTooManyRequests, codeStreamLimit,
+				"stream limit reached for this user; end another stream first", details)
+			return
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, codeInternal, "playback negotiation failed", nil)
 			return

@@ -109,6 +109,78 @@ func (db *DB) SetRatingCeiling(userID, label string) error {
 	return nil
 }
 
+// PlaybackCeiling is a User's cap on HOW a Title may play (CONTEXT.md "Playback
+// ceiling", ADR-0054 §2) — as opposed to the Rating ceiling, which caps WHAT
+// they may see. The zero value is "uncapped" in all three dimensions, which is
+// exactly what the three NULL columns read back as.
+type PlaybackCeiling struct {
+	// MaxResolution is a negotiation resolution token ("720p", "1080p", "2160p");
+	// "" = uncapped.
+	MaxResolution string
+	// MaxBitrate is bits/sec; 0 = uncapped.
+	MaxBitrate int64
+	// MaxStreams is the most concurrent Playback sessions the User may hold;
+	// 0 = uncapped.
+	MaxStreams int
+}
+
+// PlaybackCeilingForUser returns a User's stored Playback ceiling; the zero value
+// means uncapped in that dimension (the columns are NULL until set).
+// ErrNotFound for an unknown User.
+func (db *DB) PlaybackCeilingForUser(userID string) (PlaybackCeiling, error) {
+	var (
+		res     sql.NullString
+		bitrate sql.NullInt64
+		streams sql.NullInt64
+	)
+	err := db.QueryRow(
+		`SELECT max_resolution, max_bitrate, max_streams FROM users WHERE id = ?`,
+		userID).Scan(&res, &bitrate, &streams)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PlaybackCeiling{}, ErrNotFound
+	}
+	if err != nil {
+		return PlaybackCeiling{}, fmt.Errorf("store: reading playback ceiling: %w", err)
+	}
+	return PlaybackCeiling{
+		MaxResolution: res.String,         // NULL → ""
+		MaxBitrate:    bitrate.Int64,      // NULL → 0
+		MaxStreams:    int(streams.Int64), // NULL → 0
+	}, nil
+}
+
+// SetPlaybackCeiling stores a User's whole Playback ceiling, writing NULL for
+// each dimension left at its zero value (uncapped). It is a replace of all three
+// — the ceiling is one setting with three knobs, not three settings — so a PUT
+// that omits a dimension clears it, exactly as the grant set is a replace-set.
+// ErrNotFound for an unknown User.
+func (db *DB) SetPlaybackCeiling(userID string, c PlaybackCeiling) error {
+	var res, bitrate, streams any
+	if c.MaxResolution != "" {
+		res = c.MaxResolution
+	}
+	if c.MaxBitrate > 0 {
+		bitrate = c.MaxBitrate
+	}
+	if c.MaxStreams > 0 {
+		streams = c.MaxStreams
+	}
+	r, err := db.Exec(
+		`UPDATE users SET max_resolution = ?, max_bitrate = ?, max_streams = ? WHERE id = ?`,
+		res, bitrate, streams, userID)
+	if err != nil {
+		return fmt.Errorf("store: setting playback ceiling: %w", err)
+	}
+	n, err := r.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: setting playback ceiling: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // LibraryOfTitle returns the Library id a Title belongs to, or ErrNotFound. The
 // access guard uses it to hide a Title's artwork (and the Title) when the Library
 // is outside the caller's Scope.

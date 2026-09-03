@@ -19,6 +19,11 @@ type userDetailResp struct {
 	Role          string   `json:"role"`
 	LibraryIDs    []string `json:"libraryIds"`
 	RatingCeiling string   `json:"ratingCeiling"`
+	// The Playback ceiling (ADR-0054 §2): how a Title may play for this User, as
+	// opposed to the Rating ceiling's what they may see. Zero = uncapped.
+	MaxResolution string `json:"maxResolution"`
+	MaxBitrate    int64  `json:"maxBitrate"`
+	MaxStreams    int    `json:"maxStreams"`
 }
 
 // grantLibraries replaces a User's granted Library set via the admin API,

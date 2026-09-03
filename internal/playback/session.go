@@ -64,6 +64,12 @@ type Session struct {
 	// LastSeen is refreshed on create and by Touch; the issue-08 reaper uses it as
 	// the idle-since signal — a session silent past the idle timeout is reaped.
 	LastSeen time.Time
+	// UserCeiling mirrors Decision.UserCeiling: this session's quality was bound by
+	// the User's Playback ceiling (ADR-0054 §2), not by what the client asked for.
+	// It is the session-level half of the marker, so an observability read of the
+	// live sessions can tell a server-capped stream from a client-capped one
+	// without re-deriving the negotiation.
+	UserCeiling bool
 	// ScratchDir is the session's HLS scratch directory under the data dir
 	// (ADR-0007), set for directStream/transcode sessions and empty for direct
 	// play (which streams the File's bytes and needs no scratch). The Manager
@@ -204,6 +210,38 @@ func (m *Manager) SetTranscodeCap(n int) { m.transcodeCap = n }
 // layer renders as 503 SERVER_BUSY. Direct play and remux never trigger it.
 var ErrTranscodeCapFull = errors.New("playback: transcode concurrency cap reached")
 
+// ErrStreamLimit is returned by CreateGoverned when the User already holds as
+// many unended sessions as their Playback ceiling's maxStreams allows (ADR-0054
+// §2). It is the sharer's one lever over LOAD from a household they cannot see
+// into, and it is per-User — unrelated to ErrTranscodeCapFull, which is the
+// server-wide transcode budget and counts only re-encodes. A direct play costs
+// the host nothing and still counts here: the cap is about how many streams a
+// User may take, not about CPU.
+//
+// "Unended" is whatever the reaper has not yet swept: ending a session (DELETE,
+// or the idle reap) frees the slot immediately, because both paths remove the
+// session from the same map this counts.
+var ErrStreamLimit = errors.New("playback: user stream limit reached")
+
+// StreamLimitError is what CreateGoverned actually returns when it refuses,
+// carrying the numbers the api layer renders into the 429 STREAM_LIMIT body so
+// the client can say "2 of 2 streams in use" rather than a bare refusal. Callers
+// that do not care use errors.Is(err, ErrStreamLimit) and never learn this type
+// exists — the same shape as auth's LoginThrottledError/DeviceAuthThrottledError.
+type StreamLimitError struct {
+	// Active is how many unended sessions the User already held.
+	Active int
+	// Limit is the User's maxStreams ceiling (always > 0 here — 0 is uncapped and
+	// never refuses).
+	Limit int
+}
+
+func (e *StreamLimitError) Error() string { return ErrStreamLimit.Error() }
+
+// Unwrap makes errors.Is(err, ErrStreamLimit) true, so handlers switch on the
+// sentinel and only reach for the type when they want the counts.
+func (e *StreamLimitError) Unwrap() error { return ErrStreamLimit }
+
 // CreateInput is what Create needs beyond the negotiated Decision: who owns the
 // session and where they want to start.
 type CreateInput struct {
@@ -254,6 +292,11 @@ type CreateInput struct {
 	// nil when the keyframe probe failed (the runtime then falls back to ffmpeg's
 	// playlist — correct for short files).
 	SegmentBoundaries []float64
+	// MaxStreams is the User's concurrent-session ceiling for THIS create (ADR-0054
+	// §2), taken from their resolved Scope; 0 means uncapped. The Service passes it
+	// down rather than the Manager reading a User's ceiling itself, because the
+	// Scope is already resolved once per request and the Manager holds no store.
+	MaxStreams int
 }
 
 // Create records a new Session for a Decision and returns it (the unmetered
@@ -296,6 +339,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		VideoCopy:     d.VideoCopy,
 		FMP4:          d.UsesFMP4(),
 		AudioStreamID: d.AudioStream.ID,
+		UserCeiling:   d.UserCeiling,
 		StartPosition: in.StartPosition,
 		CreatedAt:     now,
 		LastSeen:      now,
@@ -387,6 +431,24 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		}
 	}
 	m.mu.Lock()
+	// The User's own concurrent-stream ceiling (ADR-0054 §2), checked before the
+	// server-wide transcode cap because it is the narrower, per-User statement: a
+	// User at their limit is refused whatever tier they would have played at. It
+	// counts every UNENDED session of theirs — direct play included — under the same
+	// lock as the insertion, so two simultaneous negotiations cannot both slip past
+	// a limit of one. 0 (uncapped) never counts and never refuses.
+	if in.MaxStreams > 0 {
+		active := 0
+		for _, existing := range m.sessions {
+			if existing.UserID == in.UserID {
+				active++
+			}
+		}
+		if active >= in.MaxStreams {
+			m.mu.Unlock()
+			return Session{}, &StreamLimitError{Active: active, Limit: in.MaxStreams}
+		}
+	}
 	// Cap check + reservation under the lock, so the count cannot change between
 	// "is there room?" and "take the slot". Only a VIDEO-ENCODING transcode is
 	// metered: a video-copy transcode (ADR-0024) re-encodes only the audio (a few

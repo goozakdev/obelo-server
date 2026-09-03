@@ -7,15 +7,20 @@ import type { Library, User, UserDetail } from "../api/types";
 // in one modal (same chrome as the Library dialogs) —
 //   - a password reset (available for ANY User, including an Admin: a reset is
 //     account recovery, not an access grant),
-//   - the Library access checklist and the Rating ceiling for a Member,
+//   - the Library access checklist, the Rating ceiling and the Playback ceiling
+//     for any NON-ADMIN role (a Member, and equally the `remote` role a linked
+//     Server holds — ADR-0054 §2 makes the ceiling general because the mechanism
+//     is: capping a kid's iPad at 720p is the same code path as capping a
+//     friend's Server),
 //   - and a "Delete user" button in the footer, alongside the row's trash icon.
 //
 // An ADMIN is implicitly all-access and uncapped, so their body carries the
 // password field and a plain statement of that — no grant or ceiling control at
 // all (the server rejects both with 422 ADMIN_GRANT / ADMIN_CEILING).
 //
-// ONE SAVE, not three. The dialog collects every edit and "Save changes" applies
-// only the dirty ones, in order: password → library access → rating ceiling. Each
+// ONE SAVE, not four. The dialog collects every edit and "Save changes" applies
+// only the dirty ones, in order: password → library access → rating ceiling →
+// playback ceiling. Each
 // leg is an idempotent PUT (the access call is a REPLACE-set of the full ticked
 // list, not a delta), so if a later leg fails the earlier ones simply stand and
 // pressing Save again re-applies the whole set safely. A refused save is NOT
@@ -31,6 +36,29 @@ import type { Library, User, UserDetail } from "../api/types";
  * One ladder suffices — the server's single maturity rank caps the TV system too,
  * so we deliberately do NOT model a separate TV taxonomy on the client. */
 const RATING_RUNGS = ["G", "PG", "PG-13", "R", "NC-17"] as const;
+
+/** The Playback-ceiling resolution rungs (ADR-0054 §2) — the exact set the server
+ * accepts on `PUT /users/{id}/playbackCeiling`; anything else is 422
+ * UNKNOWN_RESOLUTION. The dropdown also offers "No limit" (the empty value). */
+const RESOLUTION_RUNGS = ["720p", "1080p", "2160p"] as const;
+
+/** Bits/sec ⇄ Mbps for the bitrate field. The server speaks bits/sec (the unit the
+ * negotiator's Constraints use); an operator thinks in Mbps, so the input holds
+ * Mbps and converts at the edges. Blank/0/nonsense means "no limit" in both
+ * directions, so a cleared field clears the cap rather than capping at zero. */
+function mbpsToBits(text: string): number {
+  const n = Number.parseFloat(text);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 1_000_000) : 0;
+}
+function bitsToMbps(bits: number): string {
+  return bits > 0 ? String(bits / 1_000_000) : "";
+}
+
+/** The stream cap as a whole number; blank/0/negative means "no limit". */
+function toStreams(text: string): number {
+  const n = Number.parseInt(text, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 /** Same members, order-insensitive — used to tell an untouched checklist from an
  * edited one so a no-op save sends nothing. */
@@ -61,6 +89,10 @@ export default function EditUserDialog({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [ceiling, setCeiling] = useState("");
   const [password, setPassword] = useState("");
+  // The Playback ceiling's three knobs, held as the strings their inputs carry.
+  const [maxResolution, setMaxResolution] = useState("");
+  const [maxBitrate, setMaxBitrate] = useState("");
+  const [maxStreams, setMaxStreams] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -90,6 +122,9 @@ export default function EditUserDialog({
         setLibraries(libs);
         setChecked(new Set(d.libraryIds));
         setCeiling(d.ratingCeiling);
+        setMaxResolution(d.maxResolution);
+        setMaxBitrate(bitsToMbps(d.maxBitrate));
+        setMaxStreams(d.maxStreams > 0 ? String(d.maxStreams) : "");
       } catch (err) {
         if (!cancelled) setLoadError(errorMessage(err));
       } finally {
@@ -112,7 +147,14 @@ export default function EditUserDialog({
 
   const accessDirty = detail !== null && !sameSet(checked, detail.libraryIds);
   const ceilingDirty = detail !== null && ceiling !== detail.ratingCeiling;
-  const dirty = password.length > 0 || accessDirty || ceilingDirty;
+  // Compared as the NUMBERS that will be sent, not as the strings typed: "8.0"
+  // and "8" are the same 8 Mbps, and a blank field is the same 0 as a "0".
+  const playbackDirty =
+    detail !== null &&
+    (maxResolution !== detail.maxResolution ||
+      mbpsToBits(maxBitrate) !== detail.maxBitrate ||
+      toStreams(maxStreams) !== detail.maxStreams);
+  const dirty = password.length > 0 || accessDirty || ceilingDirty || playbackDirty;
 
   async function onSave() {
     if (saving || !dirty) return;
@@ -129,6 +171,15 @@ export default function EditUserDialog({
       if (ceilingDirty) {
         // The empty option ("No limit") clears the ceiling — send `null`, not "".
         await apiClient.setRatingCeiling(user.id, ceiling === "" ? null : ceiling);
+      }
+      if (playbackDirty) {
+        // The WHOLE ceiling every time (a replace, like the grant set): an emptied
+        // field sends "" / 0 and clears that cap.
+        await apiClient.setPlaybackCeiling(user.id, {
+          maxResolution,
+          maxBitrate: mbpsToBits(maxBitrate),
+          maxStreams: toStreams(maxStreams),
+        });
       }
       onClose();
     } catch (err) {
@@ -283,6 +334,64 @@ export default function EditUserDialog({
                       </option>
                     ))}
                   </select>
+                </div>
+              )}
+
+              {!loading && !loadError && detail && (
+                <div className="field" data-testid="playback-ceiling">
+                  <span className="field-label">Playback ceiling</span>
+                  <p className="field-hint">
+                    How this user&rsquo;s streams may play. A capped title still
+                    appears &mdash; it plays at the cap.
+                  </p>
+                  <label className="field-label" htmlFor="edit-user-max-resolution">
+                    Max resolution
+                  </label>
+                  <select
+                    id="edit-user-max-resolution"
+                    className="field-input"
+                    data-testid="max-resolution-select"
+                    value={maxResolution}
+                    onChange={(e) => setMaxResolution(e.target.value)}
+                    disabled={saving}
+                  >
+                    <option value="">No limit</option>
+                    {RESOLUTION_RUNGS.map((rung) => (
+                      <option key={rung} value={rung}>
+                        {rung}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="field-label" htmlFor="edit-user-max-bitrate">
+                    Max bitrate (Mbps)
+                  </label>
+                  <input
+                    id="edit-user-max-bitrate"
+                    className="field-input"
+                    data-testid="max-bitrate-input"
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={maxBitrate}
+                    placeholder="No limit"
+                    onChange={(e) => setMaxBitrate(e.target.value)}
+                    disabled={saving}
+                  />
+                  <label className="field-label" htmlFor="edit-user-max-streams">
+                    Max concurrent streams
+                  </label>
+                  <input
+                    id="edit-user-max-streams"
+                    className="field-input"
+                    data-testid="max-streams-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={maxStreams}
+                    placeholder="No limit"
+                    onChange={(e) => setMaxStreams(e.target.value)}
+                    disabled={saving}
+                  />
                 </div>
               )}
             </>
