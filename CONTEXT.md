@@ -203,7 +203,7 @@ _Avoid_: Custom art, Manual image (a picked provider image is also manual).
 ## Users & access
 
 **User**:
-A person with credentials on this Server (stored locally per [ADR-0001](./docs/adr/0001-fully-self-hosted-no-vendor-dependency.md)). Has one role and their own private watch state.
+A person — or, since [ADR-0054](./docs/adr/0054-a-linked-server-is-a-user-with-the-remote-role.md), a linked Server — with credentials on this Server (stored locally per [ADR-0001](./docs/adr/0001-fully-self-hosted-no-vendor-dependency.md)). Has one role; a person has their own private watch state, a linked Server has none.
 _Avoid_: Account, Profile.
 
 **Admin**:
@@ -211,6 +211,10 @@ A User role that can manage libraries, trigger scans, change settings, and creat
 
 **Member**:
 A User role that can only browse and play, limited to the libraries granted to them and within their content-rating ceiling. May additionally trigger an on-demand subtitle fetch, which spends the shared provider quota ([ADR-0021](./docs/adr/0021-external-subtitle-fetching-mirrors-enrichment.md)) — the one outward, cost-bearing action a Member has.
+
+**Remote**:
+The User role a *linked Server* holds on this one ([ADR-0054](./docs/adr/0054-a-linked-server-is-a-user-with-the-remote-role.md)): granted libraries, a Rating ceiling and a Playback ceiling exactly like a Member, and otherwise nothing a person has — no password (its only credential is the token an Invite leaves behind), no place in the roster, no watch state, and no way to become another role. Its username is the label the sharing Admin chose ("Brandon's server"). What the sharer sees in a session list is this User, never a person behind it. A Library this Server itself received over a Link can never be granted to it: sharing does not travel.
+_Avoid_: Peer (that is any other Server, seen from here), Guest (implies a person), Federated user / Service account (borrowed vocabularies with the wrong shape), Share (a verb, not the thing that holds the grant).
 
 **Watch state**:
 Per-(User, Title) playback data: resume position, watched/unwatched, when the Title was last *played*, personal rating, the Remembered audio, and the Remembered video. Belongs to the User, never to the Title. "Last played" is deliberately distinct from "last touched": a manual mark-watched changes watched/unwatched but does **not** count as playing, so it never moves the played recency the Up Next anchor reads ([ADR-0028](./docs/adr/0028-up-next-anchors-on-most-recently-played.md)).
@@ -242,6 +246,10 @@ The age/maturity classification of a Title (e.g. PG-13, TV-MA), sourced from met
 **Rating ceiling**:
 A per-User cap on Content rating; Titles above the ceiling are hidden from that User.
 _Avoid_: Parental control.
+
+**Playback ceiling**:
+A per-User cap on *how* a Title may play — a maximum resolution, a maximum bitrate and a maximum number of concurrent streams ([ADR-0054](./docs/adr/0054-a-linked-server-is-a-user-with-the-remote-role.md)). Clamped into the Capability profile's constraints before negotiation, so it changes the tier a File plays at and never whether the Title exists: a 4K-only File under a 1080p ceiling transcodes down under the Server's own governance. Applies to any non-Admin role; it exists because a sharer wants to say "1080p, two at a time" about a linked Server, and a household Admin sometimes wants to say it about an iPad.
+_Avoid_: Quality limit (too vague to say whose), Bandwidth cap (the bitrate is one of three), Parental control (that is the Rating ceiling).
 
 ## Playback
 
@@ -334,3 +342,25 @@ A node whose key has **lapsed** is reported as its own state (`keyExpired`) rath
 **Server identity**:
 A Server's stable self-assigned id and its operator-chosen display name — minted once and persisted with the rest of its state, independent of whatever address it happens to be reachable at ([ADR-0034](./docs/adr/0034-server-identity-and-mdns-advertisement.md)). The id is machine-facing and permanent; the name is human-facing and freely changeable, so renaming never orphans a Device's token. What lets a client recognize the same Server after its address changes, and answer "is this the one I logged into?" — unanswerable before it existed. Advertised over mDNS and reported by the handshake.
 _Avoid_: Server ID (bare — the identity is both fields), Instance, Host / address (that's where it is, not which it is), Fingerprint (implies derivation from a key).
+
+## Linking
+
+**Link**:
+This Server's standing relationship with another household's Server, held on *this* side: the other Server's identity, the addresses it might be reached at, the token its `remote` User left behind, and a state — connected, unreachable, or revoked ([ADR-0055](./docs/adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md), [ADR-0056](./docs/adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). A Link is one direction: the Server that holds it browses and plays, the Server it points at shares. Two households sharing both ways have two Links, one on each side. Unlinking is the only thing that deletes what came over it.
+_Avoid_: Federation (implies a protocol among many and a shared identity; this is two machines and a token), Connection (a Link persists while unreachable), Peer / Peering (symmetry that is not there), Friend server (a person, not a Server, is the friend).
+
+**Invite**:
+The one string a sharing Admin sends to link a Server: the sharer's Server identity, the addresses to try, a single-use code and an expiry, encoded so it can be pasted into a chat or shown as a QR ([ADR-0055](./docs/adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md)). The code is redeemed once, by a Server, for an ordinary Device-bound token, and is then dead; a lapsed or spent Invite is replaced by minting a new one for the same `remote` User. Safe in a text message for the same reason a User code is: what it carries is not itself a durable credential.
+_Avoid_: Password (there is none on the role), Share link / URL (nothing hosts it and nothing opens it), Pairing code (nothing is bound; one Device results), Token (that is what redeeming it produces).
+
+**Linked Library**:
+A Library on this Server whose contents live on another household's Server and arrived over a Link ([ADR-0056](./docs/adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). It has no root folders and the Scanner never sees it; it is a mirror, keyed by the other Server's ids, refreshed by that Server's Export, and read-only here because the other Server is the identity authority for its own files. In every other respect it is a Library: granted per User, under the Rating ceiling, in Home rows, search, Collections and Playlists, with this household's own watch state. When its Server cannot be reached it stays, badged unavailable, rather than vanishing.
+_Avoid_: Remote library (says where it is, not what it is here — and "Remote" is the role), Shared library (from whose side?), Virtual library, Proxy library (playback relays; the catalog does not).
+
+**Export**:
+The one flat, incremental feed a sharing Server offers a `remote` User for each granted Library: every entity beneath it with the sharer's ids, a change cursor, and tombstones for what was removed ([ADR-0056](./docs/adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). The single place the sharer decides what another Server may learn about a Title, and deliberately not the browse API, which is shaped for screens and carries a viewer's watch state. Pulled in full once, then on the sharer's `libraryUpdated` nudge and on a timer.
+_Avoid_: Sync (that is what the receiving side does with it), Dump / backup (it is scoped to one User's grants), Feed (fine informally; the endpoint is the Export).
+
+**Relay**:
+How a Title in a Linked Library plays: this Server forwards the client's Capability profile to the sharer, the sharer negotiates the tier and does any transcoding under its own governance and the `remote` User's Playback ceiling, and this Server rewrites the resulting media URLs onto itself and streams the bytes through untouched ([ADR-0056](./docs/adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). Exactly one hop, always: bytes never bypass this Server, and a Linked Library is never relayed onward. The sharer sees one session under the `remote` User; the person watching is known only here.
+_Avoid_: Proxy (true of the bytes, but a proxy implies transparency and this side owns the Session), Stream forwarding, Transcode passthrough (the sharer transcodes; nothing here does), Federation (again).
