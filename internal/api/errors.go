@@ -126,10 +126,19 @@ const (
 	//                             the two needs an upgrade (ADR-0055 §3). Checked
 	//                             BEFORE anything is redeemed, so a mismatch never
 	//                             costs the Admin their invite.
+	//   codeResync        (410) — GET /libraries/{id}/export was handed a `since`
+	//                             older than the retention of soft-deleted rows, so
+	//                             the sharer can no longer promise the feed still
+	//                             carries every tombstone the mirror missed. The
+	//                             home Server answers it with a full pull
+	//                             (ADR-0056 §4). A 410 and not a 400: the request
+	//                             was well formed and it is the POSITION that is
+	//                             gone.
 	codeNotRemoteUser = "NOT_REMOTE_USER"
 	codeInvalidOrigin = "INVALID_ORIGIN"
 	codeInvalidInvite = "INVALID_INVITE"
 	codeLinkProtocol  = "LINK_PROTOCOL"
+	codeResync        = "RESYNC"
 	// Library-access grants (PUT /users/{id}/libraryAccess), both 422: granting to
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"
