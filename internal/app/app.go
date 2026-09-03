@@ -680,7 +680,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// later presents the CURRENT display name.
 	linkSvc := link.New(db, func() link.Identity {
 		return link.Identity{ID: identity.ID, Name: identity.Name}
-	}, link.Options{Tailnet: tailnetManager})
+	}, link.Options{Tailnet: tailnetManager, Mirror: db})
 
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
@@ -750,28 +750,36 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	enrichStatus := app.EnrichPassStatus
 
 	apiHandler := api.Handler(api.Deps{
-		Meta:            meta,
-		Auth:            authSvc,
-		Access:          accessSvc,
-		Library:         librarySvc,
-		Scanner:         scannerSvc,
-		Catalog:         catalogSvc,
-		Match:           matchSvc,
-		Playback:        playbackSvc,
-		Backend:         backendResolution,
-		GPU:             gpuProbe,
-		Enrich:          enrichSvc,
-		Organize:        organizeSvc,
-		Events:          broker,
-		EnrichTrigger:   enrichTrigger,
-		EnrichStart:     enrichStart,
-		EnrichStatus:    enrichStatus,
-		ScanStatus:      db,
-		Libraries:       db,
-		TitleCounts:     db,
-		ScanScope:       db,
-		Export:          db,
-		Links:           linkSvc,
+		Meta:          meta,
+		Auth:          authSvc,
+		Access:        accessSvc,
+		Library:       librarySvc,
+		Scanner:       scannerSvc,
+		Catalog:       catalogSvc,
+		Match:         matchSvc,
+		Playback:      playbackSvc,
+		Backend:       backendResolution,
+		GPU:           gpuProbe,
+		Enrich:        enrichSvc,
+		Organize:      organizeSvc,
+		Events:        broker,
+		EnrichTrigger: enrichTrigger,
+		EnrichStart:   enrichStart,
+		EnrichStatus:  enrichStatus,
+		ScanStatus:    db,
+		Libraries:     db,
+		TitleCounts:   db,
+		ScanScope:     db,
+		Export:        db,
+		Links:         linkSvc,
+		Mirror:        db,
+		// The Export refuses a Library this Server itself mirrored: sharing does not
+		// travel (ADR-0054 §4, ADR-0056 §7). Issue 05 left the hook nil because
+		// `libraries.source` did not exist yet; it does now.
+		LinkedLibrary: func(libraryID string) bool {
+			linked, err := db.IsLinkedLibrary(libraryID)
+			return err == nil && linked
+		},
 		Providers:       db,
 		ProviderManager: providerManager,
 		SettingsChanged: app.notifyEnrichReschedule,
@@ -960,6 +968,12 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 			for _, lib := range libs {
 				if ctx.Err() != nil {
 					return
+				}
+				// A linked Library has no root folders and is never walked
+				// (ADR-0056 §1). The Scanner refuses one anyway; skipping here keeps
+				// the sweep's log free of a refusal per Library per tick.
+				if lib.Linked() {
+					continue
 				}
 				if _, err := a.Scanner.ScanModeProgress(ctx, lib.ID, scanner.ModeIncremental, onProgress); err != nil {
 					// A cancelled ctx is shutdown, not a scan failure: don't log it as
@@ -1287,6 +1301,10 @@ func (a *App) sweepEnrich(ctx context.Context) {
 	for _, lib := range libs {
 		if ctx.Err() != nil {
 			return
+		}
+		// Somebody else's Library, enriched by somebody else (ADR-0056 §1).
+		if lib.Linked() {
+			continue
 		}
 		a.enqueueEnrichIfEnabled(lib.ID)
 	}

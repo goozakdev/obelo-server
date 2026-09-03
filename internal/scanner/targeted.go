@@ -42,7 +42,7 @@ type TargetedResult struct {
 // claims the shared per-Library lock, marks the row running with the scope tag,
 // walks, and records the outcome. Used by tests and any caller that wants to block.
 func (s *Service) TargetedScan(ctx context.Context, libraryID string, scope TargetedScope) (TargetedResult, error) {
-	lib, err := s.store.LibraryByID(libraryID)
+	lib, err := s.localLibrary(libraryID)
 	if err != nil {
 		return TargetedResult{}, err
 	}
@@ -73,7 +73,7 @@ func (s *Service) TargetedScan(ctx context.Context, libraryID string, scope Targ
 // events-free core (ADR-0006). Returns ErrScanInProgress when a scan of this
 // Library is already running, ErrNotFound for an unknown Library.
 func (s *Service) StartTargetedScan(ctx context.Context, libraryID string, scope TargetedScope, onProgress func(Progress), done func(error)) error {
-	lib, err := s.store.LibraryByID(libraryID)
+	lib, err := s.localLibrary(libraryID)
 	if err != nil {
 		return err // ErrNotFound flows back to the handler → 404
 	}

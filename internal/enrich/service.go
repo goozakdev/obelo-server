@@ -443,6 +443,13 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 	if err != nil {
 		return Result{}, err // ErrNotFound flows through to the handler
 	}
+	// A linked Library is never enriched here (ADR-0056 §1): its rows carry
+	// whatever the sharing Server's own pass decided, and re-deriving them on this
+	// side would spend somebody else's provider quota to overwrite the answer the
+	// identity authority already gave (ADR-0002, ADR-0019).
+	if lib.Linked() {
+		return Result{}, ErrLinkedLibrary
+	}
 
 	lock := s.libLock(libraryID)
 	lock.Lock()

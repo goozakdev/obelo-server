@@ -91,12 +91,12 @@ func (p ShowProblems) Empty() bool { return p.Unsettled() == 0 && p.Orphaned == 
 // shared across every Show, which is the only reason this is affordable on a
 // Library with a hundred Shows.
 func (s *Service) ShowProblems(libraryID string) ([]ShowProblems, error) {
-	exists, err := s.store.LibraryExists(libraryID)
+	linked, err := s.mirroredLibrary(libraryID)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, ErrNotFound
+	if linked {
+		return []ShowProblems{}, nil
 	}
 	shows, err := s.store.ShowsByLibrary(libraryID)
 	if err != nil {

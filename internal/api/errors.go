@@ -174,6 +174,17 @@ const (
 	codeInviteExpired      = "INVITE_EXPIRED"
 	codeLinkUnreachable    = "LINK_UNREACHABLE"
 	codeLinkServerMismatch = "LINK_SERVER_MISMATCH"
+	// codeLinkedLibrary (409): a write aimed at a Library that is a MIRROR of
+	// another household's (ADR-0056 §1). Not 403 and not 404: the caller is an
+	// Admin, the Library is theirs to see and grant, and the resource plainly
+	// exists — it is the STATE of it that refuses, which is what Conflict means.
+	// The sharer's Server is the identity authority for its own files (ADR-0002,
+	// ADR-0019), so nothing here may re-derive, correct or enrich what arrived; a
+	// correction belongs on the machine that owns the files.
+	//
+	// The one exception is renaming: PATCH /libraries/{id} still takes a `name`,
+	// because what this household calls the shelf is this household's business.
+	codeLinkedLibrary = "LINKED_LIBRARY"
 	// Library-access grants (PUT /users/{id}/libraryAccess), both 422: granting to
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"

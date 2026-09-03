@@ -54,6 +54,10 @@ type showSummaryJSON struct {
 	// tv-music/04), analogous to a Movie's resume marker. Set only on the Show
 	// grid (GET /libraries/{id}/titles for a TV Library); omitted (0) elsewhere.
 	UnwatchedEpisodeCount int `json:"unwatchedEpisodeCount,omitempty"`
+	// Linked/Available: this Show lives in a mirror of another household's Library
+	// (ADR-0056 §1, §6). Absent on a local Show.
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 	// Enrichment (issue 03): the descriptive fields + fetched artwork the optional
 	// Enrichment step decorates a Show with. All omitempty so an un-enriched Show
 	// is unchanged. PosterURL/BackgroundURL/LogoURL point at the Show artwork
@@ -107,7 +111,8 @@ type showsResponse struct {
 	NextCursor string            `json:"nextCursor,omitempty"`
 }
 
-func toShowSummary(s store.Show) showSummaryJSON {
+func toShowSummary(s store.Show, linked linkedState) showSummaryJSON {
+	isLinked, available := linked.decorate(s.LibraryID)
 	return showSummaryJSON{
 		ID:          s.ID,
 		LibraryID:   s.LibraryID,
@@ -119,6 +124,8 @@ func toShowSummary(s store.Show) showSummaryJSON {
 		IMDBID:      s.IMDBID,
 		IdentityKey: s.IdentityKey,
 		AddedAt:     formatTimestamp(s.AddedAt),
+		Linked:      isLinked,
+		Available:   available,
 	}
 }
 
@@ -379,7 +386,8 @@ func displayTitle(t store.Title) string {
 // handleListShows returns a cursor-paginated page of a TV Library's Shows. It is
 // the TV branch of GET /libraries/{id}/titles (the handler picks this when the
 // Library's kind is "tv"). Unknown/inaccessible Library → 404.
-func handleListShows(svc *catalog.Service, libraryID string) http.HandlerFunc {
+func handleListShows(deps Deps, libraryID string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -427,12 +435,13 @@ func handleListShows(svc *catalog.Service, libraryID string) http.HandlerFunc {
 		roles, _ := svc.EntityArtworkRoles(store.EntityShow, ids)
 		versions, _ := svc.EntityArtworkVersions(store.EntityShow, ids)
 
+		linked := loadLinkedState(deps)
 		out := showsResponse{
 			Shows:      make([]showSummaryJSON, 0, len(page.Shows)),
 			NextCursor: page.NextCursor,
 		}
 		for _, s := range page.Shows {
-			js := toShowSummary(s)
+			js := toShowSummary(s, linked)
 			js.UnwatchedEpisodeCount = counts[s.ID]
 			decorateShow(&js, enr[s.ID], roles[s.ID], versions[s.ID])
 			out.Shows = append(out.Shows, js)
@@ -464,7 +473,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleReviewShowEpisodes(deps.Catalog, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleReviewShowEpisodes(deps.Catalog, id)))))(w, r)
 			return
 		}
 		// POST {id}/review: dismiss this Show's needs_review flag (Admin).
@@ -474,7 +484,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleReviewShow(deps.Catalog, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleReviewShow(deps.Catalog, id)))))(w, r)
 			return
 		}
 		// PUT {id}/identityCorrection: the Wrong-item destructive correction on a Show
@@ -487,7 +498,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handleShowIdentityCorrection(deps, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleShowIdentityCorrection(deps, id)))))(w, r)
 			return
 		}
 		// {id}/matcher: the file matcher (Admin, ADR-0044) — GET the Show's whole
@@ -503,7 +515,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 			case http.MethodGet:
 				requireAuth(deps.Auth, requireAdmin(handleShowMatcher(deps, id)))(w, r)
 			case http.MethodPut:
-				requireAuth(deps.Auth, requireAdmin(handleApplyShowMatcher(deps, id)))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleApplyShowMatcher(deps, id))))(w, r)
 			default:
 				w.Header().Set("Allow", "GET, PUT")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
@@ -529,7 +542,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "show", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleTargetedScan(deps, "show", id)))))(w, r)
 			return
 		}
 		// Edit-item on a Show (item-editing/02): Fix-info search/override + hand-edit +
@@ -537,7 +551,7 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityShow, rest) {
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleShowSeasons(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleShowSeasons(deps))))(w, r)
 	}
 }
 
@@ -631,7 +645,8 @@ func handlePersonArtwork(svc *catalog.Service, personRef, role string) http.Hand
 
 // handleShowSeasons serves GET /shows/{id}/seasons. Unknown/inaccessible Show →
 // 404 (hide existence). The path must be exactly /shows/{id}/seasons.
-func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
+func handleShowSeasons(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := pathParam(r.URL.Path, "/shows/", "/seasons")
 		if id == "" {
@@ -651,7 +666,7 @@ func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list seasons", nil)
 			return
 		}
-		showJS := toShowSummary(show)
+		showJS := toShowSummary(show, loadLinkedState(deps))
 		// The per-User unwatched-Episode count on the DETAIL (not just the grid, issue
 		// tv-music/04): the resume point is null for both a not-started and a fully-
 		// watched Show, so the client tells them apart by this count — > 0 (with a

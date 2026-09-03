@@ -17,10 +17,10 @@ import (
 // household's relationship with another household, and the Libraries it brings
 // are then granted to Users like any other (ADR-0056 §2).
 //
-// NOTE what this file does NOT do. It creates no Libraries and pulls no catalog:
-// the mirror is issues 07 and 08, and the seam they will hang off is
-// link.Service.OnLinked. `libraries` on GET /links is therefore an empty list on
-// every Link today, and that is honest rather than pending.
+// Since issue 07 a Link also brings Libraries: POST /links redeems, creates a
+// linked Library per granted Library on the sharer and does the first full pull,
+// and DELETE /links takes all of it away again. `libraries` on GET /links is
+// those shelves.
 
 // linkJSON is one Link on the wire.
 //
@@ -48,21 +48,20 @@ type linkJSON struct {
 	// saying "never", which is a statement, where "" is an absence.
 	LastSyncedAt *string `json:"lastSyncedAt"`
 	LastError    string  `json:"lastError"`
-	// Libraries are the linked Libraries this Link brought (ADR-0056 §1). ALWAYS
-	// EMPTY TODAY: the mirror is issue 07. It is present and non-null from the
-	// start so the client shape does not change when it fills in.
+	// Libraries are the linked Libraries this Link brought (ADR-0056 §1) — empty
+	// until the first pull finishes, and empty forever for a sharer who granted
+	// this Server nothing.
 	Libraries []linkLibraryJSON `json:"libraries"`
 }
 
 // linkLibraryJSON is a linked Library as the Linked servers page lists it.
-// Defined now, emitted never — issue 07 is what puts rows behind it.
 type linkLibraryJSON struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
 }
 
-func toLinkJSON(l store.Link) linkJSON {
+func toLinkJSON(l store.Link, libs []store.Library) linkJSON {
 	origins := l.Origins
 	if origins == nil {
 		origins = []string{}
@@ -80,8 +79,27 @@ func toLinkJSON(l store.Link) linkJSON {
 		Origins:      origins,
 		LastSyncedAt: synced,
 		LastError:    l.LastError,
-		Libraries:    []linkLibraryJSON{},
+		Libraries:    toLinkLibraries(libs),
 	}
+}
+
+func toLinkLibraries(libs []store.Library) []linkLibraryJSON {
+	out := make([]linkLibraryJSON, 0, len(libs))
+	for _, l := range libs {
+		out = append(out, linkLibraryJSON{ID: l.ID, Name: l.Name, Kind: l.Kind})
+	}
+	return out
+}
+
+// linkWithLibraries reads a Link's mirrored shelves for the wire. A read failure
+// is reported as "none": the Link itself is the answer this endpoint owes, and
+// losing the whole list because one join failed helps nobody.
+func linkWithLibraries(deps Deps, l store.Link) linkJSON {
+	libs, err := deps.Links.Libraries(l.ID)
+	if err != nil {
+		libs = nil
+	}
+	return toLinkJSON(l, libs)
 }
 
 // linkRequest is the body of both POST /links and POST /links/{id}/rekey: the
@@ -142,7 +160,7 @@ func handleListLinks(deps Deps) http.HandlerFunc {
 		}
 		out := make([]linkJSON, 0, len(links))
 		for _, l := range links {
-			out = append(out, toLinkJSON(l))
+			out = append(out, linkWithLibraries(deps, l))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -174,7 +192,7 @@ func handleCreateLink(deps Deps) http.HandlerFunc {
 		if rekeyed {
 			status = http.StatusOK
 		}
-		writeJSON(w, status, toLinkJSON(l))
+		writeJSON(w, status, linkWithLibraries(deps, l))
 	}
 }
 
@@ -193,7 +211,7 @@ func handleRekeyLink(deps Deps, id string) http.HandlerFunc {
 			writeLinkError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toLinkJSON(l))
+		writeJSON(w, http.StatusOK, linkWithLibraries(deps, l))
 	}
 }
 

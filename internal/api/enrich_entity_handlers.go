@@ -428,7 +428,8 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodDelete,
-			requireAuth(deps.Auth, requireAdmin(handleReleaseEntityLock(deps.Catalog, deps.Events, entityType, id, field))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, entityType, id,
+				handleReleaseEntityLock(deps.Catalog, deps.Events, entityType, id, field)))))(w, r)
 		return true
 	}
 	if id, ok := strings.CutSuffix(rest, "/enrichmentCandidates"); ok {
@@ -469,7 +470,8 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodPut,
-			requireAuth(deps.Auth, requireAdmin(handleEntityPickArtwork(deps.Enrich, deps.Catalog, deps.Events, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, entityType, id,
+				handleEntityPickArtwork(deps.Enrich, deps.Catalog, deps.Events, entityType, id)))))(w, r)
 		return true
 	}
 	// POST {id}/artworkUpload?role=…: store an Admin-uploaded image as a role + Lock
@@ -481,7 +483,8 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodPost,
-			requireAuth(deps.Auth, requireAdmin(handleUploadEntityArtwork(deps.Enrich, deps.Catalog, deps.Events, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, entityType, id,
+				handleUploadEntityArtwork(deps.Enrich, deps.Catalog, deps.Events, entityType, id)))))(w, r)
 		return true
 	}
 	if id, ok := strings.CutSuffix(rest, "/enrichmentOverride"); ok {
@@ -490,7 +493,8 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodPut,
-			requireAuth(deps.Auth, requireAdmin(handleEntityEnrichmentOverride(deps.Enrich, deps.Catalog, deps.Events, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, entityType, id,
+				handleEntityEnrichmentOverride(deps.Enrich, deps.Catalog, deps.Events, entityType, id)))))(w, r)
 		return true
 	}
 	if id, ok := strings.CutSuffix(rest, "/metadata"); ok {
@@ -499,7 +503,8 @@ func dispatchEntityEditRoutes(w http.ResponseWriter, r *http.Request, deps Deps,
 			return true
 		}
 		requireMethod(http.MethodPut,
-			requireAuth(deps.Auth, requireAdmin(handleEntityMetadata(deps.Catalog, deps.Events, entityType, id))))(w, r)
+			requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, entityType, id,
+				handleEntityMetadata(deps.Catalog, deps.Events, entityType, id)))))(w, r)
 		return true
 	}
 	return false

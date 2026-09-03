@@ -38,6 +38,10 @@ type artistSummaryJSON struct {
 	// Edit-item surface (item-editing/02): on the Artist DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// Linked/Available: this Artist lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Artist.
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type artistsResponse struct {
@@ -45,8 +49,12 @@ type artistsResponse struct {
 	NextCursor string              `json:"nextCursor,omitempty"`
 }
 
-func toArtistSummary(a store.Artist) artistSummaryJSON {
-	return artistSummaryJSON{ID: a.ID, LibraryID: a.LibraryID, Kind: "artist", Name: a.Name}
+func toArtistSummary(a store.Artist, linked linkedState) artistSummaryJSON {
+	isLinked, available := linked.decorate(a.LibraryID)
+	return artistSummaryJSON{
+		ID: a.ID, LibraryID: a.LibraryID, Kind: "artist", Name: a.Name,
+		Linked: isLinked, Available: available,
+	}
 }
 
 // decorateArtist overlays an Artist summary with its enriched bio/genres + image
@@ -215,7 +223,8 @@ func toTrackContext(c store.TrackContext) *trackContextJSON {
 // Artists. It is the Music branch of GET /libraries/{id}/titles (the handler
 // picks this when the Library's kind is "music"). Unknown/inaccessible Library
 // → 404.
-func handleListArtists(svc *catalog.Service, libraryID string) http.HandlerFunc {
+func handleListArtists(deps Deps, libraryID string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -250,12 +259,13 @@ func handleListArtists(svc *catalog.Service, libraryID string) http.HandlerFunc 
 		roles, _ := svc.EntityArtworkRoles(store.EntityArtist, artistIDs)
 		versions, _ := svc.EntityArtworkVersions(store.EntityArtist, artistIDs)
 
+		linked := loadLinkedState(deps)
 		out := artistsResponse{
 			Artists:    make([]artistSummaryJSON, 0, len(page.Artists)),
 			NextCursor: page.NextCursor,
 		}
 		for _, a := range page.Artists {
-			js := toArtistSummary(a)
+			js := toArtistSummary(a, linked)
 			if roles[a.ID]["poster"] {
 				js.ArtworkURL = artistArtworkURL(a.ID, "poster", versions[a.ID])
 			}
@@ -285,20 +295,22 @@ func handleArtistSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "artist", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityArtist, id,
+					handleTargetedScan(deps, "artist", id)))))(w, r)
 			return
 		}
 		// Edit-item on an Artist (item-editing/02), Admin-only, before the albums listing.
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityArtist, rest) {
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleArtistAlbums(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleArtistAlbums(deps))))(w, r)
 	}
 }
 
 // handleArtistAlbums serves GET /artists/{id}/albums. Unknown/inaccessible
 // Artist → 404 (hide existence). The path must be exactly /artists/{id}/albums.
-func handleArtistAlbums(svc *catalog.Service) http.HandlerFunc {
+func handleArtistAlbums(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -318,7 +330,7 @@ func handleArtistAlbums(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list albums", nil)
 			return
 		}
-		artistJS := toArtistSummary(artist)
+		artistJS := toArtistSummary(artist, loadLinkedState(deps))
 		if e, err := svc.EntityEnrichment(store.EntityArtist, artist.ID); err == nil {
 			roles, _ := svc.EntityArtworkRoles(store.EntityArtist, []string{artist.ID})
 			versions, _ := svc.EntityArtworkVersions(store.EntityArtist, []string{artist.ID})
@@ -439,7 +451,8 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "album", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityAlbum, id,
+					handleTargetedScan(deps, "album", id)))))(w, r)
 			return
 		}
 		// GET {id}/editions: the editions of this Album's matched release-group, so an

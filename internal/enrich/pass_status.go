@@ -35,6 +35,13 @@ var (
 	// answer — the per-Library lock serializes them anyway — so the honest reply is
 	// "it is already running", with the running pass's status attached.
 	ErrPassInProgress = errors.New("enrich: a pass is already running for this library")
+
+	// ErrLinkedLibrary is a pass over a Library that is a MIRROR of another
+	// household's (ADR-0056 §1). Its descriptive fields are whatever the sharing
+	// Server exported, and this side is not allowed to re-derive them. The API
+	// layer refuses these first; this is the backstop for the scheduled sweep and
+	// the auto-after-scan trigger.
+	ErrLinkedLibrary = errors.New("enrich: this library is a mirror of another server's and is never enriched")
 )
 
 // String names a Mode on the wire and in a log line: "new", "full", "recheck".
