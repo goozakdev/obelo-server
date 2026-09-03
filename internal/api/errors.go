@@ -109,6 +109,12 @@ const (
 	// on an Admin, and an unknown rating label.
 	codeAdminCeiling  = "ADMIN_CEILING"
 	codeUnknownRating = "UNKNOWN_RATING"
+	// codeUnknownResolution (422): a Playback ceiling
+	// (PUT /users/{id}/playbackCeiling) named a maxResolution that is not a
+	// settable rung (ADR-0054 §2). ADMIN_CEILING is reused for an Admin target —
+	// the two ceilings refuse an Admin for the same reason, and the message says
+	// which one was refused.
+	codeUnknownResolution = "UNKNOWN_RESOLUTION"
 	// codeUnknownTitle (422): a Collection item-add (POST /collections/{id}/items)
 	// named a Title that does not exist; the whole add is rejected and the
 	// membership set is left unchanged (mirrors UNKNOWN_LIBRARY for grants).
@@ -138,6 +144,14 @@ const (
 	// details carries { retryable: true, suggestedMaxBitrate } so the client can
 	// retry at a lower quality. Direct play / remux never produce it.
 	codeServerBusy = "SERVER_BUSY"
+	// codeStreamLimit: the User already holds as many unended Playback sessions as
+	// their Playback ceiling's maxStreams allows (429, ADR-0054 §2). details carries
+	// { active, limit } so the client can say "2 of 2 streams in use". Distinct from
+	// SERVER_BUSY in both cause and cure: SERVER_BUSY is the server-wide transcode
+	// budget and a lower bitrate may get in, whereas this is the User's own cap and
+	// only ending one of their streams frees a slot — so a retry at any quality
+	// fails identically. Every tier counts, direct play included.
+	codeStreamLimit = "STREAM_LIMIT"
 	// codeServiceUnavailable: a dependency needed for the request is not wired
 	// (503). Today only the subtitle-fetch handlers use it, when the SubFetch
 	// service is absent — a wiring gap, not a client fault.

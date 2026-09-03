@@ -80,6 +80,15 @@ export interface UserDetailRaw {
    * (issue 02 fetches the detail for `libraryIds`); the ceiling control is issue
    * 03. */
   ratingCeiling?: string | null;
+  /** The Playback ceiling (ADR-0054 §2) — how this User's sessions may play, as
+   * opposed to what they may see. A rung ("720p" | "1080p" | "2160p"), or
+   * absent/`null` = no limit. */
+  maxResolution?: string | null;
+  /** Playback ceiling: bits/sec, or absent/`null`/0 = no limit. */
+  maxBitrate?: number | null;
+  /** Playback ceiling: concurrent Playback sessions, or absent/`null`/0 = no
+   * limit. */
+  maxStreams?: number | null;
 }
 
 /** A User's full detail with its `omitempty` holes filled (`libraryIds` → [],
@@ -94,6 +103,21 @@ export interface UserDetail {
   role: Role;
   libraryIds: string[];
   ratingCeiling: string;
+  /** Playback ceiling (ADR-0054 §2), holes filled: "" / 0 mean "no limit". These
+   * cap HOW a Title plays for this User (resolution, bitrate, concurrent
+   * streams); they never hide a Title, which is the Rating ceiling's job. */
+  maxResolution: string;
+  maxBitrate: number;
+  maxStreams: number;
+}
+
+/** Request body for `PUT /api/v1/users/{id}/playbackCeiling` (Admin). It is the
+ * WHOLE ceiling, not a patch: an omitted (or zero/empty) dimension clears that
+ * cap to "no limit", so the dialog always sends what it means. */
+export interface PlaybackCeilingInput {
+  maxResolution: string;
+  maxBitrate: number;
+  maxStreams: number;
 }
 
 /** Request body for `POST /api/v1/users` (Admin): create a User. `role` is

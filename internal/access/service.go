@@ -37,6 +37,12 @@ var (
 	ErrAdminCeiling = errors.New("access: cannot set a rating ceiling on an admin")
 	// ErrUnknownRating: the requested ceiling is not a known rating label (→ 422).
 	ErrUnknownRating = errors.New("access: unknown rating ceiling label")
+	// ErrUnknownResolution: the requested Playback ceiling names a resolution rung
+	// that is not settable (→ 422). The settable set is playbackResolutions.
+	ErrUnknownResolution = errors.New("access: unknown playback ceiling resolution")
+	// ErrInvalidCeiling: a Playback-ceiling dimension is negative — neither a cap
+	// nor the zero value that means uncapped (→ 400).
+	ErrInvalidCeiling = errors.New("access: playback ceiling must not be negative")
 )
 
 // Store is the persistence the resolver reads. *store.DB satisfies it. It is a
@@ -53,6 +59,12 @@ type Store interface {
 	// SetRatingCeiling stores a User's ceiling label ("" clears it to uncapped);
 	// store.ErrNotFound for an unknown User.
 	SetRatingCeiling(userID, label string) error
+	// PlaybackCeilingForUser returns a User's Playback ceiling; a zero field means
+	// uncapped in that dimension. store.ErrNotFound for an unknown User.
+	PlaybackCeilingForUser(userID string) (store.PlaybackCeiling, error)
+	// SetPlaybackCeiling stores a User's whole Playback ceiling (a zero field
+	// clears that dimension); store.ErrNotFound for an unknown User.
+	SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error
 }
 
 // Scope is a User's resolved access over the catalog (the PRD's "AccessScope").
@@ -71,6 +83,22 @@ type Scope struct {
 	// rating dimension is applied by a later slice; it is carried here so the seam
 	// is complete.
 	RatingCeiling int
+	// MaxResolution, MaxBitrate and MaxStreams are the User's Playback ceiling
+	// (CONTEXT.md, ADR-0054 §2): how a Title may play for this User, as opposed to
+	// the Rating ceiling's what they may see. They ride on the Scope for the same
+	// reason the grants and the Rating ceiling do — requireScope resolves them once
+	// per request and threads them into playback, which clamps the first two into
+	// the session's Constraints and enforces the third at session creation.
+	//
+	// A ceiling NEVER hides a Title: nothing in the browse/read surface reads these
+	// fields, and negotiation answers with a cheaper tier rather than a 404.
+	//
+	// MaxResolution is a resolution token ("1080p"), "" = uncapped; MaxBitrate is
+	// bits/sec, 0 = uncapped; MaxStreams is concurrent Playback sessions,
+	// 0 = uncapped. An Admin resolves to AllAccess and carries none of them.
+	MaxResolution string
+	MaxBitrate    int64
+	MaxStreams    int
 }
 
 // AllowsLibrary reports whether the Scope may see the given Library. An
@@ -135,11 +163,18 @@ func (s *Service) Resolve(userID string) (Scope, error) {
 	if err != nil {
 		return Scope{}, err
 	}
+	play, err := s.store.PlaybackCeilingForUser(userID)
+	if err != nil {
+		return Scope{}, err
+	}
 	return Scope{
 		IsAdmin:       false,
 		AllLibraries:  false,
 		LibraryIDs:    libs,
 		RatingCeiling: ceilingRank(ceiling),
+		MaxResolution: play.MaxResolution,
+		MaxBitrate:    play.MaxBitrate,
+		MaxStreams:    play.MaxStreams,
 	}, nil
 }
 
@@ -168,6 +203,53 @@ func (s *Service) SetRatingCeiling(userID, label string) error {
 		return ErrUnknownRating
 	}
 	if err := s.store.SetRatingCeiling(userID, label); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// PlaybackCeiling returns a User's stored Playback ceiling (zero fields =
+// uncapped), for the Admin user-management view.
+func (s *Service) PlaybackCeiling(userID string) (store.PlaybackCeiling, error) {
+	return s.store.PlaybackCeilingForUser(userID)
+}
+
+// SetPlaybackCeiling sets a non-Admin User's whole Playback ceiling (ADR-0054
+// §2). It is a REPLACE of all three dimensions, not a patch: a dimension left at
+// its zero value is cleared to uncapped, so the caller always sends the ceiling
+// it means (the grant set works the same way).
+//
+// It rejects an unknown User (ErrUserNotFound), an Admin target (ErrAdminCeiling
+// — an Admin is all-access and uncapped, exactly as for the Rating ceiling), a
+// resolution rung that is not settable (ErrUnknownResolution), and a negative
+// bitrate/stream count (ErrInvalidCeiling — 0 already means uncapped, so a
+// negative says nothing). A settable rung is stored canonically ("1080P" →
+// "1080p") so the negotiator's clamp never has to fold case.
+func (s *Service) SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error {
+	u, err := s.store.UserByID(userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if u.Role == roleAdmin {
+		return ErrAdminCeiling
+	}
+	if c.MaxResolution != "" {
+		canon, ok := canonicalResolution(c.MaxResolution)
+		if !ok {
+			return ErrUnknownResolution
+		}
+		c.MaxResolution = canon
+	}
+	if c.MaxBitrate < 0 || c.MaxStreams < 0 {
+		return ErrInvalidCeiling
+	}
+	if err := s.store.SetPlaybackCeiling(userID, c); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return ErrUserNotFound
 		}

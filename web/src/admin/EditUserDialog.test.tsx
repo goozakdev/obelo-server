@@ -19,14 +19,21 @@ import type { Library, User, UserDetail } from "../api/types";
 //     inline with the dialog and its edits intact;
 //   - "Delete user" reports up to the hub rather than deleting here.
 
-const { getUser, listLibraries, setLibraryAccess, setRatingCeiling, setPassword } =
-  vi.hoisted(() => ({
-    getUser: vi.fn(),
-    listLibraries: vi.fn(),
-    setLibraryAccess: vi.fn(),
-    setRatingCeiling: vi.fn(),
-    setPassword: vi.fn(),
-  }));
+const {
+  getUser,
+  listLibraries,
+  setLibraryAccess,
+  setRatingCeiling,
+  setPlaybackCeiling,
+  setPassword,
+} = vi.hoisted(() => ({
+  getUser: vi.fn(),
+  listLibraries: vi.fn(),
+  setLibraryAccess: vi.fn(),
+  setRatingCeiling: vi.fn(),
+  setPlaybackCeiling: vi.fn(),
+  setPassword: vi.fn(),
+}));
 
 vi.mock("../api/client", async () => {
   const actual =
@@ -38,6 +45,7 @@ vi.mock("../api/client", async () => {
       listLibraries: (...a: unknown[]) => listLibraries(...a),
       setLibraryAccess: (...a: unknown[]) => setLibraryAccess(...a),
       setRatingCeiling: (...a: unknown[]) => setRatingCeiling(...a),
+      setPlaybackCeiling: (...a: unknown[]) => setPlaybackCeiling(...a),
       setPassword: (...a: unknown[]) => setPassword(...a),
     },
   };
@@ -58,6 +66,9 @@ function detail(over: Partial<UserDetail>): UserDetail {
     role: "member",
     libraryIds: [],
     ratingCeiling: "",
+    maxResolution: "",
+    maxBitrate: 0,
+    maxStreams: 0,
     ...over,
   };
 }
@@ -96,10 +107,12 @@ beforeEach(() => {
   listLibraries.mockReset();
   setLibraryAccess.mockReset();
   setRatingCeiling.mockReset();
+  setPlaybackCeiling.mockReset();
   setPassword.mockReset();
   listLibraries.mockResolvedValue(ALL_LIBS);
   setLibraryAccess.mockResolvedValue(undefined);
   setRatingCeiling.mockResolvedValue(undefined);
+  setPlaybackCeiling.mockResolvedValue(undefined);
   setPassword.mockResolvedValue(undefined);
 });
 
@@ -309,6 +322,129 @@ describe("EditUserDialog — rating ceiling (Member)", () => {
       /not a known rating/i,
     );
     expect(screen.getByTestId("rating-ceiling-select")).toBeInTheDocument();
+  });
+});
+
+describe("EditUserDialog — playback ceiling (non-Admin)", () => {
+  it("offers 720p/1080p/2160p + No limit and preselects the stored ceiling", async () => {
+    getUser.mockResolvedValue(
+      detail({ maxResolution: "1080p", maxBitrate: 8_000_000, maxStreams: 2 }),
+    );
+    renderDialog(usr({}));
+
+    const select = (await screen.findByTestId(
+      "max-resolution-select",
+    )) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "No limit",
+      "720p",
+      "1080p",
+      "2160p",
+    ]);
+    expect(select.value).toBe("1080p");
+    // Bits/sec on the wire, Mbps in the field.
+    expect(screen.getByTestId("max-bitrate-input")).toHaveValue(8);
+    expect(screen.getByTestId("max-streams-input")).toHaveValue(2);
+  });
+
+  it("shows an uncapped User's fields empty, not zeroed", async () => {
+    getUser.mockResolvedValue(detail({}));
+    renderDialog(usr({}));
+
+    expect(
+      (await screen.findByTestId("max-resolution-select")) as HTMLSelectElement,
+    ).toHaveValue("");
+    expect(screen.getByTestId("max-bitrate-input")).toHaveValue(null);
+    expect(screen.getByTestId("max-streams-input")).toHaveValue(null);
+  });
+
+  it("saves the WHOLE ceiling, converting Mbps to bits/sec", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(detail({}));
+    renderDialog(usr({}));
+
+    await user.selectOptions(
+      await screen.findByTestId("max-resolution-select"),
+      "1080p",
+    );
+    await user.type(screen.getByTestId("max-bitrate-input"), "8");
+    await user.type(screen.getByTestId("max-streams-input"), "2");
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() =>
+      expect(setPlaybackCeiling).toHaveBeenCalledWith("u2", {
+        maxResolution: "1080p",
+        maxBitrate: 8_000_000,
+        maxStreams: 2,
+      }),
+    );
+  });
+
+  it("clears a dimension by emptying its field (the body is a replace)", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(
+      detail({ maxResolution: "720p", maxBitrate: 4_000_000, maxStreams: 1 }),
+    );
+    renderDialog(usr({}));
+
+    await user.clear(await screen.findByTestId("max-streams-input"));
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() =>
+      expect(setPlaybackCeiling).toHaveBeenCalledWith("u2", {
+        maxResolution: "720p",
+        maxBitrate: 4_000_000,
+        maxStreams: 0,
+      }),
+    );
+  });
+
+  it("sends nothing when the ceiling is untouched", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(detail({ maxStreams: 2 }));
+    renderDialog(usr({}));
+
+    await screen.findByTestId("max-streams-input");
+    await user.type(screen.getByTestId("new-password-input"), "hunter2");
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() => expect(setPassword).toHaveBeenCalled());
+    expect(setPlaybackCeiling).not.toHaveBeenCalled();
+  });
+
+  it("renders for the `remote` role — the case the ceiling exists for", async () => {
+    getUser.mockResolvedValue(detail({ role: "remote" }));
+    renderDialog(usr({ role: "remote" }));
+
+    expect(await screen.findByTestId("playback-ceiling")).toBeInTheDocument();
+    expect(screen.getByTestId("max-streams-input")).toBeInTheDocument();
+  });
+
+  it("offers no ceiling control for an Admin", async () => {
+    renderDialog(usr({ role: "admin" }));
+
+    expect(await screen.findByTestId("admin-all-libraries")).toBeInTheDocument();
+    expect(screen.queryByTestId("playback-ceiling")).not.toBeInTheDocument();
+  });
+
+  it("surfaces an UNKNOWN_RESOLUTION refusal inline, keeping the dialog", async () => {
+    const user = userEvent.setup();
+    getUser.mockResolvedValue(detail({}));
+    setPlaybackCeiling.mockRejectedValue(
+      new ApiError(422, "UNKNOWN_RESOLUTION", "1440p is not a settable rung"),
+    );
+    renderDialog(usr({}));
+
+    await user.selectOptions(
+      await screen.findByTestId("max-resolution-select"),
+      "720p",
+    );
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    expect(await screen.findByTestId("edit-user-error")).toHaveTextContent(
+      /not a settable rung/i,
+    );
+    expect(screen.getByTestId("max-resolution-select")).toBeInTheDocument();
   });
 });
 

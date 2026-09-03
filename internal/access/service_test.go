@@ -13,6 +13,9 @@ type fakeStore struct {
 	grants   map[string][]string // userID -> granted library ids
 	ceilings map[string]string   // userID -> ceiling label
 	libs     map[string]bool     // existing library ids (grant validation)
+	// play is the per-User Playback ceiling (ADR-0054 §2); an absent entry is the
+	// zero value, i.e. uncapped in all three dimensions.
+	play map[string]store.PlaybackCeiling
 }
 
 func (f *fakeStore) UserByID(id string) (store.User, error) {
@@ -53,6 +56,21 @@ func (f *fakeStore) SetRatingCeiling(userID, label string) error {
 	return nil
 }
 
+func (f *fakeStore) PlaybackCeilingForUser(userID string) (store.PlaybackCeiling, error) {
+	if _, ok := f.users[userID]; !ok {
+		return store.PlaybackCeiling{}, store.ErrNotFound
+	}
+	return f.play[userID], nil
+}
+
+func (f *fakeStore) SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error {
+	if _, ok := f.users[userID]; !ok {
+		return store.ErrNotFound
+	}
+	f.play[userID] = c
+	return nil
+}
+
 func newFake() *fakeStore {
 	return &fakeStore{
 		users: map[string]store.User{
@@ -62,6 +80,7 @@ func newFake() *fakeStore {
 		grants:   map[string][]string{},
 		ceilings: map[string]string{},
 		libs:     map[string]bool{"l1": true, "l2": true},
+		play:     map[string]store.PlaybackCeiling{},
 	}
 }
 

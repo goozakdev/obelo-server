@@ -111,6 +111,16 @@ type Decision struct {
 	// solely from directPlay and only when the resolved audio can be copied into the
 	// remux container; false for every other Decision.
 	RemuxSelectedOnly bool
+	// UserCeiling marks a Decision whose delivered quality was bound by the USER's
+	// Playback ceiling (ADR-0054 §2) rather than by the client's own Constraints —
+	// the sharer said "1080p", not the television. It is set by the Service when
+	// clampToCeiling actually tightened the request (a ceiling looser than what the
+	// client asked for leaves it false), and is stamped onto the Session so a
+	// session-level observability read can tell a server-capped stream from a
+	// client-capped one. It changes nothing about the negotiation itself: the clamp
+	// has already happened by the time this is set, and the tiering sees only the
+	// resulting Constraints.
+	UserCeiling bool
 }
 
 // UsesFMP4 reports whether the HLS session is delivered as fragmented-MP4 (.m4s +

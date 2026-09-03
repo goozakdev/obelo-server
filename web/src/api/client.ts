@@ -97,6 +97,7 @@ import type {
   PlaylistSummary,
   PlaylistsResponseRaw,
   PlaybackDecision,
+  PlaybackCeilingInput,
   PlaybackState,
   ScanMode,
   ScanStatus,
@@ -1675,6 +1676,25 @@ export class ApiClient {
     return this.request<void>(
       `/users/${encodeURIComponent(id)}/ratingCeiling`,
       { method: "PUT", body: { rating }, signal },
+    );
+  }
+
+  /** `PUT /api/v1/users/{id}/playbackCeiling` (Admin) — set a non-Admin User's
+   * Playback ceiling (ADR-0054 §2): how their sessions may play, never what they
+   * may see. The body is the WHOLE ceiling, not a patch — a dimension sent as ""
+   * or 0 is cleared to "no limit" — so the caller always sends the ceiling it
+   * means and a repeat send is idempotent. 204 No Content on success. The refusals
+   * are NOT swallowed, so the dialog surfaces them: 422 `ADMIN_CEILING` (an Admin
+   * is uncapped by definition), 422 `UNKNOWN_RESOLUTION` (a rung that is not
+   * settable), 400 (a negative bitrate/stream count); an unknown user is 404. */
+  setPlaybackCeiling(
+    id: string,
+    ceiling: PlaybackCeilingInput,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.request<void>(
+      `/users/${encodeURIComponent(id)}/playbackCeiling`,
+      { method: "PUT", body: ceiling, signal },
     );
   }
 
