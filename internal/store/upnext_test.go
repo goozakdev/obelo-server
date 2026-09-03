@@ -19,7 +19,7 @@ import (
 func seedResumeShow(t *testing.T, db *store.DB) {
 	t.Helper()
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libtv','TV','tv')`)
-	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u1','u1','member')`)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u1','u1','member','x')`)
 	mustExec(t, db, `INSERT INTO shows (id, library_id, title, identity_key, sort_title) VALUES ('sh1','libtv','Show','sh|1','show')`)
 	mustExec(t, db, `INSERT INTO seasons (id, show_id, season_number, identity_key) VALUES ('s1','sh1',1,'sh|1|s01')`)
 	mustExec(t, db, `INSERT INTO seasons (id, show_id, season_number, identity_key) VALUES ('s0','sh1',0,'sh|1|s00')`)
@@ -245,7 +245,7 @@ func TestUpNextExclusions(t *testing.T) {
 func TestSaveWatchStatePlayedAtSplit(t *testing.T) {
 	db := openTemp(t)
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libtv','TV','tv')`)
-	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u1','u1','member')`)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u1','u1','member','x')`)
 
 	// A combined-episode file (S04E19-20) → two Episode Titles sharing one path.
 	const path = "/media/tv/BSG (2003)/Season 4/BSG (2003) - S04E19-20 - Daybreak.mkv"

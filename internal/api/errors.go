@@ -95,6 +95,12 @@ const (
 	// last-Admin guard each surface as a 409 with one of these codes.
 	codeUsernameTaken = "USERNAME_TAKEN"
 	codeLastAdmin     = "LAST_ADMIN"
+	// codeRoleChange (422): a role change would cross the `remote` boundary — a
+	// linked Server promoted to a person, or a person demoted to one (ADR-0054).
+	// A remote User is created remote and dies remote. Reserved with its guard
+	// (auth.CheckRoleChange) ahead of the role-change endpoint that will need it,
+	// so the rule cannot be forgotten when that endpoint arrives.
+	codeRoleChange = "ROLE_CHANGE"
 	// Library-access grants (PUT /users/{id}/libraryAccess), both 422: granting to
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"

@@ -9,14 +9,23 @@ import type { Role, User } from "../api/types";
 // list — the hub's "Add User" button is now the single entry point.
 //
 // Role defaults to Member so an Admin is never minted by accident; "Admin" is an
-// explicit opt-in.
+// explicit opt-in. "Linked server" is the `remote` role (ADR-0054) — another
+// household's Server, not a person: it takes NO password (the server 400s one),
+// and its username is the label the Admin picks for it ("Brandon's server").
 //
-// ALL LIBRARIES BY DEFAULT. A newly created Member has no grant rows, and an
-// empty grant set means "sees no catalog" (access.Service.Resolve) — a new account
-// that can see nothing is a surprising default, so this dialog grants every
-// Library right after the create: listLibraries → setLibraryAccess(id, all). An
-// Admin needs none of this (all-access by role, and the server REFUSES grants on
-// an Admin with 422 ADMIN_GRANT), so the second call is skipped for them.
+// ALL LIBRARIES BY DEFAULT, FOR A PERSON. A newly created Member has no grant
+// rows, and an empty grant set means "sees no catalog" (access.Service.Resolve) —
+// a new account that can see nothing is a surprising default, so this dialog
+// grants every Library right after the create: listLibraries →
+// setLibraryAccess(id, all). An Admin needs none of this (all-access by role, and
+// the server REFUSES grants on an Admin with 422 ADMIN_GRANT), so the second call
+// is skipped for them.
+//
+// A linked server is skipped too, and for the opposite reason: the default there
+// must be NOTHING. "All libraries" is a friendly default for someone in the house
+// and a disclosure of the entire collection to a machine in someone else's — the
+// sharer picks the two libraries they meant, by editing the user. Convenience
+// never chooses the wider blast radius across a household boundary.
 //
 // That's two calls, and only the first is what the Admin asked for. If the grant
 // leg fails, the User still EXISTS — silently closing would leave a member who
@@ -38,7 +47,14 @@ const TAKEN_CODE = "USERNAME_TAKEN";
 const ROLES: { value: Role; label: string }[] = [
   { value: "member", label: "Member" },
   { value: "admin", label: "Admin" },
+  { value: "remote", label: "Linked server" },
 ];
+
+/** A linked Server (ADR-0054), not a person: no password, no default grants, and
+ * the username is the label the Admin picks for the other household's Server. */
+function isLinkedServer(role: Role): boolean {
+  return role === "remote";
+}
 
 export default function CreateUserDialog({
   onCreated,
@@ -71,7 +87,7 @@ export default function CreateUserDialog({
    * An Admin is all-access by role, so they are skipped. Throws on refusal — the
    * caller turns that into the grant-failed state. */
   async function grantAllLibraries(user: User) {
-    if (user.role === "admin") return;
+    if (user.role === "admin" || isLinkedServer(user.role)) return;
     const libraries = await apiClient.listLibraries();
     if (libraries.length === 0) return;
     await apiClient.setLibraryAccess(
@@ -84,16 +100,26 @@ export default function CreateUserDialog({
     e.preventDefault();
     if (submitting || created) return;
     const trimmedName = username.trim();
-    if (!trimmedName || password.length === 0) {
-      setError({ message: "Enter a username and a password.", taken: false });
+    const linked = isLinkedServer(role);
+    if (!trimmedName || (!linked && password.length === 0)) {
+      setError({
+        message: linked
+          ? "Enter a name for the linked server."
+          : "Enter a username and a password.",
+        taken: false,
+      });
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const user = await apiClient.createUser({
+        // A linked server carries no password key at all. The field is not even
+        // rendered for the role, so there is nothing to send; omitting it keeps
+        // that true if the role is switched back and forth with text typed in
+        // between, which would otherwise post a password the server 400s.
         username: trimmedName,
-        password,
+        ...(linked ? {} : { password }),
         role,
       });
       setCreated(user);
@@ -159,7 +185,7 @@ export default function CreateUserDialog({
         <div className="library-dialog-body">
           <div className="field">
             <label className="field-label" htmlFor="user-username">
-              Username
+              {isLinkedServer(role) ? "Name" : "Username"}
             </label>
             <input
               id="user-username"
@@ -167,7 +193,7 @@ export default function CreateUserDialog({
               data-testid="user-username-input"
               type="text"
               value={username}
-              placeholder="ada"
+              placeholder={isLinkedServer(role) ? "Brandon’s server" : "ada"}
               autoComplete="off"
               autoFocus
               onChange={(e) => setUsername(e.target.value)}
@@ -175,22 +201,24 @@ export default function CreateUserDialog({
             />
           </div>
 
-          <div className="field">
-            <label className="field-label" htmlFor="user-password">
-              Password
-            </label>
-            <input
-              id="user-password"
-              className="field-input"
-              data-testid="user-password-input"
-              type="password"
-              value={password}
-              placeholder="A strong password"
-              autoComplete="new-password"
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={submitting || created !== null}
-            />
-          </div>
+          {!isLinkedServer(role) && (
+            <div className="field">
+              <label className="field-label" htmlFor="user-password">
+                Password
+              </label>
+              <input
+                id="user-password"
+                className="field-input"
+                data-testid="user-password-input"
+                type="password"
+                value={password}
+                placeholder="A strong password"
+                autoComplete="new-password"
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting || created !== null}
+              />
+            </div>
+          )}
 
           <div className="field">
             <label className="field-label" htmlFor="user-role">
@@ -212,7 +240,15 @@ export default function CreateUserDialog({
             </select>
           </div>
 
-          {role !== "admin" && (
+          {isLinkedServer(role) && (
+            <p className="field-hint" data-testid="create-user-linked-hint">
+              Another household’s server, not a person. It has no password and
+              cannot sign in — edit it to grant libraries and generate an invite.
+              It starts with access to nothing.
+            </p>
+          )}
+
+          {role !== "admin" && !isLinkedServer(role) && (
             <p className="field-hint" data-testid="create-user-access-hint">
               Starts with access to all libraries and no rating ceiling. Narrow it
               any time by editing the user.

@@ -44,8 +44,13 @@ export interface EnrichmentConsent {
 /** A user's role. The backend is single-Admin today (Members deferred), but the
  * client models the role explicitly so the role gate works unchanged when
  * Member support lands (PRD "Role/user reality"). Unknown future roles are
- * tolerated as plain strings. */
-export type Role = "admin" | "member" | (string & {});
+ * tolerated as plain strings.
+ *
+ * "remote" is a LINKED SERVER, not a person (ADR-0054): it has no password, never
+ * signs in here, and is deliberately absent from every roster/switch-user surface
+ * — it exists only on the Admin Users page, where the operator manages what the
+ * other household may reach. */
+export type Role = "admin" | "member" | "remote" | (string & {});
 
 /** A User as the auth + Admin user-management endpoints return it
  * (`{ id, username, role }`). */
@@ -93,11 +98,16 @@ export interface UserDetail {
 
 /** Request body for `POST /api/v1/users` (Admin): create a User. `role` is
  * optional and defaults to "member" server-side; pass "admin" to deliberately
- * mint another Admin. A blank username/password is rejected (400 BAD_REQUEST);
- * a duplicate username is rejected (409 USERNAME_TAKEN). */
+ * mint another Admin. A blank username is rejected (400 BAD_REQUEST); a duplicate
+ * username is rejected (409 USERNAME_TAKEN).
+ *
+ * `password` is optional because the rule is per-role and goes both ways
+ * (ADR-0054): admin and member REQUIRE one, and "remote" — a linked Server, whose
+ * only credential is the token an Invite leaves behind — must NOT carry one. A
+ * password sent with `role: "remote"` is a 400, not a silently ignored field. */
 export interface CreateUserInput {
   username: string;
-  password: string;
+  password?: string;
   role?: Role;
 }
 

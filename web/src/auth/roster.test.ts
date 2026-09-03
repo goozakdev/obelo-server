@@ -72,6 +72,24 @@ describe("roster store", () => {
     expect(getRosterEntry(storage(), SERVER, "u1")?.token).toBe("tok-ana");
   });
 
+  it("never seeds a linked server, and prunes one a previous version seeded", () => {
+    // A `remote` User is another household's Server (ADR-0054): no password, login
+    // refused for the role outright. Offering it as a switch-user row would put a
+    // permanently un-signinable name in front of the household.
+    rememberUser(
+      storage(),
+      SERVER,
+      { id: "peer", username: "Brandon's server", role: "remote" },
+      null,
+    );
+    syncKnownUsers(storage(), SERVER, [
+      { id: "u1", username: "ana", role: "admin" },
+      { id: "peer", username: "Brandon's server", role: "remote" },
+    ]);
+    expect(rosterUsers(storage(), SERVER).map((u) => u.userId)).toEqual(["u1"]);
+    expect(getRosterEntry(storage(), SERVER, "peer")).toBeNull();
+  });
+
   it("refreshes a surviving entry's username and role from the server list", () => {
     rememberUser(storage(), SERVER, { id: "u1", username: "ana", role: "member" }, "tok-ana");
     syncKnownUsers(storage(), SERVER, [{ id: "u1", username: "ana-renamed", role: "admin" }]);

@@ -17,6 +17,8 @@ package testharness
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -780,6 +782,68 @@ func (s *Server) CreateMember(username, password string) {
 	); err != nil {
 		s.t.Fatalf("testharness: inserting member %q: %v", username, err)
 	}
+}
+
+// IssueTokenForUser mints a Device and a bearer token for an existing User by
+// direct DB insert, returning the raw token.
+//
+// It exists for the `remote` role (ADR-0054), which is the one User that cannot
+// reach LoginAs: it has no password and POST /auth/login refuses the role
+// outright. Its real credential comes from redeeming an Invite server-to-server
+// (ADR-0055), which is a later slice — so this seam stands in for that redemption
+// and produces exactly what it will: an ordinary Device-bound token, indexed by
+// its SHA-256 like every other, with the peer's server id as the Device clientId.
+//
+// The hashing is duplicated here rather than reached for through auth (where it
+// is unexported and must stay so). It is a plain SHA-256 of the raw token — see
+// auth/token.go for why that is right for a 256-bit random secret — and a
+// divergence would surface immediately as a 401 in any test that uses this.
+func (s *Server) IssueTokenForUser(userID, clientID string) string {
+	s.t.Helper()
+	raw := uuid.NewString() + uuid.NewString()
+	sum := sha256.Sum256([]byte(raw))
+	deviceID := uuid.NewString()
+	if _, err := s.app.DB.Exec(
+		`INSERT INTO devices (id, user_id, client_id, name, platform) VALUES (?, ?, ?, ?, ?)`,
+		deviceID, userID, clientID, clientID, "server",
+	); err != nil {
+		s.t.Fatalf("testharness: inserting device for user %q: %v", userID, err)
+	}
+	if _, err := s.app.DB.Exec(
+		`INSERT INTO auth_tokens (token_hash, device_id, user_id) VALUES (?, ?, ?)`,
+		hex.EncodeToString(sum[:]), deviceID, userID,
+	); err != nil {
+		s.t.Fatalf("testharness: inserting token for user %q: %v", userID, err)
+	}
+	return raw
+}
+
+// CountWatchRowsForUser returns the raw number of per-Title watch-state rows a
+// User owns: watch_state, then the Remembered audio and Remembered video memories
+// (Title- and Show-scoped together).
+//
+// A direct-DB seam like CountPlaylistRowsForOwner, and for the same reason: "this
+// User wrote NOTHING" is unobservable from outside. A Title detail read back as
+// the same User reports a zero resume for "no row" and for "a row saying zero"
+// alike, so the API cannot tell an absent write from a harmless one — which is
+// precisely the claim ADR-0054 makes about the `remote` role.
+func (s *Server) CountWatchRowsForUser(userID string) (watchState, audioMemory, videoMemory int) {
+	s.t.Helper()
+	count := func(query string) int {
+		var n int
+		if err := s.app.DB.QueryRow(query, userID).Scan(&n); err != nil {
+			s.t.Fatalf("testharness: counting watch rows for %q: %v", userID, err)
+		}
+		return n
+	}
+	watchState = count(`SELECT COUNT(*) FROM watch_state WHERE user_id = ?`)
+	audioMemory = count(
+		`SELECT (SELECT COUNT(*) FROM title_audio_memory WHERE user_id = ?1)
+		      + (SELECT COUNT(*) FROM show_audio_memory  WHERE user_id = ?1)`)
+	videoMemory = count(
+		`SELECT (SELECT COUNT(*) FROM title_video_memory WHERE user_id = ?1)
+		      + (SELECT COUNT(*) FROM show_video_memory  WHERE user_id = ?1)`)
+	return watchState, audioMemory, videoMemory
 }
 
 // RefreshRotationKeys forces one synchronous key-rotation poll (ADR-0032): fetch
