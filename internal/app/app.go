@@ -755,6 +755,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Libraries:       db,
 		TitleCounts:     db,
 		ScanScope:       db,
+		Export:          db,
 		Providers:       db,
 		ProviderManager: providerManager,
 		SettingsChanged: app.notifyEnrichReschedule,

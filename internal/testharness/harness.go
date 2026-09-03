@@ -689,6 +689,26 @@ func (s *Server) SetTitleHidden(titleID string, hidden bool) {
 	}
 }
 
+// Exec runs one statement against this Server's database — the general form of
+// the narrow SetTitleHidden / SetTitleContentRating seams above.
+//
+// It exists for the Library Export's replay test (.scratch/linked-servers issue
+// 05, ADR-0056 §4), whose whole claim is "an empty Server fed nothing but the
+// export answers the browse API the same way". Proving that needs a Server whose
+// catalog was written by the FEED rather than by a scan of the same folder — the
+// mirror's job, which arrives in issue 07 — so the test writes those rows itself
+// and this is the one seam that lets it. A per-table helper would be the mirror,
+// re-implemented in the harness a release early and wrong.
+//
+// Use it only for fixture state the public API genuinely cannot author. Anything
+// a real client can do belongs in a real request.
+func (s *Server) Exec(query string, args ...any) {
+	s.t.Helper()
+	if _, err := s.app.DB.Exec(query, args...); err != nil {
+		s.t.Fatalf("testharness: exec %q: %v", query, err)
+	}
+}
+
 // SetShowContentRating sets a Show's ENRICHED Content rating (stored in
 // entity_enrichment, not on the shows row) — the parent-entity equivalent of
 // SetTitleContentRating, for cross-system ceiling tests.

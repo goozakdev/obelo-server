@@ -1408,6 +1408,19 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 		case strings.HasSuffix(rest, "/titles"):
 			requireMethod(http.MethodGet, requireScope(deps.Access, handleListTitles(deps.Catalog)))(w, r)
 			return
+		case strings.HasSuffix(rest, "/export"):
+			// The Library Export (ADR-0056 §4): a `remote` User's mirror, or an
+			// Admin. requireScope resolves the grant set; the handler does the role
+			// check itself, because a Member must get the 404 an unknown route gives
+			// rather than the 403 requireAdmin would.
+			libID := exportLibraryID(rest)
+			if libID == "" {
+				notFound(w)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireScope(deps.Access, handleLibraryExport(deps, libID)))(w, r)
+			return
 		case strings.HasSuffix(rest, "/unmatched"):
 			// Admin attention surface: the Unmatched list is Admin-only.
 			requireMethod(http.MethodGet, requireAdmin(handleListUnmatched(deps.Catalog)))(w, r)

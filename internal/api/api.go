@@ -51,6 +51,14 @@ type LibraryTitleCounter interface {
 	LibraryTitleCount(libraryID string) (int, error)
 }
 
+// ExportReader is the Library Export's one read (ADR-0056 §4): a page of the
+// flat, keyset-ordered change feed a linked Server's mirror pulls. *store.DB
+// satisfies it. May be nil in narrow unit tests, and the route then answers 503
+// rather than pretending the Library is empty.
+type ExportReader interface {
+	ExportLibrary(libraryID string, after store.ExportCursor, limit int) (store.ExportPage, error)
+}
+
 // ScanScopeResolver resolves a Targeted scan's on-disk scope from a browsable
 // entity (ADR-0030): the entity's Library (roots + kind), display label, and
 // present File paths. *store.DB satisfies it. May be nil in narrow unit tests
@@ -124,6 +132,16 @@ type Deps struct {
 	// Shows / Albums by kind) for the admin scan-status "N titles" summary. *store.DB
 	// satisfies it; may be nil in narrow unit tests (the count is then omitted).
 	TitleCounts LibraryTitleCounter
+	// Export is the Library Export's reader (GET /libraries/{id}/export,
+	// ADR-0056 §4). *store.DB satisfies it; nil in narrow unit tests.
+	Export ExportReader
+	// LinkedLibrary reports whether a Library on this Server is itself a mirror of
+	// somebody else's (ADR-0056 §1) — the one thing the Export refuses to serve,
+	// because sharing does not travel (ADR-0054 §4, ADR-0056 §7). It is a hook
+	// rather than a column read: `libraries.source` arrives with the mirror in
+	// issue 07, and issue 11 wires this to it. Nil means no Library here came over
+	// a Link, which is true of every Server until then.
+	LinkedLibrary func(libraryID string) bool
 	// ScanScope resolves a Targeted scan's folder set from a browsable entity
 	// (ADR-0030, per-entity POST /{titles|shows|albums|artists}/{id}/scan). *store.DB
 	// satisfies it; nil in narrow unit tests that don't exercise targeted scanning.
