@@ -70,6 +70,7 @@ import type {
   HomeRows,
   LibrariesResponse,
   Library,
+  Link,
   LinkInvite,
   ListTitlesOptions,
   LoginRequest,
@@ -168,6 +169,11 @@ export const EVENT_TYPES = [
   // nudge: it carries no payload because the settings GET is the truth. It is
   // what makes the login link appear without a reload.
   "tailscaleState",
+  // A Link moved between connected / unreachable / revoked (ADR-0056 §6) —
+  // Admin-only. It carries `{ linkId }` and nothing else, on the same principle:
+  // GET /links is the truth. It is what turns a friend's server going dark into
+  // a badge on the Linked servers page with nobody pressing reload.
+  "linkState",
 ] as const;
 
 export interface ApiClientOptions {
@@ -1959,6 +1965,77 @@ export class ApiClient {
     });
   }
 
+  // --- Admin: linked servers, the HOME half (ADR-0055/0056, issues 06-10) ---
+  //
+  // Every route here is Admin scope, server-enforced. A Link is the household's
+  // relationship with another household — not a per-User thing — so the page
+  // that drives these is a Settings screen, and the Libraries a Link brings are
+  // granted to Users afterwards like any other.
+  //
+  // The refusals are NOT swallowed; they are the whole product here, and
+  // `linkErrorMessage` (admin/linkErrors.ts) turns each code into the one
+  // sentence that names the operator's next move.
+
+  /** `GET /api/v1/links` (Admin) — every Link this Server holds, each with its
+   * state, the origin in use, the last sync and the Libraries it provides. The
+   * truth the `linkState` SSE nudge sends the Linked servers page back to. */
+  listLinks(signal?: AbortSignal): Promise<Link[]> {
+    return this.request<Link[]>("/links", { signal });
+  }
+
+  /** `POST /api/v1/links` (Admin) — redeem a pasted `obelo-link:` string. The
+   * body is the WHOLE string, one field: not a hostname and a code, which is two
+   * fields, two mistakes and no room for a second address.
+   *
+   * 201 for a new Link and 200 when the invite re-keys one already on file (the
+   * same sharer's server id), which this method deliberately does not
+   * distinguish — either way the answer is the Link as it now stands. The
+   * refusals: 400 `BAD_INVITE`, 410 `INVITE_EXPIRED`, 409 `LINK_PROTOCOL`
+   * (`details: { theirs, ours, upgrade }`), 409 `LINK_SERVER_MISMATCH`,
+   * 409 `LINK_REVOKED` and 503 `LINK_UNREACHABLE`. */
+  createLink(invite: string, signal?: AbortSignal): Promise<Link> {
+    return this.request<Link>("/links", {
+      method: "POST",
+      body: { invite },
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/links/{id}/rekey` (Admin) — replace a Link's dead credential
+   * with a fresh invite from the SAME sharer, keeping the Link, its Libraries
+   * and this household's watch state. An invite from a different server is
+   * refused with 409 `LINK_SERVER_MISMATCH` rather than silently re-pointing. */
+  rekeyLink(id: string, invite: string, signal?: AbortSignal): Promise<Link> {
+    return this.request<Link>(`/links/${encodeURIComponent(id)}/rekey`, {
+      method: "POST",
+      body: { invite },
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/links/{id}/sync` (Admin) — one sweep, now, synchronously,
+   * answering with the Link as it stands afterwards. It is the "try again" beside
+   * an unreachable Link, and the ONE sweep a `revoked` Link gets: the background
+   * loop never retries one, but a human asking is not a retry. A failed sweep is
+   * reported as the failure it was. */
+  syncLink(id: string, signal?: AbortSignal): Promise<Link> {
+    return this.request<Link>(`/links/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+      signal,
+    });
+  }
+
+  /** `DELETE /api/v1/links/{id}` (Admin) — unlink. THE ONLY THING THAT DELETES
+   * what came over a Link: the mirrored Libraries, their catalog rows and this
+   * household's watch state for them. 204 whether or not the sharer could be
+   * reached, so a friend's server being off cannot keep this household linked. */
+  deleteLink(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/links/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      signal,
+    });
+  }
+
   // --- Playback surface (issue 04) ---------------------------------------
 
   /** `POST /api/v1/titles/{id}/playback` — negotiate playback. The body carries
@@ -2217,6 +2294,9 @@ export type {
   HomeRows,
   Library,
   LibraryRoot,
+  Link,
+  LinkedLibrary,
+  LinkState,
   ListTitlesOptions,
   LoginRequest,
   LoginResult,

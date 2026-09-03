@@ -27,19 +27,34 @@ import ConfirmDialog from "./ConfirmDialog";
 // Admin clicks "Scan All Libraries"; each increment makes every row kick off its
 // own incremental scan (reusing this row's poller/`begin`), so the shared control
 // stays reactive without the parent reaching into row state.
+//
+// A LINKED Library (ADR-0056 §1) is a mirror of another household's, and every
+// writer here is refused by the server with 409 LINKED_LIBRARY. So the row badges
+// it, names the server that provides it, and DISABLES the whole write cluster —
+// Edit (root folders and the Enrichment policy), Scan, Full scan and Delete —
+// rather than offering buttons whose only outcome is an error. Scan All skips it
+// for the same reason. The way to remove one is Unlink, on the Linked servers
+// page, because that is the only thing that removes what came over a Link.
 
 export default function LibraryAdminRow({
   library,
   onEdit,
   onDeleted,
   scanAllSignal = 0,
+  providedBy,
 }: {
   library: Library;
   onEdit: (library: Library) => void;
   /** Called after a successful delete; the hub reloads its list. */
   onDeleted: () => void;
   scanAllSignal?: number;
+  /** For a linked Library, the name of the Server that provides it — derived by
+   * the hub from GET /links, because the Library JSON carries only `linked` and
+   * `available` and never says whose it is. Empty when the links could not be
+   * read; the note then says "another server" rather than inventing a name. */
+  providedBy?: string;
 }) {
+  const linked = library.linked === true;
   const scan = useScanStatus(library.id);
   const [scanning, setScanning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -58,7 +73,7 @@ export default function LibraryAdminRow({
   const scanRunning = scanning || state === "running";
 
   async function onScan(mode: ScanMode) {
-    if (scanRunning) return;
+    if (scanRunning || linked) return;
     setScanning(true);
     setActionError(null);
     try {
@@ -93,7 +108,7 @@ export default function LibraryAdminRow({
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
   useEffect(() => {
-    if (scanAllSignal > 0) void onScanRef.current("incremental");
+    if (scanAllSignal > 0 && !linked) void onScanRef.current("incremental");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanAllSignal]);
 
@@ -129,6 +144,17 @@ export default function LibraryAdminRow({
         <span className="admin-library-name" data-testid="admin-library-name">
           {library.name}
         </span>
+        {linked && (
+          <>
+            <span className="linked-badge" data-testid="admin-library-linked-badge">
+              Linked
+            </span>
+            <span className="admin-library-provided" data-testid="admin-library-provided">
+              Provided by {providedBy || "another server"} — nothing here can change
+              it.
+            </span>
+          </>
+        )}
       </div>
 
       <div className="admin-library-aside">
@@ -182,6 +208,7 @@ export default function LibraryAdminRow({
                     className="row-menu-button"
                     role="menuitem"
                     data-testid="edit-library-button"
+                    disabled={linked}
                     onClick={() => {
                       setMenuOpen(false);
                       onEdit(library);
@@ -196,7 +223,7 @@ export default function LibraryAdminRow({
                     className="row-menu-button"
                     role="menuitem"
                     data-testid="scan-button"
-                    disabled={scanRunning}
+                    disabled={scanRunning || linked}
                     onClick={() => {
                       setMenuOpen(false);
                       void onScan("incremental");
@@ -211,7 +238,7 @@ export default function LibraryAdminRow({
                     className="row-menu-button"
                     role="menuitem"
                     data-testid="full-scan-button"
-                    disabled={scanRunning}
+                    disabled={scanRunning || linked}
                     onClick={() => {
                       setMenuOpen(false);
                       void onScan("full");
@@ -226,6 +253,7 @@ export default function LibraryAdminRow({
                     className="row-menu-button row-menu-button-danger"
                     role="menuitem"
                     data-testid="delete-library-button"
+                    disabled={linked}
                     onClick={() => {
                       setMenuOpen(false);
                       setDeleteError(null);
@@ -235,6 +263,12 @@ export default function LibraryAdminRow({
                     Delete
                   </button>
                 </li>
+                {linked && (
+                  <li className="row-menu-note" role="none">
+                    A linked library is a mirror; it is changed on the server that
+                    provides it. Remove it with Unlink under Linked servers.
+                  </li>
+                )}
               </ul>
             )}
           </div>

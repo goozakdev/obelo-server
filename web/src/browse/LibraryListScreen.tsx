@@ -10,6 +10,18 @@ import AppHeader from "./AppHeader";
 //
 // Note: GET /libraries is Admin-only on the current backend (single-Admin); a
 // non-Admin would get a 403 the API client surfaces as a readable error here.
+//
+// A LINKED Library (ADR-0056 §1) is a Library in every respect that matters here
+// — it opens into the same grid — so it is marked and not set apart: one small
+// badge, and a folder count replaced by "shared with you", because a mirror has
+// no folders on this disk and "0 folders" is a lie about it.
+//
+// `available: false` means the household that provides it cannot be reached right
+// now (ADR-0056 §6). It STAYS ON THE SHELF, greyed, rather than vanishing: the
+// catalog is still here and correct, only the bytes are momentarily out of reach,
+// and a library that disappears when a friend reboots their server teaches people
+// their films are gone. It still opens; a play attempt is where the honest
+// "unreachable" sentence belongs, and the player already says it.
 
 export default function LibraryListScreen() {
   const state = useAsync((signal) => apiClient.listLibraries(signal), []);
@@ -46,7 +58,9 @@ export default function LibraryListScreen() {
             {state.data.map((lib) => (
               <li key={lib.id}>
                 <Link
-                  className="library-card"
+                  className={`library-card${
+                    lib.linked && lib.available === false ? " is-unavailable" : ""
+                  }`}
                   // A music library opens the separate music experience
                   // (/music/...); TV/Movie libraries use the shared grid.
                   to={
@@ -56,13 +70,33 @@ export default function LibraryListScreen() {
                   }
                   data-testid="library-item"
                   data-library-id={lib.id}
+                  data-linked={lib.linked ? "true" : undefined}
+                  data-available={
+                    lib.linked ? (lib.available === false ? "false" : "true") : undefined
+                  }
                 >
                   <span className="library-name">{lib.name}</span>
                   <span className="library-kind">{lib.kind}</span>
-                  <span className="library-roots">
-                    {lib.rootFolders.length}{" "}
-                    {lib.rootFolders.length === 1 ? "folder" : "folders"}
-                  </span>
+                  {lib.linked ? (
+                    <span className="library-roots">
+                      <span className="linked-badge" data-testid="library-linked-badge">
+                        Linked
+                      </span>
+                      {lib.available === false ? (
+                        <span data-testid="library-unavailable">
+                          {" "}
+                          unavailable right now
+                        </span>
+                      ) : (
+                        <span> shared with you</span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="library-roots">
+                      {lib.rootFolders.length}{" "}
+                      {lib.rootFolders.length === 1 ? "folder" : "folders"}
+                    </span>
+                  )}
                 </Link>
               </li>
             ))}
