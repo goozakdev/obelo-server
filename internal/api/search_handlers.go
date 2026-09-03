@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 
-	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -32,7 +31,8 @@ type searchResponse struct {
 // query yields empty groups (200, not an error). Results carry the calling
 // User's watch state on the playable leaves (Movies/Episodes/Tracks) via one
 // bulk read, so a result row shows its watched/resume marker like a grid entry.
-func handleSearch(svc *catalog.Service) http.HandlerFunc {
+func handleSearch(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -97,6 +97,7 @@ func handleSearch(svc *catalog.Service) http.HandlerFunc {
 		albumEnr, _ := svc.EntityEnrichmentForMany(store.EntityAlbum, albumIDs)
 		albumRoles, _ := svc.EntityArtworkRoles(store.EntityAlbum, albumIDs)
 
+		linked := loadLinkedState(deps)
 		out := searchResponse{
 			Movies:   make([]titleSummaryJSON, 0, len(res.Movies)),
 			Shows:    make([]showSummaryJSON, 0, len(res.Shows)),
@@ -106,10 +107,10 @@ func handleSearch(svc *catalog.Service) http.HandlerFunc {
 			Tracks:   make([]titleSummaryJSON, 0, len(res.Tracks)),
 		}
 		for _, t := range res.Movies {
-			out.Movies = append(out.Movies, toTitleSummary(mergeEnrichment(t, enr), states[t.ID], genres[t.ID]))
+			out.Movies = append(out.Movies, toTitleSummary(mergeEnrichment(t, enr), states[t.ID], genres[t.ID], linked))
 		}
 		for _, s := range res.Shows {
-			js := toShowSummary(s)
+			js := toShowSummary(s, linked)
 			// Search results are a one-shot list (no live refresh), so an artwork
 			// cache-bust version isn't needed here — consistent with the Movie rows
 			// above, which also omit it.
@@ -117,7 +118,7 @@ func handleSearch(svc *catalog.Service) http.HandlerFunc {
 			out.Shows = append(out.Shows, js)
 		}
 		for _, a := range res.Artists {
-			js := toArtistSummary(a)
+			js := toArtistSummary(a, linked)
 			decorateArtist(&js, artistEnr[a.ID], artistRoles[a.ID], "")
 			out.Artists = append(out.Artists, js)
 		}
@@ -127,10 +128,10 @@ func handleSearch(svc *catalog.Service) http.HandlerFunc {
 			out.Albums = append(out.Albums, js)
 		}
 		for _, t := range res.Episodes {
-			out.Episodes = append(out.Episodes, toTitleSummary(mergeEnrichment(t, enr), states[t.ID], genres[t.ID]))
+			out.Episodes = append(out.Episodes, toTitleSummary(mergeEnrichment(t, enr), states[t.ID], genres[t.ID], linked))
 		}
 		for _, t := range res.Tracks {
-			out.Tracks = append(out.Tracks, toTitleSummary(mergeEnrichment(t, enr), states[t.ID], genres[t.ID]))
+			out.Tracks = append(out.Tracks, toTitleSummary(mergeEnrichment(t, enr), states[t.ID], genres[t.ID], linked))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

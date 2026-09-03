@@ -378,8 +378,9 @@ func decorateMembers(deps Deps, userID string, members []store.Title) ([]titleSu
 	if err != nil {
 		return nil, err
 	}
+	linked := loadLinkedState(deps)
 	for _, t := range members {
-		js := toTitleSummary(t, states[t.ID], genres[t.ID])
+		js := toTitleSummary(t, states[t.ID], genres[t.ID], linked)
 		js.ArtworkVersion = versions[t.ID]
 		out = append(out, js)
 	}

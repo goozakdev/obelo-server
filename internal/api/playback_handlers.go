@@ -282,7 +282,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodDelete,
-				requireAuth(deps.Auth, requireAdmin(handleReleaseLock(deps.Catalog, titleID, field))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, titleID,
+					handleReleaseLock(deps.Catalog, titleID, field)))))(w, r)
 			return
 		}
 		// POST {id}/scan: Targeted scan of this Movie's folder / bare file (Admin,
@@ -294,7 +295,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "title", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleTargetedScan(deps, "title", id)))))(w, r)
 			return
 		}
 		// POST {id}/review: dismiss this Title's needs_review flag — the Admin
@@ -305,7 +307,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleReviewTitle(deps.Catalog, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleReviewTitle(deps.Catalog, id)))))(w, r)
 			return
 		}
 		// PUT {id}/identityCorrection: the Wrong-item destructive correction (Admin,
@@ -318,7 +321,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handleTitleIdentityCorrection(deps, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleTitleIdentityCorrection(deps, id)))))(w, r)
 			return
 		}
 		// GET {id}/enrichmentCandidates?q=: search the authoritative provider for the
@@ -367,7 +371,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handleEnrichmentOverride(deps.Enrich, deps.Catalog, deps.Events))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleEnrichmentOverride(deps.Enrich, deps.Catalog, deps.Events)))))(w, r)
 			return
 		}
 		// PUT {id}/enrichmentMatch: re-point the external metadata match + re-enrich
@@ -379,7 +384,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handleEnrichmentMatch(deps.Enrich, deps.Catalog, deps.Events))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleEnrichmentMatch(deps.Enrich, deps.Catalog, deps.Events)))))(w, r)
 			return
 		}
 		// PUT {id}/metadata: hand-edit + Lock descriptive fields (Admin).
@@ -389,7 +395,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handleEditMetadata(deps.Catalog))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleEditMetadata(deps.Catalog)))))(w, r)
 			return
 		}
 		// GET {id}/artworkCandidates?role=: list the provider images for a role so the
@@ -412,7 +419,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handlePickTitleArtwork(deps.Enrich, deps.Catalog, deps.Events))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handlePickTitleArtwork(deps.Enrich, deps.Catalog, deps.Events)))))(w, r)
 			return
 		}
 		// POST {id}/artworkUpload?role=…: store an Admin-uploaded image as a role +
@@ -425,7 +433,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleUploadTitleArtwork(deps.Enrich, deps.Catalog, deps.Events))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
+					handleUploadTitleArtwork(deps.Enrich, deps.Catalog, deps.Events)))))(w, r)
 			return
 		}
 		// POST {id}/subtitles/search: "search online" for a subtitle in a language the
@@ -451,7 +460,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireScope(deps.Access, handleSubtitleFetch(deps, id))))(w, r)
+				requireAuth(deps.Auth, requireScope(deps.Access, requireLocalTitle(deps, id,
+					handleSubtitleFetch(deps, id)))))(w, r)
 			return
 		}
 		// GET {id}/subtitles/{subId}.vtt: the out-of-band WebVTT media GET a browser

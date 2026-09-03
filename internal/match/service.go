@@ -97,11 +97,18 @@ func (s *Service) FixMatch(in FixMatchInput) (store.MatchOverride, error) {
 // reads this to show orphans alongside needs-review / Unmatched). ErrNotFound
 // for an unknown Library so the caller answers 404.
 func (s *Service) List(libraryID string) ([]store.MatchOverride, error) {
-	if _, err := s.store.LibraryByID(libraryID); err != nil {
+	lib, err := s.store.LibraryByID(libraryID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	// A mirrored Library has no Match overrides and can never acquire one: an
+	// override redirects a future SCAN of a folder, and nothing here scans a
+	// linked Library (ADR-0056 §1).
+	if lib.Linked() {
+		return []store.MatchOverride{}, nil
 	}
 	return s.store.MatchOverridesByLibrary(libraryID)
 }

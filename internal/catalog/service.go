@@ -565,6 +565,26 @@ func (s *Service) LibraryOfEntity(entityType, entityID string) (string, error) {
 	return s.store.LibraryOfEntity(entityType, entityID)
 }
 
+// mirroredLibrary reports whether a Library is a mirror of another household's
+// (ADR-0056 §1), answering ErrNotFound for one that does not exist.
+//
+// The Admin attention queue — Unmatched, needs-review, enrichment-attention,
+// show-problems — asks it and then returns NOTHING for a linked Library. That is
+// not an omission, it is the correct answer: every row in that queue is an offer
+// to fix something, and there is nothing on this machine to fix. A mirrored
+// Title that arrived flagged is flagged on the SHARER's queue, where the files
+// are and where the Admin who can act on it lives.
+func (s *Service) mirroredLibrary(libraryID string) (bool, error) {
+	lib, err := s.store.LibraryByID(libraryID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return lib.Linked(), nil
+}
+
 // ListUnmatched returns a Library's Unmatched files (the Admin attention
 // surface). ErrNotFound for an unknown Library so the caller answers 404.
 func (s *Service) ListUnmatched(libraryID string) ([]UnmatchedFileItem, error) {
@@ -574,6 +594,9 @@ func (s *Service) ListUnmatched(libraryID string) ([]UnmatchedFileItem, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if lib.Linked() {
+		return []UnmatchedFileItem{}, nil
 	}
 	files, err := s.store.ListUnmatched(libraryID)
 	if err != nil {
@@ -636,12 +659,12 @@ func overrideAnchorKind(libraryKind string) string {
 // hand-matching, kept distinct from the identity Unmatched bucket and the
 // needs-review list. ErrNotFound for an unknown Library so the caller answers 404.
 func (s *Service) TitlesNeedingMatch(libraryID string) ([]NeedsMatchItem, error) {
-	exists, err := s.store.LibraryExists(libraryID)
+	linked, err := s.mirroredLibrary(libraryID)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, ErrNotFound
+	if linked {
+		return []NeedsMatchItem{}, nil
 	}
 	titles, err := s.store.TitlesNeedingMatch(libraryID)
 	if err != nil {
@@ -678,12 +701,12 @@ type NeedsMatchItem struct {
 // distinct from the enrichment TitlesNeedingMatch above. ErrNotFound for an
 // unknown Library so the caller answers 404.
 func (s *Service) NeedsReview(libraryID string) ([]store.NeedsReviewItem, error) {
-	exists, err := s.store.LibraryExists(libraryID)
+	linked, err := s.mirroredLibrary(libraryID)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, ErrNotFound
+	if linked {
+		return []store.NeedsReviewItem{}, nil
 	}
 	titles, err := s.store.TitlesNeedingReview(libraryID)
 	if err != nil {

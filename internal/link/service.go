@@ -47,7 +47,12 @@ var ErrServerMismatch = errors.New("link: this invite is for a different server"
 
 // Service is the home side of linking. One per Server.
 type Service struct {
-	store  Store
+	store Store
+	// mirror is the catalog half (ADR-0056 §3): the linked Libraries and the rows
+	// beneath them. Nil in a narrow unit test of the link flow, and every mirror
+	// operation is then a no-op — a Server that holds Links and mirrors nothing is
+	// a coherent state, it is what this package was before issue 07.
+	mirror MirrorStore
 	self   func() Identity
 	dialer *Dialer
 
@@ -92,12 +97,16 @@ type Options struct {
 	// Tailnet is the node the dialer may reach a peer over (ADR-0055 §5). Nil is a
 	// deployment with no Tailnet, where every origin goes to the operating system.
 	Tailnet TailnetNode
+	// Mirror is the catalog a pulled Export is written into (ADR-0056 §3).
+	// *store.DB satisfies it; nil leaves linking working and mirrors nothing.
+	Mirror MirrorStore
 }
 
 // New wires the Service.
 func New(s Store, self func() Identity, opts Options) *Service {
 	svc := &Service{
 		store:   s,
+		mirror:  opts.Mirror,
 		self:    self,
 		dialer:  &Dialer{Node: opts.Tailnet},
 		version: opts.Version,
@@ -198,8 +207,9 @@ func (s *Service) Unlink(ctx context.Context, id string) error {
 	if err := s.store.DeleteLink(l.ID); err != nil {
 		return err
 	}
-	// Issue 07/08's seam: the linked Libraries, their mirrored rows and the Watch
-	// state on them are deleted here once they exist. Nothing does today.
+	// The linked Libraries this Link brought, their mirrored rows and the Watch
+	// state on them (ADR-0056 §6, issue 07).
+	s.dropMirror(l)
 	if s.OnUnlinked != nil {
 		s.OnUnlinked(l)
 	}
@@ -268,8 +278,13 @@ func (s *Service) establish(ctx context.Context, id string, inv Invite) (store.L
 		return store.Link{}, err
 	}
 
-	// Issue 07/08's seam: the linked Libraries are created and the first sync is
-	// kicked here. Nothing does today, and GET /links reports no libraries.
+	// The linked Libraries and the first, full pull (ADR-0056 §1, §4; issue 07).
+	// A re-key runs it too: the addresses moved, and the mirror has to hear about
+	// it before the next play does.
+	syncCtx, syncCancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
+	defer syncCancel()
+	s.syncAfterLink(syncCtx, l)
+
 	if s.OnLinked != nil {
 		s.OnLinked(l)
 	}

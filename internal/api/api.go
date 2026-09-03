@@ -143,6 +143,11 @@ type Deps struct {
 	// issue 07, and issue 11 wires this to it. Nil means no Library here came over
 	// a Link, which is true of every Server until then.
 	LinkedLibrary func(libraryID string) bool
+	// Mirror is the mirror's read side (ADR-0056 §1, issue 07): which Libraries
+	// here came over a Link, whether the Server behind each is reachable, and the
+	// entity→Library resolution the writer guards need. *store.DB satisfies it;
+	// nil in a narrow unit test, and nothing is then linked.
+	Mirror LinkedLibraryReader
 	// Links is the receiving half of linking (ADR-0055, ADR-0056): the Links this
 	// Server holds against other households' Servers, and the flow that redeems an
 	// invite into one. It owns the dialer choice and the credential; the API layer
@@ -460,7 +465,7 @@ func Handler(deps Deps) http.Handler {
 	// Artists/Albums, and (drilling in) Episodes/Tracks in one grouped response,
 	// access-filtered (hidden excluded) exactly like browse. Authenticated.
 	mux.HandleFunc("/search",
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSearch(deps.Catalog)))))
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSearch(deps)))))
 
 	// GET /providerImage?ref=: the metadata-provider thumbnail proxy behind the admin
 	// Edit-item pickers (provider_image.go). It exists so the browser never contacts
