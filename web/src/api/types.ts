@@ -150,6 +150,49 @@ export interface LinkInvite {
   expiresAt: string;
 }
 
+// --- Linked servers, the HOME side (ADR-0055, ADR-0056; issues 06-10) -------
+
+/** A Link's condition (ADR-0056 §6). A closed set, never free text: the Linked
+ * servers page branches on it and each value is a different next move —
+ * `connected` nothing, `unreachable` wait or Sync now, `revoked` paste a fresh
+ * invite. */
+export type LinkState = "connected" | "unreachable" | "revoked";
+
+/** One linked Library a Link brought over, as `GET /links` lists it. Deliberately
+ * thinner than `Library`: a mirror has no root folders to show, and the page only
+ * needs to name the shelves and hand them to the grant dialog. */
+export interface LinkedLibrary {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+/** One Link as `GET /links` returns it (Admin).
+ *
+ * THERE IS NO TOKEN FIELD AND THERE MUST NEVER BE ONE — the server does not
+ * emit one (it is an outbound credential, the same posture as a provider key),
+ * and `state` is what an operator actually wants to know. */
+export interface Link {
+  id: string;
+  serverId: string;
+  serverName: string;
+  state: LinkState;
+  /** The address that answered. Shown so an operator can see WHICH path is
+   * carrying their films — the tailnet one or the public one. */
+  activeOrigin: string;
+  /** Every address the invite carried, in the order it carried them. */
+  origins: string[];
+  /** RFC3339, or null until the mirror has pulled once. Null is the server
+   * saying "never", which is a statement — not an absence. */
+  lastSyncedAt: string | null;
+  /** The reason for the most recent failure, verbatim. Empty when the last call
+   * succeeded. */
+  lastError: string;
+  /** The linked Libraries this Link provides — empty until the first pull
+   * finishes, and empty forever for a sharer who granted this Server nothing. */
+  libraries: LinkedLibrary[];
+}
+
 /** Request body for `POST /api/v1/users` (Admin): create a User. `role` is
  * optional and defaults to "member" server-side; pass "admin" to deliberately
  * mint another Admin. A blank username is rejected (400 BAD_REQUEST); a duplicate
@@ -766,6 +809,15 @@ export interface Library {
   /** RFC3339; may be absent (server `omitempty`). */
   createdAt?: string;
   rootFolders: LibraryRoot[];
+  /** True when this Library is a MIRROR of another household's (ADR-0056 §1).
+   * ABSENT on an ordinary local Library — the server omits it — so a server that
+   * has never linked sends exactly the wire it always did. */
+  linked?: boolean;
+  /** Whether the Server that provides a linked Library can be reached right now
+   * (ADR-0056 §6). Absent on a local Library: `false` is a statement about a
+   * friend's Server being down and must not be confused with a local Library's
+   * silence, which is why this is optional rather than defaulted to `true`. */
+  available?: boolean;
 }
 
 /** Response shape of `GET /libraries` (the list is wrapped). */
