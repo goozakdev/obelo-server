@@ -13,6 +13,7 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/audio"
 	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/playback"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subtitle"
@@ -476,11 +477,11 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 		// <img src> — bearer OR media cookie. handleGetTitle dispatches the artwork
 		// sub-resource itself, so route it through the cookie-capable middleware.
 		if i := strings.Index(rest, "/artwork/"); i > 0 {
-			requireMethod(http.MethodGet, requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleGetTitle(deps.Catalog))))(w, r)
+			requireMethod(http.MethodGet, requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleGetTitle(deps))))(w, r)
 			return
 		}
 		// GET {id}: the JSON detail surface — bearer-only.
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleGetTitle(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleGetTitle(deps))))(w, r)
 	}
 }
 
@@ -614,6 +615,29 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusTooManyRequests, codeStreamLimit,
 				"stream limit reached for this user; end another stream first", details)
 			return
+		case errors.Is(err, link.ErrCredentialDead):
+			// A Title in a linked Library, and the sharing Server no longer accepts this
+			// household's credential (ADR-0056 §6): the `remote` User or its Device was
+			// deleted over there. Nothing here is broken and nothing retries — the fix is
+			// a fresh invite, which the Linked servers page asks for.
+			writeError(w, http.StatusServiceUnavailable, codeLinkRevoked,
+				"the sharing server no longer accepts this server's credential; ask for a new invite", nil)
+			return
+		case errors.Is(err, link.ErrUnreachable), errors.Is(err, link.ErrNotObelo),
+			errors.Is(err, link.ErrNotRelayed):
+			// The friend's Server is off, or behind an address that has moved. The mirror
+			// stays and its Titles stay listed (badged unavailable); only the play fails.
+			writeError(w, http.StatusServiceUnavailable, codeLinkUnreachable,
+				"the sharing server could not be reached", nil)
+			return
+		case relayRefusalOf(err) != nil:
+			// The sharer answered, and its answer is the one the client needs: a
+			// SERVER_BUSY with the bitrate to retry at, a STREAM_LIMIT with its counts, a
+			// TRANSCODE_REQUIRED with its reason. It passes through verbatim (ADR-0056
+			// §5) — this Server knows nothing that would improve it.
+			ref := relayRefusalOf(err)
+			writeError(w, relayRefusalStatus(ref), relayRefusalCode(ref), ref.Message, ref.Details)
+			return
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, codeInternal, "playback negotiation failed", nil)
 			return
@@ -639,6 +663,24 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 					"retryable":           true,
 					"suggestedMaxBitrate": busy.SuggestedMaxBitrate,
 				})
+			return
+		}
+
+		// A relayed Decision is the SHARER's, re-served with its ids and URLs rewritten
+		// (relay_handlers.go). It does not go through toDecisionResponse: that builds a
+		// Decision from local Streams and a local File, and this one describes neither.
+		if dec.IsRelay() {
+			relayed := relayDecisionResponse(dec, sess.ID)
+			// The local session's own stream token, minted here for the same reason it is
+			// minted below: a client that will hand this URL to a television needs one,
+			// and the sharer's (dropped) would not work on this Server's routes.
+			if grant, err := deps.Auth.MintStreamToken(sess.ID, id.User.ID); err != nil {
+				log.Printf("obelo: api: minting stream token for relay session %s: %v", sess.ID, err)
+			} else {
+				relayed["streamToken"] = grant.Token
+				relayed["streamTokenExpiresAt"] = grant.ExpiresAt.UTC().Format(time.RFC3339)
+			}
+			writeJSON(w, http.StatusOK, relayed)
 			return
 		}
 

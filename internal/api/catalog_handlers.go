@@ -1314,7 +1314,8 @@ func handleReviewShow(svc *catalog.Service, showID string) http.HandlerFunc {
 // handleGetTitle returns one Title with its nested Editions/Files/Streams,
 // Extras, and Artwork (authenticated). Unknown id → 404. It also dispatches the
 // artwork sub-resource (/titles/{id}/artwork/{role}).
-func handleGetTitle(svc *catalog.Service) http.HandlerFunc {
+func handleGetTitle(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/titles/")
 		if rest == "" {
@@ -1329,7 +1330,7 @@ func handleGetTitle(svc *catalog.Service) http.HandlerFunc {
 		if i := strings.Index(rest, "/artwork/"); i > 0 {
 			titleID := rest[:i]
 			role := rest[i+len("/artwork/"):]
-			handleTitleArtwork(svc, scope, titleID, role)(w, r)
+			handleTitleArtwork(deps, scope, titleID, role)(w, r)
 			return
 		}
 		if strings.Contains(rest, "/") {
@@ -1377,7 +1378,8 @@ func handleGetTitle(svc *catalog.Service) http.HandlerFunc {
 // handleTitleArtwork serves the local artwork image bytes for a Title+role
 // (poster|background). Local-on-disk wins; no external fetch (ADR-0001). A Title
 // or role with no artwork → 404.
-func handleTitleArtwork(svc *catalog.Service, scope access.Scope, titleID, role string) http.HandlerFunc {
+func handleTitleArtwork(deps Deps, scope access.Scope, titleID, role string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		if titleID == "" || role == "" || strings.Contains(role, "/") {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -1386,6 +1388,12 @@ func handleTitleArtwork(svc *catalog.Service, scope access.Scope, titleID, role 
 		art, err := svc.Artwork(scope, titleID, role)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
+			// A MIRRORED Title has no artwork row here — the sharer's feed carries none
+			// (ADR-0056 §5) — so the image is fetched from them on this first request and
+			// cached. A local Title with no poster still answers 404.
+			if serveRelayArtwork(deps, w, r, scope, relayKindTitle, titleID, role) {
+				return
+			}
 			writeError(w, http.StatusNotFound, codeNotFound, "artwork not found", nil)
 			return
 		case err != nil:

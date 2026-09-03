@@ -59,8 +59,15 @@ type Service struct {
 	// operation is then a no-op — a Server that holds Links and mirrors nothing is
 	// a coherent state, it is what this package was before issue 07.
 	mirror MirrorStore
-	self   func() Identity
-	dialer *Dialer
+	// relayCatalog is the id translation the one-hop relay needs (relay.go),
+	// type-asserted off the mirror. Nil when the mirror cannot answer it (a narrow
+	// unit test), and this Server then relays nothing.
+	relayCatalog RelayStore
+	// artworkDir is the app's artwork cache (ADR-0007), where a relayed poster is
+	// stored on first request. Empty relays no artwork.
+	artworkDir string
+	self       func() Identity
+	dialer     *Dialer
 
 	// events is the realtime nudge (ADR-0016): `libraryUpdated` after a pull that
 	// changed a mirror, and the admin-only `linkState` on every state transition.
@@ -119,6 +126,11 @@ type Options struct {
 	// publishes nothing, which changes no outcome — every event this package sends
 	// is a nudge over a resource a client can poll (ADR-0016).
 	Events Publisher
+	// ArtworkDir is the app's artwork cache directory (config.ArtworkCacheDir),
+	// where a relayed poster is cached on first request (ADR-0056 §5). Empty — a
+	// narrow unit test — leaves artwork un-relayed, which reads as a Title with no
+	// poster rather than as an error.
+	ArtworkDir string
 }
 
 // Publisher is the realtime spine as this package needs it: two nudges, both
@@ -138,15 +150,23 @@ type Publisher interface {
 // New wires the Service.
 func New(s Store, self func() Identity, opts Options) *Service {
 	svc := &Service{
-		store:   s,
-		mirror:  opts.Mirror,
-		events:  opts.Events,
-		self:    self,
-		dialer:  &Dialer{Node: opts.Tailnet},
-		version: opts.Version,
-		now:     opts.Now,
-		newID:   opts.NewID,
-		timeout: opts.Timeout,
+		store:      s,
+		mirror:     opts.Mirror,
+		events:     opts.Events,
+		artworkDir: opts.ArtworkDir,
+		self:       self,
+		dialer:     &Dialer{Node: opts.Tailnet},
+		version:    opts.Version,
+		now:        opts.Now,
+		newID:      opts.NewID,
+		timeout:    opts.Timeout,
+	}
+	// The relay's catalog reads are an OPTIONAL capability of the mirror, wired
+	// only when the store can answer them (*store.DB does). A mirror that cannot
+	// leaves RelaysLibrary answering false, so every Title plays locally — which is
+	// what this package did before issue 09.
+	if rs, ok := opts.Mirror.(RelayStore); ok {
+		svc.relayCatalog = rs
 	}
 	if svc.version == 0 {
 		svc.version = server.LinkProtocolVersion

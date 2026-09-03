@@ -460,7 +460,7 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 			id := rest[:i]
 			role := rest[i+len("/artwork/"):]
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntityShow, id, role))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntityShow, id, role))))(w, r)
 			return
 		}
 		// POST {id}/reviewEpisodes: dismiss the needs_review flag on every flagged
@@ -564,7 +564,7 @@ func handleSeasonSubtree(deps Deps) http.HandlerFunc {
 			id := rest[:i]
 			role := rest[i+len("/artwork/"):]
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntitySeason, id, role))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntitySeason, id, role))))(w, r)
 			return
 		}
 		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSeasonEpisodes(deps.Catalog))))(w, r)
@@ -574,7 +574,8 @@ func handleSeasonSubtree(deps Deps) http.HandlerFunc {
 // handleEntityArtwork serves a browse parent's fetched artwork bytes (Show/Season/
 // Artist + role). Local artwork, where a parent has any, is served ahead of this
 // by the caller; this is the fetched fallback. Unknown entity/role → 404.
-func handleEntityArtwork(svc *catalog.Service, entityType, entityID, role string) http.HandlerFunc {
+func handleEntityArtwork(deps Deps, entityType, entityID, role string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		if entityID == "" || role == "" || strings.Contains(role, "/") {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -587,6 +588,11 @@ func handleEntityArtwork(svc *catalog.Service, entityType, entityID, role string
 		art, err := svc.EntityArtwork(scope, entityType, entityID, role)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
+			// Mirrored Show / Season / Artist: fetched from the sharer on first request
+			// (ADR-0056 §5). See handleTitleArtwork.
+			if serveRelayArtwork(deps, w, r, scope, entityType, entityID, role) {
+				return
+			}
 			writeError(w, http.StatusNotFound, codeNotFound, "artwork not found", nil)
 			return
 		case err != nil:
