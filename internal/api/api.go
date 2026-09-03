@@ -18,6 +18,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/events"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
+	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -142,6 +143,14 @@ type Deps struct {
 	// issue 07, and issue 11 wires this to it. Nil means no Library here came over
 	// a Link, which is true of every Server until then.
 	LinkedLibrary func(libraryID string) bool
+	// Links is the receiving half of linking (ADR-0055, ADR-0056): the Links this
+	// Server holds against other households' Servers, and the flow that redeems an
+	// invite into one. It owns the dialer choice and the credential; the API layer
+	// only pastes strings at it.
+	//
+	// May be nil in narrow unit tests, and the /links routes then answer 503 with a
+	// message rather than a 404 that reads identically to a typo'd path.
+	Links *link.Service
 	// ScanScope resolves a Targeted scan's folder set from a browsable entity
 	// (ADR-0030, per-entity POST /{titles|shows|albums|artists}/{id}/scan). *store.DB
 	// satisfies it; nil in narrow unit tests that don't exercise targeted scanning.
@@ -288,6 +297,21 @@ func Handler(deps Deps) http.Handler {
 		requireAuth(deps.Auth, requireAdmin(handleUsersCollection(deps.Auth))))
 	mux.HandleFunc("/users/",
 		requireAuth(deps.Auth, requireAdmin(handleUserSubtree(deps))))
+
+	// Linking, the RECEIVING side (ADR-0055, ADR-0056; issue 06). An Admin pastes
+	// the one string a friend sent and this Server holds the credential from then
+	// on: POST /links, GET /links, POST /links/{id}/rekey, DELETE /links/{id}.
+	// Admin-only — a Link is the household's relationship with another household,
+	// not a per-User one — and advertised via features.linkedLibraries, which is
+	// what tells a client to expect the linked/available fields (issue 07).
+	//
+	// The counterpart routes for the SHARING side are /users/{id}/invite and
+	// /auth/link/redeem above; both halves ship in one binary because every Server
+	// can be either side, but nothing here is reachable by the other one.
+	mux.HandleFunc("/links",
+		requireAuth(deps.Auth, requireAdmin(handleLinksCollection(deps))))
+	mux.HandleFunc("/links/",
+		requireAuth(deps.Auth, requireAdmin(handleLinkSubtree(deps))))
 
 	// Library management (ADR-0010 admin scope). Every route is Admin-only:
 	// requireAdmin layers on requireAuth, which attaches the identity. Method

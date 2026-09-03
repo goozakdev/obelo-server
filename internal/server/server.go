@@ -166,6 +166,18 @@ func (m *Metadata) Features() map[string]bool {
 		// it like the rest. Whether the two sides can actually TALK is the separate
 		// question linkProtocolVersion answers, and a client checks both.
 		"serverLinking": true,
+		// linkedLibraries advertises the RECEIVING half of linking (ADR-0056): the
+		// /links routes an Admin manages Links on, and — the part every client cares
+		// about — that Libraries here may have arrived over one, so a Library and its
+		// Titles can carry the `linked` and `available` fields (issue 07) and a play
+		// can answer LINK_UNREACHABLE. A client MUST branch on this rather than on a
+		// version: an older server has no such Libraries and no such fields, and the
+		// correct behaviour there is to render every Library as local, which is what
+		// it always did.
+		//
+		// It says nothing about whether this Server HAS any Links. That is what
+		// GET /links answers, and a household with none is the common case.
+		"linkedLibraries": true,
 		// transcode is the one flag that is NOT route-existence — which is why
 		// TestFeaturesMatchRoutes excludes it: /transcoding is only the admin
 		// observability snapshot (ADR-0029) and is served either way. It advertises the

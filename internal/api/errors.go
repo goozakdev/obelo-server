@@ -139,6 +139,41 @@ const (
 	codeInvalidInvite = "INVALID_INVITE"
 	codeLinkProtocol  = "LINK_PROTOCOL"
 	codeResync        = "RESYNC"
+	// Linking, the RECEIVING side (ADR-0055 §2–§5, ADR-0056 §6,
+	// .scratch/linked-servers issue 06) — the Admin who pastes the string:
+	//
+	//   codeBadInvite         (400) — POST /links (or /rekey) was handed something
+	//                                 that is not a readable invite: the wrong
+	//                                 scheme, base64 that does not decode, a field
+	//                                 missing. ONE code for every shape failure,
+	//                                 because the operator's move is the same in all
+	//                                 of them — ask for the string again. It also
+	//                                 carries the sharer's own INVALID_INVITE
+	//                                 refusal, which means the string was fine and
+	//                                 the CODE is spent or gone.
+	//   codeInviteExpired     (410) — a well-formed invite whose 24 hours ran out
+	//                                 (ADR-0055 §1). Gone rather than Bad Request
+	//                                 because nothing about the request was wrong;
+	//                                 the thing it names is no longer there.
+	//   codeLinkUnreachable   (503) — none of the addresses in the invite answered,
+	//                                 over either dialer (ADR-0055 §5). Not the
+	//                                 caller's fault and retryable, which is what
+	//                                 separates it from every 4xx here. ADR-0056 §6
+	//                                 reuses it for a play against an unreachable
+	//                                 Link.
+	//   codeLinkServerMismatch (409) — POST /links/{id}/rekey was given an invite
+	//                                 for a DIFFERENT Server. A Link is bound to one
+	//                                 peer for its whole life (the mirror is keyed by
+	//                                 that Server's ids), so this is refused rather
+	//                                 than silently repointed.
+	//
+	// LINK_PROTOCOL above is shared with the sharing side and answered here too,
+	// with details named from THIS side — { theirs, ours, upgrade } — because the
+	// asking Server is the one that has to say which household needs an upgrade.
+	codeBadInvite          = "BAD_INVITE"
+	codeInviteExpired      = "INVITE_EXPIRED"
+	codeLinkUnreachable    = "LINK_UNREACHABLE"
+	codeLinkServerMismatch = "LINK_SERVER_MISMATCH"
 	// Library-access grants (PUT /users/{id}/libraryAccess), both 422: granting to
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"
