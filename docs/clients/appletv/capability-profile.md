@@ -54,5 +54,5 @@ Notes:
 
 Consequences to design for:
 - **Almost every session is directPlay** — cheap for the server (no cap slot), instant seek via byte-range, and all in-container tracks (audio/video/subtitle, incl. image subs) are handled by mpv locally with no server round-trip.
-- The transcode tier appears mostly when the user caps quality on a fat file — handle `503 SERVER_BUSY` + `suggestedMaxBitrate` there (playbook §8).
+- The transcode tier appears mostly when the user caps quality on a fat file — handle `503 SERVER_BUSY` + `suggestedMaxBitrate` there (playbook §7, the error-recovery matrix).
 - The decision's `subtitles[]` still matters on direct play for **sidecar/fetched** tracks (they're not in the container): load them with `sub-add <url>`, preferring the original-format URLs the broad profile earns.

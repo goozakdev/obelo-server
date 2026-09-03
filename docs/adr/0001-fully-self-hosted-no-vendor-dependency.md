@@ -24,6 +24,15 @@
 > this ADR defensible rather than merely argued around. A custom DERP map — the remaining
 > Tailscale-operated component — was considered and deliberately not shipped; see ADR-0043.
 
+> **Amended by [ADR-0055](./0055-linking-is-a-one-time-invite-redeemed-server-to-server.md)** — linking
+> two households' servers. It adds **no** third party: there is no directory, no account service and
+> no relay, and there never will be. Linking is a one-time invite one person sends another, redeemed
+> **Server to Server** over an address the sharing operator typed themselves, and the credential it
+> leaves behind is an ordinary Device-bound token in the sharing server's own database. The one
+> optional path that involves anybody else is the tailnet one, and its coordination server is exactly
+> the third party ADR-0043 already admitted above, under the same terms — optional, off by default,
+> and replaceable by the operator's own.
+
 The server depends on no third-party service the operator does not control. Accounts and authentication live entirely in the server's own database — there is no cloud login. Remote access is reached directly via the operator's own networking (domain / dynamic DNS / VPN / reverse proxy); there is no vendor-operated relay.
 
 The server must function **fully offline**. External metadata enrichment (cover art, descriptions, cast) from public sources is **optional** and read-only: if the server has no internet access, everything still works, just with sparser metadata.
