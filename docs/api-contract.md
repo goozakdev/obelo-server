@@ -2,7 +2,7 @@
 
 The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-unified-two-scope-api.md)), consumed by the web app and all clients. Treated as a versioned product because clients and server update independently.
 
-> **Generated from source at commit `b295021` (2026-09-03)** — which completes **linked servers** ([ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md), [ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md), [ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)): the `remote` role and the Playback ceiling on §3.2, the invite and its redemption on §3.1, the Library Export on §3.3, the new §3.11 **Links** with the one-hop relay, the `linked`/`available` fields on Libraries and browse summaries, the `linkState` event, and eleven new error codes. Extracted from handler/DTO structs in `internal/api` and verified against a live instance. Every JSON field name below is a verbatim struct tag; examples are captured or derived from real responses. If code and this doc disagree, the code wins — regenerate by re-running the extraction against `internal/api/*.go` and `internal/events/broker.go`.
+> **Generated from source at commit `843c7ea` (2026-09-04)** — which completes **linked servers** ([ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md), [ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md), [ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)): the `remote` role and the Playback ceiling on §3.2, the invite and its redemption on §3.1, the Library Export on §3.3, the new §3.11 **Links** with the one-hop relay, the `linked`/`available` fields on Libraries and **every browse row** (§3.3, §3.4, §3.5), the `linkState` event, and eleven new error codes. Extracted from handler/DTO structs in `internal/api` and verified against a live instance. Every JSON field name below is a verbatim struct tag; examples are captured or derived from real responses. If code and this doc disagree, the code wins — regenerate by re-running the extraction against `internal/api/*.go` and `internal/events/broker.go`.
 
 **Reading this catalog:**
 - Every path lives under **`/api/v1`** (`APIPrefix`, `internal/api/api.go`). The prefix is stripped before dispatch; unknown paths under it return the enveloped `404 NOT_FOUND`, never a plain-text 404.
@@ -528,7 +528,9 @@ Errors: `400 BAD_REQUEST` `"invalid cursor"` (garbled), `410 RESYNC` (a `since` 
   "linked"?, "available"? }
 ```
 
-`linked`/`available` mean exactly what they mean on `libraryJSON` (§3.3): this row lives in a mirror of another household's Library, and whether that Server is answering. Both are absent on a local Title. `showSummaryJSON` and `artistSummaryJSON` carry the same pair.
+`linked`/`available` mean exactly what they mean on `libraryJSON` (§3.3): this row lives in a mirror of another household's Library, and whether that Server is answering. Both are absent on a local Title.
+
+**Every browse row carries the same pair**, so a client never has to infer the mark from the screen the viewer arrived through: `showSummaryJSON` and `artistSummaryJSON` here, the Album entries and the `album` object of the music endpoints below, the Episode rows of `GET /seasons/{id}/episodes`, and `homeTitleJSON` (§3.5). The three shapes that carry none are the ones that cannot need it — `seasonJSON` (no Library of its own; the Show beside it, or the Episode rows under it, say so), the `resumePoint` block (inside a Show that says so), and `titleDetailJSON` (reached from a row that says so, and its `POST /titles/{id}/playback` answers `LINK_UNREACHABLE` / `LINK_REVOKED` in its own right).
 
 `resumePositionMs`/`watched` are the **calling User's** watch state. `enrichmentStatus` ∈ `pending|matched|unmatched|failed|disabled` — note `failed` does **not** imply the item needs a human: a transient provider failure is recorded `failed` with a retry scheduled, and only a `failed` item with no retry (or one that has escalated) reaches the attention list ([ADR-0048](./adr/0048-a-transient-enrichment-failure-is-retried-not-parked.md)). `artworkVersion` is an opaque cache-bust token.
 
@@ -581,9 +583,11 @@ The full nested Title detail (`titleDetailJSON`): Editions → Files → Streams
 | Endpoint | Response |
 | --- | --- |
 | `GET /shows/{id}/seasons` | `{ "show": showSummaryJSON (fully decorated, incl. cast/lockedFields), "seasons": [ { "id", "showId", "seasonNumber", "specials"?, "episodeCount", "posterUrl"? } ], "resumePoint"?: { "id", "kind": "episode", "seasonId", "seasonNumber", "episodeNumber"?, "episodeLabel"?, "title", "overview"?, "resumePositionMs"?, "durationMs"?, "mode": "inProgress"\|"next", "enrichmentStatus"?, "stillUrl"? } }` — `resumePoint` is the Up Next anchor ([ADR-0028](./adr/0028-up-next-anchors-on-most-recently-played.md)); absent for not-started **and** fully-watched shows (disambiguate via `show.unwatchedEpisodeCount`). |
-| `GET /seasons/{id}/episodes` | `{ "season": seasonJSON, "episodes": [ { "id", "kind": "episode", "title", "seasonNumber", "episodeNumber"?, "episodeLabel"?, "needsReview"?, "resumePositionMs"?, "watched"?, "addedAt"?, "overview"?, "enrichmentStatus"?, "stillUrl"? } ] }` |
-| `GET /artists/{id}/albums` | `{ "artist": artistSummaryJSON (decorated), "albums": [ { "id", "artistId", "title", "year"?, "hasArtwork"?, "artworkVersion"?, "releaseType"?, "genres"?, "enrichmentStatus"?, "trackCount" } ] }` — `releaseType` is the normalized tag type (`"album"`, `"single"`, `"ep"`, …; absent when untagged); clients badge non-`album` types so same-titled releases (split per [ADR-0038](./adr/0038-album-identity-release-group-wins.md)) are tellable apart. |
-| `GET /albums/{id}/tracks` | `{ "album": albumJSON (incl. "artistName"), "tracks": [ { "id", "kind": "track", "title", "discNumber"?, "trackNumber"?, "durationMs"?, "needsReview"?, "resumePositionMs"?, "watched"?, "overview"?, "enrichmentStatus"? } ] }` — disc/track order. |
+| `GET /seasons/{id}/episodes` | `{ "season": seasonJSON, "episodes": [ { "id", "kind": "episode", "title", "seasonNumber", "episodeNumber"?, "episodeLabel"?, "needsReview"?, "resumePositionMs"?, "watched"?, "addedAt"?, "overview"?, "enrichmentStatus"?, "stillUrl"?, "linked"?, "available"? } ] }` — the Episode rows carry the mirror pair because nothing else in this document can: a Season has no Library of its own and the marked Show is a screen back. |
+| `GET /artists/{id}/albums` | `{ "artist": artistSummaryJSON (decorated), "albums": [ { "id", "artistId", "title", "year"?, "hasArtwork"?, "artworkVersion"?, "releaseType"?, "genres"?, "enrichmentStatus"?, "trackCount", "linked"?, "available"? } ] }` — `releaseType` is the normalized tag type (`"album"`, `"single"`, `"ep"`, …; absent when untagged); clients badge non-`album` types so same-titled releases (split per [ADR-0038](./adr/0038-album-identity-release-group-wins.md)) are tellable apart. |
+| `GET /albums/{id}/tracks` | `{ "album": albumJSON (incl. "artistName"), "tracks": [ { "id", "kind": "track", "title", "discNumber"?, "trackNumber"?, "durationMs"?, "needsReview"?, "resumePositionMs"?, "watched"?, "overview"?, "enrichmentStatus"?, "linked"?, "available"? } ] }` — disc/track order. |
+
+`albumJSON` carries `linked`/`available` wherever it appears — the entries above, the `album` object here, and the `albums` group of `GET /search` (§3.5), which is the one place an Album row arrives with no Artist beside it to inherit the mark from. A Track row carries it too: a queue built from an Album list outlives the screen it was built on.
 
 All: unknown/ungranted parent → `404`.
 
@@ -610,7 +614,7 @@ URLs advertised in parent JSON carry `?v={version}` cache-busters; title-detail 
 { "continueWatching": [ homeTitleJSON ], "upNext": [ homeTitleJSON ], "recentlyAdded": [ homeTitleJSON ] }
 ```
 
-`homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "durationMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"? }`. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first. `resumePositionMs`/`durationMs` are populated on **Continue Watching only** — together they drive the card's progress bar, the same pairing `resumePoint` carries on the Show detail; Up Next / Recently Added omit both, and `durationMs` is also omitted when the duration is unknown.
+`homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "durationMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"?, "linked"?, "available"? }`. `linked`/`available` mean exactly what they mean on `libraryJSON` (§3.3) and `titleSummaryJSON` (§3.4), and are absent on a local Title — a Home row is where a viewer meets a mirrored Title with no Library screen around it, so the row itself says so. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first. `resumePositionMs`/`durationMs` are populated on **Continue Watching only** — together they drive the card's progress bar, the same pairing `resumePoint` carries on the Show detail; Up Next / Recently Added omit both, and `durationMs` is also omitted when the duration is unknown.
 
 #### GET /search?q=…
 
@@ -618,7 +622,7 @@ URLs advertised in parent JSON carry `?v={version}` cache-busters; title-detail 
 { "movies": [], "shows": [], "artists": [], "albums": [], "episodes": [], "tracks": [] }
 ```
 
-Six always-present groups reusing the browse summary DTOs (search results carry no `?v=` artwork cache-buster). `q` (fallback `query`); empty `q` → `200` with empty groups. `limit` caps each group (default 20, max 100). Case-insensitive substring on display names, access-filtered.
+Six always-present groups reusing the browse summary DTOs (search results carry no `?v=` artwork cache-buster), so every hit carries `linked`/`available` when it lives in a mirror — including the `albums` group, whose rows have no Artist beside them. `q` (fallback `query`); empty `q` → `200` with empty groups. `limit` caps each group (default 20, max 100). Case-insensitive substring on display names, access-filtered.
 
 ### 3.6 Playback
 

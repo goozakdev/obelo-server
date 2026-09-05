@@ -49,6 +49,14 @@ type homeTitleJSON struct {
 	Overview     string   `json:"overview,omitempty"`
 	Genres       []string `json:"genres,omitempty"`
 	DisplayTitle string   `json:"displayTitle,omitempty"`
+	// Linked/Available: this row lives in a mirror of another household's Library
+	// (ADR-0056 §1, §6). Absent on a local Title — exactly the pair, with exactly
+	// the semantics, titleSummaryJSON carries. A Home row is the one place a
+	// viewer meets a mirrored Title with no Library screen around it, so the row
+	// itself has to say so rather than leave the client to infer it from where it
+	// arrived (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type homeResponse struct {
@@ -57,8 +65,11 @@ type homeResponse struct {
 	RecentlyAdded    []homeTitleJSON `json:"recentlyAdded"`
 }
 
-func toHomeTitle(t catalog.HomeTitle) homeTitleJSON {
+func toHomeTitle(t catalog.HomeTitle, linked linkedState) homeTitleJSON {
+	isLinked, available := linked.decorate(t.LibraryID)
 	j := homeTitleJSON{
+		Linked:           isLinked,
+		Available:        available,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            t.Title.Title,
@@ -82,7 +93,8 @@ func toHomeTitle(t catalog.HomeTitle) homeTitleJSON {
 }
 
 // handleHome returns the calling User's computed Home rows (authenticated).
-func handleHome(svc *catalog.Service) http.HandlerFunc {
+func handleHome(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -98,19 +110,22 @@ func handleHome(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to build home", nil)
 			return
 		}
+		// One read of the mirror state for the whole payload — three rows of up to
+		// 20 Titles each share it, rather than one lookup per row.
+		linked := loadLinkedState(deps)
 		out := homeResponse{
 			ContinueWatching: make([]homeTitleJSON, 0, len(cw.Titles)),
 			UpNext:           make([]homeTitleJSON, 0, len(un.Titles)),
 			RecentlyAdded:    make([]homeTitleJSON, 0, len(ra.Titles)),
 		}
 		for _, t := range cw.Titles {
-			out.ContinueWatching = append(out.ContinueWatching, toHomeTitle(t))
+			out.ContinueWatching = append(out.ContinueWatching, toHomeTitle(t, linked))
 		}
 		for _, t := range un.Titles {
-			out.UpNext = append(out.UpNext, toHomeTitle(t))
+			out.UpNext = append(out.UpNext, toHomeTitle(t, linked))
 		}
 		for _, t := range ra.Titles {
-			out.RecentlyAdded = append(out.RecentlyAdded, toHomeTitle(t))
+			out.RecentlyAdded = append(out.RecentlyAdded, toHomeTitle(t, linked))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

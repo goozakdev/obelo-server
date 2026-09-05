@@ -123,7 +123,7 @@ func handleSearch(deps Deps) http.HandlerFunc {
 			out.Artists = append(out.Artists, js)
 		}
 		for _, al := range res.Albums {
-			js := toAlbumJSON(al)
+			js := toAlbumJSON(al, linked)
 			decorateAlbum(&js, albumEnr[al.ID], albumRoles[al.ID], "")
 			out.Albums = append(out.Albums, js)
 		}

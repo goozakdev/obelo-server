@@ -469,7 +469,7 @@ func Handler(deps Deps) http.Handler {
 	// GET /home: the per-User computed Home surface — Continue Watching +
 	// Recently Added rows (issue 08). Authenticated; computed, never stored.
 	mux.HandleFunc("/home",
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleHome(deps.Catalog)))))
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleHome(deps)))))
 
 	// GET /search?q=: cross-kind search (issue tv-music/04) — Movies, Shows,
 	// Artists/Albums, and (drilling in) Episodes/Tracks in one grouped response,

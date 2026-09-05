@@ -258,6 +258,13 @@ type episodeSummaryJSON struct {
 	// that would rather render it as a badge. See episodePartLabels.
 	PartNumber int `json:"partNumber,omitempty"`
 	PartCount  int `json:"partCount,omitempty"`
+	// Linked/Available: this Episode lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Episode. The Season listing is
+	// the one browse document in which nothing else carries the mark — seasonJSON
+	// has no Library of its own and the marked Show is a screen back — so the
+	// Episode rows carry it (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type episodesResponse struct {
@@ -344,8 +351,11 @@ func partSuffix(p episodePart) string {
 	return fmt.Sprintf(" (%d of %d)", p.Number, p.Count)
 }
 
-func toEpisodeSummary(t store.Title, ws store.WatchState, version string, part episodePart) episodeSummaryJSON {
+func toEpisodeSummary(t store.Title, ws store.WatchState, version string, part episodePart, linked linkedState) episodeSummaryJSON {
+	isLinked, available := linked.decorate(t.LibraryID)
 	js := episodeSummaryJSON{
+		Linked:           isLinked,
+		Available:        available,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            displayTitle(t) + partSuffix(part),
@@ -567,7 +577,7 @@ func handleSeasonSubtree(deps Deps) http.HandlerFunc {
 				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntitySeason, id, role))))(w, r)
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSeasonEpisodes(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSeasonEpisodes(deps))))(w, r)
 	}
 }
 
@@ -732,7 +742,8 @@ func handleShowSeasons(deps Deps) http.HandlerFunc {
 
 // handleSeasonEpisodes serves GET /seasons/{id}/episodes, decorating each Episode
 // with the calling User's watch state. Unknown/inaccessible Season → 404.
-func handleSeasonEpisodes(svc *catalog.Service) http.HandlerFunc {
+func handleSeasonEpisodes(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -773,12 +784,13 @@ func handleSeasonEpisodes(svc *catalog.Service) http.HandlerFunc {
 		// two files) are otherwise indistinguishable in this list — same title, same
 		// synopsis, same still. Number them so the viewer can tell which half is which.
 		parts := episodePartLabels(episodes)
+		linked := loadLinkedState(deps)
 		out := episodesResponse{
 			Season:   toSeasonJSON(season),
 			Episodes: make([]episodeSummaryJSON, 0, len(episodes)),
 		}
 		for _, e := range episodes {
-			out.Episodes = append(out.Episodes, toEpisodeSummary(e, states[e.ID], versions[e.ID], parts[e.ID]))
+			out.Episodes = append(out.Episodes, toEpisodeSummary(e, states[e.ID], versions[e.ID], parts[e.ID], linked))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
