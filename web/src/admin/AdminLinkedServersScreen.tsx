@@ -4,7 +4,7 @@ import { apiClient } from "../api/client";
 import { appEvents } from "../events/enrichEvents";
 import { errorMessage } from "../screens/errorMessage";
 import { formatAgo, formatDateTime } from "../time";
-import type { Link } from "../api/types";
+import type { Link, LinkedLibrary } from "../api/types";
 import { linkErrorMessage } from "./linkErrors";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -34,6 +34,15 @@ import ConfirmDialog from "./ConfirmDialog";
 // one paste brings them back. Unlink is the only thing that deletes, which is why
 // it is the only action behind a confirmation and why that confirmation names
 // what goes.
+//
+// This is also the ONLY page that lists a linked Library at all (issue 16): the
+// Libraries hub shows local shelves and one line pointing here. So the one write
+// the server allows on a mirror — a rename, because what this household calls
+// somebody else's shelf is this household's business (ADR-0056 §1,
+// api-contract §3.3) — is offered here, as an inline field on the library line
+// rather than a second Edit dialog: the real one is mostly root folders and the
+// Enrichment policy, both of which a mirror refuses. Only `name` is ever sent, so
+// the 409 LINKED_LIBRARY that `addRootFolders` would earn cannot fire from here.
 
 /** The chip beside a server's name. Three states, three sentences: the label is
  * what happened, the note is what to do about it.
@@ -400,19 +409,7 @@ function LinkRow({ link, onChanged }: { link: Link; onChanged: () => void }) {
         ) : (
           <ul className="link-library-list" data-testid="link-libraries">
             {link.libraries.map((lib) => (
-              <li key={lib.id} className="link-library" data-library-id={lib.id}>
-                <span className="link-library-name">{lib.name}</span>
-                <span className="link-library-kind">{lib.kind}</span>
-                {/* The grant itself is per-User and already has a dialog; this is
-                    a shortcut into it, never a second grant UI. */}
-                <RouterLink
-                  className="nav-link"
-                  to="/admin/users"
-                  data-testid="link-grant-users"
-                >
-                  Grant users…
-                </RouterLink>
-              </li>
+              <LinkLibraryItem key={lib.id} library={lib} onRenamed={onChanged} />
             ))}
           </ul>
         )}
@@ -524,6 +521,146 @@ function LinkRow({ link, onChanged }: { link: Link; onChanged: () => void }) {
             if (busy === null) setConfirmUnlink(false);
           }}
         />
+      )}
+    </li>
+  );
+}
+
+/** One linked Library under its Link: the name, the kind, the grant shortcut, and
+ * the rename.
+ *
+ * The rename is inline — a field where the name was, Save and Cancel — rather
+ * than the Libraries hub's Edit dialog, which is two tabs of things a mirror
+ * refuses. It PATCHes `{ name }` and nothing else, then asks the page to refetch,
+ * because GET /links is the truth for this list exactly as it is for the state
+ * chip; the new name is this household's own label and shows up wherever the
+ * Library does. An empty or unchanged name is not a save, so a stray Enter is a
+ * no-op rather than a 400. */
+function LinkLibraryItem({
+  library,
+  onRenamed,
+}: {
+  library: LinkedLibrary;
+  /** Called after a successful rename; the page reloads its links. */
+  onRenamed: () => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(library.name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmed = name.trim();
+  const dirty = trimmed !== "" && trimmed !== library.name;
+
+  async function onSave() {
+    if (busy || !dirty) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiClient.updateLibrary(library.id, { name: trimmed });
+      setRenaming(false);
+      onRenamed();
+    } catch (err) {
+      // Keep the field open with what was typed: a refused rename is worth
+      // another try, and retyping it would be the second insult.
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="link-library" data-library-id={library.id}>
+      {renaming ? (
+        <div className="link-library-rename" data-testid="link-library-rename">
+          <label className="field-label" htmlFor={`link-library-name-${library.id}`}>
+            Name for {library.name}
+          </label>
+          <div className="link-library-rename-row">
+            <input
+              id={`link-library-name-${library.id}`}
+              className="field-input"
+              data-testid="link-library-rename-input"
+              type="text"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && dirty) void onSave();
+                if (e.key === "Escape") {
+                  setRenaming(false);
+                  setName(library.name);
+                  setError(null);
+                }
+              }}
+              disabled={busy}
+            />
+            <button
+              className="nav-link"
+              type="button"
+              data-testid="link-library-rename-save"
+              onClick={() => void onSave()}
+              disabled={busy || !dirty}
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+            <button
+              className="nav-link"
+              type="button"
+              data-testid="link-library-rename-cancel"
+              onClick={() => {
+                setRenaming(false);
+                setName(library.name);
+                setError(null);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          </div>
+          <span className="field-hint">
+            This is only what this household calls the shelf. Nothing on their
+            server changes, and the next sync keeps the name you chose.
+          </span>
+          {error && (
+            <p
+              className="status status-error"
+              data-testid="link-library-rename-error"
+              role="alert"
+            >
+              <span className="dot dot-error" aria-hidden="true" />
+              {error}
+            </p>
+          )}
+        </div>
+      ) : (
+        <>
+          <span className="link-library-name">{library.name}</span>
+          <span className="link-library-kind">{library.kind}</span>
+          <button
+            className="nav-link"
+            type="button"
+            data-testid="link-library-rename-toggle"
+            onClick={() => {
+              setName(library.name);
+              setError(null);
+              setRenaming(true);
+            }}
+          >
+            Rename…
+          </button>
+          {/* The grant itself is per-User and already has a dialog; this is
+              a shortcut into it, never a second grant UI. */}
+          <RouterLink
+            className="nav-link"
+            to="/admin/users"
+            data-testid="link-grant-users"
+          >
+            Grant users…
+          </RouterLink>
+        </>
       )}
     </li>
   );
