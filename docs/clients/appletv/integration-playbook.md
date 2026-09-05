@@ -143,7 +143,20 @@ A household's Obelo can hold a **Link** to a friend's Obelo, and the libraries t
 
 ### 9.1 Rendering: `linked` and `available`
 
-Both ride on `libraryJSON` and on `titleSummaryJSON` / `showSummaryJSON` / `artistSummaryJSON`. Both are **absent on anything local** — a household that has never linked sends exactly the wire it always did, so absent means "local", never "error".
+**Every browse row carries the pair**, so you never have to remember which screen the viewer came through. Both are **absent on anything local** — a household that has never linked sends exactly the wire it always did, so absent means "local", never "error".
+
+| Shape | Where you meet it |
+| --- | --- |
+| `libraryJSON` | `GET /libraries` |
+| `titleSummaryJSON` | the movie grid, and the `movies` / `episodes` / `tracks` groups of `GET /search`, collection members, playlist members, the Watchlist |
+| `showSummaryJSON` | the TV grid, the `shows` search group, and the `show` object of `GET /shows/{id}/seasons` |
+| `artistSummaryJSON` | the music grid, the `artists` search group, and the `artist` object of `GET /artists/{id}/albums` |
+| `homeTitleJSON` | **Continue Watching / Up Next / Recently Added** (`GET /home`) |
+| `albumJSON` | the `albums` of `GET /artists/{id}/albums`, the `album` of `GET /albums/{id}/tracks`, and the `albums` search group |
+| the Track rows | `GET /albums/{id}/tracks` |
+| the Episode rows | `GET /seasons/{id}/episodes` |
+
+Three shapes deliberately carry neither, and each is reachable only from a document that does: `seasonJSON` (it has no library of its own — read the Show beside it, or the Episode rows under it), the `resumePoint` block on the Show detail (read the Show), and `titleDetailJSON` on `GET /titles/{id}` (read the row you opened; and the play itself answers `LINK_UNREACHABLE` / `LINK_REVOKED` in its own right, §9.3).
 
 - **`linked: true`** — this library/row is a mirror of another household's. Show a small, quiet badge. Do not offer anything that writes: there is no scan, no edit, no artwork upload on the tvOS client anyway, but if you ever add one, this is the flag that hides it.
 - **`available`** — sent **only** for a linked library/row, and then always (it is a real `false`, not an omission). `false` means the sharing server is not answering right now.

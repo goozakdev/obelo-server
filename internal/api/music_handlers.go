@@ -113,6 +113,13 @@ type albumJSON struct {
 	// Edit-item surface (item-editing/02): on the Album DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// Linked/Available: this Album lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Album. An Album row reaches a
+	// client from three places — the Artist detail, the Album detail and a search
+	// group — and the search group has no Artist beside it to inherit the mark
+	// from (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type albumsResponse struct {
@@ -120,7 +127,8 @@ type albumsResponse struct {
 	Albums []albumJSON       `json:"albums"`
 }
 
-func toAlbumJSON(a store.Album) albumJSON {
+func toAlbumJSON(a store.Album, linked linkedState) albumJSON {
+	isLinked, available := linked.decorate(a.LibraryID)
 	return albumJSON{
 		ID:          a.ID,
 		ArtistID:    a.ArtistID,
@@ -129,6 +137,8 @@ func toAlbumJSON(a store.Album) albumJSON {
 		HasArtwork:  a.ArtworkPath != "",
 		ReleaseType: a.ReleaseType,
 		TrackCount:  a.TrackCount,
+		Linked:      isLinked,
+		Available:   available,
 	}
 }
 
@@ -167,6 +177,13 @@ type trackSummaryJSON struct {
 	// canonical enriched title where the tag title was sparse. Both omitempty.
 	Overview         string `json:"overview,omitempty"`
 	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
+	// Linked/Available: this Track lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Track. A Track is a playable
+	// leaf, and a queue built from an Album list outlives the screen it was built
+	// on, so the row says it rather than leaving the client to remember
+	// (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type tracksResponse struct {
@@ -174,8 +191,11 @@ type tracksResponse struct {
 	Tracks []trackSummaryJSON `json:"tracks"`
 }
 
-func toTrackSummary(t store.Title, ws store.WatchState) trackSummaryJSON {
+func toTrackSummary(t store.Title, ws store.WatchState, linked linkedState) trackSummaryJSON {
+	isLinked, available := linked.decorate(t.LibraryID)
 	js := trackSummaryJSON{
+		Linked:           isLinked,
+		Available:        available,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            displayTitle(t),
@@ -330,7 +350,8 @@ func handleArtistAlbums(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list albums", nil)
 			return
 		}
-		artistJS := toArtistSummary(artist, loadLinkedState(deps))
+		linked := loadLinkedState(deps)
+		artistJS := toArtistSummary(artist, linked)
 		if e, err := svc.EntityEnrichment(store.EntityArtist, artist.ID); err == nil {
 			roles, _ := svc.EntityArtworkRoles(store.EntityArtist, []string{artist.ID})
 			versions, _ := svc.EntityArtworkVersions(store.EntityArtist, []string{artist.ID})
@@ -353,7 +374,7 @@ func handleArtistAlbums(deps Deps) http.HandlerFunc {
 			Albums: make([]albumJSON, 0, len(albums)),
 		}
 		for _, a := range albums {
-			js := toAlbumJSON(a)
+			js := toAlbumJSON(a, linked)
 			decorateAlbum(&js, albumEnr[a.ID], albumRoles[a.ID], albumVersions[a.ID])
 			out.Albums = append(out.Albums, js)
 		}
@@ -365,7 +386,8 @@ func handleArtistAlbums(deps Deps) http.HandlerFunc {
 // each Track with the calling User's watch state. Unknown/inaccessible Album →
 // 404. It also dispatches the album artwork sub-resource
 // (/albums/{id}/artwork).
-func handleAlbumTracks(svc *catalog.Service) http.HandlerFunc {
+func handleAlbumTracks(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -399,7 +421,8 @@ func handleAlbumTracks(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list tracks", nil)
 			return
 		}
-		albumJS := toAlbumJSON(album)
+		linked := loadLinkedState(deps)
+		albumJS := toAlbumJSON(album, linked)
 		albumJS.ArtistName = artist.Name
 		if e, err := svc.EntityEnrichment(store.EntityAlbum, album.ID); err == nil {
 			roles, _ := svc.EntityArtworkRoles(store.EntityAlbum, []string{album.ID})
@@ -416,7 +439,7 @@ func handleAlbumTracks(svc *catalog.Service) http.HandlerFunc {
 			Tracks: make([]trackSummaryJSON, 0, len(tracks)),
 		}
 		for _, t := range tracks {
-			ts := toTrackSummary(t, states[t.ID])
+			ts := toTrackSummary(t, states[t.ID], linked)
 			ts.DurationMs = durations[t.ID]
 			out.Tracks = append(out.Tracks, ts)
 		}
@@ -472,7 +495,7 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityAlbum, rest) {
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleAlbumTracks(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleAlbumTracks(deps))))(w, r)
 	}
 }
 

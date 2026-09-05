@@ -167,7 +167,7 @@ func TestPartLabellingTouchesNothingElse(t *testing.T) {
 func TestPartSuffixIsAppendedToTheDisplayTitle(t *testing.T) {
 	title := pinned(ep("b", 6, 22, "s"), 6, 21)
 	title.Title = "Moving Up"
-	js := toEpisodeSummary(title, store.WatchState{}, "", episodePart{Number: 2, Count: 2})
+	js := toEpisodeSummary(title, store.WatchState{}, "", episodePart{Number: 2, Count: 2}, nil)
 	if js.Title != "Moving Up (2 of 2)" {
 		t.Errorf("title = %q, want %q", js.Title, "Moving Up (2 of 2)")
 	}
@@ -178,7 +178,7 @@ func TestPartSuffixIsAppendedToTheDisplayTitle(t *testing.T) {
 	// An ordinary episode keeps its title exactly, and sends no part fields.
 	plain := ep("a", 1, 1, "s")
 	plain.Title = "Pilot"
-	pjs := toEpisodeSummary(plain, store.WatchState{}, "", episodePart{})
+	pjs := toEpisodeSummary(plain, store.WatchState{}, "", episodePart{}, nil)
 	if pjs.Title != "Pilot" || pjs.PartNumber != 0 || pjs.PartCount != 0 {
 		t.Errorf("ordinary episode = %q part %d/%d, want untouched",
 			pjs.Title, pjs.PartNumber, pjs.PartCount)
