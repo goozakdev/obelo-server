@@ -61,6 +61,7 @@ import type {
   HomeResponseRaw,
   HomeRows,
   Library,
+  LinkedMarks,
   MatchOverride,
   MatchOverrideRaw,
   MediaFile,
@@ -105,7 +106,29 @@ import type {
   WatchStateResult,
 } from "./types";
 
-/** Fill a Library's holes (rootFolders may be absent on a malformed payload). */
+/** Carry the mirror pair through UNFILLED, and only when the server sent it.
+ *
+ * Every other hole on these shapes is filled (`false` / `0` / `[]`) because
+ * absent and empty mean the same thing there. Here they do not: absent means
+ * "this row is local", and `available: false` means "a friend's Server is not
+ * answering right now" (docs/api-contract.md §3.4). Defaulting `linked` to
+ * `false` would be harmless but defaulting `available` to `true` would be a lie,
+ * and a `linked: false` on every row of every payload is exactly the wire change
+ * the server deliberately does not make — so the client mirrors it: the keys
+ * exist only when the server sent them.
+ *
+ * Spread into the normalized object, so a local row comes out with neither key. */
+function linkedMarks(raw: LinkedMarks): LinkedMarks {
+  const marks: LinkedMarks = {};
+  if (raw.linked !== undefined) marks.linked = raw.linked;
+  if (raw.available !== undefined) marks.available = raw.available;
+  return marks;
+}
+
+/** Fill a Library's holes (rootFolders may be absent on a malformed payload).
+ * The mirror pair (issue 10) rides through `linkedMarks`: it was dropped here
+ * until issue 15, which meant the browse Libraries list rendered a mirror as an
+ * ordinary local shelf against a real server, however the mocked tests read. */
 export function normalizeLibrary(raw: Library): Library {
   return {
     id: raw.id,
@@ -113,6 +136,7 @@ export function normalizeLibrary(raw: Library): Library {
     kind: raw.kind,
     createdAt: raw.createdAt,
     rootFolders: raw.rootFolders ?? [],
+    ...linkedMarks(raw),
   };
 }
 
@@ -203,6 +227,7 @@ export function normalizeTitleSummary(raw: TitleSummaryRaw): TitleSummary {
     artworkVersion: raw.artworkVersion,
     episode: raw.episode,
     track: raw.track,
+    ...linkedMarks(raw),
   };
 }
 
@@ -483,6 +508,7 @@ export function normalizeShowSummary(raw: ShowSummaryRaw): ShowSummary {
     lockedFields: raw.lockedFields,
     enrichmentOverride: raw.enrichmentOverride,
     cast: raw.cast ?? [],
+    ...linkedMarks(raw),
   };
 }
 
@@ -552,6 +578,7 @@ function normalizeEpisodeSummary(raw: EpisodeSummaryRaw): EpisodeSummary {
     overview: raw.overview ?? "",
     enrichmentStatus: raw.enrichmentStatus,
     stillUrl: raw.stillUrl,
+    ...linkedMarks(raw),
   };
 }
 
@@ -583,6 +610,7 @@ export function normalizeArtistSummary(raw: ArtistSummaryRaw): ArtistSummary {
     logoUrl: raw.logoUrl,
     lockedFields: raw.lockedFields,
     enrichmentOverride: raw.enrichmentOverride,
+    ...linkedMarks(raw),
   };
 }
 
@@ -610,6 +638,7 @@ function normalizeAlbum(raw: AlbumRaw): Album {
     enrichmentStatus: raw.enrichmentStatus,
     lockedFields: raw.lockedFields,
     enrichmentOverride: raw.enrichmentOverride,
+    ...linkedMarks(raw),
   };
 }
 
@@ -634,6 +663,7 @@ function normalizeTrackSummary(raw: TrackSummaryRaw): TrackSummary {
     watched: raw.watched ?? false,
     overview: raw.overview ?? "",
     enrichmentStatus: raw.enrichmentStatus,
+    ...linkedMarks(raw),
   };
 }
 

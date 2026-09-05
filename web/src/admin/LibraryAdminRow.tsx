@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library, ScanMode } from "../api/types";
 import { LibraryKindIcon } from "../browse/kindIcons";
+import LinkedMark from "../browse/LinkedMark";
 import { useScanStatus } from "./useScanStatus";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -146,9 +147,7 @@ export default function LibraryAdminRow({
         </span>
         {linked && (
           <>
-            <span className="linked-badge" data-testid="admin-library-linked-badge">
-              Linked
-            </span>
+            <LinkedMark entity={library} testId="admin-library-linked-badge" />
             <span className="admin-library-provided" data-testid="admin-library-provided">
               Provided by {providedBy || "another server"} — nothing here can change
               it.

@@ -5934,9 +5934,12 @@ textarea.metadata-input {
   align-self: flex-start;
 }
 
-/* The one mark a mirrored Library carries, in the admin list and in browse. Dim
-   rather than loud: a linked Library is an ordinary Library to everyone using
-   it, and the badge is a fact about where it came from, not a warning. */
+/* The one mark a mirrored row carries, everywhere it appears (issue 15): the
+   Libraries list and the admin row, and every browse row that can come out of a
+   mirror — poster tiles, Detail/List rows, Show and Artist and Album grids,
+   Episode tiles, Track rows, and the detail headers. Dim rather than loud: a
+   linked Library is an ordinary Library to everyone using it, and the badge is a
+   fact about where it came from, not a warning. Rendered by <LinkedMark>. */
 .linked-badge {
   font-size: 0.75rem;
   padding: 0.05rem 0.4rem;
@@ -5946,7 +5949,8 @@ textarea.metadata-input {
   white-space: nowrap;
 }
 
-.admin-library-provided {
+.admin-library-provided,
+.linked-provided {
   font-size: 0.8rem;
   color: var(--text-dim);
 }
@@ -5961,11 +5965,15 @@ textarea.metadata-input {
   border-top: 1px solid var(--border);
 }
 
-/* The unreachable treatment in browse: greyed and set back, but still on the
-   shelf and still openable. The catalog is here; only the bytes are away. */
-.library-card.is-unavailable {
+/* The unreachable treatment, ONE rule for every row that wears it (issue 15):
+   greyed and set back, but still in place and still openable. The catalog is
+   here; only the bytes are away, and a row that vanishes when a friend reboots
+   teaches people their films are gone. Deliberately selector-free of any row
+   class so a library card, a poster tile, a browse row, an episode tile and a
+   track row all dim by exactly the same amount. */
+.is-unavailable {
   opacity: 0.55;
 }
-.library-card.is-unavailable:hover {
+.is-unavailable:hover {
   opacity: 0.8;
 }

@@ -9,6 +9,8 @@ import { useAsync } from "../browse/useAsync";
 import { errorMessage } from "../screens/errorMessage";
 import BackLink from "../browse/BackLink";
 import Poster from "../browse/Poster";
+import { useLibraryMarks, useLibraryProvider } from "../browse/librariesContext";
+import LinkedMark from "../browse/LinkedMark";
 import AddToPlaylist from "../browse/AddToPlaylist";
 import { EditIcon, MoreIcon } from "../browse/ActionIcons";
 import EnrichmentOverridePicker from "../admin/EnrichmentOverridePicker";
@@ -73,6 +75,11 @@ export default function TrackDetailScreen() {
 function TrackDetail({ title }: { title: TitleDetail }) {
   const { isAdmin } = useAuth();
   const queue = useQueue();
+  // `titleDetailJSON` carries no mirror pair (issue 14 deviation 2), so the mark
+  // is derived from the Track's Library — the same derivation the movie/episode
+  // detail makes, with the same badge.
+  const marks = useLibraryMarks(title.libraryId);
+  const providedBy = useLibraryProvider(title.libraryId);
   // Local genres, seeded from the server and rewritten from the detail an applied
   // Enrichment override returns, so an Admin's "Fix info" is reflected at once.
   const [genres, setGenres] = useState<string[]>(title.genres);
@@ -147,6 +154,11 @@ function TrackDetail({ title }: { title: TitleDetail }) {
             {title.title}
           </h1>
           <div className="detail-meta">
+            <LinkedMark
+              entity={marks}
+              testId="detail-linked-badge"
+              providedBy={providedBy}
+            />
             {title.track && (title.track.trackNumber ?? 0) > 0 && (
               <span data-testid="detail-track-number">
                 Track {title.track.trackNumber}

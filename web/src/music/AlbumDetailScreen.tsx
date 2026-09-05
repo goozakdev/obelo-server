@@ -16,6 +16,7 @@ import EntityScanMenu from "../browse/EntityScanMenu";
 import { EditIcon } from "../browse/ActionIcons";
 import BackLink from "../browse/BackLink";
 import Poster from "../browse/Poster";
+import LinkedMark, { linkedRowClass } from "../browse/LinkedMark";
 import { albumArtworkUrl } from "../browse/albumArt";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
@@ -154,6 +155,9 @@ export default function AlbumDetailScreen() {
                   </Link>
                 </p>
               )}
+              {/* The Album's own row carries the mirror pair (issue 14), so the
+                  header reads it directly rather than climbing to the Library. */}
+              <LinkedMark entity={state.data.album} testId="album-linked-badge" />
               {state.data.album.year > 0 && (
                 <div className="detail-meta">
                   <span data-testid="album-year">{state.data.album.year}</span>
@@ -312,7 +316,10 @@ function TrackRow({
 
   return (
     <li
-      className={`track-row${isCurrent ? " is-current" : ""}`}
+      className={linkedRowClass(
+        `track-row${isCurrent ? " is-current" : ""}`,
+        track,
+      )}
       data-testid="track-row"
       data-track-id={track.id}
       data-track-number={track.trackNumber}
@@ -344,6 +351,9 @@ function TrackRow({
         >
           <span data-testid="track-title">{track.title}</span>
         </Link>
+        {/* A Track is a playable leaf and a queue built from this list outlives
+            the screen, so the row says for itself that it is a mirror. */}
+        <LinkedMark entity={track} testId="track-linked-badge" />
         {artistName && (
           <Link
             className="track-artist"

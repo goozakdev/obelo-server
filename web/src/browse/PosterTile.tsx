@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { TitleSummary } from "../api/types";
 import Poster from "./Poster";
+import LinkedMark, { linkedRowClass } from "./LinkedMark";
 import { episodeContextLabel, trackContextLabel } from "./episodeLabel";
 import { formatTimecode } from "../time";
 
@@ -39,7 +40,15 @@ export default function PosterTile({ title, action }: PosterTileProps) {
   // tile's <img src> changes and reloads; every unchanged poster keeps its src
   // and never flickers — including across a re-enrich (realtime-events web slice).
   return (
-    <li className="poster-tile" data-testid="poster-tile" data-title-id={title.id}>
+    // A mirrored Title (issue 15) wears the shared Linked badge in its caption and
+    // greys — in place, still clickable — while the household providing it is
+    // unreachable. This one card is the Home rows, the Movie grid, Collection
+    // members, Playlist members and the Watchlist, so they all get it here.
+    <li
+      className={linkedRowClass("poster-tile", title)}
+      data-testid="poster-tile"
+      data-title-id={title.id}
+    >
       {/* A Track card opens the music track detail (/music/tracks/{id}); every
           other kind opens the shared Title detail. This single switch reroutes
           track cards wherever PosterTile appears — Home rows, Collections, and
@@ -86,6 +95,7 @@ export default function PosterTile({ title, action }: PosterTileProps) {
           {!title.episode && !title.track && title.year > 0 && (
             <span className="poster-year">{title.year}</span>
           )}
+          <LinkedMark entity={title} />
         </div>
       </Link>
       {action && <div className="poster-action">{action}</div>}

@@ -1,6 +1,8 @@
 import type { ReactNode, RefObject } from "react";
 import { Link } from "react-router-dom";
+import type { LinkedMarks } from "../api/types";
 import type { LayoutMode } from "./browseLayout";
+import LinkedMark, { linkedRowClass } from "./LinkedMark";
 
 // The mode-aware body of a browse grid (appletv-web-parity §5). One <ul> drawn
 // three ways from the SAME already-loaded items — so switching layout is a pure
@@ -46,6 +48,11 @@ export interface BrowseRowData {
    * nothing else) — e.g. an Album's release-type badge, without which two
    * same-titled releases are indistinguishable in List (ADR-0038). */
   badge?: ReactNode;
+  /** The row's item, for its mirror pair (issue 15). Handed over whole rather
+   * than pre-rendered so the Linked badge and the unavailable greying are decided
+   * in ONE place for all four grids — a kind that forgets it is the only way a
+   * mirrored row can look local. Absent/local rows render exactly as before. */
+  marks?: LinkedMarks;
 }
 
 export interface BrowseListProps<T> {
@@ -101,7 +108,10 @@ function BrowseRow({
 }) {
   return (
     <li
-      className={`poster-tile browse-row browse-row-${mode}`}
+      className={linkedRowClass(
+        `poster-tile browse-row browse-row-${mode}`,
+        row.marks,
+      )}
       data-testid="poster-tile"
       {...(row.dataAttrs ?? {})}
     >
@@ -120,6 +130,7 @@ function BrowseRow({
               {row.name}
             </span>
             {row.badge}
+            <LinkedMark entity={row.marks} />
           </span>
           {mode === "detail" && row.meta && (
             <div className="browse-row-meta" data-testid="browse-row-meta">
