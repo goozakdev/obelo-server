@@ -7,6 +7,8 @@ import { useTargetedScan } from "../browse/useTargetedScan";
 import EntityScanMenu from "../browse/EntityScanMenu";
 import { EditIcon } from "../browse/ActionIcons";
 import BackLink, { useLibraryName } from "../browse/BackLink";
+import { useLibraryProvider } from "../browse/librariesContext";
+import LinkedMark, { linkedRowClass } from "../browse/LinkedMark";
 import DetailBackdrop from "../browse/DetailBackdrop";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
@@ -72,6 +74,10 @@ export default function ArtistDetailScreen() {
     scan: runScan,
   } = useTargetedScan(() => setReloadKey((k) => k + 1));
   const libraryName = useLibraryName(artist?.libraryId, "Music");
+  // The Artist's own summary carries the mirror pair; the providing Server's name
+  // is joined from GET /links when it is cheaply in hand (Admin, something
+  // linked), and the badge stands alone when it is not.
+  const providedBy = useLibraryProvider(artist?.libraryId);
   const parent = artist
     ? { to: `/music/libraries/${artist.libraryId}`, label: libraryName }
     : { to: "/", label: "Home" };
@@ -111,6 +117,11 @@ export default function ArtistDetailScreen() {
               logoUrl={state.data.artist.logoUrl}
               photoUrl={state.data.artist.artworkUrl}
             >
+              <LinkedMark
+                entity={state.data.artist}
+                testId="artist-linked-badge"
+                providedBy={providedBy}
+              />
               {(state.data.artist.genres ?? []).length > 0 && (
                 <div className="detail-genres" data-testid="artist-genres">
                   {(state.data.artist.genres ?? []).join(" · ")}
@@ -309,6 +320,7 @@ function albumToRow(album: Album): BrowseRowData {
     key: album.id,
     to: `/music/albums/${album.id}`,
     name: album.title,
+    marks: album,
     dataAttrs: { "data-album-id": album.id },
     thumb: (
       <div className="poster-frame album-frame">
@@ -348,7 +360,7 @@ function albumMeta(album: Album): ReactNode {
 function AlbumTile({ album }: { album: Album }) {
   return (
     <li
-      className="poster-tile album-tile"
+      className={linkedRowClass("poster-tile album-tile", album)}
       data-testid="poster-tile"
       data-album-id={album.id}
     >
@@ -374,6 +386,7 @@ function AlbumTile({ album }: { album: Album }) {
             {album.title}
           </span>
           {album.year > 0 && <span className="poster-year">{album.year}</span>}
+          <LinkedMark entity={album} />
         </div>
       </Link>
     </li>

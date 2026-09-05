@@ -28,6 +28,8 @@ import CastStrip from "./CastStrip";
 import DetailBackdrop from "./DetailBackdrop";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
+import { useLibraryMarks, useLibraryProvider } from "./librariesContext";
+import LinkedMark from "./LinkedMark";
 import {
   WatchlistIcon,
   WatchedIcon,
@@ -138,6 +140,10 @@ function Detail({
   const { isAdmin, session } = useAuth();
   const userId = session?.user.id ?? null;
   const queue = useQueue();
+  // The mirror mark, derived from the Title's Library (see the hero below), plus
+  // the providing Server's name when it is cheaply in hand.
+  const marks = useLibraryMarks(initialTitle.libraryId);
+  const providedBy = useLibraryProvider(initialTitle.libraryId);
   // The full title, held in state so an Admin correction (Fix info Enrichment
   // override / metadata edit) refreshes the WHOLE object — display title, poster,
   // and the external id the Fix info picker shows as "current record" — at once,
@@ -438,6 +444,15 @@ function Detail({
           )}
           <TitleLogo title={title.title} src={logoSrc} />
           <div className="detail-meta">
+            {/* `titleDetailJSON` carries no mirror pair (issue 14 deviation 2) —
+                it is the one browse document that does not — so the mark is
+                derived from the Title's LIBRARY, which does. Same badge, same
+                greying rule, one screen later than the row that led here. */}
+            <LinkedMark
+              entity={marks}
+              testId="detail-linked-badge"
+              providedBy={providedBy}
+            />
             {title.year > 0 && (
               <span data-testid="detail-year">{title.year}</span>
             )}

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { useAsync } from "./useAsync";
 import AppHeader from "./AppHeader";
+import LinkedMark, { linkedRowClass } from "./LinkedMark";
 
 // The library list (issue 03 / PRD user story 8): fetch GET /libraries and let
 // the user open one into its poster grid. Single library is the common case, so
@@ -58,9 +59,7 @@ export default function LibraryListScreen() {
             {state.data.map((lib) => (
               <li key={lib.id}>
                 <Link
-                  className={`library-card${
-                    lib.linked && lib.available === false ? " is-unavailable" : ""
-                  }`}
+                  className={linkedRowClass("library-card", lib)}
                   // A music library opens the separate music experience
                   // (/music/...); TV/Movie libraries use the shared grid.
                   to={
@@ -79,9 +78,7 @@ export default function LibraryListScreen() {
                   <span className="library-kind">{lib.kind}</span>
                   {lib.linked ? (
                     <span className="library-roots">
-                      <span className="linked-badge" data-testid="library-linked-badge">
-                        Linked
-                      </span>
+                      <LinkedMark entity={lib} testId="library-linked-badge" />
                       {lib.available === false ? (
                         <span data-testid="library-unavailable">
                           {" "}

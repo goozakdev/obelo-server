@@ -11,6 +11,7 @@ import BrowseList, { type BrowseRowData } from "../browse/BrowseList";
 import LetterJumpBar from "../browse/LetterJumpBar";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import Poster from "../browse/Poster";
+import LinkedMark, { linkedRowClass } from "../browse/LinkedMark";
 
 // The Music Artist list (tv-music issue 03 / PRD user story 26): a Music library
 // browses Artists → Albums → Tracks. This is the top-level grid (the analogue of
@@ -149,6 +150,7 @@ function artistToRow(a: ArtistSummary): BrowseRowData {
     key: a.id,
     to: `/music/artists/${a.id}`,
     name: a.name,
+    marks: a,
     dataAttrs: { "data-artist-id": a.id },
     thumb: (
       <div className="poster-frame artist-frame">
@@ -171,7 +173,7 @@ function artistMeta(a: ArtistSummary): ReactNode {
 function ArtistTile({ artist }: { artist: ArtistSummary }) {
   return (
     <li
-      className="poster-tile artist-tile"
+      className={linkedRowClass("poster-tile artist-tile", artist)}
       data-testid="poster-tile"
       data-artist-id={artist.id}
     >
@@ -183,6 +185,7 @@ function ArtistTile({ artist }: { artist: ArtistSummary }) {
           <span className="poster-title" data-testid="poster-title" title={artist.name}>
             {artist.name}
           </span>
+          <LinkedMark entity={artist} />
         </div>
       </Link>
     </li>

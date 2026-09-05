@@ -11,6 +11,7 @@ import BrowseList, { type BrowseRowData } from "./BrowseList";
 import LetterJumpBar from "./LetterJumpBar";
 import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import Poster from "./Poster";
+import LinkedMark, { linkedRowClass } from "./LinkedMark";
 
 // The TV Show poster grid (tv-music issue 01 / PRD user story 11): a TV library
 // browses a grid of SHOWS, not a flat wall of episodes. Each tile links to the
@@ -140,6 +141,7 @@ function showToRow(s: ShowSummary): BrowseRowData {
     key: s.id,
     to: `/shows/${s.id}`,
     name: s.title,
+    marks: s,
     dataAttrs: { "data-show-id": s.id },
     thumb: (
       <div className="poster-frame">
@@ -175,7 +177,7 @@ function showMeta(s: ShowSummary): ReactNode {
 function ShowTile({ show }: { show: ShowSummary }) {
   return (
     <li
-      className="poster-tile"
+      className={linkedRowClass("poster-tile", show)}
       data-testid="poster-tile"
       data-show-id={show.id}
     >
@@ -202,6 +204,7 @@ function ShowTile({ show }: { show: ShowSummary }) {
             {show.title}
           </span>
           {show.year > 0 && <span className="poster-year">{show.year}</span>}
+          <LinkedMark entity={show} />
         </div>
       </Link>
     </li>
