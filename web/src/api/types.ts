@@ -44,8 +44,13 @@ export interface EnrichmentConsent {
 /** A user's role. The backend is single-Admin today (Members deferred), but the
  * client models the role explicitly so the role gate works unchanged when
  * Member support lands (PRD "Role/user reality"). Unknown future roles are
- * tolerated as plain strings. */
-export type Role = "admin" | "member" | (string & {});
+ * tolerated as plain strings.
+ *
+ * "remote" is a LINKED SERVER, not a person (ADR-0054): it has no password, never
+ * signs in here, and is deliberately absent from every roster/switch-user surface
+ * — it exists only on the Admin Users page, where the operator manages what the
+ * other household may reach. */
+export type Role = "admin" | "member" | "remote" | (string & {});
 
 /** A User as the auth + Admin user-management endpoints return it
  * (`{ id, username, role }`). */
@@ -55,9 +60,22 @@ export interface User {
   role: Role;
 }
 
+/** A User as the Admin roster lists them: the User plus when their Devices were
+ * last seen. A SEPARATE type from {@link User} because only `GET /users` carries
+ * it — no authentication response has any business reporting somebody's Devices.
+ *
+ * `lastSeenAt` is the most recent last-seen across ALL of this User's Devices,
+ * and is ABSENT when they have none. That absence is the whole signal for a
+ * `remote` User: a linked Server has no Device until it redeems its Invite and
+ * exactly one afterwards (ADR-0055 §4), so "no lastSeenAt" is "never linked" and
+ * a timestamp is "linked, and last heard from then". */
+export interface AdminUser extends User {
+  lastSeenAt?: string;
+}
+
 /** Response shape of `GET /api/v1/users` (Admin) — the list is wrapped. */
 export interface UsersResponse {
-  users: User[];
+  users: AdminUser[];
 }
 
 /** Raw `GET /api/v1/users/{id}` (Admin) — one User's full detail. The server
@@ -75,6 +93,15 @@ export interface UserDetailRaw {
    * (issue 02 fetches the detail for `libraryIds`); the ceiling control is issue
    * 03. */
   ratingCeiling?: string | null;
+  /** The Playback ceiling (ADR-0054 §2) — how this User's sessions may play, as
+   * opposed to what they may see. A rung ("720p" | "1080p" | "2160p"), or
+   * absent/`null` = no limit. */
+  maxResolution?: string | null;
+  /** Playback ceiling: bits/sec, or absent/`null`/0 = no limit. */
+  maxBitrate?: number | null;
+  /** Playback ceiling: concurrent Playback sessions, or absent/`null`/0 = no
+   * limit. */
+  maxStreams?: number | null;
 }
 
 /** A User's full detail with its `omitempty` holes filled (`libraryIds` → [],
@@ -89,15 +116,95 @@ export interface UserDetail {
   role: Role;
   libraryIds: string[];
   ratingCeiling: string;
+  /** Playback ceiling (ADR-0054 §2), holes filled: "" / 0 mean "no limit". These
+   * cap HOW a Title plays for this User (resolution, bitrate, concurrent
+   * streams); they never hide a Title, which is the Rating ceiling's job. */
+  maxResolution: string;
+  maxBitrate: number;
+  maxStreams: number;
+}
+
+/** Request body for `PUT /api/v1/users/{id}/playbackCeiling` (Admin). It is the
+ * WHOLE ceiling, not a patch: an omitted (or zero/empty) dimension clears that
+ * cap to "no limit", so the dialog always sends what it means. */
+export interface PlaybackCeilingInput {
+  maxResolution: string;
+  maxBitrate: number;
+  maxStreams: number;
+}
+
+/** Response of `POST /api/v1/users/{id}/invite` (Admin) — the one-time invite a
+ * sharing Admin sends to link a Server (ADR-0055 §1, §2).
+ *
+ * `invite` is the WHOLE `obelo-link:<base64url(JSON)>` string: the sharer's
+ * server identity, the origins the Admin typed, a single-use code and its
+ * expiry, in one field so there is one thing to copy and one thing to paste.
+ * The raw code exists ONLY in this response — it is never stored unhashed and
+ * cannot be re-read — so a lost string is replaced by minting again, which also
+ * kills the one it replaced.
+ *
+ * `expiresAt` is the same instant the payload carries, hoisted out so a dialog
+ * can say when it lapses without decoding what it was just handed. */
+export interface LinkInvite {
+  invite: string;
+  expiresAt: string;
+}
+
+// --- Linked servers, the HOME side (ADR-0055, ADR-0056; issues 06-10) -------
+
+/** A Link's condition (ADR-0056 §6). A closed set, never free text: the Linked
+ * servers page branches on it and each value is a different next move —
+ * `connected` nothing, `unreachable` wait or Sync now, `revoked` paste a fresh
+ * invite. */
+export type LinkState = "connected" | "unreachable" | "revoked";
+
+/** One linked Library a Link brought over, as `GET /links` lists it. Deliberately
+ * thinner than `Library`: a mirror has no root folders to show, and the page only
+ * needs to name the shelves and hand them to the grant dialog. */
+export interface LinkedLibrary {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+/** One Link as `GET /links` returns it (Admin).
+ *
+ * THERE IS NO TOKEN FIELD AND THERE MUST NEVER BE ONE — the server does not
+ * emit one (it is an outbound credential, the same posture as a provider key),
+ * and `state` is what an operator actually wants to know. */
+export interface Link {
+  id: string;
+  serverId: string;
+  serverName: string;
+  state: LinkState;
+  /** The address that answered. Shown so an operator can see WHICH path is
+   * carrying their films — the tailnet one or the public one. */
+  activeOrigin: string;
+  /** Every address the invite carried, in the order it carried them. */
+  origins: string[];
+  /** RFC3339, or null until the mirror has pulled once. Null is the server
+   * saying "never", which is a statement — not an absence. */
+  lastSyncedAt: string | null;
+  /** The reason for the most recent failure, verbatim. Empty when the last call
+   * succeeded. */
+  lastError: string;
+  /** The linked Libraries this Link provides — empty until the first pull
+   * finishes, and empty forever for a sharer who granted this Server nothing. */
+  libraries: LinkedLibrary[];
 }
 
 /** Request body for `POST /api/v1/users` (Admin): create a User. `role` is
  * optional and defaults to "member" server-side; pass "admin" to deliberately
- * mint another Admin. A blank username/password is rejected (400 BAD_REQUEST);
- * a duplicate username is rejected (409 USERNAME_TAKEN). */
+ * mint another Admin. A blank username is rejected (400 BAD_REQUEST); a duplicate
+ * username is rejected (409 USERNAME_TAKEN).
+ *
+ * `password` is optional because the rule is per-role and goes both ways
+ * (ADR-0054): admin and member REQUIRE one, and "remote" — a linked Server, whose
+ * only credential is the token an Invite leaves behind — must NOT carry one. A
+ * password sent with `role: "remote"` is a 400, not a silently ignored field. */
 export interface CreateUserInput {
   username: string;
-  password: string;
+  password?: string;
   role?: Role;
 }
 
@@ -694,8 +801,30 @@ export interface LibraryRoot {
   path: string;
 }
 
+/** The mirror pair EVERY browse row carries (docs/api-contract.md §3.4/§3.5), so
+ * a client never has to infer the mark from the screen the viewer arrived
+ * through. Both fields are `omitempty` on the wire: absent means the row is
+ * LOCAL, and `available` is meaningful only while `linked` is true.
+ *
+ * Carried by `Library`, `TitleSummary` (and with it Home rows, Collection and
+ * Playlist members and the Watchlist), `ShowSummary`, `ArtistSummary`, `Album`,
+ * `TrackSummary` and `EpisodeSummary`. NOT carried by `TitleDetail`, which is
+ * always reached from a row that says so (issue 14 deviation 2) — the detail
+ * screens derive it from the Title's Library instead. */
+export interface LinkedMarks {
+  /** True when this row lives in a MIRROR of another household's Library
+   * (ADR-0056 §1). ABSENT on an ordinary local row — the server omits it — so a
+   * server that has never linked sends exactly the wire it always did. */
+  linked?: boolean;
+  /** Whether the Server that provides the mirror can be reached right now
+   * (ADR-0056 §6). Absent on a local row: `false` is a statement about a
+   * friend's Server being down and must not be confused with a local row's
+   * silence, which is why this is optional rather than defaulted to `true`. */
+  available?: boolean;
+}
+
 /** A Library as `GET /libraries` / `GET /libraries/{id}` return it. */
-export interface Library {
+export interface Library extends LinkedMarks {
   id: string;
   name: string;
   kind: string;
@@ -892,7 +1021,7 @@ export interface ScanStatus {
 /** A Title summary as it appears in a library grid (`/libraries/{id}/titles`).
  * The RAW server shape: booleans/numbers/timestamps are `omitempty` and may be
  * absent. Components consume {@link TitleSummary} (normalized) instead. */
-export interface TitleSummaryRaw {
+export interface TitleSummaryRaw extends LinkedMarks {
   id: string;
   kind: string;
   title: string;
@@ -926,7 +1055,7 @@ export interface TitleSummaryRaw {
  * → 0): the shape components rely on. Note: the summary carries NO artwork flag
  * — whether a poster exists is discovered by the `<img>` load result, so the
  * grid uses an onError placeholder fallback (issue 03 poster strategy). */
-export interface TitleSummary {
+export interface TitleSummary extends LinkedMarks {
   id: string;
   kind: string;
   title: string;
@@ -1228,7 +1357,7 @@ export interface MetadataEditInput {
 // by the normalize layer so components see consistent shapes.
 
 /** Raw Show summary from a TV Library's `/libraries/{id}/titles`. */
-export interface ShowSummaryRaw {
+export interface ShowSummaryRaw extends LinkedMarks {
   id: string;
   /** The Library this Show belongs to; drives the Show detail's parent "Back"
    * link. Absent on an older server. */
@@ -1263,7 +1392,7 @@ export interface ShowSummaryRaw {
 }
 
 /** A Show summary with holes filled — the TV grid entry. */
-export interface ShowSummary {
+export interface ShowSummary extends LinkedMarks {
   id: string;
   /** The Library this Show belongs to, "" when absent — the Show detail's parent
    * "Back" link returns to its owning Library. */
@@ -1397,7 +1526,7 @@ export interface ShowSeasons {
 }
 
 /** Raw Episode summary from `GET /seasons/{id}/episodes`. */
-export interface EpisodeSummaryRaw {
+export interface EpisodeSummaryRaw extends LinkedMarks {
   id: string;
   kind: string; // "episode"
   title: string;
@@ -1416,7 +1545,7 @@ export interface EpisodeSummaryRaw {
 
 /** An Episode summary with holes filled — one row in a Season's episode list.
  * `title` is the display title (the canonical enriched name when present). */
-export interface EpisodeSummary {
+export interface EpisodeSummary extends LinkedMarks {
   id: string;
   kind: string;
   title: string;
@@ -1467,7 +1596,7 @@ export interface EpisodeContext {
 // filled by the normalize layer so components see consistent shapes.
 
 /** Raw Artist summary from a Music Library's `/libraries/{id}/titles`. */
-export interface ArtistSummaryRaw {
+export interface ArtistSummaryRaw extends LinkedMarks {
   id: string;
   /** The Music Library this Artist belongs to; drives the Artist detail's parent
    * "Back" link. Absent on an older server. */
@@ -1490,7 +1619,7 @@ export interface ArtistSummaryRaw {
 }
 
 /** An Artist summary — the Music list entry (and the Artist detail header). */
-export interface ArtistSummary {
+export interface ArtistSummary extends LinkedMarks {
   id: string;
   /** The Music Library this Artist belongs to, "" when absent — the Artist
    * detail's parent "Back" link returns to its owning Library. */
@@ -1527,7 +1656,7 @@ export interface ArtistsPage {
 }
 
 /** Raw Album from `GET /artists/{id}/albums`. */
-export interface AlbumRaw {
+export interface AlbumRaw extends LinkedMarks {
   id: string;
   artistId: string;
   /** Parent Artist's display name, for the album header's artist link. Absent
@@ -1554,7 +1683,7 @@ export interface AlbumRaw {
 }
 
 /** An Album with holes filled. */
-export interface Album {
+export interface Album extends LinkedMarks {
   id: string;
   artistId: string;
   /** Parent Artist's display name, "" when the server couldn't resolve it. */
@@ -1590,7 +1719,7 @@ export interface ArtistAlbums {
 }
 
 /** Raw Track summary from `GET /albums/{id}/tracks`. */
-export interface TrackSummaryRaw {
+export interface TrackSummaryRaw extends LinkedMarks {
   id: string;
   kind: string; // "track"
   title: string;
@@ -1609,7 +1738,7 @@ export interface TrackSummaryRaw {
 }
 
 /** A Track summary with holes filled — one row in an Album's track list. */
-export interface TrackSummary {
+export interface TrackSummary extends LinkedMarks {
   id: string;
   kind: string;
   title: string;

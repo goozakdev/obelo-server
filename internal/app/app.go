@@ -24,6 +24,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/events"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
+	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -36,6 +37,13 @@ import (
 	"github.com/goozakdev/obelo-server/internal/transcode"
 	"github.com/goozakdev/obelo-server/internal/webui"
 )
+
+// relayEndTimeout bounds the courtesy call that ends a relayed session on the
+// sharing Server (ADR-0056 §5). It is short on purpose: nobody is waiting for it,
+// the local session is already gone, and the sharer's own idle reaper ends the
+// stream anyway — so a friend's Server that has become unreachable must not hold
+// a goroutine here for anything like as long as a real request would.
+const relayEndTimeout = 10 * time.Second
 
 // App is a fully wired server: an http.Handler ready to serve, plus the
 // resources it owns so callers can shut it down cleanly.
@@ -110,6 +118,12 @@ type App struct {
 	// enrich); each closes its done channel once it has fully exited, so Close
 	// shuts them down cleanly. A goroutine that was never started leaves its done
 	// channel nil (skipped by Close).
+	// linkSyncer keeps every linked Library's mirror fresh (ADR-0056 §4): one
+	// goroutine per Link holding that sharer's /events subscription and running the
+	// periodic sweep. Nil on a build wired without linking; Close stops it before
+	// the Broker goes, so a last state transition still has somewhere to land.
+	linkSyncer *link.Syncer
+
 	cancel          context.CancelFunc
 	schedDone       chan struct{}
 	reaperDone      chan struct{}
@@ -594,6 +608,12 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// producers below publish onto it.
 	broker := events.NewBroker()
 
+	// Declared before the session observer below because that observer must be able
+	// to end a RELAY session on the sharing Server (ADR-0056 §5), and the link
+	// Service itself cannot be built until the Tailnet manager exists further down.
+	// The closure reads the variable when a session ends, by which time it is set.
+	var linkSvc *link.Service
+
 	// Session lifecycle → realtime (issue 03): translate the Playback Manager's
 	// observer transitions into the Broker's Admin-only session events. Wired via
 	// the setter AFTER both the Service and Broker exist (the Broker is created
@@ -621,6 +641,23 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			// caller, and the DELETE has already succeeded).
 			if err := authSvc.RevokeStreamTokens(e.SessionID); err != nil {
 				log.Printf("obelo: revoking stream tokens for ended session %s: %v", e.SessionID, err)
+			}
+			// A RELAY session wraps one on another household's Server (ADR-0056 §5), and
+			// ending this one ends that one. It hangs off this observer for the same
+			// reason the revocation above does — the idle reaper fires the identical
+			// event, so an abandoned relay cannot leave a session, and possibly a
+			// transcode, running on somebody else's machine. Best effort in the
+			// background: the DELETE that triggered it has already answered, and the
+			// sharer's own reaper is the backstop.
+			if e.RelayLinkID != "" && e.RemoteSessionID != "" {
+				linkID, remoteID := e.RelayLinkID, e.RemoteSessionID
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), relayEndTimeout)
+					defer cancel()
+					if err := linkSvc.RelayEndSession(ctx, linkID, remoteID); err != nil {
+						log.Printf("obelo: link: ending the shared session %s: %v", remoteID, err)
+					}
+				}()
 			}
 		default:
 			return
@@ -666,6 +703,32 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// appears without anybody reloading the page (ADR-0043).
 		OnChange: broker.PublishTailscaleState,
 	})
+
+	// Linking, the receiving half (ADR-0055, ADR-0056; .scratch/linked-servers
+	// issue 06). It is handed the Tailnet MANAGER rather than the node, for
+	// Listen's reason: "is the node up?" must have exactly one answer, and the
+	// state machine is the only thing that has it. On a build or a deployment with
+	// no Tailnet this changes nothing — every origin then goes to the operating
+	// system, which is what a household with no Tailnet has always had.
+	//
+	// The identity closure is what the sharer records as the Device (ADR-0055 §4).
+	// It is read at each use rather than captured as a value so a re-key months
+	// later presents the CURRENT display name.
+	linkSvc = link.New(db, func() link.Identity {
+		return link.Identity{ID: identity.ID, Name: identity.Name}
+	}, link.Options{
+		Tailnet:    tailnetManager,
+		Mirror:     db,
+		Events:     broker,
+		ArtworkDir: cfg.ArtworkCacheDir(),
+	})
+	// The one-hop playback relay (ADR-0056 §5; issue 09). It is installed on the
+	// playback Service rather than passed to NewService because the link Service
+	// needs the Tailnet manager and the mirror, both of which are built after
+	// playback — the same post-construction wiring the session observer uses. With
+	// it set, and ONLY with it set, a play on a Title in a linked Library is
+	// negotiated by the Server that holds the file.
+	playbackSvc.SetRelay(linkSvc)
 
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
@@ -735,26 +798,36 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	enrichStatus := app.EnrichPassStatus
 
 	apiHandler := api.Handler(api.Deps{
-		Meta:            meta,
-		Auth:            authSvc,
-		Access:          accessSvc,
-		Library:         librarySvc,
-		Scanner:         scannerSvc,
-		Catalog:         catalogSvc,
-		Match:           matchSvc,
-		Playback:        playbackSvc,
-		Backend:         backendResolution,
-		GPU:             gpuProbe,
-		Enrich:          enrichSvc,
-		Organize:        organizeSvc,
-		Events:          broker,
-		EnrichTrigger:   enrichTrigger,
-		EnrichStart:     enrichStart,
-		EnrichStatus:    enrichStatus,
-		ScanStatus:      db,
-		Libraries:       db,
-		TitleCounts:     db,
-		ScanScope:       db,
+		Meta:          meta,
+		Auth:          authSvc,
+		Access:        accessSvc,
+		Library:       librarySvc,
+		Scanner:       scannerSvc,
+		Catalog:       catalogSvc,
+		Match:         matchSvc,
+		Playback:      playbackSvc,
+		Backend:       backendResolution,
+		GPU:           gpuProbe,
+		Enrich:        enrichSvc,
+		Organize:      organizeSvc,
+		Events:        broker,
+		EnrichTrigger: enrichTrigger,
+		EnrichStart:   enrichStart,
+		EnrichStatus:  enrichStatus,
+		ScanStatus:    db,
+		Libraries:     db,
+		TitleCounts:   db,
+		ScanScope:     db,
+		Export:        db,
+		Links:         linkSvc,
+		Mirror:        db,
+		// The Export refuses a Library this Server itself mirrored: sharing does not
+		// travel (ADR-0054 §4, ADR-0056 §7). Issue 05 left the hook nil because
+		// `libraries.source` did not exist yet; it does now.
+		LinkedLibrary: func(libraryID string) bool {
+			linked, err := db.IsLinkedLibrary(libraryID)
+			return err == nil && linked
+		},
 		Providers:       db,
 		ProviderManager: providerManager,
 		SettingsChanged: app.notifyEnrichReschedule,
@@ -857,6 +930,19 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		}
 	}
 
+	// Linked-server freshness (ADR-0056 §4, §6). Started UNCONDITIONALLY and
+	// outside the block above: it owns the three link states as much as it owns the
+	// pulls, and a Server whose sync interval is 0 still has to park its Links as
+	// `unreachable` at boot and still holds their subscriptions. With no Links it
+	// starts no goroutines at all, which is every household that has never linked.
+	app.linkSyncer = link.NewSyncer(linkSvc, link.SyncerOptions{Interval: cfg.LinkSyncInterval})
+	if err := app.linkSyncer.Start(context.Background()); err != nil {
+		// Reading the Links failed. That is a database problem the rest of the boot
+		// will hit too; it must not be the thing that stops the living room working.
+		log.Printf("obelo: link: the linked servers could not be brought up (%v); "+
+			"their libraries stay, marked unavailable", err)
+	}
+
 	// An ENABLED Tailnet node connects at boot (ADR-0043). This is the whole point
 	// of persisting the desire rather than treating connect as a live-only action:
 	// otherwise a power cut strands the operator outside a house they cannot reach,
@@ -943,6 +1029,12 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 			for _, lib := range libs {
 				if ctx.Err() != nil {
 					return
+				}
+				// A linked Library has no root folders and is never walked
+				// (ADR-0056 §1). The Scanner refuses one anyway; skipping here keeps
+				// the sweep's log free of a refusal per Library per tick.
+				if lib.Linked() {
+					continue
 				}
 				if _, err := a.Scanner.ScanModeProgress(ctx, lib.ID, scanner.ModeIncremental, onProgress); err != nil {
 					// A cancelled ctx is shutdown, not a scan failure: don't log it as
@@ -1271,6 +1363,10 @@ func (a *App) sweepEnrich(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		// Somebody else's Library, enriched by somebody else (ADR-0056 §1).
+		if lib.Linked() {
+			continue
+		}
 		a.enqueueEnrichIfEnabled(lib.ID)
 	}
 }
@@ -1298,6 +1394,13 @@ func (a *App) Close() error {
 			<-a.rotationDone
 		}
 		a.cancel = nil
+	}
+	// Stop the per-Link sync goroutines and their outbound subscriptions before the
+	// Broker goes, for the Tailnet's reason: a transition published into a closed
+	// Broker is a panic, and a subscription left open is a goroutine leaked past
+	// the App that owned it.
+	if a.linkSyncer != nil {
+		a.linkSyncer.Stop()
 	}
 	// Stop the Tailnet node and its watcher before the Broker goes, so the last
 	// transitions have somewhere to go and nothing is left publishing into a closed

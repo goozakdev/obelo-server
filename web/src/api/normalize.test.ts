@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
+  normalizeAlbumTracks,
+  normalizeArtistAlbums,
   normalizeHome,
+  normalizeLibrary,
+  normalizeSeasonEpisodes,
+  normalizeShowSummary,
   normalizeMatchOverride,
   normalizeMatcher,
   normalizeScanStatus,
@@ -247,5 +252,71 @@ describe("normalizeMatcher (the file matcher document)", () => {
       groups: [{ number: 3, slots: [{ group: 3, slot: 61, record: { group: 1, slot: 1 } }] }],
     });
     expect(m.groups[0].slots[0].record).toEqual({ externalId: undefined, group: 1, slot: 1 });
+  });
+});
+
+// The mirror pair (issues 07/14/15) is the ONE thing on these shapes that is not
+// hole-filled: `absent` means the row is local, and inventing `available: true`
+// for a local row would be a claim about a friend's Server that nobody made.
+describe("normalize (the mirror pair)", () => {
+  it("carries linked/available through on a Library — the fix issue 15 found", () => {
+    // normalizeLibrary DROPPED both fields until issue 15, so against a real
+    // server the browse Libraries list rendered a mirror as an ordinary local
+    // shelf, however green its (mocked) screen test was.
+    const lib = normalizeLibrary({
+      id: "l1",
+      name: "Cartoons",
+      kind: "movie",
+      rootFolders: [],
+      linked: true,
+      available: false,
+    });
+    expect(lib.linked).toBe(true);
+    expect(lib.available).toBe(false);
+  });
+
+  it("leaves a local row with NEITHER key, not with false ones", () => {
+    // Field ABSENCE, not a false value: the server deliberately omits the pair,
+    // and a client that filled it in would answer "is this local?" with a shrug.
+    const s = normalizeTitleSummary({ id: "t1", kind: "movie", title: "Dune" });
+    expect("linked" in s).toBe(false);
+    expect("available" in s).toBe(false);
+
+    const lib = normalizeLibrary({ id: "l1", name: "Films", kind: "movie", rootFolders: [] });
+    expect("linked" in lib).toBe(false);
+    expect("available" in lib).toBe(false);
+  });
+
+  it("carries the pair on every row shape that has it on the wire", () => {
+    const marks = { linked: true, available: false };
+
+    expect(normalizeTitleSummary({ id: "t", kind: "movie", title: "T", ...marks }))
+      .toMatchObject(marks);
+    expect(normalizeShowSummary({ id: "s", kind: "show", title: "S", ...marks }))
+      .toMatchObject(marks);
+    expect(
+      normalizeHome({ continueWatching: [{ id: "t", kind: "movie", title: "T", ...marks }] })
+        .continueWatching[0],
+    ).toMatchObject(marks);
+    expect(
+      normalizeSeasonEpisodes({
+        season: { id: "se", showId: "sh", seasonNumber: 1 },
+        episodes: [{ id: "e", kind: "episode", title: "E", seasonNumber: 1, ...marks }],
+      }).episodes[0],
+    ).toMatchObject(marks);
+
+    const artistAlbums = normalizeArtistAlbums({
+      artist: { id: "ar", kind: "artist", name: "A", ...marks },
+      albums: [{ id: "al", artistId: "ar", title: "AL", ...marks }],
+    });
+    expect(artistAlbums.artist).toMatchObject(marks);
+    expect(artistAlbums.albums[0]).toMatchObject(marks);
+
+    const albumTracks = normalizeAlbumTracks({
+      album: { id: "al", artistId: "ar", title: "AL", ...marks },
+      tracks: [{ id: "tr", kind: "track", title: "TR", ...marks }],
+    });
+    expect(albumTracks.album).toMatchObject(marks);
+    expect(albumTracks.tracks[0]).toMatchObject(marks);
   });
 });

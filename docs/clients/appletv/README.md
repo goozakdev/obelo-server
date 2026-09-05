@@ -6,9 +6,9 @@ Self-contained documentation for building the tvOS client in its **own repositor
 
 | Doc | What it covers |
 | --- | --- |
-| [integration-playbook.md](./integration-playbook.md) | The choreography: cold start, auth (bearer header incl. mpv media requests), playback state machine, progress/keepalive + track-memory write-back, local track switching, SSE, and the error-recovery matrix. |
+| [integration-playbook.md](./integration-playbook.md) | The choreography: cold start, auth (bearer header incl. mpv media requests), playback state machine, progress/keepalive + track-memory write-back, local track switching, SSE, the error-recovery matrix, and **linked servers** (§9 — the `linked`/`available` treatment every Apple client owes, and the invite scan the iPhone/iPad app owns). |
 | [capability-profile.md](./capability-profile.md) | The exact libmpv `deviceProfile` to send (broad containers/codecs, `textSubtitleFormats` for original-format subs) and the tier each file type lands on. |
 | [test-harness.md](./test-harness.md) | Booting a disposable Obelo backend with generated media fixtures to develop and test against. |
 | [design-language.md](./design-language.md) | The Obelo visual language (flat wireframe, lime accent, media-first) adapted to the tvOS 10-foot, focus-driven UI — including the fully-custom player overlay libmpv requires. |
 
-**Canonical source**: these files are generated from and maintained in the Obelo server repo (`docs/clients/appletv/`, contract stamped at server commit `0eeda2c`). When the server's API changes, regenerate/update there and re-copy. If a doc here contradicts `api-contract.md`, the contract wins; if the contract contradicts the server, the server wins.
+**Canonical source**: these files are generated from and maintained in the Obelo server repo (`docs/clients/appletv/`, contract stamped at server commit `843c7ea`). The bundled `api-contract.md` is a **copy taken at handoff**, not a live mirror — when the server's API changes, update these docs there and re-copy both. If a doc here contradicts `api-contract.md`, the contract wins; if the contract contradicts the server, the server wins.

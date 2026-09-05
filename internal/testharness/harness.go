@@ -17,6 +17,8 @@ package testharness
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -73,6 +75,17 @@ func WithDataDir(dir string) Option {
 // harness disables it so unrelated tests are deterministic and quiet.
 func WithScanInterval(d time.Duration) Option {
 	return func(b *builder) { b.cfg.ScanInterval = d }
+}
+
+// WithLinkSyncInterval turns the background refresh of linked Libraries on and
+// sets its cadence (0 disables it). The default harness disables it, for the
+// scheduled scan's reason and one more: a linked home Server holds a LONG-LIVED
+// /events subscription to its sharer, and httptest.Server.Close blocks on an
+// in-flight request — so a test that closes a sharer mid-run would hang on a
+// stream it never asked for. Tests that exercise the nudge, the timer or the
+// backoff opt in.
+func WithLinkSyncInterval(d time.Duration) Option {
+	return func(b *builder) { b.cfg.LinkSyncInterval = d }
 }
 
 // WithSessionIdleTimeout sets the Playback-session reaper's idle window (0
@@ -344,6 +357,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	b.cfg.SessionIdleTimeout = 0      // session reaper off by default; opt in with WithSessionIdleTimeout
 	b.cfg.AutoEnrichAfterScan = false // auto-after-scan enrich off by default; opt in with WithAutoEnrich
 	b.cfg.EnrichInterval = 0          // scheduled enrich off by default; opt in with WithEnrichInterval
+	b.cfg.LinkSyncInterval = 0        // linked-library refresh off by default; opt in with WithLinkSyncInterval
 	// First-run Enrichment consent (ADR-0032) is GRANTED by default so a harness
 	// represents an operator who has already opted in — existing enrichment tests
 	// enrich as before. A consent-gate test overrides this with WithEnrichmentConsent.
@@ -687,6 +701,26 @@ func (s *Server) SetTitleHidden(titleID string, hidden bool) {
 	}
 }
 
+// Exec runs one statement against this Server's database — the general form of
+// the narrow SetTitleHidden / SetTitleContentRating seams above.
+//
+// It exists for the Library Export's replay test (.scratch/linked-servers issue
+// 05, ADR-0056 §4), whose whole claim is "an empty Server fed nothing but the
+// export answers the browse API the same way". Proving that needs a Server whose
+// catalog was written by the FEED rather than by a scan of the same folder — the
+// mirror's job, which arrives in issue 07 — so the test writes those rows itself
+// and this is the one seam that lets it. A per-table helper would be the mirror,
+// re-implemented in the harness a release early and wrong.
+//
+// Use it only for fixture state the public API genuinely cannot author. Anything
+// a real client can do belongs in a real request.
+func (s *Server) Exec(query string, args ...any) {
+	s.t.Helper()
+	if _, err := s.app.DB.Exec(query, args...); err != nil {
+		s.t.Fatalf("testharness: exec %q: %v", query, err)
+	}
+}
+
 // SetShowContentRating sets a Show's ENRICHED Content rating (stored in
 // entity_enrichment, not on the shows row) — the parent-entity equivalent of
 // SetTitleContentRating, for cross-system ceiling tests.
@@ -763,6 +797,28 @@ func (s *Server) ExpireStreamTokensForSession(sessionID string) {
 	}
 }
 
+// ExpireLinkInvites ages every one of a User's link invites out, by backdating
+// expires_at an hour into the past (ADR-0055 §1).
+//
+// A direct-DB seam like ExpireStreamTokensForSession, and for the same reason:
+// the TTL is 24 hours, nothing in the API shortens it, and a test that waited
+// would wait a day. Expiry is enforced in the redeem's WHERE clause
+// (store.RedeemLinkInvite), so a backdated row is exactly what a genuinely
+// aged-out one looks like — the only difference is which clock got there first.
+func (s *Server) ExpireLinkInvites(userID string) {
+	s.t.Helper()
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	res, err := s.app.DB.Exec(
+		`UPDATE link_invites SET expires_at = ? WHERE user_id = ?`, past, userID,
+	)
+	if err != nil {
+		s.t.Fatalf("testharness: expiring link invites for user %q: %v", userID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		s.t.Fatalf("testharness: no link invites to expire for user %q", userID)
+	}
+}
+
 // CreateMember inserts a non-Admin (role "member") User directly into the
 // database with the given credentials. Prefer CreateUser (which drives the real
 // admin API); this direct-insert seam remains for the pre-API baseline — seeding
@@ -780,6 +836,68 @@ func (s *Server) CreateMember(username, password string) {
 	); err != nil {
 		s.t.Fatalf("testharness: inserting member %q: %v", username, err)
 	}
+}
+
+// IssueTokenForUser mints a Device and a bearer token for an existing User by
+// direct DB insert, returning the raw token.
+//
+// It exists for the `remote` role (ADR-0054), which is the one User that cannot
+// reach LoginAs: it has no password and POST /auth/login refuses the role
+// outright. Its real credential comes from redeeming an Invite server-to-server
+// (ADR-0055), which is a later slice — so this seam stands in for that redemption
+// and produces exactly what it will: an ordinary Device-bound token, indexed by
+// its SHA-256 like every other, with the peer's server id as the Device clientId.
+//
+// The hashing is duplicated here rather than reached for through auth (where it
+// is unexported and must stay so). It is a plain SHA-256 of the raw token — see
+// auth/token.go for why that is right for a 256-bit random secret — and a
+// divergence would surface immediately as a 401 in any test that uses this.
+func (s *Server) IssueTokenForUser(userID, clientID string) string {
+	s.t.Helper()
+	raw := uuid.NewString() + uuid.NewString()
+	sum := sha256.Sum256([]byte(raw))
+	deviceID := uuid.NewString()
+	if _, err := s.app.DB.Exec(
+		`INSERT INTO devices (id, user_id, client_id, name, platform) VALUES (?, ?, ?, ?, ?)`,
+		deviceID, userID, clientID, clientID, "server",
+	); err != nil {
+		s.t.Fatalf("testharness: inserting device for user %q: %v", userID, err)
+	}
+	if _, err := s.app.DB.Exec(
+		`INSERT INTO auth_tokens (token_hash, device_id, user_id) VALUES (?, ?, ?)`,
+		hex.EncodeToString(sum[:]), deviceID, userID,
+	); err != nil {
+		s.t.Fatalf("testharness: inserting token for user %q: %v", userID, err)
+	}
+	return raw
+}
+
+// CountWatchRowsForUser returns the raw number of per-Title watch-state rows a
+// User owns: watch_state, then the Remembered audio and Remembered video memories
+// (Title- and Show-scoped together).
+//
+// A direct-DB seam like CountPlaylistRowsForOwner, and for the same reason: "this
+// User wrote NOTHING" is unobservable from outside. A Title detail read back as
+// the same User reports a zero resume for "no row" and for "a row saying zero"
+// alike, so the API cannot tell an absent write from a harmless one — which is
+// precisely the claim ADR-0054 makes about the `remote` role.
+func (s *Server) CountWatchRowsForUser(userID string) (watchState, audioMemory, videoMemory int) {
+	s.t.Helper()
+	count := func(query string) int {
+		var n int
+		if err := s.app.DB.QueryRow(query, userID).Scan(&n); err != nil {
+			s.t.Fatalf("testharness: counting watch rows for %q: %v", userID, err)
+		}
+		return n
+	}
+	watchState = count(`SELECT COUNT(*) FROM watch_state WHERE user_id = ?`)
+	audioMemory = count(
+		`SELECT (SELECT COUNT(*) FROM title_audio_memory WHERE user_id = ?1)
+		      + (SELECT COUNT(*) FROM show_audio_memory  WHERE user_id = ?1)`)
+	videoMemory = count(
+		`SELECT (SELECT COUNT(*) FROM title_video_memory WHERE user_id = ?1)
+		      + (SELECT COUNT(*) FROM show_video_memory  WHERE user_id = ?1)`)
+	return watchState, audioMemory, videoMemory
 }
 
 // RefreshRotationKeys forces one synchronous key-rotation poll (ADR-0032): fetch

@@ -59,6 +59,12 @@ type titleSummaryJSON struct {
 	// artwork URL so a re-fetched poster reloads in place while a text-only edit
 	// leaves it untouched (no flicker). Omitted when the Title has no artwork.
 	ArtworkVersion string `json:"artworkVersion,omitempty"`
+	// Linked/Available say this Title lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6) — the badge a client greys when the friend's Server
+	// cannot be reached. Absent on a local Title; see libraryJSON for why
+	// `available` is a pointer.
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type titlesResponse struct {
@@ -78,7 +84,8 @@ func mergeEnrichment(t store.Title, enr map[string]store.Title) store.Title {
 	return t
 }
 
-func toTitleSummary(t store.Title, ws store.WatchState, genres []string) titleSummaryJSON {
+func toTitleSummary(t store.Title, ws store.WatchState, genres []string, linked linkedState) titleSummaryJSON {
+	isLinked, available := linked.decorate(t.LibraryID)
 	return titleSummaryJSON{
 		ID:               t.ID,
 		Kind:             t.Kind,
@@ -98,6 +105,8 @@ func toTitleSummary(t store.Title, ws store.WatchState, genres []string) titleSu
 		Studio:           t.Studio,
 		Genres:           genres,
 		EnrichmentStatus: t.EnrichmentStatus,
+		Linked:           isLinked,
+		Available:        available,
 	}
 }
 
@@ -774,7 +783,8 @@ func handleScanStatus(status ScanStatusReader, exists LibraryExister, counts Lib
 // Title summaries (authenticated). Each summary is decorated with the calling
 // User's watch state (resume + watched) via one bulk read, so a client sees
 // resume markers without an extra round-trip per Title.
-func handleListTitles(svc *catalog.Service) http.HandlerFunc {
+func handleListTitles(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -803,12 +813,12 @@ func handleListTitles(svc *catalog.Service) http.HandlerFunc {
 			return
 		}
 		if kind == "tv" {
-			handleListShows(svc, id)(w, r)
+			handleListShows(deps, id)(w, r)
 			return
 		}
 		// A Music Library's top-level list is Artists, not Titles (api-contract.md).
 		if kind == "music" {
-			handleListArtists(svc, id)(w, r)
+			handleListArtists(deps, id)(w, r)
 			return
 		}
 
@@ -860,12 +870,13 @@ func handleListTitles(svc *catalog.Service) http.HandlerFunc {
 			return
 		}
 
+		linked := loadLinkedState(deps)
 		out := titlesResponse{
 			Titles:     make([]titleSummaryJSON, 0, len(page.Titles)),
 			NextCursor: page.NextCursor,
 		}
 		for _, t := range page.Titles {
-			js := toTitleSummary(t, states[t.ID], genres[t.ID])
+			js := toTitleSummary(t, states[t.ID], genres[t.ID], linked)
 			js.ArtworkVersion = versions[t.ID]
 			out.Titles = append(out.Titles, js)
 		}
@@ -1303,7 +1314,8 @@ func handleReviewShow(svc *catalog.Service, showID string) http.HandlerFunc {
 // handleGetTitle returns one Title with its nested Editions/Files/Streams,
 // Extras, and Artwork (authenticated). Unknown id → 404. It also dispatches the
 // artwork sub-resource (/titles/{id}/artwork/{role}).
-func handleGetTitle(svc *catalog.Service) http.HandlerFunc {
+func handleGetTitle(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest := strings.TrimPrefix(r.URL.Path, "/titles/")
 		if rest == "" {
@@ -1318,7 +1330,7 @@ func handleGetTitle(svc *catalog.Service) http.HandlerFunc {
 		if i := strings.Index(rest, "/artwork/"); i > 0 {
 			titleID := rest[:i]
 			role := rest[i+len("/artwork/"):]
-			handleTitleArtwork(svc, scope, titleID, role)(w, r)
+			handleTitleArtwork(deps, scope, titleID, role)(w, r)
 			return
 		}
 		if strings.Contains(rest, "/") {
@@ -1366,7 +1378,8 @@ func handleGetTitle(svc *catalog.Service) http.HandlerFunc {
 // handleTitleArtwork serves the local artwork image bytes for a Title+role
 // (poster|background). Local-on-disk wins; no external fetch (ADR-0001). A Title
 // or role with no artwork → 404.
-func handleTitleArtwork(svc *catalog.Service, scope access.Scope, titleID, role string) http.HandlerFunc {
+func handleTitleArtwork(deps Deps, scope access.Scope, titleID, role string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		if titleID == "" || role == "" || strings.Contains(role, "/") {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -1375,6 +1388,12 @@ func handleTitleArtwork(svc *catalog.Service, scope access.Scope, titleID, role 
 		art, err := svc.Artwork(scope, titleID, role)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
+			// A MIRRORED Title has no artwork row here — the sharer's feed carries none
+			// (ADR-0056 §5) — so the image is fetched from them on this first request and
+			// cached. A local Title with no poster still answers 404.
+			if serveRelayArtwork(deps, w, r, scope, relayKindTitle, titleID, role) {
+				return
+			}
 			writeError(w, http.StatusNotFound, codeNotFound, "artwork not found", nil)
 			return
 		case err != nil:
@@ -1406,7 +1425,20 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 
 		switch {
 		case strings.HasSuffix(rest, "/titles"):
-			requireMethod(http.MethodGet, requireScope(deps.Access, handleListTitles(deps.Catalog)))(w, r)
+			requireMethod(http.MethodGet, requireScope(deps.Access, handleListTitles(deps)))(w, r)
+			return
+		case strings.HasSuffix(rest, "/export"):
+			// The Library Export (ADR-0056 §4): a `remote` User's mirror, or an
+			// Admin. requireScope resolves the grant set; the handler does the role
+			// check itself, because a Member must get the 404 an unknown route gives
+			// rather than the 403 requireAdmin would.
+			libID := exportLibraryID(rest)
+			if libID == "" {
+				notFound(w)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireScope(deps.Access, handleLibraryExport(deps, libID)))(w, r)
 			return
 		case strings.HasSuffix(rest, "/unmatched"):
 			// Admin attention surface: the Unmatched list is Admin-only.
@@ -1421,7 +1453,8 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 				return
 			}
-			requireMethod(http.MethodDelete, requireAdmin(handleDeleteOverride(deps.Match, overrideID)))(w, r)
+			requireMethod(http.MethodDelete, requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
+				handleDeleteOverride(deps.Match, overrideID))))(w, r)
 			return
 		case strings.HasSuffix(rest, "/overrides"):
 			// Admin attention surface: Match overrides (orphans surfaced here).
@@ -1458,7 +1491,8 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 		case strings.HasSuffix(rest, "/fix-match"):
 			// Admin identity correction (fix-match), keyed to a folder path. An id-only
 			// fix resolves its canonical title/year from the provider (deps.Enrich).
-			requireMethod(http.MethodPost, requireAdmin(handleFixMatch(deps.Match, deps.Enrich, deps.Catalog)))(w, r)
+			requireMethod(http.MethodPost, requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
+				handleFixMatch(deps.Match, deps.Enrich, deps.Catalog))))(w, r)
 			return
 		case strings.HasSuffix(rest, "/enrich"):
 			// Admin: START a background Enrichment pass over the Library (POST, 202),
@@ -1467,7 +1501,7 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			// started, never awaited, so there has to be somewhere to ask about it.
 			switch r.Method {
 			case http.MethodPost:
-				requireAdmin(handleEnrich(deps))(w, r)
+				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest), handleEnrich(deps)))(w, r)
 			case http.MethodGet:
 				requireAdmin(handleEnrichStatus(deps))(w, r)
 			default:
@@ -1482,7 +1516,8 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			case http.MethodGet:
 				requireAdmin(handleGetEnrichmentPolicy(deps))(w, r)
 			case http.MethodPut:
-				requireAdmin(handleUpdateEnrichmentPolicy(deps))(w, r)
+				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
+					handleUpdateEnrichmentPolicy(deps)))(w, r)
 			default:
 				w.Header().Set("Allow", "GET, PUT")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
@@ -1492,7 +1527,8 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 		case strings.HasSuffix(rest, "/scan"):
 			switch r.Method {
 			case http.MethodPost:
-				requireAdmin(handleScan(deps.Scanner, deps.ScanStatus, deps.EnrichTrigger, deps.Events))(w, r)
+				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
+					handleScan(deps.Scanner, deps.ScanStatus, deps.EnrichTrigger, deps.Events)))(w, r)
 			case http.MethodGet:
 				handleScanStatus(deps.ScanStatus, deps.Libraries, deps.TitleCounts)(w, r)
 			default:
@@ -1506,11 +1542,17 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 			// scoped (an ungranted Library is 404); DELETE is Admin-only.
 			switch r.Method {
 			case http.MethodGet:
-				requireScope(deps.Access, handleGetLibrary(deps.Library))(w, r)
+				requireScope(deps.Access, handleGetLibrary(deps))(w, r)
 			case http.MethodPatch:
-				requireAdmin(handleUpdateLibrary(deps.Library))(w, r)
+				// PATCH is NOT guarded wholesale: a linked Library may still be renamed
+				// (ADR-0056 §1). The handler refuses the half of the body that would
+				// give a mirror root folders.
+				requireAdmin(handleUpdateLibrary(deps))(w, r)
 			case http.MethodDelete:
-				requireAdmin(handleDeleteLibrary(deps.Library))(w, r)
+				// DELETE is refused on a mirror: unlinking is the only thing that
+				// removes what came over a Link (ADR-0056 §6), and it removes the Link
+				// too. Deleting the shelf alone would leave a Link syncing into nothing.
+				requireAdmin(requireLocalLibrary(deps, rest, handleDeleteLibrary(deps.Library)))(w, r)
 			default:
 				w.Header().Set("Allow", "GET, PATCH, DELETE")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,

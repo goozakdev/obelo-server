@@ -147,22 +147,20 @@ func (db *DB) searchArtists(pattern string, limit int, filter AccessFilter) ([]A
 }
 
 func (db *DB) searchAlbums(pattern string, limit int, filter AccessFilter) ([]Album, error) {
-	// An Album carries no library_id of its own; its Library is its Artist's, so a
-	// restrictive filter joins through artists. Under all-access the clause is
-	// empty and no join is added, leaving the query byte-identical to before.
+	// An Album carries no library_id of its own; its Library is its Artist's, so
+	// the join through artists is unconditional: a restrictive filter needs it,
+	// and so does every row, which reports its Library on the wire (a search hit
+	// has no Artist beside it to inherit the linked mark from). The join is on a
+	// NOT NULL foreign key, so it can drop no row.
 	libClause, libArgs := filter.libraryClause("ar.library_id")
-	join := ""
-	if libClause != "" {
-		join = " JOIN artists ar ON ar.id = a.artist_id"
-	}
 	args := []any{pattern}
 	args = append(args, libArgs...)
 	args = append(args, limit)
 	rows, err := db.Query(
-		`SELECT a.id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
+		`SELECT a.id, ar.library_id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
 		        a.artwork_path, a.release_type, a.hidden, a.added_at, a.musicbrainz_id, a.musicbrainz_release_id,
 		        (SELECT COUNT(*) FROM titles t WHERE t.album_id = a.id AND t.hidden = 0) AS track_count
-		   FROM albums a`+join+`
+		   FROM albums a JOIN artists ar ON ar.id = a.artist_id
 		  WHERE a.hidden = 0 AND a.title LIKE ? ESCAPE '\'`+libClause+`
 		  ORDER BY a.sort_title ASC, a.id ASC LIMIT ?`, args...)
 	if err != nil {

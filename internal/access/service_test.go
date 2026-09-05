@@ -2,6 +2,7 @@ package access
 
 import (
 	"errors"
+	"sort"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -13,6 +14,12 @@ type fakeStore struct {
 	grants   map[string][]string // userID -> granted library ids
 	ceilings map[string]string   // userID -> ceiling label
 	libs     map[string]bool     // existing library ids (grant validation)
+	// linked is the subset of libs that arrived over a Link (ADR-0056 §1) — the
+	// Libraries a `remote` User may never be granted and never resolves.
+	linked map[string]bool
+	// play is the per-User Playback ceiling (ADR-0054 §2); an absent entry is the
+	// zero value, i.e. uncapped in all three dimensions.
+	play map[string]store.PlaybackCeiling
 }
 
 func (f *fakeStore) UserByID(id string) (store.User, error) {
@@ -53,15 +60,46 @@ func (f *fakeStore) SetRatingCeiling(userID, label string) error {
 	return nil
 }
 
+func (f *fakeStore) PlaybackCeilingForUser(userID string) (store.PlaybackCeiling, error) {
+	if _, ok := f.users[userID]; !ok {
+		return store.PlaybackCeiling{}, store.ErrNotFound
+	}
+	return f.play[userID], nil
+}
+
+func (f *fakeStore) SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error {
+	if _, ok := f.users[userID]; !ok {
+		return store.ErrNotFound
+	}
+	f.play[userID] = c
+	return nil
+}
+
+func (f *fakeStore) LinkedLibraryIDs() ([]string, error) {
+	out := make([]string, 0, len(f.linked))
+	for id := range f.linked {
+		if f.linked[id] {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// newFake: two local Libraries and one ("mirror") that arrived over a Link,
+// plus one User of each role.
 func newFake() *fakeStore {
 	return &fakeStore{
 		users: map[string]store.User{
 			"a": {ID: "a", Role: "admin"},
 			"m": {ID: "m", Role: "member"},
+			"r": {ID: "r", Role: "remote"},
 		},
 		grants:   map[string][]string{},
 		ceilings: map[string]string{},
-		libs:     map[string]bool{"l1": true, "l2": true},
+		libs:     map[string]bool{"l1": true, "l2": true, "mirror": true},
+		linked:   map[string]bool{"mirror": true},
+		play:     map[string]store.PlaybackCeiling{},
 	}
 }
 
@@ -138,6 +176,63 @@ func TestSetLibraryAccess(t *testing.T) {
 	}
 	if err := svc.SetLibraryAccess("m", []string{"l1", "nope"}); !errors.Is(err, ErrUnknownLibrary) {
 		t.Errorf("grant with unknown library err = %v, want ErrUnknownLibrary", err)
+	}
+}
+
+// TestSetLibraryAccessRefusesALinkedLibraryForARemoteUser: a Library that
+// arrived over a Link is never re-shared (ADR-0054 §4). The whole set is
+// refused, the prior set stands, and the same Library granted to a MEMBER is
+// ordinary business.
+func TestSetLibraryAccessRefusesALinkedLibraryForARemoteUser(t *testing.T) {
+	fs := newFake()
+	svc := NewService(fs)
+
+	if err := svc.SetLibraryAccess("r", []string{"l1"}); err != nil {
+		t.Fatalf("granting a local library to a remote user: %v", err)
+	}
+	if err := svc.SetLibraryAccess("r", []string{"l2", "mirror"}); !errors.Is(err, ErrLinkedGrant) {
+		t.Errorf("granting a mirror to a remote user = %v, want ErrLinkedGrant", err)
+	}
+	// Rejected whole: the l2 in the same set was not applied either.
+	if got := fs.grants["r"]; len(got) != 1 || got[0] != "l1" {
+		t.Errorf("after the refusal, remote grants = %v, want [l1] (unchanged)", got)
+	}
+	// A Member is unaffected — the second hop is what is refused, not the first.
+	if err := svc.SetLibraryAccess("m", []string{"mirror"}); err != nil {
+		t.Errorf("granting a mirror to a member: %v, want nil", err)
+	}
+}
+
+// TestResolveDropsALinkedLibraryFromARemoteScope: the invariant holds where the
+// Scope is COMPUTED, not only where a grant is written — a row inserted behind
+// the API (a restore, a hand-edit, a Library that became a mirror after it was
+// granted) still resolves to nothing for a `remote` User, while the same row
+// resolves normally for a Member.
+func TestResolveDropsALinkedLibraryFromARemoteScope(t *testing.T) {
+	fs := newFake()
+	fs.grants["r"] = []string{"l1", "mirror"} // written behind SetLibraryAccess
+	fs.grants["m"] = []string{"l1", "mirror"}
+
+	sc, err := NewService(fs).Resolve("r")
+	if err != nil {
+		t.Fatalf("Resolve(remote): %v", err)
+	}
+	if sc.AllowsLibrary("mirror") {
+		t.Error("a remote User's Scope allows a linked Library; sharing does not travel")
+	}
+	if !sc.AllowsLibrary("l1") {
+		t.Errorf("a remote User's Scope lost its local grant: %v", sc.LibraryIDs)
+	}
+	if len(sc.LibraryIDs) != 1 {
+		t.Errorf("remote LibraryIDs = %v, want just [l1]", sc.LibraryIDs)
+	}
+
+	member, err := NewService(fs).Resolve("m")
+	if err != nil {
+		t.Fatalf("Resolve(member): %v", err)
+	}
+	if !member.AllowsLibrary("mirror") {
+		t.Error("a Member lost their linked Library; only the remote role is capped")
 	}
 }
 

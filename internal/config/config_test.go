@@ -40,6 +40,30 @@ func TestScanIntervalFromEnv(t *testing.T) {
 	}
 }
 
+// TestLinkSyncIntervalFromEnv: the linked-library refresh cadence has the scan's
+// shape — a sensible default, env-overridable, "0" turns it off, garbage keeps
+// the default rather than failing a boot over a knob for an optional feature.
+func TestLinkSyncIntervalFromEnv(t *testing.T) {
+	if d := config.Defaults().LinkSyncInterval; d != config.DefaultLinkSyncInterval {
+		t.Errorf("default link sync interval = %v, want %v", d, config.DefaultLinkSyncInterval)
+	}
+
+	t.Setenv("OBELO_LINK_SYNC_INTERVAL", "15m")
+	if d := config.FromEnv().LinkSyncInterval; d != 15*time.Minute {
+		t.Errorf("env link sync interval = %v, want 15m", d)
+	}
+
+	t.Setenv("OBELO_LINK_SYNC_INTERVAL", "0")
+	if d := config.FromEnv().LinkSyncInterval; d != 0 {
+		t.Errorf("link sync interval = %v, want 0 (background refresh off)", d)
+	}
+
+	t.Setenv("OBELO_LINK_SYNC_INTERVAL", "not-a-duration")
+	if d := config.FromEnv().LinkSyncInterval; d != config.DefaultLinkSyncInterval {
+		t.Errorf("garbage link sync interval = %v, want default %v", d, config.DefaultLinkSyncInterval)
+	}
+}
+
 // TestTranscodeCapFromEnv: the concurrent-transcode cap (ADR-0009) has a sensible
 // default and is env-overridable; "0" disables it (unlimited); garbage falls back
 // to the default.

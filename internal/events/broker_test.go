@@ -161,6 +161,36 @@ func TestPublishGatesByAudience(t *testing.T) {
 	}
 }
 
+// TestPublishLinkStateIsAdminOnly: a Link is the household's relationship with
+// another household — the operator's configuration — so the nudge that says one
+// moved is Admin-only, in the same posture as the Tailnet's. It carries the link
+// id and nothing else: GET /links stays the source of truth for the state.
+func TestPublishLinkStateIsAdminOnly(t *testing.T) {
+	b := NewBroker()
+	defer b.Close()
+
+	adminCh, cancelA := b.Subscribe(Identity{UserID: "a", IsAdmin: true})
+	defer cancelA()
+	memberCh, cancelM := b.Subscribe(Identity{UserID: "m"})
+	defer cancelM()
+
+	b.PublishLinkState("link-1")
+	// The broadcast right after is the sentinel: receiving it on the Member's
+	// channel FIRST proves the link event was filtered rather than merely late.
+	b.Publish(Event{Type: TypeEnrichProgress})
+
+	e := recvWithin(t, adminCh)
+	if e.Type != TypeLinkState {
+		t.Fatalf("admin first event = %q, want %q", e.Type, TypeLinkState)
+	}
+	if p, ok := e.Data.(LinkState); !ok || p.LinkID != "link-1" {
+		t.Fatalf("payload = %+v, want the link id", e.Data)
+	}
+	if e := recvWithin(t, memberCh); e.Type != TypeEnrichProgress {
+		t.Fatalf("member first event = %q, want %q (linkState must be filtered)", e.Type, TypeEnrichProgress)
+	}
+}
+
 func recvWithin(t *testing.T, ch <-chan Event) Event {
 	t.Helper()
 	select {

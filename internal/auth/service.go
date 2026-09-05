@@ -25,10 +25,22 @@ import (
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// Role values a User may hold (CONTEXT.md: Admin manages; Member browses/plays).
+// Role values a User may hold (CONTEXT.md: Admin manages; Member browses/plays;
+// Remote is a linked Server, not a person).
 const (
 	RoleAdmin  = "admin"
 	RoleMember = "member"
+	// RoleRemote is the role a LINKED SERVER holds on this one (ADR-0054). It is a
+	// User so that grants, the Rating ceiling, access.Service.Resolve, the
+	// Device/token binding and the 404 posture apply to it with no new enforcement
+	// code — and it is its own ROLE rather than a flag on a Member so that every
+	// guard reads as one field test.
+	//
+	// What it does NOT have, all enforced here or in the schema (0058_remote_role):
+	// a password (its only credential is the token an Invite leaves behind,
+	// ADR-0055), a way to log in, a place in the roster, watch state, or any route
+	// to another role.
+	RoleRemote = "remote"
 )
 
 // Store is the persistence the auth service needs. *store.DB satisfies it; the
@@ -45,6 +57,7 @@ type Store interface {
 	DeleteUser(id string) error
 	UpsertDevice(newID, userID, clientID, name, platform string) (store.Device, error)
 	DevicesByUser(userID string) ([]store.Device, error)
+	LastDeviceSeenByUser() (map[string]string, error)
 	DeviceByID(id string) (store.Device, error)
 	DeleteDevice(id string) error
 	InsertToken(tokenHash, deviceID, userID string) error
@@ -59,6 +72,15 @@ type Store interface {
 	TouchDeviceAuthPoll(hash, now string) (string, error)
 	CountLiveDeviceAuthRequests(now string) (int, error)
 	DeleteExpiredDeviceAuthRequests(now string) error
+	// Link invites (ADR-0055 §1) — the `remote` role's one-time credential. A
+	// THIRD namespace, separate from both the bearer tokens above and the stream
+	// tokens below: an invite code can never authenticate as either, and neither
+	// can be redeemed as an invite.
+	InsertLinkInvite(inv store.LinkInvite) error
+	LinkInviteByCodeHash(hash string) (store.LinkInvite, error)
+	RedeemLinkInvite(hash, now string) (store.LinkInvite, error)
+	DeleteUnredeemedLinkInvites(userID string) error
+	DeleteExpiredLinkInvites(now string) error
 	// Session stream tokens (.scratch/session-stream-tokens). A SEPARATE namespace
 	// from InsertToken/LookupToken above, and deliberately so: nothing here reads
 	// or writes auth_tokens, so a stream token can never authenticate as a bearer
@@ -85,6 +107,10 @@ var (
 	ErrUsernameTaken = errors.New("auth: username already taken")
 	ErrLastAdmin     = errors.New("auth: cannot remove the last admin")
 	ErrInvalidUser   = errors.New("auth: invalid user input")
+	// ErrRoleChange: a role change would cross the `remote` boundary (ADR-0054) —
+	// promoting a linked Server to a person, or demoting a person to one. A remote
+	// User is created remote and dies remote (→ 422 ROLE_CHANGE).
+	ErrRoleChange = errors.New("auth: cannot change a role to or from remote")
 )
 
 // Service implements the authentication operations. It holds the one-time claim
@@ -117,6 +143,9 @@ type Service struct {
 	//   loginUserFails    — password login failures, keyed by submitted username.
 	//   loginIPFails      — password login failures, keyed by client IP.
 	//   deviceStartQuota  — device-code starts that SUCCEEDED, keyed by client IP.
+	//   linkRedeemFails   — link-invite redemption FAILURES, keyed by client IP
+	//                       (that endpoint is unauthenticated by necessity, so
+	//                       there is no User to key on — see link_invite.go).
 	//
 	// The first three are free until somebody is wrong repeatedly. The fourth is a
 	// quota on a scarce resource rather than a penalty for being wrong, because a
@@ -130,6 +159,7 @@ type Service struct {
 	loginUserFails   *fixedWindowLimiter
 	loginIPFails     *fixedWindowLimiter
 	deviceStartQuota *fixedWindowLimiter
+	linkRedeemFails  *fixedWindowLimiter
 }
 
 // Option configures the Service. Present for the clock seam; NewService's
@@ -153,6 +183,7 @@ func NewService(s Store, opts ...Option) (*Service, error) {
 		loginUserFails:   newFixedWindowLimiter(loginUserFailureLimit, loginFailureWindow),
 		loginIPFails:     newFixedWindowLimiter(loginIPFailureLimit, loginFailureWindow),
 		deviceStartQuota: newFixedWindowLimiter(maxDeviceAuthStartsPerSource, deviceAuthStartWindow),
+		linkRedeemFails:  newFixedWindowLimiter(linkRedeemFailureLimit, linkRedeemFailureWindow),
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -301,6 +332,26 @@ func (s *Service) Login(ctx context.Context, username, password string, dev Devi
 		// sick database lock out the people trying to use it.
 		return LoginResult{}, err
 	}
+	if user.Role == RoleRemote {
+		// A linked Server has no password to verify (ADR-0054): its only credential
+		// is the token an Invite leaves behind, and password login is refused for the
+		// role outright, with any password.
+		//
+		// It is refused down the UNKNOWN-USERNAME path — the dummy verify, then the
+		// same generic ErrInvalidCredentials — and not with an early return, which is
+		// the shape this guard reads like it wants. An early return would answer
+		// instantly while every real login queued on the KDF semaphore, making the
+		// role of any name an attacker can guess readable off the clock; the comment
+		// above the dummy verify is the record of that exact bug being fixed once
+		// already for the unknown-username case. Refusing a role must not reintroduce
+		// it: on this path the ONLY thing a caller learns is "those credentials are
+		// not good", which is all any of the three refusals says.
+		if verr := VerifyPasswordContext(ctx, dummyHash, password); kdfAbandoned(verr) {
+			return LoginResult{}, verr
+		}
+		s.chargeLoginFailure(username, clientIP)
+		return LoginResult{}, ErrInvalidCredentials
+	}
 	if verr := VerifyPasswordContext(ctx, user.PasswordHash, password); verr != nil {
 		if kdfAbandoned(verr) {
 			return LoginResult{}, verr
@@ -392,23 +443,45 @@ func (s *Service) DeleteDevice(caller store.User, deviceID string) error {
 
 // CreateUser mints a User with the given role (defaulting to Member when role
 // is empty), hashing the password here so no plaintext leaves the caller. A
-// duplicate username yields ErrUsernameTaken; an empty username/password or an
-// unknown role yields ErrInvalidUser. ctx is threaded in for the KDF meter
-// (password.go): this is an Admin-only endpoint, but it hashes, and every path
-// into argon2 queues in the same line.
+// duplicate username yields ErrUsernameTaken; an empty username, an unknown
+// role, or a password that does not match the role yields ErrInvalidUser. ctx is
+// threaded in for the KDF meter (password.go): this is an Admin-only endpoint,
+// but it hashes, and every path into argon2 queues in the same line.
+//
+// The password rule is per-role and goes BOTH ways (ADR-0054): an Admin or a
+// Member must have one, and a Remote User must NOT — a supplied password on the
+// role is a mistake worth refusing rather than storing an inert secret nothing
+// will ever verify. The username of a Remote User is the label the sharing Admin
+// chose ("Brandon's server").
 func (s *Service) CreateUser(ctx context.Context, username, password, role string) (store.User, error) {
-	if username == "" || password == "" {
+	if username == "" {
 		return store.User{}, ErrInvalidUser
 	}
 	if role == "" {
 		role = RoleMember
 	}
-	if role != RoleAdmin && role != RoleMember {
+	switch role {
+	case RoleAdmin, RoleMember:
+		if password == "" {
+			return store.User{}, ErrInvalidUser
+		}
+	case RoleRemote:
+		if password != "" {
+			return store.User{}, ErrInvalidUser
+		}
+	default:
 		return store.User{}, ErrInvalidUser
 	}
-	hash, err := HashPasswordContext(ctx, password)
-	if err != nil {
-		return store.User{}, err
+	// A Remote User stores the empty hash — the one state the schema's CHECK
+	// admits for exactly this role (0058_remote_role.sql). Nothing hashes here for
+	// it, so creating one never queues on the KDF.
+	hash := ""
+	if password != "" {
+		var err error
+		hash, err = HashPasswordContext(ctx, password)
+		if err != nil {
+			return store.User{}, err
+		}
 	}
 	user, err := s.store.CreateUser(uuid.NewString(), username, role, hash)
 	if err != nil {
@@ -423,6 +496,15 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 // Users lists every User (for the Admin user-management view).
 func (s *Service) Users() ([]store.User, error) {
 	return s.store.ListUsers()
+}
+
+// LastDeviceSeen reports, per User id, the most recent last-seen across that
+// User's Devices; a User with no Device is absent from the map. It is what lets
+// the Admin Users list say whether a `remote` User — a linked Server — has ever
+// redeemed its Invite, and when it last spoke (ADR-0055 §4: the redeeming Server
+// arrives as an ordinary Device with a real last-seen).
+func (s *Service) LastDeviceSeen() (map[string]string, error) {
+	return s.store.LastDeviceSeenByUser()
 }
 
 // User returns one User by id, or ErrUserNotFound.
@@ -450,6 +532,32 @@ func (s *Service) SetPassword(ctx context.Context, id, password string) error {
 			return ErrUserNotFound
 		}
 		return err
+	}
+	return nil
+}
+
+// CheckRoleChange is the guard every future role change must pass: a User may
+// move between admin and member, and may never cross the `remote` boundary in
+// either direction (ADR-0054). A linked Server is created remote and dies remote
+// — promoting one would hand a stranger's machine a person's surface (a
+// password reset, the roster, watch state), and demoting a person into one would
+// silently strip theirs.
+//
+// There is NO role-change endpoint today, and this function is why that fact is
+// safe rather than merely true: whoever adds `PUT /users/{id}/role` finds the
+// rule already written, already tested, and already mapped to its wire code
+// (422 ROLE_CHANGE), instead of rediscovering it. A change that moves nothing
+// (from == to) is not a change and passes; an unknown target role is
+// ErrInvalidUser, the same answer CreateUser gives it.
+func CheckRoleChange(from, to string) error {
+	if to != RoleAdmin && to != RoleMember && to != RoleRemote {
+		return ErrInvalidUser
+	}
+	if from == to {
+		return nil
+	}
+	if from == RoleRemote || to == RoleRemote {
+		return ErrRoleChange
 	}
 	return nil
 }

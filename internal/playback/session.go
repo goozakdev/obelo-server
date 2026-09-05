@@ -64,12 +64,35 @@ type Session struct {
 	// LastSeen is refreshed on create and by Touch; the issue-08 reaper uses it as
 	// the idle-since signal — a session silent past the idle timeout is reaped.
 	LastSeen time.Time
+	// UserCeiling mirrors Decision.UserCeiling: this session's quality was bound by
+	// the User's Playback ceiling (ADR-0054 §2), not by what the client asked for.
+	// It is the session-level half of the marker, so an observability read of the
+	// live sessions can tell a server-capped stream from a client-capped one
+	// without re-deriving the negotiation.
+	UserCeiling bool
 	// ScratchDir is the session's HLS scratch directory under the data dir
 	// (ADR-0007), set for directStream/transcode sessions and empty for direct
 	// play (which streams the File's bytes and needs no scratch). The Manager
 	// creates it on Create and removes it (with any ffmpeg output) on End/Reap.
 	ScratchDir string
+	// RelayLinkID, RemoteSessionID and RemoteTitleID are set for a RELAY session
+	// (ADR-0056 §5): the Link to fetch the bytes under, the session the sharing
+	// Server opened for us, and its id for the Title. They are what makes ending
+	// this session end that one, and what lets the relay media routes decide
+	// whether a requested path belongs to this session at all.
+	//
+	// A relay session is otherwise an ordinary Session — it is reaped on the same
+	// idle clock, keeps the same watch state, and feeds the same nowPlaying — and
+	// every field above describes the mirrored row, not a file on this disk
+	// (FilePath is empty by construction).
+	RelayLinkID     string
+	RemoteSessionID string
+	RemoteTitleID   string
 }
+
+// IsRelay reports whether this Session is a one-hop relay of another Server's
+// (ADR-0056 §5).
+func (s Session) IsRelay() bool { return s.RemoteSessionID != "" }
 
 // sessionDurationMs is the duration the Watched threshold and resume are measured
 // against: the whole Edition (the sum of its parts), falling back to the playing
@@ -121,6 +144,29 @@ type SessionEvent struct {
 	UserID     string
 	TitleID    string
 	PositionMs int64
+	// RelayLinkID and RemoteSessionID are set for a RELAY session (ADR-0056 §5),
+	// and they are how the sharer's session ends when this one does. Ending hangs
+	// off this observer rather than off the DELETE handler for the same reason the
+	// stream-token revocation does: the idle REAPER fires the identical event, so
+	// an abandoned relay cannot leave a session (and a transcode) running on
+	// somebody else's machine — and there is one path rather than two that drift.
+	RelayLinkID     string
+	RemoteSessionID string
+}
+
+// endedEvent is the SessionEnded notification for a session that has just left,
+// built in ONE place because both exits — the clean End and the idle Reap — must
+// carry the same thing. The relay ids ride on it so the observer can end the
+// sharer's session too; they are empty for every local session.
+func endedEvent(s Session) SessionEvent {
+	return SessionEvent{
+		Kind:            SessionEnded,
+		SessionID:       s.ID,
+		UserID:          s.UserID,
+		TitleID:         s.TitleID,
+		RelayLinkID:     s.RelayLinkID,
+		RemoteSessionID: s.RemoteSessionID,
+	}
 }
 
 // Manager is the in-memory store of active Playback sessions: a map guarded by a
@@ -204,6 +250,38 @@ func (m *Manager) SetTranscodeCap(n int) { m.transcodeCap = n }
 // layer renders as 503 SERVER_BUSY. Direct play and remux never trigger it.
 var ErrTranscodeCapFull = errors.New("playback: transcode concurrency cap reached")
 
+// ErrStreamLimit is returned by CreateGoverned when the User already holds as
+// many unended sessions as their Playback ceiling's maxStreams allows (ADR-0054
+// §2). It is the sharer's one lever over LOAD from a household they cannot see
+// into, and it is per-User — unrelated to ErrTranscodeCapFull, which is the
+// server-wide transcode budget and counts only re-encodes. A direct play costs
+// the host nothing and still counts here: the cap is about how many streams a
+// User may take, not about CPU.
+//
+// "Unended" is whatever the reaper has not yet swept: ending a session (DELETE,
+// or the idle reap) frees the slot immediately, because both paths remove the
+// session from the same map this counts.
+var ErrStreamLimit = errors.New("playback: user stream limit reached")
+
+// StreamLimitError is what CreateGoverned actually returns when it refuses,
+// carrying the numbers the api layer renders into the 429 STREAM_LIMIT body so
+// the client can say "2 of 2 streams in use" rather than a bare refusal. Callers
+// that do not care use errors.Is(err, ErrStreamLimit) and never learn this type
+// exists — the same shape as auth's LoginThrottledError/DeviceAuthThrottledError.
+type StreamLimitError struct {
+	// Active is how many unended sessions the User already held.
+	Active int
+	// Limit is the User's maxStreams ceiling (always > 0 here — 0 is uncapped and
+	// never refuses).
+	Limit int
+}
+
+func (e *StreamLimitError) Error() string { return ErrStreamLimit.Error() }
+
+// Unwrap makes errors.Is(err, ErrStreamLimit) true, so handlers switch on the
+// sentinel and only reach for the type when they want the counts.
+func (e *StreamLimitError) Unwrap() error { return ErrStreamLimit }
+
 // CreateInput is what Create needs beyond the negotiated Decision: who owns the
 // session and where they want to start.
 type CreateInput struct {
@@ -254,6 +332,11 @@ type CreateInput struct {
 	// nil when the keyframe probe failed (the runtime then falls back to ffmpeg's
 	// playlist — correct for short files).
 	SegmentBoundaries []float64
+	// MaxStreams is the User's concurrent-session ceiling for THIS create (ADR-0054
+	// §2), taken from their resolved Scope; 0 means uncapped. The Service passes it
+	// down rather than the Manager reading a User's ceiling itself, because the
+	// Scope is already resolved once per request and the Manager holds no store.
+	MaxStreams int
 }
 
 // Create records a new Session for a Decision and returns it (the unmetered
@@ -296,12 +379,22 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		VideoCopy:     d.VideoCopy,
 		FMP4:          d.UsesFMP4(),
 		AudioStreamID: d.AudioStream.ID,
+		UserCeiling:   d.UserCeiling,
 		StartPosition: in.StartPosition,
 		CreatedAt:     now,
 		LastSeen:      now,
 	}
+	// A relay Decision names the sharing Server's session rather than a local File
+	// (ADR-0056 §5). It deliberately falls through the HLS-runtime branch below
+	// (there is no ffmpeg here to start) and the transcode metering (the re-encode,
+	// if there is one, is running on the other household's host).
+	if r := d.Relay; r != nil {
+		s.RelayLinkID = r.LinkID
+		s.RemoteSessionID = r.RemoteSessionID
+		s.RemoteTitleID = r.RemoteTitleID
+	}
 	var rt *hlsRuntime
-	if d.Tier != TierDirectPlay && m.runner != nil && m.scratchRoot != "" {
+	if d.Tier != TierDirectPlay && d.Relay == nil && m.runner != nil && m.scratchRoot != "" {
 		s.ScratchDir = filepath.Join(m.scratchRoot, id)
 		// Bind the scratch path into the per-seek args builder now that it is known.
 		// The runtime calls buildArgs on the first launch (zero seek) and again on
@@ -387,13 +480,37 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		}
 	}
 	m.mu.Lock()
+	// The User's own concurrent-stream ceiling (ADR-0054 §2), checked before the
+	// server-wide transcode cap because it is the narrower, per-User statement: a
+	// User at their limit is refused whatever tier they would have played at. It
+	// counts every UNENDED session of theirs — direct play included — under the same
+	// lock as the insertion, so two simultaneous negotiations cannot both slip past
+	// a limit of one. 0 (uncapped) never counts and never refuses.
+	if in.MaxStreams > 0 {
+		active := 0
+		for _, existing := range m.sessions {
+			if existing.UserID == in.UserID {
+				active++
+			}
+		}
+		if active >= in.MaxStreams {
+			m.mu.Unlock()
+			return Session{}, &StreamLimitError{Active: active, Limit: in.MaxStreams}
+		}
+	}
 	// Cap check + reservation under the lock, so the count cannot change between
 	// "is there room?" and "take the slot". Only a VIDEO-ENCODING transcode is
 	// metered: a video-copy transcode (ADR-0024) re-encodes only the audio (a few
 	// percent of a core, like the in-session audio renditions ADR-0022 exempts), so
 	// it is unmetered like remux — the cap exists to bound video encodes saturating
 	// the host, which a copy is not.
-	if d.Tier == TierTranscode && !d.VideoCopy {
+	// A RELAY transcode is not metered either, and for a stronger reason than a
+	// video copy: it is not running here at all. The cap bounds video encodes
+	// saturating THIS host (ADR-0009), and the sharer already refused or accepted
+	// the job under its own governance — counting it twice would let one friend's
+	// library exhaust a budget it never spends (ADR-0056 §5: "this Server pays
+	// bandwidth, never CPU").
+	if d.Tier == TierTranscode && !d.VideoCopy && d.Relay == nil {
 		if m.transcodeCap > 0 && m.activeTranscodes >= m.transcodeCap {
 			m.mu.Unlock()
 			return Session{}, ErrTranscodeCapFull
@@ -589,8 +706,9 @@ func (m *Manager) End(id string) bool {
 	delete(m.audioBuilders, id)
 	// Free the transcode slot under the same lock that removed the session, so a
 	// previously-rejected transcode can take it immediately (ADR-0009). Only a
-	// transcode session ever incremented the counter, so only it decrements.
-	if s.Tier == TierTranscode && !s.VideoCopy {
+	// transcode session ever incremented the counter, so only it decrements — and
+	// a relay never did (the encode is the sharer's).
+	if s.Tier == TierTranscode && !s.VideoCopy && !s.IsRelay() {
 		m.releaseTranscodeSlot()
 	}
 	m.mu.Unlock()
@@ -605,7 +723,7 @@ func (m *Manager) End(id string) bool {
 	}
 	// ended fires only when a session was actually removed (the !ok early-return
 	// above already left), so a DELETE on an unknown/ended id emits nothing.
-	m.notify(SessionEvent{Kind: SessionEnded, SessionID: s.ID, UserID: s.UserID, TitleID: s.TitleID})
+	m.notify(endedEvent(s))
 	return true
 }
 
@@ -713,14 +831,15 @@ func (m *Manager) Reap(idle time.Duration) int {
 			}
 			// Reaping frees the transcode slot exactly as a clean DELETE does, so an
 			// abandoned transcode never permanently holds a cap slot (ADR-0009). A
-			// video-copy transcode never took a slot, so it never releases one (ADR-0024).
-			if s.Tier == TierTranscode && !s.VideoCopy {
+			// video-copy transcode never took a slot, so it never releases one (ADR-0024),
+			// and neither did a relay (the encode is the sharer's, ADR-0056 §5).
+			if s.Tier == TierTranscode && !s.VideoCopy && !s.IsRelay() {
 				m.releaseTranscodeSlot()
 			}
 			// A reaped session ends exactly as a clean DELETE does (the headline
 			// acceptance criterion): announce it so the Admin's live view drops
 			// abandoned streams, not only cleanly-stopped ones.
-			ended = append(ended, SessionEvent{Kind: SessionEnded, SessionID: s.ID, UserID: s.UserID, TitleID: s.TitleID})
+			ended = append(ended, endedEvent(s))
 			n++
 		}
 	}

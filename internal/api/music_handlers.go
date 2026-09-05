@@ -38,6 +38,10 @@ type artistSummaryJSON struct {
 	// Edit-item surface (item-editing/02): on the Artist DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// Linked/Available: this Artist lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Artist.
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type artistsResponse struct {
@@ -45,8 +49,12 @@ type artistsResponse struct {
 	NextCursor string              `json:"nextCursor,omitempty"`
 }
 
-func toArtistSummary(a store.Artist) artistSummaryJSON {
-	return artistSummaryJSON{ID: a.ID, LibraryID: a.LibraryID, Kind: "artist", Name: a.Name}
+func toArtistSummary(a store.Artist, linked linkedState) artistSummaryJSON {
+	isLinked, available := linked.decorate(a.LibraryID)
+	return artistSummaryJSON{
+		ID: a.ID, LibraryID: a.LibraryID, Kind: "artist", Name: a.Name,
+		Linked: isLinked, Available: available,
+	}
 }
 
 // decorateArtist overlays an Artist summary with its enriched bio/genres + image
@@ -105,6 +113,13 @@ type albumJSON struct {
 	// Edit-item surface (item-editing/02): on the Album DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// Linked/Available: this Album lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Album. An Album row reaches a
+	// client from three places — the Artist detail, the Album detail and a search
+	// group — and the search group has no Artist beside it to inherit the mark
+	// from (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type albumsResponse struct {
@@ -112,7 +127,8 @@ type albumsResponse struct {
 	Albums []albumJSON       `json:"albums"`
 }
 
-func toAlbumJSON(a store.Album) albumJSON {
+func toAlbumJSON(a store.Album, linked linkedState) albumJSON {
+	isLinked, available := linked.decorate(a.LibraryID)
 	return albumJSON{
 		ID:          a.ID,
 		ArtistID:    a.ArtistID,
@@ -121,6 +137,8 @@ func toAlbumJSON(a store.Album) albumJSON {
 		HasArtwork:  a.ArtworkPath != "",
 		ReleaseType: a.ReleaseType,
 		TrackCount:  a.TrackCount,
+		Linked:      isLinked,
+		Available:   available,
 	}
 }
 
@@ -159,6 +177,13 @@ type trackSummaryJSON struct {
 	// canonical enriched title where the tag title was sparse. Both omitempty.
 	Overview         string `json:"overview,omitempty"`
 	EnrichmentStatus string `json:"enrichmentStatus,omitempty"`
+	// Linked/Available: this Track lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Track. A Track is a playable
+	// leaf, and a queue built from an Album list outlives the screen it was built
+	// on, so the row says it rather than leaving the client to remember
+	// (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type tracksResponse struct {
@@ -166,8 +191,11 @@ type tracksResponse struct {
 	Tracks []trackSummaryJSON `json:"tracks"`
 }
 
-func toTrackSummary(t store.Title, ws store.WatchState) trackSummaryJSON {
+func toTrackSummary(t store.Title, ws store.WatchState, linked linkedState) trackSummaryJSON {
+	isLinked, available := linked.decorate(t.LibraryID)
 	js := trackSummaryJSON{
+		Linked:           isLinked,
+		Available:        available,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            displayTitle(t),
@@ -215,7 +243,8 @@ func toTrackContext(c store.TrackContext) *trackContextJSON {
 // Artists. It is the Music branch of GET /libraries/{id}/titles (the handler
 // picks this when the Library's kind is "music"). Unknown/inaccessible Library
 // → 404.
-func handleListArtists(svc *catalog.Service, libraryID string) http.HandlerFunc {
+func handleListArtists(deps Deps, libraryID string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -250,12 +279,13 @@ func handleListArtists(svc *catalog.Service, libraryID string) http.HandlerFunc 
 		roles, _ := svc.EntityArtworkRoles(store.EntityArtist, artistIDs)
 		versions, _ := svc.EntityArtworkVersions(store.EntityArtist, artistIDs)
 
+		linked := loadLinkedState(deps)
 		out := artistsResponse{
 			Artists:    make([]artistSummaryJSON, 0, len(page.Artists)),
 			NextCursor: page.NextCursor,
 		}
 		for _, a := range page.Artists {
-			js := toArtistSummary(a)
+			js := toArtistSummary(a, linked)
 			if roles[a.ID]["poster"] {
 				js.ArtworkURL = artistArtworkURL(a.ID, "poster", versions[a.ID])
 			}
@@ -275,7 +305,7 @@ func handleArtistSubtree(deps Deps) http.HandlerFunc {
 			id := rest[:i]
 			role := rest[i+len("/artwork/"):]
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntityArtist, id, role))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntityArtist, id, role))))(w, r)
 			return
 		}
 		// POST {id}/scan: Targeted scan of this Artist's album folders (Admin, ADR-0030).
@@ -285,20 +315,22 @@ func handleArtistSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "artist", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityArtist, id,
+					handleTargetedScan(deps, "artist", id)))))(w, r)
 			return
 		}
 		// Edit-item on an Artist (item-editing/02), Admin-only, before the albums listing.
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityArtist, rest) {
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleArtistAlbums(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleArtistAlbums(deps))))(w, r)
 	}
 }
 
 // handleArtistAlbums serves GET /artists/{id}/albums. Unknown/inaccessible
 // Artist → 404 (hide existence). The path must be exactly /artists/{id}/albums.
-func handleArtistAlbums(svc *catalog.Service) http.HandlerFunc {
+func handleArtistAlbums(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -318,7 +350,8 @@ func handleArtistAlbums(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list albums", nil)
 			return
 		}
-		artistJS := toArtistSummary(artist)
+		linked := loadLinkedState(deps)
+		artistJS := toArtistSummary(artist, linked)
 		if e, err := svc.EntityEnrichment(store.EntityArtist, artist.ID); err == nil {
 			roles, _ := svc.EntityArtworkRoles(store.EntityArtist, []string{artist.ID})
 			versions, _ := svc.EntityArtworkVersions(store.EntityArtist, []string{artist.ID})
@@ -341,7 +374,7 @@ func handleArtistAlbums(svc *catalog.Service) http.HandlerFunc {
 			Albums: make([]albumJSON, 0, len(albums)),
 		}
 		for _, a := range albums {
-			js := toAlbumJSON(a)
+			js := toAlbumJSON(a, linked)
 			decorateAlbum(&js, albumEnr[a.ID], albumRoles[a.ID], albumVersions[a.ID])
 			out.Albums = append(out.Albums, js)
 		}
@@ -353,7 +386,8 @@ func handleArtistAlbums(svc *catalog.Service) http.HandlerFunc {
 // each Track with the calling User's watch state. Unknown/inaccessible Album →
 // 404. It also dispatches the album artwork sub-resource
 // (/albums/{id}/artwork).
-func handleAlbumTracks(svc *catalog.Service) http.HandlerFunc {
+func handleAlbumTracks(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -387,7 +421,8 @@ func handleAlbumTracks(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list tracks", nil)
 			return
 		}
-		albumJS := toAlbumJSON(album)
+		linked := loadLinkedState(deps)
+		albumJS := toAlbumJSON(album, linked)
 		albumJS.ArtistName = artist.Name
 		if e, err := svc.EntityEnrichment(store.EntityAlbum, album.ID); err == nil {
 			roles, _ := svc.EntityArtworkRoles(store.EntityAlbum, []string{album.ID})
@@ -404,7 +439,7 @@ func handleAlbumTracks(svc *catalog.Service) http.HandlerFunc {
 			Tracks: make([]trackSummaryJSON, 0, len(tracks)),
 		}
 		for _, t := range tracks {
-			ts := toTrackSummary(t, states[t.ID])
+			ts := toTrackSummary(t, states[t.ID], linked)
 			ts.DurationMs = durations[t.ID]
 			out.Tracks = append(out.Tracks, ts)
 		}
@@ -429,7 +464,7 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleAlbumArtwork(deps.Catalog, id))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleAlbumArtwork(deps, id))))(w, r)
 			return
 		}
 		// POST {id}/scan: Targeted scan of this Album's folder(s) (Admin, ADR-0030).
@@ -439,7 +474,8 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "album", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityAlbum, id,
+					handleTargetedScan(deps, "album", id)))))(w, r)
 			return
 		}
 		// GET {id}/editions: the editions of this Album's matched release-group, so an
@@ -459,7 +495,7 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityAlbum, rest) {
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleAlbumTracks(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleAlbumTracks(deps))))(w, r)
 	}
 }
 
@@ -467,7 +503,8 @@ func handleAlbumSubtree(deps Deps) http.HandlerFunc {
 // folder.jpg). Local-on-disk wins; no external fetch (ADR-0001). An Album with no
 // local cover → 404 (the client falls back to a placeholder; embedded cover art
 // extraction is a later concern).
-func handleAlbumArtwork(svc *catalog.Service, albumID string) http.HandlerFunc {
+func handleAlbumArtwork(deps Deps, albumID string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		if albumID == "" {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -480,6 +517,11 @@ func handleAlbumArtwork(svc *catalog.Service, albumID string) http.HandlerFunc {
 		art, err := svc.AlbumArtwork(scope, albumID)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
+			// A mirrored Album's cover, fetched from the sharer on first request
+			// (ADR-0056 §5). The role is the Album's single "cover".
+			if serveRelayArtwork(deps, w, r, scope, store.EntityAlbum, albumID, "cover") {
+				return
+			}
 			writeError(w, http.StatusNotFound, codeNotFound, "artwork not found", nil)
 			return
 		case err != nil:

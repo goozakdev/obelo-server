@@ -129,6 +129,22 @@ func handleStreamTokenSubtree(deps Deps) http.HandlerFunc {
 		r = redactStreamTokenRequest(r)
 		r = r.WithContext(withIdentity(r.Context(), streamTokenIdentity(user)))
 
+		// A RELAY session's media lives on another household's Server (ADR-0056 §5),
+		// not in a scratch dir here, so it is served by the relay rather than by the
+		// handlers below — which would find no File and no runtime and answer 404. The
+		// token is the third credential the relay routes accept, and it reaches them
+		// here rather than on /relay/{id}/… because the token IS the session: there is
+		// no id in the URL to bind it to, which is the shape ADR-0039 chose.
+		if sess, ok := deps.Playback.Sessions().Get(sessionID); ok && sess.IsRelay() {
+			tail, ok := relayTailForArtifact(sess, artifact)
+			if !ok {
+				refuseStreamToken(w)
+				return
+			}
+			serveRelayMedia(deps, w, r, sess, tail, relayTokenURIMapper(sess))
+			return
+		}
+
 		if artifact == streamProgressiveArtifact {
 			// Progressive direct play. http.ServeContent still owns Range/206/If-Range
 			// exactly as on the bearer path — an AirPlay receiver range-seeks, and this

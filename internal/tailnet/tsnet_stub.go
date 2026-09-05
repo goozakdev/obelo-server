@@ -54,6 +54,13 @@ func (unsupportedNode) Changes() <-chan Status { return make(chan Status) }
 func (unsupportedNode) Listen(string, string) (net.Listener, error)    { return nil, ErrNoNode }
 func (unsupportedNode) ListenTLS(string, string) (net.Listener, error) { return nil, ErrNoNode }
 
+// Dial cannot reach a Tailnet this build cannot join. A linking caller treats
+// this as "that origin is not reachable from here" and moves on to the next one
+// (ADR-0055 §5), which is why it is an ordinary error and not a fatal one.
+func (unsupportedNode) Dial(context.Context, string, string) (net.Conn, error) {
+	return nil, ErrNoNode
+}
+
 // Close succeeds: there is nothing running, and shutdown paths must not have to
 // care which build they are in.
 func (unsupportedNode) Close() error { return nil }

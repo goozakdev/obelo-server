@@ -2,12 +2,12 @@
 
 The single HTTP/JSON API with public and admin scopes ([ADR-0010](./adr/0010-unified-two-scope-api.md)), consumed by the web app and all clients. Treated as a versioned product because clients and server update independently.
 
-> **Generated from source at commit `c57f537` (2026-07-14)** — which committed the ADR-0033 original-format subtitle delivery and the progress `videoStreamId` that an earlier revision of this doc described as an uncommitted working tree — plus the ADR-0034 Server identity (`GET /server`'s `id`/`name`) and mDNS advertisement, currently uncommitted. Extracted from handler/DTO structs in `internal/api` and verified against a live instance. Every JSON field name below is a verbatim struct tag; examples are captured or derived from real responses. If code and this doc disagree, the code wins — regenerate by re-running the extraction against `internal/api/*.go` and `internal/events/broker.go`.
+> **Generated from source at commit `843c7ea` (2026-09-04)** — which completes **linked servers** ([ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md), [ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md), [ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)): the `remote` role and the Playback ceiling on §3.2, the invite and its redemption on §3.1, the Library Export on §3.3, the new §3.11 **Links** with the one-hop relay, the `linked`/`available` fields on Libraries and **every browse row** (§3.3, §3.4, §3.5), the `linkState` event, and eleven new error codes. Extracted from handler/DTO structs in `internal/api` and verified against a live instance. Every JSON field name below is a verbatim struct tag; examples are captured or derived from real responses. If code and this doc disagree, the code wins — regenerate by re-running the extraction against `internal/api/*.go` and `internal/events/broker.go`.
 
 **Reading this catalog:**
 - Every path lives under **`/api/v1`** (`APIPrefix`, `internal/api/api.go`). The prefix is stripped before dispatch; unknown paths under it return the enveloped `404 NOT_FOUND`, never a plain-text 404.
 - Each endpoint is tagged **[Public]** (any authenticated User), **[Admin]** (requires `role: "admin"`), or **[Unauthenticated]**. Two routes carry a fourth tag, **[Stream token]** — they take no bearer and no cookie, only the session-scoped media credential in their path (§Auth, [ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)).
-- **An Apple TV / native client needs only the [Public] endpoints** plus `/server`, `/setup`, `/auth/*`, `/devices`. The [Admin] scope is used only by the management web app (ADR-0010).
+- **An Apple TV / native client needs only the [Public] endpoints** plus `/server`, `/setup`, `/auth/*`, `/devices`. The [Admin] scope is otherwise the management web app's (ADR-0010) — with one deliberate exception: an iPhone/iPad app that scans an invite QR posts it to `POST /links` (§3.11), which requires an Admin bearer on the **user's own** Server.
 
 ---
 
@@ -55,7 +55,27 @@ Every error — including the catch-all 404/405 — returns:
 
 `details` is omitted when empty. A wrong method on a known path returns `405 METHOD_NOT_ALLOWED` with an `Allow` header.
 
-Complete `code` enum (`internal/api/errors.go`): `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `INTERNAL`, `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `FOLDER_OVERLAP`, `NO_FILES`, `SETUP_CLOSED`, `INVALID_CLAIM_TOKEN`, `INVALID_CREDENTIALS`, `USERNAME_TAKEN`, `LAST_ADMIN`, `ADMIN_GRANT`, `UNKNOWN_LIBRARY`, `ADMIN_CEILING`, `UNKNOWN_RATING`, `UNKNOWN_TITLE`, `KIND_MISMATCH`, `ITEM_SET_MISMATCH`, `SYSTEM_PLAYLIST`, `TRANSCODE_REQUIRED`, `SERVER_BUSY`, `SERVICE_UNAVAILABLE`, `ENRICH_UNAVAILABLE`, `ENRICH_BUSY`, `PROVIDER_UNKNOWN`, `PROVIDER_KEY_REQUIRED`, `PROVIDER_INVALID_BASE_URL`, `PROVIDER_INVALID_LANGUAGE`, `PROVIDER_INVALID_SETTING`, `PROVIDER_NOT_AUTHORITATIVE`, `SEARCH_UNAVAILABLE`, `WRONG_KIND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`.
+Complete `code` enum (`internal/api/errors.go`, in file order): `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `INTERNAL`, `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `FOLDER_OVERLAP`, `SCAN_RUNNING`, `SLOT_COLLISION`, `OUTSIDE_SHOW`, `EMPTY_SLOT`, `NO_FILES`, `SETUP_CLOSED`, `INVALID_CLAIM_TOKEN`, `INVALID_CREDENTIALS`, `AUTHORIZATION_PENDING`, `SLOW_DOWN`, `EXPIRED_TOKEN`, `INVALID_DEVICE_CODE`, `INVALID_USER_CODE`, `TOO_MANY_ATTEMPTS`, `DEVICE_AUTH_BUSY`, `USERNAME_TAKEN`, `LAST_ADMIN`, `ROLE_CHANGE`, `NOT_REMOTE_USER`, `INVALID_ORIGIN`, `INVALID_INVITE`, `LINK_PROTOCOL`, `RESYNC`, `BAD_INVITE`, `INVITE_EXPIRED`, `LINK_UNREACHABLE`, `LINK_SERVER_MISMATCH`, `LINK_REVOKED`, `LINKED_LIBRARY`, `ADMIN_GRANT`, `UNKNOWN_LIBRARY`, `LINKED_GRANT`, `ADMIN_CEILING`, `UNKNOWN_RATING`, `UNKNOWN_RESOLUTION`, `UNKNOWN_TITLE`, `KIND_MISMATCH`, `ITEM_SET_MISMATCH`, `SYSTEM_PLAYLIST`, `TRANSCODE_REQUIRED`, `SERVER_BUSY`, `STREAM_LIMIT`, `SERVICE_UNAVAILABLE`, `ENRICH_UNAVAILABLE`, `ENRICH_BUSY`, `PROVIDER_UNKNOWN`, `PROVIDER_KEY_REQUIRED`, `PROVIDER_INVALID_BASE_URL`, `PROVIDER_INVALID_LANGUAGE`, `PROVIDER_INVALID_SETTING`, `PROVIDER_NOT_AUTHORITATIVE`, `SEARCH_UNAVAILABLE`, `WRONG_KIND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`, `TAILNET_INVALID_HOSTNAME`, `TAILNET_INVALID_CONTROL_URL`. (Everything from `SCAN_RUNNING` through `DEVICE_AUTH_BUSY`, and the two `TAILNET_*`, were documented at their own endpoints but missing from this list until 2026-09-03; the linking codes are new and are broken out below.)
+
+**Linking codes** ([ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md)–[ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)), split by which side of the Link emits them. They are listed together because the two halves ship in one binary — every Server can be either side — and a client reading a refusal has to know which household it is about.
+
+| Code | Status | Emitted by | Means |
+| --- | --- | --- | --- |
+| `ROLE_CHANGE` | 422 | sharer | A role change to or from `remote` was attempted. A `remote` User is created `remote` and dies `remote` (ADR-0054 §1). |
+| `NOT_REMOTE_USER` | 422 | sharer | `POST /users/{id}/invite` named a User whose role is not `remote`. An invite exists only for a linked Server. |
+| `INVALID_ORIGIN` | 422 | sharer | An origin in the invite request is not an absolute `http(s)` origin with no path, or the list is empty. Nothing is minted. |
+| `INVALID_INVITE` | 400 | sharer | `POST /auth/link/redeem` presented a code that is unknown, expired, or already spent — **one byte-identical body for all three**, so the live code space cannot be mapped. |
+| `LINK_PROTOCOL` | 409 | both | The two Servers speak different `linkProtocolVersion`s. `details` is named from the answering side: `{ supported, requested }` on the sharer's redeem, `{ theirs, ours, upgrade: "theirs"\|"ours" }` on the receiver's `POST /links`. Checked **before** the code is spent. |
+| `RESYNC` | 410 | sharer | `GET /libraries/{id}/export` was handed a `since` older than the tombstone retention (30 days). The position is gone, not the request malformed; the mirror answers with a full pull. |
+| `LINKED_GRANT` | 422 | sharer | A grant set for a `remote` User named a Library that itself arrived over a Link. A mirror is never re-shared onward (ADR-0054 §4); the whole set is rejected and the prior grants stand. |
+| `BAD_INVITE` | 400 | receiver | The pasted string is not a readable invite — wrong scheme, undecodable base64, a missing field — **or** the sharer refused it (`INVALID_INVITE`). One code, because the operator's move is the same: ask for the string again. |
+| `INVITE_EXPIRED` | 410 | receiver | A well-formed invite whose 24 hours ran out. Ask for a fresh one; do not re-paste this. |
+| `LINK_SERVER_MISMATCH` | 409 | receiver | `POST /links/{id}/rekey` was given an invite for a **different** Server. A Link is bound to one peer for its whole life. |
+| `LINK_UNREACHABLE` | 503 | receiver | No origin in the invite answered, over either dialer — or, on a play, the sharing Server is not answering now. Retryable; nothing is deleted. |
+| `LINK_REVOKED` | 409 / 503 | receiver | The sharer answered `401`: the `remote` User or its Device is gone over there. 409 from `POST /links/{id}/sync`, 503 from a play. The fix is a fresh invite, never a retry. |
+| `LINKED_LIBRARY` | 409 | receiver | A **write** was aimed at a Library that is a mirror of another household's. The Server that owns the files is the identity authority for them (ADR-0056 §1); a correction belongs on that machine. Renaming is the one exception. |
+| `STREAM_LIMIT` | 429 | either | The User is at their Playback ceiling's `maxStreams`. `details: { "active", "limit" }`. On a relayed play the **sharer's** refusal passes through verbatim. |
+| `UNKNOWN_RESOLUTION` | 422 | either | `PUT /users/{id}/playbackCeiling` named a `maxResolution` that is not a settable rung (`720p`, `1080p`, `2160p`). |
 
 ### Request bodies
 
@@ -102,6 +122,8 @@ Four credential transports, each honored only where stated:
 
 Cursor pagination (opaque `cursor` param, keyset seek — never offset) is implemented **only on the three top-level grids**: `GET /libraries/{id}/titles` and its TV/music delegates (shows, artists). Params `limit` (default 20, max 100) and `cursor`; the response carries `nextCursor` (absent on the last page). **Not paginated**: seasons/episodes, albums/tracks (full listings), `/home` (each row capped at 20), `/search` (`limit` caps each group independently, default 20, max 100).
 
+One route paginates by the same mechanism with **different bounds and an extra field**: `GET /libraries/{id}/export` (§3.3), which is server-to-server rather than screen-shaped — `limit` defaults to 200 and is **clamped** (not refused) at 500, and every page carries a `checkpoint` beside the optional `nextCursor`. See §3.3 for why the two differ.
+
 ### Timestamps & conventions
 
 - Timestamps are RFC3339 UTC (`2026-07-14T10:00:00Z`).
@@ -141,11 +163,12 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
 | --- | --- | --- | --- |
 | `enrichProgress` | broadcast | `{ "libraryId", "total", "done", "matched", "unmatched", "failed", "disabled", "retrying", "complete" }` | `/libraries`, `/libraries/{id}/titles` |
 | `scanProgress` | library-scoped | `{ "libraryId", "titlesFound", "filesFound", "complete", "scope"?, "added"?, "removed"? }` — `scope` is the Targeted-scan entity label (absent for full scans); `added`/`removed` only on the terminal targeted event | `GET /libraries/{id}/scan` |
-| `libraryUpdated` | library-scoped | `{ "libraryId" }` — a refetch nudge, not a diff | `/libraries`, `/libraries/{id}/titles` |
+| `libraryUpdated` | library-scoped | `{ "libraryId" }` — a refetch nudge, not a diff. Also emitted for a **linked** Library after a mirror pull that actually applied rows (a pull that carried nothing publishes nothing — there would be no refetch behind the nudge). A `remote` User subscribing to `/events` is audience-gated to its own grants, which is exactly the nudge the mirror on the other side wants (ADR-0056 §4) | `/libraries`, `/libraries/{id}/titles` |
 | `sessionStarted` | admin-only | `{ "sessionId", "userId", "titleId" }` | — (no session list yet) |
 | `nowPlaying` | admin-only | `{ "sessionId", "userId", "titleId", "positionMs" }` | — |
 | `sessionEnded` | admin-only | `{ "sessionId", "userId", "titleId" }` | — |
 | `tailscaleState` | admin-only | `{}` — a refetch nudge carrying **no state**, fired on every Tailnet node transition ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)) | `GET /settings/tailscale` |
+| `linkState` | admin-only | `{ "linkId" }` — a refetch nudge fired on every **Link** state transition ([ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md) §6). It carries the id and deliberately **not** the new state, for `tailscaleState`'s reason — a second copy of a condition is the one on the screen when the two disagree — while the id is there because a household can hold several Links and only one moved | `GET /links` |
 
 ---
 
@@ -166,9 +189,11 @@ No `id:`, no `retry:`, no heartbeat. The subscriber's identity (user, admin flag
     "watchState": true, "home": true, "search": true, "collections": true,
     "playlists": true, "realtimeEvents": true, "deviceAuth": true,
     "mediaCookieRefresh": true, "streamToken": true, "transcode": true,
-    "tailscale": false
+    "tailscale": false,
+    "serverLinking": true, "linkedLibraries": true
   },
   "setupRequired": false,
+  "linkProtocolVersion": 1,
   "tailnetURL": null
 }
 ```
@@ -177,6 +202,13 @@ Every flag above reads `true` on a normally-provisioned server except the two th
 
 - **`transcode`** varies by host — `false` on a deployment with no usable ffmpeg (see the handshake note in Part 1).
 - **`tailscale`** varies by **build** ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)): `true` only in a binary compiled with `-tags tailscale`, which is what the Docker image and the release binaries are and what a plain `go build` is not. It says whether this server *can* join a Tailnet, **not** whether remote access is switched on — that is `GET /settings/tailscale` (§3.9). A client that sees `false` should explain that remote access is unavailable in this build rather than offer a control that can only fail; the `/settings/tailscale` routes are served either way, answering with an error that names the build, precisely so the failure is not a bare `404` that reads like a mistyped path.
+
+The two linking flags describe the two halves of ADR-0055, and every Server ships both:
+
+- **`serverLinking`** — this Server can **be linked to**: it serves `POST /users/{id}/invite`, `POST /auth/link/redeem` and `GET /libraries/{id}/export` (the sharing side). A home Server reads this flag on the other Server's handshake **before** it posts an invite code, so a mismatch costs the Admin nothing.
+- **`linkedLibraries`** — this Server can **hold Links**: it serves `/links` (§3.11) and its Libraries and browse summaries may carry `linked` / `available`. A client branches on it to show the Linked-servers surface and to expect those two fields; absent and `false` are indistinguishable, which is what makes the flag safe to read against an older server.
+
+`linkProtocolVersion` is the **top-level** link-protocol version — one small integer, `1` today. It is deliberately *not* a feature flag and clients must not branch on it: it exists so two **Servers** can refuse each other clearly. The invite, the redeem request, the export and the relay all stamp it, and the receiving Server compares it before anything is redeemed, answering `409 LINK_PROTOCOL` naming which side needs an upgrade. Bumping it is a deliberate act with a compatibility note. A server predating linking omits the key; the receiving side reads that as version `0` — "speaks no version of this protocol" — which lands on the same sentence.
 
 `tailnetURL` is the origin a signed-in client should use to reach this server **from away** — `"https://obelo.tail1a2b.ts.net"` — or `null` ([ADR-0043](./adr/0043-tailnet-remote-access-via-embedded-tsnet.md)). Four rules, and each exists because getting it wrong is silent:
 
@@ -309,6 +341,39 @@ Errors: `404 INVALID_USER_CODE` — unknown, expired, **and** already-used, deli
 
 There is no deny operation. The recourse for an unintended approval is `DELETE /devices/{id}`, which revokes instantly.
 
+#### POST /auth/link/redeem — [Unauthenticated]
+
+Gated by the **`serverLinking`** feature flag. **Called by another Obelo Server, never by an app** — it is how a home Server spends the one-time invite a sharing Admin sent and comes away with an ordinary Device-bound bearer ([ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md) §1, §4). Nothing in a phone or a TV posts here; a client that has scanned an invite posts the whole string to **its own** Server's `POST /links` (§3.11) and this call happens between the two machines.
+
+```json
+{ "code": "opaque-256-bit-secret",
+  "linkProtocolVersion": 1,
+  "server": { "id": "<the redeeming server's own id>", "name": "Brandon's server" } }
+```
+
+`server` is [ADR-0034](./adr/0034-server-identity-and-mdns-advertisement.md)'s Server identity doing the job it was minted for, one hop out: it becomes the **Device** row on this side, upserted by `clientId` exactly as a login is, so a re-link from the same household reuses the row instead of leaving a trail of dead ones. There is no `platform` field — it is always `"server"`, set by the auth layer, so a linked Server cannot present itself as a phone.
+
+→ `200`:
+
+```json
+{ "token": "opaque-session-token",
+  "user":   { "id": "…", "username": "Brandon's server", "role": "remote" },
+  "device": { "id": "…", "name": "Brandon's server", "platform": "server",
+              "clientId": "<the redeeming server's id>",
+              "createdAt": "…", "lastSeenAt": "…" },
+  "linkProtocolVersion": 1 }
+```
+
+The first three fields are **byte-identical to `POST /auth/login`'s response**, and deliberately so: what a Link holds is an ordinary Device-bound token, not a second kind of credential. **The media cookie is not set** — the caller is a process on another household's machine with no cookie jar and no use for one.
+
+The code is **single-use and valid 24 hours**. It is stored only as its SHA-256, like a device code, and it is dead the moment it is spent.
+
+Errors:
+- `409 LINK_PROTOCOL` — `details: { "supported", "requested" }`, named from *this* (the answering) side. Checked **before** the code is examined, so a mismatch never costs the Admin their invite.
+- `400 INVALID_INVITE` — unknown, expired, already redeemed, or a missing server id: **one byte-identical body for all of them**, so the live code space cannot be mapped. Every one of them means "ask for a fresh invite".
+- `429 TOO_MANY_ATTEMPTS` with `Retry-After` — failed redemptions are counted per client address in a counter **of their own**, separate from the login limiter: a stranger guessing at invites must not lock the household out of password login, and a fumbled password must not spend a friend's redemption budget. The limiter runs before the code is looked at, so it is not an oracle. The security property here is the 256 bits, not the limiter.
+- `500`.
+
 #### POST /auth/logout — [Public] (bearer only)
 
 No body → `204`. Revokes exactly the calling token and clears the media cookie.
@@ -335,27 +400,106 @@ Why it exists: the web instant user switch swaps the *bearer* token from JS but 
 
 All bearer + admin. Non-admin → `403 FORBIDDEN`.
 
+**Three roles**: `admin`, `member`, and — since [ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md) — **`remote`**, which is what a *linked Server* holds on this one. A `remote` User is a User in every enforcement seam (grants, Rating ceiling, `access.Scope`, Device/token binding, the 404 posture) and differs in four ways a client can observe:
+
+- **No password.** `POST /users` with `role: "remote"` takes none and **refuses a supplied one** (`400`); `POST /auth/login` refuses the role with any password, answering the same `401 INVALID_CREDENTIALS` an unknown username gets, on the same timing path. Its only credential is what redeeming an invite leaves behind.
+- **Not promotable.** Any role change to or from `remote` is `422 ROLE_CHANGE`.
+- **Not in the roster.** It is absent from every "who is on this Server" surface a non-Admin can see, and present on the Admin Users page — which is where the operator manages what it can reach.
+- **No watch state.** Relay playback under it starts and ends Sessions and feeds `nowPlaying`, and writes nothing per-Title. The person watching is on the other Server, and their watch state stays there.
+
 | Endpoint | Body → Response |
 | --- | --- |
-| `POST /users` — [Admin] | `{ "username", "password", "role": "admin"\|"member" }` → `201` bare `{ "id", "username", "role" }`. Errors: `400`, `409 USERNAME_TAKEN`. |
-| `GET /users` — [Admin] | → `200` `{ "users": [ { "id", "username", "role" } ] }` |
-| `GET /users/{id}` — [Admin] | → `200` `{ "id", "username", "role", "libraryIds": [], "ratingCeiling": "" }` — `libraryIds` never null (`[]` for an admin), `ratingCeiling` `""` = uncapped. Errors: `404`. |
-| `DELETE /users/{id}` — [Admin] | → `204`. Errors: `404`, `409 LAST_ADMIN`. |
+| `POST /users` — [Admin] | `{ "username", "password", "role": "admin"\|"member"\|"remote" }` → `201` bare `{ "id", "username", "role" }`. For `role: "remote"` the `username` is the label the sharing Admin picks ("Brandon's server") and `password` **must be omitted**. Errors: `400` (missing username, unknown role, a password for `remote`, none for `admin`/`member`), `409 USERNAME_TAKEN`. |
+| `GET /users` — [Admin] | → `200` `{ "users": [ { "id", "username", "role", "lastSeenAt"? } ] }`. `lastSeenAt` is the newest `lastSeenAt` across that User's Devices, RFC3339 UTC, and is **omitted — never `""`** — for a User with no Device at all. That absence is the only way to tell a `remote` User that has redeemed its invite from one that never has ("Linked, seen 2h ago" vs "Never linked"). It is best-effort: if the lookup fails the field is off *every* row rather than the roster failing over a decoration. |
+| `GET /users/{id}` — [Admin] | → `200` `{ "id", "username", "role", "libraryIds": [], "ratingCeiling": "", "maxResolution": "", "maxBitrate": 0, "maxStreams": 0 }` — `libraryIds` never null (`[]` for an admin), `ratingCeiling` `""` = uncapped, and the three **Playback ceiling** fields zero/empty = uncapped (always zero for an Admin, who may not carry one). Errors: `404`. |
+| `DELETE /users/{id}` — [Admin] | → `204`. Errors: `404`, `409 LAST_ADMIN`. Deleting a `remote` User is the sharer's **kill switch**: the cascade removes its Device and token, the next request from the other Server `401`s, and that Server marks its Link `revoked` (§3.11). |
 | `PUT /users/{id}/password` — [Admin] | `{ "password" }` → `204`. Errors: `400`, `404`. |
-| `PUT /users/{id}/libraryAccess` — [Admin] | `{ "libraryIds": [ … ] }` (full replace-set) → `204`. Errors: `404`, `422 ADMIN_GRANT`, `422 UNKNOWN_LIBRARY`. On 422 the prior grant set is unchanged. |
+| `PUT /users/{id}/libraryAccess` — [Admin] | `{ "libraryIds": [ … ] }` (full replace-set) → `204`. Errors: `404`, `422 ADMIN_GRANT`, `422 UNKNOWN_LIBRARY`, `422 LINKED_GRANT` (the target is `remote` and the set names a Library that itself arrived over a Link — a mirror is never re-shared onward). On any 422 the prior grant set is unchanged. |
 | `PUT /users/{id}/ratingCeiling` — [Admin] | `{ "rating": "PG-13" }` (`""` clears) → `204`. Errors: `404`, `422 ADMIN_CEILING`, `422 UNKNOWN_RATING`. |
+| `PUT /users/{id}/playbackCeiling` — [Admin] | `{ "maxResolution": "1080p", "maxBitrate": 8000000, "maxStreams": 2 }` → `204`. Errors: `404`, `422 ADMIN_CEILING`, `422 UNKNOWN_RESOLUTION`, `400` (a negative bitrate or stream count). See below. |
+| `POST /users/{id}/invite` — [Admin] | `{ "origins": [ "https://media.example.org", "http://obelo.tail1a2b.ts.net" ] }` → `201` `{ "invite": "obelo-link:…", "expiresAt": "…" }`. Target must be `remote`. Errors: `404`, `422 NOT_REMOTE_USER`, `422 INVALID_ORIGIN`. See below. |
+
+#### PUT /users/{id}/playbackCeiling — the Playback ceiling
+
+A per-User cap on **how** a Title may play, never on **what** may be seen ([ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md) §2). It applies to every role **except Admin**: a sharer says "1080p, two at a time" about a linked Server, and a household Admin sometimes says it about a kid's iPad.
+
+The body is the **whole ceiling, not a patch** — every omitted field decodes to its zero value and clears that dimension, exactly as `libraryAccess` is a replace-set, so re-sending the same body is idempotent:
+
+- **`maxResolution`** — one of exactly three settable rungs, `"720p"`, `"1080p"`, `"2160p"`; `""` = uncapped. Case and spacing fold; anything else is `422 UNKNOWN_RESOLUTION`. (The negotiator's own ladder is wider — `144p…4320p` plus `sd/hd/fhd/2k/4k/uhd` — but only these three are *settable*.)
+- **`maxBitrate`** — bits/sec; `0` = uncapped.
+- **`maxStreams`** — concurrent Playback sessions; `0` = uncapped.
+
+`maxResolution` and `maxBitrate` are **clamped into the session's constraints before negotiation**: the effective constraint is the stricter of what the client asked for and what the User is allowed, and zero on either side means "the other one". The existing tiering then does what it always does — a 1080p Edition direct-plays, a 4K-only File transcodes down under [ADR-0009](./adr/0009-transcode-governance.md) governance and is refused `503 SERVER_BUSY` when the budget is full. **A ceiling never hides a Title**; it changes how something plays, not whether it exists.
+
+`maxStreams` is enforced at session creation, under the same lock as the session map insertion, so two simultaneous negotiations cannot both slip past a limit of one. At the cap the negotiation answers `429 STREAM_LIMIT` with `details: { "active", "limit" }`; ending a session frees the slot, and the reaper defines "unended". A **relayed** play counts against the home User's `maxStreams` here *and* against the `remote` User's on the sharer — the two Servers each count their own, which is the point of the lever.
+
+#### POST /users/{id}/invite — minting the one string
+
+The `remote` User's credential comes into being here and nowhere else ([ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md) §1–§2). Creating the User mints nothing; re-keying a Link means minting again, and nothing about the User changes.
+
+`origins` are the addresses the other Server should **try**, in order, and they are **typed by the sharing Admin** because this Server does not know its own public address and deliberately never emits one ([ADR-0005](./adr/0005-discovery-and-tls-via-reverse-proxy.md), the retired External URL). Each must be an absolute `http(s)` origin with **no path**; a lone trailing `/` is folded away, the host is lowercased, exact duplicates are dropped, and the **order is preserved** because it is meaningful. A path prefix, a malformed origin, or an **empty list** is `422 INVALID_ORIGIN` — an invite with no address could only ever fail on the other household's machine, with nothing on this side to explain why.
+
+`invite` is one self-contained string, not "a hostname and a code":
+
+```
+obelo-link:<base64url(JSON)>
+
+{ "v": 1, "id": "<this server's id>", "name": "<this server's name>",
+  "origins": [ … ], "code": "…", "exp": "<RFC3339>" }
+```
+
+It is **not** an `https://` URL: there is no hosted page to open it against, and the action it triggers belongs on the *redeeming* Server, which the string cannot name. The origins are not secret and the code is single-use for 24 hours, so the whole thing is safe in a chat — the same reasoning that makes a User code safe. The raw code exists **only in this response**; minting a new invite invalidates any unredeemed one for the same User. The web app additionally renders the string as a QR, which is a convenience over the string and never the mechanism.
 
 ### 3.3 Libraries & scanning
 
-`libraryJSON`: `{ "id", "name", "kind", "createdAt"?, "rootFolders": [ { "id", "path" } ] }`.
+`libraryJSON`: `{ "id", "name", "kind", "createdAt"?, "rootFolders": [ { "id", "path" } ], "linked"?, "available"? }`.
+
+**`linked` and `available` describe a mirror** ([ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md) §1), and both are absent on an ordinary local Library — a Server that has never linked emits exactly the wire it always did.
+
+- **`linked: true`** — this Library's contents live on another household's Server and arrived over a Link (§3.11). It has no `rootFolders`, the Scanner never sees it, and it is granted, rating-capped, searched, collected, playlisted and watch-stated here exactly like any other Library. `linked` is `omitempty`: it is never sent as `false`.
+- **`available`** — sent **only** for a linked Library, and then always (a `*bool`, so `false` is a statement rather than an absence). It is `true` while the Link's state is `connected`. `false` means the sharing Server is not answering: the shelf stays, its Titles stay listed, and a play answers `503 LINK_UNREACHABLE`. **Grey it, do not hide it** — Continue Watching must survive a friend's reboot.
+
+The same two fields ride on `titleSummaryJSON`, `showSummaryJSON` and `artistSummaryJSON` (§3.4), so a grid can badge a mirrored row without a second request. Library JSON deliberately does **not** say *whose* Library it is; the providing Server's name comes from `GET /links` (§3.11), joined by library id.
+
+**Every write aimed at a mirror is `409 LINKED_LIBRARY`** — 37 routes across scan, targeted scan, enrichment, the enrichment policy, fix-match, override deletion, the file matcher, per-entity editing, artwork upload, and subtitle fetch. Not `403` and not `404`: the caller is an Admin, the Library is theirs to see and grant, and it plainly exists — it is the *state* of it that refuses, which is what Conflict means. The Server that owns the files is the identity authority for them ([ADR-0002](./adr/0002-naming-convention-is-identity-authority.md), [ADR-0019](./adr/0019-item-editing-preserves-local-identity.md)), so a correction belongs on that machine. The Admin attention reads (`needs-review`, `unmatched`, `enrichment-attention`, `show-problems`, the matcher) answer **empty** for a mirror rather than refusing — an empty list is the true answer, since that queue is the sharer's.
 
 | Endpoint | Notes |
 | --- | --- |
-| `POST /libraries` — [Admin] | `{ "name", "kind": "movie"\|"tv"\|"music", "rootFolders": ["/abs/path"] }` → `201` libraryJSON. Errors: `400`, `409 FOLDER_OVERLAP`. |
+| `POST /libraries` — [Admin] | `{ "name", "kind": "movie"\|"tv"\|"music", "rootFolders": ["/abs/path"] }` → `201` libraryJSON. Errors: `400`, `409 FOLDER_OVERLAP`. A linked Library is never created here — it appears when a Link is made (§3.11). |
 | `GET /libraries` — [Public] | → `200` `{ "libraries": [ … ] }`, filtered to the caller's grants. |
 | `GET /libraries/{id}` — [Public] | → `200` libraryJSON. Ungranted/unknown → `404`. |
-| `PATCH /libraries/{id}` — [Admin] | `{ "name"?, "addRootFolders"?: [ … ] }` (partial; `kind` immutable) → `200` libraryJSON. Errors: `400`, `404`, `409 FOLDER_OVERLAP`. |
-| `DELETE /libraries/{id}` — [Admin] | → `204`. |
+| `PATCH /libraries/{id}` — [Admin] | `{ "name"?, "addRootFolders"?: [ … ] }` (partial; `kind` immutable) → `200` libraryJSON. Errors: `400`, `404`, `409 FOLDER_OVERLAP`. On a **linked** Library a `name` is accepted and `addRootFolders` is `409 LINKED_LIBRARY`: what this household calls somebody else's shelf is this household's business; giving it a folder is not, because it has none. |
+| `DELETE /libraries/{id}` — [Admin] | → `204`. `409 LINKED_LIBRARY` for a mirror — deleting the shelf alone would leave a Link syncing into nothing; `DELETE /links/{id}` is what removes it (§3.11). |
+| `GET /libraries/{id}/export` — [Admin] / **`remote`** | The Library Export. See below. |
+
+#### GET /libraries/{id}/export — [Admin] / [`remote`]
+
+`?since=<cursor>&cursor=<cursor>&limit=<n≤500>`
+
+The **one flat, incremental feed** a sharing Server offers for one Library ([ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md) §4). It is *not* the browse API and no client should call it: browse is nested, capped per row, carries the caller's Watch state, and has no way to ask "what changed" — a full walk of a TV library through it is one request per Show and then one per Season. The export is also the **single place** the sharing Server decides what another Server may learn about a Title, rather than an audit of every browse handler.
+
+Readable by a `remote` User (for its granted Libraries) and by Admins. A Member gets `404`, like any route outside their scope. A **linked** Library answers `404` for *every* caller including an Admin — a mirror is never re-shared onward ([ADR-0054](./adr/0054-a-linked-server-is-a-user-with-the-remote-role.md) §4).
+
+```json
+{
+  "linkProtocolVersion": 1,
+  "library": { "id": "…", "kind": "movie", "name": "Films" },
+  "entities": [
+    { "type": "title", "id": "…", "parentId"?: "…",
+      "updatedAt": "2026-09-01T10:00:00Z", "deletedAt"?: "…", "data": { … } }
+  ],
+  "nextCursor"?: "opaque",
+  "checkpoint": "opaque"
+}
+```
+
+- **`type`** ∈ `title | show | season | episode | artist | album | track | edition | file | stream`. One table serves three of them: a Movie is a `title` with no `parentId`, an Episode an `episode` under its Season, a Track a `track` under its Album.
+- **`data`** is the entity's *public* fields only — what the browse API already exposes, plus genres and cast. Deliberately absent: **every path and folder name** (a test greps the whole body for `/`-rooted values), `mtime`, artwork rows (artwork is relayed and cached, §3.11), and every enrichment **bookkeeping** column — attempts, retry times, reasons, the id origin, the episode pin, `reviewed`. Those are the sharing Server's notes about how it reached its own answer. Files carry container, codecs, resolution, bitrate, duration and size: what a Capability profile needs, nothing that names disk.
+- **`deletedAt`** is the tombstone. Soft-deleted Files ([ADR-0008](./adr/0008-incremental-scan-soft-delete-missing-files.md)) carry it, and so does a Title with no live Files. Editions and Streams have no soft delete of their own and are rebuilt with fresh ids by the sharing Server's scanner, so their removal carries no tombstone — it is visible only as an **absence in a full pull**, which is why a mirror re-walks a Library in full whenever an incremental page mentions an Edition, File or Stream.
+- **Ordering is keyset on `(updatedAt, type, id)`**, and `since`/`cursor` are the same opaque shape: `since` starts a walk, `cursor` continues one, and the walk position wins when both are sent. **`checkpoint` is on every page** — the position after this page's last entity, equal to `nextCursor` when more follow — so a mirror that stops early resumes exactly where it stopped, and an empty page hands back the bound it was given rather than "the beginning".
+- Propagation stops at the Title: a Stream change bumps its File, its Edition and its Title, so a codec edit surfaces as a Title change. A Season does **not** bump its Show and an Album does not bump its Artist — each is exported as its own entity with its own stamp.
+
+Errors: `400 BAD_REQUEST` `"invalid cursor"` (garbled), `410 RESYNC` (a `since` older than the 30-day tombstone retention — the position is gone, so pull in full), `404` (unknown, ungranted, or linked), `401` anonymous. `limit` over 500 is **clamped, not refused**: the caller is another Server, and a smaller page costs it one round trip where a `400` costs it the sync.
 
 **Scan status shape** (`scanStatusJSON`, shared by trigger + status + targeted scans):
 
@@ -380,8 +524,13 @@ All bearer + admin. Non-admin → `403 FORBIDDEN`.
 { "id": "…", "kind": "movie|episode|track", "title": "…",
   "year"?, "needsReview"?, "ambiguous"?, "tmdbId"?, "imdbId"?, "addedAt"?,
   "resumePositionMs"?, "watched"?, "overview"?, "contentRating"?, "releaseDate"?,
-  "runtimeMinutes"?, "studio"?, "genres"?: [], "enrichmentStatus"?, "artworkVersion"? }
+  "runtimeMinutes"?, "studio"?, "genres"?: [], "enrichmentStatus"?, "artworkVersion"?,
+  "linked"?, "available"? }
 ```
+
+`linked`/`available` mean exactly what they mean on `libraryJSON` (§3.3): this row lives in a mirror of another household's Library, and whether that Server is answering. Both are absent on a local Title.
+
+**Every browse row carries the same pair**, so a client never has to infer the mark from the screen the viewer arrived through: `showSummaryJSON` and `artistSummaryJSON` here, the Album entries and the `album` object of the music endpoints below, the Episode rows of `GET /seasons/{id}/episodes`, and `homeTitleJSON` (§3.5). The three shapes that carry none are the ones that cannot need it — `seasonJSON` (no Library of its own; the Show beside it, or the Episode rows under it, say so), the `resumePoint` block (inside a Show that says so), and `titleDetailJSON` (reached from a row that says so, and its `POST /titles/{id}/playback` answers `LINK_UNREACHABLE` / `LINK_REVOKED` in its own right).
 
 `resumePositionMs`/`watched` are the **calling User's** watch state. `enrichmentStatus` ∈ `pending|matched|unmatched|failed|disabled` — note `failed` does **not** imply the item needs a human: a transient provider failure is recorded `failed` with a retry scheduled, and only a `failed` item with no retry (or one that has escalated) reaches the attention list ([ADR-0048](./adr/0048-a-transient-enrichment-failure-is-retried-not-parked.md)). `artworkVersion` is an opaque cache-bust token.
 
@@ -434,9 +583,11 @@ The full nested Title detail (`titleDetailJSON`): Editions → Files → Streams
 | Endpoint | Response |
 | --- | --- |
 | `GET /shows/{id}/seasons` | `{ "show": showSummaryJSON (fully decorated, incl. cast/lockedFields), "seasons": [ { "id", "showId", "seasonNumber", "specials"?, "episodeCount", "posterUrl"? } ], "resumePoint"?: { "id", "kind": "episode", "seasonId", "seasonNumber", "episodeNumber"?, "episodeLabel"?, "title", "overview"?, "resumePositionMs"?, "durationMs"?, "mode": "inProgress"\|"next", "enrichmentStatus"?, "stillUrl"? } }` — `resumePoint` is the Up Next anchor ([ADR-0028](./adr/0028-up-next-anchors-on-most-recently-played.md)); absent for not-started **and** fully-watched shows (disambiguate via `show.unwatchedEpisodeCount`). |
-| `GET /seasons/{id}/episodes` | `{ "season": seasonJSON, "episodes": [ { "id", "kind": "episode", "title", "seasonNumber", "episodeNumber"?, "episodeLabel"?, "needsReview"?, "resumePositionMs"?, "watched"?, "addedAt"?, "overview"?, "enrichmentStatus"?, "stillUrl"? } ] }` |
-| `GET /artists/{id}/albums` | `{ "artist": artistSummaryJSON (decorated), "albums": [ { "id", "artistId", "title", "year"?, "hasArtwork"?, "artworkVersion"?, "releaseType"?, "genres"?, "enrichmentStatus"?, "trackCount" } ] }` — `releaseType` is the normalized tag type (`"album"`, `"single"`, `"ep"`, …; absent when untagged); clients badge non-`album` types so same-titled releases (split per [ADR-0038](./adr/0038-album-identity-release-group-wins.md)) are tellable apart. |
-| `GET /albums/{id}/tracks` | `{ "album": albumJSON (incl. "artistName"), "tracks": [ { "id", "kind": "track", "title", "discNumber"?, "trackNumber"?, "durationMs"?, "needsReview"?, "resumePositionMs"?, "watched"?, "overview"?, "enrichmentStatus"? } ] }` — disc/track order. |
+| `GET /seasons/{id}/episodes` | `{ "season": seasonJSON, "episodes": [ { "id", "kind": "episode", "title", "seasonNumber", "episodeNumber"?, "episodeLabel"?, "needsReview"?, "resumePositionMs"?, "watched"?, "addedAt"?, "overview"?, "enrichmentStatus"?, "stillUrl"?, "linked"?, "available"? } ] }` — the Episode rows carry the mirror pair because nothing else in this document can: a Season has no Library of its own and the marked Show is a screen back. |
+| `GET /artists/{id}/albums` | `{ "artist": artistSummaryJSON (decorated), "albums": [ { "id", "artistId", "title", "year"?, "hasArtwork"?, "artworkVersion"?, "releaseType"?, "genres"?, "enrichmentStatus"?, "trackCount", "linked"?, "available"? } ] }` — `releaseType` is the normalized tag type (`"album"`, `"single"`, `"ep"`, …; absent when untagged); clients badge non-`album` types so same-titled releases (split per [ADR-0038](./adr/0038-album-identity-release-group-wins.md)) are tellable apart. |
+| `GET /albums/{id}/tracks` | `{ "album": albumJSON (incl. "artistName"), "tracks": [ { "id", "kind": "track", "title", "discNumber"?, "trackNumber"?, "durationMs"?, "needsReview"?, "resumePositionMs"?, "watched"?, "overview"?, "enrichmentStatus"?, "linked"?, "available"? } ] }` — disc/track order. |
+
+`albumJSON` carries `linked`/`available` wherever it appears — the entries above, the `album` object here, and the `albums` group of `GET /search` (§3.5), which is the one place an Album row arrives with no Artist beside it to inherit the mark from. A Track row carries it too: a queue built from an Album list outlives the screen it was built on.
 
 All: unknown/ungranted parent → `404`.
 
@@ -463,7 +614,7 @@ URLs advertised in parent JSON carry `?v={version}` cache-busters; title-detail 
 { "continueWatching": [ homeTitleJSON ], "upNext": [ homeTitleJSON ], "recentlyAdded": [ homeTitleJSON ] }
 ```
 
-`homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "durationMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"? }`. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first. `resumePositionMs`/`durationMs` are populated on **Continue Watching only** — together they drive the card's progress bar, the same pairing `resumePoint` carries on the Show detail; Up Next / Recently Added omit both, and `durationMs` is also omitted when the duration is unknown.
+`homeTitleJSON`: `{ "id", "kind", "title", "year"?, "tmdbId"?, "imdbId"?, "addedAt"?, "resumePositionMs"?, "durationMs"?, "episode"?, "track"?, "overview"?, "genres"?, "displayTitle"?, "linked"?, "available"? }`. `linked`/`available` mean exactly what they mean on `libraryJSON` (§3.3) and `titleSummaryJSON` (§3.4), and are absent on a local Title — a Home row is where a viewer meets a mirrored Title with no Library screen around it, so the row itself says so. Each row capped at 20, computed per-User, never stored. Continue Watching = 2–90% band, most recent first; Up Next = TV resume points; Recently Added = newest first. `resumePositionMs`/`durationMs` are populated on **Continue Watching only** — together they drive the card's progress bar, the same pairing `resumePoint` carries on the Show detail; Up Next / Recently Added omit both, and `durationMs` is also omitted when the duration is unknown.
 
 #### GET /search?q=…
 
@@ -471,7 +622,7 @@ URLs advertised in parent JSON carry `?v={version}` cache-busters; title-detail 
 { "movies": [], "shows": [], "artists": [], "albums": [], "episodes": [], "tracks": [] }
 ```
 
-Six always-present groups reusing the browse summary DTOs (search results carry no `?v=` artwork cache-buster). `q` (fallback `query`); empty `q` → `200` with empty groups. `limit` caps each group (default 20, max 100). Case-insensitive substring on display names, access-filtered.
+Six always-present groups reusing the browse summary DTOs (search results carry no `?v=` artwork cache-buster), so every hit carries `linked`/`available` when it lives in a mirror — including the `albums` group, whose rows have no Artist beside them. `q` (fallback `query`); empty `q` → `200` with empty groups. `limit` caps each group (default 20, max 100). Case-insensitive substring on display names, access-filtered.
 
 ### 3.6 Playback
 
@@ -534,6 +685,10 @@ Errors:
 - `404` `"title not found"` / `"subtitle not found"` / `"audio stream not found"` / `"video stream not found"`.
 - `501 TRANSCODE_REQUIRED` — structurally unplayable for this client; `details: { "reason": "container|videoCodec|audioCodec|resolution|bitrate|audioChannels|noVideo|noFile", "detail": "…" }`.
 - `503 SERVER_BUSY` — transcode cap full ([ADR-0009](./adr/0009-transcode-governance.md)); `details: { "retryable": true, "suggestedMaxBitrate": <half the estimate, floor 600000> }`. Direct play/remux never hit this.
+- `429 STREAM_LIMIT` — the calling User is at their Playback ceiling's `maxStreams` (§3.2); `details: { "active", "limit" }`. Ending another session frees the slot. Not retryable on its own.
+- `503 LINK_REVOKED` / `503 LINK_UNREACHABLE` — the Title lives in a **linked** Library and the sharing Server refused the credential, or did not answer at all (§3.11). Two sentences that are deliberately not interchangeable: one invites a retry, the other names the Admin's fix (paste a new invite).
+
+**A Title in a linked Library negotiates the same way and comes back with a different session.** The decision is the *sharing* Server's — its tier, its estimate, its stream lists — with four things changed and everything else re-served untouched: `sessionId` is the local session's, `streamUrl` and each subtitle `url` are rewritten onto `/relay/{sessionId}/…`, and the sharer's stream token is dropped in favour of one minted here. Any other refusal the sharer gives — `SERVER_BUSY` with its `suggestedMaxBitrate`, `STREAM_LIMIT` with its counts, `TRANSCODE_REQUIRED` with its reason — **passes through verbatim**, because this Server knows nothing that would improve it. See §3.11.
 
 #### Session lifecycle
 
@@ -761,3 +916,81 @@ Read-only snapshot ([ADR-0029](./adr/0029-transcoding-observability-admin-surfac
 ```
 
 `degraded` = requested hardware but running CPU. `cap: 0` = unlimited. `gpu` is `null` unless the active backend is NVENC and `nvidia-smi` answered; individual fields are `null` when a column is unavailable. Non-admin → `403`, not a filtered view.
+
+### 3.11 Links — the receiving half of linking (admin scope)
+
+Gated by the **`linkedLibraries`** feature flag; every route is bearer + admin. Branch on the flag, never on `linkProtocolVersion` — a server without these routes `404`s them, and there is no fallback, because there is nothing else that can hold a Link.
+
+**A Link is this Server's standing relationship with another household's Server**, held on *this* side ([ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md), [ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)): the other Server's identity, the addresses it might be reached at, the token its `remote` User left behind, and a state. It is **one direction** — the Server that holds it browses and plays, the Server it points at shares — so two households sharing both ways hold two Links, one each. Linking is not a per-User act: a Link belongs to the household, and the Libraries it brings are then granted to Users like any other Library (§3.2).
+
+`linkJSON`:
+
+```json
+{
+  "id": "…",
+  "serverId": "<the sharer's server id>",
+  "serverName": "Kate's Obelo",
+  "state": "connected",
+  "activeOrigin": "https://media.example.org",
+  "origins": [ "https://media.example.org", "http://obelo.tail1a2b.ts.net" ],
+  "lastSyncedAt": "2026-09-03T09:14:02Z",
+  "lastError": "",
+  "libraries": [ { "id": "…", "name": "Cartoons", "kind": "tv" } ]
+}
+```
+
+**There is no token field and there must never be one.** What the row holds is an outbound credential against somebody else's Server — the same posture as a metadata provider key, which this API reports only as a `hasKey` boolean. There is not even a `hasToken`, because a Link without a token cannot exist: `state` is what an operator actually wants to know.
+
+- **`activeOrigin`** is the address that answered; **`origins`** is every address the invite carried, in the order it carried them. Both are shown so an operator can see *which* path is carrying their films — the tailnet one or the public one — which is otherwise invisible and is the first thing to look at when a Link is slow.
+- **`lastSyncedAt`** is `null` until the mirror has pulled once — a pointer, not `""`, because `null` is this Server *saying* "never". A **relay** call moves the state but never stamps this: a play proves reachability, not freshness, and a month-old catalog must not report itself as just synced.
+- **`libraries`** are the linked Libraries this Link brought. Never `null`; empty forever for a sharer who granted this Server nothing.
+
+**The three states** ([ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md) §6), which a client branches on rather than parsing `lastError`:
+
+| State | Means | What the Admin does |
+| --- | --- | --- |
+| `connected` | The last export or relay call succeeded. `available: true` on its Libraries and Titles. | Nothing |
+| `unreachable` | A transport failure or a 5xx. Transient: retried with backoff (1m→30m) across every origin in the invite, and the event subscription is re-established on recovery. The mirror **stays**, badged `available: false`; a play answers `503 LINK_UNREACHABLE`; nothing is deleted and Continue Watching survives the friend's reboot. | Wait, or **Sync now** |
+| `revoked` | The sharer answered `401` — the `remote` User or its Device was deleted over there. **No retries**: a dead credential cannot recover on its own, so a play answers `503 LINK_REVOKED` without spending a round trip. The mirror stays. | Ask for a fresh invite and **Re-key** |
+
+**Every Link begins `unreachable` at startup**, until its first successful call — a Server that boots without a network says so rather than pretending.
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /links` — [Admin] | → `200` a bare array of `linkJSON` (not an envelope). |
+| `POST /links` — [Admin] | `{ "invite": "obelo-link:…" }` → **`201`** a new Link, **`200`** a re-key of one that already existed (the same `serverId` updates in place — created-vs-updated, exactly what those two statuses mean; a client that ignores the difference still gets the right Link). The whole flow runs inside the request: parse the string, probe the origins in order over the right dialer, check `features.serverLinking` and `linkProtocolVersion`, `POST /auth/link/redeem`, create the Link, create a linked Library per granted Library, and do the **first full pull** — so the answer already carries `libraries` and a `lastSyncedAt`. Errors: `400 BAD_INVITE`, `410 INVITE_EXPIRED`, `409 LINK_PROTOCOL` (`details: { theirs, ours, upgrade }`), `503 LINK_UNREACHABLE` (the message names the reason the last origin gave). |
+| `POST /links/{id}/rekey` — [Admin] | `{ "invite": "obelo-link:…" }` → `200` linkJSON. The same flow, requiring a **matching `serverId`**: a Link is bound to one peer for its whole life, because the mirror is keyed by that Server's ids, so another household's invite is `409 LINK_SERVER_MISMATCH` and the row is left untouched. Replaces the credential and the addresses, keeps `createdAt`, and moves the state to `connected`. |
+| `POST /links/{id}/sync` — [Admin] | No body → `200` the Link **as it stands afterwards**. Forces one sweep: reconcile the granted set, then pull every granted Library forward from its checkpoint. **Synchronous** — the operator pressed it because they had just plugged the other house's server back in, and "we will get to it" is not an answer to that. It is also the one sweep a `revoked` Link gets ("no retries" is about the automatic loop; a human asking is not a retry). A failed sweep is reported as one — `503 LINK_UNREACHABLE`, `409 LINK_REVOKED` — with the row already updated, so a client that merely refetches is correct too. Errors: `404` unknown Link, `405` on GET. |
+| `DELETE /links/{id}` — [Admin] | → `204`, **whether or not the sharer could be reached** — a friend's server being off must not be able to keep this household linked to them. Best-effort first: this Server deletes its own Device over there (`DELETE /devices/{id}`, falling back to `POST /auth/logout`) so the sharer's Users page loses the row rather than keeping a ghost with a last-seen. Then it removes the Link, its linked Libraries, their mirrored rows **and this household's Watch state for them** — the same shape as deleting a local Library. This is the only thing that deletes what came over a Link. Errors: `404`. |
+
+**Two dialers, no second identity** ([ADR-0055](./adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md) §5). Per origin, this Server uses either the operating system's network (a port-forwarded host with an ACME certificate, a reverse proxy, a Tailscale Funnel address — all three are just an HTTPS origin) or **its own Tailnet node's dialer**, when the node is running and the host is a CGNAT literal or a name under the node's MagicDNS root. A machine a friend *shares in* keeps its owner's tailnet in its name, which is exactly the case the tailnet path exists for; a tailnet dial that fails falls back to the OS dialer, because a Funnel address wears the same name and this Server cannot tell the two apart in advance. Nothing is configured. An origin that answers as a **different** Server is skipped rather than fatal — the invite's addresses are addresses to try, not to believe — while a version mismatch stops the walk at once, since every origin leads to the same machine.
+
+**Freshness.** After the first full pull the mirror is refreshed two ways: on the sharer's `libraryUpdated` nudge, over a `GET /events` subscription held under the Link's token (the `remote` User is audience-gated to its own grants, so it hears exactly the right Libraries), and on a timer as the poll fallback — `OBELO_LINK_SYNC_INTERVAL`, default `1h`. Setting it to `0` turns the background half off **entirely**: no timer, no backoff, and no subscription. `POST /links/{id}/sync` and the pull that follows a link or a re-key still work, and every Link still starts `unreachable`, because that is a statement about this boot and not about the schedule.
+
+#### GET /relay/{sessionId}/{tail} — [Public] (bearer **or media cookie**), also reachable by [Stream token]
+
+The transport of the one-hop relay ([ADR-0056](./adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md) §5). A play on a mirrored Title is negotiated by the **sharing** Server, under the `remote` User's bearer and that User's Playback ceiling, and transcoded there under its own governance; this Server opens a local Session wrapping the remote one, rewrites every media URL in the answer onto this route, and streams the bytes through. **Exactly one hop, always**: bytes never bypass this Server, and a linked Library is never relayed onward.
+
+**The remote path tail is preserved**, which is the whole design:
+
+```
+sharer   /api/v1/sessions/{remoteId}/hls/index.m3u8
+here     /api/v1/relay/{localId}/sessions/{remoteId}/hls/index.m3u8
+```
+
+Every playlist Obelo emits uses **bare relative URIs**, so a player resolves `000.ts` against the playlist's own URL — and because the tail's shape is preserved, that resolution lands on the matching relay path by construction, with not one playlist byte needing to change. It is the same argument that puts the stream token in the path ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md)), applied one hop further out. An **absolute** URI inside a playlist is rewritten line by line (`EXT-X-MAP`, `EXT-X-MEDIA`, `EXT-X-KEY`, and bare lines); a foreign URI is left alone.
+
+**Credential rules**, which are the media routes' own and nothing new:
+
+- **Bearer or the media cookie**, through the same middleware `GET /sessions/{id}/stream` uses, and **bound to the local Session's User**. Unknown, ended, another User's, or not-a-relay session → one `404 "session not found"`, the same existence-hiding answer the local media routes give; anonymous → `401`.
+- **The stream token reaches the same bytes on its own existing route.** The token *is* the session identifier ([ADR-0039](./adr/0039-scoped-expiring-media-credential-for-delegated-fetches.md) — there is no id in that URL), so `/stream/{streamToken}/…` dispatches a relay session into the same serving code instead of a scratch directory that does not exist. Under a token, playlists map an absolute remote URI back to a **bare filename** rather than to a `/relay/{id}/…` path, so the secret is never written into a playlist and relative resolution still lands on the token prefix.
+- **The tail is validated against the session, not forwarded as given.** Exactly three shapes are allowed: this session's own progressive stream (`sessions/{remoteId}/stream`), a single path element under its own `sessions/{remoteId}/hls/`, and the subtitle tracks of the Title it is playing (`titles/{remoteTitleId}/subtitles/{file}`). Anything else — another session's media, another Title's, a browse endpoint, a traversal — is `404`. Without that check the route would be an open proxy into a friend's Server under this household's credential.
+- `GET`/`HEAD` only; anything else is `405` with `Allow: GET`.
+
+Bytes are **streamed, never buffered to disk**: status, content type, `Content-Length` or a `206`'s `Content-Range`, and `Accept-Ranges` all pass through, so a seek behaves exactly as it does on a local file. A relayed fetch is also the session's keepalive, like a local manifest or segment request. Ending the local Session — `DELETE /sessions/{id}` or the idle reaper — ends the sharer's session too.
+
+**Artwork needs no new route.** A `/artwork/…` request for a mirrored entity that has no local image is fetched from the sharer under the Link's token on first request and cached in the identity-keyed artwork cache under the linked Library; the second request never reaches the sharer. Nothing about the URL changes.
+
+**What crosses the wire about the viewer: nothing.** The sharer sees one Session per concurrent stream under the one `remote` User, and `nowPlaying` shows "Brandon's server — Title X". No user id, username, display name, Device name or Device id from this household appears in any header, body, path or query of a relayed request; the person watching is known only here, and their Watch state is written here, against the mirrored row.
+
+**This Server pays bandwidth, never CPU.** A relay Decision skips the local HLS runtime and the transcode meter entirely, so it holds no slot against the transcode cap ([ADR-0009](./adr/0009-transcode-governance.md)) — the encode is the sharer's, which is the point: they are the ones sharing with a stranger, so the budget that protects them must be theirs.

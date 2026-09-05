@@ -32,8 +32,15 @@ someone else's servers, no phoning home, no vendor lock-in.
   VAAPI, Quick Sync, and VideoToolbox backends are selectable, with a live
   admin view of transcode load and (on NVIDIA) GPU telemetry.
 - **Multi-user with real access control.** Per-user libraries, content-rating
-  ceilings, private watch state, resume/Continue-Watching, TV Up Next, and
+  ceilings, per-user playback ceilings (max resolution, bitrate and concurrent
+  streams), private watch state, resume/Continue-Watching, TV Up Next, and
   named per-device tokens you can revoke individually.
+- **Link two households' servers.** Send a friend one string and their Obelo
+  mirrors the libraries you granted it — read-only, badged, in their apps with
+  no app update, with their own watch state. Playback relays through their
+  server in exactly one hop: you negotiate and transcode under *your* ceilings
+  and governance, they pay the bandwidth. No directory, no account service, no
+  relay in the middle.
 - **Subtitles that just work.** Embedded, sidecar (`Movie.en.srt`), and
   on-demand fetched subtitles — delivered as selectable tracks or burned in when
   the format requires it.
@@ -220,6 +227,7 @@ All configuration is via `OBELO_*` environment variables. Common ones:
 | `OBELO_TRUSTED_PROXIES`           | —         | CIDRs whose `X-Forwarded-*` headers are believed. See below.   |
 | `OBELO_DATA_DIR`                  | `./data`  | Writable data directory (DB + caches).                         |
 | `OBELO_SCAN_INTERVAL`             | `1h`      | Scheduled incremental scan cadence (`0` disables).             |
+| `OBELO_LINK_SYNC_INTERVAL`        | `1h`      | How often a linked server's libraries are pulled again (`0` turns background refresh off). |
 | `OBELO_HARDWARE_ACCEL`            | `off`     | `off` / `auto` / `nvenc` / `vaapi` / `qsv` / `videotoolbox`.   |
 | `OBELO_MAX_CONCURRENT_TRANSCODES` | `3`       | Cap on simultaneous transcodes (`0` = unlimited).              |
 | `OBELO_TMDB_API_KEY`              | —         | Enables Movie/TV enrichment via TMDB.                          |
@@ -290,6 +298,17 @@ The honest cost, up front: **every client device must also join the Tailnet** �
 **Node keys expire — by default after 180 days**, and the symptom is "remote access stopped working" six months after you last touched the box. The expiry appears in the settings panel and in the boot log, and the log warns under 14 days. The real fix is to disable key expiry for this node in the Tailscale console; nothing in Obelo can extend it.
 
 For a first-time setup end to end, follow [docs/runbooks/remote-access-with-tailscale.md](./docs/runbooks/remote-access-with-tailscale.md).
+
+### Sharing libraries with another household
+
+Two people who each run an Obelo can link them ([ADR-0054](./docs/adr/0054-a-linked-server-is-a-user-with-the-remote-role.md), [ADR-0055](./docs/adr/0055-linking-is-a-one-time-invite-redeemed-server-to-server.md), [ADR-0056](./docs/adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). The sharer creates a **Linked server** user (Settings → Users), grants it libraries, sets its rating and playback ceilings, and sends **one string**. The receiver pastes that string into **Settings → Linked servers**, and the granted libraries appear on their server as read-only mirrors — granted to their own household per user, in Home rows and search, with their own watch state, in every app with no app update.
+
+- **Reachability is a one-machine problem, deliberately.** Only the receiving server has to reach the sharing one; nobody's phone or TV does. That is what makes the tailnet path work: the sharer shares their Obelo *machine* into the other operator's tailnet from the Tailscale console, and no router page is opened on either side. A public HTTPS origin (the `acme` setup above, or a reverse proxy) works just as well.
+- **The sharer keeps control of load and content.** The invite is single-use and expires in 24 hours; the linked-server user has no password and can never become one; ceilings are enforced on the sharer's own machine, so a 4K film under a 1080p cap transcodes down there. Deleting that user is an immediate kill switch.
+- **The receiver keeps control of everything else.** Only unlinking deletes anything; an unreachable friend leaves the shelves in place, greyed. A library received over a link can never be shared onward to a third household.
+- `OBELO_LINK_SYNC_INTERVAL` (above) is the fallback refresh cadence; the mirror is normally nudged the moment the sharer's library changes.
+
+For both sides end to end — including the Tailscale machine-share console steps and the node-key-expiry trap — follow [docs/runbooks/link-two-servers.md](./docs/runbooks/link-two-servers.md).
 
 ### Running behind a reverse proxy
 

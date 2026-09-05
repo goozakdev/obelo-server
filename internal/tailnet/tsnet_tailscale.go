@@ -285,6 +285,21 @@ func (n *tsnetNode) ListenTLS(network, addr string) (net.Listener, error) {
 	}), nil
 }
 
+// Dial opens an outbound connection over the node's own userspace stack — the
+// tailnet dialer of ADR-0055 §5.
+//
+// tsnet's Dial is what makes a shared machine reachable: the name resolves
+// through the node's own MagicDNS and the packets leave over WireGuard, so
+// neither household needs a port-forward and the host's resolver — which has
+// never heard of the sharer's tailnet — is never consulted.
+func (n *tsnetNode) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	srv := n.server()
+	if srv == nil {
+		return nil, ErrNotRunning
+	}
+	return srv.Dial(ctx, network, addr)
+}
+
 // Close stops the node and releases its listeners, KEEPING the state directory so
 // the next Start needs no re-authorization. Idempotent.
 func (n *tsnetNode) Close() error {

@@ -113,8 +113,8 @@ func newRescanFixtureWith(t *testing.T, prober scanner.Prober, files ...string) 
 		[]store.LibraryRootInput{{ID: "root1", Path: root}}); err != nil {
 		t.Fatalf("create library: %v", err)
 	}
-	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u1','u1','member')`)
-	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u2','u2','member')`)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u1','u1','member','x')`)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u2','u2','member','x')`)
 
 	f := &rescanFixture{t: t, db: db, root: root, show: show}
 	f.scan = scanner.NewService(db, prober)

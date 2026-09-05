@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import { useAuth } from "../auth/session";
 import { errorMessage } from "../screens/errorMessage";
-import type { User } from "../api/types";
+import type { AdminUser } from "../api/types";
 import AdminListPanel from "./AdminListPanel";
 import UserAdminRow from "./UserAdminRow";
 import CreateUserDialog from "./CreateUserDialog";
@@ -15,7 +15,8 @@ import ConfirmDialog from "./ConfirmDialog";
 // hub's composition — a filled header bar over a framed body, held to a
 // readable column rather than the full content width:
 //   - a "N users" count and an "Add User" button opening the create dialog,
-//   - one row per User (username + role) carrying an Edit and a Delete icon,
+//   - one row per User (username + role, plus a link badge for a `remote` User)
+//     carrying an Edit and a Delete icon,
 //   - the loading/error/empty states, which share the list's frame so the panel
 //     keeps its shape whatever state it is in.
 //
@@ -34,14 +35,14 @@ import ConfirmDialog from "./ConfirmDialog";
 type ListState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; users: User[] };
+  | { status: "ready"; users: AdminUser[] };
 
 export default function AdminUsersScreen() {
   const { forgetRosterUser } = useAuth();
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [addOpen, setAddOpen] = useState(false);
-  const [editing, setEditing] = useState<User | null>(null);
-  const [deleting, setDeleting] = useState<User | null>(null);
+  const [editing, setEditing] = useState<AdminUser | null>(null);
+  const [deleting, setDeleting] = useState<AdminUser | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -65,7 +66,7 @@ export default function AdminUsersScreen() {
 
   const reload = useCallback(() => void load(), [load]);
 
-  function requestDelete(user: User) {
+  function requestDelete(user: AdminUser) {
     // Closing the Edit dialog first keeps the confirmation the only open modal
     // when delete is reached from inside it.
     setEditing(null);

@@ -1,0 +1,434 @@
+package link
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/goozakdev/obelo-server/internal/server"
+	"github.com/goozakdev/obelo-server/internal/store"
+)
+
+// Store is the persistence a Link needs. *store.DB satisfies it; the narrow
+// interface keeps this package testable without a live database and keeps the
+// set of tables linking may touch visible in one place.
+type Store interface {
+	Links() ([]store.Link, error)
+	LinkByID(id string) (store.Link, error)
+	LinkByServerID(serverID string) (store.Link, error)
+	InsertLink(l store.Link) error
+	UpdateLinkCredential(l store.Link) error
+	DeleteLink(id string) error
+	// The three writers of the ADR-0056 §6 state machine: what a sweep proved
+	// (SetLinkState / SetLinkSynced) and which address proved it.
+	SetLinkState(id, state, lastError string) error
+	SetLinkSynced(id, syncedAt string) error
+	SetLinkActiveOrigin(id, origin string) error
+}
+
+// Identity is this Server's own id and name (ADR-0034), presented to the sharer
+// as the Device (ADR-0055 §4). It is a function rather than a value because the
+// name is freely changeable and a re-key months later should present the current
+// one.
+type Identity struct {
+	ID   string
+	Name string
+}
+
+// ErrUnreachable is every origin in the invite failing to answer. It is the
+// state ADR-0056 §6 calls `unreachable` arriving at link time, and it is a 503
+// on the wire rather than a 4xx: nothing about the request was wrong.
+var ErrUnreachable = errors.New("link: none of the addresses in this invite answered")
+
+// ErrServerMismatch is a re-key whose invite names a different Server than the
+// Link being re-keyed. A Link is bound to one peer for its whole life — that is
+// what makes the mirror's ids meaningful — so the answer is "this invite belongs
+// to a different server", not a silent repoint.
+var ErrServerMismatch = errors.New("link: this invite is for a different server")
+
+// Service is the home side of linking. One per Server.
+type Service struct {
+	store Store
+	// mirror is the catalog half (ADR-0056 §3): the linked Libraries and the rows
+	// beneath them. Nil in a narrow unit test of the link flow, and every mirror
+	// operation is then a no-op — a Server that holds Links and mirrors nothing is
+	// a coherent state, it is what this package was before issue 07.
+	mirror MirrorStore
+	// relayCatalog is the id translation the one-hop relay needs (relay.go),
+	// type-asserted off the mirror. Nil when the mirror cannot answer it (a narrow
+	// unit test), and this Server then relays nothing.
+	relayCatalog RelayStore
+	// artworkDir is the app's artwork cache (ADR-0007), where a relayed poster is
+	// stored on first request. Empty relays no artwork.
+	artworkDir string
+	self       func() Identity
+	dialer     *Dialer
+
+	// events is the realtime nudge (ADR-0016): `libraryUpdated` after a pull that
+	// changed a mirror, and the admin-only `linkState` on every state transition.
+	// Nil is a Service that publishes nothing, which is every narrow unit test and
+	// no deployment.
+	events Publisher
+
+	// mu guards attached, the running Syncer. It is written once at boot and read
+	// by every request that forces a sweep, so the lock is uncontended and exists
+	// to make that hand-off legal rather than to arbitrate anything.
+	mu       sync.Mutex
+	attached *Syncer
+
+	// version is the link-protocol version this build speaks. Injected rather than
+	// read from the server package at each use so a test can put the two sides on
+	// different versions without rebuilding either.
+	version int
+	now     func() time.Time
+	newID   func() string
+	timeout time.Duration
+
+	// OnLinked and OnUnlinked are how the Syncer hears about a Link coming into
+	// being and going away (watch.go): the first starts the goroutine that keeps
+	// that Link's mirror fresh, the second stops it. They stay hooks rather than a
+	// direct call because a Service with no Syncer — every narrow unit test, and a
+	// Server whose sync interval is 0 — is a coherent thing that still links,
+	// pulls and unlinks.
+	//
+	// OnLinked fires on a new Link AND on a re-key (a re-key moves the addresses
+	// and may revive a `revoked` credential, both of which the watcher has to hear
+	// about). OnUnlinked fires after the row is gone. Both run INSIDE the request
+	// that caused them, so neither may block on a network.
+	OnLinked   func(l store.Link)
+	OnUnlinked func(l store.Link)
+}
+
+// Options are Service's injectable seams. Every field is optional; the zero
+// value is what production uses.
+type Options struct {
+	// Version overrides the link-protocol version this Server claims. Zero uses
+	// server.LinkProtocolVersion, which is what every deployment does — this exists
+	// so a test can stand up two Servers that disagree.
+	Version int
+	// Now, NewID and Timeout are the clock, the id source and the per-call
+	// deadline. Zero values use the real ones.
+	Now     func() time.Time
+	NewID   func() string
+	Timeout time.Duration
+	// Tailnet is the node the dialer may reach a peer over (ADR-0055 §5). Nil is a
+	// deployment with no Tailnet, where every origin goes to the operating system.
+	Tailnet TailnetNode
+	// Mirror is the catalog a pulled Export is written into (ADR-0056 §3).
+	// *store.DB satisfies it; nil leaves linking working and mirrors nothing.
+	Mirror MirrorStore
+	// Events is the realtime Broker (*events.Broker satisfies Publisher). Nil
+	// publishes nothing, which changes no outcome — every event this package sends
+	// is a nudge over a resource a client can poll (ADR-0016).
+	Events Publisher
+	// ArtworkDir is the app's artwork cache directory (config.ArtworkCacheDir),
+	// where a relayed poster is cached on first request (ADR-0056 §5). Empty — a
+	// narrow unit test — leaves artwork un-relayed, which reads as a Title with no
+	// poster rather than as an error.
+	ArtworkDir string
+}
+
+// Publisher is the realtime spine as this package needs it: two nudges, both
+// carrying no state of their own. *events.Broker satisfies it. It is an
+// interface here rather than the Broker itself so a sweep can be tested for what
+// it ANNOUNCES without a transport, and so this package cannot reach the rest of
+// the event vocabulary.
+type Publisher interface {
+	// PublishLibraryUpdated tells clients a Library's contents changed. Published
+	// for a linked Library after a pull that applied anything.
+	PublishLibraryUpdated(libraryID string)
+	// PublishLinkState tells connected Admins a Link changed state. Published on
+	// the transition only, never on every sweep.
+	PublishLinkState(linkID string)
+}
+
+// New wires the Service.
+func New(s Store, self func() Identity, opts Options) *Service {
+	svc := &Service{
+		store:      s,
+		mirror:     opts.Mirror,
+		events:     opts.Events,
+		artworkDir: opts.ArtworkDir,
+		self:       self,
+		dialer:     &Dialer{Node: opts.Tailnet},
+		version:    opts.Version,
+		now:        opts.Now,
+		newID:      opts.NewID,
+		timeout:    opts.Timeout,
+	}
+	// The relay's catalog reads are an OPTIONAL capability of the mirror, wired
+	// only when the store can answer them (*store.DB does). A mirror that cannot
+	// leaves RelaysLibrary answering false, so every Title plays locally — which is
+	// what this package did before issue 09.
+	if rs, ok := opts.Mirror.(RelayStore); ok {
+		svc.relayCatalog = rs
+	}
+	if svc.version == 0 {
+		svc.version = server.LinkProtocolVersion
+	}
+	if svc.now == nil {
+		svc.now = time.Now
+	}
+	if svc.newID == nil {
+		svc.newID = func() string { return uuid.NewString() }
+	}
+	return svc
+}
+
+// syncer returns the running Syncer, or nil on a Server that starts none.
+func (s *Service) syncer() *Syncer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attached
+}
+
+func (s *Service) attach(sy *Syncer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attached = sy
+}
+
+func (s *Service) publishLibraryUpdated(libraryID string) {
+	if s.events != nil {
+		s.events.PublishLibraryUpdated(libraryID)
+	}
+}
+
+func (s *Service) publishLinkState(linkID string) {
+	if s.events != nil {
+		s.events.PublishLinkState(linkID)
+	}
+}
+
+// Version is the link-protocol version this Server speaks. The API layer reads
+// it to fill in the "ours" side of a mismatch.
+func (s *Service) Version() int { return s.version }
+
+// List returns every Link, oldest first.
+func (s *Service) List() ([]store.Link, error) { return s.store.Links() }
+
+// Get returns one Link, store.ErrNotFound when there is none.
+func (s *Service) Get(id string) (store.Link, error) { return s.store.LinkByID(id) }
+
+// Create links this Server to another from a pasted invite string (POST /links).
+//
+// Same server id already on file is a RE-KEY (ADR-0055 §2) rather than an error
+// or a second Link: the id in the invite is precisely what makes "this is the
+// same friend, at a new address, with a fresh code" expressible. rekeyed reports
+// which happened, so the transport can answer 200 against 201.
+func (s *Service) Create(ctx context.Context, invite string) (l store.Link, rekeyed bool, err error) {
+	inv, err := s.parse(invite)
+	if err != nil {
+		return store.Link{}, false, err
+	}
+
+	existing, err := s.store.LinkByServerID(inv.ServerID)
+	switch {
+	case err == nil:
+		l, err := s.establish(ctx, existing.ID, inv)
+		return l, true, err
+	case errors.Is(err, store.ErrNotFound):
+		l, err := s.establish(ctx, "", inv)
+		return l, false, err
+	default:
+		return store.Link{}, false, err
+	}
+}
+
+// Rekey replaces the credential on an existing Link (POST /links/{id}/rekey) —
+// the move the Linked servers page offers when a Link has gone `revoked`.
+//
+// It differs from Create in one way and it is the point of the endpoint: the
+// invite MUST name the Link being re-keyed. Create is addressed by the invite
+// and finds its own row; this is addressed by a row and refuses an invite that
+// does not match it, so an operator with two friends' invites in a clipboard
+// cannot repoint one Link at the other household.
+func (s *Service) Rekey(ctx context.Context, id, invite string) (store.Link, error) {
+	existing, err := s.store.LinkByID(id)
+	if err != nil {
+		return store.Link{}, err
+	}
+	inv, err := s.parse(invite)
+	if err != nil {
+		return store.Link{}, err
+	}
+	if inv.ServerID != existing.ServerID {
+		return store.Link{}, ErrServerMismatch
+	}
+	return s.establish(ctx, existing.ID, inv)
+}
+
+// Unlink deletes a Link, handing the credential back first (ADR-0055,
+// Consequences) so the sharer is left with no Device for this household.
+//
+// The surrender is BEST EFFORT and its failure is logged, never returned. A friend
+// whose server is off, or who has already deleted the `remote` User, must not be
+// able to keep this household linked to them: the local delete is the operation,
+// and the courtesy call is a courtesy.
+func (s *Service) Unlink(ctx context.Context, id string) error {
+	l, err := s.store.LinkByID(id)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, s.callTimeout())
+	defer cancel()
+	if err := s.surrender(ctx, s.client(), l); err != nil {
+		log.Printf("obelo: link: unlinking %q: the sharing server was not told (%v); "+
+			"its device row for this server may linger until it is revoked there", l.ServerName, err)
+	}
+
+	if err := s.store.DeleteLink(l.ID); err != nil {
+		return err
+	}
+	// The linked Libraries this Link brought, their mirrored rows and the Watch
+	// state on them (ADR-0056 §6, issue 07).
+	s.dropMirror(l)
+	if s.OnUnlinked != nil {
+		s.OnUnlinked(l)
+	}
+	return nil
+}
+
+// parse decodes and time-checks an invite. The version stamped INSIDE the string
+// is checked here too, before a single packet leaves: a mismatch discovered from
+// the string alone is a mismatch that could never have spent the code, which is
+// the strongest form of ADR-0055 §3's promise.
+func (s *Service) parse(invite string) (Invite, error) {
+	inv, err := ParseInvite(invite)
+	if err != nil {
+		return Invite{}, err
+	}
+	if inv.Expired(s.now()) {
+		return Invite{}, ErrInviteExpired
+	}
+	if inv.Version != s.version {
+		return Invite{}, &ProtocolMismatch{Theirs: inv.Version, Ours: s.version}
+	}
+	return inv, nil
+}
+
+// establish is the shared body of Create, Rekey and the re-key branch of Create:
+// find an origin that answers as the right Server, spend the code there, and
+// write the row. id is empty for a new Link and the existing row's id for a
+// re-key.
+func (s *Service) establish(ctx context.Context, id string, inv Invite) (store.Link, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.callTimeout()*time.Duration(len(inv.Origins)+1))
+	defer cancel()
+
+	client := s.client()
+	origin, peer, err := s.reach(ctx, client, inv)
+	if err != nil {
+		return store.Link{}, err
+	}
+
+	res, err := s.redeem(ctx, client, origin, inv)
+	if err != nil {
+		return store.Link{}, err
+	}
+
+	name := peer.Name
+	if name == "" {
+		name = inv.ServerName
+	}
+	l := store.Link{
+		ID:                  id,
+		ServerID:            inv.ServerID,
+		ServerName:          name,
+		Origins:             inv.Origins,
+		ActiveOrigin:        origin,
+		Token:               res.Token,
+		DeviceID:            res.DeviceID,
+		LinkProtocolVersion: peer.LinkProtocolVersion,
+		State:               store.LinkStateConnected,
+		CreatedAt:           s.now().UTC().Format(time.RFC3339),
+	}
+	if id == "" {
+		l.ID = s.newID()
+		if err := s.store.InsertLink(l); err != nil {
+			return store.Link{}, err
+		}
+	} else if err := s.store.UpdateLinkCredential(l); err != nil {
+		return store.Link{}, err
+	}
+
+	// The linked Libraries and the first, full pull (ADR-0056 §1, §4; issue 07).
+	// A re-key runs it too: the addresses moved, and the mirror has to hear about
+	// it before the next play does.
+	syncCtx, syncCancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
+	defer syncCancel()
+	s.syncAfterLink(syncCtx, l)
+
+	// Read the row back: the first pull is what wrote `last_synced_at` and what
+	// settled the state, so the value assembled above is already stale by the time
+	// this returns. Answering with it would tell the Admin their brand-new Link has
+	// never synced — and would say `connected` for a sharer whose first pull did not
+	// finish. A read that fails is not fatal: the Link is real either way.
+	if fresh, err := s.store.LinkByID(l.ID); err == nil {
+		l = fresh
+	}
+
+	if s.OnLinked != nil {
+		s.OnLinked(l)
+	}
+	return l, nil
+}
+
+// reach walks the origins IN ORDER and stops at the first that answers as the
+// Server the invite names (ADR-0055 §2).
+//
+// The two kinds of failure are kept apart deliberately. An origin that does not
+// answer, or answers as somebody else, is that ORIGIN's problem and the walk
+// continues — an invite carrying a tailnet name and a public one exists exactly
+// so one of them can be wrong. A version mismatch is the SERVER's problem and
+// stops the walk at once: every origin leads to the same machine, so trying the
+// next one can only produce the same refusal a second time.
+func (s *Service) reach(ctx context.Context, client *http.Client, inv Invite) (string, Peer, error) {
+	var lastErr error
+	for _, origin := range inv.Origins {
+		peer, err := s.probe(ctx, client, origin)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: %w", origin, err)
+			continue
+		}
+		if peer.ID != inv.ServerID {
+			lastErr = fmt.Errorf("%s: %w", origin, ErrWrongServer)
+			continue
+		}
+		// A Server with no serverLinking flag speaks no version of this protocol at
+		// all, which is version 0 for the purposes of the one sentence the operator
+		// needs: their server needs an upgrade.
+		if !peer.ServerLinking {
+			return "", Peer{}, &ProtocolMismatch{Theirs: 0, Ours: s.version}
+		}
+		if peer.LinkProtocolVersion != s.version {
+			return "", Peer{}, &ProtocolMismatch{Theirs: peer.LinkProtocolVersion, Ours: s.version}
+		}
+		return origin, peer, nil
+	}
+	if lastErr != nil {
+		return "", Peer{}, fmt.Errorf("%w (%v)", ErrUnreachable, lastErr)
+	}
+	return "", Peer{}, ErrUnreachable
+}
+
+func (s *Service) client() *http.Client { return s.dialer.HTTPClient(s.callTimeout()) }
+
+func (s *Service) callTimeout() time.Duration {
+	if s.timeout > 0 {
+		return s.timeout
+	}
+	return defaultRequestTimeout
+}
+
+// OverTailnet reports which of the two dialers an origin would use. It exists
+// for the admin surface and for tests; nothing in the link flow branches on it,
+// because the dialer already did.
+func (s *Service) OverTailnet(origin string) bool {
+	return s.dialer.OverTailnet(originHost(origin))
+}

@@ -37,6 +37,7 @@ import type {
   ArtistAlbumsResponseRaw,
   ArtistsPage,
   ArtistsResponseRaw,
+  AdminUser,
   DeviceApprovalResponse,
   ArtworkCandidate,
   ArtworkCandidatesResult,
@@ -69,6 +70,8 @@ import type {
   HomeRows,
   LibrariesResponse,
   Library,
+  Link,
+  LinkInvite,
   ListTitlesOptions,
   LoginRequest,
   LoginResult,
@@ -97,6 +100,7 @@ import type {
   PlaylistSummary,
   PlaylistsResponseRaw,
   PlaybackDecision,
+  PlaybackCeilingInput,
   PlaybackState,
   ScanMode,
   ScanStatus,
@@ -165,6 +169,11 @@ export const EVENT_TYPES = [
   // nudge: it carries no payload because the settings GET is the truth. It is
   // what makes the login link appear without a reload.
   "tailscaleState",
+  // A Link moved between connected / unreachable / revoked (ADR-0056 §6) —
+  // Admin-only. It carries `{ linkId }` and nothing else, on the same principle:
+  // GET /links is the truth. It is what turns a friend's server going dark into
+  // a badge on the Linked servers page with nobody pressing reload.
+  "linkState",
 ] as const;
 
 export interface ApiClientOptions {
@@ -1596,9 +1605,14 @@ export class ApiClient {
   // --- Admin: users (access-control-admin-ui issue 01) -------------------
 
   /** `GET /api/v1/users` (Admin) — every User on the server (`{ id, username,
-   * role }` each). Returns the unwrapped array. Admin scope: a Member gets a 403
-   * the UI surfaces as a readable error (the tab is also role-gated). */
-  async listUsers(signal?: AbortSignal): Promise<User[]> {
+   * role }` each, plus a `lastSeenAt` when they have a Device). Returns the
+   * unwrapped array. Admin scope: a Member gets a 403 the UI surfaces as a
+   * readable error (the tab is also role-gated).
+   *
+   * `lastSeenAt` is the newest last-seen across the User's Devices, absent when
+   * they have none — which is what tells a `remote` User that has redeemed its
+   * Invite from one that never has (ADR-0055 §4). */
+  async listUsers(signal?: AbortSignal): Promise<AdminUser[]> {
     const res = await this.request<UsersResponse>("/users", { signal });
     return res?.users ?? [];
   }
@@ -1675,6 +1689,48 @@ export class ApiClient {
     return this.request<void>(
       `/users/${encodeURIComponent(id)}/ratingCeiling`,
       { method: "PUT", body: { rating }, signal },
+    );
+  }
+
+  /** `PUT /api/v1/users/{id}/playbackCeiling` (Admin) — set a non-Admin User's
+   * Playback ceiling (ADR-0054 §2): how their sessions may play, never what they
+   * may see. The body is the WHOLE ceiling, not a patch — a dimension sent as ""
+   * or 0 is cleared to "no limit" — so the caller always sends the ceiling it
+   * means and a repeat send is idempotent. 204 No Content on success. The refusals
+   * are NOT swallowed, so the dialog surfaces them: 422 `ADMIN_CEILING` (an Admin
+   * is uncapped by definition), 422 `UNKNOWN_RESOLUTION` (a rung that is not
+   * settable), 400 (a negative bitrate/stream count); an unknown user is 404. */
+  setPlaybackCeiling(
+    id: string,
+    ceiling: PlaybackCeilingInput,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.request<void>(
+      `/users/${encodeURIComponent(id)}/playbackCeiling`,
+      { method: "PUT", body: ceiling, signal },
+    );
+  }
+
+  /** `POST /api/v1/users/{id}/invite` (Admin) — mint the one-time invite that
+   * links another household's Server to this `remote` User (ADR-0055 §1–§2).
+   * `origins` are the addresses the Admin typed, tried in the order given by the
+   * Server that redeems; each must be a bare absolute http(s) origin with no path.
+   *
+   * 201 with the whole `obelo-link:` string, whose code is single-use and lapses
+   * in 24 hours. MINTING AGAIN INVALIDATES THE PREVIOUS INVITE — that is how a
+   * mis-sent or lapsed one is taken back, and why the caller must treat the
+   * returned string as the only live one. The refusals are NOT swallowed: 422
+   * `NOT_REMOTE_USER` (the target is not a linked Server — no other role has any
+   * use for an invite) and 422 `INVALID_ORIGIN` (an origin is not a bare absolute
+   * http(s) address, or none was given); an unknown user is 404. */
+  createLinkInvite(
+    id: string,
+    origins: string[],
+    signal?: AbortSignal,
+  ): Promise<LinkInvite> {
+    return this.request<LinkInvite>(
+      `/users/${encodeURIComponent(id)}/invite`,
+      { method: "POST", body: { origins }, signal },
     );
   }
 
@@ -1905,6 +1961,77 @@ export class ApiClient {
   forgetTailnet(signal?: AbortSignal): Promise<TailnetSettingsView> {
     return this.request<TailnetSettingsView>("/settings/tailscale/forget", {
       method: "POST",
+      signal,
+    });
+  }
+
+  // --- Admin: linked servers, the HOME half (ADR-0055/0056, issues 06-10) ---
+  //
+  // Every route here is Admin scope, server-enforced. A Link is the household's
+  // relationship with another household — not a per-User thing — so the page
+  // that drives these is a Settings screen, and the Libraries a Link brings are
+  // granted to Users afterwards like any other.
+  //
+  // The refusals are NOT swallowed; they are the whole product here, and
+  // `linkErrorMessage` (admin/linkErrors.ts) turns each code into the one
+  // sentence that names the operator's next move.
+
+  /** `GET /api/v1/links` (Admin) — every Link this Server holds, each with its
+   * state, the origin in use, the last sync and the Libraries it provides. The
+   * truth the `linkState` SSE nudge sends the Linked servers page back to. */
+  listLinks(signal?: AbortSignal): Promise<Link[]> {
+    return this.request<Link[]>("/links", { signal });
+  }
+
+  /** `POST /api/v1/links` (Admin) — redeem a pasted `obelo-link:` string. The
+   * body is the WHOLE string, one field: not a hostname and a code, which is two
+   * fields, two mistakes and no room for a second address.
+   *
+   * 201 for a new Link and 200 when the invite re-keys one already on file (the
+   * same sharer's server id), which this method deliberately does not
+   * distinguish — either way the answer is the Link as it now stands. The
+   * refusals: 400 `BAD_INVITE`, 410 `INVITE_EXPIRED`, 409 `LINK_PROTOCOL`
+   * (`details: { theirs, ours, upgrade }`), 409 `LINK_SERVER_MISMATCH`,
+   * 409 `LINK_REVOKED` and 503 `LINK_UNREACHABLE`. */
+  createLink(invite: string, signal?: AbortSignal): Promise<Link> {
+    return this.request<Link>("/links", {
+      method: "POST",
+      body: { invite },
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/links/{id}/rekey` (Admin) — replace a Link's dead credential
+   * with a fresh invite from the SAME sharer, keeping the Link, its Libraries
+   * and this household's watch state. An invite from a different server is
+   * refused with 409 `LINK_SERVER_MISMATCH` rather than silently re-pointing. */
+  rekeyLink(id: string, invite: string, signal?: AbortSignal): Promise<Link> {
+    return this.request<Link>(`/links/${encodeURIComponent(id)}/rekey`, {
+      method: "POST",
+      body: { invite },
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/links/{id}/sync` (Admin) — one sweep, now, synchronously,
+   * answering with the Link as it stands afterwards. It is the "try again" beside
+   * an unreachable Link, and the ONE sweep a `revoked` Link gets: the background
+   * loop never retries one, but a human asking is not a retry. A failed sweep is
+   * reported as the failure it was. */
+  syncLink(id: string, signal?: AbortSignal): Promise<Link> {
+    return this.request<Link>(`/links/${encodeURIComponent(id)}/sync`, {
+      method: "POST",
+      signal,
+    });
+  }
+
+  /** `DELETE /api/v1/links/{id}` (Admin) — unlink. THE ONLY THING THAT DELETES
+   * what came over a Link: the mirrored Libraries, their catalog rows and this
+   * household's watch state for them. 204 whether or not the sharer could be
+   * reached, so a friend's server being off cannot keep this household linked. */
+  deleteLink(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/links/${encodeURIComponent(id)}`, {
+      method: "DELETE",
       signal,
     });
   }
@@ -2140,6 +2267,7 @@ export class ApiClient {
 
 export { ApiError, NetworkError };
 export type {
+  AdminUser,
   Album,
   AlbumTracks,
   ArtistAlbums,
@@ -2166,6 +2294,9 @@ export type {
   HomeRows,
   Library,
   LibraryRoot,
+  Link,
+  LinkedLibrary,
+  LinkState,
   ListTitlesOptions,
   LoginRequest,
   LoginResult,

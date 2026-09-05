@@ -143,6 +143,37 @@ function busyMessage(retrying: boolean): string {
     : "The server is busy transcoding right now. Try again at a lower quality.";
 }
 
+/** The two refusals a Title in a LINKED Library can come back with (ADR-0056 §6,
+ * linked-servers issue 09), turned into a sentence, or null for anything else.
+ *
+ * Both are 503s and neither is a fault of this household's server, so the copy
+ * has to do two jobs at once: say the film cannot play now, and say that nothing
+ * is broken or lost here. The distinction between them is the whole point of them
+ * being separate codes — `LINK_UNREACHABLE` fixes itself when the other machine
+ * comes back and is worth retrying, `LINK_REVOKED` never does and needs a person
+ * to ask for a fresh invite — so they must not collapse into one "cannot play".
+ *
+ * The server's own message is appended for the unreachable case only, where it
+ * carries the reason the last address gave; the revoked case has no detail worth
+ * quoting, only a next move. */
+export function linkOutageMessage(err: ApiError): string | null {
+  switch (err.code) {
+    case "LINK_UNREACHABLE":
+      return (
+        "This title lives on a friend's server, and that server can't be reached " +
+        "right now. Nothing here is lost — try again when it is back online."
+      );
+    case "LINK_REVOKED":
+      return (
+        "This title lives on a friend's server, and that server has withdrawn " +
+        "access. An admin needs to ask them for a fresh invite and re-key the " +
+        "link under Linked servers."
+      );
+    default:
+      return null;
+  }
+}
+
 /** Friendly, honest copy for a TRANSCODE_REQUIRED outcome. The server's
  * `details.reason` is a machine enum (container/videoCodec/audioCodec/…); we map
  * the common ones to a sentence and fall back to the server message otherwise.
@@ -384,6 +415,17 @@ export function usePlayerSession(
             const { reason, message } = unsupportedMessage(err);
             setStatus({ kind: "unsupported", reason, message });
             return;
+          }
+          // A linked server that is down or has revoked us: an ordinary error
+          // state (there is nothing to retry automatically and no lower bitrate
+          // to step down to), but with a sentence that says whose server it is
+          // and what happens next.
+          if (err instanceof ApiError) {
+            const outage = linkOutageMessage(err);
+            if (outage) {
+              setStatus({ kind: "error", message: outage });
+              return;
+            }
           }
           setStatus({ kind: "error", message: errorMessage(err) });
         }

@@ -7,7 +7,7 @@ import { AuthProvider } from "../auth/session";
 import { RequireAdmin } from "../auth/guards";
 import { ApiError } from "../api/errors";
 import type { ApiClient } from "../api/client";
-import type { Library, User } from "../api/types";
+import type { AdminUser, Library, User } from "../api/types";
 
 // AdminUsersScreen end-to-end through the faked API client (the one seam — exactly
 // as AdminLibrariesScreen.test.tsx fakes apiClient). The redesigned hub is a list
@@ -59,7 +59,7 @@ vi.mock("../api/client", async () => {
 import AdminUsersScreen from "./AdminUsersScreen";
 import AdminScreen from "../screens/AdminScreen";
 
-function usr(over: Partial<User>): User {
+function usr(over: Partial<AdminUser>): AdminUser {
   return { id: "u1", username: "ada", role: "member", ...over };
 }
 
@@ -118,6 +118,42 @@ describe("AdminUsersScreen — the roster list", () => {
     expect(screen.queryByTestId("new-password-input")).not.toBeInTheDocument();
 
     expect(screen.getByTestId("admin-users-count")).toHaveTextContent("2 users");
+  });
+
+  it("badges a linked server with its last-seen, and a person with nothing", async () => {
+    // The Device a linked Server leaves behind is created by redeeming the
+    // invite and by nothing else (ADR-0055 §4), so its last-seen is the only
+    // answer to "did they ever actually link?".
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    listUsers.mockResolvedValue([
+      usr({ id: "u2", username: "ada", role: "member", lastSeenAt: twoHoursAgo }),
+      usr({
+        id: "u9",
+        username: "Brandon's server",
+        role: "remote",
+        lastSeenAt: twoHoursAgo,
+      }),
+      usr({ id: "u10", username: "Kim's server", role: "remote" }),
+    ]);
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-user-list")).toBeInTheDocument(),
+    );
+    const rows = screen.getAllByTestId("admin-user-row");
+
+    // A person's row gets no badge at all — a Member's Devices are not a link
+    // state, and the row would only be noisier for saying when they last read.
+    expect(
+      within(rows[0]).queryByTestId("admin-user-link-state"),
+    ).not.toBeInTheDocument();
+
+    expect(within(rows[1]).getByTestId("admin-user-link-state")).toHaveTextContent(
+      "Linked, seen 2h ago",
+    );
+    expect(within(rows[2]).getByTestId("admin-user-link-state")).toHaveTextContent(
+      "Never linked",
+    );
   });
 
   it("shows a clean empty state with no users", async () => {
@@ -187,6 +223,45 @@ describe("AdminUsersScreen — adding a user", () => {
       expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
     );
     expect(await screen.findByText("ada")).toBeInTheDocument();
+  });
+
+  it("creates a linked server with NO password and grants it nothing (ADR-0054)", async () => {
+    const user = userEvent.setup();
+    const peer = usr({ id: "u9", username: "Brandon's server", role: "remote" });
+    listUsers.mockResolvedValueOnce([]).mockResolvedValue([peer]);
+    createUser.mockResolvedValue(peer);
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("add-user-button"));
+    await user.type(screen.getByTestId("user-username-input"), "Brandon's server");
+    await user.selectOptions(screen.getByTestId("user-role-select"), "remote");
+
+    // The role has no password, so the dialog offers no field for one — there is
+    // nothing to type, and a password sent with the role is a 400 server-side.
+    expect(screen.queryByTestId("user-password-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("create-user-linked-hint")).toBeInTheDocument();
+    expect(screen.queryByTestId("create-user-access-hint")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("create-user-submit"));
+
+    // No `password` key at all in the request.
+    await waitFor(() =>
+      expect(createUser).toHaveBeenCalledWith({
+        username: "Brandon's server",
+        role: "remote",
+      }),
+    );
+    // And no default grant: "all libraries" is a friendly default inside the
+    // household and a disclosure of the whole collection across a link.
+    await waitFor(() =>
+      expect(screen.queryByTestId("create-user-dialog")).not.toBeInTheDocument(),
+    );
+    expect(setLibraryAccess).not.toHaveBeenCalled();
+    expect(await screen.findByText("Brandon's server")).toBeInTheDocument();
   });
 
   it("does not grant libraries to a created Admin (they are all-access by role)", async () => {

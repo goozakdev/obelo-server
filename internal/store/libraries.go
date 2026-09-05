@@ -6,6 +6,16 @@ import (
 	"fmt"
 )
 
+// The two things a Library can be (ADR-0056 §1). `local` is the ordinary one:
+// root folders on this machine, walked by the Scanner. `linked` is a mirror of a
+// Library on another household's Server — no roots, no Scanner, no writers, and
+// the other Server is the identity authority for everything under it (ADR-0002,
+// ADR-0019 — "local disk wins", and here local means theirs).
+const (
+	LibrarySourceLocal  = "local"
+	LibrarySourceLinked = "linked"
+)
+
 // Library is a top-level collection of media of a single kind (CONTEXT.md),
 // backed by one or more root folders. Roots is populated by the read methods;
 // it is the merged set of folders that make up this one logical Library.
@@ -15,6 +25,44 @@ type Library struct {
 	Kind      string
 	CreatedAt string
 	Roots     []LibraryRoot
+
+	// Source is LibrarySourceLocal or LibrarySourceLinked. It is THE field every
+	// writer filters on: the Scanner, the enrichment pass and the attention queue
+	// skip a linked Library, and the write handlers refuse it with 409
+	// LINKED_LIBRARY (ADR-0056 §1).
+	Source string
+	// LinkID and RemoteLibraryID are set only on a linked Library: the Link it
+	// arrived over (store.Link.ID) and its id on the sharing Server. The second is
+	// what the Export is addressed by.
+	LinkID          string
+	RemoteLibraryID string
+	// RemoteCheckpoint is the sharer's export cursor this mirror has consumed up
+	// to — the value handed back as `since` on the next pull (ADR-0056 §4). Empty
+	// means "nothing pulled yet", which is a full pull.
+	RemoteCheckpoint string
+}
+
+// Linked reports whether this Library is a mirror of another Server's.
+func (l Library) Linked() bool { return l.Source == LibrarySourceLinked }
+
+// libraryColumns is the one projection every Library read uses, so a new column
+// cannot reach one reader and miss another.
+const libraryColumns = `id, name, kind, created_at, source, link_id, remote_library_id, remote_checkpoint`
+
+// scanLibrary reads libraryColumns off a row. link_id is NULL on a local
+// Library, which is what makes the partial unique index on
+// (link_id, remote_library_id) ignore every local row.
+func scanLibrary(sc interface{ Scan(...any) error }) (Library, error) {
+	var (
+		l      Library
+		linkID sql.NullString
+	)
+	if err := sc.Scan(&l.ID, &l.Name, &l.Kind, &l.CreatedAt, &l.Source, &linkID,
+		&l.RemoteLibraryID, &l.RemoteCheckpoint); err != nil {
+		return Library{}, err
+	}
+	l.LinkID = linkID.String
+	return l, nil
 }
 
 // LibraryRoot is one root folder owned by a Library. Path is stored already
@@ -135,7 +183,7 @@ func (db *DB) UpdateLibrary(id string, name *string, addRoots []LibraryRootInput
 // first.
 func (db *DB) Libraries() ([]Library, error) {
 	rows, err := db.Query(
-		`SELECT id, name, kind, created_at FROM libraries ORDER BY created_at DESC, id DESC`)
+		`SELECT ` + libraryColumns + ` FROM libraries ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing libraries: %w", err)
 	}
@@ -144,8 +192,8 @@ func (db *DB) Libraries() ([]Library, error) {
 	var libs []Library
 	byID := make(map[string]int)
 	for rows.Next() {
-		var l Library
-		if err := rows.Scan(&l.ID, &l.Name, &l.Kind, &l.CreatedAt); err != nil {
+		l, err := scanLibrary(rows)
+		if err != nil {
 			return nil, fmt.Errorf("store: scanning library: %w", err)
 		}
 		byID[l.ID] = len(libs)
@@ -169,10 +217,8 @@ func (db *DB) Libraries() ([]Library, error) {
 
 // LibraryByID returns one Library with its root folders, or ErrNotFound.
 func (db *DB) LibraryByID(id string) (Library, error) {
-	var l Library
-	err := db.QueryRow(
-		`SELECT id, name, kind, created_at FROM libraries WHERE id = ?`, id,
-	).Scan(&l.ID, &l.Name, &l.Kind, &l.CreatedAt)
+	l, err := scanLibrary(db.QueryRow(
+		`SELECT `+libraryColumns+` FROM libraries WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Library{}, ErrNotFound
 	}
@@ -235,6 +281,176 @@ func (db *DB) LibraryTitleCount(libraryID string) (int, error) {
 		return 0, fmt.Errorf("store: counting library titles: %w", err)
 	}
 	return n, nil
+}
+
+// --- linked Libraries (ADR-0056 §1) -----------------------------------------
+
+// UpsertLinkedLibrary creates — or, on a later pull, refreshes — the Library row
+// that mirrors one of a sharer's granted Libraries. It is keyed by
+// (link_id, remote_library_id), which is what makes a re-pull and a re-key find
+// the SAME shelf instead of building a second one beside it.
+//
+// The sharer's name is taken ONCE, at creation. A later pull leaves it alone,
+// because renaming is the one thing PATCH /libraries/{id} still allows on a
+// linked Library (ADR-0056 §1) and a household that called this shelf "Dave's
+// cartoons" should not find it renamed back overnight.
+//
+// It never touches remote_checkpoint either: that is the mirror's own bookmark
+// and a refresh of the Library row is not a pull.
+func (db *DB) UpsertLinkedLibrary(id, name, kind, linkID, remoteLibraryID string) (Library, error) {
+	if linkID == "" || remoteLibraryID == "" {
+		return Library{}, fmt.Errorf("store: a linked library needs a link and a remote library id")
+	}
+	existing, err := db.LinkedLibrary(linkID, remoteLibraryID)
+	switch {
+	case err == nil:
+		return existing, nil
+	case errors.Is(err, ErrNotFound):
+		if _, err := db.Exec(
+			`INSERT INTO libraries (id, name, kind, source, link_id, remote_library_id)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			id, name, kind, LibrarySourceLinked, linkID, remoteLibraryID,
+		); err != nil {
+			return Library{}, fmt.Errorf("store: inserting linked library: %w", err)
+		}
+		return db.LibraryByID(id)
+	default:
+		return Library{}, err
+	}
+}
+
+// LinkedLibrary returns the Library mirroring one remote Library over one Link,
+// or ErrNotFound.
+func (db *DB) LinkedLibrary(linkID, remoteLibraryID string) (Library, error) {
+	l, err := scanLibrary(db.QueryRow(
+		`SELECT `+libraryColumns+` FROM libraries WHERE link_id = ? AND remote_library_id = ?`,
+		linkID, remoteLibraryID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Library{}, ErrNotFound
+	}
+	if err != nil {
+		return Library{}, fmt.Errorf("store: scanning linked library: %w", err)
+	}
+	return l, nil
+}
+
+// LibrariesForLink lists the linked Libraries one Link brought, oldest first.
+// Roots are not loaded: a linked Library has none by construction.
+func (db *DB) LibrariesForLink(linkID string) ([]Library, error) {
+	rows, err := db.Query(
+		`SELECT `+libraryColumns+` FROM libraries WHERE link_id = ?
+		  ORDER BY created_at, id`, linkID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing libraries for link: %w", err)
+	}
+	defer rows.Close()
+	var out []Library
+	for rows.Next() {
+		l, err := scanLibrary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scanning library for link: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// LinkedLibraryStates maps every linked Library's id to whether its sharing
+// Server is currently reachable — `available` on the wire (ADR-0056 §6). Today
+// that is exactly "its Link is connected"; issue 08 owns the state machine that
+// moves it.
+//
+// It returns nil (not an empty map) when nothing here came over a Link, which is
+// the common case and lets a caller skip the decoration entirely.
+func (db *DB) LinkedLibraryStates() (map[string]bool, error) {
+	rows, err := db.Query(
+		`SELECT l.id, COALESCE(k.state, '') FROM libraries l
+		    LEFT JOIN links k ON k.id = l.link_id
+		   WHERE l.source = ?`, LibrarySourceLinked)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading linked library states: %w", err)
+	}
+	defer rows.Close()
+	var out map[string]bool
+	for rows.Next() {
+		var id, state string
+		if err := rows.Scan(&id, &state); err != nil {
+			return nil, fmt.Errorf("store: scanning linked library state: %w", err)
+		}
+		if out == nil {
+			out = map[string]bool{}
+		}
+		out[id] = state == LinkStateConnected
+	}
+	return out, rows.Err()
+}
+
+// IsLinkedLibrary reports whether a Library is a mirror. An unknown Library is
+// false, never an error: every caller is a guard asking "may I write here", and
+// "there is no such Library" is not that guard's refusal to make.
+func (db *DB) IsLinkedLibrary(id string) (bool, error) {
+	var source string
+	err := db.QueryRow(`SELECT source FROM libraries WHERE id = ?`, id).Scan(&source)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: reading library source: %w", err)
+	}
+	return source == LibrarySourceLinked, nil
+}
+
+// LinkedLibraryIDs lists the ids of every Library that is a mirror of another
+// household's (source = linked), in a stable order. It is the read behind the
+// "sharing does not travel" invariant (ADR-0054 §4, ADR-0056 §7): the grant
+// surface refuses a set naming one of these for a `remote` User, and the access
+// resolver subtracts them from such a User's Scope.
+//
+// It answers the whole set rather than one id at a time because both callers ask
+// about a set, and on a Server that has never linked the answer is one empty
+// query rather than one query per granted Library.
+func (db *DB) LinkedLibraryIDs() ([]string, error) {
+	rows, err := db.Query(
+		`SELECT id FROM libraries WHERE source = ? ORDER BY id`, LibrarySourceLinked)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing linked libraries: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: scanning linked library id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetLibraryCheckpoint records how far the mirror has consumed the sharer's feed.
+func (db *DB) SetLibraryCheckpoint(id, checkpoint string) error {
+	if _, err := db.Exec(
+		`UPDATE libraries SET remote_checkpoint = ? WHERE id = ?`, checkpoint, id,
+	); err != nil {
+		return fmt.Errorf("store: recording library checkpoint: %w", err)
+	}
+	return nil
+}
+
+// DeleteLibrariesForLink removes every Library a Link brought and, by cascade,
+// its whole mirrored catalog and the Watch state hanging off it (ADR-0056 §6:
+// unlinking is the only thing that deletes what came over a Link). It returns
+// how many shelves went.
+func (db *DB) DeleteLibrariesForLink(linkID string) (int, error) {
+	res, err := db.Exec(`DELETE FROM libraries WHERE link_id = ?`, linkID)
+	if err != nil {
+		return 0, fmt.Errorf("store: deleting libraries for link: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: deleting libraries for link: %w", err)
+	}
+	return int(n), nil
 }
 
 // DeleteLibrary removes a Library and (via ON DELETE CASCADE) its root folders

@@ -23,19 +23,29 @@ type libraryJSON struct {
 	Kind        string            `json:"kind"`
 	CreatedAt   string            `json:"createdAt,omitempty"`
 	RootFolders []libraryRootJSON `json:"rootFolders"`
+	// Linked and Available describe a mirror of another household's Library
+	// (ADR-0056 §1, §6). Both are ABSENT on an ordinary local Library — a client
+	// that never links never sees either — so `linked` is omitempty and
+	// `available` is a pointer: false is a statement about a friend's Server being
+	// down, and it must not be confused with a local Library's silence.
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
-func toLibraryJSON(l store.Library) libraryJSON {
+func toLibraryJSON(l store.Library, linked linkedState) libraryJSON {
 	roots := make([]libraryRootJSON, 0, len(l.Roots))
 	for _, r := range l.Roots {
 		roots = append(roots, libraryRootJSON{ID: r.ID, Path: r.Path})
 	}
+	isLinked, available := linkedFromLibrary(l, linked)
 	return libraryJSON{
 		ID:          l.ID,
 		Name:        l.Name,
 		Kind:        l.Kind,
 		CreatedAt:   formatTimestamp(l.CreatedAt),
 		RootFolders: roots,
+		Linked:      isLinked,
+		Available:   available,
 	}
 }
 
@@ -47,7 +57,8 @@ type createLibraryRequest struct {
 	RootFolders []string `json:"rootFolders"`
 }
 
-func handleCreateLibrary(svc *library.Service) http.HandlerFunc {
+func handleCreateLibrary(deps Deps) http.HandlerFunc {
+	svc := deps.Library
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createLibraryRequest
 		if !decodeJSON(w, r, &req) {
@@ -70,7 +81,9 @@ func handleCreateLibrary(svc *library.Service) http.HandlerFunc {
 				"failed to create library", nil)
 			return
 		}
-		writeJSON(w, http.StatusCreated, toLibraryJSON(lib))
+		// A newly created Library is local by construction: linking is the only way
+		// a mirrored one comes into being.
+		writeJSON(w, http.StatusCreated, toLibraryJSON(lib, nil))
 	}
 }
 
@@ -84,7 +97,12 @@ type updateLibraryRequest struct {
 	AddRootFolders []string `json:"addRootFolders"`
 }
 
-func handleUpdateLibrary(svc *library.Service) http.HandlerFunc {
+// A linked Library takes a rename and NOTHING else (ADR-0056 §1). What this
+// household calls somebody else's shelf is this household's business; adding a
+// root folder to it is not, because it has no folders — its contents arrive over
+// the Link and the Scanner never sees it.
+func handleUpdateLibrary(deps Deps) http.HandlerFunc {
+	svc := deps.Library
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/libraries/")
 		if id == "" || strings.Contains(id, "/") {
@@ -93,6 +111,10 @@ func handleUpdateLibrary(svc *library.Service) http.HandlerFunc {
 		}
 		var req updateLibraryRequest
 		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if len(req.AddRootFolders) > 0 && linkedLibrary(deps, id) {
+			writeLinkedLibraryRefusal(w)
 			return
 		}
 		lib, err := svc.Update(id, library.UpdateInput{
@@ -114,7 +136,7 @@ func handleUpdateLibrary(svc *library.Service) http.HandlerFunc {
 				"failed to update library", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, toLibraryJSON(lib))
+		writeJSON(w, http.StatusOK, toLibraryJSON(lib, loadLinkedState(deps)))
 	}
 }
 
@@ -124,7 +146,8 @@ type librariesResponse struct {
 	Libraries []libraryJSON `json:"libraries"`
 }
 
-func handleListLibraries(svc *library.Service) http.HandlerFunc {
+func handleListLibraries(deps Deps) http.HandlerFunc {
+	svc := deps.Library
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -136,9 +159,10 @@ func handleListLibraries(svc *library.Service) http.HandlerFunc {
 				"failed to list libraries", nil)
 			return
 		}
+		linked := loadLinkedState(deps)
 		out := make([]libraryJSON, 0, len(libs))
 		for _, l := range libs {
-			out = append(out, toLibraryJSON(l))
+			out = append(out, toLibraryJSON(l, linked))
 		}
 		writeJSON(w, http.StatusOK, librariesResponse{Libraries: out})
 	}
@@ -149,7 +173,8 @@ func handleListLibraries(svc *library.Service) http.HandlerFunc {
 // handleGetLibrary serves GET /libraries/{id} for any authenticated User,
 // scoped: an ungranted (or unknown) Library is 404 (hide existence). It runs
 // behind requireScope, so the caller's access Scope is on the context.
-func handleGetLibrary(svc *library.Service) http.HandlerFunc {
+func handleGetLibrary(deps Deps) http.HandlerFunc {
+	svc := deps.Library
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -170,7 +195,7 @@ func handleGetLibrary(svc *library.Service) http.HandlerFunc {
 				"failed to get library", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, toLibraryJSON(lib))
+		writeJSON(w, http.StatusOK, toLibraryJSON(lib, loadLinkedState(deps)))
 	}
 }
 
@@ -205,9 +230,9 @@ func handleLibrariesCollection(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
-			requireAdmin(handleCreateLibrary(deps.Library))(w, r)
+			requireAdmin(handleCreateLibrary(deps))(w, r)
 		case http.MethodGet:
-			requireScope(deps.Access, handleListLibraries(deps.Library))(w, r)
+			requireScope(deps.Access, handleListLibraries(deps))(w, r)
 		default:
 			w.Header().Set("Allow", "GET, POST")
 			writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
