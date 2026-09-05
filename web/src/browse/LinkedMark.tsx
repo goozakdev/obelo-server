@@ -52,10 +52,10 @@ export function linkedRowClass(
 export interface LinkedMarkProps {
   /** The row (or Library) whose pair decides the mark. */
   entity: LinkedMarks | null | undefined;
-  /** Override the badge's testid. The two surfaces that had this badge before it
-   * was shared keep the ids their specs already select on
-   * (`library-linked-badge` / `admin-library-linked-badge`); everything else uses
-   * the default, so a new surface is selected the same way everywhere. */
+  /** Override the badge's testid. The browse Libraries list, which had this badge
+   * before it was shared, keeps the id its spec already selects on
+   * (`library-linked-badge`); everything else uses the default, so a new surface
+   * is selected the same way everywhere. */
   testId?: string;
   /** The name of the Server providing it, when a screen has it cheaply in hand
    * (see `useLibraryProvider`). Renders "Provided by <name>" beside the badge on

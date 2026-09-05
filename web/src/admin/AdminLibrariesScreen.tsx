@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library } from "../api/types";
@@ -20,13 +21,15 @@ import EditLibraryDialog from "./EditLibraryDialog";
 //     Edit-Library dialog (rename / add folders). Delete lives on the row's ⋮
 //     menu (its own confirmation modal), not in the Edit dialog.
 //
-// A LINKED Library (ADR-0056 §1) is badged and its write affordances disabled, in
-// the row. The Library JSON says only that it IS linked — it never names whose it
-// is — so the server name behind "provided by …" comes from GET /links, which is
-// read ONLY when at least one Library is linked: a household that has never linked
-// makes exactly the requests it always did. A failed read is not an error state
-// here; the badge stands and the note says "another server", because losing the
-// whole libraries list to a second request would be the worse trade.
+// This page lists LOCAL Libraries only (issue 16). A linked Library (ADR-0056 §1)
+// is a mirror of another household's shelf: every writer here is refused with 409
+// LINKED_LIBRARY, so a row of it was a row an Admin could look at and do nothing
+// with. Everything an Admin actually does with one — sync, re-key, unlink, grant,
+// and the single write the server DOES allow, a rename — is per-Link and lives on
+// Settings → Linked servers. All that stays here is one line at the foot of the
+// list saying how many shelves are over there, and it is absent entirely when
+// nothing is linked: a household that never linked sees exactly what it saw
+// before, down to the requests it makes (there is no GET /links from this page).
 //
 // The list is reloaded after any create / edit / delete so the UI reflects the
 // server's truth without patching local state. A small reloadable loader is used
@@ -41,46 +44,21 @@ type ListState =
 
 export default function AdminLibrariesScreen() {
   const [state, setState] = useState<ListState>({ status: "loading" });
-  // libraryId → the name of the Server providing it. Empty on a server with no
-  // Links, which is the overwhelmingly common case.
-  const [providers, setProviders] = useState<Record<string, string>>({});
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Library | null>(null);
   const [scanAllSignal, setScanAllSignal] = useState(0);
 
-  const loadProviders = useCallback(async (signal?: AbortSignal) => {
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setState({ status: "loading" });
     try {
-      const links = await apiClient.listLinks(signal);
+      const libraries = await apiClient.listLibraries(signal);
       if (signal?.aborted) return;
-      const map: Record<string, string> = {};
-      for (const link of links) {
-        for (const lib of link.libraries) map[lib.id] = link.serverName;
-      }
-      setProviders(map);
-    } catch {
-      // The badge is the load-bearing part and it is already on the row; a name
-      // this could not fetch degrades to "another server" rather than to an
-      // error banner over a libraries list that loaded perfectly well.
+      setState({ status: "ready", libraries });
+    } catch (err) {
+      if (signal?.aborted) return;
+      setState({ status: "error", message: errorMessage(err) });
     }
   }, []);
-
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
-      setState({ status: "loading" });
-      try {
-        const libraries = await apiClient.listLibraries(signal);
-        if (signal?.aborted) return;
-        setState({ status: "ready", libraries });
-        // Only when something IS a mirror: a household that has never linked
-        // makes exactly the requests it always did.
-        if (libraries.some((l) => l.linked)) void loadProviders(signal);
-      } catch (err) {
-        if (signal?.aborted) return;
-        setState({ status: "error", message: errorMessage(err) });
-      }
-    },
-    [loadProviders],
-  );
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -90,8 +68,12 @@ export default function AdminLibrariesScreen() {
 
   const reload = useCallback(() => void load(), [load]);
 
-  const libraries = state.status === "ready" ? state.libraries : [];
+  // Local only. `linked` is omitempty on the wire, so "not true" is the test —
+  // absent means local (issue 15's LinkedMark follows the same rule).
+  const all = state.status === "ready" ? state.libraries : [];
+  const libraries = all.filter((lib) => lib.linked !== true);
   const count = libraries.length;
+  const linkedCount = all.length - count;
 
   return (
     <section className="admin-libraries" data-testid="admin-libraries">
@@ -155,10 +137,29 @@ export default function AdminLibrariesScreen() {
                 onEdit={setEditing}
                 onDeleted={reload}
                 scanAllSignal={scanAllSignal}
-                providedBy={providers[lib.id]}
               />
             ))}
           </ul>
+        )}
+
+        {/* The pointer, and nothing more: this page owns no action on a mirror,
+            so it says where the mirrors are and gets out of the way. Absent
+            when nothing is linked. */}
+        {state.status === "ready" && linkedCount > 0 && (
+          <p
+            className="admin-libraries-linked-note"
+            data-testid="admin-libraries-linked-note"
+          >
+            {linkedCount} more {linkedCount === 1 ? "library is" : "libraries are"}{" "}
+            provided by{" "}
+            <RouterLink
+              to="/admin/linked-servers"
+              data-testid="admin-libraries-linked-link"
+            >
+              linked servers
+            </RouterLink>
+            .
+          </p>
         )}
       </AdminListPanel>
 

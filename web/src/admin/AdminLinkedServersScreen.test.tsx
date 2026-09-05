@@ -20,15 +20,23 @@ import type { Link } from "../api/types";
 // The paste-time refusals have their own unit suite (linkErrors.test.ts); what is
 // asserted here is that the screen SHOWS them, on the right control.
 
-const { listLinks, createLink, rekeyLink, syncLink, deleteLink, subscribeEvents } =
-  vi.hoisted(() => ({
-    listLinks: vi.fn(),
-    createLink: vi.fn(),
-    rekeyLink: vi.fn(),
-    syncLink: vi.fn(),
-    deleteLink: vi.fn(),
-    subscribeEvents: vi.fn(),
-  }));
+const {
+  listLinks,
+  createLink,
+  rekeyLink,
+  syncLink,
+  deleteLink,
+  updateLibrary,
+  subscribeEvents,
+} = vi.hoisted(() => ({
+  listLinks: vi.fn(),
+  createLink: vi.fn(),
+  rekeyLink: vi.fn(),
+  syncLink: vi.fn(),
+  deleteLink: vi.fn(),
+  updateLibrary: vi.fn(),
+  subscribeEvents: vi.fn(),
+}));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -40,6 +48,7 @@ vi.mock("../api/client", async () => {
       rekeyLink: (...a: unknown[]) => rekeyLink(...a),
       syncLink: (...a: unknown[]) => syncLink(...a),
       deleteLink: (...a: unknown[]) => deleteLink(...a),
+      updateLibrary: (...a: unknown[]) => updateLibrary(...a),
       subscribeEvents: (...a: unknown[]) => subscribeEvents(...a),
     },
   };
@@ -81,6 +90,7 @@ beforeEach(() => {
   rekeyLink.mockReset();
   syncLink.mockReset();
   deleteLink.mockReset();
+  updateLibrary.mockReset();
   subscribeEvents.mockReset();
   emit = null;
   subscribeEvents.mockImplementation((fn: (type: string, data: unknown) => void) => {
@@ -359,6 +369,141 @@ describe("AdminLinkedServersScreen — the walkthrough", () => {
     listLinks.mockResolvedValue([link()]);
     await user.click(screen.getByTestId("links-retry"));
     await waitFor(() => expect(screen.getByTestId("link-row")).toBeInTheDocument());
+  });
+});
+
+// --- Rename ------------------------------------------------------------------
+
+// The one write the server allows on a mirror (ADR-0056 §1, api-contract §3.3),
+// and — since issue 16 took the mirrors off the Libraries hub — this is the only
+// place it is reachable from. What matters is that it PATCHes `name` and NOTHING
+// ELSE: `addRootFolders` on a linked Library is 409 LINKED_LIBRARY, so a rename
+// that carried one would fail every time.
+
+describe("AdminLinkedServersScreen — renaming a linked library", () => {
+  it("renames in place, sending only the name, and refetches the list", async () => {
+    listLinks.mockResolvedValue([link()]);
+    updateLibrary.mockResolvedValue({
+      id: "lib9",
+      name: "Saturday morning",
+      kind: "movie",
+      rootFolders: [],
+      linked: true,
+      available: true,
+    });
+    const user = userEvent.setup();
+    renderWithAuth(<AdminLinkedServersScreen />);
+
+    const row = await screen.findByTestId("link-row");
+    const lib = within(row)
+      .getAllByTestId("link-library-rename-toggle")
+      .map((b) => b.closest("li") as HTMLElement)
+      .find((li) => li.dataset.libraryId === "lib9")!;
+
+    await user.click(within(lib).getByTestId("link-library-rename-toggle"));
+    const input = within(lib).getByTestId("link-library-rename-input");
+    expect(input).toHaveValue("Cartoons");
+
+    await user.clear(input);
+    await user.type(input, "Saturday morning");
+
+    // The list the row will be redrawn from is the server's, as everywhere else
+    // on this page: GET /links is the truth.
+    listLinks.mockResolvedValue([
+      link({
+        libraries: [
+          { id: "lib9", name: "Saturday morning", kind: "movie" },
+          { id: "lib8", name: "Sam's music", kind: "music" },
+        ],
+      }),
+    ]);
+    await user.click(within(lib).getByTestId("link-library-rename-save"));
+
+    await waitFor(() =>
+      expect(updateLibrary).toHaveBeenCalledWith("lib9", { name: "Saturday morning" }),
+    );
+    // Only `name`. A stray addRootFolders here would be refused every time.
+    expect(Object.keys(updateLibrary.mock.calls[0][1] as object)).toEqual(["name"]);
+
+    // Back to a plain line, under its new name — and the shelf beside it is
+    // untouched.
+    await waitFor(() =>
+      expect(screen.getByTestId("link-libraries")).toHaveTextContent(
+        "Saturday morning",
+      ),
+    );
+    expect(screen.getByTestId("link-libraries")).toHaveTextContent("Sam's music");
+    expect(screen.queryByTestId("link-library-rename-input")).toBeNull();
+  });
+
+  it("keeps the grant shortcut on the line", async () => {
+    listLinks.mockResolvedValue([link()]);
+    renderWithAuth(<AdminLinkedServersScreen />);
+
+    const row = await screen.findByTestId("link-row");
+    expect(within(row).getAllByTestId("link-grant-users")[0]).toHaveAttribute(
+      "href",
+      "/admin/users",
+    );
+  });
+
+  it("will not save an empty or unchanged name", async () => {
+    listLinks.mockResolvedValue([link()]);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminLinkedServersScreen />);
+
+    await screen.findByTestId("link-row");
+    await user.click(screen.getAllByTestId("link-library-rename-toggle")[0]);
+    const input = screen.getByTestId("link-library-rename-input");
+
+    // Unchanged: nothing to send.
+    expect(screen.getByTestId("link-library-rename-save")).toBeDisabled();
+
+    await user.clear(input);
+    expect(screen.getByTestId("link-library-rename-save")).toBeDisabled();
+    await user.keyboard("{Enter}");
+    expect(updateLibrary).not.toHaveBeenCalled();
+  });
+
+  it("keeps what was typed when the server refuses, and reports why", async () => {
+    listLinks.mockResolvedValue([link()]);
+    updateLibrary.mockRejectedValue(
+      new ApiError(409, "LINKED_LIBRARY", "that library is provided by another server"),
+    );
+    const user = userEvent.setup();
+    renderWithAuth(<AdminLinkedServersScreen />);
+
+    await screen.findByTestId("link-row");
+    await user.click(screen.getAllByTestId("link-library-rename-toggle")[0]);
+    const input = screen.getByTestId("link-library-rename-input");
+    await user.clear(input);
+    await user.type(input, "Saturday morning");
+    await user.click(screen.getByTestId("link-library-rename-save"));
+
+    expect(await screen.findByTestId("link-library-rename-error")).toHaveTextContent(
+      /provided by another server/i,
+    );
+    // Still open, still holding the typed name: a refusal is worth another try.
+    expect(screen.getByTestId("link-library-rename-input")).toHaveValue(
+      "Saturday morning",
+    );
+  });
+
+  it("Cancel puts the original name back and sends nothing", async () => {
+    listLinks.mockResolvedValue([link()]);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminLinkedServersScreen />);
+
+    await screen.findByTestId("link-row");
+    await user.click(screen.getAllByTestId("link-library-rename-toggle")[0]);
+    const input = screen.getByTestId("link-library-rename-input");
+    await user.clear(input);
+    await user.type(input, "Nonsense");
+    await user.click(screen.getByTestId("link-library-rename-cancel"));
+
+    expect(screen.queryByTestId("link-library-rename-input")).toBeNull();
+    expect(screen.getByTestId("link-libraries")).toHaveTextContent("Cartoons");
+    expect(updateLibrary).not.toHaveBeenCalled();
   });
 });
 

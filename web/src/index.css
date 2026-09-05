@@ -5916,6 +5916,26 @@ textarea.metadata-input {
   text-transform: capitalize;
 }
 
+/* The inline rename on a linked Library line (issue 16): the one write the
+   server allows on a mirror, offered where the mirror is listed rather than in a
+   second Edit dialog. Takes the whole line while it is open. */
+.link-library-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+}
+.link-library-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.link-library-rename-row .field-input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
 .link-actions {
   display: flex;
   align-items: center;
@@ -5949,20 +5969,18 @@ textarea.metadata-input {
   white-space: nowrap;
 }
 
-.admin-library-provided,
 .linked-provided {
   font-size: 0.8rem;
   color: var(--text-dim);
 }
 
-/* A note inside the row's ⋮ menu explaining why everything above it is greyed.
-   Not a menu item: it has no role and cannot be picked. */
-.row-menu-note {
-  padding: 0.4rem 0.6rem;
-  max-width: 22rem;
-  font-size: 0.8rem;
+/* The one line the Libraries hub keeps about mirrors (issue 16): how many shelves
+   live under Linked servers, and a way there. Quiet — it is a signpost, not a
+   row. */
+.admin-libraries-linked-note {
+  padding: 0.6rem 0.9rem;
+  font-size: 0.85rem;
   color: var(--text-dim);
-  border-top: 1px solid var(--border);
 }
 
 /* The unreachable treatment, ONE rule for every row that wears it (issue 15):
