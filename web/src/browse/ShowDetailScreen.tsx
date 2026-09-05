@@ -20,6 +20,8 @@ import { useAsync } from "./useAsync";
 import { useTargetedScan } from "./useTargetedScan";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
+import { useLibraryProvider } from "./librariesContext";
+import LinkedMark, { linkedRowClass } from "./LinkedMark";
 import EpisodeActionsMenu from "./EpisodeActionsMenu";
 import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
@@ -71,6 +73,10 @@ export default function ShowDetailScreen() {
     scan: runScan,
   } = useTargetedScan(() => setReloadKey((k) => k + 1));
   const libraryName = useLibraryName(show?.libraryId);
+  // The Show summary carries the mirror pair itself; the providing Server's name
+  // is joined from GET /links when it is cheaply in hand, else the badge stands
+  // alone.
+  const providedBy = useLibraryProvider(show?.libraryId);
   const parent = show
     ? { to: `/libraries/${show.libraryId}`, label: libraryName }
     : { to: "/", label: "Home" };
@@ -254,6 +260,11 @@ export default function ShowDetailScreen() {
                   testId="show-title"
                 />
                 <div className="detail-meta">
+                  <LinkedMark
+                    entity={state.data.show}
+                    testId="show-linked-badge"
+                    providedBy={providedBy}
+                  />
                   {state.data.show.year > 0 && (
                     <span data-testid="show-year">{state.data.show.year}</span>
                   )}
@@ -815,7 +826,7 @@ function EpisodeRow({
   const resuming = !episode.watched && episode.resumePositionMs > 0;
   return (
     <li
-      className="episode-tile"
+      className={linkedRowClass("episode-tile", episode)}
       data-testid="episode-row"
       data-episode-id={episode.id}
       data-episode-number={episode.episodeNumber}
@@ -875,6 +886,11 @@ function EpisodeRow({
               Needs review
             </span>
           )}
+          {/* GET /seasons/{id}/episodes is the one browse document where nothing
+              ELSE can carry the mark — a Season has no Library of its own and the
+              badged Show is a screen back (issue 14 deviation 1) — so the Episode
+              row says it. */}
+          <LinkedMark entity={episode} testId="episode-linked-badge" />
         </span>
         {episode.overview && (
           <span className="episode-overview" data-testid="episode-overview">

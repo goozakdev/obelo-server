@@ -40,7 +40,14 @@ type Artist struct {
 // ArtworkPath is the local cover.jpg/folder.jpg when present (embedded cover art
 // fallback), empty otherwise.
 type Album struct {
-	ID          string
+	ID string
+	// LibraryID is the Library this Album belongs to. An album row carries no
+	// library_id of its own — its Library is its Artist's — so every read that
+	// feeds the wire joins artists for it. It is here because a browse row has to
+	// say whether it lives in a mirror of another household's Library (ADR-0056
+	// §1, §6), and an Album reaches the wire from three places, one of which
+	// (search) has no Artist in hand.
+	LibraryID   string
 	ArtistID    string
 	Title       string
 	Year        int
@@ -305,10 +312,11 @@ func (db *DB) AlbumsForArtist(artistID string) ([]Album, error) {
 		return nil, err
 	}
 	rows, err := db.Query(
-		`SELECT a.id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
+		`SELECT a.id, ar.library_id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
 		        a.artwork_path, a.release_type, a.hidden, a.added_at, a.musicbrainz_id, a.musicbrainz_release_id,
 		        (SELECT COUNT(*) FROM titles t WHERE t.album_id = a.id AND t.hidden = 0) AS track_count
-		   FROM albums a WHERE a.artist_id = ? AND a.hidden = 0
+		   FROM albums a JOIN artists ar ON ar.id = a.artist_id
+		  WHERE a.artist_id = ? AND a.hidden = 0
 		  ORDER BY a.year ASC, a.sort_title ASC, a.id ASC`, artistID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing albums: %w", err)
@@ -363,10 +371,11 @@ func (db *DB) AlbumByID(id string) (Album, error) {
 	var year sql.NullInt64
 	var hidden int
 	err := db.QueryRow(
-		`SELECT id, artist_id, title, year, identity_key, sort_title, artwork_path, release_type, hidden, added_at,
-		        musicbrainz_id, musicbrainz_release_id
-		   FROM albums WHERE id = ?`, id,
-	).Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey, &al.SortTitle,
+		`SELECT a.id, ar.library_id, a.artist_id, a.title, a.year, a.identity_key, a.sort_title,
+		        a.artwork_path, a.release_type, a.hidden, a.added_at,
+		        a.musicbrainz_id, a.musicbrainz_release_id
+		   FROM albums a JOIN artists ar ON ar.id = a.artist_id WHERE a.id = ?`, id,
+	).Scan(&al.ID, &al.LibraryID, &al.ArtistID, &al.Title, &year, &al.IdentityKey, &al.SortTitle,
 		&al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.MusicbrainzID, &al.MusicbrainzReleaseID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Album{}, ErrNotFound
@@ -536,7 +545,7 @@ func scanAlbum(s scanner) (Album, error) {
 	var al Album
 	var year sql.NullInt64
 	var hidden int
-	if err := s.Scan(&al.ID, &al.ArtistID, &al.Title, &year, &al.IdentityKey,
+	if err := s.Scan(&al.ID, &al.LibraryID, &al.ArtistID, &al.Title, &year, &al.IdentityKey,
 		&al.SortTitle, &al.ArtworkPath, &al.ReleaseType, &hidden, &al.AddedAt, &al.MusicbrainzID,
 		&al.MusicbrainzReleaseID, &al.TrackCount); err != nil {
 		return Album{}, err

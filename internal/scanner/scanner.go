@@ -145,6 +145,31 @@ func NewService(s Store, p Prober) *Service {
 // process and empty after a restart), so a crashed scan never leaves a stuck lock.
 var ErrScanInProgress = errors.New("scanner: a scan is already running for this library")
 
+// ErrLinkedLibrary is a scan of a Library that is a MIRROR of another
+// household's (ADR-0056 §1). It has no root folders and nothing on this disk to
+// walk; the Server that owns the files scans them, and its Export is how the
+// result reaches here.
+//
+// The API layer refuses these before they arrive, so this is the backstop for
+// every other caller — the scheduled sweep, the auto-after-scan trigger, a
+// future one — and it is deliberately an error rather than a silent no-op: a
+// caller that asked to scan a mirror has a bug, not a preference.
+var ErrLinkedLibrary = errors.New("scanner: this library is a mirror of another server's and is never scanned")
+
+// localLibrary loads a Library and refuses a mirrored one. Every entry point
+// that takes a library id goes through it, so "the Scanner never sees a linked
+// Library" is one function and not five remembered checks.
+func (s *Service) localLibrary(libraryID string) (store.Library, error) {
+	lib, err := s.store.LibraryByID(libraryID)
+	if err != nil {
+		return store.Library{}, err
+	}
+	if lib.Linked() {
+		return store.Library{}, ErrLinkedLibrary
+	}
+	return lib, nil
+}
+
 // beginScan claims the in-flight slot for a Library, returning false if a scan is
 // already running for it. endScan releases it.
 func (s *Service) beginScan(libraryID string) bool {
@@ -269,7 +294,7 @@ func (s *Service) ScanMode(ctx context.Context, libraryID string, mode Mode) (Re
 // enrich.EnrichLibraryProgress; the callback is wired by the API/app layer so
 // scanner stays free of any events import (ADR-0006).
 func (s *Service) ScanModeProgress(ctx context.Context, libraryID string, mode Mode, onProgress func(Progress)) (Result, error) {
-	lib, err := s.store.LibraryByID(libraryID)
+	lib, err := s.localLibrary(libraryID)
 	if err != nil {
 		return Result{}, err // ErrNotFound flows through to the handler
 	}
@@ -297,7 +322,7 @@ func (s *Service) ScanModeProgress(ctx context.Context, libraryID string, mode M
 // scanner's events-free core (ADR-0006). It mirrors ScanModeProgress, which the
 // scheduled safety-net path still uses synchronously.
 func (s *Service) StartScan(ctx context.Context, libraryID string, mode Mode, onProgress func(Progress), done func(error)) error {
-	lib, err := s.store.LibraryByID(libraryID)
+	lib, err := s.localLibrary(libraryID)
 	if err != nil {
 		return err // ErrNotFound flows back to the handler → 404
 	}

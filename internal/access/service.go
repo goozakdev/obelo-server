@@ -19,8 +19,14 @@ import (
 )
 
 // roleAdmin is the Admin role string (mirrors the value the auth/store layers
-// use); an Admin always resolves to an all-access Scope.
-const roleAdmin = "admin"
+// use); an Admin always resolves to an all-access Scope. roleRemote is the role
+// a linked Server holds here (ADR-0054 §1): it resolves a Scope exactly like a
+// Member, minus any Library that itself arrived over a Link (§4 — sharing does
+// not travel).
+const (
+	roleAdmin  = "admin"
+	roleRemote = "remote"
+)
 
 // Errors the api layer maps onto HTTP envelopes for the grant-management surface.
 var (
@@ -32,11 +38,24 @@ var (
 	// ErrUnknownLibrary: a library id in the grant set does not exist; the whole
 	// replace-set is rejected and the prior set is left unchanged (→ 422).
 	ErrUnknownLibrary = errors.New("access: unknown library in grant set")
+	// ErrLinkedGrant: the target is a `remote` User (a linked Server) and the
+	// grant set names a Library that itself arrived over a Link. A mirror is
+	// never re-shared — the owner of the files decided who sees them, and one hop
+	// later that decision would be made by somebody they never met (ADR-0054 §4,
+	// ADR-0056 §7). The whole set is rejected and the prior set is left unchanged,
+	// exactly as for an unknown id (→ 422).
+	ErrLinkedGrant = errors.New("access: cannot grant a linked library to a remote user")
 	// ErrAdminCeiling: a Rating ceiling cannot be set on an Admin — Admins are
 	// all-access and the ceiling is never consulted for them (→ 422).
 	ErrAdminCeiling = errors.New("access: cannot set a rating ceiling on an admin")
 	// ErrUnknownRating: the requested ceiling is not a known rating label (→ 422).
 	ErrUnknownRating = errors.New("access: unknown rating ceiling label")
+	// ErrUnknownResolution: the requested Playback ceiling names a resolution rung
+	// that is not settable (→ 422). The settable set is playbackResolutions.
+	ErrUnknownResolution = errors.New("access: unknown playback ceiling resolution")
+	// ErrInvalidCeiling: a Playback-ceiling dimension is negative — neither a cap
+	// nor the zero value that means uncapped (→ 400).
+	ErrInvalidCeiling = errors.New("access: playback ceiling must not be negative")
 )
 
 // Store is the persistence the resolver reads. *store.DB satisfies it. It is a
@@ -53,6 +72,15 @@ type Store interface {
 	// SetRatingCeiling stores a User's ceiling label ("" clears it to uncapped);
 	// store.ErrNotFound for an unknown User.
 	SetRatingCeiling(userID, label string) error
+	// PlaybackCeilingForUser returns a User's Playback ceiling; a zero field means
+	// uncapped in that dimension. store.ErrNotFound for an unknown User.
+	PlaybackCeilingForUser(userID string) (store.PlaybackCeiling, error)
+	// SetPlaybackCeiling stores a User's whole Playback ceiling (a zero field
+	// clears that dimension); store.ErrNotFound for an unknown User.
+	SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error
+	// LinkedLibraryIDs returns the ids of every Library that is a mirror of
+	// another household's (ADR-0056 §1); empty on a Server that has never linked.
+	LinkedLibraryIDs() ([]string, error)
 }
 
 // Scope is a User's resolved access over the catalog (the PRD's "AccessScope").
@@ -71,6 +99,22 @@ type Scope struct {
 	// rating dimension is applied by a later slice; it is carried here so the seam
 	// is complete.
 	RatingCeiling int
+	// MaxResolution, MaxBitrate and MaxStreams are the User's Playback ceiling
+	// (CONTEXT.md, ADR-0054 §2): how a Title may play for this User, as opposed to
+	// the Rating ceiling's what they may see. They ride on the Scope for the same
+	// reason the grants and the Rating ceiling do — requireScope resolves them once
+	// per request and threads them into playback, which clamps the first two into
+	// the session's Constraints and enforces the third at session creation.
+	//
+	// A ceiling NEVER hides a Title: nothing in the browse/read surface reads these
+	// fields, and negotiation answers with a cheaper tier rather than a 404.
+	//
+	// MaxResolution is a resolution token ("1080p"), "" = uncapped; MaxBitrate is
+	// bits/sec, 0 = uncapped; MaxStreams is concurrent Playback sessions,
+	// 0 = uncapped. An Admin resolves to AllAccess and carries none of them.
+	MaxResolution string
+	MaxBitrate    int64
+	MaxStreams    int
 }
 
 // AllowsLibrary reports whether the Scope may see the given Library. An
@@ -131,7 +175,24 @@ func (s *Service) Resolve(userID string) (Scope, error) {
 	if err != nil {
 		return Scope{}, err
 	}
+	// The one-hop invariant, enforced where the Scope is COMPUTED and not only
+	// where a grant is written (ADR-0054 §4, ADR-0056 §7). A grant row naming a
+	// linked Library can only reach a `remote` User behind the API — a restore of
+	// an older database, a hand-edit, a Library that became a mirror after it was
+	// granted — and this is the last place before the answer is used, so a row
+	// that should not exist buys nothing. A failed read fails the whole Resolve
+	// (fail closed): the alternative is silently re-sharing somebody else's files.
+	if u.Role == roleRemote && len(libs) > 0 {
+		libs, err = s.localLibrariesOnly(libs)
+		if err != nil {
+			return Scope{}, err
+		}
+	}
 	ceiling, err := s.store.RatingCeilingForUser(userID)
+	if err != nil {
+		return Scope{}, err
+	}
+	play, err := s.store.PlaybackCeilingForUser(userID)
 	if err != nil {
 		return Scope{}, err
 	}
@@ -140,7 +201,47 @@ func (s *Service) Resolve(userID string) (Scope, error) {
 		AllLibraries:  false,
 		LibraryIDs:    libs,
 		RatingCeiling: ceilingRank(ceiling),
+		MaxResolution: play.MaxResolution,
+		MaxBitrate:    play.MaxBitrate,
+		MaxStreams:    play.MaxStreams,
 	}, nil
+}
+
+// localLibrariesOnly drops any Library that arrived over a Link from ids,
+// preserving order. It is the one place the "a mirror is never re-shared" filter
+// is spelled, shared by Resolve and SetLibraryAccess.
+func (s *Service) localLibrariesOnly(ids []string) ([]string, error) {
+	linked, err := s.linkedSet()
+	if err != nil {
+		return nil, err
+	}
+	if len(linked) == 0 {
+		return ids, nil
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !linked[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// linkedSet reads the mirrored Library ids as a set (nil when nothing here came
+// over a Link, which is every Server until one is linked).
+func (s *Service) linkedSet() (map[string]bool, error) {
+	ids, err := s.store.LinkedLibraryIDs()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set, nil
 }
 
 // RatingCeiling returns a User's stored ceiling label ("" = uncapped), for the
@@ -176,6 +277,53 @@ func (s *Service) SetRatingCeiling(userID, label string) error {
 	return nil
 }
 
+// PlaybackCeiling returns a User's stored Playback ceiling (zero fields =
+// uncapped), for the Admin user-management view.
+func (s *Service) PlaybackCeiling(userID string) (store.PlaybackCeiling, error) {
+	return s.store.PlaybackCeilingForUser(userID)
+}
+
+// SetPlaybackCeiling sets a non-Admin User's whole Playback ceiling (ADR-0054
+// §2). It is a REPLACE of all three dimensions, not a patch: a dimension left at
+// its zero value is cleared to uncapped, so the caller always sends the ceiling
+// it means (the grant set works the same way).
+//
+// It rejects an unknown User (ErrUserNotFound), an Admin target (ErrAdminCeiling
+// — an Admin is all-access and uncapped, exactly as for the Rating ceiling), a
+// resolution rung that is not settable (ErrUnknownResolution), and a negative
+// bitrate/stream count (ErrInvalidCeiling — 0 already means uncapped, so a
+// negative says nothing). A settable rung is stored canonically ("1080P" →
+// "1080p") so the negotiator's clamp never has to fold case.
+func (s *Service) SetPlaybackCeiling(userID string, c store.PlaybackCeiling) error {
+	u, err := s.store.UserByID(userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if u.Role == roleAdmin {
+		return ErrAdminCeiling
+	}
+	if c.MaxResolution != "" {
+		canon, ok := canonicalResolution(c.MaxResolution)
+		if !ok {
+			return ErrUnknownResolution
+		}
+		c.MaxResolution = canon
+	}
+	if c.MaxBitrate < 0 || c.MaxStreams < 0 {
+		return ErrInvalidCeiling
+	}
+	if err := s.store.SetPlaybackCeiling(userID, c); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 // LibraryAccess returns the Library ids granted to a User (for the Admin
 // user-management view). An Admin has no grant rows (they are all-access by
 // role), so this is empty for an Admin — the caller reads the role to know that
@@ -186,8 +334,13 @@ func (s *Service) LibraryAccess(userID string) ([]string, error) {
 
 // SetLibraryAccess replaces a Member's grant set with exactly libraryIDs. It
 // rejects an unknown User (ErrUserNotFound), an Admin target (ErrAdminGrant —
-// Admins are implicitly all-access), and an unknown library id in the set
-// (ErrUnknownLibrary, leaving the prior set unchanged).
+// Admins are implicitly all-access), a linked Library aimed at a `remote` User
+// (ErrLinkedGrant — sharing does not travel), and an unknown library id in the
+// set (ErrUnknownLibrary). Every refusal leaves the prior set unchanged.
+//
+// A Member is unaffected: a linked Library is granted to the household's own
+// people exactly like any other (ADR-0056 §2). It is the second hop that is
+// refused, not the first.
 func (s *Service) SetLibraryAccess(userID string, libraryIDs []string) error {
 	u, err := s.store.UserByID(userID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -198,6 +351,21 @@ func (s *Service) SetLibraryAccess(userID string, libraryIDs []string) error {
 	}
 	if u.Role == roleAdmin {
 		return ErrAdminGrant
+	}
+	if u.Role == roleRemote && len(libraryIDs) > 0 {
+		// Checked before the write, so the whole set is refused with the prior set
+		// intact — the same shape the unknown-id rejection has. A set that names
+		// both a linked Library and an unknown one is LINKED_GRANT: the two mean
+		// the same thing to the caller (nothing was applied, fix the set).
+		linked, err := s.linkedSet()
+		if err != nil {
+			return err
+		}
+		for _, id := range libraryIDs {
+			if linked[id] {
+				return ErrLinkedGrant
+			}
+		}
 	}
 	if err := s.store.ReplaceLibraryAccess(userID, libraryIDs); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

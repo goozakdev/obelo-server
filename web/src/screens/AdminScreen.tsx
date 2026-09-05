@@ -8,6 +8,7 @@ import AdminProvidersScreen from "../admin/AdminProvidersScreen";
 import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen";
 import AdminTranscodingScreen from "../admin/AdminTranscodingScreen";
 import AdminRemoteAccessScreen from "../admin/AdminRemoteAccessScreen";
+import AdminLinkedServersScreen from "../admin/AdminLinkedServersScreen";
 import ShowMatcherScreen from "../admin/ShowMatcherScreen";
 import { useOptionalFeature } from "../serverInfoContext";
 
@@ -24,6 +25,8 @@ import { useOptionalFeature } from "../serverInfoContext";
 //   /admin/remote-access  the Tailnet node's lifecycle (ADR-0043) — gated on the
 //                    handshake's `tailscale` feature flag, so a build without it
 //                    has neither the tab nor the route
+//   /admin/linked-servers  the Links to other households' Servers (ADR-0055/0056)
+//                    — gated the same way on `linkedLibraries`
 // All gated by RequireAdmin (App.tsx) and still server-enforced. This screen
 // shares the site-wide AppHeader so the top chrome is identical everywhere; the
 // admin-tabs nav below provides the sub-navigation.
@@ -36,6 +39,10 @@ export default function AdminScreen() {
   // optional read also degrades to "off" outside a ServerInfoProvider, which is
   // the same answer for the same reason.
   const remoteAccess = useOptionalFeature("tailscale");
+  // Linked servers is gated on `linkedLibraries` for the same reason and in the
+  // same shape: a server that does not speak linking has no tab, no route and
+  // therefore no GET /links.
+  const linkedServers = useOptionalFeature("linkedLibraries");
   return (
     <div className="app-shell" data-testid="admin-screen">
       <AppHeader />
@@ -105,6 +112,15 @@ export default function AdminScreen() {
                 Remote access
               </NavLink>
             )}
+            {linkedServers && (
+              <NavLink
+                to="/admin/linked-servers"
+                className="admin-tab"
+                data-testid="admin-tab-linked-servers"
+              >
+                Linked servers
+              </NavLink>
+            )}
           </nav>
 
           <div className="admin-content">
@@ -135,6 +151,12 @@ export default function AdminScreen() {
                 <Route
                   path="remote-access"
                   element={<AdminRemoteAccessScreen />}
+                />
+              )}
+              {linkedServers && (
+                <Route
+                  path="linked-servers"
+                  element={<AdminLinkedServersScreen />}
                 />
               )}
             </Routes>

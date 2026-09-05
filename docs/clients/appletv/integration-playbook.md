@@ -57,6 +57,7 @@ Logout: `POST /auth/logout`, then clear the Keychain and the mpv header property
 - **Detail → play**: `GET /titles/{id}` gives Editions/Files/Streams for the pre-play UI. For TV, `GET /shows/{id}/seasons` includes `resumePoint` — the server-computed Up Next episode with `mode` `inProgress` (Continue + Restart) or `next` (Play). Don't compute next-episode logic client-side.
 - **Artwork**: fetch the JSON-advertised URLs with the bearer header (plain `URLSession`). URLs may carry `?v=` cache-busters — treat the full URL string as the cache key and invalidation is free.
 - **404 means "doesn't exist for this user"** everywhere (access-hiding). Render not-found/empty, never "forbidden".
+- **`linked` / `available`** may appear on a library and on grid rows — a library mirrored from another household's server. See §9; treat them as ordinary libraries everywhere else.
 
 ## 4. Playback state machine
 
@@ -118,6 +119,9 @@ Subtitle preference has **no server memory** in v1 (audio and video do) — pers
 | `404` on a title/session/playlist | Doesn't exist *for this user* (or reaped session) | Not-found/empty UI. Mid-playback session 404 → offer resume (re-negotiate at last position). |
 | `503 SERVER_BUSY` + `details.suggestedMaxBitrate` | Transcode cap full | Offer "retry at lower quality" with the suggested bitrate. Rare with the mpv profile (few transcodes). |
 | `501 TRANSCODE_REQUIRED` + `details.reason` | Structurally unplayable | Show "can't play" with the reason. Not retryable. |
+| `429 STREAM_LIMIT` + `details.{active,limit}` | The user is at their concurrent-stream cap | "You're already watching on N devices." Not retryable until one ends. On a linked title this may be the *other* household's cap — the sentence is the same. |
+| `503 LINK_UNREACHABLE` | A title from a linked library; that server isn't answering | "<Library>'s server can't be reached right now." Offer retry. Do **not** clear anything cached. |
+| `503 LINK_REVOKED` | A linked library whose credential was revoked | "Access to this shared library has been revoked." Do **not** offer retry — an admin must paste a new invite on the server. |
 | `422` (`KIND_MISMATCH`, `ITEM_SET_MISMATCH`, `UNKNOWN_TITLE`, `SYSTEM_PLAYLIST`) | Domain rule violation | Surface inline; server state unchanged (all 422s are no-ops). |
 | `400 BAD_REQUEST` `"invalid JSON body"` | Client bug: unknown field, >1 MiB, malformed | Fix the payload — the decoder rejects unknown fields. |
 | Network unreachable | Server down / off-LAN | Cached UI + backoff; `GET /server` is the cheapest liveness probe. |
@@ -131,7 +135,80 @@ Subtitle preference has **no server memory** in v1 (audio and video do) — pers
 - **Access filtering** — everything arrives pre-filtered.
 - **Edition choice** — omit `editionId` and the server picks; send it only on explicit user choice.
 
-## 9. libmpv housekeeping (not API, but will bite)
+## 9. Linked servers — someone else's libraries on this server
+
+Gate everything in this section on **`features.linkedLibraries`**. Absent and `false` are indistinguishable, which is what makes the flag safe against an older server. (`features.serverLinking` is the *other* half — it says this server can be linked *to* — and no client reads it.)
+
+A household's Obelo can hold a **Link** to a friend's Obelo, and the libraries the friend granted appear here as ordinary libraries whose contents live on the other machine ([ADR-0056](../../adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). **There is no new playback path**: you negotiate `POST /titles/{id}/playback` exactly as always, and the server relays. What changes for a client is two fields and three error codes.
+
+### 9.1 Rendering: `linked` and `available`
+
+**Every browse row carries the pair**, so you never have to remember which screen the viewer came through. Both are **absent on anything local** — a household that has never linked sends exactly the wire it always did, so absent means "local", never "error".
+
+| Shape | Where you meet it |
+| --- | --- |
+| `libraryJSON` | `GET /libraries` |
+| `titleSummaryJSON` | the movie grid, and the `movies` / `episodes` / `tracks` groups of `GET /search`, collection members, playlist members, the Watchlist |
+| `showSummaryJSON` | the TV grid, the `shows` search group, and the `show` object of `GET /shows/{id}/seasons` |
+| `artistSummaryJSON` | the music grid, the `artists` search group, and the `artist` object of `GET /artists/{id}/albums` |
+| `homeTitleJSON` | **Continue Watching / Up Next / Recently Added** (`GET /home`) |
+| `albumJSON` | the `albums` of `GET /artists/{id}/albums`, the `album` of `GET /albums/{id}/tracks`, and the `albums` search group |
+| the Track rows | `GET /albums/{id}/tracks` |
+| the Episode rows | `GET /seasons/{id}/episodes` |
+
+Three shapes deliberately carry neither, and each is reachable only from a document that does: `seasonJSON` (it has no library of its own — read the Show beside it, or the Episode rows under it), the `resumePoint` block on the Show detail (read the Show), and `titleDetailJSON` on `GET /titles/{id}` (read the row you opened; and the play itself answers `LINK_UNREACHABLE` / `LINK_REVOKED` in its own right, §9.3).
+
+- **`linked: true`** — this library/row is a mirror of another household's. Show a small, quiet badge. Do not offer anything that writes: there is no scan, no edit, no artwork upload on the tvOS client anyway, but if you ever add one, this is the flag that hides it.
+- **`available`** — sent **only** for a linked library/row, and then always (it is a real `false`, not an omission). `false` means the sharing server is not answering right now.
+  - **Grey it; never hide it.** The shelf, its titles, and their place in Continue Watching all stay. Hiding them would make a friend's reboot look like a library that vanished, and it would strand the user's resume positions.
+  - A greyed row must **stay selectable** and open its detail. The failure sentence belongs at play time, where it can name the cause.
+
+### 9.2 Scanning an invite (iPhone / iPad only — **not** the Apple TV)
+
+The Apple TV has no camera and no role here. On the phone and tablet, in an **Admin** session:
+
+**Settings → Link a server** → camera → decode a QR whose payload starts with `obelo-link:` → `POST /links` on **the user's own server**, with that user's Admin bearer.
+
+```
+obelo-link:<base64url(JSON)>
+
+{ "v": 1, "id": "<sharer's server id>", "name": "<sharer's server name>",
+  "origins": [ "https://media.example.org", "https://obelo.tail1a2b.ts.net" ],
+  "code": "…", "exp": "<RFC3339>" }
+```
+
+```
+POST /links   [Admin]
+{ "invite": "obelo-link:…" }
+→ 201 (new) | 200 (re-key) linkJSON  — see api-contract.md §3.11
+```
+
+Five rules, and each of them is a way this goes wrong:
+
+1. **Post the string verbatim.** Do not decode, re-encode, normalise, trim inside, or "fix" it. Your only job is to confirm the `obelo-link:` prefix so the camera does not fire on every QR code in the room; the server does the parsing and owns every refusal. Surrounding whitespace and base64 padding are tolerated server-side.
+2. **The bearer is the user's own Admin token on their own server.** Nothing in the invite is a credential you hold, and nothing in it names a server you should talk to. The one call you make is to the server this app is already signed into.
+3. **The phone stores nothing from the QR** — not the code, not the origins, not the sharer's id or name. It is a courier: decode, post, forget. The code is single-use and dies on redemption anyway, so a copy on the phone can only ever be a liability.
+4. **Also accept a pasted string.** Not every invite arrives as a picture, and a text field is the fallback when a camera cannot focus.
+5. **Do not build a Links management UI.** Listing, re-keying, syncing and unlinking live in the web app. Scanning is the one thing a phone does better.
+
+The call can take a few seconds — the server probes the addresses, redeems the code, creates the libraries and pulls the whole catalog before it answers — so show progress and do not time out early. On success, the response names the sharer and the libraries received; say so, and refetch `GET /libraries`.
+
+### 9.3 The refusals, and the sentence for each
+
+Every one of these is a different next move for the person holding the phone. Do not collapse them.
+
+| Code | Status | Say |
+| --- | --- | --- |
+| `BAD_INVITE` | 400 | "That isn't a valid invite — ask them to send it again." (Also what a spent code returns.) |
+| `INVITE_EXPIRED` | 410 | "This invite has expired. Ask them for a fresh one." An invite lasts 24 hours. |
+| `LINK_PROTOCOL` | 409 | `details.upgrade` is `"theirs"` or `"ours"` — **use it**: "Their server needs an update" or "This server needs an update." Never make the user compare two version numbers. |
+| `LINK_UNREACHABLE` | 503 | "Couldn't reach their server at any of the addresses in the invite." Offer retry. If you decoded the invite for its `origins`, listing them helps — read-only, never dialled. |
+| `LINK_SERVER_MISMATCH` | 409 | Only on a re-key: "This invite is for a different server." |
+| `403` | — | The signed-in user is not an Admin. Hide the entry point for non-Admins rather than letting them find this. |
+
+Anything else: show the server's own `message`. It is written to be read.
+
+## 10. libmpv housekeeping (not API, but will bite)
 
 - **Licensing**: build libmpv **LGPL** (`-Dgpl=false`, and mind ffmpeg's own flags) for App Store distribution, and provide relinking compliance per LGPL. The GPL default build is not App-Store-compatible.
 - Ship mpv's own ICC/HDR tone-mapping config for the Apple TV's output mode; declare `hdr` in the profile but verify Dolby Vision output behavior on-device (mpv outputs HDR10 from DV profiles it can't fully handle).

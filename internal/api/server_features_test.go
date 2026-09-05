@@ -86,6 +86,18 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 		// does not. That is the distinction the flag claims, and the only verb that
 		// can observe it.
 		{flag: "streamToken", path: "/api/v1/stream/not-a-real-token/stream", method: http.MethodPost},
+		// POST-only, so this GET probe draws a 405 — the route exists, which is all
+		// the flag claims. serverLinking advertises the SHARING half of linking
+		// (ADR-0055): this route plus POST /users/{id}/invite, which cannot be
+		// probed unauthenticated (it lives under the Admin /users/ subtree, whose
+		// 401 says nothing about the leaf). The unauthenticated half is the one a
+		// redeeming Server actually branches on before it posts a code.
+		{flag: "serverLinking", path: "/api/v1/auth/link/redeem"},
+		// linkedLibraries advertises the RECEIVING half (ADR-0056): the /links
+		// routes, and with them the linked/available fields on a Library. The probe
+		// is unauthenticated, so a served route answers 401 — which is all the flag
+		// claims — while a server without the slice would 404.
+		{flag: "linkedLibraries", path: "/api/v1/links"},
 	}
 
 	for _, p := range probes {

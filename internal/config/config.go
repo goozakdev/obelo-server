@@ -270,6 +270,23 @@ type Config struct {
 	// still work). Filesystem watching is explicitly out of scope (ADR-0008).
 	ScanInterval time.Duration
 
+	// LinkSyncInterval is how often the mirror of every linked Library is pulled
+	// again as the POLL FALLBACK behind the sharer's `libraryUpdated` nudge
+	// (ADR-0056 §4, .scratch/linked-servers issue 08). The nudge is an
+	// optimisation over this timer and never a requirement: a Server whose SSE
+	// subscription to a friend is down still catches up within one interval, and
+	// one whose subscription is up is fresh within seconds.
+	//
+	// It is the scan's cadence for the scan's reason — a sweep of an unchanged
+	// mirror is one small `since` request per linked Library.
+	//
+	// 0 turns the background half off ENTIRELY: no timer, no retry of an
+	// unreachable Link, and no subscription either, because a Server that has
+	// stopped pulling on its own has no use for a stream telling it to. The mirror
+	// then refreshes when a Link is created or re-keyed, and when an Admin presses
+	// "sync now" (POST /links/{id}/sync).
+	LinkSyncInterval time.Duration
+
 	// SessionIdleTimeout is how long a Playback session may go without a progress
 	// report before the reaper ends it (issue 08). Progress reports double as
 	// keepalive; a session silent for longer than this is assumed abandoned and
@@ -523,6 +540,12 @@ const DefaultACMEDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
 // the scan is incremental so an unchanged library costs only a directory walk.
 const DefaultScanInterval = time.Hour
 
+// DefaultLinkSyncInterval is the periodic mirror-refresh cadence (ADR-0056 §4).
+// One hour, the scheduled scan's, for the same reason: it is the cadence at
+// which a household notices a change nobody told it about, and a sweep of an
+// unchanged mirror costs one small request per linked Library.
+const DefaultLinkSyncInterval = time.Hour
+
 // DefaultSessionIdleTimeout is how long an idle Playback session lives before
 // the reaper ends it. Progress arrives every ~10–15s (api-contract.md), so a
 // minute-plus of silence is a safe "abandoned" signal that tolerates transient
@@ -615,6 +638,7 @@ func Defaults() Config {
 		KeyRotationURL:           DefaultKeyRotationURL,
 		KeyRotationInterval:      DefaultKeyRotationInterval,
 		ScanInterval:             DefaultScanInterval,
+		LinkSyncInterval:         DefaultLinkSyncInterval,
 		SessionIdleTimeout:       DefaultSessionIdleTimeout,
 		MaxConcurrentTranscodes:  DefaultMaxConcurrentTranscodes,
 		HardwareAccel:            HWAccelOff,
@@ -760,6 +784,10 @@ func (c Config) SubtitleCacheDir() string {
 //	                               system default multicast interface)
 //	OBELO_SCAN_INTERVAL  -> ScanInterval (a Go duration, e.g. "30m";
 //	                               "0" disables the scheduled scan)
+//	OBELO_LINK_SYNC_INTERVAL -> LinkSyncInterval (a Go duration, e.g. "15m";
+//	                               "0" turns off the background refresh of every
+//	                               linked Library — timer and live nudge both —
+//	                               leaving POST /links/{id}/sync)
 //	OBELO_SESSION_IDLE_TIMEOUT -> SessionIdleTimeout (a Go duration, e.g.
 //	                               "2m"; "0" disables the session reaper)
 //	OBELO_MAX_CONCURRENT_TRANSCODES -> MaxConcurrentTranscodes (an integer;
@@ -874,6 +902,14 @@ func FromEnv() Config {
 	if v := os.Getenv("OBELO_SCAN_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.ScanInterval = d
+		}
+	}
+	// LinkSyncInterval: a Go duration ("0" disables the periodic mirror sweep). An
+	// unparseable value keeps the default, as with the scan: this is a safety net
+	// behind the SSE nudge and a typo in it must not stop a server from booting.
+	if v := os.Getenv("OBELO_LINK_SYNC_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			c.LinkSyncInterval = d
 		}
 	}
 	if v := os.Getenv("OBELO_SESSION_IDLE_TIMEOUT"); v != "" {

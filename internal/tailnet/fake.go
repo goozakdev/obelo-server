@@ -28,11 +28,22 @@ type Fake struct {
 	// StartErr, when set, fails every Start — the coordination server that cannot
 	// be reached, the auth key that was rejected, the node that never starts.
 	StartErr error
-	// CloseErr, ListenErr, ListenTLSErr fail the corresponding call, so each step
-	// can be failed independently.
+	// CloseErr, ListenErr, ListenTLSErr, DialErr fail the corresponding call, so
+	// each step can be failed independently. DialErr is how a test models the
+	// origin that LOOKS like a tailnet name but is not shared into this Tailnet —
+	// the case ADR-0055 §5 leaves to the operator and the caller falls back from.
 	CloseErr     error
 	ListenErr    error
 	ListenTLSErr error
+	DialErr      error
+
+	// DialFunc, when set, is what Dial actually opens. A linking test points it at
+	// the other test Server's listener, which is the whole trick: the origin under
+	// test is a MagicDNS name that resolves nowhere, and this is the only thing
+	// standing between "the dialer chose the Tailnet" and a connection that works.
+	// Unset, Dial opens an ordinary TCP connection to addr, so a Fake needs no
+	// scripting to stand in for a node on a reachable network.
+	DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	// Fresh is the status a join settles into when the state directory holds no
 	// prior state — the interactive first run, typically StateNeedsLogin carrying a
@@ -58,6 +69,13 @@ type Fake struct {
 	// lastConfig is the Config of the most recent Start, so a test can prove the
 	// auth key reached the join — and then prove it reached nothing else.
 	lastConfig Config
+
+	// dials counts Dial calls and dialAddrs records what they asked for, so a test
+	// can prove which of ADR-0055 §5's two dialers an origin chose. A count of zero
+	// against a successful fetch is the assertion that says "that one went out over
+	// the operating system", which no amount of looking at the response can show.
+	dials     int
+	dialAddrs []string
 }
 
 // stateFile is the marker the Fake writes into the state directory on a join. Its
@@ -137,6 +155,40 @@ func (f *Fake) Listen(network, addr string) (net.Listener, error) {
 // exactly there.
 func (f *Fake) ListenTLS(network, addr string) (net.Listener, error) {
 	return f.listen(f.ListenTLSErr)
+}
+
+// Dial opens an outbound connection "over the Tailnet". Like Listen it fails
+// while the node is down — that is the real constraint, not a convenience: the
+// stack the connection originates from does not exist until the node is up.
+func (f *Fake) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	f.mu.Lock()
+	running, scripted, dial := f.started, f.DialErr, f.DialFunc
+	f.dials++
+	f.dialAddrs = append(f.dialAddrs, addr)
+	f.mu.Unlock()
+
+	if scripted != nil {
+		return nil, scripted
+	}
+	if !running {
+		return nil, ErrNotRunning
+	}
+	if dial != nil {
+		return dial(ctx, network, addr)
+	}
+	var d net.Dialer
+	return d.DialContext(ctx, network, addr)
+}
+
+// Dials is how many times Dial was called and DialAddrs what each asked for —
+// the observation that says which dialer an origin chose.
+func (f *Fake) Dials() int { f.mu.Lock(); defer f.mu.Unlock(); return f.dials }
+
+// DialAddrs returns a copy of the addresses Dial was asked for, in order.
+func (f *Fake) DialAddrs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.dialAddrs...)
 }
 
 func (f *Fake) listen(scripted error) (net.Listener, error) {

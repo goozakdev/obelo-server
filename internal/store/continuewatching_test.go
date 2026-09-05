@@ -15,7 +15,7 @@ func TestContinueWatchingVideoOnly(t *testing.T) {
 
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libmov','Movies','movie')`)
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libmus','Music','music')`)
-	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u1','u1','member')`)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u1','u1','member','x')`)
 
 	// A movie, an episode, and a music track — each with an in-progress resume.
 	mustExec(t, db,

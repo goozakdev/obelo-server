@@ -217,6 +217,7 @@ function movieToRow(t: TitleSummary): BrowseRowData {
     key: t.id,
     to: `/titles/${t.id}`,
     name: t.title,
+    marks: t,
     dataAttrs: { "data-title-id": t.id },
     thumb: (
       <div className="poster-frame">

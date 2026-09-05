@@ -130,7 +130,7 @@ func newFixture(t *testing.T, episodes ...store.EpisodeTree) *fixture {
 	t.Helper()
 	db := openTemp(t)
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libtv','TV','tv')`)
-	mustExec(t, db, `INSERT INTO users (id, username, role) VALUES ('u1','u1','member')`)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u1','u1','member','x')`)
 
 	bySeason := map[int][]store.EpisodeTree{}
 	var order []int

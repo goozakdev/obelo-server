@@ -18,6 +18,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/events"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
+	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -49,6 +50,14 @@ type LibraryExister interface {
 // in the User's sense — not the leaf Episode/Track count. *store.DB satisfies it.
 type LibraryTitleCounter interface {
 	LibraryTitleCount(libraryID string) (int, error)
+}
+
+// ExportReader is the Library Export's one read (ADR-0056 §4): a page of the
+// flat, keyset-ordered change feed a linked Server's mirror pulls. *store.DB
+// satisfies it. May be nil in narrow unit tests, and the route then answers 503
+// rather than pretending the Library is empty.
+type ExportReader interface {
+	ExportLibrary(libraryID string, after store.ExportCursor, limit int) (store.ExportPage, error)
 }
 
 // ScanScopeResolver resolves a Targeted scan's on-disk scope from a browsable
@@ -124,6 +133,29 @@ type Deps struct {
 	// Shows / Albums by kind) for the admin scan-status "N titles" summary. *store.DB
 	// satisfies it; may be nil in narrow unit tests (the count is then omitted).
 	TitleCounts LibraryTitleCounter
+	// Export is the Library Export's reader (GET /libraries/{id}/export,
+	// ADR-0056 §4). *store.DB satisfies it; nil in narrow unit tests.
+	Export ExportReader
+	// LinkedLibrary reports whether a Library on this Server is itself a mirror of
+	// somebody else's (ADR-0056 §1) — the one thing the Export refuses to serve,
+	// because sharing does not travel (ADR-0054 §4, ADR-0056 §7). It is a hook
+	// rather than a column read: `libraries.source` arrives with the mirror in
+	// issue 07, and issue 11 wires this to it. Nil means no Library here came over
+	// a Link, which is true of every Server until then.
+	LinkedLibrary func(libraryID string) bool
+	// Mirror is the mirror's read side (ADR-0056 §1, issue 07): which Libraries
+	// here came over a Link, whether the Server behind each is reachable, and the
+	// entity→Library resolution the writer guards need. *store.DB satisfies it;
+	// nil in a narrow unit test, and nothing is then linked.
+	Mirror LinkedLibraryReader
+	// Links is the receiving half of linking (ADR-0055, ADR-0056): the Links this
+	// Server holds against other households' Servers, and the flow that redeems an
+	// invite into one. It owns the dialer choice and the credential; the API layer
+	// only pastes strings at it.
+	//
+	// May be nil in narrow unit tests, and the /links routes then answer 503 with a
+	// message rather than a 404 that reads identically to a typo'd path.
+	Links *link.Service
 	// ScanScope resolves a Targeted scan's folder set from a browsable entity
 	// (ADR-0030, per-entity POST /{titles|shows|albums|artists}/{id}/scan). *store.DB
 	// satisfies it; nil in narrow unit tests that don't exercise targeted scanning.
@@ -245,6 +277,15 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("/auth/device/approve",
 		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleDeviceApprove(deps.Auth))))
 
+	// Linking, the sharing side (ADR-0055): another household's Server redeems the
+	// one-time invite an Admin minted for a `remote` User, and receives an ordinary
+	// Device-bound bearer. Unauthenticated for the same reason the device grant's
+	// /token is — the caller has no credential here yet, which is what the invite
+	// is FOR — and rate-limited per client IP inside the service. Advertised via
+	// features.serverLinking, with the protocol version top-level on GET /server.
+	mux.HandleFunc("/auth/link/redeem",
+		requireMethod(http.MethodPost, handleRedeemLinkInvite(deps.Auth)))
+
 	// GET /devices lists the caller's Devices.
 	mux.HandleFunc("/devices",
 		requireMethod(http.MethodGet, requireAuth(deps.Auth, handleListDevices(deps.Auth))))
@@ -261,6 +302,21 @@ func Handler(deps Deps) http.Handler {
 		requireAuth(deps.Auth, requireAdmin(handleUsersCollection(deps.Auth))))
 	mux.HandleFunc("/users/",
 		requireAuth(deps.Auth, requireAdmin(handleUserSubtree(deps))))
+
+	// Linking, the RECEIVING side (ADR-0055, ADR-0056; issue 06). An Admin pastes
+	// the one string a friend sent and this Server holds the credential from then
+	// on: POST /links, GET /links, POST /links/{id}/rekey, DELETE /links/{id}.
+	// Admin-only — a Link is the household's relationship with another household,
+	// not a per-User one — and advertised via features.linkedLibraries, which is
+	// what tells a client to expect the linked/available fields (issue 07).
+	//
+	// The counterpart routes for the SHARING side are /users/{id}/invite and
+	// /auth/link/redeem above; both halves ship in one binary because every Server
+	// can be either side, but nothing here is reachable by the other one.
+	mux.HandleFunc("/links",
+		requireAuth(deps.Auth, requireAdmin(handleLinksCollection(deps))))
+	mux.HandleFunc("/links/",
+		requireAuth(deps.Auth, requireAdmin(handleLinkSubtree(deps))))
 
 	// Library management (ADR-0010 admin scope). Every route is Admin-only:
 	// requireAdmin layers on requireAuth, which attaches the identity. Method
@@ -347,6 +403,16 @@ func Handler(deps Deps) http.Handler {
 	// existence-hiding 404, not the 401 the bearer/cookie middlewares produce.
 	mux.HandleFunc("/stream/", handleStreamTokenSubtree(deps))
 
+	// GET /relay/{sessionId}/{the sharer's path tail}: the media of a session that
+	// is playing a Title from a LINKED Library (ADR-0056 §5). The bytes are on
+	// another household's Server; this Server negotiated with it under the Link's
+	// credential and rewrote every URL in its answer onto this route, preserving
+	// the remote path tail so relative playlist URIs keep resolving. Bearer or the
+	// media cookie, bound to the local Session's User — the same middleware the
+	// /sessions media GETs use; the stream token reaches the same bytes through its
+	// own route above. See relay_handlers.go.
+	mux.HandleFunc(relayRoutePrefix, handleRelaySubtree(deps))
+
 	// Collections (collections-playlists 01): Admin-curated, shared groupings of
 	// Titles. Writes (POST/PUT/DELETE on the Collection and its items) are Admin
 	// scope; reads (GET list/detail) are any authenticated User. A `/collections`
@@ -403,13 +469,13 @@ func Handler(deps Deps) http.Handler {
 	// GET /home: the per-User computed Home surface — Continue Watching +
 	// Recently Added rows (issue 08). Authenticated; computed, never stored.
 	mux.HandleFunc("/home",
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleHome(deps.Catalog)))))
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleHome(deps)))))
 
 	// GET /search?q=: cross-kind search (issue tv-music/04) — Movies, Shows,
 	// Artists/Albums, and (drilling in) Episodes/Tracks in one grouped response,
 	// access-filtered (hidden excluded) exactly like browse. Authenticated.
 	mux.HandleFunc("/search",
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSearch(deps.Catalog)))))
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSearch(deps)))))
 
 	// GET /providerImage?ref=: the metadata-provider thumbnail proxy behind the admin
 	// Edit-item pickers (provider_image.go). It exists so the browser never contacts

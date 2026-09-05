@@ -20,6 +20,14 @@ import EditLibraryDialog from "./EditLibraryDialog";
 //     Edit-Library dialog (rename / add folders). Delete lives on the row's ⋮
 //     menu (its own confirmation modal), not in the Edit dialog.
 //
+// A LINKED Library (ADR-0056 §1) is badged and its write affordances disabled, in
+// the row. The Library JSON says only that it IS linked — it never names whose it
+// is — so the server name behind "provided by …" comes from GET /links, which is
+// read ONLY when at least one Library is linked: a household that has never linked
+// makes exactly the requests it always did. A failed read is not an error state
+// here; the badge stands and the note says "another server", because losing the
+// whole libraries list to a second request would be the worse trade.
+//
 // The list is reloaded after any create / edit / delete so the UI reflects the
 // server's truth without patching local state. A small reloadable loader is used
 // here (rather than a load-once useAsync) because this screen mutates the very
@@ -33,21 +41,46 @@ type ListState =
 
 export default function AdminLibrariesScreen() {
   const [state, setState] = useState<ListState>({ status: "loading" });
+  // libraryId → the name of the Server providing it. Empty on a server with no
+  // Links, which is the overwhelmingly common case.
+  const [providers, setProviders] = useState<Record<string, string>>({});
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Library | null>(null);
   const [scanAllSignal, setScanAllSignal] = useState(0);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setState({ status: "loading" });
+  const loadProviders = useCallback(async (signal?: AbortSignal) => {
     try {
-      const libraries = await apiClient.listLibraries(signal);
+      const links = await apiClient.listLinks(signal);
       if (signal?.aborted) return;
-      setState({ status: "ready", libraries });
-    } catch (err) {
-      if (signal?.aborted) return;
-      setState({ status: "error", message: errorMessage(err) });
+      const map: Record<string, string> = {};
+      for (const link of links) {
+        for (const lib of link.libraries) map[lib.id] = link.serverName;
+      }
+      setProviders(map);
+    } catch {
+      // The badge is the load-bearing part and it is already on the row; a name
+      // this could not fetch degrades to "another server" rather than to an
+      // error banner over a libraries list that loaded perfectly well.
     }
   }, []);
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      setState({ status: "loading" });
+      try {
+        const libraries = await apiClient.listLibraries(signal);
+        if (signal?.aborted) return;
+        setState({ status: "ready", libraries });
+        // Only when something IS a mirror: a household that has never linked
+        // makes exactly the requests it always did.
+        if (libraries.some((l) => l.linked)) void loadProviders(signal);
+      } catch (err) {
+        if (signal?.aborted) return;
+        setState({ status: "error", message: errorMessage(err) });
+      }
+    },
+    [loadProviders],
+  );
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -122,6 +155,7 @@ export default function AdminLibrariesScreen() {
                 onEdit={setEditing}
                 onDeleted={reload}
                 scanAllSignal={scanAllSignal}
+                providedBy={providers[lib.id]}
               />
             ))}
           </ul>

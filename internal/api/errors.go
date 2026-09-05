@@ -95,14 +95,125 @@ const (
 	// last-Admin guard each surface as a 409 with one of these codes.
 	codeUsernameTaken = "USERNAME_TAKEN"
 	codeLastAdmin     = "LAST_ADMIN"
+	// codeRoleChange (422): a role change would cross the `remote` boundary — a
+	// linked Server promoted to a person, or a person demoted to one (ADR-0054).
+	// A remote User is created remote and dies remote. Reserved with its guard
+	// (auth.CheckRoleChange) ahead of the role-change endpoint that will need it,
+	// so the rule cannot be forgotten when that endpoint arrives.
+	codeRoleChange = "ROLE_CHANGE"
+	// Linking, the sharing side (ADR-0055, .scratch/linked-servers issue 03):
+	//
+	//   codeNotRemoteUser (422) — POST /users/{id}/invite named a User that is not
+	//                             a linked Server. An invite is the `remote` role's
+	//                             ONLY credential and no other role has any use for
+	//                             one; minting for a Member would hand out a second,
+	//                             passwordless way into a person's account.
+	//   codeInvalidOrigin (422) — an origin in the mint body is not a bare absolute
+	//                             http(s) address. Refused rather than repaired: a
+	//                             path prefix or a typo becomes an invite that can
+	//                             only fail on somebody else's machine, with nothing
+	//                             on this side to explain why.
+	//   codeInvalidInvite (400) — POST /auth/link/redeem presented a code that is
+	//                             unknown, expired or already spent. ONE answer for
+	//                             all three (and for a missing server id), so the
+	//                             live invite space cannot be mapped by watching
+	//                             which reply comes back — the same collapse
+	//                             INVALID_USER_CODE makes.
+	//   codeLinkProtocol  (409) — the two Servers stamp different
+	//                             linkProtocolVersions. details carries
+	//                             { supported, requested } — this server's and the
+	//                             caller's — so the redeeming side can say which of
+	//                             the two needs an upgrade (ADR-0055 §3). Checked
+	//                             BEFORE anything is redeemed, so a mismatch never
+	//                             costs the Admin their invite.
+	//   codeResync        (410) — GET /libraries/{id}/export was handed a `since`
+	//                             older than the retention of soft-deleted rows, so
+	//                             the sharer can no longer promise the feed still
+	//                             carries every tombstone the mirror missed. The
+	//                             home Server answers it with a full pull
+	//                             (ADR-0056 §4). A 410 and not a 400: the request
+	//                             was well formed and it is the POSITION that is
+	//                             gone.
+	codeNotRemoteUser = "NOT_REMOTE_USER"
+	codeInvalidOrigin = "INVALID_ORIGIN"
+	codeInvalidInvite = "INVALID_INVITE"
+	codeLinkProtocol  = "LINK_PROTOCOL"
+	codeResync        = "RESYNC"
+	// Linking, the RECEIVING side (ADR-0055 §2–§5, ADR-0056 §6,
+	// .scratch/linked-servers issue 06) — the Admin who pastes the string:
+	//
+	//   codeBadInvite         (400) — POST /links (or /rekey) was handed something
+	//                                 that is not a readable invite: the wrong
+	//                                 scheme, base64 that does not decode, a field
+	//                                 missing. ONE code for every shape failure,
+	//                                 because the operator's move is the same in all
+	//                                 of them — ask for the string again. It also
+	//                                 carries the sharer's own INVALID_INVITE
+	//                                 refusal, which means the string was fine and
+	//                                 the CODE is spent or gone.
+	//   codeInviteExpired     (410) — a well-formed invite whose 24 hours ran out
+	//                                 (ADR-0055 §1). Gone rather than Bad Request
+	//                                 because nothing about the request was wrong;
+	//                                 the thing it names is no longer there.
+	//   codeLinkUnreachable   (503) — none of the addresses in the invite answered,
+	//                                 over either dialer (ADR-0055 §5). Not the
+	//                                 caller's fault and retryable, which is what
+	//                                 separates it from every 4xx here. ADR-0056 §6
+	//                                 reuses it for a play against an unreachable
+	//                                 Link.
+	//   codeLinkRevoked       (409) — POST /links/{id}/sync reached the sharer and was
+	//                                 told the credential is dead (their 401). The
+	//                                 mirror stays; the fix is a fresh invite, not a
+	//                                 retry, which is why it is a conflict and not
+	//                                 the 503 an unreachable Link gets (ADR-0056 §6).
+	//   codeLinkServerMismatch (409) — POST /links/{id}/rekey was given an invite
+	//                                 for a DIFFERENT Server. A Link is bound to one
+	//                                 peer for its whole life (the mirror is keyed by
+	//                                 that Server's ids), so this is refused rather
+	//                                 than silently repointed.
+	//
+	// LINK_PROTOCOL above is shared with the sharing side and answered here too,
+	// with details named from THIS side — { theirs, ours, upgrade } — because the
+	// asking Server is the one that has to say which household needs an upgrade.
+	codeBadInvite          = "BAD_INVITE"
+	codeInviteExpired      = "INVITE_EXPIRED"
+	codeLinkUnreachable    = "LINK_UNREACHABLE"
+	codeLinkServerMismatch = "LINK_SERVER_MISMATCH"
+	codeLinkRevoked        = "LINK_REVOKED"
+	// codeLinkedLibrary (409): a write aimed at a Library that is a MIRROR of
+	// another household's (ADR-0056 §1). Not 403 and not 404: the caller is an
+	// Admin, the Library is theirs to see and grant, and the resource plainly
+	// exists — it is the STATE of it that refuses, which is what Conflict means.
+	// The sharer's Server is the identity authority for its own files (ADR-0002,
+	// ADR-0019), so nothing here may re-derive, correct or enrich what arrived; a
+	// correction belongs on the machine that owns the files.
+	//
+	// The one exception is renaming: PATCH /libraries/{id} still takes a `name`,
+	// because what this household calls the shelf is this household's business.
+	codeLinkedLibrary = "LINKED_LIBRARY"
 	// Library-access grants (PUT /users/{id}/libraryAccess), both 422: granting to
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"
 	codeUnknownLibrary = "UNKNOWN_LIBRARY"
+	// codeLinkedGrant (422): the target of a grant is a `remote` User (a linked
+	// Server) and the set names a Library that itself arrived over a Link. A
+	// mirror is never re-shared onward (ADR-0054 §4, ADR-0056 §7) — the owner of
+	// the files decided who sees them. Same shape as UNKNOWN_LIBRARY: the whole
+	// set is rejected and the prior grants stand. Distinct from LINKED_LIBRARY
+	// (409), which refuses a WRITE to the mirror itself; nothing is being written
+	// to the Library here, and the Library is not in conflict — the pairing of it
+	// with this User is what cannot exist.
+	codeLinkedGrant = "LINKED_GRANT"
 	// Rating ceiling (PUT /users/{id}/ratingCeiling), both 422: setting a ceiling
 	// on an Admin, and an unknown rating label.
 	codeAdminCeiling  = "ADMIN_CEILING"
 	codeUnknownRating = "UNKNOWN_RATING"
+	// codeUnknownResolution (422): a Playback ceiling
+	// (PUT /users/{id}/playbackCeiling) named a maxResolution that is not a
+	// settable rung (ADR-0054 §2). ADMIN_CEILING is reused for an Admin target —
+	// the two ceilings refuse an Admin for the same reason, and the message says
+	// which one was refused.
+	codeUnknownResolution = "UNKNOWN_RESOLUTION"
 	// codeUnknownTitle (422): a Collection item-add (POST /collections/{id}/items)
 	// named a Title that does not exist; the whole add is rejected and the
 	// membership set is left unchanged (mirrors UNKNOWN_LIBRARY for grants).
@@ -132,6 +243,14 @@ const (
 	// details carries { retryable: true, suggestedMaxBitrate } so the client can
 	// retry at a lower quality. Direct play / remux never produce it.
 	codeServerBusy = "SERVER_BUSY"
+	// codeStreamLimit: the User already holds as many unended Playback sessions as
+	// their Playback ceiling's maxStreams allows (429, ADR-0054 §2). details carries
+	// { active, limit } so the client can say "2 of 2 streams in use". Distinct from
+	// SERVER_BUSY in both cause and cure: SERVER_BUSY is the server-wide transcode
+	// budget and a lower bitrate may get in, whereas this is the User's own cap and
+	// only ending one of their streams frees a slot — so a retry at any quality
+	// fails identically. Every tier counts, direct play included.
+	codeStreamLimit = "STREAM_LIMIT"
 	// codeServiceUnavailable: a dependency needed for the request is not wired
 	// (503). Today only the subtitle-fetch handlers use it, when the SubFetch
 	// service is absent — a wiring gap, not a client fault.

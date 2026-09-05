@@ -202,6 +202,42 @@ func (db *DB) DevicesByUser(userID string) ([]Device, error) {
 	return out, rows.Err()
 }
 
+// LastDeviceSeenByUser returns, keyed by User id, the most recent last-seen
+// across that User's Devices. A User with no Device is ABSENT from the map
+// rather than present with an empty string, so "never seen" is one lookup and
+// not a second comparison.
+//
+// One grouped query rather than a DevicesByUser per row: the Admin Users list
+// wants this for every User at once (it is what tells a `remote` User —
+// a linked Server — apart from one that has never redeemed its Invite), and an
+// N+1 there would grow with the roster.
+//
+// MAX() over the TEXT column is a lexical comparison, which is exactly what
+// DevicesByUser's ORDER BY already relies on: every write goes through
+// UpsertDevice/LookupToken, which format UTC RFC3339 (fixed width, so lexical
+// order is chronological order).
+func (db *DB) LastDeviceSeenByUser() (map[string]string, error) {
+	rows, err := db.Query(
+		`SELECT user_id, MAX(last_seen_at) FROM devices GROUP BY user_id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing device last-seen: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var userID string
+		var seen sql.NullString
+		if err := rows.Scan(&userID, &seen); err != nil {
+			return nil, fmt.Errorf("store: scanning device last-seen: %w", err)
+		}
+		if seen.Valid {
+			out[userID] = seen.String
+		}
+	}
+	return out, rows.Err()
+}
+
 // DeviceByID looks up a single Device by id, returning ErrNotFound if absent.
 func (db *DB) DeviceByID(id string) (Device, error) {
 	return db.deviceBy(`id = ?`, id)

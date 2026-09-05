@@ -234,6 +234,20 @@ type Node interface {
 	// certificates to be enabled in the Tailscale console — a prerequisite outside
 	// this web UI — so its failure costs HTTPS on the Tailnet and nothing else.
 	ListenTLS(network, addr string) (net.Listener, error)
+	// Dial opens an OUTBOUND connection over the node's own userspace stack —
+	// the mirror of Listen, and the second of ADR-0055 §5's two dialers.
+	//
+	// It exists for exactly one caller: linking. A friend who shares their Obelo
+	// machine into this operator's Tailnet from the Tailscale console has given
+	// this Server a route to a machine with no public address at all, and the
+	// ONLY way to take it is to dial from inside this node's netstack — the
+	// operating system's resolver and routing table know nothing about it. Every
+	// other outbound fetch this server makes (metadata providers, subtitles) is
+	// to the public internet and stays on net.Dialer.
+	//
+	// It fails while the node is not started, for Listen's reason: the stack the
+	// connection would originate from does not exist yet. ctx bounds the dial.
+	Dial(ctx context.Context, network, addr string) (net.Conn, error)
 	// Close stops the node and releases its listeners, KEEPING the state directory
 	// so the next Start needs no re-authorization. Idempotent: closing a node that
 	// never started is not an error.

@@ -115,6 +115,27 @@ type VideoMemoryStore interface {
 	ShowIDForTitle(titleID string) (string, bool, error)
 }
 
+// roleRemote is the role a linked Server holds (ADR-0054), mirrored here as a
+// local constant the way access mirrors roleAdmin — the string is the schema's,
+// and this package does not import auth for one word of vocabulary.
+const roleRemote = "remote"
+
+// UserRoleStore is the sliver of the User record the watch-state writers consult:
+// a linked Server plays under the `remote` role and MUST leave watch state
+// untouched (ADR-0054). Watch state belongs to the person watching, and on a relay
+// that person is on the other Server, which keeps their state there — so a play
+// here would otherwise invent a phantom viewer whose Continue Watching row is the
+// union of a whole foreign household's viewing.
+//
+// *store.DB satisfies it. Like AudioMemoryStore/VideoMemoryStore it is an OPTIONAL
+// dependency, type-asserted off the passed store in NewService: a fake store that
+// does not implement it runs with the guard disabled (every User writes, the
+// pre-linked-servers behavior), which keeps existing playback unit tests compiling
+// unchanged. Production always passes *store.DB, so the guard is always live there.
+type UserRoleStore interface {
+	UserByID(id string) (store.User, error)
+}
+
 // Service is the direct-play negotiation domain: given a Title, a Capability
 // profile, and constraints, it picks the best playable Edition, makes the
 // directPlay-or-TRANSCODE_REQUIRED decision, and creates the Playback session
@@ -133,6 +154,20 @@ type Service struct {
 	// tests) — in which case video memory read/write is skipped and video resolution
 	// stays on the capability-then-quality default, the pre-04 behavior.
 	videoMem VideoMemoryStore
+	// roles resolves a User's role for the watch-state write guard (ADR-0054), or
+	// nil when the passed store does not implement UserRoleStore (a fake in some
+	// unit tests) — in which case no User is treated as remote and every write
+	// proceeds, the pre-linked-servers behavior.
+	roles UserRoleStore
+	// relay is the one-hop playback relay for a mirrored Title (ADR-0056 §5,
+	// relay.go), installed by SetRelay after the link Service exists. Nil on every
+	// Server that holds no Links, and on every unit test — a mirrored Title is then
+	// negotiated like a local one, which is what this package did before issue 09.
+	relay Relayer
+	// sessions is the in-memory session Manager. Deliberately NOT behind the
+	// remote guard: a relay session still starts, ends and feeds nowPlaying, which
+	// is how the sharer sees its own transcode load. What a remote User writes
+	// nothing of is the per-Title record.
 	sessions *Manager
 	// accel is the resolved video encode backend threaded into every transcode
 	// job's args (ADR-0009 HW-accel knob). It is transcode.AccelCPU (the zero
@@ -188,7 +223,34 @@ func NewService(s interface {
 	if vm, ok := s.(VideoMemoryStore); ok {
 		svc.videoMem = vm
 	}
+	// The remote-role watch-state guard (ADR-0054), wired the same way: only when
+	// the store can answer "what role is this User?". A fake that cannot runs with
+	// the guard off, so every pre-linked-servers unit test behaves as before.
+	if rs, ok := s.(UserRoleStore); ok {
+		svc.roles = rs
+	}
 	return svc
+}
+
+// writesWatchState reports whether this User's playback may touch per-Title watch
+// state. It is false for exactly one thing: a linked Server, playing under the
+// `remote` role (ADR-0054), whose viewer is a person on another Server that keeps
+// their state there.
+//
+// It fails OPEN on a lookup error, and on purpose. The alternative — refusing to
+// write when the User row cannot be read — would silently drop a household's own
+// resume positions during any transient database trouble, which is a far worse
+// failure than writing a row for a peer we could not classify. The remote path is
+// the rare one; the ordinary one must not be collateral.
+func (s *Service) writesWatchState(userID string) bool {
+	if s.roles == nil {
+		return true
+	}
+	u, err := s.roles.UserByID(userID)
+	if err != nil {
+		return true
+	}
+	return u.Role != roleRemote
 }
 
 // Sessions exposes the session Manager so the api layer can serve the stream and
@@ -326,6 +388,8 @@ func suggestBusyBitrate(estimated, requestedMax int64) int64 {
 //     direct-played and the failure is structural;
 //   - a non-nil *ServerBusy (mapped to 503 SERVER_BUSY) when the chosen tier is
 //     transcode and the concurrent-transcode cap is full (ADR-0009);
+//   - a *StreamLimitError (errors.Is ErrStreamLimit, mapped to 429 STREAM_LIMIT)
+//     when the User already holds maxStreams unended sessions (ADR-0054 §2);
 //   - otherwise the Decision and the created Session.
 //
 // The error return is reserved for genuine faults (store failures); negotiation
@@ -345,6 +409,25 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// created. No-op under an all-access scope.
 	if !req.Scope.AllowsLibrary(detail.LibraryID) || !req.Scope.AllowsRating(detail.ContentRating) {
 		return Decision{}, Session{}, nil, nil, ErrTitleNotFound
+	}
+
+	// The User's Playback ceiling (ADR-0054 §2) is applied HERE and nowhere else:
+	// by clamping it into the request's Constraints before a single tier decision
+	// is made, every downstream escalation (burn, audio, video, remux-selected) and
+	// every args builder sees one consistent set of limits, and the existing tiering
+	// transcodes a too-large File down instead of hiding it. req is a value, so this
+	// tightens only this negotiation's copy.
+	clamped, ceilingBound := clampToCeiling(req.Constraints, req.Scope)
+	req.Constraints = clamped
+
+	// A Title in a LINKED Library is negotiated by the Server that holds its files
+	// (ADR-0056 §5). This is the only branch on `library.source` in the whole
+	// playback path: everything above it — the Scope check, the Rating ceiling, the
+	// Playback-ceiling clamp — has already run and is this household's own, and
+	// everything below it is about a File on this disk, which a mirrored Title does
+	// not have.
+	if s.relayed(detail.LibraryID) {
+		return s.negotiateRelay(req, detail)
 	}
 
 	dec, unsup := SelectEdition(req.Profile, req.Constraints, detail.Editions, req.EditionID)
@@ -466,6 +549,11 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// an hls.js client, fMP4 for Apple's native player.
 	dec.HevcInMpegTS = req.Profile.HevcInMpegTS
 
+	// Mark a Decision the USER's ceiling bound (not the client's own Constraints),
+	// after every escalation has settled so the flag rides the Decision that is
+	// actually delivered. The Session copies it in CreateGoverned.
+	dec.UserCeiling = ceilingBound
+
 	// A video COPY / REMUX serves a SERVER-SYNTHESIZED media playlist computed from the
 	// source's keyframes, because ffmpeg writes its own copy playlist only when the
 	// whole (feature-length) input finishes — so serving ffmpeg's would 404 the long
@@ -498,7 +586,17 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 		BuildHLSArgsCPU:         cpuFallback,
 		BuildAudioRenditionArgs: audioRendition,
 		SegmentBoundaries:       boundaries,
+		MaxStreams:              req.Scope.MaxStreams,
 	}, dec)
+	// The User's concurrent-stream ceiling (ADR-0054 §2) refuses BEFORE a session
+	// exists, so nothing has to be unwound. It travels as an error rather than as a
+	// fourth outcome pointer because it carries counts the api renders into the 429
+	// body — the LoginThrottledError shape — and errors.Is(err, ErrStreamLimit)
+	// keeps callers that only want the classification simple.
+	var limit *StreamLimitError
+	if errors.As(err, &limit) {
+		return Decision{}, Session{}, nil, nil, limit
+	}
 	if errors.Is(err, ErrTranscodeCapFull) {
 		return Decision{}, Session{}, nil, &ServerBusy{
 			SuggestedMaxBitrate: suggestBusyBitrate(dec.EstimatedBitrate, req.Constraints.MaxBitrate),
@@ -563,6 +661,13 @@ func (s *Service) rememberAudioPick(userID, titleID string, chosen store.Stream)
 	if s.audioMem == nil || chosen.ID == "" {
 		return
 	}
+	// Remembered audio is watch state (CONTEXT.md), so a linked Server writes none
+	// (ADR-0054). Guarded HERE rather than at each caller because both of them —
+	// the negotiation's explicit pick and the progress report's in-band pick —
+	// funnel through this one function.
+	if !s.writesWatchState(userID) {
+		return
+	}
 	mem := audioMemoryOf(chosen)
 	_ = s.audioMem.SaveRememberedAudioForTitle(userID, titleID, mem)
 
@@ -612,6 +717,11 @@ func (s *Service) resolveRememberedVideo(userID string, detail store.TitleDetail
 // the play. The direct video mirror of rememberAudioPick.
 func (s *Service) rememberVideoPick(userID, titleID string, chosen store.Stream) {
 	if s.videoMem == nil || chosen.ID == "" {
+		return
+	}
+	// Remembered video is watch state too: a linked Server writes none (ADR-0054),
+	// guarded at the single funnel point exactly as rememberAudioPick is.
+	if !s.writesWatchState(userID) {
 		return
 	}
 	mem := videoMemoryOf(chosen)
@@ -1302,6 +1412,17 @@ func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, aud
 	// segment keepalives use plain Touch and carry no fresh position.
 	s.sessions.TouchProgress(sessionID, positionMs)
 
+	// A linked Server writes no watch state (ADR-0054). The keepalive and the
+	// nowPlaying transition above have already happened — the sharer's session
+	// list and transcode observability are exactly what the relay is FOR — and
+	// everything below this line is per-Title, which belongs to the person
+	// watching, who is on the other Server. The outcome carries the reported
+	// Title with no resume and unwatched, which is the truth about what this
+	// Server stores for that User.
+	if !s.writesWatchState(userID) {
+		return ProgressOutcome{TitleID: sess.TitleID}, nil
+	}
+
 	// Read current state so a below-floor report leaves an already-watched or
 	// already-resuming Title untouched rather than wiping it.
 	cur, err := s.watch.WatchStateFor(userID, sess.TitleID)
@@ -1410,6 +1531,13 @@ func (s *Service) SetWatchState(userID, titleID string, watched bool) error {
 	// start-over — neither carries a meaningful mid-file offset. played=false: a
 	// manual mark is bookkeeping, not playback, so it never stamps played_at and
 	// never moves the Up Next anchor (ADR-0028).
+	//
+	// A linked Server has no watch state to toggle (ADR-0054): the mark is
+	// accepted and dropped, so the relay never fails on a surface it simply does
+	// not have.
+	if !s.writesWatchState(userID) {
+		return nil
+	}
 	return s.watch.SaveWatchState(userID, titleID, 0, watched, false)
 }
 

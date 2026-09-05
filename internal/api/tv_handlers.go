@@ -54,6 +54,10 @@ type showSummaryJSON struct {
 	// tv-music/04), analogous to a Movie's resume marker. Set only on the Show
 	// grid (GET /libraries/{id}/titles for a TV Library); omitted (0) elsewhere.
 	UnwatchedEpisodeCount int `json:"unwatchedEpisodeCount,omitempty"`
+	// Linked/Available: this Show lives in a mirror of another household's Library
+	// (ADR-0056 §1, §6). Absent on a local Show.
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 	// Enrichment (issue 03): the descriptive fields + fetched artwork the optional
 	// Enrichment step decorates a Show with. All omitempty so an un-enriched Show
 	// is unchanged. PosterURL/BackgroundURL/LogoURL point at the Show artwork
@@ -107,7 +111,8 @@ type showsResponse struct {
 	NextCursor string            `json:"nextCursor,omitempty"`
 }
 
-func toShowSummary(s store.Show) showSummaryJSON {
+func toShowSummary(s store.Show, linked linkedState) showSummaryJSON {
+	isLinked, available := linked.decorate(s.LibraryID)
 	return showSummaryJSON{
 		ID:          s.ID,
 		LibraryID:   s.LibraryID,
@@ -119,6 +124,8 @@ func toShowSummary(s store.Show) showSummaryJSON {
 		IMDBID:      s.IMDBID,
 		IdentityKey: s.IdentityKey,
 		AddedAt:     formatTimestamp(s.AddedAt),
+		Linked:      isLinked,
+		Available:   available,
 	}
 }
 
@@ -251,6 +258,13 @@ type episodeSummaryJSON struct {
 	// that would rather render it as a badge. See episodePartLabels.
 	PartNumber int `json:"partNumber,omitempty"`
 	PartCount  int `json:"partCount,omitempty"`
+	// Linked/Available: this Episode lives in a mirror of another household's
+	// Library (ADR-0056 §1, §6). Absent on a local Episode. The Season listing is
+	// the one browse document in which nothing else carries the mark — seasonJSON
+	// has no Library of its own and the marked Show is a screen back — so the
+	// Episode rows carry it (.scratch/linked-servers issue 14).
+	Linked    bool  `json:"linked,omitempty"`
+	Available *bool `json:"available,omitempty"`
 }
 
 type episodesResponse struct {
@@ -337,8 +351,11 @@ func partSuffix(p episodePart) string {
 	return fmt.Sprintf(" (%d of %d)", p.Number, p.Count)
 }
 
-func toEpisodeSummary(t store.Title, ws store.WatchState, version string, part episodePart) episodeSummaryJSON {
+func toEpisodeSummary(t store.Title, ws store.WatchState, version string, part episodePart, linked linkedState) episodeSummaryJSON {
+	isLinked, available := linked.decorate(t.LibraryID)
 	js := episodeSummaryJSON{
+		Linked:           isLinked,
+		Available:        available,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            displayTitle(t) + partSuffix(part),
@@ -379,7 +396,8 @@ func displayTitle(t store.Title) string {
 // handleListShows returns a cursor-paginated page of a TV Library's Shows. It is
 // the TV branch of GET /libraries/{id}/titles (the handler picks this when the
 // Library's kind is "tv"). Unknown/inaccessible Library → 404.
-func handleListShows(svc *catalog.Service, libraryID string) http.HandlerFunc {
+func handleListShows(deps Deps, libraryID string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := mustScope(w, r)
 		if !ok {
@@ -427,12 +445,13 @@ func handleListShows(svc *catalog.Service, libraryID string) http.HandlerFunc {
 		roles, _ := svc.EntityArtworkRoles(store.EntityShow, ids)
 		versions, _ := svc.EntityArtworkVersions(store.EntityShow, ids)
 
+		linked := loadLinkedState(deps)
 		out := showsResponse{
 			Shows:      make([]showSummaryJSON, 0, len(page.Shows)),
 			NextCursor: page.NextCursor,
 		}
 		for _, s := range page.Shows {
-			js := toShowSummary(s)
+			js := toShowSummary(s, linked)
 			js.UnwatchedEpisodeCount = counts[s.ID]
 			decorateShow(&js, enr[s.ID], roles[s.ID], versions[s.ID])
 			out.Shows = append(out.Shows, js)
@@ -451,7 +470,7 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 			id := rest[:i]
 			role := rest[i+len("/artwork/"):]
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntityShow, id, role))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntityShow, id, role))))(w, r)
 			return
 		}
 		// POST {id}/reviewEpisodes: dismiss the needs_review flag on every flagged
@@ -464,7 +483,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleReviewShowEpisodes(deps.Catalog, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleReviewShowEpisodes(deps.Catalog, id)))))(w, r)
 			return
 		}
 		// POST {id}/review: dismiss this Show's needs_review flag (Admin).
@@ -474,7 +494,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleReviewShow(deps.Catalog, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleReviewShow(deps.Catalog, id)))))(w, r)
 			return
 		}
 		// PUT {id}/identityCorrection: the Wrong-item destructive correction on a Show
@@ -487,7 +508,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(handleShowIdentityCorrection(deps, id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleShowIdentityCorrection(deps, id)))))(w, r)
 			return
 		}
 		// {id}/matcher: the file matcher (Admin, ADR-0044) — GET the Show's whole
@@ -503,7 +525,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 			case http.MethodGet:
 				requireAuth(deps.Auth, requireAdmin(handleShowMatcher(deps, id)))(w, r)
 			case http.MethodPut:
-				requireAuth(deps.Auth, requireAdmin(handleApplyShowMatcher(deps, id)))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleApplyShowMatcher(deps, id))))(w, r)
 			default:
 				w.Header().Set("Allow", "GET, PUT")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
@@ -529,7 +552,8 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 				return
 			}
 			requireMethod(http.MethodPost,
-				requireAuth(deps.Auth, requireAdmin(handleTargetedScan(deps, "show", id))))(w, r)
+				requireAuth(deps.Auth, requireAdmin(requireLocalEntity(deps, store.EntityShow, id,
+					handleTargetedScan(deps, "show", id)))))(w, r)
 			return
 		}
 		// Edit-item on a Show (item-editing/02): Fix-info search/override + hand-edit +
@@ -537,7 +561,7 @@ func handleShowSubtree(deps Deps) http.HandlerFunc {
 		if dispatchEntityEditRoutes(w, r, deps, store.EntityShow, rest) {
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleShowSeasons(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleShowSeasons(deps))))(w, r)
 	}
 }
 
@@ -550,17 +574,18 @@ func handleSeasonSubtree(deps Deps) http.HandlerFunc {
 			id := rest[:i]
 			role := rest[i+len("/artwork/"):]
 			requireMethod(http.MethodGet,
-				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps.Catalog, store.EntitySeason, id, role))))(w, r)
+				requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEntityArtwork(deps, store.EntitySeason, id, role))))(w, r)
 			return
 		}
-		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSeasonEpisodes(deps.Catalog))))(w, r)
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, requireScope(deps.Access, handleSeasonEpisodes(deps))))(w, r)
 	}
 }
 
 // handleEntityArtwork serves a browse parent's fetched artwork bytes (Show/Season/
 // Artist + role). Local artwork, where a parent has any, is served ahead of this
 // by the caller; this is the fetched fallback. Unknown entity/role → 404.
-func handleEntityArtwork(svc *catalog.Service, entityType, entityID, role string) http.HandlerFunc {
+func handleEntityArtwork(deps Deps, entityType, entityID, role string) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		if entityID == "" || role == "" || strings.Contains(role, "/") {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -573,6 +598,11 @@ func handleEntityArtwork(svc *catalog.Service, entityType, entityID, role string
 		art, err := svc.EntityArtwork(scope, entityType, entityID, role)
 		switch {
 		case errors.Is(err, catalog.ErrNotFound):
+			// Mirrored Show / Season / Artist: fetched from the sharer on first request
+			// (ADR-0056 §5). See handleTitleArtwork.
+			if serveRelayArtwork(deps, w, r, scope, entityType, entityID, role) {
+				return
+			}
 			writeError(w, http.StatusNotFound, codeNotFound, "artwork not found", nil)
 			return
 		case err != nil:
@@ -631,7 +661,8 @@ func handlePersonArtwork(svc *catalog.Service, personRef, role string) http.Hand
 
 // handleShowSeasons serves GET /shows/{id}/seasons. Unknown/inaccessible Show →
 // 404 (hide existence). The path must be exactly /shows/{id}/seasons.
-func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
+func handleShowSeasons(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := pathParam(r.URL.Path, "/shows/", "/seasons")
 		if id == "" {
@@ -651,7 +682,7 @@ func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list seasons", nil)
 			return
 		}
-		showJS := toShowSummary(show)
+		showJS := toShowSummary(show, loadLinkedState(deps))
 		// The per-User unwatched-Episode count on the DETAIL (not just the grid, issue
 		// tv-music/04): the resume point is null for both a not-started and a fully-
 		// watched Show, so the client tells them apart by this count — > 0 (with a
@@ -711,7 +742,8 @@ func handleShowSeasons(svc *catalog.Service) http.HandlerFunc {
 
 // handleSeasonEpisodes serves GET /seasons/{id}/episodes, decorating each Episode
 // with the calling User's watch state. Unknown/inaccessible Season → 404.
-func handleSeasonEpisodes(svc *catalog.Service) http.HandlerFunc {
+func handleSeasonEpisodes(deps Deps) http.HandlerFunc {
+	svc := deps.Catalog
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
 		if !ok {
@@ -752,12 +784,13 @@ func handleSeasonEpisodes(svc *catalog.Service) http.HandlerFunc {
 		// two files) are otherwise indistinguishable in this list — same title, same
 		// synopsis, same still. Number them so the viewer can tell which half is which.
 		parts := episodePartLabels(episodes)
+		linked := loadLinkedState(deps)
 		out := episodesResponse{
 			Season:   toSeasonJSON(season),
 			Episodes: make([]episodeSummaryJSON, 0, len(episodes)),
 		}
 		for _, e := range episodes {
-			out.Episodes = append(out.Episodes, toEpisodeSummary(e, states[e.ID], versions[e.ID], parts[e.ID]))
+			out.Episodes = append(out.Episodes, toEpisodeSummary(e, states[e.ID], versions[e.ID], parts[e.ID], linked))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

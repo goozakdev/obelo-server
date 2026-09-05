@@ -126,10 +126,20 @@ export function rememberUser(
   saveRoster(storage, serverId, entries);
 }
 
+/** The roster lists PEOPLE. A `remote` User is a linked Server (ADR-0054): it has
+ * no password, `POST /auth/login` refuses the role outright, and offering it as a
+ * switch-user row would put a permanently un-signinable name in the household's
+ * face. It is filtered out of the reconciliation input rather than at render, so
+ * the same pass that refuses to seed one also PRUNES any that a previous version
+ * seeded — an entry the server still knows but this surface no longer lists. */
+function isPerson(u: RosterIdentity): boolean {
+  return u.role !== "remote";
+}
+
 /** Reconcile the roster against the server's own User list (Admin seeding via
  * GET /users): add Known entries for Users not yet remembered, refresh the
  * username/role of those that are, and DROP entries whose id the server no longer
- * knows.
+ * knows — or that the server knows as a linked Server rather than a person.
  *
  * The pruning matters as much as the seeding. Nothing else in a long-lived browser
  * ever removes a remembered User, so a User deleted server-side lingered forever —
@@ -142,8 +152,9 @@ export function rememberUser(
 export function syncKnownUsers(
   storage: Storage,
   serverId: string | null,
-  users: RosterIdentity[],
+  allUsers: RosterIdentity[],
 ): void {
+  const users = allUsers.filter(isPerson);
   const entries = loadRoster(storage, serverId);
   const live = new Map(users.map((u) => [u.id, u]));
   // Keep only entries the server still knows, refreshed from its copy — the token
