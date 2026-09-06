@@ -29,8 +29,9 @@ type LinkedLibraryReader interface {
 	// guard's.
 	IsLinkedLibrary(id string) (bool, error)
 	// LinkedLibraryStates maps each linked Library id to whether its sharing Server
-	// is reachable — `available` on the wire. Nil when nothing is linked.
-	LinkedLibraryStates() (map[string]bool, error)
+	// is reachable (`available`) and the name it was linked under (`linkedServer`).
+	// Nil when nothing is linked.
+	LinkedLibraryStates() (map[string]store.LinkedLibraryState, error)
 	// LibraryOfTitle and LibraryOfEntity resolve the Library behind an entity id,
 	// which is what lets the guard sit on /titles/{id}/… and /shows/{id}/… without
 	// each handler learning to ask.
@@ -104,11 +105,11 @@ func requireLocalEntity(deps Deps, entityType, entityID string, next http.Handle
 
 // --- the two wire fields ------------------------------------------------------
 
-// linkedState is the per-request answer to "which Libraries here are mirrors, and
-// is the Server behind each one reachable". It is read once per request that
-// needs it and is nil on the overwhelmingly common Server that has no Links, so
-// the decoration costs a map lookup that always misses.
-type linkedState map[string]bool
+// linkedState is the per-request answer to "which Libraries here are mirrors, is
+// the Server behind each one reachable, and what is it called". It is read once
+// per request that needs it and is nil on the overwhelmingly common Server that
+// has no Links, so the decoration costs a map lookup that always misses.
+type linkedState map[string]store.LinkedLibraryState
 
 func loadLinkedState(deps Deps) linkedState {
 	if deps.Mirror == nil {
@@ -121,33 +122,37 @@ func loadLinkedState(deps Deps) linkedState {
 	return states
 }
 
-// decorate answers the `linked` / `available` pair for one Library id. available
-// is a pointer so it is emitted ONLY for a linked Library: a local Library is not
-// "available", it simply is, and a client that sees the field at all knows it is
-// looking at somebody else's shelf.
+// decorate answers the `linked` / `available` / `linkedServer` triple for one
+// Library id. available is a pointer so it is emitted ONLY for a linked Library:
+// a local Library is not "available", it simply is, and a client that sees the
+// field at all knows it is looking at somebody else's shelf. server is the
+// sharing Server's display name — the provenance a member-facing surface names —
+// and is empty (so `omitempty`-dropped) for a local Library.
 //
 // Today available is "the Link is connected". Issue 08 owns the state machine
 // that moves it, and nothing else about this shape changes when it lands.
-func (l linkedState) decorate(libraryID string) (bool, *bool) {
+func (l linkedState) decorate(libraryID string) (bool, *bool, string) {
 	if l == nil {
-		return false, nil
+		return false, nil, ""
 	}
-	available, ok := l[libraryID]
+	st, ok := l[libraryID]
 	if !ok {
-		return false, nil
+		return false, nil, ""
 	}
-	return true, &available
+	available := st.Available
+	return true, &available, st.ServerName
 }
 
 // linkedFromLibrary is the same answer for a Library row already in hand, which
 // knows its own source without a second read.
-func linkedFromLibrary(lib store.Library, l linkedState) (bool, *bool) {
+func linkedFromLibrary(lib store.Library, l linkedState) (bool, *bool, string) {
 	if !lib.Linked() {
-		return false, nil
+		return false, nil, ""
 	}
-	if available, ok := l[lib.ID]; ok {
-		return true, &available
+	if st, ok := l[lib.ID]; ok {
+		available := st.Available
+		return true, &available, st.ServerName
 	}
 	no := false
-	return true, &no
+	return true, &no, ""
 }

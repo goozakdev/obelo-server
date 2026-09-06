@@ -184,6 +184,27 @@ describe("Home rows", () => {
     expect(mirrored.className).not.toContain("is-unavailable");
   });
 
+  it("names the sharing server on a mirrored home card when the wire carries it (issue 18)", async () => {
+    // PosterTile hands the whole row to LinkedMark, so `linkedServer` reaches the
+    // card with no per-surface wiring — a Member sees whose shelf it is.
+    const named = title("t1", "Cartoon", {
+      linked: true,
+      available: true,
+      linkedServer: "Kate's Obelo",
+    });
+    getHome.mockResolvedValue(home({ continueWatching: [named, LOCAL] }));
+    render();
+    await waitFor(() =>
+      expect(screen.getByTestId("home-continue-watching-items")).toBeInTheDocument(),
+    );
+
+    const { mirrored, local } = tiles(screen.getByTestId("home-continue-watching-items"));
+    expect(within(mirrored).getByTestId("linked-badge")).toHaveTextContent(
+      "Kate's Obelo",
+    );
+    expect(within(local).queryByTestId("linked-badge")).toBeNull();
+  });
+
   it("greys an unreachable one but keeps it in the row, still clickable", async () => {
     getHome.mockResolvedValue(home({ recentlyAdded: [AWAY, LOCAL] }));
     render();

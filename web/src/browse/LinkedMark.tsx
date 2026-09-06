@@ -1,4 +1,5 @@
 import type { LinkedMarks } from "../api/types";
+import { LinkIcon } from "./ActionIcons";
 
 // The ONE mark a mirrored row wears, anywhere in the app (issue 15).
 //
@@ -13,9 +14,14 @@ import type { LinkedMarks } from "../api/types";
 //
 // Two rules, and only two:
 //
-//   • BADGE — a linked row wears "Linked". Nothing else changes about it: it
-//     keeps its poster, its position, its link and its actions, because a
-//     mirrored Title is a Title.
+//   • BADGE — a linked row wears a chain LinkIcon and, when the wire named it
+//     (issue 18: `linkedServer` now rides the row itself, not the Admin-only
+//     /links join), the sharing Server's name — so a Member reads "🔗 Kate's
+//     Obelo", not a bare "Linked". A row with no name yet (an older server, a
+//     document that carries the pair but not the name) falls back to the icon
+//     plus the word "Linked". Nothing else changes about the row: it keeps its
+//     poster, its position, its link and its actions, because a mirrored Title
+//     is a Title.
 //   • GREY — `available: false` means the household that provides it cannot be
 //     reached RIGHT NOW (ADR-0056 §6). The row is greyed (`is-unavailable`) and
 //     STAYS WHERE IT IS, still clickable: the catalog is here and correct, only
@@ -59,7 +65,10 @@ export interface LinkedMarkProps {
   testId?: string;
   /** The name of the Server providing it, when a screen has it cheaply in hand
    * (see `useLibraryProvider`). Renders "Provided by <name>" beside the badge on
-   * the detail screens; omitted, the badge stands on its own. */
+   * the DETAIL screens, which reach a mirror through a document that carries no
+   * `linkedServer` (`titleDetailJSON`, issue 14 deviation 2) and read the name
+   * off the Admin-only /links join instead. On a ROW the name rides the badge
+   * itself, so those callers pass nothing here (issue 18). */
   providedBy?: string;
 }
 
@@ -72,6 +81,10 @@ export default function LinkedMark({
 }: LinkedMarkProps) {
   if (!isLinked(entity)) return null;
   const away = isUnavailable(entity);
+  // The name the wire put on the row itself (issue 18); a bare "Linked" only
+  // when it is absent — an older server, or a document that carries the pair but
+  // not the name (the detail headers, which use `providedBy` for it instead).
+  const name = entity?.linkedServer;
   return (
     <>
       <span
@@ -83,7 +96,8 @@ export default function LinkedMark({
         // never hovers.
         title={away ? "unavailable right now" : "shared with you"}
       >
-        Linked
+        <LinkIcon className="linked-badge-icon" />
+        {name || "Linked"}
       </span>
       {providedBy && (
         <span className="linked-provided" data-testid={`${testId}-provided`}>

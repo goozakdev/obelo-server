@@ -270,9 +270,11 @@ describe("normalize (the mirror pair)", () => {
       rootFolders: [],
       linked: true,
       available: false,
+      linkedServer: "Kate's Obelo",
     });
     expect(lib.linked).toBe(true);
     expect(lib.available).toBe(false);
+    expect(lib.linkedServer).toBe("Kate's Obelo");
   });
 
   it("leaves a local row with NEITHER key, not with false ones", () => {
@@ -281,14 +283,16 @@ describe("normalize (the mirror pair)", () => {
     const s = normalizeTitleSummary({ id: "t1", kind: "movie", title: "Dune" });
     expect("linked" in s).toBe(false);
     expect("available" in s).toBe(false);
+    expect("linkedServer" in s).toBe(false);
 
     const lib = normalizeLibrary({ id: "l1", name: "Films", kind: "movie", rootFolders: [] });
     expect("linked" in lib).toBe(false);
     expect("available" in lib).toBe(false);
+    expect("linkedServer" in lib).toBe(false);
   });
 
-  it("carries the pair on every row shape that has it on the wire", () => {
-    const marks = { linked: true, available: false };
+  it("carries the pair (and the server name) on every row shape that has it", () => {
+    const marks = { linked: true, available: false, linkedServer: "Kate's Obelo" };
 
     expect(normalizeTitleSummary({ id: "t", kind: "movie", title: "T", ...marks }))
       .toMatchObject(marks);

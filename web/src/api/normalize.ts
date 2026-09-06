@@ -117,11 +117,14 @@ import type {
  * the server deliberately does not make — so the client mirrors it: the keys
  * exist only when the server sent them.
  *
- * Spread into the normalized object, so a local row comes out with neither key. */
+ * Spread into the normalized object, so a local row comes out with no keys.
+ * `linkedServer` (the sharing Server's name, issue 18) rides through the same
+ * way — present only when the server sent it, absent on a local row. */
 function linkedMarks(raw: LinkedMarks): LinkedMarks {
   const marks: LinkedMarks = {};
   if (raw.linked !== undefined) marks.linked = raw.linked;
   if (raw.available !== undefined) marks.available = raw.available;
+  if (raw.linkedServer !== undefined) marks.linkedServer = raw.linkedServer;
   return marks;
 }
 

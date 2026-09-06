@@ -58,6 +58,9 @@ type showSummaryJSON struct {
 	// (ADR-0056 §1, §6). Absent on a local Show.
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer names the sharing Server (ADR-0056 §6). Present only on a
+	// linked row.
+	LinkedServer string `json:"linkedServer,omitempty"`
 	// Enrichment (issue 03): the descriptive fields + fetched artwork the optional
 	// Enrichment step decorates a Show with. All omitempty so an un-enriched Show
 	// is unchanged. PosterURL/BackgroundURL/LogoURL point at the Show artwork
@@ -112,20 +115,21 @@ type showsResponse struct {
 }
 
 func toShowSummary(s store.Show, linked linkedState) showSummaryJSON {
-	isLinked, available := linked.decorate(s.LibraryID)
+	isLinked, available, server := linked.decorate(s.LibraryID)
 	return showSummaryJSON{
-		ID:          s.ID,
-		LibraryID:   s.LibraryID,
-		Kind:        "show",
-		Title:       s.Title,
-		Year:        s.Year,
-		NeedsReview: s.NeedsReview,
-		TMDBID:      s.TMDBID,
-		IMDBID:      s.IMDBID,
-		IdentityKey: s.IdentityKey,
-		AddedAt:     formatTimestamp(s.AddedAt),
-		Linked:      isLinked,
-		Available:   available,
+		ID:           s.ID,
+		LibraryID:    s.LibraryID,
+		Kind:         "show",
+		Title:        s.Title,
+		Year:         s.Year,
+		NeedsReview:  s.NeedsReview,
+		TMDBID:       s.TMDBID,
+		IMDBID:       s.IMDBID,
+		IdentityKey:  s.IdentityKey,
+		AddedAt:      formatTimestamp(s.AddedAt),
+		Linked:       isLinked,
+		Available:    available,
+		LinkedServer: server,
 	}
 }
 
@@ -265,6 +269,9 @@ type episodeSummaryJSON struct {
 	// Episode rows carry it (.scratch/linked-servers issue 14).
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer names the sharing Server (ADR-0056 §6). Present only on a
+	// linked row.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 type episodesResponse struct {
@@ -352,10 +359,11 @@ func partSuffix(p episodePart) string {
 }
 
 func toEpisodeSummary(t store.Title, ws store.WatchState, version string, part episodePart, linked linkedState) episodeSummaryJSON {
-	isLinked, available := linked.decorate(t.LibraryID)
+	isLinked, available, server := linked.decorate(t.LibraryID)
 	js := episodeSummaryJSON{
 		Linked:           isLinked,
 		Available:        available,
+		LinkedServer:     server,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            displayTitle(t) + partSuffix(part),

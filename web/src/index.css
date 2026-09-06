@@ -5961,12 +5961,22 @@ textarea.metadata-input {
    linked Library is an ordinary Library to everyone using it, and the badge is a
    fact about where it came from, not a warning. Rendered by <LinkedMark>. */
 .linked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   font-size: 0.75rem;
   padding: 0.05rem 0.4rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/* The chain glyph that leads the badge (issue 18) — sized to the badge's own
+   text so the icon and the server name sit on one line. */
+.linked-badge-icon {
+  flex: none;
+  font-size: 0.85em;
 }
 
 .linked-provided {

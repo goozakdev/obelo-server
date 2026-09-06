@@ -39,8 +39,9 @@ func (f *linkedFixture) unreachable(t *testing.T) {
 // linkedMark is the pair as a client reads it: whether the fields were there at
 // all, and what they said.
 type linkedMark struct {
-	Linked    bool  `json:"linked"`
-	Available *bool `json:"available"`
+	Linked       bool   `json:"linked"`
+	Available    *bool  `json:"available"`
+	LinkedServer string `json:"linkedServer"`
 }
 
 // wantMirrored asserts a row is badged as a mirror whose Server is (or is not)
@@ -62,9 +63,9 @@ func wantMirrored(t *testing.T, what string, m linkedMark, available bool) {
 
 func wantLocal(t *testing.T, what string, m linkedMark) {
 	t.Helper()
-	if m.Linked || m.Available != nil {
-		t.Errorf("%s: a local row carried the linked fields (linked=%v available=%v)",
-			what, m.Linked, m.Available)
+	if m.Linked || m.Available != nil || m.LinkedServer != "" {
+		t.Errorf("%s: a local row carried the linked fields (linked=%v available=%v linkedServer=%q)",
+			what, m.Linked, m.Available, m.LinkedServer)
 	}
 }
 
@@ -128,6 +129,70 @@ func TestHomeRowsCarryTheLinkedMark(t *testing.T) {
 	wantMirrored(t, "continue watching, sharer away", rowFor(t, "continue watching", rows.ContinueWatching, mirrored), false)
 	wantMirrored(t, "recently added, sharer away", rowFor(t, "recently added", rows.RecentlyAdded, mirrored), false)
 	wantLocal(t, "continue watching (local), sharer away", rowFor(t, "continue watching", rows.ContinueWatching, local))
+}
+
+// TestLinkedRowsNameTheSharingServer is issue 18: the sharing Server's display
+// name now rides the wire (`linkedServer`), not the Admin-only `GET /links`
+// join, so a member-facing surface can name whose shelf a mirror is. It is on
+// the linked libraryJSON and on a linked Home row, and it equals the name the
+// home Server recorded on the Link. A local Library and a local Home row omit it.
+func TestLinkedRowsNameTheSharingServer(t *testing.T) {
+	f := linkFixtures(t, "movie")
+	localLib := createMovieLibrary(t, f.home, f.homeAdmin, fixtureRoot(t))
+	scanLib(t, f.home, f.homeAdmin, localLib, "")
+
+	// The name of record: what the home Server stored for this Link.
+	var links []linkResp
+	if status, body := f.home.AuthGET("/api/v1/links", f.homeAdmin, &links); status != http.StatusOK || len(links) != 1 {
+		t.Fatalf("GET /links = %d with %d links; body: %s", status, len(links), body)
+	}
+	want := links[0].ServerName
+	if want == "" {
+		t.Fatal("the fixture Link recorded no server name to assert against")
+	}
+
+	// libraryJSON: the mirror names its Server; the local shelf beside it omits it.
+	type libRow struct {
+		ID string `json:"id"`
+		linkedMark
+	}
+	var libraries struct {
+		Libraries []libRow `json:"libraries"`
+	}
+	if status, body := f.home.AuthGET("/api/v1/libraries", f.homeAdmin, &libraries); status != http.StatusOK {
+		t.Fatalf("GET /libraries = %d; body: %s", status, body)
+	}
+	var sawMirror, sawLocal bool
+	for _, l := range libraries.Libraries {
+		switch l.ID {
+		case f.mirror["movie"]:
+			sawMirror = true
+			wantMirrored(t, "linked libraryJSON", l.linkedMark, true)
+			if l.LinkedServer != want {
+				t.Errorf("linked libraryJSON linkedServer = %q, want %q", l.LinkedServer, want)
+			}
+		case localLib:
+			sawLocal = true
+			wantLocal(t, "local libraryJSON", l.linkedMark)
+		}
+	}
+	if !sawMirror || !sawLocal {
+		t.Fatalf("GET /libraries did not return both shelves (mirror=%v local=%v)", sawMirror, sawLocal)
+	}
+
+	// A Home row: the mirror names its Server there too.
+	mirrored := firstMirroredTitleID(t, f)
+	local := firstGridID(t, f.home, f.homeAdmin, localLib, "titles")
+	setWatchStateResume(t, f.home, f.homeAdmin, mirrored, 60000)
+	setWatchStateResume(t, f.home, f.homeAdmin, local, 60000)
+
+	rows := homeRows(t, f.home, f.homeAdmin)
+	if got := rowFor(t, "continue watching", rows.ContinueWatching, mirrored).LinkedServer; got != want {
+		t.Errorf("linked Home row linkedServer = %q, want %q", got, want)
+	}
+	if got := rowFor(t, "continue watching", rows.ContinueWatching, local).LinkedServer; got != "" {
+		t.Errorf("local Home row carried linkedServer = %q, want empty", got)
+	}
 }
 
 // --- Album rows ---------------------------------------------------------------
@@ -369,7 +434,7 @@ func TestNeverLinkedRowsCarryNoMark(t *testing.T) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("decoding %s: %v", path, err)
 		}
-		if key := findKey(doc, "linked", "available"); key != "" {
+		if key := findKey(doc, "linked", "available", "linkedServer"); key != "" {
 			t.Errorf("GET %s carried %q on a Server that has never linked: %s", path, key, raw)
 		}
 	}

@@ -1588,3 +1588,46 @@ describe("AdminNeedsFixingScreen — re-checking the settled rows", () => {
     await waitFor(() => expect(button).not.toBeDisabled());
   });
 });
+
+// Issue 18: a linked Library has no attention rows and nothing here can act on
+// it — the queue answers empty and every fix route refuses it — so it never
+// belongs in this picker, where it would only ever read "— all clear".
+describe("AdminNeedsFixingScreen — linked libraries are not fixable here", () => {
+  const linkedLib = () =>
+    lib({
+      id: "lib9",
+      name: "Kate's films",
+      rootFolders: [],
+      linked: true,
+      linkedServer: "Kate's Obelo",
+    });
+
+  it("keeps a linked library out of the picker and never counts it", async () => {
+    listLibraries.mockResolvedValue([lib(), linkedLib()]);
+    render();
+
+    const select = await screen.findByTestId("needs-fixing-library-select");
+    // The local shelf is offered; the mirror is not — by id, since a name is
+    // easy to collide.
+    const values = Array.from(select.querySelectorAll("option")).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
+    expect(values).toContain("lib1");
+    expect(values).not.toContain("lib9");
+    // The fix-count reads never touch the mirror either (they only run over the
+    // ids the picker offers).
+    await waitFor(() => expect(listUnmatched).toHaveBeenCalledWith("lib1", expect.anything()));
+    expect(listUnmatched).not.toHaveBeenCalledWith("lib9", expect.anything());
+  });
+
+  it("shows a natural empty state when every library is a mirror", async () => {
+    listLibraries.mockResolvedValue([linkedLib()]);
+    render();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("needs-fixing-no-libraries")).toBeInTheDocument(),
+    );
+    // No picker, because there is nothing on this side to pick.
+    expect(screen.queryByTestId("needs-fixing-library-select")).not.toBeInTheDocument();
+  });
+});

@@ -84,4 +84,36 @@ describe("LinkedMark — the rules", () => {
     render(<LinkedMark entity={{ linked: true }} testId="library-linked-badge" />);
     expect(screen.getByTestId("library-linked-badge")).toHaveTextContent("Linked");
   });
+
+  it("names the sharing server INLINE when the row carries it (issue 18)", () => {
+    // `linkedServer` now rides the row itself, so the badge reads the name off
+    // the entity — no /links join, so a Member sees it too.
+    render(
+      <LinkedMark entity={{ linked: true, linkedServer: "Kate's Obelo" }} />,
+    );
+    const badge = screen.getByTestId("linked-badge");
+    expect(badge).toHaveTextContent("Kate's Obelo");
+    // The chain icon leads the name.
+    expect(badge.querySelector("svg")).not.toBeNull();
+  });
+
+  it("falls back to 'Linked' when the row is a mirror but carries no name", () => {
+    // An older server, or a document that marks the row without naming the
+    // Server (the detail headers, which use `providedBy` instead).
+    render(<LinkedMark entity={{ linked: true }} />);
+    const badge = screen.getByTestId("linked-badge");
+    expect(badge).toHaveTextContent("Linked");
+    expect(badge.querySelector("svg")).not.toBeNull();
+  });
+
+  it("still greys an unreachable mirror that names its server", () => {
+    render(
+      <LinkedMark
+        entity={{ linked: true, available: false, linkedServer: "Kate's Obelo" }}
+      />,
+    );
+    const badge = screen.getByTestId("linked-badge");
+    expect(badge).toHaveTextContent("Kate's Obelo");
+    expect(badge).toHaveAttribute("data-available", "false");
+  });
 });

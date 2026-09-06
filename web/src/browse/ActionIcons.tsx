@@ -162,6 +162,34 @@ export function UnlinkIcon({ className }: IconProps) {
   );
 }
 
+/** Two interlocking chain links — "this is linked" provenance, worn beside a
+ * mirrored row's server name (issue 18). A whole, joined chain, deliberately the
+ * OPPOSITE meaning to UnlinkIcon above, which is a broken link (the admin action
+ * that severs a Link). Stroke-drawn on its own 24×24 grid rather than through the
+ * shared filled-path Svg wrapper, because a chain reads as two thin loops, not a
+ * solid silhouette; still 1em and currentColor like every other icon here. */
+export function LinkIcon({ className }: IconProps) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="presentation"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
 /** Thin plus-in-a-circle — "also place this file", on the file matcher. Distinct
  * artwork from WatchlistIcon above, which is the same gesture drawn solid. */
 export function AlsoPlaceIcon({ className }: IconProps) {
