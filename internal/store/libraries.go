@@ -453,6 +453,35 @@ func (db *DB) DeleteLibrariesForLink(linkID string) (int, error) {
 	return int(n), nil
 }
 
+// DeleteOrphanLinkedLibraries removes every linked Library whose link_id names no
+// Link that still exists — the exact debris a partial unlink leaves behind
+// (.scratch/linked-servers issue 17). Such a row is invisible to the per-Link
+// views (which filter WHERE link_id = <a live link>) yet present in every listing
+// that reads the whole table, so it surfaces as a Library that appears once on the
+// Linked servers page and twice in the browse menus, the second copy empty because
+// its catalog rows live under the surviving row's id.
+//
+// A `source = 'linked'` row with a NULL link_id is orphaned too — it can never be
+// refreshed or reached by unlink — so it is reaped by the same COALESCE. The
+// mirrored catalog rows beneath each reaped Library go with it via ON DELETE
+// CASCADE, and this household's Watch state for them with those. Returns how many
+// Libraries went.
+func (db *DB) DeleteOrphanLinkedLibraries() (int, error) {
+	res, err := db.Exec(
+		`DELETE FROM libraries
+		  WHERE source = ?
+		    AND COALESCE(link_id, '') NOT IN (SELECT id FROM links)`,
+		LibrarySourceLinked)
+	if err != nil {
+		return 0, fmt.Errorf("store: reaping orphaned linked libraries: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: reaping orphaned linked libraries: %w", err)
+	}
+	return int(n), nil
+}
+
 // DeleteLibrary removes a Library and (via ON DELETE CASCADE) its root folders
 // and empty catalog. Returns ErrNotFound if no such Library exists.
 func (db *DB) DeleteLibrary(id string) error {

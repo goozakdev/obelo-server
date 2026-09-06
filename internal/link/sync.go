@@ -482,20 +482,24 @@ func (s *Service) syncAfterLink(ctx context.Context, l store.Link) {
 // dropMirror is the other half of unlinking: the linked Libraries this Link
 // brought, their mirrored rows and the Watch state on them all go (ADR-0056 §6).
 // One DELETE, and the schema's cascades carry it down.
-func (s *Service) dropMirror(l store.Link) {
+// dropMirror removes the linked Libraries a Link brought (and, via ON DELETE
+// CASCADE, their mirrored rows and this household's Watch state on them). It
+// returns its error rather than swallowing it, because Unlink now removes the
+// mirror BEFORE the Link and must abort if this fails: deleting the Link first
+// and then failing here is precisely what orphans a linked Library.
+func (s *Service) dropMirror(l store.Link) error {
 	if s.mirror == nil {
-		return
+		return nil
 	}
 	n, err := s.mirror.DeleteLibrariesForLink(l.ID)
 	if err != nil {
-		log.Printf("obelo: link: unlinking %q: its mirrored libraries could not be removed (%v)",
-			l.ServerName, err)
-		return
+		return fmt.Errorf("its mirrored libraries could not be removed: %w", err)
 	}
 	if n > 0 {
 		log.Printf("obelo: link: unlinked %q and removed %d mirrored librar%s",
 			l.ServerName, n, plural(n))
 	}
+	return nil
 }
 
 func plural(n int) string {

@@ -149,6 +149,15 @@ func NewSyncer(svc *Service, opts SyncerOptions) *Syncer {
 // It returns an error only if the Links cannot be read at all. Everything after
 // that is a goroutine's problem, and none of it may fail a boot.
 func (sy *Syncer) Start(ctx context.Context) error {
+	// Reap any linked Library whose Link is gone before anything reads the table —
+	// the debris a partial unlink can leave (issue 17). No requests are served yet
+	// and no worker is running, so this is the one moment it races nothing.
+	if n, err := sy.svc.store.DeleteOrphanLinkedLibraries(); err != nil {
+		log.Printf("obelo: link: could not remove orphaned linked libraries at boot: %v", err)
+	} else if n > 0 {
+		log.Printf("obelo: link: removed %d orphaned linked librar%s left by an interrupted unlink", n, plural(n))
+	}
+
 	links, err := sy.svc.store.Links()
 	if err != nil {
 		return err
