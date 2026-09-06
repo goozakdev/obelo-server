@@ -105,8 +105,9 @@ func (p *stubPeer) counts() (probes, redeems int) {
 // database. It enforces the one invariant the real table's UNIQUE constraint
 // does: at most one Link per peer.
 type memStore struct {
-	mu    sync.Mutex
-	links []store.Link
+	mu          sync.Mutex
+	links       []store.Link
+	orphanReaps int
 }
 
 func (m *memStore) Links() ([]store.Link, error) {
@@ -188,6 +189,15 @@ func (m *memStore) update(id string, apply func(*store.Link)) error {
 		}
 	}
 	return store.ErrNotFound
+}
+
+// orphansReaped counts calls to the boot-time reaper; the memStore holds no
+// Libraries, so there is nothing for it to delete and it reports zero.
+func (m *memStore) DeleteOrphanLinkedLibraries() (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.orphanReaps++
+	return 0, nil
 }
 
 func (m *memStore) DeleteLink(id string) error {
@@ -622,5 +632,78 @@ func TestTheRedemptionPresentsThisServersIdentity(t *testing.T) {
 	}
 	if v, _ := body["linkProtocolVersion"].(float64); int(v) != 1 {
 		t.Errorf("redeem stamped version %v, want 1", body["linkProtocolVersion"])
+	}
+}
+
+// fakeMirror is a MirrorStore whose DeleteLibrariesForLink can be made to fail,
+// so the Unlink ordering (.scratch/linked-servers issue 17) can be exercised
+// without a database.
+type fakeMirror struct {
+	deleteErr   error
+	deleteCalls int
+}
+
+func (f *fakeMirror) UpsertLinkedLibrary(id, name, kind, linkID, remote string) (store.Library, error) {
+	return store.Library{ID: id, Name: name, Kind: kind, Source: store.LibrarySourceLinked,
+		LinkID: linkID, RemoteLibraryID: remote}, nil
+}
+func (f *fakeMirror) LibrariesForLink(string) ([]store.Library, error) { return nil, nil }
+func (f *fakeMirror) DeleteLibrariesForLink(string) (int, error) {
+	f.deleteCalls++
+	if f.deleteErr != nil {
+		return 0, f.deleteErr
+	}
+	return 1, nil
+}
+func (f *fakeMirror) SetLibraryCheckpoint(string, string) error            { return nil }
+func (f *fakeMirror) ApplyMirror(string, []store.MirrorEntity, bool) error { return nil }
+func (f *fakeMirror) TombstoneMirror(string) error                         { return nil }
+
+// TestUnlinkRemovesTheMirrorBeforeTheLink pins the happy-path order: the mirror
+// goes, then the Link. If the mirror were removed after the Link (the old order),
+// a failure would leave the Libraries orphaned.
+func TestUnlinkRemovesTheMirrorBeforeTheLink(t *testing.T) {
+	st := &memStore{}
+	m := &fakeMirror{}
+	svc := newService(t, st, Options{Mirror: m, Timeout: 200 * time.Millisecond})
+	if err := st.InsertLink(store.Link{ID: "L1", ServerID: "peer", ServerName: "Dave",
+		Origins: []string{"http://127.0.0.1:1"}, State: store.LinkStateConnected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Unlink(context.Background(), "L1"); err != nil {
+		t.Fatalf("Unlink: %v", err)
+	}
+	if m.deleteCalls != 1 {
+		t.Errorf("mirror delete called %d times, want 1", m.deleteCalls)
+	}
+	if links, _ := st.Links(); len(links) != 0 {
+		t.Errorf("%d links remain after unlinking, want 0", len(links))
+	}
+}
+
+// TestUnlinkAbortsRatherThanOrphaningWhenTheMirrorCannotBeRemoved is the fix for
+// the orphan-duplicate report: if the Libraries cannot be removed, the Link is
+// NOT deleted (deleting it is what would orphan them), the error is surfaced, and
+// the Link's freshness worker is stopped then restarted so it is not left dark.
+func TestUnlinkAbortsRatherThanOrphaningWhenTheMirrorCannotBeRemoved(t *testing.T) {
+	st := &memStore{}
+	m := &fakeMirror{deleteErr: errors.New("the database said no")}
+	svc := newService(t, st, Options{Mirror: m, Timeout: 200 * time.Millisecond})
+	var removed, added []store.Link
+	svc.OnUnlinked = func(l store.Link) { removed = append(removed, l) }
+	svc.OnLinked = func(l store.Link) { added = append(added, l) }
+
+	if err := st.InsertLink(store.Link{ID: "L1", ServerID: "peer", ServerName: "Dave",
+		Origins: []string{"http://127.0.0.1:1"}, State: store.LinkStateConnected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Unlink(context.Background(), "L1"); err == nil {
+		t.Fatalf("Unlink returned nil, want the mirror error surfaced")
+	}
+	if links, _ := st.Links(); len(links) != 1 {
+		t.Fatalf("%d links after a failed unlink, want 1 — the row must survive so its libraries are not orphaned", len(links))
+	}
+	if len(removed) != 1 || len(added) != 1 {
+		t.Errorf("worker stop/restart = (%d, %d), want (1, 1)", len(removed), len(added))
 	}
 }

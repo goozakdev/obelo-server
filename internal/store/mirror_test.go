@@ -333,3 +333,79 @@ func TestLinkedLibraryStatesFollowTheLink(t *testing.T) {
 		t.Error("a mirror on an unreachable Link still reported available")
 	}
 }
+
+// TestReapingRemovesALinkedLibraryWhoseLinkIsGone is the cleanup half of
+// .scratch/linked-servers issue 17: a partial unlink can delete a Link and leave
+// its Libraries behind — a row whose link_id names no Link, which shows twice in
+// the browse menus (the second copy empty) and cannot be reached to remove. The
+// boot-time reaper deletes exactly those, cascading their mirrored rows and Watch
+// state, and leaves a Library whose Link still lives untouched.
+func TestReapingRemovesALinkedLibraryWhoseLinkIsGone(t *testing.T) {
+	db := openTemp(t)
+	// A healthy Link with a mirror.
+	linkID, live := mirrorLibrary(t, db, "movie")
+	if err := db.ApplyMirror(live.ID, movieFeed(), true); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// An orphan: a linked Library pointing at a Link that no longer exists, with
+	// its own mirrored content so the cascade has something to remove.
+	if _, err := db.Exec(
+		`INSERT INTO libraries (id, name, kind, source, link_id, remote_library_id)
+		 VALUES ('orphan-lib', 'Ghost films', 'movie', ?, 'dead-link', 'their-lib')`,
+		store.LibrarySourceLinked); err != nil {
+		t.Fatalf("seeding the orphan: %v", err)
+	}
+	orphanFeed := []store.MirrorEntity{
+		{Type: store.ExportTitle, RemoteID: "og1", Data: map[string]any{
+			"title": "Ghost", "year": 1990, "identityKey": "ghost|1990", "sortTitle": "ghost",
+		}},
+		{Type: store.ExportEdition, RemoteID: "oe1", ParentID: "og1", Data: map[string]any{"name": "1080p"}},
+		{Type: store.ExportFile, RemoteID: "of1", ParentID: "oe1", Data: map[string]any{
+			"container": "mkv", "videoCodec": "h264", "partOrdinal": 1, "durationMs": 100000,
+		}},
+	}
+	if err := db.ApplyMirror("orphan-lib", orphanFeed, true); err != nil {
+		t.Fatalf("seeding the orphan's content: %v", err)
+	}
+
+	n, err := db.DeleteOrphanLinkedLibraries()
+	if err != nil {
+		t.Fatalf("reaping: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("reaper removed %d libraries, want 1 (the orphan only)", n)
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM libraries WHERE id = 'orphan-lib'`); got != 0 {
+		t.Errorf("the orphan library survived the reaper")
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM titles WHERE library_id = 'orphan-lib'`); got != 0 {
+		t.Errorf("the orphan's %d mirrored titles were not cascaded away", got)
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM libraries WHERE id = ?`, live.ID); got != 1 {
+		t.Errorf("the reaper took a Library whose Link is still alive")
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM titles WHERE library_id = ?`, live.ID); got == 0 {
+		t.Errorf("the live Library lost its mirrored titles")
+	}
+	_ = linkID
+}
+
+// TestReapingSparesLocalLibraries: a reaper keyed on source must never touch a
+// local Library, however the links table looks.
+func TestReapingSparesLocalLibraries(t *testing.T) {
+	db := openTemp(t)
+	if _, err := db.CreateLibrary("local-1", "Movies", "movie",
+		[]store.LibraryRootInput{{ID: "r1", Path: t.TempDir()}}); err != nil {
+		t.Fatalf("creating a local library: %v", err)
+	}
+	n, err := db.DeleteOrphanLinkedLibraries()
+	if err != nil {
+		t.Fatalf("reaping: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("reaper removed %d rows against a local-only server, want 0", n)
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM libraries WHERE source = 'local'`); got != 1 {
+		t.Errorf("the local library count is %d, want 1", got)
+	}
+}

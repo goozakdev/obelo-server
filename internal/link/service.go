@@ -29,6 +29,10 @@ type Store interface {
 	SetLinkState(id, state, lastError string) error
 	SetLinkSynced(id, syncedAt string) error
 	SetLinkActiveOrigin(id, origin string) error
+	// DeleteOrphanLinkedLibraries removes linked Libraries whose Link no longer
+	// exists — debris a partial unlink left behind. Run once at boot (watch.go),
+	// where there are no requests and no workers to race.
+	DeleteOrphanLinkedLibraries() (int, error)
 }
 
 // Identity is this Server's own id and name (ADR-0034), presented to the sharer
@@ -283,14 +287,30 @@ func (s *Service) Unlink(ctx context.Context, id string) error {
 			"its device row for this server may linger until it is revoked there", l.ServerName, err)
 	}
 
-	if err := s.store.DeleteLink(l.ID); err != nil {
-		return err
-	}
-	// The linked Libraries this Link brought, their mirrored rows and the Watch
-	// state on them (ADR-0056 §6, issue 07).
-	s.dropMirror(l)
+	// Stop this Link's freshness worker first, so a pull already in flight cannot
+	// re-create the very Libraries we are about to remove between the two deletes
+	// below.
 	if s.OnUnlinked != nil {
 		s.OnUnlinked(l)
+	}
+
+	// Remove the mirror BEFORE the Link, and abort if it fails. Deleting the Link
+	// first and then failing to remove its Libraries is exactly what orphans a
+	// linked Library — a row whose link_id names a Link that no longer exists,
+	// invisible to the per-Link views and doubled in every list that reads all
+	// Libraries. The linked Libraries this Link brought, their mirrored rows and
+	// the Watch state on them go here (ADR-0056 §6, issue 07).
+	if err := s.dropMirror(l); err != nil {
+		// The Link still stands; bring its worker back so it does not go dark until
+		// the next boot, and let the operator retry the unlink.
+		if s.OnLinked != nil {
+			s.OnLinked(l)
+		}
+		return fmt.Errorf("link: unlinking %q: %w", l.ServerName, err)
+	}
+
+	if err := s.store.DeleteLink(l.ID); err != nil {
+		return err
 	}
 	return nil
 }
