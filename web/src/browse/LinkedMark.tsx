@@ -94,10 +94,22 @@ export default function LinkedMark({
         // The hover text is the sentence LibraryListScreen already says; no new
         // copy, and the greying carries the meaning on its own for a viewer who
         // never hovers.
-        title={away ? "unavailable right now" : "shared with you"}
+        title={
+          name
+            ? away
+              ? `${name} — unavailable right now`
+              : `Shared from ${name}`
+            : away
+              ? "unavailable right now"
+              : "shared with you"
+        }
       >
         <LinkIcon className="linked-badge-icon" />
-        {name || "Linked"}
+        {/* The name can be long and a poster card is narrow, so the text — not
+            the icon — truncates with an ellipsis rather than overflowing the
+            card (the full name stays in the badge's title for hover, and screen
+            readers read it whole). */}
+        <span className="linked-badge-name">{name || "Linked"}</span>
       </span>
       {providedBy && (
         <span className="linked-provided" data-testid={`${testId}-provided`}>
