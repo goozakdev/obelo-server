@@ -821,6 +821,11 @@ export interface LinkedMarks {
    * friend's Server being down and must not be confused with a local row's
    * silence, which is why this is optional rather than defaulted to `true`. */
   available?: boolean;
+  /** The sharing Server's display name (ADR-0056 §6) — the provenance a
+   * surface names beside the link icon. Present only on a linked row, and it
+   * rides the row itself rather than an Admin-only `/links` join, so a Member
+   * sees whose shelf this is too. Absent on a local row. */
+  linkedServer?: string;
 }
 
 /** A Library as `GET /libraries` / `GET /libraries/{id}` return it. */

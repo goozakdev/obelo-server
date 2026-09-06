@@ -42,6 +42,9 @@ type artistSummaryJSON struct {
 	// Library (ADR-0056 §1, §6). Absent on a local Artist.
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer names the sharing Server (ADR-0056 §6). Present only on a
+	// linked row.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 type artistsResponse struct {
@@ -50,10 +53,10 @@ type artistsResponse struct {
 }
 
 func toArtistSummary(a store.Artist, linked linkedState) artistSummaryJSON {
-	isLinked, available := linked.decorate(a.LibraryID)
+	isLinked, available, server := linked.decorate(a.LibraryID)
 	return artistSummaryJSON{
 		ID: a.ID, LibraryID: a.LibraryID, Kind: "artist", Name: a.Name,
-		Linked: isLinked, Available: available,
+		Linked: isLinked, Available: available, LinkedServer: server,
 	}
 }
 
@@ -120,6 +123,10 @@ type albumJSON struct {
 	// from (.scratch/linked-servers issue 14).
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer names the sharing Server (ADR-0056 §6). Present only on a
+	// linked row — including the search group, where an Album has no Artist beside
+	// it to inherit the name from.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 type albumsResponse struct {
@@ -128,17 +135,18 @@ type albumsResponse struct {
 }
 
 func toAlbumJSON(a store.Album, linked linkedState) albumJSON {
-	isLinked, available := linked.decorate(a.LibraryID)
+	isLinked, available, server := linked.decorate(a.LibraryID)
 	return albumJSON{
-		ID:          a.ID,
-		ArtistID:    a.ArtistID,
-		Title:       a.Title,
-		Year:        a.Year,
-		HasArtwork:  a.ArtworkPath != "",
-		ReleaseType: a.ReleaseType,
-		TrackCount:  a.TrackCount,
-		Linked:      isLinked,
-		Available:   available,
+		ID:           a.ID,
+		ArtistID:     a.ArtistID,
+		Title:        a.Title,
+		Year:         a.Year,
+		HasArtwork:   a.ArtworkPath != "",
+		ReleaseType:  a.ReleaseType,
+		TrackCount:   a.TrackCount,
+		Linked:       isLinked,
+		Available:    available,
+		LinkedServer: server,
 	}
 }
 
@@ -184,6 +192,9 @@ type trackSummaryJSON struct {
 	// (.scratch/linked-servers issue 14).
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer names the sharing Server (ADR-0056 §6). Present only on a
+	// linked row.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 type tracksResponse struct {
@@ -192,10 +203,11 @@ type tracksResponse struct {
 }
 
 func toTrackSummary(t store.Title, ws store.WatchState, linked linkedState) trackSummaryJSON {
-	isLinked, available := linked.decorate(t.LibraryID)
+	isLinked, available, server := linked.decorate(t.LibraryID)
 	js := trackSummaryJSON{
 		Linked:           isLinked,
 		Available:        available,
+		LinkedServer:     server,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            displayTitle(t),

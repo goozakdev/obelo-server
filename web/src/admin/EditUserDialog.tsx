@@ -4,6 +4,7 @@ import { errorMessage } from "../screens/errorMessage";
 import { formatDateTime } from "../time";
 import QrSvg from "../lib/QrSvg";
 import { tailnetAddress } from "./AdminRemoteAccessScreen";
+import LinkedMark from "../browse/LinkedMark";
 import type { LinkInvite, Library, User, UserDetail } from "../api/types";
 
 // The Edit-User dialog: everything an Admin can change about an existing User,
@@ -558,6 +559,11 @@ export default function EditUserDialog({
                               disabled={saving}
                             />{" "}
                             {lib.name}
+                            {/* A linked shelf is grantable to a person, but the
+                                Admin should see whose it is before sharing it on
+                                (issue 18). The mark never shows for a `remote`
+                                target — those rows are filtered out above. */}
+                            <LinkedMark entity={lib} />
                           </label>
                         </li>
                       ))}

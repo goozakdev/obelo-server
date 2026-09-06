@@ -355,32 +355,47 @@ func (db *DB) LibrariesForLink(linkID string) ([]Library, error) {
 	return out, rows.Err()
 }
 
-// LinkedLibraryStates maps every linked Library's id to whether its sharing
-// Server is currently reachable — `available` on the wire (ADR-0056 §6). Today
-// that is exactly "its Link is connected"; issue 08 owns the state machine that
-// moves it.
+// LinkedLibraryState is the per-linked-Library answer the wire needs: whether the
+// sharing Server is reachable (`available`) and the display name that Server was
+// linked under (`linkedServer`, the provenance a member-facing surface names).
+type LinkedLibraryState struct {
+	// Available is whether the sharing Server is currently reachable — today
+	// exactly "its Link is connected".
+	Available bool
+	// ServerName is the sharing Server's display name, as this household recorded
+	// it on the Link. Empty only for a mirror whose Link row is somehow gone.
+	ServerName string
+}
+
+// LinkedLibraryStates maps every linked Library's id to its sharing Server's
+// reachability and name — `available` / `linkedServer` on the wire (ADR-0056 §6).
+// Today reachability is exactly "its Link is connected"; issue 08 owns the state
+// machine that moves it.
 //
 // It returns nil (not an empty map) when nothing here came over a Link, which is
 // the common case and lets a caller skip the decoration entirely.
-func (db *DB) LinkedLibraryStates() (map[string]bool, error) {
+func (db *DB) LinkedLibraryStates() (map[string]LinkedLibraryState, error) {
 	rows, err := db.Query(
-		`SELECT l.id, COALESCE(k.state, '') FROM libraries l
+		`SELECT l.id, COALESCE(k.state, ''), COALESCE(k.server_name, '') FROM libraries l
 		    LEFT JOIN links k ON k.id = l.link_id
 		   WHERE l.source = ?`, LibrarySourceLinked)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading linked library states: %w", err)
 	}
 	defer rows.Close()
-	var out map[string]bool
+	var out map[string]LinkedLibraryState
 	for rows.Next() {
-		var id, state string
-		if err := rows.Scan(&id, &state); err != nil {
+		var id, state, serverName string
+		if err := rows.Scan(&id, &state, &serverName); err != nil {
 			return nil, fmt.Errorf("store: scanning linked library state: %w", err)
 		}
 		if out == nil {
-			out = map[string]bool{}
+			out = map[string]LinkedLibraryState{}
 		}
-		out[id] = state == LinkStateConnected
+		out[id] = LinkedLibraryState{
+			Available:  state == LinkStateConnected,
+			ServerName: serverName,
+		}
 	}
 	return out, rows.Err()
 }

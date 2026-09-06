@@ -304,6 +304,30 @@ describe("EditUserDialog — a linked Library is never re-shared", () => {
     expect(screen.queryByTestId("linked-not-grantable")).toBeNull();
   });
 
+  it("names the sharing server beside a linked Library on a Member's grant list (issue 18)", async () => {
+    const NAMED = [
+      lib("l1", "Kids Movies"),
+      {
+        ...lib("l9", "Their Films"),
+        linked: true,
+        available: true,
+        linkedServer: "Kate's Obelo",
+      },
+    ];
+    listLibraries.mockResolvedValue(NAMED);
+    getUser.mockResolvedValue(detail({ libraryIds: [] }));
+    renderDialog(usr({}));
+
+    await screen.findByTestId("library-checklist");
+    // The linked shelf stays grantable AND names whose it is.
+    expect(screen.getByTestId("library-checkbox-l9")).toBeInTheDocument();
+    const badge = screen.getByTestId("linked-badge");
+    expect(badge).toHaveTextContent("Kate's Obelo");
+    expect(badge.querySelector("svg")).not.toBeNull();
+    // Exactly one mark — the local shelf beside it wears none.
+    expect(screen.getAllByTestId("linked-badge")).toHaveLength(1);
+  });
+
   it("shows no note for a linked server when nothing here came over a Link", async () => {
     getUser.mockResolvedValue(detail({ role: "remote" }));
     renderDialog(usr({ role: "remote" }));

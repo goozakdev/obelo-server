@@ -57,6 +57,10 @@ type homeTitleJSON struct {
 	// arrived (.scratch/linked-servers issue 14).
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer names the sharing Server (ADR-0056 §6). Present only on a
+	// linked row — the provenance a member sees on a card with no Library screen
+	// around it.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 type homeResponse struct {
@@ -66,10 +70,11 @@ type homeResponse struct {
 }
 
 func toHomeTitle(t catalog.HomeTitle, linked linkedState) homeTitleJSON {
-	isLinked, available := linked.decorate(t.LibraryID)
+	isLinked, available, server := linked.decorate(t.LibraryID)
 	j := homeTitleJSON{
 		Linked:           isLinked,
 		Available:        available,
+		LinkedServer:     server,
 		ID:               t.ID,
 		Kind:             t.Kind,
 		Title:            t.Title.Title,

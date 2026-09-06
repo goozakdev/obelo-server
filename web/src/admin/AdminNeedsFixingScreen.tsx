@@ -207,25 +207,33 @@ export default function AdminNeedsFixingScreen() {
     });
   }, [selected]);
 
-  // Default the selection to the first library once the list loads.
+  // A linked Library has no attention rows and nothing here can act on it — the
+  // Scanner and enrichment pass skip it, every fix route refuses it, and the
+  // queue answers empty (ADR-0056 §1). So it never belongs in this picker: it
+  // would only ever read "— all clear" and mislead. Filter it out (absent
+  // `linked` means local, the rule LinkedMark follows) and this screen is about
+  // the shelves it can fix (issue 18).
+  const localLibs = useMemo(
+    () => (libs.status === "ready" ? libs.data.filter((l) => l.linked !== true) : []),
+    [libs],
+  );
+
+  // Default the selection to the first fixable library once the list loads.
   useEffect(() => {
-    if (libs.status === "ready" && selected === "" && libs.data.length > 0) {
-      setSelected(libs.data[0].id);
+    if (selected === "" && localLibs.length > 0) {
+      setSelected(localLibs[0].id);
     }
-  }, [libs, selected]);
+  }, [localLibs, selected]);
 
   const library = useMemo(
-    () => (libs.status === "ready" ? libs.data.find((l) => l.id === selected) : undefined),
-    [libs, selected],
+    () => localLibs.find((l) => l.id === selected),
+    [localLibs, selected],
   );
 
   // Per-Library open counts, so the selector answers "where is the work?" before the
   // Admin has to click through each Library to find out. Best-effort — an
   // uncountable Library just shows no number.
-  const libraryIds = useMemo(
-    () => (libs.status === "ready" ? libs.data.map((l) => l.id) : []),
-    [libs],
-  );
+  const libraryIds = useMemo(() => localLibs.map((l) => l.id), [localLibs]);
   const counts = useFixCounts(libraryIds, reloadToken);
 
   return (
@@ -248,8 +256,19 @@ export default function AdminNeedsFixingScreen() {
           </p>
         </div>
       )}
+      {libs.status === "ready" &&
+        libs.data.length > 0 &&
+        localLibs.length === 0 && (
+          <div className="card" data-testid="needs-fixing-no-libraries">
+            <p className="status status-loading">
+              Every library here is provided by a linked server, so there is
+              nothing to fix on this side — a mirror is managed on the server
+              that owns it.
+            </p>
+          </div>
+        )}
 
-      {libs.status === "ready" && libs.data.length > 0 && (
+      {libs.status === "ready" && localLibs.length > 0 && (
         <>
           <div className="needs-fixing-toolbar">
             <label className="field needs-fixing-library-picker">
@@ -260,7 +279,7 @@ export default function AdminNeedsFixingScreen() {
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}
               >
-                {libs.data.map((lib) => (
+                {localLibs.map((lib) => (
                   <option key={lib.id} value={lib.id}>
                     {lib.name}
                     {counts[lib.id] === undefined

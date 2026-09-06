@@ -65,6 +65,9 @@ type titleSummaryJSON struct {
 	// `available` is a pointer.
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer is the sharing Server's display name (ADR-0056 §6) — the
+	// provenance a member-facing surface names. Present only on a linked row.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 type titlesResponse struct {
@@ -85,7 +88,7 @@ func mergeEnrichment(t store.Title, enr map[string]store.Title) store.Title {
 }
 
 func toTitleSummary(t store.Title, ws store.WatchState, genres []string, linked linkedState) titleSummaryJSON {
-	isLinked, available := linked.decorate(t.LibraryID)
+	isLinked, available, server := linked.decorate(t.LibraryID)
 	return titleSummaryJSON{
 		ID:               t.ID,
 		Kind:             t.Kind,
@@ -107,6 +110,7 @@ func toTitleSummary(t store.Title, ws store.WatchState, genres []string, linked 
 		EnrichmentStatus: t.EnrichmentStatus,
 		Linked:           isLinked,
 		Available:        available,
+		LinkedServer:     server,
 	}
 }
 

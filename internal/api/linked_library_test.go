@@ -106,10 +106,11 @@ func (f *linkedFixture) resync(t *testing.T) {
 
 var uuidLike = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// mirrorDropped is `dropped` (the Export's deliberate omissions) plus the two
-// fields the mirror ADDS. A linked Title says linked/available and the sharer's
-// own copy of it does not — that difference is the feature, not a mismatch.
-var mirrorDropped = map[string]bool{"linked": true, "available": true}
+// mirrorDropped is `dropped` (the Export's deliberate omissions) plus the
+// fields the mirror ADDS. A linked Title says linked/available/linkedServer and
+// the sharer's own copy of it does not — that difference is the feature, not a
+// mismatch.
+var mirrorDropped = map[string]bool{"linked": true, "available": true, "linkedServer": true}
 
 // normalizeAcrossServers strips what the two Servers cannot agree on and folds
 // every id to a placeholder. The ids MUST differ — the mirror mints its own and

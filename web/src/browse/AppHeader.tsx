@@ -5,6 +5,7 @@ import { useFeature } from "../serverInfoContext";
 import { useEnrichmentActivity } from "../events/enrichEvents";
 import { useLibraries } from "./librariesContext";
 import { MusicIcon, FilmIcon, TvIcon } from "./kindIcons";
+import LinkedMark from "./LinkedMark";
 import type { Library } from "../api/types";
 
 // The shared authed header: app title (links to the landing) on the left, the
@@ -331,6 +332,9 @@ function MediaNav({ libraries }: { libraries: Library[] }) {
         const libs = libraries.filter((lib) => lib.kind === kind);
         if (libs.length === 0) return null;
         if (libs.length === 1) {
+          // When the ONLY Library of a kind is a mirror, this kind link is a
+          // mirror too — so it wears the same LinkIcon + server name a linked
+          // Library row does, right here in the nav (issue 18).
           return (
             <Link
               key={kind}
@@ -340,6 +344,7 @@ function MediaNav({ libraries }: { libraries: Library[] }) {
             >
               <Icon />
               <span>{label}</span>
+              <LinkedMark entity={libs[0]} />
             </Link>
           );
         }
@@ -422,7 +427,10 @@ function LibraryDropdown({
                 data-library-id={lib.id}
                 onClick={() => setOpen(false)}
               >
-                {lib.name}
+                <span>{lib.name}</span>
+                {/* A linked shelf in the menu names its sharing Server (issue
+                    18), the same LinkIcon + name every other surface shows. */}
+                <LinkedMark entity={lib} />
               </Link>
             </li>
           ))}

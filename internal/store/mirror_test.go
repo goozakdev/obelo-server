@@ -301,8 +301,9 @@ func TestUnlinkingDeletesTheWholeMirror(t *testing.T) {
 }
 
 // TestLinkedLibraryStatesFollowTheLink: `available` is "the Link is connected"
-// today, and a local Library is not in the map at all — which is what keeps the
-// two wire fields off every Server that has never linked.
+// today, `serverName` is the name the Link was recorded under, and a local
+// Library is not in the map at all — which is what keeps the wire fields off
+// every Server that has never linked.
 func TestLinkedLibraryStatesFollowTheLink(t *testing.T) {
 	db := openTemp(t)
 	linkID, lib := mirrorLibrary(t, db, "movie")
@@ -315,8 +316,12 @@ func TestLinkedLibraryStatesFollowTheLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading states: %v", err)
 	}
-	if available, ok := states[lib.ID]; !ok || !available {
-		t.Errorf("a mirror on a connected Link reported %v/%v", available, ok)
+	st, ok := states[lib.ID]
+	if !ok || !st.Available {
+		t.Errorf("a mirror on a connected Link reported %+v/%v", st, ok)
+	}
+	if st.ServerName != "Dave's server" {
+		t.Errorf("a mirror carried server name %q, want %q", st.ServerName, "Dave's server")
 	}
 	if _, ok := states[local.ID]; ok {
 		t.Error("a local Library appeared in the linked-library states")
@@ -329,8 +334,11 @@ func TestLinkedLibraryStatesFollowTheLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-reading states: %v", err)
 	}
-	if states[lib.ID] {
+	if states[lib.ID].Available {
 		t.Error("a mirror on an unreachable Link still reported available")
+	}
+	if states[lib.ID].ServerName != "Dave's server" {
+		t.Errorf("an unreachable mirror lost its server name: %q", states[lib.ID].ServerName)
 	}
 }
 

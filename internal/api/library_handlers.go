@@ -30,6 +30,10 @@ type libraryJSON struct {
 	// down, and it must not be confused with a local Library's silence.
 	Linked    bool  `json:"linked,omitempty"`
 	Available *bool `json:"available,omitempty"`
+	// LinkedServer is the sharing Server's display name (ADR-0056 §6). Present
+	// only on a linked Library, so any authenticated User — not just an Admin
+	// reading /links — can name whose shelf this is.
+	LinkedServer string `json:"linkedServer,omitempty"`
 }
 
 func toLibraryJSON(l store.Library, linked linkedState) libraryJSON {
@@ -37,15 +41,16 @@ func toLibraryJSON(l store.Library, linked linkedState) libraryJSON {
 	for _, r := range l.Roots {
 		roots = append(roots, libraryRootJSON{ID: r.ID, Path: r.Path})
 	}
-	isLinked, available := linkedFromLibrary(l, linked)
+	isLinked, available, server := linkedFromLibrary(l, linked)
 	return libraryJSON{
-		ID:          l.ID,
-		Name:        l.Name,
-		Kind:        l.Kind,
-		CreatedAt:   formatTimestamp(l.CreatedAt),
-		RootFolders: roots,
-		Linked:      isLinked,
-		Available:   available,
+		ID:           l.ID,
+		Name:         l.Name,
+		Kind:         l.Kind,
+		CreatedAt:    formatTimestamp(l.CreatedAt),
+		RootFolders:  roots,
+		Linked:       isLinked,
+		Available:    available,
+		LinkedServer: server,
 	}
 }
 
