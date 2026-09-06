@@ -5970,6 +5970,9 @@ textarea.metadata-input {
   border: 1px solid var(--border);
   color: var(--text-dim);
   white-space: nowrap;
+  /* A poster card is only as wide as its artwork, so the badge must never push
+     past it: cap it to the caption width and let the name (below) ellipsis. */
+  max-width: 100%;
 }
 
 /* The chain glyph that leads the badge (issue 18) — sized to the badge's own
@@ -5977,6 +5980,16 @@ textarea.metadata-input {
 .linked-badge-icon {
   flex: none;
   font-size: 0.85em;
+}
+
+/* The server name (issue 18). It, not the icon, gives way when the badge is
+   wider than its narrow home: a long "Kate's Media Server" truncates instead of
+   overflowing a poster card. min-width:0 lets it shrink inside the flex badge. */
+.linked-badge-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .linked-provided {
