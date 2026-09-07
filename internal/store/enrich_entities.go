@@ -538,19 +538,30 @@ func (db *DB) LibrariesCreditingPerson(personRef string) ([]string, error) {
 // EntityArtworkRolesForMany returns, for a page of entity ids of one type, the
 // set of roles each has fetched artwork for (keyed by id). Lets the Show grid
 // decide whether to advertise a poster URL without an N+1 existence check.
+//
+// It UNIONs entity_artwork (local/fetched/uploaded rows on THIS Server) with
+// linked_entity_artwork (the roles a mirrored entity's sharer advertises, landed
+// by the mirror — .scratch/linked-servers issue 19). A local entity has no linked
+// rows and a mirrored one has no entity_artwork rows, so the union is exactly one
+// side per entity and the decorators (decorateShow/decorateArtist/decorateAlbum)
+// stay on one code path for both.
 func (db *DB) EntityArtworkRolesForMany(entityType string, ids []string) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	if len(ids) == 0 {
 		return out, nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, entityType)
+	oneSide := make([]any, 0, len(ids)+1)
+	oneSide = append(oneSide, entityType)
 	for _, id := range ids {
-		args = append(args, id)
+		oneSide = append(oneSide, id)
 	}
+	args := append(append([]any{}, oneSide...), oneSide...)
 	rows, err := db.Query(
 		`SELECT entity_id, role FROM entity_artwork
+		   WHERE entity_type = ? AND entity_id IN (`+placeholders+`)
+		 UNION
+		 SELECT entity_id, role FROM linked_entity_artwork
 		   WHERE entity_type = ? AND entity_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading entity artwork roles: %w", err)
@@ -582,14 +593,25 @@ func (db *DB) EntityArtworkVersionsForMany(entityType string, ids []string) (map
 		return out, nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, entityType)
+	oneSide := make([]any, 0, len(ids)+1)
+	oneSide = append(oneSide, entityType)
 	for _, id := range ids {
-		args = append(args, id)
+		oneSide = append(oneSide, id)
 	}
+	args := append(append([]any{}, oneSide...), oneSide...)
+	// UNIONs the local token (newest entity_artwork added_at) with the mirrored one
+	// (linked_entity_artwork.version, the sharer's entity-level cache-bust token
+	// landed by the mirror — .scratch/linked-servers issue 19). A linked entity has
+	// no entity_artwork rows and a local one no linked rows, so MAX picks the one
+	// side that exists.
 	rows, err := db.Query(
-		`SELECT entity_id, MAX(added_at) FROM entity_artwork
-		   WHERE entity_type = ? AND entity_id IN (`+placeholders+`) GROUP BY entity_id`, args...)
+		`SELECT entity_id, MAX(v) FROM (
+		     SELECT entity_id, added_at AS v FROM entity_artwork
+		       WHERE entity_type = ? AND entity_id IN (`+placeholders+`)
+		     UNION ALL
+		     SELECT entity_id, version AS v FROM linked_entity_artwork
+		       WHERE entity_type = ? AND entity_id IN (`+placeholders+`)
+		 ) GROUP BY entity_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading entity artwork versions: %w", err)
 	}
