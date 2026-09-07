@@ -614,6 +614,9 @@ func (db *DB) decorateExport(entities []ExportEntity) error {
 				e.Data["cast"] = c
 			}
 		}
+		if err := db.decorateExportTitleArtwork(byTitle); err != nil {
+			return err
+		}
 	}
 
 	if len(byEntity) == 0 {
@@ -630,13 +633,13 @@ func (db *DB) decorateExport(entities []ExportEntity) error {
 }
 
 // decorateExportArtwork attaches `artworkRoles` + `artworkVersion` to a page's
-// Show/Artist/Album entities (.scratch/linked-servers issue 19). These are the
-// one thing about a mirrored entity's artwork the receiver cannot recover on its
-// own: which roles the sharer advertises and a token that changes when the image
-// does. The bytes themselves never cross here — they are relayed on demand and
-// cached (ADR-0056 §5) — so this carries the SIGNAL, not the file.
+// Show/Season/Artist/Album entities (.scratch/linked-servers issues 19, 20).
+// These are the one thing about a mirrored entity's artwork the receiver cannot
+// recover on its own: which roles the sharer advertises and a token that changes
+// when the image does. The bytes themselves never cross here — they are relayed
+// on demand and cached (ADR-0056 §5) — so this carries the SIGNAL, not the file.
 //
-// Roles come from entity_artwork for all three types (every source — a local,
+// Roles come from entity_artwork for all four types (every source — a local,
 // fetched or uploaded image is servable and therefore advertisable), PLUS an
 // Album's LOCAL cover, which lives in albums.artwork_path rather than in
 // entity_artwork. The version is the newest entity_artwork added_at for the
@@ -644,13 +647,14 @@ func (db *DB) decorateExport(entities []ExportEntity) error {
 // absent for an Album whose only cover is the local file (which carries no such
 // token, exactly as decorateAlbum leaves it on the sharer). Emitted only when the
 // entity actually has artwork, so a mirror advertises nothing the sharer lacks
-// (no 404 storms). Seasons and Movies are out of scope (issue 19): a Season
-// poster and a Movie poster remain a mirror gap.
+// (no 404 storms). A Season folds in here exactly like a Show (issue 20); a Movie
+// poster lives in the `artwork` table instead and is carried by
+// decorateExportTitleArtwork.
 func (db *DB) decorateExportArtwork(byEntity map[string]*ExportEntity) error {
 	var ids []string
 	for _, e := range byEntity {
 		switch e.Type {
-		case ExportShow, ExportArtist, ExportAlbum:
+		case ExportShow, ExportSeason, ExportArtist, ExportAlbum:
 			ids = append(ids, e.ID)
 		}
 	}
@@ -664,7 +668,7 @@ func (db *DB) decorateExportArtwork(byEntity map[string]*ExportEntity) error {
 
 	art, err := db.Query(
 		`SELECT entity_type, entity_id, role, added_at FROM entity_artwork
-		   WHERE entity_type IN ('show','artist','album') AND entity_id IN (`+ph+`)`, args...)
+		   WHERE entity_type IN ('show','season','artist','album') AND entity_id IN (`+ph+`)`, args...)
 	if err != nil {
 		return fmt.Errorf("store: exporting entity artwork: %w", err)
 	}
@@ -728,6 +732,73 @@ func (db *DB) decorateExportArtwork(byEntity map[string]*ExportEntity) error {
 		sort.Strings(list)
 		e.Data["artworkRoles"] = list
 		putStr(e.Data, "artworkVersion", exportInstant(version[k]))
+	}
+	return nil
+}
+
+// decorateExportTitleArtwork attaches `artworkRoles` + `artworkVersion` to a
+// page's MOVIE entities (.scratch/linked-servers issue 20), the Title analogue of
+// decorateExportArtwork. A Title's artwork lives in the `artwork` table keyed by
+// title_id (roles poster/background/logo, every source servable), not in
+// entity_artwork — so it needs its own read, but lands under the same two `data`
+// keys and rides the same mirror/read machinery as a Show's.
+//
+// Only ExportTitle (movies) are decorated: an Episode still already advertises off
+// its enrichment status and a Track uses the album cover, so neither carries a
+// redundant signal here (issue 20). Emitted only when the movie actually has
+// artwork, so a mirror advertises nothing the sharer lacks.
+func (db *DB) decorateExportTitleArtwork(byTitle map[string]*ExportEntity) error {
+	var ids []string
+	for _, e := range byTitle {
+		if e.Type == ExportTitle {
+			ids = append(ids, e.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	ph, args := inPlaceholders(ids)
+
+	roles := map[string]map[string]bool{} // title id -> set of roles
+	version := map[string]string{}        // title id -> newest added_at
+
+	rows, err := db.Query(
+		`SELECT title_id, role, added_at FROM artwork WHERE title_id IN (`+ph+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("store: exporting title artwork: %w", err)
+	}
+	for rows.Next() {
+		var id, role, added string
+		if err := rows.Scan(&id, &role, &added); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("store: scanning exported title artwork: %w", err)
+		}
+		if roles[id] == nil {
+			roles[id] = map[string]bool{}
+		}
+		roles[id][role] = true
+		if added > version[id] {
+			version[id] = added
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("store: exporting title artwork: %w", err)
+	}
+	_ = rows.Close()
+
+	for id, e := range byTitle {
+		rs := roles[id]
+		if len(rs) == 0 {
+			continue
+		}
+		list := make([]string, 0, len(rs))
+		for r := range rs {
+			list = append(list, r)
+		}
+		sort.Strings(list)
+		e.Data["artworkRoles"] = list
+		putStr(e.Data, "artworkVersion", exportInstant(version[id]))
 	}
 	return nil
 }

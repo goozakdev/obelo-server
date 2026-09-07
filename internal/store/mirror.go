@@ -458,7 +458,10 @@ func (m *mirrorTx) writeSeason(id string, isNew bool, showID string, e MirrorEnt
 	if err != nil {
 		return fmt.Errorf("store: mirroring season: %w", err)
 	}
-	return m.writeEntityExtras(EntitySeason, id, d)
+	if err := m.writeEntityExtras(EntitySeason, id, d); err != nil {
+		return err
+	}
+	return m.writeLinkedArtwork(EntitySeason, id, d)
 }
 
 func (m *mirrorTx) writeArtist(id string, isNew bool, e MirrorEntity) error {
@@ -599,6 +602,16 @@ func (m *mirrorTx) writeTitle(id string, isNew bool, parent string, e MirrorEnti
 			id, c.person, c.role, c.character, c.kind, i, c.personRef,
 		); err != nil {
 			return fmt.Errorf("store: mirroring title credit: %w", err)
+		}
+	}
+	// A mirrored MOVIE carries its artwork SIGNAL the same way a Show does (issue
+	// 20): the sharer's export attaches artworkRoles/artworkVersion only to movies
+	// (an Episode still and a Track cover advertise off other copied signals), so
+	// this lands only for ExportTitle. writeLinkedArtwork's DELETE also clears the
+	// rows when a re-pull finds the movie's art gone — a tombstone by absence.
+	if e.Type == ExportTitle {
+		if err := m.writeLinkedArtwork(EntityTitle, id, d); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -758,21 +771,22 @@ func (m *mirrorTx) writeEntityExtras(entityType, id string, d map[string]any) er
 	return nil
 }
 
-// writeLinkedArtwork replaces a mirrored Show's / Artist's / Album's advertised
-// artwork SIGNAL (.scratch/linked-servers issue 19): the roles the sharer offers
-// for it and an entity-level cache-bust version, from the Export's `artworkRoles`
-// + `artworkVersion`. Nothing servable is written — the bytes are relayed on
-// demand and cached (link.RelayArtwork, ADR-0056 §5) — so this lands in the
-// SIGNAL-ONLY linked_entity_artwork table (migration 0064) and never in
-// entity_artwork, whose rows carry a servable path.
+// writeLinkedArtwork replaces a mirrored entity's advertised artwork SIGNAL
+// (.scratch/linked-servers issues 19, 20): the roles the sharer offers for it and
+// an entity-level cache-bust version, from the Export's `artworkRoles` +
+// `artworkVersion`. Called for a mirrored Show/Season/Artist/Album and a mirrored
+// Movie (entity_type 'title'). Nothing servable is written — the bytes are
+// relayed on demand and cached (link.RelayArtwork, ADR-0056 §5) — so this lands
+// in the SIGNAL-ONLY linked_entity_artwork table (migration 0064) and never in
+// entity_artwork / the artwork table, whose rows carry a servable path.
 //
 // REPLACE-per-entity, exactly like writeEntityExtras: the sharer dropping all of
 // an entity's art leaves an empty `artworkRoles`, the DELETE clears the rows, and
 // the mirror stops advertising it — a tombstone by absence, the mirror's own
-// model. The read path (EntityArtworkRolesForMany / EntityArtworkVersionsForMany)
-// unions these rows in for a LINKED entity, so decorateShow / decorateArtist /
-// decorateAlbum advertise a mirrored image on the same one code path a local one
-// takes.
+// model. The read path (EntityArtworkRolesForMany / EntityArtworkVersionsForMany
+// for parents, ArtworkVersionsForTitles + artworkForTitle for a movie) unions
+// these rows in for a LINKED entity, so the decorators advertise a mirrored image
+// on the same one code path a local one takes.
 func (m *mirrorTx) writeLinkedArtwork(entityType, id string, d map[string]any) error {
 	if _, err := m.tx.Exec(
 		`DELETE FROM linked_entity_artwork WHERE entity_type = ? AND entity_id = ?`,

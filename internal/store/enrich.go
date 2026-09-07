@@ -529,7 +529,15 @@ func (db *DB) GenresForTitles(titleIDs []string) (map[string][]string, error) {
 // now), and a rescan likewise rewrites the local row, that timestamp changes
 // exactly when the served bytes could have changed. A browse client uses it as
 // the poster cache-bust token so a re-fetched image reloads while text-only
-// edits leave the poster untouched. Mirrors GenresForTitles (no N+1).
+// edits leave the poster untouched — and, being non-empty, is the very signal
+// that tells the grid to REQUEST the poster (which then relays for a mirror).
+// Mirrors GenresForTitles (no N+1).
+//
+// It UNIONs the local `artwork` table with linked_entity_artwork (entity_type
+// 'title'), the roles a mirrored MOVIE's sharer advertises, landed by the mirror
+// (.scratch/linked-servers issue 20). A local Title has no linked rows and a
+// mirrored one no `artwork` rows, so exactly one side answers per Title and the
+// grid gets a non-empty version for a mirrored movie just as for a local one.
 func (db *DB) ArtworkVersionsForTitles(titleIDs []string) (map[string]string, error) {
 	out := map[string]string{}
 	if len(titleIDs) == 0 {
@@ -541,8 +549,13 @@ func (db *DB) ArtworkVersionsForTitles(titleIDs []string) (map[string]string, er
 		args[i] = id
 	}
 	rows, err := db.Query(
-		`SELECT title_id, MAX(added_at) FROM artwork
-		   WHERE title_id IN (`+placeholders+`) GROUP BY title_id`, args...)
+		`SELECT title_id, MAX(v) FROM (
+		     SELECT title_id, added_at AS v FROM artwork
+		       WHERE title_id IN (`+placeholders+`)
+		     UNION ALL
+		     SELECT entity_id AS title_id, version AS v FROM linked_entity_artwork
+		       WHERE entity_type = 'title' AND entity_id IN (`+placeholders+`)
+		 ) GROUP BY title_id`, append(append([]any{}, args...), args...)...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading artwork versions: %w", err)
 	}

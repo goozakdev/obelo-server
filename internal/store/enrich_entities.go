@@ -29,6 +29,12 @@ const (
 	// Library — entity_id is the provider-namespaced person ref ("tmdb:<id>"), and
 	// one row (role='profile') is shared by every Title that credits the person.
 	EntityPerson = "person"
+	// EntityTitle keys a mirrored Movie's artwork SIGNAL in linked_entity_artwork
+	// (.scratch/linked-servers issue 20). A LOCAL Title's artwork lives in the
+	// `artwork` table (title_id), never in entity_artwork — so this type appears
+	// only on the linked side, as the roles/version a mirrored movie's sharer
+	// advertises for the byte relay.
+	EntityTitle = "title"
 )
 
 // EntityEnrichment is the read shape of a parent entity's enriched metadata.

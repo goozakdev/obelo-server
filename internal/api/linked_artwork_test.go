@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,13 +37,18 @@ type artFixture struct {
 	remoteUser  string
 	rec         *relayRecorder
 
-	tvLib, musicLib       string // sharer-side library ids
-	mirrorTV, mirrorMusic string // home-side (mirror) library ids
+	tvLib, musicLib, movieLib          string // sharer-side library ids
+	mirrorTV, mirrorMusic, mirrorMovie string // home-side (mirror) library ids
 
 	// The sharer-side ids and titles of the entities the test uploaded art to.
 	showID, showTitle    string
 	artistID, artistName string
 	albumID, albumTitle  string
+	movieID, movieTitle  string
+	// The show whose Season 01 carries a local poster (issue 20), and that season's
+	// number — the season artwork the mirror must advertise + relay.
+	seasonShowTitle string
+	seasonNumber    int
 }
 
 func linkArtworkFixture(t *testing.T) *artFixture {
@@ -52,10 +59,28 @@ func linkArtworkFixture(t *testing.T) *artFixture {
 	f.sharer = testharness.New(t)
 	f.sharerAdmin = adminToken(t, f.sharer)
 
-	f.tvLib = createTVLibrary(t, f.sharer, f.sharerAdmin, tvRoot(t))
+	// A MUTABLE tv tree so the seasons that carry a local `Season NN.jpg` poster
+	// serve KNOWN bytes: "Double Show (2020)" already ships one, overwritten here so
+	// assertRelayed can compare the sharer's exact image (issue 20 — Season art
+	// folds into issue 19's entity_artwork machinery).
+	tvDir := testharness.MutableLibraryDir(t, tvRoot(t))
+	// The show FOLDER is "Double Show (2020)"; its parsed grid title drops the year.
+	f.seasonShowTitle, f.seasonNumber = "Double Show", 1
+	writeSeasonPoster(t, tvDir, "Double Show (2020)", "Season 01.jpg", pngImage("season-poster"))
+	f.tvLib = createTVLibrary(t, f.sharer, f.sharerAdmin, tvDir)
 	scanLib(t, f.sharer, f.sharerAdmin, f.tvLib, "")
 	f.musicLib = createMusicLibrary(t, f.sharer, f.sharerAdmin, musicRoot(t))
 	scanLib(t, f.sharer, f.sharerAdmin, f.musicLib, "")
+
+	// A Movie library: its artwork lives in the `artwork` table (issue 20's extra
+	// work), uploaded to the first movie before the link so the first pull carries
+	// the poster/background/logo signal.
+	f.movieLib = createMovieLibrary(t, f.sharer, f.sharerAdmin, fixtureRoot(t))
+	scanLib(t, f.sharer, f.sharerAdmin, f.movieLib, "")
+	f.movieID, f.movieTitle = firstRow(t, f.sharer, f.sharerAdmin, f.movieLib, "titles")
+	uploadArtwork(t, f.sharer, f.sharerAdmin, "/api/v1/titles/"+f.movieID+"/artworkUpload?role=poster", "image/png", pngImage("movie-poster"), nil)
+	uploadArtwork(t, f.sharer, f.sharerAdmin, "/api/v1/titles/"+f.movieID+"/artworkUpload?role=background", "image/png", pngImage("movie-background"), nil)
+	uploadArtwork(t, f.sharer, f.sharerAdmin, "/api/v1/titles/"+f.movieID+"/artworkUpload?role=logo", "image/png", pngImage("movie-logo"), nil)
 
 	// The Show gets a poster and a background but deliberately NO logo — a role the
 	// sharer lacks, which the mirror must not advertise.
@@ -70,7 +95,7 @@ func linkArtworkFixture(t *testing.T) *artFixture {
 	uploadEntityArt(t, f.sharer, f.sharerAdmin, "albums", f.albumID, "cover", pngImage("album-cover"))
 
 	f.remoteUser = createRemoteUser(t, f.sharer, f.sharerAdmin, "The other household")
-	grantLibraries(t, f.sharer, f.sharerAdmin, f.remoteUser, f.tvLib, f.musicLib)
+	grantLibraries(t, f.sharer, f.sharerAdmin, f.remoteUser, f.tvLib, f.musicLib, f.movieLib)
 
 	// The invite origin is the RECORDER, so every byte the home Server fetches is
 	// inspectable — which is how "fetched once" becomes an assertion.
@@ -90,10 +115,12 @@ func linkArtworkFixture(t *testing.T) *artFixture {
 			f.mirrorTV = lib.ID
 		case "music":
 			f.mirrorMusic = lib.ID
+		case "movie":
+			f.mirrorMovie = lib.ID
 		}
 	}
-	if f.mirrorTV == "" || f.mirrorMusic == "" {
-		t.Fatalf("the link did not bring both libraries: %+v", l.Libraries)
+	if f.mirrorTV == "" || f.mirrorMusic == "" || f.mirrorMovie == "" {
+		t.Fatalf("the link did not bring all libraries: %+v", l.Libraries)
 	}
 	return f
 }
@@ -182,7 +209,95 @@ func TestRelayArtworkVersionReflectsASharerChange(t *testing.T) {
 	}
 }
 
+// TestRelayArtworkForMirroredMovie is issue 20's movie half: a mirrored Movie
+// advertises its poster in the GRID (a non-empty artworkVersion, the signal that
+// makes the client request the poster) and poster/background/logo on the DETAIL —
+// and each URL relays the sharer's exact bytes and serves them from cache after,
+// the sharer asked once. A Movie's artwork lives in the `artwork` table, so this
+// exercises both read paths (ArtworkVersionsForTitles for the grid, the detail
+// artwork[] for the hero).
+func TestRelayArtworkForMirroredMovie(t *testing.T) {
+	f := linkArtworkFixture(t)
+
+	// --- Grid: the version signal that makes the client ask for the poster ------
+	movie := mirroredRow(t, f.home, f.homeAdmin, f.mirrorMovie, "titles", "title", f.movieTitle)
+	movieID := str(movie, "id")
+	if str(movie, "artworkVersion") == "" {
+		t.Fatalf("mirrored movie grid row carries no artworkVersion, so the client never asks for its poster: %+v", movie)
+	}
+	posterURL := "/api/v1/titles/" + movieID + "/artwork/poster"
+	assertRelayedOnce(t, f, posterURL, pngImage("movie-poster"), "/api/v1/titles/")
+
+	// --- Detail: the hero advertises every mirrored role ------------------------
+	var detail map[string]any
+	if st, body := f.home.AuthGET("/api/v1/titles/"+movieID, f.homeAdmin, &detail); st != http.StatusOK {
+		t.Fatalf("GET mirrored movie detail = %d; body: %s", st, body)
+	}
+	art := artworkURLsByRole(detail)
+	for _, role := range []string{"poster", "background", "logo"} {
+		if art[role] == "" {
+			t.Fatalf("mirrored movie detail did not advertise the %s the sharer has: %+v", role, detail["artwork"])
+		}
+	}
+	assertRelayed(t, f, art["background"], pngImage("movie-background"))
+	assertRelayed(t, f, art["logo"], pngImage("movie-logo"))
+}
+
+// TestRelayArtworkForMirroredSeason is issue 20's season half: a mirrored Season
+// with a local poster on the sharer advertises a posterUrl, which relays the
+// sharer's exact bytes. Seasons fold into issue 19's entity_artwork machinery, so
+// this proves the fold works end to end.
+func TestRelayArtworkForMirroredSeason(t *testing.T) {
+	f := linkArtworkFixture(t)
+
+	show := mirroredRow(t, f.home, f.homeAdmin, f.mirrorTV, "shows", "title", f.seasonShowTitle)
+	var seasons map[string]any
+	if st, body := f.home.AuthGET("/api/v1/shows/"+str(show, "id")+"/seasons", f.homeAdmin, &seasons); st != http.StatusOK {
+		t.Fatalf("GET mirrored show seasons = %d; body: %s", st, body)
+	}
+	var poster string
+	for _, s := range rawList(seasons, "seasons") {
+		if int(numOf(s, "seasonNumber")) == f.seasonNumber {
+			poster = str(s, "posterUrl")
+		}
+	}
+	if poster == "" {
+		t.Fatalf("mirrored season %d advertised no posterUrl: %+v", f.seasonNumber, rawList(seasons, "seasons"))
+	}
+	if !strings.Contains(poster, "?v=") {
+		t.Errorf("mirrored season poster carries no cache-bust version: %q", poster)
+	}
+	assertRelayedOnce(t, f, poster, pngImage("season-poster"), "/api/v1/seasons/")
+}
+
 // --- helpers ------------------------------------------------------------------
+
+// writeSeasonPoster overwrites (or creates) a `Season NN.jpg` poster in a show
+// folder of a mutable library tree, so the sharer serves KNOWN bytes for it.
+func writeSeasonPoster(t *testing.T, root, showFolder, name string, img []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, showFolder, name), img, 0o644); err != nil {
+		t.Fatalf("writing season poster: %v", err)
+	}
+}
+
+// artworkURLsByRole maps a Title detail's artwork[] to role -> url.
+func artworkURLsByRole(detail map[string]any) map[string]string {
+	out := map[string]string{}
+	raw, _ := detail["artwork"].([]any)
+	for _, a := range raw {
+		if m, ok := a.(map[string]any); ok {
+			out[str(m, "role")] = str(m, "url")
+		}
+	}
+	return out
+}
+
+// numOf reads a JSON number field (they decode as float64).
+func numOf(m map[string]any, key string) float64 {
+	v, _ := m[key].(float64)
+	return v
+}
 
 // uploadEntityArt uploads one image to a Show/Artist/Album role on a Server.
 func uploadEntityArt(t *testing.T, srv *testharness.Server, token, plural, id, role string, img []byte) {
