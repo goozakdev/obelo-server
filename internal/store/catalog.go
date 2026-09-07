@@ -1128,6 +1128,46 @@ func (db *DB) artworkForTitle(titleID string) ([]Artwork, error) {
 		seen[a.Role] = true
 		out = append(out, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// A mirrored MOVIE has no local `artwork` rows — its bytes are relayed on
+	// demand (issue 20) — so its detail artwork comes from the SIGNAL table the
+	// mirror landed: the roles the sharer advertises and their cache-bust version.
+	// A local Title never has linked rows, so this fallback fires only for a
+	// mirror, keeping the detail's artwork[] builder on one code path.
+	if len(out) == 0 {
+		linked, err := db.linkedArtworkForTitle(titleID)
+		if err != nil {
+			return nil, err
+		}
+		out = linked
+	}
+	return out, nil
+}
+
+// linkedArtworkForTitle reads a mirrored Movie's advertised artwork SIGNAL from
+// linked_entity_artwork (entity_type 'title'): one Artwork per role, its AddedAt
+// carrying the sharer's cache-bust version (so the detail hero busts on a swap)
+// and Source "linked" (there is no local file — the bytes relay). Empty for a
+// local Title, which has no such rows.
+func (db *DB) linkedArtworkForTitle(titleID string) ([]Artwork, error) {
+	rows, err := db.Query(
+		`SELECT role, version FROM linked_entity_artwork
+		   WHERE entity_type = 'title' AND entity_id = ? ORDER BY role`, titleID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing linked title artwork: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Artwork
+	for rows.Next() {
+		var role, version string
+		if err := rows.Scan(&role, &version); err != nil {
+			return nil, fmt.Errorf("store: scanning linked title artwork: %w", err)
+		}
+		out = append(out, Artwork{TitleID: titleID, Role: role, Source: "linked", AddedAt: version})
+	}
 	return out, rows.Err()
 }
 
