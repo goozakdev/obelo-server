@@ -623,7 +623,113 @@ func (db *DB) decorateExport(entities []ExportEntity) error {
 	for k := range byEntity {
 		keys = append(keys, k)
 	}
-	return db.decorateExportEntities(keys, byEntity)
+	if err := db.decorateExportEntities(keys, byEntity); err != nil {
+		return err
+	}
+	return db.decorateExportArtwork(byEntity)
+}
+
+// decorateExportArtwork attaches `artworkRoles` + `artworkVersion` to a page's
+// Show/Artist/Album entities (.scratch/linked-servers issue 19). These are the
+// one thing about a mirrored entity's artwork the receiver cannot recover on its
+// own: which roles the sharer advertises and a token that changes when the image
+// does. The bytes themselves never cross here — they are relayed on demand and
+// cached (ADR-0056 §5) — so this carries the SIGNAL, not the file.
+//
+// Roles come from entity_artwork for all three types (every source — a local,
+// fetched or uploaded image is servable and therefore advertisable), PLUS an
+// Album's LOCAL cover, which lives in albums.artwork_path rather than in
+// entity_artwork. The version is the newest entity_artwork added_at for the
+// entity — the exact token EntityArtworkVersionsForMany computes locally — and is
+// absent for an Album whose only cover is the local file (which carries no such
+// token, exactly as decorateAlbum leaves it on the sharer). Emitted only when the
+// entity actually has artwork, so a mirror advertises nothing the sharer lacks
+// (no 404 storms). Seasons and Movies are out of scope (issue 19): a Season
+// poster and a Movie poster remain a mirror gap.
+func (db *DB) decorateExportArtwork(byEntity map[string]*ExportEntity) error {
+	var ids []string
+	for _, e := range byEntity {
+		switch e.Type {
+		case ExportShow, ExportArtist, ExportAlbum:
+			ids = append(ids, e.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	ph, args := inPlaceholders(ids)
+
+	roles := map[string]map[string]bool{} // "<type>\x00<id>" -> set of roles
+	version := map[string]string{}        // "<type>\x00<id>" -> newest added_at
+
+	art, err := db.Query(
+		`SELECT entity_type, entity_id, role, added_at FROM entity_artwork
+		   WHERE entity_type IN ('show','artist','album') AND entity_id IN (`+ph+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("store: exporting entity artwork: %w", err)
+	}
+	for art.Next() {
+		var typ, id, role, added string
+		if err := art.Scan(&typ, &id, &role, &added); err != nil {
+			_ = art.Close()
+			return fmt.Errorf("store: scanning exported entity artwork: %w", err)
+		}
+		k := typ + "\x00" + id
+		if roles[k] == nil {
+			roles[k] = map[string]bool{}
+		}
+		roles[k][role] = true
+		if added > version[k] {
+			version[k] = added
+		}
+	}
+	if err := art.Err(); err != nil {
+		_ = art.Close()
+		return fmt.Errorf("store: exporting entity artwork: %w", err)
+	}
+	_ = art.Close()
+
+	// An Album's LOCAL cover (cover.jpg/folder.jpg) is albums.artwork_path, not an
+	// entity_artwork row — decorateAlbum flips HasArtwork on it locally without a
+	// role. It advertises the same single "cover" over the Link; its version stays
+	// absent, like a local-only cover's does on the sharer.
+	alb, err := db.Query(
+		`SELECT id FROM albums WHERE artwork_path <> '' AND id IN (`+ph+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("store: exporting album cover: %w", err)
+	}
+	for alb.Next() {
+		var id string
+		if err := alb.Scan(&id); err != nil {
+			_ = alb.Close()
+			return fmt.Errorf("store: scanning exported album cover: %w", err)
+		}
+		k := ExportAlbum + "\x00" + id
+		if roles[k] == nil {
+			roles[k] = map[string]bool{}
+		}
+		roles[k]["cover"] = true
+	}
+	if err := alb.Err(); err != nil {
+		_ = alb.Close()
+		return fmt.Errorf("store: exporting album cover: %w", err)
+	}
+	_ = alb.Close()
+
+	for k, e := range byEntity {
+		rs := roles[k]
+		if len(rs) == 0 {
+			continue
+		}
+		list := make([]string, 0, len(rs))
+		for r := range rs {
+			list = append(list, r)
+		}
+		sort.Strings(list)
+		e.Data["artworkRoles"] = list
+		putStr(e.Data, "artworkVersion", exportInstant(version[k]))
+	}
+	return nil
 }
 
 // exportCredit is one cast/crew member as it crosses the Link: the same fields

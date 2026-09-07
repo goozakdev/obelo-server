@@ -433,7 +433,10 @@ func (m *mirrorTx) writeShow(id string, isNew bool, e MirrorEntity) error {
 	if err != nil {
 		return fmt.Errorf("store: mirroring show: %w", err)
 	}
-	return m.writeEntityExtras(EntityShow, id, d)
+	if err := m.writeEntityExtras(EntityShow, id, d); err != nil {
+		return err
+	}
+	return m.writeLinkedArtwork(EntityShow, id, d)
 }
 
 func (m *mirrorTx) writeSeason(id string, isNew bool, showID string, e MirrorEntity) error {
@@ -479,7 +482,10 @@ func (m *mirrorTx) writeArtist(id string, isNew bool, e MirrorEntity) error {
 	if err != nil {
 		return fmt.Errorf("store: mirroring artist: %w", err)
 	}
-	return m.writeEntityExtras(EntityArtist, id, d)
+	if err := m.writeEntityExtras(EntityArtist, id, d); err != nil {
+		return err
+	}
+	return m.writeLinkedArtwork(EntityArtist, id, d)
 }
 
 func (m *mirrorTx) writeAlbum(id string, isNew bool, artistID string, e MirrorEntity) error {
@@ -505,7 +511,10 @@ func (m *mirrorTx) writeAlbum(id string, isNew bool, artistID string, e MirrorEn
 	if err != nil {
 		return fmt.Errorf("store: mirroring album: %w", err)
 	}
-	return m.writeEntityExtras(EntityAlbum, id, d)
+	if err := m.writeEntityExtras(EntityAlbum, id, d); err != nil {
+		return err
+	}
+	return m.writeLinkedArtwork(EntityAlbum, id, d)
 }
 
 // mirrorTitleKind maps the three Title wire types onto the one column that tells
@@ -744,6 +753,44 @@ func (m *mirrorTx) writeEntityExtras(entityType, id string, d map[string]any) er
 			c.person, c.character, c.kind, i, c.personRef,
 		); err != nil {
 			return fmt.Errorf("store: mirroring entity credit: %w", err)
+		}
+	}
+	return nil
+}
+
+// writeLinkedArtwork replaces a mirrored Show's / Artist's / Album's advertised
+// artwork SIGNAL (.scratch/linked-servers issue 19): the roles the sharer offers
+// for it and an entity-level cache-bust version, from the Export's `artworkRoles`
+// + `artworkVersion`. Nothing servable is written — the bytes are relayed on
+// demand and cached (link.RelayArtwork, ADR-0056 §5) — so this lands in the
+// SIGNAL-ONLY linked_entity_artwork table (migration 0064) and never in
+// entity_artwork, whose rows carry a servable path.
+//
+// REPLACE-per-entity, exactly like writeEntityExtras: the sharer dropping all of
+// an entity's art leaves an empty `artworkRoles`, the DELETE clears the rows, and
+// the mirror stops advertising it — a tombstone by absence, the mirror's own
+// model. The read path (EntityArtworkRolesForMany / EntityArtworkVersionsForMany)
+// unions these rows in for a LINKED entity, so decorateShow / decorateArtist /
+// decorateAlbum advertise a mirrored image on the same one code path a local one
+// takes.
+func (m *mirrorTx) writeLinkedArtwork(entityType, id string, d map[string]any) error {
+	if _, err := m.tx.Exec(
+		`DELETE FROM linked_entity_artwork WHERE entity_type = ? AND entity_id = ?`,
+		entityType, id,
+	); err != nil {
+		return fmt.Errorf("store: clearing mirrored entity artwork: %w", err)
+	}
+	version := mirrorStr(d, "artworkVersion")
+	for _, role := range mirrorStrings(d, "artworkRoles") {
+		if role == "" {
+			continue
+		}
+		if _, err := m.tx.Exec(
+			`INSERT OR REPLACE INTO linked_entity_artwork (entity_type, entity_id, role, version)
+			 VALUES (?,?,?,?)`,
+			entityType, id, role, version,
+		); err != nil {
+			return fmt.Errorf("store: mirroring entity artwork: %w", err)
 		}
 	}
 	return nil
