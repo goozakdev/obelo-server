@@ -15,6 +15,7 @@ func TestBuildProviderComposition(t *testing.T) {
 			TMDBAPIKey:           "tmdb-key",
 			MusicBrainzEnabled:   true,
 			MusicBrainzRateLimit: 2 * time.Second,
+			CoverArtBaseURL:      "https://cover.test",
 		})
 		if en != (Enablement{Video: true, Music: true}) {
 			t.Errorf("enablement = %+v, want video+music on", en)
@@ -26,14 +27,23 @@ func TestBuildProviderComposition(t *testing.T) {
 		if got := pluginSlug(comp.Video); got != SlugTMDB {
 			t.Errorf("video = %q (%T), want the tmdb Plugin", got, comp.Video)
 		}
-		// No image key: Music stays plain MusicBrainz, NOT wrapped in the chain.
-		mb, ok := comp.Music.(*MusicBrainzProvider)
-		if !ok {
-			t.Fatalf("music = %T, want plain *MusicBrainzProvider", comp.Music)
+		// No image key: Music stays the plain lead Plugin, NOT wrapped in the chain.
+		if got := pluginSlug(comp.Music); got != SlugMusicBrainz {
+			t.Fatalf("music = %q (%T), want the plain musicbrainz Plugin", got, comp.Music)
 		}
-		// The operator's throttle policy is threaded through to the host.
+		// The operator's throttle policy is threaded through to the host — now through
+		// the Plugin's Settings, so this asserts the whole path the setting takes.
+		mb := musicBrainzBehind(comp.Music)
+		if mb == nil {
+			t.Fatalf("music Plugin is not built around a *MusicBrainzProvider: %T", comp.Music)
+		}
 		if mb.MinInterval != 2*time.Second {
 			t.Errorf("MinInterval = %v, want 2s (honoring MusicBrainzRateLimit)", mb.MinInterval)
+		}
+		// And the Cover Art Archive host reaches it as the Plugin's SECOND url, which
+		// is the whole of what Cover Art Archive's factory-less registration does.
+		if mb.CoverArtURL != "https://cover.test" {
+			t.Errorf("CoverArtURL = %q, want the configured Cover Art host", mb.CoverArtURL)
 		}
 	})
 
@@ -59,8 +69,8 @@ func TestBuildProviderComposition(t *testing.T) {
 			t.Errorf("enablement = %+v, want both off", en)
 		}
 		comp := provider.(CompositeProvider)
-		if _, ok := comp.Music.(*MusicBrainzProvider); !ok {
-			t.Errorf("music = %T, want plain *MusicBrainzProvider (music off)", comp.Music)
+		if got := pluginSlug(comp.Music); got != SlugMusicBrainz {
+			t.Errorf("music = %q (%T), want the plain musicbrainz Plugin (music off)", got, comp.Music)
 		}
 	})
 
@@ -265,8 +275,8 @@ func TestBuildProviderComposition(t *testing.T) {
 		if !ok {
 			t.Fatalf("provider = %T, want CompositeProvider", provider)
 		}
-		if _, ok := comp.Music.(*MusicBrainzProvider); !ok {
-			t.Errorf("music = %T, want plain *MusicBrainzProvider", comp.Music)
+		if got := pluginSlug(comp.Music); got != SlugMusicBrainz {
+			t.Errorf("music = %q (%T), want the plain musicbrainz Plugin", got, comp.Music)
 		}
 	})
 }

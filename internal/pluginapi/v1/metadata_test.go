@@ -127,11 +127,15 @@ func metadataWireCases() []wireCase {
 				Disambiguation: "Part one of a two-part adaptation.",
 				Kind:           "movie",
 				TypeLabel:      "Album · Soundtrack",
+				Tracklist:      []TrackCandidate{{Disc: 1, Position: 3, Title: "Wasted Time"}},
+				ReleaseID:      "9c9f1380-2516-4fc9-a3e6-f9f61941d090",
 			},
 			golden: `{"externalId":"438631","title":"Dune","year":2021,` +
 				`"thumbnailUrl":"https://images.example.test/t.jpg",` +
 				`"disambiguation":"Part one of a two-part adaptation.","kind":"movie",` +
-				`"typeLabel":"Album · Soundtrack"}`,
+				`"typeLabel":"Album · Soundtrack",` +
+				`"tracklist":[{"disc":1,"position":3,"title":"Wasted Time"}],` +
+				`"releaseId":"9c9f1380-2516-4fc9-a3e6-f9f61941d090"}`,
 		},
 		{
 			name: "SearchResponse",
@@ -215,6 +219,99 @@ func metadataWireCases() []wireCase {
 			golden: `{"outcome":"matched","episodes":[{"season":2,"episode":5,"name":"Breakage"}],` +
 				`"detail":"1 episode"}`,
 		},
+		{
+			name: "TrackCandidate",
+			value: TrackCandidate{
+				Disc:       2,
+				Position:   4,
+				Title:      "(I Could Only) Whisper Your Name",
+				ExternalID: "f2b67b28-6b1b-4c56-b1cd-1a0b4b1c2b21",
+			},
+			golden: `{"disc":2,"position":4,"title":"(I Could Only) Whisper Your Name",` +
+				`"externalId":"f2b67b28-6b1b-4c56-b1cd-1a0b4b1c2b21"}`,
+		},
+		{
+			name: "TracklistRequest",
+			value: TracklistRequest{
+				ReleaseGroupID:  "b1392450-e666-3926-a536-22c65f834433",
+				ReleaseID:       "9c9f1380-2516-4fc9-a3e6-f9f61941d090",
+				ReleaseIDChosen: true,
+				LocalTrackCount: 12,
+			},
+			golden: `{"releaseGroupId":"b1392450-e666-3926-a536-22c65f834433",` +
+				`"releaseId":"9c9f1380-2516-4fc9-a3e6-f9f61941d090","releaseIdChosen":true,` +
+				`"localTrackCount":12}`,
+		},
+		{
+			name: "TracklistResponse",
+			value: TracklistResponse{
+				Outcome: OutcomeMatched,
+				Tracks:  []TrackCandidate{{Position: 1, Title: "Airbag"}},
+				Detail:  "1 track",
+			},
+			golden: `{"outcome":"matched","tracks":[{"position":1,"title":"Airbag"}],"detail":"1 track"}`,
+		},
+		{
+			name:   "ReleaseEditionsRequest",
+			value:  ReleaseEditionsRequest{ReleaseGroupID: "b1392450-e666-3926-a536-22c65f834433", Page: Page{Limit: 100}},
+			golden: `{"releaseGroupId":"b1392450-e666-3926-a536-22c65f834433","limit":100}`,
+		},
+		{
+			name: "ReleaseEdition",
+			value: ReleaseEdition{
+				ReleaseID:      "9c9f1380-2516-4fc9-a3e6-f9f61941d090",
+				Date:           "1997-06-16",
+				Country:        "GB",
+				Format:         "CD",
+				TrackCount:     12,
+				Disambiguation: "deluxe edition",
+			},
+			golden: `{"releaseId":"9c9f1380-2516-4fc9-a3e6-f9f61941d090","date":"1997-06-16",` +
+				`"country":"GB","format":"CD","trackCount":12,"disambiguation":"deluxe edition"}`,
+		},
+		{
+			name: "ReleaseEditionsResponse",
+			value: ReleaseEditionsResponse{
+				Outcome:  OutcomeMatched,
+				Editions: []ReleaseEdition{{ReleaseID: "9c9f1380-2516-4fc9-a3e6-f9f61941d090", TrackCount: 12}},
+				Detail:   "1 edition",
+			},
+			golden: `{"outcome":"matched","editions":[{"releaseId":"9c9f1380-2516-4fc9-a3e6-f9f61941d090",` +
+				`"trackCount":12}],"detail":"1 edition"}`,
+		},
+		{
+			name:   "ExternalRefRequest",
+			value:  ExternalRefRequest{Kind: "album", Pasted: "https://musicbrainz.org/release/9c9f1380-2516-4fc9-a3e6-f9f61941d090"},
+			golden: `{"kind":"album","pasted":"https://musicbrainz.org/release/9c9f1380-2516-4fc9-a3e6-f9f61941d090"}`,
+		},
+		{
+			name: "ExternalRefResponse",
+			value: ExternalRefResponse{
+				Outcome:    OutcomeRefKindMismatch,
+				ExternalID: "b1392450-e666-3926-a536-22c65f834433",
+				ReleaseID:  "9c9f1380-2516-4fc9-a3e6-f9f61941d090",
+				GotKind:    "artist",
+				WantKind:   "track",
+				Detail:     "that is an artist link",
+			},
+			golden: `{"outcome":"ref-kind-mismatch","externalId":"b1392450-e666-3926-a536-22c65f834433",` +
+				`"releaseId":"9c9f1380-2516-4fc9-a3e6-f9f61941d090","gotKind":"artist",` +
+				`"wantKind":"track","detail":"that is an artist link"}`,
+		},
+	}
+}
+
+// TestCapabilityAlbumTracklistCoversBothCalls: one declaration, two calls. The
+// tracklist and the edition list are the automatic and the manual half of one
+// question, so a Plugin declaring album-tracklist may be asked for either — which
+// is what the host's single capability check relies on.
+func TestCapabilityAlbumTracklistCoversBothCalls(t *testing.T) {
+	d := Descriptor{Capabilities: []Capability{CapabilityAlbumTracklist}}
+	if !d.HasCapability(CapabilityAlbumTracklist) {
+		t.Fatal("a declared capability was not reported")
+	}
+	if d.HasCapability(CapabilityExternalRef) || d.HasCapability(CapabilityEpisodeList) {
+		t.Error("declaring album-tracklist must not imply any other capability")
 	}
 }
 

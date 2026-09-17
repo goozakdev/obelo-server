@@ -317,6 +317,82 @@ func TestMusicChainTrackSynopsisFilledFromTheAudioDB(t *testing.T) {
 	}
 }
 
+// TestMusicChainSkipsTheSynopsisForACandidateTheHostWillReject closes issue 01's
+// third deviation. Moving the acceptance test out of MusicBrainz meant the chain
+// stopped seeing a rejection and started decorating candidates the service was
+// about to discard — one wasted TheAudioDB request per rejected Track, hundreds on
+// a real library.
+//
+// The fix is a PRECONDITION, not a verdict: the chain asks the host's own rule
+// whether this record is one the host will keep, and the service still produces
+// ErrMatchRejected and the `search-rejected` reason a moment later.
+func TestMusicChainSkipsTheSynopsisForACandidateTheHostWillReject(t *testing.T) {
+	// A search hit whose title is a DIFFERENT song — what a relevance query returns
+	// when the local track is not in the index.
+	hit := mbTrackResult()
+	hit.Name, hit.FromSearch = "Creep (Acoustic Version by Someone Else)", true
+	mb := &stubProvider{meta: hit}
+	audioDB := &stubProvider{meta: TitleMetadata{Matched: true, Overview: "A synopsis nobody will read."}}
+	chain := NewMusicChainProvider(mb, nil, audioDB)
+
+	ref := TitleRef{Kind: "track", Track: "Paranoid Android", Artist: "Radiohead"}
+	got, err := chain.Lookup(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if audioDB.calls != 0 {
+		t.Errorf("theaudiodb was asked for a synopsis for a candidate the host rejects (%d calls); want 0", audioDB.calls)
+	}
+	// The record is still handed UP unjudged: the host, not the chain, rejects it.
+	if _, err := acceptSearchHit(ref, got, nil); !errors.Is(err, ErrMatchRejected) {
+		t.Errorf("the host's verdict = %v, want ErrMatchRejected — the chain must not settle anything itself", err)
+	}
+}
+
+// TestMusicChainStillFillsTheSynopsisForAnAcceptedSearchHit is the other half, and
+// the reason the fix is not simply "skip the fill for any search hit": an accepted
+// hit is a perfectly good record, and gating on FromSearch alone would have
+// stripped its synopsis — trading a wasted call for a real regression.
+func TestMusicChainStillFillsTheSynopsisForAnAcceptedSearchHit(t *testing.T) {
+	hit := mbTrackResult()
+	// The candidate's own title, spelled as MusicBrainz spells it — the same title
+	// under normalizeMatchTitle, which is what the host accepts.
+	hit.Name, hit.FromSearch = "Creep (Remastered 2011)", true
+	mb := &stubProvider{meta: hit}
+	audioDB := &stubProvider{meta: TitleMetadata{Matched: true, Overview: "A real, sourced synopsis."}}
+	chain := NewMusicChainProvider(mb, nil, audioDB)
+
+	got, err := chain.Lookup(context.Background(), TitleRef{Kind: "track", Track: "Creep", Artist: "Radiohead"})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if audioDB.calls != 1 {
+		t.Fatalf("theaudiodb calls = %d, want 1 — an accepted search hit keeps its synopsis", audioDB.calls)
+	}
+	if got.Overview != "A real, sourced synopsis." {
+		t.Errorf("overview = %q, want the synopsis", got.Overview)
+	}
+}
+
+// TestMusicChainFillsTheSynopsisForARecordResolvedByID: a record resolved by id is
+// never judged (an id IS the identification, ADR-0049), so the precondition must
+// not gate it — a canonical title that disagrees with the local one is a spelling.
+func TestMusicChainFillsTheSynopsisForARecordResolvedByID(t *testing.T) {
+	byID := mbTrackResult()
+	byID.Name = "Something Spelled Quite Differently" // and FromSearch stays false
+	mb := &stubProvider{meta: byID}
+	audioDB := &stubProvider{meta: TitleMetadata{Matched: true, Overview: "A real, sourced synopsis."}}
+	chain := NewMusicChainProvider(mb, nil, audioDB)
+
+	got, err := chain.Lookup(context.Background(), TitleRef{Kind: "track", Track: "Creep", MusicbrainzID: "rec-1"})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if audioDB.calls != 1 || got.Overview != "A real, sourced synopsis." {
+		t.Errorf("a record resolved by id lost its synopsis: calls=%d overview=%q", audioDB.calls, got.Overview)
+	}
+}
+
 func TestMusicChainTrackDoesNotOverwriteExistingOverview(t *testing.T) {
 	// If MusicBrainz ever carried a track Overview, the synopsis source must not
 	// replace it (fill-only). MusicBrainz has none today; this guards the policy.

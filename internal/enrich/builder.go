@@ -64,6 +64,16 @@ type ProviderConfig struct {
 	CoverArtBaseURL      string
 	MusicBrainzRateLimit time.Duration
 
+	// AuthoritativeMusic is the slug of the Full provider that LEADS the music
+	// chain, the twin of AuthoritativeVideo (ADR-0027). Empty means the global
+	// default (MusicBrainz), which is what every Library inherits and what the
+	// eight Built-ins alone can express — MusicBrainz is the only Full music source
+	// this binary ships. It exists so that ADR-0057 decision 4 is true of music as
+	// well: a Library may be repointed at a Plugin-provided Full music source, and
+	// nothing about that is a special case (the anime case for video is the
+	// classical/jazz case for music).
+	AuthoritativeMusic string
+
 	// FanartTV / TheAudioDB — the optional artist-image (and, for TheAudioDB, bio)
 	// sources for the Music kind. A key wraps MusicBrainz in the fill-only chain;
 	// no key keeps plain MusicBrainz with zero calls to either host (ADR-0001).
@@ -71,6 +81,18 @@ type ProviderConfig struct {
 	FanartTVBaseURL   string
 	TheAudioDBAPIKey  string
 	TheAudioDBBaseURL string
+
+	// ProviderKeys holds the API key of any OTHER registered Plugin — one this
+	// binary has no named field for, which from Phase 2 is every Installed plugin
+	// and today is any Plugin a test registers. The named fields above stay because
+	// they are what the Built-ins' own construction reads and what every existing
+	// caller writes; this is the open half of the same map, so that "which provider
+	// is keyed" has an answer for a source the builder was not written around.
+	//
+	// Without it ADR-0057 decision 4 is not actually true: a registered Full
+	// provider could be pointed at by an Enrichment policy and then be built with
+	// no key, because the resolver had nowhere to inject one. Nil is empty.
+	ProviderKeys map[string]string
 }
 
 // videoAuthoritativeSlug is the slug of the Full provider that leads the video
@@ -83,11 +105,24 @@ func (c ProviderConfig) videoAuthoritativeSlug() string {
 	return SlugTMDB
 }
 
-// videoProviderKey returns the API key configured for a video-serving provider in
-// this config (empty ⇒ not active). It is how the builder decides which video
-// sources to compose: fanart.tv rides its single key across both the video and
-// music chains.
-func (c ProviderConfig) videoProviderKey(slug string) string {
+// musicAuthoritativeSlug is the slug of the Full provider that leads the music
+// chain: the configured AuthoritativeMusic, or the registry default (MusicBrainz)
+// when unset. Twin of videoAuthoritativeSlug, and the single place the "which
+// music source leads" decision reads.
+func (c ProviderConfig) musicAuthoritativeSlug() string {
+	if c.AuthoritativeMusic != "" {
+		return c.AuthoritativeMusic
+	}
+	return SlugMusicBrainz
+}
+
+// providerKey returns the API key configured for a key-bearing provider in this
+// config (empty ⇒ not active, and empty for a KEYLESS source, which has no key to
+// configure — providerReachable is where that difference is honored). It is how the
+// builder decides which sources to compose: fanart.tv rides its single key across
+// both the video and music chains, and any provider this binary has no named field
+// for is answered from ProviderKeys.
+func (c ProviderConfig) providerKey(slug string) string {
 	switch slug {
 	case SlugTMDB:
 		return c.TMDBAPIKey
@@ -99,20 +134,27 @@ func (c ProviderConfig) videoProviderKey(slug string) string {
 		return c.AniDBAPIKey
 	case SlugFanartTV:
 		return c.FanartTVAPIKey
+	case SlugTheAudioDB:
+		return c.TheAudioDBAPIKey
 	default:
-		return ""
+		return c.ProviderKeys[slug]
 	}
 }
 
-// videoProviderSettings is the fixed Settings shape (ADR-0057) the host resolves
-// for one video-serving Plugin out of this config: the key it holds, the effective
-// base URL, the image host for the one source that has a distinct one, and the
-// server-wide metadata language. Enabled is true because the host only builds a
-// Plugin it means to use.
-func (c ProviderConfig) videoProviderSettings(slug string) pluginapi.Settings {
+// providerSettings is the fixed Settings shape (ADR-0057) the host resolves for one
+// Plugin out of this config: the key it holds, the effective base URL, a second
+// host for the two sources that have one, the server-wide metadata language and —
+// for the throttled host — the operator's rate policy. Enabled is true because the
+// host only builds a Plugin it means to use.
+//
+// The two second-URL cases differ in where the value comes from and that is worth
+// seeing side by side: TMDB's image host is TMDB's own setting, while MusicBrainz's
+// is the Cover Art Archive's — a separate registration with its own row, resolved
+// into this Plugin's URL2 because Cover Art Archive has no client of its own.
+func (c ProviderConfig) providerSettings(slug string) pluginapi.Settings {
 	s := pluginapi.Settings{
 		Enabled:  true,
-		Secret:   c.videoProviderKey(slug),
+		Secret:   c.providerKey(slug),
 		Language: c.MetadataLanguage,
 	}
 	switch slug {
@@ -126,45 +168,73 @@ func (c ProviderConfig) videoProviderSettings(slug string) pluginapi.Settings {
 		s.URL = c.AniDBBaseURL
 	case SlugFanartTV:
 		s.URL = c.FanartTVBaseURL
+	case SlugMusicBrainz:
+		s.URL, s.URL2 = c.MusicBrainzBaseURL, c.CoverArtBaseURL
+		// Always stated for this one source, including the 0 that means "do not
+		// throttle": the operator's rate policy is DB-authoritative and this config
+		// carries it, so leaving it absent would silently substitute the Plugin's own
+		// default for a saved setting (ADR-0049).
+		ms := int(c.MusicBrainzRateLimit / time.Millisecond)
+		s.RateLimitMillis = &ms
+	case SlugTheAudioDB:
+		s.URL = c.TheAudioDBBaseURL
 	}
 	return s
 }
 
-// newVideoProvider builds the video-serving Plugin for a slug from this config and
-// adapts it back to a MetadataProvider, or returns nil for a slug no video Plugin
-// claims. It is the one place a video source is built, so both the authoritative
-// lead and the fill-only supplements go through the contract (the difference is
-// only their POSITION in the chain, ADR-0027).
-func (cat Catalog) newVideoProvider(cfg ProviderConfig, slug string) MetadataProvider {
+// newProvider builds the Plugin registered under a slug from this config and adapts
+// it back to a MetadataProvider, or returns nil when no Plugin claims the slug,
+// when the one that does does not serve the wanted coarse kind, or when it carries
+// no factory. It is the one place a source is built, so the authoritative lead and
+// the fill-only supplements of BOTH kinds go through the contract — the difference
+// between them is only their POSITION in the chain (ADR-0027).
+//
+// The kind is passed rather than inferred because the same slug can mean two
+// positions: fanart.tv serves video and music, and asking for it "as a music
+// source" is what keeps a Catalog holding only video Plugins from composing one
+// into the music chain.
+func (cat Catalog) newProvider(cfg ProviderConfig, slug, kind string) MetadataProvider {
 	e, ok := cat.Entry(slug)
-	if !ok || !e.Serves(KindVideo) {
+	if !ok || !e.Serves(kind) {
 		return nil
 	}
-	return cat.buildPlugin(slug, cfg.videoProviderSettings(slug))
+	return cat.buildPlugin(slug, cfg.providerSettings(slug))
 }
 
 // authoritativeSlugFor returns the slug of the provider LEADING a given media kind
-// in this effective config: the video authoritative for the video kinds, MusicBrainz
-// for the music kinds. Used by the per-item override precedence (issue 06) to decide
-// whether a pinned Title's record provider differs from the Library's leader.
+// in this effective config. Used by the per-item override precedence (issue 06) to
+// decide whether a pinned Title's record provider differs from the Library's leader.
 func (c ProviderConfig) authoritativeSlugFor(kind string) string {
 	switch kind {
 	case "artist", "album", "track":
-		return SlugMusicBrainz
+		return c.musicAuthoritativeSlug()
 	default:
 		return c.videoAuthoritativeSlug()
 	}
 }
 
+// kindGroupFor maps a fine entity kind onto the coarse Enrichment media-kind group
+// a Plugin declares (KindVideo / KindMusic) — the translation between the vocabulary
+// the Titles are filed in and the one a registration speaks.
+func kindGroupFor(kind string) string {
+	switch kind {
+	case "artist", "album", "track":
+		return KindMusic
+	default:
+		return KindVideo
+	}
+}
+
 // providerReachable reports whether a provider is usable in this effective config —
-// its key is present (video), or (MusicBrainz) the music kind is on. It is how the
-// pass decides a pinned Title's record provider is still reachable (issue 06): a
-// policy change that cleared/muted the provider makes its key absent here.
+// its key is present, or (for the keyless MusicBrainz, which has none) the music
+// kind is on. It is how the pass decides a pinned Title's record provider is still
+// reachable (issue 06): a policy change that cleared/muted the provider makes its
+// key absent here.
 func (c ProviderConfig) providerReachable(slug string) bool {
 	if slug == SlugMusicBrainz {
 		return c.musicEnabled()
 	}
-	return c.videoProviderKey(slug) != ""
+	return c.providerKey(slug) != ""
 }
 
 // videoEnabled reports whether the Movie/TV kinds enrich: video is on exactly when
@@ -173,13 +243,25 @@ func (c ProviderConfig) providerReachable(slug string) bool {
 // that is keyed turns video on even if TMDB itself is unkeyed; a supplement never
 // turns video on by itself.
 func (c ProviderConfig) videoEnabled() bool {
-	return c.videoProviderKey(c.videoAuthoritativeSlug()) != ""
+	return c.providerKey(c.videoAuthoritativeSlug()) != ""
 }
 
-// musicEnabled reports whether the Music kind enriches: MusicBrainz + Cover Art
-// Archive need no key, so Music turns on via its own opt-in — or alongside a TMDB
-// key, which enables every kind (mirrors config.MusicEnrichmentEnabled).
-func (c ProviderConfig) musicEnabled() bool { return c.MusicBrainzEnabled || c.TMDBAPIKey != "" }
+// musicEnabled reports whether the Music kind enriches. With MusicBrainz leading —
+// the default, and every Library that has not been repointed — it is MusicBrainz's
+// own opt-in, because MusicBrainz and Cover Art Archive need no key: Music turns on
+// via MusicBrainzEnabled, or alongside a TMDB key, which enables every kind
+// (mirrors config.MusicEnrichmentEnabled).
+//
+// A Library led by some OTHER Full music provider gates on that provider's key
+// instead, exactly as videoEnabled gates on the video lead's — a repointed lead
+// that is keyed turns music on even where MusicBrainz's opt-in is off, and a
+// supplement still never turns a kind on by itself.
+func (c ProviderConfig) musicEnabled() bool {
+	if slug := c.musicAuthoritativeSlug(); slug != SlugMusicBrainz {
+		return c.providerKey(slug) != ""
+	}
+	return c.MusicBrainzEnabled || c.TMDBAPIKey != ""
+}
 
 // musicImageEnabled reports whether an artist-image source is configured (at
 // least one of fanart.tv / TheAudioDB has a key). Mirrors config.MusicImageEnabled.
@@ -199,10 +281,10 @@ func (cat Catalog) videoSupplements(cfg ProviderConfig, authoritative string) []
 		if e.Slug == authoritative || !e.Serves(KindVideo) {
 			continue
 		}
-		if cfg.videoProviderKey(e.Slug) == "" {
+		if cfg.providerKey(e.Slug) == "" {
 			continue // not keyed → inactive (zero calls to it, ADR-0001)
 		}
-		if p := cat.newVideoProvider(cfg, e.Slug); p != nil {
+		if p := cat.newProvider(cfg, e.Slug, KindVideo); p != nil {
 			out = append(out, p)
 		}
 	}
@@ -257,32 +339,43 @@ func BuilderFor(cat Catalog) BuildFunc { return cat.BuildProvider }
 //     Plugin's factory for a source and wraps what comes back in the host-side
 //     adapter, so a Built-in and (from Phase 2) an Installed plugin reach the chain
 //     by exactly the same path (ADR-0057 decision 5).
-//   - Music is MusicBrainz + Cover Art Archive, wrapped in the fill-only
-//     MusicChainProvider only when an image source is configured AND Music is
-//     enabled — so an enriched artist also gets a poster (fanart.tv, preferred,
-//     MBID-keyed) and a real bio (TheAudioDB, name-capable). With no image key
-//     (or Music off) it stays plain MusicBrainz, making zero calls to either host
-//     (ADR-0001 explicit opt-in). The music chain is still composed DIRECTLY here,
-//     not through the contract: it needs the album-tracklist and external-ref
-//     capabilities, which arrive with the music slice. Until then the builder
-//     composes one chain from both sources, which is what lets the video half move
-//     without the music half moving with it.
+//   - Music composes the Library's Authoritative music provider (MusicBrainz by
+//     default, its Cover Art Archive host arriving as the Plugin's second URL),
+//     wrapped in the fill-only MusicChainProvider only when an image source is
+//     configured AND Music is enabled — so an enriched artist also gets a poster
+//     (fanart.tv, preferred, MBID-keyed) and a real bio (TheAudioDB, name-capable).
+//     With no image key (or Music off) it stays the plain lead, making zero calls
+//     to either host (ADR-0001 explicit opt-in). Every one of those sources is now
+//     built THROUGH THE CONTRACT, so no provider in this server is registered or
+//     composed outside it.
 func (cat Catalog) BuildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
-	// Honor the operator's throttle policy for the configured MusicBrainz host (a
-	// mirror may allow more than the public ~1 req/sec; 0 disables throttling).
-	mb := NewMusicBrainzProvider(cfg.MusicBrainzBaseURL, cfg.CoverArtBaseURL, cfg.MetadataLanguage)
-	mb.MinInterval = cfg.MusicBrainzRateLimit
-	var music MetadataProvider = mb
-	if cfg.musicImageEnabled() && cfg.musicEnabled() {
-		// An image source is configured: wrap MusicBrainz in the fill-only chain,
+	// Music leads with the Library's Authoritative music provider — MusicBrainz
+	// unless an Enrichment policy repointed it (ADR-0027) — built from its
+	// registration exactly as the video lead is. The operator's throttle policy and
+	// the Cover Art Archive host travel in that Plugin's Settings.
+	musicSlug := cfg.musicAuthoritativeSlug()
+	music := cat.newProvider(cfg, musicSlug, KindMusic)
+	if music == nil {
+		// A pointer at a slug no music Plugin claims can't lead; fall back to the
+		// default MusicBrainz lead so the composite is always well-formed (the resolver
+		// never sets such a pointer, but BuildProvider stays total). On a Catalog
+		// holding no music Plugin at all this stays nil, and a nil sub-provider is the
+		// all-off posture CompositeProvider already documents (ADR-0001) — the same
+		// answer the video half gives for the same reason.
+		music = cat.newProvider(cfg, SlugMusicBrainz, KindMusic)
+		musicSlug = SlugMusicBrainz
+	}
+	if music != nil && cfg.musicImageEnabled() && cfg.musicEnabled() {
+		// An image source is configured: wrap the lead in the fill-only chain,
 		// composing whichever sources have a key — fanart.tv (image) and/or
-		// TheAudioDB (image + biography).
+		// TheAudioDB (image + biography). Both are artwork-only, so neither can BE the
+		// lead; the guard is what keeps a source from supplementing itself.
 		var fanart, audioDB MetadataProvider
-		if cfg.FanartTVAPIKey != "" {
-			fanart = NewFanartTVProvider(cfg.FanartTVAPIKey, cfg.FanartTVBaseURL)
+		if cfg.FanartTVAPIKey != "" && musicSlug != SlugFanartTV {
+			fanart = cat.newProvider(cfg, SlugFanartTV, KindMusic)
 		}
-		if cfg.TheAudioDBAPIKey != "" {
-			audioDB = NewTheAudioDBProvider(cfg.TheAudioDBAPIKey, cfg.TheAudioDBBaseURL, cfg.MetadataLanguage)
+		if cfg.TheAudioDBAPIKey != "" && musicSlug != SlugTheAudioDB {
+			audioDB = cat.newProvider(cfg, SlugTheAudioDB, KindMusic)
 		}
 		music = NewMusicChainProvider(music, fanart, audioDB)
 	}
@@ -294,7 +387,7 @@ func (cat Catalog) BuildProvider(cfg ProviderConfig) (MetadataProvider, Enableme
 	// wrap is added only when video is on AND a supplement is active, so an
 	// all-supplements-off Library is plain lead with zero calls to the others.
 	authSlug := cfg.videoAuthoritativeSlug()
-	video := cat.newVideoProvider(cfg, authSlug)
+	video := cat.newProvider(cfg, authSlug, KindVideo)
 	if video == nil {
 		// A pointer at a slug no video Plugin claims can't lead the video chain; fall
 		// back to the default TMDB lead so the composite is always well-formed (the
@@ -302,7 +395,7 @@ func (cat Catalog) BuildProvider(cfg ProviderConfig) (MetadataProvider, Enableme
 		// Catalog holding no video Plugin at all this stays nil, and a nil
 		// sub-provider is the all-off posture CompositeProvider already documents
 		// (ADR-0001).
-		video = cat.newVideoProvider(cfg, SlugTMDB)
+		video = cat.newProvider(cfg, SlugTMDB, KindVideo)
 		authSlug = SlugTMDB
 	}
 	if supplements := cat.videoSupplements(cfg, authSlug); video != nil && cfg.videoEnabled() && len(supplements) > 0 {

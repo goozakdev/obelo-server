@@ -21,11 +21,12 @@ const probeArtistMBID = "a74b1b7f-71a5-4011-9441-d0b5e4122711"
 // The caller supplies a bounded context so a hung host can't stall the request.
 // A key-requiring provider with no key fails fast without any call.
 //
-// A source that goes through the contract is probed BY BUILDING ITS PLUGIN from
-// the catalog (ADR-0057): the probe then exercises the registration and the
-// adapter — the same path the real chain takes — rather than a private
-// construction no production flow uses. The music sources are still constructed
-// directly, because that is still how the music chain composes them.
+// Every source is probed BY BUILDING ITS PLUGIN from the catalog (ADR-0057): the
+// probe exercises the registration and the adapter — the same path the real chain
+// takes — rather than a private construction no production flow uses. Cover Art
+// Archive is the one that reads oddly and is the most honest of the set: it has no
+// Plugin of its own, so it is probed exactly as it is USED, through the MusicBrainz
+// Plugin with the supplied host as that Plugin's second URL.
 func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, language string) (ok bool, detail string) {
 	entry, found := cat.Entry(slug)
 	if !found {
@@ -39,10 +40,17 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, lan
 		base = entry.DefaultURL
 	}
 
-	var (
-		provider MetadataProvider
-		ref      TitleRef
-	)
+	// buildSlug is whose Plugin is built; settings are what it is built FROM. They
+	// differ for exactly one source, and that difference is what Cover Art Archive IS.
+	buildSlug := slug
+	settings := pluginapi.Settings{
+		Enabled:  true,
+		Secret:   apiKey,
+		URL:      base,
+		URL2:     entry.DefaultURL2,
+		Language: language,
+	}
+	var ref TitleRef
 	switch slug {
 	case SlugTMDB:
 		// The image host is irrelevant to a connectivity probe (no artwork bytes are
@@ -60,29 +68,25 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, lan
 	case SlugFanartTV:
 		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead", MusicbrainzID: probeArtistMBID}
 	case SlugMusicBrainz:
-		provider = NewMusicBrainzProvider(base, registryCoverArtBaseURL, language)
+		// The artwork host is irrelevant to an artist probe, but the Plugin is built
+		// with two hosts, so name the Cover Art default rather than leave it blank.
+		settings.URL2 = registryCoverArtBaseURL
 		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"}
 	case SlugCoverArt:
-		// Cover Art Archive is exercised through the MusicBrainz provider (they are
-		// one source under the hood); probe an album so a cover lookup is attempted
-		// against the supplied Cover Art host.
-		provider = NewMusicBrainzProvider(registryMusicBrainzBaseURL, base, language)
+		// Cover Art Archive has no Plugin of its own: it is the artwork host of the
+		// MusicBrainz Plugin. So probe it the way it is used — build MusicBrainz with
+		// the SUPPLIED host as its second URL and its own default as its API — and ask
+		// for an album, so a cover lookup is attempted against the host under test.
+		buildSlug = SlugMusicBrainz
+		settings.Secret = ""
+		settings.URL, settings.URL2 = registryMusicBrainzBaseURL, base
 		ref = TitleRef{Kind: "album", Title: "OK Computer", Artist: "Radiohead"}
 	case SlugTheAudioDB:
-		provider = NewTheAudioDBProvider(apiKey, base, language)
 		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"}
 	default:
 		return false, "unknown provider"
 	}
-	if provider == nil {
-		provider = cat.buildPlugin(slug, pluginapi.Settings{
-			Enabled:  true,
-			Secret:   apiKey,
-			URL:      base,
-			URL2:     entry.DefaultURL2,
-			Language: language,
-		})
-	}
+	provider := cat.buildPlugin(buildSlug, settings)
 	if provider == nil {
 		return false, "this provider cannot be built from these settings"
 	}

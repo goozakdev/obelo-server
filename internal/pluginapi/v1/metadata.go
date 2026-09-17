@@ -188,6 +188,19 @@ type SearchCandidate struct {
 	// TypeLabel is a short record-type hint ("Album · Soundtrack", "Group") shown as
 	// a badge beside the free-text Disambiguation line.
 	TypeLabel string `json:"typeLabel,omitempty"`
+	// Tracklist is the ordered track preview an ALBUM candidate carries, so an
+	// Admin can confirm the positional map before applying the pin. Nil for every
+	// other kind. It is a PREVIEW and not the AlbumTracklister's answer: roughly
+	// right for a page of candidates is the whole requirement here, where one
+	// album resolving its own tracks needs the exact edition (ADR-0050).
+	Tracklist []TrackCandidate `json:"tracklist,omitempty"`
+	// ReleaseID is the exact EDITION this candidate came from, when the source was
+	// given one: a pasted /release/ URL resolves to its parent release-group (which
+	// is what an album IS, ADR-0038) and carries the release here rather than
+	// dropping it (ADR-0052). Empty for an ordinary search hit and for every
+	// non-album kind — and an empty value applied to an album CLEARS whatever
+	// edition it had, because the Admin just named a less specific thing.
+	ReleaseID string `json:"releaseId,omitempty"`
 }
 
 // SearchResponse is what a search answers. OutcomeMatched with an empty list is a
@@ -279,6 +292,154 @@ type SeasonEpisodesResponse struct {
 	Detail   string             `json:"detail,omitempty"`
 }
 
+// TrackCandidate is one entry of an album's tracklist: where it sits, what it is
+// called, and the id of the recording behind it. It is display and positional-map
+// data only, never identity — embedded tags stay the Music identity authority
+// (ADR-0002). ExternalID may be empty when the source named no recording; the
+// entry still CLAIMS its position, which the host's match rule needs (ADR-0050
+// rule 3 fires only when exactly one local track and exactly one position are
+// unclaimed, so a position that exists must be visible even when it is anonymous).
+type TrackCandidate struct {
+	Disc       int    `json:"disc,omitempty"`
+	Position   int    `json:"position,omitempty"`
+	Title      string `json:"title,omitempty"`
+	ExternalID string `json:"externalId,omitempty"`
+}
+
+// TracklistRequest names the album whose tracklist is wanted. Two ids, a flag and
+// a count, because that is exactly what choosing the right RELEASE takes
+// (ADR-0050):
+//
+//   - ReleaseGroupID is the album itself — required, and the authority the named
+//     release is checked against. Empty means the album is unresolved, which is
+//     "no tracklist" without a single call.
+//   - ReleaseID is the exact edition to read: the one an ADMIN chose (ADR-0052)
+//     or, failing that, the one the FILES name. It is used ONLY when its parent
+//     release-group is ReleaseGroupID — neither a mis-tagged file nor a stale pin
+//     naming a stranger's release may renumber the album.
+//   - ReleaseIDChosen says WHOSE assertion ReleaseID is: a human's, or a file's.
+//     It does not change how the release is fetched or checked; it changes what
+//     happens when that release does not apply. A file's release falls through to
+//     fit-selection silently, while a human's is reported as "no tracklist" so the
+//     host can re-ask WITHOUT the pin and know that what it finally got is not the
+//     edition the human asserted. That distinction is the whole licence ADR-0052
+//     grants position-alone mapping, and it is NOT recoverable after the fact —
+//     every release's tracklist looks the same — which is why it crosses the wire
+//     rather than being inferred from the answer.
+//   - LocalTrackCount is how many Tracks the LOCAL album holds, which is what
+//     separates a 12-track standard edition from its 15-track deluxe. It is an
+//     input because no source could derive it. Zero means "unknown".
+type TracklistRequest struct {
+	ReleaseGroupID  string `json:"releaseGroupId"`
+	ReleaseID       string `json:"releaseId,omitempty"`
+	ReleaseIDChosen bool   `json:"releaseIdChosen,omitempty"`
+	LocalTrackCount int    `json:"localTrackCount,omitempty"`
+}
+
+// TracklistResponse is what a tracklist answers. OutcomeMatched ALWAYS carries at
+// least one track, and OutcomeNoMatch is "this album has no tracklist" — the
+// album named no release-group, the release-group holds no releases, the release
+// holds no tracks, or a human's chosen edition did not apply.
+//
+// Those two are deliberately not collapsible: "this album has no tracklist" sends
+// an Admin to the Album (or its release) while "this tracklist has no room for
+// this track" sends them to the one file, and a source answering with an empty
+// list and no outcome would render them as the same shrug (ADR-0050). That
+// invariant is what lets this call reuse OutcomeNoMatch instead of the contract
+// growing a value only one Extension point could ever mean anything by.
+type TracklistResponse struct {
+	Outcome Outcome          `json:"outcome"`
+	Tracks  []TrackCandidate `json:"tracks,omitempty"`
+	Detail  string           `json:"detail,omitempty"`
+}
+
+// ReleaseEditionsRequest asks which editions an album has, by the album's own id.
+type ReleaseEditionsRequest struct {
+	ReleaseGroupID string `json:"releaseGroupId"`
+	Page
+}
+
+// ReleaseEdition is ONE edition of an album — a release under the album's
+// release-group — described with the five facts an Admin needs to tell two
+// editions apart at a glance (ADR-0052): when it came out, where, on what medium,
+// how many tracks it holds, and whatever the source says to disambiguate it.
+//
+// TrackCount is the one that does the work: an operator is looking at this list
+// precisely because their album's tracks did not line up, and the edition whose
+// count equals the local album's is the one that will.
+//
+// An edition is NOT a SearchCandidate. A candidate is a record to pin as the
+// album's identity, and an edition is never that — album identity stays the
+// release-group (ADR-0038). It is a DECORATION refinement.
+type ReleaseEdition struct {
+	ReleaseID      string `json:"releaseId"`
+	Date           string `json:"date,omitempty"`
+	Country        string `json:"country,omitempty"`
+	Format         string `json:"format,omitempty"`
+	TrackCount     int    `json:"trackCount,omitempty"`
+	Disambiguation string `json:"disambiguation,omitempty"`
+}
+
+// ReleaseEditionsResponse lists an album's editions. An empty list with
+// OutcomeMatched is "this album has exactly no editions to choose from", which the
+// picker renders as an answer; OutcomeUnavailable is "no listable edition set
+// here", the picker's "not now", which degrades to the pasted-URL escape hatch
+// rather than an error page.
+//
+// The pair differs from TracklistResponse's on purpose, and the difference is the
+// host's, not the Plugin's: a missing tracklist is a fact about the ALBUM that the
+// enrichment pass must record as a settled reason, while a missing edition list is
+// a fact about the PICKER that only hides a control.
+type ReleaseEditionsResponse struct {
+	Outcome  Outcome          `json:"outcome"`
+	Editions []ReleaseEdition `json:"editions,omitempty"`
+	Detail   string           `json:"detail,omitempty"`
+}
+
+// ExternalRefRequest is a string an Admin pasted into the "paste an id when search
+// isn't enough" box, plus the fine kind of the item they pasted it on. The Plugin
+// reads it; the host then looks the answer up by id and shows it before anything
+// is pinned.
+type ExternalRefRequest struct {
+	// Kind is the item being corrected: "movie" | "show" | "season" | "episode" |
+	// "artist" | "album" | "track". It is what makes a wrong-kind paste detectable.
+	Kind string `json:"kind"`
+	// Pasted is the raw string, untrimmed and unvalidated — a bare id, a full URL
+	// with any scheme, subdomain, slug, query or fragment, or nonsense.
+	Pasted string `json:"pasted"`
+}
+
+// ExternalRefResponse is what parsing a pasted reference answers. The three
+// failure outcomes are distinct because the host renders three different sentences
+// and each names a different fix:
+//
+//   - OutcomeRefInvalid — "that doesn't look like an id or URL I know."
+//   - OutcomeRefKindMismatch — "that names a real entity of the WRONG kind for
+//     this item." GotKind and WantKind travel with it, because the useful message
+//     names both ("that looks like an artist link, but this item is a track");
+//     without them the host can only say "wrong kind", which is what the Admin
+//     already knew.
+//   - OutcomeRefUnsupportedKind — "that IS one of my URLs, for an entity kind this
+//     server does not pin at all" (a work, a label). Distinguished from invalid so
+//     the host can say which kind of link to paste instead, rather than "that's
+//     not a URL".
+//
+// OutcomeMatched carries the id to resolve. ReleaseID carries the EDITION when the
+// paste named one — the mapping that makes this a call rather than a pattern list:
+// a /release/ URL is not itself an album pin, so the Plugin answers with the
+// release-group in ExternalID and the release here (ADR-0052), and a bare
+// release-group URL leaves it empty, which is what CLEARS a chosen edition.
+type ExternalRefResponse struct {
+	Outcome    Outcome `json:"outcome"`
+	ExternalID string  `json:"externalId,omitempty"`
+	ReleaseID  string  `json:"releaseId,omitempty"`
+	// GotKind and WantKind are the two fine kinds of a kind mismatch: what the
+	// paste names, and what the item needs. Both empty for every other outcome.
+	GotKind  string `json:"gotKind,omitempty"`
+	WantKind string `json:"wantKind,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+}
+
 // MetadataProvider is the Go call surface of the Metadata provider Extension
 // point. It is a Go interface only so a Built-in can be called in-process: every
 // parameter and result is a wire type, so the same three calls survive being moved
@@ -312,6 +473,49 @@ type EpisodeLister interface {
 	SeasonEpisodes(ctx context.Context, req SeasonEpisodesRequest) (SeasonEpisodesResponse, error)
 }
 
+// AlbumTracklister is the CapabilityAlbumTracklist half of the Metadata provider
+// Extension point: what an Album holds. One interface, two calls, because they are
+// the automatic and the manual half of one question (ADR-0050, ADR-0052) — pick
+// the release that fits, or show a human the releases to pick from — and a source
+// that can do the first can do the second out of the same browse. Asking that
+// question in two spellings is how the two halves would come to disagree about
+// which editions there are.
+//
+// Only the authoritative MUSIC source can answer it, so like EpisodeLister it is a
+// separate interface rather than more methods on MetadataProvider: folding it in
+// would force every video source and every artwork-only supplement to carry a
+// stub. The host asks the Descriptor before it asks the Plugin.
+type AlbumTracklister interface {
+	// AlbumTracklist returns the album's ordered tracks. OutcomeMatched is never an
+	// empty list; OutcomeNoMatch is "this album has no tracklist" (see
+	// TracklistResponse). A transport failure is a Go error, so the host can still
+	// tell a load shed apart from a settled nothing (ADR-0049).
+	AlbumTracklist(ctx context.Context, req TracklistRequest) (TracklistResponse, error)
+	// ReleaseGroupEditions lists the album's editions, best-effort in the source's
+	// own order. An album with no editions is OutcomeMatched and an empty list.
+	ReleaseGroupEditions(ctx context.Context, req ReleaseEditionsRequest) (ReleaseEditionsResponse, error)
+}
+
+// ExternalRefParser is the CapabilityExternalRef half of the Metadata provider
+// Extension point: reading a string an Admin pasted into the "paste an id when
+// search isn't enough" box.
+//
+// It is a CALL and not a manifest list of URL patterns because the mapping is
+// logic, not a regex: one of MusicBrainz's URL kinds (a /release/) has to be
+// resolved to a DIFFERENT entity than the one it names before it can be pinned,
+// and several others are real URLs for entities no server pins at all. A pattern
+// list could not express either, and a Plugin whose source has its own id shapes
+// is exactly the case this exists for.
+//
+// A host that asks and gets OutcomeUnavailable — an undeclared capability, or a
+// Plugin that does not implement this — is free to read the paste itself for the
+// id namespaces it already understands, because the columns those ids are stored
+// in are the host's own (ADR-0045/0049). A Plugin that DECLARES the capability
+// answers instead, and its answer stands.
+type ExternalRefParser interface {
+	ParseExternalRef(ctx context.Context, req ExternalRefRequest) (ExternalRefResponse, error)
+}
+
 // MetadataProviderFactory builds a Metadata provider Plugin from the Settings an
 // Admin saved. Like its Subtitle provider sibling it is the one thing here that is
 // not wire-shaped, which is why it lives in the registration beside the Descriptor
@@ -324,12 +528,13 @@ type MetadataProviderFactory func(Settings) (MetadataProvider, error)
 // what it is, and how to build it.
 //
 // New may be nil, and that means exactly one thing: this Plugin's static facts are
-// registered — so the settings screen renders it and the Authoritative-provider
-// pointer can be validated against it — while the host still constructs the source
-// itself. Cover Art Archive is the permanent case (it has no client of its own; it
-// is reached through the MusicBrainz Plugin), and the music sources are the
-// temporary one until the music chain moves behind the contract. The builder skips
-// a nil factory rather than treating it as an error.
+// registered — so the settings screen renders it, the Authoritative-provider
+// pointer can be validated against it, and an operator can override its URL — while
+// nothing is ever built from it. Cover Art Archive is the case, and after the music
+// chain crossed this contract it is the only one: it has no client of its own,
+// because it is the artwork HOST the MusicBrainz Plugin's cover URLs point at, and
+// the host resolves its row into that Plugin's URL2. The builder skips a nil factory
+// rather than treating it as an error.
 type MetadataProviderRegistration struct {
 	Descriptor Descriptor
 	New        MetadataProviderFactory

@@ -23,21 +23,34 @@ type wireCase struct {
 	golden string
 }
 
+// intPtr is for the one wire field that is a pointer, because absent and zero are
+// two different instructions there (see Settings.RateLimitMillis).
+func intPtr(n int) *int { return &n }
+
 func wireCases() []wireCase {
 	return append([]wireCase{
 		{
 			name: "Settings",
 			value: Settings{
-				Enabled:  true,
-				Secret:   "sk-123",
-				URL:      "https://api.example.test/v1",
-				URL2:     "https://images.example.test",
-				Events:   []string{"scan.completed", "playback.started"},
-				Language: "en-US",
+				Enabled:         true,
+				Secret:          "sk-123",
+				URL:             "https://api.example.test/v1",
+				URL2:            "https://images.example.test",
+				Events:          []string{"scan.completed", "playback.started"},
+				Language:        "en-US",
+				RateLimitMillis: intPtr(1000),
 			},
 			golden: `{"enabled":true,"secret":"sk-123","url":"https://api.example.test/v1",` +
 				`"url2":"https://images.example.test","events":["scan.completed","playback.started"],` +
-				`"language":"en-US"}`,
+				`"language":"en-US","rateLimitMillis":1000}`,
+		},
+		{
+			// A rate limit of ZERO is the operator's "do not throttle at all" and has to
+			// survive the wire as a stated 0, not vanish into the absent "use your own
+			// default" (ADR-0049 — a mirror with no rate policy is a real setting).
+			name:   "Settings with an explicit zero rate limit",
+			value:  Settings{Enabled: true, RateLimitMillis: intPtr(0)},
+			golden: `{"enabled":true,"rateLimitMillis":0}`,
 		},
 		{
 			name: "Descriptor",

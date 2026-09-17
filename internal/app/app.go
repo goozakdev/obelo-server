@@ -155,6 +155,12 @@ type options struct {
 	metadataProvider enrich.MetadataProvider
 	artworkFetcher   enrich.ArtworkFetcher
 	providerBuilder  enrich.BuildFunc
+	// metadataPlugins are extra Metadata provider Plugins registered alongside the
+	// Built-ins (ADR-0057). It is the seam for "a Plugin this binary does not ship":
+	// a test registers one and the real Catalog, builder, settings API and
+	// Enrichment policy then treat it exactly as they treat a Built-in, which is the
+	// only honest way to check that decision 4 holds.
+	metadataPlugins []pluginapi.MetadataProviderRegistration
 	// subtitleProviderBuilder overrides how the subtitle-fetch Manager composes a
 	// SubtitleProvider from settings (default: subfetch.BuildProvider). It is the
 	// test seam for the fetch flow: a black-box test maps settings → a fake
@@ -228,12 +234,25 @@ func WithArtworkFetcher(f enrich.ArtworkFetcher) Option {
 
 // WithProviderBuilder substitutes the function the provider Manager uses to
 // compose a MetadataProvider + Enablement from settings (default:
-// enrich.BuildProvider). It is the test seam for the write→rebuild→enrich loop: a
-// black-box test maps settings → fake sub-providers, so a PUT that enables a kind
-// makes the next pass enrich it with ZERO network. Unlike WithMetadataProvider,
+// enrich.Catalog.BuildProvider). It is the test seam for the write→rebuild→enrich
+// loop: a black-box test maps settings → fake sub-providers, so a PUT that enables
+// a kind makes the next pass enrich it with ZERO network. Unlike WithMetadataProvider,
 // the manager stays active and rebuilds from the DB at boot and after each save.
 func WithProviderBuilder(build enrich.BuildFunc) Option {
 	return func(o *options) { o.providerBuilder = build }
+}
+
+// WithMetadataPlugins registers extra Metadata provider Plugins into the Plugin
+// registry alongside the Built-ins, in the order given and after them (so the
+// catalog order — which decides the settings list, the supplement order and each
+// kind's default lead — still starts with the Built-ins).
+//
+// Nothing else about the composition changes: the Catalog, the builder, the
+// settings API and the per-Library Enrichment policy see one registry and cannot
+// tell a registration that came from here from one that came from builtins.
+// Registering a duplicate slug panics, exactly as a Built-in would.
+func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option {
+	return func(o *options) { o.metadataPlugins = append(o.metadataPlugins, regs...) }
 }
 
 // WithDetector overrides the setup-time hardware-accel Detector (default:
@@ -478,6 +497,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Phase 2 loader adds Installed plugins to this same value.
 	plugins := pluginapi.NewRegistry()
 	builtins.Register(plugins)
+	for _, reg := range o.metadataPlugins {
+		plugins.RegisterMetadataProvider(reg)
+	}
 
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
@@ -487,8 +509,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// durable artwork cache under the data dir (ADR-0007); unlike transcode scratch
 	// it is NOT cleared at boot.
 	// Compose the enrichment provider + its per-kind enablement snapshot. The
-	// composition logic lives once, in enrich.BuildProvider (a future settings-
-	// driven rebuild calls the same builder and hot-swaps via Service.SetProvider).
+	// composition logic lives once, in enrich.Catalog.BuildProvider (a future
+	// settings-driven rebuild calls the same builder and hot-swaps via SetProvider).
 	// app.New maps config.Config → the builder's decoupled ProviderConfig, mirroring
 	// how it maps config → playback.Governance (ADR-0006: the domain never imports
 	// config). A test-injected fixed provider (WithMetadataProvider) bypasses the
@@ -566,12 +588,13 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	}
 
 	// The provider Manager reads settings → builds → atomically swaps the running
-	// Service (metadata-providers 02). Production composes via enrich.BuildProvider;
-	// a black-box test substitutes a fake builder (WithProviderBuilder) to drive the
-	// write→rebuild→enrich loop with zero network. Every provider input is now
-	// DB-backed — including the MusicBrainz throttle, which the Manager reads from
-	// store.EnrichmentBehavior on each Reload (so app.New no longer passes it from
-	// cfg), and every base URL including the TMDB image host.
+	// Service (metadata-providers 02). Production composes via the Catalog's own
+	// BuildProvider; a black-box test substitutes a fake builder
+	// (WithProviderBuilder) to drive the write→rebuild→enrich loop with zero
+	// network. Every provider input is DB-backed — including the MusicBrainz
+	// throttle, which the Manager reads from store.EnrichmentBehavior on each Reload
+	// (so app.New no longer passes it from cfg), and every base URL including the
+	// TMDB image host.
 	providerBuild := enrich.BuilderFor(metadataCatalog)
 	if o.providerBuilder != nil {
 		providerBuild = o.providerBuilder

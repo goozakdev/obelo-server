@@ -2,6 +2,7 @@ package enrich
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -127,7 +128,7 @@ func TestManagerReload(t *testing.T) {
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload again: %v", err)
 	}
-	if len(builtCfgs) != 2 || builtCfgs[1] != builtCfgs[0] {
+	if len(builtCfgs) != 2 || !reflect.DeepEqual(builtCfgs[1], builtCfgs[0]) {
 		t.Errorf("second build cfg = %+v, want equal to first", builtCfgs)
 	}
 

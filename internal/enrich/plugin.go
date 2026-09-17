@@ -162,6 +162,13 @@ func (b builtinPlugin) Search(ctx context.Context, req pluginapi.SearchRequest) 
 			Disambiguation: c.Disambiguation,
 			Kind:           c.Kind,
 			TypeLabel:      c.TypeLabel,
+			// An album candidate carries its tracklist preview and, when the Admin named
+			// one, the edition it came from. Both are album-only and both were left off
+			// the wire until music crossed it; dropping them here would have quietly
+			// emptied the picker's track preview and cleared a pasted /release/ URL's
+			// chosen edition (ADR-0052).
+			Tracklist: wireTracklist(c.Tracklist),
+			ReleaseID: c.ReleaseID,
 		})
 	}
 	return pluginapi.SearchResponse{Outcome: outcome, Candidates: out}, nil
@@ -307,6 +314,8 @@ func (a pluginProvider) Search(ctx context.Context, kind, query string, opts Sea
 			Disambiguation: c.Disambiguation,
 			Kind:           c.Kind,
 			TypeLabel:      c.TypeLabel,
+			Tracklist:      domainTracklist(c.Tracklist),
+			ReleaseID:      c.ReleaseID,
 		})
 	}
 	return out, nil
@@ -518,4 +527,262 @@ func metadataFromRecord(rec pluginapi.MetadataRecord) TitleMetadata {
 		meta.Artwork = append(meta.Artwork, ArtworkRef{Role: a.Role, URL: a.URL})
 	}
 	return meta
+}
+
+// --- the music-only calls: album tracklist, album editions, external refs ----
+
+// tracklistCallOutcome is the AlbumTracklist call's OWN error→Outcome mapping, and it
+// is deliberately not errorOutcome. Within this one call "no-match" MEANS "this
+// album has no tracklist": the call guarantees a matched answer is never empty
+// (ErrNoTracklist exists precisely so an empty list cannot stand in for it —
+// ADR-0050), so the two values round-trip losslessly and the contract needs no
+// eighth Outcome that only one Extension point could ever mean anything by.
+//
+// Everything else — including a bare ErrNoMatch, which is what a 404 on the
+// release browse produces — is NOT an outcome here and travels as a Go error, so
+// the host still retries a failed fetch (ADR-0048) instead of settling the album
+// as "has no tracklist". Collapsing those two would turn an outage into a
+// diagnosis, which is the mistake ADR-0049 spent an outage learning.
+func tracklistCallOutcome(err error) (pluginapi.Outcome, bool) {
+	switch {
+	case err == nil:
+		return pluginapi.OutcomeMatched, true
+	case errors.Is(err, ErrNoTracklist):
+		return pluginapi.OutcomeNoMatch, true
+	default:
+		return "", false
+	}
+}
+
+// tracklistCallError is tracklistCallOutcome's inverse on the host side: the same
+// call-scoped reading of no-match, so what the Plugin said is what the caller
+// gets. An Outcome this call has no meaning for is still mapped by the domain's
+// general table, so a Plugin answering "unavailable" is reported as such rather
+// than silently read as an album with nothing on it.
+func tracklistError(o pluginapi.Outcome) error {
+	if o == pluginapi.OutcomeNoMatch {
+		return ErrNoTracklist
+	}
+	return outcomeError(o)
+}
+
+// AlbumTracklist (Plugin side) exposes a wrapped source's optional
+// AlbumTracklister. A source that does not implement it answers OutcomeNoMatch —
+// "this album has no tracklist" — which is exactly what the chains degraded to
+// when the type assertion they used to make failed.
+func (b builtinPlugin) AlbumTracklist(ctx context.Context, req pluginapi.TracklistRequest) (pluginapi.TracklistResponse, error) {
+	lister, ok := b.provider.(AlbumTracklister)
+	if !ok {
+		return pluginapi.TracklistResponse{Outcome: pluginapi.OutcomeNoMatch}, nil
+	}
+	tracks, err := lister.AlbumTracklist(ctx, TracklistRequest{
+		ReleaseGroupID:  req.ReleaseGroupID,
+		ReleaseID:       req.ReleaseID,
+		ReleaseIDChosen: req.ReleaseIDChosen,
+		LocalTrackCount: req.LocalTrackCount,
+	})
+	outcome, known := tracklistCallOutcome(err)
+	if !known {
+		return pluginapi.TracklistResponse{}, err
+	}
+	if outcome != pluginapi.OutcomeMatched {
+		return pluginapi.TracklistResponse{Outcome: outcome}, nil
+	}
+	return pluginapi.TracklistResponse{Outcome: outcome, Tracks: wireTracklist(tracks)}, nil
+}
+
+// ReleaseGroupEditions (Plugin side) exposes a wrapped source's optional
+// AlbumEditionLister. A source that does not implement it answers
+// OutcomeUnavailable — the picker's "not now", which is what the failed type
+// assertion produced — and NOT the no-match a missing tracklist answers: an album
+// with no editions to choose from is a real, matched answer.
+func (b builtinPlugin) ReleaseGroupEditions(ctx context.Context, req pluginapi.ReleaseEditionsRequest) (pluginapi.ReleaseEditionsResponse, error) {
+	lister, ok := b.provider.(AlbumEditionLister)
+	if !ok {
+		return pluginapi.ReleaseEditionsResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
+	}
+	eds, err := lister.ReleaseGroupEditions(ctx, req.ReleaseGroupID)
+	outcome, known := errorOutcome(err)
+	if !known {
+		return pluginapi.ReleaseEditionsResponse{}, err
+	}
+	if outcome != pluginapi.OutcomeMatched {
+		return pluginapi.ReleaseEditionsResponse{Outcome: outcome}, nil
+	}
+	out := make([]pluginapi.ReleaseEdition, 0, len(eds))
+	for _, e := range eds {
+		out = append(out, pluginapi.ReleaseEdition{
+			ReleaseID:      e.ReleaseID,
+			Date:           e.Date,
+			Country:        e.Country,
+			Format:         e.Format,
+			TrackCount:     e.TrackCount,
+			Disambiguation: e.Disambiguation,
+		})
+	}
+	return pluginapi.ReleaseEditionsResponse{Outcome: outcome, Editions: out}, nil
+}
+
+// ParseExternalRef (Plugin side) exposes a wrapped source's optional
+// ExternalRefParser, turning its three refusal sentinels into the three distinct
+// Outcomes and lifting a kind mismatch's got/want kinds out of the typed error
+// into the response — where they survive a boundary, which an error's Go type
+// does not.
+func (b builtinPlugin) ParseExternalRef(ctx context.Context, req pluginapi.ExternalRefRequest) (pluginapi.ExternalRefResponse, error) {
+	parser, ok := b.provider.(ExternalRefParser)
+	if !ok {
+		return pluginapi.ExternalRefResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
+	}
+	ref, err := parser.ParseExternalRef(ctx, req.Kind, req.Pasted)
+	outcome, known := errorOutcome(err)
+	if !known {
+		return pluginapi.ExternalRefResponse{}, err
+	}
+	if outcome != pluginapi.OutcomeMatched {
+		resp := pluginapi.ExternalRefResponse{Outcome: outcome}
+		var mismatch *ExternalRefKindMismatchError
+		if errors.As(err, &mismatch) {
+			resp.GotKind, resp.WantKind = mismatch.Got, mismatch.Want
+		}
+		return resp, nil
+	}
+	return pluginapi.ExternalRefResponse{
+		Outcome:    outcome,
+		ExternalID: ref.ExternalID,
+		ReleaseID:  ref.ReleaseID,
+	}, nil
+}
+
+// AlbumTracklist (host side) asks the Plugin what its album holds. An undeclared
+// CapabilityAlbumTracklist answers ErrNoTracklist without a call — the same
+// "nothing to say about this album's contents" the pass already knows how to
+// record, so the Tracks below it fall through to the tiers ADR-0050 puts under it.
+func (a pluginProvider) AlbumTracklist(ctx context.Context, req TracklistRequest) ([]TrackCandidate, error) {
+	lister, ok := a.albumTracklister()
+	if !ok {
+		return nil, ErrNoTracklist
+	}
+	resp, err := lister.AlbumTracklist(ctx, pluginapi.TracklistRequest{
+		ReleaseGroupID:  req.ReleaseGroupID,
+		ReleaseID:       req.ReleaseID,
+		ReleaseIDChosen: req.ReleaseIDChosen,
+		LocalTrackCount: req.LocalTrackCount,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := tracklistError(resp.Outcome); err != nil {
+		return nil, err
+	}
+	if len(resp.Tracks) == 0 {
+		// The call forbids this, so a Plugin that does it anyway is normalized here
+		// rather than at the call sites, which would each have to check both.
+		return nil, ErrNoTracklist
+	}
+	return domainTracklist(resp.Tracks), nil
+}
+
+// ReleaseGroupEditions (host side) asks the Plugin for the album's editions. An
+// undeclared capability answers ErrSearchUnavailable without a call, which is the
+// picker's "not now" and degrades to the pasted-URL escape hatch (ADR-0052).
+func (a pluginProvider) ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error) {
+	lister, ok := a.albumTracklister()
+	if !ok {
+		return nil, ErrSearchUnavailable
+	}
+	resp, err := lister.ReleaseGroupEditions(ctx, pluginapi.ReleaseEditionsRequest{ReleaseGroupID: releaseGroupID})
+	if err != nil {
+		return nil, err
+	}
+	if err := outcomeError(resp.Outcome); err != nil {
+		return nil, err
+	}
+	out := make([]ReleaseEdition, 0, len(resp.Editions))
+	for _, e := range resp.Editions {
+		out = append(out, ReleaseEdition{
+			ReleaseID:      e.ReleaseID,
+			Date:           e.Date,
+			Country:        e.Country,
+			Format:         e.Format,
+			TrackCount:     e.TrackCount,
+			Disambiguation: e.Disambiguation,
+		})
+	}
+	return out, nil
+}
+
+// ParseExternalRef (host side) asks the Plugin to read a pasted id or URL, and
+// rebuilds the specific kind-mismatch error from the got/want kinds the response
+// carries — so the Admin still gets the sentence naming both kinds, which is the
+// whole reason those two fields cross the wire.
+//
+// An undeclared CapabilityExternalRef answers ErrSearchUnavailable without a call.
+// That is not the paste box's final word: the host reads the id namespaces it
+// already keeps columns for itself (see Service.externalRef), and only a Plugin
+// that DECLARES the capability speaks for its own source's id shapes.
+func (a pluginProvider) ParseExternalRef(ctx context.Context, kind, pasted string) (ExternalRef, error) {
+	if !a.desc.HasCapability(pluginapi.CapabilityExternalRef) {
+		return ExternalRef{}, ErrSearchUnavailable
+	}
+	parser, ok := a.plugin.(pluginapi.ExternalRefParser)
+	if !ok {
+		return ExternalRef{}, ErrSearchUnavailable
+	}
+	resp, err := parser.ParseExternalRef(ctx, pluginapi.ExternalRefRequest{Kind: kind, Pasted: pasted})
+	if err != nil {
+		return ExternalRef{}, err
+	}
+	if err := outcomeError(resp.Outcome); err != nil {
+		if resp.Outcome == pluginapi.OutcomeRefKindMismatch && resp.GotKind != "" {
+			return ExternalRef{}, &ExternalRefKindMismatchError{Got: resp.GotKind, Want: resp.WantKind}
+		}
+		return ExternalRef{}, err
+	}
+	return ExternalRef{ExternalID: resp.ExternalID, ReleaseID: resp.ReleaseID}, nil
+}
+
+// albumTracklister reports whether this Plugin may be asked what an album holds:
+// it has to have DECLARED CapabilityAlbumTracklist and to implement the calls.
+// The declaration is checked first, so an undeclared capability costs no call.
+func (a pluginProvider) albumTracklister() (pluginapi.AlbumTracklister, bool) {
+	if !a.desc.HasCapability(pluginapi.CapabilityAlbumTracklist) {
+		return nil, false
+	}
+	lister, ok := a.plugin.(pluginapi.AlbumTracklister)
+	return lister, ok
+}
+
+// wireTracklist / domainTracklist translate a tracklist between the two
+// vocabularies. An entry with no recording id keeps its position on both sides:
+// it still CLAIMS that position for the host's match rule (ADR-0050).
+func wireTracklist(tracks []TrackCandidate) []pluginapi.TrackCandidate {
+	if len(tracks) == 0 {
+		return nil
+	}
+	out := make([]pluginapi.TrackCandidate, 0, len(tracks))
+	for _, t := range tracks {
+		out = append(out, pluginapi.TrackCandidate{
+			Disc:       t.Disc,
+			Position:   t.Position,
+			Title:      t.Title,
+			ExternalID: t.ExternalID,
+		})
+	}
+	return out
+}
+
+func domainTracklist(tracks []pluginapi.TrackCandidate) []TrackCandidate {
+	if len(tracks) == 0 {
+		return nil
+	}
+	out := make([]TrackCandidate, 0, len(tracks))
+	for _, t := range tracks {
+		out = append(out, TrackCandidate{
+			Disc:       t.Disc,
+			Position:   t.Position,
+			Title:      t.Title,
+			ExternalID: t.ExternalID,
+		})
+	}
+	return out
 }
