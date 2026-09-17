@@ -30,7 +30,6 @@ import (
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
@@ -39,6 +38,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
 	"github.com/goozakdev/obelo-server/internal/webui"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // relayEndTimeout bounds the courtesy call that ends a relayed session on the

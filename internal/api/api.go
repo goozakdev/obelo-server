@@ -23,13 +23,13 @@ import (
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // APIPrefix is the version path prefix every route lives under.

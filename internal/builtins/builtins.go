@@ -18,7 +18,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/builtins/opensubtitles"
 	"github.com/goozakdev/obelo-server/internal/builtins/webhook"
 	"github.com/goozakdev/obelo-server/internal/enrich"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // Register adds every Built-in to reg. It is called once, from the composition

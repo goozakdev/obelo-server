@@ -38,10 +38,10 @@ import (
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/gpu"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // Server is a running test server plus the handles a test needs to drive and

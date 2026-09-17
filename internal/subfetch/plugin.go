@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The contract edge of the subtitle domain (ADR-0057). A Subtitle provider is a

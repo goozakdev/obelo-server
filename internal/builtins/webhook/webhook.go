@@ -28,8 +28,8 @@ import (
 	"net/http"
 	"time"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/safefetch"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // Slug is the stable Plugin identity: the key persisted in the event-sink settings

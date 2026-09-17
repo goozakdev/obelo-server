@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/events"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The host side of the Event sink Extension point has three promises a black-box

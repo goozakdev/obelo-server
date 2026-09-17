@@ -38,7 +38,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // QueueCapacity is how many undelivered events one sink may hold. Small on

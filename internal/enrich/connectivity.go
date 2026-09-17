@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // A well-known MusicBrainz artist id (Radiohead), used only as a representative

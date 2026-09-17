@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/safefetch"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The OpenSubtitles Built-in's HTTP guards and its contract outcomes, against an

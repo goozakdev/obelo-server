@@ -61,6 +61,16 @@ churn while the Built-ins expose its gaps. The first Phase 2 issue moves it to t
 root, freezes it additively, and generates a JSON schema for authors in other languages. The
 Go package is a convenience; the schema is the contract.
 
+> **Carried out (plugin-system issue 07, 2026-09-17):** the package is now
+> `pluginapi/v1` at the module root and is **frozen additively** — fields and enum values may
+> be added within v1, never removed, renamed or retyped, and `additionalProperties` is left
+> open on every type so a v1.0 guest tolerates a later v1.x host's fields. The schema is
+> generated from the Go structs into `pluginapi/v1/pluginapi.schema.json` (`go generate
+> ./pluginapi/v1`), a test fails when the checked-in copy is stale, and every golden document
+> in the contract suite is validated against it. Two rules that were prose became real schema
+> constraints: an event actor carries a user id **or** a link id and never both (both absent
+> is legal), and a sink event's `scan` and `enrich` blocks are mutually exclusive.
+
 ## Why
 
 Jellyfin pays for plugins on every major release because its internal types *are* its wire

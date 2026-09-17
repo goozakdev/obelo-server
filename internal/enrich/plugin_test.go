@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The contract edge of the enrichment domain. Three things are worth a unit test
