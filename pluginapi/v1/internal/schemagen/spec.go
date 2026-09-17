@@ -113,6 +113,10 @@ func fieldOverrides() map[string]any {
 			set("type", "array").
 			set("items", ref("MediaKind")).
 			set("description", "The coarse media-kind groups this Plugin serves. Empty for an Extension point that is not kind-scoped."),
+		"ManifestProvides.kinds": obj().
+			set("type", "array").
+			set("items", ref("MediaKind")).
+			set("description", "The coarse media-kind groups this entry serves. Empty and ignored for an Event sink, which is not kind-scoped."),
 		"SinkEvent.type": ref("EventType"),
 	}
 }
@@ -257,6 +261,77 @@ func contractTypes() []typeSpec {
 				"pass are separate events even when one follows the other. A relayed playback session carries no " +
 				"device block at all, because the device on the sharing side IS the other household's Server.",
 			constrain: notBoth("scan", "enrich"),
+		},
+
+		// ---- the Installed plugin (ADR-0058) ---------------------------------------
+		{
+			value: pluginapi.Manifest{},
+			doc: "The document an author ships beside a WebAssembly module (`manifest.json`): the Installed " +
+				"half of a Descriptor, plus the two things a Built-in never declares because the compiler knew " +
+				"them — which contract major it was built against, and which hosts it may reach. Every field is a " +
+				"CLAIM the host enforces from its own side: id must not collide with a Plugin the server already " +
+				"has, apiVersion must equal the host's, and network.hosts is checked host-side against this file " +
+				"on every fetch. A manifest the host cannot read, or that names a contract major it does not " +
+				"speak, is refused at load with a message naming which side to upgrade — and the server still " +
+				"boots, because a Plugin may never stop one.",
+		},
+		{
+			value: pluginapi.ManifestProvides{},
+			doc: "One Extension point this Plugin fills. The host copies these facts onto the Descriptor it " +
+				"registers, so an Installed Plugin reaches the registry as the same kind of thing a Built-in does. " +
+				"role and class are a claim about where the Plugin belongs in the provider chain, not a grant: " +
+				"the host's Enrichment policy decides whether to honour it.",
+		},
+		{
+			value: pluginapi.ManifestNetwork{},
+			doc: "The outbound allowlist, and the most load-bearing claim in the document — which is why it is " +
+				"the one the host trusts least. Hosts are bare names with no scheme, port, path or wildcard " +
+				"('api.example.test'), matched exactly and case-insensitively against the URL's host with its port " +
+				"removed. A guest cannot widen this at call time and is never told why a refusal happened beyond " +
+				"'refused'. An absent or empty list means a Plugin that makes no outbound requests at all.",
+		},
+		{
+			value: pluginapi.ManifestSettings{},
+			doc: "What a manifest may declare about the FIXED settings shape (enabled, secret, url, url2, " +
+				"events): which parts must be filled before the Plugin can be turned on, and what the defaults " +
+				"are. It is not a schema and does not change the shape. An Event sink leaves the default URLs " +
+				"empty — there is no sensible default target for somebody else's receiver.",
+		},
+		{
+			value: pluginapi.SinkDeliverRequest{},
+			doc: "What the host hands an Installed Event sink for one event: the curated event, and the " +
+				"Settings the Admin saved. The settings travel WITH the call and are never installed into the " +
+				"guest, so a secret lives only for the duration of a delivery and an instance rebuilt after a trap " +
+				"starts with nobody's credential. The host has already filtered on settings.events, so a guest is " +
+				"never handed an event it did not ask for.",
+		},
+		{
+			value: pluginapi.SinkDeliverResponse{},
+			doc: "What an Installed Event sink answers. It carries no outcome for the reason the Go sink " +
+				"interface returns only an error: a sink has no domain judgment to report, and everything that can " +
+				"go wrong is transport, which the host counts and then forgets. delivered=false with an empty " +
+				"error is still a failure; filling error gives the operator something to read.",
+		},
+		{
+			value: pluginapi.FetchRequest{},
+			doc: "What a guest asks the host to send. It is the ONLY way out: a Plugin has no sockets, and the " +
+				"HOST performs the request through the same guarded fetcher every outbound call in this server " +
+				"uses. The host sets its own user agent and content length; anything else the Plugin needs goes in " +
+				"headers. An empty method means GET.",
+		},
+		{
+			value: pluginapi.FetchHeader{},
+			doc: "One header, as a name/value pair rather than a map entry, because a header may legitimately " +
+				"repeat and because the order an author wrote them in is the order they are sent.",
+		},
+		{
+			value: pluginapi.FetchResponse{},
+			doc: "What came back, or why nothing did. Exactly one of three things is true: refused is set (the " +
+				"host would not make this request — allowlist, private address, redirect policy or size), error is " +
+				"set (it was attempted and the network or the target failed), or neither is and status is what the " +
+				"target answered. A non-2xx status is NOT an error here: it is an answer, and what to do about it " +
+				"is the Plugin's business. The text of refused is host-authored and must not be branched on — ANY " +
+				"non-empty value means this server will refuse the same request again.",
 		},
 	}
 }

@@ -229,6 +229,16 @@ type Deps struct {
 	// persistence working without the runtime swap.
 	EventSinkManager *eventsink.Manager
 
+	// InstalledPlugins reports the runtime state of the Installed plugins this
+	// server loaded from disk (ADR-0058): whether each is still being called, and
+	// the sentence that says why not. A Built-in has no such state — it either
+	// compiled into this binary or it is not here — so this is joined onto the
+	// settings response only for a slug the loader knows.
+	//
+	// Nil in a narrow test, and on a server with no Installed plugins, both of
+	// which read as "every Plugin on this screen is a Built-in".
+	InstalledPlugins InstalledPluginStatus
+
 	// Tailnet remote access (ADR-0043, Admin-scope /settings/tailscale).
 	// TailnetSettings persists the four settings; Tailnet is the state machine the
 	// GET reads live status from and the three verbs drive. Either may be nil in a

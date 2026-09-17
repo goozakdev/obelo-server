@@ -86,6 +86,26 @@ guest, compiled by the ordinary command with no special flags, was told this (§
 No filesystem, no spawn, no raw sockets, no clock beyond WASI's, no host function that returns
 a handle. Every one of these is request-response and JSON-shaped, like the contract itself.
 
+> **Carried out in part (plugin-system issue 09, 2026-09-17):** the first loader ships **two** of
+> the four — `http_fetch` and `log` — under the module name `obelo`. `kv_get`/`kv_set` and
+> `settings_get` arrive with the Extension points that need them (issues 11 and 12); an Event
+> sink needs neither, because its Settings ride **with** the call in `SinkDeliverRequest`, which
+> is the strongest form of "secrets at call time only" this decision asked for: a rebuilt
+> instance starts with nobody's credential.
+>
+> One rule this decision left implicit had to be made explicit, because a sink cannot work
+> without it. `http_fetch` permits **the manifest's `network.hosts`, plus the host of the URL the
+> Admin configured for that Plugin** — an author cannot know the address of somebody else's
+> receiver, so a sink restricted to manifest hosts could never post anywhere. The two are then
+> treated differently, and deliberately: a target the **Plugin** chose is also refused when it
+> resolves into loopback/RFC1918/link-local space (so `169.254.169.254` is refused even when the
+> manifest allowlists it), while a target the **operator** typed is not, because a receiver on
+> their own LAN is the point of this product. That is exactly the asymmetry `safefetch` documents
+> for every other fetch in this server, applied at the only granularity where a Plugin has one.
+> Redirects off either are the safe fetcher's, unchanged. Every refusal is an audit line —
+> `plugin=<id> host=<h> reason=<allowlist|private-address|fetch-policy|oversize|bad-url>` — and a
+> run of them disables the Plugin.
+
 **6. Every call carries a deadline, and the deadline is enforced by the runtime.** The runtime
 is built with `WithCloseOnContextDone(true)` and each call gets a `context` with a deadline.
 A guest that never returns is unwound: the spike's spinning guest, given 200 ms, was stopped
@@ -116,6 +136,15 @@ half-loaded and never discovers the mismatch mid-enrichment.
 unchanged by this document; `.scratch/plugin-system/issues/09-…` adds
 `github.com/tetratelabs/wazero` when it loads the first Installed Event sink. Nothing in
 `internal/` or `cmd/` imports a wasm runtime today.
+
+> **Carried out (plugin-system issue 09, 2026-09-17):** `github.com/tetratelabs/wazero v1.12.0` is
+> in `go.mod`, and it is the **only** line added — `golang.org/x/sys` was already there at a newer
+> version, exactly as decision 2 predicted. The host half lives in `internal/plugins`, the
+> manifest and the guest-call wire types were added **additively** to the frozen `pluginapi/v1`
+> (`Manifest`, `ManifestProvides`, `ManifestNetwork`, `ManifestSettings`, `SinkDeliverRequest`,
+> `SinkDeliverResponse`, `FetchRequest`, `FetchHeader`, `FetchResponse`), and the JSON schema was
+> regenerated, so an author in another language has the manifest and the ABI's documents from the
+> same file as the rest of the contract.
 
 ## The numbers
 

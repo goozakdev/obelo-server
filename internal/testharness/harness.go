@@ -38,6 +38,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/gpu"
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
@@ -319,6 +320,20 @@ func WithMetadataProvider(p enrich.MetadataProvider) Option {
 // only if its settings row and the Library's policy actually say so.
 func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMetadataPlugins(regs...)) }
+}
+
+// WithPluginCallTimeout shortens the per-call budget the Installed-plugin loader
+// gives a guest (default: plugins.DefaultCallTimeout, ten seconds).
+//
+// It exists for exactly one kind of test: a guest that NEVER RETURNS has to be
+// killed by the runtime, three times over, before the Plugin is disabled, and at
+// the production budget that is half a minute of a suite sitting still watching
+// something work correctly. Nothing else about the loader changes — the same
+// deadline mechanism does the same thing, sooner.
+func WithPluginCallTimeout(d time.Duration) Option {
+	return func(b *builder) {
+		b.appOpts = append(b.appOpts, app.WithPluginOptions(plugins.Options{CallTimeout: d}))
+	}
 }
 
 // WithKeyRotation points the key-rotation channel (ADR-0032, layer 2) at a stub
