@@ -16,6 +16,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/events"
+	"github.com/goozakdev/obelo-server/internal/eventsink"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
@@ -218,6 +219,15 @@ type Deps struct {
 	// unit tests reads as "no Plugins": the settings list is empty and every slug is
 	// unknown, rather than a panic.
 	Plugins *pluginapi.Registry
+
+	// EventSinks is the DB-backed Event sink settings store (Admin-scope
+	// /settings/event-sinks). *store.DB satisfies it. May be nil in narrow tests,
+	// which then read as "no sink has ever been configured".
+	EventSinks EventSinkSettingsStore
+	// EventSinkManager rebuilds + hot-swaps the live Event sinks after a settings
+	// save (ADR-0057 decision 6). The PUT handler calls Reload; nil leaves
+	// persistence working without the runtime swap.
+	EventSinkManager *eventsink.Manager
 
 	// Tailnet remote access (ADR-0043, Admin-scope /settings/tailscale).
 	// TailnetSettings persists the four settings; Tailnet is the state machine the

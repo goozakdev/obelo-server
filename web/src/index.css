@@ -4178,6 +4178,32 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   line-height: 1.55;
 }
 
+/* The Event sink events control (ADR-0057): a checkbox per event type this server
+   can derive, each with its own one-line explanation. A fieldset because the boxes
+   are one question, and the legend reuses .field-label so it sits like every other
+   label on the screen. */
+.sink-events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.sink-event-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.sink-event-label {
+  font-weight: 550;
+}
+.sink-event-hint {
+  grid-column: 2;
+}
+
 /* Standalone setting cards (language, enrichment behavior). */
 .provider-language.card,
 .provider-behavior.card {

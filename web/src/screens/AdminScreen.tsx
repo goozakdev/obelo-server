@@ -6,6 +6,7 @@ import AdminDevicesScreen from "../admin/AdminDevicesScreen";
 import AdminUsersScreen from "../admin/AdminUsersScreen";
 import AdminProvidersScreen from "../admin/AdminProvidersScreen";
 import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen";
+import AdminEventSinksScreen from "../admin/AdminEventSinksScreen";
 import AdminTranscodingScreen from "../admin/AdminTranscodingScreen";
 import AdminRemoteAccessScreen from "../admin/AdminRemoteAccessScreen";
 import AdminLinkedServersScreen from "../admin/AdminLinkedServersScreen";
@@ -97,6 +98,13 @@ export default function AdminScreen() {
               Subtitle Providers
             </NavLink>
             <NavLink
+              to="/admin/event-sinks"
+              className="admin-tab"
+              data-testid="admin-tab-event-sinks"
+            >
+              Event Sinks
+            </NavLink>
+            <NavLink
               to="/admin/transcoding"
               className="admin-tab"
               data-testid="admin-tab-transcoding"
@@ -146,6 +154,10 @@ export default function AdminScreen() {
                 path="subtitles"
                 element={<AdminSubtitleProvidersScreen />}
               />
+              {/* Event sinks (ADR-0057 decision 6): the outbound half of the
+                  Plugin system — where an Admin points a webhook at their own
+                  automation and picks which events it hears about. */}
+              <Route path="event-sinks" element={<AdminEventSinksScreen />} />
               <Route path="transcoding" element={<AdminTranscodingScreen />} />
               {remoteAccess && (
                 <Route

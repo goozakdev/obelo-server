@@ -16,6 +16,7 @@ package builtins
 
 import (
 	"github.com/goozakdev/obelo-server/internal/builtins/opensubtitles"
+	"github.com/goozakdev/obelo-server/internal/builtins/webhook"
 	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 )
 
@@ -25,6 +26,7 @@ import (
 // boot than by an Admin.
 func Register(reg *pluginapi.Registry) {
 	RegisterSubtitleProviders(reg)
+	RegisterEventSinks(reg)
 }
 
 // RegisterSubtitleProviders adds the Built-in Subtitle providers. OpenSubtitles is
@@ -45,5 +47,27 @@ func RegisterSubtitleProviders(reg *pluginapi.Registry) {
 			DocsURL:      "https://www.opensubtitles.com/en/consumers",
 		},
 		New: opensubtitles.New,
+	})
+}
+
+// RegisterEventSinks adds the Built-in Event sinks. The Webhook is the only one,
+// and it is the first Plugin at this Extension point — the piece of the plugin
+// system the maintainer would use today (ADR-0057, "Why").
+//
+// RequiresKey is true because a sink's secret is its SIGNING key: enabling one
+// without it would post unsigned documents a receiver has no way to trust, so the
+// settings endpoint refuses it for exactly the reason it refuses a key-requiring
+// provider with no key.
+func RegisterEventSinks(reg *pluginapi.Registry) {
+	reg.RegisterEventSink(pluginapi.EventSinkRegistration{
+		Descriptor: pluginapi.Descriptor{
+			Slug:        webhook.Slug,
+			Name:        "Webhook",
+			RequiresKey: true,
+			Description: "POST one signed JSON document per event to a URL you choose. " +
+				"Each request is signed with HMAC-SHA256 over the body under your secret, " +
+				"so your receiver can reject anything this server did not send.",
+		},
+		New: webhook.New,
 	})
 }

@@ -155,6 +155,14 @@ func handleSettingsSubtree(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		// Event sink settings (ADR-0057 decision 6) — the same subtree shape again,
+		// for the Extension point that has no external source to probe. Branched
+		// alongside the subtitle providers, before the metadata /test suffix handling.
+		if rest == "event-sinks" || strings.HasPrefix(rest, "event-sinks/") {
+			handleEventSinkSettingsSubtree(deps, rest)(w, r)
+			return
+		}
+
 		// Tailnet remote-access settings (ADR-0043) — the same subtree shape, plus
 		// three imperative verbs. Branched here, before the /test suffix handling
 		// below, so /settings/tailscale/connect is not read as a provider probe.
