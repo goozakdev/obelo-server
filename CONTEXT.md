@@ -380,7 +380,7 @@ A Plugin compiled into the server and registered through the same contract an In
 _Avoid_: Core provider, Native plugin, Bundled plugin.
 
 **Installed plugin**:
-A Plugin an Admin added to a running server as a module and a manifest, without a rebuild. It reaches the network only through what the host grants it, and a failing one is recorded and disabled, never allowed to stop a boot. None exist until Phase 2 of the plugin system opens.
+A Plugin an Admin added to a running server as a module and a manifest, without a rebuild. The module is WebAssembly, run in a wazero sandbox that grants it no filesystem, no sockets and no processes, and reached through a hand-rolled JSON ABI ([ADR-0058](./docs/adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)). It reaches the network only through what the host grants it, and a failing one is recorded and disabled, never allowed to stop a boot. None exist until Phase 2 of the plugin system opens.
 _Avoid_: Third-party plugin (the maintainer writes the first one), External plugin (says where it came from, not what it is), Module (the file format).
 
 **Event sink**:
