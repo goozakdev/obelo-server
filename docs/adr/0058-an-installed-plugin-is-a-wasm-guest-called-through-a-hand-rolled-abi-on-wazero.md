@@ -124,6 +124,26 @@ a handle. Every one of these is request-response and JSON-shaped, like the contr
 > call failure, for the reason issue 09 gave — the call itself succeeded, so the failure counter
 > would be cleared by the very call that earned it.
 
+> **Carried out in full (plugin-system issue 11, 2026-09-17):** the Metadata provider Extension
+> point needed the other two, and they landed with it. The set is now **five**, not four, because
+> `kv_delete` was added beside `kv_get`/`kv_set`: a Plugin that may only ever grow its namespace
+> has no way to evict a cache entry it knows is stale, and the one-line store method costs less
+> than the workaround an author would otherwise write. The namespace is
+> `plugin_kv(plugin_id, key, value BLOB, updated_at)` with `PRIMARY KEY (plugin_id, key)` —
+> migration `0068_plugin_kv` — and the `plugin_id` is prefixed **by the host**, from the manifest
+> on disk, so there is no spelling of a key that reaches another Plugin's value. Uninstall is one
+> `DELETE` (`store.DeletePluginNamespace`). Keys and values are size-capped (256 B / 64 KiB by
+> default) and exceeding a cap is a **refusal**, never a truncation, for the reason an oversize
+> fetch is.
+>
+> `settings_get` takes no request and answers the `Settings` the host resolved for the call the
+> guest is **currently inside**; outside a call it answers a zero `Settings`, so a secret is never
+> readable beyond the call it belongs to. That is why a Metadata provider needs the function
+> where a sink did not: a sink has one call and its Settings ride with it, while a provider has
+> eight, and eight per-call envelopes carrying the same document would be eight places for a
+> secret to be forgotten. No new envelope type was added for the metadata calls at all — their
+> requests and responses are the `pluginapi/v1` types issue 07 froze, unchanged.
+
 **6. Every call carries a deadline, and the deadline is enforced by the runtime.** The runtime
 is built with `WithCloseOnContextDone(true)` and each call gets a `context` with a deadline.
 A guest that never returns is unwound: the spike's spinning guest, given 200 ms, was stopped

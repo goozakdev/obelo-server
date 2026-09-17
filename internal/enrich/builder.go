@@ -93,6 +93,32 @@ type ProviderConfig struct {
 	// provider could be pointed at by an Enrichment policy and then be built with
 	// no key, because the resolver had nowhere to inject one. Nil is empty.
 	ProviderKeys map[string]string
+
+	// ProviderEndpoints is the URL twin of ProviderKeys: the effective base URLs of
+	// any OTHER registered Plugin — from Phase 2, every Installed one.
+	//
+	// It is separate from the named fields for the same reason, and it closes the
+	// same kind of hole one level down. Without it an Installed provider is built
+	// with an EMPTY url however carefully its manifest declared a default and
+	// however plainly the operator typed an override, because providerSettings'
+	// switch has a case per Built-in slug and no default. A source with no endpoint
+	// makes no requests, silently — the worst of the three ways this could fail.
+	//
+	// Unlike ProviderKeys it is filled for every such Plugin whether or not it is
+	// active, because a URL is not a credential: knowing where a source lives costs
+	// nothing and a Plugin that is built at all must know it. It is READ-ONLY to the
+	// per-Library resolver (which copies the config and shares this map), so unlike
+	// ProviderKeys it needs no copy-on-write. Nil is empty.
+	ProviderEndpoints map[string]ProviderEndpoint
+}
+
+// ProviderEndpoint is one Plugin's effective hosts: its base URL, and the second
+// one for the rare source whose images come from elsewhere. It is the pair
+// pluginapi.Settings carries as URL and URL2, resolved from the row's overrides or
+// the Descriptor's defaults.
+type ProviderEndpoint struct {
+	URL  string
+	URL2 string
 }
 
 // videoAuthoritativeSlug is the slug of the Full provider that leads the video
@@ -178,6 +204,20 @@ func (c ProviderConfig) providerSettings(slug string) pluginapi.Settings {
 		s.RateLimitMillis = &ms
 	case SlugTheAudioDB:
 		s.URL = c.TheAudioDBBaseURL
+	default:
+		// Every Plugin this binary was not written around — from Phase 2, every
+		// Installed one. Its manifest's defaultUrl and the operator's override were
+		// resolved into ProviderEndpoints by SettingsToProviderConfig, exactly as the
+		// named fields above were; without this case the source would be built with
+		// no endpoint and would quietly make no requests at all.
+		//
+		// RateLimitMillis is deliberately left ABSENT here and not set to zero: absent
+		// is "use your own default pacing", which is the only honest thing to tell a
+		// source this server holds no rate policy for, where 0 would be the operator
+		// explicitly saying "do not throttle" (ADR-0049). A per-Plugin rate setting is
+		// the generic settings schema's (issue 13).
+		e := c.ProviderEndpoints[slug]
+		s.URL, s.URL2 = e.URL, e.URL2
 	}
 	return s
 }

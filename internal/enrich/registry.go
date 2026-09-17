@@ -547,6 +547,23 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		}
 		cfg.ProviderKeys[e.Slug] = byslug[e.Slug].APIKey
 	}
+	// And every such Plugin's ENDPOINTS, whether or not it is active — a URL is not
+	// a credential, and a Plugin the resolver activates for one Library (by
+	// injecting its key) must already know where its source lives. Same resolution
+	// as the named fields: the row's override, else the Descriptor's default, which
+	// for an Installed plugin is what its manifest declared.
+	for _, e := range c.entries {
+		if hasNamedKeyField(e.Slug) {
+			continue
+		}
+		if cfg.ProviderEndpoints == nil {
+			cfg.ProviderEndpoints = map[string]ProviderEndpoint{}
+		}
+		cfg.ProviderEndpoints[e.Slug] = ProviderEndpoint{
+			URL:  baseURL(e.Slug),
+			URL2: imageBaseURL(e.Slug),
+		}
+	}
 	return cfg
 }
 

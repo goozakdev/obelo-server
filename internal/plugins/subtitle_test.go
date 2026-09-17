@@ -127,7 +127,7 @@ func loadWith(t *testing.T, dataDir string, log *logSink, opts plugins.Options) 
 
 // providerFor registers the Set into a fresh Registry and builds the one Subtitle
 // provider for id, exactly as subfetch.BuildProvider does from a settings row.
-func providerFor(t *testing.T, set *plugins.Set, id string, s pluginapi.Settings) pluginapi.SubtitleProvider {
+func subtitleProviderFor(t *testing.T, set *plugins.Set, id string, s pluginapi.Settings) pluginapi.SubtitleProvider {
 	t.Helper()
 	reg := pluginapi.NewRegistry()
 	set.Register(reg)
@@ -195,7 +195,7 @@ func TestAnInstalledSubtitleProviderRegistersAndAnswersBothCalls(t *testing.T) {
 		t.Error("a Plugin providing only subtitle-provider was registered as an Event sink too")
 	}
 
-	provider := providerFor(t, set, "example-subs", pluginapi.Settings{
+	provider := subtitleProviderFor(t, set, "example-subs", pluginapi.Settings{
 		Enabled: true, Secret: "sk-test", URL: source.srv.URL,
 	})
 
@@ -253,7 +253,7 @@ func TestAGuestSearchingWithNoHashSaysSoIsQuery(t *testing.T) {
 	source := newSubtitleSource(t)
 	set := load(t, dataDir, &logSink{})
 
-	provider := providerFor(t, set, "example-subs", pluginapi.Settings{
+	provider := subtitleProviderFor(t, set, "example-subs", pluginapi.Settings{
 		Enabled: true, Secret: "sk-test", URL: source.srv.URL,
 	})
 	req := pluginapi.SubtitleSearchRequest{
@@ -286,7 +286,7 @@ func TestAnOversizeDownloadIsRefusedWholeAndRecorded(t *testing.T) {
 
 	// The secret carries the mode marker: the one string a test can set that
 	// reaches a provider guest.
-	provider := providerFor(t, set, "greedy-subs", pluginapi.Settings{
+	provider := subtitleProviderFor(t, set, "greedy-subs", pluginapi.Settings{
 		Enabled: true, Secret: "sk-test;obelo-mode=oversize", URL: source.srv.URL,
 	})
 
@@ -327,7 +327,7 @@ func TestAPluginThatOnlyEverAnswersOversizeIsDisabled(t *testing.T) {
 	source := newSubtitleSource(t)
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{MaxFetchBytes: 4096})
 
-	provider := providerFor(t, set, "greedy-subs", pluginapi.Settings{
+	provider := subtitleProviderFor(t, set, "greedy-subs", pluginapi.Settings{
 		Enabled: true, Secret: "obelo-mode=oversize", URL: source.srv.URL,
 	})
 	req := pluginapi.SubtitleDownloadRequest{Candidate: pluginapi.SubtitleCandidate{ID: "9001"}}

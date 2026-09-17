@@ -500,6 +500,47 @@ func installedWireCases() []wireCase {
 			value:  FetchResponse{Refused: "host not in allowlist"},
 			golden: `{"refused":"host not in allowlist"}`,
 		},
+		{
+			name:   "KVGetRequest",
+			value:  KVGetRequest{Key: "cursor/artists"},
+			golden: `{"key":"cursor/artists"}`,
+		},
+		{
+			name:   "KVGetResponse",
+			value:  KVGetResponse{Found: true, Value: []byte("page-7")},
+			golden: `{"found":true,"value":"cGFnZS03"}`,
+		},
+		{
+			// The absent key, which is NOT an error and NOT a zero-length value. An
+			// author who reads only `value` cannot tell those apart, which is why
+			// `found` is on the wire at all.
+			name:   "KVGetResponse/absent",
+			value:  KVGetResponse{},
+			golden: `{"found":false}`,
+		},
+		{
+			name:   "KVSetRequest",
+			value:  KVSetRequest{Key: "cursor/artists", Value: []byte("page-8")},
+			golden: `{"key":"cursor/artists","value":"cGFnZS04"}`,
+		},
+		{
+			name:   "KVDeleteRequest",
+			value:  KVDeleteRequest{Key: "cursor/artists"},
+			golden: `{"key":"cursor/artists"}`,
+		},
+		{
+			name:   "KVWriteResponse",
+			value:  KVWriteResponse{OK: true},
+			golden: `{"ok":true}`,
+		},
+		{
+			// A refusal, which is what an oversize key or value answers. The text is
+			// host-authored prose an author reads and does not branch on, exactly as
+			// FetchResponse.Refused is.
+			name:   "KVWriteResponse/refused",
+			value:  KVWriteResponse{Error: "the value is larger than a plugin may store"},
+			golden: `{"ok":false,"error":"the value is larger than a plugin may store"}`,
+		},
 	}
 }
 

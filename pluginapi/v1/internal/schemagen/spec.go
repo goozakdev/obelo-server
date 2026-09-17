@@ -350,5 +350,34 @@ func contractTypes() []typeSpec {
 				"is the Plugin's business. The text of refused is host-authored and must not be branched on — ANY " +
 				"non-empty value means this server will refuse the same request again.",
 		},
+		{
+			value: pluginapi.KVGetRequest{},
+			doc: "A read from the Plugin's OWN key-value namespace in the host's database. The key is the " +
+				"guest's alone: the host prefixes it with the Plugin id from the manifest on disk, so no spelling " +
+				"of a key can reach another Plugin's value. Uninstalling a Plugin drops the whole namespace.",
+		},
+		{
+			value: pluginapi.KVGetResponse{},
+			doc: "What a read answers. found distinguishes a key that was never written from a key holding zero " +
+				"bytes — two different facts a guest caching 'I asked and there was nothing' has to tell apart — " +
+				"and error is a host-side failure or a refusal (an oversize key), which is again not the same as " +
+				"an absent key.",
+		},
+		{
+			value: pluginapi.KVSetRequest{},
+			doc: "A write into the Plugin's own key-value namespace, replacing whatever was there. Keys and " +
+				"values are size-capped by the host; exceeding a cap is REFUSED rather than truncated, for the " +
+				"reason an oversize fetch is.",
+		},
+		{
+			value: pluginapi.KVDeleteRequest{},
+			doc: "A removal from the Plugin's own key-value namespace. Deleting a key that was never written is " +
+				"not an error — it is the state the caller asked for.",
+		},
+		{
+			value: pluginapi.KVWriteResponse{},
+			doc: "What a write or a delete answers. There is no outcome here because storing a byte string has " +
+				"no domain judgment to report: ok is true, or error says why the host refused or failed.",
+		},
 	}
 }
