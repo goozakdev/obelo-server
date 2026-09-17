@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/eventsink"
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -64,6 +65,31 @@ type eventSinkJSON struct {
 	// vocabularies. All zero for a sink that has never been live, which is the
 	// truth and not an absence — so it is a value, never omitted.
 	Counters eventsink.Counters `json:"counters"`
+	// Installed reports that this sink is an Installed plugin — a module an Admin
+	// placed under the data directory — rather than a Built-in compiled into this
+	// binary. It is the only field on this response that distinguishes the two,
+	// and it exists because the three fields after it are meaningless for a
+	// Built-in: code that shipped with the server cannot fail to load.
+	Installed bool `json:"installed,omitempty"`
+	// Disabled is an Installed plugin this server will not call: one that was
+	// refused at load (a manifest it could not read, an API version it does not
+	// speak, a module that would not compile) or one that failed enough times at
+	// runtime to be stopped. It is NOT the Admin's enabled toggle — a Plugin can
+	// be switched on and still be disabled, which is exactly the state that needs
+	// explaining.
+	Disabled bool `json:"disabled,omitempty"`
+	// LastError is the sentence that says why. It is the whole reason a refused
+	// Plugin is listed at all rather than quietly skipped.
+	LastError string `json:"lastError,omitempty"`
+	// Version is the author's own version of their Plugin, for an operator to read.
+	Version string `json:"version,omitempty"`
+}
+
+// InstalledPluginStatus reports the loader's view of one Installed plugin by
+// slug. *plugins.Set satisfies it; the narrow interface keeps the HTTP layer able
+// to answer without a wasm runtime anywhere near it.
+type InstalledPluginStatus interface {
+	Status(slug string) (plugins.Status, bool)
 }
 
 // eventSinksResponse is the GET/PUT body: the joined sink list plus the event
@@ -311,6 +337,13 @@ func buildEventSinksResponse(deps Deps) (eventSinksResponse, error) {
 		if events == nil {
 			events = []string{}
 		}
+		// An Installed plugin's runtime state, joined on by slug. A slug the
+		// loader does not know is a Built-in, and every field below stays zero.
+		var installed plugins.Status
+		known := false
+		if deps.InstalledPlugins != nil {
+			installed, known = deps.InstalledPlugins.Status(d.Slug)
+		}
 		resp.Sinks = append(resp.Sinks, eventSinkJSON{
 			Slug:           d.Slug,
 			Name:           d.Name,
@@ -322,6 +355,10 @@ func buildEventSinksResponse(deps Deps) (eventSinksResponse, error) {
 			Description:    d.Description,
 			DocsURL:        d.DocsURL,
 			Counters:       counters[d.Slug],
+			Installed:      known,
+			Disabled:       installed.Disabled,
+			LastError:      installed.LastError,
+			Version:        installed.Version,
 		})
 	}
 	if resp.Sinks == nil {

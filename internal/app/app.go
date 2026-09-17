@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
@@ -125,6 +127,13 @@ type App struct {
 	sinkManager    *eventsink.Manager
 	sinkTranslator *eventsink.Translator
 
+	// installedPlugins is the Installed half of the Plugin system (ADR-0058): every
+	// Plugin found under <dataDir>/plugins at boot, the refused ones included, each
+	// holding its compiled module and the state that decides whether this server is
+	// still willing to call it. Closed with the App so no wasm runtime outlives the
+	// process that built it.
+	installedPlugins *plugins.Set
+
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
 	// enrich); each closes its done channel once it has fully exited, so Close
@@ -161,6 +170,12 @@ type options struct {
 	// Enrichment policy then treat it exactly as they treat a Built-in, which is the
 	// only honest way to check that decision 4 holds.
 	metadataPlugins []pluginapi.MetadataProviderRegistration
+	// pluginOptions tunes the Installed-plugin loader (ADR-0058). The zero value
+	// is production: a ten-second per-call budget, a one-mebibyte fetch cap and
+	// three consecutive failures before a Plugin is disabled. A test shortens the
+	// call budget so a guest that never returns can be observed being stopped
+	// without the suite waiting half a minute for it.
+	pluginOptions plugins.Options
 	// subtitleProviderBuilder overrides how the subtitle-fetch Manager composes a
 	// SubtitleProvider from settings (default: subfetch.BuildProvider). It is the
 	// test seam for the fetch flow: a black-box test maps settings → a fake
@@ -253,6 +268,15 @@ func WithProviderBuilder(build enrich.BuildFunc) Option {
 // Registering a duplicate slug panics, exactly as a Built-in would.
 func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option {
 	return func(o *options) { o.metadataPlugins = append(o.metadataPlugins, regs...) }
+}
+
+// WithPluginOptions tunes the Installed-plugin loader (ADR-0058). Every field
+// falls back to its production default, so a caller sets only what it means to
+// change — in practice the per-call budget, because a test that has to watch a
+// guest be killed three times for spinning should not wait thirty seconds to see
+// it.
+func WithPluginOptions(opts plugins.Options) Option {
+	return func(o *options) { o.pluginOptions = opts }
 }
 
 // WithDetector overrides the setup-time hardware-accel Detector (default:
@@ -493,13 +517,31 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// of them it has. Registration is EXPLICIT — builtins.Register is the only way a
 	// Built-in reaches a running server, there is no init() side effect anywhere —
 	// and the registry is a VALUE, so the builders and the settings handlers consume
-	// what this composition root put in it rather than a package-level catalog. A
-	// Phase 2 loader adds Installed plugins to this same value.
-	plugins := pluginapi.NewRegistry()
-	builtins.Register(plugins)
+	// what this composition root put in it rather than a package-level catalog. The
+	// Installed-plugin loader below adds to this same value, which is what makes an
+	// Installed plugin indistinguishable from a Built-in everywhere downstream.
+	registry := pluginapi.NewRegistry()
+	builtins.Register(registry)
 	for _, reg := range o.metadataPlugins {
-		plugins.RegisterMetadataProvider(reg)
+		registry.RegisterMetadataProvider(reg)
 	}
+
+	// Installed plugins (ADR-0058), AFTER the Built-ins and into the same value:
+	// a module and a manifest an Admin placed by hand under <dataDir>/plugins/<id>/,
+	// compiled into its own wazero sandbox and registered as the seam its manifest
+	// says it fills. From here on nothing can tell one from a Built-in — which is
+	// the point, and the proof that the contract was honest.
+	//
+	// NOTHING HERE MAY STOP A BOOT (ADR-0001, and the ADR-0043 template). A Plugin
+	// that will not load is registered anyway, disabled, carrying the sentence that
+	// says why, so an operator sees it on the settings screen instead of wondering
+	// where their files went. Even an unreadable plugins directory is a logged
+	// warning and an empty set.
+	installed, err := plugins.Load(context.Background(), filepath.Join(cfg.DataDir, plugins.DirName), o.pluginOptions)
+	if err != nil {
+		log.Printf("obelo: installed plugins were not loaded: %v", err)
+	}
+	installed.Register(registry)
 
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
@@ -519,7 +561,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// The enrichment Catalog is the Metadata provider half of that registry, seen in
 	// the enrichment domain's own vocabulary: the value the builder, the Manager and
 	// the settings handlers consume instead of a package-level provider catalog.
-	metadataCatalog := enrich.NewCatalog(plugins)
+	metadataCatalog := enrich.NewCatalog(registry)
 	provider := o.metadataProvider
 	enablement := enrich.Enablement{Video: cfg.VideoEnrichmentEnabled(), Music: cfg.MusicEnrichmentEnabled()}
 	if provider == nil {
@@ -643,7 +685,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: seeding subtitle provider settings: %w", err)
 	}
-	subtitleBuild := subfetch.BuilderFor(plugins)
+	subtitleBuild := subfetch.BuilderFor(registry)
 	if o.subtitleProviderBuilder != nil {
 		subtitleBuild = o.subtitleProviderBuilder
 	}
@@ -667,7 +709,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Reloaded at boot and again on every settings save, like both provider
 	// Managers. A read failure here is a boot failure for the same reason theirs is:
 	// the settings the operator saved are not optional state.
-	sinkManager := eventsink.NewManager(db, plugins, eventsink.NewDispatcher())
+	sinkManager := eventsink.NewManager(db, registry, eventsink.NewDispatcher())
 	if err := sinkManager.Reload(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: applying event sink settings: %w", err)
@@ -830,6 +872,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		tailnetMgr:       tailnetManager,
 		sinkManager:      sinkManager,
 		sinkTranslator:   sinkTranslator,
+		installedPlugins: installed,
 	}
 	queueDepth := enrichQueueDepth
 	if o.enrichQueueSize > 0 {
@@ -923,9 +966,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		SubFetch:                subFetchSvc,
 		SubtitleProviders:       db,
 		SubtitleProviderManager: subtitleManager,
-		Plugins:                 plugins,
+		Plugins:                 registry,
 		EventSinks:              db,
 		EventSinkManager:        sinkManager,
+		InstalledPlugins:        installed,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
@@ -1492,6 +1536,13 @@ func (a *App) Close() error {
 	}
 	if a.sinkManager != nil {
 		a.sinkManager.Dispatcher().Close()
+	}
+	// Then the wasm runtimes, AFTER the sinks that call into them have stopped:
+	// closing a runtime out from under an in-flight delivery would trap the guest
+	// on the way out and record a failure against a Plugin that was doing nothing
+	// wrong.
+	if a.installedPlugins != nil {
+		_ = a.installedPlugins.Close(context.Background())
 	}
 	if a.Events != nil {
 		a.Events.Close()

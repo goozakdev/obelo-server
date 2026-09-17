@@ -310,7 +310,162 @@ func wireCases() []wireCase {
 			golden: `{"id":"5b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"library.changed",` +
 				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-2","name":"Shows","kind":"show"}}`,
 		},
-	}, metadataWireCases()...)
+	}, append(metadataWireCases(), installedWireCases()...)...)
+}
+
+// installedWireCases pins the documents an INSTALLED plugin deals in (ADR-0058):
+// the manifest an author writes by hand, the request and response of the one
+// guest call this slice implements, and the two shapes of the fetch host function.
+//
+// These matter more than most goldens here, because they are the documents an
+// author who is not writing Go reads the schema for. A field order or a key name
+// that drifts is a Plugin in another language that stops loading.
+func installedWireCases() []wireCase {
+	return []wireCase{
+		{
+			// The whole manifest, every field set, so the key ORDER is pinned.
+			name: "Manifest",
+			value: Manifest{
+				ID:         "example-sink",
+				Name:       "Example Sink",
+				Version:    "0.2.0",
+				APIVersion: APIVersion,
+				Provides: []ManifestProvides{{
+					Kind:           ExtensionEventSink,
+					RequiresSecret: true,
+				}},
+				Network:     ManifestNetwork{Hosts: []string{"automation.example.test"}},
+				Settings:    ManifestSettings{RequiresSecret: true},
+				Description: "Posts a signed document when something finishes.",
+				DocsURL:     "https://example.test/obelo-plugin",
+				Module:      "plugin.wasm",
+			},
+			golden: `{"id":"example-sink","name":"Example Sink","version":"0.2.0","apiVersion":1,` +
+				`"provides":[{"kind":"event-sink","requiresSecret":true}],` +
+				`"network":{"hosts":["automation.example.test"]},"settings":{"requiresSecret":true},` +
+				`"description":"Posts a signed document when something finishes.",` +
+				`"docsUrl":"https://example.test/obelo-plugin","module":"plugin.wasm"}`,
+		},
+		{
+			// The smallest manifest that is still a Plugin: a Metadata provider
+			// declaring where it belongs in the chain and what it can do. Nothing
+			// optional is present, which is what an author's first file looks like.
+			name: "Manifest/minimal",
+			value: Manifest{
+				ID:         "anilist",
+				Name:       "AniList",
+				APIVersion: APIVersion,
+				Provides: []ManifestProvides{{
+					Kind:         ExtensionMetadataProvider,
+					Kinds:        []string{KindVideo},
+					Role:         RoleSupplement,
+					Class:        ClassFull,
+					Capabilities: []Capability{CapabilitySearch},
+				}},
+			},
+			golden: `{"id":"anilist","name":"AniList","apiVersion":1,` +
+				`"provides":[{"kind":"metadata-provider","kinds":["video"],"role":"supplement",` +
+				`"class":"full","capabilities":["search"]}]}`,
+		},
+		{
+			name: "ManifestProvides",
+			value: ManifestProvides{
+				Kind:           ExtensionMetadataProvider,
+				Kinds:          []string{KindVideo, KindMusic},
+				Role:           RoleAuthoritative,
+				Class:          ClassFull,
+				Capabilities:   []Capability{CapabilitySearch, CapabilityExternalRef},
+				RequiresSecret: true,
+			},
+			golden: `{"kind":"metadata-provider","kinds":["video","music"],"role":"authoritative",` +
+				`"class":"full","capabilities":["search","external-ref"],"requiresSecret":true}`,
+		},
+		{
+			name:   "ManifestNetwork",
+			value:  ManifestNetwork{Hosts: []string{"api.example.test", "images.example.test"}},
+			golden: `{"hosts":["api.example.test","images.example.test"]}`,
+		},
+		{
+			name: "ManifestSettings",
+			value: ManifestSettings{
+				RequiresSecret: true,
+				DefaultURL:     "https://api.example.test/v1",
+				DefaultURL2:    "https://images.example.test",
+			},
+			golden: `{"requiresSecret":true,"defaultUrl":"https://api.example.test/v1",` +
+				`"defaultUrl2":"https://images.example.test"}`,
+		},
+		{
+			// The settings ride WITH the call: a secret reaches a guest for the
+			// duration of one delivery and is never installed into it.
+			name: "SinkDeliverRequest",
+			value: SinkDeliverRequest{
+				Event: SinkEvent{
+					ID:      "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+					Type:    EventScanCompleted,
+					At:      "2026-09-16T12:00:00Z",
+					Library: EventEntity{ID: "lib-1", Name: "Movies", Kind: "movie"},
+					Scan:    &EventScan{TitlesFound: 3, FilesFound: 4},
+				},
+				Settings: Settings{
+					Enabled: true,
+					Secret:  "topsecret",
+					URL:     "https://automation.example.test/obelo",
+					Events:  []string{EventScanCompleted},
+				},
+			},
+			golden: `{"event":{"id":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"scan.completed",` +
+				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
+				`"scan":{"titlesFound":3,"filesFound":4}},` +
+				`"settings":{"enabled":true,"secret":"topsecret",` +
+				`"url":"https://automation.example.test/obelo","events":["scan.completed"]}}`,
+		},
+		{
+			name:   "SinkDeliverResponse",
+			value:  SinkDeliverResponse{Delivered: true},
+			golden: `{"delivered":true}`,
+		},
+		{
+			// A failure the author described. delivered is written either way — the
+			// key is always present, so a guest that forgets it says "not delivered",
+			// which is the safe reading.
+			name:   "SinkDeliverResponse/failed",
+			value:  SinkDeliverResponse{Error: "automation.example.test answered 503"},
+			golden: `{"delivered":false,"error":"automation.example.test answered 503"}`,
+		},
+		{
+			name: "FetchRequest",
+			value: FetchRequest{
+				Method:  "POST",
+				URL:     "https://automation.example.test/obelo",
+				Headers: []FetchHeader{{Name: "Content-Type", Value: "application/json"}},
+				Body:    []byte(`{"ok":true}`),
+			},
+			golden: `{"method":"POST","url":"https://automation.example.test/obelo",` +
+				`"headers":[{"name":"Content-Type","value":"application/json"}],` +
+				`"body":"eyJvayI6dHJ1ZX0="}`,
+		},
+		{
+			name:   "FetchHeader",
+			value:  FetchHeader{Name: "Accept", Value: "application/json"},
+			golden: `{"name":"Accept","value":"application/json"}`,
+		},
+		{
+			name: "FetchResponse",
+			value: FetchResponse{
+				Status:  204,
+				Headers: []FetchHeader{{Name: "Content-Length", Value: "0"}},
+			},
+			golden: `{"status":204,"headers":[{"name":"Content-Length","value":"0"}]}`,
+		},
+		{
+			// The refusal an author will meet first, and the one the audit line is
+			// about. No status, no body: the request was never sent.
+			name:   "FetchResponse/refused",
+			value:  FetchResponse{Refused: "host not in allowlist"},
+			golden: `{"refused":"host not in allowlist"}`,
+		},
+	}
 }
 
 // TestAllEventTypesIsComplete: the curated set is closed (ADR-0057 decision 6), so
