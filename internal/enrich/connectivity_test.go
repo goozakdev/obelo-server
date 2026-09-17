@@ -19,7 +19,7 @@ func TestTestConnectionOMDbProbes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok, detail := TestConnection(context.Background(), SlugOMDb, "key", srv.URL, "en-US")
+	ok, detail := TestConnection(context.Background(), builtinCatalog(), SlugOMDb, "key", srv.URL, "en-US")
 	if !ok {
 		t.Fatalf("omdb probe = ok:false (%q), want ok:true against a healthy stub", detail)
 	}
@@ -40,14 +40,14 @@ func TestTestConnectionTheTVDBProbes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok, detail := TestConnection(context.Background(), SlugTheTVDB, "key", srv.URL, "en-US")
+	ok, detail := TestConnection(context.Background(), builtinCatalog(), SlugTheTVDB, "key", srv.URL, "en-US")
 	if !ok {
 		t.Fatalf("thetvdb probe = ok:false (%q), want ok:true against a healthy stub", detail)
 	}
 }
 
 func TestTestConnectionUnknownSlug(t *testing.T) {
-	ok, detail := TestConnection(context.Background(), "nope", "key", "http://unused", "en-US")
+	ok, detail := TestConnection(context.Background(), builtinCatalog(), "nope", "key", "http://unused", "en-US")
 	if ok || detail == "" {
 		t.Errorf("unknown slug = ok:%v detail:%q, want ok:false with a detail", ok, detail)
 	}

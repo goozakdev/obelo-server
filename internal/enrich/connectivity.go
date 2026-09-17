@@ -3,6 +3,8 @@ package enrich
 import (
 	"context"
 	"errors"
+
+	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 )
 
 // A well-known MusicBrainz artist id (Radiohead), used only as a representative
@@ -18,8 +20,14 @@ const probeArtistMBID = "a74b1b7f-71a5-4011-9441-d0b5e4122711"
 // transport/credential error means it did not (not ok, with the error as detail).
 // The caller supplies a bounded context so a hung host can't stall the request.
 // A key-requiring provider with no key fails fast without any call.
-func TestConnection(ctx context.Context, slug, apiKey, baseURL, language string) (ok bool, detail string) {
-	entry, found := RegistryEntryFor(slug)
+//
+// A source that goes through the contract is probed BY BUILDING ITS PLUGIN from
+// the catalog (ADR-0057): the probe then exercises the registration and the
+// adapter — the same path the real chain takes — rather than a private
+// construction no production flow uses. The music sources are still constructed
+// directly, because that is still how the music chain composes them.
+func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, language string) (ok bool, detail string) {
+	entry, found := cat.Entry(slug)
 	if !found {
 		return false, "unknown provider"
 	}
@@ -28,7 +36,7 @@ func TestConnection(ctx context.Context, slug, apiKey, baseURL, language string)
 	}
 	base := baseURL
 	if base == "" {
-		base = entry.DefaultBaseURL
+		base = entry.DefaultURL
 	}
 
 	var (
@@ -38,21 +46,19 @@ func TestConnection(ctx context.Context, slug, apiKey, baseURL, language string)
 	switch slug {
 	case SlugTMDB:
 		// The image host is irrelevant to a connectivity probe (no artwork bytes are
-		// fetched), so the registry default suffices here.
-		provider = NewTMDBProvider(apiKey, language, base, entry.DefaultImageBaseURL)
+		// fetched), so the Descriptor default suffices here.
 		ref = TitleRef{Kind: "movie", Title: "Inception", Year: 2010}
 	case SlugOMDb:
-		provider = NewOMDbProvider(apiKey, base)
 		ref = TitleRef{Kind: "movie", Title: "Inception", Year: 2010}
 	case SlugTheTVDB:
-		provider = NewTheTVDBProvider(apiKey, base)
 		ref = TitleRef{Kind: "show", Title: "Breaking Bad"}
 	case SlugAniDB:
 		// AniDB resolves BY anime id (no name search), so probe a well-known aid
 		// (aid=1) — a normal record OR an unknown-aid no-match both prove the host
 		// answered and the client name was accepted. The apiKey is the client name.
-		provider = NewAniDBProvider(apiKey, base, language)
 		ref = TitleRef{Kind: "show", Title: "Cowboy Bebop", AniDBID: "1"}
+	case SlugFanartTV:
+		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead", MusicbrainzID: probeArtistMBID}
 	case SlugMusicBrainz:
 		provider = NewMusicBrainzProvider(base, registryCoverArtBaseURL, language)
 		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"}
@@ -62,14 +68,23 @@ func TestConnection(ctx context.Context, slug, apiKey, baseURL, language string)
 		// against the supplied Cover Art host.
 		provider = NewMusicBrainzProvider(registryMusicBrainzBaseURL, base, language)
 		ref = TitleRef{Kind: "album", Title: "OK Computer", Artist: "Radiohead"}
-	case SlugFanartTV:
-		provider = NewFanartTVProvider(apiKey, base)
-		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead", MusicbrainzID: probeArtistMBID}
 	case SlugTheAudioDB:
 		provider = NewTheAudioDBProvider(apiKey, base, language)
 		ref = TitleRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"}
 	default:
 		return false, "unknown provider"
+	}
+	if provider == nil {
+		provider = cat.buildPlugin(slug, pluginapi.Settings{
+			Enabled:  true,
+			Secret:   apiKey,
+			URL:      base,
+			URL2:     entry.DefaultURL2,
+			Language: language,
+		})
+	}
+	if provider == nil {
+		return false, "this provider cannot be built from these settings"
 	}
 
 	_, err := provider.Lookup(ctx, ref)

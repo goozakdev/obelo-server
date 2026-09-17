@@ -28,6 +28,11 @@ import "github.com/goozakdev/obelo-server/internal/store"
 // active-if-keyed authoritative and the force-on tri-state. The Manager builds it
 // once per Reload (both parts derived from the same provider rows).
 type GlobalEnrichment struct {
+	// Catalog is the Metadata provider Plugins this server was composed with — the
+	// value the resolver validates an Authoritative-provider pointer against, so
+	// "may this Library lead with that source" is a registration fact and a Built-in
+	// is not special (ADR-0057 decision 4).
+	Catalog   Catalog
 	Config    ProviderConfig
 	Providers map[string]ProviderState
 }
@@ -61,12 +66,12 @@ func ResolveLibraryEnrichment(g GlobalEnrichment, policy store.LibraryEnrichment
 	}
 
 	// Authoritative-provider pointer (issue 03): repoint the Full provider that leads.
-	fallback := resolveAuthoritative(&cfg, g.Providers, policy.AuthoritativeProvider)
+	fallback := resolveAuthoritative(g.Catalog, &cfg, g.Providers, policy.AuthoritativeProvider)
 
 	// Per-provider Supplement tri-state (issue 05): force a supplement on or off for
 	// this Library only. Applied AFTER the authoritative is chosen so force-off of the
 	// current authoritative can be recognized as a no-op.
-	applySupplementOverrides(&cfg, g.Providers, policy.SupplementOverrides)
+	applySupplementOverrides(g.Catalog, &cfg, g.Providers, policy.SupplementOverrides)
 
 	// enrich_enabled=false is the ONLY hard off-switch for a Library (ADR-0027): no
 	// chain runs and no outbound call is made. The service gates every fetch on
@@ -91,19 +96,19 @@ func ResolveLibraryEnrichment(g GlobalEnrichment, policy store.LibraryEnrichment
 //     if-keyed): point cfg at it and inject its key so BuildProvider composes it;
 //   - a Full provider that is NOT keyed (its key was cleared after selection) ⇒
 //     fall back to the kind's global default authoritative and flag it, never stall.
-func resolveAuthoritative(cfg *ProviderConfig, providers map[string]ProviderState, pointer *string) string {
+func resolveAuthoritative(cat Catalog, cfg *ProviderConfig, providers map[string]ProviderState, pointer *string) string {
 	if pointer == nil {
 		return "" // inherit the kind default
 	}
 	slug := *pointer
-	entry, ok := RegistryEntryFor(slug)
+	entry, ok := cat.Entry(slug)
 	if !ok || entry.Class != ClassFull {
 		return "" // not a leadable provider — ignore, inherit the default
 	}
 	// Only the video kind has multiple Full providers today, so only a video
 	// authoritative changes the composition; a music pointer (MusicBrainz, the sole
 	// Full music provider) already equals the default and needs no cfg change.
-	if !entry.serves(KindVideo) {
+	if !entry.Serves(KindVideo) {
 		return ""
 	}
 	st := providers[slug]
@@ -128,9 +133,9 @@ func resolveAuthoritative(cfg *ProviderConfig, providers map[string]ProviderStat
 // CURRENT authoritative is a no-op (ADR-0027): its off-switch is enrich_enabled, not
 // a per-provider toggle. A force-on activates a source only when it is keyed
 // (offline-first — never conjure a call for an unkeyed provider).
-func applySupplementOverrides(cfg *ProviderConfig, providers map[string]ProviderState, overrides map[string]bool) {
+func applySupplementOverrides(cat Catalog, cfg *ProviderConfig, providers map[string]ProviderState, overrides map[string]bool) {
 	for slug, on := range overrides {
-		if isCurrentAuthoritative(*cfg, slug) {
+		if isCurrentAuthoritative(cat, *cfg, slug) {
 			continue // force-off/on of the leader is meaningless — no-op
 		}
 		if on {
@@ -146,8 +151,8 @@ func applySupplementOverrides(cfg *ProviderConfig, providers map[string]Provider
 // isCurrentAuthoritative reports whether slug is the Library's leading provider for
 // its kind — the video authoritative (repointable) or the fixed music authoritative
 // (MusicBrainz). Used to make force-off of the leader a no-op.
-func isCurrentAuthoritative(cfg ProviderConfig, slug string) bool {
-	return slug == cfg.videoAuthoritativeSlug() || slug == DefaultAuthoritativeForKind(KindMusic)
+func isCurrentAuthoritative(cat Catalog, cfg ProviderConfig, slug string) bool {
+	return slug == cfg.videoAuthoritativeSlug() || slug == cat.DefaultAuthoritativeForKind(KindMusic)
 }
 
 // setProviderKey sets (or clears, with an empty key) the API-key field for a

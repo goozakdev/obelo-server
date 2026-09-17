@@ -493,10 +493,15 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// how it maps config → playback.Governance (ADR-0006: the domain never imports
 	// config). A test-injected fixed provider (WithMetadataProvider) bypasses the
 	// builder but still takes its enablement from config, exactly as before.
+	//
+	// The enrichment Catalog is the Metadata provider half of that registry, seen in
+	// the enrichment domain's own vocabulary: the value the builder, the Manager and
+	// the settings handlers consume instead of a package-level provider catalog.
+	metadataCatalog := enrich.NewCatalog(plugins)
 	provider := o.metadataProvider
 	enablement := enrich.Enablement{Video: cfg.VideoEnrichmentEnabled(), Music: cfg.MusicEnrichmentEnabled()}
 	if provider == nil {
-		provider, enablement = enrich.BuildProvider(enrich.ProviderConfig{
+		provider, enablement = metadataCatalog.BuildProvider(enrich.ProviderConfig{
 			TMDBAPIKey:           cfg.TMDBAPIKey,
 			TMDBBaseURL:          cfg.TMDBBaseURL,
 			TMDBImageBaseURL:     cfg.TMDBImageBaseURL,
@@ -567,11 +572,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// DB-backed — including the MusicBrainz throttle, which the Manager reads from
 	// store.EnrichmentBehavior on each Reload (so app.New no longer passes it from
 	// cfg), and every base URL including the TMDB image host.
-	providerBuild := enrich.BuildFunc(enrich.BuildProvider)
+	providerBuild := enrich.BuilderFor(metadataCatalog)
 	if o.providerBuilder != nil {
 		providerBuild = o.providerBuilder
 	}
-	providerManager := enrich.NewManager(db, enrichSvc, providerBuild)
+	providerManager := enrich.NewManager(db, enrichSvc, metadataCatalog, providerBuild)
 	// Apply the persisted settings at boot so the DB is authoritative — UNLESS a
 	// fixed provider was injected (WithMetadataProvider), which pins that provider
 	// and its config-derived enablement for the existing enrichment tests.

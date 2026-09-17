@@ -14,6 +14,7 @@ import "fmt"
 // like an empty one so a narrow test that wires no Plugins reads as "no Plugins"
 // rather than panicking.
 type Registry struct {
+	metadataProviders []MetadataProviderRegistration
 	subtitleProviders []SubtitleProviderRegistration
 	eventSinks        []EventSinkRegistration
 }
@@ -21,6 +22,56 @@ type Registry struct {
 // NewRegistry returns an empty Registry. Nothing is registered until the
 // composition root says so, explicitly.
 func NewRegistry() *Registry { return &Registry{} }
+
+// RegisterMetadataProvider adds one Metadata provider Plugin. Registration order
+// is preserved and it MATTERS here in a way it does not for subtitles: it is the
+// order the settings screen lists sources in, the order the fill-only Supplements
+// are composed behind the Authoritative provider (ADR-0027 keeps one global order —
+// there is no per-Library reordering), and the first authoritative-role Full
+// provider of a kind is that kind's global default lead.
+//
+// It PANICS on a missing or duplicate slug, for the same reason its Subtitle
+// provider sibling does: registration is a composition-root act, and two Plugins
+// claiming one slug would make a persisted settings row ambiguous.
+//
+// A nil New is ALLOWED and means what MetadataProviderRegistration documents — the
+// static facts are registered while the host still builds the source itself.
+func (r *Registry) RegisterMetadataProvider(reg MetadataProviderRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: metadata provider registered with no slug")
+	}
+	if _, exists := r.MetadataProvider(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: metadata provider %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionMetadataProvider
+	r.metadataProviders = append(r.metadataProviders, reg)
+}
+
+// MetadataProviders returns the registered Metadata providers in registration
+// order. The slice is a copy, so a caller iterating it cannot reorder what the
+// next caller sees.
+func (r *Registry) MetadataProviders() []MetadataProviderRegistration {
+	if r == nil {
+		return nil
+	}
+	out := make([]MetadataProviderRegistration, len(r.metadataProviders))
+	copy(out, r.metadataProviders)
+	return out
+}
+
+// MetadataProvider returns the registration for a slug, or ok=false for a slug no
+// Plugin claimed (which the settings API rejects as an unknown provider).
+func (r *Registry) MetadataProvider(slug string) (MetadataProviderRegistration, bool) {
+	if r == nil {
+		return MetadataProviderRegistration{}, false
+	}
+	for _, reg := range r.metadataProviders {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return MetadataProviderRegistration{}, false
+}
 
 // RegisterSubtitleProvider adds one Subtitle provider Plugin. Registration order
 // is preserved, because it is the order the settings screen lists providers in and

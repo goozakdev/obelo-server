@@ -3,22 +3,28 @@ package enrich
 import (
 	"time"
 
+	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// The provider registry is the STATIC code catalog of the external metadata
-// sources this server knows how to use (metadata-providers 02). It is the single
-// place a provider is registered: it drives both how the builder composes a
-// source (SettingsToProviderConfig below) and what the settings API renders. It
-// holds NO secrets and NO mutable state — enablement, API keys, and base-URL
-// overrides live in the DB (store.MetadataProviderRow); a provider's identity,
-// the kinds it serves, its role, its key requirement, and its default base URL
-// are code.
+// The Metadata provider catalog. It used to be a package-level slice of registry
+// entries that every consumer reached for by name; since ADR-0057 it is a VALUE —
+// a Catalog derived from the Plugin registry the composition root built — that the
+// builder, the Manager, the per-Library resolver and the settings API each receive.
+// Nothing here is reachable without being handed one, so a test composes a server
+// with exactly the Plugins it means and a Phase 2 loader adds Installed plugins to
+// the same value the Built-ins registered into.
+//
+// It still holds NO secrets and NO mutable state: enablement, API keys and
+// base-URL overrides live in the DB (store.MetadataProviderRow); a Plugin's
+// identity, the kinds it serves, its Role, its Class, its key requirement, its
+// declared capabilities and its default URLs are code, now carried by
+// pluginapi.Descriptor exactly as they were by a registry entry.
 
-// Provider slugs — the stable keys shared by the registry, the DB rows, and the
-// settings API. Only the sources that already exist are registered here; the
-// video-supplement sources (OMDb, TheTVDB, fanart.tv-video) arrive in later
-// slices.
+// Provider slugs — the stable keys shared by the Descriptors, the DB rows, and the
+// settings API. The enrichment domain keeps its own copies because a settings row
+// it seeds must not depend on which Plugins happen to be registered, and a row
+// whose slug no Plugin claims is simply never built.
 const (
 	SlugTMDB        = "tmdb"
 	SlugOMDb        = "omdb"
@@ -30,41 +36,25 @@ const (
 	SlugTheAudioDB  = "theaudiodb"
 )
 
-// Media-kind groups a provider serves. These are the coarse Enrichment kinds
-// (Video vs. Music), matching the per-kind Enablement snapshot — not the finer
-// CONTEXT.md kinds (movie/show/…). The settings UI groups providers by these.
+// The coarse Enrichment media-kind groups (Video vs. Music), the Plugin's default
+// chain Role and the ADR-0027 Class, named here in the enrichment domain's own
+// vocabulary while BEING the contract's values — the Authoritative-provider
+// pointer constrains against a registration fact, so these must not be a second
+// set of constants that could drift from the ones a Plugin registers with.
 const (
-	KindVideo = "video"
-	KindMusic = "music"
+	KindVideo = pluginapi.KindVideo
+	KindMusic = pluginapi.KindMusic
+
+	RoleAuthoritative = pluginapi.RoleAuthoritative
+	RoleSupplement    = pluginapi.RoleSupplement
+
+	ClassFull        = pluginapi.ClassFull
+	ClassArtworkOnly = pluginapi.ClassArtworkOnly
 )
 
-// ProviderRole classifies a provider's contribution to a kind: the single
-// authoritative source that drives identity/most fields, or a fill-only
-// supplement that only adds what the authoritative source left empty.
-type ProviderRole string
-
-const (
-	RoleAuthoritative ProviderRole = "authoritative"
-	RoleSupplement    ProviderRole = "supplement"
-)
-
-// ProviderClass is the capability distinction the per-Library Authoritative-
-// provider pointer constrains against (ADR-0027): a Full provider supplies
-// complete descriptive records and is therefore eligible to LEAD a Library's
-// Enrichment (be its Authoritative provider), whereas an Artwork-only provider
-// only fills images/fields the authoritative left empty and can only ever be a
-// Supplement. It is orthogonal to Role: Role is the provider's DEFAULT position in
-// the global chain; Class is what a per-Library pointer may repoint to.
-type ProviderClass string
-
-const (
-	ClassFull        ProviderClass = "full"
-	ClassArtworkOnly ProviderClass = "artwork"
-)
-
-// Registry default base URLs — the public endpoints each provider talks to when
-// the operator sets no override. They mirror config's Default*BaseURL constants
-// (config keeps its own for env defaulting; the registry is the runtime catalog).
+// Default base URLs — the public endpoints each source talks to when the operator
+// sets no override. They mirror config's Default*BaseURL constants (config keeps
+// its own for env defaulting; the Descriptors are the runtime catalog).
 const (
 	registryTMDBBaseURL        = "https://api.themoviedb.org/3"
 	registryTMDBImageBaseURL   = "https://image.tmdb.org/t/p/original"
@@ -77,173 +67,254 @@ const (
 	registryTheAudioDBBaseURL  = "https://www.theaudiodb.com/api/v1/json"
 )
 
-// RegistryEntry describes one known provider statically.
-type RegistryEntry struct {
-	Slug string
-	Name string
-	// Kinds are the coarse media-kind groups the provider serves (KindVideo /
-	// KindMusic). Most serve one; the UI groups by these.
-	Kinds []string
-	// Role is authoritative vs. fill-only supplement for the kinds it serves.
-	Role ProviderRole
-	// Class is the Full vs. Artwork-only capability (ADR-0027): only a Full provider
-	// may be pointed at as a Library's Authoritative provider. Artwork-only providers
-	// (fanart.tv, Cover Art Archive, TheAudioDB) can only ever be Supplements.
-	Class ProviderClass
-	// RequiresKey reports whether the source needs an API key to be enabled. A
-	// key-requiring provider can't be turned on with no key on file (the API
-	// validates this).
-	RequiresKey bool
-	// DefaultBaseURL is the public endpoint used when no base-URL override is set.
-	DefaultBaseURL string
-	// DefaultImageBaseURL is the public artwork host for the few sources whose
-	// images come from a host distinct from their API (today only TMDB). Empty for
-	// every other provider — a provider with no image host has none to configure,
-	// so the settings API omits the field for it.
-	DefaultImageBaseURL string
-	// Description + DocsURL are human-facing copy for the settings screen.
-	Description string
-	DocsURL     string
+// MetadataPlugins is the ordered set of Metadata provider Built-ins this binary
+// ships: what each one IS (its Descriptor) and, for the ones that go through the
+// contract, how to build it from an Admin's Settings. internal/builtins hands the
+// whole list to the Registry from the composition root — explicitly, with no
+// init() side effect anywhere — and app.New then derives the Catalog from that
+// Registry.
+//
+// The registrations live beside the implementations they describe, because these
+// sources are still in this package: a Built-in is code plus its own
+// self-description, and splitting the two would make "what does fanart.tv
+// require" answerable in one place and "what does fanart.tv do" in another.
+// OpenSubtitles differs only because its client moved to internal/builtins, so
+// its Descriptor moved with it.
+//
+// ORDER IS THE CATALOG ORDER and three things read it: the settings screen lists
+// sources in it, the fill-only Supplements are composed behind the Authoritative
+// provider in it (ADR-0027 keeps one global order), and the first
+// authoritative-role Full provider of a kind is that kind's default lead.
+//
+// The music sources carry no factory yet: MusicBrainz, Cover Art Archive and
+// TheAudioDB are still composed by BuildProvider directly, so their Descriptors
+// register the facts the settings screen and the Authoritative-provider pointer
+// need while the chain itself moves behind the contract with the music slice.
+// Cover Art Archive is the permanent case — it has no client of its own, it is
+// reached through the MusicBrainz Plugin — so its factory stays nil for good.
+func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
+	return []pluginapi.MetadataProviderRegistration{
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:        SlugTMDB,
+				Name:        "The Movie Database (TMDB)",
+				Kinds:       []string{KindVideo},
+				Role:        RoleAuthoritative,
+				Class:       ClassFull,
+				RequiresKey: true,
+				// TMDB is the only video source that owns a candidate list, a listable
+				// image set AND an episode list — which is why the assertions the chains
+				// used to make on the concrete type are now three declared capabilities.
+				Capabilities: []pluginapi.Capability{
+					pluginapi.CapabilitySearch,
+					pluginapi.CapabilityArtworkCandidates,
+					pluginapi.CapabilityEpisodeList,
+				},
+				DefaultURL: registryTMDBBaseURL,
+				// TMDB serves its images from a host distinct from its API — the one
+				// source with a second URL, and the reason the contract's Settings has one.
+				DefaultURL2: registryTMDBImageBaseURL,
+				Description: "Authoritative source for movies and TV: titles, overviews, cast, genres, and artwork.",
+				DocsURL:     "https://www.themoviedb.org/settings/api",
+			},
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				return pluginFromProvider(NewTMDBProvider(s.Secret, s.Language, s.URL, s.URL2)), nil
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:        SlugOMDb,
+				Name:        "OMDb API",
+				Kinds:       []string{KindVideo},
+				Role:        RoleSupplement,
+				Class:       ClassFull,
+				RequiresKey: true,
+				// A fill-only supplement owns no candidate list and no listable image set
+				// (ADR-0019), so it declares neither capability and is never asked for one.
+				DefaultURL:  registryOMDbBaseURL,
+				Description: "Fills a movie's plot, content rating, and genres from the Open Movie Database. Fill-only supplement; requires an API key.",
+				DocsURL:     "https://www.omdbapi.com/apikey.aspx",
+			},
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				return pluginFromProvider(NewOMDbProvider(s.Secret, s.URL)), nil
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:        SlugTheTVDB,
+				Name:        "TheTVDB",
+				Kinds:       []string{KindVideo},
+				Role:        RoleSupplement,
+				Class:       ClassFull,
+				RequiresKey: true,
+				DefaultURL:  registryTheTVDBBaseURL,
+				Description: "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
+				DocsURL:     "https://thetvdb.com/api-information",
+			},
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				return pluginFromProvider(NewTheTVDBProvider(s.Secret, s.URL)), nil
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:  SlugAniDB,
+				Name:  "AniDB",
+				Kinds: []string{KindVideo},
+				// A Full, authoritative-capable anime source. It is NOT the global default
+				// authoritative (TMDB, registered first, is) — AniDB ships globally DISABLED
+				// (no seed row) so it touches no Library until one explicitly points its
+				// Authoritative provider at it (ADR-0027). RequiresKey: the AniDB HTTP API
+				// needs a registered client name, so it is selectable only once configured.
+				Role:        RoleAuthoritative,
+				Class:       ClassFull,
+				RequiresKey: true,
+				// It declares search even though its HTTP API offers none: the declaration
+				// says "ask me and I will answer", and AniDB's answer is an EMPTY candidate
+				// list, which the Edit-item box renders as "no results" rather than as the
+				// "search unavailable" an undeclared capability means. Those are different
+				// sentences and an anime Library leading with AniDB sees the right one.
+				Capabilities: []pluginapi.Capability{
+					pluginapi.CapabilitySearch,
+					pluginapi.CapabilityArtworkCandidates,
+				},
+				DefaultURL:  registryAniDBBaseURL,
+				Description: "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
+				DocsURL:     "https://wiki.anidb.net/HTTP_API_Definition",
+			},
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				return pluginFromProvider(NewAniDBProvider(s.Secret, s.URL, s.Language)), nil
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:        SlugMusicBrainz,
+				Name:        "MusicBrainz",
+				Kinds:       []string{KindMusic},
+				Role:        RoleAuthoritative,
+				Class:       ClassFull,
+				RequiresKey: false,
+				Capabilities: []pluginapi.Capability{
+					pluginapi.CapabilitySearch,
+					pluginapi.CapabilityArtworkCandidates,
+					pluginapi.CapabilityAlbumTracklist,
+					pluginapi.CapabilityExternalRef,
+				},
+				DefaultURL:  registryMusicBrainzBaseURL,
+				Description: "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
+				DocsURL:     "https://musicbrainz.org/doc/MusicBrainz_API",
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:        SlugCoverArt,
+				Name:        "Cover Art Archive",
+				Kinds:       []string{KindMusic},
+				Role:        RoleSupplement,
+				Class:       ClassArtworkOnly,
+				RequiresKey: false,
+				DefaultURL:  registryCoverArtBaseURL,
+				Description: "Album cover artwork keyed to MusicBrainz releases. No API key required; used alongside MusicBrainz.",
+				DocsURL:     "https://coverartarchive.org/",
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug: SlugFanartTV,
+				Name: "fanart.tv",
+				// The one source that serves BOTH kinds from one client and one key.
+				Kinds:        []string{KindVideo, KindMusic},
+				Role:         RoleSupplement,
+				Class:        ClassArtworkOnly,
+				RequiresKey:  true,
+				Capabilities: []pluginapi.Capability{pluginapi.CapabilityArtworkCandidates},
+				DefaultURL:   registryFanartTVBaseURL,
+				Description:  "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
+				DocsURL:      "https://fanart.tv/get-an-api-key/",
+			},
+			// The factory serves fanart.tv's VIDEO side — the fill-only supplement in
+			// the video chain. Its music side (artist photos) is a second instance the
+			// music chain still constructs directly, exactly as it was two instances
+			// before this contract existed: one client, one key, one host throttle,
+			// two places in the composition. Both become this Plugin with the music
+			// slice; splitting the source across the two paths for one release is what
+			// lets the video chain move without touching music.
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				return pluginFromProvider(NewFanartTVProvider(s.Secret, s.URL)), nil
+			},
+		},
+		{
+			Descriptor: pluginapi.Descriptor{
+				Slug:         SlugTheAudioDB,
+				Name:         "TheAudioDB",
+				Kinds:        []string{KindMusic},
+				Role:         RoleSupplement,
+				Class:        ClassArtworkOnly,
+				RequiresKey:  true,
+				Capabilities: []pluginapi.Capability{pluginapi.CapabilityArtworkCandidates},
+				DefaultURL:   registryTheAudioDBBaseURL,
+				Description:  "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
+				DocsURL:      "https://www.theaudiodb.com/api_guide.php",
+			},
+		},
+	}
 }
 
-// registry is the ordered catalog. Order is stable so the API/UI list is
-// deterministic (video authoritative first, then the music sources).
-var registry = []RegistryEntry{
-	{
-		Slug:                SlugTMDB,
-		Name:                "The Movie Database (TMDB)",
-		Kinds:               []string{KindVideo},
-		Role:                RoleAuthoritative,
-		Class:               ClassFull,
-		RequiresKey:         true,
-		DefaultBaseURL:      registryTMDBBaseURL,
-		DefaultImageBaseURL: registryTMDBImageBaseURL,
-		Description:         "Authoritative source for movies and TV: titles, overviews, cast, genres, and artwork.",
-		DocsURL:             "https://www.themoviedb.org/settings/api",
-	},
-	{
-		Slug:           SlugOMDb,
-		Name:           "OMDb API",
-		Kinds:          []string{KindVideo},
-		Role:           RoleSupplement,
-		Class:          ClassFull,
-		RequiresKey:    true,
-		DefaultBaseURL: registryOMDbBaseURL,
-		Description:    "Fills a movie's plot, content rating, and genres from the Open Movie Database. Fill-only supplement; requires an API key.",
-		DocsURL:        "https://www.omdbapi.com/apikey.aspx",
-	},
-	{
-		Slug:           SlugTheTVDB,
-		Name:           "TheTVDB",
-		Kinds:          []string{KindVideo},
-		Role:           RoleSupplement,
-		Class:          ClassFull,
-		RequiresKey:    true,
-		DefaultBaseURL: registryTheTVDBBaseURL,
-		Description:    "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
-		DocsURL:        "https://thetvdb.com/api-information",
-	},
-	{
-		Slug:  SlugAniDB,
-		Name:  "AniDB",
-		Kinds: []string{KindVideo},
-		// A Full, authoritative-capable anime source. It is NOT the global default
-		// authoritative (TMDB, registered first, is) — AniDB ships globally DISABLED
-		// (no seed row) so it touches no Library until one explicitly points its
-		// Authoritative provider at it (ADR-0027). RequiresKey: the AniDB HTTP API
-		// needs a registered client name, so it is selectable only once configured.
-		Role:           RoleAuthoritative,
-		Class:          ClassFull,
-		RequiresKey:    true,
-		DefaultBaseURL: registryAniDBBaseURL,
-		Description:    "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
-		DocsURL:        "https://wiki.anidb.net/HTTP_API_Definition",
-	},
-	{
-		Slug:           SlugMusicBrainz,
-		Name:           "MusicBrainz",
-		Kinds:          []string{KindMusic},
-		Role:           RoleAuthoritative,
-		Class:          ClassFull,
-		RequiresKey:    false,
-		DefaultBaseURL: registryMusicBrainzBaseURL,
-		Description:    "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
-		DocsURL:        "https://musicbrainz.org/doc/MusicBrainz_API",
-	},
-	{
-		Slug:           SlugCoverArt,
-		Name:           "Cover Art Archive",
-		Kinds:          []string{KindMusic},
-		Role:           RoleSupplement,
-		Class:          ClassArtworkOnly,
-		RequiresKey:    false,
-		DefaultBaseURL: registryCoverArtBaseURL,
-		Description:    "Album cover artwork keyed to MusicBrainz releases. No API key required; used alongside MusicBrainz.",
-		DocsURL:        "https://coverartarchive.org/",
-	},
-	{
-		Slug:           SlugFanartTV,
-		Name:           "fanart.tv",
-		Kinds:          []string{KindVideo, KindMusic},
-		Role:           RoleSupplement,
-		Class:          ClassArtworkOnly,
-		RequiresKey:    true,
-		DefaultBaseURL: registryFanartTVBaseURL,
-		Description:    "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
-		DocsURL:        "https://fanart.tv/get-an-api-key/",
-	},
-	{
-		Slug:           SlugTheAudioDB,
-		Name:           "TheAudioDB",
-		Kinds:          []string{KindMusic},
-		Role:           RoleSupplement,
-		Class:          ClassArtworkOnly,
-		RequiresKey:    true,
-		DefaultBaseURL: registryTheAudioDBBaseURL,
-		Description:    "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
-		DocsURL:        "https://www.theaudiodb.com/api_guide.php",
-	},
+// Catalog is the enrichment domain's view of the registered Metadata provider
+// Plugins: the ordered Descriptors, plus the registry they came from so the
+// builder can construct one. It is a plain value — copying it is free and two
+// Catalogs never see each other's Plugins.
+//
+// A zero Catalog (and one built from a nil Registry) is an empty catalog, which
+// reads as "this server has no Metadata providers": every list is empty, every
+// slug is unknown, and the composed chain makes no calls. That is the same
+// all-off posture an unconfigured server has (ADR-0001), so a narrow test that
+// wires no Plugins degrades instead of panicking.
+type Catalog struct {
+	registry *pluginapi.Registry
+	entries  []pluginapi.Descriptor
 }
 
-// Registry returns the static provider catalog (a copy of the ordering; the
-// entries are immutable value types).
-func Registry() []RegistryEntry {
-	out := make([]RegistryEntry, len(registry))
-	copy(out, registry)
+// NewCatalog derives the enrichment catalog from the Plugin registry the
+// composition root built. Registration order is preserved, because it is the
+// catalog order.
+func NewCatalog(reg *pluginapi.Registry) Catalog {
+	regs := reg.MetadataProviders()
+	entries := make([]pluginapi.Descriptor, 0, len(regs))
+	for _, r := range regs {
+		entries = append(entries, r.Descriptor)
+	}
+	return Catalog{registry: reg, entries: entries}
+}
+
+// Entries returns the registered Metadata providers' Descriptors in catalog order
+// (a copy of the ordering; a Descriptor is an immutable value).
+func (c Catalog) Entries() []pluginapi.Descriptor {
+	out := make([]pluginapi.Descriptor, len(c.entries))
+	copy(out, c.entries)
 	return out
 }
 
-// RegistryEntryFor returns the catalog entry for a slug, or ok=false for an
-// unknown slug (the API rejects an unknown slug as PROVIDER_UNKNOWN).
-func RegistryEntryFor(slug string) (RegistryEntry, bool) {
-	for _, e := range registry {
+// Entry returns the Descriptor for a slug, or ok=false for a slug no Plugin
+// claimed (the API rejects an unknown slug as PROVIDER_UNKNOWN).
+func (c Catalog) Entry(slug string) (pluginapi.Descriptor, bool) {
+	for _, e := range c.entries {
 		if e.Slug == slug {
 			return e, true
 		}
 	}
-	return RegistryEntry{}, false
-}
-
-// serves reports whether a registry entry serves the given coarse media kind.
-func (e RegistryEntry) serves(kind string) bool {
-	for _, k := range e.Kinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
+	return pluginapi.Descriptor{}, false
 }
 
 // FullProvidersForKind returns the Full providers that serve the given coarse
-// media kind (KindVideo / KindMusic), in registry order — the STATIC candidate set
+// media kind (KindVideo / KindMusic), in catalog order — the STATIC candidate set
 // for a Library's Authoritative-provider pointer (ADR-0027). It is capability-only:
 // the caller intersects it with runtime reachability (a Full provider is
 // SELECTABLE only once it is keyed) to get the usable candidates. Artwork-only
 // providers are never returned; they can only ever be Supplements.
-func FullProvidersForKind(kind string) []RegistryEntry {
-	var out []RegistryEntry
-	for _, e := range registry {
-		if e.Class == ClassFull && e.serves(kind) {
+func (c Catalog) FullProvidersForKind(kind string) []pluginapi.Descriptor {
+	var out []pluginapi.Descriptor
+	for _, e := range c.entries {
+		if e.Class == ClassFull && e.Serves(kind) {
 			out = append(out, e)
 		}
 	}
@@ -252,16 +323,16 @@ func FullProvidersForKind(kind string) []RegistryEntry {
 
 // SupplementProvidersForKind returns the providers of a coarse media kind that a
 // Library can force on/off via its per-provider Supplement tri-state (ADR-0027),
-// in registry order: the key-bearing providers (RequiresKey) — the ones the
+// in catalog order: the key-bearing providers (RequiresKey) — the ones the
 // resolver activates/mutes by injecting or clearing a key. Keyless providers
 // (MusicBrainz, Cover Art Archive) have no independent per-Library toggle (their
 // activation rides their authoritative), so they are excluded. The caller removes
 // the current Authoritative provider (its off-switch is enrich_enabled, not a
 // per-provider toggle) before presenting the list.
-func SupplementProvidersForKind(kind string) []RegistryEntry {
-	var out []RegistryEntry
-	for _, e := range registry {
-		if e.RequiresKey && e.serves(kind) {
+func (c Catalog) SupplementProvidersForKind(kind string) []pluginapi.Descriptor {
+	var out []pluginapi.Descriptor
+	for _, e := range c.entries {
+		if e.RequiresKey && e.Serves(kind) {
 			out = append(out, e)
 		}
 	}
@@ -273,14 +344,32 @@ func SupplementProvidersForKind(kind string) []RegistryEntry {
 // authoritative pointer is unset, and the fallback target when a chosen
 // authoritative becomes unreachable (ADR-0027): TMDB for video, MusicBrainz for
 // music. It is the FIRST authoritative-role Full provider registered for the kind,
-// so the registry order is the single source of truth.
-func DefaultAuthoritativeForKind(kind string) string {
-	for _, e := range registry {
-		if e.Class == ClassFull && e.Role == RoleAuthoritative && e.serves(kind) {
+// so the catalog order is the single source of truth.
+func (c Catalog) DefaultAuthoritativeForKind(kind string) string {
+	for _, e := range c.entries {
+		if e.Class == ClassFull && e.Role == RoleAuthoritative && e.Serves(kind) {
 			return e.Slug
 		}
 	}
 	return ""
+}
+
+// buildPlugin constructs the Plugin registered under a slug from the Settings the
+// host resolved, and adapts it back to the MetadataProvider the chains call. It
+// returns nil when no Plugin claims the slug, when the registration carries no
+// factory (the source is still composed directly — see MetadataPlugins), or when
+// the factory refuses these settings: a Plugin that cannot be built makes no calls
+// at all rather than half-working (ADR-0001), and the caller composes without it.
+func (c Catalog) buildPlugin(slug string, s pluginapi.Settings) MetadataProvider {
+	registration, ok := c.registry.MetadataProvider(slug)
+	if !ok || registration.New == nil {
+		return nil
+	}
+	plugin, err := registration.New(s)
+	if err != nil || plugin == nil {
+		return nil
+	}
+	return ProviderFromPlugin(registration.Descriptor, plugin)
 }
 
 // ProviderState is the server-global mutable state of one provider that the
@@ -301,13 +390,13 @@ type ProviderState struct {
 // for every registered provider (a provider with no row is disabled + unkeyed,
 // unless it requires no key). Sibling to SettingsToProviderConfig — both are pure
 // derivations over the same rows, read together on each Manager Reload.
-func ProviderStatesFromRows(rows []store.MetadataProviderRow) map[string]ProviderState {
+func (c Catalog) ProviderStatesFromRows(rows []store.MetadataProviderRow) map[string]ProviderState {
 	byslug := make(map[string]store.MetadataProviderRow, len(rows))
 	for _, r := range rows {
 		byslug[r.Slug] = r
 	}
-	out := make(map[string]ProviderState, len(registry))
-	for _, e := range registry {
+	out := make(map[string]ProviderState, len(c.entries))
+	for _, e := range c.entries {
 		r, ok := byslug[e.Slug]
 		out[e.Slug] = ProviderState{
 			Enabled: ok && r.Enabled,
@@ -332,34 +421,34 @@ type FixedProviderInputs struct {
 }
 
 // SettingsToProviderConfig maps the persisted provider rows + language into the
-// decoupled ProviderConfig the builder consumes, applying registry default base
-// URLs where a row has no override. Only rows that are BOTH enabled and (for a
+// decoupled ProviderConfig the builder consumes, applying each Descriptor's default
+// base URL where a row has no override. Only rows that are BOTH enabled and (for a
 // key-requiring source) hold a key contribute an active source; anything else
 // leaves that source off, so the derived Enablement reports it disabled
 // (ADR-0001). Cover Art Archive has no independent switch — it is part of the
 // MusicBrainz provider — so its row contributes only its base-URL override and
 // rides MusicBrainz's enablement.
-func SettingsToProviderConfig(rows []store.MetadataProviderRow, language string, fixed FixedProviderInputs) ProviderConfig {
+func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, language string, fixed FixedProviderInputs) ProviderConfig {
 	byslug := make(map[string]store.MetadataProviderRow, len(rows))
 	for _, r := range rows {
 		byslug[r.Slug] = r
 	}
-	// baseURL returns the row's override or the registry default for a slug.
+	// baseURL returns the row's override or the Descriptor default for a slug.
 	baseURL := func(slug string) string {
-		e, _ := RegistryEntryFor(slug)
+		e, _ := c.Entry(slug)
 		if r, ok := byslug[slug]; ok && r.BaseURL != "" {
 			return r.BaseURL
 		}
-		return e.DefaultBaseURL
+		return e.DefaultURL
 	}
-	// imageBaseURL returns the row's image-host override or the registry default,
+	// imageBaseURL returns the row's image-host override or the Descriptor default,
 	// for the sources that serve artwork from a distinct host (today only TMDB).
 	imageBaseURL := func(slug string) string {
-		e, _ := RegistryEntryFor(slug)
+		e, _ := c.Entry(slug)
 		if r, ok := byslug[slug]; ok && r.ImageBaseURL != "" {
 			return r.ImageBaseURL
 		}
-		return e.DefaultImageBaseURL
+		return e.DefaultURL2
 	}
 	// active reports whether a source contributes: its row is enabled and, when the
 	// source requires a key, a key is on file.
@@ -368,7 +457,7 @@ func SettingsToProviderConfig(rows []store.MetadataProviderRow, language string,
 		if !ok || !r.Enabled {
 			return false
 		}
-		e, _ := RegistryEntryFor(slug)
+		e, _ := c.Entry(slug)
 		if e.RequiresKey && r.APIKey == "" {
 			return false
 		}

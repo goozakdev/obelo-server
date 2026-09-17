@@ -12,7 +12,7 @@ import (
 func TestProviderClass(t *testing.T) {
 	wantFull := map[string]bool{SlugTMDB: true, SlugOMDb: true, SlugTheTVDB: true, SlugMusicBrainz: true}
 	wantArtwork := map[string]bool{SlugFanartTV: true, SlugCoverArt: true, SlugTheAudioDB: true}
-	for _, e := range Registry() {
+	for _, e := range builtinCatalog().Entries() {
 		switch {
 		case wantFull[e.Slug]:
 			if e.Class != ClassFull {
@@ -29,7 +29,7 @@ func TestProviderClass(t *testing.T) {
 // TestFullProvidersForKind asserts the candidate helper returns only Full providers
 // of the requested kind, in registry order, and never an Artwork-only source.
 func TestFullProvidersForKind(t *testing.T) {
-	video := FullProvidersForKind(KindVideo)
+	video := builtinCatalog().FullProvidersForKind(KindVideo)
 	var slugs []string
 	for _, e := range video {
 		slugs = append(slugs, e.Slug)
@@ -48,7 +48,7 @@ func TestFullProvidersForKind(t *testing.T) {
 		}
 	}
 
-	music := FullProvidersForKind(KindMusic)
+	music := builtinCatalog().FullProvidersForKind(KindMusic)
 	if len(music) != 1 || music[0].Slug != SlugMusicBrainz {
 		t.Errorf("music Full providers = %v, want just MusicBrainz", music)
 	}
@@ -56,10 +56,10 @@ func TestFullProvidersForKind(t *testing.T) {
 
 // TestDefaultAuthoritativeForKind asserts the kind defaults the pointer inherits.
 func TestDefaultAuthoritativeForKind(t *testing.T) {
-	if got := DefaultAuthoritativeForKind(KindVideo); got != SlugTMDB {
+	if got := builtinCatalog().DefaultAuthoritativeForKind(KindVideo); got != SlugTMDB {
 		t.Errorf("video default authoritative = %q, want tmdb", got)
 	}
-	if got := DefaultAuthoritativeForKind(KindMusic); got != SlugMusicBrainz {
+	if got := builtinCatalog().DefaultAuthoritativeForKind(KindMusic); got != SlugMusicBrainz {
 		t.Errorf("music default authoritative = %q, want musicbrainz", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestProviderStatesFromRows(t *testing.T) {
 		{Slug: SlugOMDb, Enabled: false, APIKey: "ok"}, // disabled but keyed
 		{Slug: SlugTheTVDB, Enabled: true, APIKey: ""}, // enabled but unkeyed
 	}
-	states := ProviderStatesFromRows(rows)
+	states := builtinCatalog().ProviderStatesFromRows(rows)
 
 	if s := states[SlugTMDB]; !s.Enabled || !s.Keyed || s.APIKey != "tk" {
 		t.Errorf("tmdb state = %+v, want enabled+keyed", s)

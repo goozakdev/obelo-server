@@ -11,7 +11,7 @@ import (
 // byte behavior the prefactor must preserve.
 func TestBuildProviderComposition(t *testing.T) {
 	t.Run("no image key => plain MusicBrainz (no chain)", func(t *testing.T) {
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			TMDBAPIKey:           "tmdb-key",
 			MusicBrainzEnabled:   true,
 			MusicBrainzRateLimit: 2 * time.Second,
@@ -23,8 +23,8 @@ func TestBuildProviderComposition(t *testing.T) {
 		if !ok {
 			t.Fatalf("provider = %T, want CompositeProvider", provider)
 		}
-		if _, ok := comp.Video.(*TMDBProvider); !ok {
-			t.Errorf("video = %T, want *TMDBProvider", comp.Video)
+		if got := pluginSlug(comp.Video); got != SlugTMDB {
+			t.Errorf("video = %q (%T), want the tmdb Plugin", got, comp.Video)
 		}
 		// No image key: Music stays plain MusicBrainz, NOT wrapped in the chain.
 		mb, ok := comp.Music.(*MusicBrainzProvider)
@@ -38,7 +38,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("image key + music => MusicChain", func(t *testing.T) {
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			TMDBAPIKey:     "tmdb-key",
 			FanartTVAPIKey: "fanart-key",
 		})
@@ -54,7 +54,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("music image key but music off => no chain", func(t *testing.T) {
 		// An image key alone must NOT turn Music on, and must NOT wrap the chain
 		// (MusicImageEnabled && MusicEnrichmentEnabled — both required).
-		provider, en := BuildProvider(ProviderConfig{FanartTVAPIKey: "fanart-key"})
+		provider, en := buildProvider(ProviderConfig{FanartTVAPIKey: "fanart-key"})
 		if en != (Enablement{Video: false, Music: false}) {
 			t.Errorf("enablement = %+v, want both off", en)
 		}
@@ -65,7 +65,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("omdb + tmdb => Video is the chain", func(t *testing.T) {
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			TMDBAPIKey: "tmdb-key",
 			OMDbAPIKey: "omdb-key",
 		})
@@ -79,7 +79,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("thetvdb + tmdb => Video is the chain", func(t *testing.T) {
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			TMDBAPIKey:    "tmdb-key",
 			TheTVDBAPIKey: "tvdb-key",
 		})
@@ -95,18 +95,18 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("thetvdb key but tmdb off => video off, plain (no chain)", func(t *testing.T) {
 		// A supplement can't enable the video kinds on its own; with no TMDB key
 		// video stays off and Video stays plain TMDB (zero calls to TheTVDB).
-		provider, en := BuildProvider(ProviderConfig{TheTVDBAPIKey: "tvdb-key"})
+		provider, en := buildProvider(ProviderConfig{TheTVDBAPIKey: "tvdb-key"})
 		if en.Video {
 			t.Errorf("enablement = %+v, want video off (supplement can't enable a kind)", en)
 		}
 		comp := provider.(CompositeProvider)
-		if _, ok := comp.Video.(*TMDBProvider); !ok {
-			t.Errorf("video = %T, want plain *TMDBProvider (video off)", comp.Video)
+		if got := pluginSlug(comp.Video); got != SlugTMDB {
+			t.Errorf("video = %q (%T), want the plain tmdb Plugin (video off)", got, comp.Video)
 		}
 	})
 
 	t.Run("omdb + thetvdb + tmdb => both supplements in the chain", func(t *testing.T) {
-		provider, _ := BuildProvider(ProviderConfig{
+		provider, _ := buildProvider(ProviderConfig{
 			TMDBAPIKey:    "tmdb-key",
 			OMDbAPIKey:    "omdb-key",
 			TheTVDBAPIKey: "tvdb-key",
@@ -118,10 +118,10 @@ func TestBuildProviderComposition(t *testing.T) {
 		}
 		var haveOMDb, haveTVDB bool
 		for _, s := range chain.Supplements {
-			switch s.(type) {
-			case *OMDbProvider:
+			switch pluginSlug(s) {
+			case SlugOMDb:
 				haveOMDb = true
-			case *TheTVDBProvider:
+			case SlugTheTVDB:
 				haveTVDB = true
 			}
 		}
@@ -133,20 +133,20 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("omdb key but tmdb off => video still off, plain (no chain)", func(t *testing.T) {
 		// A supplement can't enable the video kinds on its own; with no TMDB key
 		// video stays off and Video stays plain TMDB (zero calls to OMDb).
-		provider, en := BuildProvider(ProviderConfig{OMDbAPIKey: "omdb-key"})
+		provider, en := buildProvider(ProviderConfig{OMDbAPIKey: "omdb-key"})
 		if en.Video {
 			t.Errorf("enablement = %+v, want video off (supplement can't enable a kind)", en)
 		}
 		comp := provider.(CompositeProvider)
-		if _, ok := comp.Video.(*TMDBProvider); !ok {
-			t.Errorf("video = %T, want plain *TMDBProvider (video off)", comp.Video)
+		if got := pluginSlug(comp.Video); got != SlugTMDB {
+			t.Errorf("video = %q (%T), want the plain tmdb Plugin (video off)", got, comp.Video)
 		}
 	})
 
 	t.Run("fanarttv + tmdb => fanart.tv wired into BOTH the video and music chains", func(t *testing.T) {
 		// The same fanart.tv key feeds both chains: it supplies artist images in the
 		// music chain AND movie/show artwork in the video chain.
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			TMDBAPIKey:     "tmdb-key",
 			FanartTVAPIKey: "fanart-key",
 		})
@@ -161,12 +161,12 @@ func TestBuildProviderComposition(t *testing.T) {
 		}
 		var haveFanart bool
 		for _, s := range chain.Supplements {
-			if _, ok := s.(*FanartTVProvider); ok {
+			if pluginSlug(s) == SlugFanartTV {
 				haveFanart = true
 			}
 		}
 		if !haveFanart {
-			t.Errorf("video supplements = %+v, want a *FanartTVProvider", chain.Supplements)
+			t.Errorf("video supplements = %+v, want the fanarttv Plugin", chain.Supplements)
 		}
 		// Music: fanart.tv remains wired into the music chain (unchanged).
 		if _, ok := comp.Music.(*MusicChainProvider); !ok {
@@ -178,24 +178,24 @@ func TestBuildProviderComposition(t *testing.T) {
 		// A supplement (even fanart.tv, which now serves video) can't enable the video
 		// kinds on its own; with no TMDB key video stays off and Video stays plain TMDB
 		// (zero calls to fanart.tv on the video side).
-		provider, en := BuildProvider(ProviderConfig{FanartTVAPIKey: "fanart-key"})
+		provider, en := buildProvider(ProviderConfig{FanartTVAPIKey: "fanart-key"})
 		if en.Video {
 			t.Errorf("enablement = %+v, want video off (supplement can't enable a kind)", en)
 		}
 		comp := provider.(CompositeProvider)
-		if _, ok := comp.Video.(*TMDBProvider); !ok {
-			t.Errorf("video = %T, want plain *TMDBProvider (video off)", comp.Video)
+		if got := pluginSlug(comp.Video); got != SlugTMDB {
+			t.Errorf("video = %q (%T), want the plain tmdb Plugin (video off)", got, comp.Video)
 		}
 	})
 
 	t.Run("omdb disabled => plain TMDB (no chain)", func(t *testing.T) {
-		provider, en := BuildProvider(ProviderConfig{TMDBAPIKey: "tmdb-key"})
+		provider, en := buildProvider(ProviderConfig{TMDBAPIKey: "tmdb-key"})
 		if !en.Video {
 			t.Errorf("enablement = %+v, want video on", en)
 		}
 		comp := provider.(CompositeProvider)
-		if _, ok := comp.Video.(*TMDBProvider); !ok {
-			t.Errorf("video = %T, want plain *TMDBProvider (no supplement)", comp.Video)
+		if got := pluginSlug(comp.Video); got != SlugTMDB {
+			t.Errorf("video = %q (%T), want the plain tmdb Plugin (no supplement)", got, comp.Video)
 		}
 	})
 
@@ -203,7 +203,7 @@ func TestBuildProviderComposition(t *testing.T) {
 		// A Library led by a keyed OMDb: OMDb is the chain's authoritative, and the
 		// remaining keyed video providers (TMDB, TheTVDB) run as fill-only supplements
 		// in registry order — the anime-swap mechanism, demoable without AniDB.
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			AuthoritativeVideo: SlugOMDb,
 			TMDBAPIKey:         "tmdb-key",
 			OMDbAPIKey:         "omdb-key",
@@ -217,18 +217,18 @@ func TestBuildProviderComposition(t *testing.T) {
 		if !ok {
 			t.Fatalf("video = %T, want *VideoChainProvider", comp.Video)
 		}
-		if _, ok := chain.Authoritative.(*OMDbProvider); !ok {
-			t.Errorf("authoritative = %T, want *OMDbProvider (repointed lead)", chain.Authoritative)
+		if got := pluginSlug(chain.Authoritative); got != SlugOMDb {
+			t.Errorf("authoritative = %q (%T), want the omdb Plugin (repointed lead)", got, chain.Authoritative)
 		}
 		// TMDB and TheTVDB are the supplements; OMDb is NOT among them (it leads).
 		var haveTMDB, haveTVDB, haveOMDb bool
 		for _, s := range chain.Supplements {
-			switch s.(type) {
-			case *TMDBProvider:
+			switch pluginSlug(s) {
+			case SlugTMDB:
 				haveTMDB = true
-			case *TheTVDBProvider:
+			case SlugTheTVDB:
 				haveTVDB = true
-			case *OMDbProvider:
+			case SlugOMDb:
 				haveOMDb = true
 			}
 		}
@@ -241,7 +241,7 @@ func TestBuildProviderComposition(t *testing.T) {
 		// A globally-disabled-but-keyed authoritative leads even when TMDB is unkeyed:
 		// video is on because the AUTHORITATIVE is keyed, not because TMDB is. With no
 		// other keyed source it is a plain OMDb lead (no chain wrap).
-		provider, en := BuildProvider(ProviderConfig{
+		provider, en := buildProvider(ProviderConfig{
 			AuthoritativeVideo: SlugOMDb,
 			OMDbAPIKey:         "omdb-key",
 		})
@@ -249,13 +249,13 @@ func TestBuildProviderComposition(t *testing.T) {
 			t.Errorf("enablement = %+v, want video on (authoritative OMDb keyed)", en)
 		}
 		comp := provider.(CompositeProvider)
-		if _, ok := comp.Video.(*OMDbProvider); !ok {
-			t.Errorf("video = %T, want a plain *OMDbProvider lead (no other keyed source)", comp.Video)
+		if got := pluginSlug(comp.Video); got != SlugOMDb {
+			t.Errorf("video = %q (%T), want a plain omdb Plugin lead (no other keyed source)", got, comp.Video)
 		}
 	})
 
 	t.Run("nothing configured => both kinds disabled", func(t *testing.T) {
-		provider, en := BuildProvider(ProviderConfig{})
+		provider, en := buildProvider(ProviderConfig{})
 		if en != (Enablement{Video: false, Music: false}) {
 			t.Errorf("enablement = %+v, want both kinds disabled", en)
 		}
