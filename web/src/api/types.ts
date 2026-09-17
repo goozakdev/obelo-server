@@ -2496,6 +2496,50 @@ export interface UpdateEventSinksInput {
   sinks?: EventSinkUpdate[];
 }
 
+// --- Installed plugins (ADR-0058, plugin-system/10) --------------------------
+
+/** One Installed plugin: a WebAssembly module an Admin put on this server, rather
+ * than code compiled into the binary.
+ *
+ * `enabled` and `disabledByFailure` are NOT the same switch and the screen must
+ * not merge them. `enabled` is the Admin's own decision, kept in the database and
+ * durable across a restart. `disabledByFailure` is this server refusing to call
+ * the plugin any more — because it would not load at all, or because it failed
+ * enough times in a row to be stopped — and `lastError` is the sentence that says
+ * why. A plugin can be enabled and disabled by failure at once, which is exactly
+ * the state that needs explaining.
+ *
+ * `provides` is the Extension points the manifest declared, in the contract's own
+ * tokens (`event-sink`, `metadata-provider`, `subtitle-provider`). `source` is
+ * where the bytes came from: `upload`, a URL, or `placed by hand` for a plugin an
+ * operator copied into the data directory themselves. */
+export interface InstalledPlugin {
+  id: string;
+  name: string;
+  version?: string;
+  apiVersion?: number;
+  provides: string[];
+  enabled: boolean;
+  disabledByFailure: boolean;
+  lastError?: string;
+  source?: string;
+  installedAt?: string;
+}
+
+/** The `GET /settings/plugins` view, and what every lifecycle verb answers with —
+ * so a screen that just installed or uninstalled something re-renders from one
+ * response and never has to ask again. */
+export interface InstalledPluginsView {
+  plugins: InstalledPlugin[];
+}
+
+/** The `POST /settings/plugins/from-url` body: the URL of a plugin's
+ * `manifest.json`, with its `plugin.wasm` published beside it in the same
+ * directory. */
+export interface InstallPluginFromURLInput {
+  url: string;
+}
+
 // --- Transcoding observability (ADR-0029) -----------------------------------
 
 /** The resolved Transcode backend block of the /transcoding snapshot (ADR-0009):

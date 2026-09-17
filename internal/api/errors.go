@@ -283,6 +283,34 @@ const (
 	codeProviderInvalidBaseURL  = "PROVIDER_INVALID_BASE_URL"
 	codeProviderInvalidLanguage = "PROVIDER_INVALID_LANGUAGE"
 	codeProviderInvalidSetting  = "PROVIDER_INVALID_SETTING"
+	// Installing an Installed plugin (ADR-0058, .scratch/plugin-system issue 10).
+	// FIVE codes rather than one, because they are five different things for the
+	// Admin to do next and a single PLUGIN_REFUSED would make the screen say "it
+	// did not work" five times in the same words:
+	//
+	//   codePluginInvalidManifest (422) — no manifest, not JSON, or a manifest
+	//                               claiming something a manifest may not claim.
+	//   codePluginAPIVersion (422)  — an apiVersion this server does not speak. Its
+	//                               message ALWAYS names WHICH SIDE to upgrade
+	//                               (ADR-0058 decision 8, the ADR-0055 posture).
+	//   codePluginDuplicate (409)   — the id is already claimed, by an Installed
+	//                               plugin or by a Built-in this binary ships.
+	//   codePluginInvalidModule (422) — no module, or one that will not compile or
+	//                               instantiate in this server's sandbox.
+	//   codePluginSourceRefused (422) — a pasted URL this server will not fetch a
+	//                               plugin from (not absolute http(s), unresolvable,
+	//                               resolving into this server's own network) or one
+	//                               that answered with something unusable.
+	//
+	// codePluginUnknown (404) is the lifecycle half: enable / disable / re-enable /
+	// uninstall naming a Plugin that is not installed.
+	codePluginInvalidManifest = "PLUGIN_INVALID_MANIFEST"
+	codePluginAPIVersion      = "PLUGIN_API_VERSION"
+	codePluginDuplicate       = "PLUGIN_DUPLICATE"
+	codePluginInvalidModule   = "PLUGIN_INVALID_MODULE"
+	codePluginSourceRefused   = "PLUGIN_SOURCE_REFUSED"
+	codePluginUnknown         = "PLUGIN_UNKNOWN"
+
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the
 	// Library's kind — unknown, artwork-only, wrong-kind, or not yet keyed (ADR-0027).

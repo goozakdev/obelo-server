@@ -163,6 +163,17 @@ func handleSettingsSubtree(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		// Installed-plugin management (ADR-0058, plugin-system issue 10): install,
+		// enable, disable, re-enable, uninstall. Branched alongside the three
+		// Extension-point settings subtrees, before the /test suffix handling, and
+		// deliberately SEPARATE from them: what a Plugin does is configured on the
+		// screen for its Extension point, exactly as a Built-in's is, and only
+		// getting the code onto the server lives here.
+		if rest == "plugins" || strings.HasPrefix(rest, "plugins/") {
+			handlePluginSettingsSubtree(deps, rest)(w, r)
+			return
+		}
+
 		// Tailnet remote-access settings (ADR-0043) — the same subtree shape, plus
 		// three imperative verbs. Branched here, before the /test suffix handling
 		// below, so /settings/tailscale/connect is not read as a provider probe.

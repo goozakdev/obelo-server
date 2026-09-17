@@ -6070,3 +6070,32 @@ textarea.metadata-input {
 .is-unavailable:hover {
   opacity: 0.8;
 }
+
+/* The Plugins admin screen (ADR-0058, plugin-system/10). Two small additions to
+   the provider-card vocabulary the settings screens already share: the author's
+   version beside the name, and the facts list that says whether a plugin is
+   running, where it came from and when it arrived. */
+.plugin-version {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plugin-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.plugin-facts dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.plugin-facts dd {
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+}

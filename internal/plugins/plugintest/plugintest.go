@@ -234,6 +234,22 @@ func WriteRawManifest(t *testing.T, dataDir, id string, raw []byte) string {
 	return dir
 }
 
+// ManifestJSON is a manifest as the bytes an author would ship — the same
+// encoding Install writes to disk.
+//
+// It exists for the install tests (.scratch/plugin-system issue 10), which hand a
+// manifest to an HTTP endpoint rather than placing it in a directory, and it is
+// deliberately the SAME encoder: an upload and a hand-placed file have to be the
+// same document, or the two paths are not exercising one loader.
+func ManifestJSON(t *testing.T, m pluginapi.Manifest) []byte {
+	t.Helper()
+	raw, err := marshalManifest(m)
+	if err != nil {
+		t.Fatalf("encoding the manifest: %v", err)
+	}
+	return raw
+}
+
 // marshalManifest writes the manifest indented, because in this slice these files
 // are placed and edited by hand and a one-line JSON document is not something an
 // operator can work with.

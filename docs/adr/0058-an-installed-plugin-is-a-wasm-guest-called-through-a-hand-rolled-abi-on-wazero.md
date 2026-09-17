@@ -170,6 +170,27 @@ server does not speak is refused when it is installed, with a message naming **w
 upgrade** — the ADR-0055 posture, applied to a Plugin instead of a Link. A Plugin is never
 half-loaded and never discovers the mismatch mid-enrichment.
 
+> **Carried out (plugin-system issue 10, 2026-09-17):** there is now an install to check it at.
+> `POST /settings/plugins` (a `manifest` and a `module` part) and `POST /settings/plugins/from-url`
+> (the manifest's URL, with the module fetched from beside it) refuse a version mismatch with
+> `422 PLUGIN_API_VERSION` and the loader's own sentence, which names the side to upgrade in both
+> directions. Four other refusals are deliberately **not** that code — an unreadable manifest, a
+> duplicate id, a module that will not instantiate, and a source this server will not fetch from —
+> because they want four different things done about them.
+>
+> The mechanism that makes an install take effect without a restart is the one decision 7's
+> instance lifecycle left open: the whole `Set` is re-read from disk and a whole new
+> `pluginapi.Registry` is built and published in one atomic store (`Registry.Swap`), after which the
+> provider, subtitle and sink Managers Reload and only then is the old `Set` closed. Rebuild-and-swap
+> rather than a delta, so the state after an install is the state a reboot would have produced.
+>
+> One rule the ADR does not have, added here and worth knowing. `safefetch` deliberately checks
+> redirect targets and **never** the initial request, because an operator pointing a source at a
+> mirror on their own LAN is the point of this product. The URL-install path does check the first
+> hop, because it is the one fetch in this server whose payload is **executed**: a pasted URL
+> resolving into loopback/RFC1918/link-local space is refused, and an operator serving plugins from
+> their own LAN uploads the file instead.
+
 **9. The dependency is committed by the first loader issue, not by this ADR.** `go.mod` is
 unchanged by this document; `.scratch/plugin-system/issues/09-…` adds
 `github.com/tetratelabs/wazero` when it loads the first Installed Event sink. Nothing in

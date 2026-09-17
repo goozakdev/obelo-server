@@ -336,6 +336,22 @@ func WithPluginCallTimeout(d time.Duration) Option {
 	}
 }
 
+// WithPluginSourcesFromPrivateAddresses lets a URL install (POST
+// /settings/plugins/from-url) fetch from an address this server would otherwise
+// refuse to fetch CODE from — loopback, RFC1918, link-local.
+//
+// The suite serves its fixture plugin from an httptest.Server, which binds
+// 127.0.0.1, and there is no hermetic public address to serve it from instead.
+// Nothing else about the install path changes: the same safe fetcher, the same
+// redirect policy, the same byte caps. The refusal itself is asserted by a test
+// that does NOT pass this option, which is the only way round the fact that a
+// test cannot have both.
+func WithPluginSourcesFromPrivateAddresses() Option {
+	return func(b *builder) {
+		b.appOpts = append(b.appOpts, app.WithPluginSourcesFromPrivateAddresses())
+	}
+}
+
 // WithKeyRotation points the key-rotation channel (ADR-0032, layer 2) at a stub
 // endpoint with a known decryption key, and sets the re-poll interval (0 = fetch on
 // startup / on demand only, no periodic timer — the deterministic choice for a
@@ -525,6 +541,72 @@ func (s *Server) Multipart(method, path, token, fieldName, filename, contentType
 	}
 	if _, err := part.Write(content); err != nil {
 		s.t.Fatalf("testharness: writing multipart part: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		s.t.Fatalf("testharness: closing multipart writer: %v", err)
+	}
+
+	req, err := http.NewRequest(method, s.URL(path), &buf)
+	if err != nil {
+		s.t.Fatalf("testharness: building %s %s: %v", method, path, err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.t.Fatalf("testharness: %s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		s.t.Fatalf("testharness: reading body of %s %s: %v", method, path, err)
+	}
+	if out != nil && len(body) > 0 {
+		if err := json.Unmarshal(body, out); err != nil {
+			s.t.Fatalf("testharness: decoding body of %s %s: %v\nbody: %s", method, path, err, body)
+		}
+	}
+	return resp.StatusCode, body
+}
+
+// MultipartFile is one named file part of a multi-part upload.
+type MultipartFile struct {
+	// Field is the form field name the handler reads (e.g. "manifest").
+	Field string
+	// Name is the filename the part is labelled with.
+	Name string
+	// ContentType labels the part; "" leaves it to the reader to sniff.
+	ContentType string
+	// Content is the raw bytes.
+	Content []byte
+}
+
+// MultipartFiles issues a multipart/form-data request carrying SEVERAL named file
+// parts, in the order given. Multipart above sends exactly one, which is all the
+// artwork upload ever needed; installing a Plugin sends two — a manifest and a
+// module — and their ORDER is part of what is being tested, because a server that
+// only worked when the module came first would be one nobody could write a client
+// for.
+func (s *Server) MultipartFiles(method, path, token string, parts []MultipartFile, out any) (status int, body []byte) {
+	s.t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, p := range parts {
+		hdr := make(textproto.MIMEHeader)
+		hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, p.Field, p.Name))
+		if p.ContentType != "" {
+			hdr.Set("Content-Type", p.ContentType)
+		}
+		part, err := mw.CreatePart(hdr)
+		if err != nil {
+			s.t.Fatalf("testharness: building multipart part %q: %v", p.Field, err)
+		}
+		if _, err := part.Write(p.Content); err != nil {
+			s.t.Fatalf("testharness: writing multipart part %q: %v", p.Field, err)
+		}
 	}
 	if err := mw.Close(); err != nil {
 		s.t.Fatalf("testharness: closing multipart writer: %v", err)

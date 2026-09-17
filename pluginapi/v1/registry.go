@@ -1,6 +1,10 @@
 package v1
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
 
 // Registry is the set of Plugins one running server has, held as a VALUE the
 // composition root builds and hands to the builders and the settings handlers
@@ -13,7 +17,27 @@ import "fmt"
 // composition, not something that crosses the contract. A nil *Registry behaves
 // like an empty one so a narrow test that wires no Plugins reads as "no Plugins"
 // rather than panicking.
+// It is also SWAPPABLE, and that is the one thing about it worth reading twice.
+// The three slices live behind an atomic pointer rather than in the struct, so a
+// reader — the enrichment Catalog, the subtitle builder, the event-sink Manager,
+// the settings handlers — holds the same *Registry for the life of the process and
+// still sees a whole new set of Plugins the instant one is installed (Swap, below).
+// A reader never observes a half-built value, and none of them had to learn what an
+// install is.
 type Registry struct {
+	// mu serializes WRITERS. The registrations themselves are copy-on-write: a
+	// Register builds the next state under this lock and publishes it in one
+	// store, so a concurrent reader sees either the state before or the state
+	// after and never a slice being appended to.
+	mu sync.Mutex
+	// state is nil for a zero-value Registry, which reads as empty — a narrow test
+	// that wires no Plugins must not have to know this type has an initializer.
+	state atomic.Pointer[registryState]
+}
+
+// registryState is everything a Registry holds, as one immutable value. It is
+// replaced, never mutated, which is what makes the atomic read safe.
+type registryState struct {
 	metadataProviders []MetadataProviderRegistration
 	subtitleProviders []SubtitleProviderRegistration
 	eventSinks        []EventSinkRegistration
@@ -21,7 +45,69 @@ type Registry struct {
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
 // composition root says so, explicitly.
-func NewRegistry() *Registry { return &Registry{} }
+func NewRegistry() *Registry {
+	r := &Registry{}
+	r.state.Store(&registryState{})
+	return r
+}
+
+// load is every reader's entry point. A nil Registry and a zero-value one both
+// read as empty.
+func (r *Registry) load() *registryState {
+	if r == nil {
+		return &registryState{}
+	}
+	if s := r.state.Load(); s != nil {
+		return s
+	}
+	return &registryState{}
+}
+
+// mutate applies f to a COPY of the current state and publishes the result. Every
+// Register goes through it, which is why no reader ever sees a partially appended
+// slice.
+func (r *Registry) mutate(f func(*registryState)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur := r.load()
+	next := &registryState{
+		metadataProviders: append([]MetadataProviderRegistration(nil), cur.metadataProviders...),
+		subtitleProviders: append([]SubtitleProviderRegistration(nil), cur.subtitleProviders...),
+		eventSinks:        append([]EventSinkRegistration(nil), cur.eventSinks...),
+	}
+	f(next)
+	r.state.Store(next)
+}
+
+// Swap replaces everything this Registry holds with everything next holds, in ONE
+// store, and is how a Plugin is installed or uninstalled on a running server
+// (.scratch/plugin-system issue 10).
+//
+// The composition root builds a FRESH Registry from scratch — the Built-ins
+// registered again, then the Installed plugins re-read from disk — and hands it
+// here. Nothing is mutated in place and nothing is registered into a live value,
+// so the failure mode this design exists to remove cannot happen: there is no
+// moment at which a reader sees the Built-ins but not the Plugins, or a Plugin
+// whose module is still compiling.
+//
+// Readers keep their pointer. That is the whole trick, and it is why installing a
+// Plugin did not have to change the signature of the enrichment Catalog, the
+// subtitle builder, the event-sink Manager or the settings Deps: each of them
+// already asks this value a question on every read, and this makes the answer
+// current.
+//
+// Swapping does NOT rebuild anything downstream. A composed provider chain or a
+// live sink is built from a snapshot of this Registry and keeps running until its
+// own Manager is told to Reload — which the installer does, in order, right after
+// calling this.
+func (r *Registry) Swap(next *Registry) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.state.Store(next.load())
+}
 
 // RegisterMetadataProvider adds one Metadata provider Plugin. Registration order
 // is preserved and it MATTERS here in a way it does not for subtitles: it is the
@@ -44,7 +130,9 @@ func (r *Registry) RegisterMetadataProvider(reg MetadataProviderRegistration) {
 		panic(fmt.Sprintf("pluginapi: metadata provider %q registered twice", reg.Descriptor.Slug))
 	}
 	reg.Descriptor.ExtensionPoint = ExtensionMetadataProvider
-	r.metadataProviders = append(r.metadataProviders, reg)
+	r.mutate(func(s *registryState) {
+		s.metadataProviders = append(s.metadataProviders, reg)
+	})
 }
 
 // MetadataProviders returns the registered Metadata providers in registration
@@ -54,18 +142,16 @@ func (r *Registry) MetadataProviders() []MetadataProviderRegistration {
 	if r == nil {
 		return nil
 	}
-	out := make([]MetadataProviderRegistration, len(r.metadataProviders))
-	copy(out, r.metadataProviders)
+	cur := r.load()
+	out := make([]MetadataProviderRegistration, len(cur.metadataProviders))
+	copy(out, cur.metadataProviders)
 	return out
 }
 
 // MetadataProvider returns the registration for a slug, or ok=false for a slug no
 // Plugin claimed (which the settings API rejects as an unknown provider).
 func (r *Registry) MetadataProvider(slug string) (MetadataProviderRegistration, bool) {
-	if r == nil {
-		return MetadataProviderRegistration{}, false
-	}
-	for _, reg := range r.metadataProviders {
+	for _, reg := range r.load().metadataProviders {
 		if reg.Descriptor.Slug == slug {
 			return reg, true
 		}
@@ -92,7 +178,9 @@ func (r *Registry) RegisterSubtitleProvider(reg SubtitleProviderRegistration) {
 		panic(fmt.Sprintf("pluginapi: subtitle provider %q registered twice", reg.Descriptor.Slug))
 	}
 	reg.Descriptor.ExtensionPoint = ExtensionSubtitleProvider
-	r.subtitleProviders = append(r.subtitleProviders, reg)
+	r.mutate(func(s *registryState) {
+		s.subtitleProviders = append(s.subtitleProviders, reg)
+	})
 }
 
 // SubtitleProviders returns the registered Subtitle providers in registration
@@ -102,18 +190,16 @@ func (r *Registry) SubtitleProviders() []SubtitleProviderRegistration {
 	if r == nil {
 		return nil
 	}
-	out := make([]SubtitleProviderRegistration, len(r.subtitleProviders))
-	copy(out, r.subtitleProviders)
+	cur := r.load()
+	out := make([]SubtitleProviderRegistration, len(cur.subtitleProviders))
+	copy(out, cur.subtitleProviders)
 	return out
 }
 
 // SubtitleProvider returns the registration for a slug, or ok=false for a slug no
 // Plugin claimed (which the settings API rejects as an unknown provider).
 func (r *Registry) SubtitleProvider(slug string) (SubtitleProviderRegistration, bool) {
-	if r == nil {
-		return SubtitleProviderRegistration{}, false
-	}
-	for _, reg := range r.subtitleProviders {
+	for _, reg := range r.load().subtitleProviders {
 		if reg.Descriptor.Slug == slug {
 			return reg, true
 		}
@@ -136,7 +222,9 @@ func (r *Registry) RegisterEventSink(reg EventSinkRegistration) {
 		panic(fmt.Sprintf("pluginapi: event sink %q registered twice", reg.Descriptor.Slug))
 	}
 	reg.Descriptor.ExtensionPoint = ExtensionEventSink
-	r.eventSinks = append(r.eventSinks, reg)
+	r.mutate(func(s *registryState) {
+		s.eventSinks = append(s.eventSinks, reg)
+	})
 }
 
 // EventSinks returns the registered Event sinks in registration order, as a copy.
@@ -144,18 +232,16 @@ func (r *Registry) EventSinks() []EventSinkRegistration {
 	if r == nil {
 		return nil
 	}
-	out := make([]EventSinkRegistration, len(r.eventSinks))
-	copy(out, r.eventSinks)
+	cur := r.load()
+	out := make([]EventSinkRegistration, len(cur.eventSinks))
+	copy(out, cur.eventSinks)
 	return out
 }
 
 // EventSink returns the registration for a slug, or ok=false for a slug no Plugin
 // claimed (which the sink settings API rejects as unknown).
 func (r *Registry) EventSink(slug string) (EventSinkRegistration, bool) {
-	if r == nil {
-		return EventSinkRegistration{}, false
-	}
-	for _, reg := range r.eventSinks {
+	for _, reg := range r.load().eventSinks {
 		if reg.Descriptor.Slug == slug {
 			return reg, true
 		}
