@@ -298,6 +298,23 @@ func contractTypes() []typeSpec {
 				"empty — there is no sensible default target for somebody else's receiver.",
 		},
 		{
+			value: pluginapi.SubtitleSearchCall{},
+			doc: "What the host hands an INSTALLED Subtitle provider for one search: the request a Built-in " +
+				"would receive, and the Settings the Admin saved. The settings travel WITH the call and are " +
+				"never installed into the guest, which is why this seam needs no 'give me my settings' host " +
+				"function: a guest rebuilt after a trap starts holding nobody's credential. The response is " +
+				"un-enveloped — a plain SubtitleSearchResponse.",
+		},
+		{
+			value: pluginapi.SubtitleDownloadCall{},
+			doc: "What the host hands an Installed Subtitle provider for one candidate's bytes. " +
+				"request.maxBytes is the cap the HOST states, already narrowed to what this server will accept " +
+				"back from a guest: a Plugin must refuse rather than answer with more, and the host checks the " +
+				"length of what comes back anyway. An oversize answer is DISCARDED and recorded as a failure, " +
+				"never truncated — a truncated subtitle is one the host would cache and a viewer would play as " +
+				"though it were whole. The response is un-enveloped — a plain SubtitleDownloadResponse.",
+		},
+		{
 			value: pluginapi.SinkDeliverRequest{},
 			doc: "What the host hands an Installed Event sink for one event: the curated event, and the " +
 				"Settings the Admin saved. The settings travel WITH the call and are never installed into the " +

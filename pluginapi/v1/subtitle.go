@@ -129,3 +129,48 @@ type SubtitleProviderRegistration struct {
 	Descriptor Descriptor
 	New        SubtitleProviderFactory
 }
+
+// --- the guest call, for the Subtitle provider Extension point ---------------
+//
+// A Built-in is handed its Settings once, by the factory that constructs it, and
+// keeps them for as long as it lives. An INSTALLED plugin cannot be given them
+// that way: it is a WebAssembly instance the host discards and rebuilds on any
+// trap, any deadline kill and after a byte budget (ADR-0058 decision 7), so
+// anything installed into it would have to be installed again — and a secret
+// installed into a long-lived instance is a secret that outlives the call it was
+// handed over for.
+//
+// So the two Subtitle provider calls travel in an envelope carrying the resolved
+// Settings, exactly as SinkDeliverRequest does. That is the strongest reading of
+// ADR-0058 decision 5's "secrets handed over only at call time", and it is why a
+// settings_get host function is not needed for this seam: a rebuilt instance
+// starts holding nobody's credential.
+//
+// The RESPONSES are un-enveloped. SubtitleSearchResponse and
+// SubtitleDownloadResponse cross the boundary unchanged, because a guest has
+// nothing to say back about the settings it was handed.
+
+// SubtitleSearchCall is what the host hands an Installed Subtitle provider for
+// one search.
+type SubtitleSearchCall struct {
+	// Request is the search itself, exactly as a Built-in receives it: the ref the
+	// host gathered — including the content hash the HOST computed, because a
+	// Plugin never reads media bytes — and the normalized language.
+	Request SubtitleSearchRequest `json:"request"`
+	// Settings carries URL (the source the Admin configured, or the manifest's
+	// default) and Secret (the API key). Events is empty for a provider.
+	Settings Settings `json:"settings"`
+}
+
+// SubtitleDownloadCall is what the host hands an Installed Subtitle provider for
+// one candidate's bytes.
+//
+// Request.MaxBytes is the cap the HOST states, already narrowed to what this
+// server will accept back from a guest. A Plugin must refuse rather than answer
+// with more, and the host checks the length of what comes back anyway: an
+// oversize answer is DISCARDED, never truncated, because a truncated subtitle is
+// one the host would cache and a viewer would play as though it were whole.
+type SubtitleDownloadCall struct {
+	Request  SubtitleDownloadRequest `json:"request"`
+	Settings Settings                `json:"settings"`
+}

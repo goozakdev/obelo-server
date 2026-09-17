@@ -1214,6 +1214,38 @@
         }
       }
     },
+    "SubtitleSearchCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Subtitle provider for one search: the request a Built-in would receive, and the Settings the Admin saved. The settings travel WITH the call and are never installed into the guest, which is why this seam needs no 'give me my settings' host function: a guest rebuilt after a trap starts holding nobody's credential. The response is un-enveloped — a plain SubtitleSearchResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SubtitleSearchRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "SubtitleDownloadCall": {
+      "type": "object",
+      "description": "What the host hands an Installed Subtitle provider for one candidate's bytes. request.maxBytes is the cap the HOST states, already narrowed to what this server will accept back from a guest: a Plugin must refuse rather than answer with more, and the host checks the length of what comes back anyway. An oversize answer is DISCARDED and recorded as a failure, never truncated — a truncated subtitle is one the host would cache and a viewer would play as though it were whole. The response is un-enveloped — a plain SubtitleDownloadResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SubtitleDownloadRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
     "SinkDeliverRequest": {
       "type": "object",
       "description": "What the host hands an Installed Event sink for one event: the curated event, and the Settings the Admin saved. The settings travel WITH the call and are never installed into the guest, so a secret lives only for the duration of a delivery and an instance rebuilt after a trap starts with nobody's credential. The host has already filtered on settings.events, so a guest is never handed an event it did not ask for.",

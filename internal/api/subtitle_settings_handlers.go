@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/subtitle"
@@ -42,6 +43,26 @@ type subtitleProviderJSON struct {
 	BaseURL     string `json:"baseURL"`
 	Description string `json:"description"`
 	DocsURL     string `json:"docsURL"`
+
+	// The Installed-plugin fields, identical in meaning to the ones the event-sink
+	// screen carries (issue 09). They are omitempty, so a Built-in's entry is the
+	// document it always was and a client that has not heard of Installed plugins
+	// reads this response unchanged.
+	//
+	// Installed reports that this provider is a module an Admin placed under
+	// <dataDir>/plugins/, not code this server shipped.
+	Installed bool `json:"installed,omitempty"`
+	// Disabled is an Installed plugin this server will not call: refused at load,
+	// or stopped after failing repeatedly. It is NOT the Admin's enabled toggle —
+	// a provider can be switched on and still be disabled, which is exactly the
+	// state that needs explaining.
+	Disabled bool `json:"disabled,omitempty"`
+	// LastError is the sentence that says why. A download refused for exceeding
+	// the byte cap lands here, which is where an Admin finds out that a Plugin
+	// answered with more than this server accepts.
+	LastError string `json:"lastError,omitempty"`
+	// Version is the author's own version of their Plugin, for an operator to read.
+	Version string `json:"version,omitempty"`
 }
 
 // subtitleProvidersResponse is the GET/PUT body: the joined provider list plus the
@@ -303,6 +324,17 @@ func buildSubtitleProvidersResponse(deps Deps) (subtitleProvidersResponse, error
 		if base == "" {
 			base = d.DefaultURL
 		}
+		// An Installed plugin's runtime state, joined on by slug exactly as the
+		// event-sink screen joins it. A slug the loader has never heard of is a
+		// Built-in and reads as all-zero, which is the document this response
+		// always was.
+		var (
+			installed plugins.Status
+			known     bool
+		)
+		if deps.InstalledPlugins != nil {
+			installed, known = deps.InstalledPlugins.Status(d.Slug)
+		}
 		providers = append(providers, subtitleProviderJSON{
 			Slug:        d.Slug,
 			Name:        d.Name,
@@ -312,6 +344,10 @@ func buildSubtitleProvidersResponse(deps Deps) (subtitleProvidersResponse, error
 			BaseURL:     base,
 			Description: d.Description,
 			DocsURL:     d.DocsURL,
+			Installed:   known,
+			Disabled:    installed.Disabled,
+			LastError:   installed.LastError,
+			Version:     installed.Version,
 		})
 	}
 	return subtitleProvidersResponse{Providers: providers, AutoFetchLang: autoLang}, nil

@@ -119,6 +119,37 @@ func SinkManifest(id string, allowedHosts ...string) pluginapi.Manifest {
 	}
 }
 
+// SubtitleManifest is the manifest of a working Installed Subtitle provider: the
+// same module as SinkManifest names, declaring the other seam it fills. One
+// module CAN fill both at once — the host looks up only the exports the provides
+// list says to expect — and keeping them in one module is what keeps the suite to
+// one wasm compile per process.
+//
+// It declares a default URL an operator is expected to override, exactly as
+// OpenSubtitles does, and requires a secret for the same reason: a source with a
+// free-tier quota is one nobody should be able to turn on by accident.
+func SubtitleManifest(id string, allowedHosts ...string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "Test Subtitles (" + id + ")",
+		Version:    "2.1.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:           pluginapi.ExtensionSubtitleProvider,
+			Kinds:          []string{pluginapi.KindVideo},
+			Capabilities:   []pluginapi.Capability{pluginapi.CapabilitySearch},
+			RequiresSecret: true,
+		}},
+		Network: pluginapi.ManifestNetwork{Hosts: allowedHosts},
+		Settings: pluginapi.ManifestSettings{
+			RequiresSecret: true,
+			DefaultURL:     "https://subs.example.test/v1",
+		},
+		Description: "An Installed Subtitle provider, built from source by the test suite.",
+		DocsURL:     "https://example.test/obelo-test-subtitles",
+	}
+}
+
 // Install places a manifest and the compiled guest under <dataDir>/plugins/<id>/,
 // exactly as an Admin does by hand in this slice. It returns the Plugin directory.
 func Install(t *testing.T, dataDir string, m pluginapi.Manifest) string {

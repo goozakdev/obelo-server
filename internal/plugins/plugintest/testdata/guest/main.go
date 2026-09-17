@@ -319,3 +319,257 @@ func mode(target string) string {
 	}
 	return m
 }
+
+// =============================================================================
+// The Subtitle provider seam (.scratch/plugin-system issue 12).
+// =============================================================================
+//
+// ONE module, two Extension points. The manifest's `provides` list says which
+// seams this Plugin fills and the host looks up only the exports those seams
+// need, so a module can be an Event sink and a Subtitle provider at once and the
+// two never see each other. That is why this section is simply appended: nothing
+// above it changes.
+//
+// Two more exports, and they are the whole of this seam:
+//
+//	obelo_subtitle_search(ptr u32, len u32) -> i64     a SubtitleSearchCall in,
+//	                                                   a SubtitleSearchResponse out
+//	obelo_subtitle_download(ptr u32, len u32) -> i64   a SubtitleDownloadCall in,
+//	                                                   a SubtitleDownloadResponse out
+//
+// Everything here but the two lines marked as scaffolding is the example: this
+// is what a Subtitle provider author writes. Note what it does NOT do. It never
+// opens a file and never reads a frame of anybody's library — the release-exact
+// content hash arrives in the request, computed by the HOST, because a guest has
+// no filesystem and needs none. And it never decides how big a download may be:
+// the host states maxBytes on the way in and checks the answer on the way out.
+
+// --- the shapes, copied from the contract's JSON schema ----------------------
+
+type subtitleRef struct {
+	Title     string `json:"title,omitempty"`
+	Year      int    `json:"year,omitempty"`
+	IMDBID    string `json:"imdbId,omitempty"`
+	MovieHash string `json:"movieHash,omitempty"`
+	FileSize  int64  `json:"fileSize,omitempty"`
+}
+
+type subtitleSearchRequest struct {
+	Ref      subtitleRef `json:"ref"`
+	Language string      `json:"language"`
+}
+
+// The settings ride WITH the call, exactly as they do for a delivery, so the API
+// key exists in here for the duration of one search and dies with the instance.
+type subtitleSearchCall struct {
+	Request  subtitleSearchRequest `json:"request"`
+	Settings settings              `json:"settings"`
+}
+
+type subtitleCandidate struct {
+	ID        string `json:"id"`
+	Language  string `json:"language,omitempty"`
+	Format    string `json:"format,omitempty"`
+	Release   string `json:"release,omitempty"`
+	MatchedBy string `json:"matchedBy,omitempty"`
+	Downloads int    `json:"downloads,omitempty"`
+}
+
+type subtitleSearchResponse struct {
+	Outcome    string              `json:"outcome"`
+	Candidates []subtitleCandidate `json:"candidates,omitempty"`
+	Detail     string              `json:"detail,omitempty"`
+}
+
+type subtitleDownloadRequest struct {
+	Candidate subtitleCandidate `json:"candidate"`
+	MaxBytes  int64             `json:"maxBytes,omitempty"`
+}
+
+type subtitleDownloadCall struct {
+	Request  subtitleDownloadRequest `json:"request"`
+	Settings settings                `json:"settings"`
+}
+
+type subtitleDownloadResponse struct {
+	Outcome     string `json:"outcome"`
+	Data        []byte `json:"data,omitempty"`
+	Format      string `json:"format,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+}
+
+// sourceSubtitle is one entry of the SOURCE's own answer — the shape of the
+// service this Plugin wraps, not the contract's. Translating between the two is
+// the entire job of a provider Plugin.
+type sourceSubtitle struct {
+	ID        string `json:"id"`
+	Language  string `json:"language"`
+	Format    string `json:"format"`
+	Release   string `json:"release"`
+	Downloads int    `json:"downloads"`
+}
+
+// --- what this Plugin actually does ------------------------------------------
+
+//go:wasmexport obelo_subtitle_search
+func subtitleSearch(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call subtitleSearchCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SubtitleSearchCall: " + err.Error())
+	}
+	if mode(call.Settings.Secret) == "nomatch" {
+		return reply(subtitleSearchResponse{Outcome: "no-match", Detail: "this source has nothing for that release"})
+	}
+
+	resp := fetch(fetchRequest{
+		Method: "POST",
+		URL:    call.Settings.URL + "/search",
+		Headers: []header{
+			{Name: "Content-Type", Value: "application/json"},
+			{Name: "Api-Key", Value: call.Settings.Secret},
+		},
+		Body: encode(call.Request),
+	})
+	if detail, bad := unusable(resp); bad {
+		// A source that cannot be reached is 'unavailable', NOT 'no-match'. The
+		// two are different facts and the host renders them differently: one is
+		// "there is nothing", the other is "I could not ask".
+		logLine(levelError, "the search could not be made: "+detail)
+		return reply(subtitleSearchResponse{Outcome: "unavailable", Detail: detail})
+	}
+
+	var found struct {
+		Subtitles []sourceSubtitle `json:"subtitles"`
+	}
+	if err := json.Unmarshal(resp.Body, &found); err != nil {
+		return reply(subtitleSearchResponse{Outcome: "unavailable", Detail: "the source's answer is not the shape this plugin knows: " + err.Error()})
+	}
+	if len(found.Subtitles) == 0 {
+		return reply(subtitleSearchResponse{Outcome: "no-match"})
+	}
+
+	// Which signal produced these candidates is the host's to display and this
+	// Plugin's to report: a release-exact hash match is worth more to a viewer
+	// than a title query, and only the Plugin knows which one it used.
+	matched := matchedBy(call.Request.Ref)
+	out := make([]subtitleCandidate, 0, len(found.Subtitles))
+	for _, s := range found.Subtitles {
+		out = append(out, subtitleCandidate{
+			ID:        s.ID,
+			Language:  s.Language,
+			Format:    s.Format,
+			Release:   s.Release,
+			MatchedBy: matched,
+			Downloads: s.Downloads,
+		})
+	}
+	return reply(subtitleSearchResponse{Outcome: "matched", Candidates: out})
+}
+
+//go:wasmexport obelo_subtitle_download
+func subtitleDownload(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call subtitleDownloadCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SubtitleDownloadCall: " + err.Error())
+	}
+	if answer, misbehaving := misbehaveDownload(call); misbehaving {
+		return answer
+	}
+
+	resp := fetch(fetchRequest{
+		URL:     call.Settings.URL + "/download/" + call.Request.Candidate.ID,
+		Headers: []header{{Name: "Api-Key", Value: call.Settings.Secret}},
+	})
+	if detail, bad := unusable(resp); bad {
+		logLine(levelError, "the download could not be made: "+detail)
+		return reply(subtitleDownloadResponse{Outcome: "unavailable", Detail: detail})
+	}
+	if len(resp.Body) == 0 {
+		// The candidate is gone from the source since the search. That is a
+		// no-match, not a failure: nothing is broken and nothing should be retried.
+		return reply(subtitleDownloadResponse{Outcome: "no-match", Detail: "the source no longer has that candidate"})
+	}
+	if int64(len(resp.Body)) > call.Request.MaxBytes && call.Request.MaxBytes > 0 {
+		// The host said how much it would take. Answering with more is refusing
+		// the contract, so the honest answer is to refuse the download instead.
+		return reply(subtitleDownloadResponse{Outcome: "unavailable", Detail: "the file is larger than the host will accept"})
+	}
+
+	format := call.Request.Candidate.Format
+	if format == "" {
+		format = "srt"
+	}
+	logLine(levelInfo, "downloaded one subtitle")
+	return reply(subtitleDownloadResponse{
+		Outcome:     "matched",
+		Data:        resp.Body,
+		Format:      format,
+		ContentType: "application/x-subrip",
+	})
+}
+
+// matchedBy names the signal these candidates came from, in the order a source
+// is worth asking in: a release-exact content hash first, then the enrichment id,
+// then the title query nothing better was available for.
+func matchedBy(ref subtitleRef) string {
+	switch {
+	case ref.MovieHash != "":
+		return "moviehash"
+	case ref.IMDBID != "":
+		return "imdb"
+	default:
+		return "query"
+	}
+}
+
+// unusable folds the three ways a fetch can fail to produce an answer into one
+// sentence, because this Plugin does the same thing about all three.
+func unusable(resp fetchResponse) (string, bool) {
+	switch {
+	case resp.Refused != "":
+		return "refused by the host: " + resp.Refused, true
+	case resp.Error != "":
+		return "the request failed: " + resp.Error, true
+	case resp.Status < 200 || resp.Status > 299:
+		return "the source answered " + itoa(resp.Status), true
+	}
+	return "", false
+}
+
+func encode(v any) []byte {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+// --- scaffolding, again ------------------------------------------------------
+//
+// One mode, for the one thing a well-behaved Plugin cannot demonstrate: a guest
+// that answers with MORE bytes than the host said it would take. It cannot be
+// provoked through the source, because the host's fetch cap already refuses an
+// oversize body on the way in — so the bytes have to be invented in here. The
+// mode is read out of the SECRET, which for a provider is the one string a test
+// can set that reaches this far in.
+
+func misbehaveDownload(call subtitleDownloadCall) (uint64, bool) {
+	if mode(call.Settings.Secret) != "oversize" {
+		return 0, false
+	}
+	// Exactly one byte past the cap the host stated, whatever it is.
+	return reply(subtitleDownloadResponse{
+		Outcome: "matched",
+		Data:    make([]byte, call.Request.MaxBytes+1),
+		Format:  "srt",
+	}), true
+}

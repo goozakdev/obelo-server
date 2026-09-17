@@ -396,6 +396,41 @@ func installedWireCases() []wireCase {
 				`"defaultUrl2":"https://images.example.test"}`,
 		},
 		{
+			// A Subtitle provider's settings ride with the call for the same reason
+			// a sink's do: the instance they would be installed into is discarded
+			// and rebuilt on any trap, so the only place a secret can live for
+			// exactly one call is the call.
+			name: "SubtitleSearchCall",
+			value: SubtitleSearchCall{
+				Request: SubtitleSearchRequest{
+					Ref:      SubtitleRef{Title: "Dune", Year: 2021, MovieHash: "8e245d9679d31e12", FileSize: 12909756},
+					Language: "de",
+				},
+				Settings: Settings{
+					Enabled: true,
+					Secret:  "sk-123",
+					URL:     "https://api.example.test/v1",
+				},
+			},
+			golden: `{"request":{"ref":{"title":"Dune","year":2021,"movieHash":"8e245d9679d31e12",` +
+				`"fileSize":12909756},"language":"de"},` +
+				`"settings":{"enabled":true,"secret":"sk-123","url":"https://api.example.test/v1"}}`,
+		},
+		{
+			// maxBytes is the host's cap, restated to the guest. The host checks the
+			// answer against it regardless, and discards an oversize one whole.
+			name: "SubtitleDownloadCall",
+			value: SubtitleDownloadCall{
+				Request: SubtitleDownloadRequest{
+					Candidate: SubtitleCandidate{ID: "42", Format: "srt"},
+					MaxBytes:  1 << 20,
+				},
+				Settings: Settings{Enabled: true, Secret: "sk-123", URL: "https://api.example.test/v1"},
+			},
+			golden: `{"request":{"candidate":{"id":"42","format":"srt"},"maxBytes":1048576},` +
+				`"settings":{"enabled":true,"secret":"sk-123","url":"https://api.example.test/v1"}}`,
+		},
+		{
 			// The settings ride WITH the call: a secret reaches a guest for the
 			// duration of one delivery and is never installed into it.
 			name: "SinkDeliverRequest",

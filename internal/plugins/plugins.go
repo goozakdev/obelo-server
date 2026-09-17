@@ -540,9 +540,15 @@ func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 		provides = []pluginapi.ManifestProvides{{Kind: pluginapi.ExtensionEventSink}}
 	}
 	for _, entry := range provides {
+		if entry.Kind == pluginapi.ExtensionSubtitleProvider {
+			// The Subtitle provider seam (issue 12). Its whole branch is in
+			// subtitle.go, beside the adapter it registers.
+			s.registerSubtitleProvider(reg, p, entry)
+			continue
+		}
 		if entry.Kind != pluginapi.ExtensionEventSink {
-			// Metadata and Subtitle providers are issues 11 and 12. Saying so beats
-			// silence: an operator who installs one today learns why it did nothing.
+			// Metadata providers are issue 11. Saying so beats silence: an operator
+			// who installs one today learns why it did nothing.
 			p.logf("obelo: plugin %s provides %s, which this build does not load yet", p.id, entry.Kind)
 			continue
 		}
