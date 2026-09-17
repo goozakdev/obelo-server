@@ -88,6 +88,8 @@ import type {
   UpdateSubtitleProvidersInput,
   EventSinksView,
   UpdateEventSinksInput,
+  InstalledPluginsView,
+  InstallPluginFromURLInput,
   TestProviderResult,
   EnrichmentPolicy,
   EnrichMode,
@@ -1931,6 +1933,101 @@ export class ApiClient {
     });
   }
 
+  // --- Admin: Installed plugins (ADR-0058, plugin-system/10) -------------
+  //
+  // Getting CODE onto a running server, and nothing else. What a plugin DOES —
+  // the URL a sink posts to, the events it hears, the key it signs with — is
+  // configured on the screen for its Extension point, through the same endpoint
+  // as the Built-in beside it. That sameness is the design, and this client must
+  // not grow a second way to do it.
+  //
+  // Every verb answers with the WHOLE list, so a caller re-renders from one
+  // response rather than following each action with a GET.
+
+  /** `GET /api/v1/settings/plugins` (Admin) — what is installed, with the Admin's
+   * enable switch, whether this server has stopped calling it, and why. A Member
+   * gets a 403. */
+  getPlugins(signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>("/settings/plugins", { signal });
+  }
+
+  /** `POST /api/v1/settings/plugins` (Admin, multipart) — install from two files:
+   * the `manifest` (manifest.json) and the `module` (the .wasm). Two named parts
+   * rather than an archive, so the server never unpacks paths it did not choose.
+   * Returns the full list. */
+  installPlugin(
+    manifest: File | Blob,
+    module: File | Blob,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    const form = new FormData();
+    form.append("manifest", manifest);
+    form.append("module", module);
+    return this.request<InstalledPluginsView>("/settings/plugins", {
+      method: "POST",
+      body: form,
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/plugins/from-url` (Admin) — install from the URL of a
+   * plugin's manifest.json; the module is fetched from beside it. Fetched under
+   * the safe fetcher, and — unlike every other outbound fetch in this server — a
+   * URL resolving into this server's own network is refused, because what comes
+   * back is executed. Returns the full list. */
+  installPluginFromURL(
+    input: InstallPluginFromURLInput,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>("/settings/plugins/from-url", {
+      method: "POST",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/enable` (Admin) — the Admin's switch,
+   * on. Returns the full list. */
+  enablePlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "enable", signal);
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/disable` (Admin) — the Admin's switch,
+   * off. The plugin stops being registered at all, so delivery stops immediately;
+   * it stays on this screen, named, so it can be switched back on. */
+  disablePlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "disable", signal);
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/reenable` (Admin) — forgive a recorded
+   * failure: clears the error and reloads the plugin from disk, so a plugin whose
+   * manifest or module was fixed gets a genuine second try. It does NOT touch the
+   * Admin's enable switch. */
+  reenablePlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "reenable", signal);
+  }
+
+  /** `DELETE /api/v1/settings/plugins/{id}` (Admin) — unload the module, delete
+   * its files and its settings. Artwork and subtitles it produced stay in the
+   * ordinary caches: they are the library's now. */
+  uninstallPlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}`,
+      { method: "DELETE", signal },
+    );
+  }
+
+  private pluginVerb(
+    id: string,
+    verb: string,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}/${verb}`,
+      { method: "POST", signal },
+    );
+  }
+
   // --- Admin: Tailnet remote access (ADR-0043, tailscale/01) -------------
   //
   // Admin scope, server-enforced. One response shape for all five routes — the
@@ -2324,6 +2421,9 @@ export type {
   EpisodeSummary,
   FixMatchInput,
   HomeRows,
+  InstalledPlugin,
+  InstalledPluginsView,
+  InstallPluginFromURLInput,
   Library,
   LibraryRoot,
   Link,

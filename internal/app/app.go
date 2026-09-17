@@ -134,6 +134,13 @@ type App struct {
 	// process that built it.
 	installedPlugins *plugins.Set
 
+	// pluginManager installs, enables, disables and uninstalls an Installed plugin
+	// on a RUNNING server (issue 10). It owns the live Set from here on —
+	// installedPlugins above is only what boot found — so Close releases the
+	// runtimes through it and never through the boot-time value, which an install
+	// will have replaced.
+	pluginManager *plugins.Manager
+
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
 	// enrich); each closes its done channel once it has fully exited, so Close
@@ -176,6 +183,12 @@ type options struct {
 	// call budget so a guest that never returns can be observed being stopped
 	// without the suite waiting half a minute for it.
 	pluginOptions plugins.Options
+	// pluginSourcesMayBePrivate drops the address check on a URL install (issue
+	// 10). TESTS ONLY: the suite serves its fixture plugin from an httptest.Server
+	// on 127.0.0.1 and there is no hermetic public address to serve it from. In
+	// production a pasted URL that resolves into loopback/RFC1918/link-local space
+	// is refused, because a plugin is code this server will run.
+	pluginSourcesMayBePrivate bool
 	// subtitleProviderBuilder overrides how the subtitle-fetch Manager composes a
 	// SubtitleProvider from settings (default: subfetch.BuildProvider). It is the
 	// test seam for the fetch flow: a black-box test maps settings → a fake
@@ -275,6 +288,19 @@ func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option 
 // change — in practice the per-call budget, because a test that has to watch a
 // guest be killed three times for spinning should not wait thirty seconds to see
 // it.
+// WithPluginSourcesFromPrivateAddresses lets a URL install fetch from an address
+// this server would otherwise refuse to fetch CODE from (loopback, RFC1918,
+// link-local).
+//
+// It exists for one reason: the black-box suite serves its fixture plugin from an
+// httptest.Server, which binds 127.0.0.1, and there is no hermetic public address
+// to serve it from instead. Nothing else about the install path changes — the
+// same safe fetcher, the same redirect policy, the same byte caps — and the
+// refusal itself is asserted by a test that does NOT pass this option.
+func WithPluginSourcesFromPrivateAddresses() Option {
+	return func(o *options) { o.pluginSourcesMayBePrivate = true }
+}
+
 func WithPluginOptions(opts plugins.Options) Option {
 	return func(o *options) { o.pluginOptions = opts }
 }
@@ -552,7 +578,18 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	if err != nil {
 		log.Printf("obelo: installed plugins were not loaded: %v", err)
 	}
-	installed.Register(registry)
+	// The Admin's enable switch lives in the plugins table (issue 10) and is read
+	// HERE, before anything is registered: a Plugin an Admin switched off is not
+	// registered at all, so nothing downstream can reach it — which is what makes
+	// "disable stops delivery" a property of the composition rather than of a flag
+	// some delivery path has to remember to check. An unreadable table registers
+	// everything, because a settings read failing must not silently turn a working
+	// Plugin off.
+	disabledPluginIDs, err := db.DisabledPluginIDs()
+	if err != nil {
+		log.Printf("obelo: the plugin enable switches could not be read, so every installed plugin is registered: %v", err)
+	}
+	installed.RegisterEnabled(registry, disabledPluginIDs)
 
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
@@ -728,6 +765,47 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	sinkTranslator := eventsink.NewTranslator(sinkManager.Dispatcher(), db)
 	sinkTranslator.Start(broker)
 
+	// Installing a Plugin without a restart (issue 10). The Manager owns the
+	// lifecycle the loader deliberately does not: the files, the rows, the Admin's
+	// switch, and the REBUILD-AND-SWAP that makes all three take effect on a
+	// running server.
+	//
+	// It is built here, last of the Plugin wiring, because it needs the three
+	// Managers that compose FROM the registry: an install swaps a freshly built
+	// registry into the value every reader holds and then tells each of them to
+	// Reload, in this order — providers, subtitles, sinks — so nothing is left
+	// composed from Plugins that are no longer there. Only then is the old Set
+	// closed, which app.Close does in the same order for the same reason.
+	pluginManager := plugins.NewManager(plugins.ManagerConfig{
+		Dir:      filepath.Join(cfg.DataDir, plugins.DirName),
+		Registry: registry,
+		Set:      installed,
+		Store:    db,
+		Loader:   o.pluginOptions,
+		Base: func(reg *pluginapi.Registry) {
+			// Exactly what this composition root registered above, in the same
+			// order, so a rebuilt registry is the one a reboot would have built.
+			builtins.Register(reg)
+			for _, r := range o.metadataPlugins {
+				reg.RegisterMetadataProvider(r)
+			}
+		},
+		Reload: func(ctx context.Context) error {
+			// A fixed injected provider (WithMetadataProvider) has no Manager
+			// driving it, exactly as at boot, so it is not reloaded here either.
+			if o.metadataProvider == nil {
+				if err := providerManager.Reload(ctx); err != nil {
+					return err
+				}
+			}
+			if err := subtitleManager.Reload(ctx); err != nil {
+				return err
+			}
+			return sinkManager.Reload(ctx)
+		},
+		AllowPrivateSources: o.pluginSourcesMayBePrivate,
+	})
+
 	// Declared before the session observer below because that observer must be able
 	// to end a RELAY session on the sharing Server (ADR-0056 §5), and the link
 	// Service itself cannot be built until the Tailnet manager exists further down.
@@ -884,6 +962,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		sinkManager:      sinkManager,
 		sinkTranslator:   sinkTranslator,
 		installedPlugins: installed,
+		pluginManager:    pluginManager,
 	}
 	queueDepth := enrichQueueDepth
 	if o.enrichQueueSize > 0 {
@@ -980,7 +1059,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Plugins:                 registry,
 		EventSinks:              db,
 		EventSinkManager:        sinkManager,
-		InstalledPlugins:        installed,
+		InstalledPlugins:        pluginManager,
+		PluginManager:           pluginManager,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
@@ -1552,7 +1632,9 @@ func (a *App) Close() error {
 	// closing a runtime out from under an in-flight delivery would trap the guest
 	// on the way out and record a failure against a Plugin that was doing nothing
 	// wrong.
-	if a.installedPlugins != nil {
+	if a.pluginManager != nil {
+		_ = a.pluginManager.Close(context.Background())
+	} else if a.installedPlugins != nil {
 		_ = a.installedPlugins.Close(context.Background())
 	}
 	if a.Events != nil {

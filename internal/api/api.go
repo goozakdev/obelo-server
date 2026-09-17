@@ -239,6 +239,17 @@ type Deps struct {
 	// which read as "every Plugin on this screen is a Built-in".
 	InstalledPlugins InstalledPluginStatus
 
+	// PluginManager installs, enables, disables, re-enables and uninstalls an
+	// Installed plugin on a RUNNING server (ADR-0058, Admin-scope
+	// /settings/plugins). *plugins.Manager satisfies it.
+	//
+	// Nil in a narrow test, and the /settings/plugins routes then answer 503 with a
+	// sentence rather than a 404 that reads identically to a typo'd path. It is
+	// separate from InstalledPlugins above because they answer different questions:
+	// that one is "what is the loader's view of this slug", read by the Extension
+	// points' own settings surfaces, and this one is the lifecycle.
+	PluginManager PluginManager
+
 	// Tailnet remote access (ADR-0043, Admin-scope /settings/tailscale).
 	// TailnetSettings persists the four settings; Tailnet is the state machine the
 	// GET reads live status from and the three verbs drive. Either may be nil in a
