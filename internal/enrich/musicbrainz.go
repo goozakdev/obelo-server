@@ -958,6 +958,48 @@ func MusicBrainzRefUnsupported(s string) bool {
 	return false
 }
 
+// ParseExternalRef reads a pasted MusicBrainz id-or-URL for a Music item — the
+// ExternalRefParser half of this source (ADR-0057's external-ref capability). It
+// is the one place this provider's URL vocabulary is interpreted, and it is a call
+// rather than a pattern list because two of its four answers are logic, not shape:
+//
+//   - A /release/ URL on an ALBUM is not an album pin. It names one EDITION of the
+//     release-group the album actually is (ADR-0038), so it resolves to the
+//     release-group in ExternalID — which the Lookup does, from ReleaseMBID — and
+//     rides back as ReleaseID so the human's edition survives the preview→apply
+//     round trip instead of being dropped (ADR-0052).
+//   - A recognized URL for an entity this server pins nothing by (a /work/, a
+//     /label/) is ErrExternalRefUnsupportedKind, not ErrExternalRefInvalid, so the
+//     Admin is told which kind of link to grab rather than "that's not a URL".
+//
+// The remaining two are the ordinary ones: a typed URL of the wrong kind for the
+// item is an *ExternalRefKindMismatchError carrying both kinds, and anything else
+// is unreadable. A non-Music kind is ErrSearchUnavailable — this source has
+// nothing to say about a TMDB paste, and saying so lets the host answer for the
+// namespaces it keeps its own columns for.
+func (p *MusicBrainzProvider) ParseExternalRef(_ context.Context, kind, pasted string) (ExternalRef, error) {
+	switch kind {
+	case "artist", "album", "track":
+	default:
+		return ExternalRef{}, ErrSearchUnavailable
+	}
+	if refKind, id, ok := ParseMusicBrainzRef(pasted); ok {
+		if refKind != "" && refKind != kind {
+			return ExternalRef{}, &ExternalRefKindMismatchError{Got: refKind, Want: kind}
+		}
+		return ExternalRef{ExternalID: id}, nil
+	}
+	if kind == "album" {
+		if relID, ok := parseMusicBrainzReleaseRef(pasted); ok {
+			return ExternalRef{ReleaseID: relID}, nil
+		}
+	}
+	if MusicBrainzRefUnsupported(pasted) {
+		return ExternalRef{}, ErrExternalRefUnsupportedKind
+	}
+	return ExternalRef{}, ErrExternalRefInvalid
+}
+
 // ParseMusicBrainzRef reads a pasted MusicBrainz reference — a full URL
 // (https://musicbrainz.org/release-group/<uuid>, /artist/<uuid>, /recording/<uuid>;
 // any scheme/subdomain, optional slug/query/fragment) or a bare MBID (UUID) — into

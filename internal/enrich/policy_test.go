@@ -1,6 +1,7 @@
 package enrich
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -12,19 +13,26 @@ import (
 // config — the inputs processLeaf routes on (override-wins vs. orphaned→attention).
 func TestPinnedProviderPrecedenceHelpers(t *testing.T) {
 	// pinnedProviderFor: a video Title with a TMDB id pins TMDB; a Track with an MBID
-	// pins MusicBrainz; a Title with no external id is unpinned.
-	if slug, ok := pinnedProviderFor(store.Title{Kind: "movie", TMDBID: "555"}); !ok || slug != SlugTMDB {
+	// pins its Library's MUSIC LEAD, because the column it lives in names no source
+	// (see pinnedProviderFor); a Title with no external id is unpinned.
+	if slug, ok := pinnedProviderFor(store.Title{Kind: "movie", TMDBID: "555"}, ProviderConfig{}); !ok || slug != SlugTMDB {
 		t.Errorf("movie w/ tmdb id: got %q/%v, want tmdb/true", slug, ok)
 	}
-	if slug, ok := pinnedProviderFor(store.Title{Kind: "track", MusicbrainzID: "mb"}); !ok || slug != SlugMusicBrainz {
+	if slug, ok := pinnedProviderFor(store.Title{Kind: "track", MusicbrainzID: "mb"}, ProviderConfig{}); !ok || slug != SlugMusicBrainz {
 		t.Errorf("track w/ mbid: got %q/%v, want musicbrainz/true", slug, ok)
 	}
-	if _, ok := pinnedProviderFor(store.Title{Kind: "movie"}); ok {
+	// A repointed music Library reads the same record as its own lead's, so the
+	// per-item precedence stays a no-op rather than orphaning every Track.
+	leadElsewhere := ProviderConfig{AuthoritativeMusic: "someplugin"}
+	if slug, _ := pinnedProviderFor(store.Title{Kind: "track", MusicbrainzID: "mb"}, leadElsewhere); slug != "someplugin" {
+		t.Errorf("track w/ mbid under a repointed music lead = %q, want the lead", slug)
+	}
+	if _, ok := pinnedProviderFor(store.Title{Kind: "movie"}, ProviderConfig{}); ok {
 		t.Errorf("movie w/ no id: got pinned, want unpinned")
 	}
 
-	// authoritativeSlugFor: video reads the pointer (default TMDB, or a repoint);
-	// music is always MusicBrainz.
+	// authoritativeSlugFor: each kind reads its own pointer (default TMDB /
+	// MusicBrainz, or a repoint).
 	repointed := ProviderConfig{AuthoritativeVideo: SlugAniDB}
 	if got := repointed.authoritativeSlugFor("show"); got != SlugAniDB {
 		t.Errorf("video leader = %q, want anidb (repointed)", got)
@@ -33,7 +41,10 @@ func TestPinnedProviderPrecedenceHelpers(t *testing.T) {
 		t.Errorf("default video leader = %q, want tmdb", got)
 	}
 	if got := repointed.authoritativeSlugFor("track"); got != SlugMusicBrainz {
-		t.Errorf("music leader = %q, want musicbrainz", got)
+		t.Errorf("music leader = %q, want musicbrainz (a video repoint leaves music alone)", got)
+	}
+	if got := leadElsewhere.authoritativeSlugFor("track"); got != "someplugin" {
+		t.Errorf("repointed music leader = %q, want someplugin", got)
 	}
 
 	// providerReachable: a keyed video provider is reachable; a keyless muted one is
@@ -161,7 +172,7 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: builtinCatalog(), Config: tc.global}, tc.policy)
-			if res.Config != tc.wantCfg {
+			if !reflect.DeepEqual(res.Config, tc.wantCfg) {
 				t.Errorf("cfg = %+v, want %+v", res.Config, tc.wantCfg)
 			}
 			if res.Enablement != tc.wantEnab {
@@ -179,7 +190,7 @@ func TestResolveLibraryEnrichmentMatchesGlobalForEmptyPolicy(t *testing.T) {
 	global := ProviderConfig{TMDBAPIKey: "tk", MusicBrainzEnabled: true, MetadataLanguage: "en-GB"}
 	res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: builtinCatalog(), Config: global}, store.LibraryEnrichmentPolicy{})
 
-	if res.Config != global {
+	if !reflect.DeepEqual(res.Config, global) {
 		t.Errorf("effective cfg = %+v, want the global cfg unchanged", res.Config)
 	}
 	if want := DeriveEnablement(global); res.Enablement != want {

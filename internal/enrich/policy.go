@@ -71,7 +71,7 @@ func ResolveLibraryEnrichment(g GlobalEnrichment, policy store.LibraryEnrichment
 	// Per-provider Supplement tri-state (issue 05): force a supplement on or off for
 	// this Library only. Applied AFTER the authoritative is chosen so force-off of the
 	// current authoritative can be recognized as a no-op.
-	applySupplementOverrides(g.Catalog, &cfg, g.Providers, policy.SupplementOverrides)
+	applySupplementOverrides(&cfg, g.Providers, policy.SupplementOverrides)
 
 	// enrich_enabled=false is the ONLY hard off-switch for a Library (ADR-0027): no
 	// chain runs and no outbound call is made. The service gates every fetch on
@@ -105,20 +105,22 @@ func resolveAuthoritative(cat Catalog, cfg *ProviderConfig, providers map[string
 	if !ok || entry.Class != ClassFull {
 		return "" // not a leadable provider — ignore, inherit the default
 	}
-	// Only the video kind has multiple Full providers today, so only a video
-	// authoritative changes the composition; a music pointer (MusicBrainz, the sole
-	// Full music provider) already equals the default and needs no cfg change.
-	if !entry.Serves(KindVideo) {
-		return ""
-	}
 	st := providers[slug]
 	if !st.Keyed {
-		// Unreachable after selection: don't point cfg at an unusable lead. Leaving
-		// AuthoritativeVideo unset falls back to the kind default (TMDB); flag it so
+		// Unreachable after selection: don't point cfg at an unusable lead. Leaving the
+		// pointer unset falls back to the kind default (TMDB / MusicBrainz); flag it so
 		// the app can surface the degradation on the attention surface.
 		return slug
 	}
-	cfg.AuthoritativeVideo = slug
+	// Point the kind(s) this provider serves at it. A Library has one kind, so at
+	// most one of these fields is ever read for it; setting both for a provider that
+	// serves both is what keeps this from having to know which kind the Library is.
+	if entry.Serves(KindVideo) {
+		cfg.AuthoritativeVideo = slug
+	}
+	if entry.Serves(KindMusic) {
+		cfg.AuthoritativeMusic = slug
+	}
 	// Inject the key so BuildProvider composes it as the lead even if the provider is
 	// globally DISABLED (always-active-if-keyed). The base URL is already in cfg
 	// (SettingsToProviderConfig sets every provider's base URL regardless of enabled).
@@ -133,9 +135,9 @@ func resolveAuthoritative(cat Catalog, cfg *ProviderConfig, providers map[string
 // CURRENT authoritative is a no-op (ADR-0027): its off-switch is enrich_enabled, not
 // a per-provider toggle. A force-on activates a source only when it is keyed
 // (offline-first — never conjure a call for an unkeyed provider).
-func applySupplementOverrides(cat Catalog, cfg *ProviderConfig, providers map[string]ProviderState, overrides map[string]bool) {
+func applySupplementOverrides(cfg *ProviderConfig, providers map[string]ProviderState, overrides map[string]bool) {
 	for slug, on := range overrides {
-		if isCurrentAuthoritative(cat, *cfg, slug) {
+		if isCurrentAuthoritative(*cfg, slug) {
 			continue // force-off/on of the leader is meaningless — no-op
 		}
 		if on {
@@ -149,16 +151,20 @@ func applySupplementOverrides(cat Catalog, cfg *ProviderConfig, providers map[st
 }
 
 // isCurrentAuthoritative reports whether slug is the Library's leading provider for
-// its kind — the video authoritative (repointable) or the fixed music authoritative
-// (MusicBrainz). Used to make force-off of the leader a no-op.
-func isCurrentAuthoritative(cat Catalog, cfg ProviderConfig, slug string) bool {
-	return slug == cfg.videoAuthoritativeSlug() || slug == cat.DefaultAuthoritativeForKind(KindMusic)
+// its kind — the video authoritative or the music one, both repointable since the
+// music chain went through the contract. Used to make force-off of the leader a
+// no-op.
+func isCurrentAuthoritative(cfg ProviderConfig, slug string) bool {
+	return slug == cfg.videoAuthoritativeSlug() || slug == cfg.musicAuthoritativeSlug()
 }
 
-// setProviderKey sets (or clears, with an empty key) the API-key field for a
-// key-bearing provider in cfg — the one place the resolver injects/removes a key to
-// activate/mute a source. A keyless provider (MusicBrainz, Cover Art Archive) has no
-// key to set here; its activation rides its authoritative's enablement.
+// setProviderKey sets (or clears, with an empty key) the API key for a key-bearing
+// provider in cfg — the one place the resolver injects/removes a key to activate or
+// mute a source. A provider this binary has no named field for lands in
+// ProviderKeys, so an Installed plugin is activated by the same act that activates
+// a Built-in (ADR-0057 decision 4). A keyless provider (MusicBrainz, Cover Art
+// Archive) has no key to set: its activation rides its authoritative's enablement,
+// and writing "" to the map for it would say "muted", which is a different thing.
 func setProviderKey(cfg *ProviderConfig, slug, key string) {
 	switch slug {
 	case SlugTMDB:
@@ -173,5 +179,18 @@ func setProviderKey(cfg *ProviderConfig, slug, key string) {
 		cfg.FanartTVAPIKey = key
 	case SlugTheAudioDB:
 		cfg.TheAudioDBAPIKey = key
+	case SlugMusicBrainz, SlugCoverArt:
+		// keyless — nothing to inject or clear
+	default:
+		// COPY-ON-WRITE, not a write. The resolver works on a struct copy of the
+		// global config, which shares this map with it — writing through would let one
+		// Library's policy change every other Library's keys, and the sparse-overlay
+		// model (ADR-0027) is built on the global config being untouched by a resolve.
+		keys := make(map[string]string, len(cfg.ProviderKeys)+1)
+		for k, v := range cfg.ProviderKeys {
+			keys[k] = v
+		}
+		keys[slug] = key
+		cfg.ProviderKeys = keys
 	}
 }

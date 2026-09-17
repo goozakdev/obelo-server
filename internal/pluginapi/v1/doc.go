@@ -41,7 +41,7 @@
 // # What the Built-ins have exposed so far
 //
 // This package exists to be found wrong while that is still cheap (decision 5).
-// Two gaps the video metadata Built-ins found, both filled additively:
+// The gaps the metadata Built-ins found, all filled additively:
 //
 //   - Settings needed a Language. A Metadata provider caches responses under a
 //     language-dependent key, so the metadata language is part of what the Plugin
@@ -51,6 +51,29 @@
 //     an optional Go interface the chains type-asserted on; the contract cannot
 //     carry a type assertion across a boundary, so they became a declared
 //     capability and a second, optional interface of wire calls.
+//   - Settings needed a RateLimitMillis, for the same reason it needed Language and
+//     one more: the limiter is keyed by HOST rather than held on the Plugin
+//     (ADR-0049), so the operator's interval has to be known when the Plugin is
+//     built. It is a pointer because "use your own default" and "do not throttle"
+//     are both meaningful and neither is the other's zero.
+//   - A source with TWO hosts is not only TMDB. MusicBrainz's images come from the
+//     Cover Art Archive, which is a separate registration with its own settings
+//     row — so the host resolves that row into the MusicBrainz Plugin's URL2. The
+//     field was general enough; what needed saying is that a Descriptor's
+//     DefaultURL2 and a Settings' URL2 are not obliged to come from the same
+//     registration (Cover Art Archive is the one Built-in with no factory at all:
+//     it has no client of its own, so there is nothing for one to construct).
+//   - One capability can cover two calls, and ErrNoTracklist did NOT need an
+//     Outcome. Album tracklists and album editions are the automatic and the manual
+//     half of one question, so album-tracklist declares both (AlbumTracklister),
+//     and "this album has no tracklist" is OutcomeNoMatch — losslessly, because
+//     the call guarantees a matched answer is never empty. Adding an eighth Outcome
+//     would have forced every adapter at every Extension point to decide what
+//     "no-tracklist" means for a subtitle search, which is nothing.
+//   - A mismatch outcome needs its DETAIL in the response, not in the enum.
+//     ref-kind-mismatch is one value; the sentence the host renders names the kind
+//     pasted and the kind wanted, so ExternalRefResponse carries GotKind/WantKind
+//     and the adapter rebuilds the specific error from them.
 //
 // # Lifetime
 //

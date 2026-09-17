@@ -281,7 +281,7 @@ func (m *Manager) SupplementProviders(ctx context.Context, libraryID, kind strin
 	}
 	var authoritative string
 	if kind == KindMusic {
-		authoritative = m.catalog.DefaultAuthoritativeForKind(KindMusic)
+		authoritative = res.Config.musicAuthoritativeSlug()
 	} else {
 		authoritative = res.Config.videoAuthoritativeSlug()
 	}
@@ -310,7 +310,10 @@ func (m *Manager) EffectiveAuthoritative(ctx context.Context, libraryID, kind st
 		return "", "", err
 	}
 	if kind == KindMusic {
-		return m.catalog.DefaultAuthoritativeForKind(KindMusic), res.AuthoritativeFallback, nil
+		// Read from the RESOLVED config, not from the catalog default: since the music
+		// chain went through the contract a Library's music lead is repointable too,
+		// so the default is the answer only when nothing repointed it (ADR-0027).
+		return res.Config.musicAuthoritativeSlug(), res.AuthoritativeFallback, nil
 	}
 	return res.Config.videoAuthoritativeSlug(), res.AuthoritativeFallback, nil
 }

@@ -522,6 +522,45 @@ type AlbumEditionLister interface {
 	ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error)
 }
 
+// ExternalRef is what reading a pasted id-or-URL produced: the external id to
+// resolve, and — for an Album whose paste named one — the EDITION it named
+// (ADR-0052).
+//
+// Two fields rather than one string because the two are same-typed MusicBrainz ids
+// one level apart, and because a /release/ URL means both at once: the album to
+// pin is the parent release-group, and the release is the refinement that would
+// otherwise be dropped between the preview and the apply. An empty ReleaseID is a
+// decision too — it CLEARS whatever edition the album had.
+type ExternalRef struct {
+	ExternalID string
+	ReleaseID  string
+}
+
+// ExternalRefParser is an OPTIONAL provider capability: reading a string an Admin
+// pasted into the "paste an id when search isn't enough" box for an item of a
+// given kind.
+//
+// It is a CALL and not a list of URL patterns the source could declare, because
+// the mapping is logic: a MusicBrainz /release/ URL has to be resolved to the
+// release-group an album IS (ADR-0038) before it can be pinned, and a real URL for
+// an entity kind nothing pins (a work, a label) has to be told apart from an
+// unreadable paste so the Admin is told which link to grab instead.
+//
+// Like the other optional interfaces it is deliberately NOT part of
+// MetadataProvider. A provider that does not implement it answers
+// ErrSearchUnavailable, and the HOST then reads the paste itself for the id
+// namespaces it already keeps columns for (ADR-0045/0049) — see
+// Service.externalRef. A provider that DOES implement it speaks for its own
+// source's id shapes, and its answer stands.
+type ExternalRefParser interface {
+	// ParseExternalRef reads pasted for an item of kind, returning the id to
+	// resolve or one of the three refusals: ErrExternalRefInvalid (unreadable),
+	// an *ExternalRefKindMismatchError (a real entity of the wrong kind), or
+	// ErrExternalRefUnsupportedKind (one of this source's URLs for an entity kind
+	// nothing pins).
+	ParseExternalRef(ctx context.Context, kind, pasted string) (ExternalRef, error)
+}
+
 // ArtworkFetcher downloads image bytes for a remote URL the provider returned,
 // with content-type + size guards. The enrich service writes the bytes into the
 // on-disk artwork cache (ADR-0007).

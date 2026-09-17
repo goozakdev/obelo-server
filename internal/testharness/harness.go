@@ -38,6 +38,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/gpu"
+	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
@@ -305,6 +306,21 @@ func WithMetadataProvider(p enrich.MetadataProvider) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMetadataProvider(p)) }
 }
 
+// WithMetadataPlugins registers extra Metadata provider Plugins beside the
+// Built-ins (ADR-0057), so a black-box test can drive a server that has a source
+// this binary does not ship. Everything downstream — the settings API, the
+// Authoritative-provider candidate list, the per-Library Enrichment policy, the
+// composed chain — treats it as a registration like any other, which is the point:
+// it is the only way to check that an Installed plugin may LEAD a Library
+// (ADR-0057 decision 4) without shipping one.
+//
+// Unlike WithMetadataProvider and WithProviderBuilder it substitutes nothing: the
+// real catalog and the real builder stay in charge, so the Plugin reaches the pass
+// only if its settings row and the Library's policy actually say so.
+func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMetadataPlugins(regs...)) }
+}
+
 // WithKeyRotation points the key-rotation channel (ADR-0032, layer 2) at a stub
 // endpoint with a known decryption key, and sets the re-poll interval (0 = fetch on
 // startup / on demand only, no periodic timer — the deterministic choice for a
@@ -328,7 +344,7 @@ func WithArtworkFetcher(f enrich.ArtworkFetcher) Option {
 
 // WithProviderBuilder substitutes the function the provider Manager uses to
 // compose a provider + enablement from the DB settings (default:
-// enrich.BuildProvider). Unlike WithMetadataProvider (a pinned fixed provider),
+// enrich.Catalog.BuildProvider). Unlike WithMetadataProvider (a pinned fixed provider),
 // this keeps the manager active, so a settings PUT rebuilds + hot-swaps via the
 // fake builder — letting a black-box test drive the write→rebuild→enrich loop
 // with ZERO network by mapping settings → fake sub-providers.

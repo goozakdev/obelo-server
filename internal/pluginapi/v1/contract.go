@@ -36,10 +36,21 @@ const (
 	CapabilitySearch Capability = "search"
 	// CapabilityArtworkCandidates is offering images for an Artwork role.
 	CapabilityArtworkCandidates Capability = "artwork-candidates"
-	// CapabilityAlbumTracklist is resolving an Album's own tracklist (ADR-0050).
+	// CapabilityAlbumTracklist is answering what an Album holds: the ordered tracks
+	// of the release the album actually IS (ADR-0050) and the EDITIONS that album
+	// has to choose from (ADR-0052). One capability covers both because they are
+	// the automatic and the manual half of a single question — the source that can
+	// pick a release by track-count fit is the source that can list the releases to
+	// pick from, and both come out of the same browse — so a Plugin that can answer
+	// one and not the other does not exist. The two calls keep their own
+	// absent-answers (see AlbumTracklister), which is a per-call fact, not a second
+	// declaration.
 	CapabilityAlbumTracklist Capability = "album-tracklist"
 	// CapabilityExternalRef is parsing a pasted external id or URL into a reference
-	// the Plugin can then look up.
+	// the Plugin can then look up — a CALL and not a manifest pattern list, because
+	// the mapping is logic: MusicBrainz's /release/ URL names an edition and has to
+	// be resolved to the release-group an album IS (ADR-0038), and a typed URL of
+	// the wrong entity kind has to be told apart from an unreadable paste.
 	CapabilityExternalRef Capability = "external-ref"
 	// CapabilityEpisodeList is listing a series' seasons and one season's episodes,
 	// so an Admin can pick the exact provider episode a file is decorated from. Only
@@ -171,6 +182,24 @@ type Settings struct {
 	// Empty for a Subtitle provider (the wanted language is per search) and for an
 	// Event sink.
 	Language string `json:"language,omitempty"`
+	// RateLimitMillis is the operator's minimum interval between two requests to
+	// this source's HOST, in milliseconds. Like Secret, URL and Language it is
+	// HOST-resolved — one number on the enrichment settings screen, persisted in
+	// milliseconds — rather than something the Plugin decides for itself.
+	//
+	// It is a POINTER because the two things a host can mean are both meaningful
+	// and neither is the other's zero: absent is "use your own default pacing",
+	// which is what a Plugin the host has no policy for must get, while 0 is the
+	// explicit "do not throttle at all" an operator sets for a self-hosted mirror
+	// that has no rate policy (ADR-0049). An int with 0 meaning "off" would make a
+	// caller that simply forgot the field hammer a public host.
+	//
+	// It is a construction input and not a per-call argument for Language's reason
+	// and one more: the limiter is keyed by HOST, not held on the Plugin (ADR-0049
+	// — the per-instance version meant a three-Library server sent 3 req/sec at one
+	// host with each Library correctly believing it was well behaved), so the
+	// interval has to be known when the Plugin is built, before any call.
+	RateLimitMillis *int `json:"rateLimitMillis,omitempty"`
 }
 
 // Descriptor is the static self-description a Plugin registers with: the facts

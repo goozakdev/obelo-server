@@ -135,3 +135,18 @@ func (v *VideoChainProvider) SeasonEpisodes(ctx context.Context, showID string, 
 	}
 	return lister.SeasonEpisodes(ctx, showID, season)
 }
+
+// ParseExternalRef forwards the optional ExternalRefParser capability to the
+// AUTHORITATIVE source only, for the reason above: the id an Admin pastes is the id
+// this chain PINS, and that is the leader's namespace. None of the video Built-ins
+// declares the capability today, so this answers ErrSearchUnavailable and the host
+// reads a TMDB paste itself (Service.externalRef) exactly as it always has — the
+// forwarding is here so that a video Plugin which DOES declare it is reached
+// without the composition changing.
+func (v *VideoChainProvider) ParseExternalRef(ctx context.Context, kind, pasted string) (ExternalRef, error) {
+	parser, ok := v.Authoritative.(ExternalRefParser)
+	if !ok {
+		return ExternalRef{}, ErrSearchUnavailable
+	}
+	return parser.ParseExternalRef(ctx, kind, pasted)
+}

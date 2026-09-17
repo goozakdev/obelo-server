@@ -68,8 +68,8 @@ const (
 )
 
 // MetadataPlugins is the ordered set of Metadata provider Built-ins this binary
-// ships: what each one IS (its Descriptor) and, for the ones that go through the
-// contract, how to build it from an Admin's Settings. internal/builtins hands the
+// ships: what each one IS (its Descriptor) and how to build it from an Admin's
+// Settings. internal/builtins hands the
 // whole list to the Registry from the composition root — explicitly, with no
 // init() side effect anywhere — and app.New then derives the Catalog from that
 // Registry.
@@ -86,12 +86,15 @@ const (
 // provider in it (ADR-0027 keeps one global order), and the first
 // authoritative-role Full provider of a kind is that kind's default lead.
 //
-// The music sources carry no factory yet: MusicBrainz, Cover Art Archive and
-// TheAudioDB are still composed by BuildProvider directly, so their Descriptors
-// register the facts the settings screen and the Authoritative-provider pointer
-// need while the chain itself moves behind the contract with the music slice.
-// Cover Art Archive is the permanent case — it has no client of its own, it is
-// reached through the MusicBrainz Plugin — so its factory stays nil for good.
+// EVERY source here is now reached through its factory — no provider is composed
+// outside the contract — with exactly one permanent exception: Cover Art Archive
+// has no factory and never will. It is not a client; it is the artwork HOST of the
+// MusicBrainz Plugin, registered so an Admin can see it, read what it is, and
+// override its base URL. The host resolves that override into MusicBrainz's second
+// URL (see SettingsToProviderConfig and providerSettings), which is the same thing
+// TMDB's image host is, arriving from a neighbouring registration instead of its
+// own. Inventing a client for it so that every registration could carry a factory
+// would have added a source nothing calls.
 func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 	return []pluginapi.MetadataProviderRegistration{
 		{
@@ -199,9 +202,25 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 					pluginapi.CapabilityAlbumTracklist,
 					pluginapi.CapabilityExternalRef,
 				},
-				DefaultURL:  registryMusicBrainzBaseURL,
+				DefaultURL: registryMusicBrainzBaseURL,
+				// NO DefaultURL2, deliberately, even though this Plugin is built with two
+				// hosts: DefaultURL2 is what the settings screen renders as a source's own
+				// image-host field, and MusicBrainz does not have one — the Cover Art
+				// Archive is a separate registration with a separate row and a separate
+				// override. The host reads that row and hands it over as URL2.
 				Description: "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
 				DocsURL:     "https://musicbrainz.org/doc/MusicBrainz_API",
+			},
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				mb := NewMusicBrainzProvider(s.URL, s.URL2, s.Language)
+				// A nil rate limit keeps the constructor's own ~1 req/sec default, which is
+				// the public host's policy; an explicit 0 is the operator saying their
+				// mirror has none (ADR-0049). The two are different instructions and the
+				// pointer is what keeps them apart.
+				if s.RateLimitMillis != nil {
+					mb.MinInterval = time.Duration(*s.RateLimitMillis) * time.Millisecond
+				}
+				return pluginFromProvider(mb), nil
 			},
 		},
 		{
@@ -216,6 +235,18 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 				Description: "Album cover artwork keyed to MusicBrainz releases. No API key required; used alongside MusicBrainz.",
 				DocsURL:     "https://coverartarchive.org/",
 			},
+			// FACTS ONLY, permanently — the one registration with no factory. Cover Art
+			// Archive has no client of its own: it is the host MusicBrainz's album cover
+			// URLs point at, and the MusicBrainz Plugin is what talks to it. What this
+			// registration buys is everything the facts are for and nothing more — a row
+			// on the settings screen with a name, a description and a docs link; a
+			// base-URL override an operator can point at a mirror, which the host hands
+			// to the MusicBrainz Plugin as its second URL; and ClassArtworkOnly, so the
+			// Authoritative-provider pointer can never select it (ADR-0027). It declares
+			// no capabilities because it answers no calls.
+			//
+			// buildPlugin skips a nil factory rather than erroring, which is what makes
+			// "registered, never built" a state the composition can hold.
 		},
 		{
 			Descriptor: pluginapi.Descriptor{
@@ -231,13 +262,14 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 				Description:  "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
 				DocsURL:      "https://fanart.tv/get-an-api-key/",
 			},
-			// The factory serves fanart.tv's VIDEO side — the fill-only supplement in
-			// the video chain. Its music side (artist photos) is a second instance the
-			// music chain still constructs directly, exactly as it was two instances
-			// before this contract existed: one client, one key, one host throttle,
-			// two places in the composition. Both become this Plugin with the music
-			// slice; splitting the source across the two paths for one release is what
-			// lets the video chain move without touching music.
+			// ONE factory, both kinds. The video chain and the music chain each build
+			// their fanart.tv from this registration with the same Settings, so the
+			// split the video slice left behind — a Plugin on one side, a direct
+			// constructor on the other — is closed. It is still two INSTANCES, exactly
+			// as it was two instances before the contract existed: one client, one key,
+			// one process-wide host throttle, two positions in the composition. Sharing
+			// one instance between the chains would be a cache-sharing change nothing
+			// asked for, where two is the composition this Plugin has always had.
 			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
 				return pluginFromProvider(NewFanartTVProvider(s.Secret, s.URL)), nil
 			},
@@ -254,6 +286,9 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 				DefaultURL:   registryTheAudioDBBaseURL,
 				Description:  "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
 				DocsURL:      "https://www.theaudiodb.com/api_guide.php",
+			},
+			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+				return pluginFromProvider(NewTheAudioDBProvider(s.Secret, s.URL, s.Language)), nil
 			},
 		},
 	}
@@ -357,7 +392,7 @@ func (c Catalog) DefaultAuthoritativeForKind(kind string) string {
 // buildPlugin constructs the Plugin registered under a slug from the Settings the
 // host resolved, and adapts it back to the MetadataProvider the chains call. It
 // returns nil when no Plugin claims the slug, when the registration carries no
-// factory (the source is still composed directly — see MetadataPlugins), or when
+// factory (facts only — Cover Art Archive, see MetadataPlugins), or when
 // the factory refuses these settings: a Plugin that cannot be built makes no calls
 // at all rather than half-working (ADR-0001), and the caller composes without it.
 func (c Catalog) buildPlugin(slug string, s pluginapi.Settings) MetadataProvider {
@@ -498,5 +533,32 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	if active(SlugTheAudioDB) {
 		cfg.TheAudioDBAPIKey = byslug[SlugTheAudioDB].APIKey
 	}
+	// Every OTHER registered Plugin's key goes in the open map. The eight Built-ins
+	// have named fields above because their own constructors read them; a Plugin
+	// this binary was not written around — from Phase 2, every Installed one — has
+	// nowhere else to put a key, and without one it could be registered, keyed and
+	// pointed at by a Library's policy and still be built unconfigured.
+	for _, e := range c.entries {
+		if hasNamedKeyField(e.Slug) || !active(e.Slug) {
+			continue
+		}
+		if cfg.ProviderKeys == nil {
+			cfg.ProviderKeys = map[string]string{}
+		}
+		cfg.ProviderKeys[e.Slug] = byslug[e.Slug].APIKey
+	}
 	return cfg
+}
+
+// hasNamedKeyField reports whether ProviderConfig carries a dedicated API-key field
+// for a slug. Its twin is the switch in setProviderKey, and the two change together:
+// one decides where a key is READ from, the other where it is WRITTEN, and a slug
+// listed by only one of them would be keyed in a place nothing looks.
+func hasNamedKeyField(slug string) bool {
+	switch slug {
+	case SlugTMDB, SlugOMDb, SlugTheTVDB, SlugAniDB, SlugFanartTV, SlugTheAudioDB,
+		SlugMusicBrainz, SlugCoverArt:
+		return true
+	}
+	return false
 }

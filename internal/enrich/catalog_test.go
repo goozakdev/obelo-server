@@ -41,3 +41,26 @@ func pluginSlug(p MetadataProvider) string {
 	}
 	return adapted.desc.Slug
 }
+
+// musicBrainzBehind unwraps a composed provider back through BOTH halves of the
+// adapter to the concrete source the Plugin was built around, or nil when it was
+// not built around one.
+//
+// It exists for the handful of assertions that are about what a Settings VALUE did
+// to the source it constructed — the operator's rate policy, the Cover Art Archive
+// host — which no slug can answer. It is deliberately the only thing in these
+// suites that looks through the contract, and it is a test helper rather than a
+// method for exactly that reason: production code asking which concrete type is
+// behind a Plugin would be undoing the contract.
+func musicBrainzBehind(p MetadataProvider) *MusicBrainzProvider {
+	adapted, ok := p.(pluginProvider)
+	if !ok {
+		return nil
+	}
+	builtin, ok := adapted.plugin.(builtinPlugin)
+	if !ok {
+		return nil
+	}
+	mb, _ := builtin.provider.(*MusicBrainzProvider)
+	return mb
+}
