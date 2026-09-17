@@ -537,7 +537,18 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// says why, so an operator sees it on the settings screen instead of wondering
 	// where their files went. Even an unreadable plugins directory is a logged
 	// warning and an empty set.
-	installed, err := plugins.Load(context.Background(), filepath.Join(cfg.DataDir, plugins.DirName), o.pluginOptions)
+	//
+	// The Plugin-scoped key-value namespace (ADR-0058 decision 5) is the database
+	// itself: the kv_get/kv_set host functions write into plugin_kv, scoped by the
+	// Plugin id the manifest on disk carries. It is supplied here rather than
+	// defaulted inside the loader so that a narrow test can still build a Set with
+	// no database at all — a Plugin that cannot cache a cursor is a slower Plugin,
+	// not a broken server.
+	pluginOpts := o.pluginOptions
+	if pluginOpts.KV == nil {
+		pluginOpts.KV = db
+	}
+	installed, err := plugins.Load(context.Background(), filepath.Join(cfg.DataDir, plugins.DirName), pluginOpts)
 	if err != nil {
 		log.Printf("obelo: installed plugins were not loaded: %v", err)
 	}

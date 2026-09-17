@@ -89,6 +89,12 @@ const (
 	// Rebuilding costs 0.03–1.74 ms; compiling, which is NOT repeated, costs
 	// 43–606 ms.
 	DefaultRecycleBytes = 64 << 20
+	// DefaultMaxKVKeyBytes and DefaultMaxKVValueBytes cap what one guest may store
+	// in its namespace (issue 11). The namespace is for a cursor, an etag, a
+	// token's expiry or a small response cache — ADR-0007 keeps blobs on disk, and
+	// a generous cap here is how this table quietly becomes the blob store.
+	DefaultMaxKVKeyBytes   = 256
+	DefaultMaxKVValueBytes = 64 << 10
 )
 
 // Options are the knobs the composition root sets. The zero value is usable: every
@@ -106,6 +112,39 @@ type Options struct {
 	// Logf is where the audit lines and the failure records go. Nil means the
 	// server log.
 	Logf func(format string, args ...any)
+
+	// --- issue 11: the plugin-scoped key-value store -------------------------
+
+	// KV backs the kv_get/kv_set/kv_delete host functions (ADR-0058 decision 5).
+	// Nil is a legitimate configuration and means a server with NO key-value store:
+	// every kv call answers a refusal naming that, and nothing else changes. A
+	// Plugin that cannot cache a cursor is a slower Plugin, not a broken server
+	// (ADR-0001), and a Set built by a narrow test needs no database.
+	KV PluginKV
+	// MaxKVKeyBytes and MaxKVValueBytes cap what one guest may store. Zero means
+	// the Default. Exceeding either is a REFUSAL, never a truncation, for the
+	// reason an oversize fetch is: a truncated document is one a guest parses as
+	// complete.
+	MaxKVKeyBytes   int
+	MaxKVValueBytes int
+}
+
+// PluginKV is the durable half of the kv host functions — store.DB satisfies it.
+// It is an interface here and not a *store.DB so that internal/plugins keeps
+// depending on nothing it does not call, and so a test can hand a Set a map.
+//
+// EVERY method takes the plugin id first and it is never optional: the id comes
+// from the manifest on disk, the host supplies it, and a guest never spells it.
+// That is the whole of the isolation property.
+//
+// Dropping a whole namespace is deliberately NOT here. It is
+// store.DeletePluginNamespace, called by UNINSTALL (issue 10), and a guest must
+// have no path to it: a Plugin that could erase its own namespace wholesale would
+// be a Plugin deciding it is not installed.
+type PluginKV interface {
+	PluginKV(pluginID, key string) (value []byte, found bool, err error)
+	SetPluginKV(pluginID, key string, value []byte) error
+	DeletePluginKV(pluginID, key string) error
 }
 
 func (o Options) withDefaults() Options {
@@ -120,6 +159,12 @@ func (o Options) withDefaults() Options {
 	}
 	if o.FailureThreshold <= 0 {
 		o.FailureThreshold = DefaultFailureThreshold
+	}
+	if o.MaxKVKeyBytes <= 0 {
+		o.MaxKVKeyBytes = DefaultMaxKVKeyBytes
+	}
+	if o.MaxKVValueBytes <= 0 {
+		o.MaxKVValueBytes = DefaultMaxKVValueBytes
 	}
 	if o.RecycleBytes <= 0 {
 		o.RecycleBytes = DefaultRecycleBytes
@@ -191,6 +236,10 @@ type Plugin struct {
 	lastError  string
 	failures   int
 	violations int
+
+	// meta is the Metadata provider Extension point's per-call state (issue 11).
+	// It lives in metadata.go; the field is here only because Plugin is.
+	meta metaState
 }
 
 // ID is the Plugin's stable identity: the manifest id, the settings slug and the
@@ -356,6 +405,15 @@ func (p *Plugin) callGuest(ctx context.Context, export string, target string, re
 
 	n, err := p.instance.invoke(callCtx, export, req, out)
 	p.bytes += int64(n)
+	if errors.Is(err, errNoExport) {
+		// NOT a trap (issue 11). The module simply does not export this call, which
+		// is a fact about the module rather than a failure of the instance: nothing
+		// ran, the guest's memory is untouched, and the next call is as likely to
+		// work as the last one. So the instance is kept and no failure is counted —
+		// only an optional Extension-point call reaches this, and its adapter turns
+		// it into the same "unavailable" an undeclared capability answers.
+		return err
+	}
 	if err != nil {
 		// A trap, a deadline kill or a guest that answered nothing: the instance is
 		// not resumable — wazero CLOSES the module on a deadline — so it is dropped
@@ -546,9 +604,15 @@ func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 			s.registerSubtitleProvider(reg, p, entry)
 			continue
 		}
+		// The Metadata provider Extension point (issue 11). Its whole registration
+		// is in metadata.go, beside the adapter, so this stays a dispatch.
+		if entry.Kind == pluginapi.ExtensionMetadataProvider {
+			s.registerMetadataProvider(reg, p, entry)
+			continue
+		}
 		if entry.Kind != pluginapi.ExtensionEventSink {
-			// Metadata providers are issue 11. Saying so beats silence: an operator
-			// who installs one today learns why it did nothing.
+			// An Extension point this build does not know. Saying so beats silence:
+			// an operator who installs one learns why it did nothing.
 			p.logf("obelo: plugin %s provides %s, which this build does not load yet", p.id, entry.Kind)
 			continue
 		}

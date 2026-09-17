@@ -150,6 +150,34 @@ func SubtitleManifest(id string, allowedHosts ...string) pluginapi.Manifest {
 	}
 }
 
+// MetadataProviderManifest is the manifest of an Installed Metadata provider
+// (.scratch/plugin-system issue 11): the same document a sink ships, with a
+// `metadata-provider` entry carrying the four facts that decide where it sits in
+// the enrichment chain — which coarse kinds it serves, its default Role, its
+// ADR-0027 Class, and the optional operations it implements.
+//
+// requiresSecret is TRUE, like every Built-in Supplement's, and that is not
+// incidental: the builder composes a Supplement only for a provider whose key is
+// present, and the Authoritative-provider list offers only a keyed Full provider,
+// so a keyless Plugin is registered and configurable but never composed (the
+// known limitation issue 04 named). A test that wants a Plugin in a chain keys it
+// through the settings API, exactly as an Admin does.
+func MetadataProviderManifest(id string, p pluginapi.ManifestProvides, allowedHosts ...string) pluginapi.Manifest {
+	p.Kind = pluginapi.ExtensionMetadataProvider
+	p.RequiresSecret = true
+	return pluginapi.Manifest{
+		ID:          id,
+		Name:        "Test Source (" + id + ")",
+		Version:     "1.0.0",
+		APIVersion:  pluginapi.APIVersion,
+		Provides:    []pluginapi.ManifestProvides{p},
+		Network:     pluginapi.ManifestNetwork{Hosts: allowedHosts},
+		Settings:    pluginapi.ManifestSettings{RequiresSecret: true},
+		Description: "An Installed Metadata provider, built from source by the test suite.",
+		DocsURL:     "https://example.test/obelo-test-source",
+	}
+}
+
 // Install places a manifest and the compiled guest under <dataDir>/plugins/<id>/,
 // exactly as an Admin does by hand in this slice. It returns the Plugin directory.
 func Install(t *testing.T, dataDir string, m pluginapi.Manifest) string {

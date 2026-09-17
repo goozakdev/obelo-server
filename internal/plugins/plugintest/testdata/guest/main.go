@@ -1,10 +1,16 @@
 //go:build wasm
 
-// An Obelo Event sink Plugin, whole, in one file.
+// An Obelo Plugin, whole, in one file: an Event sink AND a Metadata provider.
+//
+// One module may fill more than one seam — the loader looks up only the exports
+// it needs, and the manifest's `provides` list is what says which — so the suite
+// gets both Extension points out of one compile. The sink half is everything down
+// to `mode`; the Metadata provider half (issue 11) is the fenced section below it.
 //
 // This is the guest half of the plugin system: a WebAssembly module that is told
-// when something finished on a server and posts a signed document about it. The
-// suite builds it from this source at test time
+// when something finished on a server and posts a signed document about it, and
+// that answers what a Title is when the enrichment pass asks. The suite builds it
+// from this source at test time
 // (`GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared`), so the loader is
 // exercised by a real module rather than a mock — and so an author can read the
 // smallest complete example there is.
@@ -306,6 +312,452 @@ func reportRefusal(resp fetchResponse) deliverResponse {
 	}
 	return deliverResponse{Error: "the host allowed a fetch it should have refused, answering " + itoa(resp.Status)}
 }
+
+// =============================================================================
+// THE METADATA PROVIDER HALF (.scratch/plugin-system issue 11)
+//
+// One module can fill two seams: the loader only looks up the exports it needs,
+// and the manifest's `provides` list is what says which. Everything from here to
+// the end of the file is the Metadata provider Extension point — eight exports,
+// three of them mandatory — plus the two host functions a provider uses that a
+// sink does not.
+//
+// The example an author copies is the shapes and the ABI glue. The `obelo-mode=`
+// switch inside metadata_lookup is test scaffolding, exactly as `misbehave` above
+// is: one module has to play every part the suite needs, and the mode arrives in
+// the url the test configures because that is the one thing a test can set that
+// reaches this far in.
+//
+// Exports:
+//
+//	metadata_lookup(ptr, len) -> i64              a LookupRequest in, a LookupResponse out
+//	metadata_search(ptr, len) -> i64              search, behind capability "search"
+//	metadata_artwork_candidates(ptr, len) -> i64  behind capability "artwork-candidates"
+//	metadata_external_ref(ptr, len) -> i64        behind capability "external-ref"
+//
+// (episode-list and album-tracklist are not exported here: a module that does not
+// export an optional call is told "unavailable" by the host, which is the same
+// thing an undeclared capability answers, and NOT exporting them is how this file
+// demonstrates that.)
+//
+// Imports used only by this half, in module "obelo":
+//
+//	settings_get() -> i64          the Settings the host resolved for THIS call
+//	kv_get(ptr, len) -> i64        this Plugin's own namespace
+//	kv_set(ptr, len) -> i64
+//	kv_delete(ptr, len) -> i64
+// =============================================================================
+
+//go:wasmimport obelo settings_get
+func hostSettingsGet() uint64
+
+//go:wasmimport obelo kv_get
+func hostKVGet(ptr, n uint32) uint64
+
+//go:wasmimport obelo kv_set
+func hostKVSet(ptr, n uint32) uint64
+
+//go:wasmimport obelo kv_delete
+func hostKVDelete(ptr, n uint32) uint64
+
+// --- the shapes, copied from the contract's JSON schema ----------------------
+
+type mediaRef struct {
+	Kind   string `json:"kind"`
+	Title  string `json:"title,omitempty"`
+	Year   int    `json:"year,omitempty"`
+	Artist string `json:"artist,omitempty"`
+	Album  string `json:"album,omitempty"`
+	Track  string `json:"track,omitempty"`
+}
+
+type artworkRef struct {
+	Role string `json:"role"`
+	URL  string `json:"url"`
+}
+
+type metadataRecord struct {
+	Matched    bool         `json:"matched"`
+	Name       string       `json:"name,omitempty"`
+	Year       int          `json:"year,omitempty"`
+	Overview   string       `json:"overview,omitempty"`
+	Genres     []string     `json:"genres,omitempty"`
+	Artwork    []artworkRef `json:"artwork,omitempty"`
+	ExternalID string       `json:"externalId,omitempty"`
+	Source     string       `json:"source,omitempty"`
+	FromSearch bool         `json:"fromSearch,omitempty"`
+}
+
+type lookupRequest struct {
+	Ref mediaRef `json:"ref"`
+}
+
+type lookupResponse struct {
+	Outcome string         `json:"outcome"`
+	Record  metadataRecord `json:"record"`
+	Detail  string         `json:"detail,omitempty"`
+}
+
+type searchRequest struct {
+	Kind  string `json:"kind"`
+	Query string `json:"query"`
+}
+
+type searchCandidate struct {
+	ExternalID string `json:"externalId"`
+	Title      string `json:"title,omitempty"`
+	Year       int    `json:"year,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+}
+
+type searchResponse struct {
+	Outcome    string            `json:"outcome"`
+	Candidates []searchCandidate `json:"candidates,omitempty"`
+}
+
+type artworkCandidatesRequest struct {
+	Ref  mediaRef `json:"ref"`
+	Role string   `json:"role"`
+}
+
+type artworkCandidate struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
+type artworkCandidatesResponse struct {
+	Outcome    string             `json:"outcome"`
+	Candidates []artworkCandidate `json:"candidates,omitempty"`
+}
+
+type externalRefRequest struct {
+	Kind   string `json:"kind"`
+	Pasted string `json:"pasted"`
+}
+
+type externalRefResponse struct {
+	Outcome    string `json:"outcome"`
+	ExternalID string `json:"externalId,omitempty"`
+	GotKind    string `json:"gotKind,omitempty"`
+	WantKind   string `json:"wantKind,omitempty"`
+}
+
+// The Outcome enum, as far as this Plugin needs it.
+const (
+	outcomeMatched           = "matched"
+	outcomeNoMatch           = "no-match"
+	outcomeRefKindMismatch   = "ref-kind-mismatch"
+	outcomeRefUnsupportedKnd = "ref-unsupported-kind"
+)
+
+// settings is the same struct the sink half declares, plus the two fields only a
+// provider is handed.
+type providerSettings struct {
+	Enabled  bool   `json:"enabled"`
+	Secret   string `json:"secret"`
+	URL      string `json:"url"`
+	URL2     string `json:"url2"`
+	Language string `json:"language"`
+}
+
+type kvGetRequest struct {
+	Key string `json:"key"`
+}
+
+type kvGetResponse struct {
+	Found bool   `json:"found"`
+	Value []byte `json:"value,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+type kvSetRequest struct {
+	Key   string `json:"key"`
+	Value []byte `json:"value,omitempty"`
+}
+
+type kvDeleteRequest struct {
+	Key string `json:"key"`
+}
+
+type kvWriteResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// --- what this Plugin does as a Metadata provider ----------------------------
+
+// The strings a test greps for. Nothing else in the server writes them, so an
+// item carrying one was decorated by this guest and by nothing else.
+const (
+	guestOverview    = "Filled from inside the sandbox by an Installed plugin."
+	guestWrongTitle  = "An Entirely Different Record"
+	guestArtworkPath = "/art/poster.jpg"
+)
+
+//go:wasmexport metadata_lookup
+func metadataLookup(ptr, n uint32) uint64 {
+	var req lookupRequest
+	if !takeRequest(ptr, n, &req) {
+		return fail("the request is not a LookupRequest")
+	}
+	s := currentSettings()
+
+	switch mode(s.URL) {
+	case "video-supplement":
+		// A fill-only Supplement: it contributes an overview and one poster and
+		// NEVER a name, because identity is the host's (ADR-0002). The host merges
+		// only what the Authoritative provider left empty.
+		if !videoKind(req.Ref.Kind) {
+			return reply(lookupResponse{Outcome: outcomeNoMatch})
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched:  true,
+			Overview: guestOverview,
+			Artwork:  []artworkRef{{Role: "poster", URL: s.URL2 + guestArtworkPath}},
+			Source:   "installed",
+		}})
+
+	case "music-search-hit":
+		// A relevance-ranked SEARCH hit whose title is not the local one — for the
+		// TRACK only, so the artist and album above it resolve normally and the
+		// rejection under test is the track's own.
+		//
+		// The guest states the FACT that it searched and says nothing about whether
+		// the answer is right; the host applies the ADR-0050 acceptance test to it.
+		if !musicKind(req.Ref.Kind) {
+			return reply(lookupResponse{Outcome: outcomeNoMatch})
+		}
+		if req.Ref.Kind == "track" {
+			return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+				Matched:    true,
+				Name:       guestWrongTitle,
+				Overview:   guestOverview,
+				ExternalID: "guest-search-hit",
+				Source:     "installed",
+				FromSearch: true,
+			}})
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched:    true,
+			Name:       req.Ref.Title,
+			Overview:   guestOverview,
+			ExternalID: "guest-" + req.Ref.Kind,
+			Source:     "installed",
+		}})
+
+	case "kv":
+		// The plugin-scoped namespace: write this Plugin's own secret under a key
+		// every guest in the test uses, read it back, and report what came out. Two
+		// Plugins doing this must not see each other's value.
+		if !kvSet("shared-key", []byte(s.Secret)) {
+			return fail("kv_set was refused")
+		}
+		value, found, err := kvGet("shared-key")
+		if err != "" {
+			return fail("kv_get: " + err)
+		}
+		if !found {
+			return fail("kv_get answered absent for a key this guest just wrote")
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched: true, Name: req.Ref.Title, Overview: string(value), Source: "installed",
+		}})
+
+	default:
+		// The ordinary Full provider: resolve by lookup, answer a record. Music and
+		// video alike, so one manifest can point it at either kind.
+		if !musicKind(req.Ref.Kind) && !videoKind(req.Ref.Kind) {
+			return reply(lookupResponse{Outcome: outcomeNoMatch})
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched:    true,
+			Name:       req.Ref.Title,
+			Overview:   guestOverview,
+			Genres:     []string{"Test Genre"},
+			Artwork:    []artworkRef{{Role: artworkRole(req.Ref.Kind), URL: s.URL2 + guestArtworkPath}},
+			ExternalID: "guest-" + req.Ref.Kind,
+			Source:     "installed",
+		}})
+	}
+}
+
+// metadata_album_tracklist answers what an Album holds (capability
+// "album-tracklist"). This guest has no tracklist of its own, so it says so — and
+// says it two different ways, because the two mean different things to the host:
+//
+//   - no-match is SETTLED: "this album can name none of its contents", which
+//     sends the Admin to the Album.
+//   - unavailable is "I cannot answer this call at all right now", an outage
+//     rather than a diagnosis, which leaves the album tier with nothing to say and
+//     lets each Track fall back to its own search this pass (ADR-0050).
+//
+//go:wasmexport metadata_album_tracklist
+func metadataAlbumTracklist(ptr, n uint32) uint64 {
+	var req map[string]any
+	if !takeRequest(ptr, n, &req) {
+		return fail("the request is not a TracklistRequest")
+	}
+	if mode(currentSettings().URL) == "music-search-hit" {
+		return reply(map[string]any{"outcome": "unavailable"})
+	}
+	return reply(map[string]any{"outcome": outcomeNoMatch})
+}
+
+//go:wasmexport metadata_search
+func metadataSearch(ptr, n uint32) uint64 {
+	var req searchRequest
+	if !takeRequest(ptr, n, &req) {
+		return fail("the request is not a SearchRequest")
+	}
+	return reply(searchResponse{Outcome: outcomeMatched, Candidates: []searchCandidate{{
+		ExternalID: "guest-" + req.Kind,
+		Title:      req.Query,
+		Kind:       req.Kind,
+	}}})
+}
+
+//go:wasmexport metadata_artwork_candidates
+func metadataArtworkCandidates(ptr, n uint32) uint64 {
+	var req artworkCandidatesRequest
+	if !takeRequest(ptr, n, &req) {
+		return fail("the request is not an ArtworkCandidatesRequest")
+	}
+	s := currentSettings()
+	return reply(artworkCandidatesResponse{Outcome: outcomeMatched, Candidates: []artworkCandidate{{
+		URL: s.URL2 + guestArtworkPath, Width: 600, Height: 900, Source: "installed",
+	}}})
+}
+
+// metadata_external_ref reads a string an Admin pasted. The two refusals here are
+// the two the host renders as distinct 400s: a link naming a real entity of the
+// WRONG kind (with both kinds, so the message can name them), and a link naming an
+// entity kind this server does not pin at all.
+//
+//go:wasmexport metadata_external_ref
+func metadataExternalRef(ptr, n uint32) uint64 {
+	var req externalRefRequest
+	if !takeRequest(ptr, n, &req) {
+		return fail("the request is not an ExternalRefRequest")
+	}
+	switch {
+	case strings.Contains(req.Pasted, "/artist/") && req.Kind != "artist":
+		return reply(externalRefResponse{
+			Outcome: outcomeRefKindMismatch, GotKind: "artist", WantKind: req.Kind,
+		})
+	case strings.Contains(req.Pasted, "/work/"), strings.Contains(req.Pasted, "/label/"):
+		return reply(externalRefResponse{Outcome: outcomeRefUnsupportedKnd})
+	default:
+		return reply(externalRefResponse{Outcome: outcomeMatched, ExternalID: "guest-pinned"})
+	}
+}
+
+// --- the ABI glue for the provider half --------------------------------------
+
+// settings asks the host for the Settings it resolved for THIS call: the Admin's
+// enabled flag, the decrypted secret, the effective URLs and the server's
+// preferred language. It is answered only while a call is on the stack, which is
+// what "secrets at call time only" means from in here.
+func currentSettings() providerSettings {
+	var s providerSettings
+	packed := hostSettingsGet()
+	if packed == 0 {
+		return s
+	}
+	rptr, rlen := uint32(packed>>32), uint32(packed)
+	buf, ok := pinned[rptr]
+	if !ok || uint32(len(buf)) < rlen {
+		return s
+	}
+	_ = json.Unmarshal(buf[:rlen], &s)
+	free(rptr)
+	return s
+}
+
+func kvGet(key string) (value []byte, found bool, errMsg string) {
+	var resp kvGetResponse
+	if !hostRoundTrip(hostKVGet, kvGetRequest{Key: key}, &resp) {
+		return nil, false, "the host answered nothing"
+	}
+	return resp.Value, resp.Found, resp.Error
+}
+
+func kvSet(key string, value []byte) bool {
+	var resp kvWriteResponse
+	if !hostRoundTrip(hostKVSet, kvSetRequest{Key: key, Value: value}, &resp) {
+		return false
+	}
+	return resp.OK
+}
+
+// kvDelete is exercised by the suite's namespace test; a real Plugin uses it to
+// evict a cache entry it knows is stale.
+func kvDelete(key string) bool {
+	var resp kvWriteResponse
+	if !hostRoundTrip(hostKVDelete, kvDeleteRequest{Key: key}, &resp) {
+		return false
+	}
+	return resp.OK
+}
+
+// hostRoundTrip is fetch's shape for the request-response host functions: marshal
+// into a buffer this guest allocated, call, read the answer out of a buffer the
+// host obtained from the same allocator, free both.
+func hostRoundTrip(call func(ptr, n uint32) uint64, req any, out any) bool {
+	in, err := json.Marshal(req)
+	if err != nil {
+		return false
+	}
+	ptr := alloc(uint32(len(in)))
+	copy(pinned[ptr], in)
+	packed := call(ptr, uint32(len(in)))
+	free(ptr)
+	if packed == 0 {
+		return false
+	}
+	rptr, rlen := uint32(packed>>32), uint32(packed)
+	buf, ok := pinned[rptr]
+	if !ok || uint32(len(buf)) < rlen {
+		return false
+	}
+	uerr := json.Unmarshal(buf[:rlen], out)
+	free(rptr)
+	return uerr == nil
+}
+
+// takeRequest turns the host's (ptr, len) into the request document. A pointer
+// this guest did not allocate is refused, which is what makes "the guest owns
+// every buffer on both sides" checkable from in here.
+func takeRequest(ptr, n uint32, out any) bool {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return false
+	}
+	return json.Unmarshal(buf[:n], out) == nil
+}
+
+func videoKind(kind string) bool {
+	switch kind {
+	case "movie", "show", "season", "episode":
+		return true
+	}
+	return false
+}
+
+func musicKind(kind string) bool {
+	switch kind {
+	case "artist", "album", "track":
+		return true
+	}
+	return false
+}
+
+// artworkRole is the one the host will accept for a Title of any kind. A real
+// source names the role its image IS; this guest offers a poster for everything
+// because the suite only needs one image to travel, and because a role the host
+// does not file for that kind is refused at the store rather than silently kept.
+func artworkRole(string) string { return "poster" }
 
 func mode(target string) string {
 	const marker = "obelo-mode="
