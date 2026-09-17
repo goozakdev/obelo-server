@@ -42,7 +42,11 @@ type albumTierProvider struct {
 	tracklistErr error             // ... unless this is set
 	recordings   map[string]string // recording MBID → title, for the by-id lookup
 	searchHits   map[string]string // local title → recording MBID a search would find
-	searchErr    error             // when set, every track SEARCH fails with it
+	// searchHitTitles overrides the TITLE the found candidate carries (default: the
+	// local one), so a fake can offer the wrong song without judging it — which is
+	// what a source does now that acceptance is the host's (ADR-0057).
+	searchHitTitles map[string]string
+	searchErr       error // when set, every track SEARCH fails with it
 }
 
 func (p *albumTierProvider) note(call string) {
@@ -112,7 +116,18 @@ func (p *albumTierProvider) Lookup(_ context.Context, ref TitleRef) (TitleMetada
 		if !ok {
 			return TitleMetadata{}, ErrNoMatch
 		}
-		return TitleMetadata{Matched: true, Name: ref.Track, ExternalID: id, Source: "musicbrainz"}, nil
+		// A search hit is handed back UNJUDGED and marked as one, the way a real
+		// provider does since ADR-0057: the title it carries is the candidate's, and
+		// the HOST decides whether that is this song. By default the candidate is
+		// spelled exactly like the local track (so every other test in this file gets
+		// the match it always did); searchHitTitles makes it a different song.
+		name := ref.Track
+		if title, ok := p.searchHitTitles[ref.Track]; ok {
+			name = title
+		}
+		return TitleMetadata{
+			Matched: true, Name: name, ExternalID: id, Source: "musicbrainz", FromSearch: true,
+		}, nil
 	}
 	return TitleMetadata{}, ErrNoMatch
 }
