@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The Webhook Built-in stands in for every future sink an author writes: one

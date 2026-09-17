@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/events"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The three things about the four events issue 06 adds that a black-box API test

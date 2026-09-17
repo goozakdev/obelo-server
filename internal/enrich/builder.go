@@ -3,7 +3,7 @@ package enrich
 import (
 	"time"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // ProviderConfig carries everything BuildProvider needs to compose the per-kind

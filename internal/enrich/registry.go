@@ -3,8 +3,8 @@ package enrich
 import (
 	"time"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The Metadata provider catalog. It used to be a package-level slice of registry

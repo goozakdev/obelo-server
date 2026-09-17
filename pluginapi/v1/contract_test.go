@@ -177,10 +177,17 @@ func wireCases() []wireCase {
 				`"disabled":1,"retrying":1}`,
 		},
 		{
-			// Every block at once. Not a document any event actually produces — a
-			// scan and a pass are separate events, and neither names a Device — but
-			// it is the one case that pins the FIELD ORDER of the whole type, which
-			// is what a receiving script's golden fixtures are compared against.
+			// Every block a LEGAL document may carry at once. Not a document any
+			// event actually produces — no event names both a Library and a Title,
+			// and none of them name a Device alongside a scan — but it is the case
+			// that pins the FIELD ORDER of the whole type, which is what a receiving
+			// script's golden fixtures are compared against.
+			//
+			// It carries the SCAN block and not the enrich one, and its twin below
+			// carries the enrich block, because the two are MUTUALLY EXCLUSIVE and
+			// the JSON schema now says so (issue 07). A single case holding both
+			// pinned the order at the price of being a document the contract
+			// forbids — which nobody noticed until the rule stopped being prose.
 			name: "SinkEvent",
 			value: SinkEvent{
 				ID:      "6f9619ff-8b86-d011-b42d-00c04fc964ff",
@@ -191,14 +198,34 @@ func wireCases() []wireCase {
 				Actor:   EventActor{UserID: "user-1", Name: "brandon"},
 				Device:  EventEntity{ID: "dev-1", Name: "Laptop", Kind: "macos"},
 				Scan:    &EventScan{TitlesFound: 12, FilesFound: 14},
-				Enrich:  &EventEnrich{Total: 2, Done: 2, Matched: 2},
 			},
 			golden: `{"id":"6f9619ff-8b86-d011-b42d-00c04fc964ff","type":"playback.started",` +
 				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
 				`"title":{"id":"title-1","name":"Dune","kind":"movie"},` +
 				`"actor":{"userId":"user-1","name":"brandon"},` +
 				`"device":{"id":"dev-1","name":"Laptop","kind":"macos"},` +
-				`"scan":{"titlesFound":12,"filesFound":14},` +
+				`"scan":{"titlesFound":12,"filesFound":14}}`,
+		},
+		{
+			// The maximal case's twin: the same every-block document with the ENRICH
+			// block in the scan block's place, so the enrich block's position in the
+			// field order is pinned by a document the contract permits.
+			name: "SinkEvent/maximalWithEnrich",
+			value: SinkEvent{
+				ID:      "7f9619ff-8b86-d011-b42d-00c04fc964ff",
+				Type:    EventPlaybackStarted,
+				At:      "2026-09-16T12:00:00Z",
+				Library: EventEntity{ID: "lib-1", Name: "Movies", Kind: "movie"},
+				Title:   EventEntity{ID: "title-1", Name: "Dune", Kind: "movie"},
+				Actor:   EventActor{UserID: "user-1", Name: "brandon"},
+				Device:  EventEntity{ID: "dev-1", Name: "Laptop", Kind: "macos"},
+				Enrich:  &EventEnrich{Total: 2, Done: 2, Matched: 2},
+			},
+			golden: `{"id":"7f9619ff-8b86-d011-b42d-00c04fc964ff","type":"playback.started",` +
+				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
+				`"title":{"id":"title-1","name":"Dune","kind":"movie"},` +
+				`"actor":{"userId":"user-1","name":"brandon"},` +
+				`"device":{"id":"dev-1","name":"Laptop","kind":"macos"},` +
 				`"enrich":{"total":2,"done":2,"matched":2,"unmatched":0}}`,
 		},
 		{

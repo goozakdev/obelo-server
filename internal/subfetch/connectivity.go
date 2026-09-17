@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // TestConnection performs a best-effort, single-shot connectivity/credential probe

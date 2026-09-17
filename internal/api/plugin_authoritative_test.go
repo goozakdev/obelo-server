@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/testharness"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // Black-box test for ADR-0057 decision 4: a Plugin this binary does not ship,
@@ -26,7 +26,7 @@ const fakeMusicSlug = "fakemusic"
 
 // fakeMusicPlugin is a contract-level Metadata provider Plugin: wire types in,
 // wire types out, no knowledge of the enrichment domain at all. It is what an
-// Installed plugin will be, written against internal/pluginapi/v1 alone.
+// Installed plugin will be, written against pluginapi/v1 alone.
 type fakeMusicPlugin struct {
 	mu      sync.Mutex
 	lookups int

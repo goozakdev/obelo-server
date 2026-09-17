@@ -75,12 +75,69 @@
 //     pasted and the kind wanted, so ExternalRefResponse carries GotKind/WantKind
 //     and the adapter rebuilds the specific error from them.
 //
-// # Lifetime
+// # Two things a manifest reader gets wrong, from Phase 1
 //
-// It lives under internal/ and churns freely while the Built-ins expose its gaps
-// (decision 7). The first Phase 2 issue moves it to the module root, freezes it
-// additively, and generates a JSON schema for authors in other languages; the Go
-// package is a convenience, the schema is the contract.
+// Both are recorded above in their own right; they are repeated here because an
+// author designing an install flow will look for them and not for a gap list.
 //
-// Imported as `pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"`.
+//   - A registration may have NO FACTORY. Cover Art Archive is registered so the
+//     settings screen renders it and an operator can override its URL, and nothing
+//     is ever built from it — it has no client of its own. The builder skips a nil
+//     factory rather than treating it as an error, so "every Plugin is a module"
+//     is false, and an install flow that demanded one would have no way to express
+//     this shape.
+//   - URL2 IS NOT ALWAYS THE SAME REGISTRATION'S SETTING. TMDB's image host is
+//     TMDB's own row. MusicBrainz's is Cover Art Archive's row — a separate
+//     registration — which the host resolves into the MusicBrainz Plugin's
+//     Settings.URL2. A manifest that assumed one settings row per Plugin URL gets
+//     Cover Art Archive wrong.
+//
+// # Lifetime: frozen, additive only
+//
+// The package churned freely through Phase 1 while the nine Built-ins exposed its
+// gaps (decision 7). It has now left internal/, lives at the module root, and
+// FROM THIS COMMIT v1 CHANGES ADDITIVELY ONLY:
+//
+//   - A field may be ADDED to a wire struct. No field is ever removed, renamed or
+//     retyped, and no existing field becomes required.
+//   - A VALUE may be added to an enum — an Outcome, a Capability, an Extension
+//     point, an event type. No value is ever removed or respelled. A guest that
+//     meets a value it does not know treats it as it treats an unavailable
+//     capability: a known state, not an error.
+//   - A CALL may be added behind a new Capability, so a Plugin that does not
+//     declare it is never asked. No existing call's parameters or results change.
+//   - Unknown fields are TOLERATED in both directions, which is what makes the
+//     above safe: the generated schema leaves additionalProperties open on every
+//     type, a guest must ignore a field a later host sends, and a host must ignore
+//     a field a guest sends back.
+//
+// Anything else is v2: a second directory beside this one, with both served at
+// once until nothing is left on v1.
+//
+// # The schema is the contract
+//
+// The Go package is a convenience for a Built-in compiled into this binary. What
+// an author in another language reads is pluginapi.schema.json, checked in beside
+// these files and generated from these structs by internal/schemagen:
+//
+//	go generate ./pluginapi/v1
+//
+// TestCheckedInSchemaIsNotStale regenerates it in memory and fails if the file
+// differs, and TestGoldenDocumentsValidateAgainstTheSchema runs every golden
+// document the round-trip suite pins through the checked-in file — so the schema
+// cannot drift from the structs, and neither can drift from what this server
+// actually sends. Two rules that are prose up here are real constraints down
+// there, because an author reads the schema and not this comment: an EventActor
+// carries a user id or a link id and never both (both absent is legal), and a
+// SinkEvent carries a scan block or an enrich block and never both.
+//
+// # What this package may not import, restated
+//
+// Still nothing but the standard library. The schema generator needs reflect and
+// a JSON writer of its own, which is exactly why it is a neighbouring package
+// under internal/schemagen and not a function here.
+//
+// Imported as `pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"`.
 package v1
+
+//go:generate go run ./internal/schemagen/cmd/schemagen

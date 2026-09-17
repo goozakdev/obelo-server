@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The contract edge. Two things are worth a unit test here, and they are the two

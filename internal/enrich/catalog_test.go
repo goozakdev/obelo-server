@@ -1,7 +1,7 @@
 package enrich
 
 import (
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The catalog these tests run against. Since ADR-0057 the Metadata provider

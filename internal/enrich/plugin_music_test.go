@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // The music half of the contract edge. What is worth a unit test here is exactly

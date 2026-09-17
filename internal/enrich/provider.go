@@ -12,7 +12,7 @@
 // interfaces + a Store, never on net/http (ADR-0006 modular monolith).
 //
 // Since ADR-0057 a source reaching the MetadataProvider seam is a **Plugin**: the
-// video sources are Built-ins registered through internal/pluginapi/v1 from the
+// video sources are Built-ins registered through pluginapi/v1 from the
 // composition root and adapted back to this interface in plugin.go, and the
 // catalog they are registered into is a Catalog VALUE the builder, the Manager and
 // the settings API are handed (see registry.go). This interface stays the

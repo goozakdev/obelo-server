@@ -7,8 +7,8 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/auth"
 	"github.com/goozakdev/obelo-server/internal/events"
-	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 
 	"github.com/google/uuid"
 )
