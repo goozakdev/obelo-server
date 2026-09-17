@@ -47,6 +47,14 @@ type Manager struct {
 	svc   *Service
 	build BuildFunc
 
+	// catalog is the Metadata provider Plugins this server was composed with
+	// (ADR-0057 decision 5): a VALUE the composition root derived from the Plugin
+	// registry and handed over, not a package-level catalog this Manager reaches for.
+	// Everything it drives — which sources a rebuild composes, which Full providers a
+	// Library may lead with, which Supplements it may toggle — is therefore a fact
+	// about THIS server's Plugins.
+	catalog Catalog
+
 	// mu serializes concurrent Reloads (e.g. two Admin saves racing) so the last
 	// writer's snapshot is the one that stays live, and guards the per-Library
 	// resolution state below (globalCfg + libCache).
@@ -109,8 +117,8 @@ type EnablementView struct {
 // Per-Library policy resolution is OFF until EnablePerLibraryResolution is called
 // (after the first Reload), so a Service given a fixed injected provider keeps
 // using the global snapshot.
-func NewManager(store ManagerStore, svc *Service, build BuildFunc) *Manager {
-	return &Manager{store: store, svc: svc, build: build, libCache: map[string]providerSnapshot{}}
+func NewManager(store ManagerStore, svc *Service, cat Catalog, build BuildFunc) *Manager {
+	return &Manager{store: store, svc: svc, catalog: cat, build: build, libCache: map[string]providerSnapshot{}}
 }
 
 // Reload reads the current settings, composes the provider + enablement, and
@@ -150,7 +158,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	m.consent = consent
 
-	cfg := SettingsToProviderConfig(rows, lang, fixed)
+	cfg := m.catalog.SettingsToProviderConfig(rows, lang, fixed)
 	provider, enablement := m.build(cfg)
 	// AND consent into the global snapshot: without it, the composed provider still
 	// exists but every kind is off, so the Service's global-snapshot readers
@@ -163,7 +171,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	// an overriding one is re-layered over the new base on its next resolution. The
 	// per-slug ProviderState is derived from the same rows so the resolver can honor
 	// the always-active-if-keyed authoritative and the supplement tri-state.
-	m.global = GlobalEnrichment{Config: cfg, Providers: ProviderStatesFromRows(rows)}
+	m.global = GlobalEnrichment{Catalog: m.catalog, Config: cfg, Providers: m.catalog.ProviderStatesFromRows(rows)}
 	m.libCache = map[string]providerSnapshot{}
 	return nil
 }
@@ -236,7 +244,7 @@ func (m *Manager) UsableFullProviders(kind string) []ProviderRef {
 	providers := m.global.Providers
 	m.mu.Unlock()
 	var out []ProviderRef
-	for _, e := range FullProvidersForKind(kind) {
+	for _, e := range m.catalog.FullProvidersForKind(kind) {
 		if providers[e.Slug].Keyed {
 			out = append(out, ProviderRef{Slug: e.Slug, Name: e.Name})
 		}
@@ -273,7 +281,7 @@ func (m *Manager) SupplementProviders(ctx context.Context, libraryID, kind strin
 	}
 	var authoritative string
 	if kind == KindMusic {
-		authoritative = DefaultAuthoritativeForKind(KindMusic)
+		authoritative = m.catalog.DefaultAuthoritativeForKind(KindMusic)
 	} else {
 		authoritative = res.Config.videoAuthoritativeSlug()
 	}
@@ -281,7 +289,7 @@ func (m *Manager) SupplementProviders(ctx context.Context, libraryID, kind strin
 	providers := m.global.Providers
 	m.mu.Unlock()
 	var out []SupplementRef
-	for _, e := range SupplementProvidersForKind(kind) {
+	for _, e := range m.catalog.SupplementProvidersForKind(kind) {
 		if e.Slug == authoritative {
 			continue // the leader isn't a supplement; its off-switch is enrich_enabled
 		}
@@ -302,7 +310,7 @@ func (m *Manager) EffectiveAuthoritative(ctx context.Context, libraryID, kind st
 		return "", "", err
 	}
 	if kind == KindMusic {
-		return DefaultAuthoritativeForKind(KindMusic), res.AuthoritativeFallback, nil
+		return m.catalog.DefaultAuthoritativeForKind(KindMusic), res.AuthoritativeFallback, nil
 	}
 	return res.Config.videoAuthoritativeSlug(), res.AuthoritativeFallback, nil
 }
@@ -353,7 +361,7 @@ func (m *Manager) resolveLibrary(ctx context.Context, libraryID string) (provide
 	// consentGate forces the Library off when consent is not granted (ADR-0032), so
 	// a per-Library pass, MatchTitle, and the background triggers all no-op the same
 	// way the global snapshot does — the gate applies uniformly regardless of policy.
-	snap := providerSnapshot{provider: provider, enablement: m.consentGate(res.Enablement), config: res.Config}
+	snap := providerSnapshot{provider: provider, enablement: m.consentGate(res.Enablement), catalog: m.catalog, config: res.Config}
 	m.libCache[libraryID] = snap
 	return snap, nil
 }

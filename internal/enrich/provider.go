@@ -10,6 +10,15 @@
 // TMDB provider + HTTP fetcher; tests inject fakes, so the black-box HTTP tests
 // drive enrichment with zero network. The service depends only on these
 // interfaces + a Store, never on net/http (ADR-0006 modular monolith).
+//
+// Since ADR-0057 a source reaching the MetadataProvider seam is a **Plugin**: the
+// video sources are Built-ins registered through internal/pluginapi/v1 from the
+// composition root and adapted back to this interface in plugin.go, and the
+// catalog they are registered into is a Catalog VALUE the builder, the Manager and
+// the settings API are handed (see registry.go). This interface stays the
+// enrichment domain's own vocabulary — nothing above plugin.go knows the contract
+// exists — so the Service, the chains and every test that injects a fake provider
+// are unchanged by a source moving behind it.
 package enrich
 
 import (

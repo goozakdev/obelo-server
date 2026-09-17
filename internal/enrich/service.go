@@ -196,6 +196,14 @@ type providerSnapshot struct {
 	// (issue 06). The zero value (the global/fixed-provider path) means "no per-Library
 	// config" — every pin then rides the chain unchanged, the pre-policy behavior.
 	config ProviderConfig
+	// catalog is the Metadata provider Plugins this snapshot was composed from,
+	// carried for the same reason config is: the per-item override path may have to
+	// build ONE pinned provider on its own, and it builds it through the same
+	// registered Plugin the chain would (ADR-0057). The zero value (the global /
+	// fixed-provider path) means "no per-Library catalog", and that path never
+	// reaches the pinned-provider branch — a zero config makes every pin unreachable
+	// first, which is the pre-policy behavior.
+	catalog Catalog
 }
 
 // Service runs Enrichment passes. It owns a Store, the ArtworkFetcher network
@@ -1454,7 +1462,7 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 			// Reachable but no longer the leader: resolve via the pinned provider alone
 			// so the override still wins (the chain leads a different source that can't
 			// answer this record's id).
-			if p := snap.config.newVideoProvider(pinSlug); p != nil {
+			if p := snap.catalog.newVideoProvider(snap.config, pinSlug); p != nil {
 				provider = p
 			}
 		}

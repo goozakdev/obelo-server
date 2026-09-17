@@ -24,18 +24,20 @@ type wireCase struct {
 }
 
 func wireCases() []wireCase {
-	return []wireCase{
+	return append([]wireCase{
 		{
 			name: "Settings",
 			value: Settings{
-				Enabled: true,
-				Secret:  "sk-123",
-				URL:     "https://api.example.test/v1",
-				URL2:    "https://images.example.test",
-				Events:  []string{"scan.completed", "playback.started"},
+				Enabled:  true,
+				Secret:   "sk-123",
+				URL:      "https://api.example.test/v1",
+				URL2:     "https://images.example.test",
+				Events:   []string{"scan.completed", "playback.started"},
+				Language: "en-US",
 			},
 			golden: `{"enabled":true,"secret":"sk-123","url":"https://api.example.test/v1",` +
-				`"url2":"https://images.example.test","events":["scan.completed","playback.started"]}`,
+				`"url2":"https://images.example.test","events":["scan.completed","playback.started"],` +
+				`"language":"en-US"}`,
 		},
 		{
 			name: "Descriptor",
@@ -47,15 +49,18 @@ func wireCases() []wireCase {
 				Role:           RoleAuthoritative,
 				Class:          ClassFull,
 				RequiresKey:    true,
-				Capabilities:   []Capability{CapabilitySearch, CapabilityArtworkCandidates, CapabilityAlbumTracklist, CapabilityExternalRef},
-				DefaultURL:     "https://api.example.test/v1",
-				DefaultURL2:    "https://images.example.test",
-				Description:    "An example source.",
-				DocsURL:        "https://example.test/docs",
+				Capabilities: []Capability{
+					CapabilitySearch, CapabilityArtworkCandidates, CapabilityAlbumTracklist,
+					CapabilityExternalRef, CapabilityEpisodeList,
+				},
+				DefaultURL:  "https://api.example.test/v1",
+				DefaultURL2: "https://images.example.test",
+				Description: "An example source.",
+				DocsURL:     "https://example.test/docs",
 			},
 			golden: `{"slug":"example","name":"Example Source","extensionPoint":"metadata-provider",` +
 				`"kinds":["video","music"],"role":"authoritative","class":"full","requiresKey":true,` +
-				`"capabilities":["search","artwork-candidates","album-tracklist","external-ref"],` +
+				`"capabilities":["search","artwork-candidates","album-tracklist","external-ref","episode-list"],` +
 				`"defaultUrl":"https://api.example.test/v1","defaultUrl2":"https://images.example.test",` +
 				`"description":"An example source.","docsUrl":"https://example.test/docs"}`,
 		},
@@ -185,7 +190,7 @@ func wireCases() []wireCase {
 				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
 				`"scan":{"titlesFound":0,"filesFound":0}}`,
 		},
-	}
+	}, metadataWireCases()...)
 }
 
 // TestAllEventTypesIsComplete: the curated set is closed (ADR-0057 decision 6), so

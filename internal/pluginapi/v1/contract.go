@@ -41,6 +41,13 @@ const (
 	// CapabilityExternalRef is parsing a pasted external id or URL into a reference
 	// the Plugin can then look up.
 	CapabilityExternalRef Capability = "external-ref"
+	// CapabilityEpisodeList is listing a series' seasons and one season's episodes,
+	// so an Admin can pick the exact provider episode a file is decorated from. Only
+	// an authoritative VIDEO source can answer it; it is a capability rather than a
+	// mandatory call for the same reason the enrichment domain kept it off its own
+	// provider interface — folding it in would force every music source and every
+	// artwork-only supplement to carry a stub.
+	CapabilityEpisodeList Capability = "episode-list"
 )
 
 // Outcome is what happened, as a VALUE at the contract edge (ADR-0057 decision 2).
@@ -152,6 +159,18 @@ type Settings struct {
 	// is fixed from the first slice; empty for every provider, and for a sink until
 	// the sink translator lands.
 	Events []string `json:"events,omitempty"`
+	// Language is the server-wide preferred metadata language/region the host
+	// resolves for a Metadata provider (e.g. "en-US"). It is a HOST-resolved setting
+	// like Secret and URL rather than something an Admin types per Plugin: it is one
+	// field on the enrichment settings screen and it reaches every source at once.
+	//
+	// It is here, and not on each call, because that is where the Built-ins put it:
+	// a source caches responses under a language-dependent key, so the language is
+	// part of what a Plugin IS, and a language change is a settings save the host
+	// answers by rebuilding every Plugin — exactly what it already does for a key.
+	// Empty for a Subtitle provider (the wanted language is per search) and for an
+	// Event sink.
+	Language string `json:"language,omitempty"`
 }
 
 // Descriptor is the static self-description a Plugin registers with: the facts
@@ -193,6 +212,19 @@ type Descriptor struct {
 	// Description and DocsURL are the human-facing copy the settings screen shows.
 	Description string `json:"description,omitempty"`
 	DocsURL     string `json:"docsUrl,omitempty"`
+}
+
+// Serves reports whether the Plugin declared a coarse media kind (KindVideo /
+// KindMusic). It is what the per-kind chain composition and the Authoritative-
+// provider candidate list read, so "which kinds does this source serve" is a
+// registration fact for a Built-in and an Installed plugin alike.
+func (d Descriptor) Serves(kind string) bool {
+	for _, k := range d.Kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // HasCapability reports whether the Plugin declared an optional operation. The

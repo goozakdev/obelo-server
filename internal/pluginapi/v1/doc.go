@@ -38,6 +38,20 @@
 // ADR-0057: Jellyfin pays for plugins on every major release because its internal
 // types ARE its wire types).
 //
+// # What the Built-ins have exposed so far
+//
+// This package exists to be found wrong while that is still cheap (decision 5).
+// Two gaps the video metadata Built-ins found, both filled additively:
+//
+//   - Settings needed a Language. A Metadata provider caches responses under a
+//     language-dependent key, so the metadata language is part of what the Plugin
+//     IS, not a per-call argument — and a language change is already a settings
+//     save the host answers by rebuilding every Plugin.
+//   - The capability set needed episode-list. TMDB's season and episode lists were
+//     an optional Go interface the chains type-asserted on; the contract cannot
+//     carry a type assertion across a boundary, so they became a declared
+//     capability and a second, optional interface of wire calls.
+//
 // # Lifetime
 //
 // It lives under internal/ and churns freely while the Built-ins expose its gaps

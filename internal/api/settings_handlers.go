@@ -253,8 +253,9 @@ func handleUpdateProviders(deps Deps) http.HandlerFunc {
 		// Resolve + validate every provider update into a full desired state BEFORE
 		// persisting anything, so a rejected update leaves the settings unchanged.
 		var upserts []store.MetadataProviderUpsert
+		catalog := metadataCatalog(deps)
 		for _, u := range req.Providers {
-			entry, ok := enrich.RegistryEntryFor(u.Slug)
+			entry, ok := catalog.Entry(u.Slug)
 			if !ok {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown,
 					"unknown provider: "+u.Slug, nil)
@@ -286,7 +287,7 @@ func handleUpdateProviders(deps Deps) http.HandlerFunc {
 			if u.ImageBaseURL != nil { // omitted = unchanged; "" = reset to default; value = set
 				// Only providers that actually serve artwork from a distinct host have an
 				// image host to override; reject the field for any other provider.
-				if entry.DefaultImageBaseURL == "" && strings.TrimSpace(*u.ImageBaseURL) != "" {
+				if entry.DefaultURL2 == "" && strings.TrimSpace(*u.ImageBaseURL) != "" {
 					writeError(w, http.StatusUnprocessableEntity, codeProviderInvalidBaseURL,
 						entry.Name+" has no configurable image host", nil)
 					return
@@ -407,7 +408,7 @@ func handleUpdateProviders(deps Deps) http.HandlerFunc {
 
 func handleTestProvider(deps Deps, slug string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entry, ok := enrich.RegistryEntryFor(slug)
+		entry, ok := metadataCatalog(deps).Entry(slug)
 		if !ok {
 			writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown,
 				"unknown provider: "+slug, nil)
@@ -447,13 +448,13 @@ func handleTestProvider(deps Deps, slug string) http.HandlerFunc {
 		if req.BaseURL != nil {
 			baseURL = strings.TrimSpace(*req.BaseURL)
 		}
-		_ = entry // registry entry validated the slug; TestConnection re-reads it
+		_ = entry // the Descriptor validated the slug; TestConnection re-reads it
 
 		// Bound the probe so a hung host can't stall the request; failure is a clean
 		// {ok:false}, never a 500.
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		ok2, detail := enrich.TestConnection(ctx, slug, apiKey, baseURL, lang)
+		ok2, detail := enrich.TestConnection(ctx, metadataCatalog(deps), slug, apiKey, baseURL, lang)
 		writeJSON(w, http.StatusOK, testProviderResponse{OK: ok2, Detail: detail})
 	}
 }
@@ -559,7 +560,14 @@ func enrichmentConsentJSON(deps Deps, c store.EnrichmentConsent) enrichmentConse
 
 // --- Shared view builder ----------------------------------------------------
 
-// buildProvidersResponse joins the static registry with the current DB settings
+// metadataCatalog is the enrichment domain's view of the Metadata provider Plugins
+// this server was composed with (ADR-0057 decision 5). The settings handlers read
+// the catalog from the Registry they were handed rather than from a package-level
+// slice, so the screen describes THIS server's Plugins — Built-in today, Installed
+// from Phase 2 — and a nil Registry (a narrow unit test) reads as "no providers".
+func metadataCatalog(deps Deps) enrich.Catalog { return enrich.NewCatalog(deps.Plugins) }
+
+// buildProvidersResponse joins the provider catalog with the current DB settings
 // into the masked GET/PUT response, and takes the per-kind enablement summary FROM
 // the running provider Manager, so the screen reflects what enrichment will
 // actually do — including the ADR-0032 consent gate. It deliberately does not
@@ -590,15 +598,15 @@ func buildProvidersResponse(deps Deps) (providersResponse, error) {
 		EnrichIntervalSeconds:  behavior.IntervalSeconds(),
 		MusicBrainzRateLimitMs: behavior.RateLimitMs(),
 	}
-	for _, e := range enrich.Registry() {
+	for _, e := range metadataCatalog(deps).Entries() {
 		row, has := bySlug[e.Slug]
-		baseURL := e.DefaultBaseURL
+		baseURL := e.DefaultURL
 		if has && row.BaseURL != "" {
 			baseURL = row.BaseURL
 		}
 		// The image host is emitted only for providers that have one (via omitempty),
 		// so the UI renders the extra override exactly where it applies.
-		imageBaseURL := e.DefaultImageBaseURL
+		imageBaseURL := e.DefaultURL2
 		if has && row.ImageBaseURL != "" {
 			imageBaseURL = row.ImageBaseURL
 		}

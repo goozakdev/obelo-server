@@ -1,6 +1,10 @@
 package enrich
 
-import "time"
+import (
+	"time"
+
+	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
+)
 
 // ProviderConfig carries everything BuildProvider needs to compose the per-kind
 // metadata sources: the API keys, the base-URL overrides, the preferred metadata
@@ -80,7 +84,7 @@ func (c ProviderConfig) videoAuthoritativeSlug() string {
 }
 
 // videoProviderKey returns the API key configured for a video-serving provider in
-// this config (empty ⇒ not active). It is how BuildProvider decides which video
+// this config (empty ⇒ not active). It is how the builder decides which video
 // sources to compose: fanart.tv rides its single key across both the video and
 // music chains.
 func (c ProviderConfig) videoProviderKey(slug string) string {
@@ -100,25 +104,43 @@ func (c ProviderConfig) videoProviderKey(slug string) string {
 	}
 }
 
-// newVideoProvider constructs the video-serving provider for a slug from this
-// config, or nil for a slug that serves no video kind. It is the one place a video
-// source is built, so both the authoritative lead and the fill-only supplements go
-// through it (the difference is only their POSITION in the chain, ADR-0027).
-func (c ProviderConfig) newVideoProvider(slug string) MetadataProvider {
+// videoProviderSettings is the fixed Settings shape (ADR-0057) the host resolves
+// for one video-serving Plugin out of this config: the key it holds, the effective
+// base URL, the image host for the one source that has a distinct one, and the
+// server-wide metadata language. Enabled is true because the host only builds a
+// Plugin it means to use.
+func (c ProviderConfig) videoProviderSettings(slug string) pluginapi.Settings {
+	s := pluginapi.Settings{
+		Enabled:  true,
+		Secret:   c.videoProviderKey(slug),
+		Language: c.MetadataLanguage,
+	}
 	switch slug {
 	case SlugTMDB:
-		return NewTMDBProvider(c.TMDBAPIKey, c.MetadataLanguage, c.TMDBBaseURL, c.TMDBImageBaseURL)
+		s.URL, s.URL2 = c.TMDBBaseURL, c.TMDBImageBaseURL
 	case SlugOMDb:
-		return NewOMDbProvider(c.OMDbAPIKey, c.OMDbBaseURL)
+		s.URL = c.OMDbBaseURL
 	case SlugTheTVDB:
-		return NewTheTVDBProvider(c.TheTVDBAPIKey, c.TheTVDBBaseURL)
+		s.URL = c.TheTVDBBaseURL
 	case SlugAniDB:
-		return NewAniDBProvider(c.AniDBAPIKey, c.AniDBBaseURL, c.MetadataLanguage)
+		s.URL = c.AniDBBaseURL
 	case SlugFanartTV:
-		return NewFanartTVProvider(c.FanartTVAPIKey, c.FanartTVBaseURL)
-	default:
+		s.URL = c.FanartTVBaseURL
+	}
+	return s
+}
+
+// newVideoProvider builds the video-serving Plugin for a slug from this config and
+// adapts it back to a MetadataProvider, or returns nil for a slug no video Plugin
+// claims. It is the one place a video source is built, so both the authoritative
+// lead and the fill-only supplements go through the contract (the difference is
+// only their POSITION in the chain, ADR-0027).
+func (cat Catalog) newVideoProvider(cfg ProviderConfig, slug string) MetadataProvider {
+	e, ok := cat.Entry(slug)
+	if !ok || !e.Serves(KindVideo) {
 		return nil
 	}
+	return cat.buildPlugin(slug, cfg.videoProviderSettings(slug))
 }
 
 // authoritativeSlugFor returns the slug of the provider LEADING a given media kind
@@ -171,16 +193,16 @@ func (c ProviderConfig) musicImageEnabled() bool {
 // authoritative slug is excluded (it leads, it doesn't also fill), so repointing
 // the authoritative at OMDb makes TMDB a supplement and vice versa. A supplement
 // never turns the video kinds on by itself — that stays the authoritative's job.
-func (c ProviderConfig) videoSupplements(authoritative string) []MetadataProvider {
+func (cat Catalog) videoSupplements(cfg ProviderConfig, authoritative string) []MetadataProvider {
 	var out []MetadataProvider
-	for _, e := range registry {
-		if e.Slug == authoritative || !e.serves(KindVideo) {
+	for _, e := range cat.entries {
+		if e.Slug == authoritative || !e.Serves(KindVideo) {
 			continue
 		}
-		if c.videoProviderKey(e.Slug) == "" {
+		if cfg.videoProviderKey(e.Slug) == "" {
 			continue // not keyed → inactive (zero calls to it, ADR-0001)
 		}
-		if p := c.newVideoProvider(e.Slug); p != nil {
+		if p := cat.newVideoProvider(cfg, e.Slug); p != nil {
 			out = append(out, p)
 		}
 	}
@@ -218,21 +240,34 @@ func DeriveEnablement(cfg ProviderConfig) Enablement {
 	return Enablement{Video: cfg.videoEnabled(), Music: cfg.musicEnabled()}
 }
 
+// BuilderFor returns the BuildFunc the Manager rebuilds from on every settings
+// save, closed over the Catalog the composition root derived from the Plugin
+// registry. It is what app.New hands to NewManager in production; a test
+// substitutes its own BuildFunc through app.WithProviderBuilder exactly as before.
+func BuilderFor(cat Catalog) BuildFunc { return cat.BuildProvider }
+
 // BuildProvider composes the per-kind sources behind the single MetadataProvider
 // seam and returns them together with the derived per-kind Enablement snapshot.
 // It is the ONE place the enrichment composition lives: app.New calls it at boot,
-// and a future settings-driven rebuild calls the same function to hot-swap the
-// running Service (see Service.SetProvider). The composition is byte-for-byte the
-// block that previously lived inline in app.New:
+// and a settings-driven rebuild calls the same function to hot-swap the running
+// Service (see Service.SetProvider).
 //
-//   - Video is TMDB (the authoritative video source for movie/show/season/episode).
+//   - Video composes the Library's Authoritative provider plus the keyed fill-only
+//     Supplements, each built THROUGH THE CONTRACT: the Catalog asks the registered
+//     Plugin's factory for a source and wraps what comes back in the host-side
+//     adapter, so a Built-in and (from Phase 2) an Installed plugin reach the chain
+//     by exactly the same path (ADR-0057 decision 5).
 //   - Music is MusicBrainz + Cover Art Archive, wrapped in the fill-only
 //     MusicChainProvider only when an image source is configured AND Music is
 //     enabled — so an enriched artist also gets a poster (fanart.tv, preferred,
 //     MBID-keyed) and a real bio (TheAudioDB, name-capable). With no image key
 //     (or Music off) it stays plain MusicBrainz, making zero calls to either host
-//     (ADR-0001 explicit opt-in).
-func BuildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
+//     (ADR-0001 explicit opt-in). The music chain is still composed DIRECTLY here,
+//     not through the contract: it needs the album-tracklist and external-ref
+//     capabilities, which arrive with the music slice. Until then the builder
+//     composes one chain from both sources, which is what lets the video half move
+//     without the music half moving with it.
+func (cat Catalog) BuildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
 	// Honor the operator's throttle policy for the configured MusicBrainz host (a
 	// mirror may allow more than the public ~1 req/sec; 0 disables throttling).
 	mb := NewMusicBrainzProvider(cfg.MusicBrainzBaseURL, cfg.CoverArtBaseURL, cfg.MetadataLanguage)
@@ -259,15 +294,18 @@ func BuildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
 	// wrap is added only when video is on AND a supplement is active, so an
 	// all-supplements-off Library is plain lead with zero calls to the others.
 	authSlug := cfg.videoAuthoritativeSlug()
-	var video MetadataProvider = cfg.newVideoProvider(authSlug)
+	video := cat.newVideoProvider(cfg, authSlug)
 	if video == nil {
-		// A pointer at a non-video slug can't lead the video chain; fall back to the
-		// default TMDB lead so the composite is always well-formed (the resolver
-		// never sets such a pointer, but BuildProvider stays total).
-		video = NewTMDBProvider(cfg.TMDBAPIKey, cfg.MetadataLanguage, cfg.TMDBBaseURL, cfg.TMDBImageBaseURL)
+		// A pointer at a slug no video Plugin claims can't lead the video chain; fall
+		// back to the default TMDB lead so the composite is always well-formed (the
+		// resolver never sets such a pointer, but BuildProvider stays total). On a
+		// Catalog holding no video Plugin at all this stays nil, and a nil
+		// sub-provider is the all-off posture CompositeProvider already documents
+		// (ADR-0001).
+		video = cat.newVideoProvider(cfg, SlugTMDB)
 		authSlug = SlugTMDB
 	}
-	if supplements := cfg.videoSupplements(authSlug); cfg.videoEnabled() && len(supplements) > 0 {
+	if supplements := cat.videoSupplements(cfg, authSlug); video != nil && cfg.videoEnabled() && len(supplements) > 0 {
 		video = NewVideoChainProvider(video, supplements...)
 	}
 

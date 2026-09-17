@@ -54,7 +54,7 @@ func TestSettingsToProviderConfig(t *testing.T) {
 		{Slug: SlugTheAudioDB, Enabled: false, APIKey: "adk"}, // has key but disabled → inactive
 	}
 	fixed := FixedProviderInputs{MusicBrainzRateLimit: 2 * time.Second}
-	cfg := SettingsToProviderConfig(rows, "en-GB", fixed)
+	cfg := builtinCatalog().SettingsToProviderConfig(rows, "en-GB", fixed)
 
 	if cfg.TMDBAPIKey != "tk" {
 		t.Errorf("TMDBAPIKey = %q, want tk", cfg.TMDBAPIKey)
@@ -66,7 +66,7 @@ func TestSettingsToProviderConfig(t *testing.T) {
 		t.Errorf("TMDBImageBaseURL = %q, want the row's image-host override", cfg.TMDBImageBaseURL)
 	}
 	// A tmdb row with no image-host override falls back to the registry default.
-	noOverride := SettingsToProviderConfig(
+	noOverride := builtinCatalog().SettingsToProviderConfig(
 		[]store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}}, "en-GB", fixed)
 	if noOverride.TMDBImageBaseURL != registryTMDBImageBaseURL {
 		t.Errorf("TMDBImageBaseURL = %q, want registry default %q", noOverride.TMDBImageBaseURL, registryTMDBImageBaseURL)
@@ -105,7 +105,7 @@ func TestManagerReload(t *testing.T) {
 	if svc.EnrichmentEnabled() {
 		t.Fatalf("precondition: service starts disabled")
 	}
-	mgr := NewManager(st, svc, build)
+	mgr := NewManager(st, svc, builtinCatalog(), build)
 
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -156,7 +156,7 @@ func TestManagerReloadConsentGate(t *testing.T) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, build)
+	mgr := NewManager(st, svc, builtinCatalog(), build)
 
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload (consent withheld): %v", err)
@@ -206,7 +206,7 @@ func TestManagerDisplayViewsAreConsentGated(t *testing.T) {
 				policies:         map[string]store.LibraryEnrichmentPolicy{}, // "lib" inherits
 			}
 			svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-			mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+			mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 				return CompositeProvider{}, DeriveEnablement(cfg)
 			}))
 			if err := mgr.Reload(context.Background()); err != nil {
@@ -273,7 +273,7 @@ func TestManagerDisplayViewsAreConsentGated(t *testing.T) {
 func TestManagerDisplayViewsSeparateConsentFromConfiguration(t *testing.T) {
 	st := &fakeManagerStore{lang: "en-US"} // no provider rows; consent granted
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+	mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}))
 	if err := mgr.Reload(context.Background()); err != nil {
@@ -304,7 +304,7 @@ func TestManagerReloadRateLimit(t *testing.T) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, build)
+	mgr := NewManager(st, svc, builtinCatalog(), build)
 
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -348,7 +348,7 @@ func TestManagerPerLibraryResolution(t *testing.T) {
 		},
 	}
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+	mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}))
 	if err := mgr.Reload(context.Background()); err != nil {
@@ -388,7 +388,7 @@ func TestManagerLibraryCacheInvalidation(t *testing.T) {
 	}
 	var built int
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+	mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		built++
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}))
@@ -521,7 +521,7 @@ func TestSeedIfEmpty(t *testing.T) {
 				Slug: u.Slug, Enabled: u.Enabled, APIKey: u.APIKey, BaseURL: u.BaseURL,
 			})
 		}
-		en := DeriveEnablement(SettingsToProviderConfig(rows, s.language, FixedProviderInputs{}))
+		en := DeriveEnablement(builtinCatalog().SettingsToProviderConfig(rows, s.language, FixedProviderInputs{}))
 		if !en.Video || !en.Music {
 			t.Errorf("reproduced enablement = %+v, want video+music on", en)
 		}
