@@ -46,6 +46,7 @@ function view(over: Partial<EventSinksView> = {}): EventSinksView {
         events: [],
         description: "POST one signed JSON document per event to a URL you choose.",
         docsURL: "",
+        counters: { delivered: 0, dropped: 0, failed: 0 },
       },
     ],
     availableEvents: ["scan.completed"],

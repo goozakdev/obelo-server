@@ -2452,6 +2452,24 @@ export interface EventSink {
   events: string[];
   description: string;
   docsURL: string;
+  /** This sink's delivery tally since the server booted. */
+  counters: EventSinkCounters;
+}
+
+/** One Event sink's delivery tally since boot (ADR-0057 decision 6). It is the
+ * answer to "is my receiver getting these?", and it takes the place of the Test
+ * button a sink cannot have — its secret is the server's own signing key, so there
+ * is nobody to ask whether it works.
+ *
+ * `delivered` climbing is a working receiver; `failed` climbing is a target that
+ * refuses or cannot be reached; `dropped` climbing is a target too slow to keep up
+ * (the queue is bounded and discards its oldest event). All three flat means the
+ * server has had nothing to say. None of them survive a restart — delivery is
+ * in-memory and best-effort on purpose. */
+export interface EventSinkCounters {
+  delivered: number;
+  dropped: number;
+  failed: number;
 }
 
 /** The `GET/PUT /settings/event-sinks` view: the sink list plus the event types
