@@ -22,6 +22,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
+	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -208,6 +209,15 @@ type Deps struct {
 	// a settings save. The PUT handler calls Reload; nil leaves persistence working
 	// without the runtime swap.
 	SubtitleProviderManager *subfetch.Manager
+
+	// Plugins is the registry of Plugins this server was composed with (ADR-0057):
+	// the Built-ins the composition root registered, and later any Installed plugin.
+	// It is what the provider settings surfaces render — the static facts about a
+	// source live in its registration, never in the database — and it is a VALUE,
+	// so a test composes a server with exactly the Plugins it means. Nil in narrow
+	// unit tests reads as "no Plugins": the settings list is empty and every slug is
+	// unknown, rather than a panic.
+	Plugins *pluginapi.Registry
 
 	// Tailnet remote access (ADR-0043, Admin-scope /settings/tailscale).
 	// TailnetSettings persists the four settings; Tailnet is the state machine the

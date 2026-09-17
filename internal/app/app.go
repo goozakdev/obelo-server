@@ -18,6 +18,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/api"
 	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/builtins"
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
@@ -28,6 +29,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
+	pluginapi "github.com/goozakdev/obelo-server/internal/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
@@ -457,6 +459,16 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		gpuProbe = gpu.NewNvidiaSMIProbe("", 0)
 	}
 
+	// The Plugin registry (ADR-0057): every unit of code that talks to an external
+	// source goes through one contract, and this is where the server is told which
+	// of them it has. Registration is EXPLICIT — builtins.Register is the only way a
+	// Built-in reaches a running server, there is no init() side effect anywhere —
+	// and the registry is a VALUE, so the builders and the settings handlers consume
+	// what this composition root put in it rather than a package-level catalog. A
+	// Phase 2 loader adds Installed plugins to this same value.
+	plugins := pluginapi.NewRegistry()
+	builtins.Register(plugins)
+
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
 	// guarded HTTP fetcher, but tests inject fakes via Options so the black-box
@@ -593,7 +605,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: seeding subtitle provider settings: %w", err)
 	}
-	subtitleBuild := subfetch.BuildFunc(subfetch.BuildProvider)
+	subtitleBuild := subfetch.BuilderFor(plugins)
 	if o.subtitleProviderBuilder != nil {
 		subtitleBuild = o.subtitleProviderBuilder
 	}
@@ -853,6 +865,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		SubFetch:                subFetchSvc,
 		SubtitleProviders:       db,
 		SubtitleProviderManager: subtitleManager,
+		Plugins:                 plugins,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
