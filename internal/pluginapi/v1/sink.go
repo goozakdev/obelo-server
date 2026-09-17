@@ -70,9 +70,18 @@ type EventEntity struct {
 // household's legitimate interests are load and content, and a viewer on another
 // household's Server is neither. Exactly one of UserID and LinkID is set.
 type EventActor struct {
-	// UserID is one of this server's own Users.
+	// UserID is one of this server's own Users — a person with credentials here.
 	UserID string `json:"userId,omitempty"`
-	// LinkID is the Link a relayed session arrived over. Set INSTEAD of UserID.
+	// LinkID is this server's own record of the linked Server a relayed session
+	// arrived over, set INSTEAD of UserID.
+	//
+	// On the SHARING side — the side that emits these events for a relayed play —
+	// that record is the `remote` User the other household redeemed its Invite as
+	// (ADR-0054): it is the sharing Admin's one durable handle on the linked
+	// Server, it is what their session list shows, and the `links` row proper
+	// lives on the other machine. So a sink can correlate this id with the
+	// linked-Server row the Admin Users page shows, and can never correlate it
+	// with a person.
 	LinkID string `json:"linkId,omitempty"`
 	// Name is the operator-facing label — the User's username, or the Link's name
 	// ("Brandon's server"). Never a name from the other household.
@@ -93,6 +102,35 @@ type EventScan struct {
 	Removed int `json:"removed,omitempty"`
 	// Scope is the entity label of a Targeted scan, "" for a full one.
 	Scope string `json:"scope,omitempty"`
+}
+
+// EventEnrich is the terminal counts of an Enrichment pass, carried by
+// EventEnrichCompleted. A POINTER on the event for EventScan's reason: a pass with
+// nothing left to do is a real outcome and "all zero" must not read as "no enrich
+// block here".
+//
+// It is its own struct rather than a reuse of EventScan because the two count
+// different things. A scan reports what it FOUND on disk; a pass reports how the
+// Titles it looked at came out — and the split between Failed and Retrying is the
+// whole reason an operator would automate on this event at all (ADR-0048: a
+// transient failure will be tried again, and raising an alarm about it is noise).
+type EventEnrich struct {
+	// Total is how many Titles the pass considered, Done how many it finished.
+	Total int `json:"total"`
+	Done  int `json:"done"`
+	// Matched / Unmatched are the two settled answers: a record was found, or the
+	// source honestly had none.
+	Matched   int `json:"matched"`
+	Unmatched int `json:"unmatched"`
+	// Failed is parked failures — something an Admin may have to act on.
+	Failed int `json:"failed,omitempty"`
+	// Disabled is Titles skipped because their Library's policy says so
+	// (ADR-0027).
+	Disabled int `json:"disabled,omitempty"`
+	// Retrying is transient failures scheduled to be tried again rather than
+	// parked (ADR-0048). Reported apart from Failed so an automation can stay
+	// quiet about a blip.
+	Retrying int `json:"retrying,omitempty"`
 }
 
 // SinkEvent is one curated event, whole. Every field but ID, Type and At is
@@ -118,10 +156,18 @@ type SinkEvent struct {
 	// Actor is who the playback session belongs to — a User of this server, or a
 	// Link. See EventActor.
 	Actor EventActor `json:"actor,omitzero"`
-	// Device is the Device a playback session is bound to (ADR-0015).
+	// Device is the Device a playback session is bound to (ADR-0015). ABSENT when
+	// the Actor is a Link: a relayed session's Device is the other household's
+	// Server presenting itself as one (ADR-0055 §4), so its name is a name from
+	// over there — and naming the far household's hardware would be a worse
+	// version of naming the person.
 	Device EventEntity `json:"device,omitzero"`
 	// Scan is the terminal counts of a scan.completed event, absent otherwise.
 	Scan *EventScan `json:"scan,omitempty"`
+	// Enrich is the terminal counts of an enrich.completed event, absent
+	// otherwise. The two blocks are never both present: a pass and a walk are
+	// separate events even when one follows the other.
+	Enrich *EventEnrich `json:"enrich,omitempty"`
 }
 
 // EventSink is the Go call surface of the Event sink Extension point. One call,

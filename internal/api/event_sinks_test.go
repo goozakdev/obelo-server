@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -153,10 +154,15 @@ func TestEventSinkSettingsRoundTrip(t *testing.T) {
 	if initial.Sinks[0].Enabled || initial.Sinks[0].HasSecret || len(initial.Sinks[0].Events) != 0 {
 		t.Fatalf("an unconfigured sink reads as %+v, want off with nothing on file", initial.Sinks[0])
 	}
-	// The only event the translator derives today is offered; promising an Admin
-	// one that nothing produces would be worse than not offering it.
-	if len(initial.AvailableEvents) != 1 || initial.AvailableEvents[0] != "scan.completed" {
-		t.Fatalf("availableEvents = %v, want [scan.completed]", initial.AvailableEvents)
+	// Exactly the events the translator derives are offered; promising an Admin one
+	// that nothing produces would be worse than not offering it. As of issue 06
+	// that is the whole curated five, in the contract's order.
+	wantAvailable := []string{
+		"scan.completed", "enrich.completed",
+		"playback.started", "playback.stopped", "library.changed",
+	}
+	if !reflect.DeepEqual(initial.AvailableEvents, wantAvailable) {
+		t.Fatalf("availableEvents = %v, want %v", initial.AvailableEvents, wantAvailable)
 	}
 
 	saved := configureSink(t, srv, token, map[string]any{
@@ -218,9 +224,13 @@ func TestEventSinkSettingsRefusals(t *testing.T) {
 			code:   "PROVIDER_UNKNOWN",
 		},
 		{
+			// Every curated event is derivable now (issue 06), so the type this
+			// refuses is one no version of the contract has ever defined — which is
+			// the case that will matter again the moment a newer client, or a hand-
+			// written curl, asks for an event type this build has not heard of.
 			name: "an event this server does not emit",
 			update: map[string]any{
-				"slug": "webhook", "events": []string{"playback.started"},
+				"slug": "webhook", "events": []string{"transcode.throttled"},
 			},
 			code: "PROVIDER_INVALID_SETTING",
 		},

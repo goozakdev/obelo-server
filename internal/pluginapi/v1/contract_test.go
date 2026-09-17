@@ -155,6 +155,19 @@ func wireCases() []wireCase {
 			golden: `{"titlesFound":12,"filesFound":14,"added":2,"removed":1,"scope":"The Wire"}`,
 		},
 		{
+			name: "EventEnrich",
+			value: EventEnrich{
+				Total: 40, Done: 40, Matched: 33, Unmatched: 4, Failed: 1,
+				Disabled: 1, Retrying: 1,
+			},
+			golden: `{"total":40,"done":40,"matched":33,"unmatched":4,"failed":1,` +
+				`"disabled":1,"retrying":1}`,
+		},
+		{
+			// Every block at once. Not a document any event actually produces — a
+			// scan and a pass are separate events, and neither names a Device — but
+			// it is the one case that pins the FIELD ORDER of the whole type, which
+			// is what a receiving script's golden fixtures are compared against.
 			name: "SinkEvent",
 			value: SinkEvent{
 				ID:      "6f9619ff-8b86-d011-b42d-00c04fc964ff",
@@ -165,13 +178,15 @@ func wireCases() []wireCase {
 				Actor:   EventActor{UserID: "user-1", Name: "brandon"},
 				Device:  EventEntity{ID: "dev-1", Name: "Laptop", Kind: "macos"},
 				Scan:    &EventScan{TitlesFound: 12, FilesFound: 14},
+				Enrich:  &EventEnrich{Total: 2, Done: 2, Matched: 2},
 			},
 			golden: `{"id":"6f9619ff-8b86-d011-b42d-00c04fc964ff","type":"playback.started",` +
 				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
 				`"title":{"id":"title-1","name":"Dune","kind":"movie"},` +
 				`"actor":{"userId":"user-1","name":"brandon"},` +
 				`"device":{"id":"dev-1","name":"Laptop","kind":"macos"},` +
-				`"scan":{"titlesFound":12,"filesFound":14}}`,
+				`"scan":{"titlesFound":12,"filesFound":14},` +
+				`"enrich":{"total":2,"done":2,"matched":2,"unmatched":0}}`,
 		},
 		{
 			// The shape an operator's webhook actually receives today: only the
@@ -189,6 +204,71 @@ func wireCases() []wireCase {
 			golden: `{"id":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"scan.completed",` +
 				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
 				`"scan":{"titlesFound":0,"filesFound":0}}`,
+		},
+		{
+			// An Enrichment pass with nothing left to do, for the scan case's
+			// reason: "40 Titles, all already settled" is an answer, and an
+			// omit-when-empty block would report it as no pass having happened.
+			name: "SinkEvent/enrichCompleted",
+			value: SinkEvent{
+				ID:      "2b4e28ba-2fa1-11d2-883f-0016d3cca427",
+				Type:    EventEnrichCompleted,
+				At:      "2026-09-16T12:00:00Z",
+				Library: EventEntity{ID: "lib-1", Name: "Movies", Kind: "movie"},
+				Enrich:  &EventEnrich{Total: 40, Done: 40, Matched: 40},
+			},
+			golden: `{"id":"2b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"enrich.completed",` +
+				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
+				`"enrich":{"total":40,"done":40,"matched":40,"unmatched":0}}`,
+		},
+		{
+			// A LOCAL play: the person is this server's own User, so the actor names
+			// them. No library block — a playback event is about a Title.
+			name: "SinkEvent/playbackStarted",
+			value: SinkEvent{
+				ID:     "3b4e28ba-2fa1-11d2-883f-0016d3cca427",
+				Type:   EventPlaybackStarted,
+				At:     "2026-09-16T12:00:00Z",
+				Title:  EventEntity{ID: "title-1", Name: "Dune", Kind: "movie"},
+				Actor:  EventActor{UserID: "user-1", Name: "brandon"},
+				Device: EventEntity{ID: "dev-1", Name: "Laptop", Kind: "macos"},
+			},
+			golden: `{"id":"3b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"playback.started",` +
+				`"at":"2026-09-16T12:00:00Z","title":{"id":"title-1","name":"Dune","kind":"movie"},` +
+				`"actor":{"userId":"user-1","name":"brandon"},` +
+				`"device":{"id":"dev-1","name":"Laptop","kind":"macos"}}`,
+		},
+		{
+			// A RELAYED play, stopping: the actor is the LINK, there is no userId
+			// anywhere in the document, and the only name is the label THIS
+			// household's Admin typed for the linked Server (ADR-0054 section 3).
+			// The Device is absent because a relayed session is bound to the linked
+			// Server's own Device record and naming it would say something about
+			// the far household's hardware.
+			name: "SinkEvent/playbackStoppedOverALink",
+			value: SinkEvent{
+				ID:    "4b4e28ba-2fa1-11d2-883f-0016d3cca427",
+				Type:  EventPlaybackStopped,
+				At:    "2026-09-16T12:34:56Z",
+				Title: EventEntity{ID: "title-1", Name: "Dune", Kind: "movie"},
+				Actor: EventActor{LinkID: "user-9", Name: "Brandon's server"},
+			},
+			golden: `{"id":"4b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"playback.stopped",` +
+				`"at":"2026-09-16T12:34:56Z","title":{"id":"title-1","name":"Dune","kind":"movie"},` +
+				`"actor":{"linkId":"user-9","name":"Brandon's server"}}`,
+		},
+		{
+			// The refetch nudge: a Library and nothing else. There is deliberately
+			// no diff — the catalog is the truth about what changed.
+			name: "SinkEvent/libraryChanged",
+			value: SinkEvent{
+				ID:      "5b4e28ba-2fa1-11d2-883f-0016d3cca427",
+				Type:    EventLibraryChanged,
+				At:      "2026-09-16T12:00:00Z",
+				Library: EventEntity{ID: "lib-2", Name: "Shows", Kind: "show"},
+			},
+			golden: `{"id":"5b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"library.changed",` +
+				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-2","name":"Shows","kind":"show"}}`,
 		},
 	}, metadataWireCases()...)
 }

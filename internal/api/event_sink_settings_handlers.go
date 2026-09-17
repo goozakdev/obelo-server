@@ -16,11 +16,17 @@ import (
 // returned — only a hasSecret boolean — because it is a signing key and is handled
 // with exactly the care an API key is.
 //
-// The one thing this surface has that the provider surfaces do not is the
-// subscribed-event list, the first user of pluginapi.Settings.Events. The server
-// answers with the event types it can actually derive today (availableEvents), so
-// the screen offers only those and an Admin can never subscribe to something
-// nothing produces.
+// Two things this surface has that the provider surfaces do not:
+//
+//   - the subscribed-event list, the first user of pluginapi.Settings.Events. The
+//     server answers with the event types it can actually derive today
+//     (availableEvents), so the screen offers only those and an Admin can never
+//     subscribe to something nothing produces.
+//   - the delivery counters. A sink has no Test button — its secret is this
+//     server's own signing key, so there is nobody to ask whether it works — and
+//     the counters are what takes that button's place: delivered climbing is a
+//     working receiver, failed climbing is a misconfigured URL, and all three flat
+//     is a quiet server.
 //
 // Every route is Admin-only (wired behind requireAuth + requireAdmin via the
 // /settings/ subtree in api.go).
@@ -48,6 +54,16 @@ type eventSinkJSON struct {
 	Events         []string `json:"events"`
 	Description    string   `json:"description"`
 	DocsURL        string   `json:"docsURL"`
+	// Counters is this sink's delivery tally since boot: delivered, dropped and
+	// failed. It is host state rather than settings, and it is on the settings
+	// response because this is the surface an Admin is already looking at when
+	// they ask the question it answers — "is my receiver getting these?".
+	//
+	// It is eventsink.Counters verbatim, tags included, so the numbers on the
+	// screen and the numbers the Dispatcher counts cannot drift into two
+	// vocabularies. All zero for a sink that has never been live, which is the
+	// truth and not an absence — so it is a value, never omitted.
+	Counters eventsink.Counters `json:"counters"`
 }
 
 // eventSinksResponse is the GET/PUT body: the joined sink list plus the event
@@ -283,6 +299,11 @@ func buildEventSinksResponse(deps Deps) (eventSinksResponse, error) {
 		return eventSinksResponse{}, err
 	}
 	resp := eventSinksResponse{AvailableEvents: eventsink.SupportedEventTypes()}
+	// One read of the live tallies for the whole response: they are a snapshot of a
+	// running mechanism, and reading them per sink would let two cards on one
+	// screen describe two different moments. A build with no Manager (a narrow
+	// test) reports zeroes rather than refusing the settings it can still serve.
+	counters := deps.EventSinkManager.Counters()
 	for _, registration := range deps.Plugins.EventSinks() {
 		d := registration.Descriptor
 		row := rows[d.Slug]
@@ -300,6 +321,7 @@ func buildEventSinksResponse(deps Deps) (eventSinksResponse, error) {
 			Events:         events,
 			Description:    d.Description,
 			DocsURL:        d.DocsURL,
+			Counters:       counters[d.Slug],
 		})
 	}
 	if resp.Sinks == nil {

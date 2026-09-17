@@ -139,9 +139,15 @@ const (
 // (SessionID) and render a live row (UserID, TitleID); PositionMs is set only for
 // SessionNowPlaying.
 type SessionEvent struct {
-	Kind       SessionEventKind
-	SessionID  string
-	UserID     string
+	Kind      SessionEventKind
+	SessionID string
+	UserID    string
+	// DeviceID is the Device this session is bound to (ADR-0015). It rides on the
+	// notification rather than being looked up by an observer because by the time
+	// an ENDED event is handled the session is already gone from the Manager — so
+	// an observer that wanted the Device would find nothing, and only for the
+	// stop, which is the worst kind of asymmetry to debug.
+	DeviceID   string
 	TitleID    string
 	PositionMs int64
 	// RelayLinkID and RemoteSessionID are set for a RELAY session (ADR-0056 §5),
@@ -163,6 +169,7 @@ func endedEvent(s Session) SessionEvent {
 		Kind:            SessionEnded,
 		SessionID:       s.ID,
 		UserID:          s.UserID,
+		DeviceID:        s.DeviceID,
 		TitleID:         s.TitleID,
 		RelayLinkID:     s.RelayLinkID,
 		RemoteSessionID: s.RemoteSessionID,
@@ -533,7 +540,13 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 	// started fires HERE — the single common create path Create delegates to — so a
 	// session is announced exactly once. The cap-rejection path above returned
 	// without minting a session, so it correctly does not reach this.
-	m.notify(SessionEvent{Kind: SessionStarted, SessionID: s.ID, UserID: s.UserID, TitleID: s.TitleID})
+	m.notify(SessionEvent{
+		Kind:      SessionStarted,
+		SessionID: s.ID,
+		UserID:    s.UserID,
+		DeviceID:  s.DeviceID,
+		TitleID:   s.TitleID,
+	})
 	return s, nil
 }
 
@@ -675,6 +688,7 @@ func (m *Manager) TouchProgress(id string, positionMs int64) {
 			Kind:       SessionNowPlaying,
 			SessionID:  s.ID,
 			UserID:     s.UserID,
+			DeviceID:   s.DeviceID,
 			TitleID:    s.TitleID,
 			PositionMs: positionMs,
 		})

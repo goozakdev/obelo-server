@@ -709,6 +709,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		broker.PublishSessionEvent(eventType, events.SessionEvent{
 			SessionID:  e.SessionID,
 			UserID:     e.UserID,
+			DeviceID:   e.DeviceID,
 			TitleID:    e.TitleID,
 			PositionMs: e.PositionMs,
 		})

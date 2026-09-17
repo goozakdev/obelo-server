@@ -229,12 +229,33 @@ func TestCountersSurviveASettingsSave(t *testing.T) {
 	}
 }
 
-// countingLookup records how often a Library was named.
-type countingLookup struct{ calls int }
+// countingLookup records how often a Library was named. The three ref lookups
+// (issue 06) are here only to satisfy eventsink.Lookup; they count into refs so
+// that "the translator does no work" stays checkable if a future event type starts
+// reaching for one of them.
+type countingLookup struct {
+	calls int
+	refs  int
+}
 
 func (c *countingLookup) LibraryByID(id string) (store.Library, error) {
 	c.calls++
 	return store.Library{ID: id, Name: "Movies", Kind: "movie"}, nil
+}
+
+func (c *countingLookup) EventTitleRef(id string) (store.EventRef, error) {
+	c.refs++
+	return store.EventRef{ID: id, Name: "Dune", Kind: "movie"}, nil
+}
+
+func (c *countingLookup) EventDeviceRef(id string) (store.EventRef, error) {
+	c.refs++
+	return store.EventRef{ID: id, Name: "Laptop", Kind: "macos"}, nil
+}
+
+func (c *countingLookup) EventUserRef(id string) (store.EventRef, error) {
+	c.refs++
+	return store.EventRef{ID: id, Name: "brandon", Kind: "admin"}, nil
 }
 
 // TestTranslatorDoesNoWorkForAnUnsubscribedEvent: with no sink subscribed to

@@ -53,15 +53,23 @@ const QueueCapacity = 64
 // a queue rather than a goroutine per event.
 const DeliveryTimeout = 15 * time.Second
 
-// SupportedEventTypes is what THIS server can actually derive today, which is
-// narrower than the contract's curated five: the settings screen offers exactly
-// this list, and the settings endpoint refuses a subscription to anything else.
+// SupportedEventTypes is what THIS server can actually derive today: the settings
+// screen offers exactly this list, and the settings endpoint refuses a
+// subscription to anything else.
 //
 // Promising an Admin an event nothing produces is worse than not offering it —
 // they would configure it, see nothing, and have no way to tell a broken webhook
-// from an unimplemented one. The remaining four land as their translations do.
+// from an unimplemented one. As of issue 06 the translator derives all five, so
+// this answers with the whole curated set.
+//
+// It remains a separate function from pluginapi.AllEventTypes, and the two being
+// equal today is not a reason to collapse them. They answer different questions —
+// "what does the contract define" versus "what can this build produce" — and the
+// next event type will be defined in the contract one commit before its
+// translation exists, at which point a settings screen reading the contract's list
+// would offer an Admin something nothing emits.
 func SupportedEventTypes() []string {
-	return []string{pluginapi.EventScanCompleted}
+	return pluginapi.AllEventTypes()
 }
 
 // Supported reports whether this server can derive eventType.

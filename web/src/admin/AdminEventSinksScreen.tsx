@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type {
   EventSink,
+  EventSinkCounters,
   EventSinksView,
   EventSinkUpdate,
   UpdateEventSinksInput,
@@ -10,14 +11,11 @@ import type {
 import MaskedKeyInput from "./MaskedKeyInput";
 import EventsControl from "./EventsControl";
 
-// The Event Sinks admin screen (ADR-0057 decision 6, plugin-system/05). The shape
-// of the Subtitle Providers screen — the same card, the same masked secret, the
-// same partial-update Save that the server applies with no restart — plus the one
-// control only a sink has: which events it is told about.
-//
-// Kept deliberately minimal. Issue 06 adds the delivery / dropped / failure
-// counters beside each sink, which is the number an Admin actually acts on once
-// their receiver starts falling behind.
+// The Event Sinks admin screen (ADR-0057 decision 6, plugin-system/05 and /06).
+// The shape of the Subtitle Providers screen — the same card, the same masked
+// secret, the same partial-update Save that the server applies with no restart —
+// plus the two things only a sink has: which events it is told about, and what has
+// actually been delivered.
 //
 // Behind RequireAdmin and still server-enforced: a sink is the operator's outbound
 // integration, not a Member's business.
@@ -79,6 +77,44 @@ function buildPayload(view: EventSinksView, draft: Draft): UpdateEventSinksInput
   return payload;
 }
 
+// SinkCounters is the sink's delivery tally (plugin-system/06). It takes the place
+// of the Test button a sink cannot have: a sink's secret is this server's own
+// signing key, so there is nobody to ask whether the configuration works, and the
+// only honest answer is what actually happened. Delivered climbing means the
+// receiver is taking them; failed climbing means the URL is wrong or the target is
+// down; dropped climbing means the target cannot keep up. All three flat means the
+// server has had nothing to say, which is the state an Admin would otherwise
+// mistake for a broken sink.
+function SinkCounters({ slug, counters }: { slug: string; counters: EventSinkCounters }) {
+  const quiet =
+    counters.delivered === 0 && counters.dropped === 0 && counters.failed === 0;
+  return (
+    <div className="field">
+      <span className="field-label">Delivery since this server started</span>
+      <dl className="sink-counters" data-testid={`sink-counters-${slug}`}>
+        <div>
+          <dt>Delivered</dt>
+          <dd data-testid={`sink-counter-delivered-${slug}`}>{counters.delivered}</dd>
+        </div>
+        <div>
+          <dt>Dropped</dt>
+          <dd data-testid={`sink-counter-dropped-${slug}`}>{counters.dropped}</dd>
+        </div>
+        <div>
+          <dt>Failures</dt>
+          <dd data-testid={`sink-counter-failed-${slug}`}>{counters.failed}</dd>
+        </div>
+      </dl>
+      <p className="field-hint">
+        {quiet
+          ? "Nothing has been sent yet — either nothing has happened, or this sink is not subscribed to it."
+          : "Failures mean the target refused or could not be reached; drops mean it could not keep up."}{" "}
+        These counts start again at zero on every restart.
+      </p>
+    </div>
+  );
+}
+
 export default function AdminEventSinksScreen() {
   const [view, setView] = useState<EventSinksView | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -136,7 +172,8 @@ export default function AdminEventSinksScreen() {
     <div className="admin-section" data-testid="event-sinks-screen">
       <h2 className="admin-section-title">Event Sinks</h2>
       <p className="admin-section-note">
-        Have this server tell something else when a scan finishes. Delivery is
+        Have this server tell something else when a scan or a metadata pass
+        finishes, when a play starts or stops, or when a library changes. Delivery is
         best-effort and in memory — it never slows a scan or a play down, and it does
         not survive a restart.
       </p>
@@ -224,6 +261,8 @@ export default function AdminEventSinksScreen() {
             }
             disabled={saving}
           />
+
+          <SinkCounters slug={s.slug} counters={s.counters} />
         </div>
       ))}
 

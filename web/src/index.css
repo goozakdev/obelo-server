@@ -4204,6 +4204,32 @@ body.np-controls-hidden .now-playing-surface[data-surface="stage"] {
   grid-column: 2;
 }
 
+/* An Event sink's delivery tally (ADR-0057 decision 6, plugin-system/06). Three
+   numbers in a row, because they are read TOGETHER — delivered against failed is
+   the whole diagnosis, and reading one without the others says nothing. A <dl>
+   rather than a table for the reason the transcoding surface uses one: it is a
+   handful of labelled values, not rows of records. */
+.sink-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0.25rem 0 0;
+}
+.sink-counters > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.sink-counters dt {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+.sink-counters dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 /* Standalone setting cards (language, enrichment behavior). */
 .provider-language.card,
 .provider-behavior.card {
