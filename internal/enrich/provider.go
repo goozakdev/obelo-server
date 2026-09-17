@@ -30,6 +30,14 @@ var ErrNoMatch = errors.New("enrich: no external match")
 // that fails is discarded rather than stored, because a confident wrong overview is
 // worse than an empty one (ADR-0049).
 //
+// THE SERVICE PRODUCES IT, NOT A PROVIDER (ADR-0057). A source declares that an
+// answer came from a search (TitleMetadata.FromSearch) and hands over the candidate
+// it found; the host applies the acceptance test and returns this. A provider that
+// judged its own answer would be asking the server to trust an author who never
+// read ADR-0049 — and the same rule has to hold for a source the core does not
+// ship. A provider MAY still return this value directly (nothing rejects it, and
+// test fakes do), but no Built-in does.
+//
 // It WRAPS ErrNoMatch, so every errors.Is(err, ErrNoMatch) caller is unaffected —
 // the pass still files the item 'unmatched' and moves on. The distinction exists so
 // a settled failure can eventually say WHY: 'search-rejected' ("MusicBrainz has
@@ -296,6 +304,25 @@ type TitleMetadata struct {
 
 	ExternalID string
 	Source     string
+
+	// FromSearch says the source found this record by RELEVANCE-RANKED SEARCH
+	// rather than by resolving an id. It is a fact about HOW the answer was found,
+	// never a judgement about whether it is right — a relevance query essentially
+	// always returns something, so its top hit is a CANDIDATE, and only the host
+	// turns a candidate into a record (ADR-0057).
+	//
+	// The enrichment service applies ADR-0050's title acceptance test to a music
+	// record marked this way: Name (the candidate's own title) must be the local
+	// title under normalizeMatchTitle, or the answer becomes ErrMatchRejected and
+	// the Track settles with the `search-rejected` diagnosis. Video kinds are not
+	// filtered in this phase.
+	//
+	// A record resolved BY ID is never marked, and that distinction is the whole
+	// point: an id IS the identification (ADR-0049), so a canonical title that
+	// disagrees with the local one is a spelling, not a wrong record, and running
+	// the acceptance test over it would reject correct answers. Name therefore has
+	// to be the candidate's title whenever this is set.
+	FromSearch bool
 }
 
 // MetadataProvider resolves a parsed identity to normalized descriptive metadata
@@ -304,6 +331,13 @@ type TitleMetadata struct {
 // caching. It NEVER returns identity; a no-match is (TitleMetadata{}, ErrNoMatch)
 // or a result with Matched=false, not a fatal error.
 type MetadataProvider interface {
+	// Lookup resolves ref to one record. A source that had to SEARCH for it —
+	// because ref carried no id it could resolve — returns its best candidate with
+	// FromSearch set and Name carrying that candidate's own title, and does NOT
+	// decide whether the candidate is good enough: the host applies the acceptance
+	// test and produces ErrMatchRejected (ADR-0057, ADR-0050). This is the only
+	// obligation the signature does not state, and it is what lets a source written
+	// by someone who never read ADR-0049 be trusted with a Library.
 	Lookup(ctx context.Context, ref TitleRef) (TitleMetadata, error)
 
 	// Search returns the authoritative provider's candidates for a free-text query

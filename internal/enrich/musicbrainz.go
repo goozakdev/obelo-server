@@ -1177,8 +1177,8 @@ func (p *MusicBrainzProvider) artistIDFromReleaseGroup(ctx context.Context, rgID
 // instrumental group that never recorded Hell Freezes Over. There is a test that
 // reads the query off the wire for exactly this reason.
 //
-// The top hit is accepted only when its title matches the local one under
-// normalizeMatchTitle — issue 03's matching normalizer, the same acceptance test
+// The top hit corroborates only when its title matches the local one under
+// normalizeMatchTitle — issue 03's matching normalizer, the same comparison
 // ADR-0050 put on the track search — and only the TOP hit is considered, for the
 // reason issue 05 gives: scanning down a ranked list is how a search quietly
 // becomes "find me anything plausible". A rejected hit corroborates nothing and the
@@ -1204,7 +1204,18 @@ func (p *MusicBrainzProvider) artistIDFromAlbumSearch(ctx context.Context, album
 		return "", nil
 	}
 	rg := out.ReleaseGroups[0]
-	if !acceptsTitle(album, rg.Title) {
+	// This is NOT the ADR-0050 record-acceptance rule, which left this file for the
+	// service (ADR-0057). Nothing here becomes a record: the top hit is discarded
+	// either way, and all that is at stake is whether the artist credit hanging off
+	// it is evidence. That question is MusicBrainz's own — it is about which of its
+	// intermediate results this provider will build its answer on, the candidate
+	// title never leaves this function, and no contract call exposes the step for a
+	// host to judge. It is written out rather than routed through acceptsTitle so
+	// the provider carries no acceptance rule at all, while still sharing the one
+	// matching normalizer. A hint that fails corroborates nothing and the artist
+	// falls back to its name.
+	want := normalizeMatchTitle(album)
+	if want == "" || want != normalizeMatchTitle(rg.Title) {
 		return "", nil
 	}
 	return creditArtistID(rg.ArtistCredit), nil
@@ -1314,15 +1325,17 @@ func (p *MusicBrainzProvider) albumDetails(ctx context.Context, album, artist st
 // had already moved off that shape, so the automatic matcher was strictly worse
 // than the manual one it hands its failures to.
 //
-// THE ACCEPTANCE TEST IS WHAT MAKES THE SWAP PAYABLE. An exact phrase returning
-// zero rows is HONESTLY empty; a relevance query essentially always returns
-// something, so `Recordings[0]` applied blind would trade a queue row for a silent
-// wrong overview — the confident-wrong-answer ADR-0049 ruled is the worse outcome.
-// The top hit is therefore accepted only when its title matches the local track's
-// under normalizeMatchTitle, the same matching normalizer the album tracklist rule
-// uses (and deliberately NOT scanner.normalizeTitle, which serves identity keys).
-// A rejected hit is ErrMatchRejected, which wraps ErrNoMatch: the row that results
-// is exactly as honest as today's.
+// THE ACCEPTANCE TEST IS WHAT MAKES THE SWAP PAYABLE, AND IT IS NOT APPLIED HERE.
+// An exact phrase returning zero rows is HONESTLY empty; a relevance query
+// essentially always returns something, so `Recordings[0]` applied blind would
+// trade a queue row for a silent wrong overview — the confident-wrong-answer
+// ADR-0049 ruled is the worse outcome. So the top hit comes back marked
+// FromSearch, and the SERVICE accepts it only when its title matches the local
+// track's under normalizeMatchTitle (acceptsTitle), turning a failure into
+// ErrMatchRejected itself. This provider used to run that test and return that
+// error; ADR-0057 moved the judgement to the host, because the rule has to hold
+// for sources the core does not ship as well as for this one. What is decided is
+// unchanged — only where.
 //
 // ONE REQUEST, ALWAYS. No looser second query when the first comes back empty or
 // is rejected. ADR-0049 measured MusicBrainz shedding load globally on the search
@@ -1351,25 +1364,18 @@ func (p *MusicBrainzProvider) trackDetails(ctx context.Context, track, artist st
 		return TitleMetadata{}, ErrNoMatch
 	}
 	r := out.Recordings[0]
-	if !acceptsTitle(track, r.Title) {
-		return TitleMetadata{}, ErrMatchRejected
-	}
+	// The top hit, UNJUDGED, marked as the search hit it is. Whether it is actually
+	// this song is the HOST's call (ADR-0057) — see acceptSearchHit, which applies
+	// the same ADR-0050 acceptance test this function used to apply itself and
+	// produces ErrMatchRejected when the candidate fails it. Name carries the
+	// candidate's own title because that is what the host judges against.
+	//
 	// MusicBrainz has no track synopsis; only the canonical title is offered. The
-	// service applies it as a display title ONLY where the tag title was sparse.
-	return TitleMetadata{Matched: true, Name: r.Title, ExternalID: r.ID, Source: "musicbrainz"}, nil
-}
-
-// acceptsTitle is the acceptance test a search hit must pass before it becomes a
-// Track's record: the candidate's title and the local one must be the same title
-// under normalizeMatchTitle (case, diacritics, punctuation, bracket padding and the
-// trailing decorations taggers and MusicBrainz disagree about all folded).
-//
-// A local title that normalizes to nothing — one that is punctuation only — never
-// accepts. It would otherwise be equal to every other degenerate title the source
-// holds, which is the same coin flip mapTracks refuses in rules 1 and 2.
-func acceptsTitle(local, candidate string) bool {
-	want := normalizeMatchTitle(local)
-	return want != "" && want == normalizeMatchTitle(candidate)
+	// service applies it as a display title ONLY where the tag title was sparse,
+	// and only for a record it accepted.
+	return TitleMetadata{
+		Matched: true, Name: r.Title, ExternalID: r.ID, Source: "musicbrainz", FromSearch: true,
+	}, nil
 }
 
 // ArtworkCandidates lists the cover images the Cover Art Archive holds for an

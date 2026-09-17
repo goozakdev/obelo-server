@@ -1301,6 +1301,60 @@ type leafWork struct {
 	tracklist tracklistOutcome
 }
 
+// acceptSearchHit is where the server decides whether a source's answer is really
+// the item on the shelf — ADR-0050's acceptance test, applied by the HOST rather
+// than by the source that produced the candidate (ADR-0057).
+//
+// A provider that had to SEARCH marks its answer FromSearch and hands over the
+// candidate's own title in Name; it makes no claim that the candidate is right,
+// because a relevance-ranked query essentially always returns something. This
+// function turns that candidate into either a record or ErrMatchRejected, which
+// the reason table below renders as `search-rejected`. Rejecting produces the ZERO
+// TitleMetadata, so a refused candidate's id and fields cannot leak into the row —
+// a confident wrong overview being worse than an empty one (ADR-0049).
+//
+// MUSIC KINDS ONLY, which is exactly where MusicBrainz applied it before the move.
+// A video record marked FromSearch passes through untouched: whether TMDB's top
+// hit should face the same test is a real question with a different answer (a film
+// is disambiguated by year and the picker's human, not by a normalized title), and
+// deciding it here would have smuggled a behavior change into a prefactor.
+//
+// It is applied on the two paths that SETTLE an item against a provider — a leaf
+// in processLeaf and a parent in enrichParent. The other two Lookup call sites
+// (ResolveIdentity, PreviewExternalRef) exist only to resolve an id an Admin
+// already named, so no Built-in can hand them a search hit; when the contract
+// lands they are the places to re-check that claim.
+func acceptSearchHit(ref TitleRef, meta TitleMetadata, err error) (TitleMetadata, error) {
+	if err != nil || !meta.Matched || !meta.FromSearch {
+		return meta, err
+	}
+	local, judged := localTitleForAcceptance(ref)
+	if !judged {
+		return meta, err
+	}
+	if acceptsTitle(local, meta.Name) {
+		return meta, err
+	}
+	return TitleMetadata{}, ErrMatchRejected
+}
+
+// localTitleForAcceptance answers which field of the ref holds the title the
+// acceptance test compares against, and whether the kind is judged at all. Only
+// the three Music kinds are, and each names its title in its own field because the
+// ref is the lookup's whole vocabulary: a track is searched by Track, an album by
+// Album, an artist by its name in Title. A kind that is not listed is not filtered.
+func localTitleForAcceptance(ref TitleRef) (string, bool) {
+	switch ref.Kind {
+	case "track":
+		return ref.Track, true
+	case "album":
+		return ref.Album, true
+	case "artist":
+		return ref.Title, true
+	}
+	return "", false
+}
+
 // unmatchedReason is ADR-0050's reason table, evaluated for a leaf the provider
 // declined to match. err is the lookup's error (nil when the provider answered
 // "no record" without one, which is an empty answer and not a rejection).
@@ -1407,6 +1461,10 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 	}
 
 	meta, err := provider.Lookup(ctx, lw.ref)
+	// The source found a candidate; the server decides whether it is this item
+	// (ADR-0057). A refusal becomes ErrMatchRejected here, which the case below
+	// files 'unmatched' and unmatchedReason diagnoses as `search-rejected`.
+	meta, err = acceptSearchHit(lw.ref, meta, err)
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		res.Unmatched++
@@ -2198,6 +2256,11 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	}
 
 	meta, err := snap.provider.Lookup(ctx, ref)
+	// A parent settles against the same rule a leaf does (ADR-0057). No Built-in
+	// marks an Artist or an Album FromSearch today — MusicBrainz resolves both by
+	// exact-phrase query — so this is inert for them and present so that a Plugin
+	// leading a Library cannot bypass the judgement a Track's source cannot.
+	meta, err = acceptSearchHit(ref, meta, err)
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
