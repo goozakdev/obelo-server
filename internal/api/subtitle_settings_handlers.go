@@ -148,7 +148,7 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 		}
 		var upserts []store.SubtitleProviderUpsert
 		for _, u := range req.Providers {
-			entry, ok := subfetch.RegistryEntryFor(u.Slug)
+			registration, ok := deps.Plugins.SubtitleProvider(u.Slug)
 			if !ok {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown, "unknown subtitle provider: "+u.Slug, nil)
 				return
@@ -170,9 +170,9 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 				desired.BaseURL = strings.TrimSpace(*u.BaseURL)
 			}
 			// A key-requiring provider can't be enabled with no key on file.
-			if desired.Enabled && entry.RequiresKey && desired.APIKey == "" {
+			if desired.Enabled && registration.Descriptor.RequiresKey && desired.APIKey == "" {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderKeyRequired,
-					"an API key is required to enable "+entry.Name, nil)
+					"an API key is required to enable "+registration.Descriptor.Name, nil)
 				return
 			}
 			upserts = append(upserts, desired)
@@ -228,7 +228,7 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 
 func handleTestSubtitleProvider(deps Deps, slug string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entry, ok := subfetch.RegistryEntryFor(slug)
+		registration, ok := deps.Plugins.SubtitleProvider(slug)
 		if !ok {
 			writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown, "unknown subtitle provider: "+slug, nil)
 			return
@@ -254,12 +254,12 @@ func handleTestSubtitleProvider(deps Deps, slug string) http.HandlerFunc {
 			baseURL = strings.TrimSpace(*req.BaseURL)
 		}
 		if baseURL == "" {
-			baseURL = entry.DefaultBaseURL
+			baseURL = registration.Descriptor.DefaultURL
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		okProbe, detail := subfetch.TestConnection(ctx, slug, apiKey, baseURL)
+		okProbe, detail := subfetch.TestConnection(ctx, deps.Plugins, slug, apiKey, baseURL)
 		writeJSON(w, http.StatusOK, subtitleTestResponse{OK: okProbe, Detail: detail})
 	}
 }
@@ -280,8 +280,11 @@ func currentSubtitleRows(deps Deps) (map[string]store.SubtitleProviderRow, error
 	return out, nil
 }
 
-// buildSubtitleProvidersResponse joins the static registry with the DB rows,
-// masking the key to a hasKey boolean and resolving the effective base URL.
+// buildSubtitleProvidersResponse joins the registered Subtitle provider Plugins
+// with the DB rows, masking the key to a hasKey boolean and resolving the effective
+// base URL. The list is in registration order, which is what keeps the screen
+// deterministic now that the catalog is a value the composition root builds rather
+// than a package-level slice (ADR-0057 decision 5).
 func buildSubtitleProvidersResponse(deps Deps) (subtitleProvidersResponse, error) {
 	rows, err := currentSubtitleRows(deps)
 	if err != nil {
@@ -293,21 +296,22 @@ func buildSubtitleProvidersResponse(deps Deps) (subtitleProvidersResponse, error
 	}
 
 	var providers []subtitleProviderJSON
-	for _, e := range subfetch.Registry() {
-		row := rows[e.Slug]
+	for _, registration := range deps.Plugins.SubtitleProviders() {
+		d := registration.Descriptor
+		row := rows[d.Slug]
 		base := row.BaseURL
 		if base == "" {
-			base = e.DefaultBaseURL
+			base = d.DefaultURL
 		}
 		providers = append(providers, subtitleProviderJSON{
-			Slug:        e.Slug,
-			Name:        e.Name,
-			RequiresKey: e.RequiresKey,
+			Slug:        d.Slug,
+			Name:        d.Name,
+			RequiresKey: d.RequiresKey,
 			Enabled:     row.Enabled,
 			HasKey:      row.APIKey != "",
 			BaseURL:     base,
-			Description: e.Description,
-			DocsURL:     e.DocsURL,
+			Description: d.Description,
+			DocsURL:     d.DocsURL,
 		})
 	}
 	return subtitleProvidersResponse{Providers: providers, AutoFetchLang: autoLang}, nil

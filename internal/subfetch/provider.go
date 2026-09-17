@@ -9,10 +9,14 @@
 // playback (ADR-0001).
 //
 // The network is isolated behind one seam — SubtitleProvider — mirroring how the
-// scanner fakes the Prober and enrich fakes MetadataProvider. app.New wires the
-// real OpenSubtitles provider; tests inject a fake, so the black-box HTTP tests
-// drive the whole fetch flow with zero network. The Service depends only on this
-// interface + a Store + a cache dir, never on net/http (ADR-0006).
+// scanner fakes the Prober and enrich fakes MetadataProvider. Since ADR-0057 the
+// code on the far side of that seam is a Plugin: app.New registers the
+// OpenSubtitles Built-in into the Plugin registry and BuilderFor composes it
+// through the wire-shaped contract (plugin.go adapts its Outcomes back to the
+// sentinels below). Tests inject a fake through the same BuildFunc, so the
+// black-box HTTP tests drive the whole fetch flow with zero network. The Service
+// depends only on this interface + a Store + a cache dir, never on net/http
+// (ADR-0006) and never on the contract.
 package subfetch
 
 import (
@@ -82,6 +86,11 @@ type Candidate struct {
 // match order the provider implements, and Download fetches one candidate's bytes.
 // A no-match is ErrNoMatch (or an empty slice), never fatal; a disabled provider
 // is the nil provider the builder yields, whose methods return ErrProviderDisabled.
+//
+// It is the DOMAIN's seam, not the contract: a real Subtitle provider Plugin is
+// reached through pluginapi and wrapped by ProviderFromPlugin (plugin.go), which
+// is what keeps the Service, the handlers and the existing tests matching on these
+// sentinels after the move behind the contract.
 type SubtitleProvider interface {
 	// Search returns the candidate subtitles for ref in the wanted ISO-639-1
 	// language, best-first. An empty slice (or ErrNoMatch) means the provider has
