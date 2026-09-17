@@ -2434,6 +2434,50 @@ export interface UpdateSubtitleProvidersInput {
   autoFetchLang?: string;
 }
 
+/** One Event sink in the settings view (ADR-0057 decision 6, plugin-system/05):
+ * the sink Plugin's registration facts joined with current settings. The signing
+ * secret is never returned — only `hasSecret`. */
+export interface EventSink {
+  slug: string;
+  name: string;
+  /** Whether a signing secret is required to enable it (true for the Webhook: an
+   * unsigned POST is one a receiver has no way to trust). */
+  requiresSecret: boolean;
+  enabled: boolean;
+  hasSecret: boolean;
+  /** The target to POST to. "" = nowhere, which is why such a sink cannot be
+   * enabled. */
+  url: string;
+  /** The event types this sink subscribes to. */
+  events: string[];
+  description: string;
+  docsURL: string;
+}
+
+/** The `GET/PUT /settings/event-sinks` view: the sink list plus the event types
+ * THIS server can actually derive. `availableEvents` is what the events control
+ * offers — it grows as translations land, so a client must never hard-code it. */
+export interface EventSinksView {
+  sinks: EventSink[];
+  availableEvents: string[];
+}
+
+/** One sink's partial update (secret omitted = unchanged, "" = clear, non-empty =
+ * set; enabled/url follow the same omit=unchanged rule; events omitted =
+ * unchanged, [] = subscribe to nothing). */
+export interface EventSinkUpdate {
+  slug: string;
+  enabled?: boolean;
+  secret?: string;
+  url?: string;
+  events?: string[];
+}
+
+/** The `PUT /settings/event-sinks` body: per-sink partial updates. */
+export interface UpdateEventSinksInput {
+  sinks?: EventSinkUpdate[];
+}
+
 // --- Transcoding observability (ADR-0029) -----------------------------------
 
 /** The resolved Transcode backend block of the /transcoding snapshot (ADR-0009):

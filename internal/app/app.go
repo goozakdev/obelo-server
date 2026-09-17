@@ -23,6 +23,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/events"
+	"github.com/goozakdev/obelo-server/internal/eventsink"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
@@ -114,6 +115,15 @@ type App struct {
 	// connect/disconnect/forget verbs. Never nil, and inert while the feature is off.
 	// Reached from outside through Tailnet().
 	tailnetMgr *tailnet.Manager
+
+	// sinkManager and sinkTranslator are the Event sink half of the Plugin system
+	// (ADR-0057 decision 6): the manager owns the "read settings → build → swap the
+	// live sinks" cycle the settings PUT calls Reload on, and the translator holds
+	// the Broker subscription the curated events are derived from. Both are stopped
+	// before the Broker goes, for the Tailnet's reason — nothing may be left
+	// publishing into, or subscribed to, a closed Broker.
+	sinkManager    *eventsink.Manager
+	sinkTranslator *eventsink.Translator
 
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
@@ -620,6 +630,23 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// producers below publish onto it.
 	broker := events.NewBroker()
 
+	// Event sinks (ADR-0057 decision 6): the operator's outbound integrations. The
+	// translator subscribes to the Broker exactly as an Admin's browser does and
+	// derives the curated events from its terminal snapshots; the Dispatcher hands
+	// each to the sinks that asked for it, off the publish path and under their own
+	// deadline, so a webhook pointed at a dead host can never slow a scan.
+	//
+	// Reloaded at boot and again on every settings save, like both provider
+	// Managers. A read failure here is a boot failure for the same reason theirs is:
+	// the settings the operator saved are not optional state.
+	sinkManager := eventsink.NewManager(db, plugins, eventsink.NewDispatcher())
+	if err := sinkManager.Reload(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("app: applying event sink settings: %w", err)
+	}
+	sinkTranslator := eventsink.NewTranslator(sinkManager.Dispatcher(), db)
+	sinkTranslator.Start(broker)
+
 	// Declared before the session observer below because that observer must be able
 	// to end a RELAY session on the sharing Server (ADR-0056 §5), and the link
 	// Service itself cannot be built until the Tailnet manager exists further down.
@@ -772,6 +799,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		keyRotator:       keyRot,
 		rotationWake:     make(chan struct{}, 1),
 		tailnetMgr:       tailnetManager,
+		sinkManager:      sinkManager,
+		sinkTranslator:   sinkTranslator,
 	}
 	queueDepth := enrichQueueDepth
 	if o.enrichQueueSize > 0 {
@@ -866,6 +895,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		SubtitleProviders:       db,
 		SubtitleProviderManager: subtitleManager,
 		Plugins:                 plugins,
+		EventSinks:              db,
+		EventSinkManager:        sinkManager,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
@@ -1421,6 +1452,17 @@ func (a *App) Close() error {
 	// next boot, which is the difference between shutting down and disconnecting.
 	if a.tailnetMgr != nil {
 		_ = a.tailnetMgr.Close()
+	}
+	// Drop the Event sink subscription and stop the sink workers before the Broker
+	// goes, for the same reason: a subscription left open is a goroutine leaked past
+	// the App that owned it. Whatever the sinks still had queued is DISCARDED — sink
+	// delivery is best-effort and in memory, and a restart losing a queued event is
+	// the documented behavior, not a bug (ADR-0057 decision 6).
+	if a.sinkTranslator != nil {
+		a.sinkTranslator.Stop()
+	}
+	if a.sinkManager != nil {
+		a.sinkManager.Dispatcher().Close()
 	}
 	if a.Events != nil {
 		a.Events.Close()

@@ -86,6 +86,8 @@ import type {
   MetadataProvidersView,
   UpdateMetadataProvidersInput,
   UpdateSubtitleProvidersInput,
+  EventSinksView,
+  UpdateEventSinksInput,
   TestProviderResult,
   EnrichmentPolicy,
   EnrichMode,
@@ -1897,6 +1899,36 @@ export class ApiClient {
       `/settings/subtitle-providers/${encodeURIComponent(slug)}/test`,
       { method: "POST", body: creds, signal },
     );
+  }
+
+  // --- Admin: Event sink settings (ADR-0057, plugin-system/05) -----------
+  //
+  // The same shape again, for the Extension point with no external source to
+  // probe: Admin-scope, the signing secret is never returned (only `hasSecret`),
+  // and a save rebuilds + hot-swaps the live sinks with no restart. There is no
+  // /test leaf — a provider probe asks a third party whether a credential works,
+  // while a sink's secret is this server's own signing key.
+
+  /** `GET /api/v1/settings/event-sinks` (Admin) — the registered Event sink
+   * Plugins joined with current settings, plus the event types this server can
+   * derive. A Member gets a 403. */
+  getEventSinks(signal?: AbortSignal): Promise<EventSinksView> {
+    return this.request<EventSinksView>("/settings/event-sinks", { signal });
+  }
+
+  /** `PUT /api/v1/settings/event-sinks` (Admin) — a PARTIAL update (secret
+   * omitted = unchanged, "" = clear, non-empty = set; enabled/url follow the same
+   * rule; events omitted = unchanged, [] = subscribe to nothing). Returns the
+   * masked view. */
+  updateEventSinks(
+    input: UpdateEventSinksInput,
+    signal?: AbortSignal,
+  ): Promise<EventSinksView> {
+    return this.request<EventSinksView>("/settings/event-sinks", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
   }
 
   // --- Admin: Tailnet remote access (ADR-0043, tailscale/01) -------------

@@ -132,6 +132,120 @@ func wireCases() []wireCase {
 			golden: `{"outcome":"matched","data":"V0VCVlRUCg==","format":"vtt",` +
 				`"contentType":"text/vtt","detail":"7 bytes"}`,
 		},
+		{
+			name:   "EventEntity",
+			value:  EventEntity{ID: "lib-1", Name: "Movies", Kind: "movie"},
+			golden: `{"id":"lib-1","name":"Movies","kind":"movie"}`,
+		},
+		{
+			name:   "EventActor",
+			value:  EventActor{LinkID: "link-1", Name: "Brandon's server"},
+			golden: `{"linkId":"link-1","name":"Brandon's server"}`,
+		},
+		{
+			name: "EventScan",
+			value: EventScan{
+				TitlesFound: 12, FilesFound: 14, Added: 2, Removed: 1, Scope: "The Wire",
+			},
+			golden: `{"titlesFound":12,"filesFound":14,"added":2,"removed":1,"scope":"The Wire"}`,
+		},
+		{
+			name: "SinkEvent",
+			value: SinkEvent{
+				ID:      "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+				Type:    EventPlaybackStarted,
+				At:      "2026-09-16T12:00:00Z",
+				Library: EventEntity{ID: "lib-1", Name: "Movies", Kind: "movie"},
+				Title:   EventEntity{ID: "title-1", Name: "Dune", Kind: "movie"},
+				Actor:   EventActor{UserID: "user-1", Name: "brandon"},
+				Device:  EventEntity{ID: "dev-1", Name: "Laptop", Kind: "macos"},
+				Scan:    &EventScan{TitlesFound: 12, FilesFound: 14},
+			},
+			golden: `{"id":"6f9619ff-8b86-d011-b42d-00c04fc964ff","type":"playback.started",` +
+				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
+				`"title":{"id":"title-1","name":"Dune","kind":"movie"},` +
+				`"actor":{"userId":"user-1","name":"brandon"},` +
+				`"device":{"id":"dev-1","name":"Laptop","kind":"macos"},` +
+				`"scan":{"titlesFound":12,"filesFound":14}}`,
+		},
+		{
+			// The shape an operator's webhook actually receives today: only the
+			// blocks the event has something to say in. A scan that found nothing
+			// still carries its scan block (EventScan is a pointer for exactly this
+			// reason) — "zero files" is an answer, not an absence.
+			name: "SinkEvent/scanCompleted",
+			value: SinkEvent{
+				ID:      "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+				Type:    EventScanCompleted,
+				At:      "2026-09-16T12:00:00Z",
+				Library: EventEntity{ID: "lib-1", Name: "Movies", Kind: "movie"},
+				Scan:    &EventScan{},
+			},
+			golden: `{"id":"1b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"scan.completed",` +
+				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-1","name":"Movies","kind":"movie"},` +
+				`"scan":{"titlesFound":0,"filesFound":0}}`,
+		},
+	}
+}
+
+// TestAllEventTypesIsComplete: the curated set is closed (ADR-0057 decision 6), so
+// AllEventTypes has to list exactly it. A type added to the constants but not the
+// list would be one nothing could subscribe to; one in the list with no constant
+// would be one nothing can produce.
+func TestAllEventTypesIsComplete(t *testing.T) {
+	declared := []string{
+		EventScanCompleted, EventEnrichCompleted,
+		EventPlaybackStarted, EventPlaybackStopped, EventLibraryChanged,
+	}
+	if !reflect.DeepEqual(AllEventTypes(), declared) {
+		t.Fatalf("AllEventTypes() = %v, want %v", AllEventTypes(), declared)
+	}
+	seen := map[string]bool{}
+	for _, ev := range AllEventTypes() {
+		if ev == "" {
+			t.Fatal("the empty string is not an event type — it is an unset field")
+		}
+		if seen[ev] {
+			t.Fatalf("event type %q listed twice", ev)
+		}
+		seen[ev] = true
+	}
+}
+
+// TestRegistryHoldsEventSinks: a sink registers into the same Registry VALUE the
+// providers do, and reads back in registration order under its own slug namespace.
+func TestRegistryHoldsEventSinks(t *testing.T) {
+	reg := NewRegistry()
+	reg.RegisterEventSink(EventSinkRegistration{
+		Descriptor: Descriptor{Slug: "webhook", Name: "Webhook"},
+		New:        func(Settings) (EventSink, error) { return nil, nil },
+	})
+
+	sinks := reg.EventSinks()
+	if len(sinks) != 1 || sinks[0].Descriptor.Slug != "webhook" {
+		t.Fatalf("EventSinks() = %+v, want the one webhook registration", sinks)
+	}
+	// Registering fills in the Extension point, so a Descriptor cannot claim to be
+	// something other than what it registered as.
+	if got := sinks[0].Descriptor.ExtensionPoint; got != ExtensionEventSink {
+		t.Fatalf("extension point = %q, want %q", got, ExtensionEventSink)
+	}
+	if _, ok := reg.EventSink("webhook"); !ok {
+		t.Fatal("EventSink(webhook) not found")
+	}
+	// Slug namespaces do not collide across Extension points: a Subtitle provider
+	// lookup must not find a sink.
+	if _, ok := reg.SubtitleProvider("webhook"); ok {
+		t.Fatal("SubtitleProvider(webhook) found an event sink")
+	}
+	// A nil Registry reads as "no Plugins" rather than panicking, which is what
+	// keeps a narrow api.Deps test from needing a composition root.
+	var nilReg *Registry
+	if got := nilReg.EventSinks(); got != nil {
+		t.Fatalf("nil registry EventSinks() = %v, want nil", got)
+	}
+	if _, ok := nilReg.EventSink("webhook"); ok {
+		t.Fatal("nil registry claimed to have a sink")
 	}
 }
 

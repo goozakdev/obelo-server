@@ -15,6 +15,7 @@ import "fmt"
 // rather than panicking.
 type Registry struct {
 	subtitleProviders []SubtitleProviderRegistration
+	eventSinks        []EventSinkRegistration
 }
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
@@ -67,4 +68,46 @@ func (r *Registry) SubtitleProvider(slug string) (SubtitleProviderRegistration, 
 		}
 	}
 	return SubtitleProviderRegistration{}, false
+}
+
+// RegisterEventSink adds one Event sink Plugin, under the same rules as a
+// Subtitle provider: registration order is preserved, and a malformed or
+// duplicate registration PANICS at the composition root rather than leaving an
+// Admin's signing secret on an ambiguous settings row.
+func (r *Registry) RegisterEventSink(reg EventSinkRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: event sink registered with no slug")
+	}
+	if reg.New == nil {
+		panic(fmt.Sprintf("pluginapi: event sink %q registered with no factory", reg.Descriptor.Slug))
+	}
+	if _, exists := r.EventSink(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: event sink %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionEventSink
+	r.eventSinks = append(r.eventSinks, reg)
+}
+
+// EventSinks returns the registered Event sinks in registration order, as a copy.
+func (r *Registry) EventSinks() []EventSinkRegistration {
+	if r == nil {
+		return nil
+	}
+	out := make([]EventSinkRegistration, len(r.eventSinks))
+	copy(out, r.eventSinks)
+	return out
+}
+
+// EventSink returns the registration for a slug, or ok=false for a slug no Plugin
+// claimed (which the sink settings API rejects as unknown).
+func (r *Registry) EventSink(slug string) (EventSinkRegistration, bool) {
+	if r == nil {
+		return EventSinkRegistration{}, false
+	}
+	for _, reg := range r.eventSinks {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return EventSinkRegistration{}, false
 }
