@@ -106,6 +106,24 @@ a handle. Every one of these is request-response and JSON-shaped, like the contr
 > `plugin=<id> host=<h> reason=<allowlist|private-address|fetch-policy|oversize|bad-url>` — and a
 > run of them disables the Plugin.
 
+> **Carried out further (plugin-system issue 12, 2026-09-17):** the **Subtitle provider** seam
+> does not need `settings_get` either, and does not get it. Its two calls travel in
+> `SubtitleSearchCall` and `SubtitleDownloadCall`, each carrying the resolved `Settings` the way
+> `SinkDeliverRequest` does, so this decision's "secrets handed over only at call time" holds for
+> a second Extension point without a third host function existing. Two of the four named here are
+> now the whole set for two of the three seams; `kv_get`/`kv_set` arrive with issue 11, which has
+> state to keep rather than a credential to borrow.
+>
+> The same slice makes the **byte cap** decision 3's "byte payloads come back whole and
+> size-capped" implies concrete for a payload coming OUT of a guest rather than into one. The host
+> narrows the caller's `maxBytes` to `Options.MaxFetchBytes` on the way in, restates it to the
+> guest, and checks the length of what comes back against it regardless — because a cap the guest
+> enforces is not one. An oversize answer is **discarded whole**, never truncated to fit: a
+> truncated subtitle is one the host would cache, record as fetched and serve, and a viewer would
+> watch a subtitle that simply stops. It is counted like an allowlist violation rather than like a
+> call failure, for the reason issue 09 gave — the call itself succeeded, so the failure counter
+> would be cleared by the very call that earned it.
+
 **6. Every call carries a deadline, and the deadline is enforced by the runtime.** The runtime
 is built with `WithCloseOnContextDone(true)` and each call gets a `context` with a deadline.
 A guest that never returns is unwound: the spike's spinning guest, given 200 ms, was stopped
