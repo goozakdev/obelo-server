@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,43 +16,119 @@ import (
 // What happens when a lookup does not produce a record, and why the two halves
 // are answered differently (see the package comment).
 
-// The port of internal/enrich's TestTMDBProviderMarksServerErrorsTransient. The
-// classification moved: it used to be enrich.ErrTransient wrapped around the
-// error this provider returned, and it is now the SDK's *FetchError, which tells
-// "the source is briefly unwell" from "the source refused this request". The
-// property under test is the same one, and it is the one that decides whether a
-// wrong API key is retried quietly forever instead of reaching the Admin.
+// The port of internal/enrich's TestTMDBProviderMarksServerErrorsTransient — the
+// same line, one layer over.
+//
+// It used to be `enrich.ErrTransient` wrapped around the error the Go provider
+// returned, and the pass read it to decide whether to retry the item or park it.
+// A guest cannot wrap a server sentinel, so the same decision now travels as the
+// OUTCOME: a status that describes the SOURCE is OutcomeUnavailable, and a status
+// that describes OUR REQUEST is still a Go error.
+//
+// The stakes went UP with the move, which is why this is worth a table. A Go error
+// from a guest is a STRIKE: internal/plugins drops the instance and counts a
+// failure, and three consecutive failures disable the plugin. So classifying a 503
+// as an error would not merely park three Titles — it would take TMDB off this
+// server entirely until an Admin pressed Re-enable.
 func TestTMDBStatusErrorsCarryTheirClassification(t *testing.T) {
-	var code int
-	host := sdktest.New(
+	ref := pluginapi.MediaRef{Kind: "movie", Title: "Inception", Year: 2010}
+
+	// A status the SOURCE owns: unavailable, with the status in the Detail, and no
+	// Go error for the host to count against the plugin.
+	for _, code := range []int{
+		http.StatusRequestTimeout,      // 408
+		http.StatusTooManyRequests,     // 429
+		http.StatusInternalServerError, // 500
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout,      // 504
+	} {
+		p := New(statusHost(code))
+		resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
+		if err != nil {
+			t.Errorf("a %d from TMDB produced a Go error (%v), which the host counts as a strike "+
+				"— three of them disable the plugin", code, err)
+			continue
+		}
+		if resp.Outcome != pluginapi.OutcomeUnavailable {
+			t.Errorf("a %d from TMDB answered %q, want unavailable (never no-match: it says "+
+				"nothing about the item)", code, resp.Outcome)
+			continue
+		}
+		if !strings.Contains(resp.Detail, strconv.Itoa(code)) {
+			t.Errorf("a %d from TMDB left the detail %q, which does not name the status an "+
+				"operator would need to read", code, resp.Detail)
+		}
+	}
+
+	// A status OUR REQUEST owns: still a Go error, so the item is parked where the
+	// Admin will see it. Asking again with the same key or the same id gets the
+	// same answer, and retrying it quietly forever is how a rejected credential
+	// stays invisible.
+	for _, code := range []int{
+		http.StatusBadRequest,   // 400
+		http.StatusUnauthorized, // 401
+		http.StatusForbidden,    // 403
+		http.StatusNotFound,     // 404
+	} {
+		p := New(statusHost(code))
+		resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
+		if err == nil {
+			t.Errorf("a %d from TMDB answered %q with no error; it must reach the operator",
+				code, resp.Outcome)
+			continue
+		}
+		var fe *pluginsdk.FetchError
+		if !errors.As(err, &fe) {
+			t.Errorf("a %d from TMDB produced %v, want a *FetchError", code, err)
+			continue
+		}
+		if fe.IsTransient() {
+			t.Errorf("a %d from TMDB is transient: it would be retried quietly forever instead "+
+				"of appearing on the attention list", code)
+		}
+	}
+}
+
+// Every call path applies the same rule, not only Lookup. The picker saying "this
+// record has no images" because TMDB was briefly down is the same mistake in a
+// place a human is watching.
+func TestEveryTMDBCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) {
+	p := New(statusHost(http.StatusServiceUnavailable))
+	ctx := context.Background()
+
+	if resp, err := p.Lookup(ctx, pluginapi.LookupRequest{
+		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"},
+	}); err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
+		t.Errorf("lookup = (%q, %v), want unavailable and no error", resp.Outcome, err)
+	}
+	if resp, err := p.Search(ctx, pluginapi.SearchRequest{Kind: "movie", Query: "Dune"}); err != nil ||
+		resp.Outcome != pluginapi.OutcomeUnavailable {
+		t.Errorf("search = (%q, %v), want unavailable and no error", resp.Outcome, err)
+	}
+	if resp, err := p.ArtworkCandidates(ctx, pluginapi.ArtworkCandidatesRequest{
+		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"}, Role: "poster",
+	}); err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
+		t.Errorf("artwork candidates = (%q, %v), want unavailable and no error", resp.Outcome, err)
+	}
+	if resp, err := p.SeriesSeasons(ctx, pluginapi.SeriesSeasonsRequest{SeriesID: "1399"}); err != nil ||
+		resp.Outcome != pluginapi.OutcomeUnavailable {
+		t.Errorf("series seasons = (%q, %v), want unavailable and no error", resp.Outcome, err)
+	}
+	if resp, err := p.SeasonEpisodes(ctx, pluginapi.SeasonEpisodesRequest{SeriesID: "1399", Season: 1}); err != nil ||
+		resp.Outcome != pluginapi.OutcomeUnavailable {
+		t.Errorf("season episodes = (%q, %v), want unavailable and no error", resp.Outcome, err)
+	}
+}
+
+// statusHost answers every fetch with one status and an empty JSON document.
+func statusHost(code int) *sdktest.Host {
+	return sdktest.New(
 		sdktest.WithSettings(settings()),
 		sdktest.WithHandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(code)
 			_, _ = w.Write([]byte(`{}`))
 		}),
 	)
-	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "movie", Title: "Inception", Year: 2010}
-
-	code = http.StatusServiceUnavailable
-	_, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
-	var fe *pluginsdk.FetchError
-	if !errors.As(err, &fe) {
-		t.Fatalf("a 503 from TMDB produced %v, want a *FetchError", err)
-	}
-	if !fe.IsTransient() {
-		t.Fatalf("a 503 from TMDB is not transient — a brief outage would park the item")
-	}
-
-	code = http.StatusUnauthorized
-	_, err = p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
-	if !errors.As(err, &fe) {
-		t.Fatalf("a 401 from TMDB produced %v, want a *FetchError", err)
-	}
-	if fe.IsTransient() {
-		t.Fatal("a 401 from TMDB is transient: a wrong API key would be retried quietly forever " +
-			"instead of appearing on the attention list")
-	}
 }
 
 // A fetch the HOST would not make is OutcomeUnavailable and NEVER OutcomeNoMatch:

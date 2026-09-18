@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -51,7 +52,11 @@ var errOutcomeNotInPoint = errors.New("enrich: outcome is not part of the Metada
 //   - unavailable          → ErrSearchUnavailable, the "this kind cannot be searched
 //     right now" the Edit-item box reports to the Admin instead
 //     of an empty result set. It is also what an UNDECLARED
-//     capability answers, without the Plugin being called
+//     capability answers, without the Plugin being called.
+//     ONE CALLER READS IT DIFFERENTLY: pluginProvider.Lookup
+//     marks it transient as well, because on a lookup it means
+//     "we could not ask" rather than "there is nothing to show"
+//     (see lookupUnavailable)
 //   - ref-invalid          → ErrExternalRefInvalid
 //   - ref-kind-mismatch    → ErrExternalRefKindMismatch. The got/want kinds that
 //     make the message specific are carried by the external-ref
@@ -269,15 +274,52 @@ type pluginProvider struct {
 // Lookup is the one call no capability gates: resolving a ref to a record is what
 // a Metadata provider IS, and a Plugin that cannot do it has no business
 // registering.
+//
+// OutcomeUnavailable ON A LOOKUP IS TRANSIENT, and that is the one place this
+// adapter reads an Outcome as more than outcomeError does. See lookupUnavailable.
 func (a pluginProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMetadata, error) {
 	resp, err := a.plugin.Lookup(ctx, pluginapi.LookupRequest{Ref: wireRefFromTitleRef(ref)})
 	if err != nil {
 		return TitleMetadata{}, err
 	}
+	if resp.Outcome == pluginapi.OutcomeUnavailable {
+		return TitleMetadata{}, lookupUnavailable(resp.Detail)
+	}
 	if err := outcomeError(resp.Outcome); err != nil {
 		return TitleMetadata{}, err
 	}
 	return metadataFromRecord(resp.Record), nil
+}
+
+// lookupUnavailable is what a Plugin answering OutcomeUnavailable to a LOOKUP
+// means, and it is deliberately not what the same Outcome means anywhere else.
+//
+// # Why one call reads it differently
+//
+// Everywhere else — search, the artwork picker, the episode chooser, a pasted
+// reference — "unavailable" is a fact about the SOURCE'S CATALOGUE that a human
+// is looking at right now: this source owns no listable set for this kind, so the
+// picker says "not now" and offers the upload path instead. There is nothing to
+// retry and nobody waiting.
+//
+// A LOOKUP is the enrichment pass, and a pass has exactly one question to answer
+// about a failed lookup (ADR-0048): did we manage to ask? A Plugin says
+// "unavailable" to a lookup when the host refused its fetch, when the fetch ran
+// out of the call's budget, or when the source answered 503 — none of which is a
+// statement about the item, and all of which ADR-0059 decision 6 says must take
+// the backoff rather than park the Title. Without this, a guest that answered
+// honestly would settle a perfectly matchable movie as 'failed' on one bad
+// afternoon, which is the exact failure ADR-0048 exists to prevent and which the
+// Built-in it replaced never had.
+//
+// The error satisfies BOTH matchers on purpose: errors.Is(err, ErrSearchUnavailable)
+// keeps every existing caller that tells this apart from a no-match working, and
+// IsTransient(err) is what recordLeafFailure and recordParentFailure read.
+func lookupUnavailable(detail string) error {
+	if strings.TrimSpace(detail) == "" {
+		return transient(ErrSearchUnavailable)
+	}
+	return transient(fmt.Errorf("%w: %s", ErrSearchUnavailable, detail))
 }
 
 // Search asks the Plugin for candidates. An undeclared CapabilitySearch is the

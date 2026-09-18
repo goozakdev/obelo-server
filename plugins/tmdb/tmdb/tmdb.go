@@ -19,21 +19,26 @@
 // # Where an error goes
 //
 // Two different things can go wrong and they are answered differently, because
-// the host does two different things with them:
+// the host does two different things with them. [pluginsdk.Unavailable] draws the
+// line and this package does not restate it:
 //
-//   - The HOST would not, or could not, make the request — a refusal, a transport
-//     failure, or a fetch that ran out of the call's budget (ADR-0059 decision 6).
-//     That is not TMDB's answer about this item at all, so it is
-//     OutcomeUnavailable with the reason in Detail, NEVER OutcomeNoMatch. No
-//     failure is counted against the plugin and the item takes ADR-0048's backoff.
-//   - TMDB answered, and the answer was a non-2xx status or a document this code
-//     cannot read. That is a Go error, exactly as the Go provider returned one, so
-//     the host keeps treating it as the transport-or-plugin failure it is.
+//   - "TMDB could not answer right now" — the host refused the fetch, the fetch
+//     ran out of the call's budget (ADR-0059 decision 6), or TMDB answered 408,
+//     429 or a 5xx. None of that is an answer about the ITEM, so it is
+//     OutcomeUnavailable with the reason in Detail, NEVER OutcomeNoMatch and never
+//     a Go error. The item takes ADR-0048's backoff and no failure is counted
+//     against the plugin — which matters more than it looks: a Go error IS a
+//     strike, and three consecutive ones disable the plugin, so a source having a
+//     bad afternoon would otherwise take the whole provider down.
+//   - "TMDB answered, and the answer is no use" — a 401, a 403, a 404, or a
+//     document this code cannot read. Those describe OUR REQUEST, asking again
+//     changes nothing, and an operator is the only one who can fix a rejected key.
+//     They stay Go errors, so the item is parked where they will see it, exactly
+//     as the Go provider left it.
 package tmdb
 
 import (
 	"context"
-	"errors"
 	"net/url"
 	"strconv"
 	"strings"
@@ -194,7 +199,7 @@ func (p *Provider) Search(ctx context.Context, req pluginapi.SearchRequest) (plu
 		} `json:"results"`
 	}
 	if err := p.getJSON(ctx, s, path, q, &out); err != nil {
-		if detail, ok := hostUnavailable(err); ok {
+		if detail, ok := pluginsdk.Unavailable(err); ok {
 			return pluginapi.SearchResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: detail}, nil
 		}
 		return pluginapi.SearchResponse{}, err
@@ -270,7 +275,7 @@ func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkC
 		Logos     []image `json:"logos"`
 	}
 	if err := p.getJSON(ctx, s, path, q, &out); err != nil {
-		if detail, ok := hostUnavailable(err); ok {
+		if detail, ok := pluginsdk.Unavailable(err); ok {
 			return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: detail}, nil
 		}
 		return pluginapi.ArtworkCandidatesResponse{}, err
@@ -326,7 +331,7 @@ func (p *Provider) SeriesSeasons(ctx context.Context, req pluginapi.SeriesSeason
 		} `json:"seasons"`
 	}
 	if err := p.getJSON(ctx, s, "/tv/"+req.SeriesID, q, &out); err != nil {
-		if detail, ok := hostUnavailable(err); ok {
+		if detail, ok := pluginsdk.Unavailable(err); ok {
 			return pluginapi.SeriesSeasonsResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: detail}, nil
 		}
 		return pluginapi.SeriesSeasonsResponse{}, err
@@ -361,7 +366,7 @@ func (p *Provider) SeasonEpisodes(ctx context.Context, req pluginapi.SeasonEpiso
 	}
 	path := "/tv/" + req.SeriesID + "/season/" + strconv.Itoa(req.Season)
 	if err := p.getJSON(ctx, s, path, q, &out); err != nil {
-		if detail, ok := hostUnavailable(err); ok {
+		if detail, ok := pluginsdk.Unavailable(err); ok {
 			return pluginapi.SeasonEpisodesResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: detail}, nil
 		}
 		return pluginapi.SeasonEpisodesResponse{}, err
@@ -742,33 +747,14 @@ func (p *Provider) getJSON(ctx context.Context, s pluginapi.Settings, path strin
 	return pluginsdk.GetJSON(ctx, p.host, s.URL+path, q, out)
 }
 
-// hostUnavailable reports whether a fetch failure is the HOST's rather than
-// TMDB's, and returns the sentence to put in Detail when it is.
-//
-// The two that qualify are a REFUSAL (the allowlist, or an address this server
-// will not talk to) and a fetch the host attempted and could not complete —
-// which includes the one ADR-0059 decision 6 exists for: "the fetch did not
-// finish before this call's deadline". Neither says anything about the item, so
-// neither may become OutcomeNoMatch, and neither is worth a Go error that the
-// host would count as a failure against this plugin.
-//
-// A non-2xx status and an unreadable document are NOT here. TMDB answered; that
-// is the source's business and it travels as the Go error the port preserves.
-func hostUnavailable(err error) (string, bool) {
-	var fe *pluginsdk.FetchError
-	if !errors.As(err, &fe) {
-		return "", false
-	}
-	if fe.IsRefusal() || fe.Transport != "" {
-		return fe.Error(), true
-	}
-	return "", false
-}
-
 // lookupFailure turns a fetch failure into either the unavailable answer or the
 // Go error, per the package comment.
+//
+// The CLASSIFICATION is [pluginsdk.Unavailable]'s and not this plugin's: every
+// metadata provider needs exactly this rule and none of them should own a copy of
+// it, least of all seven copies that could disagree about what a 503 means.
 func lookupFailure(err error) (pluginapi.LookupResponse, error) {
-	if detail, ok := hostUnavailable(err); ok {
+	if detail, ok := pluginsdk.Unavailable(err); ok {
 		return pluginapi.LookupResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: detail}, nil
 	}
 	return pluginapi.LookupResponse{}, err
