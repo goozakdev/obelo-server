@@ -295,9 +295,28 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 }
 
 // Catalog is the enrichment domain's view of the registered Metadata provider
-// Plugins: the ordered Descriptors, plus the registry they came from so the
-// builder can construct one. It is a plain value — copying it is free and two
-// Catalogs never see each other's Plugins.
+// Plugins: the ordered Descriptors, read from the registry they came from. It is a
+// plain value — copying it is free and two Catalogs never see each other's
+// Plugins.
+//
+// It holds the REGISTRY AND NOTHING ELSE, and that is the whole of
+// .scratch/plugin-system issue 19. It used to copy the Descriptor list into a
+// slice at construction, which made every catalog read answer a question about the
+// Plugins this server had AT BOOT: a Metadata provider installed from the Plugins
+// screen was keyable on the settings screen (those handlers derive a fresh Catalog
+// per request) and yet could not lead a Library, could not be toggled per Library
+// and was never composed into a chain until a restart, because the enrichment
+// Manager held one Catalog for the life of the process. Issue 10 made
+// pluginapi.Registry copy-on-write behind an atomic pointer precisely so that
+// every reader could hold the same pointer and still see a whole new set of
+// Plugins the instant one is installed; deriving the entries on each read is how
+// this reader takes that up. Registry.MetadataProviders returns an immutable copy,
+// so the derivation is race-free and a reader can never observe a half-built
+// catalog.
+//
+// The GlobalEnrichment and providerSnapshot values that EMBED a Catalog follow for
+// free: they hold this same value, with this same pointer, so a swap reaches them
+// without anyone having to remember to rebuild them.
 //
 // A zero Catalog (and one built from a nil Registry) is an empty catalog, which
 // reads as "this server has no Metadata providers": every list is empty, every
@@ -306,38 +325,49 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 // wires no Plugins degrades instead of panicking.
 type Catalog struct {
 	registry *pluginapi.Registry
-	entries  []pluginapi.Descriptor
 }
 
 // NewCatalog derives the enrichment catalog from the Plugin registry the
 // composition root built. Registration order is preserved, because it is the
-// catalog order.
+// catalog order — and it is preserved on every read, not captured here: see the
+// type's comment.
 func NewCatalog(reg *pluginapi.Registry) Catalog {
-	regs := reg.MetadataProviders()
-	entries := make([]pluginapi.Descriptor, 0, len(regs))
-	for _, r := range regs {
-		entries = append(entries, r.Descriptor)
-	}
-	return Catalog{registry: reg, entries: entries}
+	return Catalog{registry: reg}
 }
 
-// Entries returns the registered Metadata providers' Descriptors in catalog order
-// (a copy of the ordering; a Descriptor is an immutable value).
-func (c Catalog) Entries() []pluginapi.Descriptor {
-	out := make([]pluginapi.Descriptor, len(c.entries))
-	copy(out, c.entries)
+// entries is every catalog read's entry point: the registered Metadata providers'
+// Descriptors, in registration order, AS OF THIS CALL. It is deliberately not a
+// field — see the type comment — and it is cheap: Registry.MetadataProviders reads
+// one atomic pointer and copies a slice whose length is the number of Plugins this
+// server has.
+//
+// Callers that need several derivations to agree with each other read it ONCE into
+// a local and range that, rather than calling it per loop.
+func (c Catalog) entries() []pluginapi.Descriptor {
+	regs := c.registry.MetadataProviders()
+	out := make([]pluginapi.Descriptor, 0, len(regs))
+	for _, r := range regs {
+		out = append(out, r.Descriptor)
+	}
 	return out
 }
 
+// Entries returns the registered Metadata providers' Descriptors in catalog order
+// (a fresh slice; a Descriptor is an immutable value).
+func (c Catalog) Entries() []pluginapi.Descriptor {
+	return c.entries()
+}
+
 // Entry returns the Descriptor for a slug, or ok=false for a slug no Plugin
-// claimed (the API rejects an unknown slug as PROVIDER_UNKNOWN).
+// claimed (the API rejects an unknown slug as PROVIDER_UNKNOWN). It asks the
+// registry for the one registration rather than deriving the whole list, because
+// it is called per slug inside loops.
 func (c Catalog) Entry(slug string) (pluginapi.Descriptor, bool) {
-	for _, e := range c.entries {
-		if e.Slug == slug {
-			return e, true
-		}
+	reg, ok := c.registry.MetadataProvider(slug)
+	if !ok {
+		return pluginapi.Descriptor{}, false
 	}
-	return pluginapi.Descriptor{}, false
+	return reg.Descriptor, true
 }
 
 // FullProvidersForKind returns the Full providers that serve the given coarse
@@ -348,7 +378,7 @@ func (c Catalog) Entry(slug string) (pluginapi.Descriptor, bool) {
 // providers are never returned; they can only ever be Supplements.
 func (c Catalog) FullProvidersForKind(kind string) []pluginapi.Descriptor {
 	var out []pluginapi.Descriptor
-	for _, e := range c.entries {
+	for _, e := range c.entries() {
 		if e.Class == ClassFull && e.Serves(kind) {
 			out = append(out, e)
 		}
@@ -366,7 +396,7 @@ func (c Catalog) FullProvidersForKind(kind string) []pluginapi.Descriptor {
 // per-provider toggle) before presenting the list.
 func (c Catalog) SupplementProvidersForKind(kind string) []pluginapi.Descriptor {
 	var out []pluginapi.Descriptor
-	for _, e := range c.entries {
+	for _, e := range c.entries() {
 		if e.RequiresKey && e.Serves(kind) {
 			out = append(out, e)
 		}
@@ -381,7 +411,7 @@ func (c Catalog) SupplementProvidersForKind(kind string) []pluginapi.Descriptor 
 // music. It is the FIRST authoritative-role Full provider registered for the kind,
 // so the catalog order is the single source of truth.
 func (c Catalog) DefaultAuthoritativeForKind(kind string) string {
-	for _, e := range c.entries {
+	for _, e := range c.entries() {
 		if e.Class == ClassFull && e.Role == RoleAuthoritative && e.Serves(kind) {
 			return e.Slug
 		}
@@ -430,8 +460,9 @@ func (c Catalog) ProviderStatesFromRows(rows []store.MetadataProviderRow) map[st
 	for _, r := range rows {
 		byslug[r.Slug] = r
 	}
-	out := make(map[string]ProviderState, len(c.entries))
-	for _, e := range c.entries {
+	entries := c.entries()
+	out := make(map[string]ProviderState, len(entries))
+	for _, e := range entries {
 		r, ok := byslug[e.Slug]
 		out[e.Slug] = ProviderState{
 			Enabled: ok && r.Enabled,
@@ -468,9 +499,20 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	for _, r := range rows {
 		byslug[r.Slug] = r
 	}
+	// ONE read of the catalog for the whole derivation. The entries come from the
+	// live registry (see Catalog), so a Plugin could in principle be installed or
+	// uninstalled between two reads inside this function and leave the named fields
+	// and the open maps describing different sets of Plugins. Reading once removes
+	// the question rather than answering it, and it is also why the three closures
+	// below look a Descriptor up in a map instead of asking the registry per slug.
+	entries := c.entries()
+	descs := make(map[string]pluginapi.Descriptor, len(entries))
+	for _, e := range entries {
+		descs[e.Slug] = e
+	}
 	// baseURL returns the row's override or the Descriptor default for a slug.
 	baseURL := func(slug string) string {
-		e, _ := c.Entry(slug)
+		e := descs[slug]
 		if r, ok := byslug[slug]; ok && r.BaseURL != "" {
 			return r.BaseURL
 		}
@@ -479,7 +521,7 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	// imageBaseURL returns the row's image-host override or the Descriptor default,
 	// for the sources that serve artwork from a distinct host (today only TMDB).
 	imageBaseURL := func(slug string) string {
-		e, _ := c.Entry(slug)
+		e := descs[slug]
 		if r, ok := byslug[slug]; ok && r.ImageBaseURL != "" {
 			return r.ImageBaseURL
 		}
@@ -492,7 +534,7 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		if !ok || !r.Enabled {
 			return false
 		}
-		e, _ := c.Entry(slug)
+		e := descs[slug]
 		if e.RequiresKey && r.APIKey == "" {
 			return false
 		}
@@ -538,7 +580,7 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	// this binary was not written around — from Phase 2, every Installed one — has
 	// nowhere else to put a key, and without one it could be registered, keyed and
 	// pointed at by a Library's policy and still be built unconfigured.
-	for _, e := range c.entries {
+	for _, e := range entries {
 		if hasNamedKeyField(e.Slug) || !active(e.Slug) {
 			continue
 		}
@@ -561,7 +603,7 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	// because the absence of an entry means "infer it from the key" and a
 	// switched-off keyless Plugin must say so rather than fall through to a rule
 	// that cannot see it.
-	for _, e := range c.entries {
+	for _, e := range entries {
 		if hasNamedKeyField(e.Slug) {
 			continue
 		}

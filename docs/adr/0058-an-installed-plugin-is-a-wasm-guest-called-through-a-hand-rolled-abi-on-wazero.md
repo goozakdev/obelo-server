@@ -227,6 +227,15 @@ half-loaded and never discovers the mismatch mid-enrichment.
 > provider, subtitle and sink Managers Reload and only then is the old `Set` closed. Rebuild-and-swap
 > rather than a delta, so the state after an install is the state a reboot would have produced.
 >
+> **Amended (plugin-system issue 19, 2026-09-17):** "every reader picks the new value up on its next
+> read" was true of the subtitle builder, the sink Manager and the settings handlers, and NOT of the
+> enrichment catalog, which copied the Metadata provider Descriptors into a slice at construction
+> and was held for the life of the process by `enrich.Manager`. A provider installed from the
+> Plugins screen was therefore keyable at once and could not lead a Library, be forced on or off per
+> Library, or be composed into a chain until a restart. `enrich.Catalog` now holds the registry
+> pointer and nothing else, deriving its entries on every read, so the sentence above is true of
+> every reader named in it.
+>
 > One rule the ADR does not have, added here and worth knowing. `safefetch` deliberately checks
 > redirect targets and **never** the initial request, because an operator pointing a source at a
 > mirror on their own LAN is the point of this product. The URL-install path does check the first

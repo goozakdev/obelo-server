@@ -373,7 +373,7 @@ func (c ProviderConfig) musicImageEnabled() bool {
 // never turns the video kinds on by itself — that stays the authoritative's job.
 func (cat Catalog) videoSupplements(cfg ProviderConfig, authoritative string) []MetadataProvider {
 	var out []MetadataProvider
-	for _, e := range cat.entries {
+	for _, e := range cat.entries() {
 		if e.Slug == authoritative || !e.Serves(KindVideo) {
 			continue
 		}

@@ -31,7 +31,11 @@ type GlobalEnrichment struct {
 	// Catalog is the Metadata provider Plugins this server was composed with — the
 	// value the resolver validates an Authoritative-provider pointer against, so
 	// "may this Library lead with that source" is a registration fact and a Built-in
-	// is not special (ADR-0057 decision 4).
+	// is not special (ADR-0057 decision 4). It is a registry pointer, not a copied
+	// list, so this embedded value follows an install or uninstall without the
+	// Manager rebuilding it (.scratch/plugin-system issue 19): the moment a Plugin
+	// is uninstalled, resolveAuthoritative stops finding its Descriptor and the
+	// Library falls back to the kind's default lead.
 	Catalog   Catalog
 	Config    ProviderConfig
 	Providers map[string]ProviderState
