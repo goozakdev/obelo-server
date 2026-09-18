@@ -163,7 +163,7 @@ A Metadata provider that supplies complete descriptive records — titles, overv
 _Avoid_: Full source (collides with Artwork source).
 
 **Artwork-only provider**:
-A Metadata provider that supplies only images, so it can never lead — only ever act as a Supplement (fanart.tv, Cover Art Archive, TheAudioDB).
+A Metadata provider that supplies only images, so it can never lead — only ever act as a Supplement (fanart.tv, TheAudioDB). Cover Art Archive is not one: it is the cover-art host the MusicBrainz provider reads, not a provider of its own.
 _Avoid_: Art source, Image provider.
 
 **Authoritative provider**:
@@ -376,12 +376,16 @@ One of the closed set of seams a Plugin may implement: Metadata provider, Subtit
 _Avoid_: Hook (the Broker's word), Slot (a transcode slot is something else), Interface (the Go word for the seam, not the domain concept).
 
 **Built-in**:
-A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; the eight metadata providers and OpenSubtitles are Built-ins. That the Built-ins go first is what proves the contract honest.
+A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; OpenSubtitles and the Webhook sink are Built-ins. The shipped metadata providers were Built-ins first, which is what proved the contract honest, and are now Bundled plugins.
 _Avoid_: Core provider, Native plugin, Bundled plugin.
 
 **Installed plugin**:
 A Plugin an Admin added to a running server as a module and a manifest, without a rebuild. The module is WebAssembly, run in a wazero sandbox that grants it no filesystem, no sockets and no processes, and reached through a hand-rolled JSON ABI ([ADR-0058](./docs/adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)). It reaches the network only through what the host grants it, and a failing one is recorded and disabled, never allowed to stop a boot. It lives in its own directory under the data directory, named by its Manifest's id, holding the module and that manifest; the id is also the key its settings row is stored under, so a Plugin may not claim an id another Plugin on this server already has.
 _Avoid_: Third-party plugin (the maintainer writes the first one), External plugin (says where it came from, not what it is), Module (the file format).
+
+**Bundled plugin**:
+An Installed plugin the server shipped with, placed on the server at first boot exactly as if an Admin had uploaded it, and shown to the Admin as having come with the server rather than from them. Otherwise indistinguishable from any other Installed plugin: same sandbox, same contract, same lifecycle.
+_Avoid_: Built-in (that is compiled-in code), Default plugin (says nothing about origin), Pre-installed (a mechanism, not a kind).
 
 **Manifest**:
 The JSON document an Installed plugin's author ships beside the module: its id, name, version, the contract major it was built against, what it provides, the hosts it may reach, and what settings it needs. It is the Installed half of the self-description a Built-in writes in Go, and it is a **claim**, never an authority — the host checks the contract major, refuses an id another Plugin holds, and enforces the host allowlist itself, from the file, on every fetch. A manifest the server cannot read, or one naming a contract major it does not speak, is refused with a message naming which side to upgrade, and the server still starts.

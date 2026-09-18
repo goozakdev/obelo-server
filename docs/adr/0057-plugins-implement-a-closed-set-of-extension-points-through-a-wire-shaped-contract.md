@@ -47,6 +47,14 @@ registration, no `init()`), registries become values the builder consumes, and t
 image host or MusicBrainz's release-group identity, that is discovered while the contract can
 still change freely.
 
+> **Carried out, then superseded for one Extension point (bundled-plugins, 2026-09-18):** the
+> Built-ins went first and the contract held. [ADR-0059](./0059-the-shipped-metadata-providers-are-bundled-plugins.md)
+> then takes the seven shipped metadata providers *through* the door ADR-0058 built: they leave
+> the binary and ship as **Bundled plugins** — Installed plugins the server carries with it —
+> and Cover Art Archive folds into the MusicBrainz plugin as its second URL. OpenSubtitles and
+> the Webhook sink remain the Built-ins, and "the `internal/api` black-box suites must pass
+> unmodified" remains the proof standard for that conversion as it was for this one.
+
 **6. Event sinks see a curated set, best-effort, idempotent by id.** A translator derives
 five terminal events (`scan.completed`, `enrich.completed`, `playback.started`,
 `playback.stopped`, `library.changed`) from the Broker's UI snapshots; the snapshots
