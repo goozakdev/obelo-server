@@ -39,6 +39,9 @@ func TestEveryBundledModuleIsPresent(t *testing.T) {
 func shipped() []string {
 	return []string{
 		"tmdb",
+		"omdb",
+		"thetvdb",
+		"anidb",
 	}
 }
 
@@ -231,9 +234,9 @@ func TestAssertReplacesAnOlderBundledCopy(t *testing.T) {
 	if row.Version != shippedManifest.Version {
 		t.Errorf("the row still says %q, want %q", row.Version, shippedManifest.Version)
 	}
-	if st.inserts != 0 {
+	if st.insertsOf["tmdb"] != 0 {
 		t.Errorf("a replace inserted a row (%d); the id is the same, so the settings row, the "+
-			"per-Library overrides and the item pins must all survive", st.inserts)
+			"per-Library overrides and the item pins must all survive", st.insertsOf["tmdb"])
 	}
 }
 
@@ -254,8 +257,9 @@ func TestAssertLeavesAnAdminsOwnPluginAlone(t *testing.T) {
 	if got := readFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile)); got != "the admin's module" {
 		t.Error("an admin's own plugin was overwritten by the shipped one; theirs wins, whatever the version")
 	}
-	if st.updates != 0 || st.inserts != 0 {
-		t.Errorf("an admin's row was written to (%d inserts, %d updates)", st.inserts, st.updates)
+	if st.updatesOf["tmdb"] != 0 || st.insertsOf["tmdb"] != 0 {
+		t.Errorf("an admin's row was written to (%d inserts, %d updates)",
+			st.insertsOf["tmdb"], st.updatesOf["tmdb"])
 	}
 }
 
@@ -285,8 +289,8 @@ func TestAssertSkipsADeclinedPlugin(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, plugins.DirName, "tmdb")); err == nil {
 		t.Fatal("a declined plugin was reinstalled on boot, so uninstall means 'until you restart'")
 	}
-	if st.inserts != 0 {
-		t.Errorf("a declined plugin got a row (%d inserts)", st.inserts)
+	if st.insertsOf["tmdb"] != 0 {
+		t.Errorf("a declined plugin got a row (%d inserts)", st.insertsOf["tmdb"])
 	}
 
 	// Clearing the mark — which is what "reinstall the shipped version" does —
@@ -332,10 +336,24 @@ type assertStore struct {
 	declined map[string]bool
 	inserts  int
 	updates  int
+
+	// PER ID as well as in total, because AssertAll writes a row for every shipped
+	// plugin this server carries and a test about ONE of them must not count the
+	// others. The totals were enough while TMDB was the only Bundled plugin
+	// (.scratch/bundled-plugins issue 04); they stopped being enough the moment a
+	// second id shipped, and they would go on being wrong as ids five, six and
+	// seven arrive.
+	insertsOf map[string]int
+	updatesOf map[string]int
 }
 
 func newAssertStore() *assertStore {
-	return &assertStore{rows: map[string]store.PluginRow{}, declined: map[string]bool{}}
+	return &assertStore{
+		rows:      map[string]store.PluginRow{},
+		declined:  map[string]bool{},
+		insertsOf: map[string]int{},
+		updatesOf: map[string]int{},
+	}
 }
 
 func (s *assertStore) Plugins() ([]store.PluginRow, error) {
@@ -348,6 +366,7 @@ func (s *assertStore) Plugins() ([]store.PluginRow, error) {
 
 func (s *assertStore) InsertPlugin(p store.PluginInsert) error {
 	s.inserts++
+	s.insertsOf[p.ID]++
 	s.rows[p.ID] = store.PluginRow{
 		ID: p.ID, Name: p.Name, Version: p.Version, APIVersion: p.APIVersion,
 		Provides: p.Provides, Enabled: true, Source: p.Source, Origin: p.Origin,
@@ -358,6 +377,7 @@ func (s *assertStore) InsertPlugin(p store.PluginInsert) error {
 
 func (s *assertStore) UpdatePluginManifest(p store.PluginInsert) error {
 	s.updates++
+	s.updatesOf[p.ID]++
 	row := s.rows[p.ID]
 	row.Name, row.Version, row.APIVersion, row.Provides = p.Name, p.Version, p.APIVersion, p.Provides
 	s.rows[p.ID] = row

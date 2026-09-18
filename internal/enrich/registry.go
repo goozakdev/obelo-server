@@ -83,9 +83,6 @@ const (
 // sets no override. They mirror config's Default*BaseURL constants (config keeps
 // its own for env defaulting; the Descriptors are the runtime catalog).
 const (
-	registryOMDbBaseURL        = "https://www.omdbapi.com"
-	registryTheTVDBBaseURL     = "https://api4.thetvdb.com/v4"
-	registryAniDBBaseURL       = "http://api.anidb.net:9001/httpapi"
 	registryMusicBrainzBaseURL = "https://musicbrainz.org/ws/2"
 	registryCoverArtBaseURL    = "https://coverartarchive.org"
 	registryFanartTVBaseURL    = "https://webservice.fanart.tv/v3"
@@ -140,77 +137,16 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 		//
 		// Its Descriptor — the name, the capabilities, the default URLs, the copy and
 		// the connection probe — is now plugins/tmdb/manifest.json, word for word.
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugOMDb,
-				Name:        "OMDb API",
-				Kinds:       []string{KindVideo},
-				Role:        RoleSupplement,
-				Class:       ClassFull,
-				RequiresKey: true,
-				// A fill-only supplement owns no candidate list and no listable image set
-				// (ADR-0019), so it declares neither capability and is never asked for one.
-				DefaultURL:  registryOMDbBaseURL,
-				Description: "Fills a movie's plot, content rating, and genres from the Open Movie Database. Fill-only supplement; requires an API key.",
-				DocsURL:     "https://www.omdbapi.com/apikey.aspx",
-				Probe:       &pluginapi.MediaRef{Kind: "movie", Title: "Inception", Year: 2010},
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewOMDbProvider(s.Secret, s.URL)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugTheTVDB,
-				Name:        "TheTVDB",
-				Kinds:       []string{KindVideo},
-				Role:        RoleSupplement,
-				Class:       ClassFull,
-				RequiresKey: true,
-				DefaultURL:  registryTheTVDBBaseURL,
-				Description: "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
-				DocsURL:     "https://thetvdb.com/api-information",
-				Probe:       &pluginapi.MediaRef{Kind: "show", Title: "Breaking Bad"},
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewTheTVDBProvider(s.Secret, s.URL)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:  SlugAniDB,
-				Name:  "AniDB",
-				Kinds: []string{KindVideo},
-				// A Full, authoritative-capable anime source. It is NOT the global default
-				// authoritative (TMDB, registered first, is) — AniDB ships globally DISABLED
-				// (no seed row) so it touches no Library until one explicitly points its
-				// Authoritative provider at it (ADR-0027). RequiresKey: the AniDB HTTP API
-				// needs a registered client name, so it is selectable only once configured.
-				Role:        RoleAuthoritative,
-				Class:       ClassFull,
-				RequiresKey: true,
-				// It declares search even though its HTTP API offers none: the declaration
-				// says "ask me and I will answer", and AniDB's answer is an EMPTY candidate
-				// list, which the Edit-item box renders as "no results" rather than as the
-				// "search unavailable" an undeclared capability means. Those are different
-				// sentences and an anime Library leading with AniDB sees the right one.
-				Capabilities: []pluginapi.Capability{
-					pluginapi.CapabilitySearch,
-					pluginapi.CapabilityArtworkCandidates,
-				},
-				DefaultURL:  registryAniDBBaseURL,
-				Description: "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
-				DocsURL:     "https://wiki.anidb.net/HTTP_API_Definition",
-				// AniDB resolves BY anime id and offers no name search, which is precisely
-				// why a probe is the author's to declare rather than the host's to guess: a
-				// well-known aid (1) answers either a record or an unknown-aid no-match, and
-				// both prove the host answered and the client name was accepted.
-				Probe: &pluginapi.MediaRef{Kind: "show", Title: "Cowboy Bebop", AniDBID: "1"},
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewAniDBProvider(s.Secret, s.URL, s.Language)), nil
-			},
-		},
+		// OMDb, TheTVDB AND AniDB ARE NOT HERE ANY MORE EITHER, for the same reason
+		// and by the same route (.scratch/bundled-plugins: issue 05). Each is a
+		// WebAssembly module built from plugins/<id>/, and its Descriptor — the name,
+		// the capabilities, the default URL, the copy and the connection probe — is
+		// that module's manifest.json, word for word.
+		//
+		// The order they register in is internal/bundled's (tmdb, omdb, thetvdb,
+		// anidb, …) and not this file's, which is what keeps the video chain composing
+		// OMDb and TheTVDB behind TMDB exactly as it did, and keeps AniDB a Full video
+		// candidate that leads nothing until a Library points at it (ADR-0027).
 		{
 			Descriptor: pluginapi.Descriptor{
 				Slug:        SlugMusicBrainz,

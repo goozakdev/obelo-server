@@ -1,0 +1,28 @@
+{
+  "id": "thetvdb",
+  "name": "TheTVDB",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
+  "docsUrl": "https://thetvdb.com/api-information",
+  "provides": [
+    {
+      "kind": "metadata-provider",
+      "kinds": ["video"],
+      "role": "supplement",
+      "class": "full",
+      "requiresSecret": true,
+      "probe": {
+        "kind": "show",
+        "title": "Breaking Bad"
+      }
+    }
+  ],
+  "network": {
+    "hosts": ["api4.thetvdb.com"]
+  },
+  "settings": {
+    "requiresSecret": true,
+    "defaultUrl": "https://api4.thetvdb.com/v4"
+  }
+}

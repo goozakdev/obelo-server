@@ -1,0 +1,30 @@
+{
+  "id": "anidb",
+  "name": "AniDB",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
+  "docsUrl": "https://wiki.anidb.net/HTTP_API_Definition",
+  "provides": [
+    {
+      "kind": "metadata-provider",
+      "kinds": ["video"],
+      "role": "authoritative",
+      "class": "full",
+      "capabilities": ["search", "artwork-candidates"],
+      "requiresSecret": true,
+      "probe": {
+        "kind": "show",
+        "title": "Cowboy Bebop",
+        "anidbId": "1"
+      }
+    }
+  ],
+  "network": {
+    "hosts": ["api.anidb.net"]
+  },
+  "settings": {
+    "requiresSecret": true,
+    "defaultUrl": "http://api.anidb.net:9001/httpapi"
+  }
+}
