@@ -6,6 +6,8 @@ import AdminDevicesScreen from "../admin/AdminDevicesScreen";
 import AdminUsersScreen from "../admin/AdminUsersScreen";
 import AdminProvidersScreen from "../admin/AdminProvidersScreen";
 import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen";
+import AdminEventSinksScreen from "../admin/AdminEventSinksScreen";
+import AdminPluginsScreen from "../admin/AdminPluginsScreen";
 import AdminTranscodingScreen from "../admin/AdminTranscodingScreen";
 import AdminRemoteAccessScreen from "../admin/AdminRemoteAccessScreen";
 import AdminLinkedServersScreen from "../admin/AdminLinkedServersScreen";
@@ -22,6 +24,9 @@ import { useOptionalFeature } from "../serverInfoContext";
 //   /admin/devices   the signed-in user's devices, with revoke
 //   /admin/users     manage Users — list + create Member + delete
 //                    (access-control-admin-ui issue 01)
+//   /admin/plugins   install / enable / disable / uninstall an Installed plugin
+//                    (ADR-0058, plugin-system/10). What a plugin DOES is on the
+//                    screen for its Extension point, not here.
 //   /admin/remote-access  the Tailnet node's lifecycle (ADR-0043) — gated on the
 //                    handshake's `tailscale` feature flag, so a build without it
 //                    has neither the tab nor the route
@@ -97,6 +102,20 @@ export default function AdminScreen() {
               Subtitle Providers
             </NavLink>
             <NavLink
+              to="/admin/event-sinks"
+              className="admin-tab"
+              data-testid="admin-tab-event-sinks"
+            >
+              Event Sinks
+            </NavLink>
+            <NavLink
+              to="/admin/plugins"
+              className="admin-tab"
+              data-testid="admin-tab-plugins"
+            >
+              Plugins
+            </NavLink>
+            <NavLink
               to="/admin/transcoding"
               className="admin-tab"
               data-testid="admin-tab-transcoding"
@@ -146,6 +165,16 @@ export default function AdminScreen() {
                 path="subtitles"
                 element={<AdminSubtitleProvidersScreen />}
               />
+              {/* Event sinks (ADR-0057 decision 6): the outbound half of the
+                  Plugin system — where an Admin points a webhook at their own
+                  automation and picks which events it hears about. */}
+              <Route path="event-sinks" element={<AdminEventSinksScreen />} />
+              {/* Plugins (ADR-0058): getting CODE onto a running server, and
+                  nothing else. It sits AFTER the three Extension-point screens
+                  because that is the order an Admin meets them in — a plugin is
+                  configured on the screen for what it provides, exactly as a
+                  Built-in is, and this tab is only how it got here. */}
+              <Route path="plugins" element={<AdminPluginsScreen />} />
               <Route path="transcoding" element={<AdminTranscodingScreen />} />
               {remoteAccess && (
                 <Route

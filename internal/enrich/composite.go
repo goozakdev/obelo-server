@@ -108,6 +108,29 @@ func (c CompositeProvider) AlbumTracklist(ctx context.Context, req TracklistRequ
 	return lister.AlbumTracklist(ctx, req)
 }
 
+// ParseExternalRef routes a pasted id-or-URL to the source that owns that kind's
+// id namespace, exactly as Lookup routes a record: music kinds to Music, video
+// kinds to Video. A sub-provider that cannot read a paste — it did not declare the
+// external-ref capability, or there is no provider for the kind — answers
+// ErrSearchUnavailable, which is the HOST's cue to read the paste itself for the
+// namespaces it keeps columns for (see Service.externalRef). That is why this
+// dispatches rather than short-circuiting video: the day a video Plugin declares
+// external-ref, its URLs work here with no change.
+func (c CompositeProvider) ParseExternalRef(ctx context.Context, kind, pasted string) (ExternalRef, error) {
+	var src MetadataProvider
+	switch kind {
+	case "movie", "show", "season", "episode":
+		src = c.Video
+	case "artist", "album", "track":
+		src = c.Music
+	}
+	parser, ok := src.(ExternalRefParser)
+	if src == nil || !ok {
+		return ExternalRef{}, ErrSearchUnavailable
+	}
+	return parser.ParseExternalRef(ctx, kind, pasted)
+}
+
 // ReleaseGroupEditions forwards the optional AlbumEditionLister capability to the
 // MUSIC sub-provider, for the same reason AlbumTracklist does. A build with no
 // music provider (or one that cannot list editions) answers ErrSearchUnavailable —

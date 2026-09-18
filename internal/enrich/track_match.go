@@ -249,6 +249,28 @@ func normalizeMatchTitle(title string) string {
 	return foldMatchText(s)
 }
 
+// acceptsTitle is the acceptance test a search hit must pass before it becomes a
+// record: the candidate's title and the local one must be the same title under
+// normalizeMatchTitle (case, diacritics, punctuation, bracket padding and the
+// trailing decorations taggers and MusicBrainz disagree about all folded).
+//
+// IT IS THE HOST'S RULE AND IT LIVES HERE, beside the one normalizer it shares
+// with the album tracklist's positional map, so there is a single implementation
+// of "are these two spellings the same title" and no source owns a copy of it.
+// It used to sit in musicbrainz.go, where the provider both applied it and
+// returned the rejection; ADR-0057 moved the judgement to the server, because a
+// source that decides its own answer is good enough is a source the server has to
+// take on faith — and the point of the Plugin contract is that it does not have
+// to. See acceptSearchHit for where it is applied and what it produces.
+//
+// A local title that normalizes to nothing — one that is punctuation only — never
+// accepts. It would otherwise be equal to every other degenerate title the source
+// holds, which is the same coin flip mapTracks refuses in rules 1 and 2.
+func acceptsTitle(local, candidate string) bool {
+	want := normalizeMatchTitle(local)
+	return want != "" && want == normalizeMatchTitle(candidate)
+}
+
 // creditRe matches a trailing featured-artist credit ("Song feat. X", "Song ft X",
 // "Song featuring X"). Anchored on preceding whitespace so a title whose own words
 // merely start with those letters is untouched.

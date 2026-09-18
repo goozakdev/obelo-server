@@ -16,7 +16,8 @@ type ManagerStore interface {
 }
 
 // BuildFunc composes a SubtitleProvider from the persisted provider rows.
-// Production uses BuildProvider; a test substitutes a fake builder
+// Production uses BuilderFor(registry), which builds the enabled Subtitle provider
+// Plugin through the contract (plugin.go); a test substitutes a fake builder
 // (app.WithSubtitleProviderBuilder) so the settings→rebuild→fetch loop runs with
 // zero network.
 type BuildFunc func(rows []store.SubtitleProviderRow) SubtitleProvider
@@ -37,7 +38,7 @@ type Manager struct {
 }
 
 // NewManager wires a Manager over the settings store, the running Service, and the
-// composition function (BuildProvider in production, a fake in tests).
+// composition function (BuilderFor(registry) in production, a fake in tests).
 func NewManager(store ManagerStore, svc *Service, build BuildFunc) *Manager {
 	return &Manager{store: store, svc: svc, build: build}
 }
@@ -57,32 +58,6 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	m.svc.SetProvider(m.build(rows))
 	return nil
-}
-
-// BuildProvider composes the active SubtitleProvider from the persisted rows: the
-// OpenSubtitles provider when its row is enabled AND (it requires a key) a key is
-// on file, otherwise the disabled nil-object provider that makes zero calls. This
-// is the one place a subtitle provider is constructed in production; the Manager
-// calls it on every Reload.
-func BuildProvider(rows []store.SubtitleProviderRow) SubtitleProvider {
-	for _, r := range rows {
-		if r.Slug != SlugOpenSubtitles {
-			continue
-		}
-		entry, ok := RegistryEntryFor(r.Slug)
-		if !ok {
-			continue
-		}
-		if !r.Enabled || (entry.RequiresKey && r.APIKey == "") {
-			continue
-		}
-		base := r.BaseURL
-		if base == "" {
-			base = entry.DefaultBaseURL
-		}
-		return NewOpenSubtitlesProvider(r.APIKey, base)
-	}
-	return disabledProvider{}
 }
 
 // SeedInput is the first-boot seed source, decoupled from config.Config (ADR-0006

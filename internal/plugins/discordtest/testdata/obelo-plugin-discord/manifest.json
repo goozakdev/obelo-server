@@ -1,0 +1,79 @@
+{
+  "id": "discord",
+  "name": "Discord",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Posts a readable line to a Discord channel when a scan or an enrichment pass finishes, when somebody presses play or stop, or when a Library changes.",
+  "docsUrl": "https://discord.com/developers/docs/resources/webhook",
+  "module": "plugin.wasm",
+  "provides": [
+    {
+      "kind": "event-sink",
+      "requiresSecret": false
+    }
+  ],
+  "network": {
+    "hosts": ["discord.com"]
+  },
+  "settings": {
+    "requiresSecret": false,
+    "defaultUrl": "https://discord.com",
+    "fields": [
+      {
+        "key": "webhook_url",
+        "type": "secret",
+        "label": "Discord webhook URL",
+        "help": "Channel Settings → Integrations → Webhooks → Copy Webhook URL. Anyone holding it can post to the channel, so it is stored as a secret and never shown again.",
+        "required": true
+      },
+      {
+        "key": "template_scan_completed",
+        "type": "string",
+        "label": "Message: scan finished",
+        "help": "Placeholders: {library} {kind} {count} {files} {scope} {at}. Leave empty to post nothing for this event.",
+        "default": "📚 Scan of **{library}** finished: {count} titles, {files} files"
+      },
+      {
+        "key": "template_enrich_completed",
+        "type": "string",
+        "label": "Message: enrichment finished",
+        "help": "Placeholders: {library} {kind} {count} (matched) {total} {files} (done) {at}.",
+        "default": "✨ Enrichment of **{library}** finished: {count} of {total} matched"
+      },
+      {
+        "key": "template_playback_started",
+        "type": "string",
+        "label": "Message: playback started",
+        "help": "Placeholders: {title} {kind} {who} {device} {at}. {who} is a User's display name, or a linked server — never a person on the other side of a Link.",
+        "default": "▶️ **{title}** — started by {who}"
+      },
+      {
+        "key": "template_playback_stopped",
+        "type": "string",
+        "label": "Message: playback stopped",
+        "help": "Placeholders: {title} {kind} {who} {device} {at}.",
+        "default": "⏹️ **{title}** — stopped by {who}"
+      },
+      {
+        "key": "template_library_changed",
+        "type": "string",
+        "label": "Message: library changed",
+        "help": "Placeholders: {library} {kind} {at}. Off by default — this one fires often.",
+        "default": ""
+      },
+      {
+        "key": "mention_role",
+        "type": "bool",
+        "label": "Mention a role",
+        "help": "Prefix every message with a role ping. Off means no message from this plugin ever pings anybody, whatever a Title happens to be called.",
+        "default": false
+      },
+      {
+        "key": "role_id",
+        "type": "string",
+        "label": "Role id",
+        "help": "The numeric id of the role to ping. Turn on Developer Mode in Discord, then right-click the role and Copy ID."
+      }
+    ]
+  }
+}

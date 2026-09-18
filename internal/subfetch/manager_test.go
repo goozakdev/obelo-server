@@ -33,31 +33,34 @@ func (s *fakeManagerStore) SetSubtitleAutoFetchLang(lang string) error {
 }
 
 func TestBuildProviderGatesOnEnabledAndKey(t *testing.T) {
+	reg := testRegistry(t, SlugOpenSubtitles, &fakePlugin{}, true)
+
 	// No rows → disabled.
-	if _, ok := BuildProvider(nil).(disabledProvider); !ok {
+	if _, ok := BuildProvider(reg, nil).(disabledProvider); !ok {
 		t.Fatalf("no rows should yield the disabled provider")
 	}
 	// Enabled but no key (RequiresKey) → disabled.
 	rows := []store.SubtitleProviderRow{{Slug: SlugOpenSubtitles, Enabled: true}}
-	if _, ok := BuildProvider(rows).(disabledProvider); !ok {
+	if _, ok := BuildProvider(reg, rows).(disabledProvider); !ok {
 		t.Fatalf("enabled-without-key should yield the disabled provider")
 	}
 	// Disabled with a key → disabled.
 	rows = []store.SubtitleProviderRow{{Slug: SlugOpenSubtitles, Enabled: false, APIKey: "k"}}
-	if _, ok := BuildProvider(rows).(disabledProvider); !ok {
+	if _, ok := BuildProvider(reg, rows).(disabledProvider); !ok {
 		t.Fatalf("disabled-with-key should yield the disabled provider")
 	}
-	// Enabled with a key → the real provider.
+	// Enabled with a key → the registered Plugin, behind the contract adapter.
 	rows = []store.SubtitleProviderRow{{Slug: SlugOpenSubtitles, Enabled: true, APIKey: "k"}}
-	if _, ok := BuildProvider(rows).(*OpenSubtitlesProvider); !ok {
-		t.Fatalf("enabled-with-key should yield the OpenSubtitles provider")
+	if _, ok := BuildProvider(reg, rows).(pluginProvider); !ok {
+		t.Fatalf("enabled-with-key should yield the registered Plugin")
 	}
 }
 
 func TestManagerReloadHotSwaps(t *testing.T) {
 	st := &fakeManagerStore{}
 	svc := NewService(&fakeStore{}, t.TempDir())
-	mgr := NewManager(st, svc, BuildProvider)
+	reg := testRegistry(t, SlugOpenSubtitles, &fakePlugin{}, true)
+	mgr := NewManager(st, svc, BuilderFor(reg))
 
 	// Initially disabled: Search yields nothing, no error.
 	if err := mgr.Reload(context.Background()); err != nil {
@@ -68,14 +71,14 @@ func TestManagerReloadHotSwaps(t *testing.T) {
 		t.Fatalf("disabled search = (%v, %v), want (nil, nil)", cands, err)
 	}
 
-	// Enable via settings + reload → the live provider swaps to the real one (which
-	// would make a call; here we only assert it is no longer the disabled provider).
+	// Enable via settings + reload → the live provider swaps to the registered
+	// Plugin, reached through the contract adapter.
 	st.rows = []store.SubtitleProviderRow{{Slug: SlugOpenSubtitles, Enabled: true, APIKey: "k"}}
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("reload after enable: %v", err)
 	}
-	if _, ok := svc.current().(*OpenSubtitlesProvider); !ok {
-		t.Fatalf("after enabling, the live provider should be OpenSubtitles, got %T", svc.current())
+	if _, ok := svc.current().(pluginProvider); !ok {
+		t.Fatalf("after enabling, the live provider should be the registered Plugin, got %T", svc.current())
 	}
 }
 

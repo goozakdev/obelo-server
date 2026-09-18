@@ -283,6 +283,54 @@ const (
 	codeProviderInvalidBaseURL  = "PROVIDER_INVALID_BASE_URL"
 	codeProviderInvalidLanguage = "PROVIDER_INVALID_LANGUAGE"
 	codeProviderInvalidSetting  = "PROVIDER_INVALID_SETTING"
+	// Installing an Installed plugin (ADR-0058, .scratch/plugin-system issue 10).
+	// FIVE codes rather than one, because they are five different things for the
+	// Admin to do next and a single PLUGIN_REFUSED would make the screen say "it
+	// did not work" five times in the same words:
+	//
+	//   codePluginInvalidManifest (422) — no manifest, not JSON, or a manifest
+	//                               claiming something a manifest may not claim.
+	//   codePluginAPIVersion (422)  — an apiVersion this server does not speak. Its
+	//                               message ALWAYS names WHICH SIDE to upgrade
+	//                               (ADR-0058 decision 8, the ADR-0055 posture).
+	//   codePluginDuplicate (409)   — the id is already claimed, by an Installed
+	//                               plugin or by a Built-in this binary ships.
+	//   codePluginInvalidModule (422) — no module, or one that will not compile or
+	//                               instantiate in this server's sandbox.
+	//   codePluginSourceRefused (422) — a pasted URL this server will not fetch a
+	//                               plugin from (not absolute http(s), unresolvable,
+	//                               resolving into this server's own network) or one
+	//                               that answered with something unusable.
+	//
+	// codePluginUnknown (404) is the lifecycle half: enable / disable / re-enable /
+	// uninstall naming a Plugin that is not installed.
+	//
+	// codePluginInvalidSettings (400) is the manifest-declared settings schema
+	// (.scratch/plugin-system issue 13): a save that did not satisfy the fields the
+	// Plugin's own manifest declared — a required one left empty, an enum value
+	// outside the declared set, an integer out of range, a URL that is not one. It
+	// is the one plugin refusal that is PER FIELD, so its details carry
+	// { fields: [ { key, message } ] } and the message restates the first of them,
+	// which is what lets the form put each sentence under the control that caused
+	// it instead of one prose line above the whole panel.
+	//
+	// codePluginSignature (422) is the pinned-publisher policy (.scratch/plugin-
+	// system issue 15): this server has publisher keys pinned and the plugin does
+	// not satisfy them. A SERVER WITH NOTHING PINNED NEVER PRODUCES IT — that is
+	// the shipped state, and in it nothing about installing changes. Its message
+	// always names the publisher the plugin CLAIMED, because "no signature at all",
+	// "a publisher nobody pinned", "a signature over other files" and "a signature
+	// that does not verify" want four different things done about them and the
+	// claimed name is what tells them apart.
+	codePluginInvalidManifest = "PLUGIN_INVALID_MANIFEST"
+	codePluginAPIVersion      = "PLUGIN_API_VERSION"
+	codePluginDuplicate       = "PLUGIN_DUPLICATE"
+	codePluginInvalidModule   = "PLUGIN_INVALID_MODULE"
+	codePluginSourceRefused   = "PLUGIN_SOURCE_REFUSED"
+	codePluginUnknown         = "PLUGIN_UNKNOWN"
+	codePluginInvalidSettings = "PLUGIN_INVALID_SETTINGS"
+	codePluginSignature       = "PLUGIN_SIGNATURE"
+
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the
 	// Library's kind — unknown, artwork-only, wrong-kind, or not yet keyed (ADR-0027).

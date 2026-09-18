@@ -16,6 +16,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/events"
+	"github.com/goozakdev/obelo-server/internal/eventsink"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
@@ -28,6 +29,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // APIPrefix is the version path prefix every route lives under.
@@ -208,6 +210,45 @@ type Deps struct {
 	// a settings save. The PUT handler calls Reload; nil leaves persistence working
 	// without the runtime swap.
 	SubtitleProviderManager *subfetch.Manager
+
+	// Plugins is the registry of Plugins this server was composed with (ADR-0057):
+	// the Built-ins the composition root registered, and later any Installed plugin.
+	// It is what the provider settings surfaces render — the static facts about a
+	// source live in its registration, never in the database — and it is a VALUE,
+	// so a test composes a server with exactly the Plugins it means. Nil in narrow
+	// unit tests reads as "no Plugins": the settings list is empty and every slug is
+	// unknown, rather than a panic.
+	Plugins *pluginapi.Registry
+
+	// EventSinks is the DB-backed Event sink settings store (Admin-scope
+	// /settings/event-sinks). *store.DB satisfies it. May be nil in narrow tests,
+	// which then read as "no sink has ever been configured".
+	EventSinks EventSinkSettingsStore
+	// EventSinkManager rebuilds + hot-swaps the live Event sinks after a settings
+	// save (ADR-0057 decision 6). The PUT handler calls Reload; nil leaves
+	// persistence working without the runtime swap.
+	EventSinkManager *eventsink.Manager
+
+	// InstalledPlugins reports the runtime state of the Installed plugins this
+	// server loaded from disk (ADR-0058): whether each is still being called, and
+	// the sentence that says why not. A Built-in has no such state — it either
+	// compiled into this binary or it is not here — so this is joined onto the
+	// settings response only for a slug the loader knows.
+	//
+	// Nil in a narrow test, and on a server with no Installed plugins, both of
+	// which read as "every Plugin on this screen is a Built-in".
+	InstalledPlugins InstalledPluginStatus
+
+	// PluginManager installs, enables, disables, re-enables and uninstalls an
+	// Installed plugin on a RUNNING server (ADR-0058, Admin-scope
+	// /settings/plugins). *plugins.Manager satisfies it.
+	//
+	// Nil in a narrow test, and the /settings/plugins routes then answer 503 with a
+	// sentence rather than a 404 that reads identically to a typo'd path. It is
+	// separate from InstalledPlugins above because they answer different questions:
+	// that one is "what is the loader's view of this slug", read by the Extension
+	// points' own settings surfaces, and this one is the lifecycle.
+	PluginManager PluginManager
 
 	// Tailnet remote access (ADR-0043, Admin-scope /settings/tailscale).
 	// TailnetSettings persists the four settings; Tailnet is the state machine the

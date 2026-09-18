@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // ADR-0050: "A search hit must pass an acceptance test before it becomes a record."
@@ -303,16 +305,28 @@ func TestTrackSearchEscapesTitlesTheParserWouldReject(t *testing.T) {
 	}
 }
 
-// --- the acceptance test -------------------------------------------------------
+// --- the acceptance test, applied by the host ----------------------------------
 
 // The regression the acceptance test exists to prevent, asserted directly: a
 // relevance query nearly always returns SOMETHING, and the top hit here is a
 // different song. Storing it would be the confident wrong overview ADR-0049 ruled is
 // worse than an empty one.
-func TestTrackSearchRejectsATopHitThatIsADifferentSong(t *testing.T) {
+//
+// THE PROVIDER NO LONGER REFUSES IT (ADR-0057). It offers the candidate and says
+// how it found it; acceptSearchHit does the refusing. Both halves are driven here
+// because only across the seam are they one answer — a provider that quietly kept
+// judging, and a host that quietly stopped, each pass one half of this test.
+func TestTheHostRejectsATopHitThatIsADifferentSong(t *testing.T) {
 	p, queries := mbSearchStub(t, "Whispering Your Name", "Whisper Your Name")
 
-	meta, err := trackLookup(t, p, "Whisper Your Name", "Harry Connick Jr.")
+	ref := TitleRef{Kind: "track", Track: "Whisper Your Name", Artist: "Harry Connick Jr."}
+	hit, err := p.Lookup(context.Background(), ref)
+	if err != nil || !hit.Matched || !hit.FromSearch || hit.Name != "Whispering Your Name" {
+		t.Fatalf("provider = %+v, err = %v — want the top hit handed back UNJUDGED, marked "+
+			"FromSearch and carrying its own title, which is what the host judges it by", hit, err)
+	}
+
+	meta, err := acceptSearchHit(ref, hit, err)
 	if !errors.Is(err, ErrMatchRejected) {
 		t.Fatalf("err = %v, want ErrMatchRejected — the top hit was %q, a different song, and "+
 			"it must not become this Track's record", err, "Whispering Your Name")
@@ -429,5 +443,82 @@ func TestARejectedSearchLeavesTheTrackUnmatchedAndUntouched(t *testing.T) {
 	// The matched sibling is undisturbed by its neighbour's rejection.
 	if sib := trackRow(t, db, "t1"); sib.EnrichmentStatus != "matched" || sib.MusicbrainzID != "rec-1" {
 		t.Errorf("sibling row = %s/%s, want matched/rec-1", sib.EnrichmentStatus, sib.MusicbrainzID)
+	}
+}
+
+// --- the judgement, in the host ------------------------------------------------
+
+// The whole point of the move, end to end: the SOURCE offers a wrong song and says
+// nothing about whether it is right, and the SERVER produces the rejection and the
+// `search-rejected` diagnosis (ADR-0057). Before the move a fake had to return
+// ErrMatchRejected to reach this row — it was reporting a judgement the server had
+// delegated to it, which is exactly what a source written by someone who never read
+// ADR-0049 would not report.
+func TestTheServerNotTheSourceProducesTheSearchRejectedReason(t *testing.T) {
+	prov := &albumTierProvider{
+		// A TRANSIENT tracklist failure, so the album tier has nothing to say and does
+		// not outrank the search's own answer in ADR-0050's reason table — which is the
+		// only arrangement under which `search-rejected` is the reason at all.
+		tracklistErr: errors.New("musicbrainz busy"),
+		searchHits:   map[string]string{"Nowhere On The Release": "rec-wrong"},
+		// The source found something and offers it, unjudged. It is a different song.
+		searchHitTitles: map[string]string{"Nowhere On The Release": "A Completely Different Song"},
+	}
+	svc, db := newAlbumFixture(t, prov, seedAlbum{
+		entityRecord: "rg-she",
+		tracks:       []seedTrack{{id: "t2", title: "Nowhere On The Release", num: 2}},
+	})
+
+	if _, err := svc.EnrichLibrary(context.Background(), "lib", ModeNew); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	got := trackRow(t, db, "t2")
+	if got.EnrichmentStatus != "unmatched" || got.EnrichmentReason != store.EnrichmentReasonSearchRejected {
+		t.Fatalf("row = %s/%s, want unmatched/%s — the server did not apply the acceptance test "+
+			"to a candidate the source declined to judge (calls: %v)",
+			got.EnrichmentStatus, got.EnrichmentReason, store.EnrichmentReasonSearchRejected,
+			prov.history())
+	}
+	if got.MusicbrainzID != "" {
+		t.Errorf("recorded %q — the refused candidate's id reached the row, so the rejection is "+
+			"leaking the record it rejected", got.MusicbrainzID)
+	}
+}
+
+// The same path accepts, so the move did not simply refuse everything: the one bit
+// that separates this row from the one above is the title the source handed over.
+func TestAnAcceptedSearchHitStillBecomesTheRecord(t *testing.T) {
+	prov := &albumTierProvider{
+		tracklistErr: errors.New("musicbrainz busy"),
+		searchHits:   map[string]string{"Nowhere On The Release": "rec-right"},
+	}
+	svc, db := newAlbumFixture(t, prov, seedAlbum{
+		entityRecord: "rg-she",
+		tracks:       []seedTrack{{id: "t2", title: "Nowhere On The Release", num: 2}},
+	})
+
+	if _, err := svc.EnrichLibrary(context.Background(), "lib", ModeNew); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+	if got := trackRow(t, db, "t2"); got.EnrichmentStatus != "matched" || got.MusicbrainzID != "rec-right" {
+		t.Fatalf("row = %s/%s, want matched/rec-right", got.EnrichmentStatus, got.MusicbrainzID)
+	}
+}
+
+// Video is NOT filtered by this phase (ADR-0057's consequence, PRD story 6): a movie
+// hit whose canonical title is not the parsed one — a re-release, a localized title,
+// a subtitle the filename omits — still becomes the record, exactly as it did before
+// acceptance moved. The rule is written by kind, so this is the guard against
+// someone later "finishing the job" by deleting the kind check.
+func TestAcceptanceDoesNotTouchVideo(t *testing.T) {
+	ref := TitleRef{Kind: "movie", Title: "Star Wars"}
+	hit := TitleMetadata{
+		Matched: true, Name: "Star Wars: Episode IV - A New Hope",
+		ExternalID: "11", Source: "tmdb", FromSearch: true,
+	}
+	meta, err := acceptSearchHit(ref, hit, nil)
+	if err != nil || meta.ExternalID != "11" {
+		t.Fatalf("meta = %+v, err = %v — a video search hit must pass through untouched; "+
+			"whether TMDB should face a title test is its own decision, not this one", meta, err)
 	}
 }

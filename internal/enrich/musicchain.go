@@ -35,6 +35,14 @@ import (
 // so the entity keeps its MusicBrainz metadata and the pass continues. The album
 // kind passes straight through to MusicBrainz untouched.
 type MusicChainProvider struct {
+	// MusicBrainz is the AUTHORITATIVE music source — MusicBrainz unless a Library
+	// repointed its Enrichment policy at another Full music provider (ADR-0027), in
+	// which case it is that one and every rule below still reads the same way: the
+	// lead owns identity, the canonical title, the candidate list, the album's
+	// tracklist and its editions, and the two artist sources only fill what it left
+	// empty. The field keeps the name the composition has always used because it
+	// names the POSITION its occupant holds, and every comment here that says
+	// "MusicBrainz" means "whatever leads".
 	MusicBrainz MetadataProvider
 	Image       MetadataProvider // preferred, MBID-keyed artist image (fanart.tv); may be nil
 	ImageBio    MetadataProvider // fallback image + real biography (TheAudioDB); may be nil
@@ -80,6 +88,20 @@ func (p *MusicChainProvider) ReleaseGroupEditions(ctx context.Context, releaseGr
 		return nil, ErrSearchUnavailable
 	}
 	return lister.ReleaseGroupEditions(ctx, releaseGroupID)
+}
+
+// ParseExternalRef forwards the optional ExternalRefParser capability to the
+// AUTHORITATIVE source only, for AlbumTracklist's reason: the id an Admin pastes
+// is the id this chain PINS, and that is MusicBrainz's namespace. A fill-only
+// artist source reading a paste would be offering an id nothing stores. A source
+// that cannot read one answers ErrSearchUnavailable, which the host takes as
+// permission to read it itself.
+func (p *MusicChainProvider) ParseExternalRef(ctx context.Context, kind, pasted string) (ExternalRef, error) {
+	parser, ok := p.MusicBrainz.(ExternalRefParser)
+	if !ok {
+		return ExternalRef{}, ErrSearchUnavailable
+	}
+	return parser.ParseExternalRef(ctx, kind, pasted)
 }
 
 // ArtworkCandidates lists the images the Edit-item picker offers for a Music role.
@@ -143,7 +165,7 @@ func (p *MusicChainProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMet
 		// recording MBID when present and otherwise by artist+name. fanart.tv is artist-
 		// only and is never consulted. Fill-only: a non-empty MusicBrainz Overview (none
 		// today) is never overwritten, and identity/canonical title are untouched.
-		if p.ImageBio != nil && meta.Overview == "" {
+		if p.ImageBio != nil && meta.Overview == "" && worthDecorating(ref, meta) {
 			tref := TitleRef{Kind: "track", MusicbrainzID: meta.ExternalID, Track: ref.Track, Artist: ref.Artist}
 			if syn, ok := p.lookup(ctx, p.ImageBio, tref, meta.ExternalID); ok && syn.Overview != "" {
 				meta.Overview = syn.Overview
@@ -176,6 +198,35 @@ func (p *MusicChainProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMet
 		}
 	}
 	return meta, nil
+}
+
+// worthDecorating reports whether a record is one the host will keep, so the chain
+// does not spend a fill-only request on an answer that is about to be discarded.
+//
+// The chain is HOST code, not a Plugin, which is what makes this legitimate:
+// nothing here judges on a source's behalf (ADR-0057 decision 3 is about the
+// source not judging itself), and the judgement is the host's one implementation —
+// acceptsTitle, the same function acceptSearchHit applies a moment later and the
+// same localTitleForAcceptance choosing which field holds the local title. It is
+// asked here as a PRECONDITION, not as a verdict: the verdict is still the
+// service's, and a record this declines is still returned to the service, which
+// rejects it and writes `search-rejected` exactly as before.
+//
+// Without it a library of hundreds of rejected tracks paid hundreds of TheAudioDB
+// requests for synopses that were thrown away with the records they decorated
+// (issue 01's third deviation). Gating on FromSearch alone would have been the
+// wrong fix — it strips the synopsis from ACCEPTED search hits too, which is a
+// real regression — and a record resolved BY ID is never judged at all, so it is
+// decorated as it always was.
+func worthDecorating(ref TitleRef, meta TitleMetadata) bool {
+	if !meta.Matched || !meta.FromSearch {
+		return true
+	}
+	local, judged := localTitleForAcceptance(ref)
+	if !judged {
+		return true
+	}
+	return acceptsTitle(local, meta.Name)
 }
 
 // lookup runs one auxiliary source, returning its result and whether it should be

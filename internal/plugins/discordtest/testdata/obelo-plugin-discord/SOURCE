@@ -1,0 +1,22 @@
+This directory is a byte-for-byte copy of the Discord reference plugin's source.
+
+Its home is a SIBLING REPOSITORY — its own git repository, its own go.mod,
+importing nothing of this module — because a plugin author's project is not
+inside this repository, and an example that lived here would quietly be allowed
+to cheat.
+
+  repository   obelo-plugin-discord
+  local path   ../obelo-plugin-discord  (relative to this repository's root)
+  remote       none — it is a local repository on the maintainer's machine
+  commit       d50722bc6249297e2218a67cf49bfc47978533eb
+               "The Discord Event sink: Obelo's reference Installed plugin"
+  taken        2026-09-17 (.scratch/plugin-system issue 14)
+
+Why the copy exists: a clean clone of the server does not have the sibling, and
+every test in internal/plugins/discordtest and internal/api/discord_plugin_test.go
+must still run. The sibling is PREFERRED when it is checked out, so that an author
+editing it sees this suite react; when it is, TestTheVendoredCopyMatchesTheSibling
+compares every file here with its original and fails on any difference.
+
+To re-vendor after changing the sibling: copy each file in
+discordtest.VendoredFiles over the copy here, and update the commit above.
