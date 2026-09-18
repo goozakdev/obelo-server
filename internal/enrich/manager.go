@@ -53,6 +53,14 @@ type Manager struct {
 	// Everything it drives — which sources a rebuild composes, which Full providers a
 	// Library may lead with, which Supplements it may toggle — is therefore a fact
 	// about THIS server's Plugins.
+	//
+	// It is held for the life of the Manager and that is CORRECT, because a Catalog
+	// is now a registry pointer rather than a copied list (.scratch/plugin-system
+	// issue 19): it answers every question against the Plugins installed at the
+	// moment of asking. Before that it was a boot-time snapshot, and holding it here
+	// is what made a Metadata provider installed from the Plugins screen keyable on
+	// the settings screen and yet unable to lead a Library, be toggled per Library,
+	// or be composed into a chain until a restart.
 	catalog Catalog
 
 	// mu serializes concurrent Reloads (e.g. two Admin saves racing) so the last
@@ -158,6 +166,17 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	m.consent = consent
 
+	// The catalog is read LIVE from the Plugin registry on every derivation below
+	// (.scratch/plugin-system issue 19), so an install or uninstall that swapped the
+	// registry is already visible here without the Manager being handed anything
+	// new. The two derivations are separate reads on purpose rather than one pinned
+	// snapshot: each is internally consistent (SettingsToProviderConfig reads the
+	// entries once into a local), the rebuild path always calls this Reload AFTER
+	// Registry.Swap and holds the plugin Manager's own mutex while it does, and a
+	// swap that landed between them is followed by its own Reload that supersedes
+	// this one. Pinning would buy nothing a second later Reload does not already buy,
+	// and would cost the property this issue was about — that the Catalog this
+	// Manager hands on to the resolver keeps following the registry.
 	cfg := m.catalog.SettingsToProviderConfig(rows, lang, fixed)
 	provider, enablement := m.build(cfg)
 	// AND consent into the global snapshot: without it, the composed provider still

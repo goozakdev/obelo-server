@@ -215,26 +215,21 @@ func TestUninstallingAnInstalledSubtitleProviderForgetsItsKeyAndBaseURL(t *testi
 // Library falls back to the kind's default lead with no error surfaced.
 func TestUninstallingALibrarysLeadHandsItBackToTheKindDefault(t *testing.T) {
 	requireFixtures(t)
-	// Placed by hand before boot, as every Installed-Metadata-provider test does:
-	// the enrichment Manager takes its catalog when it is composed, so a provider
-	// uploaded after boot is on the settings screen (that catalog is read per
-	// request) but is not yet selectable as a Library's lead until a restart. That
-	// is a pre-existing limitation of the post-boot swap, not something this issue
-	// changes — and the UNINSTALL below is still the live API verb, which is what is
-	// under test.
-	dataDir := t.TempDir()
-	lead := plugintest.MetadataProviderManifest(uninstallLeadSource, leadVideoProvides())
-	lead.Settings.DefaultURL = uninstallSourceURL
-	plugintest.Install(t, dataDir, lead)
-	supp := plugintest.MetadataProviderManifest(uninstallSuppSource, supplementVideoProvides())
-	supp.Settings.DefaultURL = uninstallSourceURL
-	plugintest.Install(t, dataDir, supp)
-
+	// BOTH Plugins are UPLOADED AFTER BOOT, through the Plugins screen's own
+	// endpoint, so every verb in this test is one an Admin has (.scratch/plugin-system
+	// issue 19). It used to place them on disk before the server started, because
+	// the enrichment Manager took its catalog when it was composed: a provider
+	// uploaded after boot reached the metadata-provider settings screen (that
+	// catalog is derived per request) and yet was refused as a Library's lead with
+	// 422 PROVIDER_NOT_AUTHORITATIVE until a restart. The Catalog now reads the live
+	// registry, so an install and an uninstall are symmetrical here and the
+	// workaround is gone.
 	srv := testharness.New(t,
-		testharness.WithDataDir(dataDir),
 		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
 	)
 	token := adminToken(t, srv)
+	uploadMetadataProviderPlugin(t, srv, token, uninstallLeadSource, leadVideoProvides())
+	uploadMetadataProviderPlugin(t, srv, token, uninstallSuppSource, supplementVideoProvides())
 	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
 	scanLib(t, srv, token, libID, "")
 
