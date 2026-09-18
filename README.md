@@ -115,6 +115,22 @@ If your Docker can't run amd64 images locally you can still build them:
 docker buildx build --platform linux/amd64 -f docker/Dockerfile -t obelo . --load
 ```
 
+**Before you build an image to run or push**, run the release-side gate:
+
+```sh
+make check-amd64      # needs Docker; runs the plugin suite on linux/amd64
+```
+
+`make check` — the pre-commit gate — runs on whatever architecture you happen to
+be sitting at. That is enough for every other part of this server, and it is not
+enough for plugins: an Installed plugin is WebAssembly, compiled *at run time* by
+a backend [wazero](https://wazero.io) chooses per architecture
+([ADR-0058](./docs/adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)),
+so a green suite on an arm64 laptop says nothing about the amd64 image. `make
+check-amd64` runs the plugin-facing packages inside a `--platform linux/amd64`
+container — with and without `-tags tailscale` — so the backend that will execute
+every plugin in production has actually executed one.
+
 Full details, plus the maintainer publish checklist, are in
 [`docker/README.md`](./docker/README.md#build).
 

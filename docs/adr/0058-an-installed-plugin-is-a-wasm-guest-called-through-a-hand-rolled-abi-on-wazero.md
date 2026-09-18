@@ -25,6 +25,49 @@ gRPC needs a native binary per architecture, lets the guest inherit the containe
 and pulls gRPC into a tree that has none. go-plugin stays named as the fallback if an Extension
 point ever needs bytes-heavy or process-spawning work, and this ADR does not retire it.
 
+> **Carried out (plugin-system issue 18, 2026-09-17):** "both amd64 and arm64" was, until
+> this issue, half true. Every Installed plugin in this repo's history had been compiled and
+> called on **arm64 only** — the development machine — because Docker was not running here when
+> issues 08 through 16 were written, and each of them closed by saying so and asking for a CI
+> job. What they could do was `CGO_ENABLED=0 GOARCH=amd64 go build ./...`, and it passed every
+> time, which is the thing worth naming: a Plugin is compiled **at run time**, by a backend
+> wazero chooses per architecture, so cross-compiling the host says nothing whatever about the
+> backend that executes the guest. The one measurement this ADR's own "Portability" section
+> refused to claim was exactly that one.
+>
+> It is now claimed, and measured. `make test-go-amd64` runs `./pluginapi/...`,
+> `./internal/plugins/...`, `./internal/eventsink/...`, `./internal/subfetch/...`,
+> `./internal/enrich/...` and `./internal/api/` inside a `--platform linux/amd64`
+> `golang:1.26` container, where the wasm test guest is **compiled from source by the ordinary
+> `GOOS=wasip1 GOARCH=wasm go build` and called**, on the machine ADR-0006 ships to. Everything
+> passes, with **no behavioural difference of any kind** between the two backends: not one
+> wazero trap, not one timing assumption broken — the deadline test of decision 6 and the
+> byte-budget recycling of decision 7 both hold unchanged — and not one test that had to be
+> skipped or loosened for the architecture. That is the useful result, and it was not a
+> foregone one.
+>
+> **The cost, on an arm64 Mac under Docker 29's qemu emulation (2026-09-17):** 14 min 47 s cold
+> for the untagged run and 15 min 56 s for the `-tags tailscale` one. The same packages run
+> natively in about 6.5 min, so emulation costs roughly **2.3× wall**; per package the honest
+> figure is `internal/api` at **835 s against 315 s native, 2.7×**, and `internal/plugins` —
+> the one that compiles and calls the guest — at **60 s against 45.5 s**. A second run with no
+> source change is **47 s**, because Go's test cache answers for every package; the one named
+> proof test is `-count=1` so it executes regardless, which is the point of it. `make
+> check-amd64` runs both variants and is called from docker/README.md's publish checklist.
+> `make check` is unchanged and still needs no Docker.
+>
+> Two things the container taught us that are worth writing down. **ffmpeg has to be installed
+> into it**: `internal/api` synthesises its media fixtures with `ffmpeg -f lavfi -i testsrc`, and
+> without ffmpeg those tests do not skip politely — 364 of them fail on an empty fixture library,
+> which looks exactly like a catastrophic architecture regression and is nothing of the kind.
+> And **Go's default 10-minute per-package timeout is not enough** for `internal/api` under
+> emulation; it panics mid-test at 10m00s, which reads like a hang. Both are properties of the
+> harness, not of amd64, and both cost an afternoon to tell apart from the thing being measured.
+>
+> `.github/workflows/check.yml` was added in the same commit and is **dormant** — this repo has
+> no remote — so that the day one exists, `make check` starts running per commit on an amd64
+> runner and this container stops being the only place the gap is closed.
+
 **2. The ABI is hand-rolled, not Extism.** Three fixed exports plus one per contract call —
 five in all for a Subtitle provider — JSON in and JSON out through the
 guest's own linear memory (decision 3). This is the decision the spike existed to make, and it
@@ -223,7 +266,8 @@ calls (200 for the mebibyte). Reproduce with `./build-guests.sh && go run ./cmd/
 the spike module cross-compiles clean with `CGO_ENABLED=0` for `linux/amd64`, `linux/arm64` and
 `darwin/arm64` — the two architectures ADR-0006 ships plus the development machine. It was **not**
 executed on linux/amd64: Docker was not running on this machine, and that is a gap issue 09's CI
-closes rather than something this ADR may claim. wazero's `NewRuntimeConfig` selects the
+closes rather than something this ADR may claim. (It did not — issue 09 could not either, and
+nor could 11, 12, 13, 15 or 16. **Issue 18** closed it; see the note under decision 1.) wazero's `NewRuntimeConfig` selects the
 optimizing compiler on amd64 and arm64 and falls back to the interpreter elsewhere; it exports
 no way to ask which one it chose, so the spike carries `OBELO_SPIKE_INTERPRETER=1` to force the
 interpreter, and the difference is the answer: with the compiler, preparing the stock-Go guest

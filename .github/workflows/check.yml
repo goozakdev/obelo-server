@@ -1,0 +1,106 @@
+# DORMANT. As of 2026-09-17 this repository has NO GIT REMOTE — it is a solo,
+# local-only project whose issues live as markdown under .scratch/ and whose gate is
+# `make check`, run by hand. GitHub never sees this file, so nothing here runs, and
+# nothing in the repo may depend on it running.
+#
+# It exists anyway, and that is the whole point. Seven plugin-system issues (08, 09,
+# 11, 12, 13, 15, 16) each ended with "execution on linux/amd64 is unverified; this
+# should be a CI job", and each of them was right and could do nothing about it. The
+# gate that runs TODAY is `make check-amd64` (a linux/amd64 container on the
+# developer's machine — see the Makefile). This is the half that costs nothing now
+# and closes the gap by itself the day a remote appears: push once, and the same
+# checks start running per commit, on an amd64 runner, without anyone remembering
+# that they should.
+#
+# IF YOU ARE THE ONE ADDING THE REMOTE: nothing below has ever executed, not once.
+# Expect to fix it. `make check` is the contract it is written against, so read the
+# Makefile first and change this file rather than the gate.
+
+name: check
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The repo's own pre-commit gate, unchanged and unsplit: gofmt, go vet both ways,
+  # the placeholder and credential guards, the vitest suite, and the Go suite with and
+  # without `-tags tailscale` (ADR-0043).
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ffmpeg is a REQUIREMENT of the suite, not a nicety: internal/api synthesises
+      # its media fixtures with `ffmpeg -f lavfi -i testsrc`, and on a machine without
+      # it those tests FAIL rather than skip (measured: 364 of them). The runner image
+      # does not reliably carry it. Do not drop this step to save a minute.
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      # `make check` runs check-web, which FAILS (deliberately, not skips) when
+      # web/node_modules is absent. So the toolchain is installed before the gate
+      # rather than by it — the Makefile refuses to mutate a toolchain itself.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+
+      - run: make check
+
+  # THE AMD64 EXECUTION, which on this runner is free.
+  #
+  # `make test-go-amd64` runs the plugin packages inside a --platform linux/amd64
+  # container, because the development machine is arm64 and there is no other way.
+  # ubuntu-latest IS amd64, so a container here would add qemu emulation to a machine
+  # that needs none, and Docker-in-Docker on top of it. There is deliberately no
+  # `amd64-container` job, and adding one would only make this workflow slower and
+  # less likely to be true.
+  #
+  # The `check` job above has in fact already executed every one of these packages on
+  # amd64 — that is the point, and it is the gap ADR-0058 recorded, closed. This job
+  # states it out loud rather than leaving it as an inference from the runner's
+  # architecture, and runs the ONE named test verbosely so a green run carries proof
+  # that a wasm guest was compiled from source and called under wazero's amd64
+  # backend, rather than a list of `ok` lines that would look identical if it had not
+  # been. The package list comes from the Makefile (`make -s amd64-pkgs`), so it
+  # cannot drift from the container target.
+  amd64-plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Show the architecture under test
+        run: |
+          uname -m
+          go version
+
+      # -count=1 on purpose: a cached PASS would print `(cached)` and prove nothing,
+      # and a -run pattern that matches nothing exits 0. This step is the proof.
+      - name: One guest, compiled from source and called, verbosely
+        run: go test -count=1 -v -run '^TestAGuestDeliversASignedDocument$' ./internal/plugins/
+
+      - name: The plugin-facing packages
+        run: go test $(make -s amd64-pkgs)
+
+      # The variant the Docker image actually ships (ADR-0043), one architecture over.
+      - name: The same packages with the release build tag
+        run: go test -tags tailscale $(make -s amd64-pkgs)
