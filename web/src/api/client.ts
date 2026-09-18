@@ -90,6 +90,10 @@ import type {
   UpdateEventSinksInput,
   InstalledPluginsView,
   InstallPluginFromURLInput,
+  PluginCatalogView,
+  SetPluginCatalogInput,
+  PluginPublishersView,
+  PinPluginPublisherInput,
   PluginSettingsInput,
   TestProviderResult,
   EnrichmentPolicy,
@@ -1955,15 +1959,23 @@ export class ApiClient {
   /** `POST /api/v1/settings/plugins` (Admin, multipart) — install from two files:
    * the `manifest` (manifest.json) and the `module` (the .wasm). Two named parts
    * rather than an archive, so the server never unpacks paths it did not choose.
-   * Returns the full list. */
+   * Returns the full list.
+   *
+   * `signature` is an OPTIONAL third part, the detached `plugin.sig.json`
+   * (plugin-system/15). Omitting it is not an error and is the usual case: most
+   * plugins are unsigned, and whether this server requires one is decided by the
+   * publisher keys its Admin pinned, server-side, with a refusal that names the
+   * publisher the plugin claimed. */
   installPlugin(
     manifest: File | Blob,
     module: File | Blob,
+    signature?: File | Blob | null,
     signal?: AbortSignal,
   ): Promise<InstalledPluginsView> {
     const form = new FormData();
     form.append("manifest", manifest);
     form.append("module", module);
+    if (signature) form.append("signature", signature);
     return this.request<InstalledPluginsView>("/settings/plugins", {
       method: "POST",
       body: form,
@@ -2030,6 +2042,80 @@ export class ApiClient {
     return this.request<InstalledPluginsView>(
       `/settings/plugins/${encodeURIComponent(id)}/settings`,
       { method: "PUT", body: JSON.stringify(input), signal },
+    );
+  }
+
+  // --- Admin: the optional catalog and pinned publishers (plugin-system/15) ---
+  //
+  // Both are OFF by default and both are the operator's own decision: this
+  // project runs no catalog and vouches for no publisher (ADR-0001). A server
+  // that has used neither browses nothing, verifies nothing, and behaves exactly
+  // as it did before these routes existed.
+  //
+  // There is deliberately NO "install this catalog entry" call. An entry is a
+  // manifest URL, so installing one is installPluginFromURL with that URL —
+  // the same endpoint, the same safe-fetch policy, the same refusals. A second
+  // path would have been a second place for that policy to be got wrong.
+
+  /** `GET /api/v1/settings/plugins/catalog` (Admin) — the configured index and
+   * what it currently offers.
+   *
+   * IT ANSWERS 200 WHEN THE CATALOG IS BROKEN. An index that is down, moved or
+   * malformed comes back as `entries: []` with a sentence in `error`, because the
+   * upload and paste-URL paths have nothing to do with the catalog and must not be
+   * taken away by somebody else's outage. Render `error` as a note rather than as
+   * a failed request, and key the Browse tab off `url` rather than off `entries`. */
+  getPluginCatalog(signal?: AbortSignal): Promise<PluginCatalogView> {
+    return this.request<PluginCatalogView>("/settings/plugins/catalog", { signal });
+  }
+
+  /** `PUT /api/v1/settings/plugins/catalog` (Admin) — point this server at an
+   * index, or clear it with `""`. The address is validated but NOT fetched, so
+   * saving the address of a catalog that happens to be down is not an error; the
+   * response carries a freshly fetched view, note and all. */
+  setPluginCatalog(
+    input: SetPluginCatalogInput,
+    signal?: AbortSignal,
+  ): Promise<PluginCatalogView> {
+    return this.request<PluginCatalogView>("/settings/plugins/catalog", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `GET /api/v1/settings/plugins/publishers` (Admin) — the pinned publisher
+   * keys. An EMPTY list is the default policy (nothing is verified), not missing
+   * data. */
+  getPluginPublishers(signal?: AbortSignal): Promise<PluginPublishersView> {
+    return this.request<PluginPublishersView>("/settings/plugins/publishers", { signal });
+  }
+
+  /** `PUT /api/v1/settings/plugins/publishers` (Admin) — pin a publisher's base64
+   * ed25519 public key, replacing whatever that publisher had, which is what a key
+   * rotation needs. Pinning the FIRST key makes every later install require a
+   * signature. `422 PLUGIN_SIGNATURE` for something that is not an ed25519 key. */
+  pinPluginPublisher(
+    input: PinPluginPublisherInput,
+    signal?: AbortSignal,
+  ): Promise<PluginPublishersView> {
+    return this.request<PluginPublishersView>("/settings/plugins/publishers", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `DELETE /api/v1/settings/plugins/publishers/{publisher}` (Admin) — unpin a
+   * key. Removing the LAST one returns this server to installing unsigned plugins.
+   * `404 PLUGIN_UNKNOWN` for a publisher nobody pinned. */
+  unpinPluginPublisher(
+    publisher: string,
+    signal?: AbortSignal,
+  ): Promise<PluginPublishersView> {
+    return this.request<PluginPublishersView>(
+      `/settings/plugins/publishers/${encodeURIComponent(publisher)}`,
+      { method: "DELETE", signal },
     );
   }
 
@@ -2440,6 +2526,12 @@ export type {
   InstalledPlugin,
   InstalledPluginsView,
   InstallPluginFromURLInput,
+  PluginCatalogEntry,
+  PluginCatalogView,
+  SetPluginCatalogInput,
+  PluginPublisher,
+  PluginPublishersView,
+  PinPluginPublisherInput,
   PluginSettingsField,
   PluginSettingsFieldType,
   PluginSettingsValues,

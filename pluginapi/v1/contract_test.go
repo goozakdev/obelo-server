@@ -541,6 +541,61 @@ func installedWireCases() []wireCase {
 			value:  KVWriteResponse{Error: "the value is larger than a plugin may store"},
 			golden: `{"ok":false,"error":"the value is larger than a plugin may store"}`,
 		},
+		{
+			// The detached signature document, published beside the manifest it
+			// covers. Pinned in full because it is a file a publisher's own tooling
+			// writes and a second implementation has to match key for key.
+			name: "Signature",
+			value: Signature{
+				Publisher:      "Example Publisher",
+				KeyID:          "9f86d081884c7d65",
+				Algorithm:      SignatureAlgorithmEd25519,
+				ManifestSHA256: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+				ModuleSHA256:   "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+				Signature:      "c2lnbmF0dXJlLWJ5dGVz",
+			},
+			golden: `{"publisher":"Example Publisher","keyId":"9f86d081884c7d65","algorithm":"ed25519",` +
+				`"manifestSha256":"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",` +
+				`"moduleSha256":"0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",` +
+				`"signature":"c2lnbmF0dXJlLWJ5dGVz"}`,
+		},
+		{
+			// A whole catalog index, as an operator's own host would serve it.
+			name: "CatalogIndex",
+			value: CatalogIndex{
+				Version: CatalogVersion,
+				Entries: []CatalogEntry{{
+					ID:           "discord",
+					Name:         "Discord",
+					Version:      "0.1.0",
+					Publisher:    "Example Publisher",
+					Provides:     []ExtensionPoint{ExtensionEventSink},
+					ManifestURL:  "https://plugins.example.test/discord/manifest.json",
+					SignatureURL: "https://plugins.example.test/discord/plugin.sig.json",
+					Description:  "Posts a message to a Discord channel when something finishes.",
+					DocsURL:      "https://example.test/obelo-plugin-discord",
+				}},
+			},
+			golden: `{"version":1,"entries":[{"id":"discord","name":"Discord","version":"0.1.0",` +
+				`"publisher":"Example Publisher","provides":["event-sink"],` +
+				`"manifestUrl":"https://plugins.example.test/discord/manifest.json",` +
+				`"signatureUrl":"https://plugins.example.test/discord/plugin.sig.json",` +
+				`"description":"Posts a message to a Discord channel when something finishes.",` +
+				`"docsUrl":"https://example.test/obelo-plugin-discord"}]}`,
+		},
+		{
+			// The smallest entry an index may carry: the manifest URL, and enough
+			// for a person to recognise what they are choosing. Everything else is
+			// optional because everything else is display.
+			name: "CatalogEntry/minimal",
+			value: CatalogEntry{
+				ID:          "anilist",
+				Name:        "AniList",
+				ManifestURL: "https://plugins.example.test/anilist/manifest.json",
+			},
+			golden: `{"id":"anilist","name":"AniList",` +
+				`"manifestUrl":"https://plugins.example.test/anilist/manifest.json"}`,
+		},
 	}
 }
 

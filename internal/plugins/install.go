@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goozakdev/obelo-server/internal/plugins/signing"
 	"github.com/goozakdev/obelo-server/internal/safefetch"
 	"github.com/goozakdev/obelo-server/internal/store"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
@@ -79,6 +80,13 @@ const (
 	// than per request, so its Refusal carries Fields and the API renders each
 	// sentence under the control that caused it.
 	ReasonSettings = "settings"
+	// ReasonSignature: this server has publisher keys PINNED, and the plugin does
+	// not satisfy them (issue 15) — it carries no signature, names a publisher
+	// nobody pinned, covers other bytes, or does not verify. Its message always
+	// names the publisher the plugin CLAIMED, because that is the one fact that
+	// tells an operator which of those happened. A server with nothing pinned
+	// never produces this refusal.
+	ReasonSignature = "signature"
 )
 
 // Refusal is an install this server would not perform. Message is written for the
@@ -111,8 +119,20 @@ const (
 	// MaxManifestBytes caps a manifest document. A manifest is a few hundred bytes
 	// of JSON; anything near this is not one.
 	MaxManifestBytes = 256 << 10
-	// SourceFetchTimeout bounds each of the two fetches a URL install makes.
+	// SourceFetchTimeout bounds each of the fetches a URL install makes.
 	SourceFetchTimeout = 60 * time.Second
+	// MaxSignatureBytes caps the detached signature document (issue 15). It is the
+	// signing package's cap, restated here so the three limits an install applies
+	// read as one list.
+	MaxSignatureBytes = signing.MaxSignatureBytes
+	// MaxCatalogBytes caps a catalog index. A household's index is tens of entries;
+	// a megabyte is room for thousands and a refusal for anything that is not an
+	// index at all.
+	MaxCatalogBytes = 1 << 20
+	// CatalogFetchTimeout bounds the catalog fetch, and is SHORT on purpose: the
+	// Plugins screen asks for it on every load, and an index that is slow must cost
+	// a quiet note rather than a screen that hangs.
+	CatalogFetchTimeout = 10 * time.Second
 )
 
 // SourceUpload is the recorded provenance of a Plugin an Admin sent through the
@@ -139,6 +159,13 @@ type Installed struct {
 	LastError   string   `json:"lastError,omitempty"`
 	Source      string   `json:"source,omitempty"`
 	InstalledAt string   `json:"installedAt,omitempty"`
+	// Publisher and KeyID are who SIGNED this Plugin, recorded at install time and
+	// ONLY when the signature verified against a key an Admin had pinned (issue
+	// 15). Empty means no verification happened — either nothing was pinned or
+	// nothing was signed — and a screen must not read it as "unsigned", because
+	// this server does not know that.
+	Publisher string `json:"publisher,omitempty"`
+	KeyID     string `json:"keyId,omitempty"`
 	// SettingsSchema is what this Plugin's manifest declares about its OWN settings
 	// (issue 13), straight from the file on disk: the ordered field list the web app
 	// renders a form from. Empty for a Plugin configured entirely through the fixed
@@ -179,6 +206,20 @@ type ManagerStore interface {
 	DeletePlugin(id string) error
 	PluginSettings(pluginID string) ([]store.PluginSetting, error)
 	ReplacePluginSettings(pluginID string, values []store.PluginSetting) error
+	// PluginPublishers is the pinned-key policy (issue 15). An EMPTY list is the
+	// shipped state and means nothing is verified, so it is asked on every install
+	// rather than cached: unpinning the last key has to take effect at once, and
+	// so does pinning the first.
+	PluginPublishers() ([]store.PluginPublisher, error)
+	UpsertPluginPublisher(p store.PluginPublisher) error
+	DeletePluginPublisher(publisher string) (bool, error)
+	// SetPluginSigner records who signed, and is called only after a signature has
+	// verified against a pinned key.
+	SetPluginSigner(id, publisher, keyID string) error
+	// PluginCatalogURL / SetPluginCatalogURL are the operator's chosen index —
+	// empty by default, and empty means this server browses no catalog at all.
+	PluginCatalogURL() (string, error)
+	SetPluginCatalogURL(url string) error
 }
 
 // ManagerConfig is what the composition root hands the Manager. Every field but
@@ -314,11 +355,16 @@ func (m *Manager) Close(ctx context.Context) error {
 // installed; rename the staged directory into place, which is atomic on the one
 // filesystem this can happen on; record the row; and only then rebuild and swap.
 //
+// signatureRaw is the detached signature document that travelled with the plugin
+// (pluginapi.SignatureFile), or nil when none did. It is checked against the keys
+// an Admin pinned — signature.go holds the two-state policy — and stored beside
+// the manifest either way, as provenance.
+//
 // source is the provenance recorded on the row: SourceUpload, or the URL.
-func (m *Manager) Install(ctx context.Context, manifestRaw, module []byte, source string) (Installed, error) {
+func (m *Manager) Install(ctx context.Context, manifestRaw, module, signatureRaw []byte, source string) (Installed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.install(ctx, manifestRaw, module, source)
+	return m.install(ctx, manifestRaw, module, signatureRaw, source)
 }
 
 // InstallFromURL fetches a manifest from an absolute URL and the module from
@@ -336,7 +382,20 @@ func (m *Manager) Install(ctx context.Context, manifestRaw, module []byte, sourc
 // Both fetches go through safefetch, so the redirect policy and the bounded chain
 // apply. Unlike every other outbound fetch in this server, the FIRST hop is
 // checked too: see refuseInternalSource.
-func (m *Manager) InstallFromURL(ctx context.Context, rawURL string) (Installed, error) {
+//
+// A THIRD fetch looks for the detached signature (issue 15), beside the manifest
+// under its conventional name unless signatureURL names somewhere else — which is
+// what a catalog entry's optional signatureUrl is for. A 404 is NOT an error:
+// most plugins are unsigned, and a server with no publisher keys pinned does not
+// care. What a missing signature COSTS is decided afterwards by the pinned-key
+// policy, which is the one place that decision belongs.
+//
+// This is also the whole of a catalog install (issue 15): a catalog entry is a
+// manifest URL, so browsing one adds a way to choose an address and adds nothing
+// whatever to this path — including the first-hop check, which is why an entry
+// pointing into this server's own network is refused with the sentence a pasted
+// one gets.
+func (m *Manager) InstallFromURL(ctx context.Context, rawURL, signatureURL string) (Installed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -354,15 +413,32 @@ func (m *Manager) InstallFromURL(ctx context.Context, rawURL string) (Installed,
 	if err != nil {
 		return Installed{}, err
 	}
-	moduleURL := *manifestURL
-	moduleURL.RawQuery = ""
-	moduleURL.Fragment = ""
-	moduleURL.Path = path.Join(path.Dir(manifestURL.Path), moduleFile(man))
-	module, err := m.get(ctx, moduleURL.String(), MaxModuleBytes, "module")
+	beside := func(name string) string {
+		u := *manifestURL
+		u.RawQuery = ""
+		u.Fragment = ""
+		u.Path = path.Join(path.Dir(manifestURL.Path), name)
+		return u.String()
+	}
+	module, err := m.get(ctx, beside(moduleFile(man)), MaxModuleBytes, "module")
 	if err != nil {
 		return Installed{}, err
 	}
-	return m.install(ctx, manifestRaw, module, manifestURL.String())
+	sigTarget := strings.TrimSpace(signatureURL)
+	if sigTarget == "" {
+		sigTarget = beside(pluginapi.SignatureFile)
+	} else if _, err := m.checkSourceURL(ctx, sigTarget); err != nil {
+		// An explicit signature URL gets the same address check the manifest gets.
+		// It is not code, but it is the document that decides whether code is
+		// trusted, and a catalog entry able to point it inside this network would be
+		// a catalog entry choosing whose signature this server believes.
+		return Installed{}, err
+	}
+	signatureRaw, err := m.getOptional(ctx, sigTarget, MaxSignatureBytes, "signature")
+	if err != nil {
+		return Installed{}, err
+	}
+	return m.install(ctx, manifestRaw, module, signatureRaw, manifestURL.String())
 }
 
 // SetEnabled is the Admin's switch. Switching a Plugin OFF un-registers it, so
@@ -521,6 +597,8 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 			LastError:   firstNonEmpty(st.LastError, row.LastError),
 			Source:      row.Source,
 			InstalledAt: row.InstalledAt,
+			Publisher:   row.Publisher,
+			KeyID:       row.KeyID,
 		}
 		if p := m.plugin(id); p != nil && len(p.Manifest().Provides) > 0 {
 			item.Provides = providesOf(p.Manifest())
@@ -601,7 +679,7 @@ func (m *Manager) rebuild(ctx context.Context) error {
 
 // install is Install with the lock already held, so InstallFromURL can fetch and
 // install as one indivisible act.
-func (m *Manager) install(ctx context.Context, manifestRaw, module []byte, source string) (Installed, error) {
+func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw []byte, source string) (Installed, error) {
 	man, err := decodeManifest(manifestRaw)
 	if err != nil {
 		return Installed{}, err
@@ -615,6 +693,15 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module []byte, sourc
 		return Installed{}, refuse(ReasonModule,
 			"the module is %d bytes, and this server will not install one larger than %d",
 			len(module), int64(MaxModuleBytes))
+	}
+	// WHOSE CODE IS THIS — asked here, between the manifest being understood and
+	// anything being written, because this is the only point at which both the raw
+	// manifest bytes and the module bytes are in hand and nothing has yet touched
+	// the disk or the database. A server with no publisher keys pinned answers
+	// "nobody asked" and this costs one query (signature.go).
+	signedBy, err := m.checkSignature(man, manifestRaw, module, signatureRaw)
+	if err != nil {
+		return Installed{}, err
 	}
 	if err := m.checkDuplicate(man.ID); err != nil {
 		return Installed{}, err
@@ -640,6 +727,13 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module []byte, sourc
 	}
 	if err := os.WriteFile(filepath.Join(staged, moduleFile(man)), module, 0o644); err != nil {
 		return Installed{}, fmt.Errorf("plugins: writing the module for %s: %w", man.ID, err)
+	}
+	// The signature goes in beside them, byte for byte, whenever one arrived —
+	// verified or not. It is provenance: an operator who pins a key next month can
+	// check what they already have without fetching it again. The FILE is never the
+	// claim that anything was verified; the row's publisher column is.
+	if err := writeSignature(staged, signatureRaw); err != nil {
+		return Installed{}, err
 	}
 
 	// COMPILE IT WHERE IT CANNOT BE FOUND. loadOne does everything boot does —
@@ -670,6 +764,13 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module []byte, sourc
 			// Nothing is left behind by a failed install, including here.
 			_ = os.RemoveAll(m.pluginDir(man.ID))
 			return Installed{}, err
+		}
+		if signedBy.Publisher != "" {
+			if err := m.store.SetPluginSigner(man.ID, signedBy.Publisher, signedBy.KeyID); err != nil {
+				// The Plugin IS installed and its signature DID verify; failing the whole
+				// install over a display column would throw away the thing that worked.
+				m.logf("obelo: plugin %s was installed but its publisher could not be recorded: %v", man.ID, err)
+			}
 		}
 	}
 	if err := m.rebuild(ctx); err != nil {
@@ -810,6 +911,38 @@ func (m *Manager) get(ctx context.Context, target string, limit int64, what stri
 		// A refusal, never a truncation: a truncated module is one this server
 		// would then try to compile, and a truncated manifest is one it would try
 		// to parse.
+		return nil, refuse(ReasonSource, "the plugin's %s at %s is larger than %d bytes", what, target, limit)
+	}
+	return body, nil
+}
+
+// getOptional is get for a document that is allowed not to exist — today, the
+// detached signature.
+//
+// A 404 (or any other non-200) answers nil and no error, because MOST PLUGINS ARE
+// UNSIGNED and an absent signature is not a failure of anything: whether it costs
+// the install is the pinned-key policy's decision, made later and once. A
+// transport failure is a refusal like any other, though, since "the source went
+// away halfway through" must not silently become "there is no signature".
+func (m *Manager) getOptional(ctx context.Context, target string, limit int64, what string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, refuse(ReasonSource, "%s is not a URL this server can request", target)
+	}
+	req.Header.Set("User-Agent", "obelo/1.0 (self-hosted; plugin install)")
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return nil, refuse(ReasonSource, "the plugin's %s could not be fetched from %s: %v", what, target, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, refuse(ReasonSource, "the plugin's %s could not be read from %s: %v", what, target, err)
+	}
+	if int64(len(body)) > limit {
 		return nil, refuse(ReasonSource, "the plugin's %s at %s is larger than %d bytes", what, target, limit)
 	}
 	return body, nil

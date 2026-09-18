@@ -313,6 +313,15 @@ const (
 	// { fields: [ { key, message } ] } and the message restates the first of them,
 	// which is what lets the form put each sentence under the control that caused
 	// it instead of one prose line above the whole panel.
+	//
+	// codePluginSignature (422) is the pinned-publisher policy (.scratch/plugin-
+	// system issue 15): this server has publisher keys pinned and the plugin does
+	// not satisfy them. A SERVER WITH NOTHING PINNED NEVER PRODUCES IT — that is
+	// the shipped state, and in it nothing about installing changes. Its message
+	// always names the publisher the plugin CLAIMED, because "no signature at all",
+	// "a publisher nobody pinned", "a signature over other files" and "a signature
+	// that does not verify" want four different things done about them and the
+	// claimed name is what tells them apart.
 	codePluginInvalidManifest = "PLUGIN_INVALID_MANIFEST"
 	codePluginAPIVersion      = "PLUGIN_API_VERSION"
 	codePluginDuplicate       = "PLUGIN_DUPLICATE"
@@ -320,6 +329,7 @@ const (
 	codePluginSourceRefused   = "PLUGIN_SOURCE_REFUSED"
 	codePluginUnknown         = "PLUGIN_UNKNOWN"
 	codePluginInvalidSettings = "PLUGIN_INVALID_SETTINGS"
+	codePluginSignature       = "PLUGIN_SIGNATURE"
 
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the

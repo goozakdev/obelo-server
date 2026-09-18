@@ -2524,6 +2524,16 @@ export interface InstalledPlugin {
   lastError?: string;
   source?: string;
   installedAt?: string;
+  /** Who SIGNED this plugin, recorded at install time and only when the signature
+   * verified against a key an Admin had pinned (plugin-system/15).
+   *
+   * EMPTY IS NOT "UNSIGNED". It means no verification happened — either nothing
+   * was pinned when this arrived, or nothing was signed — and the screen must not
+   * claim otherwise, because the server does not know. `keyId` is a short
+   * fingerprint of the key that signed, for a human comparing it against what a
+   * publisher advertises; nothing is verified against it. */
+  publisher?: string;
+  keyId?: string;
   settingsSchema?: PluginSettingsField[];
   settings?: PluginSettingsValues;
 }
@@ -2602,9 +2612,87 @@ export interface InstalledPluginsView {
 
 /** The `POST /settings/plugins/from-url` body: the URL of a plugin's
  * `manifest.json`, with its `plugin.wasm` published beside it in the same
- * directory. */
+ * directory.
+ *
+ * `signatureUrl` is optional and almost always omitted — a signature published
+ * the ordinary way sits beside the manifest under its conventional name, which
+ * is where the server looks anyway. It exists for a catalog entry that carries a
+ * `signatureUrl` of its own. */
 export interface InstallPluginFromURLInput {
   url: string;
+  signatureUrl?: string;
+}
+
+/** One plugin an operator's chosen catalog offers (plugin-system/15).
+ *
+ * `manifestUrl` IS the entry: installing it is the ordinary URL install, through
+ * the same endpoint and the same policy as an address pasted by hand — including
+ * the refusal of one that resolves inside the server's own network. Everything
+ * else here is the index author's CLAIM, shown so an operator can choose and
+ * believed by nothing: the manifest fetched from `manifestUrl` decides the id,
+ * the name, the version and what it provides, and only a signature makes
+ * `publisher` more than a word in a file. */
+export interface PluginCatalogEntry {
+  id: string;
+  name: string;
+  version?: string;
+  publisher?: string;
+  provides?: string[];
+  manifestUrl: string;
+  signatureUrl?: string;
+  description?: string;
+  docsUrl?: string;
+}
+
+/** The `GET /settings/plugins/catalog` view.
+ *
+ * `error` BESIDE A 200 IS NORMAL and is a note, not a failed request. An index
+ * that is down, moved or malformed must not take away the upload and paste-URL
+ * paths, so the server answers `entries: []` with a sentence and the screen shows
+ * it while everything else keeps working.
+ *
+ * The Browse tab keys off `url`, never off `entries`: a catalog that is
+ * configured and unreachable still has a tab, and the tab is where the note
+ * belongs. `url` is `""` when no catalog is configured, which is the default. */
+export interface PluginCatalogView {
+  url: string;
+  entries: PluginCatalogEntry[];
+  error: string;
+}
+
+/** The `PUT /settings/plugins/catalog` body. An empty `url` CLEARS the catalog. */
+export interface SetPluginCatalogInput {
+  url: string;
+}
+
+/** One publisher key an Admin has pinned (plugin-system/15).
+ *
+ * `publicKey` is returned IN FULL and deliberately unmasked, unlike every other
+ * credential-shaped field in this API: it is public, and an operator has to be
+ * able to compare what they pinned against what a publisher advertises. */
+export interface PluginPublisher {
+  publisher: string;
+  publicKey: string;
+  keyId?: string;
+  addedAt?: string;
+}
+
+/** The `GET /settings/plugins/publishers` view.
+ *
+ * AN EMPTY LIST IS THE DEFAULT POLICY, not an absence of data: with nothing
+ * pinned no install is signature-checked at all. A screen says that in words,
+ * because a bare empty table invites the opposite conclusion. */
+export interface PluginPublishersView {
+  publishers: PluginPublisher[];
+}
+
+/** The `PUT /settings/plugins/publishers` body: a publisher name and a base64
+ * ed25519 public key. The name is the LOOKUP — a signature naming this publisher
+ * is checked under this key and no other — so a typo in it is a publisher nobody
+ * pinned, not a label that reads oddly. */
+export interface PinPluginPublisherInput {
+  publisher: string;
+  publicKey: string;
 }
 
 // --- Transcoding observability (ADR-0029) -----------------------------------

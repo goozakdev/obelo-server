@@ -20,6 +20,12 @@ const client = vi.hoisted(() => ({
   disablePlugin: vi.fn(),
   reenablePlugin: vi.fn(),
   uninstallPlugin: vi.fn(),
+  // The catalog and the pinned keys (plugin-system/15). Every test in THIS file
+  // leaves them rejecting, which is the point: with neither configured the screen
+  // must be exactly what it was before they existed, so nothing below changed
+  // when they arrived. The Browse tab and the key pinning have their own file.
+  getPluginCatalog: vi.fn(),
+  getPluginPublishers: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -50,6 +56,9 @@ function view(...plugins: InstalledPlugin[]): InstalledPluginsView {
 
 beforeEach(() => {
   for (const fn of Object.values(client)) fn.mockReset();
+  // No catalog and no pinned keys — the shipped default.
+  client.getPluginCatalog.mockResolvedValue({ url: "", entries: [], error: "" });
+  client.getPluginPublishers.mockResolvedValue({ publishers: [] });
 });
 
 describe("the Plugins screen", () => {
@@ -161,7 +170,10 @@ describe("the Plugins screen", () => {
     await userEvent.upload(screen.getByTestId("plugin-module-file"), module);
     await userEvent.click(screen.getByTestId("plugin-upload"));
 
-    expect(client.installPlugin).toHaveBeenCalledWith(manifest, module);
+    // The third argument is the OPTIONAL signature part (plugin-system/15), and
+    // it is undefined here because this form does not insist on one: most plugins
+    // are unsigned, and whether this server needs one is the server's question.
+    expect(client.installPlugin).toHaveBeenCalledWith(manifest, module, undefined);
     await screen.findByTestId("plugin-example-sink");
   });
 
