@@ -3,9 +3,11 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/bundled"
@@ -327,5 +329,163 @@ func TestTheOperatorsRateLimitReachesAGuestThroughTheSandbox(t *testing.T) {
 	if saw.RateLimitMillis == nil || *saw.RateLimitMillis != 750 {
 		t.Fatalf("the guest saw rateLimitMillis %v, want 750 — the operator's pacing never "+
 			"reached the code that is supposed to honour it", saw.RateLimitMillis)
+	}
+}
+
+// A SOURCE OUTAGE RETRIES THE ITEMS AND DOES NOT STRIKE THE PLUGIN
+// (.scratch/bundled-plugins: issue 04 follow-up).
+//
+// This is the end-to-end proof of the chain ADR-0059 decision 6 and ADR-0048
+// describe together, and every link in it lives in a different package: the real
+// bundled TMDB module, inside wazero, fetches a stand-in that answers 503; the SDK
+// classifies that as "could not answer"; the guest replies OutcomeUnavailable; the
+// host adapter turns that into a TRANSIENT error; and the pass schedules a retry
+// rather than parking the Title.
+//
+// The number that matters is THREE. A Go error from a guest is a STRIKE, and
+// internal/plugins disables a Plugin after three consecutive ones — so if any link
+// here were wrong, a source having a bad afternoon would not merely park three
+// movies, it would take TMDB off this server until an Admin pressed Re-enable. Two
+// full passes over the three movie fixtures is six consecutive failing lookups,
+// twice the threshold.
+//
+// Note what is NOT asserted: the Title's enrichmentStatus. A retry and a park both
+// write 'failed' (store.SetTitleEnrichmentRetry) and are told apart by the attempts
+// and retry-at columns, which the pass summary reports as Retrying against Failed.
+// Those two counters are the honest observable here.
+func TestASourceOutageRetriesTheItemsAndDoesNotStrikeThePlugin(t *testing.T) {
+	requireFixtures(t)
+
+	var calls int32
+	outage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status_message":"the service is temporarily unavailable"}`))
+	}))
+	defer outage.Close()
+
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	// Point the SHIPPED plugin at the stand-in. The operator's own base URL is
+	// reachable beside the manifest allowlist, which is what lets a bundled plugin
+	// be driven against a loopback server at all.
+	putProviders(t, srv, token, map[string]any{"providers": []map[string]any{
+		{"slug": "tmdb", "enabled": true, "apiKey": "an-operator-key", "baseURL": outage.URL},
+	}}, http.StatusOK)
+
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+	scanLib(t, srv, token, libID, "")
+
+	for pass := 1; pass <= 2; pass++ {
+		res := enrichLib(t, srv, token, libID, "full")
+		if res.Total == 0 {
+			t.Skip("no titles in the movie fixture")
+		}
+		if res.Failed != 0 {
+			t.Fatalf("pass %d: %d of %d titles were PARKED as failed by a 503 — a source outage "+
+				"says nothing about the item (ADR-0048)", pass, res.Failed, res.Total)
+		}
+		if res.Retrying != res.Total {
+			t.Fatalf("pass %d: retrying = %d of %d, want every title scheduled for a retry",
+				pass, res.Retrying, res.Total)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got < 6 {
+		t.Fatalf("the stand-in saw %d requests; two passes over three fixtures should have made "+
+			"at least six, so the guest was not the thing talking to it", got)
+	}
+
+	// And the plugin came through it: no strike, no recorded error, still leading.
+	row := pluginNamed(t, readPlugins(t, srv, token), "tmdb")
+	if row.DisabledByFailure {
+		t.Fatalf("the TMDB plugin was DISABLED by a source outage: %+v — six consecutive "+
+			"unavailable answers must cost it nothing (ADR-0059 decision 6)", row)
+	}
+	if row.LastError != "" {
+		t.Errorf("the plugin recorded %q; an outage the guest ANSWERED is not the plugin failing",
+			row.LastError)
+	}
+	if !row.Enabled {
+		t.Errorf("the plugin is no longer enabled: %+v", row)
+	}
+	if providers := readMetadataProviders(t, srv, token); len(providers) == 0 || providers[0].Slug != "tmdb" {
+		t.Errorf("after the outage the providers screen leads with %+v, want tmdb first", providers)
+	}
+}
+
+// THE OTHER HALF, WRITTEN DOWN BECAUSE IT IS A DECISION AND NOT AN ACCIDENT: a
+// REJECTED KEY still disables the plugin after three lookups.
+//
+// This is a characterization test. It asserts what this server does today so that
+// nobody has to rediscover it, and it will fail the day somebody changes it — at
+// which point the change was deliberate and this test says what it replaced.
+//
+// The reasoning, such as it is. A 401 describes OUR REQUEST: the key is wrong, and
+// asking again with the same key gets the same answer forever, so the plugin
+// answers a Go error and the item is parked where an Admin will see it. That much
+// is right, and it is exactly what the Built-in did. What comes WITH it is that
+// the host counts a guest's Go error as a strike, so three parked items also stop
+// the plugin — which the Built-in never did, because a Built-in has no strikes.
+//
+// Whether that is the behaviour anybody wants is a real question and is NOT this
+// issue's to answer:
+//
+//   - FOR: a source that answers 401 to everything is genuinely not working, and a
+//     disabled plugin with "status 401" on the Plugins screen is a louder, more
+//     findable statement than three quietly parked movies. The Admin fixes the key
+//     and presses Re-enable, which is two clicks.
+//   - AGAINST: it conflates "the operator's credential is wrong" with "this code is
+//     broken", and those want different words on the screen. It also means ONE bad
+//     key takes out a provider that would otherwise keep serving the items it can.
+//
+// Either way the OUTAGE case above is settled and this one is not, so this test
+// pins the current answer rather than asserting a preference.
+func TestARejectedKeyStillDisablesThePluginAfterThreeLookups(t *testing.T) {
+	requireFixtures(t)
+
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"status_message":"Invalid API key"}`))
+	}))
+	defer rejecting.Close()
+
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	putProviders(t, srv, token, map[string]any{"providers": []map[string]any{
+		{"slug": "tmdb", "enabled": true, "apiKey": "a-key-this-source-rejects", "baseURL": rejecting.URL},
+	}}, http.StatusOK)
+
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+	scanLib(t, srv, token, libID, "")
+	res := enrichLib(t, srv, token, libID, "full")
+	if res.Total < 3 {
+		t.Skipf("the movie fixture holds %d titles; this needs at least the failure threshold", res.Total)
+	}
+
+	// The items are PARKED, not retried — which is the half that matches the
+	// Built-in exactly.
+	if res.Retrying != 0 {
+		t.Errorf("retrying = %d, want 0: a rejected key is not worth asking again", res.Retrying)
+	}
+	if res.Failed == 0 {
+		t.Errorf("failed = 0 of %d; a 401 must reach the Admin's attention list", res.Total)
+	}
+
+	// And the plugin is stopped, which the Built-in it replaced never was.
+	row := pluginNamed(t, readPlugins(t, srv, token), "tmdb")
+	if !row.DisabledByFailure {
+		t.Fatalf("the plugin survived three rejected lookups: %+v — if this is now deliberate, "+
+			"replace this test with one that says so", row)
+	}
+	if !strings.Contains(row.LastError, "401") {
+		t.Errorf("lastError = %q, want the status in it so the Admin can tell a rejected key "+
+			"from a broken module", row.LastError)
+	}
+	// The Admin's own switch is untouched: it is the LOADER that stopped calling
+	// it, and Re-enable is the verb that forgives that.
+	if !row.Enabled {
+		t.Errorf("the Admin's enable switch was flipped by a failure: %+v", row)
 	}
 }
