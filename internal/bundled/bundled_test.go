@@ -42,6 +42,8 @@ func shipped() []string {
 		"omdb",
 		"thetvdb",
 		"anidb",
+		"fanarttv",
+		"theaudiodb",
 	}
 }
 
