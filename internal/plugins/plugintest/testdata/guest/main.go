@@ -900,6 +900,9 @@ func subtitleSearch(ptr, n uint32) uint64 {
 	if mode(call.Settings.Secret) == "nomatch" {
 		return reply(subtitleSearchResponse{Outcome: "no-match", Detail: "this source has nothing for that release"})
 	}
+	if answer, probing := probeNamespace(call); probing {
+		return answer
+	}
 
 	resp := fetch(fetchRequest{
 		Method: "POST",
@@ -1030,12 +1033,13 @@ func encode(v any) []byte {
 
 // --- scaffolding, again ------------------------------------------------------
 //
-// One mode, for the one thing a well-behaved Plugin cannot demonstrate: a guest
-// that answers with MORE bytes than the host said it would take. It cannot be
-// provoked through the source, because the host's fetch cap already refuses an
-// oversize body on the way in — so the bytes have to be invented in here. The
-// mode is read out of the SECRET, which for a provider is the one string a test
-// can set that reaches this far in.
+// Two modes. The first is for the one thing a well-behaved Plugin cannot
+// demonstrate: a guest that answers with MORE bytes than the host said it would
+// take. It cannot be provoked through the source, because the host's fetch cap
+// already refuses an oversize body on the way in — so the bytes have to be
+// invented in here. The second reports what this Plugin's own key-value
+// namespace holds. Both modes are read out of the SECRET, which for a provider is
+// the one string a test can set that reaches this far in.
 
 func misbehaveDownload(call subtitleDownloadCall) (uint64, bool) {
 	if mode(call.Settings.Secret) != "oversize" {
@@ -1047,4 +1051,45 @@ func misbehaveDownload(call subtitleDownloadCall) (uint64, bool) {
 		Data:    make([]byte, call.Request.MaxBytes+1),
 		Format:  "srt",
 	}), true
+}
+
+// The strings the kv-probe mode reports with (.scratch/plugin-system issue 16).
+const (
+	kvProbeKey     = "install-marker"
+	kvProbeValue   = "written-by-an-earlier-install"
+	kvProbeAbsent  = "namespace-absent"
+	kvProbePresent = "namespace-survived"
+)
+
+// probeNamespace reads one key out of this Plugin's OWN namespace, reports what
+// was there, and then writes it — so asking twice tells a test that the write
+// landed, and asking again after an uninstall and a reinstall under the same id
+// tells it whether the namespace went with the Plugin. Only the host can answer
+// that question honestly, and a guest is the only thing that can ask it.
+//
+// It answers through the candidate list rather than a log line or an error,
+// because the candidate id is what travels untouched all the way to the player's
+// "search online" — which is to say, to somewhere a black-box test can read it.
+func probeNamespace(call subtitleSearchCall) (uint64, bool) {
+	if mode(call.Settings.Secret) != "kv-probe" {
+		return 0, false
+	}
+	value, found, errMsg := kvGet(kvProbeKey)
+	if errMsg != "" {
+		return reply(subtitleSearchResponse{Outcome: "unavailable", Detail: "kv_get: " + errMsg}), true
+	}
+	id, release := kvProbeAbsent, ""
+	if found {
+		id, release = kvProbePresent, string(value)
+	}
+	if !kvSet(kvProbeKey, []byte(kvProbeValue)) {
+		return reply(subtitleSearchResponse{Outcome: "unavailable", Detail: "kv_set was refused"}), true
+	}
+	return reply(subtitleSearchResponse{Outcome: "matched", Candidates: []subtitleCandidate{{
+		ID:        id,
+		Language:  call.Request.Language,
+		Format:    "srt",
+		Release:   release,
+		MatchedBy: "query",
+	}}}), true
 }

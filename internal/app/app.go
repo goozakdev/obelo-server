@@ -781,7 +781,12 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Registry: registry,
 		Set:      installed,
 		Store:    db,
-		Loader:   o.pluginOptions,
+		// The SAME options the boot load used, key-value store and all. Handing the
+		// Manager the caller's raw options instead would give every Plugin loaded
+		// after an install a nil KV — so a guest's kv_get would answer "this server
+		// has no key-value store" until the next restart, and only then start
+		// working. A rebuild has to produce what a reboot would.
+		Loader: pluginOpts,
 		Base: func(reg *pluginapi.Registry) {
 			// Exactly what this composition root registered above, in the same
 			// order, so a rebuilt registry is the one a reboot would have built.
