@@ -249,11 +249,14 @@ func TestPassTrackSearchWidenedClauseParsesWithMetacharacters(t *testing.T) {
 // the SEARCH may return, and nothing else. Issue 05's acceptance test still stands
 // between a hit and a record (ADR-0050) — a relevance query essentially always
 // returns something, and taking it blind is the confident-wrong-answer ADR-0049
-// ruled is the worse outcome.
+// ruled is the worse outcome. The test now stands where the rule does, in the host
+// (ADR-0057); the widened clause is still the thing on trial.
 func TestPassTrackSearchStillRejectsAWrongTitle(t *testing.T) {
 	p, queries := mbSearchStub(t, "Hotel California")
 
-	_, err := trackLookup(t, p, "Get Over It", "The Eagles")
+	ref := TitleRef{Kind: "track", Track: "Get Over It", Artist: "The Eagles"}
+	hit, err := p.Lookup(context.Background(), ref)
+	_, err = acceptSearchHit(ref, hit, err)
 	if !errors.Is(err, ErrMatchRejected) {
 		t.Fatalf("err = %v, want ErrMatchRejected — the article-insensitive clause must "+
 			"not buy recall by relaxing the acceptance test", err)

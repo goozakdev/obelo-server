@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/subtitle"
@@ -42,6 +43,26 @@ type subtitleProviderJSON struct {
 	BaseURL     string `json:"baseURL"`
 	Description string `json:"description"`
 	DocsURL     string `json:"docsURL"`
+
+	// The Installed-plugin fields, identical in meaning to the ones the event-sink
+	// screen carries (issue 09). They are omitempty, so a Built-in's entry is the
+	// document it always was and a client that has not heard of Installed plugins
+	// reads this response unchanged.
+	//
+	// Installed reports that this provider is a module an Admin placed under
+	// <dataDir>/plugins/, not code this server shipped.
+	Installed bool `json:"installed,omitempty"`
+	// Disabled is an Installed plugin this server will not call: refused at load,
+	// or stopped after failing repeatedly. It is NOT the Admin's enabled toggle —
+	// a provider can be switched on and still be disabled, which is exactly the
+	// state that needs explaining.
+	Disabled bool `json:"disabled,omitempty"`
+	// LastError is the sentence that says why. A download refused for exceeding
+	// the byte cap lands here, which is where an Admin finds out that a Plugin
+	// answered with more than this server accepts.
+	LastError string `json:"lastError,omitempty"`
+	// Version is the author's own version of their Plugin, for an operator to read.
+	Version string `json:"version,omitempty"`
 }
 
 // subtitleProvidersResponse is the GET/PUT body: the joined provider list plus the
@@ -148,7 +169,7 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 		}
 		var upserts []store.SubtitleProviderUpsert
 		for _, u := range req.Providers {
-			entry, ok := subfetch.RegistryEntryFor(u.Slug)
+			registration, ok := deps.Plugins.SubtitleProvider(u.Slug)
 			if !ok {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown, "unknown subtitle provider: "+u.Slug, nil)
 				return
@@ -170,9 +191,9 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 				desired.BaseURL = strings.TrimSpace(*u.BaseURL)
 			}
 			// A key-requiring provider can't be enabled with no key on file.
-			if desired.Enabled && entry.RequiresKey && desired.APIKey == "" {
+			if desired.Enabled && registration.Descriptor.RequiresKey && desired.APIKey == "" {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderKeyRequired,
-					"an API key is required to enable "+entry.Name, nil)
+					"an API key is required to enable "+registration.Descriptor.Name, nil)
 				return
 			}
 			upserts = append(upserts, desired)
@@ -228,7 +249,7 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 
 func handleTestSubtitleProvider(deps Deps, slug string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entry, ok := subfetch.RegistryEntryFor(slug)
+		registration, ok := deps.Plugins.SubtitleProvider(slug)
 		if !ok {
 			writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown, "unknown subtitle provider: "+slug, nil)
 			return
@@ -254,12 +275,12 @@ func handleTestSubtitleProvider(deps Deps, slug string) http.HandlerFunc {
 			baseURL = strings.TrimSpace(*req.BaseURL)
 		}
 		if baseURL == "" {
-			baseURL = entry.DefaultBaseURL
+			baseURL = registration.Descriptor.DefaultURL
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		okProbe, detail := subfetch.TestConnection(ctx, slug, apiKey, baseURL)
+		okProbe, detail := subfetch.TestConnection(ctx, deps.Plugins, slug, apiKey, baseURL)
 		writeJSON(w, http.StatusOK, subtitleTestResponse{OK: okProbe, Detail: detail})
 	}
 }
@@ -280,8 +301,11 @@ func currentSubtitleRows(deps Deps) (map[string]store.SubtitleProviderRow, error
 	return out, nil
 }
 
-// buildSubtitleProvidersResponse joins the static registry with the DB rows,
-// masking the key to a hasKey boolean and resolving the effective base URL.
+// buildSubtitleProvidersResponse joins the registered Subtitle provider Plugins
+// with the DB rows, masking the key to a hasKey boolean and resolving the effective
+// base URL. The list is in registration order, which is what keeps the screen
+// deterministic now that the catalog is a value the composition root builds rather
+// than a package-level slice (ADR-0057 decision 5).
 func buildSubtitleProvidersResponse(deps Deps) (subtitleProvidersResponse, error) {
 	rows, err := currentSubtitleRows(deps)
 	if err != nil {
@@ -293,21 +317,37 @@ func buildSubtitleProvidersResponse(deps Deps) (subtitleProvidersResponse, error
 	}
 
 	var providers []subtitleProviderJSON
-	for _, e := range subfetch.Registry() {
-		row := rows[e.Slug]
+	for _, registration := range deps.Plugins.SubtitleProviders() {
+		d := registration.Descriptor
+		row := rows[d.Slug]
 		base := row.BaseURL
 		if base == "" {
-			base = e.DefaultBaseURL
+			base = d.DefaultURL
+		}
+		// An Installed plugin's runtime state, joined on by slug exactly as the
+		// event-sink screen joins it. A slug the loader has never heard of is a
+		// Built-in and reads as all-zero, which is the document this response
+		// always was.
+		var (
+			installed plugins.Status
+			known     bool
+		)
+		if deps.InstalledPlugins != nil {
+			installed, known = deps.InstalledPlugins.Status(d.Slug)
 		}
 		providers = append(providers, subtitleProviderJSON{
-			Slug:        e.Slug,
-			Name:        e.Name,
-			RequiresKey: e.RequiresKey,
+			Slug:        d.Slug,
+			Name:        d.Name,
+			RequiresKey: d.RequiresKey,
 			Enabled:     row.Enabled,
 			HasKey:      row.APIKey != "",
 			BaseURL:     base,
-			Description: e.Description,
-			DocsURL:     e.DocsURL,
+			Description: d.Description,
+			DocsURL:     d.DocsURL,
+			Installed:   known,
+			Disabled:    installed.Disabled,
+			LastError:   installed.LastError,
+			Version:     installed.Version,
 		})
 	}
 	return subtitleProvidersResponse{Providers: providers, AutoFetchLang: autoLang}, nil

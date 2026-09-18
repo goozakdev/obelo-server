@@ -28,6 +28,15 @@ import "github.com/goozakdev/obelo-server/internal/store"
 // active-if-keyed authoritative and the force-on tri-state. The Manager builds it
 // once per Reload (both parts derived from the same provider rows).
 type GlobalEnrichment struct {
+	// Catalog is the Metadata provider Plugins this server was composed with — the
+	// value the resolver validates an Authoritative-provider pointer against, so
+	// "may this Library lead with that source" is a registration fact and a Built-in
+	// is not special (ADR-0057 decision 4). It is a registry pointer, not a copied
+	// list, so this embedded value follows an install or uninstall without the
+	// Manager rebuilding it (.scratch/plugin-system issue 19): the moment a Plugin
+	// is uninstalled, resolveAuthoritative stops finding its Descriptor and the
+	// Library falls back to the kind's default lead.
+	Catalog   Catalog
 	Config    ProviderConfig
 	Providers map[string]ProviderState
 }
@@ -61,7 +70,7 @@ func ResolveLibraryEnrichment(g GlobalEnrichment, policy store.LibraryEnrichment
 	}
 
 	// Authoritative-provider pointer (issue 03): repoint the Full provider that leads.
-	fallback := resolveAuthoritative(&cfg, g.Providers, policy.AuthoritativeProvider)
+	fallback := resolveAuthoritative(g.Catalog, &cfg, g.Providers, policy.AuthoritativeProvider)
 
 	// Per-provider Supplement tri-state (issue 05): force a supplement on or off for
 	// this Library only. Applied AFTER the authoritative is chosen so force-off of the
@@ -91,33 +100,40 @@ func ResolveLibraryEnrichment(g GlobalEnrichment, policy store.LibraryEnrichment
 //     if-keyed): point cfg at it and inject its key so BuildProvider composes it;
 //   - a Full provider that is NOT keyed (its key was cleared after selection) ⇒
 //     fall back to the kind's global default authoritative and flag it, never stall.
-func resolveAuthoritative(cfg *ProviderConfig, providers map[string]ProviderState, pointer *string) string {
+func resolveAuthoritative(cat Catalog, cfg *ProviderConfig, providers map[string]ProviderState, pointer *string) string {
 	if pointer == nil {
 		return "" // inherit the kind default
 	}
 	slug := *pointer
-	entry, ok := RegistryEntryFor(slug)
+	entry, ok := cat.Entry(slug)
 	if !ok || entry.Class != ClassFull {
 		return "" // not a leadable provider — ignore, inherit the default
 	}
-	// Only the video kind has multiple Full providers today, so only a video
-	// authoritative changes the composition; a music pointer (MusicBrainz, the sole
-	// Full music provider) already equals the default and needs no cfg change.
-	if !entry.serves(KindVideo) {
-		return ""
-	}
 	st := providers[slug]
 	if !st.Keyed {
-		// Unreachable after selection: don't point cfg at an unusable lead. Leaving
-		// AuthoritativeVideo unset falls back to the kind default (TMDB); flag it so
+		// Unreachable after selection: don't point cfg at an unusable lead. Leaving the
+		// pointer unset falls back to the kind default (TMDB / MusicBrainz); flag it so
 		// the app can surface the degradation on the attention surface.
 		return slug
 	}
-	cfg.AuthoritativeVideo = slug
-	// Inject the key so BuildProvider composes it as the lead even if the provider is
+	// Point the kind(s) this provider serves at it. A Library has one kind, so at
+	// most one of these fields is ever read for it; setting both for a provider that
+	// serves both is what keeps this from having to know which kind the Library is.
+	if entry.Serves(KindVideo) {
+		cfg.AuthoritativeVideo = slug
+	}
+	if entry.Serves(KindMusic) {
+		cfg.AuthoritativeMusic = slug
+	}
+	// Switch it on so BuildProvider composes it as the lead even if the provider is
 	// globally DISABLED (always-active-if-keyed). The base URL is already in cfg
 	// (SettingsToProviderConfig sets every provider's base URL regardless of enabled).
-	setProviderKey(cfg, slug, st.APIKey)
+	//
+	// "On", not "keyed": a Full provider that declares it needs no secret reaches
+	// here with st.Keyed true and an EMPTY key, and injecting that empty key was
+	// exactly the step at which a keyless lead used to become a lead that led
+	// nothing (.scratch/plugin-system issue 13).
+	setProviderActive(cfg, slug, st.APIKey, true)
 	return ""
 }
 
@@ -135,25 +151,69 @@ func applySupplementOverrides(cfg *ProviderConfig, providers map[string]Provider
 		}
 		if on {
 			if st := providers[slug]; st.Keyed {
-				setProviderKey(cfg, slug, st.APIKey)
+				setProviderActive(cfg, slug, st.APIKey, true)
 			}
 		} else {
-			setProviderKey(cfg, slug, "") // muted for this Library — zero calls
+			setProviderActive(cfg, slug, "", false) // muted for this Library — zero calls
 		}
 	}
 }
 
 // isCurrentAuthoritative reports whether slug is the Library's leading provider for
-// its kind — the video authoritative (repointable) or the fixed music authoritative
-// (MusicBrainz). Used to make force-off of the leader a no-op.
+// its kind — the video authoritative or the music one, both repointable since the
+// music chain went through the contract. Used to make force-off of the leader a
+// no-op.
 func isCurrentAuthoritative(cfg ProviderConfig, slug string) bool {
-	return slug == cfg.videoAuthoritativeSlug() || slug == DefaultAuthoritativeForKind(KindMusic)
+	return slug == cfg.videoAuthoritativeSlug() || slug == cfg.musicAuthoritativeSlug()
 }
 
-// setProviderKey sets (or clears, with an empty key) the API-key field for a
-// key-bearing provider in cfg — the one place the resolver injects/removes a key to
-// activate/mute a source. A keyless provider (MusicBrainz, Cover Art Archive) has no
-// key to set here; its activation rides its authoritative's enablement.
+// setProviderActive switches one provider on or off for THIS Library, which for a
+// key-bearing source means injecting or clearing its key and for every source
+// means stating the explicit active fact.
+//
+// The two halves are one act and must stay one. Before .scratch/plugin-system
+// issue 13 there was only the key, and "on" was inferred from it — which works
+// perfectly for the six keyed Built-ins and not at all for a source that declares
+// it needs no secret: activating one wrote an empty key, which every gate then
+// read as "off". Writing the fact as well as the key means a keyless provider can
+// be on, and a force-off still means off for a source whose key was never the
+// thing holding it up.
+//
+// A KEYLESS BUILT-IN (MusicBrainz, Cover Art Archive) is deliberately untouched by
+// either half: its activation rides its authoritative's enablement and its opt-in,
+// and it has no named key to set. Stating a fact for it here would give the
+// per-Library resolver a second, contradictory answer to a question MusicBrainz
+// already answers for itself.
+func setProviderActive(cfg *ProviderConfig, slug, key string, active bool) {
+	setProviderKey(cfg, slug, key)
+	switch slug {
+	case SlugMusicBrainz, SlugCoverArt:
+		return
+	}
+	if hasNamedKeyField(slug) {
+		// A keyed Built-in's named field IS its active fact, and it has just been
+		// written. Recording a second one would be two places to keep in step.
+		return
+	}
+	// COPY-ON-WRITE, for setProviderKey's reason: the resolver holds a struct copy
+	// that shares this map with the global config.
+	states := make(map[string]bool, len(cfg.ProviderActive)+1)
+	for k, v := range cfg.ProviderActive {
+		states[k] = v
+	}
+	states[slug] = active
+	cfg.ProviderActive = states
+}
+
+// setProviderKey sets (or clears, with an empty key) the API key for a key-bearing
+// provider in cfg. A provider this binary has no named field for lands in
+// ProviderKeys, so an Installed plugin is keyed by the same act that keys a
+// Built-in (ADR-0057 decision 4). A keyless provider (MusicBrainz, Cover Art
+// Archive) has no key to set.
+//
+// Callers go through setProviderActive, which is the act that has meaning: keying
+// a source and switching it on stopped being the same thing when a source that
+// needs no key arrived.
 func setProviderKey(cfg *ProviderConfig, slug, key string) {
 	switch slug {
 	case SlugTMDB:
@@ -168,5 +228,18 @@ func setProviderKey(cfg *ProviderConfig, slug, key string) {
 		cfg.FanartTVAPIKey = key
 	case SlugTheAudioDB:
 		cfg.TheAudioDBAPIKey = key
+	case SlugMusicBrainz, SlugCoverArt:
+		// keyless — nothing to inject or clear
+	default:
+		// COPY-ON-WRITE, not a write. The resolver works on a struct copy of the
+		// global config, which shares this map with it — writing through would let one
+		// Library's policy change every other Library's keys, and the sparse-overlay
+		// model (ADR-0027) is built on the global config being untouched by a resolve.
+		keys := make(map[string]string, len(cfg.ProviderKeys)+1)
+		for k, v := range cfg.ProviderKeys {
+			keys[k] = v
+		}
+		keys[slug] = key
+		cfg.ProviderKeys = keys
 	}
 }

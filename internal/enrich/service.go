@@ -196,6 +196,14 @@ type providerSnapshot struct {
 	// (issue 06). The zero value (the global/fixed-provider path) means "no per-Library
 	// config" — every pin then rides the chain unchanged, the pre-policy behavior.
 	config ProviderConfig
+	// catalog is the Metadata provider Plugins this snapshot was composed from,
+	// carried for the same reason config is: the per-item override path may have to
+	// build ONE pinned provider on its own, and it builds it through the same
+	// registered Plugin the chain would (ADR-0057). The zero value (the global /
+	// fixed-provider path) means "no per-Library catalog", and that path never
+	// reaches the pinned-provider branch — a zero config makes every pin unreachable
+	// first, which is the pre-policy behavior.
+	catalog Catalog
 }
 
 // Service runs Enrichment passes. It owns a Store, the ArtworkFetcher network
@@ -926,22 +934,16 @@ func (s *Service) PreviewExternalForKind(ctx context.Context, kind, pastedRef st
 // a disabled/unconfigured provider ErrSearchUnavailable, and an unknown id ErrNoMatch
 // (so a stale id previews as "not found" instead of hanging or 500ing).
 func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (Candidate, error) {
-	externalID, err := externalIDForKind(kind, pastedRef)
-	// A MusicBrainz /release/ URL isn't itself an album pin, but it names an edition of
-	// a release-group — resolve it to that release-group (the album) rather than
-	// rejecting it as an unsupported entity kind.
-	var releaseMBID string
-	if err != nil {
-		if kind == "album" {
-			if relID, ok := parseMusicBrainzReleaseRef(pastedRef); ok {
-				releaseMBID, err = relID, nil
-			}
-		}
-		if err != nil {
-			return Candidate{}, err
-		}
-	}
+	// The snapshot is read BEFORE the parse because the parse may be the provider's
+	// (see externalRef) — and the parse still comes before the enablement gate, so a
+	// misread paste on a switched-off kind is still "that isn't an id" rather than
+	// "enrichment is off", which is the order the two 400s have always had.
 	snap := s.snapshot()
+	parsed, err := s.externalRef(ctx, snap, kind, pastedRef)
+	if err != nil {
+		return Candidate{}, err
+	}
+	externalID, releaseMBID := parsed.ExternalID, parsed.ReleaseID
 	if !snap.enablement.enabledFor(kind) {
 		return Candidate{}, ErrSearchUnavailable
 	}
@@ -987,6 +989,51 @@ func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (
 		}
 	}
 	return c, nil
+}
+
+// externalRef reads the pasted id-or-URL, asking the PROVIDER first.
+//
+// A Plugin that declared the external-ref capability owns its source's id shapes:
+// MusicBrainz's does the /release/ → release-group mapping and tells a /work/ URL
+// apart from nonsense, and a Plugin for a source the core never shipped is the
+// whole reason this is a call rather than a pattern list (ADR-0057 decision 3).
+//
+// ErrSearchUnavailable is the one answer the host does not pass on. It means "no
+// Plugin here reads pastes for this kind" — an undeclared capability, a kind with
+// no provider, or a fixed provider injected by a test — and the host then reads
+// the paste itself with hostExternalRef, for the two id namespaces it keeps its
+// own columns for (ADR-0045/0049: `titles.musicbrainz_id` and `titles.tmdb_id` are
+// the server's, so understanding what may be written into them is the server's
+// too). Every other answer, including all three refusals, is the Plugin's and
+// stands: that is what keeps the two distinct 400s the Admin sees produced by the
+// source that knows which link they should have pasted.
+func (s *Service) externalRef(ctx context.Context, snap providerSnapshot, kind, pasted string) (ExternalRef, error) {
+	if parser, ok := snap.provider.(ExternalRefParser); ok {
+		ref, err := parser.ParseExternalRef(ctx, kind, pasted)
+		if !errors.Is(err, ErrSearchUnavailable) {
+			return ref, err
+		}
+	}
+	return hostExternalRef(kind, pasted)
+}
+
+// hostExternalRef is the host's own reading of a pasted ref — the answer for a
+// kind whose provider does not read pastes. It is the same parse the service has
+// always done, including the one mapping that is not a shape: a MusicBrainz
+// /release/ URL on an album is not an album pin, so it resolves to the edition
+// (ReleaseID) whose parent release-group the Lookup then finds (ADR-0052), rather
+// than being refused as an unsupported entity kind.
+func hostExternalRef(kind, pasted string) (ExternalRef, error) {
+	externalID, err := externalIDForKind(kind, pasted)
+	if err != nil {
+		if kind == "album" {
+			if relID, ok := parseMusicBrainzReleaseRef(pasted); ok {
+				return ExternalRef{ReleaseID: relID}, nil
+			}
+		}
+		return ExternalRef{}, err
+	}
+	return ExternalRef{ExternalID: externalID}, nil
 }
 
 // externalIDForKind parses a pasted id-or-URL into the authoritative external id for
@@ -1301,6 +1348,68 @@ type leafWork struct {
 	tracklist tracklistOutcome
 }
 
+// acceptSearchHit is where the server decides whether a source's answer is really
+// the item on the shelf — ADR-0050's acceptance test, applied by the HOST rather
+// than by the source that produced the candidate (ADR-0057).
+//
+// A provider that had to SEARCH marks its answer FromSearch and hands over the
+// candidate's own title in Name; it makes no claim that the candidate is right,
+// because a relevance-ranked query essentially always returns something. This
+// function turns that candidate into either a record or ErrMatchRejected, which
+// the reason table below renders as `search-rejected`. Rejecting produces the ZERO
+// TitleMetadata, so a refused candidate's id and fields cannot leak into the row —
+// a confident wrong overview being worse than an empty one (ADR-0049).
+//
+// MUSIC KINDS ONLY, which is exactly where MusicBrainz applied it before the move.
+// A video record marked FromSearch passes through untouched: whether TMDB's top
+// hit should face the same test is a real question with a different answer (a film
+// is disambiguated by year and the picker's human, not by a normalized title), and
+// deciding it here would have smuggled a behavior change into a prefactor.
+//
+// It is applied on the two paths that SETTLE an item against a provider — a leaf
+// in processLeaf and a parent in enrichParent. The other two Lookup call sites
+// (ResolveIdentity, previewExternal) exist only to resolve an id an Admin already
+// named, so no Built-in can hand them a search hit.
+//
+// RE-CHECKED now that the whole metadata chain is behind the contract, because a
+// Plugin the core does not ship could mark a by-id answer FromSearch where no
+// Built-in would: both of those paths are still correct to skip the test, and for
+// a better reason than "a Built-in would not". They exist to SHOW an Admin what an
+// id they typed resolves to, before anything is stored. The human is the judgement
+// there, and rejecting the preview on a normalized-title mismatch would hide the
+// very answer they asked to see — including the correct answer for a track whose
+// local title is wrong, which is the case someone reaches for the paste box for.
+func acceptSearchHit(ref TitleRef, meta TitleMetadata, err error) (TitleMetadata, error) {
+	if err != nil || !meta.Matched || !meta.FromSearch {
+		return meta, err
+	}
+	local, judged := localTitleForAcceptance(ref)
+	if !judged {
+		return meta, err
+	}
+	if acceptsTitle(local, meta.Name) {
+		return meta, err
+	}
+	return TitleMetadata{}, ErrMatchRejected
+}
+
+// localTitleForAcceptance answers which field of the ref holds the title the
+// acceptance test compares against, and whether the kind is judged at all. Only
+// the three Music kinds are, and each names its title in its own field because the
+// ref is the lookup's whole vocabulary: a track is searched by Track, an album by
+// Album, an artist by its name in Title. A kind that is not listed is not filtered.
+func localTitleForAcceptance(ref TitleRef) (string, bool) {
+	switch ref.Kind {
+	case "track":
+		return ref.Track, true
+	case "album":
+		return ref.Album, true
+	case "artist":
+		return ref.Title, true
+	}
+	return "", false
+}
+
 // unmatchedReason is ADR-0050's reason table, evaluated for a leaf the provider
 // declined to match. err is the lookup's error (nil when the provider answered
 // "no record" without one, which is an empty answer and not a rejection).
@@ -1387,7 +1496,7 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 	// the pinned id, so the pass is unchanged. The pinned id column is never touched —
 	// the override survives to be re-applied once its provider is reachable again.
 	provider := snap.provider
-	if pinSlug, pinned := pinnedProviderFor(t); pinned {
+	if pinSlug, pinned := pinnedProviderFor(t, snap.config); pinned {
 		if leader := snap.config.authoritativeSlugFor(t.Kind); pinSlug != leader {
 			if !snap.config.providerReachable(pinSlug) {
 				res.Unmatched++
@@ -1400,13 +1509,17 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 			// Reachable but no longer the leader: resolve via the pinned provider alone
 			// so the override still wins (the chain leads a different source that can't
 			// answer this record's id).
-			if p := snap.config.newVideoProvider(pinSlug); p != nil {
+			if p := snap.catalog.newProvider(snap.config, pinSlug, kindGroupFor(t.Kind)); p != nil {
 				provider = p
 			}
 		}
 	}
 
 	meta, err := provider.Lookup(ctx, lw.ref)
+	// The source found a candidate; the server decides whether it is this item
+	// (ADR-0057). A refusal becomes ErrMatchRejected here, which the case below
+	// files 'unmatched' and unmatchedReason diagnoses as `search-rejected`.
+	meta, err = acceptSearchHit(lw.ref, meta, err)
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		res.Unmatched++
@@ -2198,6 +2311,11 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	}
 
 	meta, err := snap.provider.Lookup(ctx, ref)
+	// A parent settles against the same rule a leaf does (ADR-0057). No Built-in
+	// marks an Artist or an Album FromSearch today — MusicBrainz resolves both by
+	// exact-phrase query — so this is inert for them and present so that a Plugin
+	// leading a Library cannot bypass the judgement a Track's source cannot.
+	meta, err = acceptSearchHit(ref, meta, err)
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
 		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
@@ -2330,16 +2448,30 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 
 // pinnedProviderFor reports the registry slug of the provider a Title's RECORD
 // lives with — an Enrichment override's, or the embedded id token's when nothing
-// overrode it (ADR-0045) — and whether there is such a record at all: a video Title with a TMDB id resolves against TMDB's record, a
-// music Track with a MusicBrainz id against MusicBrainz's. It is how the pass
-// recognizes an override whose record provider may differ from the Library's current
-// Authoritative provider (issue 06). A Title with no external id is not pinned (its
-// resolution simply follows the Library leader).
-func pinnedProviderFor(t store.Title) (string, bool) {
+// overrode it (ADR-0045) — and whether there is such a record at all. It is how the
+// pass recognizes an override whose record provider may differ from the Library's
+// current Authoritative provider (issue 06). A Title with no external id is not
+// pinned: its resolution simply follows the Library leader.
+//
+// The two kinds answer differently, and the difference is a fact about the COLUMNS,
+// not a preference. A video record lives in `titles.tmdb_id`, a column named after
+// one source, so a video Title carrying one is pinned to TMDB however the Library
+// was repointed. A music record lives in `titles.musicbrainz_id`, which was named
+// after the only music source that existed when ADR-0049 added it and holds
+// whatever source the music chain resolved — so it names no source, and the pass
+// cannot conclude that a repointed music Library's records came from somewhere
+// other than its lead. A music pin therefore reports the current music lead, which
+// makes the precedence a no-op for music exactly as it has always been in practice.
+//
+// Telling a repointed music Library that its old records are orphaned would need a
+// record-SOURCE column beside the id. That is a real gap and a later decision; what
+// it is not is a guess this function is entitled to make, because guessing wrong
+// files every Track of a repointed Library to the attention list.
+func pinnedProviderFor(t store.Title, cfg ProviderConfig) (string, bool) {
 	switch t.Kind {
 	case "artist", "album", "track":
 		if t.MusicbrainzID != "" {
-			return SlugMusicBrainz, true
+			return cfg.musicAuthoritativeSlug(), true
 		}
 	default:
 		if t.TMDBID != "" {

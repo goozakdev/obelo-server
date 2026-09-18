@@ -1,0 +1,3 @@
+# Compiled guests. Rebuilt by ./build-guests.sh; never committed — this is a
+# throwaway spike and a 3 MiB wasm blob per variant has no business in history.
+build/

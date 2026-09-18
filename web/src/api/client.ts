@@ -86,6 +86,15 @@ import type {
   MetadataProvidersView,
   UpdateMetadataProvidersInput,
   UpdateSubtitleProvidersInput,
+  EventSinksView,
+  UpdateEventSinksInput,
+  InstalledPluginsView,
+  InstallPluginFromURLInput,
+  PluginCatalogView,
+  SetPluginCatalogInput,
+  PluginPublishersView,
+  PinPluginPublisherInput,
+  PluginSettingsInput,
   TestProviderResult,
   EnrichmentPolicy,
   EnrichMode,
@@ -1899,6 +1908,228 @@ export class ApiClient {
     );
   }
 
+  // --- Admin: Event sink settings (ADR-0057, plugin-system/05) -----------
+  //
+  // The same shape again, for the Extension point with no external source to
+  // probe: Admin-scope, the signing secret is never returned (only `hasSecret`),
+  // and a save rebuilds + hot-swaps the live sinks with no restart. There is no
+  // /test leaf — a provider probe asks a third party whether a credential works,
+  // while a sink's secret is this server's own signing key.
+
+  /** `GET /api/v1/settings/event-sinks` (Admin) — the registered Event sink
+   * Plugins joined with current settings, plus the event types this server can
+   * derive. A Member gets a 403. */
+  getEventSinks(signal?: AbortSignal): Promise<EventSinksView> {
+    return this.request<EventSinksView>("/settings/event-sinks", { signal });
+  }
+
+  /** `PUT /api/v1/settings/event-sinks` (Admin) — a PARTIAL update (secret
+   * omitted = unchanged, "" = clear, non-empty = set; enabled/url follow the same
+   * rule; events omitted = unchanged, [] = subscribe to nothing). Returns the
+   * masked view. */
+  updateEventSinks(
+    input: UpdateEventSinksInput,
+    signal?: AbortSignal,
+  ): Promise<EventSinksView> {
+    return this.request<EventSinksView>("/settings/event-sinks", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
+  }
+
+  // --- Admin: Installed plugins (ADR-0058, plugin-system/10) -------------
+  //
+  // Getting CODE onto a running server, and nothing else. What a plugin DOES —
+  // the URL a sink posts to, the events it hears, the key it signs with — is
+  // configured on the screen for its Extension point, through the same endpoint
+  // as the Built-in beside it. That sameness is the design, and this client must
+  // not grow a second way to do it.
+  //
+  // Every verb answers with the WHOLE list, so a caller re-renders from one
+  // response rather than following each action with a GET.
+
+  /** `GET /api/v1/settings/plugins` (Admin) — what is installed, with the Admin's
+   * enable switch, whether this server has stopped calling it, and why. A Member
+   * gets a 403. */
+  getPlugins(signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>("/settings/plugins", { signal });
+  }
+
+  /** `POST /api/v1/settings/plugins` (Admin, multipart) — install from two files:
+   * the `manifest` (manifest.json) and the `module` (the .wasm). Two named parts
+   * rather than an archive, so the server never unpacks paths it did not choose.
+   * Returns the full list.
+   *
+   * `signature` is an OPTIONAL third part, the detached `plugin.sig.json`
+   * (plugin-system/15). Omitting it is not an error and is the usual case: most
+   * plugins are unsigned, and whether this server requires one is decided by the
+   * publisher keys its Admin pinned, server-side, with a refusal that names the
+   * publisher the plugin claimed. */
+  installPlugin(
+    manifest: File | Blob,
+    module: File | Blob,
+    signature?: File | Blob | null,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    const form = new FormData();
+    form.append("manifest", manifest);
+    form.append("module", module);
+    if (signature) form.append("signature", signature);
+    return this.request<InstalledPluginsView>("/settings/plugins", {
+      method: "POST",
+      body: form,
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/plugins/from-url` (Admin) — install from the URL of a
+   * plugin's manifest.json; the module is fetched from beside it. Fetched under
+   * the safe fetcher, and — unlike every other outbound fetch in this server — a
+   * URL resolving into this server's own network is refused, because what comes
+   * back is executed. Returns the full list. */
+  installPluginFromURL(
+    input: InstallPluginFromURLInput,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>("/settings/plugins/from-url", {
+      method: "POST",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/enable` (Admin) — the Admin's switch,
+   * on. Returns the full list. */
+  enablePlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "enable", signal);
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/disable` (Admin) — the Admin's switch,
+   * off. The plugin stops being registered at all, so delivery stops immediately;
+   * it stays on this screen, named, so it can be switched back on. */
+  disablePlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "disable", signal);
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/reenable` (Admin) — forgive a recorded
+   * failure: clears the error and reloads the plugin from disk, so a plugin whose
+   * manifest or module was fixed gets a genuine second try. It does NOT touch the
+   * Admin's enable switch. */
+  reenablePlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "reenable", signal);
+  }
+
+  /** `DELETE /api/v1/settings/plugins/{id}` (Admin) — unload the module, delete
+   * its files and its settings. Artwork and subtitles it produced stay in the
+   * ordinary caches: they are the library's now. */
+  uninstallPlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}`,
+      { method: "DELETE", signal },
+    );
+  }
+
+  /** `PUT /api/v1/settings/plugins/{id}/settings` (Admin) — the values of the
+   * settings the plugin's OWN manifest declared. Validated server-side against
+   * that manifest; a refusal comes back as a 400 whose details carry one message
+   * per field. Returns the full list, like every other verb here. */
+  savePluginSettings(
+    id: string,
+    input: PluginSettingsInput,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}/settings`,
+      { method: "PUT", body: JSON.stringify(input), signal },
+    );
+  }
+
+  // --- Admin: the optional catalog and pinned publishers (plugin-system/15) ---
+  //
+  // Both are OFF by default and both are the operator's own decision: this
+  // project runs no catalog and vouches for no publisher (ADR-0001). A server
+  // that has used neither browses nothing, verifies nothing, and behaves exactly
+  // as it did before these routes existed.
+  //
+  // There is deliberately NO "install this catalog entry" call. An entry is a
+  // manifest URL, so installing one is installPluginFromURL with that URL —
+  // the same endpoint, the same safe-fetch policy, the same refusals. A second
+  // path would have been a second place for that policy to be got wrong.
+
+  /** `GET /api/v1/settings/plugins/catalog` (Admin) — the configured index and
+   * what it currently offers.
+   *
+   * IT ANSWERS 200 WHEN THE CATALOG IS BROKEN. An index that is down, moved or
+   * malformed comes back as `entries: []` with a sentence in `error`, because the
+   * upload and paste-URL paths have nothing to do with the catalog and must not be
+   * taken away by somebody else's outage. Render `error` as a note rather than as
+   * a failed request, and key the Browse tab off `url` rather than off `entries`. */
+  getPluginCatalog(signal?: AbortSignal): Promise<PluginCatalogView> {
+    return this.request<PluginCatalogView>("/settings/plugins/catalog", { signal });
+  }
+
+  /** `PUT /api/v1/settings/plugins/catalog` (Admin) — point this server at an
+   * index, or clear it with `""`. The address is validated but NOT fetched, so
+   * saving the address of a catalog that happens to be down is not an error; the
+   * response carries a freshly fetched view, note and all. */
+  setPluginCatalog(
+    input: SetPluginCatalogInput,
+    signal?: AbortSignal,
+  ): Promise<PluginCatalogView> {
+    return this.request<PluginCatalogView>("/settings/plugins/catalog", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `GET /api/v1/settings/plugins/publishers` (Admin) — the pinned publisher
+   * keys. An EMPTY list is the default policy (nothing is verified), not missing
+   * data. */
+  getPluginPublishers(signal?: AbortSignal): Promise<PluginPublishersView> {
+    return this.request<PluginPublishersView>("/settings/plugins/publishers", { signal });
+  }
+
+  /** `PUT /api/v1/settings/plugins/publishers` (Admin) — pin a publisher's base64
+   * ed25519 public key, replacing whatever that publisher had, which is what a key
+   * rotation needs. Pinning the FIRST key makes every later install require a
+   * signature. `422 PLUGIN_SIGNATURE` for something that is not an ed25519 key. */
+  pinPluginPublisher(
+    input: PinPluginPublisherInput,
+    signal?: AbortSignal,
+  ): Promise<PluginPublishersView> {
+    return this.request<PluginPublishersView>("/settings/plugins/publishers", {
+      method: "PUT",
+      body: input,
+      signal,
+    });
+  }
+
+  /** `DELETE /api/v1/settings/plugins/publishers/{publisher}` (Admin) — unpin a
+   * key. Removing the LAST one returns this server to installing unsigned plugins.
+   * `404 PLUGIN_UNKNOWN` for a publisher nobody pinned. */
+  unpinPluginPublisher(
+    publisher: string,
+    signal?: AbortSignal,
+  ): Promise<PluginPublishersView> {
+    return this.request<PluginPublishersView>(
+      `/settings/plugins/publishers/${encodeURIComponent(publisher)}`,
+      { method: "DELETE", signal },
+    );
+  }
+
+  private pluginVerb(
+    id: string,
+    verb: string,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}/${verb}`,
+      { method: "POST", signal },
+    );
+  }
+
   // --- Admin: Tailnet remote access (ADR-0043, tailscale/01) -------------
   //
   // Admin scope, server-enforced. One response shape for all five routes — the
@@ -2292,6 +2523,19 @@ export type {
   EpisodeSummary,
   FixMatchInput,
   HomeRows,
+  InstalledPlugin,
+  InstalledPluginsView,
+  InstallPluginFromURLInput,
+  PluginCatalogEntry,
+  PluginCatalogView,
+  SetPluginCatalogInput,
+  PluginPublisher,
+  PluginPublishersView,
+  PinPluginPublisherInput,
+  PluginSettingsField,
+  PluginSettingsFieldType,
+  PluginSettingsValues,
+  PluginSettingsInput,
   Library,
   LibraryRoot,
   Link,

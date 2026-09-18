@@ -96,14 +96,14 @@ func TestAniDBUnknownAIDIsNoMatch(t *testing.T) {
 // provider, RequiresKey, and shipped globally DISABLED (no seed row) so it appears
 // as a usable authoritative candidate only once keyed.
 func TestAniDBRegistryEntry(t *testing.T) {
-	e, ok := RegistryEntryFor(SlugAniDB)
+	e, ok := builtinCatalog().Entry(SlugAniDB)
 	if !ok {
 		t.Fatalf("AniDB not registered")
 	}
 	if e.Class != ClassFull {
 		t.Errorf("AniDB class = %q, want full (leadable)", e.Class)
 	}
-	if !e.serves(KindVideo) || e.serves(KindMusic) {
+	if !e.Serves(KindVideo) || e.Serves(KindMusic) {
 		t.Errorf("AniDB kinds = %v, want video only", e.Kinds)
 	}
 	if !e.RequiresKey {
@@ -112,7 +112,7 @@ func TestAniDBRegistryEntry(t *testing.T) {
 
 	// It is a Full VIDEO candidate...
 	found := false
-	for _, c := range FullProvidersForKind(KindVideo) {
+	for _, c := range builtinCatalog().FullProvidersForKind(KindVideo) {
 		if c.Slug == SlugAniDB {
 			found = true
 		}
@@ -121,12 +121,12 @@ func TestAniDBRegistryEntry(t *testing.T) {
 		t.Errorf("AniDB missing from the Full video candidates")
 	}
 	// ...but NOT the kind default (TMDB is), so adding it changes no existing Library.
-	if DefaultAuthoritativeForKind(KindVideo) == SlugAniDB {
+	if builtinCatalog().DefaultAuthoritativeForKind(KindVideo) == SlugAniDB {
 		t.Errorf("AniDB became the video default; want TMDB unchanged")
 	}
 	// Shipped disabled: with NO provider rows, AniDB is neither enabled nor keyed, so
 	// it is not a usable authoritative until configured.
-	states := ProviderStatesFromRows(nil)
+	states := builtinCatalog().ProviderStatesFromRows(nil)
 	if s := states[SlugAniDB]; s.Enabled || s.Keyed {
 		t.Errorf("AniDB default state = %+v, want disabled + unkeyed (ships off)", s)
 	}
@@ -135,7 +135,7 @@ func TestAniDBRegistryEntry(t *testing.T) {
 // TestBuildAniDBLeads asserts a keyed AniDB pointed as the video authoritative
 // composes as the chain's lead (with TMDB, if keyed, a fill-only supplement).
 func TestBuildAniDBLeads(t *testing.T) {
-	provider, en := BuildProvider(ProviderConfig{
+	provider, en := buildProvider(ProviderConfig{
 		AuthoritativeVideo: SlugAniDB,
 		AniDBAPIKey:        "anidb-client",
 		TMDBAPIKey:         "tmdb-key",
@@ -148,12 +148,12 @@ func TestBuildAniDBLeads(t *testing.T) {
 	if !ok {
 		t.Fatalf("video = %T, want *VideoChainProvider (AniDB leads, TMDB supplements)", comp.Video)
 	}
-	if _, ok := chain.Authoritative.(*AniDBProvider); !ok {
-		t.Errorf("authoritative = %T, want *AniDBProvider", chain.Authoritative)
+	if got := pluginSlug(chain.Authoritative); got != SlugAniDB {
+		t.Errorf("authoritative = %q (%T), want the anidb Plugin", got, chain.Authoritative)
 	}
 	var haveTMDB bool
 	for _, s := range chain.Supplements {
-		if _, ok := s.(*TMDBProvider); ok {
+		if pluginSlug(s) == SlugTMDB {
 			haveTMDB = true
 		}
 	}

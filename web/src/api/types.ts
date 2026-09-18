@@ -2434,6 +2434,267 @@ export interface UpdateSubtitleProvidersInput {
   autoFetchLang?: string;
 }
 
+/** One Event sink in the settings view (ADR-0057 decision 6, plugin-system/05):
+ * the sink Plugin's registration facts joined with current settings. The signing
+ * secret is never returned — only `hasSecret`. */
+export interface EventSink {
+  slug: string;
+  name: string;
+  /** Whether a signing secret is required to enable it (true for the Webhook: an
+   * unsigned POST is one a receiver has no way to trust). */
+  requiresSecret: boolean;
+  enabled: boolean;
+  hasSecret: boolean;
+  /** The target to POST to. "" = nowhere, which is why such a sink cannot be
+   * enabled. */
+  url: string;
+  /** The event types this sink subscribes to. */
+  events: string[];
+  description: string;
+  docsURL: string;
+  /** This sink's delivery tally since the server booted. */
+  counters: EventSinkCounters;
+}
+
+/** One Event sink's delivery tally since boot (ADR-0057 decision 6). It is the
+ * answer to "is my receiver getting these?", and it takes the place of the Test
+ * button a sink cannot have — its secret is the server's own signing key, so there
+ * is nobody to ask whether it works.
+ *
+ * `delivered` climbing is a working receiver; `failed` climbing is a target that
+ * refuses or cannot be reached; `dropped` climbing is a target too slow to keep up
+ * (the queue is bounded and discards its oldest event). All three flat means the
+ * server has had nothing to say. None of them survive a restart — delivery is
+ * in-memory and best-effort on purpose. */
+export interface EventSinkCounters {
+  delivered: number;
+  dropped: number;
+  failed: number;
+}
+
+/** The `GET/PUT /settings/event-sinks` view: the sink list plus the event types
+ * THIS server can actually derive. `availableEvents` is what the events control
+ * offers — it grows as translations land, so a client must never hard-code it. */
+export interface EventSinksView {
+  sinks: EventSink[];
+  availableEvents: string[];
+}
+
+/** One sink's partial update (secret omitted = unchanged, "" = clear, non-empty =
+ * set; enabled/url follow the same omit=unchanged rule; events omitted =
+ * unchanged, [] = subscribe to nothing). */
+export interface EventSinkUpdate {
+  slug: string;
+  enabled?: boolean;
+  secret?: string;
+  url?: string;
+  events?: string[];
+}
+
+/** The `PUT /settings/event-sinks` body: per-sink partial updates. */
+export interface UpdateEventSinksInput {
+  sinks?: EventSinkUpdate[];
+}
+
+// --- Installed plugins (ADR-0058, plugin-system/10) --------------------------
+
+/** One Installed plugin: a WebAssembly module an Admin put on this server, rather
+ * than code compiled into the binary.
+ *
+ * `enabled` and `disabledByFailure` are NOT the same switch and the screen must
+ * not merge them. `enabled` is the Admin's own decision, kept in the database and
+ * durable across a restart. `disabledByFailure` is this server refusing to call
+ * the plugin any more — because it would not load at all, or because it failed
+ * enough times in a row to be stopped — and `lastError` is the sentence that says
+ * why. A plugin can be enabled and disabled by failure at once, which is exactly
+ * the state that needs explaining.
+ *
+ * `provides` is the Extension points the manifest declared, in the contract's own
+ * tokens (`event-sink`, `metadata-provider`, `subtitle-provider`). `source` is
+ * where the bytes came from: `upload`, a URL, or `placed by hand` for a plugin an
+ * operator copied into the data directory themselves. */
+export interface InstalledPlugin {
+  id: string;
+  name: string;
+  version?: string;
+  apiVersion?: number;
+  provides: string[];
+  enabled: boolean;
+  disabledByFailure: boolean;
+  lastError?: string;
+  source?: string;
+  installedAt?: string;
+  /** Who SIGNED this plugin, recorded at install time and only when the signature
+   * verified against a key an Admin had pinned (plugin-system/15).
+   *
+   * EMPTY IS NOT "UNSIGNED". It means no verification happened — either nothing
+   * was pinned when this arrived, or nothing was signed — and the screen must not
+   * claim otherwise, because the server does not know. `keyId` is a short
+   * fingerprint of the key that signed, for a human comparing it against what a
+   * publisher advertises; nothing is verified against it. */
+  publisher?: string;
+  keyId?: string;
+  settingsSchema?: PluginSettingsField[];
+  settings?: PluginSettingsValues;
+}
+
+/** The type of one manifest-declared settings field, which decides both the
+ * control the form renders and the JSON of the value behind it:
+ *
+ *   string | secret | url | enum   a JSON string
+ *   bool                           a JSON boolean
+ *   integer                        a JSON number with no fractional part
+ *   multi-select                   a JSON array of strings
+ *
+ * The union is left open because a server one version ahead of this bundle may
+ * name a type this form cannot draw; the form says so rather than rendering the
+ * wrong control. */
+export type PluginSettingsFieldType =
+  | "string"
+  | "secret"
+  | "url"
+  | "bool"
+  | "enum"
+  | "multi-select"
+  | "integer"
+  | (string & {});
+
+/** One setting an Installed plugin's MANIFEST declares for itself — the second
+ * variant of the settings field, beside the fixed shape every plugin at every
+ * Extension point has.
+ *
+ * Every constraint here is also enforced by the server, from the manifest on
+ * disk, and the server's answer is the one that decides: the form uses `required`,
+ * `options`, `min` and `max` to draw a control an operator can get right, never to
+ * decide whether a save is allowed. A refused save comes back with a message per
+ * field, and that is what is shown. */
+export interface PluginSettingsField {
+  key: string;
+  type: PluginSettingsFieldType;
+  label?: string;
+  help?: string;
+  required?: boolean;
+  /** The value used when nothing is filled in, as JSON of this field's own type. */
+  default?: unknown;
+  /** The closed set of values for an `enum` or a `multi-select`. */
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+/** What is currently saved against a plugin's declared schema.
+ *
+ * `values` never carries a secret field — the server does not return one, ever —
+ * and `secrets` says, per secret field, whether there is one on file. That is the
+ * same contract `hasApiKey` has on a metadata provider, and the form shows the
+ * same thing: "Configured", with a box that replaces it. */
+export interface PluginSettingsValues {
+  values: Record<string, unknown>;
+  secrets: Record<string, boolean>;
+}
+
+/** The `PUT /settings/plugins/{id}/settings` body. One value per declared field
+ * key, in that field's own JSON shape.
+ *
+ * A key the form OMITS means "leave what is stored alone", which is the only way
+ * a secret the server never returned survives a save; an explicit `null` clears
+ * it. */
+export interface PluginSettingsInput {
+  values: Record<string, unknown>;
+}
+
+/** The `GET /settings/plugins` view, and what every lifecycle verb answers with —
+ * so a screen that just installed or uninstalled something re-renders from one
+ * response and never has to ask again. */
+export interface InstalledPluginsView {
+  plugins: InstalledPlugin[];
+}
+
+/** The `POST /settings/plugins/from-url` body: the URL of a plugin's
+ * `manifest.json`, with its `plugin.wasm` published beside it in the same
+ * directory.
+ *
+ * `signatureUrl` is optional and almost always omitted — a signature published
+ * the ordinary way sits beside the manifest under its conventional name, which
+ * is where the server looks anyway. It exists for a catalog entry that carries a
+ * `signatureUrl` of its own. */
+export interface InstallPluginFromURLInput {
+  url: string;
+  signatureUrl?: string;
+}
+
+/** One plugin an operator's chosen catalog offers (plugin-system/15).
+ *
+ * `manifestUrl` IS the entry: installing it is the ordinary URL install, through
+ * the same endpoint and the same policy as an address pasted by hand — including
+ * the refusal of one that resolves inside the server's own network. Everything
+ * else here is the index author's CLAIM, shown so an operator can choose and
+ * believed by nothing: the manifest fetched from `manifestUrl` decides the id,
+ * the name, the version and what it provides, and only a signature makes
+ * `publisher` more than a word in a file. */
+export interface PluginCatalogEntry {
+  id: string;
+  name: string;
+  version?: string;
+  publisher?: string;
+  provides?: string[];
+  manifestUrl: string;
+  signatureUrl?: string;
+  description?: string;
+  docsUrl?: string;
+}
+
+/** The `GET /settings/plugins/catalog` view.
+ *
+ * `error` BESIDE A 200 IS NORMAL and is a note, not a failed request. An index
+ * that is down, moved or malformed must not take away the upload and paste-URL
+ * paths, so the server answers `entries: []` with a sentence and the screen shows
+ * it while everything else keeps working.
+ *
+ * The Browse tab keys off `url`, never off `entries`: a catalog that is
+ * configured and unreachable still has a tab, and the tab is where the note
+ * belongs. `url` is `""` when no catalog is configured, which is the default. */
+export interface PluginCatalogView {
+  url: string;
+  entries: PluginCatalogEntry[];
+  error: string;
+}
+
+/** The `PUT /settings/plugins/catalog` body. An empty `url` CLEARS the catalog. */
+export interface SetPluginCatalogInput {
+  url: string;
+}
+
+/** One publisher key an Admin has pinned (plugin-system/15).
+ *
+ * `publicKey` is returned IN FULL and deliberately unmasked, unlike every other
+ * credential-shaped field in this API: it is public, and an operator has to be
+ * able to compare what they pinned against what a publisher advertises. */
+export interface PluginPublisher {
+  publisher: string;
+  publicKey: string;
+  keyId?: string;
+  addedAt?: string;
+}
+
+/** The `GET /settings/plugins/publishers` view.
+ *
+ * AN EMPTY LIST IS THE DEFAULT POLICY, not an absence of data: with nothing
+ * pinned no install is signature-checked at all. A screen says that in words,
+ * because a bare empty table invites the opposite conclusion. */
+export interface PluginPublishersView {
+  publishers: PluginPublisher[];
+}
+
+/** The `PUT /settings/plugins/publishers` body: a publisher name and a base64
+ * ed25519 public key. The name is the LOOKUP — a signature naming this publisher
+ * is checked under this key and no other — so a typo in it is a publisher nobody
+ * pinned, not a label that reads oddly. */
+export interface PinPluginPublisherInput {
+  publisher: string;
+  publicKey: string;
+}
+
 // --- Transcoding observability (ADR-0029) -----------------------------------
 
 /** The resolved Transcode backend block of the /transcoding snapshot (ADR-0009):

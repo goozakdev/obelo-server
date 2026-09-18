@@ -10,6 +10,15 @@
 // TMDB provider + HTTP fetcher; tests inject fakes, so the black-box HTTP tests
 // drive enrichment with zero network. The service depends only on these
 // interfaces + a Store, never on net/http (ADR-0006 modular monolith).
+//
+// Since ADR-0057 a source reaching the MetadataProvider seam is a **Plugin**: the
+// video sources are Built-ins registered through pluginapi/v1 from the
+// composition root and adapted back to this interface in plugin.go, and the
+// catalog they are registered into is a Catalog VALUE the builder, the Manager and
+// the settings API are handed (see registry.go). This interface stays the
+// enrichment domain's own vocabulary — nothing above plugin.go knows the contract
+// exists — so the Service, the chains and every test that injects a fake provider
+// are unchanged by a source moving behind it.
 package enrich
 
 import (
@@ -29,6 +38,14 @@ var ErrNoMatch = errors.New("enrich: no external match")
 // acceptance test — its normalized title must be the local one's (ADR-0050). A hit
 // that fails is discarded rather than stored, because a confident wrong overview is
 // worse than an empty one (ADR-0049).
+//
+// THE SERVICE PRODUCES IT, NOT A PROVIDER (ADR-0057). A source declares that an
+// answer came from a search (TitleMetadata.FromSearch) and hands over the candidate
+// it found; the host applies the acceptance test and returns this. A provider that
+// judged its own answer would be asking the server to trust an author who never
+// read ADR-0049 — and the same rule has to hold for a source the core does not
+// ship. A provider MAY still return this value directly (nothing rejects it, and
+// test fakes do), but no Built-in does.
 //
 // It WRAPS ErrNoMatch, so every errors.Is(err, ErrNoMatch) caller is unaffected —
 // the pass still files the item 'unmatched' and moves on. The distinction exists so
@@ -296,6 +313,25 @@ type TitleMetadata struct {
 
 	ExternalID string
 	Source     string
+
+	// FromSearch says the source found this record by RELEVANCE-RANKED SEARCH
+	// rather than by resolving an id. It is a fact about HOW the answer was found,
+	// never a judgement about whether it is right — a relevance query essentially
+	// always returns something, so its top hit is a CANDIDATE, and only the host
+	// turns a candidate into a record (ADR-0057).
+	//
+	// The enrichment service applies ADR-0050's title acceptance test to a music
+	// record marked this way: Name (the candidate's own title) must be the local
+	// title under normalizeMatchTitle, or the answer becomes ErrMatchRejected and
+	// the Track settles with the `search-rejected` diagnosis. Video kinds are not
+	// filtered in this phase.
+	//
+	// A record resolved BY ID is never marked, and that distinction is the whole
+	// point: an id IS the identification (ADR-0049), so a canonical title that
+	// disagrees with the local one is a spelling, not a wrong record, and running
+	// the acceptance test over it would reject correct answers. Name therefore has
+	// to be the candidate's title whenever this is set.
+	FromSearch bool
 }
 
 // MetadataProvider resolves a parsed identity to normalized descriptive metadata
@@ -304,6 +340,13 @@ type TitleMetadata struct {
 // caching. It NEVER returns identity; a no-match is (TitleMetadata{}, ErrNoMatch)
 // or a result with Matched=false, not a fatal error.
 type MetadataProvider interface {
+	// Lookup resolves ref to one record. A source that had to SEARCH for it —
+	// because ref carried no id it could resolve — returns its best candidate with
+	// FromSearch set and Name carrying that candidate's own title, and does NOT
+	// decide whether the candidate is good enough: the host applies the acceptance
+	// test and produces ErrMatchRejected (ADR-0057, ADR-0050). This is the only
+	// obligation the signature does not state, and it is what lets a source written
+	// by someone who never read ADR-0049 be trusted with a Library.
 	Lookup(ctx context.Context, ref TitleRef) (TitleMetadata, error)
 
 	// Search returns the authoritative provider's candidates for a free-text query
@@ -477,6 +520,45 @@ type AlbumEditionLister interface {
 	// an empty list, not an error: "this album has exactly no editions to choose
 	// from" is an answer, and the caller renders it as one.
 	ReleaseGroupEditions(ctx context.Context, releaseGroupID string) ([]ReleaseEdition, error)
+}
+
+// ExternalRef is what reading a pasted id-or-URL produced: the external id to
+// resolve, and — for an Album whose paste named one — the EDITION it named
+// (ADR-0052).
+//
+// Two fields rather than one string because the two are same-typed MusicBrainz ids
+// one level apart, and because a /release/ URL means both at once: the album to
+// pin is the parent release-group, and the release is the refinement that would
+// otherwise be dropped between the preview and the apply. An empty ReleaseID is a
+// decision too — it CLEARS whatever edition the album had.
+type ExternalRef struct {
+	ExternalID string
+	ReleaseID  string
+}
+
+// ExternalRefParser is an OPTIONAL provider capability: reading a string an Admin
+// pasted into the "paste an id when search isn't enough" box for an item of a
+// given kind.
+//
+// It is a CALL and not a list of URL patterns the source could declare, because
+// the mapping is logic: a MusicBrainz /release/ URL has to be resolved to the
+// release-group an album IS (ADR-0038) before it can be pinned, and a real URL for
+// an entity kind nothing pins (a work, a label) has to be told apart from an
+// unreadable paste so the Admin is told which link to grab instead.
+//
+// Like the other optional interfaces it is deliberately NOT part of
+// MetadataProvider. A provider that does not implement it answers
+// ErrSearchUnavailable, and the HOST then reads the paste itself for the id
+// namespaces it already keeps columns for (ADR-0045/0049) — see
+// Service.externalRef. A provider that DOES implement it speaks for its own
+// source's id shapes, and its answer stands.
+type ExternalRefParser interface {
+	// ParseExternalRef reads pasted for an item of kind, returning the id to
+	// resolve or one of the three refusals: ErrExternalRefInvalid (unreadable),
+	// an *ExternalRefKindMismatchError (a real entity of the wrong kind), or
+	// ErrExternalRefUnsupportedKind (one of this source's URLs for an entity kind
+	// nothing pins).
+	ParseExternalRef(ctx context.Context, kind, pasted string) (ExternalRef, error)
 }
 
 // ArtworkFetcher downloads image bytes for a remote URL the provider returned,

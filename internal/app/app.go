@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,16 +19,19 @@ import (
 	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/api"
 	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/builtins"
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/events"
+	"github.com/goozakdev/obelo-server/internal/eventsink"
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
@@ -36,6 +40,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
 	"github.com/goozakdev/obelo-server/internal/webui"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // relayEndTimeout bounds the courtesy call that ends a relayed session on the
@@ -113,6 +118,29 @@ type App struct {
 	// Reached from outside through Tailnet().
 	tailnetMgr *tailnet.Manager
 
+	// sinkManager and sinkTranslator are the Event sink half of the Plugin system
+	// (ADR-0057 decision 6): the manager owns the "read settings → build → swap the
+	// live sinks" cycle the settings PUT calls Reload on, and the translator holds
+	// the Broker subscription the curated events are derived from. Both are stopped
+	// before the Broker goes, for the Tailnet's reason — nothing may be left
+	// publishing into, or subscribed to, a closed Broker.
+	sinkManager    *eventsink.Manager
+	sinkTranslator *eventsink.Translator
+
+	// installedPlugins is the Installed half of the Plugin system (ADR-0058): every
+	// Plugin found under <dataDir>/plugins at boot, the refused ones included, each
+	// holding its compiled module and the state that decides whether this server is
+	// still willing to call it. Closed with the App so no wasm runtime outlives the
+	// process that built it.
+	installedPlugins *plugins.Set
+
+	// pluginManager installs, enables, disables and uninstalls an Installed plugin
+	// on a RUNNING server (issue 10). It owns the live Set from here on —
+	// installedPlugins above is only what boot found — so Close releases the
+	// runtimes through it and never through the boot-time value, which an install
+	// will have replaced.
+	pluginManager *plugins.Manager
+
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
 	// enrich); each closes its done channel once it has fully exited, so Close
@@ -143,6 +171,24 @@ type options struct {
 	metadataProvider enrich.MetadataProvider
 	artworkFetcher   enrich.ArtworkFetcher
 	providerBuilder  enrich.BuildFunc
+	// metadataPlugins are extra Metadata provider Plugins registered alongside the
+	// Built-ins (ADR-0057). It is the seam for "a Plugin this binary does not ship":
+	// a test registers one and the real Catalog, builder, settings API and
+	// Enrichment policy then treat it exactly as they treat a Built-in, which is the
+	// only honest way to check that decision 4 holds.
+	metadataPlugins []pluginapi.MetadataProviderRegistration
+	// pluginOptions tunes the Installed-plugin loader (ADR-0058). The zero value
+	// is production: a ten-second per-call budget, a one-mebibyte fetch cap and
+	// three consecutive failures before a Plugin is disabled. A test shortens the
+	// call budget so a guest that never returns can be observed being stopped
+	// without the suite waiting half a minute for it.
+	pluginOptions plugins.Options
+	// pluginSourcesMayBePrivate drops the address check on a URL install (issue
+	// 10). TESTS ONLY: the suite serves its fixture plugin from an httptest.Server
+	// on 127.0.0.1 and there is no hermetic public address to serve it from. In
+	// production a pasted URL that resolves into loopback/RFC1918/link-local space
+	// is refused, because a plugin is code this server will run.
+	pluginSourcesMayBePrivate bool
 	// subtitleProviderBuilder overrides how the subtitle-fetch Manager composes a
 	// SubtitleProvider from settings (default: subfetch.BuildProvider). It is the
 	// test seam for the fetch flow: a black-box test maps settings → a fake
@@ -216,12 +262,47 @@ func WithArtworkFetcher(f enrich.ArtworkFetcher) Option {
 
 // WithProviderBuilder substitutes the function the provider Manager uses to
 // compose a MetadataProvider + Enablement from settings (default:
-// enrich.BuildProvider). It is the test seam for the write→rebuild→enrich loop: a
-// black-box test maps settings → fake sub-providers, so a PUT that enables a kind
-// makes the next pass enrich it with ZERO network. Unlike WithMetadataProvider,
+// enrich.Catalog.BuildProvider). It is the test seam for the write→rebuild→enrich
+// loop: a black-box test maps settings → fake sub-providers, so a PUT that enables
+// a kind makes the next pass enrich it with ZERO network. Unlike WithMetadataProvider,
 // the manager stays active and rebuilds from the DB at boot and after each save.
 func WithProviderBuilder(build enrich.BuildFunc) Option {
 	return func(o *options) { o.providerBuilder = build }
+}
+
+// WithMetadataPlugins registers extra Metadata provider Plugins into the Plugin
+// registry alongside the Built-ins, in the order given and after them (so the
+// catalog order — which decides the settings list, the supplement order and each
+// kind's default lead — still starts with the Built-ins).
+//
+// Nothing else about the composition changes: the Catalog, the builder, the
+// settings API and the per-Library Enrichment policy see one registry and cannot
+// tell a registration that came from here from one that came from builtins.
+// Registering a duplicate slug panics, exactly as a Built-in would.
+func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option {
+	return func(o *options) { o.metadataPlugins = append(o.metadataPlugins, regs...) }
+}
+
+// WithPluginOptions tunes the Installed-plugin loader (ADR-0058). Every field
+// falls back to its production default, so a caller sets only what it means to
+// change — in practice the per-call budget, because a test that has to watch a
+// guest be killed three times for spinning should not wait thirty seconds to see
+// it.
+// WithPluginSourcesFromPrivateAddresses lets a URL install fetch from an address
+// this server would otherwise refuse to fetch CODE from (loopback, RFC1918,
+// link-local).
+//
+// It exists for one reason: the black-box suite serves its fixture plugin from an
+// httptest.Server, which binds 127.0.0.1, and there is no hermetic public address
+// to serve it from instead. Nothing else about the install path changes — the
+// same safe fetcher, the same redirect policy, the same byte caps — and the
+// refusal itself is asserted by a test that does NOT pass this option.
+func WithPluginSourcesFromPrivateAddresses() Option {
+	return func(o *options) { o.pluginSourcesMayBePrivate = true }
+}
+
+func WithPluginOptions(opts plugins.Options) Option {
+	return func(o *options) { o.pluginOptions = opts }
 }
 
 // WithDetector overrides the setup-time hardware-accel Detector (default:
@@ -457,6 +538,59 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		gpuProbe = gpu.NewNvidiaSMIProbe("", 0)
 	}
 
+	// The Plugin registry (ADR-0057): every unit of code that talks to an external
+	// source goes through one contract, and this is where the server is told which
+	// of them it has. Registration is EXPLICIT — builtins.Register is the only way a
+	// Built-in reaches a running server, there is no init() side effect anywhere —
+	// and the registry is a VALUE, so the builders and the settings handlers consume
+	// what this composition root put in it rather than a package-level catalog. The
+	// Installed-plugin loader below adds to this same value, which is what makes an
+	// Installed plugin indistinguishable from a Built-in everywhere downstream.
+	registry := pluginapi.NewRegistry()
+	builtins.Register(registry)
+	for _, reg := range o.metadataPlugins {
+		registry.RegisterMetadataProvider(reg)
+	}
+
+	// Installed plugins (ADR-0058), AFTER the Built-ins and into the same value:
+	// a module and a manifest an Admin placed by hand under <dataDir>/plugins/<id>/,
+	// compiled into its own wazero sandbox and registered as the seam its manifest
+	// says it fills. From here on nothing can tell one from a Built-in — which is
+	// the point, and the proof that the contract was honest.
+	//
+	// NOTHING HERE MAY STOP A BOOT (ADR-0001, and the ADR-0043 template). A Plugin
+	// that will not load is registered anyway, disabled, carrying the sentence that
+	// says why, so an operator sees it on the settings screen instead of wondering
+	// where their files went. Even an unreadable plugins directory is a logged
+	// warning and an empty set.
+	//
+	// The Plugin-scoped key-value namespace (ADR-0058 decision 5) is the database
+	// itself: the kv_get/kv_set host functions write into plugin_kv, scoped by the
+	// Plugin id the manifest on disk carries. It is supplied here rather than
+	// defaulted inside the loader so that a narrow test can still build a Set with
+	// no database at all — a Plugin that cannot cache a cursor is a slower Plugin,
+	// not a broken server.
+	pluginOpts := o.pluginOptions
+	if pluginOpts.KV == nil {
+		pluginOpts.KV = db
+	}
+	installed, err := plugins.Load(context.Background(), filepath.Join(cfg.DataDir, plugins.DirName), pluginOpts)
+	if err != nil {
+		log.Printf("obelo: installed plugins were not loaded: %v", err)
+	}
+	// The Admin's enable switch lives in the plugins table (issue 10) and is read
+	// HERE, before anything is registered: a Plugin an Admin switched off is not
+	// registered at all, so nothing downstream can reach it — which is what makes
+	// "disable stops delivery" a property of the composition rather than of a flag
+	// some delivery path has to remember to check. An unreadable table registers
+	// everything, because a settings read failing must not silently turn a working
+	// Plugin off.
+	disabledPluginIDs, err := db.DisabledPluginIDs()
+	if err != nil {
+		log.Printf("obelo: the plugin enable switches could not be read, so every installed plugin is registered: %v", err)
+	}
+	installed.RegisterEnabled(registry, disabledPluginIDs)
+
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
 	// guarded HTTP fetcher, but tests inject fakes via Options so the black-box
@@ -465,16 +599,21 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// durable artwork cache under the data dir (ADR-0007); unlike transcode scratch
 	// it is NOT cleared at boot.
 	// Compose the enrichment provider + its per-kind enablement snapshot. The
-	// composition logic lives once, in enrich.BuildProvider (a future settings-
-	// driven rebuild calls the same builder and hot-swaps via Service.SetProvider).
+	// composition logic lives once, in enrich.Catalog.BuildProvider (a future
+	// settings-driven rebuild calls the same builder and hot-swaps via SetProvider).
 	// app.New maps config.Config → the builder's decoupled ProviderConfig, mirroring
 	// how it maps config → playback.Governance (ADR-0006: the domain never imports
 	// config). A test-injected fixed provider (WithMetadataProvider) bypasses the
 	// builder but still takes its enablement from config, exactly as before.
+	//
+	// The enrichment Catalog is the Metadata provider half of that registry, seen in
+	// the enrichment domain's own vocabulary: the value the builder, the Manager and
+	// the settings handlers consume instead of a package-level provider catalog.
+	metadataCatalog := enrich.NewCatalog(registry)
 	provider := o.metadataProvider
 	enablement := enrich.Enablement{Video: cfg.VideoEnrichmentEnabled(), Music: cfg.MusicEnrichmentEnabled()}
 	if provider == nil {
-		provider, enablement = enrich.BuildProvider(enrich.ProviderConfig{
+		provider, enablement = metadataCatalog.BuildProvider(enrich.ProviderConfig{
 			TMDBAPIKey:           cfg.TMDBAPIKey,
 			TMDBBaseURL:          cfg.TMDBBaseURL,
 			TMDBImageBaseURL:     cfg.TMDBImageBaseURL,
@@ -539,17 +678,18 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	}
 
 	// The provider Manager reads settings → builds → atomically swaps the running
-	// Service (metadata-providers 02). Production composes via enrich.BuildProvider;
-	// a black-box test substitutes a fake builder (WithProviderBuilder) to drive the
-	// write→rebuild→enrich loop with zero network. Every provider input is now
-	// DB-backed — including the MusicBrainz throttle, which the Manager reads from
-	// store.EnrichmentBehavior on each Reload (so app.New no longer passes it from
-	// cfg), and every base URL including the TMDB image host.
-	providerBuild := enrich.BuildFunc(enrich.BuildProvider)
+	// Service (metadata-providers 02). Production composes via the Catalog's own
+	// BuildProvider; a black-box test substitutes a fake builder
+	// (WithProviderBuilder) to drive the write→rebuild→enrich loop with zero
+	// network. Every provider input is DB-backed — including the MusicBrainz
+	// throttle, which the Manager reads from store.EnrichmentBehavior on each Reload
+	// (so app.New no longer passes it from cfg), and every base URL including the
+	// TMDB image host.
+	providerBuild := enrich.BuilderFor(metadataCatalog)
 	if o.providerBuilder != nil {
 		providerBuild = o.providerBuilder
 	}
-	providerManager := enrich.NewManager(db, enrichSvc, providerBuild)
+	providerManager := enrich.NewManager(db, enrichSvc, metadataCatalog, providerBuild)
 	// Apply the persisted settings at boot so the DB is authoritative — UNLESS a
 	// fixed provider was injected (WithMetadataProvider), which pins that provider
 	// and its config-derived enablement for the existing enrichment tests.
@@ -593,7 +733,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: seeding subtitle provider settings: %w", err)
 	}
-	subtitleBuild := subfetch.BuildFunc(subfetch.BuildProvider)
+	subtitleBuild := subfetch.BuilderFor(registry)
 	if o.subtitleProviderBuilder != nil {
 		subtitleBuild = o.subtitleProviderBuilder
 	}
@@ -607,6 +747,74 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// /events stream. Created unconditionally (cheap) so /events always works; the
 	// producers below publish onto it.
 	broker := events.NewBroker()
+
+	// Event sinks (ADR-0057 decision 6): the operator's outbound integrations. The
+	// translator subscribes to the Broker exactly as an Admin's browser does and
+	// derives the curated events from its terminal snapshots; the Dispatcher hands
+	// each to the sinks that asked for it, off the publish path and under their own
+	// deadline, so a webhook pointed at a dead host can never slow a scan.
+	//
+	// Reloaded at boot and again on every settings save, like both provider
+	// Managers. A read failure here is a boot failure for the same reason theirs is:
+	// the settings the operator saved are not optional state.
+	sinkManager := eventsink.NewManager(db, registry, eventsink.NewDispatcher())
+	if err := sinkManager.Reload(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("app: applying event sink settings: %w", err)
+	}
+	sinkTranslator := eventsink.NewTranslator(sinkManager.Dispatcher(), db)
+	sinkTranslator.Start(broker)
+
+	// Installing a Plugin without a restart (issue 10). The Manager owns the
+	// lifecycle the loader deliberately does not: the files, the rows, the Admin's
+	// switch, and the REBUILD-AND-SWAP that makes all three take effect on a
+	// running server.
+	//
+	// It is built here, last of the Plugin wiring, because it needs the three
+	// Managers that compose FROM the registry: an install swaps a freshly built
+	// registry into the value every reader holds and then tells each of them to
+	// Reload, in this order — providers, subtitles, sinks — so nothing is left
+	// composed from Plugins that are no longer there. Only then is the old Set
+	// closed, which app.Close does in the same order for the same reason.
+	pluginManager := plugins.NewManager(plugins.ManagerConfig{
+		Dir:      filepath.Join(cfg.DataDir, plugins.DirName),
+		Registry: registry,
+		Set:      installed,
+		Store:    db,
+		// The SAME options the boot load used, key-value store and all. Handing the
+		// Manager the caller's raw options instead would give every Plugin loaded
+		// after an install a nil KV — so a guest's kv_get would answer "this server
+		// has no key-value store" until the next restart, and only then start
+		// working. A rebuild has to produce what a reboot would.
+		Loader: pluginOpts,
+		Base: func(reg *pluginapi.Registry) {
+			// Exactly what this composition root registered above, in the same
+			// order, so a rebuilt registry is the one a reboot would have built.
+			builtins.Register(reg)
+			for _, r := range o.metadataPlugins {
+				reg.RegisterMetadataProvider(r)
+			}
+		},
+		Reload: func(ctx context.Context) error {
+			// A fixed injected provider (WithMetadataProvider) has no Manager
+			// driving it, exactly as at boot, so it is not reloaded here either.
+			if o.metadataProvider == nil {
+				if err := providerManager.Reload(ctx); err != nil {
+					return err
+				}
+			}
+			if err := subtitleManager.Reload(ctx); err != nil {
+				return err
+			}
+			return sinkManager.Reload(ctx)
+		},
+		AllowPrivateSources: o.pluginSourcesMayBePrivate,
+	})
+	// The manifest-declared settings an Admin saved before the last restart, read
+	// onto the Plugins the loader has already built (.scratch/plugin-system issue
+	// 13). NewManager performs no I/O by design, and every later load goes through
+	// its own rebuild, so this is the one place boot has to say it.
+	pluginManager.ApplySettings()
 
 	// Declared before the session observer below because that observer must be able
 	// to end a RELAY session on the sharing Server (ADR-0056 §5), and the link
@@ -665,6 +873,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		broker.PublishSessionEvent(eventType, events.SessionEvent{
 			SessionID:  e.SessionID,
 			UserID:     e.UserID,
+			DeviceID:   e.DeviceID,
 			TitleID:    e.TitleID,
 			PositionMs: e.PositionMs,
 		})
@@ -760,6 +969,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		keyRotator:       keyRot,
 		rotationWake:     make(chan struct{}, 1),
 		tailnetMgr:       tailnetManager,
+		sinkManager:      sinkManager,
+		sinkTranslator:   sinkTranslator,
+		installedPlugins: installed,
+		pluginManager:    pluginManager,
 	}
 	queueDepth := enrichQueueDepth
 	if o.enrichQueueSize > 0 {
@@ -853,6 +1066,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		SubFetch:                subFetchSvc,
 		SubtitleProviders:       db,
 		SubtitleProviderManager: subtitleManager,
+		Plugins:                 registry,
+		EventSinks:              db,
+		EventSinkManager:        sinkManager,
+		InstalledPlugins:        pluginManager,
+		PluginManager:           pluginManager,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
@@ -1408,6 +1626,26 @@ func (a *App) Close() error {
 	// next boot, which is the difference between shutting down and disconnecting.
 	if a.tailnetMgr != nil {
 		_ = a.tailnetMgr.Close()
+	}
+	// Drop the Event sink subscription and stop the sink workers before the Broker
+	// goes, for the same reason: a subscription left open is a goroutine leaked past
+	// the App that owned it. Whatever the sinks still had queued is DISCARDED — sink
+	// delivery is best-effort and in memory, and a restart losing a queued event is
+	// the documented behavior, not a bug (ADR-0057 decision 6).
+	if a.sinkTranslator != nil {
+		a.sinkTranslator.Stop()
+	}
+	if a.sinkManager != nil {
+		a.sinkManager.Dispatcher().Close()
+	}
+	// Then the wasm runtimes, AFTER the sinks that call into them have stopped:
+	// closing a runtime out from under an in-flight delivery would trap the guest
+	// on the way out and record a failure against a Plugin that was doing nothing
+	// wrong.
+	if a.pluginManager != nil {
+		_ = a.pluginManager.Close(context.Background())
+	} else if a.installedPlugins != nil {
+		_ = a.installedPlugins.Close(context.Background())
 	}
 	if a.Events != nil {
 		a.Events.Close()

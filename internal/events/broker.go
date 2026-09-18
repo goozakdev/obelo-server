@@ -213,8 +213,13 @@ type ScanProgress struct {
 // nowPlaying — it is omitempty so the started/ended events don't carry a stale
 // zero position on the wire.
 type SessionEvent struct {
-	SessionID  string `json:"sessionId"`
-	UserID     string `json:"userId"`
+	SessionID string `json:"sessionId"`
+	UserID    string `json:"userId"`
+	// DeviceID is the Device the session is bound to (ADR-0015), omitted when the
+	// producer did not carry one. Admin-only like the rest of this payload, and
+	// the reason it is here rather than looked up downstream is that an ENDED
+	// session no longer exists to be looked up.
+	DeviceID   string `json:"deviceId,omitempty"`
 	TitleID    string `json:"titleId"`
 	PositionMs int64  `json:"positionMs,omitempty"`
 }

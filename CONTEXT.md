@@ -364,3 +364,29 @@ _Avoid_: Sync (that is what the receiving side does with it), Dump / backup (it 
 **Relay**:
 How a Title in a Linked Library plays: this Server forwards the client's Capability profile to the sharer, the sharer negotiates the tier and does any transcoding under its own governance and the `remote` User's Playback ceiling, and this Server rewrites the resulting media URLs onto itself and streams the bytes through untouched ([ADR-0056](./docs/adr/0056-a-linked-library-is-a-read-only-mirror-played-through-a-one-hop-relay.md)). Exactly one hop, always: bytes never bypass this Server, and a Linked Library is never relayed onward. The rewritten URL **keeps the sharer's own path tail**, so a playlist's bare relative references resolve onto the relay by construction and not one playlist byte has to change; the tail is then checked against the session that owns it, because a tail forwarded as given would be an open proxy into a friend's Server under this household's credential. This Server pays bandwidth and never CPU: a relayed session holds no slot against the local transcode cap, and ending it here ends the sharer's session too. The sharer sees one session under the `remote` User; the person watching is known only here, and so is their watch state.
 _Avoid_: Proxy (true of the bytes, but a proxy implies transparency and this side owns the Session), Stream forwarding, Transcode passthrough (the sharer transcodes; nothing here does), Federation (again).
+
+## Plugins
+
+**Plugin**:
+A unit of code that implements one or more Extension points and *provides* a Metadata provider, a Subtitle provider, or an Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). The word names the code, not the source: TMDB is a Metadata provider; the TMDB Plugin is what talks to it. Every Plugin, Built-in or Installed, goes through the same contract, and the host — never the Plugin — decides whether to believe what it returns. A Plugin decorates a Title the Scanner already filed; it never decides what a file *is*.
+_Avoid_: Extension (too broad; collides with browser and file extensions), Add-on, Scraper, Agent (Plex/Kodi), Provider (that is what a Plugin provides).
+
+**Extension point**:
+One of the closed set of seams a Plugin may implement: Metadata provider, Subtitle provider, Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). Identity, transcoding and authentication are deliberately not among them. The set grows by decision, not by a Plugin asking.
+_Avoid_: Hook (the Broker's word), Slot (a transcode slot is something else), Interface (the Go word for the seam, not the domain concept).
+
+**Built-in**:
+A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; the eight metadata providers and OpenSubtitles are Built-ins. That the Built-ins go first is what proves the contract honest.
+_Avoid_: Core provider, Native plugin, Bundled plugin.
+
+**Installed plugin**:
+A Plugin an Admin added to a running server as a module and a manifest, without a rebuild. The module is WebAssembly, run in a wazero sandbox that grants it no filesystem, no sockets and no processes, and reached through a hand-rolled JSON ABI ([ADR-0058](./docs/adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)). It reaches the network only through what the host grants it, and a failing one is recorded and disabled, never allowed to stop a boot. It lives in its own directory under the data directory, named by its Manifest's id, holding the module and that manifest; the id is also the key its settings row is stored under, so a Plugin may not claim an id another Plugin on this server already has.
+_Avoid_: Third-party plugin (the maintainer writes the first one), External plugin (says where it came from, not what it is), Module (the file format).
+
+**Manifest**:
+The JSON document an Installed plugin's author ships beside the module: its id, name, version, the contract major it was built against, what it provides, the hosts it may reach, and what settings it needs. It is the Installed half of the self-description a Built-in writes in Go, and it is a **claim**, never an authority — the host checks the contract major, refuses an id another Plugin holds, and enforces the host allowlist itself, from the file, on every fetch. A manifest the server cannot read, or one naming a contract major it does not speak, is refused with a message naming which side to upgrade, and the server still starts.
+_Avoid_: Plugin descriptor (the Go value the host builds *from* a manifest), Metadata (the catalog's word), Config (an Admin edits settings; an author writes a manifest).
+
+**Event sink**:
+A Plugin that consumes a small curated set of terminal server events — a scan or enrichment pass completing, a play starting or stopping, a Library changing — and may only *emit* outbound HTTP in response. It sees what an Admin would see, never a viewer's audience-gated stream, and a session relayed over a Link names the Link, not a person. Delivery is best-effort and every event carries a stable id, so a sink is idempotent by construction. A Webhook is one Event sink.
+_Avoid_: Webhook (one kind of sink), Listener, Notifier, Subscriber (an SSE client is a subscriber; a sink acts for the operator).

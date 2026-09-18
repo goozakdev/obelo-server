@@ -271,7 +271,7 @@ func handleUpdateEnrichmentPolicy(deps Deps) http.HandlerFunc {
 		// Validate every override slug BEFORE writing any, so one bad slug never leaves
 		// a partially-applied update (map iteration order is unspecified).
 		for slug := range req.ProviderOverrides {
-			if !supplementSelectable(lib.Kind, slug) {
+			if !supplementSelectable(deps, lib.Kind, slug) {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderNotAuthoritative,
 					"provider is not a supplement for this library", nil)
 				return
@@ -343,8 +343,8 @@ func authoritativeSelectable(deps Deps, libraryKind, slug string) bool {
 // supplementSelectable reports whether a slug is a togglable Supplement of a
 // Library of the given kind — a key-bearing provider of the coarse kind (the
 // write-side guard mirroring the per-Supplement control list, ADR-0027).
-func supplementSelectable(libraryKind, slug string) bool {
-	for _, e := range enrich.SupplementProvidersForKind(coarseKind(libraryKind)) {
+func supplementSelectable(deps Deps, libraryKind, slug string) bool {
+	for _, e := range metadataCatalog(deps).SupplementProvidersForKind(coarseKind(libraryKind)) {
 		if e.Slug == slug {
 			return true
 		}
@@ -354,11 +354,11 @@ func supplementSelectable(libraryKind, slug string) bool {
 
 // providerRef resolves a slug to its display-name pair for the view (empty name for
 // an unknown slug — defensive; the resolver only ever emits registered slugs).
-func providerRef(slug string) providerRefJSON {
+func providerRef(deps Deps, slug string) providerRefJSON {
 	if slug == "" {
 		return providerRefJSON{}
 	}
-	e, _ := enrich.RegistryEntryFor(slug)
+	e, _ := metadataCatalog(deps).Entry(slug)
 	return providerRefJSON{Slug: slug, Name: e.Name}
 }
 
@@ -381,7 +381,7 @@ func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (e
 		EnrichEnabled:          policy.EnrichEnabled,
 		MetadataLanguage:       policy.MetadataLanguage,
 		AuthoritativeProvider:  policy.AuthoritativeProvider,
-		InheritedAuthoritative: providerRef(enrich.DefaultAuthoritativeForKind(kind)),
+		InheritedAuthoritative: providerRef(deps, metadataCatalog(deps).DefaultAuthoritativeForKind(kind)),
 	}
 	if deps.PolicyResolver != nil {
 		eff, err := deps.PolicyResolver.EffectiveEnablementView(ctx, id)
@@ -406,7 +406,7 @@ func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (e
 		if err != nil {
 			return enrichmentPolicyResponse{}, err
 		}
-		resp.EffectiveAuthoritative = providerRef(effSlug)
+		resp.EffectiveAuthoritative = providerRef(deps, effSlug)
 		if fallbackFrom != "" {
 			resp.AuthoritativeUnreachable = &fallbackFrom
 		}
