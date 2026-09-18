@@ -509,6 +509,10 @@ func (m *Manager) Reenable(ctx context.Context, id string) (Installed, error) {
 // memory — which happens to work, and is the kind of thing that works until it
 // does not.
 //
+// The rows are store.DeletePlugin's one transaction, and they include the guest's
+// own key-value namespace: a cursor or a cache that outlived its Plugin would be
+// read straight back by the next install under the same id, whoever wrote it.
+//
 // What it deliberately does NOT delete: the artwork and the subtitles the Plugin
 // produced. Those are identity-keyed and live in the ordinary caches, indis-
 // tinguishable from anything else the server fetched, and they are the Library's

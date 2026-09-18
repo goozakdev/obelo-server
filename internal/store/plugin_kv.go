@@ -80,10 +80,16 @@ func (db *DB) DeletePluginKV(pluginID, key string) error {
 	return nil
 }
 
+// deletePluginNamespaceSQL is the whole of dropping a namespace, named because it
+// is run from two places: this file's DeletePluginNamespace, and the uninstall
+// transaction in DeletePlugin, which needs the statement rather than the method so
+// that it commits or rolls back with the Plugin's other three deletes.
+const deletePluginNamespaceSQL = `DELETE FROM plugin_kv WHERE plugin_id = ?`
+
 // DeletePluginNamespace drops everything one Plugin ever stored. It is what
-// UNINSTALL calls (issue 10 owns the uninstall flow; this is the method it needs),
-// and it is the reason the namespace is a column rather than a key prefix: dropping
-// it is one statement that cannot get the prefix subtly wrong.
+// UNINSTALL runs (as part of DeletePlugin's transaction, through the statement
+// above), and it is the reason the namespace is a column rather than a key prefix:
+// dropping it is one statement that cannot get the prefix subtly wrong.
 //
 // Uninstalling and reinstalling a Plugin therefore gives it a clean namespace,
 // which is the honest reading of "uninstall" — the identity-keyed artwork and
@@ -93,7 +99,7 @@ func (db *DB) DeletePluginNamespace(pluginID string) error {
 	if pluginID == "" {
 		return fmt.Errorf("store: dropping a plugin namespace with no plugin id")
 	}
-	if _, err := db.Exec(`DELETE FROM plugin_kv WHERE plugin_id = ?`, pluginID); err != nil {
+	if _, err := db.Exec(deletePluginNamespaceSQL, pluginID); err != nil {
 		return fmt.Errorf("store: dropping the namespace of plugin %q: %w", pluginID, err)
 	}
 	return nil

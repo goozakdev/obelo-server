@@ -154,13 +154,22 @@ func (db *DB) SetPluginLastError(id, message string) error {
 }
 
 // DeletePlugin removes a Plugin's record entirely: its row, its generic settings,
-// and the fixed-shape settings row its Extension point wrote under the same slug.
+// the fixed-shape settings row its Extension point wrote under the same slug, and
+// the key-value namespace the guest itself wrote.
 //
 // THE EVENT SINK ROW IS THE ONE PEOPLE FORGET. An Installed Event sink's settings
 // live in event_sinks keyed by the Plugin id, so leaving it behind would strand a
 // signing secret and a target URL under a slug no Plugin claims — a row the sink
 // Manager silently skips forever and that would quietly come back to life if the
 // same Plugin were ever reinstalled.
+//
+// THE KEY-VALUE NAMESPACE IS THE OTHER ONE, and it is worse, because the rows are
+// the GUEST's rather than the operator's: cursors, etags and small caches nobody
+// ever typed. Left behind, a Plugin reinstalled under the same id — by the same
+// author, or by anyone who picks the same slug — reads them back through kv_get as
+// if it had written them. Uninstall leaves exactly the identity-keyed artwork and
+// subtitles the Plugin produced (those are the Library's now, ADR-0007) and
+// nothing else.
 //
 // One transaction, because a half-removed Plugin is worse than either outcome.
 func (db *DB) DeletePlugin(id string) error {
@@ -172,6 +181,11 @@ func (db *DB) DeletePlugin(id string) error {
 
 	for _, stmt := range []string{
 		`DELETE FROM plugin_settings WHERE plugin_id = ?`,
+		// The same one statement DeletePluginNamespace runs, shared rather than
+		// spelled twice so there is one WHERE clause to get right — and run HERE,
+		// inside the transaction, so a failure anywhere in this list leaves the
+		// Plugin whole rather than half uninstalled.
+		deletePluginNamespaceSQL,
 		`DELETE FROM event_sinks WHERE slug = ?`,
 		`DELETE FROM plugins WHERE id = ?`,
 	} {
