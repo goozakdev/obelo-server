@@ -342,6 +342,45 @@ func contractTypes() []typeSpec {
 				"settings field.",
 		},
 		{
+			value: pluginapi.Signature{},
+			doc: "The DETACHED signature document an author publishes beside a manifest (`plugin.sig.json`). " +
+				"It is detached because the manifest is stored byte for byte as its author shipped it and is " +
+				"never re-encoded, so a signature field inside it would change the bytes it covers. The signed " +
+				"message is the domain separator \"obelo-plugin-v1\\n\" followed by the raw SHA-256 of the " +
+				"manifest bytes and the raw SHA-256 of the module bytes, concatenated — 80 bytes, signed with " +
+				"ed25519. There is no canonical form to agree on: the bytes ARE the object. publisher is the " +
+				"only field with consequence — a host with publisher keys pinned looks it up among them and " +
+				"verifies under that key, refusing anything else by name; keyId is a fingerprint shown to a " +
+				"human and decides nothing. The two hex digests are recomputed from the real bytes and a " +
+				"mismatch is refused BEFORE the signature is checked, because 'this covers a different module' " +
+				"and 'this is forged' are different things to be told. A host with nothing pinned verifies " +
+				"nothing and behaves exactly as it did before signatures existed (ADR-0001: this project runs " +
+				"no registry and vouches for no publisher).",
+		},
+		{
+			value: pluginapi.CatalogIndex{},
+			doc: "The document served at a catalog URL: a flat, ordered list of plugins an operator's chosen " +
+				"index offers. There is no default catalog, no bundled URL and no fallback — a server browses " +
+				"one only when an Admin typed its address, and that address is the whole of the trust decision " +
+				"(ADR-0001). No paging and no query interface, deliberately: a format that needed a server " +
+				"behind it would be a format only a hosted service could publish. An index declaring a higher " +
+				"version is still read, because this format is additive like the rest of v1; one declaring 0 " +
+				"is read as 1, since an index written by hand is the common case.",
+		},
+		{
+			value: pluginapi.CatalogEntry{},
+			doc: "One plugin a catalog offers. manifestUrl IS the entry: installing from it is the ordinary " +
+				"URL install, so the module is fetched from beside the manifest and every refusal applies " +
+				"unchanged — including the one unique to that path, where the first hop is address-checked " +
+				"because what comes back is code the server executes. An entry pointing into the server's own " +
+				"network is refused with the same sentence a pasted address gets. Every other field is DISPLAY: " +
+				"the index author's claim, shown so an operator can choose, and believed by nothing. The " +
+				"manifest fetched from manifestUrl decides the id, the name, the version and the Extension " +
+				"points, and only a signature makes `publisher` more than a word in a file. signatureUrl is " +
+				"for a signature that is not beside the manifest; absent means the conventional name in the " +
+				"manifest's own directory, which is where the host looks anyway.",
+		},
+		{
 			value: pluginapi.SubtitleSearchCall{},
 			doc: "What the host hands an INSTALLED Subtitle provider for one search: the request a Built-in " +
 				"would receive, and the Settings the Admin saved. The settings travel WITH the call and are " +

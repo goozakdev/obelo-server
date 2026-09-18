@@ -27,6 +27,11 @@ import (
 //	GET    /settings/plugins            → what is installed
 //	POST   /settings/plugins            → install from an upload (multipart)
 //	POST   /settings/plugins/from-url   → install from a pasted URL
+//	GET    /settings/plugins/catalog    → the operator's chosen index, if any
+//	PUT    /settings/plugins/catalog    → set or clear the catalog URL
+//	GET    /settings/plugins/publishers → the pinned publisher keys
+//	PUT    /settings/plugins/publishers → pin one
+//	DELETE /settings/plugins/publishers/{publisher} → unpin one
 //	POST   /settings/plugins/{id}/enable
 //	POST   /settings/plugins/{id}/disable
 //	POST   /settings/plugins/{id}/reenable
@@ -50,12 +55,21 @@ import (
 // free of a wasm runtime.
 type PluginManager interface {
 	List(ctx context.Context) ([]plugins.Installed, error)
-	Install(ctx context.Context, manifest, module []byte, source string) (plugins.Installed, error)
-	InstallFromURL(ctx context.Context, url string) (plugins.Installed, error)
+	Install(ctx context.Context, manifest, module, signature []byte, source string) (plugins.Installed, error)
+	InstallFromURL(ctx context.Context, url, signatureURL string) (plugins.Installed, error)
 	SetEnabled(ctx context.Context, id string, enabled bool) (plugins.Installed, error)
 	Reenable(ctx context.Context, id string) (plugins.Installed, error)
 	SaveSettings(ctx context.Context, id string, values map[string]json.RawMessage) (plugins.Installed, error)
 	Uninstall(ctx context.Context, id string) error
+
+	// The optional catalog and the pinned publisher keys (issue 15). Both are OFF
+	// by default and both are an Admin's own choice; a server that has made
+	// neither behaves exactly as it did before they existed.
+	Catalog(ctx context.Context) (plugins.CatalogResult, error)
+	SetCatalogURL(url string) error
+	Publishers() ([]plugins.Publisher, error)
+	PinPublisher(publisher, publicKey string) error
+	UnpinPublisher(publisher string) error
 }
 
 // --- Wire shapes ------------------------------------------------------------
@@ -69,8 +83,15 @@ type pluginsResponse struct {
 
 // installFromURLRequest is the POST /settings/plugins/from-url body: the URL of a
 // manifest.json, with the module beside it.
+//
+// SignatureURL is optional and is almost always omitted — a signature published
+// the ordinary way sits beside the manifest under its conventional name, which is
+// where the server looks anyway. It exists for a catalog entry that carries a
+// signatureUrl of its own, and it is address-checked exactly as the manifest URL
+// is, because it is the document that decides whether the code is trusted.
 type installFromURLRequest struct {
-	URL string `json:"url"`
+	URL          string `json:"url"`
+	SignatureURL string `json:"signatureUrl,omitempty"`
 }
 
 // pluginSettingsRequest is the PUT /settings/plugins/{id}/settings body: one value
@@ -123,6 +144,38 @@ func handlePluginSettingsSubtree(deps Deps, rest string) http.HandlerFunc {
 			}
 		case tail == "from-url":
 			requireMethod(http.MethodPost, handleInstallPluginFromURL(deps))(w, r)
+		// Branched BEFORE the {id}/{verb} handling below, because "catalog" and
+		// "publishers" would otherwise be read as plugin ids — and an operator who
+		// installed a plugin called "catalog" would find one of these routes had
+		// quietly become theirs. The two words are reserved here and nowhere else,
+		// which is why this comment exists.
+		case tail == "catalog":
+			switch r.Method {
+			case http.MethodGet:
+				handleGetPluginCatalog(deps)(w, r)
+			case http.MethodPut:
+				handleSetPluginCatalog(deps)(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed, "method not allowed", nil)
+			}
+		case tail == "publishers":
+			switch r.Method {
+			case http.MethodGet:
+				handleGetPluginPublishers(deps)(w, r)
+			case http.MethodPut:
+				handlePinPluginPublisher(deps)(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed, "method not allowed", nil)
+			}
+		case strings.HasPrefix(tail, "publishers/"):
+			name := strings.TrimPrefix(tail, "publishers/")
+			if name == "" || strings.Contains(name, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodDelete, handleUnpinPluginPublisher(deps, name))(w, r)
 		default:
 			id, verb, hasVerb := strings.Cut(tail, "/")
 			if id == "" || strings.Contains(verb, "/") {
@@ -192,7 +245,13 @@ func handleInstallPlugin(deps Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		installed, err := deps.PluginManager.Install(r.Context(), manifest, module, plugins.SourceUpload)
+		// An OPTIONAL third part: the detached signature (issue 15). Missing is not
+		// an error here — most plugins are unsigned and a server with no publisher
+		// keys pinned does not care — so it is read with no refusal of its own, and
+		// what a missing signature costs is decided by the pinned-key policy, in the
+		// one place that decision belongs.
+		signature := optionalUploadPart(r, "signature", plugins.MaxSignatureBytes)
+		installed, err := deps.PluginManager.Install(r.Context(), manifest, module, signature, plugins.SourceUpload)
 		if err != nil {
 			writePluginError(w, err, "failed to install the plugin")
 			return
@@ -212,7 +271,7 @@ func handleInstallPluginFromURL(deps Deps) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		installed, err := deps.PluginManager.InstallFromURL(r.Context(), req.URL)
+		installed, err := deps.PluginManager.InstallFromURL(r.Context(), req.URL, req.SignatureURL)
 		if err != nil {
 			writePluginError(w, err, "failed to install the plugin")
 			return
@@ -301,6 +360,29 @@ func readUploadPart(w http.ResponseWriter, r *http.Request, name string, limit i
 	return body, true
 }
 
+// optionalUploadPart reads a part that is allowed not to be there, answering nil
+// when it is absent, empty, or larger than the cap.
+//
+// It writes no refusal and returns no error, which is the opposite of
+// readUploadPart and is right for exactly one part: an absent signature is the
+// normal case, and the question of whether this install NEEDS one is not this
+// function's to answer — it belongs to the pinned-key policy, which asks it once,
+// afterwards, and refuses with a sentence naming the publisher. An oversize
+// signature is treated as absent for the same reason: whatever it was, it was not
+// the few hundred bytes a signature document is.
+func optionalUploadPart(r *http.Request, name string, limit int64) []byte {
+	file, _, err := r.FormFile(name)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	body, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil || len(body) == 0 || int64(len(body)) > limit {
+		return nil
+	}
+	return body
+}
+
 // writePluginInstalled answers a successful install with 201 and the whole list,
 // so the screen re-renders from one response.
 func writePluginInstalled(w http.ResponseWriter, r *http.Request, deps Deps, installed plugins.Installed) {
@@ -367,6 +449,8 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 		code = codePluginInvalidModule
 	case plugins.ReasonSource:
 		code = codePluginSourceRefused
+	case plugins.ReasonSignature:
+		code = codePluginSignature
 	case plugins.ReasonUnknown:
 		status, code = http.StatusNotFound, codePluginUnknown
 	}

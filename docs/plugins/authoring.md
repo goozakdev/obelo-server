@@ -816,7 +816,160 @@ restart, which is what the layout is.
 | 409 | `PLUGIN_DUPLICATE` | the id is already claimed — by an Installed plugin or a Built-in |
 | 422 | `PLUGIN_INVALID_MODULE` | no module, or one that will not compile or instantiate |
 | 422 | `PLUGIN_SOURCE_REFUSED` | the URL was not fetchable under the rules above |
+| 422 | `PLUGIN_SIGNATURE` | the server has publisher keys pinned and yours does not satisfy them (§7a) |
 | 413 | — | a part over the cap (64 MiB module, 256 KiB manifest) |
+
+---
+
+## 7a. Signing, and publishing to a catalog
+
+Both of these are **optional on your side and optional on the operator's**. Obelo
+runs no catalog, hosts no registry and vouches for no publisher ([ADR-0001](../adr/0001-fully-self-hosted-no-vendor-dependency.md)):
+a server browses an index because an Admin typed its address, and trusts your key
+because an Admin pasted it in. Nothing here makes you findable and nothing here
+makes you trusted. It makes you **checkable**, which is the part that can be built.
+
+### What is signed
+
+A signature covers **two files at once** — the manifest and the module — under a
+domain separator:
+
+```
+message = "obelo-plugin-v1\n" ‖ sha256(manifest bytes) ‖ sha256(module bytes)
+```
+
+16 bytes of separator and two raw 32-byte digests, concatenated with no separator
+and no length prefix: 80 bytes, signed with ed25519.
+
+**There is no canonical form of the manifest and there does not need to be one.**
+An install writes your `manifest.json` to disk **byte for byte** as you shipped it
+and never re-encodes it, so the bytes you signed and the bytes the server stores
+are the same bytes forever. Reformat it and the signature stops verifying, which
+is correct: a manifest with one byte changed is a different manifest.
+
+That is also why the signature is **detached** and has to be. A `signature` field
+inside `manifest.json` would change the very bytes it covers.
+
+### The document
+
+`plugin.sig.json`, published in the same directory as the manifest and the module:
+
+```json
+{
+  "publisher": "Example Publisher",
+  "keyId": "9f86d081884c7d65",
+  "algorithm": "ed25519",
+  "manifestSha256": "…",
+  "moduleSha256": "…",
+  "signature": "<base64>"
+}
+```
+
+- **`publisher` is the lookup, not a label.** A server finds its pinned key *by
+  this name* (case-insensitively) and verifies under that key alone. Change the
+  name and you are a different publisher to every server that pinned you.
+- **`keyId` decides nothing.** It is a short fingerprint — the first eight bytes
+  of the key's SHA-256, in hex — for a human comparing what a server has pinned
+  against what you advertise.
+- The two digests let a reader see *which* artifacts a document claims to cover
+  without holding them. A verifier recomputes both from the real bytes and refuses
+  a mismatch **before** it looks at the signature, so "this covers a different
+  module" and "this is forged" arrive as different sentences.
+
+### Making a key and signing
+
+`cmd/pluginsign` in the server repository. (It is **not** `cmd/keytool`, which
+seals the maintainer's own provider keys for rotation — a different primitive
+answering a different question.)
+
+```sh
+go run ./cmd/pluginsign keygen -out publisher.key
+# public key: <base64>        ← this is what an operator pins
+# key id:     9f86d081884c7d65
+
+go run ./cmd/pluginsign sign \
+  -key publisher.key -publisher "Example Publisher" \
+  -manifest manifest.json -module plugin.wasm -out plugin.sig.json
+
+go run ./cmd/pluginsign verify \
+  -sig plugin.sig.json -pub "<base64>" \
+  -manifest manifest.json -module plugin.wasm
+```
+
+`verify` runs the **same package the server runs** (`internal/plugins/signing`),
+so a document it accepts is a document a server accepts. **Re-sign whenever either
+file changes.**
+
+Publish `plugin.sig.json` beside the other two and a URL install picks it up with
+no extra instruction — a 404 there simply means "unsigned". An upload sends it as
+an optional third part:
+
+```sh
+curl -X POST http://localhost:8080/api/v1/settings/plugins \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -F manifest=@manifest.json \
+  -F module=@plugin.wasm \
+  -F signature=@plugin.sig.json
+```
+
+### What the operator's side does with it
+
+| Pinned keys on that server | What happens |
+| --- | --- |
+| none (the default) | Nothing is verified. Signed and unsigned plugins install identically, and the server records no publisher — it did not check, so it does not claim to know. |
+| one or more | Every install must carry a signature naming a pinned publisher and verifying under that publisher's key. Anything else is `422 PLUGIN_SIGNATURE`, **naming the publisher the plugin claimed**. |
+
+There is no "warn only" setting. An operator who pinned a key did it to stop
+something.
+
+Two consequences worth knowing as an author:
+
+- **An already-installed plugin is never re-verified.** Pinning a key is a decision
+  about future installs; re-checking what is on disk would mean your key rotation
+  silently stopping plugins that were running.
+- **A signature file is kept even when nothing was pinned.** It is provenance, so
+  an operator who pins your key later can check what they already have. Its
+  presence on disk is not a claim that anything was verified.
+
+### Publishing to a catalog
+
+A catalog is a JSON index at a URL. Anyone can publish one; Obelo publishes none
+and recommends none.
+
+```json
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "discord",
+      "name": "Discord",
+      "version": "0.1.0",
+      "publisher": "Example Publisher",
+      "provides": ["event-sink"],
+      "manifestUrl": "https://example.test/obelo-discord/manifest.json",
+      "signatureUrl": "https://example.test/obelo-discord/plugin.sig.json",
+      "description": "Posts a message to a Discord channel when something finishes.",
+      "docsUrl": "https://example.test/obelo-plugin-discord"
+    }
+  ]
+}
+```
+
+**`manifestUrl` is the entry.** Installing from a catalog is `POST
+/settings/plugins/from-url` with that URL — the same endpoint, the same safe-fetch
+policy, the same first-hop address check, the same refusals. The publish layout
+above (§7: manifest and module in one directory) is exactly what a catalog serves,
+so if your plugin installs from a pasted URL it installs from a catalog with no
+further work.
+
+`signatureUrl` is only for a signature that is *not* beside the manifest; leave it
+out and the server looks for `plugin.sig.json` in the manifest's own directory,
+which is where you should have put it.
+
+Everything else in an entry — name, version, publisher, what it provides — is
+**display**. The manifest fetched at install time decides all of them, and only a
+pinned key makes `publisher` more than a word in a file. The types are
+`CatalogIndex` and `CatalogEntry` in the JSON schema (§9).
 
 ---
 

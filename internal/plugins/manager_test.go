@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,12 +39,20 @@ type memStore struct {
 	// insertErr, when set, makes the next InsertPlugin fail — the one failure mode
 	// that has to leave nothing behind on disk.
 	insertErr error
+	// publishers is plugin_publishers (issue 15), keyed by lower-cased name
+	// because the real column is COLLATE NOCASE. EMPTY IS THE DEFAULT POLICY:
+	// with nothing pinned, no install is signature-checked.
+	publishers map[string]store.PluginPublisher
+	// catalogURL is the singleton catalog setting; "" is the shipped default and
+	// means this server browses no catalog.
+	catalogURL string
 }
 
 func newMemStore() *memStore {
 	return &memStore{
-		rows:     map[string]store.PluginRow{},
-		settings: map[string][]store.PluginSetting{},
+		rows:       map[string]store.PluginRow{},
+		settings:   map[string][]store.PluginSetting{},
+		publishers: map[string]store.PluginPublisher{},
 	}
 }
 
@@ -132,6 +141,68 @@ func (s *memStore) DeletePlugin(id string) error {
 	return nil
 }
 
+// The pinned-publisher half (issue 15). An empty publishers map is the DEFAULT
+// POLICY — nothing is verified — which is what every test in this file relies on
+// without saying so, and which is why these are here rather than in a separate
+// fake: a store that could not express "nothing is pinned" would make the
+// unsigned installs below stop working.
+
+func (s *memStore) PluginPublishers() ([]store.PluginPublisher, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.publishers))
+	for name := range s.publishers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]store.PluginPublisher, 0, len(names))
+	for _, name := range names {
+		out = append(out, s.publishers[name])
+	}
+	return out, nil
+}
+
+func (s *memStore) UpsertPluginPublisher(p store.PluginPublisher) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.publishers[strings.ToLower(p.Publisher)] = p
+	return nil
+}
+
+func (s *memStore) DeletePluginPublisher(publisher string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strings.ToLower(publisher)
+	if _, ok := s.publishers[key]; !ok {
+		return false, nil
+	}
+	delete(s.publishers, key)
+	return true, nil
+}
+
+func (s *memStore) SetPluginSigner(id, publisher, keyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.rows[id]; ok {
+		r.Publisher, r.KeyID = publisher, keyID
+		s.rows[id] = r
+	}
+	return nil
+}
+
+func (s *memStore) PluginCatalogURL() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.catalogURL, nil
+}
+
+func (s *memStore) SetPluginCatalogURL(url string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.catalogURL = url
+	return nil
+}
+
 // --- a harness ------------------------------------------------------------------
 
 // managerFixture is a Manager over a temp plugins directory, with a live registry
@@ -186,7 +257,7 @@ func (f *managerFixture) installGuest(t *testing.T, id string) plugins.Installed
 	t.Helper()
 	m := plugintest.SinkManifest(id)
 	got, err := f.manager.Install(context.Background(),
-		plugintest.ManifestJSON(t, m), plugintest.Guest(t), plugins.SourceUpload)
+		plugintest.ManifestJSON(t, m), plugintest.Guest(t), nil, plugins.SourceUpload)
 	if err != nil {
 		t.Fatalf("installing %s: %v", id, err)
 	}
@@ -326,7 +397,7 @@ func TestEveryInstallRefusalLeavesNothingBehind(t *testing.T) {
 			if module == nil {
 				module = plugintest.Guest(t)
 			}
-			_, err := f.manager.Install(context.Background(), tc.manifest, module, plugins.SourceUpload)
+			_, err := f.manager.Install(context.Background(), tc.manifest, module, nil, plugins.SourceUpload)
 			if err == nil {
 				t.Fatal("the install was accepted")
 			}
@@ -357,7 +428,7 @@ func TestADuplicateIdIsRefusedThreeWays(t *testing.T) {
 		t.Run(id, func(t *testing.T) {
 			m := plugintest.SinkManifest(id)
 			_, err := f.manager.Install(context.Background(),
-				mustJSON(t, m), plugintest.Guest(t), plugins.SourceUpload)
+				mustJSON(t, m), plugintest.Guest(t), nil, plugins.SourceUpload)
 			if got := refusalReason(err); got != plugins.ReasonDuplicate {
 				t.Fatalf("installing over %q gave reason %q, want %q (err: %v)",
 					id, got, plugins.ReasonDuplicate, err)
@@ -381,7 +452,7 @@ func TestAFailedRowWriteRollsTheFilesBack(t *testing.T) {
 	f.store.insertErr = errors.New("the disk is full")
 
 	_, err := f.manager.Install(context.Background(),
-		mustJSON(t, plugintest.SinkManifest("example-sink")), plugintest.Guest(t), plugins.SourceUpload)
+		mustJSON(t, plugintest.SinkManifest("example-sink")), plugintest.Guest(t), nil, plugins.SourceUpload)
 	if err == nil {
 		t.Fatal("an install whose row could not be written reported success")
 	}

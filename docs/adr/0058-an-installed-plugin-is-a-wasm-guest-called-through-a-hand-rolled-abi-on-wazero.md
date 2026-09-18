@@ -360,3 +360,34 @@ module is the same trade this project has made every previous time.
 - Concurrency inside a guest. One call at a time, per Plugin. A Plugin that wants parallelism is
   asking the host for a second instance, which is a pool-size decision and not an ABI one.
 - Plugin-supplied UI code, in either phase (ADR-0057, unchanged).
+
+> **Carried out (plugin-system issue 15, 2026-09-17):** two OPTIONAL trust and discovery
+> features landed, and both are off in the shipped state, so nothing above changed for a
+> server that does not opt in.
+>
+> **Manifest signing.** An author may publish a **detached** ed25519 signature beside the
+> manifest (`plugin.sig.json`), and an Admin may pin publisher public keys. The signature
+> covers `"obelo-plugin-v1\n" ‖ sha256(manifest) ‖ sha256(module)`. It is detached because
+> decision 3's byte-for-byte manifest storage leaves no room for it to be otherwise: a
+> `signature` field inside `manifest.json` would change the bytes it covers, and a canonical
+> form would be a second spelling of a document the loader already treats as authoritative in
+> its original one. With **no keys pinned** — the default — nothing is verified and the
+> install path is exactly what issue 10 built. With one or more, an install must carry a
+> signature naming a pinned publisher and verifying under that key, checked in
+> `Manager.install` between `decodeManifest` and `checkDuplicate`, which is the only point
+> where both artifacts are in hand and nothing has been written. An **already-installed**
+> Plugin is never re-verified — not at boot, not on enable, disable or re-enable — because a
+> change of mind about future installs must not become an outage of present ones.
+>
+> This does **not** soften decision 4 or the "the host owns every judgment" rule of ADR-0057.
+> A signature says who shipped the bytes; it says nothing about what they do, and the sandbox
+> is the thing that constrains that. A signed Plugin gets no extra capability of any kind.
+>
+> **A catalog URL.** A server may be pointed at a JSON index (`CatalogIndex` / `CatalogEntry`,
+> new wire types in `pluginapi/v1`), empty by default, and **this project publishes none**
+> (ADR-0001). A catalog entry is a manifest URL, so installing one is
+> `Manager.InstallFromURL` unchanged — including the first-hop address check of the
+> `http_fetch` posture in decision 5, which is why an entry pointing into the server's own
+> network is refused with the sentence a pasted address gets. The index itself is **data**,
+> so it is fetched under the ordinary `safefetch` policy; that asymmetry is the same one
+> decision 5 already draws between reading a poster and running a module.

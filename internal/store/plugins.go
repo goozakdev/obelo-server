@@ -28,6 +28,13 @@ type PluginRow struct {
 	LastError   string
 	Source      string
 	InstalledAt string
+	// Publisher and KeyID are who SIGNED this Plugin, and they are written only
+	// when the signature verified against a key an Admin had pinned
+	// (.scratch/plugin-system issue 15). Empty means nobody verified anything —
+	// either no signature travelled with it, or none was pinned at the time — and
+	// a screen must read them that way rather than as "unsigned".
+	Publisher string
+	KeyID     string
 }
 
 // PluginInsert is a newly installed Plugin. There is no update form: a Plugin is
@@ -46,7 +53,8 @@ type PluginInsert struct {
 // loader walks the directory in, so the screen and the log agree.
 func (db *DB) Plugins() ([]PluginRow, error) {
 	rows, err := db.Query(
-		`SELECT id, name, version, api_version, provides, enabled, last_error, source, installed_at
+		`SELECT id, name, version, api_version, provides, enabled, last_error, source, installed_at,
+		        publisher, key_id
 		   FROM plugins ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing plugins: %w", err)
@@ -61,7 +69,7 @@ func (db *DB) Plugins() ([]PluginRow, error) {
 			lastError sql.NullString
 		)
 		if err := rows.Scan(&r.ID, &r.Name, &r.Version, &r.APIVersion, &provides,
-			&r.Enabled, &lastError, &r.Source, &r.InstalledAt); err != nil {
+			&r.Enabled, &lastError, &r.Source, &r.InstalledAt, &r.Publisher, &r.KeyID); err != nil {
 			return nil, fmt.Errorf("store: scanning plugin: %w", err)
 		}
 		r.LastError = lastError.String

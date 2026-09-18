@@ -44,7 +44,7 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
            -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
-.PHONY: all build build-release web go-build go-build-release keytool run test test-go test-go-tailscale test-web test-e2e check check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
+.PHONY: all build build-release web go-build go-build-release keytool pluginsign run test test-go test-go-tailscale test-web test-e2e check check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
 
 all: build
 
@@ -79,6 +79,19 @@ go-build-release:
 ## needs no ldflags. See docs/runbooks/metadata-key-rotation.md.
 keytool:
 	go build -o bin/keytool ./cmd/keytool
+
+## pluginsign: build the plugin-signing CLI (.scratch/plugin-system issue 15).
+## Makes a publisher key pair, signs a plugin's manifest + module with it, and
+## verifies the result through the SAME package the server verifies with
+## (internal/plugins/signing) — which is what makes "the tool's output installs"
+## a property rather than a hope.
+##
+## It is NOT keytool. keytool seals the maintainer's provider keys into an
+## AES-GCM envelope for rotation (ADR-0032): symmetric, one channel, one
+## recipient. This is asymmetric authentication of a public artifact by an author
+## this project has never met. Two commands, deliberately.
+pluginsign:
+	go build -o bin/pluginsign ./cmd/pluginsign
 
 ## run: build everything, then run the server.
 run: build
