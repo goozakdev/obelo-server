@@ -460,6 +460,11 @@ type providerSettings struct {
 	URL      string `json:"url"`
 	URL2     string `json:"url2"`
 	Language string `json:"language"`
+	// Values is the SECOND VARIANT of the settings field: the values of the
+	// settings this Plugin's own manifest declared, keyed by the field key that
+	// declared them, in the JSON shape that field's type names. A plugin that
+	// declares no fields never sees this key at all.
+	Values map[string]any `json:"values"`
 }
 
 type kvGetRequest struct {
@@ -545,6 +550,24 @@ func metadataLookup(ptr, n uint32) uint64 {
 			Overview:   guestOverview,
 			ExternalID: "guest-" + req.Ref.Kind,
 			Source:     "installed",
+		}})
+
+	case "echo-settings":
+		// The manifest-declared settings, read back through settings_get and put
+		// where a black-box test can see them: the record's overview.
+		//
+		// It is a JSON object rather than a formatted sentence because that is what
+		// is being proved — an integer comes back as a number and not "7", a
+		// multi-select as an array, a bool as true — and because encoding/json sorts
+		// a map's keys, so what a test compares against is stable.
+		if !musicKind(req.Ref.Kind) && !videoKind(req.Ref.Kind) {
+			return reply(lookupResponse{Outcome: outcomeNoMatch})
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched:  true,
+			Name:     req.Ref.Title,
+			Overview: string(encode(s.Values)),
+			Source:   "installed",
 		}})
 
 	case "kv":

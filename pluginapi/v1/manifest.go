@@ -69,12 +69,10 @@ type Manifest struct {
 	// Network is the outbound allowlist. Absent means the Plugin makes no outbound
 	// requests at all, which is a legitimate and much safer Plugin.
 	Network ManifestNetwork `json:"network,omitzero"`
-	// Settings declares the fixed-shape settings this Plugin wants an Admin to
-	// fill in. It is NOT a schema: the settings shape is fixed for every Plugin at
-	// every Extension point (enabled, secret, url, url2, events), and what a
-	// manifest may say about it is only which parts are required and what the
-	// defaults are. A manifest-declared settings SCHEMA is a later addition that
-	// arrives beside this field, never inside it.
+	// Settings declares what an Admin fills in: which parts of the FIXED shape are
+	// required and what their defaults are, plus — since .scratch/plugin-system
+	// issue 13 — this Plugin's OWN typed fields (ManifestSettings.Fields), which
+	// the web app renders as a schema-driven form beside the fixed controls.
 	Settings ManifestSettings `json:"settings,omitzero"`
 	// Description and DocsURL are the human-facing copy the settings screen shows,
 	// exactly as a Built-in's Descriptor carries them.
@@ -135,9 +133,17 @@ type ManifestNetwork struct {
 	Hosts []string `json:"hosts,omitempty"`
 }
 
-// ManifestSettings is what a manifest may declare about the fixed settings shape:
-// which fields must be filled before the Plugin can be turned on, and what the
-// defaults are. The shape itself is not negotiable (ADR-0057 consequences).
+// ManifestSettings is what a manifest declares about its settings: which parts of
+// the FIXED shape must be filled before the Plugin can be turned on and what their
+// defaults are, and — in Fields — the Plugin's own typed settings, which is the
+// one place the shape is not fixed.
+//
+// The two halves do not overlap and must not. The fixed half is the shape every
+// Plugin at every Extension point has (ADR-0057 consequences) and the shape the
+// provider dialog renders; Fields is the author's own vocabulary, rendered by a
+// form generated from the declaration. A field that duplicates a fixed one — a
+// `secret` key, a `url` key — is refused at load, because two controls writing one
+// idea is how an operator ends up configuring the wrong one.
 type ManifestSettings struct {
 	// RequiresSecret is the Plugin-wide version of the per-seam flag: true when
 	// this Plugin cannot work without a secret, whatever it provides.
@@ -147,6 +153,15 @@ type ManifestSettings struct {
 	// manifest leaves them empty and the Admin types the URL.
 	DefaultURL  string `json:"defaultUrl,omitempty"`
 	DefaultURL2 string `json:"defaultUrl2,omitempty"`
+	// Fields are this Plugin's OWN settings: a list of typed fields the host
+	// renders a form from, validates a save against, and hands back to the guest
+	// through Settings.Values in the shape it declared them (see
+	// settings_schema.go). Absent means a Plugin configured entirely through the
+	// fixed shape, which is every Plugin written before this field existed.
+	//
+	// The list is ordered: a form shows the fields in the order the author wrote
+	// them, because that order is the only grouping a manifest can express.
+	Fields []SettingsField `json:"fields,omitempty"`
 }
 
 // --- the guest call, for the Event sink Extension point ----------------------

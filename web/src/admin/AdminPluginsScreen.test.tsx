@@ -222,4 +222,29 @@ describe("the Plugins screen", () => {
     const shown = await screen.findByTestId("plugins-action-error");
     expect(shown.textContent).toContain("upgrade the server");
   });
+
+  // plugin-system/13. The panel belongs to the plugin whose manifest declared it,
+  // so it lives inside that card — and a plugin that declares nothing gets no
+  // panel rather than an empty one.
+  it("puts a plugin's own declared settings inside its card, and only when it has some", async () => {
+    client.getPlugins.mockResolvedValue(
+      view(
+        plugin({
+          settingsSchema: [{ key: "region", type: "enum", label: "Region", options: ["eu", "us"] }],
+          settings: { values: { region: "eu" }, secrets: {} },
+        }),
+        plugin({ id: "plain-sink", name: "Plain Sink" }),
+      ),
+    );
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugins-screen");
+
+    const card = screen.getByTestId("plugin-example-sink");
+    expect(card.querySelector('[data-testid="plugin-settings-example-sink"]')).toBeTruthy();
+    expect(
+      (screen.getByTestId("plugin-field-example-sink-region") as HTMLSelectElement).value,
+    ).toBe("eu");
+    expect(screen.queryByTestId("plugin-settings-plain-sink")).toBeNull();
+  });
 });

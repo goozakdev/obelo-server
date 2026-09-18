@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
+import PluginSettingsForm from "./PluginSettingsForm";
 import type { InstalledPlugin, InstalledPluginsView } from "../api/types";
 
 // The Plugins admin screen (ADR-0058, plugin-system/10): where an Admin puts code
@@ -57,6 +58,7 @@ function PluginCard({
   onDisable,
   onReenable,
   onUninstall,
+  onSettingsSaved,
 }: {
   plugin: InstalledPlugin;
   busy: boolean;
@@ -64,6 +66,7 @@ function PluginCard({
   onDisable: () => void;
   onReenable: () => void;
   onUninstall: () => void;
+  onSettingsSaved: (view: InstalledPluginsView) => void;
 }) {
   const { id } = plugin;
   return (
@@ -111,6 +114,12 @@ function PluginCard({
           {plugin.lastError}
         </p>
       )}
+
+      {/* The plugin's OWN settings, rendered from the schema its manifest
+          declared (plugin-system/13). A plugin that declares none has no panel at
+          all rather than an empty one, which is every plugin configured entirely
+          through the fixed shape. */}
+      <PluginSettingsForm plugin={plugin} disabled={busy} onSaved={onSettingsSaved} />
 
       <div className="admin-actions">
         {plugin.enabled ? (
@@ -265,6 +274,7 @@ export default function AdminPluginsScreen() {
             onDisable={() => void run(() => apiClient.disablePlugin(p.id), "Disabled.")}
             onReenable={() => void run(() => apiClient.reenablePlugin(p.id), "Re-enabled.")}
             onUninstall={() => void run(() => apiClient.uninstallPlugin(p.id), "Uninstalled.")}
+            onSettingsSaved={setView}
           />
         ))
       )}

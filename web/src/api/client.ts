@@ -90,6 +90,7 @@ import type {
   UpdateEventSinksInput,
   InstalledPluginsView,
   InstallPluginFromURLInput,
+  PluginSettingsInput,
   TestProviderResult,
   EnrichmentPolicy,
   EnrichMode,
@@ -2017,6 +2018,21 @@ export class ApiClient {
     );
   }
 
+  /** `PUT /api/v1/settings/plugins/{id}/settings` (Admin) — the values of the
+   * settings the plugin's OWN manifest declared. Validated server-side against
+   * that manifest; a refusal comes back as a 400 whose details carry one message
+   * per field. Returns the full list, like every other verb here. */
+  savePluginSettings(
+    id: string,
+    input: PluginSettingsInput,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}/settings`,
+      { method: "PUT", body: JSON.stringify(input), signal },
+    );
+  }
+
   private pluginVerb(
     id: string,
     verb: string,
@@ -2424,6 +2440,10 @@ export type {
   InstalledPlugin,
   InstalledPluginsView,
   InstallPluginFromURLInput,
+  PluginSettingsField,
+  PluginSettingsFieldType,
+  PluginSettingsValues,
+  PluginSettingsInput,
   Library,
   LibraryRoot,
   Link,

@@ -33,12 +33,36 @@ import (
 type memStore struct {
 	mu   sync.Mutex
 	rows map[string]store.PluginRow
+	// settings is the plugin_settings table (issue 13), keyed by plugin id.
+	settings map[string][]store.PluginSetting
 	// insertErr, when set, makes the next InsertPlugin fail — the one failure mode
 	// that has to leave nothing behind on disk.
 	insertErr error
 }
 
-func newMemStore() *memStore { return &memStore{rows: map[string]store.PluginRow{}} }
+func newMemStore() *memStore {
+	return &memStore{
+		rows:     map[string]store.PluginRow{},
+		settings: map[string][]store.PluginSetting{},
+	}
+}
+
+func (s *memStore) PluginSettings(pluginID string) ([]store.PluginSetting, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]store.PluginSetting, len(s.settings[pluginID]))
+	copy(out, s.settings[pluginID])
+	return out, nil
+}
+
+func (s *memStore) ReplacePluginSettings(pluginID string, values []store.PluginSetting) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := make([]store.PluginSetting, len(values))
+	copy(stored, values)
+	s.settings[pluginID] = stored
+	return nil
+}
 
 func (s *memStore) Plugins() ([]store.PluginRow, error) {
 	s.mu.Lock()

@@ -64,7 +64,10 @@ var _ pluginapi.EventSink = (*guestSink)(nil)
 // timeout both apply, and a guest that ignores them is unwound by the runtime
 // rather than asked to stop.
 func (g *guestSink) Deliver(ctx context.Context, ev pluginapi.SinkEvent) error {
-	req := pluginapi.SinkDeliverRequest{Event: ev, Settings: g.settings}
+	// The declared settings are stamped on at CALL time (issue 13): the fixed half
+	// was resolved when this sink was built, the manifest-declared half is read now,
+	// so a settings save reaches the next delivery without a rebuild.
+	req := pluginapi.SinkDeliverRequest{Event: ev, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SinkDeliverResponse
 
 	err := g.p.callGuest(ctx, exportDeliver, hostOf(g.settings.URL), req, &resp)

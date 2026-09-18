@@ -75,6 +75,18 @@
 //     pasted and the kind wanted, so ExternalRefResponse carries GotKind/WantKind
 //     and the adapter rebuilds the specific error from them.
 //
+// # What Phase 2 added, additively
+//
+//   - Settings needed a SECOND VARIANT, not a second struct. The fixed shape
+//     (enabled, secret, url, url2, events, language, rateLimitMillis) is what a
+//     Built-in needs and what the provider dialog renders, and it stays the
+//     contract's default. An Installed plugin's author cannot add a named field to
+//     this package or a control to a screen, so a manifest DECLARES its own typed
+//     fields (ManifestSettings.Fields, settings_schema.go) and their values travel
+//     in Settings.Values, keyed by the field key that declared them. One field on
+//     one struct, so a Built-in is unchanged and a guest that declares nothing is
+//     unchanged with it.
+//
 // # Two things a manifest reader gets wrong, from Phase 1
 //
 // Both are recorded above in their own right; they are repeated here because an

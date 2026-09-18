@@ -200,6 +200,24 @@ type Settings struct {
 	// host with each Library correctly believing it was well behaved), so the
 	// interval has to be known when the Plugin is built, before any call.
 	RateLimitMillis *int `json:"rateLimitMillis,omitempty"`
+	// Values is the SECOND VARIANT of this field (.scratch/plugin-system issue 13):
+	// the values of the settings an Installed plugin's manifest declared for
+	// itself, keyed by the SettingsField.Key that declared them, in the JSON shape
+	// that field named (see settings_schema.go for each type's encoding).
+	//
+	// It is beside the fixed fields above and never instead of them. A Built-in has
+	// no manifest and therefore no declared fields, so this is empty for every one
+	// of them and the eight dialogs are unchanged; an Installed plugin that
+	// declares nothing is identical to one written before this field existed.
+	//
+	// A field the Admin never filled is ABSENT rather than present as a zero,
+	// unless the manifest declared a default — the same absent-vs-zero distinction
+	// RateLimitMillis makes, and for the same reason.
+	//
+	// SECRETS AT CALL TIME ONLY applies here exactly as it does to Secret: a
+	// declared secret field's value is in this map while a call the host made is on
+	// the stack, and the settings API never returns one.
+	Values map[string]any `json:"values,omitempty"`
 }
 
 // Descriptor is the static self-description a Plugin registers with: the facts

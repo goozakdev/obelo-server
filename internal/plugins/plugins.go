@@ -237,9 +237,58 @@ type Plugin struct {
 	failures   int
 	violations int
 
+	// declared is this Plugin's manifest-declared setting VALUES (issue 13),
+	// already decoded into the JSON shapes its own schema names. It is guarded by
+	// mu because settings_get reads it, and mu is the lock a host function may
+	// take. Nil is a Plugin that declares no fields, which is every Plugin written
+	// before the schema existed.
+	declared map[string]any
+
 	// meta is the Metadata provider Extension point's per-call state (issue 11).
 	// It lives in metadata.go; the field is here only because Plugin is.
 	meta metaState
+}
+
+// SetSettingValues publishes the manifest-declared setting values this Plugin's
+// guest reads. The Manager calls it after every load and after every save, so a
+// saved setting reaches the next call without a rebuild-and-swap.
+//
+// The map is taken whole rather than merged: the manifest on disk decides which
+// settings exist, so a field it no longer declares must stop being answerable.
+func (p *Plugin) SetSettingValues(values map[string]any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.declared = values
+}
+
+// settingValues is the declared values as they travel into a call: a COPY, so a
+// guest's document can never alias the map the host is about to reuse, and nil
+// when there is nothing declared (an omitted key rather than an empty object).
+func (p *Plugin) settingValues() map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.declared) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(p.declared))
+	for k, v := range p.declared {
+		out[k] = v
+	}
+	return out
+}
+
+// withSettingValues stamps the declared values onto the fixed Settings the host
+// resolved for one call.
+//
+// It is called at CALL time and not when the Plugin is built, which is the whole
+// of why a settings save takes effect immediately: the seam adapters hold the
+// fixed half from the moment their factory ran, and the declared half is read
+// fresh each time. It is also where SECRETS AT CALL TIME ONLY stays true of the
+// declared secrets — they exist in a Settings value the host is handing into a
+// call, and nowhere else.
+func (p *Plugin) withSettingValues(s pluginapi.Settings) pluginapi.Settings {
+	s.Values = p.settingValues()
+	return s
 }
 
 // ID is the Plugin's stable identity: the manifest id, the settings slug and the
