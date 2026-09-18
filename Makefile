@@ -100,6 +100,19 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
            -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
+# GOPKGS is what `go test` and `go vet` walk, and it is three patterns rather than
+# one because this repository is three Go modules joined by go.work (ADR-0059
+# decision 9): the server, `pluginapi` and `pluginsdk`.
+#
+# `./...` DOES NOT COVER A WORKSPACE. Inside a workspace it still expands only to
+# the packages of the module the working directory belongs to, so after the module
+# split a plain `go test ./...` silently stopped running the contract's own
+# round-trip and schema-staleness suites while reporting success — the shape
+# CLAUDE.md records. An explicit subdirectory pattern DOES cross into a workspace
+# module, which is why these three are spelled out. A module added to go.work
+# belongs here too.
+GOPKGS := ./... ./pluginapi/... ./pluginsdk/...
+
 .PHONY: all build build-release web go-build go-build-release keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
 
 all: build
@@ -159,7 +172,7 @@ test: test-go test-web test-e2e
 
 ## test-go: Go unit/integration tests (uses the committed placeholder bundle).
 test-go:
-	go test $(GOTAGS) ./...
+	go test $(GOTAGS) $(GOPKGS)
 
 ## test-go-tailscale: the same suite with the `tailscale` build tag — the OTHER
 ## half of the matrix, and the variant that actually ships (ADR-0043).
@@ -293,9 +306,9 @@ check-fmt:
 	  echo "ERROR: not gofmt-clean (run 'make fmt'):"; echo "$$files"; exit 1; \
 	else echo "ok: gofmt clean"; fi
 
-## vet: go vet over the whole module.
+## vet: go vet over every module in the workspace (see GOPKGS).
 vet:
-	@go vet $(GOTAGS) ./... && echo "ok: go vet clean"
+	@go vet $(GOTAGS) $(GOPKGS) && echo "ok: go vet clean"
 
 ## vet-tailscale: go vet over the tagged variant. A file behind a build tag is
 ## invisible to the default vet, which is the whole problem with build tags.

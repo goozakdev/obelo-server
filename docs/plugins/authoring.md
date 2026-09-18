@@ -27,6 +27,7 @@ so the guide cannot drift away from code that runs.
 8. [Reading the counters and the last error while you develop](#8-reading-the-counters-and-the-last-error-while-you-develop)
 9. [The JSON schema, and where it lives](#9-the-json-schema-and-where-it-lives)
 10. [The rules you must not break](#10-the-rules-you-must-not-break)
+11. [Writing a plugin in Go with the SDK](#11-writing-a-plugin-in-go-with-the-sdk)
 
 ---
 
@@ -1227,6 +1228,169 @@ If you sign an outbound document, sign the **exact bytes of the body you post**.
 Re-encoding between signing and sending signs one document and sends another. (The
 Discord plugin signs nothing — Discord authenticates by the webhook URL itself,
 which is why that URL is a `secret` field.)
+
+---
+
+## 11. Writing a plugin in Go with the SDK
+
+Everything above this section is the contract. **This section is a convenience,
+and only for Go authors.**
+
+The plugin this guide teaches from — the Discord Event sink — imports nothing:
+not the server, not a PDK, not even Obelo's own contract package. That is
+deliberate and it stays that way, because it is the proof that the schema and six
+function signatures are genuinely enough. If this section and the rest of this
+document ever disagree, **the schema is the contract** and the SDK is wrong.
+
+But Obelo ships seven Metadata providers of its own as plugins (ADR-0059), all in
+Go, and writing the pinned-buffer map and the packed-`i64` returns seven times
+would be seven chances to get them subtly different. So that glue lives in one
+module, `pluginsdk`, and you are welcome to it.
+
+### What it is
+
+`github.com/goozakdev/obelo-server/pluginsdk` is a Go module inside the server's
+repository whose only dependency is `.../pluginapi` — the contract's wire types,
+which are themselves a module with no dependencies at all. Nothing of the server
+comes with either. Four packages:
+
+| Package | What it gives you |
+| --- | --- |
+| `pluginsdk` | `Host` — the six host functions, typed. `Sandbox()` returns the one that calls them. `obelo_alloc`, `obelo_free` and `last_error` are exported from here, once. Also `Pacer`/`PacedHost`, and `Do`/`DoJSON`/`GetJSON` with a `FetchError` that tells a refusal from an outage from a 404. |
+| `pluginsdk/metadata` | `Serve(p)` — the eight `//go:wasmexport` Metadata provider calls, in front of the contract's own `pluginapi.MetadataProvider`. |
+| `pluginsdk/sink`, `pluginsdk/subtitle` | The same for the other two seams: `deliver`, and the two subtitle exports. |
+| `pluginsdk/sdktest` | An in-memory `Host` for NATIVE tests: a routing table of `http.Handler`s, a captured log, an in-memory kv and fixed settings. |
+
+### Your `main.go`
+
+A provider is a value implementing `pluginapi.MetadataProvider` — the same three
+methods a compiled-in source implements. You hand it over, and that is the whole
+of your `main.go`:
+
+<!-- sdk-sample: guest/main.go serve -->
+```go
+// main is never called. It exists because a Go program needs one.
+func main() {}
+
+// init hands the provider over. PacedHost is the whole of what ADR-0059 decision
+// 5 asks of a plugin: pace yourself, with your own default, and honour the
+// operator's RateLimitMillis when they set one. The interval here is short
+// because this is a test guest; a real source uses its published policy (one
+// second, for MusicBrainz).
+func init() {
+	host := pluginsdk.PacedHost(pluginsdk.Sandbox(), 5*time.Millisecond)
+	metadata.Serve(testprovider.New(host))
+}
+```
+
+**`init()`, not `main()`.** A `-buildmode=c-shared` module is a WASI *reactor*:
+the host runs `_initialize`, which runs package initialization, and `main.main` is
+never called at all. A plugin that served its provider from `main()` would answer
+every call with "this module serves no Metadata provider" — which is what the SDK
+puts in your last-error, rather than failing silently.
+
+**Pace yourself.** `PacedHost` is the whole of what ADR-0059 decision 5 asks: the
+host does not throttle you, so carry your source's published interval as your
+default and let the operator's `settings.rateLimitMillis` override it. The pacer
+re-reads that number on every call, because a settings save is not a rebuild.
+
+### Your provider
+
+Every outbound request, log line, key-value read and settings read goes through
+the `Host` you were handed. There is no `net/http` in a plugin, and that is not a
+restriction so much as the point — it is what lets the same type be tested
+natively:
+
+<!-- sdk-sample: testprovider.go artwork -->
+```go
+// ArtworkCandidates lists the one image this source offers for a role — a URL on
+// the image host the operator configured, which the HOST downloads.
+func (p *Provider) ArtworkCandidates(_ context.Context, req pluginapi.ArtworkCandidatesRequest) (pluginapi.ArtworkCandidatesResponse, error) {
+	s := p.host.Settings()
+	return pluginapi.ArtworkCandidatesResponse{
+		Outcome: pluginapi.OutcomeMatched,
+		Candidates: []pluginapi.ArtworkCandidate{{
+			URL:    s.URL2 + ArtworkPath,
+			Width:  600,
+			Height: 900,
+			Source: Source,
+		}},
+	}, nil
+}
+```
+
+The optional capabilities are optional Go interfaces: implement
+`pluginapi.EpisodeLister`, `pluginapi.AlbumTracklister` or
+`pluginapi.ExternalRefParser` and the SDK routes those exports to you. Do not, and
+they answer `unavailable` — the same known state an undeclared capability
+produces. **Declare in your manifest only what you implement**: the host reads the
+declaration before it calls, so an undeclared capability costs no call at all.
+
+### Testing it without a sandbox
+
+`sdktest.Host` is a `Host` that answers a fetch from an `http.Handler`, in memory,
+with no listener and no port. A test of your provider needs no wasm toolchain, no
+wazero and no server:
+
+<!-- sdk-sample: provider_native_test.go native-test -->
+```go
+// TestAnInMemoryHostAnswersAFetchFromAnHTTPHandler is the port's ergonomics,
+// asserted: an httptest handler becomes the source without a listener, and what
+// the provider asked for is readable afterwards.
+func TestAnInMemoryHostAnswersAFetchFromAnHTTPHandler(t *testing.T) {
+	host := sdktest.New(
+		sdktest.WithSettings(sdkTestSettings("fetch")),
+		sdktest.WithHandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Nothing") != "" {
+				t.Errorf("unexpected header on %s", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"overview":"from the source itself"}`))
+		}),
+	)
+	p := testprovider.New(host)
+
+	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
+		Ref: pluginapi.MediaRef{Kind: "movie", Title: "Dune"},
+	})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if resp.Record.Overview != "from the source itself" {
+		t.Fatalf("overview = %q, want the body the handler served", resp.Record.Overview)
+	}
+	if paths := host.Paths(); len(paths) != 1 || paths[0] != "/v1"+testprovider.FetchPath {
+		t.Errorf("the provider asked for %v, want one GET of /v1%s", paths, testprovider.FetchPath)
+	}
+}
+```
+
+`sdktest.New` takes options in the order they are consulted: `WithFetch` (a
+function of your own), `WithHostHandler` (one handler per URL host, for a source
+whose images come from a second host), `WithHandler` (everything else) and
+`WithHTTPClient` (forward to a real `httptest.Server`). `WithSettings`,
+`WithSecret`, `WithURL` and `WithRateLimitMillis` fix what `Host.Settings()`
+answers; `WithAllowedHosts` makes it refuse exactly as the real host does, so you
+can prove your provider survives a refusal. Afterwards, `Requests()`, `Paths()`,
+`Logs()` and `KVKeys()` say what it did.
+
+That is the seam the bundled providers are tested through. The end-to-end proof —
+that the module loads, that the exports are spelled right, that the JSON survives
+the boundary — is a separate suite that runs the real `.wasm` under wazero. Both
+exist because they prove different things.
+
+### Building it
+
+Exactly the command in [§7](#7-build-and-install-locally), unchanged:
+
+```sh
+GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= \
+  go build -buildmode=c-shared -o plugin.wasm .
+```
+
+The SDK changes nothing about the artifact: same ABI, same exports, same manifest,
+same install. A host cannot tell which of the two plugins in this repository's own
+suite was built with it.
 
 ---
 
