@@ -154,8 +154,19 @@ func (db *DB) SetPluginLastError(id, message string) error {
 }
 
 // DeletePlugin removes a Plugin's record entirely: its row, its generic settings,
-// the fixed-shape settings row its Extension point wrote under the same slug, and
-// the key-value namespace the guest itself wrote.
+// the fixed-shape settings row its Extension point wrote under the same slug, the
+// key-value namespace the guest itself wrote, and every per-Library Enrichment
+// override that names the slug.
+//
+// UNINSTALL FORGETS; DISABLE REMEMBERS. That is the decision (.scratch/
+// plugin-system issue 17), and it is what makes the list below a list rather than
+// a judgement call per table: "uninstall deletes files and rows" is what the PRD
+// promised, a key left behind is a credential the operator believes is gone, and a
+// reinstall that arrives already enabled and already keyed is a surprise in both
+// directions. An operator who wants the settings kept has a verb for it — Disable
+// — and it touches none of this. Every statement is keyed to the uninstalled
+// Plugin's own id, so the eight Built-ins' rows and every other Installed Plugin's
+// are out of reach by construction.
 //
 // THE EVENT SINK ROW IS THE ONE PEOPLE FORGET. An Installed Event sink's settings
 // live in event_sinks keyed by the Plugin id, so leaving it behind would strand a
@@ -163,13 +174,35 @@ func (db *DB) SetPluginLastError(id, message string) error {
 // Manager silently skips forever and that would quietly come back to life if the
 // same Plugin were ever reinstalled.
 //
-// THE KEY-VALUE NAMESPACE IS THE OTHER ONE, and it is worse, because the rows are
-// the GUEST's rather than the operator's: cursors, etags and small caches nobody
-// ever typed. Left behind, a Plugin reinstalled under the same id — by the same
-// author, or by anyone who picks the same slug — reads them back through kv_get as
-// if it had written them. Uninstall leaves exactly the identity-keyed artwork and
-// subtitles the Plugin produced (those are the Library's now, ADR-0007) and
-// nothing else.
+// THE TWO PROVIDER TABLES ARE THE SAME ROW, ONE SEAM OVER. An Installed Metadata
+// provider's enable switch, API key and base-URL override live in
+// metadata_providers keyed by slug, and an Installed Subtitle provider's in
+// subtitle_providers — exactly where a Built-in's do (migrations 0018 and 0027).
+// Until issue 17 an uninstall left both behind, so the settings screens skipped the
+// row forever (nothing registers that slug any more) while a reinstall under the
+// same id picked the previous operator's credential straight back up. They go for
+// the sink row's reason, and they now go WITH it: an Installed sink forgetting its
+// secret while an Installed provider remembered its key was an asymmetry, not a
+// policy.
+//
+// THE PER-LIBRARY ENRICHMENT POLICY NAMES SLUGS TOO (ADR-0027), in two shapes, and
+// both stop naming a Plugin that no longer exists:
+//   - library_provider_override rows, the per-Library Supplement tri-state, are
+//     DELETED — a forced on/off for a source nobody can call is not an opinion the
+//     next Plugin to claim that slug inherits.
+//   - library_enrichment_policy.authoritative_provider, the Authoritative-provider
+//     pointer, is CLEARED BACK TO NULL (inherit the kind's default lead). The
+//     resolver already falls back when the slug is not in the registry, so this is
+//     not what keeps enrichment running; it is what keeps the policy RESPONSE from
+//     echoing a dead slug back to the Admin as their deliberate choice.
+//
+// THE KEY-VALUE NAMESPACE IS THE LAST ONE, and it is the odd one out, because the
+// rows are the GUEST's rather than the operator's: cursors, etags and small caches
+// nobody ever typed. Left behind, a Plugin reinstalled under the same id — by the
+// same author, or by anyone who picks the same slug — reads them back through
+// kv_get as if it had written them. Uninstall leaves exactly the identity-keyed
+// artwork and subtitles the Plugin produced (those are the Library's now,
+// ADR-0007) and nothing else.
 //
 // One transaction, because a half-removed Plugin is worse than either outcome.
 func (db *DB) DeletePlugin(id string) error {
@@ -187,6 +220,17 @@ func (db *DB) DeletePlugin(id string) error {
 		// Plugin whole rather than half uninstalled.
 		deletePluginNamespaceSQL,
 		`DELETE FROM event_sinks WHERE slug = ?`,
+		`DELETE FROM metadata_providers WHERE slug = ?`,
+		`DELETE FROM subtitle_providers WHERE slug = ?`,
+		`DELETE FROM library_provider_override WHERE provider = ?`,
+		// The one UPDATE in the list: the Authoritative pointer is a COLUMN on a row
+		// that carries a Library's other policy keys, so deleting the row would take
+		// enrich_enabled and metadata_language with it. NULL is inherit (ADR-0027's
+		// Model A invariant), which is precisely where a Library whose lead was
+		// uninstalled belongs.
+		`UPDATE library_enrichment_policy
+		    SET authoritative_provider = NULL, updated_at = datetime('now')
+		  WHERE authoritative_provider = ?`,
 		`DELETE FROM plugins WHERE id = ?`,
 	} {
 		if _, err := tx.Exec(stmt, id); err != nil {
