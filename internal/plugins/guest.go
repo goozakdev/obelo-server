@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -80,6 +81,28 @@ type compiled struct {
 	module wazero.CompiledModule
 }
 
+// compilationCache is ONE in-memory compilation cache for this whole process,
+// shared by every Plugin's runtime (wazero supports exactly that, and it is what
+// the type is for).
+//
+// Compiling a stock-Go guest is the expensive half — measured at ~670 ms for the
+// bundled TMDB module, against ~20 ms when the cache answers — and this server
+// compiles the SAME module far more often than once. Every install, uninstall,
+// enable, disable and settings save goes through the Manager's rebuild-and-swap,
+// which re-reads the whole plugins directory and recompiles EVERY module in it
+// (that is deliberate: "a rebuild produces what a reboot would"). With the seven
+// Bundled plugins of ADR-0059 that is about five seconds of recompilation each
+// time an Admin flicks a switch, for bytes that did not change.
+//
+// It is keyed by the module's own bytes, so two Plugins that happen to ship the
+// same module share the compiled code and a Plugin whose module was REPLACED
+// compiles afresh — which is what the boot-time re-assert needs.
+//
+// It holds compiled code for the lifetime of the process, which is bounded by the
+// number of DISTINCT modules a server has: a handful. It is created lazily so a
+// binary that never loads a Plugin never allocates one.
+var compilationCache = sync.OnceValue(wazero.NewCompilationCache)
+
 // newRuntime builds the sandbox ADR-0058 decision 4 describes and compiles wasm
 // into it: WASI instantiated and nothing inside it granted, the host module with
 // exactly the functions this slice defines, and a per-call deadline the runtime
@@ -89,7 +112,7 @@ type compiled struct {
 // costs roughly 78 µs per call and is bought without argument, because the call it
 // guards exists to make an HTTP request that takes 100–500 ms.
 func newRuntime(ctx context.Context, wasm []byte, host *hostFuncs) (*compiled, error) {
-	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
+	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true).WithCompilationCache(compilationCache())
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		_ = rt.Close(ctx)

@@ -1,11 +1,8 @@
 package enrich
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -119,36 +116,5 @@ func TestEscalationMatchesTheBackoffCeiling(t *testing.T) {
 			"items now either escalate before the backoff has topped out (noise on the "+
 			"attention list) or keep retrying past it with nobody told",
 			len(retryBackoff), store.EnrichRetryEscalateAfter)
-	}
-}
-
-// End-to-end through a real provider: an httptest server returning 503 must produce
-// a transient error at the seam the pass actually reads, not merely in the helper.
-// This is the wiring half — the helpers can be perfect and still be unused.
-func TestTMDBProviderMarksServerErrorsTransient(t *testing.T) {
-	var code int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(code)
-		fmt.Fprint(w, `{}`)
-	}))
-	defer srv.Close()
-
-	p := NewTMDBProvider("key", "en-US", srv.URL, srv.URL)
-
-	code = http.StatusServiceUnavailable
-	_, err := p.Lookup(context.Background(), TitleRef{Kind: "movie", Title: "Inception", Year: 2010})
-	if err == nil || !IsTransient(err) {
-		t.Fatalf("a 503 from TMDB produced %v, want a transient error — the classification "+
-			"never reaches the pass", err)
-	}
-
-	code = http.StatusUnauthorized
-	_, err = p.Lookup(context.Background(), TitleRef{Kind: "movie", Title: "Inception", Year: 2010})
-	if err == nil {
-		t.Fatal("a 401 from TMDB produced no error at all")
-	}
-	if IsTransient(err) {
-		t.Fatal("a 401 from TMDB is transient: a wrong API key would be retried quietly forever " +
-			"instead of appearing on the attention list")
 	}
 }

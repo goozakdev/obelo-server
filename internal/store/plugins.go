@@ -35,6 +35,15 @@ type PluginRow struct {
 	// a screen must read them that way rather than as "unsigned".
 	Publisher string
 	KeyID     string
+	// Origin is who put this plugin here: "bundled" for one the server shipped
+	// (ADR-0059), "admin" for one a person uploaded or pasted a URL for. It is the
+	// fact the boot-time re-assert turns on — a bundled row's files are replaced
+	// when the server ships a newer version, an admin row's are never touched — and
+	// the one sentence the Plugins screen shows instead of an upload name.
+	//
+	// See migrations/0070_bundled_plugins.sql for why the column defaults to
+	// "admin" rather than to the empty string.
+	Origin string
 }
 
 // PluginInsert is a newly installed Plugin. There is no update form: a Plugin is
@@ -47,6 +56,10 @@ type PluginInsert struct {
 	APIVersion int
 	Provides   []string
 	Source     string
+	// Origin is "bundled" or "admin" (see PluginRow.Origin). The EMPTY value means
+	// "admin", so every caller written before Bundled plugins existed keeps
+	// recording what it always recorded.
+	Origin string
 }
 
 // Plugins lists every Installed plugin row, ordered by id — the same order the
@@ -54,7 +67,7 @@ type PluginInsert struct {
 func (db *DB) Plugins() ([]PluginRow, error) {
 	rows, err := db.Query(
 		`SELECT id, name, version, api_version, provides, enabled, last_error, source, installed_at,
-		        publisher, key_id
+		        publisher, key_id, origin
 		   FROM plugins ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing plugins: %w", err)
@@ -69,7 +82,7 @@ func (db *DB) Plugins() ([]PluginRow, error) {
 			lastError sql.NullString
 		)
 		if err := rows.Scan(&r.ID, &r.Name, &r.Version, &r.APIVersion, &provides,
-			&r.Enabled, &lastError, &r.Source, &r.InstalledAt, &r.Publisher, &r.KeyID); err != nil {
+			&r.Enabled, &lastError, &r.Source, &r.InstalledAt, &r.Publisher, &r.KeyID, &r.Origin); err != nil {
 			return nil, fmt.Errorf("store: scanning plugin: %w", err)
 		}
 		r.LastError = lastError.String
@@ -107,19 +120,116 @@ func (db *DB) DisabledPluginIDs() ([]string, error) {
 // byte, and a conflict reaching here would mean two installs raced past that
 // check, which is worth an error rather than a silent overwrite of somebody's
 // provenance.
+//
+// It also CLEARS the declined mark for the id, in the same transaction. A plugin
+// arriving under an id an Admin once declined means the Admin changed their mind
+// — either by pressing "reinstall the shipped version" or by uploading one of
+// their own — and a mark left behind would make the next boot's re-assert skip a
+// row that is now installed and, if the Admin's copy were later removed, keep the
+// shipped one away for reasons nobody could see.
 func (db *DB) InsertPlugin(p PluginInsert) error {
 	provides, err := json.Marshal(nonNilProvides(p.Provides))
 	if err != nil {
 		return fmt.Errorf("store: encoding what plugin %q provides: %w", p.ID, err)
 	}
-	_, err = db.Exec(
-		`INSERT INTO plugins (id, name, version, api_version, provides, enabled, last_error, source, installed_at)
-		      VALUES (?, ?, ?, ?, ?, 1, NULL, ?, datetime('now'))`,
-		p.ID, p.Name, p.Version, p.APIVersion, string(provides), p.Source)
+	origin := p.Origin
+	if origin == "" {
+		origin = "admin"
+	}
+	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
 	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(
+		`INSERT INTO plugins (id, name, version, api_version, provides, enabled, last_error, source, installed_at, origin)
+		      VALUES (?, ?, ?, ?, ?, 1, NULL, ?, datetime('now'), ?)`,
+		p.ID, p.Name, p.Version, p.APIVersion, string(provides), p.Source, origin); err != nil {
+		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM declined_plugins WHERE id = ?`, p.ID); err != nil {
+		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
+	}
 	return nil
+}
+
+// UpdatePluginManifest re-copies the manifest facts onto an existing row after
+// its files were replaced in place — which is what the boot-time re-assert does
+// when this build ships a newer version of a Bundled plugin (ADR-0059 decision 1).
+//
+// It is NOT an upsert and it deliberately touches nothing else. The id is the
+// same, so the settings row, the per-Library overrides, the item pins, the Admin's
+// enable switch, the install time and the origin all belong to the plugin that is
+// still there; what changed is the four facts copied out of the manifest at
+// install time, and leaving them stale would make the Plugins screen name the
+// version that is no longer on disk.
+func (db *DB) UpdatePluginManifest(p PluginInsert) error {
+	provides, err := json.Marshal(nonNilProvides(p.Provides))
+	if err != nil {
+		return fmt.Errorf("store: encoding what plugin %q provides: %w", p.ID, err)
+	}
+	_, err = db.Exec(
+		`UPDATE plugins SET name = ?, version = ?, api_version = ?, provides = ?, last_error = NULL
+		  WHERE id = ?`,
+		p.Name, p.Version, p.APIVersion, string(provides), p.ID)
+	if err != nil {
+		return fmt.Errorf("store: updating plugin %q: %w", p.ID, err)
+	}
+	return nil
+}
+
+// DeclinedPluginIDs is every Bundled plugin id an Admin has uninstalled, sorted.
+// The boot-time re-assert reads it BEFORE it writes anything: a declined id is
+// left alone, which is what makes "uninstall" mean uninstalled rather than "until
+// you restart".
+func (db *DB) DeclinedPluginIDs() ([]string, error) {
+	rows, err := db.Query(`SELECT id FROM declined_plugins ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing declined plugins: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: scanning declined plugin: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// DeclinePlugin remembers that the Admin removed the shipped plugin with this id.
+// Declining one that is already declined is not an error — it is the state the
+// caller asked for.
+func (db *DB) DeclinePlugin(id string) error {
+	_, err := db.Exec(
+		`INSERT INTO declined_plugins (id, declined_at) VALUES (?, datetime('now'))
+		 ON CONFLICT(id) DO NOTHING`, id)
+	if err != nil {
+		return fmt.Errorf("store: declining plugin %q: %w", id, err)
+	}
+	return nil
+}
+
+// UndeclinePlugin forgets the mark, so the next re-assert installs the shipped
+// plugin again. It reports whether there was a mark to forget, so the API can
+// tell "brought it back" from "it was never gone".
+func (db *DB) UndeclinePlugin(id string) (bool, error) {
+	res, err := db.Exec(`DELETE FROM declined_plugins WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("store: reinstating plugin %q: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: reinstating plugin %q: %w", id, err)
+	}
+	return n > 0, nil
 }
 
 // SetPluginEnabled flips the Admin's switch. It reports whether a row was there

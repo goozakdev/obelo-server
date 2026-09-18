@@ -66,6 +66,7 @@ WORKDIR /src
 COPY go.mod go.sum go.work* ./
 COPY pluginapi/ ./pluginapi/
 COPY pluginsdk/ ./pluginsdk/
+COPY plugins/ ./plugins/
 RUN go mod download
 
 # Source tree. `internal` carries the committed placeholder dist/index.html,
@@ -73,6 +74,31 @@ RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY --from=web /src/internal/webui/dist/ ./internal/webui/dist/
+
+# The Bundled plugins (ADR-0059), BEFORE the Go build, because internal/bundled
+# embeds them: every plugins/<id>/ is compiled to WebAssembly with the reference
+# plugin's own command and gzipped into internal/bundled/modules/, which is
+# gitignored and therefore arrives empty in the COPY above.
+#
+# WITHOUT THIS THE IMAGE COMPILES AND SHIPS NO METADATA PROVIDERS AT ALL — a
+# server that starts, serves, scans, and silently never enriches anything. That is
+# the exact shape CLAUDE.md records twice, so it is a build step rather than a note
+# in a runbook.
+#
+# It is the Makefile's `plugins` target, restated here rather than invoked, because
+# this stage is alpine with no make in it and the loop is five lines. Keep the two
+# in step; issue 08 of .scratch/bundled-plugins is where they are meant to become
+# one.
+RUN set -eux; \
+    mkdir -p internal/bundled/modules; \
+    for dir in plugins/*/; do \
+      id=$(basename "$dir"); \
+      ( cd "$dir" && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= \
+          go build -buildmode=c-shared -o "/tmp/$id.wasm" . ); \
+      gzip -9nc "/tmp/$id.wasm" > "internal/bundled/modules/$id.wasm.gz"; \
+      cp "$dir/manifest.json" "internal/bundled/modules/$id.manifest.json"; \
+    done; \
+    ls -l internal/bundled/modules/
 
 # Default metadata credentials (ADR-0032), injected only for OFFICIAL image builds
 # from CI secrets — ABSENT by default so a plain `docker build` bundles no keys and

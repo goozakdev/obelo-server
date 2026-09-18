@@ -35,6 +35,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/goozakdev/obelo-server/internal/app"
 	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/bundled/bundledtest"
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/gpu"
@@ -396,6 +397,14 @@ func WithSubtitleProviderBuilder(build subfetch.BuildFunc) Option {
 // The httptest server and database are torn down automatically via t.Cleanup.
 func New(t *testing.T, opts ...Option) *Server {
 	t.Helper()
+
+	// The Bundled plugins (ADR-0059) are the metadata providers now: TMDB is a
+	// WebAssembly module this server installs on first boot, not compiled-in code.
+	// They are BUILD OUTPUT, so on a tree where `make plugins` has not run this
+	// compiles what is missing — once per process, with the command `make plugins`
+	// runs — and every server below then boots with the REAL modules. When they
+	// have been built this does nothing.
+	bundledtest.Ensure(t)
 
 	b := &builder{cfg: config.Defaults()}
 	b.cfg.DataDir = t.TempDir()

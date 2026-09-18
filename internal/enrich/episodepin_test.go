@@ -1,10 +1,6 @@
 package enrich
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -92,68 +88,6 @@ func TestEpisodePinAllowsSpecials(t *testing.T) {
 	if ref.SeasonNumber != 0 || ref.EpisodeNumber != 2 {
 		t.Errorf("lookup ref = S%02dE%02d, want the pinned Specials S00E02",
 			ref.SeasonNumber, ref.EpisodeNumber)
-	}
-}
-
-// TestSeasonEpisodesListsAPickableSeason: the data behind the chooser — episode
-// numbers, names and stills for one season of a series.
-func TestSeasonEpisodesListsAPickableSeason(t *testing.T) {
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"episodes":[
-			{"episode_number":1,"season_number":4,"name":"Holiday Knights","air_date":"1997-09-13","overview":"Two tales.","still_path":"/hk.jpg"},
-			{"episode_number":2,"season_number":4,"name":"Sins of the Father","air_date":"1997-09-20"}
-		]}`))
-	}))
-	defer srv.Close()
-	p := NewTMDBProvider("k", "en-US", srv.URL, "https://img/")
-
-	eps, err := p.SeasonEpisodes(context.Background(), "1438", 4)
-	if err != nil {
-		t.Fatalf("SeasonEpisodes: %v", err)
-	}
-	if len(seen) != 1 || !strings.HasSuffix(seen[0], "/tv/1438/season/4") {
-		t.Fatalf("expected one /tv/1438/season/4 call, saw %v", seen)
-	}
-	if len(eps) != 2 {
-		t.Fatalf("episodes = %d, want 2", len(eps))
-	}
-	if eps[0].Season != 4 || eps[0].Episode != 1 || eps[0].Name != "Holiday Knights" {
-		t.Errorf("episode[0] = %+v", eps[0])
-	}
-	if eps[0].StillURL != "https://img//hk.jpg" {
-		t.Errorf("still = %q", eps[0].StillURL)
-	}
-	// An episode with no still is still pickable — the name and number identify it.
-	if eps[1].StillURL != "" {
-		t.Errorf("episode[1] still = %q, want empty", eps[1].StillURL)
-	}
-}
-
-// TestSeriesSeasonsListsSeasons: the season chooser's options.
-func TestSeriesSeasonsListsSeasons(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"seasons":[
-			{"season_number":0,"episode_count":3},
-			{"season_number":3,"episode_count":20},
-			{"season_number":4,"episode_count":10}
-		]}`))
-	}))
-	defer srv.Close()
-	p := NewTMDBProvider("k", "en-US", srv.URL, "https://img/")
-
-	seasons, err := p.SeriesSeasons(context.Background(), "1438")
-	if err != nil {
-		t.Fatalf("SeriesSeasons: %v", err)
-	}
-	if len(seasons) != 3 || seasons[0].Season != 0 || seasons[2].Season != 4 {
-		t.Fatalf("seasons = %+v", seasons)
-	}
-	if seasons[2].EpisodeCount != 10 {
-		t.Errorf("season 4 episode count = %d, want 10", seasons[2].EpisodeCount)
 	}
 }
 

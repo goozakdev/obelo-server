@@ -20,6 +20,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/api"
 	"github.com/goozakdev/obelo-server/internal/auth"
 	"github.com/goozakdev/obelo-server/internal/builtins"
+	"github.com/goozakdev/obelo-server/internal/bundled"
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
@@ -547,12 +548,32 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Installed-plugin loader below adds to this same value, which is what makes an
 	// Installed plugin indistinguishable from a Built-in everywhere downstream.
 	registry := pluginapi.NewRegistry()
-	builtins.Register(registry)
-	for _, reg := range o.metadataPlugins {
-		registry.RegisterMetadataProvider(reg)
+	// registerBase is everything that is NOT an Installed plugin, as one closure,
+	// because it is needed TWICE and the two must agree: here, and again inside the
+	// Manager's rebuild-and-swap, so that "a rebuild produces what a reboot would"
+	// stays true (see plugins.Set.RegisterEnabledAround, which sequences it
+	// between the Bundled plugins and the rest).
+	registerBase := func(reg *pluginapi.Registry) {
+		builtins.Register(reg)
+		for _, r := range o.metadataPlugins {
+			reg.RegisterMetadataProvider(r)
+		}
 	}
 
-	// Installed plugins (ADR-0058), AFTER the Built-ins and into the same value:
+	// The Bundled plugins (ADR-0059): the metadata providers this server SHIPS, as
+	// WebAssembly modules it carries. They are written into <dataDir>/plugins/<id>/
+	// BEFORE the loader below reads that directory — on a first boot, and again on
+	// every boot after it, so a server upgrade delivers a fixed provider without an
+	// operator doing anything.
+	//
+	// An Admin's own plugin under a shipped id, and a shipped plugin an Admin
+	// uninstalled, are both left exactly alone; internal/bundled holds the table
+	// and the reasons. Nothing here can stop a boot: a plugin whose files could not
+	// be written is a logged line and a provider that is not there.
+	shipped := bundled.NewSource(cfg.DataDir, db, log.Printf)
+	shipped.AssertAll(context.Background())
+
+	// Installed plugins (ADR-0058), and the Bundled ones are among them:
 	// a module and a manifest an Admin placed by hand under <dataDir>/plugins/<id>/,
 	// compiled into its own wazero sandbox and registered as the seam its manifest
 	// says it fills. From here on nothing can tell one from a Built-in — which is
@@ -574,6 +595,14 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	if pluginOpts.KV == nil {
 		pluginOpts.KV = db
 	}
+	// The shipped order, handed to the loader so that registration puts the
+	// Bundled plugins first (ADR-0059 decision 3). It is what makes TMDB lead video
+	// and MusicBrainz lead music on a fresh install, by the EXISTING "first
+	// authoritative Full provider of a kind" rule and with no provider name in the
+	// host.
+	if pluginOpts.BundledFirst == nil {
+		pluginOpts.BundledFirst = bundled.IDs()
+	}
 	installed, err := plugins.Load(context.Background(), filepath.Join(cfg.DataDir, plugins.DirName), pluginOpts)
 	if err != nil {
 		log.Printf("obelo: installed plugins were not loaded: %v", err)
@@ -589,7 +618,12 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	if err != nil {
 		log.Printf("obelo: the plugin enable switches could not be read, so every installed plugin is registered: %v", err)
 	}
-	installed.RegisterEnabled(registry, disabledPluginIDs)
+	// The Bundled plugins, then the Built-ins, then every other Installed plugin
+	// alphabetically. ORDER IS THE CATALOG ORDER and three things read it: the
+	// settings screen lists sources in it, the fill-only Supplements are composed
+	// behind the Authoritative provider in it (ADR-0027), and the first
+	// authoritative-role Full provider of a kind is that kind's default lead.
+	installed.RegisterEnabledAround(registry, disabledPluginIDs, registerBase)
 
 	// Enrichment (external-metadata-enrichment): the separate, optional decorator
 	// step (ADR-0002). Its two network seams default to the real TMDB provider +
@@ -774,14 +808,14 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// has no key-value store" until the next restart, and only then start
 		// working. A rebuild has to produce what a reboot would.
 		Loader: pluginOpts,
-		Base: func(reg *pluginapi.Registry) {
-			// Exactly what this composition root registered above, in the same
-			// order, so a rebuilt registry is the one a reboot would have built.
-			builtins.Register(reg)
-			for _, r := range o.metadataPlugins {
-				reg.RegisterMetadataProvider(r)
-			}
-		},
+		// Exactly what this composition root registered above, sequenced by the
+		// same function (RegisterEnabledAround), so a rebuilt registry is the one a
+		// reboot would have built — Bundled plugins first, then this, then the rest.
+		Base: registerBase,
+		// The shipped plugins, for the two lifecycle verbs that need them:
+		// uninstalling one has to remember the Admin declined it, and "reinstall
+		// the shipped version" has to put it back (ADR-0059 decision 2).
+		Bundled: shipped,
 		Reload: func(ctx context.Context) error {
 			// A fixed injected provider (WithMetadataProvider) has no Manager
 			// driving it, exactly as at boot, so it is not reloaded here either.

@@ -69,8 +69,8 @@ func TestSettingsToProviderConfig(t *testing.T) {
 	// A tmdb row with no image-host override falls back to the registry default.
 	noOverride := builtinCatalog().SettingsToProviderConfig(
 		[]store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}}, "en-GB", fixed)
-	if noOverride.ProviderEndpoints[SlugTMDB].URL2 != registryTMDBImageBaseURL {
-		t.Errorf("tmdb url2 = %q, want registry default %q", noOverride.ProviderEndpoints[SlugTMDB].URL2, registryTMDBImageBaseURL)
+	if noOverride.ProviderEndpoints[SlugTMDB].URL2 != shippedTMDBImageBaseURL {
+		t.Errorf("tmdb url2 = %q, want registry default %q", noOverride.ProviderEndpoints[SlugTMDB].URL2, shippedTMDBImageBaseURL)
 	}
 	if cfg.ProviderEndpoints[SlugMusicBrainz].URL != registryMusicBrainzBaseURL {
 		t.Errorf("musicbrainz url = %q, want registry default", cfg.ProviderEndpoints[SlugMusicBrainz].URL)

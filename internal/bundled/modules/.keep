@@ -1,0 +1,8 @@
+# internal/bundled/modules is build output: `make plugins` writes one <id>.wasm.gz
+# and one <id>.manifest.json here for every module under plugins/*/, and .gitignore
+# keeps every one of them out of the repository (ADR-0059 decision 10).
+#
+# This file is the only thing committed in the directory, and it is committed so
+# that the directory EXISTS in a fresh clone — internal/bundled embeds it, and an
+# embed pattern that matches nothing is a compile error rather than the specific
+# "run make plugins" failure a clone is supposed to get.

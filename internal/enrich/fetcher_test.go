@@ -151,22 +151,26 @@ func TestArtworkFetcherDoesNotMutateAnInjectedClient(t *testing.T) {
 	}
 }
 
-// TestProviderJSONClientsCarryTheRedirectPolicy: all seven JSON metadata clients go
-// through providerClient, including when a caller injects its own client — and none
-// of them mutates what it was given. These clients only parse what comes back, so
+// TestProviderJSONClientsCarryTheRedirectPolicy: every JSON metadata client left in
+// this package goes through providerClient, including when a caller injects its own
+// client — and none of them mutates what it was given.
+//
+// It was "all seven" until TMDB became a Bundled plugin (ADR-0059): a plugin has no
+// HTTP client at all — its only way out is the host's own guarded fetcher, which
+// carries this policy for every guest at once — so there is nothing here to assert
+// about it. Each of the remaining six leaves the same way. These clients only parse what comes back, so
 // the risk they close is blind internal probing (a hop that connects and a hop that
 // does not are distinguishable), not body disclosure.
 func TestProviderJSONClientsCarryTheRedirectPolicy(t *testing.T) {
 	injected := &http.Client{}
 	for name, got := range map[string]*http.Client{
-		"tmdb":        (&TMDBProvider{HTTPClient: injected}).client(),
 		"musicbrainz": (&MusicBrainzProvider{HTTPClient: injected}).client(),
 		"fanarttv":    (&FanartTVProvider{HTTPClient: injected}).client(),
 		"theaudiodb":  (&TheAudioDBProvider{HTTPClient: injected}).client(),
 		"anidb":       (&AniDBProvider{HTTPClient: injected}).client(),
 		"omdb":        (&OMDbProvider{HTTPClient: injected}).client(),
 		"thetvdb":     (&TheTVDBProvider{HTTPClient: injected}).client(),
-		"nil client":  (&TMDBProvider{}).client(),
+		"nil client":  (&OMDbProvider{}).client(),
 	} {
 		if got.CheckRedirect == nil {
 			t.Errorf("%s: client() follows redirects unchecked", name)

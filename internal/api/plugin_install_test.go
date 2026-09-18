@@ -40,6 +40,11 @@ type installedPluginResp struct {
 	LastError         string   `json:"lastError"`
 	Source            string   `json:"source"`
 	InstalledAt       string   `json:"installedAt"`
+	// Origin and State arrived with the Bundled plugins (ADR-0059): where this
+	// plugin came from ("bundled" | "admin"), and — for a shipped plugin the Admin
+	// uninstalled — "declined", which is the row the screen offers it back on.
+	Origin string `json:"origin"`
+	State  string `json:"state"`
 }
 
 type pluginsResp struct {
@@ -155,9 +160,11 @@ func TestUploadingAPluginMakesItAnEventSinkOnTheRunningServer(t *testing.T) {
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())
 
-	// Nothing is installed, and the Event Sinks screen is the Webhook alone.
-	if got := readPlugins(t, srv, token); len(got.Plugins) != 0 {
-		t.Fatalf("a fresh server lists %+v, want no installed plugins", got.Plugins)
+	// Nothing an ADMIN installed, and the Event Sinks screen is the Webhook alone.
+	// (A fresh server does carry the plugins it ships — ADR-0059 — which is what
+	// notShipped filters out here.)
+	if got := notShipped(readPlugins(t, srv, token).Plugins); len(got) != 0 {
+		t.Fatalf("a fresh server lists %+v, want no installed plugins", got)
 	}
 	if got := readSinks(t, srv, token); len(got.Sinks) != 1 {
 		t.Fatalf("before the install the sink screen lists %+v, want just the Webhook", got.Sinks)
@@ -278,8 +285,8 @@ func TestAURLResolvingToAPrivateAddressIsRefused(t *testing.T) {
 	if !strings.Contains(refusal.Error.Message, "upload the file instead") {
 		t.Fatalf("message = %q, want it to say what to do instead", refusal.Error.Message)
 	}
-	if got := readPlugins(t, srv, token); len(got.Plugins) != 0 {
-		t.Fatalf("a refused URL install left %+v behind", got.Plugins)
+	if got := notShipped(readPlugins(t, srv, token).Plugins); len(got) != 0 {
+		t.Fatalf("a refused URL install left %+v behind", got)
 	}
 }
 
@@ -402,20 +409,16 @@ func TestEachInstallRefusalIsItsOwnCodeAndSentence(t *testing.T) {
 
 	// Nothing was installed by any of that, and the one Plugin that WAS there is
 	// untouched and still working.
-	got := readPlugins(t, srv, token)
-	if len(got.Plugins) != 1 || got.Plugins[0].ID != "example-sink" || got.Plugins[0].DisabledByFailure {
-		t.Fatalf("after six refusals the screen shows %+v, want only the one good Plugin", got.Plugins)
+	got := notShipped(readPlugins(t, srv, token).Plugins)
+	if len(got) != 1 || got[0].ID != "example-sink" || got[0].DisabledByFailure {
+		t.Fatalf("after six refusals the screen shows %+v, want only the one good Plugin", got)
 	}
 	// Including on disk: no staging leftovers, no half-written directory.
 	entries, err := os.ReadDir(filepath.Join(srv.DataDir, plugins.DirName))
 	if err != nil {
 		t.Fatalf("reading the plugins directory: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "example-sink" {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
+	if names := notShippedDirs(entries); len(names) != 1 || names[0] != "example-sink" {
 		t.Fatalf("the plugins directory holds %v, want just the one that installed", names)
 	}
 }
@@ -646,7 +649,7 @@ func TestPluginManagementIsAdminOnly(t *testing.T) {
 		}
 	}
 	// And nothing they tried landed.
-	if got := readPlugins(t, srv, admin); len(got.Plugins) != 0 {
-		t.Fatalf("a Member installed %+v", got.Plugins)
+	if got := notShipped(readPlugins(t, srv, admin).Plugins); len(got) != 0 {
+		t.Fatalf("a Member installed %+v", got)
 	}
 }
