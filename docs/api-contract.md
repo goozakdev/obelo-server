@@ -866,6 +866,8 @@ All identity/metadata mutations emit a `libraryUpdated` SSE event.
 
 All under `/settings/`, bearer + admin.
 
+> The `/settings/plugins*` endpoints below are the install surface for **Installed plugins** ([ADR-0058](./adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)). If you are *writing* one rather than calling this API, start at **[docs/plugins/authoring.md](./plugins/authoring.md)** — the ABI, the manifest, the six host functions and what each refuses, with every sample taken from the reference plugin ([`../obelo-plugin-discord`](https://github.com/goozakdev/obelo-plugin-discord)).
+
 | Endpoint | Notes |
 | --- | --- |
 | `GET /settings/metadata-providers` — [Admin] | → `200` `{ "providers": [ { "slug", "name", "kinds": ["video"\|"music"…], "role": "authoritative"\|"supplement", "requiresKey", "enabled", "hasKey", "baseURL", "imageBaseURL"?, "description", "docsURL" } ], "metadataLanguage", "enablement": { "video", "music" }, "configuredEnablement": { "video", "music" }, "consentState": "unset"\|"granted"\|"declined", "autoEnrichAfterScan", "enrichIntervalSeconds", "musicBrainzRateLimitMs" }`. The key itself is **never returned** — only `hasKey`. `enablement` is the running server's **consent-gated** answer ([ADR-0032](./adr/0032-optional-maintainer-key-rotation-endpoint.md)) — what it will actually enrich, so it is off whenever consent is not granted; `configuredEnablement` is the ungated capability it becomes the instant consent is granted. Registry order: tmdb, omdb, thetvdb, anidb, musicbrainz, coverart, fanarttv, theaudiodb. |
