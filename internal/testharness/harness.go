@@ -233,7 +233,7 @@ func WithTailnetHTTPS(on bool) Option {
 // is the disabled no-op). The value is opaque to the fake provider; it only flips
 // config.EnrichmentEnabled. Pair with WithMetadataProvider to drive a real pass.
 func WithEnrichmentKey(key string) Option {
-	return func(b *builder) { b.cfg.TMDBAPIKey = key }
+	return func(b *builder) { b.cfg.SetProviderKey(config.ProviderTMDB, key) }
 }
 
 // WithEnrichmentConsent seeds the first-run Enrichment consent decision (ADR-0032)
@@ -258,7 +258,7 @@ func WithoutEnrichmentConsent() Option {
 // + Cover Art Archive need none). Video kinds stay disabled unless WithEnrichmentKey
 // is also set. Pair with WithMetadataProvider to drive a Music pass with no network.
 func WithMusicBrainzEnabled(on bool) Option {
-	return func(b *builder) { b.cfg.MusicBrainzEnabled = on }
+	return func(b *builder) { b.cfg.SetProviderEnabled(config.ProviderMusicBrainz, on) }
 }
 
 // WithAutoEnrich enables (or disables) the auto-after-scan background Enrichment

@@ -113,6 +113,16 @@ type ManifestProvides struct {
 	// Built-in does: enabling an unsigned sink hands the operator a receiver they
 	// cannot defend.
 	RequiresSecret bool `json:"requiresSecret,omitempty"`
+	// Probe is the connection probe for a Metadata provider entry (ADR-0059
+	// decision 8): one media reference the author knows their source answers. The
+	// host copies it onto the Descriptor, runs an ordinary lookup with it when an
+	// Admin presses "Test connection", and keeps the judgment — matched or no-match
+	// passes, unavailable / refused / a fetch error fails.
+	//
+	// Additive and optional: a manifest written before this field existed declares
+	// no probe, and its Plugin's connection test says exactly that rather than
+	// inventing a reference. Ignored for an Event sink, which has nothing to look up.
+	Probe *MediaRef `json:"probe,omitempty"`
 }
 
 // ManifestNetwork is the outbound allowlist, and it is the most load-bearing

@@ -613,20 +613,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	provider := o.metadataProvider
 	enablement := enrich.Enablement{Video: cfg.VideoEnrichmentEnabled(), Music: cfg.MusicEnrichmentEnabled()}
 	if provider == nil {
-		provider, enablement = metadataCatalog.BuildProvider(enrich.ProviderConfig{
-			TMDBAPIKey:           cfg.TMDBAPIKey,
-			TMDBBaseURL:          cfg.TMDBBaseURL,
-			TMDBImageBaseURL:     cfg.TMDBImageBaseURL,
-			MetadataLanguage:     cfg.MetadataLanguage,
-			MusicBrainzEnabled:   cfg.MusicBrainzEnabled,
-			MusicBrainzBaseURL:   cfg.MusicBrainzBaseURL,
-			CoverArtBaseURL:      cfg.CoverArtBaseURL,
-			MusicBrainzRateLimit: cfg.MusicBrainzRateLimit,
-			FanartTVAPIKey:       cfg.FanartTVAPIKey,
-			FanartTVBaseURL:      cfg.FanartTVBaseURL,
-			TheAudioDBAPIKey:     cfg.TheAudioDBAPIKey,
-			TheAudioDBBaseURL:    cfg.TheAudioDBBaseURL,
-		})
+		provider, enablement = metadataCatalog.BuildProvider(providerConfigFromConfig(cfg))
 	}
 	fetcher := o.artworkFetcher
 	if fetcher == nil {
@@ -1707,6 +1694,59 @@ func resolveFFmpegAvailability(probe transcode.AvailabilityProbe) transcode.Avai
 	return av
 }
 
+// resolvedDefaultKeys is the default-credential chain's answer for the two
+// providers the maintainer ships a key for (ADR-0032): the operator's BYOK key
+// wins, else the cached rotation key, else the build-injected bootstrap key.
+//
+// These two ids, and the rotator's matching pair in rotation.go, are the only
+// providers this binary still names outside the seeding table
+// (.scratch/bundled-plugins: issue 01) — and they are named for a reason that
+// survives the port: the keys are the MAINTAINER'S, bundled with official builds
+// for these two sources specifically, so which sources they belong to is a fact
+// about the release rather than about the provider set.
+func resolvedDefaultKeys(cfg config.Config, rot config.RotationKeys) map[string]string {
+	tmdbKey, _ := cfg.ResolveTMDBKey(rot)
+	fanartKey, _ := cfg.ResolveFanartTVKey(rot)
+	return map[string]string{
+		config.ProviderTMDB:     tmdbKey,
+		config.ProviderFanartTV: fanartKey,
+	}
+}
+
+// providerConfigFromConfig maps the environment-supplied provider settings into the
+// decoupled enrich.ProviderConfig the builder consumes — the boot-time composition,
+// used until the Manager's first Reload replaces it with the DB-authoritative one.
+// It is the config vocabulary meeting the Enrichment domain (enrich never imports
+// config, ADR-0006), and like SettingsToProviderConfig it treats every provider the
+// same way (.scratch/bundled-plugins: issue 01).
+func providerConfigFromConfig(cfg config.Config) enrich.ProviderConfig {
+	rateLimitMs := int(cfg.MusicBrainzRateLimit / time.Millisecond)
+	out := enrich.ProviderConfig{
+		MetadataLanguage:  cfg.MetadataLanguage,
+		RateLimitMillis:   &rateLimitMs,
+		ProviderKeys:      map[string]string{},
+		ProviderEndpoints: map[string]enrich.ProviderEndpoint{},
+		ProviderActive:    map[string]bool{},
+	}
+	for id, p := range cfg.Providers {
+		out.ProviderEndpoints[id] = enrich.ProviderEndpoint{URL: p.URL, URL2: p.URL2}
+		// A source is on when it holds a key or was explicitly opted in — the same
+		// rule the settings derivation applies to a row, asked of the environment.
+		out.ProviderActive[id] = p.Key != "" || p.Enabled
+		if p.Key != "" {
+			out.ProviderKeys[id] = p.Key
+		}
+	}
+	// THE ONE REMAINING SPECIAL CASE, the twin of SettingsToProviderConfig's, and
+	// issue 06 deletes both: the Cover Art Archive is the music lead's artwork HOST,
+	// not a source, so its base URL is resolved into that Plugin's second URL.
+	if e, ok := out.ProviderEndpoints[config.ProviderMusicBrainz]; ok {
+		e.URL2 = cfg.ProviderURL(config.ProviderCoverArt)
+		out.ProviderEndpoints[config.ProviderMusicBrainz] = e
+	}
+	return out
+}
+
 // seedInputFromConfig maps the config provider knobs to enrich.SeedInput — the one
 // place the config vocabulary meets the Enrichment domain (enrich never imports
 // config, ADR-0006). Used only for the first-boot seed: after the DB-backed
@@ -1725,20 +1765,20 @@ func resolveFFmpegAvailability(probe transcode.AvailabilityProbe) transcode.Avai
 // is undecided), so the seed uses the bootstrap key; the rotation layer's live
 // effect is applied post-boot by the key rotator (see rotation.go).
 func seedInputFromConfig(cfg config.Config, rot config.RotationKeys) enrich.SeedInput {
-	tmdbKey, _ := cfg.ResolveTMDBKey(rot)
-	fanartKey, _ := cfg.ResolveFanartTVKey(rot)
+	rows := cfg.SeedProviderRows(resolvedDefaultKeys(cfg, rot))
+	providers := make([]enrich.ProviderSeed, 0, len(rows))
+	for _, r := range rows {
+		providers = append(providers, enrich.ProviderSeed{
+			Slug:         r.Provider,
+			Enabled:      r.Enabled,
+			APIKey:       r.APIKey,
+			BaseURL:      r.BaseURL,
+			ImageBaseURL: r.ImageBaseURL,
+		})
+	}
 	return enrich.SeedInput{
-		TMDBAPIKey:         tmdbKey,
-		TMDBBaseURL:        cfg.TMDBBaseURL,
-		TMDBImageBaseURL:   cfg.TMDBImageBaseURL,
-		MetadataLanguage:   cfg.MetadataLanguage,
-		MusicBrainzEnabled: cfg.MusicBrainzEnabled,
-		MusicBrainzBaseURL: cfg.MusicBrainzBaseURL,
-		CoverArtBaseURL:    cfg.CoverArtBaseURL,
-		FanartTVAPIKey:     fanartKey,
-		FanartTVBaseURL:    cfg.FanartTVBaseURL,
-		TheAudioDBAPIKey:   cfg.TheAudioDBAPIKey,
-		TheAudioDBBaseURL:  cfg.TheAudioDBBaseURL,
+		Providers:        providers,
+		MetadataLanguage: cfg.MetadataLanguage,
 		// Behavior knobs seeded from config on first boot (then DB-authoritative).
 		// Durations collapse to the DB's integer units: seconds for the interval,
 		// milliseconds for the throttle.

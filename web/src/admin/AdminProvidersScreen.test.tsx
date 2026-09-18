@@ -468,16 +468,32 @@ describe("AdminProvidersScreen", () => {
     );
   });
 
-  it("shows the throttle field only in the MusicBrainz dialog", async () => {
+  // The throttle used to render only in MusicBrainz's dialog, because it only ever
+  // reached MusicBrainz. It reaches every Metadata provider now (ADR-0059 decision
+  // 5), so every provider's dialog shows and edits it — still the one server-wide
+  // value, saved through the same field.
+  it("shows the throttle field in every provider's dialog and saves it from one", async () => {
     const user = userEvent.setup();
-    getMetadataProviders.mockResolvedValue(view());
+    getMetadataProviders.mockResolvedValue(view()); // musicBrainzRateLimitMs: 1000
+    updateMetadataProviders.mockResolvedValue(view({ musicBrainzRateLimitMs: 250 }));
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     await screen.findByTestId("provider-group-video");
 
-    // TMDB's dialog has no MusicBrainz throttle.
     await user.click(screen.getByTestId("provider-edit-tmdb"));
     await screen.findByTestId("provider-baseurl-tmdb");
-    expect(screen.queryByTestId("musicbrainz-rate-limit-input")).toBeNull();
+    const rate = (await screen.findByTestId(
+      "musicbrainz-rate-limit-input",
+    )) as HTMLInputElement;
+    expect(rate.value).toBe("1000"); // the same server-wide value MusicBrainz shows
+
+    await user.clear(rate);
+    await user.type(rate, "250");
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
+
+    // Only the throttle changed → the payload carries just that server-wide knob.
+    await waitFor(() =>
+      expect(updateMetadataProviders).toHaveBeenCalledWith({ musicBrainzRateLimitMs: 250 }),
+    );
   });
 
   it("disables the settings Save button while the save is in flight", async () => {

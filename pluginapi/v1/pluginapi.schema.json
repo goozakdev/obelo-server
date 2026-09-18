@@ -171,6 +171,9 @@
         },
         "docsUrl": {
           "type": "string"
+        },
+        "probe": {
+          "$ref": "#/$defs/MediaRef"
         }
       },
       "required": [
@@ -1198,6 +1201,9 @@
         },
         "requiresSecret": {
           "type": "boolean"
+        },
+        "probe": {
+          "$ref": "#/$defs/MediaRef"
         }
       },
       "required": [

@@ -135,11 +135,11 @@ func TestAniDBRegistryEntry(t *testing.T) {
 // TestBuildAniDBLeads asserts a keyed AniDB pointed as the video authoritative
 // composes as the chain's lead (with TMDB, if keyed, a fill-only supplement).
 func TestBuildAniDBLeads(t *testing.T) {
-	provider, en := buildProvider(ProviderConfig{
-		AuthoritativeVideo: SlugAniDB,
-		AniDBAPIKey:        "anidb-client",
-		TMDBAPIKey:         "tmdb-key",
-	})
+	provider, en := buildProvider(testConfig(
+		withVideoLead(SlugAniDB),
+		withKey(SlugAniDB, "anidb-client"),
+		withKey(SlugTMDB, "tmdb-key"),
+	))
 	if !en.Video {
 		t.Errorf("enablement = %+v, want video on (AniDB keyed authoritative)", en)
 	}

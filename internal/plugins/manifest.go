@@ -166,6 +166,10 @@ func descriptorFor(m pluginapi.Manifest, p pluginapi.ManifestProvides) pluginapi
 		DefaultURL2:  m.Settings.DefaultURL2,
 		Description:  m.Description,
 		DocsURL:      m.DocsURL,
+		// The manifest-declared connection probe travels straight through to the
+		// Descriptor, so "Test connection" works for an Installed provider by exactly
+		// the path it works for a Built-in (.scratch/bundled-plugins: issue 01).
+		Probe: p.Probe,
 	}
 	// ExtensionPoint is set by the Registry's Register call, exactly as it is for
 	// a Built-in, so it can never disagree with the seam it was registered into.

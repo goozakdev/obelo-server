@@ -204,8 +204,8 @@ func TestEnrichmentConfig(t *testing.T) {
 	if c.MetadataLanguage != "fr-FR" {
 		t.Errorf("metadata language = %q, want fr-FR", c.MetadataLanguage)
 	}
-	if c.TMDBBaseURL != "http://stub/3" {
-		t.Errorf("tmdb base url = %q, want the override", c.TMDBBaseURL)
+	if got := c.ProviderURL(config.ProviderTMDB); got != "http://stub/3" {
+		t.Errorf("tmdb base url = %q, want the override", got)
 	}
 
 	c.DataDir = "/data"
@@ -254,8 +254,8 @@ func TestMusicEnrichmentWithoutKey(t *testing.T) {
 // unparseable rate limit keeps the safe default rather than failing boot.
 func TestMusicBrainzServerConfig(t *testing.T) {
 	d := config.Defaults()
-	if d.MusicBrainzBaseURL != config.DefaultMusicBrainzBaseURL {
-		t.Errorf("default MusicBrainz base URL = %q, want %q", d.MusicBrainzBaseURL, config.DefaultMusicBrainzBaseURL)
+	if got := d.ProviderURL(config.ProviderMusicBrainz); got != config.DefaultMusicBrainzBaseURL {
+		t.Errorf("default MusicBrainz base URL = %q, want %q", got, config.DefaultMusicBrainzBaseURL)
 	}
 	if d.MusicBrainzRateLimit != config.DefaultMusicBrainzRateLimit {
 		t.Errorf("default MusicBrainz rate limit = %v, want %v", d.MusicBrainzRateLimit, config.DefaultMusicBrainzRateLimit)
@@ -265,8 +265,8 @@ func TestMusicBrainzServerConfig(t *testing.T) {
 	t.Setenv("OBELO_MUSICBRAINZ_BASE_URL", "https://mirror.example/ws/2")
 	t.Setenv("OBELO_MUSICBRAINZ_RATE_LIMIT", "200ms")
 	c := config.FromEnv()
-	if c.MusicBrainzBaseURL != "https://mirror.example/ws/2" {
-		t.Errorf("MusicBrainz base URL not overridden: got %q", c.MusicBrainzBaseURL)
+	if got := c.ProviderURL(config.ProviderMusicBrainz); got != "https://mirror.example/ws/2" {
+		t.Errorf("MusicBrainz base URL not overridden: got %q", got)
 	}
 	if c.MusicBrainzRateLimit != 200*time.Millisecond {
 		t.Errorf("MusicBrainz rate limit = %v, want 200ms", c.MusicBrainzRateLimit)

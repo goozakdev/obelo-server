@@ -13,9 +13,13 @@ import (
 // Every composition gate in this package used to ask one question — "is this
 // provider's key non-empty?" — and a source that honestly declares it needs no
 // credential could therefore never be on. These tests pin the gate in its new
-// position and, just as importantly, pin that it did not move for anything else:
-// the eight Built-ins carry no explicit fact at all, so key presence still
-// answers for every one of them, which is why none of their behaviour changed.
+// position and, just as importantly, pin that it did not move for anything else.
+//
+// The fact is stated for EVERY registered provider since .scratch/bundled-plugins
+// issue 01 (it used to be stated only for a Plugin this binary had no named key
+// field for), so what the guard below now asserts is that stating it changed no
+// answer: a key-requiring source's fact is still the key-presence question, and a
+// keyless one's is its row's Enabled — which is what the MusicBrainz opt-in was.
 
 // keylessFullMusic is a registration exactly like an Installed plugin's: a Full
 // music source that declares it needs no secret.
@@ -121,25 +125,46 @@ func TestAnUnkeyedKeyRequiringProviderIsStillInactive(t *testing.T) {
 	}
 }
 
-// TestTheBuiltInsCarryNoExplicitActiveFact is the guard on "Built-ins are
-// unchanged". None of the eight ever reaches the explicit map, so for every one of
-// them providerActive is still exactly the key-presence question it always was —
-// which is why no Built-in's behaviour could have moved.
-func TestTheBuiltInsCarryNoExplicitActiveFact(t *testing.T) {
+// TestEveryProviderCarriesAnExplicitActiveFact is the guard on "every provider is
+// treated the same", and it REPLACES the guard that used to live here
+// (.scratch/bundled-plugins: issue 01). That one asserted the inverse — that no
+// shipped provider ever reached the explicit map, because each had a named struct
+// field that WAS its active fact — which was exactly the two-rules-for-two-kinds-of-
+// Plugin this prefactor removes. The fact is now stated for every registered
+// provider, from the same derivation, and what is asserted here is that stating it
+// did not change any answer: for a key-requiring source the fact is still the
+// key-presence question, and for a keyless one it is the row's own Enabled, which
+// is precisely what the MusicBrainz opt-in meant.
+func TestEveryProviderCarriesAnExplicitActiveFact(t *testing.T) {
 	cat := catalogWith()
-	cfg := cat.SettingsToProviderConfig([]store.MetadataProviderRow{
+	rows := []store.MetadataProviderRow{
 		{Slug: SlugTMDB, Enabled: true, APIKey: "k"},
 		{Slug: SlugMusicBrainz, Enabled: true},
 		{Slug: SlugCoverArt, Enabled: true},
 		{Slug: SlugOMDb, Enabled: true, APIKey: "k"},
-	}, "en-US", FixedProviderInputs{})
-
-	if len(cfg.ProviderActive) != 0 {
-		t.Fatalf("a Built-in recorded an explicit active fact: %+v", cfg.ProviderActive)
 	}
+	byslug := map[string]store.MetadataProviderRow{}
+	for _, r := range rows {
+		byslug[r.Slug] = r
+	}
+	cfg := cat.SettingsToProviderConfig(rows, "en-US", FixedProviderInputs{})
+
 	for _, e := range cat.Entries() {
-		if got, want := cfg.providerActive(e.Slug), cfg.providerKey(e.Slug) != ""; got != want {
-			t.Errorf("%s: providerActive = %v, want the key-presence answer %v", e.Slug, got, want)
+		if _, stated := cfg.ProviderActive[e.Slug]; !stated {
+			t.Errorf("%s: no explicit active fact; every registered provider gets one", e.Slug)
+		}
+		r := byslug[e.Slug]
+		want := r.Enabled
+		if e.RequiresKey {
+			// The pre-existing rule, unchanged: a key-requiring source is on exactly when
+			// it holds a key (an enabled row with no key contributes nothing).
+			want = r.Enabled && r.APIKey != ""
+			if got := cfg.providerKey(e.Slug) != ""; got != want {
+				t.Errorf("%s: keyed = %v, want the key-presence answer %v", e.Slug, got, want)
+			}
+		}
+		if got := cfg.providerActive(e.Slug); got != want {
+			t.Errorf("%s: providerActive = %v, want %v", e.Slug, got, want)
 		}
 	}
 }

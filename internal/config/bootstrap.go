@@ -128,8 +128,8 @@ func (s CredentialSource) String() string {
 // the current rotation-cache contents; pass the zero RotationKeys when rotation is
 // disabled or nothing has been fetched.
 func (c Config) ResolveTMDBKey(rot RotationKeys) (string, CredentialSource) {
-	if c.TMDBAPIKey != "" {
-		return c.TMDBAPIKey, CredentialOperator
+	if k := c.ProviderKey(ProviderTMDB); k != "" {
+		return k, CredentialOperator
 	}
 	if rot.TMDB != "" {
 		return rot.TMDB, CredentialRotation
@@ -144,8 +144,8 @@ func (c Config) ResolveTMDBKey(rot RotationKeys) (string, CredentialSource) {
 // fanart.tv key: operator BYOK wins, else the cached rotation key (rot.Fanart),
 // else the build-injected bootstrap key, else none.
 func (c Config) ResolveFanartTVKey(rot RotationKeys) (string, CredentialSource) {
-	if c.FanartTVAPIKey != "" {
-		return c.FanartTVAPIKey, CredentialOperator
+	if k := c.ProviderKey(ProviderFanartTV); k != "" {
+		return k, CredentialOperator
 	}
 	if rot.Fanart != "" {
 		return rot.Fanart, CredentialRotation

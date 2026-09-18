@@ -49,7 +49,7 @@ func TestPinnedProviderPrecedenceHelpers(t *testing.T) {
 
 	// providerReachable: a keyed video provider is reachable; a keyless muted one is
 	// not; MusicBrainz rides music-enablement.
-	cfg := ProviderConfig{TMDBAPIKey: "tk", MusicBrainzEnabled: true}
+	cfg := testConfig(withKey(SlugTMDB, "tk"), withActive(SlugMusicBrainz, true))
 	if !cfg.providerReachable(SlugTMDB) {
 		t.Errorf("keyed TMDB reported unreachable")
 	}
@@ -81,14 +81,14 @@ func withLanguage(cfg ProviderConfig, lang string) ProviderConfig {
 // enrich_enabled=true "not an off-switch" case.
 func TestResolveLibraryEnrichment(t *testing.T) {
 	// A representative "fully configured" global: video (TMDB key) + music on.
-	videoAndMusic := ProviderConfig{
-		TMDBAPIKey:         "tk",
-		TMDBBaseURL:        "http://tmdb.stub",
-		MetadataLanguage:   "en-US",
-		MusicBrainzEnabled: true,
-	}
+	videoAndMusic := testConfig(
+		withKey(SlugTMDB, "tk"),
+		withURLs(SlugTMDB, "http://tmdb.stub", registryTMDBImageBaseURL),
+		withMetadataLanguage("en-US"),
+		withActive(SlugMusicBrainz, true),
+	)
 	// A global with nothing configured — every kind off.
-	unconfigured := ProviderConfig{MetadataLanguage: "en-US"}
+	unconfigured := testConfig(withMetadataLanguage("en-US"))
 
 	tests := []struct {
 		name     string
@@ -187,7 +187,7 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 // the resolved (cfg, enablement) equals what the global path (BuildProvider's own
 // derivation) produces, so an untouched Library enriches exactly as before.
 func TestResolveLibraryEnrichmentMatchesGlobalForEmptyPolicy(t *testing.T) {
-	global := ProviderConfig{TMDBAPIKey: "tk", MusicBrainzEnabled: true, MetadataLanguage: "en-GB"}
+	global := testConfig(withKey(SlugTMDB, "tk"), withActive(SlugMusicBrainz, true), withMetadataLanguage("en-GB"))
 	res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: builtinCatalog(), Config: global}, store.LibraryEnrichmentPolicy{})
 
 	if !reflect.DeepEqual(res.Config, global) {
@@ -210,7 +210,7 @@ func TestResolveAuthoritativePointer(t *testing.T) {
 	// yet KEYED (so it is selectable as an always-active authoritative).
 	global := GlobalEnrichment{
 		Catalog: builtinCatalog(),
-		Config:  ProviderConfig{TMDBAPIKey: "tk", MetadataLanguage: "en-US"},
+		Config:  testConfig(withKey(SlugTMDB, "tk"), withMetadataLanguage("en-US")),
 		Providers: map[string]ProviderState{
 			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
 			SlugOMDb:    {Enabled: false, Keyed: true, APIKey: "ok"}, // disabled but keyed
@@ -225,8 +225,8 @@ func TestResolveAuthoritativePointer(t *testing.T) {
 		if res.Config.videoAuthoritativeSlug() != SlugOMDb {
 			t.Errorf("authoritative = %q, want omdb (always-active-if-keyed)", res.Config.videoAuthoritativeSlug())
 		}
-		if res.Config.OMDbAPIKey != "ok" {
-			t.Errorf("OMDb key = %q, want it injected so BuildProvider composes the lead", res.Config.OMDbAPIKey)
+		if res.Config.ProviderKeys[SlugOMDb] != "ok" {
+			t.Errorf("OMDb key = %q, want it injected so BuildProvider composes the lead", res.Config.ProviderKeys[SlugOMDb])
 		}
 		if !res.Enablement.Video {
 			t.Errorf("video = %+v, want on (the authoritative is keyed)", res.Enablement)
@@ -275,7 +275,7 @@ func TestResolveSupplementTriState(t *testing.T) {
 	// supplement); TheTVDB DISABLED but keyed (available to force on).
 	global := GlobalEnrichment{
 		Catalog: builtinCatalog(),
-		Config:  ProviderConfig{TMDBAPIKey: "tk", OMDbAPIKey: "ok", MetadataLanguage: "en-US"},
+		Config:  testConfig(withKey(SlugTMDB, "tk"), withKey(SlugOMDb, "ok"), withMetadataLanguage("en-US")),
 		Providers: map[string]ProviderState{
 			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
 			SlugOMDb:    {Enabled: true, Keyed: true, APIKey: "ok"},
@@ -287,8 +287,8 @@ func TestResolveSupplementTriState(t *testing.T) {
 		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
 			SupplementOverrides: map[string]bool{SlugTheTVDB: true},
 		})
-		if res.Config.TheTVDBAPIKey != "vk" {
-			t.Errorf("TheTVDB key = %q, want injected (force-on activates the keyed source)", res.Config.TheTVDBAPIKey)
+		if res.Config.ProviderKeys[SlugTheTVDB] != "vk" {
+			t.Errorf("TheTVDB key = %q, want injected (force-on activates the keyed source)", res.Config.ProviderKeys[SlugTheTVDB])
 		}
 	})
 
@@ -296,19 +296,19 @@ func TestResolveSupplementTriState(t *testing.T) {
 		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
 			SupplementOverrides: map[string]bool{SlugOMDb: false},
 		})
-		if res.Config.OMDbAPIKey != "" {
-			t.Errorf("OMDb key = %q, want cleared (force-off mutes it, zero calls)", res.Config.OMDbAPIKey)
+		if res.Config.ProviderKeys[SlugOMDb] != "" {
+			t.Errorf("OMDb key = %q, want cleared (force-off mutes it, zero calls)", res.Config.ProviderKeys[SlugOMDb])
 		}
 		// The authoritative and the rest are untouched.
-		if res.Config.TMDBAPIKey != "tk" {
-			t.Errorf("TMDB key disturbed by an OMDb force-off: %q", res.Config.TMDBAPIKey)
+		if res.Config.ProviderKeys[SlugTMDB] != "tk" {
+			t.Errorf("TMDB key disturbed by an OMDb force-off: %q", res.Config.ProviderKeys[SlugTMDB])
 		}
 	})
 
 	t.Run("inherit (no override) tracks the global config", func(t *testing.T) {
 		res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{})
-		if res.Config.OMDbAPIKey != "ok" || res.Config.TheTVDBAPIKey != "" {
-			t.Errorf("effective keys = omdb:%q tvdb:%q, want the global config (omdb on, tvdb off)", res.Config.OMDbAPIKey, res.Config.TheTVDBAPIKey)
+		if res.Config.ProviderKeys[SlugOMDb] != "ok" || res.Config.ProviderKeys[SlugTheTVDB] != "" {
+			t.Errorf("effective keys = omdb:%q tvdb:%q, want the global config (omdb on, tvdb off)", res.Config.ProviderKeys[SlugOMDb], res.Config.ProviderKeys[SlugTheTVDB])
 		}
 	})
 
@@ -321,8 +321,8 @@ func TestResolveSupplementTriState(t *testing.T) {
 		res := ResolveLibraryEnrichment(g, store.LibraryEnrichmentPolicy{
 			SupplementOverrides: map[string]bool{SlugTheTVDB: true},
 		})
-		if res.Config.TheTVDBAPIKey != "" {
-			t.Errorf("TheTVDB key = %q, want empty (force-on never conjures a key)", res.Config.TheTVDBAPIKey)
+		if res.Config.ProviderKeys[SlugTheTVDB] != "" {
+			t.Errorf("TheTVDB key = %q, want empty (force-on never conjures a key)", res.Config.ProviderKeys[SlugTheTVDB])
 		}
 	})
 }
@@ -334,7 +334,7 @@ func TestResolveSupplementTriState(t *testing.T) {
 func TestResolveSupplementOverrideAuthoritativeNoOp(t *testing.T) {
 	global := GlobalEnrichment{
 		Catalog: builtinCatalog(),
-		Config:  ProviderConfig{TMDBAPIKey: "tk", OMDbAPIKey: "ok", MetadataLanguage: "en-US"},
+		Config:  testConfig(withKey(SlugTMDB, "tk"), withKey(SlugOMDb, "ok"), withMetadataLanguage("en-US")),
 		Providers: map[string]ProviderState{
 			SlugTMDB: {Enabled: true, Keyed: true, APIKey: "tk"},
 			SlugOMDb: {Enabled: true, Keyed: true, APIKey: "ok"},
@@ -345,8 +345,8 @@ func TestResolveSupplementOverrideAuthoritativeNoOp(t *testing.T) {
 	res := ResolveLibraryEnrichment(global, store.LibraryEnrichmentPolicy{
 		SupplementOverrides: map[string]bool{SlugTMDB: false},
 	})
-	if res.Config.TMDBAPIKey != "tk" {
-		t.Errorf("TMDB key = %q, want kept (force-off of the leader is a no-op)", res.Config.TMDBAPIKey)
+	if res.Config.ProviderKeys[SlugTMDB] != "tk" {
+		t.Errorf("TMDB key = %q, want kept (force-off of the leader is a no-op)", res.Config.ProviderKeys[SlugTMDB])
 	}
 	if !res.Enablement.Video {
 		t.Errorf("video = %+v, want still on (leader can't be force-off'd)", res.Enablement)
@@ -358,10 +358,10 @@ func TestResolveSupplementOverrideAuthoritativeNoOp(t *testing.T) {
 		AuthoritativeProvider: strPtr(SlugOMDb),
 		SupplementOverrides:   map[string]bool{SlugOMDb: false, SlugTMDB: false},
 	})
-	if res.Config.OMDbAPIKey != "ok" {
-		t.Errorf("OMDb key = %q, want kept (force-off of the current leader is a no-op)", res.Config.OMDbAPIKey)
+	if res.Config.ProviderKeys[SlugOMDb] != "ok" {
+		t.Errorf("OMDb key = %q, want kept (force-off of the current leader is a no-op)", res.Config.ProviderKeys[SlugOMDb])
 	}
-	if res.Config.TMDBAPIKey != "" {
-		t.Errorf("TMDB key = %q, want cleared (a genuine supplement CAN be muted)", res.Config.TMDBAPIKey)
+	if res.Config.ProviderKeys[SlugTMDB] != "" {
+		t.Errorf("TMDB key = %q, want cleared (a genuine supplement CAN be muted)", res.Config.ProviderKeys[SlugTMDB])
 	}
 }
