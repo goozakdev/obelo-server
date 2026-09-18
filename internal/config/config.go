@@ -336,69 +336,33 @@ type Config struct {
 	// the running server reads them from the DB, so an Admin changes them from the
 	// same settings UI with no restart and this env value is ignored at runtime.
 	//
-	// Enrichment is OFF until configured (ADR-0001 offline-first): with no
-	// TMDBAPIKey the optional Enrichment step is a logged no-op and every Title's
-	// status is 'disabled' — a fresh install makes no surprise outbound calls.
-	TMDBAPIKey string
+	// Enrichment is OFF until configured (ADR-0001 offline-first): with no provider
+	// key the optional Enrichment step is a logged no-op and every Title's status is
+	// 'disabled' — a fresh install makes no surprise outbound calls.
+	//
+	// Providers is EVERY provider the environment configured, keyed by provider id,
+	// in the fixed settings shape: its key, its hosts, and (for a keyless source)
+	// its explicit opt-in. It replaces the ten named fields this struct used to
+	// carry, one per shipped source, and it is filled by ONE TABLE — see
+	// providers.go, which is also where the environment variable names, their
+	// defaults and the first-boot enablement rules now live
+	// (.scratch/bundled-plugins: issue 01). Read it through ProviderKey /
+	// ProviderURL / ProviderURL2 / ProviderEnabled.
+	Providers map[string]ProviderSettings
 	// MetadataLanguage is the preferred metadata language/region for lookups
 	// (e.g. "en-US"). Defaults to DefaultMetadataLanguage.
 	MetadataLanguage string
-	// TMDBBaseURL / TMDBImageBaseURL override the TMDB API + image hosts. They
-	// default to the public TMDB endpoints; tests (and the e2e stub) point them at
-	// a local server so enrichment is exercised with no real network.
-	TMDBBaseURL      string
-	TMDBImageBaseURL string
-	// MusicBrainzBaseURL / CoverArtBaseURL override the MusicBrainz web service +
-	// Cover Art Archive hosts used to enrich the Music kind (issue 03). They
-	// default to the public endpoints. MusicBrainz explicitly allows mirroring, so
-	// an operator can point MusicBrainzBaseURL at their own mirror (and tests/e2e
-	// point both at a local server). These hosts need no key of their own — Music
-	// enrichment is gated by MusicBrainzEnabled (or, for backward compatibility, a
-	// TMDBAPIKey), not by an API key on these hosts. Env:
-	// OBELO_MUSICBRAINZ_BASE_URL / OBELO_COVERART_BASE_URL.
-	MusicBrainzBaseURL string
-	CoverArtBaseURL    string
 
-	// MusicBrainzRateLimit is the minimum interval between requests to the
-	// MusicBrainz host, serializing the whole process under the public ~1 req/sec
-	// policy (it answers 503 once you exceed it). It defaults to
-	// DefaultMusicBrainzRateLimit. A mirror may set its own policy, so this is
-	// tunable; 0 disables throttling entirely (appropriate for a self-hosted mirror
-	// with no rate limit). Env: OBELO_MUSICBRAINZ_RATE_LIMIT.
+	// MusicBrainzRateLimit is the minimum interval between requests to a metadata
+	// source's host, serializing the whole process under the public ~1 req/sec
+	// policy MusicBrainz publishes (it answers 503 once you exceed it) — and, since
+	// ADR-0059 decision 5, stated to EVERY Metadata provider rather than to that one
+	// source by name. It defaults to DefaultMusicBrainzRateLimit. A mirror may set
+	// its own policy, so this is tunable; 0 disables throttling entirely
+	// (appropriate for a self-hosted mirror with no rate limit). It keeps its name
+	// because the environment variable and the DB column keep theirs. Env:
+	// OBELO_MUSICBRAINZ_RATE_LIMIT.
 	MusicBrainzRateLimit time.Duration
-
-	// MusicBrainzEnabled turns ON Music enrichment (MusicBrainz + Cover Art
-	// Archive) independently of the TMDB key. Because those services need no API
-	// key, this explicit opt-in is what keeps a fresh install from making surprise
-	// outbound calls (ADR-0001): Music enrichment stays OFF until either this is
-	// set or a TMDBAPIKey is present (a key still turns on every kind). Off by
-	// default. Env: OBELO_MUSICBRAINZ_ENABLED.
-	MusicBrainzEnabled bool
-
-	// FanartTVAPIKey enables artist imagery from fanart.tv — the source for the one
-	// thing MusicBrainz lacks (artist images). Empty by default: with no key the
-	// chain is not wired and Music enrichment behaves byte-for-byte as before, with
-	// zero calls to fanart.tv (ADR-0001 explicit opt-in). Env:
-	// OBELO_FANART_TV_API_KEY.
-	FanartTVAPIKey string
-	// FanartTVBaseURL overrides the fanart.tv API host. It defaults to the public
-	// endpoint; tests point it at a local server so the chain is exercised with no
-	// real network (mirrors TMDBBaseURL / MusicBrainzBaseURL). Env:
-	// OBELO_FANART_TV_BASE_URL.
-	FanartTVBaseURL string
-
-	// TheAudioDBAPIKey enables the second artist source, TheAudioDB — the one that
-	// also matches by NAME (so artists MusicBrainz didn't MBID-match still get an
-	// image) and that carries a real biography (preferred over MusicBrainz's
-	// synthesized stub). Empty by default: with no key TheAudioDB is not wired and
-	// Music enrichment makes zero calls to it (ADR-0001 explicit opt-in). Env:
-	// OBELO_THEAUDIODB_API_KEY.
-	TheAudioDBAPIKey string
-	// TheAudioDBBaseURL overrides the TheAudioDB API host. It defaults to the public
-	// endpoint; tests point it at a local server so the chain is exercised with no
-	// real network (mirrors FanartTVBaseURL). Env:
-	// OBELO_THEAUDIODB_BASE_URL.
-	TheAudioDBBaseURL string
 
 	// AutoEnrichAfterScan triggers a background Enrichment pass for the newly-
 	// added/changed ('pending') Titles right after a scan completes (manual or
@@ -629,27 +593,23 @@ const DefaultKeyRotationInterval = 6 * time.Hour
 // override fields before calling Validate.
 func Defaults() Config {
 	return Config{
-		ListenAddr:               ":8080",
-		TLSMode:                  TLSModeOff,
-		TLSListenAddr:            DefaultTLSListenAddr,
-		ACMEDirectoryURL:         DefaultACMEDirectoryURL,
-		DataDir:                  "./data",
-		KeyRotationEnabled:       true,
-		KeyRotationURL:           DefaultKeyRotationURL,
-		KeyRotationInterval:      DefaultKeyRotationInterval,
-		ScanInterval:             DefaultScanInterval,
-		LinkSyncInterval:         DefaultLinkSyncInterval,
-		SessionIdleTimeout:       DefaultSessionIdleTimeout,
-		MaxConcurrentTranscodes:  DefaultMaxConcurrentTranscodes,
-		HardwareAccel:            HWAccelOff,
-		MetadataLanguage:         DefaultMetadataLanguage,
-		TMDBBaseURL:              DefaultTMDBBaseURL,
-		TMDBImageBaseURL:         DefaultTMDBImageBaseURL,
-		MusicBrainzBaseURL:       DefaultMusicBrainzBaseURL,
-		CoverArtBaseURL:          DefaultCoverArtBaseURL,
+		ListenAddr:              ":8080",
+		TLSMode:                 TLSModeOff,
+		TLSListenAddr:           DefaultTLSListenAddr,
+		ACMEDirectoryURL:        DefaultACMEDirectoryURL,
+		DataDir:                 "./data",
+		KeyRotationEnabled:      true,
+		KeyRotationURL:          DefaultKeyRotationURL,
+		KeyRotationInterval:     DefaultKeyRotationInterval,
+		ScanInterval:            DefaultScanInterval,
+		LinkSyncInterval:        DefaultLinkSyncInterval,
+		SessionIdleTimeout:      DefaultSessionIdleTimeout,
+		MaxConcurrentTranscodes: DefaultMaxConcurrentTranscodes,
+		HardwareAccel:           HWAccelOff,
+		MetadataLanguage:        DefaultMetadataLanguage,
+		// Every provider's public endpoints, from the one table (providers.go).
+		Providers:                defaultProviders(),
 		MusicBrainzRateLimit:     DefaultMusicBrainzRateLimit,
-		FanartTVBaseURL:          DefaultFanartTVBaseURL,
-		TheAudioDBBaseURL:        DefaultTheAudioDBBaseURL,
 		AutoEnrichAfterScan:      true,
 		EnrichInterval:           DefaultEnrichInterval,
 		ArtworkCandidateCacheTTL: DefaultArtworkCandidateCacheTTL,
@@ -660,7 +620,7 @@ func Defaults() Config {
 // video provider and requires an API key, so video enrichment is on exactly when
 // a key is configured; otherwise those Titles report status 'disabled'.
 func (c Config) VideoEnrichmentEnabled() bool {
-	return c.TMDBAPIKey != ""
+	return c.ProviderKey(ProviderTMDB) != ""
 }
 
 // MusicEnrichmentEnabled reports whether the Music kind enriches. MusicBrainz +
@@ -669,7 +629,7 @@ func (c Config) VideoEnrichmentEnabled() bool {
 // with the original single-switch behavior). Off by default so a fresh install
 // makes no surprise outbound calls (ADR-0001 offline-first).
 func (c Config) MusicEnrichmentEnabled() bool {
-	return c.MusicBrainzEnabled || c.TMDBAPIKey != ""
+	return c.ProviderEnabled(ProviderMusicBrainz) || c.ProviderKey(ProviderTMDB) != ""
 }
 
 // MusicImageEnabled reports whether an artist-image source is configured for the
@@ -679,7 +639,7 @@ func (c Config) MusicEnrichmentEnabled() bool {
 // enrichment on by itself, and no key keeps the offline-first no-image behavior
 // (ADR-0001 — no public/default key is baked in).
 func (c Config) MusicImageEnabled() bool {
-	return c.FanartTVAPIKey != "" || c.TheAudioDBAPIKey != ""
+	return c.ProviderKey(ProviderFanartTV) != "" || c.ProviderKey(ProviderTheAudioDB) != ""
 }
 
 // EnrichmentEnabled reports whether ANY kind enriches. The app uses it as the
@@ -795,18 +755,25 @@ func (c Config) SubtitleCacheDir() string {
 //	OBELO_HARDWARE_ACCEL -> HardwareAccel (an enum: off|auto|nvenc|vaapi|
 //	                               qsv|videotoolbox; off/false/0 → off, the legacy
 //	                               true/1 → auto; default off → CPU libx264 path)
-//	OBELO_MUSICBRAINZ_ENABLED -> MusicBrainzEnabled (a bool; default false —
-//	                               turns on Music enrichment without a TMDB key)
-//	OBELO_MUSICBRAINZ_BASE_URL -> MusicBrainzBaseURL (the MusicBrainz host;
-//	                               point at a mirror, default is the public host)
+//	OBELO_TMDB_API_KEY, OBELO_TMDB_BASE_URL, OBELO_TMDB_IMAGE_BASE_URL,
+//	OBELO_MUSICBRAINZ_ENABLED, OBELO_MUSICBRAINZ_BASE_URL, OBELO_COVERART_BASE_URL,
+//	OBELO_FANART_TV_API_KEY, OBELO_FANART_TV_BASE_URL, OBELO_THEAUDIODB_API_KEY,
+//	OBELO_THEAUDIODB_BASE_URL
+//	                            -> Config.Providers, through the ONE TABLE in
+//	                               providers.go, which is where each variable's
+//	                               provider, field and default are declared. A key
+//	                               turns its source on; the keyless MusicBrainz +
+//	                               Cover Art pair turns on via the explicit
+//	                               MUSICBRAINZ_ENABLED opt-in (or a TMDB key, which
+//	                               historically turned on every kind). All of them
+//	                               SEED the DB-backed provider settings on first
+//	                               boot only.
 //	OBELO_MUSICBRAINZ_RATE_LIMIT -> MusicBrainzRateLimit (a Go duration, e.g.
 //	                               "1s"; "0" disables throttling for a mirror with
-//	                               no rate policy; default DefaultMusicBrainzRateLimit)
-//	OBELO_FANART_TV_API_KEY -> FanartTVAPIKey (enables artist imagery from
-//	                               fanart.tv; empty = off, no fanart.tv calls)
-//	OBELO_THEAUDIODB_API_KEY -> TheAudioDBAPIKey (enables the name-matching
-//	                               artist image + biography source; empty = off,
-//	                               no TheAudioDB calls)
+//	                               no rate policy; default DefaultMusicBrainzRateLimit).
+//	                               NOT in the provider table: it is the one
+//	                               server-wide pacing policy every Metadata provider
+//	                               is given (ADR-0059 decision 5).
 //	OBELO_AUTO_ENRICH    -> AutoEnrichAfterScan (a bool; default true)
 //	OBELO_ENRICH_INTERVAL -> EnrichInterval (a Go duration, e.g. "6h";
 //	                               "0" disables the scheduled enrich)
@@ -935,50 +902,42 @@ func FromEnv() Config {
 	// Enrichment knobs (external-metadata-enrichment). A key turns enrichment on;
 	// its absence keeps the offline-first no-op posture. The base-URL overrides
 	// exist so tests/e2e point at a local stub.
-	if v := os.Getenv("OBELO_TMDB_API_KEY"); v != "" {
-		c.TMDBAPIKey = v
+	//
+	// ONE LOOP over the provider table (providers.go), where there used to be ten
+	// named `if`s writing ten named fields (.scratch/bundled-plugins: issue 01). The
+	// variable names, their defaults and their meaning are unchanged; a keyless
+	// source's opt-in ("enabled") is the only one that parses rather than copies, and
+	// only a clearly-true value flips it on (an unparseable value leaves the
+	// offline-safe default).
+	for _, b := range ProviderEnvTable() {
+		v := os.Getenv(b.Env)
+		if v == "" {
+			continue
+		}
+		p := c.provider(b.Provider)
+		if b.Field == ProviderFieldEnabled {
+			on, err := strconv.ParseBool(v)
+			if err != nil {
+				continue
+			}
+			p.Enabled = on
+		} else {
+			setProviderField(&p, b.Field, v)
+		}
+		c.setProvider(b.Provider, p)
 	}
 	if v := os.Getenv("OBELO_METADATA_LANGUAGE"); v != "" {
 		c.MetadataLanguage = v
 	}
-	if v := os.Getenv("OBELO_TMDB_BASE_URL"); v != "" {
-		c.TMDBBaseURL = v
-	}
-	if v := os.Getenv("OBELO_TMDB_IMAGE_BASE_URL"); v != "" {
-		c.TMDBImageBaseURL = v
-	}
-	if v := os.Getenv("OBELO_MUSICBRAINZ_BASE_URL"); v != "" {
-		c.MusicBrainzBaseURL = v
-	}
-	if v := os.Getenv("OBELO_COVERART_BASE_URL"); v != "" {
-		c.CoverArtBaseURL = v
-	}
 	// MusicBrainzRateLimit: a Go duration ("0" disables throttling, for a mirror
 	// with no rate policy). An unparseable value keeps the default rather than
-	// failing boot (throttling is a politeness knob, not a critical path).
+	// failing boot (throttling is a politeness knob, not a critical path). It is not
+	// in the provider table because it is not a per-provider field: it is the one
+	// server-wide pacing policy every provider is now given (ADR-0059 decision 5),
+	// and the settings surface persists it beside the other behavior knobs.
 	if v := os.Getenv("OBELO_MUSICBRAINZ_RATE_LIMIT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			c.MusicBrainzRateLimit = d
-		}
-	}
-	if v := os.Getenv("OBELO_FANART_TV_API_KEY"); v != "" {
-		c.FanartTVAPIKey = v
-	}
-	if v := os.Getenv("OBELO_FANART_TV_BASE_URL"); v != "" {
-		c.FanartTVBaseURL = v
-	}
-	if v := os.Getenv("OBELO_THEAUDIODB_API_KEY"); v != "" {
-		c.TheAudioDBAPIKey = v
-	}
-	if v := os.Getenv("OBELO_THEAUDIODB_BASE_URL"); v != "" {
-		c.TheAudioDBBaseURL = v
-	}
-	// MusicBrainzEnabled: opt Music enrichment in without a TMDB key. Off by
-	// default; only a clearly-true value flips it on (an unparseable value leaves
-	// the offline-safe default).
-	if v := os.Getenv("OBELO_MUSICBRAINZ_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			c.MusicBrainzEnabled = b
 		}
 	}
 	// AutoEnrichAfterScan defaults ON; only a clearly-false value turns it off (an

@@ -10,11 +10,6 @@ import type {
 } from "../api/types";
 import MaskedKeyInput from "./MaskedKeyInput";
 
-// The MusicBrainz throttle is a server-wide knob (not a per-provider row), but it
-// is MusicBrainz-specific, so it lives in MusicBrainz's Advanced section rather
-// than the general Enrichment-behavior card.
-const MUSICBRAINZ_SLUG = "musicbrainz";
-
 // The per-provider configuration dialog (metadata-providers redesign). Opened from
 // the Edit icon on a provider row, it is the one place an Admin edits a single
 // source's settings — its API key (masked; the stored value is never shown), its
@@ -41,8 +36,12 @@ export default function ProviderConfigDialog({
   onClose,
 }: {
   provider: MetadataProvider;
-  /** The current server-wide MusicBrainz throttle (ms). Only the MusicBrainz
-   * dialog edits it; ignored for every other provider. */
+  /** The current server-wide request throttle (ms). Every provider's dialog shows
+   * and edits it, because every provider is now paced by it (ADR-0059 decision 5):
+   * the host states it in the fixed Settings of every Metadata provider, where it
+   * used to reach MusicBrainz alone. It is ONE server-wide number, so editing it
+   * from any provider's dialog changes it for all of them — which is what it always
+   * did, in the one dialog that showed it. */
   musicBrainzRateLimitMs: number;
   /** Called with the fresh masked view after a successful save. */
   onSaved: (view: MetadataProvidersView) => void;
@@ -51,18 +50,14 @@ export default function ProviderConfigDialog({
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const p = provider;
-  const isMusicBrainz = p.slug === MUSICBRAINZ_SLUG;
   // Local edits for this provider only. `key` is what the Admin is typing now
   // ("" = not typing → unchanged); `clearKey` marks the stored key for clearing.
   const [key, setKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [baseURL, setBaseURL] = useState(p.baseURL);
   const [imageBaseURL, setImageBaseURL] = useState(p.imageBaseURL ?? "");
-  // The MusicBrainz throttle, held as a string so the field can be cleared while
-  // typing (only meaningful in the MusicBrainz dialog).
-  const [rateLimitMs, setRateLimitMs] = useState(
-    isMusicBrainz ? String(musicBrainzRateLimitMs) : "",
-  );
+  // The request throttle, held as a string so the field can be cleared while typing.
+  const [rateLimitMs, setRateLimitMs] = useState(String(musicBrainzRateLimitMs));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<TestState>({ status: "idle" });
@@ -73,8 +68,8 @@ export default function ProviderConfigDialog({
   }, []);
 
   // Build the partial payload from what actually changed — the per-provider row
-  // fields plus, for MusicBrainz, the server-wide throttle — or null when nothing
-  // did (a Save with no edits just closes).
+  // fields plus the server-wide throttle — or null when nothing did (a Save with no
+  // edits just closes).
   function buildPayload(): UpdateMetadataProvidersInput | null {
     const payload: UpdateMetadataProvidersInput = {};
     const upd: ProviderUpdate = { slug: p.slug };
@@ -95,12 +90,10 @@ export default function ProviderConfigDialog({
       provChanged = true;
     }
     if (provChanged) payload.providers = [upd];
-    if (isMusicBrainz) {
-      const ms = Number(rateLimitMs);
-      if (rateLimitMs.trim() !== "" && Number.isFinite(ms)) {
-        const rounded = Math.round(ms);
-        if (rounded !== musicBrainzRateLimitMs) payload.musicBrainzRateLimitMs = rounded;
-      }
+    const ms = Number(rateLimitMs);
+    if (rateLimitMs.trim() !== "" && Number.isFinite(ms)) {
+      const rounded = Math.round(ms);
+      if (rounded !== musicBrainzRateLimitMs) payload.musicBrainzRateLimitMs = rounded;
     }
     return payload.providers || payload.musicBrainzRateLimitMs !== undefined
       ? payload
@@ -244,26 +237,29 @@ export default function ProviderConfigDialog({
                 />
               </div>
             )}
-            {isMusicBrainz && (
-              <div className="field">
-                <label className="field-label" htmlFor="musicbrainz-rate-limit-input">
-                  Rate limit (ms)
-                </label>
-                <input
-                  id="musicbrainz-rate-limit-input"
-                  className="field-input"
-                  data-testid="musicbrainz-rate-limit-input"
-                  type="number"
-                  min={0}
-                  value={rateLimitMs}
-                  onChange={(e) => setRateLimitMs(e.target.value)}
-                  disabled={saving}
-                />
-                <span className="field-hint">
-                  Minimum spacing between MusicBrainz requests. 0 = no throttle.
-                </span>
-              </div>
-            )}
+            {/* The request throttle renders for EVERY provider, because every
+                provider is paced by it (ADR-0059 decision 5). The control keeps its
+                id and test id: it is still the one server-wide setting it always
+                was, saved through the same field. */}
+            <div className="field">
+              <label className="field-label" htmlFor="musicbrainz-rate-limit-input">
+                Rate limit (ms)
+              </label>
+              <input
+                id="musicbrainz-rate-limit-input"
+                className="field-input"
+                data-testid="musicbrainz-rate-limit-input"
+                type="number"
+                min={0}
+                value={rateLimitMs}
+                onChange={(e) => setRateLimitMs(e.target.value)}
+                disabled={saving}
+              />
+              <span className="field-hint">
+                Minimum spacing between requests to a provider&rsquo;s host, for every
+                provider. 0 = no throttle.
+              </span>
+            </div>
           </div>
 
           <div className="provider-test">

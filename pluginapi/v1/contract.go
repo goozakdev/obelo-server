@@ -259,6 +259,20 @@ type Descriptor struct {
 	// Description and DocsURL are the human-facing copy the settings screen shows.
 	Description string `json:"description,omitempty"`
 	DocsURL     string `json:"docsUrl,omitempty"`
+	// Probe is the one media reference this Plugin's author knows their source can
+	// answer — what "Test connection" looks up (ADR-0059 decision 8). The host runs
+	// an ORDINARY lookup with it and keeps the judgment: matched or no-match proves
+	// the host was reached and any credential was accepted; unavailable, a refusal
+	// or a fetch error is a failed test.
+	//
+	// It is a declaration rather than a ninth contract call because a lookup already
+	// proves everything a connection test can prove, and it is per-Plugin rather
+	// than one fixed probe per kind because sources differ in what they can be asked:
+	// AniDB cannot search by name at all, so its probe is an anime id.
+	//
+	// Nil means the Plugin declares no probe, and the host says so rather than
+	// guessing a reference its source may not hold.
+	Probe *MediaRef `json:"probe,omitempty"`
 }
 
 // Serves reports whether the Plugin declared a coarse media kind (KindVideo /

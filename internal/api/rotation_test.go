@@ -85,7 +85,7 @@ type recordingBuilder struct {
 func (rb *recordingBuilder) build() enrich.BuildFunc {
 	return func(cfg enrich.ProviderConfig) (enrich.MetadataProvider, enrich.Enablement) {
 		rb.mu.Lock()
-		rb.lastTMDBKey = cfg.TMDBAPIKey
+		rb.lastTMDBKey = cfg.ProviderKeys[enrich.SlugTMDB]
 		rb.builds++
 		rb.mu.Unlock()
 		return enrich.CompositeProvider{Video: rb.prov, Music: rb.prov}, enrich.DeriveEnablement(cfg)

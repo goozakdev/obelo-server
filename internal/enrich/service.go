@@ -2475,7 +2475,7 @@ func pinnedProviderFor(t store.Title, cfg ProviderConfig) (string, bool) {
 		}
 	default:
 		if t.TMDBID != "" {
-			return SlugTMDB, true
+			return videoIDColumnProvider, true
 		}
 	}
 	return "", false

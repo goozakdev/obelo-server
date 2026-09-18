@@ -50,7 +50,8 @@ func TestResolveTMDBKeyPrecedence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setBootstrap(t, tc.bootstrap, "", "")
-			cfg := Config{TMDBAPIKey: tc.operator}
+			var cfg Config
+			cfg.SetProviderKey(ProviderTMDB, tc.operator)
 			key, src := cfg.ResolveTMDBKey(RotationKeys{TMDB: tc.rotation})
 			if key != tc.wantKey || src != tc.wantSource {
 				t.Fatalf("ResolveTMDBKey() = (%q, %v), want (%q, %v)", key, src, tc.wantKey, tc.wantSource)
@@ -78,7 +79,8 @@ func TestResolveFanartTVKeyPrecedence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			setBootstrap(t, "", tc.bootstrap, "")
-			cfg := Config{FanartTVAPIKey: tc.operator}
+			var cfg Config
+			cfg.SetProviderKey(ProviderFanartTV, tc.operator)
 			key, src := cfg.ResolveFanartTVKey(RotationKeys{Fanart: tc.rotation})
 			if key != tc.wantKey || src != tc.wantSource {
 				t.Fatalf("ResolveFanartTVKey() = (%q, %v), want (%q, %v)", key, src, tc.wantKey, tc.wantSource)
