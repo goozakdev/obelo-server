@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // TheAudioDBProvider is the second, broader source in the Music chain. For an
@@ -71,7 +73,7 @@ func NewTheAudioDBProvider(apiKey, baseURL, language string) *TheAudioDBProvider
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
 		Language:    language,
-		UserAgent:   DefaultUserAgent,
+		UserAgent:   useragent.Default,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultTheAudioDBThrottle,
 		cache:       map[string]audiodbArtist{},

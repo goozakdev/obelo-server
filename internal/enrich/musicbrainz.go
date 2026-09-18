@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // MusicBrainzProvider is the production MetadataProvider for the Music kinds
@@ -62,7 +64,7 @@ func NewMusicBrainzProvider(baseURL, coverArtURL, language string) *MusicBrainzP
 		BaseURL:      baseURL,
 		CoverArtURL:  coverArtURL,
 		Language:     language,
-		UserAgent:    DefaultUserAgent,
+		UserAgent:    useragent.Default,
 		HTTPClient:   &http.Client{Timeout: 15 * time.Second},
 		MinInterval:  defaultMusicBrainzInterval,
 		RetryBackoff: defaultMusicBrainzRetryBackoff,
