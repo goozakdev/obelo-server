@@ -187,6 +187,21 @@ a handle. Every one of these is request-response and JSON-shaped, like the contr
 > secret to be forgotten. No new envelope type was added for the metadata calls at all — their
 > requests and responses are the `pluginapi/v1` types issue 07 froze, unchanged.
 
+> **Withdrawn in part, and amended (bundled-plugins, 2026-09-18;
+> [ADR-0059](./0059-the-shipped-metadata-providers-are-bundled-plugins.md) decisions 5 and 7):**
+> the sentence "the throttle is the ADR-0049 limiter keyed on **host**, so two Plugins pointed at
+> one source share one budget" was never carried out — `http_fetch` makes no throttle call — and
+> is now **withdrawn**. A guest paces itself. One instance per Plugin, serialized (decision 7),
+> already makes that pacing process-wide for the source, which is the property ADR-0049 wanted;
+> what is given up is a shared budget between two *different* Plugins on one host. The operator's
+> rate-limit setting reaches every Metadata provider through the fixed `Settings` shape, and the
+> authoring guide says "pace yourself".
+>
+> The User-Agent is the **host's**: the same identity the Built-ins sent
+> (`obelo/<server.Version> ( <project contact> )`), with the plugin id and version appended as a
+> comment. A guest-supplied `User-Agent` is dropped rather than appended, which retires the
+> hardcoded `obelo/1.0` and the two-header result the previous `Add` produced.
+
 **6. Every call carries a deadline, and the deadline is enforced by the runtime.** The runtime
 is built with `WithCloseOnContextDone(true)` and each call gets a `context` with a deadline.
 A guest that never returns is unwound: the spike's spinning guest, given 200 ms, was stopped
@@ -207,6 +222,20 @@ request-response and the ADR-0049 limiter already serializes per host), **discar
 on any trap, any deadline kill, and after a configured budget of bytes returned**. Rebuilding
 is cheap — compilation is the expensive half and is kept: 0.03–1.74 ms to instantiate against
 43–606 ms to compile.
+
+> **Amended (bundled-plugins, 2026-09-18;
+> [ADR-0059](./0059-the-shipped-metadata-providers-are-bundled-plugins.md) decision 6):** a fetch
+> ran under the call's own context, so a slow upstream killed the guest at the call deadline,
+> the kill counted toward the failure threshold, and three slow lookups disabled a whole
+> provider — ADR-0048's "a transient failure is retried, not parked", violated for a source
+> instead of an item. Two rules now hold. **A Metadata provider call has a 30-second default
+> budget**, which a manifest may raise to a host cap, because with guest-side pacing a lookup
+> that makes several fetches needs room to wait. **A fetch always returns before the call
+> deadline**: `http_fetch` bounds each request by the remaining call budget minus a grace margin,
+> so a slow upstream comes back to the guest as a fetch error, the guest answers `unavailable`,
+> the item takes ADR-0048's backoff, and no failure is counted. A deadline kill therefore means
+> exactly one thing — the guest itself spun — which is what decision 6's threshold was written
+> for. The instance lifecycle of decision 7 is unchanged.
 
 **8. `apiVersion` is checked at install, not at call.** A manifest naming an `apiVersion` this
 server does not speak is refused when it is installed, with a message naming **which side to
