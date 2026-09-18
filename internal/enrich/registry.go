@@ -31,7 +31,6 @@ const (
 	SlugTheTVDB     = "thetvdb"
 	SlugAniDB       = "anidb"
 	SlugMusicBrainz = "musicbrainz"
-	SlugCoverArt    = "coverart"
 	SlugFanartTV    = "fanarttv"
 	SlugTheAudioDB  = "theaudiodb"
 )
@@ -79,14 +78,6 @@ const (
 	ClassArtworkOnly = pluginapi.ClassArtworkOnly
 )
 
-// Default base URLs — the public endpoints each source talks to when the operator
-// sets no override. They mirror config's Default*BaseURL constants (config keeps
-// its own for env defaulting; the Descriptors are the runtime catalog).
-const (
-	registryMusicBrainzBaseURL = "https://musicbrainz.org/ws/2"
-	registryCoverArtBaseURL    = "https://coverartarchive.org"
-)
-
 // MetadataPlugins is the ordered set of Metadata provider Built-ins this binary
 // ships: what each one IS (its Descriptor) and how to build it from an Admin's
 // Settings. internal/builtins hands the
@@ -112,15 +103,13 @@ const (
 // Installed plugin after it. What is left here is the Built-ins that have not been
 // converted yet; issue 08 empties the list.
 //
-// EVERY source here is now reached through its factory — no provider is composed
-// outside the contract — with exactly one permanent exception: Cover Art Archive
-// has no factory and never will. It is not a client; it is the artwork HOST of the
-// MusicBrainz Plugin, registered so an Admin can see it, read what it is, and
-// override its base URL. The host resolves that override into MusicBrainz's second
-// URL (see SettingsToProviderConfig and providerSettings), which is the same thing
-// TMDB's image host is, arriving from a neighbouring registration instead of its
-// own. Inventing a client for it so that every registration could carry a factory
-// would have added a source nothing calls.
+// EVERY source here is reached through its factory, with no exceptions left. There
+// used to be one — Cover Art Archive, a registration with no factory, which was not
+// a client but the artwork HOST of the MusicBrainz Plugin — and
+// .scratch/bundled-plugins issue 06 removed it by giving that host to the
+// MusicBrainz plugin's own manifest as its second URL. buildPlugin still skips a
+// nil factory rather than erroring, because "registered, never built" remains a
+// state the composition can hold; nothing in this binary is in it.
 func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 	return []pluginapi.MetadataProviderRegistration{
 		// TMDB IS NOT HERE ANY MORE, and this comment is the only trace it leaves.
@@ -145,75 +134,28 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 		// anidb, …) and not this file's, which is what keeps the video chain composing
 		// OMDb and TheTVDB behind TMDB exactly as it did, and keeps AniDB a Full video
 		// candidate that leads nothing until a Library points at it (ADR-0027).
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugMusicBrainz,
-				Name:        "MusicBrainz",
-				Kinds:       []string{KindMusic},
-				Role:        RoleAuthoritative,
-				Class:       ClassFull,
-				RequiresKey: false,
-				Capabilities: []pluginapi.Capability{
-					pluginapi.CapabilitySearch,
-					pluginapi.CapabilityArtworkCandidates,
-					pluginapi.CapabilityAlbumTracklist,
-					pluginapi.CapabilityExternalRef,
-				},
-				DefaultURL: registryMusicBrainzBaseURL,
-				// NO DefaultURL2, deliberately, even though this Plugin is built with two
-				// hosts: DefaultURL2 is what the settings screen renders as a source's own
-				// image-host field, and MusicBrainz does not have one — the Cover Art
-				// Archive is a separate registration with a separate row and a separate
-				// override. The host reads that row and hands it over as URL2.
-				Description: "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
-				DocsURL:     "https://musicbrainz.org/doc/MusicBrainz_API",
-				// An ARTIST probe: the artwork host is irrelevant to it, which is exactly
-				// what lets the Cover Art Archive registration probe this same Plugin with
-				// an ALBUM instead and reach the host under test.
-				Probe: &pluginapi.MediaRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"},
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				mb := NewMusicBrainzProvider(s.URL, s.URL2, s.Language)
-				// A nil rate limit keeps the constructor's own ~1 req/sec default, which is
-				// the public host's policy; an explicit 0 is the operator saying their
-				// mirror has none (ADR-0049). The two are different instructions and the
-				// pointer is what keeps them apart.
-				if s.RateLimitMillis != nil {
-					mb.MinInterval = time.Duration(*s.RateLimitMillis) * time.Millisecond
-				}
-				return pluginFromProvider(mb), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugCoverArt,
-				Name:        "Cover Art Archive",
-				Kinds:       []string{KindMusic},
-				Role:        RoleSupplement,
-				Class:       ClassArtworkOnly,
-				RequiresKey: false,
-				DefaultURL:  registryCoverArtBaseURL,
-				Description: "Album cover artwork keyed to MusicBrainz releases. No API key required; used alongside MusicBrainz.",
-				DocsURL:     "https://coverartarchive.org/",
-				// An ALBUM probe, because this host is only ever reached through a cover
-				// lookup. It is run against the MUSICBRAINZ Plugin, since this registration
-				// has no client of its own — see the one remaining special case in
-				// TestConnection, which issue 06 deletes along with this registration.
-				Probe: &pluginapi.MediaRef{Kind: "album", Title: "OK Computer", Artist: "Radiohead"},
-			},
-			// FACTS ONLY, permanently — the one registration with no factory. Cover Art
-			// Archive has no client of its own: it is the host MusicBrainz's album cover
-			// URLs point at, and the MusicBrainz Plugin is what talks to it. What this
-			// registration buys is everything the facts are for and nothing more — a row
-			// on the settings screen with a name, a description and a docs link; a
-			// base-URL override an operator can point at a mirror, which the host hands
-			// to the MusicBrainz Plugin as its second URL; and ClassArtworkOnly, so the
-			// Authoritative-provider pointer can never select it (ADR-0027). It declares
-			// no capabilities because it answers no calls.
-			//
-			// buildPlugin skips a nil factory rather than erroring, which is what makes
-			// "registered, never built" a state the composition can hold.
-		},
+		// MUSICBRAINZ IS NOT HERE ANY MORE, AND NEITHER IS THE COVER ART ARCHIVE.
+		//
+		// MusicBrainz is a Bundled plugin (ADR-0059): a WebAssembly module built from
+		// plugins/musicbrainz/, carried in the binary by internal/bundled, and
+		// installed into <dataDir>/plugins/musicbrainz/ on first boot exactly as an
+		// Admin's upload would be. It reaches this catalog through the
+		// Installed-plugin loader, registered AHEAD of everything in this list, which
+		// is what keeps it the default music lead by the unchanged "first
+		// authoritative Full provider of a kind" rule. Its Descriptor — the name, the
+		// capabilities, the copy and the connection probe — is now
+		// plugins/musicbrainz/manifest.json, word for word.
+		//
+		// The COVER ART ARCHIVE has no registration at all any more, and that is the
+		// substantive change (.scratch/bundled-plugins issue 06). It was the one entry
+		// here with no factory: not a source, but the artwork HOST the music lead's
+		// cover URLs point at, registered so an Admin could override its base URL —
+		// which the host then resolved into that Plugin's second URL through a special
+		// case in three different files. The MusicBrainz plugin's manifest now
+		// declares `settings.defaultUrl2: https://coverartarchive.org` and owns that
+		// host itself, the way TMDB owns image.tmdb.org, so all three special cases
+		// and the `coverart` row are gone. Migration 0071 copies a non-default
+		// `coverart` base URL into `musicbrainz.url2` and scrubs the row.
 		// FANART.TV AND THEAUDIODB ARE NOT HERE ANY MORE, and this comment is the
 		// only trace they leave.
 		//
@@ -334,7 +276,7 @@ func (c Catalog) FullProvidersForKind(kind string) []pluginapi.Descriptor {
 // Library can force on/off via its per-provider Supplement tri-state (ADR-0027),
 // in catalog order: the key-bearing providers (RequiresKey) — the ones the
 // resolver activates/mutes by injecting or clearing a key. Keyless providers
-// (MusicBrainz, Cover Art Archive) have no independent per-Library toggle (their
+// (MusicBrainz) have no independent per-Library toggle (their
 // activation rides their authoritative), so they are excluded. The caller removes
 // the current Authoritative provider (its off-switch is enrich_enabled, not a
 // per-provider toggle) before presenting the list.
@@ -366,7 +308,8 @@ func (c Catalog) DefaultAuthoritativeForKind(kind string) string {
 // buildPlugin constructs the Plugin registered under a slug from the Settings the
 // host resolved, and adapts it back to the MetadataProvider the chains call. It
 // returns nil when no Plugin claims the slug, when the registration carries no
-// factory (facts only — Cover Art Archive, see MetadataPlugins), or when
+// factory (facts only — see MetadataPlugins; nothing this binary ships is in that
+// state since .scratch/bundled-plugins issue 06), or when
 // the factory refuses these settings: a Plugin that cannot be built makes no calls
 // at all rather than half-working (ADR-0001), and the caller composes without it.
 func (c Catalog) buildPlugin(slug string, s pluginapi.Settings) MetadataProvider {
@@ -411,7 +354,7 @@ func (c Catalog) ProviderStatesFromRows(rows []store.MetadataProviderRow) map[st
 		out[e.Slug] = ProviderState{
 			Enabled: ok && r.Enabled,
 			// A key-requiring provider is keyed only with a key on file; a keyless one
-			// (MusicBrainz, Cover Art Archive) is always keyed (nothing to configure).
+			// (MusicBrainz) is always keyed (nothing to configure).
 			Keyed:  !e.RequiresKey || (ok && r.APIKey != ""),
 			APIKey: r.APIKey,
 		}
@@ -530,18 +473,13 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		}
 	}
 
-	// THE ONE REMAINING SPECIAL CASE (.scratch/bundled-plugins: issue 01), and issue
-	// 06 deletes it. The Cover Art Archive registration has no client of its own: it
-	// is the artwork HOST of the music lead's Plugin, so its row's base-URL override
-	// is resolved into THAT Plugin's second URL — which is the same thing TMDB's
-	// image host is, arriving from a neighbouring registration instead of its own.
-	// Issue 06 folds the host into the MusicBrainz plugin's manifest as
-	// settings.defaultUrl2 and this, and the `coverart` row, go together.
-	if _, ok := descs[SlugCoverArt]; ok {
-		if e, ok := cfg.ProviderEndpoints[SlugMusicBrainz]; ok {
-			e.URL2 = baseURL(SlugCoverArt)
-			cfg.ProviderEndpoints[SlugMusicBrainz] = e
-		}
-	}
+	// THERE IS NO SPECIAL CASE LEFT (.scratch/bundled-plugins: issue 06). The Cover
+	// Art Archive's row used to be resolved into the music lead's SECOND URL here,
+	// because that registration had no client of its own and was really a base URL
+	// wearing a provider's clothes. It is now the MusicBrainz plugin's own second
+	// host, declared by its manifest and read from its row's image_base_url by the
+	// same imageBaseURL closure every other Plugin's second host goes through — so
+	// this derivation treats every registered Plugin identically, with no exceptions
+	// at all.
 	return cfg
 }

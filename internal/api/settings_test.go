@@ -95,8 +95,14 @@ func TestProvidersGetMasksAndAdminOnly(t *testing.T) {
 	}, http.StatusOK)
 
 	v := getProviders(t, srv, token)
-	if len(v.Providers) != 8 {
-		t.Fatalf("got %d providers, want 8 (the registry)", len(v.Providers))
+	// Seven, not eight: `coverart` stopped being a provider row and became the
+	// MusicBrainz plugin's second URL (.scratch/bundled-plugins: issue 06).
+	if len(v.Providers) != 7 {
+		t.Fatalf("got %d providers, want 7 (the registry)", len(v.Providers))
+	}
+	if p := providerBySlug(v, "coverart"); p.Slug != "" {
+		t.Errorf("the registry still lists %+v; the Cover Art Archive is the music lead's "+
+			"image host now, not a source of its own", p)
 	}
 	tmdb := providerBySlug(v, "tmdb")
 	if !tmdb.Enabled || !tmdb.HasKey {
@@ -221,15 +227,23 @@ func TestProvidersImageHost(t *testing.T) {
 	token := adminToken(t, srv)
 
 	const defaultImageHost = "https://image.tmdb.org/t/p/original"
+	const defaultCoverArtHost = "https://coverartarchive.org"
 
-	// GET: tmdb carries its image host at the registry default; a source with no
-	// image host (musicbrainz) omits the field (empty string over the wire).
+	// GET: tmdb carries its image host at the registry default, and so does
+	// MUSICBRAINZ — the Cover Art Archive is its second URL since
+	// .scratch/bundled-plugins issue 06, where it used to be a provider row of its
+	// own with no client behind it. A source with genuinely no image host (omdb)
+	// omits the field (empty string over the wire).
 	v := getProviders(t, srv, token)
 	if got := providerBySlug(v, "tmdb").ImageBaseURL; got != defaultImageHost {
 		t.Errorf("tmdb imageBaseURL = %q, want registry default %q", got, defaultImageHost)
 	}
-	if got := providerBySlug(v, "musicbrainz").ImageBaseURL; got != "" {
-		t.Errorf("musicbrainz imageBaseURL = %q, want empty (no image host)", got)
+	if got := providerBySlug(v, "musicbrainz").ImageBaseURL; got != defaultCoverArtHost {
+		t.Errorf("musicbrainz imageBaseURL = %q, want the Cover Art Archive default %q",
+			got, defaultCoverArtHost)
+	}
+	if got := providerBySlug(v, "omdb").ImageBaseURL; got != "" {
+		t.Errorf("omdb imageBaseURL = %q, want empty (no image host)", got)
 	}
 
 	// PUT set → GET reflects the override.
@@ -256,8 +270,11 @@ func TestProvidersImageHost(t *testing.T) {
 		{"malformed image url", map[string]any{
 			"providers": []map[string]any{{"slug": "tmdb", "imageBaseURL": "not a url"}},
 		}},
+		// omdb, not musicbrainz: MusicBrainz HAS a second host now (the Cover Art
+		// Archive), so the provider with none to name is one of the single-host
+		// supplements (.scratch/bundled-plugins: issue 06).
 		{"image host on non-image provider", map[string]any{
-			"providers": []map[string]any{{"slug": "musicbrainz", "imageBaseURL": "http://img.x/p"}},
+			"providers": []map[string]any{{"slug": "omdb", "imageBaseURL": "http://img.x/p"}},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

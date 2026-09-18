@@ -623,8 +623,8 @@ func (c Config) VideoEnrichmentEnabled() bool {
 	return c.ProviderKey(ProviderTMDB) != ""
 }
 
-// MusicEnrichmentEnabled reports whether the Music kind enriches. MusicBrainz +
-// Cover Art Archive need no key, so Music turns on via its own MusicBrainzEnabled
+// MusicEnrichmentEnabled reports whether the Music kind enriches. MusicBrainz
+// needs no key, so Music turns on via its own MusicBrainzEnabled
 // opt-in — or alongside a TMDB key, which enables every kind (backward compatible
 // with the original single-switch behavior). Off by default so a fresh install
 // makes no surprise outbound calls (ADR-0001 offline-first).
@@ -762,12 +762,15 @@ func (c Config) SubtitleCacheDir() string {
 //	                            -> Config.Providers, through the ONE TABLE in
 //	                               providers.go, which is where each variable's
 //	                               provider, field and default are declared. A key
-//	                               turns its source on; the keyless MusicBrainz +
-//	                               Cover Art pair turns on via the explicit
-//	                               MUSICBRAINZ_ENABLED opt-in (or a TMDB key, which
-//	                               historically turned on every kind). All of them
-//	                               SEED the DB-backed provider settings on first
-//	                               boot only.
+//	                               turns its source on; the keyless MusicBrainz turns
+//	                               on via the explicit MUSICBRAINZ_ENABLED opt-in (or
+//	                               a TMDB key, which historically turned on every
+//	                               kind). OBELO_COVERART_BASE_URL fills MusicBrainz's
+//	                               SECOND host — the Cover Art Archive stopped being a
+//	                               provider of its own in .scratch/bundled-plugins
+//	                               issue 06, and the variable's name, default and
+//	                               meaning are otherwise unchanged. All of them SEED
+//	                               the DB-backed provider settings on first boot only.
 //	OBELO_MUSICBRAINZ_RATE_LIMIT -> MusicBrainzRateLimit (a Go duration, e.g.
 //	                               "1s"; "0" disables throttling for a mirror with
 //	                               no rate policy; default DefaultMusicBrainzRateLimit).

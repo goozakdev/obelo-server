@@ -151,30 +151,27 @@ func TestArtworkFetcherDoesNotMutateAnInjectedClient(t *testing.T) {
 	}
 }
 
-// TestProviderJSONClientsCarryTheRedirectPolicy: every JSON metadata client left in
-// this package goes through providerClient, including when a caller injects its own
-// client — and none of them mutates what it was given.
+// TestProviderJSONClientsCarryTheRedirectPolicy: every JSON metadata client this
+// package ever built went through providerClient, including when a caller injected
+// its own client — and it never mutated what it was given.
 //
-// It was "all seven" until TMDB became a Bundled plugin (ADR-0059), and OMDb,
-// TheTVDB and AniDB followed it out (.scratch/bundled-plugins: issue 05): a plugin
-// has no HTTP client at all — its only way out is the host's own guarded fetcher,
-// which carries this policy for every guest at once — so there is nothing here to
-// assert about them. Each of the remaining three leaves the same way. These
-// clients only parse what comes back, so the risk they close is blind internal
-// probing (a hop that connects and a hop that does not are distinguishable), not
-// body disclosure.
+// It was a table of all seven providers' client() methods. All seven are Bundled
+// plugins now (ADR-0059, .scratch/bundled-plugins issues 04-07): a plugin has no
+// HTTP client at all — its only way out is the host's own guarded fetcher, which
+// carries this policy for every guest at once. What is left to hold is the helper
+// itself, until issue 08 decides whether anything still needs it.
 func TestProviderJSONClientsCarryTheRedirectPolicy(t *testing.T) {
 	injected := &http.Client{}
 	for name, got := range map[string]*http.Client{
-		"musicbrainz": (&MusicBrainzProvider{HTTPClient: injected}).client(),
-		"nil client":  (&MusicBrainzProvider{}).client(),
+		"injected client": providerClient(injected),
+		"nil client":      providerClient(nil),
 	} {
 		if got.CheckRedirect == nil {
-			t.Errorf("%s: client() follows redirects unchecked", name)
+			t.Errorf("%s: providerClient follows redirects unchecked", name)
 		}
 	}
 	if injected.CheckRedirect != nil {
-		t.Error("client() mutated the injected client")
+		t.Error("providerClient mutated the injected client")
 	}
 	if http.DefaultClient.CheckRedirect != nil {
 		t.Error("http.DefaultClient was mutated")

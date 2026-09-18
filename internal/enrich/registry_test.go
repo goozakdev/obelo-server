@@ -11,7 +11,7 @@ import (
 // to lead; the Artwork-only providers can only ever be Supplements.
 func TestProviderClass(t *testing.T) {
 	wantFull := map[string]bool{SlugTMDB: true, SlugOMDb: true, SlugTheTVDB: true, SlugMusicBrainz: true}
-	wantArtwork := map[string]bool{SlugFanartTV: true, SlugCoverArt: true, SlugTheAudioDB: true}
+	wantArtwork := map[string]bool{SlugFanartTV: true, SlugTheAudioDB: true}
 	for _, e := range builtinCatalog().Entries() {
 		switch {
 		case wantFull[e.Slug]:

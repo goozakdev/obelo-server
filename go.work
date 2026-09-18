@@ -33,6 +33,7 @@ use (
 	./plugins/omdb
 	./plugins/thetvdb
 	./plugins/anidb
+	./plugins/musicbrainz
 	./plugins/fanarttv
 	./plugins/theaudiodb
 )

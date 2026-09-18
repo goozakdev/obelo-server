@@ -140,7 +140,6 @@ func TestEveryProviderCarriesAnExplicitActiveFact(t *testing.T) {
 	rows := []store.MetadataProviderRow{
 		{Slug: SlugTMDB, Enabled: true, APIKey: "k"},
 		{Slug: SlugMusicBrainz, Enabled: true},
-		{Slug: SlugCoverArt, Enabled: true},
 		{Slug: SlugOMDb, Enabled: true, APIKey: "k"},
 	}
 	byslug := map[string]store.MetadataProviderRow{}

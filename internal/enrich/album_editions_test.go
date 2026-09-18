@@ -40,8 +40,8 @@ func viaggioEditions() []stubRelease {
 }
 
 // viaggioFixture is the motivating album over a real store: sixteen local tracks,
-// matched to the Viaggio Italiano release-group, served by a real MusicBrainzProvider
-// pointed at a canned MusicBrainz.
+// matched to the Viaggio Italiano release-group, served by the canned album source
+// in album_tracklist_test.go.
 func viaggioFixture(t *testing.T, al seedAlbum) (*Service, *store.DB, *tracklistStub) {
 	t.Helper()
 	prov, stub := newTracklistStub(t, viaggioEditions()...)
@@ -115,11 +115,15 @@ func TestViaggioItalianoListsItsEditionsWithoutLeavingObelo(t *testing.T) {
 	if len(reqs) != 1 {
 		t.Fatalf("made %d requests, want 1: %v", len(reqs), reqs)
 	}
-	for _, want := range []string{"release-group=" + viaggioGroup, "inc=recordings", "limit=100"} {
-		if !strings.Contains(reqs[0], want) {
-			t.Errorf("browse %q is missing %q", reqs[0], want)
-		}
+	if reqs[0] != "/release" {
+		t.Errorf("browse = %q, want the release-group browse", reqs[0])
 	}
+	// The browse's WIRE SHAPE — release-group=<id>, inc=recordings, limit=100 — is
+	// the source's business and is asserted where the source is
+	// (plugins/musicbrainz/musicbrainz: TestTheEditionBrowseAsksForItsWholeLimit and
+	// TestReleaseGroupEditionsReadsTheBrowseFitSelectionAlreadyPaysFor). What this
+	// package owns, and what is asserted here, is that ONE call answers both halves
+	// of ADR-0052's question (.scratch/bundled-plugins: issue 06).
 }
 
 // --- 2. which one is in use ---------------------------------------------------
@@ -381,7 +385,7 @@ func TestAnUnknownReleaseGroupListsNoEditions(t *testing.T) {
 // established.
 func TestARefusedEditionBrowseIsReportedAsAFailure(t *testing.T) {
 	prov, stub := newTracklistStub(t, viaggioEditions()...)
-	stub.fail("/release", 503)
+	stub.fail("/release", errShed)
 
 	_, err := prov.ReleaseGroupEditions(context.Background(), viaggioGroup)
 	if err == nil {

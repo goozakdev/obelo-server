@@ -121,9 +121,16 @@ export default function ProviderConfigDialog({
 
   async function onTest() {
     setTest({ status: "pending" });
-    const creds: { apiKey?: string; baseURL?: string } = {};
+    const creds: { apiKey?: string; baseURL?: string; imageBaseURL?: string } = {};
     if (key !== "") creds.apiKey = key;
     if (baseURL !== p.baseURL) creds.baseURL = baseURL;
+    // The SECOND host is tested too, for the reason the first one is: the server
+    // probes both when a source has two (MusicBrainz reaches the Cover Art Archive
+    // this way), and a probe that could only see the saved value would be useless
+    // for the mirror the Admin has just typed into the field above.
+    if (p.imageBaseURL !== undefined && imageBaseURL !== p.imageBaseURL) {
+      creds.imageBaseURL = imageBaseURL;
+    }
     try {
       const result = await apiClient.testMetadataProvider(p.slug, creds);
       setTest({ status: "done", result });

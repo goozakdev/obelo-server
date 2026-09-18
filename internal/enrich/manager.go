@@ -497,7 +497,7 @@ type SeedStore interface {
 // it seeded.
 //
 // The env-driven enablement rules it used to encode by name — a TMDB key enables
-// tmdb, the MusicBrainz opt-in (or a TMDB key) enables musicbrainz + coverart, a
+// tmdb, the MusicBrainz opt-in (or a TMDB key) enables musicbrainz, a
 // fanart.tv / TheAudioDB key enables that source — are now ONE TABLE in
 // internal/config, read into SeedInput.Providers before this is called
 // (.scratch/bundled-plugins: issue 01). The rules themselves are unchanged; what

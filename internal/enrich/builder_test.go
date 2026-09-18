@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // TestBuildProviderComposition asserts BuildProvider reproduces the boot-time
@@ -15,7 +17,7 @@ func TestBuildProviderComposition(t *testing.T) {
 			withKey(SlugTMDB, "tmdb-key"),
 			withActive(SlugMusicBrainz, true),
 			withRateLimit(2*time.Second),
-			withURLs(SlugMusicBrainz, registryMusicBrainzBaseURL, "https://cover.test"),
+			withURLs(SlugMusicBrainz, shippedMusicBrainzBaseURL(t), "https://cover.test"),
 		))
 		if en != (Enablement{Video: true, Music: true}) {
 			t.Errorf("enablement = %+v, want video+music on", en)
@@ -31,19 +33,38 @@ func TestBuildProviderComposition(t *testing.T) {
 		if got := pluginSlug(comp.Music); got != SlugMusicBrainz {
 			t.Fatalf("music = %q (%T), want the plain musicbrainz Plugin", got, comp.Music)
 		}
-		// The operator's throttle policy is threaded through to the host — now through
-		// the Plugin's Settings, so this asserts the whole path the setting takes.
-		mb := musicBrainzBehind(comp.Music)
-		if mb == nil {
-			t.Fatalf("music Plugin is not built around a *MusicBrainzProvider: %T", comp.Music)
+	})
+
+	// The operator's throttle policy and the COVER ART HOST reach the music lead as
+	// Settings, which is the whole path either setting takes since ADR-0059 — there
+	// is no concrete provider behind the Plugin to read them off any more, and
+	// looking through the contract at a guest is not something a test can do.
+	//
+	// The second URL is the substantive change .scratch/bundled-plugins issue 06
+	// made: the Cover Art Archive used to be a factory-less registration whose row
+	// the host resolved into THIS Plugin's URL2 through a special case. It is now an
+	// ordinary second host, arriving by exactly the route TMDB's image CDN does.
+	t.Run("the music lead's settings carry the pacing and the cover-art host", func(t *testing.T) {
+		spy := &settingsSpy{outcome: pluginapi.OutcomeNoMatch}
+		cat := catalogWith(musicGuestLike(SlugMusicBrainz, spy))
+
+		cfg := testConfig(
+			withActive(SlugMusicBrainz, true),
+			withRateLimit(2*time.Second),
+			withURLs(SlugMusicBrainz, "https://mb.test/ws/2", "https://cover.test"),
+		)
+		if p := cat.newProvider(cfg, SlugMusicBrainz, KindMusic); p == nil {
+			t.Fatal("the music lead was not built")
 		}
-		if mb.MinInterval != 2*time.Second {
-			t.Errorf("MinInterval = %v, want 2s (honoring MusicBrainzRateLimit)", mb.MinInterval)
+		if spy.got.RateLimitMillis == nil || *spy.got.RateLimitMillis != 2000 {
+			t.Errorf("rateLimitMillis = %v, want the operator's 2000", spy.got.RateLimitMillis)
 		}
-		// And the Cover Art Archive host reaches it as the Plugin's SECOND url, which
-		// is the whole of what Cover Art Archive's factory-less registration does.
-		if mb.CoverArtURL != "https://cover.test" {
-			t.Errorf("CoverArtURL = %q, want the configured Cover Art host", mb.CoverArtURL)
+		if spy.got.URL != "https://mb.test/ws/2" {
+			t.Errorf("url = %q, want the configured web service", spy.got.URL)
+		}
+		if spy.got.URL2 != "https://cover.test" {
+			t.Errorf("url2 = %q, want the configured Cover Art host — it is the music lead's "+
+				"SECOND URL now, not a provider row of its own", spy.got.URL2)
 		}
 	})
 

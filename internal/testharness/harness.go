@@ -256,7 +256,7 @@ func WithoutEnrichmentConsent() Option {
 }
 
 // WithMusicBrainzEnabled turns ON Music enrichment without a TMDB key (MusicBrainz
-// + Cover Art Archive need none). Video kinds stay disabled unless WithEnrichmentKey
+// needs none). Video kinds stay disabled unless WithEnrichmentKey
 // is also set. Pair with WithMetadataProvider to drive a Music pass with no network.
 func WithMusicBrainzEnabled(on bool) Option {
 	return func(b *builder) { b.cfg.SetProviderEnabled(config.ProviderMusicBrainz, on) }
@@ -334,6 +334,36 @@ func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option 
 func WithPluginCallTimeout(d time.Duration) Option {
 	return func(b *builder) {
 		b.appOpts = append(b.appOpts, app.WithPluginOptions(plugins.Options{CallTimeout: d}))
+	}
+}
+
+// WithPluginMetadataCallBudget shortens the budget ONE call into a Metadata
+// provider guest gets, and the slice of it a fetch must leave behind
+// (.scratch/bundled-plugins: issue 06).
+//
+// It exists for one kind of test: a source too slow to answer inside its budget,
+// which is what an outage looks like from a pass's point of view. At the production
+// figures — 30 seconds, or the 90 a self-paced source may ask for — watching that
+// happen costs a minute of a suite sitting still, and the assertion is about the
+// RATIO between how long the source takes and how long the call has, not about the
+// numbers themselves. Nothing else about the loader changes: the same deadline
+// mechanism does the same thing, sooner.
+//
+// It sets the CAP as well as the default, and it has to: a manifest may raise its
+// own metadata budget (ADR-0059 decision 6) and the MusicBrainz plugin does, so
+// lowering only the default would leave that plugin running at the ninety seconds
+// its manifest asks for. The cap is what a manifest's request is clamped against,
+// with a log line naming both numbers.
+//
+// It REPLACES the whole plugins.Options, as WithPluginCallTimeout does, so the two
+// are not usable together.
+func WithPluginMetadataCallBudget(budget, fetchGrace time.Duration) Option {
+	return func(b *builder) {
+		b.appOpts = append(b.appOpts, app.WithPluginOptions(plugins.Options{
+			MetadataCallBudget: budget,
+			MaxCallBudget:      budget,
+			FetchGrace:         fetchGrace,
+		}))
 	}
 }
 

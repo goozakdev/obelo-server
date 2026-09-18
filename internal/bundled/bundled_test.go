@@ -42,6 +42,7 @@ func shipped() []string {
 		"omdb",
 		"thetvdb",
 		"anidb",
+		"musicbrainz",
 		"fanarttv",
 		"theaudiodb",
 	}
@@ -219,7 +220,9 @@ func TestAssertReplacesAnOlderBundledCopy(t *testing.T) {
 	writeFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile), "an old module")
 	st.put("tmdb", plugins.OriginBundled, "0.9.0")
 
-	NewSource(dir, st, quiet(t)).AssertAll(t.Context())
+	// Assert ONE id, not all of them: the counters below are the fake store's totals,
+	// and every other plugin this server ships installs beside this one.
+	mustAssert(t, NewSource(dir, st, quiet(t)), "tmdb")
 
 	module := readFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile))
 	if module == "an old module" {
@@ -242,6 +245,16 @@ func TestAssertReplacesAnOlderBundledCopy(t *testing.T) {
 	}
 }
 
+// mustAssert asserts ONE shipped id and fails on an error. The tests that count
+// the fake store's writes use it rather than AssertAll, so a second shipped plugin
+// installing beside the one under test cannot move their numbers.
+func mustAssert(t *testing.T, src *Source, id string) {
+	t.Helper()
+	if err := src.Assert(t.Context(), id); err != nil {
+		t.Fatalf("Assert(%q): %v", id, err)
+	}
+}
+
 func TestAssertLeavesAnAdminsOwnPluginAlone(t *testing.T) {
 	requireModules(t)
 	dir := t.TempDir()
@@ -254,7 +267,7 @@ func TestAssertLeavesAnAdminsOwnPluginAlone(t *testing.T) {
 	writeFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile), "the admin's module")
 	st.put("tmdb", plugins.OriginAdmin, "0.0.1")
 
-	NewSource(dir, st, quiet(t)).AssertAll(t.Context())
+	mustAssert(t, NewSource(dir, st, quiet(t)), "tmdb")
 
 	if got := readFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile)); got != "the admin's module" {
 		t.Error("an admin's own plugin was overwritten by the shipped one; theirs wins, whatever the version")
@@ -286,6 +299,9 @@ func TestAssertSkipsADeclinedPlugin(t *testing.T) {
 	st := newAssertStore()
 	st.decline("tmdb")
 
+	// AssertAll, not Assert: the declined mark is what AssertAll honours, and Assert
+	// is the reinstall verb that deliberately ignores it. Every OTHER shipped plugin
+	// installs during this call, which is why the assertion below names the one id.
 	NewSource(dir, st, quiet(t)).AssertAll(t.Context())
 
 	if _, err := os.Stat(filepath.Join(dir, plugins.DirName, "tmdb")); err == nil {

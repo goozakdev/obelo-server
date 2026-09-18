@@ -12,49 +12,25 @@ import (
 // The outbound identity, guarded. MusicBrainz requires
 // "Application name/<version> ( contact )" and throttles anonymous agents harder
 // than identified ones (https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting),
-// so these tests assert that it actually reaches every request we make —
-// including the artwork download, which for years sent Go's default agent while
-// the manifest request beside it was identified.
+// so these tests assert that it actually reaches every request we make.
 //
 // The SHAPE of the string is asserted where the string now lives
 // (internal/useragent), because since .scratch/bundled-plugins issue 02 it is not
 // enrichment's alone: every fetch a sandboxed guest makes carries it too.
+//
+// THE MUSICBRAINZ HALF OF THIS FILE IS GONE (issue 06), and its absence is the
+// point. It asserted that both hosts the Music provider talks to — the web service
+// and the Cover Art Archive manifest — were told who was calling, because that
+// provider set the header itself on every request. A guest cannot and must not: the
+// HOST writes the agent for every fetch and drops one a guest sent (ADR-0059
+// decision 7). So the assertion moved in two directions — internal/plugins owns
+// "the agent leaves the server", and plugins/musicbrainz/musicbrainz owns "this
+// guest does not try to set one" — and what is left here is the download this
+// package still makes with a client of its own.
 
-// TestMusicBrainzSendsUserAgent: both hosts the Music provider talks to — the web
-// service and the Cover Art Archive manifest — must be told who is calling.
-func TestMusicBrainzSendsUserAgent(t *testing.T) {
-	var wsUA, caaUA string
-	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wsUA = r.Header.Get("User-Agent")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"mbid-1","title":"Doolittle"}`))
-	}))
-	defer ws.Close()
-	caa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		caaUA = r.Header.Get("User-Agent")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"images":[{"image":"http://img/1.jpg","front":true}]}`))
-	}))
-	defer caa.Close()
-
-	p := NewMusicBrainzProvider(ws.URL, caa.URL, "en")
-	p.MinInterval = 0 // no throttle in tests
-	if _, err := p.Lookup(context.Background(), TitleRef{Kind: "album", MusicbrainzID: "mbid-1"}); err != nil {
-		t.Fatalf("lookup: %v", err)
-	}
-	if _, err := p.ArtworkCandidates(context.Background(), TitleRef{Kind: "album", MusicbrainzID: "mbid-1"}, "cover"); err != nil {
-		t.Fatalf("artwork candidates: %v", err)
-	}
-	if wsUA != useragent.Default {
-		t.Errorf("web service UA = %q, want %q", wsUA, useragent.Default)
-	}
-	if caaUA != useragent.Default {
-		t.Errorf("cover art archive UA = %q, want %q", caaUA, useragent.Default)
-	}
-}
-
-// TestArtworkFetcherSendsUserAgent: the image download identifies itself too. This
-// is the request that carries the actual cover bytes off the Cover Art Archive.
+// TestArtworkFetcherSendsUserAgent: the image download identifies itself. This is
+// the request that carries the actual cover bytes off the Cover Art Archive, and it
+// is the HOST's own fetch — the Plugin returns a URL, never bytes (ADR-0007).
 func TestArtworkFetcherSendsUserAgent(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

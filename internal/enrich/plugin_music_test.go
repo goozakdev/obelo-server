@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"time"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -279,64 +278,13 @@ func TestAPastedRefKeepsItsGotAndWantAcrossTheContract(t *testing.T) {
 	}
 }
 
-// TestTheMusicBrainzPluginReadsAPaste drives the REAL MusicBrainz Built-in through
-// its registration — factory, Plugin side, host side — over the pastes that produce
-// the two distinct 400s, so the messages the Admin sees are proven to come out of
-// the contract rather than out of the service's fallback parse.
-func TestTheMusicBrainzPluginReadsAPaste(t *testing.T) {
-	const id = "b1392450-e666-3926-a536-22c65f834433"
-	parser, ok := builtinCatalog().newProvider(ProviderConfig{}, SlugMusicBrainz, KindMusic).(ExternalRefParser)
-	if !ok {
-		t.Fatal("the MusicBrainz Plugin must read pastes: it declares the external-ref capability")
-	}
-
-	// An ARTIST url pasted on a Track — the first 400.
-	_, err := parser.ParseExternalRef(context.Background(), "track", "https://musicbrainz.org/artist/"+id)
-	var mismatch *ExternalRefKindMismatchError
-	if !errors.As(err, &mismatch) || mismatch.Got != "artist" || mismatch.Want != "track" {
-		t.Errorf("artist url on a track = %v (%+v), want a got=artist want=track mismatch", err, mismatch)
-	}
-
-	// A WORK or LABEL url — the second 400, and deliberately not "unreadable", so
-	// the Admin is told which kind of link to grab.
-	for _, entity := range []string{"work", "label"} {
-		_, err := parser.ParseExternalRef(context.Background(), "album", "https://musicbrainz.org/"+entity+"/"+id)
-		if !errors.Is(err, ErrExternalRefUnsupportedKind) {
-			t.Errorf("%s url = %v, want ErrExternalRefUnsupportedKind", entity, err)
-		}
-	}
-
-	// Nonsense is unreadable.
-	if _, err := parser.ParseExternalRef(context.Background(), "album", "not a url"); !errors.Is(err, ErrExternalRefInvalid) {
-		t.Errorf("nonsense = %v, want ErrExternalRefInvalid", err)
-	}
-
-	// A bare MBID carries no kind, so it is trusted for the item's own kind.
-	if got, err := parser.ParseExternalRef(context.Background(), "track", id); err != nil || got.ExternalID != id {
-		t.Errorf("bare mbid = (%+v, %v), want it trusted for the item kind", got, err)
-	}
-
-	// A /release/ url on an ALBUM is the mapping that makes this a call: the album to
-	// pin is the parent release-group the Lookup resolves, and the release rides along.
-	got, err := parser.ParseExternalRef(context.Background(), "album", "https://musicbrainz.org/release/"+id)
-	if err != nil {
-		t.Fatalf("release url: %v", err)
-	}
-	if got.ReleaseID != id || got.ExternalID != "" {
-		t.Errorf("release url = %+v, want only the release (the album comes from the lookup)", got)
-	}
-
-	// The same url on a TRACK is not an edition of anything: unsupported kind.
-	if _, err := parser.ParseExternalRef(context.Background(), "track", "https://musicbrainz.org/release/"+id); !errors.Is(err, ErrExternalRefUnsupportedKind) {
-		t.Errorf("release url on a track = %v, want ErrExternalRefUnsupportedKind", err)
-	}
-
-	// A video kind is not this source's namespace, and saying so is what lets the
-	// host answer for the ids it keeps its own columns for.
-	if _, err := parser.ParseExternalRef(context.Background(), "movie", "27205"); !errors.Is(err, ErrSearchUnavailable) {
-		t.Errorf("a movie paste = %v, want ErrSearchUnavailable", err)
-	}
-}
+// TestTheMusicBrainzPluginReadsAPaste IS GONE (.scratch/bundled-plugins: issue 06).
+// It drove the real MusicBrainz Built-in through its registration over the pastes
+// that produce the two distinct 400s. There is no Built-in to drive: the source is
+// a WebAssembly module, its paste vocabulary is asserted natively in
+// plugins/musicbrainz/musicbrainz (TestParseExternalRef, over the same pastes), and
+// what CROSSES the contract is asserted by TestAPastedRefKeepsItsGotAndWantAcrossTheContract
+// above, which is the part this package owns.
 
 // TestTheHostReadsAPasteOnlyWhenNoPluginCan: the provider is asked first and its
 // answer stands — including its refusals — and the host's own parse is the answer
@@ -403,47 +351,10 @@ func (s *searchingSource) Search(context.Context, string, string, SearchOptions)
 	return s.cands, nil
 }
 
-// TestTheMusicBrainzPluginIsBuiltFromItsSettings: the two construction inputs the
-// fixed Settings shape had to grow a home for — the operator's rate policy and the
-// Cover Art Archive host — reach the source, and an ABSENT rate limit is not the
-// same instruction as a zero one.
-func TestTheMusicBrainzPluginIsBuiltFromItsSettings(t *testing.T) {
-	reg, ok := func() (pluginapi.MetadataProviderRegistration, bool) {
-		for _, r := range MetadataPlugins() {
-			if r.Descriptor.Slug == SlugMusicBrainz {
-				return r, true
-			}
-		}
-		return pluginapi.MetadataProviderRegistration{}, false
-	}()
-	if !ok || reg.New == nil {
-		t.Fatal("MusicBrainz must register a factory: nothing composes it outside the contract any more")
-	}
-
-	build := func(s pluginapi.Settings) *MusicBrainzProvider {
-		plugin, err := reg.New(s)
-		if err != nil {
-			t.Fatalf("factory: %v", err)
-		}
-		return musicBrainzBehind(ProviderFromPlugin(reg.Descriptor, plugin))
-	}
-
-	// Absent: the Plugin's own default pacing, which is the public host's ~1 req/sec.
-	if mb := build(pluginapi.Settings{Enabled: true}); mb == nil || mb.MinInterval != defaultMusicBrainzInterval {
-		t.Errorf("no rate limit stated => MinInterval %v, want the default %v", mb.MinInterval, defaultMusicBrainzInterval)
-	}
-	// Stated zero: the operator's "my mirror has no rate policy" (ADR-0049).
-	zero := 0
-	if mb := build(pluginapi.Settings{Enabled: true, RateLimitMillis: &zero}); mb.MinInterval != 0 {
-		t.Errorf("rate limit 0 => MinInterval %v, want no throttling", mb.MinInterval)
-	}
-	// Stated value, in the milliseconds the setting is persisted in.
-	ms := 250
-	mb := build(pluginapi.Settings{Enabled: true, RateLimitMillis: &ms, URL: "https://mb.test", URL2: "https://caa.test", Language: "de-DE"})
-	if mb.MinInterval != 250*time.Millisecond {
-		t.Errorf("MinInterval = %v, want 250ms", mb.MinInterval)
-	}
-	if mb.BaseURL != "https://mb.test" || mb.CoverArtURL != "https://caa.test" || mb.Language != "de-DE" {
-		t.Errorf("settings did not reach the source: %+v", mb)
-	}
-}
+// TestTheMusicBrainzPluginIsBuiltFromItsSettings IS ALSO GONE, for the same reason
+// and with the same replacement in two halves: what the HOST resolves into a music
+// lead's Settings — the operator's pacing, both hosts, the language — is asserted in
+// builder_test.go against a settings-recording registration, and what the PLUGIN
+// does with them is asserted in plugins/musicbrainz/musicbrainz (the pacer suite,
+// and TestSettingsAreReadPerCall). Neither half can be asserted by reaching through
+// the contract at a guest, which is what the deleted test did.

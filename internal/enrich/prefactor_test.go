@@ -119,7 +119,7 @@ func TestConnectionRunsTheDeclaredProbe(t *testing.T) {
 	t.Run("a matched lookup passes, with the declared reference", func(t *testing.T) {
 		spy := &settingsSpy{outcome: pluginapi.OutcomeMatched}
 		cat := catalogWith(guestLike("a-guest", spy, probe))
-		ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "en-US")
+		ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "", "en-US")
 		if !ok {
 			t.Fatalf("matched probe = ok:false (%q), want a pass", detail)
 		}
@@ -131,7 +131,7 @@ func TestConnectionRunsTheDeclaredProbe(t *testing.T) {
 	t.Run("a no-match passes too — the host answered and the key was accepted", func(t *testing.T) {
 		spy := &settingsSpy{outcome: pluginapi.OutcomeNoMatch}
 		cat := catalogWith(guestLike("a-guest", spy, probe))
-		if ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "en-US"); !ok {
+		if ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "", "en-US"); !ok {
 			t.Fatalf("no-match probe = ok:false (%q), want a pass", detail)
 		}
 	})
@@ -141,7 +141,7 @@ func TestConnectionRunsTheDeclaredProbe(t *testing.T) {
 		// the call comes back with an error, and the operator is told what it said.
 		spy := &settingsSpy{err: errors.New("plugin: fetch refused: host not in allowlist")}
 		cat := catalogWith(guestLike("a-guest", spy, probe))
-		ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "en-US")
+		ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "", "en-US")
 		if ok {
 			t.Fatal("a refused probe reported a successful connection")
 		}
@@ -153,7 +153,7 @@ func TestConnectionRunsTheDeclaredProbe(t *testing.T) {
 	t.Run("an unavailable outcome fails", func(t *testing.T) {
 		spy := &settingsSpy{outcome: pluginapi.OutcomeUnavailable}
 		cat := catalogWith(guestLike("a-guest", spy, probe))
-		if ok, _ := TestConnection(context.Background(), cat, "a-guest", "k", "", "en-US"); ok {
+		if ok, _ := TestConnection(context.Background(), cat, "a-guest", "k", "", "", "en-US"); ok {
 			t.Error("an unavailable probe reported a successful connection")
 		}
 	})
@@ -161,7 +161,7 @@ func TestConnectionRunsTheDeclaredProbe(t *testing.T) {
 	t.Run("no declared probe says so", func(t *testing.T) {
 		spy := &settingsSpy{outcome: pluginapi.OutcomeMatched}
 		cat := catalogWith(guestLike("a-guest", spy, nil))
-		ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "en-US")
+		ok, detail := TestConnection(context.Background(), cat, "a-guest", "k", "", "", "en-US")
 		if ok {
 			t.Fatal("a Plugin with no probe reported a successful connection")
 		}
