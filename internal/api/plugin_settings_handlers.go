@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -29,7 +30,15 @@ import (
 //	POST   /settings/plugins/{id}/enable
 //	POST   /settings/plugins/{id}/disable
 //	POST   /settings/plugins/{id}/reenable
+//	PUT    /settings/plugins/{id}/settings → the plugin's OWN declared settings
 //	DELETE /settings/plugins/{id}       → uninstall
+//
+// The one apparent exception is the settings route, and it is not one. What it
+// configures is not an Extension point's settings — those are still the fixed
+// shape, on the screen for the seam, beside the Built-in. It is the fields a
+// MANIFEST DECLARED for itself (.scratch/plugin-system issue 13), which no
+// Built-in has and no other screen could render, because this server learns they
+// exist by reading a file an author shipped. So it lives where the manifest does.
 //
 // Every route is Admin-only, behind the same requireAuth + requireAdmin the whole
 // /settings/ subtree is behind. A Member gets the same 403 every other settings
@@ -45,6 +54,7 @@ type PluginManager interface {
 	InstallFromURL(ctx context.Context, url string) (plugins.Installed, error)
 	SetEnabled(ctx context.Context, id string, enabled bool) (plugins.Installed, error)
 	Reenable(ctx context.Context, id string) (plugins.Installed, error)
+	SaveSettings(ctx context.Context, id string, values map[string]json.RawMessage) (plugins.Installed, error)
 	Uninstall(ctx context.Context, id string) error
 }
 
@@ -61,6 +71,21 @@ type pluginsResponse struct {
 // manifest.json, with the module beside it.
 type installFromURLRequest struct {
 	URL string `json:"url"`
+}
+
+// pluginSettingsRequest is the PUT /settings/plugins/{id}/settings body: one value
+// per declared field key, in the JSON shape that field's type names.
+//
+// The values are json.RawMessage and not `any` on purpose. A declared integer
+// arrives as a JSON number and must stay one — decoding into `any` would make it a
+// float64 and lose the difference between 7 and 7.0, which is exactly what the
+// "must be a whole number" refusal is about. Keeping the bytes lets the validator
+// judge what was actually sent.
+//
+// A key the form omits means "leave it as it is", which is the only way a secret
+// the API never returned can survive a save. An explicit null clears it.
+type pluginSettingsRequest struct {
+	Values map[string]json.RawMessage `json:"values"`
 }
 
 // maxUploadBytes bounds the whole multipart body. It is the module cap plus room
@@ -115,6 +140,8 @@ func handlePluginSettingsSubtree(deps Deps, rest string) http.HandlerFunc {
 				requireMethod(http.MethodPost, handleSetPluginEnabled(deps, id, false))(w, r)
 			case "reenable":
 				requireMethod(http.MethodPost, handleReenablePlugin(deps, id))(w, r)
+			case "settings":
+				requireMethod(http.MethodPut, handleSavePluginSettings(deps, id))(w, r)
 			default:
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			}
@@ -216,6 +243,29 @@ func handleReenablePlugin(deps Deps, id string) http.HandlerFunc {
 	}
 }
 
+// handleSavePluginSettings saves the values of the settings a Plugin's own
+// manifest declared, refusing per field.
+//
+// The refusal shape is the point of this handler. A form with eight controls needs
+// to know WHICH one to put a sentence under, so a rejected save answers 400 with
+// details.fields = [{key, message}] alongside the ordinary message — and the
+// message is the first field's sentence rather than "invalid settings", so a
+// client that reads only the envelope still learns something an operator can act
+// on.
+func handleSavePluginSettings(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req pluginSettingsRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		if _, err := deps.PluginManager.SaveSettings(r.Context(), id, req.Values); err != nil {
+			writePluginError(w, err, "failed to save the plugin settings")
+			return
+		}
+		writePluginList(w, r, deps)
+	}
+}
+
 func handleUninstallPlugin(deps Deps, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := deps.PluginManager.Uninstall(r.Context(), id); err != nil {
@@ -288,6 +338,21 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 	var refusal *plugins.Refusal
 	if !errors.As(err, &refusal) {
 		writeError(w, http.StatusInternalServerError, codeInternal, fallback, nil)
+		return
+	}
+	if refusal.Reason == plugins.ReasonSettings {
+		// 400 and per field: the request is a well-formed document whose CONTENT the
+		// manifest refuses, and the form needs each sentence back under the control
+		// that caused it.
+		fields := make([]map[string]string, 0, len(refusal.Fields))
+		for _, f := range refusal.Fields {
+			fields = append(fields, map[string]string{"key": f.Key, "message": f.Message})
+		}
+		var details map[string]any
+		if len(fields) > 0 {
+			details = map[string]any{"fields": fields}
+		}
+		writeError(w, http.StatusBadRequest, codePluginInvalidSettings, refusal.Message, details)
 		return
 	}
 	status, code := http.StatusUnprocessableEntity, codePluginInvalidManifest

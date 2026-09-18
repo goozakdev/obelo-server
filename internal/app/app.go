@@ -805,6 +805,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		},
 		AllowPrivateSources: o.pluginSourcesMayBePrivate,
 	})
+	// The manifest-declared settings an Admin saved before the last restart, read
+	// onto the Plugins the loader has already built (.scratch/plugin-system issue
+	// 13). NewManager performs no I/O by design, and every later load goes through
+	// its own rebuild, so this is the one place boot has to say it.
+	pluginManager.ApplySettings()
 
 	// Declared before the session observer below because that observer must be able
 	// to end a RELAY session on the sharing Server (ADR-0056 §5), and the link

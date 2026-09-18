@@ -552,6 +552,15 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	// injecting its key) must already know where its source lives. Same resolution
 	// as the named fields: the row's override, else the Descriptor's default, which
 	// for an Installed plugin is what its manifest declared.
+	//
+	// And, beside it, the EXPLICIT ACTIVE FACT (.scratch/plugin-system issue 13).
+	// `active` is already the rule the issue asks for — the row is enabled, and a
+	// key is on file unless the Descriptor says none is needed — so the only thing
+	// missing was somewhere to record the answer for a source with no key to infer
+	// it from. Stated for every Plugin without a named field, true and false alike,
+	// because the absence of an entry means "infer it from the key" and a
+	// switched-off keyless Plugin must say so rather than fall through to a rule
+	// that cannot see it.
 	for _, e := range c.entries {
 		if hasNamedKeyField(e.Slug) {
 			continue
@@ -563,6 +572,10 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 			URL:  baseURL(e.Slug),
 			URL2: imageBaseURL(e.Slug),
 		}
+		if cfg.ProviderActive == nil {
+			cfg.ProviderActive = map[string]bool{}
+		}
+		cfg.ProviderActive[e.Slug] = active(e.Slug)
 	}
 	return cfg
 }

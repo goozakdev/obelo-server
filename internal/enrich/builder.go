@@ -110,6 +110,31 @@ type ProviderConfig struct {
 	// per-Library resolver (which copies the config and shares this map), so unlike
 	// ProviderKeys it needs no copy-on-write. Nil is empty.
 	ProviderEndpoints map[string]ProviderEndpoint
+
+	// ProviderActive is the EXPLICIT per-provider "this source is switched on"
+	// fact, for every Plugin this binary has no named field for — from Phase 2,
+	// every Installed one (.scratch/plugin-system issue 13).
+	//
+	// It exists because until it did, "active" was inferred from KEY PRESENCE, and
+	// a source that honestly declares it needs no credential then had no way to be
+	// on at all: `requiresSecret: false` made a Plugin registered, configurable,
+	// offered in the Authoritative-provider dropdown — and never composed, because
+	// every gate asked whether its key was non-empty and a keyless source has no
+	// key to put there. Issue 04 named the hole and issue 11 hit it hard enough
+	// that every test in it declared `requiresSecret: true` to get round it.
+	//
+	// The rule it replaces the inference with is the one an Admin would state:
+	// a provider is composed when it is ENABLED and either holds a secret or needs
+	// none. An entry is present for every such Plugin — true or false — and the
+	// absence of an entry means "ask the old question", which is what keeps the
+	// eight Built-ins byte-identical: each of them has a named key field (or
+	// MusicBrainz's own opt-in) that IS its active fact, so none of them ever gets
+	// an entry here and none of their gates moved.
+	//
+	// Written copy-on-write by the per-Library resolver, beside the key, for the
+	// reason ProviderKeys is: the resolver works on a struct copy that shares this
+	// map with the global config.
+	ProviderActive map[string]bool
 }
 
 // ProviderEndpoint is one Plugin's effective hosts: its base URL, and the second
@@ -265,25 +290,56 @@ func kindGroupFor(kind string) string {
 	}
 }
 
-// providerReachable reports whether a provider is usable in this effective config —
-// its key is present, or (for the keyless MusicBrainz, which has none) the music
-// kind is on. It is how the pass decides a pinned Title's record provider is still
-// reachable (issue 06): a policy change that cleared/muted the provider makes its
-// key absent here.
-func (c ProviderConfig) providerReachable(slug string) bool {
-	if slug == SlugMusicBrainz {
-		return c.musicEnabled()
+// providerActive reports whether a source is switched ON in this effective config
+// — the ONE question every composition gate asks, and the one place the answer is
+// decided.
+//
+// There are two ways a provider can answer it and the difference is which half of
+// the server registered it:
+//
+//   - An EXPLICIT fact, in ProviderActive. Every Plugin this binary has no named
+//     key field for gets one, true or false, derived as "enabled, and holding a
+//     secret or needing none". It is what lets a keyless Installed provider be on.
+//   - KEY PRESENCE, for everything else. The eight Built-ins each have a named
+//     field that is their active fact, so none of them reaches the map and none of
+//     their behaviour moved. This is the rule that was the ONLY rule before issue
+//     13, kept exactly as it was for exactly the sources it was written for.
+//
+// The explicit fact wins wherever there is one, which is what makes a per-Library
+// force-off of an Installed provider mean "off" even though a URL is still in the
+// config beside it.
+func (c ProviderConfig) providerActive(slug string) bool {
+	if on, stated := c.ProviderActive[slug]; stated {
+		return on
 	}
 	return c.providerKey(slug) != ""
 }
 
+// providerReachable reports whether a provider is usable in this effective config —
+// it is switched on, or (for the keyless MusicBrainz, whose activation rides its
+// own opt-in) the music kind is on. It is how the pass decides a pinned Title's
+// record provider is still reachable (issue 06): a policy change that cleared or
+// muted the provider makes it inactive here.
+func (c ProviderConfig) providerReachable(slug string) bool {
+	if slug == SlugMusicBrainz {
+		return c.musicEnabled()
+	}
+	return c.providerActive(slug)
+}
+
 // videoEnabled reports whether the Movie/TV kinds enrich: video is on exactly when
-// the Library's AUTHORITATIVE video provider is keyed (mirrors the old "TMDB has a
-// key" rule when the authoritative is the default TMDB). A repointed authoritative
-// that is keyed turns video on even if TMDB itself is unkeyed; a supplement never
-// turns video on by itself.
+// the Library's AUTHORITATIVE video provider is ACTIVE (mirrors the old "TMDB has a
+// key" rule when the authoritative is the default TMDB, because key presence is
+// still what answers that for TMDB). A repointed authoritative that is active turns
+// video on even if TMDB itself is unkeyed; a supplement never turns video on by
+// itself.
+//
+// "Active" rather than "keyed" is issue 13's change, and it is the whole of what a
+// keyless Installed Full provider needed: a source that declares it requires no
+// secret is on when the Admin switched it on, where before it could not be on at
+// all (see ProviderConfig.ProviderActive).
 func (c ProviderConfig) videoEnabled() bool {
-	return c.providerKey(c.videoAuthoritativeSlug()) != ""
+	return c.providerActive(c.videoAuthoritativeSlug())
 }
 
 // musicEnabled reports whether the Music kind enriches. With MusicBrainz leading —
@@ -292,13 +348,13 @@ func (c ProviderConfig) videoEnabled() bool {
 // via MusicBrainzEnabled, or alongside a TMDB key, which enables every kind
 // (mirrors config.MusicEnrichmentEnabled).
 //
-// A Library led by some OTHER Full music provider gates on that provider's key
-// instead, exactly as videoEnabled gates on the video lead's — a repointed lead
-// that is keyed turns music on even where MusicBrainz's opt-in is off, and a
+// A Library led by some OTHER Full music provider gates on that provider being
+// ACTIVE instead, exactly as videoEnabled gates on the video lead's — a repointed
+// lead that is on turns music on even where MusicBrainz's opt-in is off, and a
 // supplement still never turns a kind on by itself.
 func (c ProviderConfig) musicEnabled() bool {
 	if slug := c.musicAuthoritativeSlug(); slug != SlugMusicBrainz {
-		return c.providerKey(slug) != ""
+		return c.providerActive(slug)
 	}
 	return c.MusicBrainzEnabled || c.TMDBAPIKey != ""
 }
@@ -321,8 +377,8 @@ func (cat Catalog) videoSupplements(cfg ProviderConfig, authoritative string) []
 		if e.Slug == authoritative || !e.Serves(KindVideo) {
 			continue
 		}
-		if cfg.providerKey(e.Slug) == "" {
-			continue // not keyed → inactive (zero calls to it, ADR-0001)
+		if !cfg.providerActive(e.Slug) {
+			continue // switched off → zero calls to it (ADR-0001)
 		}
 		if p := cat.newProvider(cfg, e.Slug, KindVideo); p != nil {
 			out = append(out, p)

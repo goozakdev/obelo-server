@@ -88,6 +88,21 @@ is fluid, and because a Webhook is the one piece of this the maintainer would us
   service. Video kinds do not gain acceptance by this ADR — that is a separate decision.
 - The settings shape stays fixed (enabled, secret, url, optional url2, and an `events` list
   for sinks). A generic manifest-declared schema is Phase 2.
+
+  > **Carried out (plugin-system issue 13, 2026-09-17):** the fixed shape did not move. An
+  > INSTALLED plugin's manifest may now declare typed fields of its own
+  > (`ManifestSettings.Fields`), whose values travel in a single new field beside the fixed
+  > ones (`Settings.Values`) — one field on one struct, so a Built-in's dialog and settings
+  > row are untouched and a guest that declares nothing is unchanged. The host validates a
+  > save against the manifest on disk and refuses per field; a declared secret is masked on
+  > read and reaches a guest only inside a call, exactly as the fixed `secret` does.
+  >
+  > The same slice closed a hole this ADR's "keyed ⇒ active" inference left: a provider that
+  > declares it needs no credential could not be turned on at all, because every composition
+  > gate asked whether its key was non-empty. `ProviderConfig` now carries an explicit
+  > per-provider active fact for any Plugin the binary has no named key field for — from
+  > Phase 2, every Installed one — and key presence still answers for the eight Built-ins,
+  > which is why none of their behaviour moved.
 - The transport comparison (stdlib `plugin`, go-plugin, WebAssembly via wazero) is recorded
   in the PRD as a leaning and is **not** decided here.
 - CONTEXT.md gains Plugin, Extension point, Built-in, Installed plugin, Event sink.

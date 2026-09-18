@@ -2524,6 +2524,73 @@ export interface InstalledPlugin {
   lastError?: string;
   source?: string;
   installedAt?: string;
+  settingsSchema?: PluginSettingsField[];
+  settings?: PluginSettingsValues;
+}
+
+/** The type of one manifest-declared settings field, which decides both the
+ * control the form renders and the JSON of the value behind it:
+ *
+ *   string | secret | url | enum   a JSON string
+ *   bool                           a JSON boolean
+ *   integer                        a JSON number with no fractional part
+ *   multi-select                   a JSON array of strings
+ *
+ * The union is left open because a server one version ahead of this bundle may
+ * name a type this form cannot draw; the form says so rather than rendering the
+ * wrong control. */
+export type PluginSettingsFieldType =
+  | "string"
+  | "secret"
+  | "url"
+  | "bool"
+  | "enum"
+  | "multi-select"
+  | "integer"
+  | (string & {});
+
+/** One setting an Installed plugin's MANIFEST declares for itself — the second
+ * variant of the settings field, beside the fixed shape every plugin at every
+ * Extension point has.
+ *
+ * Every constraint here is also enforced by the server, from the manifest on
+ * disk, and the server's answer is the one that decides: the form uses `required`,
+ * `options`, `min` and `max` to draw a control an operator can get right, never to
+ * decide whether a save is allowed. A refused save comes back with a message per
+ * field, and that is what is shown. */
+export interface PluginSettingsField {
+  key: string;
+  type: PluginSettingsFieldType;
+  label?: string;
+  help?: string;
+  required?: boolean;
+  /** The value used when nothing is filled in, as JSON of this field's own type. */
+  default?: unknown;
+  /** The closed set of values for an `enum` or a `multi-select`. */
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+/** What is currently saved against a plugin's declared schema.
+ *
+ * `values` never carries a secret field — the server does not return one, ever —
+ * and `secrets` says, per secret field, whether there is one on file. That is the
+ * same contract `hasApiKey` has on a metadata provider, and the form shows the
+ * same thing: "Configured", with a box that replaces it. */
+export interface PluginSettingsValues {
+  values: Record<string, unknown>;
+  secrets: Record<string, boolean>;
+}
+
+/** The `PUT /settings/plugins/{id}/settings` body. One value per declared field
+ * key, in that field's own JSON shape.
+ *
+ * A key the form OMITS means "leave what is stored alone", which is the only way
+ * a secret the server never returned survives a save; an explicit `null` clears
+ * it. */
+export interface PluginSettingsInput {
+  values: Record<string, unknown>;
 }
 
 /** The `GET /settings/plugins` view, and what every lifecycle verb answers with —

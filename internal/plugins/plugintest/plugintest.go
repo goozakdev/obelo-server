@@ -178,6 +178,82 @@ func MetadataProviderManifest(id string, p pluginapi.ManifestProvides, allowedHo
 	}
 }
 
+// KeylessMetadataProviderManifest is MetadataProviderManifest for a source that
+// declares it needs NO credential (.scratch/plugin-system issue 13).
+//
+// It exists because that Plugin could not work before issue 13: activation was
+// inferred from key presence, so `requiresSecret: false` produced a source that was
+// registered, configurable, offered in the Authoritative-provider dropdown and
+// never composed. Every test in issue 11 declared a secret to get round it. The
+// active fact closed the hole, and this is the manifest that proves it — a Plugin
+// an Admin switches on and nothing else.
+func KeylessMetadataProviderManifest(id string, p pluginapi.ManifestProvides, allowedHosts ...string) pluginapi.Manifest {
+	m := MetadataProviderManifest(id, p, allowedHosts...)
+	m.Provides[0].RequiresSecret = false
+	m.Settings.RequiresSecret = false
+	return m
+}
+
+// EverySettingsFieldType is one declared settings field of every type the contract
+// defines, in AllSettingsFieldTypes order, with the labels, help, defaults, options
+// and bounds a real manifest would carry.
+//
+// It is the fixture for "a manifest declares one field of each type": one place
+// that has to grow when a field type is added, and one place a form, a validator
+// and a guest are all exercised against.
+func EverySettingsFieldType() []pluginapi.SettingsField {
+	min, max := 1, 10
+	return []pluginapi.SettingsField{
+		{
+			Key:   "account",
+			Type:  pluginapi.FieldString,
+			Label: "Account name",
+			Help:  "The name this source knows you by.",
+		},
+		{
+			Key:      "token",
+			Type:     pluginapi.FieldSecret,
+			Label:    "Access token",
+			Help:     "Never shown again once saved.",
+			Required: true,
+		},
+		{
+			Key:     "endpoint",
+			Type:    pluginapi.FieldURL,
+			Label:   "Mirror",
+			Help:    "An absolute http(s) address.",
+			Default: json.RawMessage(`"https://mirror.example.test"`),
+		},
+		{
+			Key:     "adult",
+			Type:    pluginapi.FieldBool,
+			Label:   "Include adult titles",
+			Default: json.RawMessage(`false`),
+		},
+		{
+			Key:      "region",
+			Type:     pluginapi.FieldEnum,
+			Label:    "Region",
+			Options:  []string{"eu", "us", "apac"},
+			Required: true,
+		},
+		{
+			Key:     "formats",
+			Type:    pluginapi.FieldMultiSelect,
+			Label:   "Formats",
+			Options: []string{"srt", "ass", "vtt"},
+		},
+		{
+			Key:   "retries",
+			Type:  pluginapi.FieldInteger,
+			Label: "Retries",
+			Help:  "How many times to try again before giving up.",
+			Min:   &min,
+			Max:   &max,
+		},
+	}
+}
+
 // Install places a manifest and the compiled guest under <dataDir>/plugins/<id>/,
 // exactly as an Admin does by hand in this slice. It returns the Plugin directory.
 func Install(t *testing.T, dataDir string, m pluginapi.Manifest) string {

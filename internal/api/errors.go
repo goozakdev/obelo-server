@@ -304,12 +304,22 @@ const (
 	//
 	// codePluginUnknown (404) is the lifecycle half: enable / disable / re-enable /
 	// uninstall naming a Plugin that is not installed.
+	//
+	// codePluginInvalidSettings (400) is the manifest-declared settings schema
+	// (.scratch/plugin-system issue 13): a save that did not satisfy the fields the
+	// Plugin's own manifest declared — a required one left empty, an enum value
+	// outside the declared set, an integer out of range, a URL that is not one. It
+	// is the one plugin refusal that is PER FIELD, so its details carry
+	// { fields: [ { key, message } ] } and the message restates the first of them,
+	// which is what lets the form put each sentence under the control that caused
+	// it instead of one prose line above the whole panel.
 	codePluginInvalidManifest = "PLUGIN_INVALID_MANIFEST"
 	codePluginAPIVersion      = "PLUGIN_API_VERSION"
 	codePluginDuplicate       = "PLUGIN_DUPLICATE"
 	codePluginInvalidModule   = "PLUGIN_INVALID_MODULE"
 	codePluginSourceRefused   = "PLUGIN_SOURCE_REFUSED"
 	codePluginUnknown         = "PLUGIN_UNKNOWN"
+	codePluginInvalidSettings = "PLUGIN_INVALID_SETTINGS"
 
 	// codeProviderNotAuthoritative (422): a Library's Enrichment policy tried to point
 	// its Authoritative provider at a slug that is not a USABLE Full provider of the

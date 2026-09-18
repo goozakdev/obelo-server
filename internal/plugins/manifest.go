@@ -85,6 +85,14 @@ func validateManifest(m pluginapi.Manifest) error {
 	if mf := moduleFile(m); mf != filepath.Base(mf) || mf == "." || mf == ".." {
 		return fmt.Errorf("module %q must be a file name beside the manifest, not a path", m.Module)
 	}
+	// The Plugin's OWN settings schema (.scratch/plugin-system issue 13). A schema
+	// that could never be satisfied — an enum with no options, a default its own
+	// rules refuse — is refused here, at load, because the person who can fix it is
+	// the author and the person who would otherwise meet it is the Admin at a Save
+	// button that never works.
+	if err := validateSettingsFields(m.Settings.Fields); err != nil {
+		return err
+	}
 	for _, h := range m.Network.Hosts {
 		if h != normalizeHost(h) || h == "" {
 			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port or path", h)

@@ -74,6 +74,11 @@ const (
 	ReasonSource = "source"
 	// ReasonUnknown: a lifecycle verb named a Plugin that is not installed.
 	ReasonUnknown = "unknown"
+	// ReasonSettings: a settings save did not satisfy the schema the Plugin's own
+	// manifest declared (issue 13). It is the one refusal that is PER FIELD rather
+	// than per request, so its Refusal carries Fields and the API renders each
+	// sentence under the control that caused it.
+	ReasonSettings = "settings"
 )
 
 // Refusal is an install this server would not perform. Message is written for the
@@ -83,6 +88,12 @@ const (
 type Refusal struct {
 	Reason  string
 	Message string
+	// Fields is the per-field detail of a ReasonSettings refusal, and empty for
+	// every other reason. A form needs to know WHICH control to put a sentence
+	// under, and a single prose message cannot say it — so the structured list
+	// travels beside the message rather than instead of it, and Message names the
+	// first field so a caller that ignores the list still reads something useful.
+	Fields []FieldError
 }
 
 func (r *Refusal) Error() string { return r.Message }
@@ -128,6 +139,33 @@ type Installed struct {
 	LastError   string   `json:"lastError,omitempty"`
 	Source      string   `json:"source,omitempty"`
 	InstalledAt string   `json:"installedAt,omitempty"`
+	// SettingsSchema is what this Plugin's manifest declares about its OWN settings
+	// (issue 13), straight from the file on disk: the ordered field list the web app
+	// renders a form from. Empty for a Plugin configured entirely through the fixed
+	// shape, which is every Plugin written before the schema existed — and the
+	// screen then shows no panel at all rather than an empty one.
+	SettingsSchema []pluginapi.SettingsField `json:"settingsSchema,omitempty"`
+	// Settings is what is currently IN FORCE against that schema, with every secret
+	// removed. Present exactly when SettingsSchema is.
+	Settings *SettingsView `json:"settings,omitempty"`
+}
+
+// SettingsView is a Plugin's declared settings as the API returns them: the values
+// an Admin can see, and a per-secret "there is one on file" boolean.
+//
+// Values are EFFECTIVE, not merely stored: a field nobody has saved carries the
+// default its manifest declared, because that is what the guest will read and a
+// screen showing an empty box for a field the Plugin will treat as "eu" is a
+// screen telling an operator something false. A field with neither a saved value
+// nor a default is absent, and absent is not the same as zero.
+//
+// A SECRET'S VALUE IS NEVER HERE. It is the same policy the fixed Secret has and
+// the same policy metadata_providers.api_key has — the form shows that one is set
+// and offers to replace it, and nothing this server sends ever carries the value
+// back out.
+type SettingsView struct {
+	Values  map[string]any  `json:"values"`
+	Secrets map[string]bool `json:"secrets"`
 }
 
 // ManagerStore is the persistence the Manager owns. *store.DB satisfies it; the
@@ -139,6 +177,8 @@ type ManagerStore interface {
 	SetPluginEnabled(id string, enabled bool) (bool, error)
 	SetPluginLastError(id, message string) error
 	DeletePlugin(id string) error
+	PluginSettings(pluginID string) ([]store.PluginSetting, error)
+	ReplacePluginSettings(pluginID string, values []store.PluginSetting) error
 }
 
 // ManagerConfig is what the composition root hands the Manager. Every field but
@@ -488,6 +528,14 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 				item.APIVersion = p.Manifest().APIVersion
 			}
 		}
+		// The declared settings schema comes from the MANIFEST ON DISK, never from
+		// the row: the row remembers what an Admin decided, and what a Plugin asks to
+		// be configured with is the author's, changing with the file whenever it does.
+		if fields := m.declaredFields(id); len(fields) > 0 {
+			item.SettingsSchema = fields
+			values, secrets := PublicSettingValues(fields, m.settingRows(id))
+			item.Settings = &SettingsView{Values: values, Secrets: secrets}
+		}
 		if item.Provides == nil {
 			item.Provides = []string{}
 		}
@@ -528,6 +576,11 @@ func (m *Manager) rebuild(ctx context.Context) error {
 		m.base(fresh)
 	}
 	next.RegisterEnabled(fresh, off)
+
+	// The declared setting values are read onto the fresh Plugins BEFORE anything
+	// can call them (issue 13): a guest handed a call with no values would read an
+	// unconfigured source for exactly as long as the window lasted.
+	m.applySettings(next)
 
 	previous := m.set.Swap(next)
 	m.registry.Swap(fresh)

@@ -6099,3 +6099,45 @@ textarea.metadata-input {
   margin: 0.15rem 0 0;
   font-variant-numeric: tabular-nums;
 }
+
+/* The schema-driven settings panel (plugin-system/13): the form a plugin's own
+   manifest describes, inside its card. Set off by a rule rather than a box, so it
+   reads as part of the plugin rather than as a second card an Admin has to relate
+   to the first. */
+.plugin-settings {
+  margin: 0.75rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.plugin-settings-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* A required field's marker. Colour alone never carries the meaning — the server
+   names the field in its refusal — so this is only a hint before the fact. */
+.field-required {
+  color: var(--danger);
+}
+
+.field-help {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plugin-field-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.plugin-field-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}

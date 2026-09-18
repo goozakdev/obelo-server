@@ -85,6 +85,22 @@ func contractEnums() []enumSpec {
 			},
 		},
 		{
+			name: "SettingsFieldType",
+			doc: "The shape of one manifest-declared setting, which decides both the control an Admin gets and " +
+				"the JSON of the value behind it: string/secret/url/enum are JSON strings, bool is a JSON boolean, " +
+				"integer is a JSON number with no fractional part, and multi-select is a JSON array of strings. " +
+				"A secret is handed to a guest only inside a call and is never returned by the settings API.",
+			goType: reflect.TypeOf(pluginapi.SettingsFieldType("")),
+			values: func() []string {
+				vs := pluginapi.AllSettingsFieldTypes()
+				out := make([]string, len(vs))
+				for i, v := range vs {
+					out[i] = string(v)
+				}
+				return out
+			}(),
+		},
+		{
 			name:   "EventType",
 			doc:    "One of the curated terminal events an Event sink may be told about. The set is closed and grows by decision: a translator that cannot derive an event honestly is a reason not to have it.",
 			values: pluginapi.AllEventTypes(),
@@ -118,6 +134,20 @@ func fieldOverrides() map[string]any {
 			set("items", ref("MediaKind")).
 			set("description", "The coarse media-kind groups this entry serves. Empty and ignored for an Event sink, which is not kind-scoped."),
 		"SinkEvent.type": ref("EventType"),
+		"Settings.values": obj().
+			set("type", "object").
+			set("description", "The values of the settings an INSTALLED plugin's manifest declared for itself "+
+				"(settings.fields), keyed by the field key that declared them and carrying the JSON shape that "+
+				"field's type names. Beside the fixed fields above, never instead of them: empty for every "+
+				"Built-in and for any plugin that declares no fields. A field the Admin never filled is ABSENT "+
+				"rather than present as a zero, unless the manifest declared a default. A declared secret field's "+
+				"value is here only while a call is on the stack, exactly as `secret` is."),
+		"SettingsField.default": obj().
+			set("description", "The value used when the Admin has filled nothing in, as JSON of this field's own "+
+				"type — a JSON number for an integer, true/false for a bool, an array of strings for a "+
+				"multi-select. Absent means there is no default and an unfilled field is simply absent from "+
+				"settings.values. A default that does not satisfy this field's own constraints is refused when "+
+				"the plugin is loaded."),
 	}
 }
 
@@ -292,10 +322,24 @@ func contractTypes() []typeSpec {
 		},
 		{
 			value: pluginapi.ManifestSettings{},
-			doc: "What a manifest may declare about the FIXED settings shape (enabled, secret, url, url2, " +
-				"events): which parts must be filled before the Plugin can be turned on, and what the defaults " +
-				"are. It is not a schema and does not change the shape. An Event sink leaves the default URLs " +
-				"empty — there is no sensible default target for somebody else's receiver.",
+			doc: "What a manifest declares about its settings. The first three keys are about the FIXED shape " +
+				"(enabled, secret, url, url2, events): which parts must be filled before the Plugin can be turned " +
+				"on, and what the defaults are — an Event sink leaves the default URLs empty, because there is no " +
+				"sensible default target for somebody else's receiver. `fields` is the other half: this Plugin's " +
+				"OWN typed settings, which the host renders a form from, validates a save against, and hands back " +
+				"through settings.values in the shape they were declared. A manifest with no fields is configured " +
+				"entirely through the fixed shape, which is every plugin written before fields existed.",
+		},
+		{
+			value: pluginapi.SettingsField{},
+			doc: "One setting a manifest declares for itself. Every constraint here is enforced by the HOST at " +
+				"save time, against the manifest on disk, and never by the guest: required refuses an empty value " +
+				"(and is not applied to a bool, because false is an answer), an enum value must be one of " +
+				"options, every element of a multi-select must be, and an integer must lie within min/max " +
+				"inclusive. min and max are OMITTED when unbounded rather than sent as 0, because 0 is an " +
+				"ordinary bound. A required secret is satisfied by one already on file, since the API never " +
+				"returns a stored secret. key must be unique within a manifest and must not restate a fixed " +
+				"settings field.",
 		},
 		{
 			value: pluginapi.SubtitleSearchCall{},

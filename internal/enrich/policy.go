@@ -121,10 +121,15 @@ func resolveAuthoritative(cat Catalog, cfg *ProviderConfig, providers map[string
 	if entry.Serves(KindMusic) {
 		cfg.AuthoritativeMusic = slug
 	}
-	// Inject the key so BuildProvider composes it as the lead even if the provider is
+	// Switch it on so BuildProvider composes it as the lead even if the provider is
 	// globally DISABLED (always-active-if-keyed). The base URL is already in cfg
 	// (SettingsToProviderConfig sets every provider's base URL regardless of enabled).
-	setProviderKey(cfg, slug, st.APIKey)
+	//
+	// "On", not "keyed": a Full provider that declares it needs no secret reaches
+	// here with st.Keyed true and an EMPTY key, and injecting that empty key was
+	// exactly the step at which a keyless lead used to become a lead that led
+	// nothing (.scratch/plugin-system issue 13).
+	setProviderActive(cfg, slug, st.APIKey, true)
 	return ""
 }
 
@@ -142,10 +147,10 @@ func applySupplementOverrides(cfg *ProviderConfig, providers map[string]Provider
 		}
 		if on {
 			if st := providers[slug]; st.Keyed {
-				setProviderKey(cfg, slug, st.APIKey)
+				setProviderActive(cfg, slug, st.APIKey, true)
 			}
 		} else {
-			setProviderKey(cfg, slug, "") // muted for this Library — zero calls
+			setProviderActive(cfg, slug, "", false) // muted for this Library — zero calls
 		}
 	}
 }
@@ -158,13 +163,53 @@ func isCurrentAuthoritative(cfg ProviderConfig, slug string) bool {
 	return slug == cfg.videoAuthoritativeSlug() || slug == cfg.musicAuthoritativeSlug()
 }
 
+// setProviderActive switches one provider on or off for THIS Library, which for a
+// key-bearing source means injecting or clearing its key and for every source
+// means stating the explicit active fact.
+//
+// The two halves are one act and must stay one. Before .scratch/plugin-system
+// issue 13 there was only the key, and "on" was inferred from it — which works
+// perfectly for the six keyed Built-ins and not at all for a source that declares
+// it needs no secret: activating one wrote an empty key, which every gate then
+// read as "off". Writing the fact as well as the key means a keyless provider can
+// be on, and a force-off still means off for a source whose key was never the
+// thing holding it up.
+//
+// A KEYLESS BUILT-IN (MusicBrainz, Cover Art Archive) is deliberately untouched by
+// either half: its activation rides its authoritative's enablement and its opt-in,
+// and it has no named key to set. Stating a fact for it here would give the
+// per-Library resolver a second, contradictory answer to a question MusicBrainz
+// already answers for itself.
+func setProviderActive(cfg *ProviderConfig, slug, key string, active bool) {
+	setProviderKey(cfg, slug, key)
+	switch slug {
+	case SlugMusicBrainz, SlugCoverArt:
+		return
+	}
+	if hasNamedKeyField(slug) {
+		// A keyed Built-in's named field IS its active fact, and it has just been
+		// written. Recording a second one would be two places to keep in step.
+		return
+	}
+	// COPY-ON-WRITE, for setProviderKey's reason: the resolver holds a struct copy
+	// that shares this map with the global config.
+	states := make(map[string]bool, len(cfg.ProviderActive)+1)
+	for k, v := range cfg.ProviderActive {
+		states[k] = v
+	}
+	states[slug] = active
+	cfg.ProviderActive = states
+}
+
 // setProviderKey sets (or clears, with an empty key) the API key for a key-bearing
-// provider in cfg — the one place the resolver injects/removes a key to activate or
-// mute a source. A provider this binary has no named field for lands in
-// ProviderKeys, so an Installed plugin is activated by the same act that activates
-// a Built-in (ADR-0057 decision 4). A keyless provider (MusicBrainz, Cover Art
-// Archive) has no key to set: its activation rides its authoritative's enablement,
-// and writing "" to the map for it would say "muted", which is a different thing.
+// provider in cfg. A provider this binary has no named field for lands in
+// ProviderKeys, so an Installed plugin is keyed by the same act that keys a
+// Built-in (ADR-0057 decision 4). A keyless provider (MusicBrainz, Cover Art
+// Archive) has no key to set.
+//
+// Callers go through setProviderActive, which is the act that has meaning: keying
+// a source and switching it on stopped being the same thing when a source that
+// needs no key arrived.
 func setProviderKey(cfg *ProviderConfig, slug, key string) {
 	switch slug {
 	case SlugTMDB:

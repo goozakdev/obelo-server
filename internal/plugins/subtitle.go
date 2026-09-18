@@ -99,7 +99,7 @@ var _ pluginapi.SubtitleProvider = (*guestSubtitleProvider)(nil)
 // an empty candidate list, so a viewer sees "nothing found" rather than a failure
 // (ADR-0001).
 func (g *guestSubtitleProvider) SearchSubtitles(ctx context.Context, req pluginapi.SubtitleSearchRequest) (pluginapi.SubtitleSearchResponse, error) {
-	call := pluginapi.SubtitleSearchCall{Request: req, Settings: g.settings}
+	call := pluginapi.SubtitleSearchCall{Request: req, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SubtitleSearchResponse
 
 	if err := g.p.callGuest(ctx, exportSubtitleSearch, hostOf(g.settings.URL), call, &resp); err != nil {
@@ -127,7 +127,7 @@ func (g *guestSubtitleProvider) DownloadSubtitle(ctx context.Context, req plugin
 	limit := g.p.downloadLimit(req.MaxBytes)
 	req.MaxBytes = limit
 
-	call := pluginapi.SubtitleDownloadCall{Request: req, Settings: g.settings}
+	call := pluginapi.SubtitleDownloadCall{Request: req, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SubtitleDownloadResponse
 
 	if err := g.p.callGuest(ctx, exportSubtitleDownload, hostOf(g.settings.URL), call, &resp); err != nil {

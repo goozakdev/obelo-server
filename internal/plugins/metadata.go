@@ -302,13 +302,23 @@ func (p *Plugin) setCallSettings(s *pluginapi.Settings) {
 // currentSettings is what settings_get answers. A COPY, so a guest's answer can
 // never alias the value the host is about to reuse; and a ZERO Settings when no
 // call is in flight, so a secret is never readable outside the call it belongs to.
+//
+// It answers BOTH halves of the settings field: the fixed shape the host resolved
+// for this call, and — since issue 13 — the manifest-declared values in Values,
+// read fresh so a save takes effect on the next call rather than on the next
+// rebuild. Outside a call neither half is answered, declared secrets included.
 func (p *Plugin) currentSettings() pluginapi.Settings {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.meta.settings == nil {
+	inFlight := p.meta.settings != nil
+	var s pluginapi.Settings
+	if inFlight {
+		s = *p.meta.settings
+	}
+	p.mu.Unlock()
+	if !inFlight {
 		return pluginapi.Settings{}
 	}
-	return *p.meta.settings
+	return p.withSettingValues(s)
 }
 
 // unavailable reports whether an error means "this module does not answer that
