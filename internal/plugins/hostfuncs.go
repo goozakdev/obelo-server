@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -39,6 +40,18 @@ const (
 	refusedOversize   = "the response is larger than a plugin may receive"
 	refusedNoResponse = "the request could not be built"
 )
+
+// errFetchDeadline is what a fetch answers when the call's own budget ran out
+// (ADR-0059 decision 6). It is an ERROR and not a refusal, deliberately: the host
+// was willing, the request was allowed, and the far end was simply too slow —
+// which is the same thing a connection refusal is, and the same thing a Plugin
+// should answer "unavailable" to so the item takes ADR-0048's backoff.
+//
+// The same sentence covers both halves of the rule, because they are the same
+// fact from the guest's side: a request that ran out of budget mid-flight, and
+// one there was no budget left to start. A guest that can tell them apart would
+// only be tempted to branch on the difference.
+const errFetchDeadline = "the fetch did not finish before this call's deadline"
 
 // The audit reasons that appear in the log line. An operator greps for these.
 const (
@@ -165,12 +178,25 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 		return pluginapi.FetchResponse{Refused: refusedAllowlist}
 	}
 
+	// THE DEADLINE, before anything is sent (ADR-0059 decision 6).
+	//
+	// Every request this function makes — the name lookup below included — ends at
+	// min(now+FetchTimeout, callDeadline−FetchGrace), so the guest is handed an
+	// answer while it still has time to turn it into one of its own. A budget that
+	// is already spent means no request at all: the honest answer is available
+	// without asking anybody.
+	fctx, cancel, ok := h.deadline(ctx)
+	if !ok {
+		return pluginapi.FetchResponse{Error: errFetchDeadline}
+	}
+	defer cancel()
+
 	// A target the MANIFEST allowlists is checked against the same address rule
 	// the redirect policy enforces, because the Plugin chose it. A target the
 	// OPERATOR typed is not, because they did — a receiver on their own LAN is the
 	// point of this product (ADR-0001), and it is their box either way.
 	if !operatorChose {
-		if refusal := h.refuseInternal(ctx, target.Hostname()); refusal != "" {
+		if refusal := h.refuseInternal(fctx, target.Hostname()); refusal != "" {
 			h.p.audit(host, auditPrivate)
 			h.p.recordViolation(fmt.Sprintf("fetched %s, which resolves into address space a plugin may not reach", host))
 			return pluginapi.FetchResponse{Refused: refusal}
@@ -185,17 +211,42 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 	if len(req.Body) > 0 {
 		body = bytes.NewReader(req.Body)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, method, target.String(), body)
+	httpReq, err := http.NewRequestWithContext(fctx, method, target.String(), body)
 	if err != nil {
 		h.p.audit(host, auditBadURL)
 		return pluginapi.FetchResponse{Refused: refusedNoResponse}
 	}
-	httpReq.Header.Set("User-Agent", "obelo/1.0 (self-hosted; plugin "+h.p.id+")")
+	// THE IDENTITY IS THE HOST'S (ADR-0059 decision 7).
+	//
+	// The guest's headers go on first and the agent goes on last, with Set rather
+	// than Add, so exactly one User-Agent leaves this server whatever the guest
+	// sent. The previous line stamped a hardcoded "obelo/1.0" and then ADDED every
+	// guest header, so a Plugin that identified itself produced two agents and a
+	// version that had not existed since 0.1.0.
+	//
+	// A guest-supplied agent is DROPPED rather than appended. Code running inside
+	// Obelo's fetcher, under Obelo's allowlist and Obelo's fetch policy, is Obelo
+	// as far as the far end is concerned, and MusicBrainz — which requires the
+	// shape and throttles anything else — has to be able to rely on that. The
+	// Plugin is named in the agent's own comment instead, which tells the far end
+	// which part called without letting the guest write the line.
+	var sentOwnAgent bool
 	for _, hd := range req.Headers {
 		if hd.Name == "" {
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(hd.Name), "user-agent") {
+			sentOwnAgent = true
+			continue
+		}
 		httpReq.Header.Add(hd.Name, hd.Value)
+	}
+	httpReq.Header.Set("User-Agent", h.p.userAgent)
+	if sentOwnAgent {
+		// A debug note for the AUTHOR, once per Plugin — not an audit line about
+		// the operator's server, and not one per fetch: a provider that sets an
+		// agent sets it on every request it ever makes.
+		h.p.noteDroppedUserAgent()
 	}
 
 	resp, err := h.p.httpClient().Do(httpReq)
@@ -208,14 +259,17 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 			h.p.recordViolation(fmt.Sprintf("fetched %s, which this server's fetch policy refused: %v", host, err))
 			return pluginapi.FetchResponse{Refused: refusedUnreached}
 		}
-		return pluginapi.FetchResponse{Error: err.Error()}
+		return pluginapi.FetchResponse{Error: fetchErrorText(err)}
 	}
 	defer resp.Body.Close()
 
-	limit := h.p.opts.MaxFetchBytes
+	limit := h.p.fetchLimit
 	payload, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if readErr != nil {
-		return pluginapi.FetchResponse{Status: resp.StatusCode, Error: readErr.Error()}
+		// A body that stopped arriving because the budget ran out says so in the
+		// budget's words: it is the same fact as a request that never completed,
+		// and the status is kept because the target did answer.
+		return pluginapi.FetchResponse{Status: resp.StatusCode, Error: fetchErrorText(readErr)}
 	}
 	if int64(len(payload)) > limit {
 		// Truncating and answering anyway would hand the guest a document it would
@@ -231,6 +285,63 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 		}
 	}
 	return out
+}
+
+// deadline derives the context ONE fetch runs under, and it is the whole of
+// "a fetch always returns before the call deadline" (ADR-0059 decision 6).
+//
+// It ends at min(now+FetchTimeout, callDeadline−FetchGrace). The first term is
+// the per-fetch bound this server has always had; the second is the new one, and
+// it is what makes a slow upstream cost an item its backoff instead of costing
+// the Plugin a strike. Under ADR-0058 a fetch ran under the call's OWN context,
+// so a source that took longer than the call budget killed the guest at the
+// deadline — and a kill is counted, so three slow lookups disabled a whole
+// provider for something the far end did.
+//
+// The returned context is a CHILD of the call's, so a cancelled call still stops
+// a fetch immediately; what it never does is outlive the guest's chance to answer.
+//
+// ok is false when there is no time left to spend. The caller answers the same
+// error without asking anybody, because that is the true answer and because a
+// zero-length deadline would otherwise become a request the host makes and
+// abandons.
+func (h *hostFuncs) deadline(ctx context.Context) (context.Context, context.CancelFunc, bool) {
+	end := time.Now().Add(h.p.opts.FetchTimeout)
+	if callEnd, ok := ctx.Deadline(); ok {
+		if latest := callEnd.Add(-h.p.opts.FetchGrace); latest.Before(end) {
+			end = latest
+		}
+	}
+	if !end.After(time.Now()) {
+		return ctx, func() {}, false
+	}
+	fctx, cancel := context.WithDeadline(ctx, end)
+	return fctx, cancel, true
+}
+
+// fetchErrorText is what a failed request tells the guest. A deadline gets the
+// budget's sentence rather than Go's "context deadline exceeded" — an author
+// reading their own log should learn which of this server's rules they met, and
+// the transport's wording is neither stable nor about them.
+//
+// Everything else is passed through verbatim: a connection refused, a TLS
+// failure, a DNS miss. Those are the far end's facts and the Plugin may
+// legitimately retry them.
+func fetchErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
+		return errFetchDeadline
+	}
+	return err.Error()
+}
+
+// isTimeout catches the timeouts that do not wrap context.DeadlineExceeded —
+// net.Error's own, and the one http.Client's Timeout field produces.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // refuseInternal fails CLOSED: a name that will not resolve is refused rather than

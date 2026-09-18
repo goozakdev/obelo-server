@@ -180,14 +180,19 @@ func (g *guestSubtitleProvider) wrap(what string, err error) error {
 // for one subtitle: the smaller of what the caller asked for and what the loader
 // allows.
 //
-// MaxFetchBytes is the right number and not an approximation of one. It is
+// The fetch limit is the right number and not an approximation of one. It is
 // already the cap on a body the host hands a guest through http_fetch, so a
 // subtitle larger than it could not have reached the guest through the only way
 // out it has; a bigger answer than that is a guest synthesizing bytes, which is
 // precisely the case the host-side check exists for. It also bounds what lands in
 // the guest's linear memory, which only ever grows (ADR-0058 decision 7).
+//
+// It is the RESOLVED limit — this Plugin's own, which its manifest may have
+// raised up to the host's cap (ADR-0059 decision 6) — rather than the Options
+// default, because otherwise that first sentence stops being true the moment a
+// manifest raises it.
 func (p *Plugin) downloadLimit(requested int64) int64 {
-	limit := p.opts.MaxFetchBytes
+	limit := p.fetchLimit
 	if requested > 0 && requested < limit {
 		return requested
 	}

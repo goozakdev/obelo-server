@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // FanartTVProvider supplies the artwork MusicBrainz and TMDB document they lack.
@@ -68,7 +70,7 @@ func NewFanartTVProvider(apiKey, baseURL string) *FanartTVProvider {
 	return &FanartTVProvider{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
-		UserAgent:   DefaultUserAgent,
+		UserAgent:   useragent.Default,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultFanartTVThrottle,
 		cache:       map[string]artistImages{},

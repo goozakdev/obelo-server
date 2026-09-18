@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/useragent"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
@@ -72,12 +73,45 @@ const (
 	// the event-sink host deadline, so a Plugin that spins is killed by its own
 	// budget and the sink worker is free again rather than both expiring at once.
 	DefaultCallTimeout = 10 * time.Second
+	// DefaultMetadataCallBudget bounds ONE call into a Metadata provider guest,
+	// and it is three times DefaultCallTimeout on purpose (ADR-0059 decision 6).
+	//
+	// A sink delivers one document to one receiver. A provider makes SEVERAL
+	// fetches inside one lookup and — since the host-side throttle was withdrawn
+	// and pacing became the guest's — deliberately waits between them. Ten seconds
+	// for that is not a deadline, it is a coin flip on a slow source, and losing it
+	// used to cost three strikes against the whole Plugin rather than one item's
+	// backoff. A budget the guest can plan inside is what makes a deadline kill
+	// mean what decision 6's threshold was written for: the guest itself spun.
+	DefaultMetadataCallBudget = 30 * time.Second
+	// DefaultMaxCallBudget is the ceiling a manifest's callBudgetMillis is clamped
+	// to. Two minutes is long enough for any honest source and short enough that a
+	// Plugin cannot hold an enrichment worker for an afternoon by declaring a
+	// number. Over it is CLAMPED and logged, never refused: a manifest asking for
+	// an hour is an author misjudging a number, not a Plugin that must not install.
+	DefaultMaxCallBudget = 2 * time.Minute
 	// DefaultFetchTimeout bounds one http_fetch.
 	DefaultFetchTimeout = 20 * time.Second
+	// DefaultFetchGrace is what a fetch leaves of the call budget for the guest to
+	// answer in (ADR-0059 decision 6). Every fetch ends at least this long before
+	// the call's own deadline, so a slow upstream comes back to the guest as a
+	// fetch error it can turn into "unavailable" — instead of the deadline killing
+	// the instance mid-request and costing the Plugin a strike for something the
+	// far end did.
+	//
+	// A second is generous for "unmarshal a refusal and encode a response", which
+	// is all the guest has left to do, and it is the margin rather than the answer:
+	// a guest that needs longer than this to say one word is a guest that spun.
+	DefaultFetchGrace = time.Second
 	// DefaultMaxFetchBytes caps a response body handed back to a guest. A byte
 	// payload costs what base64-in-JSON costs, and it lands in the guest's linear
 	// memory, which only ever grows.
 	DefaultMaxFetchBytes = 1 << 20
+	// DefaultMaxFetchBytesCap is the ceiling a manifest's maxFetchBytes is clamped
+	// to, and it is eight times the default rather than unbounded for the reason
+	// the default exists at all: the bytes land in a linear memory that cannot
+	// shrink, and the instance is recycled by a byte budget above it.
+	DefaultMaxFetchBytesCap = 8 << 20
 	// DefaultFailureThreshold is how many consecutive failures — traps, deadline
 	// kills, refused answers — disable a Plugin. Small on purpose: "repeatedly" in
 	// the issue means a pattern, and three in a row is a pattern.
@@ -100,9 +134,27 @@ const (
 // Options are the knobs the composition root sets. The zero value is usable: every
 // field falls back to its Default above.
 type Options struct {
-	CallTimeout      time.Duration
-	FetchTimeout     time.Duration
+	// CallTimeout is the default budget for ONE call into a guest. It is the
+	// Event sink's and the Subtitle provider's; a Metadata provider has its own
+	// (MetadataCallBudget), because a lookup makes several fetches and paces
+	// itself between them.
+	CallTimeout time.Duration
+	// MetadataCallBudget is the default budget for one Metadata provider call,
+	// and MaxCallBudget is the ceiling a manifest may raise it to. A manifest
+	// asking for more is CLAMPED with a line in the log at load, not refused
+	// (ADR-0059 decision 6).
+	MetadataCallBudget time.Duration
+	MaxCallBudget      time.Duration
+	FetchTimeout       time.Duration
+	// FetchGrace is what every fetch leaves of the call budget for the guest to
+	// answer in. A fetch ends at min(now+FetchTimeout, callDeadline−FetchGrace),
+	// which is the whole of "a fetch always returns before the call deadline".
+	FetchGrace time.Duration
+	// MaxFetchBytes is the default body cap and MaxFetchBytesCap is the ceiling a
+	// manifest's maxFetchBytes may raise it to, clamped and logged the same way a
+	// call budget is.
 	MaxFetchBytes    int64
+	MaxFetchBytesCap int64
 	FailureThreshold int
 	RecycleBytes     int64
 	// HTTPClient performs a guest's fetches. Nil means safefetch.Client, which is
@@ -151,11 +203,23 @@ func (o Options) withDefaults() Options {
 	if o.CallTimeout <= 0 {
 		o.CallTimeout = DefaultCallTimeout
 	}
+	if o.MetadataCallBudget <= 0 {
+		o.MetadataCallBudget = DefaultMetadataCallBudget
+	}
+	if o.MaxCallBudget <= 0 {
+		o.MaxCallBudget = DefaultMaxCallBudget
+	}
 	if o.FetchTimeout <= 0 {
 		o.FetchTimeout = DefaultFetchTimeout
 	}
+	if o.FetchGrace <= 0 {
+		o.FetchGrace = DefaultFetchGrace
+	}
 	if o.MaxFetchBytes <= 0 {
 		o.MaxFetchBytes = DefaultMaxFetchBytes
+	}
+	if o.MaxFetchBytesCap <= 0 {
+		o.MaxFetchBytesCap = DefaultMaxFetchBytesCap
 	}
 	if o.FailureThreshold <= 0 {
 		o.FailureThreshold = DefaultFailureThreshold
@@ -218,6 +282,28 @@ type Plugin struct {
 	// fetch and never rebuilt from anything a guest said, so it is immutable after
 	// Load and needs no lock.
 	hosts map[string]struct{}
+
+	// The two limits a manifest may RAISE, resolved once at load against the
+	// host's caps (ADR-0059 decision 6) and immutable after, like hosts: they are
+	// read on every call and every fetch and never from anything a guest said.
+	//
+	// metaCallBudget is the budget of one Metadata provider call. fetchLimit is
+	// the body cap of one http_fetch — declared on the metadata entry, because
+	// that is where a manifest says how big its documents are, and applied to
+	// every fetch this Plugin makes, because one guest has one linear memory and a
+	// second cap per seam would be a number nobody could predict from the file.
+	metaCallBudget time.Duration
+	fetchLimit     int64
+	// userAgent is the identity every fetch carries: the host's own, with this
+	// Plugin's id and version appended (ADR-0059 decision 7). Built once from the
+	// manifest, so the string the far end sees can never be assembled from
+	// something the guest said.
+	userAgent string
+	// droppedAgentOnce keeps the "you sent your own User-Agent" line to one per
+	// Plugin per process. It is a debug note for the author, not an audit line
+	// about the operator's server, and a provider that sets one sets it on every
+	// single fetch.
+	droppedAgentOnce sync.Once
 
 	compiled *compiled
 
@@ -316,6 +402,45 @@ func (p *Plugin) Status() Status {
 	}
 }
 
+// resolveLimits settles the numbers a manifest is allowed to move, ONCE, at
+// load, against the host's own caps (ADR-0059 decision 6).
+//
+// Here rather than at call time for the reason the allowlist is read here: these
+// are claims in a file, and a value re-read per call is a value that could be
+// made to disagree with the log line the operator was shown. Over the cap is
+// clamped and said out loud — an author who asked for ten minutes learns they got
+// two, on the boot it happened, rather than wondering why their source keeps
+// being cut off.
+func (p *Plugin) resolveLimits() {
+	p.metaCallBudget = p.opts.MetadataCallBudget
+	p.fetchLimit = p.opts.MaxFetchBytes
+	p.userAgent = useragent.ForPlugin(p.id, p.manifest.Version)
+
+	for _, entry := range p.manifest.Provides {
+		if entry.Kind != pluginapi.ExtensionMetadataProvider {
+			continue
+		}
+		if entry.CallBudgetMillis > 0 {
+			want := time.Duration(entry.CallBudgetMillis) * time.Millisecond
+			if want > p.opts.MaxCallBudget {
+				p.logf("obelo: plugin %s asks for a %s call budget; this server allows %s, so it is clamped",
+					p.id, want, p.opts.MaxCallBudget)
+				want = p.opts.MaxCallBudget
+			}
+			p.metaCallBudget = want
+		}
+		if entry.MaxFetchBytes > 0 {
+			want := entry.MaxFetchBytes
+			if want > p.opts.MaxFetchBytesCap {
+				p.logf("obelo: plugin %s asks for a %d-byte fetch limit; this server allows %d, so it is clamped",
+					p.id, want, p.opts.MaxFetchBytesCap)
+				want = p.opts.MaxFetchBytesCap
+			}
+			p.fetchLimit = want
+		}
+	}
+}
+
 func (p *Plugin) logf(format string, args ...any) { p.opts.Logf(format, args...) }
 
 func (p *Plugin) httpClient() *http.Client { return p.opts.HTTPClient }
@@ -327,6 +452,21 @@ func (p *Plugin) httpClient() *http.Client { return p.opts.HTTPClient }
 func (p *Plugin) audit(host, reason string) {
 	p.logf("obelo: plugin audit: refused a fetch: plugin=%s host=%s reason=%s",
 		p.id, sanitizeLine(host), reason)
+}
+
+// noteDroppedUserAgent says, ONCE, that this Plugin tried to set its own
+// User-Agent and the host's was sent instead.
+//
+// A debug line and not an audit line, which is the distinction ADR-0059 draws: an
+// audit line is "this Plugin reached for something it may not have" and an
+// operator greps for those. This is "your header went nowhere" — a note to the
+// AUTHOR about a header that was never going to travel, harmless, and worth
+// saying exactly once because a Plugin that sets an agent sets it every time.
+func (p *Plugin) noteDroppedUserAgent() {
+	p.droppedAgentOnce.Do(func() {
+		p.logf("obelo: plugin %s [debug] sent its own User-Agent; the host's identity is sent instead (%s)",
+			p.id, p.userAgent)
+	})
 }
 
 // allows reports whether the manifest's allowlist covers host. Exact and
@@ -423,9 +563,21 @@ func (p *Plugin) Disabled() bool {
 // event was not delivered, and the reason is on the settings screen.
 var ErrDisabled = errors.New("plugin is disabled")
 
-// callGuest makes one call into the guest, serialized, under a deadline, with the
-// instance lifecycle ADR-0058 decision 7 requires around it.
+// callGuest makes one call into the guest under the DEFAULT budget: the Event
+// sink's and the Subtitle provider's. A Metadata provider calls callGuestWithin
+// with its own (ADR-0059 decision 6).
 func (p *Plugin) callGuest(ctx context.Context, export string, target string, req, out any) error {
+	return p.callGuestWithin(ctx, p.opts.CallTimeout, export, target, req, out)
+}
+
+// callGuestWithin makes one call into the guest, serialized, under a deadline,
+// with the instance lifecycle ADR-0058 decision 7 requires around it.
+//
+// The budget is a PARAMETER rather than a field because it belongs to the
+// Extension point being called and not to the Plugin: one module may fill two
+// seams, and a sink's ten seconds must not become a provider's thirty because
+// they share a directory.
+func (p *Plugin) callGuestWithin(ctx context.Context, budget time.Duration, export string, target string, req, out any) error {
 	p.callMu.Lock()
 	defer p.callMu.Unlock()
 
@@ -439,7 +591,10 @@ func (p *Plugin) callGuest(ctx context.Context, export string, target string, re
 	}
 	defer p.endCall()
 
-	callCtx, cancel := context.WithTimeout(ctx, p.opts.CallTimeout)
+	if budget <= 0 {
+		budget = p.opts.CallTimeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	if p.instance == nil {
@@ -543,6 +698,10 @@ func Load(ctx context.Context, dir string, opts Options) (*Set, error) {
 // always return is a Plugin with a module behind it.
 func loadOne(ctx context.Context, dir, dirName string, opts Options) *Plugin {
 	p := &Plugin{id: dirName, dir: dir, opts: opts, hosts: map[string]struct{}{}}
+	// The host's own numbers, in place BEFORE the manifest is read, so a Plugin
+	// refused at any point below still has a budget, a byte cap and an identity
+	// rather than three zeroes.
+	p.resolveLimits()
 
 	m, err := readManifest(dir)
 	if err != nil {
@@ -563,6 +722,10 @@ func loadOne(ctx context.Context, dir, dirName string, opts Options) *Plugin {
 	for _, h := range m.Network.Hosts {
 		p.hosts[normalizeHost(h)] = struct{}{}
 	}
+	// Again, now that there is a manifest to read them off: the budget and the
+	// byte cap it asks for, clamped to this server's, and the User-Agent its id
+	// and version go into.
+	p.resolveLimits()
 
 	wasm, err := os.ReadFile(filepath.Join(dir, moduleFile(m)))
 	if err != nil {

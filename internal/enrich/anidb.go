@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // AniDBProvider is the anime-specialist Full video provider (ADR-0027): an
@@ -78,7 +80,7 @@ func NewAniDBProvider(client, baseURL, language string) *AniDBProvider {
 		Client:      client,
 		BaseURL:     baseURL,
 		Language:    language,
-		UserAgent:   DefaultUserAgent,
+		UserAgent:   useragent.Default,
 		HTTPClient:  &http.Client{Timeout: 20 * time.Second},
 		minInterval: defaultAniDBThrottle,
 		cache:       map[string]anidbResult{},

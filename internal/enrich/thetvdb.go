@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // TheTVDBProvider is the fill-only supplement in the video chain for the TV kinds
@@ -86,7 +88,7 @@ func NewTheTVDBProvider(apiKey, baseURL string) *TheTVDBProvider {
 	return &TheTVDBProvider{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
-		UserAgent:   DefaultUserAgent,
+		UserAgent:   useragent.Default,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultTheTVDBThrottle,
 		cache:       map[string]thetvdbResult{},

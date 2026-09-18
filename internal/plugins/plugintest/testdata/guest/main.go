@@ -448,6 +448,7 @@ type externalRefResponse struct {
 const (
 	outcomeMatched           = "matched"
 	outcomeNoMatch           = "no-match"
+	outcomeUnavailable       = "unavailable"
 	outcomeRefKindMismatch   = "ref-kind-mismatch"
 	outcomeRefUnsupportedKnd = "ref-unsupported-kind"
 )
@@ -499,6 +500,10 @@ const (
 	guestOverview    = "Filled from inside the sandbox by an Installed plugin."
 	guestWrongTitle  = "An Entirely Different Record"
 	guestArtworkPath = "/art/poster.jpg"
+	// guestAgent is an identity this guest asks the host to send and the host
+	// never does (ADR-0059 decision 7). A stand-in that ever sees it is a stand-in
+	// looking at a bug.
+	guestAgent = "guest-agent/9.9 ( nobody@example.test )"
 )
 
 //go:wasmexport metadata_lookup
@@ -587,6 +592,59 @@ func metadataLookup(ptr, n uint32) uint64 {
 		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
 			Matched: true, Name: req.Ref.Title, Overview: string(value), Source: "installed",
 		}})
+
+	case "fetch-slow":
+		// THREE fetches in one lookup, which is the shape a real provider has:
+		// resolve the id, decorate the record, ask for artwork. The stand-in the
+		// test points URL2 at answers each one slowly, so this is where the host's
+		// call budget is either enough or it is not.
+		//
+		// A fetch that comes back as an ERROR is "the source is not answering right
+		// now", and this guest says so — `unavailable`, which sends the item to the
+		// host's backoff — rather than `no-match`, which would be a claim about the
+		// source's catalogue it is in no position to make. That the guest gets to
+		// answer at all is the property under test: before ADR-0059 decision 6 the
+		// call deadline killed the instance mid-fetch and the Plugin took the blame.
+		for i := 1; i <= 3; i++ {
+			resp := fetch(fetchRequest{URL: s.URL2})
+			if resp.Refused != "" {
+				return reply(lookupResponse{Outcome: outcomeUnavailable, Detail: "fetch " + itoa(i) + " refused: " + resp.Refused})
+			}
+			if resp.Error != "" {
+				return reply(lookupResponse{Outcome: outcomeUnavailable, Detail: "fetch " + itoa(i) + " failed: " + resp.Error})
+			}
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched: true, Name: req.Ref.Title, Overview: guestOverview, Source: "installed",
+		}})
+
+	case "fetch-once":
+		// ONE fetch, carrying headers of this guest's own — including a User-Agent,
+		// which the host drops in favour of its own identity, and an ordinary one,
+		// which travels. What came back is reported as a sentence the test reads:
+		// how many bytes arrived, or the refusal that stopped them.
+		resp := fetch(fetchRequest{URL: s.URL2, Headers: []header{
+			{Name: "User-Agent", Value: guestAgent},
+			{Name: "X-Guest-Header", Value: "yes"},
+		}})
+		detail := "bytes=" + itoa(len(resp.Body))
+		switch {
+		case resp.Refused != "":
+			detail = "refused: " + resp.Refused
+		case resp.Error != "":
+			detail = "failed: " + resp.Error
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Detail: detail, Record: metadataRecord{
+			Matched: true, Name: req.Ref.Title, Overview: detail, Source: "installed",
+		}})
+
+	case "spin":
+		// A lookup that never returns. `hang` above is the sink's; this is the
+		// provider's, and it is what a deadline kill must still mean now that a
+		// slow SOURCE no longer produces one.
+		for {
+			spun++
+		}
 
 	default:
 		// The ordinary Full provider: resolve by lookup, answer a record. Music and

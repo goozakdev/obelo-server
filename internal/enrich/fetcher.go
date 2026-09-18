@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // providerClient is the one place the JSON metadata clients (tmdb.go, musicbrainz.go,
@@ -61,7 +62,7 @@ type HTTPArtworkFetcher struct {
 	// MaxBytes caps a downloaded image; 0 uses defaultMaxArtworkBytes.
 	MaxBytes int64
 	// UserAgent identifies Obelo on the image download itself; empty uses
-	// DefaultUserAgent. The bytes behind a Cover Art Archive cover come from here,
+	// useragent.Default. The bytes behind a Cover Art Archive cover come from here,
 	// not from the MusicBrainz provider's own request, so leaving this unset sent
 	// every cover fetch out as Go's "Go-http-client/1.1" — precisely the anonymous
 	// agent MusicBrainz throttles hardest — while the manifest request beside it was
@@ -91,7 +92,7 @@ func (f HTTPArtworkFetcher) Fetch(ctx context.Context, url string) ([]byte, stri
 	}
 	ua := f.UserAgent
 	if ua == "" {
-		ua = DefaultUserAgent
+		ua = useragent.Default
 	}
 	req.Header.Set("User-Agent", ua)
 	resp, err := client.Do(req)

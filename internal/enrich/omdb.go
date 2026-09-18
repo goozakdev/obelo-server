@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
 // OMDbProvider is the first fill-only supplement in the video chain. It serves the
@@ -75,7 +77,7 @@ func NewOMDbProvider(apiKey, baseURL string) *OMDbProvider {
 	return &OMDbProvider{
 		APIKey:      apiKey,
 		BaseURL:     baseURL,
-		UserAgent:   DefaultUserAgent,
+		UserAgent:   useragent.Default,
 		HTTPClient:  &http.Client{Timeout: 15 * time.Second},
 		minInterval: defaultOMDbThrottle,
 		cache:       map[string]omdbResult{},
