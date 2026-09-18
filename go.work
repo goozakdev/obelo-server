@@ -33,4 +33,6 @@ use (
 	./plugins/omdb
 	./plugins/thetvdb
 	./plugins/anidb
+	./plugins/fanarttv
+	./plugins/theaudiodb
 )

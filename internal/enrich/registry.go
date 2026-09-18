@@ -85,8 +85,6 @@ const (
 const (
 	registryMusicBrainzBaseURL = "https://musicbrainz.org/ws/2"
 	registryCoverArtBaseURL    = "https://coverartarchive.org"
-	registryFanartTVBaseURL    = "https://webservice.fanart.tv/v3"
-	registryTheAudioDBBaseURL  = "https://www.theaudiodb.com/api/v1/json"
 )
 
 // MetadataPlugins is the ordered set of Metadata provider Built-ins this binary
@@ -216,52 +214,27 @@ func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 			// buildPlugin skips a nil factory rather than erroring, which is what makes
 			// "registered, never built" a state the composition can hold.
 		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug: SlugFanartTV,
-				Name: "fanart.tv",
-				// The one source that serves BOTH kinds from one client and one key.
-				Kinds:        []string{KindVideo, KindMusic},
-				Role:         RoleSupplement,
-				Class:        ClassArtworkOnly,
-				RequiresKey:  true,
-				Capabilities: []pluginapi.Capability{pluginapi.CapabilityArtworkCandidates},
-				DefaultURL:   registryFanartTVBaseURL,
-				Description:  "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
-				DocsURL:      "https://fanart.tv/get-an-api-key/",
-				// fanart.tv is strictly MBID-keyed, so its probe carries one.
-				Probe: &pluginapi.MediaRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead", MusicbrainzID: probeArtistMBID},
-			},
-			// ONE factory, both kinds. The video chain and the music chain each build
-			// their fanart.tv from this registration with the same Settings, so the
-			// split the video slice left behind — a Plugin on one side, a direct
-			// constructor on the other — is closed. It is still two INSTANCES, exactly
-			// as it was two instances before the contract existed: one client, one key,
-			// one process-wide host throttle, two positions in the composition. Sharing
-			// one instance between the chains would be a cache-sharing change nothing
-			// asked for, where two is the composition this Plugin has always had.
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewFanartTVProvider(s.Secret, s.URL)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:         SlugTheAudioDB,
-				Name:         "TheAudioDB",
-				Kinds:        []string{KindMusic},
-				Role:         RoleSupplement,
-				Class:        ClassArtworkOnly,
-				RequiresKey:  true,
-				Capabilities: []pluginapi.Capability{pluginapi.CapabilityArtworkCandidates},
-				DefaultURL:   registryTheAudioDBBaseURL,
-				Description:  "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
-				DocsURL:      "https://www.theaudiodb.com/api_guide.php",
-				Probe:        &pluginapi.MediaRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"},
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewTheAudioDBProvider(s.Secret, s.URL, s.Language)), nil
-			},
-		},
+		// FANART.TV AND THEAUDIODB ARE NOT HERE ANY MORE, and this comment is the
+		// only trace they leave.
+		//
+		// Both are Bundled plugins (ADR-0059): WebAssembly modules built from
+		// plugins/fanarttv/ and plugins/theaudiodb/, carried in the binary by
+		// internal/bundled and installed into <dataDir>/plugins/<id>/ on first boot.
+		// They reach this catalog through the Installed-plugin loader, registered
+		// AHEAD of this list in internal/bundled's own order — which is what keeps
+		// fanart.tv before TheAudioDB, and so keeps fanart.tv the music chain's
+		// PREFERRED image source and TheAudioDB its image-plus-biography fallback
+		// (Catalog.musicImageSupplements fills its two slots in registration order).
+		//
+		// fanart.tv's registration used to say it was "still two INSTANCES, one per
+		// chain". It is one now: a Plugin serving `kinds: [video, music]` is ONE
+		// module with one linear memory, and the host's factory hands each chain a
+		// view over it (internal/plugins/metadata.go), serializing every call. That
+		// is the same single process-wide throttle and the same one key the two Go
+		// instances shared, with the sharing made structural.
+		//
+		// Their Descriptors — the names, the capabilities, the default URLs, the copy
+		// and the connection probes — are now plugins/<id>/manifest.json, word for word.
 	}
 }
 

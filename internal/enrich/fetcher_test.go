@@ -167,8 +167,6 @@ func TestProviderJSONClientsCarryTheRedirectPolicy(t *testing.T) {
 	injected := &http.Client{}
 	for name, got := range map[string]*http.Client{
 		"musicbrainz": (&MusicBrainzProvider{HTTPClient: injected}).client(),
-		"fanarttv":    (&FanartTVProvider{HTTPClient: injected}).client(),
-		"theaudiodb":  (&TheAudioDBProvider{HTTPClient: injected}).client(),
 		"nil client":  (&MusicBrainzProvider{}).client(),
 	} {
 		if got.CheckRedirect == nil {

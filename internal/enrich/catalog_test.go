@@ -47,6 +47,8 @@ func bundledStandIns() []string {
 		SlugOMDb,
 		SlugTheTVDB,
 		SlugAniDB,
+		SlugFanartTV,
+		SlugTheAudioDB,
 	}
 }
 
