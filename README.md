@@ -401,5 +401,6 @@ internal/            the modular monolith (scanner, enrichment, playback, api, â
 web/                 React + TypeScript SPA (embedded into the binary)
 docker/              multi-stage Dockerfile + docker notes
 docs/adr/            architectural decision records
+docs/plugins/        how to write a plugin for this server
 CONTEXT.md           domain glossary (the project's ubiquitous language)
 ```

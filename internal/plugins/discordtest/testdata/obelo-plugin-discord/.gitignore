@@ -1,0 +1,4 @@
+# The built module. It is an artifact, it is megabytes, and nobody reviews a
+# binary diff — so it is built from this source instead: by `make`, by the
+# server's acceptance suite, and by anyone who wants to install it.
+plugin.wasm
