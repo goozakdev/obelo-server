@@ -1,0 +1,26 @@
+// The Go workspace that joins this repository's modules (ADR-0059 decision 9).
+//
+// Three modules live here, and the split is not bookkeeping:
+//
+//   - `.`            the server. It has the whole dependency graph.
+//   - `./pluginapi`  the contract. No requires, ever — a plugin author imports
+//                    the wire types without importing the server.
+//   - `./pluginsdk`  the Go SDK for plugin authors. Requires pluginapi and
+//                    nothing else.
+//
+// The workspace is what makes `go build ./...`, `go vet ./...` and `go test ./...`
+// from the repository root cover all three at once while each still resolves its
+// own imports the way a consumer outside this repository would. The server's
+// go.mod carries a `replace` for the two local modules as well, so a build with
+// GOWORK=off — which is what a plugin's own `GOOS=wasip1` build runs under — still
+// resolves them from the working tree rather than from a proxy that has never
+// heard of them.
+//
+// From issue 04 each `./plugins/<id>` module joins this list.
+go 1.26.5
+
+use (
+	.
+	./pluginapi
+	./pluginsdk
+)

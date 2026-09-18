@@ -4,11 +4,31 @@ go 1.26.5
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/goozakdev/obelo-server/pluginapi v0.0.0
+	github.com/goozakdev/obelo-server/pluginsdk v0.0.0
 	github.com/hashicorp/mdns v1.0.7
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.34.4
 	tailscale.com v1.102.2
+)
+
+// The contract and the SDK are modules of their own inside this repository
+// (ADR-0059 decision 9), and neither is published anywhere. These two lines are
+// what resolve them from the working tree; go.work says the same thing for the
+// tools that read a workspace, and this says it for the ones that do not.
+//
+// THE PRICE, stated where it is paid: `go install
+// github.com/goozakdev/obelo-server/cmd/obelo@latest` no longer works, because
+// `go install pkg@version` refuses a module with a directory `replace`. Nobody
+// minds, and that is a decision rather than a shrug — ADR-0006 makes the Docker
+// image the only supported way to run this server, and a `go install` of it
+// could not work anyway: the binary embeds internal/webui/dist, which is a
+// committed placeholder until `make web` has run (see CLAUDE.md). The supported
+// builds are `make build`, `docker build -f docker/Dockerfile .` and a clone.
+replace (
+	github.com/goozakdev/obelo-server/pluginapi => ./pluginapi
+	github.com/goozakdev/obelo-server/pluginsdk => ./pluginsdk
 )
 
 require (

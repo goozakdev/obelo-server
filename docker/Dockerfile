@@ -46,7 +46,26 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 
 # Module deps first (cached until go.mod/go.sum change).
-COPY go.mod go.sum ./
+#
+# THIS REPOSITORY IS THREE GO MODULES (ADR-0059 decision 9): the server, the
+# contract at ./pluginapi and the plugin SDK at ./pluginsdk, joined by go.work.
+# The server's go.mod `replace`s the two at those directory paths, so they must be
+# in the image BEFORE `go mod download` — a directory replace is resolved from the
+# filesystem, and a missing directory is a module resolution error rather than a
+# missing package one.
+#
+# This also fixes the image that could not be built from `main` at all: `internal`
+# imports pluginapi and this stage never copied it (the PRD's problem statement,
+# last bullet). Both are small and change rarely, so they sit with the module
+# files rather than with the source tree, and the cached layer survives an
+# ordinary edit under cmd/ or internal/.
+#
+# `go.work*` is a glob so go.work.sum comes along when it exists and the COPY
+# still succeeds when it does not — go.work itself is committed, so the pattern
+# always matches at least one file.
+COPY go.mod go.sum go.work* ./
+COPY pluginapi/ ./pluginapi/
+COPY pluginsdk/ ./pluginsdk/
 RUN go mod download
 
 # Source tree. `internal` carries the committed placeholder dist/index.html,

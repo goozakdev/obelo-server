@@ -9,6 +9,13 @@
 
 # Go workspace / vendor
 /vendor/
+# go.work IS tracked (it joins the server, pluginapi and pluginsdk — ADR-0059
+# decision 9). go.work.sum is NOT: every module in the workspace is either local
+# or already covered by the server's go.sum, so the file is regenerated noise that
+# `go build`, `go vet` and `go test` do not need and that `go list -m all` rewrites
+# on a whim. The Dockerfile copies it with a glob, so an operator who has one
+# locally still gets it in their image.
+/go.work.sum
 
 # Editor / OS cruft
 .DS_Store
