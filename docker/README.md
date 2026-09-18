@@ -54,6 +54,42 @@ are bundled, and the server uses BYOK (bring-your-own-key) exactly as a
 `make build` binary does. That is the correct result for everyone who is not the
 maintainer cutting an official image.
 
+### Before you build: `make check-amd64`
+
+```sh
+make check-amd64      # needs a running Docker daemon
+```
+
+This image is **amd64**, and the machine you build it on very likely is not.
+`make check` — the everyday gate — runs the Go suite twice, but both times on the
+host's architecture. For everything except plugins that is the same code: pure
+Go, no CGO, one compiler.
+
+An **Installed plugin** is the exception, and it is not a small one. It is a
+WebAssembly module compiled *at run time* by wazero, which selects a **different
+optimizing-compiler backend for amd64 than for arm64**
+([ADR-0058](../docs/adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)
+decision 1). So the backend that executes every plugin in production is one an
+arm64 laptop never runs, and `CGO_ENABLED=0 GOARCH=amd64 go build ./...` — which
+is all the plugin work could do for seven issues — proves only that the tree
+compiles for it.
+
+`make check-amd64` runs the plugin-facing packages inside a `--platform
+linux/amd64` `golang:1.26` container, with and without `-tags tailscale`. It
+compiles the wasm test guest from source with the same command a plugin author
+uses and calls into it, so a green run means a guest really executed under the
+amd64 backend rather than merely compiled for it.
+
+**Budget about half an hour the first time**: measured on an arm64 Mac under
+Docker 29, 14 min 47 s for the untagged run and 15 min 56 s for the tagged one,
+against about 6.5 min for the same packages natively. A re-run with no source change is ~47 s, because Go's test
+cache answers — the build and module caches live in named Docker volumes
+(`obelo-go-mod-amd64`, `obelo-go-build-amd64`) so they never mix with the host's
+arm64 ones. The container installs `ffmpeg` on the way in (~40 s): `internal/api`
+synthesises its media fixtures with it, and without it those tests fail rather
+than skip. Knobs are in the Makefile (`AMD64_PKGS`, `AMD64_IMAGE`,
+`AMD64_TIMEOUT`).
+
 ### Official builds (maintainer only)
 
 Official images bundle default metadata credentials (ADR-0032). They are passed as
@@ -101,10 +137,15 @@ protect the **build host and its cache**, not the shipped artifact.
 
 ### Publishing an official image
 
-Run these three checks **before** `docker push`. Each one covers a failure that
+Run these four checks **before** `docker push`. Each one covers a failure that
 looks like success locally.
 
 ```sh
+# 0. ARCHITECTURE — the suite has to have RUN on amd64, not merely compiled for it.
+make check-amd64                     # see "Before you build" above; needs Docker
+# `make check` is green on an arm64 laptop whether or not wazero's amd64 backend
+# works, because it never runs it. This is the check that does.
+
 TAG=ghcr.io/goozakdev/obelo-server:latest
 
 # 1. PLATFORM — the descriptor must say amd64, not just the config.

@@ -36,6 +36,62 @@ TAGS ?=
 GOTAGS := $(if $(TAGS),-tags $(TAGS),)
 RELEASE_TAGS := tailscale
 
+# The linux/amd64 container gate (.scratch/plugin-system issue 18). ADR-0058
+# decision 1 buys wazero because its optimizing compiler serves amd64 and arm64
+# from one `.wasm`; ADR-0006 ships amd64 (and arm64). Those are TWO wazero
+# backends, and until this target existed every Installed plugin call in the suite
+# had run on exactly one of them — the development machine's arm64 — while the
+# production image executes the other. `CGO_ENABLED=0 GOARCH=amd64 go build ./...`
+# was all seven Phase 2 issues could do, and compiling for an architecture is not
+# running on it.
+#
+# AMD64_PKGS is the package list. Widening it is one edit, deliberately: start with
+# what touches a guest and grow when the emulated run time says it can.
+AMD64_PKGS ?= ./pluginapi/... ./internal/plugins/... ./internal/eventsink/... \
+              ./internal/subfetch/... ./internal/enrich/... ./internal/api/
+AMD64_IMAGE ?= golang:1.26
+
+# ffmpeg, installed into the container before the run. This is not incidental and it
+# is not skippable: internal/api SYNTHESISES its media fixtures with
+# `ffmpeg -f lavfi -i testsrc`, and a machine without ffmpeg does not skip those tests
+# — it FAILS them. Measured on the first attempt at this target: 364 failures, every
+# one an empty fixture library (the scan found 0 titles), not one of them an
+# architecture difference. The tests that DO skip politely are a different set; these
+# assert on a library the fixture was supposed to have filled.
+#
+# golang:1.26 ships no ffmpeg. The one apt installs is the same Debian trixie package
+# the runtime image installs (ADR-0042), so the gate encodes with the ffmpeg an
+# operator actually gets. It costs ~40 s and one apt fetch per run, which is why this
+# is a step inside the single `docker run` rather than a second image to maintain.
+AMD64_SETUP ?= apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1 && ffmpeg -version | head -1
+
+# Go's default is 10 minutes PER PACKAGE, and internal/api does not fit in it under
+# emulation — it panicked at 10m00s mid-test with nothing wrong, which reads like a
+# hang and is not one. Raised rather than narrowed, because the package IS the
+# end-to-end plugin coverage: install, uninstall, catalog, signing, the declared
+# settings form and the Discord fixture all reach a guest through real HTTP.
+AMD64_TIMEOUT ?= 30m
+
+# One named test, run with -v BEFORE the quiet run, so the output carries proof
+# rather than an inference: it compiles the wasm guest from source with the same
+# `GOOS=wasip1 GOARCH=wasm go build` a Plugin author runs, instantiates it under
+# wazero, and calls into it. A bare list of `ok` lines would not tell you a guest
+# had executed at all.
+#
+# The recipe GREPS for its `--- PASS:` line rather than trusting the exit code, and
+# that is not belt-and-braces: `go test -run` whose pattern matches nothing prints a
+# warning and EXITS 0. Rename this test, or fumble the shell quoting so the regex
+# arrives mangled, and the proof step would go on reporting success while proving
+# nothing — which is the exact failure CLAUDE.md records twice and this target exists
+# to close a third instance of.
+AMD64_PROOF_TEST ?= TestAGuestDeliversASignedDocument
+
+# Named volumes, NOT host cache directories: the container's cache is amd64 object
+# code and the host's is arm64. Sharing a directory between them means every
+# `make test-go` on the host evicts what the container just built, and vice versa.
+AMD64_MOD_CACHE   ?= obelo-go-mod-amd64
+AMD64_BUILD_CACHE ?= obelo-go-build-amd64
+
 CONFIG_PKG := github.com/goozakdev/obelo-server/internal/config
 BOOTSTRAP_TMDB_OBF   := $(shell printf %s "$(OBELO_BOOTSTRAP_TMDB_KEY)" | base64 | tr -d '\n')
 BOOTSTRAP_FANART_OBF := $(shell printf %s "$(OBELO_BOOTSTRAP_FANART_KEY)" | base64 | tr -d '\n')
@@ -44,7 +100,7 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
            -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
-.PHONY: all build build-release web go-build go-build-release keytool pluginsign run test test-go test-go-tailscale test-web test-e2e check check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
+.PHONY: all build build-release web go-build go-build-release keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
 
 all: build
 
@@ -110,6 +166,76 @@ test-go:
 test-go-tailscale:
 	$(MAKE) test-go TAGS="$(RELEASE_TAGS)"
 
+## test-go-amd64: run the plugin-facing packages INSIDE a linux/amd64 container, so
+## wazero's amd64 compiler backend actually executes a guest (.scratch/plugin-system
+## issue 18). Needs a running Docker daemon and nothing else — no amd64 toolchain on
+## the host, no TinyGo, no ffmpeg.
+##
+## THIS IS THE THIRD INSTANCE OF THE SHAPE CLAUDE.md RECORDS, and it is why this is a
+## target rather than a note in an ADR. Issues 08, 09, 11, 12, 13, 15 and 16 each ended
+## by saying execution on amd64 was unverified and "should be a CI job", and each of
+## them was green throughout: `CGO_ENABLED=0 GOARCH=amd64 go build ./...` passed every
+## time, reporting success about a property it does not test. A Plugin is the one thing
+## in this server COMPILED AT RUN TIME, by a backend wazero picks per architecture
+## (ADR-0058 decision 1), so "it cross-compiles" says nothing whatever about the
+## machine the image ships to — which is the amd64 one (ADR-0006).
+##
+## It is NOT part of `make check`, on purpose. `check` is the pre-commit gate and must
+## keep running on a laptop with Docker closed; this needs a daemon and takes minutes
+## under emulation. `check-amd64` below is the release-side gate instead, and
+## docker/README.md's publish checklist calls it — beside the image build, which is the
+## only reason the architecture matters at all.
+##
+## Override AMD64_PKGS to widen or narrow it; override TAGS for the shipped variant (or
+## use test-go-amd64-tailscale).
+##
+## MEASURED 2026-09-17 on an arm64 Mac, Docker 29: 14 min 47 s cold, of which
+## internal/api is 835 s (315 s native, so emulation costs 2.7x) and the ffmpeg install
+## ~40 s. A SECOND run with no source change is 47 s, because Go's test cache answers
+## for every package — the proof test above is `-count=1` precisely so that something
+## still really runs. Everything passes, with no behavioural difference between
+## wazero's two backends; the full result is the ADR-0058 "Carried out" note.
+test-go-amd64:
+	@docker info >/dev/null 2>&1 || { \
+	  echo "ERROR: test-go-amd64 needs a RUNNING DOCKER DAEMON."; \
+	  echo "       It runs the suite inside a --platform linux/amd64 $(AMD64_IMAGE)"; \
+	  echo "       container, because there is no other way to execute amd64 code on an"; \
+	  echo "       arm64 host — and executing it is the entire point of this target."; \
+	  echo "       Start Docker and run it again. 'make check' does NOT need Docker."; \
+	  exit 1; }
+	docker run --rm --platform linux/amd64 \
+	  -v "$(CURDIR)":/src -w /src \
+	  -v $(AMD64_MOD_CACHE):/go/pkg/mod \
+	  -v $(AMD64_BUILD_CACHE):/root/.cache/go-build \
+	  -e GOFLAGS=-buildvcs=false -e CGO_ENABLED=0 \
+	  $(AMD64_IMAGE) sh -c 'set -e; \
+	    echo "container kernel arch: $$(uname -m)"; \
+	    go version; \
+	    $(AMD64_SETUP); \
+	    go test $(GOTAGS) -count=1 -v -run "^$(AMD64_PROOF_TEST)\$$" ./internal/plugins/ | tee /proof.log; \
+	    grep -q "^--- PASS: $(AMD64_PROOF_TEST)" /proof.log || { \
+	      echo "ERROR: $(AMD64_PROOF_TEST) did not PASS, so no guest was compiled and"; \
+	      echo "       called under the amd64 backend. A -run that matches nothing exits 0."; \
+	      exit 1; }; \
+	    go test $(GOTAGS) -timeout $(AMD64_TIMEOUT) $(AMD64_PKGS)'
+
+## test-go-amd64-tailscale: test-go-amd64 with the release build tag (ADR-0043), so the
+## amd64 gate covers the variant the Docker image actually carries. Same argument
+## `check` makes for running the host suite twice, one architecture over.
+##
+## It turned out to be nearly free — 15:56 against 14:47, about 70 s — because the
+## tailscale tree compiles once into the amd64 build-cache volume and no plugin code
+## sits behind the tag. That is why check-amd64 runs both rather than arguing about it.
+test-go-amd64-tailscale:
+	$(MAKE) test-go-amd64 TAGS="$(RELEASE_TAGS)"
+
+## amd64-pkgs: print AMD64_PKGS and nothing else. It exists for a caller that is
+## ALREADY running on amd64 — the GitHub runner in .github/workflows/check.yml — where
+## a container would add emulation to a machine that needs none. One list, printed
+## rather than copied, so the workflow cannot drift from the target.
+amd64-pkgs:
+	@echo '$(AMD64_PKGS)'
+
 ## test-web: the vitest component suite. An alias for check-web (below), which is
 ## the single implementation, so the gate and the developer-facing name cannot drift.
 test-web: check-web
@@ -137,7 +263,26 @@ test-e2e:
 ## IT ALSO RUNS THE WEB SUITE (check-web), as of 2026-08-14. It did not before, and
 ## that was the same mistake in a third place: 775 vitest tests that ran only when a
 ## human remembered to. See check-web below for why it is placed where it is.
+##
+## IT RUNS ON ONE ARCHITECTURE — whichever one you are sitting at — and it deliberately
+## stays that way: it must work with Docker closed. The second architecture is
+## check-amd64, which is a release-time gate for the same reason check-bundle is.
 check: check-fmt vet vet-tailscale check-placeholder check-credentials-free check-web test-go test-go-tailscale
+
+## check-amd64: the RELEASE-side gate, beside `check` rather than inside it
+## (.scratch/plugin-system issue 18). Run it before building an image to push.
+##
+## `check` proves the tree is correct on the machine you are sitting at. This proves
+## it is correct on the machine it ships to — which for an Installed plugin is a
+## different question, not a stricter one: ADR-0058 runs a guest under wazero's
+## optimizing compiler, and wazero chooses a DIFFERENT compiler backend for amd64 than
+## for arm64. Nothing else in this repo has a per-architecture code path, which is
+## exactly why nothing else needs this.
+##
+## It is not in `check` because `check` may not require Docker, and it is not in the
+## Dockerfile because a build is not a test run. docker/README.md's publish checklist
+## is where it is called from.
+check-amd64: test-go-amd64 test-go-amd64-tailscale
 
 ## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.
 ## This exists because nothing enforced formatting and it silently drifted to
