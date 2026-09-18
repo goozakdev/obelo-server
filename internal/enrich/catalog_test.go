@@ -44,6 +44,9 @@ func builtinCatalog() Catalog {
 func bundledStandIns() []string {
 	return []string{
 		SlugTMDB,
+		SlugOMDb,
+		SlugTheTVDB,
+		SlugAniDB,
 	}
 }
 

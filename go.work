@@ -30,4 +30,7 @@ use (
 	./pluginapi
 	./pluginsdk
 	./plugins/tmdb
+	./plugins/omdb
+	./plugins/thetvdb
+	./plugins/anidb
 )
