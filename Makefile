@@ -111,14 +111,36 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
 # CLAUDE.md records. An explicit subdirectory pattern DOES cross into a workspace
 # module, which is why these three are spelled out. A module added to go.work
 # belongs here too.
-GOPKGS := ./... ./pluginapi/... ./pluginsdk/...
+#
+# A module added to go.work belongs here too — and `./plugins/...` DOES NOT WORK
+# for the Bundled plugins: a pattern crosses into a workspace module only when it
+# names that module's own directory, so `./plugins/tmdb/...` is covered and
+# `./plugins/...` silently matches nothing ("matched no packages", exit 0). The
+# wildcard below spells one pattern per plugin directory, so adding a plugin is a
+# directory and not a Makefile edit — which matters, because three agents adding
+# three plugins in parallel would otherwise conflict here every time.
+# The Bundled plugins (ADR-0059, .scratch/bundled-plugins). Each plugins/<id>/ is
+# a Go module with a manifest.json beside it; `make plugins` compiles each to
+# WebAssembly and writes the module and the manifest into BUNDLED_DIR, which
+# internal/bundled embeds. DISCOVERY IS THE FILESYSTEM: a new plugin is a new
+# directory with a manifest in it, and nothing here names one.
+BUNDLED_DIR := internal/bundled/modules
+PLUGIN_DIRS := $(patsubst %/manifest.json,%,$(wildcard plugins/*/manifest.json))
+PLUGIN_PKGS := $(patsubst %,./%/...,$(PLUGIN_DIRS))
+# Where the uncompressed module lands on its way to being gzipped. NOT inside
+# BUNDLED_DIR: that whole directory is embedded, so a stray .wasm left beside the
+# .wasm.gz would be compiled into the binary twice over.
+PLUGIN_BUILD_DIR := bin/plugins
 
-.PHONY: all build build-release web go-build go-build-release keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
+GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
+
+.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
 
 all: build
 
-## build: frontend bundle first, then the Go binary that embeds it.
-build: web go-build
+## build: the Bundled plugin modules and the frontend bundle first, then the Go
+## binary that embeds both.
+build: plugins web go-build
 
 ## web: install deps (if needed) and produce the SPA bundle into the embed dir.
 web:
@@ -135,13 +157,58 @@ web:
 go-build:
 	go build $(GOTAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/obelo
 
-## build-release: the artifact that ships — the SPA bundle plus the Go binary WITH
-## the `tailscale` tag (ADR-0043), matching what docker/Dockerfile produces.
-build-release: web go-build-release
+## build-release: the artifact that ships — the Bundled plugin modules, the SPA
+## bundle, and the Go binary WITH the `tailscale` tag (ADR-0043), matching what
+## docker/Dockerfile produces.
+build-release: plugins web go-build-release
 
 ## go-build-release: go-build with the release tags.
 go-build-release:
 	$(MAKE) go-build TAGS="$(RELEASE_TAGS)"
+
+## plugins: build every Bundled plugin under plugins/*/ into internal/bundled/modules
+## (ADR-0059 decision 10, .scratch/bundled-plugins).
+##
+## Each plugin is compiled with THE REFERENCE PLUGIN'S OWN COMMAND, character for
+## character — GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= go build
+## -buildmode=c-shared — and that is not a coincidence to be tidied away: it is the
+## claim ADR-0058 makes, that a plugin an outsider writes and a plugin the
+## maintainer ships are built the same way with stock Go and no PDK. The moment
+## this target needs a flag the authoring guide does not mention, the claim is
+## false.
+##
+## GOFLAGS= is emptied on purpose. It is inherited from the environment (CI sets
+## -buildvcs=false, the amd64 gate sets it too), and a flag meant for the server's
+## build reaching a wasip1 c-shared build is a failure nobody would connect to the
+## variable that caused it.
+##
+## The output is <id>.wasm.gz (gzip -9) plus <id>.manifest.json, byte for byte as
+## the author wrote it. Compressed because a stock-Go guest is ~3.9 MB and about a
+## megabyte gzipped, and seven of them uncompressed would be most of the binary's
+## size for bytes that are written to disk at most once in a server's life;
+## `gzip -n` so the archive carries no timestamp and two builds of the same module
+## are the same file.
+##
+## THE DIRECTORY NAME IS THE ID. The manifest's own id must match it, checked here
+## rather than at boot, because the loader refuses a mismatch and "your plugin
+## silently did not appear" is a worse place to learn it than a build failure.
+plugins:
+	@mkdir -p $(BUNDLED_DIR) $(PLUGIN_BUILD_DIR)
+	@set -e; for dir in $(PLUGIN_DIRS); do \
+	  id=$$(basename $$dir); \
+	  declared=$$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' $$dir/manifest.json | head -1); \
+	  if [ "$$declared" != "$$id" ]; then \
+	    echo "ERROR: $$dir/manifest.json declares the id \"$$declared\" but the directory is \"$$id\"."; \
+	    echo "       They must match: the directory IS the id on disk and the key its settings row is written under."; \
+	    exit 1; \
+	  fi; \
+	  echo "building $$dir -> $(BUNDLED_DIR)/$$id.wasm.gz"; \
+	  ( cd $$dir && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= \
+	      go build -buildmode=c-shared -o $(CURDIR)/$(PLUGIN_BUILD_DIR)/$$id.wasm . ); \
+	  gzip -9nc $(PLUGIN_BUILD_DIR)/$$id.wasm > $(BUNDLED_DIR)/$$id.wasm.gz; \
+	  cp $$dir/manifest.json $(BUNDLED_DIR)/$$id.manifest.json; \
+	done
+	@echo "ok: $(words $(PLUGIN_DIRS)) bundled plugin(s) built into $(BUNDLED_DIR)"
 
 ## keytool: build the offline maintainer key-rotation CLI (ADR-0032). Seals default
 ## provider keys into the rotation envelope for the runbook — never bundles a secret,
@@ -280,7 +347,7 @@ test-e2e:
 ## IT RUNS ON ONE ARCHITECTURE — whichever one you are sitting at — and it deliberately
 ## stays that way: it must work with Docker closed. The second architecture is
 ## check-amd64, which is a release-time gate for the same reason check-bundle is.
-check: check-fmt vet vet-tailscale check-placeholder check-credentials-free check-web test-go test-go-tailscale
+check: check-fmt vet vet-tailscale check-placeholder check-no-bundled-modules-tracked check-credentials-free check-web test-go test-go-tailscale
 
 ## check-amd64: the RELEASE-side gate, beside `check` rather than inside it
 ## (.scratch/plugin-system issue 18). Run it before building an image to push.
@@ -347,6 +414,32 @@ check-placeholder:
 ## the opposite. Do not "reconcile" them.
 check-bundle:
 	@go run ./internal/webui/cmd/checkbundle
+
+## check-no-bundled-modules-tracked: fail if a built plugin module or manifest was
+## ever committed (ADR-0059 decision 10).
+##
+## It is THE OTHER HALF of the pair `go test ./internal/bundled` makes, and the two
+## want opposite things on purpose — the same shape CLAUDE.md records for the SPA
+## bundle, and the reason both halves are automated here rather than one of them.
+## The test fails when the modules are MISSING, so a clone that has not run
+## `make plugins` cannot quietly ship a server with no providers; this fails when
+## they are PRESENT in git, so nobody ever "fixes" that by committing 7 MB of
+## build output that no reviewer can read and that goes stale the moment a plugin
+## changes.
+##
+## `git ls-files` inspects what is TRACKED, not what is on disk: a developer who
+## has run `make plugins` has the modules sitting right there, and a check that
+## failed for them would be disabled within a week.
+check-no-bundled-modules-tracked:
+	@git rev-parse --git-dir >/dev/null 2>&1 || { \
+	  echo "ERROR: not a git repository — cannot inspect the tracked plugin modules"; exit 1; }
+	@tracked=$$(git ls-files $(BUNDLED_DIR) | grep -v '^$(BUNDLED_DIR)/\.keep$$' || true); \
+	if [ -n "$$tracked" ]; then \
+	  echo "ERROR: built plugin modules are tracked in git:"; echo "$$tracked"; \
+	  echo "       $(BUNDLED_DIR) holds BUILD OUTPUT. Remove them with:"; \
+	  echo "         git rm --cached $$tracked"; \
+	  exit 1; \
+	else echo "ok: no built plugin modules are tracked"; fi
 
 ## check-credentials-free: fail if a bundled-credential var carries a non-empty
 ## literal in source (ADR-0032) — the repo must be credential-free against

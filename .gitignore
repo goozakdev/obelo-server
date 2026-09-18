@@ -38,6 +38,18 @@ node_modules/
 # except that placeholder.
 /internal/webui/dist/*
 !/internal/webui/dist/index.html
+
+# Built Bundled plugin modules (ADR-0059 decision 10): `make plugins` writes one
+# <id>.wasm.gz and one <id>.manifest.json here for every module under plugins/*/,
+# and internal/bundled embeds the lot. THEY ARE NEVER COMMITTED — a .wasm is a
+# megabyte of build output no reviewer can read, and it goes stale the moment its
+# source changes. `make check-no-bundled-modules-tracked` fails if one ever is.
+#
+# The .keep is tracked so the directory EXISTS in a fresh clone: the embed pattern
+# is `all:modules`, and a pattern that matches nothing is a compile error rather
+# than the specific "run make plugins" failure a clone is supposed to get.
+/internal/bundled/modules/*
+!/internal/bundled/modules/.keep
 # Stray root-level binaries from `go build ./cmd/<name>` (the tracked build output
 # goes to /bin/, ignored above). `make keytool` writes to bin/keytool, but a bare
 # `go build ./cmd/keytool` drops ./keytool here.

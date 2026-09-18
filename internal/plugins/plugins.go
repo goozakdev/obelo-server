@@ -179,6 +179,24 @@ type Options struct {
 	// complete.
 	MaxKVKeyBytes   int
 	MaxKVValueBytes int
+
+	// --- .scratch/bundled-plugins issue 04: the shipped order ----------------
+
+	// BundledFirst is the ids of the plugins this server SHIPPED, in the order it
+	// ships them (internal/bundled.IDs). They are registered ahead of everything
+	// else, and that ordering is the whole of what decides which source leads a
+	// kind: the first authoritative Full provider of a kind is that kind's default
+	// lead (ADR-0027), so TMDB leading video is a fact about this slice.
+	//
+	// It is a list of ids and not a reference to internal/bundled because the
+	// arrow only goes one way — that package reads this one — and because a test
+	// that wants to prove the ordering rule should be able to state an order
+	// without shipping a module.
+	//
+	// Empty is a server with no Bundled plugins, which is every server before
+	// ADR-0059 and every narrow test: everything then registers alphabetically,
+	// exactly as it did.
+	BundledFirst []string
 }
 
 // PluginKV is the durable half of the kv host functions — store.DB satisfies it.
@@ -657,6 +675,9 @@ func (p *Plugin) close(ctx context.Context) {
 type Set struct {
 	dir     string
 	plugins []*Plugin
+	// first is Options.BundledFirst, carried on the Set so that the registration
+	// ORDER travels with the thing being registered. See RegisterEnabledAround.
+	first []string
 }
 
 // Load reads dir — <dataDir>/plugins — and returns every Plugin under it, each
@@ -667,7 +688,7 @@ type Set struct {
 // with no Installed plugins, which is every server today.
 func Load(ctx context.Context, dir string, opts Options) (*Set, error) {
 	opts = opts.withDefaults()
-	set := &Set{dir: dir}
+	set := &Set{dir: dir, first: append([]string(nil), opts.BundledFirst...)}
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {

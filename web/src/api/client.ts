@@ -2020,6 +2020,17 @@ export class ApiClient {
     return this.pluginVerb(id, "reenable", signal);
   }
 
+  /** `POST /api/v1/settings/plugins/{id}/reinstall-shipped` (Admin) — put back a
+   * plugin this server SHIPS that the Admin uninstalled (ADR-0059).
+   *
+   * Uninstalling a bundled plugin records that the Admin declined it, precisely so
+   * the next boot does not put it back; this is the only way to clear that mark,
+   * which is why it is a verb rather than a note in a changelog. The plugin comes
+   * back as `bundled`, so server upgrades keep maintaining it. */
+  reinstallShippedPlugin(id: string, signal?: AbortSignal): Promise<InstalledPluginsView> {
+    return this.pluginVerb(id, "reinstall-shipped", signal);
+  }
+
   /** `DELETE /api/v1/settings/plugins/{id}` (Admin) — unload the module, delete
    * its files and its settings. Artwork and subtitles it produced stay in the
    * ordinary caches: they are the library's now. */

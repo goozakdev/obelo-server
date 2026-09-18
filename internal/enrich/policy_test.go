@@ -83,7 +83,7 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 	// A representative "fully configured" global: video (TMDB key) + music on.
 	videoAndMusic := testConfig(
 		withKey(SlugTMDB, "tk"),
-		withURLs(SlugTMDB, "http://tmdb.stub", registryTMDBImageBaseURL),
+		withURLs(SlugTMDB, "http://tmdb.stub", shippedTMDBImageBaseURL),
 		withMetadataLanguage("en-US"),
 		withActive(SlugMusicBrainz, true),
 	)

@@ -2534,6 +2534,20 @@ export interface InstalledPlugin {
    * publisher advertises; nothing is verified against it. */
   publisher?: string;
   keyId?: string;
+  /** Where this plugin came from (ADR-0059): `"bundled"` for one the server
+   * shipped and installed itself, `"admin"` for one a person uploaded, pasted a
+   * URL for, or placed in the data directory by hand.
+   *
+   * It is what the screen shows INSTEAD of an upload name or URL — "Shipped with
+   * Obelo" — and it is the one visible difference between a bundled plugin and any
+   * other. Everything else about it is identical: same sandbox, same allowlist,
+   * same lifecycle, same controls. */
+  origin?: "bundled" | "admin";
+  /** The row's lifecycle state when it is not simply installed. Today there is
+   * exactly one value — `"declined"`, a bundled plugin the Admin uninstalled — and
+   * its row carries no files, no version and no status: it exists so the screen can
+   * offer "Reinstall the shipped version", which is the only way back. */
+  state?: "declined";
   settingsSchema?: PluginSettingsField[];
   settings?: PluginSettingsValues;
 }

@@ -78,6 +78,7 @@ function PluginCard({
   onEnable,
   onDisable,
   onReenable,
+  onReinstallShipped,
   onUninstall,
   onSettingsSaved,
 }: {
@@ -86,10 +87,38 @@ function PluginCard({
   onEnable: () => void;
   onDisable: () => void;
   onReenable: () => void;
+  onReinstallShipped: () => void;
   onUninstall: () => void;
   onSettingsSaved: (view: InstalledPluginsView) => void;
 }) {
   const { id } = plugin;
+  // A DECLINED row is a plugin this server ships and the Admin removed. It has no
+  // files, no version and no status, so it gets its own small card whose only
+  // control is the way back — rather than the full card with every button
+  // disabled, which would read as a broken plugin instead of an absent one.
+  if (plugin.state === "declined") {
+    return (
+      <div className="provider-card" data-testid={`plugin-${id}`}>
+        <div className="provider-head">
+          <span className="provider-name">{plugin.name}</span>
+        </div>
+        <p className="provider-desc" data-testid={`plugin-status-${id}`}>
+          Shipped with Obelo, and you removed it. It will not come back on its own.
+        </p>
+        <div className="admin-actions">
+          <button
+            className="btn"
+            type="button"
+            data-testid={`plugin-reinstall-shipped-${id}`}
+            onClick={onReinstallShipped}
+            disabled={busy}
+          >
+            Reinstall the shipped version
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="provider-card" data-testid={`plugin-${id}`}>
       <div className="provider-head">
@@ -116,10 +145,16 @@ function PluginCard({
                 : "Running"}
           </dd>
         </div>
-        {plugin.source && (
+        {/* Where it came from. A plugin the SERVER shipped says so, in place of the
+            upload name or URL an Admin's plugin shows (ADR-0059) — it is the one
+            visible difference between the two, and an Admin is entitled to know
+            which of their sources they chose and which arrived with the server. */}
+        {(plugin.origin === "bundled" || plugin.source) && (
           <div>
             <dt>Installed from</dt>
-            <dd data-testid={`plugin-source-${id}`}>{sourceLabel(plugin.source)}</dd>
+            <dd data-testid={`plugin-source-${id}`}>
+              {plugin.origin === "bundled" ? "Shipped with Obelo" : sourceLabel(plugin.source)}
+            </dd>
           </div>
         )}
         {plugin.installedAt && (
@@ -552,7 +587,7 @@ export default function AdminPluginsScreen() {
         <>
         {view.plugins.length === 0 ? (
           <p className="admin-section-note" data-testid="plugins-empty">
-            Nothing is installed. Everything this server does today is built in.
+            Nothing is installed — not even the sources this server ships with.
           </p>
         ) : (
           view.plugins.map((p) => (
@@ -563,6 +598,12 @@ export default function AdminPluginsScreen() {
               onEnable={() => void run(() => apiClient.enablePlugin(p.id), "Enabled.")}
               onDisable={() => void run(() => apiClient.disablePlugin(p.id), "Disabled.")}
               onReenable={() => void run(() => apiClient.reenablePlugin(p.id), "Re-enabled.")}
+              onReinstallShipped={() =>
+                void run(
+                  () => apiClient.reinstallShippedPlugin(p.id),
+                  "The shipped version is back.",
+                )
+              }
               onUninstall={() => void run(() => apiClient.uninstallPlugin(p.id), "Uninstalled.")}
               onSettingsSaved={setView}
             />

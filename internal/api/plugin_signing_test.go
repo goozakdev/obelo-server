@@ -277,8 +277,8 @@ func TestWithOnePinnedKeyOnlyThatPublishersPluginInstalls(t *testing.T) {
 			// A refused install leaves nothing behind — the signature check runs
 			// before a byte is written, which is the whole reason it sits where it
 			// does in the install order.
-			if got := readPlugins(t, srv, token); len(got.Plugins) != 0 {
-				t.Fatalf("a refused install left %+v behind", got.Plugins)
+			if got := notShipped(readPlugins(t, srv, token).Plugins); len(got) != 0 {
+				t.Fatalf("a refused install left %+v behind", got)
 			}
 			dir := filepath.Join(srv.DataDir, plugins.DirName, "discord")
 			if _, err := os.Stat(dir); !os.IsNotExist(err) {

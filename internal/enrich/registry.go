@@ -83,8 +83,6 @@ const (
 // sets no override. They mirror config's Default*BaseURL constants (config keeps
 // its own for env defaulting; the Descriptors are the runtime catalog).
 const (
-	registryTMDBBaseURL        = "https://api.themoviedb.org/3"
-	registryTMDBImageBaseURL   = "https://image.tmdb.org/t/p/original"
 	registryOMDbBaseURL        = "https://www.omdbapi.com"
 	registryTheTVDBBaseURL     = "https://api4.thetvdb.com/v4"
 	registryAniDBBaseURL       = "http://api.anidb.net:9001/httpapi"
@@ -113,6 +111,12 @@ const (
 // provider in it (ADR-0027 keeps one global order), and the first
 // authoritative-role Full provider of a kind is that kind's default lead.
 //
+// THIS LIST IS NO LONGER THE WHOLE CATALOG, AND NO LONGER ITS BEGINNING. Since
+// ADR-0059 the Bundled plugins — the shipped providers, as WebAssembly modules —
+// are registered AHEAD of it, in internal/bundled's own order, and every other
+// Installed plugin after it. What is left here is the Built-ins that have not been
+// converted yet; issue 08 empties the list.
+//
 // EVERY source here is now reached through its factory — no provider is composed
 // outside the contract — with exactly one permanent exception: Cover Art Archive
 // has no factory and never will. It is not a client; it is the artwork HOST of the
@@ -124,38 +128,18 @@ const (
 // would have added a source nothing calls.
 func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
 	return []pluginapi.MetadataProviderRegistration{
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugTMDB,
-				Name:        "The Movie Database (TMDB)",
-				Kinds:       []string{KindVideo},
-				Role:        RoleAuthoritative,
-				Class:       ClassFull,
-				RequiresKey: true,
-				// TMDB is the only video source that owns a candidate list, a listable
-				// image set AND an episode list — which is why the assertions the chains
-				// used to make on the concrete type are now three declared capabilities.
-				Capabilities: []pluginapi.Capability{
-					pluginapi.CapabilitySearch,
-					pluginapi.CapabilityArtworkCandidates,
-					pluginapi.CapabilityEpisodeList,
-				},
-				DefaultURL: registryTMDBBaseURL,
-				// TMDB serves its images from a host distinct from its API — the one
-				// source with a second URL, and the reason the contract's Settings has one.
-				DefaultURL2: registryTMDBImageBaseURL,
-				Description: "Authoritative source for movies and TV: titles, overviews, cast, genres, and artwork.",
-				DocsURL:     "https://www.themoviedb.org/settings/api",
-				// The connection probe (ADR-0059 decision 8), declared here beside every
-				// other static fact about this source instead of in a switch in
-				// connectivity.go. The image host is irrelevant to a probe (no artwork
-				// bytes are fetched), so a title lookup is the whole test.
-				Probe: &pluginapi.MediaRef{Kind: "movie", Title: "Inception", Year: 2010},
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewTMDBProvider(s.Secret, s.Language, s.URL, s.URL2)), nil
-			},
-		},
+		// TMDB IS NOT HERE ANY MORE, and this comment is the only trace it leaves.
+		//
+		// It is a Bundled plugin (ADR-0059): a WebAssembly module built from
+		// plugins/tmdb/, carried in the binary by internal/bundled, and installed into
+		// <dataDir>/plugins/tmdb/ on first boot exactly as an Admin's upload would be.
+		// It reaches this catalog through the Installed-plugin loader, registered
+		// AHEAD of everything in this list (plugins.Set.RegisterEnabledAround), which is
+		// what keeps it the default video lead by the unchanged "first authoritative
+		// Full provider of a kind" rule.
+		//
+		// Its Descriptor — the name, the capabilities, the default URLs, the copy and
+		// the connection probe — is now plugins/tmdb/manifest.json, word for word.
 		{
 			Descriptor: pluginapi.Descriptor{
 				Slug:        SlugOMDb,

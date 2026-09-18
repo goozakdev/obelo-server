@@ -166,6 +166,16 @@ type Installed struct {
 	// this server does not know that.
 	Publisher string `json:"publisher,omitempty"`
 	KeyID     string `json:"keyId,omitempty"`
+	// Origin is who put this Plugin here: OriginBundled for one this server
+	// shipped (ADR-0059), OriginAdmin for one a person uploaded, pasted a URL for
+	// or placed by hand. It is what the Plugins screen turns into "Shipped with
+	// Obelo" against the upload name or URL an Admin's plugin shows.
+	Origin string `json:"origin,omitempty"`
+	// State is the row's lifecycle state when it is not simply installed. Today
+	// there is exactly one value — StateDeclined, a Bundled plugin the Admin
+	// uninstalled — and its row is the one the screen offers "reinstall the
+	// shipped version" on. Empty for every installed Plugin.
+	State string `json:"state,omitempty"`
 	// SettingsSchema is what this Plugin's manifest declares about its OWN settings
 	// (issue 13), straight from the file on disk: the ordered field list the web app
 	// renders a form from. Empty for a Plugin configured entirely through the fixed
@@ -220,6 +230,13 @@ type ManagerStore interface {
 	// empty by default, and empty means this server browses no catalog at all.
 	PluginCatalogURL() (string, error)
 	SetPluginCatalogURL(url string) error
+	// The declined memory (ADR-0059 decision 2): the Bundled plugins an Admin
+	// uninstalled. Uninstalling one records the mark; reinstalling the shipped
+	// version clears it; the boot-time re-assert reads it before it writes
+	// anything.
+	DeclinedPluginIDs() ([]string, error)
+	DeclinePlugin(id string) error
+	UndeclinePlugin(id string) (bool, error)
 }
 
 // ManagerConfig is what the composition root hands the Manager. Every field but
@@ -258,6 +275,12 @@ type ManagerConfig struct {
 	Client *http.Client
 	// Logf is where install and lifecycle lines go. Nil means the server log.
 	Logf func(format string, args ...any)
+	// Bundled is the plugins this server SHIPS (ADR-0059), which the Manager needs
+	// for exactly two verbs: uninstalling one has to remember the Admin declined
+	// it, and "reinstall the shipped version" has to put it back. Nil is a server
+	// with no Bundled plugins — every narrow test, and every server before
+	// ADR-0059 — and both verbs then behave as they did.
+	Bundled BundledSource
 	// AllowPrivateSources drops the address check on a pasted URL. IT IS FOR TESTS
 	// AND FOR NOTHING ELSE: the suite serves its fixture plugin from an
 	// httptest.Server on 127.0.0.1, and there is no hermetic public address to
@@ -283,6 +306,7 @@ type Manager struct {
 	reload   func(context.Context) error
 	client   *http.Client
 	logf     func(string, ...any)
+	bundled  BundledSource
 
 	allowPrivateSources bool
 
@@ -308,6 +332,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		reload:              cfg.Reload,
 		client:              safefetch.Guard(cfg.Client),
 		logf:                cfg.Logf,
+		bundled:             cfg.Bundled,
 		allowPrivateSources: cfg.AllowPrivateSources,
 	}
 	if m.logf == nil {
@@ -533,9 +558,16 @@ func (m *Manager) Uninstall(ctx context.Context, id string) error {
 		}
 	}
 	rebuildErr := m.rebuild(ctx)
+	// Read the origin BEFORE the row goes, and record the decline AFTER it has:
+	// DeletePlugin is one transaction over every table that names this id, and a
+	// declined mark written first would be a row it has no reason to know about.
+	bundledRow := m.rowOrigin(id) == OriginBundled
 	if m.store != nil {
 		if err := m.store.DeletePlugin(id); err != nil {
 			return err
+		}
+		if bundledRow {
+			m.declineIfUninstalled(id)
 		}
 	}
 	if trash != "" {
@@ -603,6 +635,7 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 			InstalledAt: row.InstalledAt,
 			Publisher:   row.Publisher,
 			KeyID:       row.KeyID,
+			Origin:      originOf(row.Origin),
 		}
 		if p := m.plugin(id); p != nil && len(p.Manifest().Provides) > 0 {
 			item.Provides = providesOf(p.Manifest())
@@ -629,7 +662,29 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 			}
 		}
 	}
+	// A Bundled plugin the Admin uninstalled has no files, no row and no loader
+	// state, so it appears nowhere above. Its row joins the list here so the screen
+	// can offer it back (ADR-0059 decision 2) — in id order with everything else,
+	// because a declined plugin is not a second kind of thing and does not belong
+	// in a second list.
+	if declined := m.declinedRows(out); len(declined) > 0 {
+		out = append(out, declined...)
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	}
 	return out, nil
+}
+
+// originOf reads a row's origin, defaulting an empty column to OriginAdmin.
+//
+// The column has that default, so this only fires for a row this server never
+// wrote — a database restored from before the migration, or a test's fake store.
+// "Admin" is the honest answer for both: whatever put it there, it was not this
+// binary's shipped set.
+func originOf(raw string) string {
+	if raw == "" {
+		return OriginAdmin
+	}
+	return raw
 }
 
 // --- The rebuild-and-swap ------------------------------------------------------
@@ -653,11 +708,11 @@ func (m *Manager) rebuild(ctx context.Context) error {
 		return err
 	}
 
+	// The Bundled plugins, then the Built-ins, then the rest — the same sequence
+	// app.New registers at boot, produced by the same function so the two cannot
+	// drift (see RegisterEnabledAround).
 	fresh := pluginapi.NewRegistry()
-	if m.base != nil {
-		m.base(fresh)
-	}
-	next.RegisterEnabled(fresh, off)
+	next.RegisterEnabledAround(fresh, off, m.base)
 
 	// The declared setting values are read onto the fresh Plugins BEFORE anything
 	// can call them (issue 13): a guest handed a call with no values would read an
@@ -1086,14 +1141,72 @@ func firstNonEmpty(values ...string) string {
 // Plugins screen: the Set still holds it, and the screen reads the Set, not the
 // registry.
 func (s *Set) RegisterEnabled(reg *pluginapi.Registry, off []string) {
-	if s == nil || reg == nil {
+	s.RegisterEnabledAround(reg, off, nil)
+}
+
+// RegisterEnabledAround is RegisterEnabled with the Built-ins in the middle, and
+// it exists because REGISTRATION ORDER IS THE CATALOG ORDER (ADR-0059 decision 3).
+//
+// Three groups, in this sequence:
+//
+//  1. the Bundled plugins, in the order this server ships them
+//     (Options.BundledFirst);
+//  2. whatever base registers — the Built-ins, and whatever else the composition
+//     root put there;
+//  3. every other Installed plugin, alphabetically.
+//
+// The first group has to come first because the first authoritative Full provider
+// of a kind is that kind's default lead (ADR-0027), the settings screen lists
+// sources in registration order, and the music chain's two fill-only slots are
+// filled in it. Before ADR-0059 those facts were properties of a slice in
+// internal/enrich; they are now properties of this ordering, and a bundled TMDB
+// registered after the remaining Built-ins would quietly stop leading video.
+//
+// It is ONE function rather than three calls at each site because there are two
+// sites — the boot in app.New and the Manager's rebuild-and-swap — and they must
+// produce the identical registry. "A rebuild produces what a reboot would" is the
+// property every install, uninstall and enable depends on, and two hand-ordered
+// call sequences are how it would come apart.
+//
+// A nil base is a server with no Built-ins to interleave, which is what a narrow
+// test has.
+func (s *Set) RegisterEnabledAround(reg *pluginapi.Registry, off []string, base func(*pluginapi.Registry)) {
+	if reg == nil {
+		return
+	}
+	if s == nil {
+		if base != nil {
+			base(reg)
+		}
 		return
 	}
 	skip := make(map[string]struct{}, len(off))
 	for _, id := range off {
 		skip[id] = struct{}{}
 	}
+	byID := make(map[string]*Plugin, len(s.plugins))
 	for _, p := range s.plugins {
+		byID[p.id] = p
+	}
+	done := make(map[string]struct{}, len(s.first))
+	for _, id := range s.first {
+		p, ok := byID[id]
+		if !ok {
+			continue // this server ships it, but it is not installed (declined, or removed)
+		}
+		done[id] = struct{}{}
+		if _, offNow := skip[id]; offNow {
+			continue
+		}
+		s.registerOne(reg, p)
+	}
+	if base != nil {
+		base(reg)
+	}
+	for _, p := range s.plugins {
+		if _, already := done[p.id]; already {
+			continue
+		}
 		if _, offNow := skip[p.id]; offNow {
 			continue
 		}

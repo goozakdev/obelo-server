@@ -16,11 +16,18 @@
 // resolves them from the working tree rather than from a proxy that has never
 // heard of them.
 //
-// From issue 04 each `./plugins/<id>` module joins this list.
+// Each `./plugins/<id>` is a Bundled plugin: its own module, requiring the SDK
+// and nothing else, built to WebAssembly by `make plugins` and embedded by
+// internal/bundled. They are listed here so that `go build`, `go vet` and
+// `go test` over the explicit patterns in the Makefile's GOPKGS cover them — and
+// so that a plugin's own guest build resolves pluginapi and pluginsdk from this
+// working tree rather than from a proxy that has never heard of them. Each new
+// plugin adds ONE line below (.scratch/bundled-plugins: issues 05-07).
 go 1.26.5
 
 use (
 	.
 	./pluginapi
 	./pluginsdk
+	./plugins/tmdb
 )
