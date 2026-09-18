@@ -19,7 +19,7 @@ import (
 // What is left here is the one rule this function owns alone.
 
 func TestTestConnectionUnknownSlug(t *testing.T) {
-	ok, detail := TestConnection(context.Background(), builtinCatalog(), "nope", "key", "http://unused", "en-US")
+	ok, detail := TestConnection(context.Background(), builtinCatalog(), "nope", "key", "http://unused", "", "en-US")
 	if ok || detail == "" {
 		t.Errorf("unknown slug = ok:%v detail:%q, want ok:false with a detail", ok, detail)
 	}

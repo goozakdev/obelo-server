@@ -72,8 +72,15 @@ func TestSettingsToProviderConfig(t *testing.T) {
 	if noOverride.ProviderEndpoints[SlugTMDB].URL2 != shippedTMDBImageBaseURL {
 		t.Errorf("tmdb url2 = %q, want registry default %q", noOverride.ProviderEndpoints[SlugTMDB].URL2, shippedTMDBImageBaseURL)
 	}
-	if cfg.ProviderEndpoints[SlugMusicBrainz].URL != registryMusicBrainzBaseURL {
+	if cfg.ProviderEndpoints[SlugMusicBrainz].URL != shippedMusicBrainzBaseURL(t) {
 		t.Errorf("musicbrainz url = %q, want registry default", cfg.ProviderEndpoints[SlugMusicBrainz].URL)
+	}
+	// The COVER ART ARCHIVE is the music lead's SECOND URL now, defaulted by its own
+	// manifest rather than resolved out of a `coverart` row
+	// (.scratch/bundled-plugins: issue 06).
+	if got := cfg.ProviderEndpoints[SlugMusicBrainz].URL2; got != shippedCoverArtBaseURL(t) {
+		t.Errorf("musicbrainz url2 = %q, want the manifest's cover-art default %q",
+			got, shippedCoverArtBaseURL(t))
 	}
 	if !cfg.ProviderActive[SlugMusicBrainz] {
 		t.Errorf("musicbrainz active = false, want true")
@@ -491,8 +498,9 @@ func TestSeedIfEmpty(t *testing.T) {
 		seeded, err := SeedIfEmpty(s, SeedInput{
 			Providers: []ProviderSeed{
 				{Slug: SlugTMDB, Enabled: true, APIKey: "tk", BaseURL: "http://tmdb.stub", ImageBaseURL: "http://img.stub"},
-				{Slug: SlugMusicBrainz, Enabled: true},
-				{Slug: SlugCoverArt, Enabled: true},
+				// One music row, carrying the cover-art host as its image base
+				// (.scratch/bundled-plugins: issue 06 — `coverart` is not a provider).
+				{Slug: SlugMusicBrainz, Enabled: true, ImageBaseURL: "http://caa.stub"},
 				{Slug: SlugFanartTV, Enabled: true, APIKey: "fk"},
 				// TheAudioDB has no key → the seeding table emits no row for it.
 			},
@@ -510,11 +518,12 @@ func TestSeedIfEmpty(t *testing.T) {
 		if u, ok := s.upserts[SlugTMDB]; !ok || !u.Enabled || u.APIKey != "tk" || u.BaseURL != "http://tmdb.stub" || u.ImageBaseURL != "http://img.stub" {
 			t.Errorf("tmdb seed = %+v (ok %v), want enabled/tk/stub/img", u, ok)
 		}
-		if u, ok := s.upserts[SlugMusicBrainz]; !ok || !u.Enabled {
-			t.Errorf("musicbrainz seed = %+v (ok %v), want enabled", u, ok)
+		if u, ok := s.upserts[SlugMusicBrainz]; !ok || !u.Enabled || u.ImageBaseURL != "http://caa.stub" {
+			t.Errorf("musicbrainz seed = %+v (ok %v), want enabled carrying the cover-art host", u, ok)
 		}
-		if u, ok := s.upserts[SlugCoverArt]; !ok || !u.Enabled {
-			t.Errorf("coverart seed = %+v (ok %v), want enabled (rides MusicBrainz)", u, ok)
+		if _, ok := s.upserts["coverart"]; ok {
+			t.Error("a `coverart` row was seeded; it stopped being a provider in " +
+				".scratch/bundled-plugins issue 06 and is the music lead's second host")
 		}
 		if u, ok := s.upserts[SlugFanartTV]; !ok || !u.Enabled || u.APIKey != "fk" {
 			t.Errorf("fanarttv seed = %+v (ok %v), want enabled/fk", u, ok)

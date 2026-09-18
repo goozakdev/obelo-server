@@ -23,7 +23,6 @@ package config
 const (
 	ProviderTMDB        = "tmdb"
 	ProviderMusicBrainz = "musicbrainz"
-	ProviderCoverArt    = "coverart"
 	ProviderFanartTV    = "fanarttv"
 	ProviderTheAudioDB  = "theaudiodb"
 )
@@ -76,12 +75,16 @@ func ProviderEnvTable() []ProviderEnvVar {
 		{Env: "OBELO_MUSICBRAINZ_ENABLED", Provider: ProviderMusicBrainz, Field: ProviderFieldEnabled},
 		{Env: "OBELO_MUSICBRAINZ_BASE_URL", Provider: ProviderMusicBrainz, Field: ProviderFieldURL, Default: DefaultMusicBrainzBaseURL},
 
-		// Cover Art Archive is a provider row today and a base URL in all but name:
-		// nothing reads its enable switch, and its only live effect is the second host
-		// the music lead is built with. Issue 06 re-points this variable at the
-		// MusicBrainz plugin's URL2 and the `coverart` id goes; until then it keeps
-		// landing exactly where it always has.
-		{Env: "OBELO_COVERART_BASE_URL", Provider: ProviderCoverArt, Field: ProviderFieldURL, Default: DefaultCoverArtBaseURL},
+		// OBELO_COVERART_BASE_URL now fills the MUSICBRAINZ row's SECOND host
+		// (.scratch/bundled-plugins: issue 06). The variable's name, its meaning and
+		// its default are unchanged — it is still "where the album covers come from" —
+		// but the thing it configures is no longer a provider of its own. The Cover Art
+		// Archive was a base URL wearing a provider's clothes: nothing read its enable
+		// switch, it had no client, and its only live effect was the second host the
+		// music lead was built with. It is now the MusicBrainz plugin's `url2`,
+		// declared by that plugin's manifest, and this row plants an operator's
+		// override straight into it.
+		{Env: "OBELO_COVERART_BASE_URL", Provider: ProviderMusicBrainz, Field: ProviderFieldURL2, Default: DefaultCoverArtBaseURL},
 
 		{Env: "OBELO_FANART_TV_API_KEY", Provider: ProviderFanartTV, Field: ProviderFieldKey},
 		{Env: "OBELO_FANART_TV_BASE_URL", Provider: ProviderFanartTV, Field: ProviderFieldURL, Default: DefaultFanartTVBaseURL},
@@ -205,9 +208,11 @@ type providerSeedRule struct {
 	Provider string
 	// EnabledBy is the provider whose own environment opt-in turns this row on.
 	// Empty means "this source has no opt-in — a key is what turns it on". It is a
-	// field rather than always the row's own provider because Cover Art Archive has
-	// no switch of its own: it rides MusicBrainz's, which is what it means to be that
-	// Plugin's second host rather than a source.
+	// field rather than always the row's own provider because it once had to be: the
+	// `coverart` row rode MusicBrainz's switch, having none of its own. That row is
+	// gone (.scratch/bundled-plugins: issue 06) and every remaining rule names
+	// itself, so the field is now a generality with one degenerate user — left as it
+	// is because the next keyless source to arrive will want it.
 	EnabledBy string
 	// RidesVideoKey preserves the original single-switch behaviour: a configured
 	// video source historically turned on every kind, so a deployment that set only
@@ -220,8 +225,13 @@ type providerSeedRule struct {
 func providerSeedTable() []providerSeedRule {
 	return []providerSeedRule{
 		{Provider: ProviderTMDB},
+		// The `coverart` rule is GONE (.scratch/bundled-plugins: issue 06). It seeded a
+		// row that was really a second host, which is why it was the only rule whose
+		// EnabledBy named a DIFFERENT provider — it had no switch of its own because it
+		// was not a source. That host now rides the MusicBrainz row as its
+		// image_base_url, which SeedProviderRows writes from p.URL2 for every provider
+		// alike, so one row carries what two used to.
 		{Provider: ProviderMusicBrainz, EnabledBy: ProviderMusicBrainz, RidesVideoKey: true},
-		{Provider: ProviderCoverArt, EnabledBy: ProviderMusicBrainz, RidesVideoKey: true},
 		{Provider: ProviderFanartTV},
 		{Provider: ProviderTheAudioDB},
 	}

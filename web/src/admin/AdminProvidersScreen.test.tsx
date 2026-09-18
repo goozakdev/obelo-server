@@ -80,14 +80,7 @@ function view(over: Partial<MetadataProvidersView> = {}): MetadataProvidersView 
         kinds: ["music"],
         requiresKey: false,
         baseURL: "https://musicbrainz.org/ws/2",
-      }),
-      prov({
-        slug: "coverart",
-        name: "Cover Art Archive",
-        kinds: ["music"],
-        role: "supplement",
-        requiresKey: false,
-        baseURL: "https://coverartarchive.org",
+        imageBaseURL: "https://coverartarchive.org",
       }),
       prov({
         slug: "fanarttv",
@@ -149,7 +142,7 @@ describe("AdminProvidersScreen", () => {
     // Video group holds only TMDB; the four music sources are in the music group.
     expect(within(videoGroup).getAllByTestId("provider-row")).toHaveLength(1);
     const musicRows = within(musicGroup).getAllByTestId("provider-row");
-    expect(musicRows).toHaveLength(4);
+    expect(musicRows).toHaveLength(3);
     // The authoritative source (MusicBrainz) is the first music row and is labeled;
     // the supplements carry no role badge.
     expect(musicRows[0]).toHaveAttribute("data-slug", "musicbrainz");
@@ -159,7 +152,11 @@ describe("AdminProvidersScreen", () => {
     expect(within(videoGroup).getByTestId("provider-role-tmdb")).toHaveTextContent(
       /authoritative/i,
     );
-    expect(screen.queryByTestId("provider-role-coverart")).toBeNull();
+    // A supplement carries no role badge. The example used to be the Cover Art
+    // Archive, which stopped being a provider row when it became the MusicBrainz
+    // plugin's second URL (.scratch/bundled-plugins: issue 06); fanart.tv is the
+    // supplement that took its place in this fixture.
+    expect(screen.queryByTestId("provider-role-fanarttv")).toBeNull();
   });
 
   // The per-kind badge is the screen's one claim about behaviour, and it must
@@ -368,10 +365,24 @@ describe("AdminProvidersScreen", () => {
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
     await screen.findByTestId("provider-group-music");
 
-    // MusicBrainz has no distinct image host → no override field in its dialog.
+    // TheAudioDB serves its images from its own API host → no override field.
+    await user.click(screen.getByTestId("provider-edit-theaudiodb"));
+    await screen.findByTestId("provider-baseurl-theaudiodb");
+    expect(screen.queryByTestId("provider-imagebaseurl-theaudiodb")).toBeNull();
+  });
+
+  // MusicBrainz DOES have one now: the Cover Art Archive was its own provider row
+  // until .scratch/bundled-plugins issue 06 folded it into this source as a second
+  // URL, and an operator with a CAA mirror has to be able to type it somewhere.
+  it("offers the image-host override for MusicBrainz, which is the Cover Art Archive", async () => {
+    const user = userEvent.setup();
+    getMetadataProviders.mockResolvedValue(view());
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+    await screen.findByTestId("provider-group-music");
+
     await user.click(screen.getByTestId("provider-edit-musicbrainz"));
-    await screen.findByTestId("provider-baseurl-musicbrainz");
-    expect(screen.queryByTestId("provider-imagebaseurl-musicbrainz")).toBeNull();
+    const field = await screen.findByTestId("provider-imagebaseurl-musicbrainz");
+    expect(field).toHaveValue("https://coverartarchive.org");
   });
 
   it("reports a Test-connection result from the dialog (ok and error)", async () => {

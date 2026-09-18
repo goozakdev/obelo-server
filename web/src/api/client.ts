@@ -1808,7 +1808,7 @@ export class ApiClient {
    * action. Returns `{ ok, detail }` (never throws for a failed probe). */
   testMetadataProvider(
     slug: string,
-    creds: { apiKey?: string; baseURL?: string } = {},
+    creds: { apiKey?: string; baseURL?: string; imageBaseURL?: string } = {},
     signal?: AbortSignal,
   ): Promise<TestProviderResult> {
     return this.request<TestProviderResult>(
@@ -1899,7 +1899,7 @@ export class ApiClient {
    * best-effort connectivity/credential probe. Returns `{ ok, detail }`. */
   testSubtitleProvider(
     slug: string,
-    creds: { apiKey?: string; baseURL?: string } = {},
+    creds: { apiKey?: string; baseURL?: string; imageBaseURL?: string } = {},
     signal?: AbortSignal,
   ): Promise<TestProviderResult> {
     return this.request<TestProviderResult>(

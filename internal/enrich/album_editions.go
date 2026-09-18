@@ -16,7 +16,7 @@ import (
 // release-group."* Everything below exists to answer exactly that — here are the
 // editions, here is the one in use and why, here is how many tracks yours has.
 //
-// The provider half (the browse) lives in musicbrainz.go behind the
+// The provider half (the browse) lives in the MusicBrainz plugin behind the
 // AlbumEditionLister seam and is the SAME browse fit-selection pays for. What lives
 // here is what the provider must not own: the enablement gate, the capability
 // type-assert, the cache, and the album-shaped question — which release-group, which
@@ -207,4 +207,56 @@ func findEdition(eds []ReleaseEdition, releaseID string) string {
 		}
 	}
 	return ""
+}
+
+// pickEditionByFit returns the INDEX of the edition that fits localCount best —
+// equal track count first, then earliest date, then the id as a stable tiebreak —
+// or -1 when there is nothing to choose. An edition with no tracks is never chosen:
+// it cannot be anyone's tracklist.
+//
+// An undated release sorts after every dated one, and the id tiebreak is not
+// meaningful — it is there so a release-group holding two same-dated editions
+// resolves to the SAME one on every call rather than to whatever order the source
+// returned this time.
+//
+// IT LIVES HERE NOW, and the MusicBrainz PLUGIN carries its own copy
+// (.scratch/bundled-plugins issue 06). It used to sit in musicbrainz.go and be
+// called from both sides, which was the right arrangement while the source was
+// compiled in: the picker marks which edition is IN USE, and it would be marking
+// the wrong row the moment a second copy of "which one fits" drifted from the one
+// fit-selection uses. A plugin cannot import the server, so the two copies exist —
+// but they run over the SAME data, because the edition list the picker reads is
+// the projection the plugin returned from the very browse fit-selection made.
+func pickEditionByFit(eds []ReleaseEdition, localCount int) int {
+	best := -1
+	bestFits := false
+	for i := range eds {
+		e := eds[i]
+		if e.TrackCount == 0 {
+			continue
+		}
+		fits := localCount > 0 && e.TrackCount == localCount
+		switch {
+		case best < 0, fits && !bestFits:
+		case bestFits && !fits:
+			continue
+		case !earlierEdition(e, eds[best]):
+			continue
+		}
+		best, bestFits = i, fits
+	}
+	return best
+}
+
+// earlierEdition orders two editions: a dated one before an undated one, then by
+// date, then by id.
+func earlierEdition(a, b ReleaseEdition) bool {
+	ad, bd := strings.TrimSpace(a.Date), strings.TrimSpace(b.Date)
+	if (ad == "") != (bd == "") {
+		return bd == ""
+	}
+	if ad != bd {
+		return ad < bd
+	}
+	return a.ReleaseID < b.ReleaseID
 }

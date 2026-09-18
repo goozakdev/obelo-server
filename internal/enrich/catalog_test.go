@@ -47,6 +47,7 @@ func bundledStandIns() []string {
 		SlugOMDb,
 		SlugTheTVDB,
 		SlugAniDB,
+		SlugMusicBrainz,
 		SlugFanartTV,
 		SlugTheAudioDB,
 	}
@@ -214,28 +215,62 @@ func pluginSlug(p MetadataProvider) string {
 	return adapted.desc.Slug
 }
 
-// musicBrainzBehind unwraps a composed provider back through BOTH halves of the
-// adapter to the concrete source the Plugin was built around, or nil when it was
-// not built around one.
-//
-// It exists for the handful of assertions that are about what a Settings VALUE did
-// to the source it constructed — the operator's rate policy, the Cover Art Archive
-// host — which no slug can answer. It is deliberately the only thing in these
-// suites that looks through the contract, and it is a test helper rather than a
-// method for exactly that reason: production code asking which concrete type is
-// behind a Plugin would be undoing the contract.
-func musicBrainzBehind(p MetadataProvider) *MusicBrainzProvider {
-	adapted, ok := p.(pluginProvider)
-	if !ok {
-		return nil
-	}
-	builtin, ok := adapted.plugin.(builtinPlugin)
-	if !ok {
-		return nil
-	}
-	mb, _ := builtin.provider.(*MusicBrainzProvider)
-	return mb
+// shippedMusicBrainzBaseURL is the MusicBrainz web service as the shipped manifest
+// declares it. It was a constant in registry.go until MusicBrainz stopped being a
+// Built-in; a test that wants "the default base URL" now reads the value the
+// Descriptor actually carries.
+func shippedMusicBrainzBaseURL(t *testing.T) string {
+	t.Helper()
+	return shippedManifest(SlugMusicBrainz).Settings.DefaultURL
 }
+
+// shippedCoverArtBaseURL is the COVER ART ARCHIVE as the shipped MusicBrainz
+// manifest declares it: that plugin's SECOND url. It used to be a registration of
+// its own with its own default (.scratch/bundled-plugins: issue 06), and the whole
+// point of reading it from here is that there is now exactly one place it is
+// written down.
+func shippedCoverArtBaseURL(t *testing.T) string {
+	t.Helper()
+	return shippedManifest(SlugMusicBrainz).Settings.DefaultURL2
+}
+
+// musicGuestLike registers a settings-recording stand-in under a MUSIC slug, with
+// the Descriptor the MusicBrainz manifest produces — a keyless, authoritative, Full
+// music source with two default URLs. It is guestLike's music twin (prefactor_test.go),
+// and it exists because the only honest way to assert what a Settings VALUE does to
+// a guest is to read the Settings the host resolved for it.
+func musicGuestLike(slug string, spy *settingsSpy) pluginapi.MetadataProviderRegistration {
+	return pluginapi.MetadataProviderRegistration{
+		Descriptor: pluginapi.Descriptor{
+			Slug:        slug,
+			Name:        "A Music Guest",
+			Kinds:       []string{KindMusic},
+			Role:        RoleAuthoritative,
+			Class:       ClassFull,
+			RequiresKey: false,
+			DefaultURL:  "https://guest.example.test/ws/2",
+			DefaultURL2: "https://images.guest.example.test",
+			Probe:       &pluginapi.MediaRef{Kind: "artist", Title: "Radiohead", Artist: "Radiohead"},
+		},
+		New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
+			spy.got = s
+			return spy, nil
+		},
+	}
+}
+
+// musicBrainzBehind IS GONE (.scratch/bundled-plugins: issue 06). It unwrapped a
+// composed provider back through both halves of the adapter to the concrete
+// *MusicBrainzProvider, for the handful of assertions about what a Settings VALUE
+// did to the source it constructed — the operator's rate policy, the Cover Art
+// Archive host.
+//
+// There is no concrete type to reach any more: MusicBrainz is a WebAssembly module
+// behind the contract, and looking through the contract at a guest is not something
+// a test can do or should want to. Each of those assertions moved to where it can
+// be made honestly — the SETTINGS the host resolves are asserted here by
+// composition (see the Settings-shaped tests in builder_test.go), and what the
+// PROVIDER does with them is asserted natively in plugins/musicbrainz/musicbrainz.
 
 // shippedTMDBImageBaseURL is the TMDB image host as the shipped manifest declares
 // it. It was a constant in registry.go until TMDB stopped being a Built-in; the

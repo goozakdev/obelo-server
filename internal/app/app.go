@@ -1771,13 +1771,14 @@ func providerConfigFromConfig(cfg config.Config) enrich.ProviderConfig {
 			out.ProviderKeys[id] = p.Key
 		}
 	}
-	// THE ONE REMAINING SPECIAL CASE, the twin of SettingsToProviderConfig's, and
-	// issue 06 deletes both: the Cover Art Archive is the music lead's artwork HOST,
-	// not a source, so its base URL is resolved into that Plugin's second URL.
-	if e, ok := out.ProviderEndpoints[config.ProviderMusicBrainz]; ok {
-		e.URL2 = cfg.ProviderURL(config.ProviderCoverArt)
-		out.ProviderEndpoints[config.ProviderMusicBrainz] = e
-	}
+	// NO SPECIAL CASE, and this comment is what replaces one. The twin of
+	// SettingsToProviderConfig's Cover-Art fixup stood here until
+	// .scratch/bundled-plugins issue 06: the Cover Art Archive was a provider id of
+	// its own whose base URL had to be resolved into the music lead's SECOND URL,
+	// because it was an artwork host wearing a provider's clothes. It is now the
+	// MusicBrainz plugin's own second host, and OBELO_COVERART_BASE_URL fills
+	// `(musicbrainz, url2)` directly in config.ProviderEnvTable() — so the loop
+	// above, which copies p.URL2 for every provider alike, is the whole of it.
 	return out
 }
 

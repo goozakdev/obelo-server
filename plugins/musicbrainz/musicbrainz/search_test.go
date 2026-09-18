@@ -1,17 +1,17 @@
-package enrich
+package musicbrainz
 
 import (
-	"context"
+	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
+
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
-// The real providers' Search HTTP/parse layer (the Edit-item Enrichment-override
-// picker, ADR-0019), exercised against httptest serving canned JSON — the
-// secondary, lower seam. The project's black-box tests use a fake provider's
-// Search instead; no live network is ever touched here.
+// The provider's Search request/parse layer (the Edit-item Enrichment-override
+// picker, ADR-0019), ported from internal/enrich/search_test.go with its canned
+// JSON and its assertions intact.
 
 const mbRecordingSearchJSON = `{"recordings": [
   {"id": "rec-1", "title": "Come as You Are", "disambiguation": "album version",
@@ -19,29 +19,30 @@ const mbRecordingSearchJSON = `{"recordings": [
   {"id": "rec-2", "title": "Come as You Are", "artist-credit": [{"name": "Nirvana (60s band)"}]}
 ]}`
 
-// TestMusicBrainzSearchTrackParsesCandidates: a track query hits /recording and
-// maps recordings into Candidates carrying the MBID, title, year, and an
-// artist-credit + disambiguation hint (the "wrong Nirvana" tell).
-func TestMusicBrainzSearchTrackParsesCandidates(t *testing.T) {
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
-		if r.URL.Path == "/recording" {
+// pathHandler answers one path with one body and 404s everything else — the shape
+// of most of the ported search stubs.
+func pathHandler(path, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == path {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(mbRecordingSearchJSON))
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	}
+}
 
-	cands, err := p.Search(context.Background(), "track", "Come as You Are", SearchOptions{})
+// TestMusicBrainzSearchTrackParsesCandidates: a track query hits /recording and
+// maps recordings into candidates carrying the MBID, title, year, and an
+// artist-credit + disambiguation hint (the "wrong Nirvana" tell).
+func TestMusicBrainzSearchTrackParsesCandidates(t *testing.T) {
+	p, host := newProvider(t, pathHandler("/recording", mbRecordingSearchJSON), noPacing())
+
+	cands, err := search(p, "track", "Come as You Are", pluginapi.Page{}, "", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(seen) != 1 || seen[0] != "/recording" {
+	if seen := requestPaths(host); len(seen) != 1 || seen[0] != "/recording" {
 		t.Fatalf("expected one /recording call, saw %v", seen)
 	}
 	if len(cands) != 2 {
@@ -64,29 +65,21 @@ func TestMusicBrainzSearchTrackParsesCandidates(t *testing.T) {
 // (/recording/{mbid}) — the durable Enrichment override path — instead of a
 // name search.
 func TestMusicBrainzTrackLookupByPinnedMBID(t *testing.T) {
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
-		if r.URL.Path == "/recording/rec-42" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id": "rec-42", "title": "Corrected Title"}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	p, host := newProvider(t, pathHandler("/recording/rec-42",
+		`{"id": "rec-42", "title": "Corrected Title"}`), noPacing())
 
-	meta, err := p.Lookup(context.Background(), TitleRef{Kind: "track", MusicbrainzID: "rec-42", Track: "ignored"})
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "track", MusicbrainzID: "rec-42", Track: "ignored"})
 	if err != nil {
 		t.Fatalf("Lookup by MBID: %v", err)
 	}
-	if len(seen) != 1 || seen[0] != "/recording/rec-42" {
+	if seen := requestPaths(host); len(seen) != 1 || seen[0] != "/recording/rec-42" {
 		t.Fatalf("expected a by-id /recording/rec-42 fetch, saw %v", seen)
 	}
 	if !meta.Matched || meta.Name != "Corrected Title" || meta.ExternalID != "rec-42" {
 		t.Errorf("meta = %+v", meta)
+	}
+	if meta.FromSearch {
+		t.Error("a record resolved BY ID must not be marked FromSearch — an id IS the identification")
 	}
 }
 
@@ -97,7 +90,7 @@ func TestMusicBrainzTrackLookupByPinnedMBID(t *testing.T) {
 // improvements). The stub captures the outgoing query param.
 func TestMusicBrainzSearchEscapesLuceneQuery(t *testing.T) {
 	var gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	p, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/recording" {
 			gotQuery = r.URL.Query().Get("query")
 			w.Header().Set("Content-Type", "application/json")
@@ -105,12 +98,9 @@ func TestMusicBrainzSearchEscapesLuceneQuery(t *testing.T) {
 			return
 		}
 		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	}, noPacing())
 
-	cands, err := p.Search(context.Background(), "track", `AC/DC "Heroes"`, SearchOptions{})
+	cands, err := search(p, "track", `AC/DC "Heroes"`, pluginapi.Page{}, "", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -139,19 +129,9 @@ func TestMusicBrainzSearchYearFromReleases(t *testing.T) {
 	    {"date": "1977-05-25", "release-group": {"first-release-date": "1977-05-01"}}
 	  ]
 	}]}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/recording" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(body))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	p, _ := newProvider(t, pathHandler("/recording", body), noPacing())
 
-	cands, err := p.Search(context.Background(), "track", "Star Wars", SearchOptions{})
+	cands, err := search(p, "track", "Star Wars", pluginapi.Page{}, "", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -161,12 +141,38 @@ func TestMusicBrainzSearchYearFromReleases(t *testing.T) {
 }
 
 // TestMusicBrainzSearchUnsupportedKindUnavailable: a kind MusicBrainz does not
-// own (e.g. a video kind, or a season) reports ErrSearchUnavailable — only
-// track/artist/album are searchable music kinds (item-editing/02).
+// own (e.g. a video kind, or a season) is OutcomeUnavailable — only
+// track/artist/album are searchable music kinds (item-editing/02) — and it is NOT
+// an empty candidate list, which the Edit-item box would render as "no results".
 func TestMusicBrainzSearchUnsupportedKindUnavailable(t *testing.T) {
-	p := NewMusicBrainzProvider("http://unused", "http://unused", "en-US")
-	if _, err := p.Search(context.Background(), "movie", "Dune", SearchOptions{}); err != ErrSearchUnavailable {
-		t.Errorf("movie search err = %v, want ErrSearchUnavailable", err)
+	p, host := newProvider(t, jsonHandler(`{}`), noPacing())
+	for _, kind := range []string{"movie", "show", "season", "episode"} {
+		resp, err := p.Search(t.Context(), pluginapi.SearchRequest{Kind: kind, Query: "Dune"})
+		if err != nil {
+			t.Fatalf("%s search: %v", kind, err)
+		}
+		if resp.Outcome != pluginapi.OutcomeUnavailable {
+			t.Errorf("%s search outcome = %q, want unavailable", kind, resp.Outcome)
+		}
+	}
+	if n := len(requestPaths(host)); n != 0 {
+		t.Errorf("an unsupported kind cost %d requests; it must cost none", n)
+	}
+}
+
+// A blank query is answered without a call, with an empty candidate list — which
+// is "found nothing", not "cannot search".
+func TestMusicBrainzBlankQueryAsksNothing(t *testing.T) {
+	p, host := newProvider(t, jsonHandler(`{}`), noPacing())
+	resp, err := p.Search(t.Context(), pluginapi.SearchRequest{Kind: "track", Query: "   "})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if resp.Outcome != pluginapi.OutcomeMatched || len(resp.Candidates) != 0 {
+		t.Errorf("blank query = %+v, want matched with no candidates", resp)
+	}
+	if n := len(requestPaths(host)); n != 0 {
+		t.Errorf("a blank query cost %d requests", n)
 	}
 }
 
@@ -178,28 +184,16 @@ const mbArtistSearchJSON = `{"artists": [
 ]}`
 
 // TestMusicBrainzSearchArtistParsesCandidates: an artist query hits /artist and
-// maps artists into Candidates carrying the MBID, name, and a type/area/
+// maps artists into candidates carrying the MBID, name, and a type/area/
 // disambiguation hint (the "wrong Nirvana" tell).
 func TestMusicBrainzSearchArtistParsesCandidates(t *testing.T) {
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
-		if r.URL.Path == "/artist" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(mbArtistSearchJSON))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	p, host := newProvider(t, pathHandler("/artist", mbArtistSearchJSON), noPacing())
 
-	cands, err := p.Search(context.Background(), "artist", "Nirvana", SearchOptions{})
+	cands, err := search(p, "artist", "Nirvana", pluginapi.Page{}, "", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(seen) != 1 || seen[0] != "/artist" {
+	if seen := requestPaths(host); len(seen) != 1 || seen[0] != "/artist" {
 		t.Fatalf("expected one /artist call, saw %v", seen)
 	}
 	if len(cands) != 2 {
@@ -220,7 +214,8 @@ func TestMusicBrainzSearchArtistParsesCandidates(t *testing.T) {
 // TestMusicBrainzSearchAlbumCarriesTracklist: an album (release-group) query hits
 // /release-group for candidates and /release (inc=recordings) for each candidate's
 // tracklist preview — the ordered disc/position/title an Admin confirms before
-// applying (ADR-0019; slice 05 consumes it for the positional cascade).
+// applying (ADR-0019; the positional cascade consumes it). The thumbnail comes off
+// URL2, the Cover Art Archive.
 func TestMusicBrainzSearchAlbumCarriesTracklist(t *testing.T) {
 	const rgJSON = `{"release-groups": [
 	  {"id": "rg-1", "title": "OK Computer", "first-release-date": "1997-05-21",
@@ -232,9 +227,7 @@ func TestMusicBrainzSearchAlbumCarriesTracklist(t *testing.T) {
 	    {"position": 2, "title": "Paranoid Android"}
 	  ]}]}
 	]}`
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
+	p, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/release-group":
@@ -244,12 +237,9 @@ func TestMusicBrainzSearchAlbumCarriesTracklist(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	}, noPacing())
 
-	cands, err := p.Search(context.Background(), "album", "OK Computer", SearchOptions{})
+	cands, err := search(p, "album", "OK Computer", pluginapi.Page{}, "", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -260,6 +250,9 @@ func TestMusicBrainzSearchAlbumCarriesTracklist(t *testing.T) {
 	if c.ExternalID != "rg-1" || c.Title != "OK Computer" || c.Year != 1997 || c.Kind != "album" {
 		t.Errorf("candidate = %+v", c)
 	}
+	if c.ThumbnailURL != caaHost+"/release-group/rg-1/front-250" {
+		t.Errorf("thumbnail = %q, want the 250px cover off URL2", c.ThumbnailURL)
+	}
 	if len(c.Tracklist) != 2 || c.Tracklist[0].Title != "Airbag" || c.Tracklist[1].Position != 2 {
 		t.Errorf("tracklist = %+v", c.Tracklist)
 	}
@@ -268,30 +261,44 @@ func TestMusicBrainzSearchAlbumCarriesTracklist(t *testing.T) {
 	}
 }
 
+// A tracklist preview that FAILS is non-fatal: the candidate is still offered,
+// without a preview (ADR-0001). It is the one place this provider swallows a
+// fetch failure, and it did before the port too.
+func TestAnAlbumCandidateSurvivesAFailedTracklistPreview(t *testing.T) {
+	fastBackoff(t)
+	p, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/release-group" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"release-groups":[{"id":"rg-1","title":"OK Computer"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}, noPacing())
+
+	cands, err := search(p, "album", "OK Computer", pluginapi.Page{}, "", "")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(cands) != 1 || cands[0].ExternalID != "rg-1" {
+		t.Fatalf("candidates = %+v, want the album offered anyway", cands)
+	}
+	if len(cands[0].Tracklist) != 0 {
+		t.Errorf("tracklist = %+v, want none", cands[0].Tracklist)
+	}
+}
+
 // TestMusicBrainzArtistLookupByPinnedMBID: a pinned artist MBID resolves BY id
 // (/artist/{mbid}) — the durable artist Enrichment override path — instead of a
 // name search.
 func TestMusicBrainzArtistLookupByPinnedMBID(t *testing.T) {
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
-		if r.URL.Path == "/artist/art-42" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id": "art-42", "name": "Corrected Artist", "type": "Group",
-			  "tags": [{"name": "grunge"}]}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	p, host := newProvider(t, pathHandler("/artist/art-42",
+		`{"id": "art-42", "name": "Corrected Artist", "type": "Group", "tags": [{"name": "grunge"}]}`), noPacing())
 
-	meta, err := p.Lookup(context.Background(), TitleRef{Kind: "artist", MusicbrainzID: "art-42", Title: "ignored"})
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "art-42", Title: "ignored"})
 	if err != nil {
 		t.Fatalf("Lookup by MBID: %v", err)
 	}
-	if len(seen) != 1 || seen[0] != "/artist/art-42" {
+	if seen := requestPaths(host); len(seen) != 1 || seen[0] != "/artist/art-42" {
 		t.Fatalf("expected a by-id /artist/art-42 fetch, saw %v", seen)
 	}
 	if !meta.Matched || meta.Name != "Corrected Artist" || meta.ExternalID != "art-42" {
@@ -305,26 +312,15 @@ func TestMusicBrainzArtistLookupByPinnedMBID(t *testing.T) {
 // TestMusicBrainzAlbumLookupByPinnedMBID: a pinned release-group MBID resolves BY
 // id (/release-group/{mbid}) — the durable album Enrichment override path.
 func TestMusicBrainzAlbumLookupByPinnedMBID(t *testing.T) {
-	var seen []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.URL.Path)
-		if r.URL.Path == "/release-group/rg-42" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id": "rg-42", "title": "Corrected Album",
-			  "first-release-date": "2000-01-01", "tags": [{"name": "rock"}]}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	p := NewMusicBrainzProvider(srv.URL, "https://coverart/", "en-US")
-	p.MinInterval = 0
+	p, host := newProvider(t, pathHandler("/release-group/rg-42",
+		`{"id": "rg-42", "title": "Corrected Album", "first-release-date": "2000-01-01", "tags": [{"name": "rock"}]}`),
+		noPacing())
 
-	meta, err := p.Lookup(context.Background(), TitleRef{Kind: "album", MusicbrainzID: "rg-42", Album: "ignored"})
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-42", Album: "ignored"})
 	if err != nil {
 		t.Fatalf("Lookup by MBID: %v", err)
 	}
-	if len(seen) != 1 || seen[0] != "/release-group/rg-42" {
+	if seen := requestPaths(host); len(seen) != 1 || seen[0] != "/release-group/rg-42" {
 		t.Fatalf("expected a by-id /release-group/rg-42 fetch, saw %v", seen)
 	}
 	if !meta.Matched || meta.ExternalID != "rg-42" {
@@ -332,5 +328,45 @@ func TestMusicBrainzAlbumLookupByPinnedMBID(t *testing.T) {
 	}
 	if len(meta.Artwork) != 1 || meta.Artwork[0].Role != "cover" {
 		t.Errorf("expected a cover artwork ref, got %+v", meta.Artwork)
+	}
+}
+
+// A pasted /release/ URL pins the ALBUM: the release resolves to its parent
+// release-group and the record is that release-group's (ADR-0038).
+func TestMusicBrainzLookupResolvesReleaseToReleaseGroup(t *testing.T) {
+	p, host := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/release/rel-1":
+			_, _ = w.Write([]byte(`{"release-group":{"id":"rg-7"}}`))
+		case "/release-group/rg-7":
+			_, _ = w.Write([]byte(`{"id":"rg-7","title":"Parent Album","first-release-date":"1994-01-01"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}, noPacing())
+
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "album", ReleaseMBID: "rel-1"})
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if meta.ExternalID != "rg-7" || meta.Name != "Parent Album" {
+		t.Errorf("meta = %+v, want the parent release-group", meta)
+	}
+	want := []string{"/release/rel-1", "/release-group/rg-7"}
+	if got := requestPaths(host); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("paths = %v, want %v", got, want)
+	}
+}
+
+// A 404 anywhere on a lookup is the definitive "no such record", NOT a
+// connectivity failure: the Admin who pasted a stale id is told there is no
+// record, and the item is not retried forever.
+func TestMusicBrainzLookupNotFoundIsNoMatch(t *testing.T) {
+	p, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, noPacing())
+
+	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-gone"})
+	if !errors.Is(err, errNoMatch) {
+		t.Errorf("err = %v, want no-match", err)
 	}
 }

@@ -131,6 +131,13 @@ type testProviderResponse struct {
 type testProviderRequest struct {
 	APIKey  *string `json:"apiKey,omitempty"`
 	BaseURL *string `json:"baseURL,omitempty"`
+	// ImageBaseURL is the SECOND host, for a source that has one — TMDB's image CDN,
+	// MusicBrainz's Cover Art Archive (.scratch/bundled-plugins issue 06). It is here
+	// for the same reason BaseURL is: the dialog has a field for it, and a probe that
+	// could only test the saved value would be useless for the value the Admin just
+	// typed. Absent falls back to what is on file, and a provider with no second host
+	// ignores it.
+	ImageBaseURL *string `json:"imageBaseURL,omitempty"`
 }
 
 // --- Routing ----------------------------------------------------------------
@@ -452,12 +459,15 @@ func handleTestProvider(deps Deps, slug string) http.HandlerFunc {
 				break
 			}
 		}
-		apiKey, baseURL := cur.APIKey, cur.BaseURL
+		apiKey, baseURL, imageBaseURL := cur.APIKey, cur.BaseURL, cur.ImageBaseURL
 		if req.APIKey != nil {
 			apiKey = *req.APIKey
 		}
 		if req.BaseURL != nil {
 			baseURL = strings.TrimSpace(*req.BaseURL)
+		}
+		if req.ImageBaseURL != nil {
+			imageBaseURL = strings.TrimSpace(*req.ImageBaseURL)
 		}
 		_ = entry // the Descriptor validated the slug; TestConnection re-reads it
 
@@ -465,7 +475,7 @@ func handleTestProvider(deps Deps, slug string) http.HandlerFunc {
 		// {ok:false}, never a 500.
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		ok2, detail := enrich.TestConnection(ctx, metadataCatalog(deps), slug, apiKey, baseURL, lang)
+		ok2, detail := enrich.TestConnection(ctx, metadataCatalog(deps), slug, apiKey, baseURL, imageBaseURL, lang)
 		writeJSON(w, http.StatusOK, testProviderResponse{OK: ok2, Detail: detail})
 	}
 }

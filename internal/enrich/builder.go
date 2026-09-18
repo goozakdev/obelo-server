@@ -284,9 +284,10 @@ func (c ProviderConfig) musicEnabled() bool {
 // 3 makes that order the server's own). Composing an arbitrary number of
 // Supplements is a follow-up (.scratch/bundled-plugins issue 11), not this one.
 //
-// A registration with no factory (Cover Art Archive, which is a HOST of the
-// MusicBrainz Plugin rather than a source of its own) builds to nil and is skipped
-// here exactly as it is everywhere else, which is why it never occupies a slot.
+// A registration with no factory builds to nil and is skipped here exactly as it
+// is everywhere else, so it can never occupy a slot. Cover Art Archive was the one
+// such registration and it is gone (.scratch/bundled-plugins: issue 06) — it was
+// never a source, and it is now the music lead's second URL.
 func (cat Catalog) musicImageSupplements(cfg ProviderConfig, lead string) []MetadataProvider {
 	var out []MetadataProvider
 	for _, e := range cat.entries() {

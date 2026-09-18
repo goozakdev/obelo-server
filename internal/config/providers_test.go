@@ -13,7 +13,13 @@ import (
 // enablement rules in the enrichment domain became two tables. The rules are
 // unchanged, and these are the tests that say so — including the two that read
 // oddly on purpose, because the behaviour they preserve is odd: a video key turns
-// the music rows on, and Cover Art Archive has no switch of its own.
+// the music rows on.
+//
+// OBELO_COVERART_BASE_URL now fills the MUSICBRAINZ row's SECOND host
+// (.scratch/bundled-plugins: issue 06). The variable, its default and its meaning
+// are unchanged — it is still "where the album covers come from" — but the Cover
+// Art Archive is no longer a provider of its own, so there is no `coverart` row to
+// seed and no switch of its own to ride.
 
 // TestProviderEnvTableIsTheEnvironment: every variable an operator has ever set
 // still lands where it did, and the table is the only place it is named.
@@ -39,7 +45,9 @@ func TestProviderEnvTableIsTheEnvironment(t *testing.T) {
 		{"tmdb url", c.ProviderURL(config.ProviderTMDB), "http://tmdb.stub"},
 		{"tmdb image url", c.ProviderURL2(config.ProviderTMDB), "http://img.stub"},
 		{"musicbrainz url", c.ProviderURL(config.ProviderMusicBrainz), "http://mb.stub"},
-		{"coverart url", c.ProviderURL(config.ProviderCoverArt), "http://caa.stub"},
+		// The cover-art host arrives as the MUSIC LEAD's second URL, not as a row of
+		// its own (.scratch/bundled-plugins: issue 06).
+		{"cover art url", c.ProviderURL2(config.ProviderMusicBrainz), "http://caa.stub"},
 		{"fanart key", c.ProviderKey(config.ProviderFanartTV), "fk"},
 		{"fanart url", c.ProviderURL(config.ProviderFanartTV), "http://fanart.stub"},
 		{"theaudiodb key", c.ProviderKey(config.ProviderTheAudioDB), "ak"},
@@ -74,7 +82,7 @@ func TestSeedProviderRowsReproducesTheEnvRules(t *testing.T) {
 		c := config.Defaults()
 		c.SetProviderKey(config.ProviderTMDB, "tk")
 		got := enabled(c.SeedProviderRows(nil))
-		for _, id := range []string{config.ProviderTMDB, config.ProviderMusicBrainz, config.ProviderCoverArt} {
+		for _, id := range []string{config.ProviderTMDB, config.ProviderMusicBrainz} {
 			if r, ok := got[id]; !ok || !r.Enabled {
 				t.Errorf("%s not seeded enabled; a video key historically turned on every kind", id)
 			}
@@ -94,8 +102,12 @@ func TestSeedProviderRowsReproducesTheEnvRules(t *testing.T) {
 		if _, ok := got[config.ProviderTMDB]; ok {
 			t.Error("tmdb seeded with no key")
 		}
-		if r, ok := got[config.ProviderCoverArt]; !ok || !r.Enabled {
-			t.Error("coverart not seeded; it rides the MusicBrainz opt-in, having no switch of its own")
+		if r, ok := got[config.ProviderMusicBrainz]; !ok || !r.Enabled {
+			t.Error("musicbrainz not seeded from its own opt-in")
+		}
+		if _, ok := got["coverart"]; ok {
+			t.Error("a `coverart` row was seeded; it stopped being a provider in " +
+				".scratch/bundled-plugins issue 06 and is now the music lead's second host")
 		}
 	})
 
@@ -140,8 +152,10 @@ func TestSeedProviderRowsReproducesTheEnvRules(t *testing.T) {
 		if r := got[config.ProviderTMDB]; r.BaseURL != "http://tmdb.stub" || r.ImageBaseURL != "http://img.stub" {
 			t.Errorf("tmdb seed hosts = %+v, want both overrides captured verbatim", r)
 		}
-		if r := got[config.ProviderCoverArt]; r.BaseURL != "http://caa.stub" {
-			t.Errorf("coverart seed base URL = %q, want the override", r.BaseURL)
+		// The operator's cover-art override rides the MUSIC row, as its image host.
+		if r := got[config.ProviderMusicBrainz]; r.ImageBaseURL != "http://caa.stub" {
+			t.Errorf("musicbrainz seed image base URL = %q, want the OBELO_COVERART_BASE_URL "+
+				"override — that variable now fills this field", r.ImageBaseURL)
 		}
 	})
 }

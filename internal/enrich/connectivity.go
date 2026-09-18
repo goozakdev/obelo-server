@@ -3,6 +3,8 @@ package enrich
 import (
 	"context"
 	"errors"
+	"net/url"
+	"strings"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -36,7 +38,13 @@ const probeArtistMBID = "a74b1b7f-71a5-4011-9441-d0b5e4122711"
 // Every source is probed BY BUILDING ITS PLUGIN from the catalog (ADR-0057): the
 // probe exercises the registration and the adapter — the same path the real chain
 // takes — rather than a private construction no production flow uses.
-func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, language string) (ok bool, detail string) {
+//
+// A PROVIDER WITH TWO HOSTS GETS TWO CALLS (.scratch/bundled-plugins issue 06).
+// imageBaseURL is the operator's current-or-edited SECOND host, and a Descriptor
+// that declares one has the artwork-candidates call issued against the same probe
+// reference after the lookup — see the rule below, which is where it is written
+// down and why.
+func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, imageBaseURL, language string) (ok bool, detail string) {
 	entry, found := cat.Entry(slug)
 	if !found {
 		return false, "unknown provider"
@@ -48,51 +56,116 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, lan
 	if base == "" {
 		base = entry.DefaultURL
 	}
+	imageBase := imageBaseURL
+	if imageBase == "" {
+		imageBase = entry.DefaultURL2
+	}
 
-	// buildSlug is whose Plugin is built; settings are what it is built FROM. They
-	// differ for exactly one source, below.
-	buildSlug := slug
 	settings := pluginapi.Settings{
 		Enabled:  true,
 		Secret:   apiKey,
 		URL:      base,
-		URL2:     entry.DefaultURL2,
+		URL2:     imageBase,
 		Language: language,
 	}
 
-	// THE ONE REMAINING SPECIAL CASE (.scratch/bundled-plugins: issue 01), and it is
-	// the Cover Art Archive's, which issue 06 deletes by folding that host into the
-	// MusicBrainz plugin's manifest as its second URL.
-	//
-	// Cover Art Archive has no Plugin of its own: it is the artwork host of the
-	// MusicBrainz Plugin. So it is probed the way it is USED — build MusicBrainz
-	// with the SUPPLIED host as its second URL and MusicBrainz's own default as its
-	// API — and its Descriptor's probe asks for an ALBUM, so a cover lookup is
-	// attempted against the host under test. The mirror image is MusicBrainz's own
-	// test, which names the Cover Art default rather than leaving the second host
-	// blank, because the Plugin is built with two hosts either way.
-	switch slug {
-	case SlugCoverArt:
-		buildSlug = SlugMusicBrainz
-		settings.Secret = ""
-		settings.URL, settings.URL2 = registryMusicBrainzBaseURL, base
-	case SlugMusicBrainz:
-		settings.URL2 = registryCoverArtBaseURL
-	}
-
+	// THERE ARE NO SPECIAL CASES LEFT (.scratch/bundled-plugins: issue 06). The last
+	// one was Cover Art Archive's, which had no Plugin of its own and was probed by
+	// building MusicBrainz with the supplied host as its second URL; that host is now
+	// the MusicBrainz plugin's own, so the two rows became one and this function
+	// treats every provider alike.
 	if entry.Probe == nil {
 		return false, "this provider declares no connection probe"
 	}
-	provider := cat.buildPlugin(buildSlug, settings)
+	provider := cat.buildPlugin(slug, settings)
 	if provider == nil {
 		return false, "this provider cannot be built from these settings"
 	}
 
-	_, err := provider.Lookup(ctx, titleRefFromWire(*entry.Probe))
-	switch {
-	case err == nil, errors.Is(err, ErrNoMatch):
-		return true, "connection succeeded"
-	default:
+	probe := titleRefFromWire(*entry.Probe)
+	record, err := provider.Lookup(ctx, probe)
+	if err != nil && !errors.Is(err, ErrNoMatch) {
 		return false, err.Error()
 	}
+
+	// A PROVIDER WITH TWO HOSTS IS TESTED AGAINST BOTH (ADR-0059 decision 8, as issue
+	// 06 extends it). A lookup proves the API host answered and any credential was
+	// accepted, and for a single-host source that is the whole of what a connection
+	// test can prove. It proves NOTHING about a second host: a source whose images
+	// come from an image CDN reaches that CDN only when something asks for images,
+	// and the probe's lookup does not — MusicBrainz's cover URL is BUILT from URL2
+	// and never fetched, so a wrong Cover Art Archive host passed the test and then
+	// failed silently on every album cover the pass downloaded.
+	//
+	// So a Descriptor that declares a second URL gets a SECOND CALL, and the rule is
+	// the call the provider already has for it: artwork-candidates, for the record
+	// the probe just resolved. That is the one contract call whose whole subject is
+	// images, so the host it reaches IS the second host by construction rather than
+	// by this function guessing a URL shape. A provider that declares no URL2, or no
+	// artwork-candidates capability, is untouched and costs exactly one call as
+	// before — which is every provider this server ships but two.
+	//
+	// It is the RESOLVED id that makes it work: an image set is keyed by the record,
+	// so the probe reference alone lists nothing and would reach no host at all. That
+	// is also why a Plugin's probe should name something whose images exist —
+	// MusicBrainz's is an album, the reference the Cover Art Archive's own
+	// registration used to declare before this host became MusicBrainz's second URL.
+	//
+	// The refusal names the host under test, because "connection failed" on a screen
+	// with two URL fields does not tell an operator which one they typed wrong.
+	// ErrSearchUnavailable is NOT forgiven below, which is the one place this call is
+	// judged differently from the lookup. It is what a Plugin's OutcomeUnavailable
+	// becomes, and for a capability the Descriptor DECLARES — which is what the check
+	// below tests first — "I cannot serve this call" IS the image host failing to
+	// answer, which is the whole thing under test. A no-match is a pass, as it is for
+	// the lookup: a record with no images is an answer, and the host that gave it was
+	// reached.
+	if entry.DefaultURL2 == "" || !entry.HasCapability(pluginapi.CapabilityArtworkCandidates) {
+		return true, "connection succeeded"
+	}
+	if _, err := provider.ArtworkCandidates(ctx, probeRefWithID(probe, record.ExternalID), "cover"); err != nil &&
+		!errors.Is(err, ErrNoMatch) {
+		return false, imageHostFailure(imageBase, err)
+	}
+	return true, "connection succeeded"
+}
+
+// probeRefWithID puts the id the probe lookup resolved into the reference the image
+// call is made with.
+//
+// IT FILLS EVERY ID FIELD, and that is not sloppiness. The contract's MediaRef
+// carries one field per id NAMESPACE and no generic "the id you just gave me", so a
+// host that wanted to fill exactly one would have to know which namespace this
+// Plugin owns — which is the switch over shipped slugs .scratch/bundled-plugins
+// issue 01 deleted, reappearing in a new place. This reference is built FOR one
+// Plugin, is used for one call, and is thrown away; a Plugin reads the field it owns
+// and cannot see the others, so "the id this source resolved a moment ago" is true
+// of whichever one it looks at. Follow-up issue 10 — a source-namespaced external-id
+// map on the Title — is what replaces this with one field.
+//
+// An empty id leaves the reference alone: a probe that resolved nothing (a no-match,
+// which is a PASS for the credential test) has no record to ask for images of, and
+// the call then costs whatever a Plugin charges for a reference it cannot use, which
+// for every shipped one is nothing.
+func probeRefWithID(ref TitleRef, externalID string) TitleRef {
+	id := strings.TrimSpace(externalID)
+	if id == "" {
+		return ref
+	}
+	ref.TMDBID, ref.IMDBID, ref.MusicbrainzID, ref.TheTVDBID, ref.AniDBID = id, id, id, id, id
+	return ref
+}
+
+// imageHostFailure is the sentence a failed second-host probe reports. It names the
+// host the operator is being asked about, because a provider dialog with two URL
+// fields and one verdict is a dialog that cannot be acted on.
+func imageHostFailure(imageBase string, err error) string {
+	host := strings.TrimSpace(imageBase)
+	if u, perr := url.Parse(host); perr == nil && u.Host != "" {
+		host = u.Host
+	}
+	if host == "" {
+		return "the image host could not be reached: " + err.Error()
+	}
+	return "the image host " + host + " could not be reached: " + err.Error()
 }
