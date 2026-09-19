@@ -1634,6 +1634,13 @@ func (a *App) Close() error {
 		}
 		a.cancel = nil
 	}
+	// End every Playback session once the reaper has stopped, so no remux or
+	// transcode ffmpeg outlives the server: each is killed and WAITED for before its
+	// scratch dir under the data dir is removed. Left running, a job keeps writing
+	// segments into a directory that whoever owns the data dir may be deleting.
+	if a.Playback != nil {
+		a.Playback.EndAllSessions()
+	}
 	// Stop the per-Link sync goroutines and their outbound subscriptions before the
 	// Broker goes, for the Tailnet's reason: a transition published into a closed
 	// Broker is a panic, and a subscription left open is a goroutine leaked past
