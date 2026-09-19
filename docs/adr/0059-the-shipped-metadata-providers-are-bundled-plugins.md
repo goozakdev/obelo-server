@@ -146,6 +146,12 @@ quota (a 406) is answered as `unavailable`, because a Subtitle provider's clean 
 still a strike and three of them would disable the plugin for the rest of the day. After
 this the word **Built-in** names only the Webhook sink.
 
+*Amended 2026-09-19 ([ADR-0060](./0060-a-record-id-is-namespaced-and-a-pin-holds-only-a-decision.md),
+.scratch/bundled-plugins issue 10): the named-id gap is closed.* `MediaRef.ExternalIDs` carries
+every id the host holds, keyed by namespace; the five named fields are v1 mirrors filled from it.
+A Title's record is namespaced in `title_external_ids`, so `videoIDColumnProvider` — the one
+shipped name this ADR's port could not retire — is gone.
+
 ## Consequences
 
 - CONTEXT.md gains **Bundled plugin**; **Built-in** now names OpenSubtitles and the Webhook
