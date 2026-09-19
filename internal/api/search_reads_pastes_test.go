@@ -3,6 +3,7 @@ package api_test
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/enrich"
@@ -73,8 +74,8 @@ func TestASearchResolvesAPasteThroughTheLibrarysLead(t *testing.T) {
 }
 
 // TestASearchResolvesAMusicBrainzPasteAndKeepsThePastesErrors: the shipped lead's
-// shapes still resolve, and a paste fails as a paste — a stale id is 404 "no
-// record", a wrong-kind link is the 400 that says which link to paste — never a
+// shapes still resolve, and a pasted LINK fails as a paste — a stale one is 404 "no
+// record", a wrong-kind one is the 400 that says which link to paste — never a
 // free-text search for a URL. A "show more" page is always a search.
 func TestASearchResolvesAMusicBrainzPasteAndKeepsThePastesErrors(t *testing.T) {
 	requireMusicFixtures(t)
@@ -109,7 +110,9 @@ func TestASearchResolvesAMusicBrainzPasteAndKeepsThePastesErrors(t *testing.T) {
 		got.Candidates[0].Source != pluginapi.NamespaceMusicBrainz || got.HasMore {
 		t.Errorf("url paste = %+v, want one resolved candidate %s in musicbrainz", got, goodID)
 	}
-	getCandidateSearch(t, srv, token, path, "22222222-2222-2222-2222-222222222222", http.StatusNotFound)
+	// A stale id pasted as a LINK keeps the paste's 404: a URL says plainly that a
+	// reference was meant (the bare-id fallback is TestAnIdThatNamesNothing…).
+	getCandidateSearch(t, srv, token, path, "https://musicbrainz.org/recording/22222222-2222-2222-2222-222222222222", http.StatusNotFound)
 	getCandidateSearch(t, srv, token, path, "https://musicbrainz.org/artist/"+goodID, http.StatusBadRequest)
 
 	var page candidateSearchResp
@@ -152,4 +155,55 @@ func TestALeadThatReadsNoPastesIsNotHandedTheHostsReading(t *testing.T) {
 	if got.ResolvedRef || len(got.Candidates) != 1 || got.Candidates[0].ExternalID != slug+"-hit" {
 		t.Errorf("uuid under a non-reading lead = %+v, want the lead's search hit, unresolved", got)
 	}
+}
+
+// TestAnIdThatNamesNothingFallsBackToSearchingForIt: a bare id is also a search
+// term ("1917" and "2012" are films as well as TMDB ids). An id the lead reads but
+// cannot resolve is searched for instead of dead-ending — unless it was pasted as a
+// LINK, or the search finds nothing either, in both of which cases the paste's own
+// "no record for that id" is the better answer.
+func TestAnIdThatNamesNothingFallsBackToSearchingForIt(t *testing.T) {
+	requireMusicFixtures(t)
+	const stale = "22222222-2222-2222-2222-222222222222"
+	const barren = "33333333-3333-3333-3333-333333333333"
+	prov := &fakeProvider{
+		searchFn: func(kind, query string) ([]enrich.Candidate, error) {
+			if strings.Contains(query, barren) {
+				return nil, nil // nothing by that name either
+			}
+			return []enrich.Candidate{{ExternalID: "found", Title: query, Kind: kind}}, nil
+		},
+		// No id resolves: every paste here is a stale one.
+		fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) {
+			return enrich.TitleMetadata{}, enrich.ErrNoMatch
+		},
+	}
+	srv := testharness.New(t,
+		testharness.WithMusicBrainzEnabled(true),
+		testharness.WithMetadataProvider(prov),
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	libID := createMusicLibrary(t, srv, token, musicRoot(t))
+	scanLib(t, srv, token, libID, "")
+	trackID := firstTrackID(t, srv, token, libID)
+	if trackID == "" {
+		t.Skip("no tracks in music fixture")
+	}
+	path := "/api/v1/titles/" + trackID + "/enrichmentCandidates"
+
+	// A bare id naming no record is searched for, and the hits are ordinary search
+	// results — not a resolved reference.
+	got := getCandidateSearch(t, srv, token, path, stale, http.StatusOK)
+	if got.ResolvedRef || len(got.Candidates) != 1 || got.Candidates[0].ExternalID != "found" {
+		t.Errorf("stale bare id = %+v, want the search's hits, unresolved", got)
+	}
+
+	// With nothing found by that name either, the paste's answer stands: the id is
+	// stale, which is more use than an empty result list.
+	getCandidateSearch(t, srv, token, path, barren, http.StatusNotFound)
+
+	// A pasted LINK says plainly that a reference was meant, so it keeps its 404
+	// even though searching for it would have "found" something here.
+	getCandidateSearch(t, srv, token, path, "https://musicbrainz.org/recording/"+stale, http.StatusNotFound)
 }

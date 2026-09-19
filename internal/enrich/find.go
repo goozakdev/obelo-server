@@ -56,13 +56,30 @@ func (s *Service) FindCandidatesForKind(ctx context.Context, kind, query string,
 	return s.findIn(ctx, s.snapshot(), kind, query, opts)
 }
 
+// looksLikeLink reports whether a query was plainly PASTED as a reference rather
+// than typed as a term: a URL with a scheme, or a bare host/path like
+// "musicbrainz.org/artist/…". It knows nothing about any source's id shapes — that
+// is the lead's business (ADR-0057 decision 3) — only about what a human typing a
+// title does not type. A term with a slash in it but no dot ("AC/DC") is a term.
+func looksLikeLink(query string) bool {
+	q := strings.TrimSpace(query)
+	return strings.Contains(q, "://") || (strings.Contains(q, "/") && strings.Contains(q, "."))
+}
+
 // findIn asks the snapshot's lead to read query as a reference, then either
 // previews the record it names or searches for query as a term.
 //
 //   - A query the lead cannot read (ErrExternalRefInvalid) is a search term.
 //   - A query it reads as a reference is previewed exactly as the externalPreview
-//     endpoints preview a paste, and its errors are the paste's errors: an id with
-//     no record is ErrNoMatch, and so on.
+//     endpoints preview a paste, and its errors are the paste's errors.
+//   - EXCEPT that an id naming no record (ErrNoMatch) falls back to searching for
+//     the query, because a bare id is also a search term: "1917" and "2012" are
+//     films as well as TMDB ids, and an Admin who typed one meaning the title
+//     should get the film. A LINK never falls back — pasting a URL says plainly
+//     that a reference was meant, so it keeps its "no record for that id" — and
+//     neither does a fallback search that finds nothing, which answers with the
+//     paste's error as well. So a stale bare id still reports itself as stale
+//     rather than as an empty search.
 //   - A reference of the WRONG kind (ErrExternalRefKindMismatch) or an unsupported
 //     one (ErrExternalRefUnsupportedKind) is returned as that error. The Admin
 //     plainly pasted a link, and "that's an album link, this is an artist" is the
@@ -80,10 +97,21 @@ func (s *Service) findIn(ctx context.Context, snap providerSnapshot, kind, query
 		switch {
 		case err == nil:
 			c, err := s.previewExternal(ctx, snap, kind, query)
-			if err != nil {
+			switch {
+			case err == nil:
+				return CandidateSearch{Candidates: []Candidate{c}, ResolvedRef: true}, nil
+			case errors.Is(err, ErrNoMatch) && !looksLikeLink(query):
+				// The id read fine and names nothing. A bare id is also a perfectly good
+				// SEARCH TERM — "1917" and "2012" are films as well as TMDB ids — so the
+				// term gets its search rather than a dead end. If that finds nothing
+				// either, the paste's own answer is the better one and comes back below.
+				if cands, serr := s.searchIn(ctx, snap, kind, query, opts); serr == nil && len(cands) > 0 {
+					return CandidateSearch{Candidates: cands}, nil
+				}
+				return CandidateSearch{ResolvedRef: true}, err
+			default:
 				return CandidateSearch{ResolvedRef: true}, err
 			}
-			return CandidateSearch{Candidates: []Candidate{c}, ResolvedRef: true}, nil
 		case errors.Is(err, ErrExternalRefKindMismatch), errors.Is(err, ErrExternalRefUnsupportedKind):
 			return CandidateSearch{ResolvedRef: true}, err
 		}
