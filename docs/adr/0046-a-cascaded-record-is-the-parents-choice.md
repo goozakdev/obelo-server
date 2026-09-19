@@ -162,3 +162,9 @@ with it.
   `applyPinsTx`' Clear branch releases it, both as they cleared the lock before: a
   Wrong item is a clean slate and a cleared pin is a withdrawn choice, whichever
   of the two provenances put the value there.
+
+*Amended 2026-09-19 ([ADR-0060](./0060-a-record-id-is-namespaced-and-a-pin-holds-only-a-decision.md)):
+the origin is also the pin's gate.* A record whose origin is `'chosen'` or `'cascaded'`
+(`Locked()`) resolves via its own namespace's provider even after the Library is repointed; a
+record with origin `''` does not, and re-resolves via the new lead. The three values and their
+meaning are unchanged.

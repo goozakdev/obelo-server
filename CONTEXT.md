@@ -166,6 +166,10 @@ _Avoid_: Full source (collides with Artwork source).
 A Metadata provider that supplies only images, so it can never lead — only ever act as a Supplement (fanart.tv, TheAudioDB). Cover Art Archive is not one: it is the cover-art host the MusicBrainz provider reads, not a provider of its own.
 _Avoid_: Art source, Image provider.
 
+**External-id namespace**:
+The id space an external id belongs to — `tmdb`, `imdb`, `musicbrainz`, `thetvdb`, `anidb`, or a third-party source's own — as distinct from the Plugin that reads it: IMDb ids have no plugin of their own and are read by OMDb; MusicBrainz ids are read by fanart.tv and TheAudioDB too. A record's `Source` names its id's namespace, a source's namespace is its plugin id, and every id the host holds is keyed by one ([ADR-0060](./docs/adr/0060-a-record-id-is-namespaced-and-a-pin-holds-only-a-decision.md)). An entity's record **pins** it to its namespace's provider only when the record is a decision — chosen, cascaded, or asserted by the folder — never merely because a pass once resolved it there.
+_Avoid_: Source id (ambiguous with the Plugin id), provider id.
+
 **Authoritative provider**:
 The single Full provider that leads a Library's Enrichment, supplying the canonical record the Supplements fill around. A per-Library choice that inherits a global default per media kind (TMDB for video, MusicBrainz for music) and can be repointed through the Library's Enrichment policy. When enrichment is on it always runs — even if that provider is disabled for general use — as long as it is usable (credentialed). Constrained to Full providers of the Library's kind ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)).
 _Avoid_: Primary, Master, Agent.
