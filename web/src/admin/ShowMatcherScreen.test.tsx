@@ -13,13 +13,11 @@ const {
   applyShowMatcher,
   listSeriesSlots,
   searchEntityEnrichmentCandidates,
-  previewEntityExternalCandidate,
 } = vi.hoisted(() => ({
   getShowMatcher: vi.fn(),
   applyShowMatcher: vi.fn(),
   listSeriesSlots: vi.fn(),
   searchEntityEnrichmentCandidates: vi.fn(),
-  previewEntityExternalCandidate: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -31,7 +29,6 @@ vi.mock("../api/client", async () => {
       applyShowMatcher: (...a: unknown[]) => applyShowMatcher(...a),
       listSeriesSlots: (...a: unknown[]) => listSeriesSlots(...a),
       searchEntityEnrichmentCandidates: (...a: unknown[]) => searchEntityEnrichmentCandidates(...a),
-      previewEntityExternalCandidate: (...a: unknown[]) => previewEntityExternalCandidate(...a),
     },
   };
 });
@@ -103,7 +100,6 @@ beforeEach(() => {
   applyShowMatcher.mockReset();
   listSeriesSlots.mockReset();
   searchEntityEnrichmentCandidates.mockReset();
-  previewEntityExternalCandidate.mockReset();
 });
 
 describe("ShowMatcherScreen", () => {

@@ -8,7 +8,6 @@ import AlbumEditionPicker from "./AlbumEditionPicker";
 import { cascadeSummaryText } from "./cascadeSummary";
 import FixItemPicker, { type FixSearchScope } from "./FixItemPicker";
 import { kindLabel, type FixItem } from "./needsFixing";
-import type { Provider } from "./searchRef";
 
 // One row of the Needs-Fixing queue. Every row — whatever went wrong — answers the
 // same four questions in the same places, which is the whole point of collapsing
@@ -41,7 +40,6 @@ import type { Provider } from "./searchRef";
 export default function FixItemRow({
   item,
   libraryId,
-  provider,
   onResolved,
   onIdentityCorrected,
   compact = false,
@@ -49,8 +47,6 @@ export default function FixItemRow({
 }: {
   item: FixItem;
   libraryId: string;
-  /** Which provider a pasted bare id belongs to (from the Library's media kind). */
-  provider: Provider;
   /** Called after the row's problem is resolved, so the queue refetches. */
   onResolved: () => void;
   /** Called after an identity correction, which only takes effect on the next scan
@@ -108,11 +104,13 @@ export default function FixItemRow({
       folderPath: item.folderPath,
       title: candidate.title,
       year: candidate.year,
-      // Only the video providers issue ids fix-match can store; a MusicBrainz id has
-      // no column, and music identity comes from tags anyway, so the title carries it.
-      tmdbId: provider === "tmdb" ? candidate.externalId : undefined,
+      // fix-match stores a TMDB identity id and nothing else, so the id goes only
+      // when the pick IS one — its `source` says so (ADR-0060). A MusicBrainz id has
+      // no column (music identity comes from tags; the title carries it), and neither
+      // has another lead's.
+      tmdbId: candidate.source === "tmdb" ? candidate.externalId : undefined,
     });
-    if (item.titleId !== "" && provider === "tmdb") {
+    if (item.titleId !== "" && candidate.source === "tmdb") {
       await apiClient.applyEnrichmentOverride(
         item.titleId,
         candidate.externalId,
@@ -217,13 +215,6 @@ export default function FixItemRow({
       : item.route === "enrichment-override"
         ? apiClient.searchEnrichmentCandidates(item.titleId, query, { page, ...scope })
         : apiClient.searchLibraryEnrichmentCandidates(libraryId, query, { page, ...scope });
-
-  const preview = (ref: string) =>
-    item.route === "album-enrichment-override"
-      ? apiClient.previewEntityExternalCandidate("albums", item.albumId, ref)
-      : item.route === "enrichment-override"
-        ? apiClient.previewExternalCandidate(item.titleId, ref)
-        : apiClient.previewLibraryExternalCandidate(libraryId, ref);
 
   // Applying means genuinely different things on the three routes, and the hint is
   // where that difference is stated — the Admin should never have to know the
@@ -491,7 +482,6 @@ export default function FixItemRow({
                   key={child.key}
                   item={child}
                   libraryId={libraryId}
-                  provider={provider}
                   onResolved={onResolved}
                   onIdentityCorrected={onIdentityCorrected}
                   compact
@@ -527,11 +517,9 @@ export default function FixItemRow({
           seed={item.searchSeed}
           artistScope={item.artistScope}
           albumScope={item.albumScope}
-          provider={provider}
           applyLabel="Use this"
           applyHint={applyHint}
           search={search}
-          preview={preview}
           onApply={onApply}
           onCancel={() => setPickerOpen(false)}
         />

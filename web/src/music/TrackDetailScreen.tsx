@@ -240,7 +240,6 @@ function TrackDetail({ title }: { title: TitleDetail }) {
                     node: (
                       <EnrichmentOverridePicker
                         titleId={title.id}
-                        provider="musicbrainz"
                         artistScope={title.track?.artistName ?? ""}
                         initialQuery={title.title}
                         onApplied={(d) => setGenres(d.genres)}

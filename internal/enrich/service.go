@@ -899,23 +899,6 @@ func (s *Service) seriesNamespace(ctx context.Context, titleID string) (string, 
 	return s.leadNamespace(ctx, t.LibraryID, t.Kind)
 }
 
-// SearchTitleCandidates searches the authoritative provider for a single Title,
-// deriving the searched kind from the Title itself. The service owns the lean
-// existence+kind read (store.ErrNotFound for an unknown Title flows to the handler
-// as a 404), so the HTTP layer needs no join-heavy detail fetch just to learn the
-// kind.
-func (s *Service) SearchTitleCandidates(ctx context.Context, titleID, query string, opts SearchOptions) ([]Candidate, error) {
-	t, err := s.store.TitleForEnrichmentByID(titleID)
-	if err != nil {
-		return nil, err // ErrNotFound flows through
-	}
-	snap, err := s.snapshotFor(ctx, t.LibraryID)
-	if err != nil {
-		return nil, err
-	}
-	return s.searchIn(ctx, snap, t.Kind, query, opts)
-}
-
 // PreviewTitleExternal resolves a pasted MusicBrainz/TMDB id-or-URL to a single
 // candidate for a leaf Title WITHOUT searching — the "paste an id when search isn't
 // enough" escape hatch (item-editing/search-improvements). It parses the ref, rejects
@@ -947,7 +930,7 @@ func (s *Service) PreviewTitleExternal(ctx context.Context, titleID, pastedRef s
 // namespace by media kind any more: that was ExternalMatchForKind, and it is how an
 // AniDB-led Library's aids ended up recorded as TMDB ids.
 //
-// Like SearchTitleCandidates it owns the lean Title read. store.ErrNotFound for an
+// Like FindTitleCandidates it owns the lean Title read. store.ErrNotFound for an
 // unknown Title flows to the handler as a 404. Identity/watch state are untouched.
 //
 // Admin-facing, like MatchTitle: the record is the Title's OWN choice. The Cascade
@@ -982,19 +965,6 @@ func entityKind(entityType string) string {
 	default:
 		return "show"
 	}
-}
-
-// SearchEntityCandidates searches the authoritative provider for a browse-parent
-// entity (Show/Artist/Album), deriving the searched kind from the entity type —
-// the parent analogue of SearchTitleCandidates (ADR-0019). It reuses SearchCandidates
-// (enablement-gated, capped); a disabled/unreachable provider surfaces
-// ErrSearchUnavailable so the Edit-item box reports why. Reads only.
-func (s *Service) SearchEntityCandidates(ctx context.Context, entityType, entityID, query string, opts SearchOptions) ([]Candidate, error) {
-	snap, err := s.entitySnapshot(ctx, entityType, entityID)
-	if err != nil {
-		return nil, err
-	}
-	return s.searchIn(ctx, snap, entityKind(entityType), query, opts)
 }
 
 // entitySnapshot is the effective snapshot of the Library a browse parent lives in.
@@ -1108,7 +1078,9 @@ func (s *Service) previewExternal(ctx context.Context, snap providerSnapshot, ki
 // Plugin here reads pastes for this kind" — an undeclared capability, a kind with
 // no provider, or a fixed provider injected by a test — and the host then reads
 // the paste itself with hostExternalRef, for the two namespaces it has its own
-// readers for (`tmdb` and `musicbrainz`). Every other answer, including all three
+// readers for (`tmdb` and `musicbrainz`), and only when that namespace LEADS the
+// kind in this snapshot (otherwise the paste is ErrExternalRefInvalid, "not a
+// reference"). Every other answer, including all three
 // refusals, is the Plugin's and stands: that is what keeps the two distinct 400s the
 // Admin sees produced by the source that knows which link they should have pasted.
 //
@@ -1126,7 +1098,16 @@ func (s *Service) externalRef(ctx context.Context, snap providerSnapshot, kind, 
 			return ref, err
 		}
 	}
-	return hostExternalRef(kind, pasted)
+	ref, err := hostExternalRef(kind, pasted)
+	if err == nil && ref.Namespace != snap.config.authoritativeSlugFor(kind) {
+		// The host reads only its own two namespaces, and only for a Library those
+		// sources lead. A Library led by a source that reads no pastes (AniDB, a
+		// third-party plugin) would otherwise read a bare number as a TMDB id and
+		// look it up at a lead that has never heard of TMDB — so for that lead it is
+		// not a reference at all, and the picker searches for it instead.
+		return ExternalRef{}, ErrExternalRefInvalid
+	}
+	return ref, err
 }
 
 // hostExternalRef is the host's own reading of a pasted ref — the answer for a

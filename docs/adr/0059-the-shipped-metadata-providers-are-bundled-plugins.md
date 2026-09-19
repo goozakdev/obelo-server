@@ -158,6 +158,15 @@ music Supplement in registration order, the video chain's shape, and MusicBrainz
 synthesized artist Overview so TheAudioDB's biography still replaces it. Decision 4's *reason*
 for rejecting a Cover Art Archive plugin no longer holds; the decision stands.
 
+*Amended 2026-09-19 (.scratch/bundled-plugins issue 12): the web app's pickers name no
+provider.* The Edit-item and Needs-Fixing pickers no longer choose TMDB or MusicBrainz by media
+kind, or decide with a local regex whether the box holds an id. Every `enrichmentCandidates`
+search first asks the item's Library's lead to read the query as a reference, through its
+`external-ref` capability, or through the host's own reader when that reader's source leads.
+A resolved one comes back flagged `resolvedRef` and is selected. The host reader no longer
+answers for a lead whose namespace it isn't, so an AniDB-led Library's bare number is a
+search term, not a TMDB id.
+
 ## Consequences
 
 - CONTEXT.md gains **Bundled plugin**; **Built-in** now names OpenSubtitles and the Webhook

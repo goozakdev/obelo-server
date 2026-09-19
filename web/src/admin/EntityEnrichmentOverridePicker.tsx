@@ -7,13 +7,12 @@ import type {
 } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import AlbumEditionPicker from "./AlbumEditionPicker";
-import { looksLikeRef, type Provider } from "./searchRef";
 
 // Edit-item unified "Search" tab on a browse PARENT — Show / Artist / Album
 // (item-editing/02, ADR-0019). The parent analogue of EnrichmentOverridePicker:
-// ONE input that accepts a search term, a provider URL, or a bare id (a URL/id
-// routes to externalPreview and auto-selects the resolved record; a term searches
-// TMDB tv for a Show or MusicBrainz for an Artist/Album). The Admin selects a
+// ONE input that accepts a search term, a provider URL, or a bare id. The server's
+// search asks the Library's lead to read it as a reference first and auto-selects a
+// resolved one (`resolvedRef`); a term is searched by that same lead. The Admin selects a
 // candidate row, optionally ticks "also apply to children", then applies at the
 // bottom:
 //   • Update (primary) — a parent Enrichment override (Fix info): re-points WHICH
@@ -55,10 +54,6 @@ export default function EntityEnrichmentOverridePicker({
     cascade: boolean,
   ) => Promise<EntityEnrichmentDetail>;
 }) {
-  // A Show resolves against TMDB (tv); an Artist/Album against MusicBrainz — so a
-  // pasted bare id is detected against the right provider.
-  const provider: Provider = entityType === "shows" ? "tmdb" : "musicbrainz";
-
   const [query, setQuery] = useState(initialQuery ?? "");
   const [artist, setArtist] = useState(artistScope ?? "");
   const [candidates, setCandidates] = useState<EnrichmentCandidate[] | null>(null);
@@ -88,32 +83,11 @@ export default function EntityEnrichmentOverridePicker({
       setCandidates((prev) =>
         append && prev ? [...prev, ...res.candidates] : res.candidates,
       );
+      // A pasted URL/id the lead resolved auto-selects its one record.
+      if (res.resolvedRef) setSelected(res.candidates[0] ?? null);
       setHasMore(res.hasMore ?? false);
       setPage(nextPage);
     } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  // A pasted provider URL/id resolves a single candidate via externalPreview and
-  // AUTO-SELECTS it; an error surfaces the server's actionable message.
-  async function runPreview(ref: string) {
-    setSearching(true);
-    setError(null);
-    try {
-      const candidate = await apiClient.previewEntityExternalCandidate(
-        entityType,
-        entityId,
-        ref,
-      );
-      setCandidates([candidate]);
-      setSelected(candidate);
-      setHasMore(false);
-    } catch (err) {
-      setCandidates(null);
-      setSelected(null);
       setError(errorMessage(err));
     } finally {
       setSearching(false);
@@ -126,11 +100,7 @@ export default function EntityEnrichmentOverridePicker({
     const q = query.trim();
     if (q === "") return;
     setSelected(null);
-    if (looksLikeRef(q, provider)) {
-      void runPreview(q);
-    } else {
-      void runSearch(0, false);
-    }
+    void runSearch(0, false);
   }
 
   async function doApply(mode: "update" | "replace") {

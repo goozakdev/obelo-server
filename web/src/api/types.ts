@@ -674,6 +674,11 @@ export interface EnrichmentCandidatesResult {
   /** Another page likely exists (a full page came back), so the picker can offer
    * "show more" for a broad common-title query (item-editing/search-improvements). */
   hasMore?: boolean;
+  /** The query was a pasted id-or-URL that the Library's lead read and resolved
+   * (.scratch/bundled-plugins issue 12): `candidates` holds that one record and the
+   * picker selects it. The client never decides what a reference looks like — only
+   * the lead knows its own ids. */
+  resolvedRef?: boolean;
 }
 
 /** One image the provider offers for a role in the Edit-item image picker (Fix

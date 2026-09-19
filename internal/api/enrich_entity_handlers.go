@@ -153,19 +153,8 @@ func handleEntityEnrichmentCandidates(enrichSvc *enrich.Service, images *provide
 			return
 		}
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		cands, err := enrichSvc.SearchEntityCandidates(r.Context(), entityType, entityID, query, searchOptionsFrom(r))
-		switch {
-		case errors.Is(err, enrich.ErrSearchUnavailable):
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search is unavailable for this item — the provider is unconfigured or disabled", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search failed — the source may be unreachable", nil)
-			return
-		}
-
-		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+		res, err := enrichSvc.FindEntityCandidates(r.Context(), entityType, entityID, query, searchOptionsFrom(r))
+		writeCandidateSearch(w, images, res, err, "item")
 	}
 }
 
