@@ -376,6 +376,61 @@ func TestAParentPinnedToTMDBInARepointedLibraryResolvesViaTMDB(t *testing.T) {
 	}
 }
 
+// A Show's FOLDER token pins it, exactly as a Title's does (ADR-0060 decision 6):
+// in an AniDB-led Library a {tmdb-1399} Show is looked up BY 1399 at TMDB and its
+// record is stored in `tmdb`, while a token-less neighbour goes to the new lead —
+// so it is the token that pins, not the Show's kind. With TMDB unreachable the
+// folder-pinned Show is ORPHANED and nobody is asked.
+func TestAShowsFolderTokenPinsItsNamespace(t *testing.T) {
+	tmdb, anidb := videoSources()
+	f := newNSFixture(t, tmdb, anidb)
+	f.exec(t, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+	f.exec(t, `INSERT INTO shows (id, library_id, title, identity_key, sort_title, tmdb_id)
+	           VALUES ('tok', 'tv', 'Game of Thrones', 'tmdb:1399', 'game of thrones', '1399')`)
+	f.exec(t, `INSERT INTO shows (id, library_id, title, identity_key, sort_title)
+	           VALUES ('bare', 'tv', 'Inception', 'inception', 'inception')`)
+	f.repoint(SlugAniDB, "")
+
+	f.pass(t, "tv", ModeFull)
+	if refs := tmdb.refsFor("Game of Thrones"); len(refs) != 1 || refs[0].ID("tmdb") != "1399" {
+		t.Errorf("a {tmdb-1399} Show in an AniDB-led Library: TMDB saw %+v, want one lookup BY 1399", refs)
+	}
+	if n := len(anidb.refsFor("Game of Thrones")); n != 0 {
+		t.Errorf("AniDB was asked about a folder-pinned Show %d time(s)", n)
+	}
+	e, err := f.db.EntityEnrichmentByID(store.EntityShow, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Status != "matched" || e.ExternalID != "1399" || e.Namespace != "tmdb" {
+		t.Errorf("folder-pinned Show: %q %q in %q, want matched 1399 in tmdb", e.Status, e.ExternalID, e.Namespace)
+	}
+	if e.ExternalIDOrigin.Locked() {
+		t.Errorf("a folder pin wrote origin %q; the folder holds the id, nobody chose it", e.ExternalIDOrigin)
+	}
+	bare, err := f.db.EntityEnrichmentByID(store.EntityShow, "bare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.ExternalID != "a-1" || bare.Namespace != "anidb" {
+		t.Errorf("token-less Show: %q in %q, want a-1 in anidb via the new lead", bare.ExternalID, bare.Namespace)
+	}
+
+	f.mute(SlugTMDB)
+	tmdb.forget()
+	anidb.forget()
+	f.pass(t, "tv", ModeFull)
+	if n := len(tmdb.refsFor("Game of Thrones")) + len(anidb.refsFor("Game of Thrones")); n != 0 {
+		t.Errorf("a folder-pinned Show whose provider is unreachable was looked up %d time(s)", n)
+	}
+	if e, err = f.db.EntityEnrichmentByID(store.EntityShow, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if e.Status != "unmatched" {
+		t.Errorf("orphaned folder-pinned Show: status %q, want unmatched", e.Status)
+	}
+}
+
 // A repointed music Library re-resolves auto-matched Tracks via its new lead, and a
 // Track whose recording the Admin chose keeps resolving at MusicBrainz — the music
 // pin used to be a no-op that reported whatever led.
