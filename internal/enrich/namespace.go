@@ -2,6 +2,7 @@ package enrich
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -258,4 +259,51 @@ func (s *Service) leadNamespace(ctx context.Context, libraryID, kind string) (st
 // override on an item of `kind` in this Library means when the request names none.
 func (s *Service) LeadNamespace(ctx context.Context, libraryID, kind string) (string, error) {
 	return s.leadNamespace(ctx, libraryID, kind)
+}
+
+// ErrUnknownNamespace is an Admin's pick naming a namespace no registered
+// Authoritative provider of the item's kind claims (ADR-0060 decision 5). The API
+// answers it with a 400 rather than pinning an id nothing can ever look up.
+var ErrUnknownNamespace = errors.New("enrich: no authoritative provider claims that namespace")
+
+// CheckTitleNamespace reports whether ns is a namespace an Enrichment override on
+// the Title may name: nil when a registered Full provider serving the Title's kind
+// claims it (the set a Library's Authoritative-provider pointer may name) or when it
+// is the Library's current lead's, else ErrUnknownNamespace. store.ErrNotFound for
+// an unknown Title. An empty ns is the caller's "no source", which is always fine:
+// it means the lead.
+func (s *Service) CheckTitleNamespace(ctx context.Context, titleID, ns string) error {
+	t, err := s.store.TitleForEnrichmentByID(titleID)
+	if err != nil {
+		return err
+	}
+	return s.checkNamespace(ctx, t.LibraryID, t.Kind, ns)
+}
+
+// CheckEntityNamespace is CheckTitleNamespace for a browse parent. store.ErrNotFound
+// for an unknown parent.
+func (s *Service) CheckEntityNamespace(ctx context.Context, entityType, entityID, ns string) error {
+	libraryID, err := s.store.LibraryOfEntity(entityType, entityID)
+	if err != nil {
+		return err
+	}
+	return s.checkNamespace(ctx, libraryID, entityKind(entityType), ns)
+}
+
+// checkNamespace is the shared rule. The lead is accepted by name as well as through
+// the catalog because a fixed provider (a test's, or the global path) carries no
+// catalog, and its lead is still what every candidate it returns is stamped with.
+func (s *Service) checkNamespace(ctx context.Context, libraryID, kind, ns string) error {
+	ns = strings.TrimSpace(ns)
+	if ns == "" {
+		return nil
+	}
+	snap, err := s.snapshotFor(ctx, libraryID)
+	if err != nil {
+		return err
+	}
+	if ns == snap.config.authoritativeSlugFor(kind) || isAuthoritativeNamespace(snap.catalog, ns, kind) {
+		return nil
+	}
+	return ErrUnknownNamespace
 }

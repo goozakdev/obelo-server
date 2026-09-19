@@ -113,7 +113,13 @@ export default function FixItemRow({
       tmdbId: provider === "tmdb" ? candidate.externalId : undefined,
     });
     if (item.titleId !== "" && provider === "tmdb") {
-      await apiClient.applyEnrichmentOverride(item.titleId, candidate.externalId);
+      await apiClient.applyEnrichmentOverride(
+        item.titleId,
+        candidate.externalId,
+        undefined,
+        undefined,
+        candidate.source,
+      );
     }
     if (item.canDismiss) {
       if (item.showId !== "") await apiClient.reviewShow(item.showId);
@@ -126,7 +132,14 @@ export default function FixItemRow({
   // it. Identity and every User's watch state are untouched (ADR-0014) — no rescan
   // is needed or wanted, so this route never reports an identity correction.
   async function applyMetadata(candidate: EnrichmentCandidate) {
-    await apiClient.applyEnrichmentOverride(item.titleId, candidate.externalId);
+    await apiClient.applyEnrichmentOverride(
+      item.titleId,
+      candidate.externalId,
+      undefined,
+      undefined,
+      // The namespace the pick was found in (ADR-0060 decision 5).
+      candidate.source,
+    );
   }
 
   // The ALBUM correction, and the reason this row exists (ADR-0050). Pinning the
@@ -145,6 +158,8 @@ export default function FixItemRow({
       // cascade decorates from (ADR-0052) instead of picking one by track-count fit.
       // A searched candidate carries none, which clears any edition previously named.
       candidate.releaseId,
+      undefined,
+      candidate.source,
     );
     setCascade(detail.cascade ?? null);
   }

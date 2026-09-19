@@ -639,6 +639,11 @@ export interface EnrichmentCandidate {
    * Send it straight back as the override's `releaseId`; absent means the Admin named
    * no edition, which CLEARS any edition the album had. Album previews only. */
   releaseId?: string;
+  /** The External-id namespace `externalId` belongs to (`tmdb`, `musicbrainz`,
+   * `anidb`, a third party's plugin id), stamped by the server from the provider that
+   * answered (ADR-0060 decision 5). Send it straight back as the override's `source`
+   * so the pick is pinned where it was found. Absent from an older server. */
+  source?: string;
 }
 
 /** One track in an album candidate's tracklist preview. */
@@ -752,6 +757,10 @@ export type EditionSource = "chosen" | "tagged" | "fit";
 export interface AlbumEditions {
   albumId: string;
   releaseGroupId?: string;
+  /** The External-id namespace `releaseGroupId` belongs to (ADR-0060 decision 5).
+   * Sent back as the apply's `source` so choosing an edition keeps the album's
+   * record where it is. Absent from an older server. */
+  source?: string;
   chosenReleaseId?: string;
   inUseReleaseId?: string;
   inUseSource?: EditionSource;

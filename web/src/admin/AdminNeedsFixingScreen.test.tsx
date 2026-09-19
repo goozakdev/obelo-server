@@ -453,7 +453,7 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
       enrichmentItem({ id: "e1", kind: "movie", title: "Arrival", showTitle: "", showId: "" }),
     ]);
     searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438" })],
+      candidates: [candidate({ externalId: "1438", source: "tmdb" })],
       hasMore: false,
     });
     render();
@@ -461,7 +461,11 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
     await userEvent.click(await screen.findByTestId("fix-item-toggle"));
     await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
 
-    await waitFor(() => expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438"));
+    // The candidate's namespace rides back with its id (ADR-0060 decision 5), so
+    // the pick is pinned where it was found and not in whatever the lead is now.
+    await waitFor(() =>
+      expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438", undefined, undefined, "tmdb"),
+    );
     // A metadata pin is not an identity change, so nothing is re-filed and no scan
     // is offered (ADR-0014).
     expect(fixMatch).not.toHaveBeenCalled();
@@ -958,7 +962,9 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
       albumTrack("2", "album-unmatched"),
     ]);
     searchEntityEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "mbid-bh", title: "Braveheart", year: 1995 })],
+      candidates: [
+        candidate({ externalId: "mbid-bh", title: "Braveheart", year: 1995, source: "musicbrainz" }),
+      ],
       hasMore: false,
     });
     applyEntityEnrichmentOverride.mockResolvedValue({
@@ -981,6 +987,9 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         // A SEARCHED candidate names no edition (ADR-0052) — only a pasted
         // /release/ URL does — so the apply carries none, and clears any stored one.
         undefined,
+        undefined,
+        // ...and its namespace rides back with its id (ADR-0060 decision 5).
+        "musicbrainz",
       ),
     );
     const summary = await screen.findByTestId("fix-item-cascade");
@@ -1051,6 +1060,7 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
     listAlbumEditions.mockResolvedValue({
       albumId: "al-bh",
       releaseGroupId: "rg-bh",
+      source: "musicbrainz",
       localTrackCount: 16,
       inUseReleaseId: "rel-a",
       inUseSource: "fit",
@@ -1079,6 +1089,8 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         "rg-bh",
         true,
         "rel-b",
+        undefined,
+        "musicbrainz",
       ),
     );
     expect(await screen.findByTestId("album-edition-cascade")).toHaveTextContent(

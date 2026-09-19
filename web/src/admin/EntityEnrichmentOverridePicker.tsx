@@ -150,6 +150,9 @@ export default function EntityEnrichmentOverridePicker({
               // search hit carries none, and applying one CLEARS any edition the
               // album had — which is right: they just named a less specific thing.
               selected.releaseId,
+              undefined,
+              // The namespace the pick was found in (ADR-0060 decision 5).
+              selected.source,
             );
       onApplied(detail);
       setSummary(detail.cascade ?? null);

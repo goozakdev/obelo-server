@@ -628,10 +628,19 @@ const SearchCandidateLimit = 12
 // an unreachable provider surfaces its error to the handler. It writes nothing —
 // this is a read, like ResolveIdentity.
 func (s *Service) SearchCandidates(ctx context.Context, kind, query string, opts SearchOptions) ([]Candidate, error) {
+	return s.searchIn(ctx, s.snapshot(), kind, query, opts)
+}
+
+// searchIn is SearchCandidates against a given snapshot. The item-scoped searches
+// (a Title's, a parent's) pass their Library's snapshot, so the lead that answers
+// is the lead an apply without a `source` means (ADR-0060 decision 5): in a
+// repointed Library the picker must not offer TMDB records for a pick that would
+// then be read as AniDB ids. For a Library with no policy of its own the Library's
+// snapshot is the global one, so nothing changes there.
+func (s *Service) searchIn(ctx context.Context, snap providerSnapshot, kind, query string, opts SearchOptions) ([]Candidate, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
-	snap := s.snapshot()
 	if !snap.enablement.enabledFor(kind) {
 		return nil, ErrSearchUnavailable
 	}
@@ -668,27 +677,46 @@ func (s *Service) SearchCandidates(ctx context.Context, kind, query string, opts
 // ErrSearchUnavailable when the kind's enrichment is off or the configured
 // provider cannot list episodes, so the picker says why instead of hanging.
 func (s *Service) SeriesSeasons(ctx context.Context, showExternalID string) ([]SeasonSummary, error) {
-	lister, err := s.episodeLister()
+	return s.seriesSeasonsIn(ctx, s.snapshot(), showExternalID)
+}
+
+func (s *Service) SeasonEpisodes(ctx context.Context, showExternalID string, season int) ([]EpisodeCandidate, error) {
+	return s.seasonEpisodesIn(ctx, s.snapshot(), showExternalID, season)
+}
+
+// episodeCacheScope prefixes an episode-list cache key with the namespace of the
+// lead that listed it: a series id means something only in its namespace, and two
+// Libraries led by different sources can ask for the same bare id (ADR-0060).
+func episodeCacheScope(snap providerSnapshot, showExternalID string) string {
+	return snap.config.authoritativeSlugFor("show") + "\x00" + showExternalID
+}
+
+// seriesSeasonsIn / seasonEpisodesIn are SeriesSeasons / SeasonEpisodes against a
+// given snapshot — the Episode picker passes its Title's Library's, so the series it
+// lists is read by the lead that answered the Fix-info search.
+func (s *Service) seriesSeasonsIn(ctx context.Context, snap providerSnapshot, showExternalID string) ([]SeasonSummary, error) {
+	lister, err := episodeListerIn(snap)
 	if err != nil {
 		return nil, err
 	}
-	if cached, ok := s.slotGroups.get(showExternalID); ok {
+	key := episodeCacheScope(snap, showExternalID)
+	if cached, ok := s.slotGroups.get(key); ok {
 		return cached, nil
 	}
 	out, err := lister.SeriesSeasons(ctx, showExternalID)
 	if err != nil {
 		return nil, err
 	}
-	s.slotGroups.put(showExternalID, out)
+	s.slotGroups.put(key, out)
 	return out, nil
 }
 
-func (s *Service) SeasonEpisodes(ctx context.Context, showExternalID string, season int) ([]EpisodeCandidate, error) {
-	lister, err := s.episodeLister()
+func (s *Service) seasonEpisodesIn(ctx context.Context, snap providerSnapshot, showExternalID string, season int) ([]EpisodeCandidate, error) {
+	lister, err := episodeListerIn(snap)
 	if err != nil {
 		return nil, err
 	}
-	key := seasonEpisodesKey(showExternalID, season)
+	key := seasonEpisodesKey(episodeCacheScope(snap, showExternalID), season)
 	if cached, ok := s.slotLists.get(key); ok {
 		return cached, nil
 	}
@@ -731,11 +759,10 @@ func (s *Service) EpisodeListingUnavailable() string {
 	return ""
 }
 
-// episodeLister resolves the configured provider to the optional EpisodeLister
+// episodeListerIn resolves a snapshot's provider to the optional EpisodeLister
 // capability, gated on video enrichment being on at all (an episode list is a
 // video notion). A provider that doesn't implement it is ErrSearchUnavailable.
-func (s *Service) episodeLister() (EpisodeLister, error) {
-	snap := s.snapshot()
+func episodeListerIn(snap providerSnapshot) (EpisodeLister, error) {
 	if !snap.enablement.enabledFor("episode") {
 		return nil, ErrSearchUnavailable
 	}
@@ -769,11 +796,15 @@ func (s *Service) EpisodePickerData(ctx context.Context, titleID, showExternalID
 	if err != nil {
 		return EpisodePicker{}, err // ErrNotFound flows through
 	}
+	snap, err := s.snapshotFor(ctx, t.LibraryID)
+	if err != nil {
+		return EpisodePicker{}, err
+	}
 	out := EpisodePicker{Season: t.SeasonNumber}
 	if season != nil {
 		out.Season = *season
 	} else {
-		seasons, sErr := s.SeriesSeasons(ctx, showExternalID)
+		seasons, sErr := s.seriesSeasonsIn(ctx, snap, showExternalID)
 		if sErr != nil {
 			return EpisodePicker{}, sErr
 		}
@@ -786,7 +817,7 @@ func (s *Service) EpisodePickerData(ctx context.Context, titleID, showExternalID
 		// empty list in that case would look like "this series has no episodes".
 		out.Season = defaultSeason(seasons, t.SeasonNumber)
 	}
-	eps, err := s.SeasonEpisodes(ctx, showExternalID, out.Season)
+	eps, err := s.seasonEpisodesIn(ctx, snap, showExternalID, out.Season)
 	if err != nil {
 		return EpisodePicker{}, err
 	}
@@ -875,7 +906,11 @@ func (s *Service) SearchTitleCandidates(ctx context.Context, titleID, query stri
 	if err != nil {
 		return nil, err // ErrNotFound flows through
 	}
-	return s.SearchCandidates(ctx, t.Kind, query, opts)
+	snap, err := s.snapshotFor(ctx, t.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	return s.searchIn(ctx, snap, t.Kind, query, opts)
 }
 
 // PreviewTitleExternal resolves a pasted MusicBrainz/TMDB id-or-URL to a single
@@ -891,7 +926,11 @@ func (s *Service) PreviewTitleExternal(ctx context.Context, titleID, pastedRef s
 	if err != nil {
 		return Candidate{}, err // ErrNotFound flows through
 	}
-	return s.previewExternal(ctx, t.Kind, pastedRef)
+	snap, err := s.snapshotFor(ctx, t.LibraryID)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return s.previewExternal(ctx, snap, t.Kind, pastedRef)
 }
 
 // ApplyOverride applies a picked candidate's authoritative external id as a durable
@@ -948,7 +987,21 @@ func entityKind(entityType string) string {
 // (enablement-gated, capped); a disabled/unreachable provider surfaces
 // ErrSearchUnavailable so the Edit-item box reports why. Reads only.
 func (s *Service) SearchEntityCandidates(ctx context.Context, entityType, entityID, query string, opts SearchOptions) ([]Candidate, error) {
-	return s.SearchCandidates(ctx, entityKind(entityType), query, opts)
+	snap, err := s.entitySnapshot(ctx, entityType, entityID)
+	if err != nil {
+		return nil, err
+	}
+	return s.searchIn(ctx, snap, entityKind(entityType), query, opts)
+}
+
+// entitySnapshot is the effective snapshot of the Library a browse parent lives in.
+// store.ErrNotFound for an unknown parent.
+func (s *Service) entitySnapshot(ctx context.Context, entityType, entityID string) (providerSnapshot, error) {
+	libraryID, err := s.store.LibraryOfEntity(entityType, entityID)
+	if err != nil {
+		return providerSnapshot{}, err
+	}
+	return s.snapshotFor(ctx, libraryID)
 }
 
 // PreviewEntityExternal is the browse-parent analogue of PreviewTitleExternal: it
@@ -956,7 +1009,11 @@ func (s *Service) SearchEntityCandidates(ctx context.Context, entityType, entity
 // the lookup kind from the entity type and validating the pasted ref's kind against it
 // (item-editing/search-improvements). Reads only.
 func (s *Service) PreviewEntityExternal(ctx context.Context, entityType, entityID, pastedRef string) (Candidate, error) {
-	return s.previewExternal(ctx, entityKind(entityType), pastedRef)
+	snap, err := s.entitySnapshot(ctx, entityType, entityID)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return s.previewExternal(ctx, snap, entityKind(entityType), pastedRef)
 }
 
 // PreviewExternalForKind resolves a pasted MusicBrainz/TMDB id-or-URL for a bare
@@ -965,7 +1022,7 @@ func (s *Service) PreviewEntityExternal(ctx context.Context, entityType, entityI
 // Library's media kind) supplies it. Same parse/lookup/error contract as
 // PreviewTitleExternal; reads only.
 func (s *Service) PreviewExternalForKind(ctx context.Context, kind, pastedRef string) (Candidate, error) {
-	return s.previewExternal(ctx, kind, pastedRef)
+	return s.previewExternal(ctx, s.snapshot(), kind, pastedRef)
 }
 
 // previewExternal is the shared core of the paste-an-id escape hatch: parse + kind-
@@ -974,12 +1031,13 @@ func (s *Service) PreviewExternalForKind(ctx context.Context, kind, pastedRef st
 // unreadable paste is ErrExternalRefInvalid, a wrong-kind URL ErrExternalRefKindMismatch,
 // a disabled/unconfigured provider ErrSearchUnavailable, and an unknown id ErrNoMatch
 // (so a stale id previews as "not found" instead of hanging or 500ing).
-func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (Candidate, error) {
-	// The snapshot is read BEFORE the parse because the parse may be the provider's
+func (s *Service) previewExternal(ctx context.Context, snap providerSnapshot, kind, pastedRef string) (Candidate, error) {
+	// The caller hands in the snapshot (the item's Library's, so the paste is read by
+	// the lead an apply without a `source` means). It is needed BEFORE the parse
+	// because the parse may be the provider's
 	// (see externalRef) — and the parse still comes before the enablement gate, so a
 	// misread paste on a switched-off kind is still "that isn't an id" rather than
 	// "enrichment is off", which is the order the two 400s have always had.
-	snap := s.snapshot()
 	parsed, err := s.externalRef(ctx, snap, kind, pastedRef)
 	if err != nil {
 		return Candidate{}, err

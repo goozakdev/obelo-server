@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/catalog"
 	"github.com/goozakdev/obelo-server/internal/enrich"
@@ -47,6 +48,12 @@ type albumEditionJSON struct {
 type albumEditionsJSON struct {
 	AlbumID        string `json:"albumId"`
 	ReleaseGroupID string `json:"releaseGroupId,omitempty"`
+	// Source is the External-id namespace releaseGroupId belongs to (ADR-0060
+	// decision 5): the Album's record's namespace when the anchor is its record, else
+	// `musicbrainz` (the files' own release-group tag). The client sends it back as
+	// the apply's `source`, so choosing an edition re-pins the release-group where it
+	// already was, not in whatever the Library's lead is now.
+	Source string `json:"source,omitempty"`
 	// ChosenReleaseID is the edition an Admin has pinned (ADR-0052), "" when nobody
 	// has. InUseReleaseID is the one that actually decorates the tracks today, which
 	// is the same thing when a pin applies and something else when it does not;
@@ -96,6 +103,7 @@ func handleAlbumEditions(enrichSvc *enrich.Service, cat *catalog.Service, albumI
 		out := albumEditionsJSON{
 			AlbumID:         albumID,
 			ReleaseGroupID:  eds.ReleaseGroupID,
+			Source:          editionsAnchorSource(cat, albumID, eds.ReleaseGroupID),
 			ChosenReleaseID: eds.ChosenReleaseID,
 			InUseReleaseID:  eds.InUseReleaseID,
 			InUseSource:     eds.InUseSource,
@@ -110,6 +118,20 @@ func handleAlbumEditions(enrichSvc *enrich.Service, cat *catalog.Service, albumI
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+// editionsAnchorSource is the namespace of the release-group the editions were
+// listed for: the Album's record's when that record is the anchor, else the files'
+// MusicBrainz tag's (AlbumEditions' fallback). "" when there is no anchor.
+func editionsAnchorSource(cat *catalog.Service, albumID, anchor string) string {
+	if anchor == "" {
+		return ""
+	}
+	if e, err := cat.EntityEnrichment(store.EntityAlbum, albumID); err == nil &&
+		strings.TrimSpace(e.ExternalID) == anchor && strings.TrimSpace(e.Namespace) != "" {
+		return strings.TrimSpace(e.Namespace)
+	}
+	return store.NamespaceMusicBrainz
 }
 
 // writeEditionsUnavailable reports a provider that cannot answer, in the shape every

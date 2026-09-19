@@ -78,6 +78,9 @@ type showSummaryJSON struct {
 	// prior correction. Omitted on the lean grid.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// RecordSource is the External-id namespace of this parent's record, empty when
+	// it has none (ADR-0060 decision 5). Detail only; additive.
+	RecordSource string `json:"recordSource,omitempty"`
 	// Cast is the Show's series main cast (cast-photos/02), each member carrying the
 	// same personId + photoVersion shape a Movie's cast does — so the Show detail
 	// renders the same headshot cast strip. On the Show DETAIL only; omitted (empty)
@@ -715,6 +718,7 @@ func handleShowSeasons(deps Deps) http.HandlerFunc {
 			versions, _ := svc.EntityArtworkVersions(store.EntityShow, []string{show.ID})
 			decorateShow(&showJS, e, roles[show.ID], versions[show.ID])
 			showJS.EnrichmentOverride = entityOverride(e)
+			showJS.RecordSource = entityRecordSource(e)
 		}
 		showJS.LockedFields, _ = svc.EntityLockedFields(store.EntityShow, show.ID)
 		// The Show's series main cast (cast-photos/02): the same personId + photoVersion
