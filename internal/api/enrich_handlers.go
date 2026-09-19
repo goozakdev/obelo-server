@@ -793,7 +793,9 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 		if req.Episode > 0 {
 			err = enrichSvc.ApplyEpisodeOverride(r.Context(), titleID, externalID, req.Season, req.Episode)
 		} else {
-			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID)
+			// No namespace yet: the Title's Library's current lead's is what the
+			// request means (ADR-0060 decision 5). The API's `source` is issue 16.
+			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID, "")
 		}
 		switch {
 		case errors.Is(err, store.ErrNotFound):

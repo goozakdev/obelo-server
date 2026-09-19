@@ -7,14 +7,16 @@ import "strings"
 // plugins/tmdb/ because the HOST is what calls them, and the host still needs
 // them after the provider has gone:
 //
-//   - parseTMDBRef and isDigits are read by Service.ResolveExternalRef. A Plugin
-//     that declares CapabilityExternalRef answers a paste for itself, and its
-//     answer stands; a host that gets "unavailable" is free to read the paste for
-//     the id namespaces IT owns, and `titles.tmdb_id` is one of the host's own
-//     columns (ADR-0045/0049). Deleting this would mean an Admin's pasted TMDB URL
-//     stopped working the moment TMDB became a plugin, for a column the plugin has
-//     no say over. Follow-up issue 10 — a source-namespaced external-id map on the
-//     Title — is what retires it.
+//   - parseTMDBRef and isDigits are the HOST'S READER FOR THE `tmdb` NAMESPACE,
+//     called by Service.externalRef (through hostExternalRef). A Plugin that
+//     declares CapabilityExternalRef answers a paste for itself, and its answer
+//     stands, stamped with that Plugin's id as its namespace; a host that gets
+//     "unavailable" reads the paste itself for the two namespaces it keeps readers
+//     for, and stamps it `tmdb` or `musicbrainz` (ADR-0060 decision 5). That is why
+//     it survives: not because a column is named after TMDB — the columns are gone,
+//     every record id is a row keyed by its namespace (ADR-0060 decision 2) — but
+//     because a `{tmdb-…}` folder token is a `tmdb` id by definition and an Admin's
+//     pasted TMDB URL has to keep working on a server whose TMDB plugin is off.
 //
 // A third, yearFromDate, is GONE (.scratch/bundled-plugins: issue 08). It was a
 // plain "YYYY-MM-DD" → int parser that never belonged to TMDB and merely lived
@@ -23,13 +25,13 @@ import "strings"
 // dependency between a host and its guests.
 //
 // The MusicBrainz reference parsers at the bottom joined them for the same reason
-// (.scratch/bundled-plugins issue 06): `titles.musicbrainz_id` is the HOST's
-// column, and Service.ResolveExternalRef reads a paste for it whenever no Plugin
-// claims CapabilityExternalRef. The MusicBrainz plugin DOES claim it, so on a
-// stock server its answer is the one that stands and these are the fallback — but
-// a server whose Admin uninstalled that plugin, or pointed a Library at some other
-// music source, still has that column and still has to be able to read a URL for
-// it.
+// (.scratch/bundled-plugins issue 06): they are the host's reader for the
+// `musicbrainz` namespace, which Service.externalRef uses whenever no Plugin claims
+// CapabilityExternalRef. The MusicBrainz plugin DOES claim it, so on a stock server
+// its answer is the one that stands and these are the fallback — but a server whose
+// Admin uninstalled that plugin, or pointed a Library at some other music source,
+// still holds `musicbrainz` ids (the files' tags assert them) and still has to be
+// able to read a URL for them.
 
 // parseTMDBRef reads a pasted TMDB reference — one of that site's own URLs
 // (/movie/<id> or /tv/<id>, the id optionally carrying a "-slug" suffix; any scheme/subdomain,

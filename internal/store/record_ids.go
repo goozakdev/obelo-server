@@ -68,14 +68,44 @@ func recordIDExpr(alias, ns string) string {
 	return "COALESCE(NULLIF(" + row + ", ''), " + alias + col + ")"
 }
 
-// recordIDsColumns is the SELECT pair (enrichment_id_namespace, every record row as
-// a JSON object) that decodeRecordIDs turns into Title.RecordNamespace and
-// Title.RecordIDs. Carried by the reads that feed enrichment.
+// recordIDsColumns is the SELECT list (enrichment_id_namespace, every record row as
+// a JSON object, the raw identity tmdb_id, the raw identity imdb_id) that the
+// enrichment-feeding scans turn into Title.RecordNamespace, Title.RecordIDs and
+// Title.IdentityIDs. Carried by the reads that feed enrichment.
+//
+// The identity pair is selected RAW, not through recordIDExpr, because the question
+// it answers is not "which id resolves" but "what did the FOLDER assert" — the
+// half of ADR-0060 decision 6 that makes an id a decision without anybody picking
+// it (a `{tmdb-…}` / `{imdb-…}` token, ADR-0002).
 func recordIDsColumns(alias string) string {
 	return alias + "enrichment_id_namespace, " +
 		"(SELECT json_group_object(xid.namespace, xid.external_id) FROM title_external_ids xid" +
-		" WHERE xid.title_id = " + titleIDRef(alias) + ")"
+		" WHERE xid.title_id = " + titleIDRef(alias) + "), " +
+		"IFNULL(" + alias + "tmdb_id, ''), IFNULL(" + alias + "imdb_id, '')"
 }
+
+// identityIDs is the Title's IDENTITY ids keyed by namespace — what the Scanner
+// filled tmdb_id / imdb_id from — or nil when the folder asserts none.
+func identityIDs(tmdbID, imdbID string) map[string]string {
+	var out map[string]string
+	put := func(ns, id string) {
+		if id == "" {
+			return
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[ns] = id
+	}
+	put(NamespaceTMDB, tmdbID)
+	put(NamespaceIMDB, imdbID)
+	return out
+}
+
+// IdentityID returns the id the Title's FOLDER asserts in namespace ns (the
+// Scanner-owned tmdb_id / imdb_id, ADR-0002) — never a record row — or "" when it
+// asserts none, or when the read that built the Title did not carry it.
+func (t Title) IdentityID(ns string) string { return t.IdentityIDs[ns] }
 
 // decodeRecordIDs turns recordIDsColumns' JSON object into the map a Title carries;
 // nil when the Title has no record rows.
@@ -219,4 +249,75 @@ func entityNamespace(entityType, explicit, source, externalID string) string {
 		return source
 	}
 	return defaultEntityNamespace(entityType)
+}
+
+// replaceRecordTx is the ONE exception to ADR-0045's fill-only rule, and it is
+// ADR-0060 decision 6's: a record a pass resolved on its own (OriginDerived) in a
+// namespace the Library no longer leads with is not a pin, so the pass that
+// re-resolved it via the current lead REPLACES it. The old record row is deleted
+// (it sits in a namespace nobody decided on), the first pair m names is written
+// and named the record, and every other pair is filled exactly as a normal pass
+// fills it. The caller decides that the record may be replaced (see
+// TitleEnrichment.ReplaceRecord); this function does not re-ask, because only the
+// caller knows the Title's origin and its Library's lead.
+func replaceRecordTx(tx *sql.Tx, titleID string, m ExternalMatch) error {
+	pairs := m.ids()
+	if len(pairs) == 0 {
+		return nil
+	}
+	lead := pairs[0]
+	if _, err := tx.Exec(
+		`DELETE FROM title_external_ids
+		   WHERE title_id = ? AND namespace <> ?
+		     AND namespace = (SELECT enrichment_id_namespace FROM titles WHERE id = ?)`,
+		titleID, lead.ns, titleID,
+	); err != nil {
+		return fmt.Errorf("store: replacing the record: %w", err)
+	}
+	if err := putRecordID(tx, titleID, lead.ns, lead.id); err != nil {
+		return err
+	}
+	if err := setRecordNamespace(tx, titleID, lead.ns); err != nil {
+		return err
+	}
+	return fillRecordPairsTx(tx, titleID, pairs[1:])
+}
+
+// queryRower is what a single-row read needs: a *sql.Tx or the DB itself.
+type queryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// seriesNamespaceForTitle is the namespace an Episode's series record inherits
+// (ADR-0060 decision 5: an Episode pin inherits the parent's namespace): its Show's
+// record namespace, else the Show kind's default lead when the Show has no record
+// yet. A Title with no Season linkage reads the default too.
+func seriesNamespaceForTitle(q queryRower, titleID string) (string, error) {
+	return seriesNamespace(q,
+		`SELECT IFNULL((SELECT ee.external_id_namespace
+		                  FROM titles t
+		                  JOIN seasons s ON s.id = t.season_id
+		                  JOIN entity_enrichment ee ON ee.entity_type = ? AND ee.entity_id = s.show_id
+		                 WHERE t.id = ?), '')`, titleID)
+}
+
+// seriesNamespaceForSeason is seriesNamespaceForTitle for a Title not yet written:
+// the record namespace of the Show that owns seasonID.
+func seriesNamespaceForSeason(q queryRower, seasonID string) (string, error) {
+	return seriesNamespace(q,
+		`SELECT IFNULL((SELECT ee.external_id_namespace
+		                  FROM seasons s
+		                  JOIN entity_enrichment ee ON ee.entity_type = ? AND ee.entity_id = s.show_id
+		                 WHERE s.id = ?), '')`, seasonID)
+}
+
+func seriesNamespace(q queryRower, query, id string) (string, error) {
+	var ns string
+	if err := q.QueryRow(query, EntityShow, id).Scan(&ns); err != nil {
+		return "", fmt.Errorf("store: reading the series namespace: %w", err)
+	}
+	if ns == "" {
+		ns = defaultEntityNamespace(EntityShow)
+	}
+	return ns, nil
 }

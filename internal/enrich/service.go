@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/goozakdev/obelo-server/internal/store"
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // Store is the persistence the enrich service needs. *store.DB satisfies it; the
@@ -66,6 +67,11 @@ type Store interface {
 	// is how ADR-0050's tracklist tier reaches the one path that was missing it.
 	// store.ErrNotFound for a Title that is not a Track (no album linkage).
 	TrackContextForTitle(titleID string) (store.TrackContext, error)
+	// EpisodeContextForTitle walks an Episode UP to its Show, the same walk for TV:
+	// an Episode pin inherits its Show's record namespace (ADR-0060 decision 5), and
+	// the pin arrives with nothing but the Episode's id. store.ErrNotFound for a
+	// Title that is not an Episode.
+	EpisodeContextForTitle(titleID string) (store.EpisodeContext, error)
 	WriteEntityEnrichment(entityType, entityID string, e store.EntityEnrichmentWrite, locks map[string]bool) error
 	SetEntityEnrichmentStatus(entityType, entityID, status string) error
 	SetEntityEnrichmentRetry(entityType, entityID string, attempts int, retryAt time.Time) error
@@ -636,6 +642,16 @@ func (s *Service) SearchCandidates(ctx context.Context, kind, query string, opts
 	if len(cands) > SearchCandidateLimit {
 		cands = cands[:SearchCandidateLimit]
 	}
+	// The HOST stamps each candidate with the namespace of the provider that answered
+	// (ADR-0060 decision 5). A Plugin's adapter already did, from its Descriptor; a
+	// candidate that arrives unstamped (an in-process provider) came from the lead
+	// this snapshot searched.
+	lead := snap.config.authoritativeSlugFor(kind)
+	for i := range cands {
+		if cands[i].Source == "" {
+			cands[i].Source = lead
+		}
+	}
 	return cands, nil
 }
 
@@ -811,29 +827,42 @@ func defaultSeason(seasons []SeasonSummary, want int) int {
 //
 // Admin-facing: an Episode pin is the Slot's OWN choice (store.OriginChosen via
 // MatchTitle), so it outranks its Show's Cascade (ADR-0046).
+//
+// The series id is stamped with the SHOW's record namespace: an Episode pin inherits
+// its parent's namespace (ADR-0060 decision 5). A Show with no record yet lends the
+// Library's current lead's.
 func (s *Service) ApplyEpisodeOverride(ctx context.Context, titleID, showExternalID string, season, episode int) error {
 	if episode <= 0 {
 		return fmt.Errorf("%w: an episode number is required", ErrExternalRefInvalid)
 	}
+	ns, err := s.seriesNamespace(ctx, titleID)
+	if err != nil {
+		return err
+	}
 	return s.MatchTitle(ctx, titleID, store.ExternalMatch{
-		TMDBID:        showExternalID,
+		Namespace:     ns,
+		ID:            showExternalID,
 		EpisodeSeason: season,
 		EpisodeNumber: episode,
 	})
 }
 
-// ExternalMatchForKind maps a picked candidate's authoritative external id onto
-// the right id column for the entity kind: music leaves (track) pin a MusicBrainz
-// id, video leaves (movie/episode) a TMDB id. It is the small adapter the apply-
-// Enrichment-override endpoint uses to reuse MatchTitle (the durable-pin +
-// single-entity re-enrich primitive) from a candidate rather than a raw id form.
-func ExternalMatchForKind(kind, externalID string) store.ExternalMatch {
-	switch kind {
-	case "artist", "album", "track":
-		return store.ExternalMatch{MusicbrainzID: externalID}
-	default:
-		return store.ExternalMatch{TMDBID: externalID}
+// seriesNamespace is the namespace an Episode's series pin inherits: its Show's
+// record namespace, else the Library's lead for the Episode's kind.
+// store.ErrNotFound for an unknown Title.
+func (s *Service) seriesNamespace(ctx context.Context, titleID string) (string, error) {
+	t, err := s.store.TitleForEnrichmentByID(titleID)
+	if err != nil {
+		return "", err
 	}
+	if ec, err := s.store.EpisodeContextForTitle(titleID); err == nil {
+		if e, err := s.store.EntityEnrichmentByID(store.EntityShow, ec.ShowID); err == nil {
+			if rec := storedParentRecord(store.EntityShow, e); rec.Namespace != "" {
+				return rec.Namespace, nil
+			}
+		}
+	}
+	return s.leadNamespace(ctx, t.LibraryID, t.Kind)
 }
 
 // SearchTitleCandidates searches the authoritative provider for a single Title,
@@ -866,25 +895,37 @@ func (s *Service) PreviewTitleExternal(ctx context.Context, titleID, pastedRef s
 }
 
 // ApplyOverride applies a picked candidate's authoritative external id as a durable
-// Enrichment override on a leaf Title and re-enriches just it. It derives the id
-// column from the Title's own kind (so the caller passes only the picked id), then
-// reuses MatchTitle. Like SearchTitleCandidates it owns the lean kind read, so the
-// HTTP layer needs no separate detail fetch to map the id. store.ErrNotFound for an
+// Enrichment override on a leaf Title and re-enriches just it, reusing MatchTitle.
+//
+// namespace is the External-id namespace externalID belongs to — the `source` of the
+// candidate the Admin picked, which the host stamped from the provider it asked
+// (ADR-0060 decision 5). An empty namespace means the Title's Library's CURRENT
+// lead's namespace for the Title's kind, so a caller that names none (an older
+// client) keeps meaning what it always meant. Nothing here maps an id onto a
+// namespace by media kind any more: that was ExternalMatchForKind, and it is how an
+// AniDB-led Library's aids ended up recorded as TMDB ids.
+//
+// Like SearchTitleCandidates it owns the lean Title read. store.ErrNotFound for an
 // unknown Title flows to the handler as a 404. Identity/watch state are untouched.
 //
 // Admin-facing, like MatchTitle: the record is the Title's OWN choice. The Cascade
 // uses applyOverride with store.OriginCascaded (ADR-0046).
-func (s *Service) ApplyOverride(ctx context.Context, titleID, externalID string) error {
-	return s.applyOverride(ctx, titleID, externalID, store.OriginChosen)
+func (s *Service) ApplyOverride(ctx context.Context, titleID, externalID, namespace string) error {
+	return s.applyOverride(ctx, titleID, externalID, namespace, store.OriginChosen)
 }
 
 // applyOverride is ApplyOverride with the record's origin spelled out.
-func (s *Service) applyOverride(ctx context.Context, titleID, externalID string, origin store.RecordOrigin) error {
+func (s *Service) applyOverride(ctx context.Context, titleID, externalID, namespace string, origin store.RecordOrigin) error {
 	t, err := s.store.TitleForEnrichmentByID(titleID)
 	if err != nil {
 		return err // ErrNotFound flows through
 	}
-	return s.matchTitle(ctx, titleID, ExternalMatchForKind(t.Kind, externalID), origin)
+	if namespace == "" {
+		if namespace, err = s.leadNamespace(ctx, t.LibraryID, t.Kind); err != nil {
+			return err
+		}
+	}
+	return s.matchTitle(ctx, titleID, store.ExternalMatch{Namespace: namespace, ID: externalID}, origin)
 }
 
 // entityKind maps a browse-parent entity type onto the fine search/lookup kind:
@@ -956,7 +997,7 @@ func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (
 	case "season", "episode":
 		lookupKind = "show"
 	}
-	ref := refWithPinnedEntityID(TitleRef{Kind: lookupKind}, externalID)
+	ref := refWithPinnedEntityID(TitleRef{Kind: lookupKind}, parsed.Namespace, externalID)
 	if releaseMBID != "" {
 		ref.ReleaseMBID = releaseMBID // resolve release → parent release-group in Lookup
 	}
@@ -967,9 +1008,13 @@ func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (
 	case err != nil:
 		return Candidate{}, err
 	}
-	c := Candidate{ExternalID: externalID, Title: meta.Name, Year: meta.Year, Kind: kind}
+	// The preview carries the namespace the paste resolved in (ADR-0060 decision 5),
+	// so the apply can echo it back. When the Lookup named the record itself (a
+	// /release/ URL resolving to its release-group), its own Source names that id.
+	c := Candidate{ExternalID: externalID, Title: meta.Name, Year: meta.Year, Kind: kind, Source: parsed.Namespace}
 	if meta.ExternalID != "" {
 		c.ExternalID = meta.ExternalID
+		c.Source = stampNamespace(meta.Source, parsed.Namespace)
 	}
 	// The pasted EDITION rides back with the release-group it resolved to (ADR-0052).
 	// This is the one moment a human names a release, and the preview→apply round trip
@@ -1001,16 +1046,22 @@ func (s *Service) previewExternal(ctx context.Context, kind, pastedRef string) (
 // ErrSearchUnavailable is the one answer the host does not pass on. It means "no
 // Plugin here reads pastes for this kind" — an undeclared capability, a kind with
 // no provider, or a fixed provider injected by a test — and the host then reads
-// the paste itself with hostExternalRef, for the two id namespaces it keeps its
-// own columns for (ADR-0045/0049: `titles.musicbrainz_id` and `titles.tmdb_id` are
-// the server's, so understanding what may be written into them is the server's
-// too). Every other answer, including all three refusals, is the Plugin's and
-// stands: that is what keeps the two distinct 400s the Admin sees produced by the
-// source that knows which link they should have pasted.
+// the paste itself with hostExternalRef, for the two namespaces it has its own
+// readers for (`tmdb` and `musicbrainz`). Every other answer, including all three
+// refusals, is the Plugin's and stands: that is what keeps the two distinct 400s the
+// Admin sees produced by the source that knows which link they should have pasted.
+//
+// It returns the NAMESPACE the paste resolved in (ADR-0060 decision 5): the id of
+// the Plugin that answered (stamped by its adapter from its Descriptor), or the
+// host reader's own namespace. An answer that arrives unstamped came from the
+// snapshot's lead.
 func (s *Service) externalRef(ctx context.Context, snap providerSnapshot, kind, pasted string) (ExternalRef, error) {
 	if parser, ok := snap.provider.(ExternalRefParser); ok {
 		ref, err := parser.ParseExternalRef(ctx, kind, pasted)
 		if !errors.Is(err, ErrSearchUnavailable) {
+			if err == nil && ref.Namespace == "" {
+				ref.Namespace = snap.config.authoritativeSlugFor(kind)
+			}
 			return ref, err
 		}
 	}
@@ -1023,17 +1074,25 @@ func (s *Service) externalRef(ctx context.Context, snap providerSnapshot, kind, 
 // /release/ URL on an album is not an album pin, so it resolves to the edition
 // (ReleaseID) whose parent release-group the Lookup then finds (ADR-0052), rather
 // than being refused as an unsupported entity kind.
+//
+// Its namespace is the reader's: `musicbrainz` for a music kind, `tmdb` for a video
+// one — the two namespaces the host reads for itself.
 func hostExternalRef(kind, pasted string) (ExternalRef, error) {
+	ns := pluginapi.NamespaceTMDB
+	switch kind {
+	case "artist", "album", "track":
+		ns = pluginapi.NamespaceMusicBrainz
+	}
 	externalID, err := externalIDForKind(kind, pasted)
 	if err != nil {
 		if kind == "album" {
 			if relID, ok := parseMusicBrainzReleaseRef(pasted); ok {
-				return ExternalRef{ReleaseID: relID}, nil
+				return ExternalRef{ReleaseID: relID, Namespace: ns}, nil
 			}
 		}
 		return ExternalRef{}, err
 	}
-	return ExternalRef{ExternalID: externalID}, nil
+	return ExternalRef{ExternalID: externalID, Namespace: ns}, nil
 }
 
 // externalIDForKind parses a pasted id-or-URL into the authoritative external id for
@@ -1088,6 +1147,11 @@ func externalIDForKind(kind, pasted string) (string, error) {
 // Cascade all mean.
 type EntityPin struct {
 	ExternalID string
+	// Namespace is the External-id namespace ExternalID belongs to: the `source` of
+	// the candidate the Admin picked (ADR-0060 decision 5). Empty means the parent's
+	// Library's current lead's namespace for its kind, which is what every caller
+	// meant before namespaces existed.
+	Namespace string
 	// ReleaseID is the release (one edition) the Admin named, when they named one —
 	// a pasted /release/ URL, which resolves to its parent release-group for
 	// ExternalID and keeps the release here. Empty CLEARS any edition the parent had.
@@ -1120,8 +1184,14 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID 
 	if err != nil {
 		return err // ErrNotFound flows through
 	}
+	ns := pin.Namespace
+	if ns == "" {
+		if ns, err = s.leadNamespace(ctx, libraryID, entityKind(entityType)); err != nil {
+			return err
+		}
+	}
 	if err := s.store.SetEntityExternalMatch(entityType, entityID, store.EntityRecordPin{
-		ExternalID: pin.ExternalID, ReleaseID: pin.ReleaseID, Origin: origin,
+		ExternalID: pin.ExternalID, Namespace: ns, ReleaseID: pin.ReleaseID, Origin: origin,
 	}); err != nil {
 		return err
 	}
@@ -1135,7 +1205,7 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID 
 	if err != nil {
 		return err
 	}
-	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, pin.ExternalID)
+	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, ns, pin.ExternalID)
 	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref, parentTrusted)
 	return err
 }
@@ -1206,7 +1276,8 @@ func (s *Service) ListEntityArtworkCandidates(ctx context.Context, entityType, e
 	if cached, ok := s.candidates.get(key); ok {
 		return cached, nil
 	}
-	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, cur.ExternalID)
+	rec := storedParentRecord(entityType, cur)
+	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, rec.Namespace, rec.ID)
 	cands, err := s.ArtworkCandidates(ctx, ref, role)
 	if err != nil {
 		return nil, err // never cache an error/unavailable outcome
@@ -1485,33 +1556,39 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		return err
 	}
 
-	// Per-item Enrichment-override precedence (issue 06, ADR-0027): a Title pinned to
-	// a specific provider's record keeps resolving via THAT provider — most-specific-
-	// wins — even when the Library's Authoritative provider changed underneath it, as
-	// long as the provider stays reachable. If a policy change made that provider
+	// Per-item Enrichment-override precedence (issue 06, ADR-0027, ADR-0060 decision
+	// 6): a Title whose record is a DECISION — chosen, cascaded, or asserted by its
+	// folder — in some Authoritative namespace keeps resolving via THAT namespace's
+	// provider, even when the Library's Authoritative provider changed underneath it,
+	// as long as the provider stays reachable. If a policy change made that provider
 	// unreachable, the override is ORPHANED: file the Title to the attention list
 	// (status 'unmatched') rather than silently resolving it against the wrong leader
 	// or dropping the pin. Only engages when the pin's provider differs from the
 	// current leader; when they match (the common case), the chain already resolves by
-	// the pinned id, so the pass is unchanged. The pinned id column is never touched —
+	// the pinned id, so the pass is unchanged. The pinned record is never touched —
 	// the override survives to be re-applied once its provider is reachable again.
+	//
+	// A record the pass resolved on its own is NOT a pin (pinnedProviderFor): it
+	// resolves via the lead like anything unmatched, and the write below replaces it.
+	//
+	// asked is the slug of the provider this Title is resolved through — which is the
+	// namespace an id it returns belongs to, when the record does not say.
 	provider := snap.provider
-	if pinSlug, pinned := pinnedProviderFor(t, snap.config); pinned {
-		if leader := snap.config.authoritativeSlugFor(t.Kind); pinSlug != leader {
-			if !snap.config.providerReachable(pinSlug) {
-				res.Unmatched++
-				// An ORPHANED override is a policy problem, not one of ADR-0050's five
-				// diagnoses: nothing was asked and nothing was learned about the item. The
-				// empty reason renders the generic sentence and, just as importantly,
-				// clears any diagnosis from before the provider went unreachable.
-				return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched", store.EnrichmentReasonNone)
-			}
-			// Reachable but no longer the leader: resolve via the pinned provider alone
-			// so the override still wins (the chain leads a different source that can't
-			// answer this record's id).
-			if p := snap.catalog.newProvider(snap.config, pinSlug, kindGroupFor(t.Kind)); p != nil {
-				provider = p
-			}
+	asked := snap.config.authoritativeSlugFor(t.Kind)
+	if pinSlug, pinned := pinnedProviderFor(t, snap.catalog); pinned && pinSlug != asked {
+		if !snap.config.providerReachable(pinSlug) {
+			res.Unmatched++
+			// An ORPHANED override is a policy problem, not one of ADR-0050's five
+			// diagnoses: nothing was asked and nothing was learned about the item. The
+			// empty reason renders the generic sentence and, just as importantly,
+			// clears any diagnosis from before the provider went unreachable.
+			return s.store.SetTitleEnrichmentStatus(t.ID, "unmatched", store.EnrichmentReasonNone)
+		}
+		// Reachable but no longer the leader: resolve via the pinned provider alone
+		// so the override still wins (the chain leads a different source that can't
+		// answer this record's id).
+		if p := snap.catalog.newProvider(snap.config, pinSlug, kindGroupFor(t.Kind)); p != nil {
+			provider, asked = p, pinSlug
 		}
 	}
 
@@ -1564,6 +1641,9 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		s.fetchCastHeadshots(ctx, meta.Cast)
 	}
 
+	// The id this lookup resolved belongs to the namespace of the provider asked
+	// (ADR-0060 decision 5) — never to a column picked by media kind.
+	ns := stampNamespace(meta.Source, asked)
 	if err := s.store.WriteTitleEnrichment(t.ID, store.TitleEnrichment{
 		Overview:       meta.Overview,
 		Tagline:        meta.Tagline,
@@ -1582,7 +1662,13 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		// pinned by a {tmdb-…} token or a Fix-info override is never rewritten by
 		// a provider response. An Episode lookup reports no ExternalID (its
 		// anchor is the Show id, pinned separately in collectTVLeaves).
-		ExternalIDs: ExternalMatchForKind(t.Kind, meta.ExternalID),
+		ExternalIDs: store.ExternalMatch{Namespace: ns, ID: meta.ExternalID},
+		// ...EXCEPT a record the pass itself resolved earlier in a namespace the
+		// Library no longer leads with. That one is nobody's decision, so this answer
+		// REPLACES it, row and namespace: ADR-0060 decision 6, the deliberate exception
+		// to ADR-0045's fill-only rule. Without it a repointed Library would keep the
+		// old lead's id as the record beside the new lead's for ever.
+		ReplaceRecord: replacesRecord(t, ns, meta.ExternalID),
 	}, locks); err != nil {
 		return err
 	}
@@ -1603,14 +1689,21 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 	}
 	var leaves []leafWork
 	for _, sh := range shows {
-		showExtID := sh.TMDBID // embedded {tmdb-…} fallback
-		extID, err := s.enrichParent(ctx, snap, mode, store.EntityShow, sh.ID,
-			TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year, TMDBID: sh.TMDBID}, parentTrusted)
+		// The Show's record, in its namespace, is what its Seasons and Episodes
+		// resolve under. The embedded {tmdb-…} token is the fallback, and it is a
+		// `tmdb` id by definition (ADR-0060 decision 2).
+		showRec := parentRecord{}
+		if id := strings.TrimSpace(sh.TMDBID); id != "" {
+			showRec = parentRecord{ID: id, Namespace: pluginapi.NamespaceTMDB}
+		}
+		rec, err := s.enrichParent(ctx, snap, mode, store.EntityShow, sh.ID,
+			withExternalIDs(TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year},
+				idsIn(pluginapi.NamespaceTMDB, sh.TMDBID)), parentTrusted)
 		if err != nil {
 			return nil, err
 		}
-		if extID != "" {
-			showExtID = extID
+		if rec.ID != "" {
+			showRec = rec
 		}
 
 		seasons, err := s.store.SeasonsForShow(sh.ID)
@@ -1619,7 +1712,8 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 		}
 		for _, se := range seasons {
 			if _, err := s.enrichParent(ctx, snap, mode, store.EntitySeason, se.ID,
-				TitleRef{Kind: "season", TMDBID: showExtID, SeasonNumber: se.SeasonNumber},
+				withExternalIDs(TitleRef{Kind: "season", SeasonNumber: se.SeasonNumber},
+					idsIn(showRec.Namespace, showRec.ID)),
 				parentTrusted); err != nil {
 				return nil, err
 			}
@@ -1633,22 +1727,27 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 				}
 				// Episode durability (ADR-0019, closing the gap deferred from slice 01):
 				// an Episode's OWN record wins over the one derived from its Show, so a
-				// pinned episode survives a full pass instead of being re-derived. ep.TMDBID
-				// is the record (enrichment_tmdb_id first, ADR-0045), which is the right
-				// question here — WHICH record decorates this leaf — and deliberately not
-				// "did the Admin choose it": a co-File sibling inheriting a split's series
-				// and a cleared pin's series-write are both legitimate anchors that carry no
-				// lock. (The skip rule in cascade.go asks the other question and reads
-				// EnrichmentIDOrigin; do not confuse the two.) An Episode with no record of
-				// its own resolves under the Show's resolved id.
-				epShowID := showExtID
-				if ep.TMDBID != "" {
-					epShowID = ep.TMDBID
+				// pinned episode survives a full pass instead of being re-derived. The
+				// Episode's own ids (titleExternalIDs: its record rows over its identity,
+				// ADR-0045) are the right question here — WHICH record decorates this leaf
+				// — and deliberately not "did the Admin choose it": a co-File sibling
+				// inheriting a split's series and a cleared pin's series-write are both
+				// legitimate anchors that carry no lock. (The skip rule in cascade.go asks
+				// the other question and reads EnrichmentIDOrigin; do not confuse the two.)
+				// The Show's record fills the namespace the Episode holds nothing in, so an
+				// Episode with no record of its own resolves under the Show's resolved id —
+				// in the Show's namespace, which is what an AniDB-led Library needs.
+				ids := titleExternalIDs(ep)
+				if ids == nil {
+					ids = map[string]string{}
 				}
-				ref := TitleRef{
-					Kind: "episode", Title: ep.Title, TMDBID: epShowID,
+				if _, own := ids[showRec.Namespace]; !own {
+					putID(ids, showRec.Namespace, showRec.ID)
+				}
+				ref := withExternalIDs(TitleRef{
+					Kind: "episode", Title: ep.Title,
 					SeasonNumber: ep.SeasonNumber, EpisodeNumber: ep.EpisodeNumber, EpisodeLabel: ep.EpisodeLabel,
-				}
+				}, ids)
 				// The Episode pin, honored here as well as in refFor. A library pass
 				// collects its own leaves, so without this the pass would quietly look a
 				// repointed Slot up by the numbers it was pinned AWAY from — and a pass is
@@ -1689,19 +1788,22 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 		if err != nil {
 			return nil, err
 		}
+		// An Artist's and an Album's tag MBIDs are `musicbrainz` ids by definition: the
+		// FILES assert them (ADR-0049), whoever leads.
 		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
-			TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
-				MusicbrainzID: ar.MusicbrainzID,
-				AlbumHints:    musicAlbumHints(albums)}, doubted); err != nil {
+			withExternalIDs(TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
+				AlbumHints: musicAlbumHints(albums)},
+				idsIn(pluginapi.NamespaceMusicBrainz, ar.MusicbrainzID)), doubted); err != nil {
 			return nil, err
 		}
 		for _, al := range albums {
-			albumRecordID, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
-				TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name,
-					MusicbrainzID: al.MusicbrainzID}, parentTrusted)
+			albumRec, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
+				withExternalIDs(TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name},
+					idsIn(pluginapi.NamespaceMusicBrainz, al.MusicbrainzID)), parentTrusted)
 			if err != nil {
 				return nil, err
 			}
+			albumRecordID := albumRec.ID
 			tracks, err := s.store.TracksForAlbum(al.ID)
 			if err != nil {
 				return nil, err
@@ -1713,11 +1815,20 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 				if !s.shouldProcessLeaf(snap, mode, tr) {
 					continue
 				}
-				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, tracklist: outcome, ref: TitleRef{
-					Kind: "track", Title: tr.Title, Track: tr.Title,
-					Artist: ar.Name, Album: al.Title,
-					MusicbrainzID: trackAnchorID(tr, fromTracklist[tr.ID]),
-				}})
+				// The Track's own ids, with the `musicbrainz` entry in ADR-0049/0050's
+				// precedence (record → tag → the Album's tracklist). The Album's
+				// release-group id is NOT added: it is a `musicbrainz` id too, and a
+				// namespace holds one id, which for a Track is its recording.
+				ids := titleExternalIDs(tr)
+				if ids == nil {
+					ids = map[string]string{}
+				}
+				putID(ids, pluginapi.NamespaceMusicBrainz, trackAnchorID(tr, fromTracklist[tr.ID]))
+				leaves = append(leaves, leafWork{title: tr, sparseTitle: true, tracklist: outcome,
+					ref: withExternalIDs(TitleRef{
+						Kind: "track", Title: tr.Title, Track: tr.Title,
+						Artist: ar.Name, Album: al.Title,
+					}, ids)})
 			}
 		}
 	}
@@ -1804,7 +1915,9 @@ func musicAlbumHints(albums []store.Album) []AlbumHint {
 // trackRecordID answers "which MusicBrainz recording should decorate this Track?"
 // in precedence order (ADR-0049):
 //
-//  1. MusicbrainzID — the enrichment RECORD. Either the Admin's Fix-info choice or
+//  1. The `musicbrainz` record row (Title.RecordID) — the enrichment RECORD, read
+//     as a row and never through the derived Title.MusicbrainzID convenience
+//     (ADR-0060). Either the Admin's Fix-info choice or
 //     an id a previous pass resolved and stored. A human's correction outranks
 //     anything a file claims, and a resolved id spares a second search.
 //  2. MusicbrainzRecordingID — what the FILE's tags assert. Exact, free, and
@@ -1816,7 +1929,7 @@ func musicAlbumHints(albums []store.Album) []AlbumHint {
 // pressure and answers 503 while the lookup endpoints are perfectly healthy. For a
 // tagged library, tiers 1 and 2 remove that dependency almost entirely.
 func trackRecordID(t store.Title) string {
-	if id := strings.TrimSpace(t.MusicbrainzID); id != "" {
+	if id := strings.TrimSpace(t.RecordID(pluginapi.NamespaceMusicBrainz)); id != "" {
 		return id
 	}
 	return strings.TrimSpace(t.MusicbrainzRecordingID)
@@ -1962,8 +2075,7 @@ func (s *Service) albumTrackAnchors(ctx context.Context, snap providerSnapshot,
 // re-enrich is byte-identical on the wire to what it was before this existed.
 func (s *Service) singleLeafWork(ctx context.Context, snap providerSnapshot, t store.Title) leafWork {
 	tc, fromTracklist, outcome := s.trackAlbumAnchor(ctx, snap, t)
-	ref := refFor(t)
-	ref.MusicbrainzID = trackAnchorID(t, fromTracklist)
+	ref := withExternalID(refFor(t), pluginapi.NamespaceMusicBrainz, trackAnchorID(t, fromTracklist))
 	ref = withMusicSearchTerms(ref, t, tc)
 	return leafWork{title: t, ref: ref, sparseTitle: t.Kind == "track", tracklist: outcome}
 }
@@ -2273,13 +2385,23 @@ func (s *Service) recordParentFailure(entityType, entityID string, cur store.Ent
 // stored `matched` answer?" (ADR-0053's amendment). Every other caller passes
 // parentTrusted; only the Music walk's Artist computes one, and it is consulted
 // in ModeRecheck alone. See uncorroboratedMatch.
-func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, doubted bool) (string, error) {
+//
+// The record it returns carries its NAMESPACE (ADR-0060 decision 3), so a child
+// resolves under its parent's id in the parent's namespace.
+//
+// A parent gets the leaf's pin rule (decision 6). A pinned external_id — chosen or
+// cascaded — resolves through its external_id_namespace's provider when that names
+// a registered Authoritative provider other than the lead, and is ORPHANED to
+// 'unmatched' when that provider is unreachable. An auto-resolved parent is no pin:
+// it is re-resolved by the lead whenever a pass re-asks it, and the write replaces
+// its id and namespace, as a parent's write always has.
+func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, doubted bool) (parentRecord, error) {
 	if !snap.enablement.enabledFor(ref.Kind) {
-		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "disabled")
+		return parentRecord{}, s.store.SetEntityEnrichmentStatus(entityType, entityID, "disabled")
 	}
 	cur, err := s.store.EntityEnrichmentByID(entityType, entityID)
 	if err != nil {
-		return "", err
+		return parentRecord{}, err
 	}
 	// ModeRecheck re-asks PARENTS as well as leaves (ADR-0051). It has to: on the
 	// motivating library 365 of 730 flagged Tracks hang under an Album that is
@@ -2296,21 +2418,39 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) &&
 		!(mode == ModeRecheck && (settledNonAnswer(cur.Status, cur.RetryAt) ||
 			uncorroboratedMatch(cur.Status, doubted))) {
-		return cur.ExternalID, nil // already settled; reuse its resolved id
+		return storedParentRecord(entityType, cur), nil // already settled; reuse its resolved record
 	}
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id
 	// every pass (New or Full) rather than re-searching by name, so the correction
-	// survives later passes and rescans exactly like a leaf's pinned id.
-	if cur.ExternalIDOrigin.Locked() && cur.ExternalID != "" {
-		ref = refWithPinnedEntityID(ref, cur.ExternalID)
+	// survives later passes and rescans exactly like a leaf's pinned id — and through
+	// the provider of the namespace it was pinned in (ADR-0060 decision 6), which is
+	// the Library's lead only when nobody repointed the Library since.
+	provider := snap.provider
+	asked := snap.config.authoritativeSlugFor(ref.Kind)
+	pinned := cur.ExternalIDOrigin.Locked() && strings.TrimSpace(cur.ExternalID) != ""
+	var pin parentRecord
+	if pinned {
+		pin = storedParentRecord(entityType, cur)
+		ref = refWithPinnedEntityID(ref, pin.Namespace, pin.ID)
+		if isAuthoritativeNamespace(snap.catalog, pin.Namespace, ref.Kind) && pin.Namespace != asked {
+			if !snap.config.providerReachable(pin.Namespace) {
+				// ORPHANED, exactly as a leaf is: filed to the attention list, the pin
+				// kept for when its provider is reachable again. The record still stands,
+				// so it is what the children resolve under.
+				return pin, s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
+			}
+			if p := snap.catalog.newProvider(snap.config, pin.Namespace, kindGroupFor(ref.Kind)); p != nil {
+				provider, asked = p, pin.Namespace
+			}
+		}
 	}
 
 	locks, err := s.store.EntityLockedFields(entityType, entityID)
 	if err != nil {
-		return "", err
+		return parentRecord{}, err
 	}
 
-	meta, err := snap.provider.Lookup(ctx, ref)
+	meta, err := provider.Lookup(ctx, ref)
 	// A parent settles against the same rule a leaf does (ADR-0057). No Built-in
 	// marks an Artist or an Album FromSearch today — MusicBrainz resolves both by
 	// exact-phrase query — so this is inert for them and present so that a Plugin
@@ -2318,9 +2458,9 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	meta, err = acceptSearchHit(ref, meta, err)
 	switch {
 	case errors.Is(err, ErrNoMatch), err == nil && !meta.Matched:
-		return "", s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
+		return parentRecord{}, s.store.SetEntityEnrichmentStatus(entityType, entityID, "unmatched")
 	case err != nil:
-		return "", s.recordParentFailure(entityType, entityID, cur, err)
+		return parentRecord{}, s.recordParentFailure(entityType, entityID, cur, err)
 	}
 
 	var fetched []store.EntityArtworkRow
@@ -2342,38 +2482,47 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	if !locks["cast"] {
 		s.fetchCastHeadshots(ctx, meta.Cast)
 	}
-	// A pinned override keeps its id even if the provider echoes a different one;
-	// otherwise the resolved id is stored (and threaded to children).
-	externalID := meta.ExternalID
-	if cur.ExternalIDOrigin.Locked() && cur.ExternalID != "" {
-		externalID = cur.ExternalID
+	// A pinned override keeps its id — and its namespace — even if the provider
+	// echoes a different one; otherwise the resolved id is stored (and threaded to
+	// children) in the namespace of the provider asked (ADR-0060 decision 5).
+	rec := parentRecord{ID: meta.ExternalID, Namespace: stampNamespace(meta.Source, asked)}
+	if pinned {
+		rec = pin
+	}
+	if rec.ID == "" {
+		rec.Namespace = ""
 	}
 	if err := s.store.WriteEntityEnrichment(entityType, entityID, store.EntityEnrichmentWrite{
 		Overview:      meta.Overview,
 		ContentRating: meta.ContentRating,
 		Network:       meta.Studio, // Studio carries the show network / album label
 		Source:        meta.Source,
-		ExternalID:    externalID,
+		ExternalID:    rec.ID,
+		Namespace:     rec.Namespace,
 		Genres:        meta.Genres,
 		Artwork:       fetched,
 		Cast:          toStoreCredits(meta.Cast),
 	}, locks); err != nil {
-		return "", err
+		return parentRecord{}, err
 	}
-	return externalID, nil
+	return rec, nil
 }
 
-// refWithPinnedEntityID rebuilds a parent lookup ref to resolve BY a pinned
-// authoritative id: a Show pins a TMDB id, an Artist/Album a MusicBrainz id. The
-// kind is preserved so the provider dispatches to the right by-id path.
-func refWithPinnedEntityID(ref TitleRef, externalID string) TitleRef {
-	switch ref.Kind {
-	case "artist", "album", "track":
-		ref.MusicbrainzID = externalID
-	default:
-		ref.TMDBID = externalID
+// refWithPinnedEntityID rebuilds a lookup ref to resolve BY a pinned record id in
+// its namespace (ADR-0060): the id goes into the ref's namespaced carrier, and the
+// named mirror for that namespace follows. The kind is preserved so the provider
+// dispatches to the right by-id path. A blank namespace reads as the kind's default
+// lead, which is what every pinned parent meant before namespaces existed.
+func refWithPinnedEntityID(ref TitleRef, namespace, externalID string) TitleRef {
+	if namespace == "" {
+		switch ref.Kind {
+		case "artist", "album", "track":
+			namespace = pluginapi.NamespaceMusicBrainz
+		default:
+			namespace = pluginapi.NamespaceTMDB
+		}
 	}
-	return ref
+	return withExternalID(ref, namespace, externalID)
 }
 
 // fetchCastHeadshots downloads the headshots for a Title's cast into the artwork
@@ -2446,41 +2595,6 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 	return name, true
 }
 
-// pinnedProviderFor reports the registry slug of the provider a Title's RECORD
-// lives with — an Enrichment override's, or the embedded id token's when nothing
-// overrode it (ADR-0045) — and whether there is such a record at all. It is how the
-// pass recognizes an override whose record provider may differ from the Library's
-// current Authoritative provider (issue 06). A Title with no external id is not
-// pinned: its resolution simply follows the Library leader.
-//
-// The two kinds answer differently, and the difference is a fact about the COLUMNS,
-// not a preference. A video record lives in `titles.tmdb_id`, a column named after
-// one source, so a video Title carrying one is pinned to TMDB however the Library
-// was repointed. A music record lives in `titles.musicbrainz_id`, which was named
-// after the only music source that existed when ADR-0049 added it and holds
-// whatever source the music chain resolved — so it names no source, and the pass
-// cannot conclude that a repointed music Library's records came from somewhere
-// other than its lead. A music pin therefore reports the current music lead, which
-// makes the precedence a no-op for music exactly as it has always been in practice.
-//
-// Telling a repointed music Library that its old records are orphaned would need a
-// record-SOURCE column beside the id. That is a real gap and a later decision; what
-// it is not is a guess this function is entitled to make, because guessing wrong
-// files every Track of a repointed Library to the attention list.
-func pinnedProviderFor(t store.Title, cfg ProviderConfig) (string, bool) {
-	switch t.Kind {
-	case "artist", "album", "track":
-		if t.MusicbrainzID != "" {
-			return cfg.musicAuthoritativeSlug(), true
-		}
-	default:
-		if t.TMDBID != "" {
-			return videoIDColumnProvider, true
-		}
-	}
-	return "", false
-}
-
 // withEpisodePin redirects a lookup reference onto the provider episode an Admin
 // pinned — the one and only place the pin takes effect. The Title's own
 // SeasonNumber/EpisodeNumber (and so its place in the library, its identity_key
@@ -2516,22 +2630,25 @@ func withEpisodePin(ref TitleRef, t store.Title) TitleRef {
 // when it was written and it stopped being true the day the tier was added — which
 // is what a comment asserting parity between two code paths is worth without a test
 // holding them to it. There is one now, and it covers all four tiers (issues 14, 17).
+//
+// Its ids are titleExternalIDs (ADR-0060 decision 7): every record row keyed by its
+// namespace, over the ids the folder asserts, with the five named fields filled
+// from the same map. It reads no derived Title.TMDBID / MusicbrainzID: those mix a
+// record with an identity in ONE namespace, and a record in `anidb` has no place in
+// either. Tiers one and two of the music precedence ride in the `musicbrainz` entry
+// (the record wins, the file's tag id is the fallback, ADR-0049); tier three (the
+// Album's tracklist, ADR-0050) and tier four's search TERMS are added by
+// singleLeafWork; a search is still the last resort, and it is still the only tier
+// that does not resolve by an id.
 func refFor(t store.Title) TitleRef {
-	ref := TitleRef{
-		Kind:   t.Kind,
-		Title:  t.Title,
-		Year:   t.Year,
-		TMDBID: t.TMDBID,
-		IMDBID: t.IMDBID,
-		// Tiers one and two of the music precedence: the record wins, the file's tag id
-		// is the fallback (ADR-0049). Tier three (the Album's tracklist, ADR-0050) and
-		// tier four's search TERMS are added by singleLeafWork; a search is still the
-		// last resort, and it is still the only tier that does not resolve by an id.
-		MusicbrainzID: trackRecordID(t),
+	ref := withExternalIDs(TitleRef{
+		Kind:          t.Kind,
+		Title:         t.Title,
+		Year:          t.Year,
 		SeasonNumber:  t.SeasonNumber,
 		EpisodeNumber: t.EpisodeNumber,
 		EpisodeLabel:  t.EpisodeLabel,
-	}
+	}, titleExternalIDs(t))
 	// An Admin-pinned provider episode overrides the parsed numbers FOR THE LOOKUP
 	// ONLY. It is what makes a file fixable when the provider numbers the series
 	// differently from the disk.

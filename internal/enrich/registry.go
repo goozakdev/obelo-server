@@ -53,15 +53,6 @@ const (
 	defaultMusicLeadSlug = SlugMusicBrainz
 )
 
-// videoIDColumnProvider is the source the `titles.tmdb_id` COLUMN is named after.
-// It is not a statement about which provider leads anything: it is the reason a
-// video Title carrying an external id is pinned to that source however the Library
-// was repointed (see pinnedProviderFor). It sits here with the other shipped names
-// so the host proper carries none (.scratch/bundled-plugins: issue 01), and it is
-// the one of them a Bundled plugin does NOT retire — the schema gap it names is
-// follow-up issue 10, a source-namespaced external-id map on the Title.
-const videoIDColumnProvider = SlugTMDB
-
 // The coarse Enrichment media-kind groups (Video vs. Music), the Plugin's default
 // chain Role and the ADR-0027 Class, named here in the enrichment domain's own
 // vocabulary while BEING the contract's values — the Authoritative-provider

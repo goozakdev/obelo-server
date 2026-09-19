@@ -185,3 +185,75 @@ func TestAParentsRecordCarriesItsNamespace(t *testing.T) {
 		t.Errorf("a parent with no id reads namespace %q, want none", got)
 	}
 }
+
+// ADR-0060 decision 6's exception to fill-only: a ReplaceRecord write deletes the
+// old record row, writes the new pair and names it the record, and leaves every
+// other row (a cross-reference) standing.
+func TestAReplacingWriteMovesTheRecordAndKeepsCrossReferences(t *testing.T) {
+	db := seedNamespacedMovie(t, "")
+	if err := db.WriteTitleEnrichment("m1", store.TitleEnrichment{Source: "tmdb",
+		ExternalIDs: store.ExternalMatch{Namespace: "tmdb", ID: "438631"}}, nil); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if err := db.WriteTitleEnrichment("m1", store.TitleEnrichment{Source: "omdb",
+		ExternalIDs: store.ExternalMatch{Namespace: "imdb", ID: "tt1160419"}}, nil); err != nil {
+		t.Fatalf("cross-reference fill: %v", err)
+	}
+	if err := db.WriteTitleEnrichment("m1", store.TitleEnrichment{Source: "anidb",
+		ExternalIDs: store.ExternalMatch{Namespace: "anidb", ID: "4563"}, ReplaceRecord: true}, nil); err != nil {
+		t.Fatalf("replacing pass: %v", err)
+	}
+	got := readRecord(t, db)
+	want := map[string]string{"anidb": "4563", "imdb": "tt1160419"}
+	if !reflect.DeepEqual(got.RecordIDs, want) || got.RecordNamespace != "anidb" {
+		t.Errorf("after the replace: %v in %q, want %v with anidb the record", got.RecordIDs, got.RecordNamespace, want)
+	}
+	if got.EnrichmentIDOrigin != store.OriginDerived {
+		t.Errorf("a replacing pass set origin %q; a pass's answer is nobody's choice", got.EnrichmentIDOrigin)
+	}
+}
+
+// The enrichment reads carry what the FOLDER asserts raw, apart from the record, so
+// the pin rule can tell "asserted by the folder" from "resolved by a pass".
+func TestTheEnrichmentReadCarriesTheFolderIdentityApartFromTheRecord(t *testing.T) {
+	db := seedNamespacedMovie(t, "438631")
+	if err := db.SetTitleExternalMatch("m1",
+		store.ExternalMatch{Namespace: "tmdb", ID: "999"}, store.OriginChosen); err != nil {
+		t.Fatalf("fix info: %v", err)
+	}
+	got := readRecord(t, db)
+	if got.IdentityID("tmdb") != "438631" || got.RecordID("tmdb") != "999" || got.TMDBID != "999" {
+		t.Errorf("identity %q / record %q / derived %q, want 438631 / 999 / 999",
+			got.IdentityID("tmdb"), got.RecordID("tmdb"), got.TMDBID)
+	}
+}
+
+// An Episode pin written by the file matcher inherits its Show's record namespace
+// (ADR-0060 decision 5), and a Show with no record lends the default lead's.
+func TestASlotPinInheritsTheShowsNamespace(t *testing.T) {
+	db := openTemp(t)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+	mustExec(t, db, `INSERT INTO shows (id, library_id, title, identity_key, sort_title)
+	                 VALUES ('sh1', 'tv', 'Frieren', 'frieren', 'frieren')`)
+	mustExec(t, db, `INSERT INTO seasons (id, show_id, season_number, identity_key)
+	                 VALUES ('se1', 'sh1', 1, 'frieren|s01')`)
+	mustExec(t, db, `INSERT INTO titles (id, library_id, kind, title, identity_key, sort_title,
+	                   season_id, season_number, episode_number)
+	                 VALUES ('ep1', 'tv', 'episode', 'One', 'frieren|s01e01', 'one', 'se1', 1, 1)`)
+	if err := db.SetEntityExternalMatch(store.EntityShow, "sh1",
+		store.EntityRecordPin{ExternalID: "17617", Namespace: "anidb", Origin: store.OriginChosen}); err != nil {
+		t.Fatalf("pin show: %v", err)
+	}
+	if err := db.ApplyShowArrangement(store.ShowArrangement{ShowID: "sh1", LibraryID: "tv",
+		Decisions: store.FileDecisionSet{LibraryID: "tv"},
+		Pins:      []store.SlotPin{{IdentityKey: "frieren|s01e01", SeriesID: "17617", Season: 1, Episode: 2}}}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	got, err := db.TitleForEnrichmentByID("ep1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RecordNamespace != "anidb" || !reflect.DeepEqual(got.RecordIDs, map[string]string{"anidb": "17617"}) {
+		t.Errorf("Episode pin = %v in %q, want the Show's namespace anidb", got.RecordIDs, got.RecordNamespace)
+	}
+}

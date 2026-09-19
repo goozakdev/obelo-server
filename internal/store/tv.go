@@ -552,13 +552,14 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 	var idOrigin string
 	var pinSeason, pinEpisode sql.NullInt64
 	var recordIDs sql.NullString
+	var identTMDB, identIMDB string
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
 		&t.EnrichmentAttempts, &t.EnrichmentRetryAt,
-		&t.RecordNamespace, &recordIDs); err != nil {
+		&t.RecordNamespace, &recordIDs, &identTMDB, &identIMDB); err != nil {
 		return Title{}, err
 	}
 	ids, err := decodeRecordIDs(recordIDs)
@@ -566,6 +567,7 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 		return Title{}, err
 	}
 	t.RecordIDs = ids
+	t.IdentityIDs = identityIDs(identTMDB, identIMDB)
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)

@@ -304,7 +304,7 @@ func TestTrackRecordIDPrefersTheAdminsRecordOverTheTag(t *testing.T) {
 	const record = "11111111-1111-4111-8111-111111111111"
 	const tagged = "22222222-2222-4222-8222-222222222222"
 
-	if got := trackRecordID(store.Title{MusicbrainzID: record, MusicbrainzRecordingID: tagged}); got != record {
+	if got := trackRecordID(store.Title{RecordIDs: map[string]string{"musicbrainz": record}, MusicbrainzRecordingID: tagged}); got != record {
 		t.Errorf("got %q, want the enrichment record %q — the file's tag is overruling a "+
 			"human's correction, which every scan would then re-apply", got, record)
 	}

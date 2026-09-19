@@ -929,7 +929,20 @@ type TitleEnrichment struct {
 	// analogue of EntityEnrichmentWrite.ExternalID — without it a search-resolved
 	// Title has no stored id for the LIVE artwork-candidate lookup to key on, and
 	// every Edit-item image tab comes back empty.
+	//
+	// The first pair ExternalIDs names (ExternalMatch.Namespace/ID) is the record the
+	// pass resolved, in the namespace the host stamped from the provider it asked
+	// (ADR-0060 decision 5).
 	ExternalIDs ExternalMatch
+	// ReplaceRecord turns the fill into a REPLACE of the Title's record: the old
+	// record row is deleted and ExternalIDs' first pair becomes the record, row and
+	// namespace both. It is ADR-0060 decision 6's deliberate exception to the
+	// fill-only rule above, for exactly one case the caller has already established:
+	// the record was a pass's own resolution (OriginDerived), it sits in a namespace that
+	// is not the one the pass just resolved through, and nothing about it was a
+	// decision. Repointing a Library means what it says; without this the old id
+	// would stand for ever beside the new lead's answer.
+	ReplaceRecord bool
 }
 
 // WriteTitleEnrichment persists a matched enrichment result for a Title in one
@@ -995,7 +1008,11 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	); err != nil {
 		return fmt.Errorf("store: updating enriched title: %w", err)
 	}
-	if err := fillRecordIDsTx(tx, titleID, e.ExternalIDs); err != nil {
+	writeIDs := fillRecordIDsTx
+	if e.ReplaceRecord {
+		writeIDs = replaceRecordTx
+	}
+	if err := writeIDs(tx, titleID, e.ExternalIDs); err != nil {
 		return err
 	}
 
@@ -1065,8 +1082,13 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 // happened AND the Title had no live record to point at — a fill beside an existing
 // record is a cross-reference, not a new record. The origin is never touched.
 func fillRecordIDsTx(tx *sql.Tx, titleID string, m ExternalMatch) error {
+	return fillRecordPairsTx(tx, titleID, m.ids())
+}
+
+// fillRecordPairsTx is fillRecordIDsTx over pairs already listed in record order.
+func fillRecordPairsTx(tx *sql.Tx, titleID string, pairs []namespacedID) error {
 	filled := ""
-	for _, x := range m.ids() {
+	for _, x := range pairs {
 		cond := `NOT EXISTS (SELECT 1 FROM title_external_ids
 		                      WHERE title_id = ? AND namespace = ? AND external_id <> '')`
 		args := []any{titleID, x.ns}

@@ -312,19 +312,27 @@ func applyPinsTx(tx *sql.Tx, libraryID string, pins []SlotPin) error {
 		case err != nil:
 			return fmt.Errorf("store: resolving the pinned Title %q: %w", p.IdentityKey, err)
 		}
+		// The series a pin names is in the Show's record namespace: an Episode pin
+		// inherits its parent's namespace (ADR-0060 decision 5).
+		seriesNS := ""
+		if p.SeriesID != "" {
+			if seriesNS, err = seriesNamespaceForTitle(tx, titleID); err != nil {
+				return err
+			}
+		}
 		if p.Clear {
 			// Nothing is pinned any more, so the record stops being anybody's choice
 			// (ADR-0045): the origin is released along with the numbers, whichever of
 			// the two provenances put it there (ADR-0046). The record rows go too and
-			// the Show's own series is written back as the record, in `tmdb` as every
-			// series id is until issue 15 stamps its namespace (ADR-0060).
+			// the Show's own series is written back as the record, in the Show's
+			// namespace.
 			if err := clearRecordIDs(tx, titleID); err != nil {
 				return err
 			}
 			recordNS := ""
 			if p.SeriesID != "" {
-				recordNS = NamespaceTMDB
-				if err := putRecordID(tx, titleID, NamespaceTMDB, p.SeriesID); err != nil {
+				recordNS = seriesNS
+				if err := putRecordID(tx, titleID, seriesNS, p.SeriesID); err != nil {
 					return err
 				}
 			}
@@ -337,7 +345,7 @@ func applyPinsTx(tx *sql.Tx, libraryID string, pins []SlotPin) error {
 				recordNS, titleID)
 		} else {
 			if p.SeriesID != "" {
-				if err := putRecordID(tx, titleID, NamespaceTMDB, p.SeriesID); err != nil {
+				if err := putRecordID(tx, titleID, seriesNS, p.SeriesID); err != nil {
 					return err
 				}
 			}
@@ -349,7 +357,7 @@ func applyPinsTx(tx *sql.Tx, libraryID string, pins []SlotPin) error {
 				     enrichment_status = 'pending', `+clearEnrichmentRetry+`,
 				     `+clearEnrichmentReason+`
 				   WHERE id = ?`,
-				p.SeriesID, NamespaceTMDB, p.SeriesID, p.Season, p.Episode, titleID)
+				p.SeriesID, seriesNS, p.SeriesID, p.Season, p.Episode, titleID)
 		}
 		if err != nil {
 			return fmt.Errorf("store: pinning the record for %q: %w", p.IdentityKey, err)
