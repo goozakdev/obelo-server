@@ -376,7 +376,7 @@ One of the closed set of seams a Plugin may implement: Metadata provider, Subtit
 _Avoid_: Hook (the Broker's word), Slot (a transcode slot is something else), Interface (the Go word for the seam, not the domain concept).
 
 **Built-in**:
-A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; OpenSubtitles and the Webhook sink are Built-ins. The shipped metadata providers were Built-ins first, which is what proved the contract honest, and are now Bundled plugins.
+A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; the Webhook sink is the only Built-in. The shipped metadata providers and OpenSubtitles were Built-ins first, which is what proved the contract honest, and are now Bundled plugins.
 _Avoid_: Core provider, Native plugin, Bundled plugin.
 
 **Installed plugin**:
@@ -384,7 +384,7 @@ A Plugin an Admin added to a running server as a module and a manifest, without 
 _Avoid_: Third-party plugin (the maintainer writes the first one), External plugin (says where it came from, not what it is), Module (the file format).
 
 **Bundled plugin**:
-An Installed plugin the server shipped with, placed on the server at first boot exactly as if an Admin had uploaded it, and shown to the Admin as having come with the server rather than from them. Otherwise indistinguishable from any other Installed plugin: same sandbox, same contract, same lifecycle. It is re-asserted on every boot, which is what lets an upgrade ship a newer module, and the two ways an operator can have said otherwise both win: a plugin they uploaded under the same id is left alone, and one they **uninstalled stays uninstalled** — the server remembers the refusal rather than reinstating it on the next boot, and offers *"reinstall the shipped version"* as the way back ([ADR-0059](./docs/adr/0059-the-shipped-metadata-providers-are-bundled-plugins.md)). The seven shipped metadata providers — TMDB, OMDb, TheTVDB, AniDB, MusicBrainz, fanart.tv, TheAudioDB — are the Bundled plugins.
+An Installed plugin the server shipped with, placed on the server at first boot exactly as if an Admin had uploaded it, and shown to the Admin as having come with the server rather than from them. Otherwise indistinguishable from any other Installed plugin: same sandbox, same contract, same lifecycle. It is re-asserted on every boot, which is what lets an upgrade ship a newer module, and the two ways an operator can have said otherwise both win: a plugin they uploaded under the same id is left alone, and one they **uninstalled stays uninstalled** — the server remembers the refusal rather than reinstating it on the next boot, and offers *"reinstall the shipped version"* as the way back ([ADR-0059](./docs/adr/0059-the-shipped-metadata-providers-are-bundled-plugins.md)). The seven shipped metadata providers — TMDB, OMDb, TheTVDB, AniDB, MusicBrainz, fanart.tv, TheAudioDB — and the OpenSubtitles Subtitle provider are the Bundled plugins.
 _Avoid_: Built-in (that is compiled-in code), Default plugin (says nothing about origin), Pre-installed (a mechanism, not a kind), Read-only plugin (nothing about it is).
 
 **Manifest**:

@@ -411,3 +411,70 @@ func TestASubtitlePluginCannotShadowAnAlreadyRegisteredProvider(t *testing.T) {
 		t.Errorf("no log line says why the Plugin did nothing:\n%s", log.all())
 	}
 }
+
+// --- what a subtitle manifest may raise (.scratch/bundled-plugins issue 09) ---
+
+// TestASubtitleManifestRaisesItsBudgetAndItsByteCap: callBudgetMillis and
+// maxFetchBytes on a subtitle-provider entry are honoured, as they are on a
+// metadata-provider entry. The bundled OpenSubtitles asks for both, because the
+// Built-in it replaced took an 8 MiB subtitle and waited out the request's own
+// 30 s, where the seam's defaults are 1 MiB and 10 s.
+func TestASubtitleManifestRaisesItsBudgetAndItsByteCap(t *testing.T) {
+	t.Run("the budget", func(t *testing.T) {
+		dataDir := t.TempDir()
+		m := plugintest.SubtitleManifest("patient-subs")
+		m.Provides[0].CallBudgetMillis = 700
+		plugintest.Install(t, dataDir, m)
+		// A default budget far past the test's patience: if the manifest's 700 ms
+		// were not read, the spinning guest would run for a minute.
+		set := loadWith(t, dataDir, &logSink{}, plugins.Options{CallTimeout: time.Minute})
+		provider := subtitleProviderFor(t, set, "patient-subs", pluginapi.Settings{
+			Enabled: true, Secret: "obelo-mode=spin", URL: "http://unused.example.test",
+		})
+
+		started := time.Now()
+		if _, err := provider.SearchSubtitles(context.Background(), germanSearch("")); err == nil {
+			t.Fatal("the spinning guest answered")
+		}
+		if elapsed := time.Since(started); elapsed > 10*time.Second {
+			t.Errorf("the guest ran for %s; the manifest asked for 700 ms", elapsed)
+		}
+	})
+
+	t.Run("the default budget is the seam's own when the manifest says nothing", func(t *testing.T) {
+		dataDir := t.TempDir()
+		plugintest.Install(t, dataDir, plugintest.SubtitleManifest("plain-subs"))
+		set := loadWith(t, dataDir, &logSink{}, plugins.Options{CallTimeout: 500 * time.Millisecond})
+		provider := subtitleProviderFor(t, set, "plain-subs", pluginapi.Settings{
+			Enabled: true, Secret: "obelo-mode=spin", URL: "http://unused.example.test",
+		})
+
+		started := time.Now()
+		if _, err := provider.SearchSubtitles(context.Background(), germanSearch("")); err == nil {
+			t.Fatal("the spinning guest answered")
+		}
+		if elapsed := time.Since(started); elapsed > 10*time.Second {
+			t.Errorf("the guest ran for %s; the seam's default is 500 ms here", elapsed)
+		}
+	})
+
+	t.Run("the byte cap", func(t *testing.T) {
+		dataDir := t.TempDir()
+		m := plugintest.SubtitleManifest("big-subs")
+		m.Provides[0].MaxFetchBytes = 8192
+		plugintest.Install(t, dataDir, m)
+		set := loadWith(t, dataDir, &logSink{}, plugins.Options{MaxFetchBytes: 4096})
+		provider := subtitleProviderFor(t, set, "big-subs", pluginapi.Settings{
+			Enabled: true, Secret: "obelo-mode=oversize", URL: "http://unused.example.test",
+		})
+
+		// The oversize guest answers one byte past the cap it was TOLD, so the
+		// number in the refusal is the number the host resolved.
+		_, err := provider.DownloadSubtitle(context.Background(), pluginapi.SubtitleDownloadRequest{
+			Candidate: pluginapi.SubtitleCandidate{ID: "9001"}, MaxBytes: 8 << 20,
+		})
+		if err == nil || !strings.Contains(err.Error(), "more than the 8192") {
+			t.Fatalf("err = %v, want a refusal at the manifest's 8192, not the default 4096", err)
+		}
+	})
+}

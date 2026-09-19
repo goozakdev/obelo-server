@@ -1,5 +1,6 @@
-// Package bundled is the seven shipped metadata providers, as WebAssembly
-// modules carried inside the binary (ADR-0059 decisions 1-3).
+// Package bundled is the plugins this server ships — the seven metadata
+// providers and OpenSubtitles — as WebAssembly modules carried inside the binary
+// (ADR-0059 decisions 1-3; OpenSubtitles since .scratch/bundled-plugins issue 09).
 //
 // A Bundled plugin is an Installed plugin the server shipped with. It is placed
 // under <dataDir>/plugins/<id>/ on first boot exactly as an Admin's upload would
@@ -83,6 +84,11 @@ var ids = []string{
 	"musicbrainz",
 	"fanarttv",
 	"theaudiodb",
+	// A Subtitle provider, not a Metadata provider, and LAST for that reason:
+	// the order above decides which metadata source leads a kind, and nothing
+	// about subtitles reads it. It arrived after the seven (.scratch/
+	// bundled-plugins issue 09, ADR-0059 decision 11 as amended).
+	"opensubtitles",
 }
 
 // IDs is the ordered list of Bundled plugin ids. The slice is a copy.

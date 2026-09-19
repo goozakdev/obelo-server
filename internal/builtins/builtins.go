@@ -15,7 +15,6 @@
 package builtins
 
 import (
-	"github.com/goozakdev/obelo-server/internal/builtins/opensubtitles"
 	"github.com/goozakdev/obelo-server/internal/builtins/webhook"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -25,47 +24,22 @@ import (
 // registration, which is a programming error in this file and is better found at
 // boot than by an Admin.
 //
-// TWO BUILT-INS REMAIN, and neither is a Metadata provider
-// (.scratch/bundled-plugins: issue 08). There used to be a third call here,
-// RegisterMetadataProviders, which looped over enrich.MetadataPlugins() and put
-// eight shipped sources — TMDB, OMDb, TheTVDB, AniDB, MusicBrainz, the Cover Art
-// Archive, fanart.tv and TheAudioDB — into the registry as compiled-in code. All
-// of them are Bundled plugins now (ADR-0059): WebAssembly modules built from
+// ONE BUILT-IN REMAINS: the Webhook sink. Nothing that talks to an external
+// source is compiled into this binary any more (ADR-0059, decision 11 as amended
+// by .scratch/bundled-plugins issue 09). The eight metadata sources left in
+// issues 04-08, and OpenSubtitles — this file's last Subtitle provider — left in
+// issue 09. All of them are Bundled plugins: WebAssembly modules built from
 // plugins/<id>/, embedded by internal/bundled, installed into the data directory
 // on first boot and reaching this same Registry through the Installed-plugin
-// loader, ahead of whatever this file registers. The Cover Art Archive is not a
-// provider at all any more; it is the MusicBrainz plugin's second URL.
+// loader, ahead of whatever this file registers.
 //
-// So this package's job is unchanged and its list is shorter: it is the ONE place
-// that knows both the contract and the Built-in implementations, and the only way
-// a compiled-in Plugin reaches a running server. What it registers is also what
-// internal/plugins' duplicate check refuses an Admin's upload for — an id this
-// binary answers to — which is now exactly `opensubtitles` and `webhook`.
-// Bundling those two is follow-up issue 09.
+// The Webhook stays: it talks to no third-party source, only to the URL the
+// operator types, and bundling it was never part of ADR-0059. What it registers
+// is also what internal/plugins' duplicate
+// check refuses an Admin's upload for — an id this binary answers to — which is
+// now exactly `webhook`.
 func Register(reg *pluginapi.Registry) {
-	RegisterSubtitleProviders(reg)
 	RegisterEventSinks(reg)
-}
-
-// RegisterSubtitleProviders adds the Built-in Subtitle providers. OpenSubtitles is
-// the only one, and the static facts here — its name, that it needs a key, its
-// default host, the copy the settings screen shows — are the catalog that used to
-// be a package-level slice in the subtitle domain (ADR-0021's registry.go).
-func RegisterSubtitleProviders(reg *pluginapi.Registry) {
-	reg.RegisterSubtitleProvider(pluginapi.SubtitleProviderRegistration{
-		Descriptor: pluginapi.Descriptor{
-			Slug:        opensubtitles.Slug,
-			Name:        "OpenSubtitles",
-			RequiresKey: true,
-			// Searching is what a Subtitle provider is for, so the declaration is
-			// honest rather than load-bearing here; the host calls search either way.
-			Capabilities: []pluginapi.Capability{pluginapi.CapabilitySearch},
-			DefaultURL:   opensubtitles.DefaultBaseURL,
-			Description:  "Community subtitle database. Matches your exact release by content hash for in-sync subtitles; requires a free API key.",
-			DocsURL:      "https://www.opensubtitles.com/en/consumers",
-		},
-		New: opensubtitles.New,
-	})
 }
 
 // RegisterEventSinks adds the Built-in Event sinks. The Webhook is the only one,

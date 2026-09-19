@@ -25,9 +25,9 @@ import (
 // They are Bundled plugins now: WebAssembly modules under plugins/<id>/, embedded
 // by internal/bundled and installed into the data directory on first boot, which
 // means they reach the same Registry by the same route an Admin's upload does.
-// Bundling the two below is follow-up issue 09; when it lands, this test's lists
-// go empty rather than gaining a third name.
-func TestTheBuiltInsAreOpenSubtitlesAndTheWebhookAndNothingElse(t *testing.T) {
+// OpenSubtitles followed them in issue 09, so the Subtitle provider list below is
+// empty, and the Webhook is the one name left.
+func TestTheOnlyBuiltInIsTheWebhook(t *testing.T) {
 	reg := pluginapi.NewRegistry()
 	builtins.Register(reg)
 
@@ -41,7 +41,7 @@ func TestTheBuiltInsAreOpenSubtitlesAndTheWebhookAndNothingElse(t *testing.T) {
 			"Admin's and could take over a kind's lead", metadata)
 	}
 
-	assertOnly(t, "Subtitle provider", subtitleSlugs(reg), "opensubtitles")
+	assertOnly(t, "Subtitle provider", subtitleSlugs(reg))
 	assertOnly(t, "Event sink", sinkSlugs(reg), "webhook")
 }
 
