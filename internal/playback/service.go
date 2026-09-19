@@ -1547,6 +1547,12 @@ func (s *Service) ReapIdle(idle time.Duration) int {
 	return s.sessions.Reap(idle)
 }
 
+// EndAllSessions ends every Playback session, idle or not, through the same
+// teardown a reap uses. App.Close calls it so no ffmpeg job outlives the server.
+func (s *Service) EndAllSessions() int {
+	return s.sessions.EndAll()
+}
+
 // ErrNotHLS means the session exists but is direct-play — it has no HLS
 // playlist/segments (the client should use the progressive stream URL). The api
 // layer maps it to 404 on the HLS routes (a direct-play session has no /hls
