@@ -544,8 +544,8 @@ func (f *rescanFixture) snapshot() string {
 
 	trows, err := f.db.Query(
 		`SELECT id, identity_key, kind, enrichment_status, COALESCE(season_id, ''),
-		        COALESCE(NULLIF(enrichment_tmdb_id, ''), tmdb_id),
-		        COALESCE(NULLIF(enrichment_imdb_id, ''), imdb_id),
+		        COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), tmdb_id),
+		        COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'imdb'), ''), imdb_id),
 		        COALESCE(enrichment_season, -1), COALESCE(enrichment_episode, -1)
 		   FROM titles WHERE library_id = 'libtv' ORDER BY identity_key`)
 	if err != nil {

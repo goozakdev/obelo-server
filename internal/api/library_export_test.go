@@ -213,8 +213,8 @@ func replay(t *testing.T, dst *testharness.Server, lib struct {
 			            season_id, season_number, episode_number, episode_label,
 			            album_id, disc_number, track_number,
 			            overview, tagline, content_rating, release_date, runtime_minutes, studio,
-			            musicbrainz_id, musicbrainz_recording_id, enrichment_status, enriched_title)
-			          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			            musicbrainz_recording_id, enrichment_status, enriched_title)
+			          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				e.ID, lib.ID, kind, str(d, "title"), nullableInt(d, "year"), str(d, "identityKey"),
 				str(d, "sortTitle"), str(d, "addedAt"), str(d, "tmdbId"), str(d, "imdbId"),
 				boolean(d, "needsReview"), boolean(d, "ambiguous"), tombstoneFlag(e),
@@ -222,7 +222,13 @@ func replay(t *testing.T, dst *testharness.Server, lib struct {
 				albumID, num(d, "discNumber"), num(d, "trackNumber"),
 				str(d, "overview"), str(d, "tagline"), str(d, "contentRating"), str(d, "releaseDate"),
 				num(d, "runtimeMinutes"), str(d, "studio"),
-				str(d, "musicbrainzId"), str(d, "musicbrainzRecordingId"), status, str(d, "displayTitle"))
+				str(d, "musicbrainzRecordingId"), status, str(d, "displayTitle"))
+			// A Track's record id is a `musicbrainz` row since migration 0072 (ADR-0060).
+			if mbid := str(d, "musicbrainzId"); mbid != "" {
+				dst.Exec(`INSERT INTO title_external_ids (title_id, namespace, external_id)
+				          VALUES (?, 'musicbrainz', ?)`, e.ID, mbid)
+				dst.Exec(`UPDATE titles SET enrichment_id_namespace = 'musicbrainz' WHERE id = ?`, e.ID)
+			}
 			for i, g := range strList(d, "genres") {
 				dst.Exec(`INSERT INTO title_genres (title_id, genre, ord) VALUES (?,?,?)`, e.ID, g, i)
 			}

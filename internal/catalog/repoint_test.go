@@ -321,7 +321,7 @@ func TestClearingARecordReturnsTheSlotToItsDefault(t *testing.T) {
 
 	var series string
 	if err := f.db.QueryRow(
-		`SELECT COALESCE(NULLIF(enrichment_tmdb_id, ''), tmdb_id)
+		`SELECT COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), tmdb_id)
 		   FROM titles WHERE library_id = 'libtv' AND identity_key = ?`,
 		episodeKey(4, 2)).Scan(&series); err != nil {
 		t.Fatalf("reading the cleared Slot's series: %v", err)

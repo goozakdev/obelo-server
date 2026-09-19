@@ -444,7 +444,8 @@ func (db *DB) EpisodesForSeason(seasonID string) ([]Title, error) {
 		        season_number, episode_number, episode_label,
 		        overview, enrichment_status, enriched_title,
 		        enrichment_season, enrichment_episode, enrichment_id_origin,
-		        enrichment_attempts, enrichment_retry_at
+		        enrichment_attempts, enrichment_retry_at,
+		        `+recordIDsColumns("")+`
 		   FROM titles WHERE season_id = ? AND hidden = 0
 		  ORDER BY episode_number ASC, sort_title ASC, id ASC`, seasonID)
 	if err != nil {
@@ -550,14 +551,21 @@ func scanEpisodeTitle(s scanner) (Title, error) {
 	var needsReview, ambiguous, hidden int
 	var idOrigin string
 	var pinSeason, pinEpisode sql.NullInt64
+	var recordIDs sql.NullString
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
-		&t.EnrichmentAttempts, &t.EnrichmentRetryAt); err != nil {
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt,
+		&t.RecordNamespace, &recordIDs); err != nil {
 		return Title{}, err
 	}
+	ids, err := decodeRecordIDs(recordIDs)
+	if err != nil {
+		return Title{}, err
+	}
+	t.RecordIDs = ids
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)

@@ -400,10 +400,12 @@ func (db *DB) TracksForAlbum(albumID string) ([]Title, error) {
 	}
 	rows, err := db.Query(
 		`SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
-		        `+recordExternalIDs("")+`, musicbrainz_id, needs_review, ambiguous, hidden,
+		        `+recordExternalIDs("")+`, `+recordIDExpr("", NamespaceMusicBrainz)+`,
+		        needs_review, ambiguous, hidden,
 		        disc_number, track_number,
 		        overview, enrichment_status, enriched_title, enrichment_id_origin,
-		        enrichment_attempts, enrichment_retry_at, musicbrainz_recording_id
+		        enrichment_attempts, enrichment_retry_at, musicbrainz_recording_id,
+		        `+recordIDsColumns("")+`
 		   FROM titles WHERE album_id = ? AND hidden = 0
 		  ORDER BY disc_number ASC, track_number ASC, sort_title ASC, id ASC`, albumID)
 	if err != nil {
@@ -565,13 +567,20 @@ func scanTrackTitle(s scanner) (Title, error) {
 	var year sql.NullInt64
 	var needsReview, ambiguous, hidden int
 	var idOrigin string
+	var recordIDs sql.NullString
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &t.MusicbrainzID, &needsReview, &ambiguous, &hidden,
 		&t.DiscNumber, &t.TrackNumber,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle, &idOrigin,
-		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.MusicbrainzRecordingID); err != nil {
+		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.MusicbrainzRecordingID,
+		&t.RecordNamespace, &recordIDs); err != nil {
 		return Title{}, err
 	}
+	ids, err := decodeRecordIDs(recordIDs)
+	if err != nil {
+		return Title{}, err
+	}
+	t.RecordIDs = ids
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)

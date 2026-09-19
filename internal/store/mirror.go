@@ -544,7 +544,7 @@ func (m *mirrorTx) writeTitle(id string, isNew bool, parent string, e MirrorEnti
 		mirrorTitleKind[e.Type], mirrorStr(d, "title"), mirrorYear(d), mirrorStr(d, "identityKey"),
 		mirrorStr(d, "sortTitle"), mirrorStr(d, "addedAt"),
 		mirrorStr(d, "tmdbId"), mirrorStr(d, "imdbId"),
-		mirrorStr(d, "musicbrainzId"), mirrorStr(d, "musicbrainzRecordingId"),
+		mirrorStr(d, "musicbrainzRecordingId"),
 		mirrorBool(d, "needsReview"), mirrorBool(d, "ambiguous"), mirrorHidden(e),
 		seasonID, mirrorInt(d, "seasonNumber"), mirrorInt(d, "episodeNumber"),
 		mirrorStr(d, "episodeLabel"),
@@ -557,19 +557,19 @@ func (m *mirrorTx) writeTitle(id string, isNew bool, parent string, e MirrorEnti
 	if isNew {
 		_, err = m.tx.Exec(
 			`INSERT INTO titles (kind, title, year, identity_key, sort_title, added_at,
-			   tmdb_id, imdb_id, musicbrainz_id, musicbrainz_recording_id,
+			   tmdb_id, imdb_id, musicbrainz_recording_id,
 			   needs_review, ambiguous, hidden,
 			   season_id, season_number, episode_number, episode_label,
 			   album_id, disc_number, track_number,
 			   overview, tagline, content_rating, release_date, runtime_minutes, studio,
 			   enrichment_status, enriched_title,
 			   id, library_id, remote_id)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			append(args, id, m.libraryID, e.RemoteID)...)
 	} else {
 		_, err = m.tx.Exec(
 			`UPDATE titles SET kind = ?, title = ?, year = ?, identity_key = ?, sort_title = ?,
-			   added_at = ?, tmdb_id = ?, imdb_id = ?, musicbrainz_id = ?, musicbrainz_recording_id = ?,
+			   added_at = ?, tmdb_id = ?, imdb_id = ?, musicbrainz_recording_id = ?,
 			   needs_review = ?, ambiguous = ?, hidden = ?,
 			   season_id = ?, season_number = ?, episode_number = ?, episode_label = ?,
 			   album_id = ?, disc_number = ?, track_number = ?,
@@ -580,6 +580,19 @@ func (m *mirrorTx) writeTitle(id string, isNew bool, parent string, e MirrorEnti
 	}
 	if err != nil {
 		return fmt.Errorf("store: mirroring title: %w", err)
+	}
+	// The sharer's musicbrainzId is its Track's RECORD, and lands here as one: the
+	// `musicbrainz` row, named as the record (ADR-0060). An absent id withdraws it,
+	// exactly as the old column was overwritten with "".
+	if mbid := mirrorStr(d, "musicbrainzId"); mbid != "" {
+		if err := putRecordID(m.tx, id, NamespaceMusicBrainz, mbid); err != nil {
+			return err
+		}
+		if err := setRecordNamespace(m.tx, id, NamespaceMusicBrainz); err != nil {
+			return err
+		}
+	} else if err := deleteRecordID(m.tx, id, NamespaceMusicBrainz); err != nil {
+		return err
 	}
 
 	if _, err := m.tx.Exec(`DELETE FROM title_genres WHERE title_id = ?`, id); err != nil {
