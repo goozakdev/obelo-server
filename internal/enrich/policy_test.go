@@ -171,7 +171,7 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: builtinCatalog(), Config: tc.global}, tc.policy)
+			res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: shippedCatalog(), Config: tc.global}, tc.policy)
 			if !reflect.DeepEqual(res.Config, tc.wantCfg) {
 				t.Errorf("cfg = %+v, want %+v", res.Config, tc.wantCfg)
 			}
@@ -188,7 +188,7 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 // derivation) produces, so an untouched Library enriches exactly as before.
 func TestResolveLibraryEnrichmentMatchesGlobalForEmptyPolicy(t *testing.T) {
 	global := testConfig(withKey(SlugTMDB, "tk"), withActive(SlugMusicBrainz, true), withMetadataLanguage("en-GB"))
-	res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: builtinCatalog(), Config: global}, store.LibraryEnrichmentPolicy{})
+	res := ResolveLibraryEnrichment(GlobalEnrichment{Catalog: shippedCatalog(), Config: global}, store.LibraryEnrichmentPolicy{})
 
 	if !reflect.DeepEqual(res.Config, global) {
 		t.Errorf("effective cfg = %+v, want the global cfg unchanged", res.Config)
@@ -209,7 +209,7 @@ func TestResolveAuthoritativePointer(t *testing.T) {
 	// A global where TMDB is enabled+keyed and OMDb is present but GLOBALLY DISABLED
 	// yet KEYED (so it is selectable as an always-active authoritative).
 	global := GlobalEnrichment{
-		Catalog: builtinCatalog(),
+		Catalog: shippedCatalog(),
 		Config:  testConfig(withKey(SlugTMDB, "tk"), withMetadataLanguage("en-US")),
 		Providers: map[string]ProviderState{
 			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
@@ -274,7 +274,7 @@ func TestResolveSupplementTriState(t *testing.T) {
 	// Global: TMDB authoritative (keyed+enabled); OMDb enabled+keyed (a live
 	// supplement); TheTVDB DISABLED but keyed (available to force on).
 	global := GlobalEnrichment{
-		Catalog: builtinCatalog(),
+		Catalog: shippedCatalog(),
 		Config:  testConfig(withKey(SlugTMDB, "tk"), withKey(SlugOMDb, "ok"), withMetadataLanguage("en-US")),
 		Providers: map[string]ProviderState{
 			SlugTMDB:    {Enabled: true, Keyed: true, APIKey: "tk"},
@@ -333,7 +333,7 @@ func TestResolveSupplementTriState(t *testing.T) {
 // surface; the invariant is asserted here.)
 func TestResolveSupplementOverrideAuthoritativeNoOp(t *testing.T) {
 	global := GlobalEnrichment{
-		Catalog: builtinCatalog(),
+		Catalog: shippedCatalog(),
 		Config:  testConfig(withKey(SlugTMDB, "tk"), withKey(SlugOMDb, "ok"), withMetadataLanguage("en-US")),
 		Providers: map[string]ProviderState{
 			SlugTMDB: {Enabled: true, Keyed: true, APIKey: "tk"},

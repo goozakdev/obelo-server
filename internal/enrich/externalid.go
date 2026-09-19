@@ -1,11 +1,8 @@
 package enrich
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
-// The three small parsers that survived TMDB leaving this package
+// The two small parsers that survived TMDB leaving this package
 // (.scratch/bundled-plugins issue 04). They are here rather than in
 // plugins/tmdb/ because the HOST is what calls them, and the host still needs
 // them after the provider has gone:
@@ -18,11 +15,12 @@ import (
 //     stopped working the moment TMDB became a plugin, for a column the plugin has
 //     no say over. Follow-up issue 10 — a source-namespaced external-id map on the
 //     Title — is what retires it.
-//   - yearFromDate is a plain date parser several sources use. It never belonged
-//     to TMDB; it merely lived next door. After MusicBrainz left too
-//     (.scratch/bundled-plugins issue 06) it has no caller in this package — the
-//     plugin carries its own — and it is LEFT here deliberately for issue 08's
-//     dead-code sweep rather than deleted mid-wave.
+//
+// A third, yearFromDate, is GONE (.scratch/bundled-plugins: issue 08). It was a
+// plain "YYYY-MM-DD" → int parser that never belonged to TMDB and merely lived
+// next door; MusicBrainz was its last caller here and left in issue 06. Each
+// plugin that needs one now carries its own, which is three lines and no shared
+// dependency between a host and its guests.
 //
 // The MusicBrainz reference parsers at the bottom joined them for the same reason
 // (.scratch/bundled-plugins issue 06): `titles.musicbrainz_id` is the HOST's
@@ -77,19 +75,6 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
-}
-
-// yearFromDate extracts the 4-digit year from a provider date string
-// ("YYYY-MM-DD", or just "YYYY"); 0 when absent/unparseable.
-func yearFromDate(date string) int {
-	if len(date) < 4 {
-		return 0
-	}
-	y, err := strconv.Atoi(date[:4])
-	if err != nil {
-		return 0
-	}
-	return y
 }
 
 // --- MusicBrainz's URL vocabulary, as the HOST reads it ------------------------

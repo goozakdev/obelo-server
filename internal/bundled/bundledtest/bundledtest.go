@@ -27,6 +27,12 @@
 // TMDB module on a warm build cache — and then nothing. The wazero side is cached
 // too (internal/plugins keeps one compilation cache for the process), so the
 // hundreds of servers a suite builds pay ~20 ms each rather than ~670 ms.
+//
+// # The other thing it does now
+//
+// It also decompresses the modules this binary WAS built with, once per process,
+// and supplies those (.scratch/bundled-plugins: issue 08). See supplyEmbedded for
+// why the cache belongs on this side of the line and not in internal/bundled.
 package bundledtest
 
 import (
@@ -62,6 +68,9 @@ func Ensure(t *testing.T) {
 }
 
 func build() {
+	if err = supplyEmbedded(); err != nil {
+		return
+	}
 	missing := bundled.Missing()
 	if len(missing) == 0 {
 		return
@@ -92,6 +101,52 @@ func build() {
 			return
 		}
 	}
+}
+
+// supplyEmbedded decompresses every module this binary WAS built with, once, and
+// hands the bytes back to internal/bundled so that every server a suite boots
+// afterwards gets the same slice instead of gunzipping its own copy
+// (.scratch/bundled-plugins: issue 08).
+//
+// # Why this is here and not in internal/bundled
+//
+// A real server decompresses a bundled module on the one boot that installs or
+// replaces it, and then never again for that id: bundled.Module is called from
+// the boot-time assertion and from "reinstall the shipped version", and neither
+// happens twice in a process. Caching there would hold ~28 MB of decompressed
+// WebAssembly for the life of a server process to save work that process will
+// never do again — a test optimisation charged to every operator, which is not a
+// trade this repository makes.
+//
+// A TEST process is the opposite shape. internal/api boots several hundred
+// servers, each with its own data directory, so each one really is a first boot
+// and really does install all seven: measured at 110 ms of gzip per server, about
+// 90 seconds across that package. The bytes are identical every time — they come
+// out of the same embedded archive — so decompressing once and handing the result
+// to the same door the from-source path already uses changes nothing about what a
+// test exercises. Every server still writes the real module to its own disk, the
+// loader still reads it back, and wazero still compiles and runs it.
+//
+// It is deliberately NOT conditional on anything: a tree that has run
+// `make plugins` and one that has not now take the same path, where before the
+// built tree was the slow one because SupplyForTests short-circuits the gunzip and
+// only a from-source module ever went through it. That asymmetry was the bug this
+// closes.
+func supplyEmbedded() error {
+	for _, id := range bundled.Present() {
+		manifest, mErr := bundled.ManifestBytes(id)
+		if mErr != nil {
+			return mErr
+		}
+		module, modErr := bundled.Module(id)
+		if modErr != nil {
+			return modErr
+		}
+		if supplyErr := bundled.SupplyForTests(id, manifest, module); supplyErr != nil {
+			return supplyErr
+		}
+	}
+	return nil
 }
 
 // compile runs the plugin's own build command — the reference plugin's, character

@@ -54,6 +54,33 @@ are bundled, and the server uses BYOK (bring-your-own-key) exactly as a
 `make build` binary does. That is the correct result for everyone who is not the
 maintainer cutting an official image.
 
+**Nothing has to be built first.** The Dockerfile has a `plugins` stage that
+compiles the seven Bundled metadata providers to WebAssembly inside the image
+([ADR-0059](../docs/adr/0059-the-shipped-metadata-providers-are-bundled-plugins.md)),
+running `scripts/build-bundled-plugins.sh` — the same file `make plugins` runs, so
+there is one definition of that build command and not two. It matters because
+`internal/bundled/modules/` is **gitignored build output**: an image built without
+that stage compiles, boots, scans and then silently enriches nothing, which is the
+failure this repository has already paid for twice (see CLAUDE.md). The stage
+copies only `go.mod`/`go.sum`/`go.work`, `pluginapi/`, `pluginsdk/` and
+`plugins/`, so an ordinary edit under `cmd/` or `internal/` reuses its layer and
+costs nothing.
+
+A finished image installs seven plugins on its first boot, and says so. The
+quickest check needs no login and no volume that outlives it:
+
+```sh
+docker run -d --name obelo-verify --platform linux/amd64 obelo >/dev/null
+sleep 5
+docker logs obelo-verify 2>&1 | grep 'shipped with this server and was installed'
+docker rm -f obelo-verify >/dev/null
+# obelo: the plugin tmdb (TMDB 1.0.0) shipped with this server and was installed
+# …and six more: omdb, thetvdb, anidb, musicbrainz, fanarttv, theaudiodb
+```
+
+Seven lines is right. **Zero lines is the failure this stage exists to prevent**,
+and the server starts and serves perfectly well without them.
+
 ### Before you build: `make check-amd64`
 
 ```sh
@@ -80,9 +107,21 @@ compiles the wasm test guest from source with the same command a plugin author
 uses and calls into it, so a green run means a guest really executed under the
 amd64 backend rather than merely compiled for it.
 
-**Budget about half an hour the first time**: measured on an arm64 Mac under
-Docker 29, 14 min 47 s for the untagged run and 15 min 56 s for the tagged one,
-against about 6.5 min for the same packages natively. A re-run with no source change is ~47 s, because Go's test
+**It now builds and runs the seven modules the server ships**, not only a test
+guest: the container runs `scripts/build-bundled-plugins.sh` before any test, and
+`./internal/bundled/...`, `./plugins/<id>/...` and `./internal/api/` are in the
+package list, so every bundled provider is compiled and *called* under the amd64
+backend. Until that landed, the guests this gate executed were fixtures and the
+providers an operator actually depends on ran on exactly one architecture — the
+maintainer's laptop. The container writes into the mounted tree, so a run leaves
+your `internal/bundled/modules/` holding container-built modules; they are
+gitignored build output and valid either way, and `make plugins` puts yours back.
+
+**Budget about forty minutes the first time**: measured on an arm64 Mac under
+Docker 29, **37 min 51 s for both halves together** with the seven Bundled plugins
+in the package list (2026-09-18; it was 14 min 47 s + 15 min 56 s before them).
+`internal/api` alone is 1054 s in the container against 462 s natively, so
+emulation costs about 2.3x — which is why `AMD64_TIMEOUT` is 60m. A re-run with no source change is ~47 s, because Go's test
 cache answers — the build and module caches live in named Docker volumes
 (`obelo-go-mod-amd64`, `obelo-go-build-amd64`) so they never mix with the host's
 arm64 ones. The container installs `ffmpeg` on the way in (~40 s): `internal/api`
@@ -137,7 +176,7 @@ protect the **build host and its cache**, not the shipped artifact.
 
 ### Publishing an official image
 
-Run these four checks **before** `docker push`. Each one covers a failure that
+Run these five checks **before** `docker push`. Each one covers a failure that
 looks like success locally.
 
 ```sh
@@ -170,6 +209,16 @@ strings ./obelo-check | grep -c 'obelo-spa-placeholder'    # must be 0
 # so it exits 1 on a clean checkout and tells you nothing about what you are pushing.
 # The Docker build produces its own bundle in stage 1; this is the only check that
 # sees it.
+
+# 4. PROVIDERS — the image must carry the seven Bundled plugins, and install them.
+docker run -d --name obelo-verify --platform linux/amd64 "$TAG" >/dev/null
+sleep 5
+docker logs obelo-verify 2>&1 | grep -c 'shipped with this server and was installed'   # 7
+docker rm -f obelo-verify >/dev/null
+# internal/bundled/modules/ is gitignored BUILD OUTPUT. A Dockerfile that lost its
+# `plugins` stage still builds, still boots, still scans — and enriches nothing,
+# for ever, in silence, while every check above stays green. This is the only one
+# that would notice.
 
 rm ./obelo-check
 ```

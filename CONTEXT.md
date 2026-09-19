@@ -193,7 +193,7 @@ The provenance of the image filling a role — one of three: **Local** (a file i
 _Avoid_: Origin, Provider (a provider is one supplier of Fetched candidates, not the source axis).
 
 **Artwork candidate**:
-One selectable image offered for a role, shown as a thumbnail in an artwork tab. Provider candidates are queried **live** from the metadata providers each time the tab opens (TMDB posters/backdrops, Cover Art Archive covers, fanart.tv/TheAudioDB artist photos) and are never persisted; only the image an Admin selects is stored. Distinct from the resolved Artwork (the single image actually serving the role).
+One selectable image offered for a role, shown as a thumbnail in an artwork tab. Provider candidates are queried **live** from the metadata providers each time the tab opens (TMDB posters/backdrops, MusicBrainz covers — served from the Cover Art Archive, its second host — fanart.tv/TheAudioDB artist photos) and are never persisted; only the image an Admin selects is stored. Distinct from the resolved Artwork (the single image actually serving the role).
 _Avoid_: Option, Variant.
 
 **Uploaded artwork**:
@@ -384,8 +384,8 @@ A Plugin an Admin added to a running server as a module and a manifest, without 
 _Avoid_: Third-party plugin (the maintainer writes the first one), External plugin (says where it came from, not what it is), Module (the file format).
 
 **Bundled plugin**:
-An Installed plugin the server shipped with, placed on the server at first boot exactly as if an Admin had uploaded it, and shown to the Admin as having come with the server rather than from them. Otherwise indistinguishable from any other Installed plugin: same sandbox, same contract, same lifecycle.
-_Avoid_: Built-in (that is compiled-in code), Default plugin (says nothing about origin), Pre-installed (a mechanism, not a kind).
+An Installed plugin the server shipped with, placed on the server at first boot exactly as if an Admin had uploaded it, and shown to the Admin as having come with the server rather than from them. Otherwise indistinguishable from any other Installed plugin: same sandbox, same contract, same lifecycle. It is re-asserted on every boot, which is what lets an upgrade ship a newer module, and the two ways an operator can have said otherwise both win: a plugin they uploaded under the same id is left alone, and one they **uninstalled stays uninstalled** — the server remembers the refusal rather than reinstating it on the next boot, and offers *"reinstall the shipped version"* as the way back ([ADR-0059](./docs/adr/0059-the-shipped-metadata-providers-are-bundled-plugins.md)). The seven shipped metadata providers — TMDB, OMDb, TheTVDB, AniDB, MusicBrainz, fanart.tv, TheAudioDB — are the Bundled plugins.
+_Avoid_: Built-in (that is compiled-in code), Default plugin (says nothing about origin), Pre-installed (a mechanism, not a kind), Read-only plugin (nothing about it is).
 
 **Manifest**:
 The JSON document an Installed plugin's author ships beside the module: its id, name, version, the contract major it was built against, what it provides, the hosts it may reach, and what settings it needs. It is the Installed half of the self-description a Built-in writes in Go, and it is a **claim**, never an authority — the host checks the contract major, refuses an id another Plugin holds, and enforces the host allowlist itself, from the file, on every fetch. A manifest the server cannot read, or one naming a contract major it does not speak, is refused with a message naming which side to upgrade, and the server still starts.

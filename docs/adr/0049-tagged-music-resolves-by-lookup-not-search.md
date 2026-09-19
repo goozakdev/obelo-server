@@ -93,6 +93,10 @@ whole time.
   usage or the host shedding load for everyone. "status 503" alone is not a
   diagnosis: it is the same three digits for rate-limited, blocked, and
   standing-in-a-global-queue, and those have opposite remedies.
+  *(2026-09-18, ADR-0059: the decision stands and the code moved. MusicBrainz is a
+  Bundled plugin now, so the type is `refusal` in `plugins/musicbrainz/`, reading
+  the same headers and writing the same sentence. `internal/enrich` carries none of
+  it — that host type had no other caller and went with the provider.)*
 
 - **In-request retries happen only when waiting can plausibly work** — our own
   rate limit, or an explicit `Retry-After`. Against a global shed the old

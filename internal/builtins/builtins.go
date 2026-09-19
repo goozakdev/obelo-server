@@ -17,7 +17,6 @@ package builtins
 import (
 	"github.com/goozakdev/obelo-server/internal/builtins/opensubtitles"
 	"github.com/goozakdev/obelo-server/internal/builtins/webhook"
-	"github.com/goozakdev/obelo-server/internal/enrich"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
@@ -25,30 +24,27 @@ import (
 // root, before anything reads the Registry. It panics on a malformed or duplicate
 // registration, which is a programming error in this file and is better found at
 // boot than by an Admin.
+//
+// TWO BUILT-INS REMAIN, and neither is a Metadata provider
+// (.scratch/bundled-plugins: issue 08). There used to be a third call here,
+// RegisterMetadataProviders, which looped over enrich.MetadataPlugins() and put
+// eight shipped sources — TMDB, OMDb, TheTVDB, AniDB, MusicBrainz, the Cover Art
+// Archive, fanart.tv and TheAudioDB — into the registry as compiled-in code. All
+// of them are Bundled plugins now (ADR-0059): WebAssembly modules built from
+// plugins/<id>/, embedded by internal/bundled, installed into the data directory
+// on first boot and reaching this same Registry through the Installed-plugin
+// loader, ahead of whatever this file registers. The Cover Art Archive is not a
+// provider at all any more; it is the MusicBrainz plugin's second URL.
+//
+// So this package's job is unchanged and its list is shorter: it is the ONE place
+// that knows both the contract and the Built-in implementations, and the only way
+// a compiled-in Plugin reaches a running server. What it registers is also what
+// internal/plugins' duplicate check refuses an Admin's upload for — an id this
+// binary answers to — which is now exactly `opensubtitles` and `webhook`.
+// Bundling those two is follow-up issue 09.
 func Register(reg *pluginapi.Registry) {
-	RegisterMetadataProviders(reg)
 	RegisterSubtitleProviders(reg)
 	RegisterEventSinks(reg)
-}
-
-// RegisterMetadataProviders adds the eight Built-in Metadata providers, in the
-// order that IS the catalog order: the settings screen lists them in it, the
-// fill-only Supplements are composed behind the Authoritative provider in it
-// (ADR-0027 keeps one global order), and the first authoritative-role Full
-// provider of a kind is that kind's default lead.
-//
-// Their registrations are authored beside the sources they describe, in
-// internal/enrich, rather than inline here as OpenSubtitles' is: those sources
-// still live in that package, and a Built-in is code plus its own
-// self-description — splitting the two would make "what does fanart.tv require"
-// answerable in one place and "what does fanart.tv do" in another. What this
-// package owns is the same thing it owns for OpenSubtitles: being the ONE place
-// that knows both the contract and the implementations, and being the only way a
-// Plugin reaches a running server.
-func RegisterMetadataProviders(reg *pluginapi.Registry) {
-	for _, plugin := range enrich.MetadataPlugins() {
-		reg.RegisterMetadataProvider(plugin)
-	}
 }
 
 // RegisterSubtitleProviders adds the Built-in Subtitle providers. OpenSubtitles is

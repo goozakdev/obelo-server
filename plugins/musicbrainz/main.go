@@ -49,6 +49,7 @@ import (
 	"github.com/goozakdev/obelo-server/pluginsdk/metadata"
 )
 
+// bundled-sample:begin pace
 // main is never called. It exists because a Go program needs one.
 func main() {}
 
@@ -56,3 +57,5 @@ func init() {
 	host := pluginsdk.PacedHost(pluginsdk.Sandbox(), musicbrainz.DefaultInterval)
 	metadata.Serve(musicbrainz.New(host))
 }
+
+// bundled-sample:end pace

@@ -8,9 +8,15 @@ Everything here is taught from one working plugin — the **Discord Event sink**
 its own repository at [`obelo-plugin-discord`](https://github.com/goozakdev/obelo-plugin-discord).
 It is not an illustration. Obelo's own acceptance suite builds it from source and
 drives it end to end ([`internal/api/discord_plugin_test.go`](../../internal/api/discord_plugin_test.go)),
-and **every code block below is extracted from its source by a test**
-([`internal/plugins/discordtest/samples_test.go`](../../internal/plugins/discordtest/samples_test.go)),
-so the guide cannot drift away from code that runs.
+and **every code block below is extracted from source by a test**, so the guide
+cannot drift away from code that runs. Three tests do it, one per source, each
+with its own marker syntax so none can see another's blocks:
+
+| Sections | Source | Test |
+| --- | --- | --- |
+| most of this guide | the Discord plugin | [`internal/plugins/discordtest/samples_test.go`](../../internal/plugins/discordtest/samples_test.go) |
+| §11, the Go SDK | `pluginsdk/` | [`internal/plugins/sdkguesttest/samples_test.go`](../../internal/plugins/sdkguesttest/samples_test.go) |
+| pacing and the probe | the plugins Obelo ships, under `plugins/<id>/` | [`internal/bundled/guidesamples_test.go`](../../internal/bundled/guidesamples_test.go) |
 
 > **In a hurry?** [Build and install](#7-build-and-install-locally) is four
 > commands. The rest of this document is why each of them is what it is.
@@ -263,6 +269,88 @@ makes no outbound requests at all.
 The host checks this list **from the file on disk, on every fetch**. Nothing your
 guest says at call time can widen it.
 
+### Declare a probe (Metadata providers)
+
+The providers screen has a **Test connection** button, and what it does is run one
+ordinary `metadata_lookup` against a reference **you** name. `probe` on your
+`provides` entry is that reference — one `MediaRef`, the same shape a real lookup
+is handed:
+
+```json
+"probe": { "kind": "movie", "title": "Inception", "year": 2010 }
+```
+
+The host keeps the judgment and it is short:
+
+| Your answer | Verdict |
+| --- | --- |
+| `matched` | pass — the host answered and your credential was accepted |
+| `no-match` | **pass** — same thing. Whether that particular record exists is not what the button is asking |
+| `unavailable`, a refusal, a fetch error | fail, and the reason is the sentence the Admin reads |
+
+**Declare one.** A Metadata provider with no `probe` is not broken, but its Test
+connection button answers *"this provider declares no connection probe"* — which
+is the most operator-visible feature of the settings screen telling them nothing.
+This used to be a `switch` over the eight provider slugs the server shipped, with
+a reference the author of that file happened to know each source could answer, and
+an installed third-party provider fell off the end of it into "unknown provider".
+
+Three things worth getting right:
+
+- **Name something that exists and is stable.** The point is to reach your source,
+  not to test its catalogue.
+- **Fill every field your lookup needs.** A probe your own code rejects before it
+  makes a request is a button that passes unconditionally, which is a worse answer
+  than a failure. Obelo shipped exactly that: the Cover Art Archive's probe named an
+  album by `title` and left `album` empty, the lookup answered no-match without a
+  single request, and the button had been passing for everyone regardless of what
+  they had typed.
+- **If you serve artwork from a second host, name a record that HAS images.** A
+  provider that declares both `settings.defaultUrl2` and the `artwork-candidates`
+  capability gets a *second* call — artwork candidates for the record the probe
+  just resolved — because a lookup proves nothing about an image host that a lookup
+  never touches. A failure there is reported against the image host by name, so the
+  operator knows which of the two URL fields they typed wrong.
+
+This is the MusicBrainz plugin's whole manifest, which is the shipped example of
+all of it — a probe that reaches both hosts, a second URL, and a raised call budget
+for a plugin that paces itself:
+
+<!-- bundled-sample: musicbrainz/manifest.json whole -->
+```json
+{
+  "id": "musicbrainz",
+  "name": "MusicBrainz",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
+  "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
+  "provides": [
+    {
+      "kind": "metadata-provider",
+      "kinds": ["music"],
+      "role": "authoritative",
+      "class": "full",
+      "capabilities": ["search", "artwork-candidates", "album-tracklist", "external-ref"],
+      "probe": {
+        "kind": "album",
+        "title": "OK Computer",
+        "album": "OK Computer",
+        "artist": "Radiohead"
+      },
+      "callBudgetMillis": 90000
+    }
+  ],
+  "network": {
+    "hosts": ["musicbrainz.org", "coverartarchive.org"]
+  },
+  "settings": {
+    "defaultUrl": "https://musicbrainz.org/ws/2",
+    "defaultUrl2": "https://coverartarchive.org"
+  }
+}
+```
+
 ---
 
 ## 4. The ABI: four exports and six imports
@@ -502,14 +590,45 @@ obelo: plugin audit: refused a fetch: plugin=discord host=not-discord.example.te
 …with `reason` one of `allowlist`, `private-address`, `bad-url`, `fetch-policy`,
 `oversize`.
 
-Three more things the host decides and you cannot:
+Four more things the host decides and you cannot:
 
-- **It sets the `User-Agent`** (`obelo/1.0 (self-hosted; plugin <your id>)`) and
-  fills in `Content-Length`. Everything else — an `Authorization` header built
-  from your secret, a `Content-Type` — is yours.
+- **It writes the `User-Agent`, and it drops yours.** Exactly one agent leaves the
+  server, whatever you send, and it is built from the server's own version plus
+  your id and the `version` in your manifest:
+
+  ```
+  obelo/0.1.0 ( https://www.obelo.tv; metadata@obelo.tv ) plugin/tmdb/1.0.0
+  ```
+
+  A `User-Agent` header in your `FetchRequest` is skipped (case-insensitively) and
+  a debug line says so, once per Plugin per process. This is not tidiness: a source
+  with a published policy — MusicBrainz is the loud one — throttles an anonymous or
+  malformed agent hardest, and one request carrying two agents is malformed. It also
+  means the far end can always tell *which server and which plugin* reached it,
+  which is what makes a complaint actionable. Give your manifest a real `version`,
+  because that is where the last segment comes from. Everything else — an
+  `Authorization` header built from your secret, a `Content-Type` — is yours, and
+  the host fills in `Content-Length`.
+- **A fetch always returns before the call's deadline.** The host bounds each
+  request by *what is left of your call budget, minus a grace margin*, so you get an
+  answer with time to turn it into a response rather than being unwound mid-read.
+  If the budget is already spent the request is **not made at all** — not even the
+  DNS lookup — and you are told:
+
+  ```
+  the fetch did not finish before this call's deadline
+  ```
+
+  It arrives as `Error`, never as `Refused`, and the right thing to do with it is
+  the right thing to do with any `Error`: answer `unavailable`. Then the item takes
+  the host's backoff and **no failure is counted against you** — see [Pace
+  yourself](#pace-yourself) and [The deadline is real](#the-deadline-is-real-and-the-runtime-enforces-it).
 - **Redirects are bounded (3 hops) and never followed inward.**
 - **Responses are capped at 1 MiB**, and going over is a *refusal*, never a
-  truncation: a shortened document is one you would parse as complete.
+  truncation: a shortened document is one you would parse as complete. A manifest
+  may raise its own cap with `maxFetchBytes` on a `provides` entry, up to the
+  server's ceiling of 8 MiB; ask for more and it is clamped with a log line naming
+  both numbers, rather than your Plugin being refused.
 
 ### `log` — why you need no stdout
 
@@ -765,6 +884,15 @@ Three things about that command:
 - **TinyGo is optional.** It produces a module about 13× smaller and compiles it
   about 14× faster, and you should use it for something you ship — but Obelo's own
   suite builds with stock Go, and stock Go is the toolchain this guide assumes.
+
+> **Do not import `net/http`, not even for a constant.** You have no socket to
+> open, so the package can never do anything for you — but linking it costs about
+> **1.9 MB of module (528 KB gzipped)**, measured: Obelo's own TheTVDB plugin
+> nearly shipped half a megabyte heavier for `http.MethodPost`,
+> `http.StatusUnauthorized` and `http.StatusNotFound`, three integers and a string.
+> Spell them out locally. It is the easiest half-megabyte in a wasm build to leave
+> behind, and the first place to look when a module comes out bigger than its
+> neighbours.
 
 Then, two files — `manifest.json` and `plugin.wasm` — and two ways to install
 them. **The layout you publish is identical to the layout on disk**, by
@@ -1143,16 +1271,88 @@ the address rule; a host *they* typed is not.
 
 ### The deadline is real, and the runtime enforces it
 
-One call into your module gets **10 seconds** (one `http_fetch` inside it gets 20).
-A sink's whole delivery sits inside a **15-second** host budget.
+Every call into your module runs under a budget:
+
+| Seam | Budget | Raise it? |
+| --- | --- | --- |
+| Metadata provider | **30 seconds** | `callBudgetMillis` on your `provides` entry, up to **120 s** |
+| Event sink | 10 seconds, inside a 15-second delivery budget | no |
+| Subtitle provider | 10 seconds | no |
 
 A guest that spins past its deadline is **unwound by the runtime, not asked to
-stop**: the module is closed and the instance discarded. Do not sleep, do not
-retry in a loop, do not busy-wait. Three consecutive failures — a trap, a deadline
-kill, or answering nothing — and you are disabled with a sentence.
+stop**: the module is closed and the instance discarded. Do not retry in a loop, do
+not busy-wait. Three consecutive failures — a trap, a deadline kill, or answering
+nothing — and you are disabled with a sentence.
+
+**A slow source is not one of those failures**, and that distinction is the whole
+point of the budget being a number you can see. `http_fetch` returns before your
+deadline rather than letting a slow upstream run you into it, so what you get is an
+`Error` and what you answer is `unavailable` — the item is retried, nothing is
+counted against you, and a deadline kill once again means only that your code spun.
+
+**Sleeping spends the budget.** If you pace yourself (below), count the waiting: a
+call that makes twenty-six requests a second apart needs more than thirty seconds
+before a byte of latency, which is why MusicBrainz's manifest asks for ninety. Ask
+for *less* than the host's figure inside your own code, too — a guest that sleeps
+to its host's exact deadline is a guest that gets unwound, and that IS a strike.
 
 Nothing about a failed delivery is ever shown to a viewer and nothing about it
 slows the server down. Delivery is off the publish path, always.
+
+### Pace yourself
+
+**The host does not throttle you.** ADR-0058 said `http_fetch` applied a per-host
+rate limit; it never did, nobody noticed because no guest that needed one existed,
+and ADR-0059 decision 5 withdrew the clause rather than implementing it. If your
+source publishes a rate policy, honouring it is **your** code's job.
+
+That is less work than it sounds, because of a guarantee you already have: **your
+Plugin is one instance and the host serialises every call into it.** One module,
+one linear memory, one queue — so a plain in-guest pacer is sufficient even when
+two Libraries enrich at once, and there is no second instance of you racing for the
+same quota. (The server's own Go providers needed a process-wide limiter keyed by
+host for exactly this reason; the sandbox made it unnecessary.)
+
+**Read the operator's override.** The fixed `Settings` every Metadata provider is
+handed carries `rateLimitMillis`, and it has three meanings, which are three
+different instructions and must not be collapsed:
+
+| `rateLimitMillis` | Means |
+| --- | --- |
+| absent | no policy saved — use *your* default |
+| `0` | the operator says their mirror has no policy — do not pace |
+| `n` | pace at `n` milliseconds |
+
+The SDK does this for you. `pluginsdk.PacedHost(h, yourDefault)` wraps `Fetch` and
+nothing else, re-reading the setting on every call through
+`pluginsdk.IntervalFrom`; `pluginsdk.NewPacer` / `Wait` / `SetInterval` are there
+if you need to pace something else. Wrapping is the whole of it — this is every
+executable line of the MusicBrainz plugin's `main.go`:
+
+<!-- bundled-sample: musicbrainz/main.go pace -->
+```go
+// main is never called. It exists because a Go program needs one.
+func main() {}
+
+func init() {
+	host := pluginsdk.PacedHost(pluginsdk.Sandbox(), musicbrainz.DefaultInterval)
+	metadata.Serve(musicbrainz.New(host))
+}
+```
+
+What the seven plugins Obelo ships actually do, because "pace yourself" with no
+numbers is not advice:
+
+| Plugin | Interval | Why |
+| --- | --- | --- |
+| MusicBrainz | 1 s, and `callBudgetMillis: 90000` | its published policy; ADR-0049 is the incident report about ignoring it |
+| AniDB | 2 s | its published policy |
+| OMDb, TheTVDB, fanart.tv, TheAudioDB | 250 ms | no published figure; enough that a large-library backfill does not get the server banned |
+| TMDB | none | it publishes none, and adding one would have been a behaviour change |
+
+**Do not pace what you did not fetch.** Pacing belongs on the way out, once, which
+is what wrapping the host buys you: a cache hit costs nothing, and a call site
+cannot forget.
 
 ### Memory only grows, so instances get recycled
 

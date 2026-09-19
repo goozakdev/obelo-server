@@ -78,107 +78,50 @@ const (
 	ClassArtworkOnly = pluginapi.ClassArtworkOnly
 )
 
-// MetadataPlugins is the ordered set of Metadata provider Built-ins this binary
-// ships: what each one IS (its Descriptor) and how to build it from an Admin's
-// Settings. internal/builtins hands the
-// whole list to the Registry from the composition root — explicitly, with no
-// init() side effect anywhere — and app.New then derives the Catalog from that
-// Registry.
+// THERE ARE NO BUILT-IN METADATA PROVIDERS LEFT, and this note is the whole trace
+// the seven of them leave in this package (.scratch/bundled-plugins: issue 08).
 //
-// The registrations live beside the implementations they describe, because these
-// sources are still in this package: a Built-in is code plus its own
-// self-description, and splitting the two would make "what does fanart.tv
-// require" answerable in one place and "what does fanart.tv do" in another.
-// OpenSubtitles differs only because its client moved to internal/builtins, so
-// its Descriptor moved with it.
+// This file used to hold MetadataPlugins() — the ordered list of Built-in
+// registrations, each a Descriptor plus a factory that built a Go client living a
+// few files away. All seven are Bundled plugins now (ADR-0059): WebAssembly
+// modules built from plugins/<id>/, carried in the binary by internal/bundled, and
+// installed into <dataDir>/plugins/<id>/ on first boot exactly as an Admin's
+// upload would be. Each one's Descriptor — its name, its kinds, its Role and
+// Class, its capabilities, its key requirement, its default URLs, the copy the
+// settings screen shows and its connection probe — is that module's
+// manifest.json, word for word.
 //
-// ORDER IS THE CATALOG ORDER and three things read it: the settings screen lists
-// sources in it, the fill-only Supplements are composed behind the Authoritative
-// provider in it (ADR-0027 keeps one global order), and the first
-// authoritative-role Full provider of a kind is that kind's default lead.
+// Three facts the deleted list used to carry, because each is still load-bearing
+// somewhere else:
 //
-// THIS LIST IS NO LONGER THE WHOLE CATALOG, AND NO LONGER ITS BEGINNING. Since
-// ADR-0059 the Bundled plugins — the shipped providers, as WebAssembly modules —
-// are registered AHEAD of it, in internal/bundled's own order, and every other
-// Installed plugin after it. What is left here is the Built-ins that have not been
-// converted yet; issue 08 empties the list.
+//   - ORDER IS THE CATALOG ORDER, and it is now internal/bundled's ordered `ids`
+//     rather than a literal here. The settings screen lists sources in it, the
+//     fill-only Supplements are composed behind the Authoritative provider in it
+//     (ADR-0027 keeps one global order), and the first authoritative-role Full
+//     provider of a kind is that kind's default lead — which is what keeps TMDB
+//     leading video and MusicBrainz leading music with no provider name in the
+//     host. plugins.Set.RegisterEnabledAround registers the Bundled ids in that
+//     order, then the Built-ins, then every other Installed plugin alphabetically.
+//     Keeping fanart.tv ahead of TheAudioDB there is what keeps fanart.tv the
+//     music chain's preferred image source (Catalog.musicImageSupplements fills
+//     its two slots in registration order); internal/enrich's
+//     musicimagesupplements_test.go is what holds it.
+//   - THE COVER ART ARCHIVE WAS NEVER A SOURCE. It was the artwork HOST the music
+//     lead's cover URLs point at, registered as a provider so an Admin could
+//     override its base URL — the one entry with no factory, resolved into the
+//     music lead's second URL by a special case in three files. It is the
+//     MusicBrainz plugin's own `settings.defaultUrl2` now, the way image.tmdb.org
+//     is TMDB's, and migration 0071 carried a mirrored host across
+//     (.scratch/bundled-plugins: issue 06).
+//   - FANART.TV IS ONE INSTANCE, not two. It serves `kinds: [video, music]` from
+//     one module with one linear memory, and the host's factory hands each chain a
+//     view over it (internal/plugins/metadata.go), serializing every call — the
+//     same one key and one pace the two Go instances used to share by convention,
+//     made structural.
 //
-// EVERY source here is reached through its factory, with no exceptions left. There
-// used to be one — Cover Art Archive, a registration with no factory, which was not
-// a client but the artwork HOST of the MusicBrainz Plugin — and
-// .scratch/bundled-plugins issue 06 removed it by giving that host to the
-// MusicBrainz plugin's own manifest as its second URL. buildPlugin still skips a
-// nil factory rather than erroring, because "registered, never built" remains a
-// state the composition can hold; nothing in this binary is in it.
-func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
-	return []pluginapi.MetadataProviderRegistration{
-		// TMDB IS NOT HERE ANY MORE, and this comment is the only trace it leaves.
-		//
-		// It is a Bundled plugin (ADR-0059): a WebAssembly module built from
-		// plugins/tmdb/, carried in the binary by internal/bundled, and installed into
-		// <dataDir>/plugins/tmdb/ on first boot exactly as an Admin's upload would be.
-		// It reaches this catalog through the Installed-plugin loader, registered
-		// AHEAD of everything in this list (plugins.Set.RegisterEnabledAround), which is
-		// what keeps it the default video lead by the unchanged "first authoritative
-		// Full provider of a kind" rule.
-		//
-		// Its Descriptor — the name, the capabilities, the default URLs, the copy and
-		// the connection probe — is now plugins/tmdb/manifest.json, word for word.
-		// OMDb, TheTVDB AND AniDB ARE NOT HERE ANY MORE EITHER, for the same reason
-		// and by the same route (.scratch/bundled-plugins: issue 05). Each is a
-		// WebAssembly module built from plugins/<id>/, and its Descriptor — the name,
-		// the capabilities, the default URL, the copy and the connection probe — is
-		// that module's manifest.json, word for word.
-		//
-		// The order they register in is internal/bundled's (tmdb, omdb, thetvdb,
-		// anidb, …) and not this file's, which is what keeps the video chain composing
-		// OMDb and TheTVDB behind TMDB exactly as it did, and keeps AniDB a Full video
-		// candidate that leads nothing until a Library points at it (ADR-0027).
-		// MUSICBRAINZ IS NOT HERE ANY MORE, AND NEITHER IS THE COVER ART ARCHIVE.
-		//
-		// MusicBrainz is a Bundled plugin (ADR-0059): a WebAssembly module built from
-		// plugins/musicbrainz/, carried in the binary by internal/bundled, and
-		// installed into <dataDir>/plugins/musicbrainz/ on first boot exactly as an
-		// Admin's upload would be. It reaches this catalog through the
-		// Installed-plugin loader, registered AHEAD of everything in this list, which
-		// is what keeps it the default music lead by the unchanged "first
-		// authoritative Full provider of a kind" rule. Its Descriptor — the name, the
-		// capabilities, the copy and the connection probe — is now
-		// plugins/musicbrainz/manifest.json, word for word.
-		//
-		// The COVER ART ARCHIVE has no registration at all any more, and that is the
-		// substantive change (.scratch/bundled-plugins issue 06). It was the one entry
-		// here with no factory: not a source, but the artwork HOST the music lead's
-		// cover URLs point at, registered so an Admin could override its base URL —
-		// which the host then resolved into that Plugin's second URL through a special
-		// case in three different files. The MusicBrainz plugin's manifest now
-		// declares `settings.defaultUrl2: https://coverartarchive.org` and owns that
-		// host itself, the way TMDB owns image.tmdb.org, so all three special cases
-		// and the `coverart` row are gone. Migration 0071 copies a non-default
-		// `coverart` base URL into `musicbrainz.url2` and scrubs the row.
-		// FANART.TV AND THEAUDIODB ARE NOT HERE ANY MORE, and this comment is the
-		// only trace they leave.
-		//
-		// Both are Bundled plugins (ADR-0059): WebAssembly modules built from
-		// plugins/fanarttv/ and plugins/theaudiodb/, carried in the binary by
-		// internal/bundled and installed into <dataDir>/plugins/<id>/ on first boot.
-		// They reach this catalog through the Installed-plugin loader, registered
-		// AHEAD of this list in internal/bundled's own order — which is what keeps
-		// fanart.tv before TheAudioDB, and so keeps fanart.tv the music chain's
-		// PREFERRED image source and TheAudioDB its image-plus-biography fallback
-		// (Catalog.musicImageSupplements fills its two slots in registration order).
-		//
-		// fanart.tv's registration used to say it was "still two INSTANCES, one per
-		// chain". It is one now: a Plugin serving `kinds: [video, music]` is ONE
-		// module with one linear memory, and the host's factory hands each chain a
-		// view over it (internal/plugins/metadata.go), serializing every call. That
-		// is the same single process-wide throttle and the same one key the two Go
-		// instances shared, with the sharing made structural.
-		//
-		// Their Descriptors — the names, the capabilities, the default URLs, the copy
-		// and the connection probes — are now plugins/<id>/manifest.json, word for word.
-	}
-}
+// What composes the catalog now is internal/builtins.Register (OpenSubtitles and
+// the Webhook sink) plus the Installed-plugin loader, and NewCatalog below reads
+// whatever that produced.
 
 // Catalog is the enrichment domain's view of the registered Metadata provider
 // Plugins: the ordered Descriptors, read from the registry they came from. It is a
@@ -308,10 +251,11 @@ func (c Catalog) DefaultAuthoritativeForKind(kind string) string {
 // buildPlugin constructs the Plugin registered under a slug from the Settings the
 // host resolved, and adapts it back to the MetadataProvider the chains call. It
 // returns nil when no Plugin claims the slug, when the registration carries no
-// factory (facts only — see MetadataPlugins; nothing this binary ships is in that
-// state since .scratch/bundled-plugins issue 06), or when
-// the factory refuses these settings: a Plugin that cannot be built makes no calls
-// at all rather than half-working (ADR-0001), and the caller composes without it.
+// factory (a registration that is facts only; nothing this binary ships is in that
+// state since .scratch/bundled-plugins issue 06 retired the Cover Art Archive
+// row), or when the factory refuses these settings: a Plugin that cannot be built
+// makes no calls at all rather than half-working (ADR-0001), and the caller
+// composes without it.
 func (c Catalog) buildPlugin(slug string, s pluginapi.Settings) MetadataProvider {
 	registration, ok := c.registry.MetadataProvider(slug)
 	if !ok || registration.New == nil {

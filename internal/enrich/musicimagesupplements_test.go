@@ -27,7 +27,7 @@ import (
 // TestTheMusicChainKeepsFanartTVAheadOfTheAudioDB is that assertion at the level
 // the slots are filled.
 func TestTheMusicChainKeepsFanartTVAheadOfTheAudioDB(t *testing.T) {
-	cat := builtinCatalog()
+	cat := shippedCatalog()
 	cfg := testConfig(
 		withActive(SlugMusicBrainz, true),
 		withKey(SlugFanartTV, "fanart-key"),

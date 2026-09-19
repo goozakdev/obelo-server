@@ -128,34 +128,16 @@ func TestOutcomeErrorItselfIsNotTransient(t *testing.T) {
 	}
 }
 
-// NO BUILT-IN ANSWERS UNAVAILABLE TO A LOOKUP, which is why this change cannot
-// alter what any compiled-in source does. A Built-in reaches the same adapter
-// through builtinPlugin, so an ErrSearchUnavailable returned from ITS Lookup would
-// round-trip into the new transient error; none does, and this asks every shipped
-// registration directly rather than taking that on trust.
-func TestNoBuiltInAnswersUnavailableToALookup(t *testing.T) {
-	for _, reg := range MetadataPlugins() {
-		if reg.New == nil {
-			continue // Cover Art Archive: registered for the screen, never built
-		}
-		plugin, err := reg.New(pluginapi.Settings{Enabled: true, Secret: "k", URL: "https://unused.test"})
-		if err != nil || plugin == nil {
-			continue
-		}
-		for _, kind := range []string{"movie", "show", "season", "episode", "artist", "album", "track"} {
-			// A ref with no ids and no title: every source answers this WITHOUT a
-			// network call, which is what makes it safe to ask all of them here.
-			resp, err := plugin.Lookup(context.Background(), pluginapi.LookupRequest{
-				Ref: pluginapi.MediaRef{Kind: kind},
-			})
-			if err != nil {
-				continue // a transport failure is not an outcome
-			}
-			if resp.Outcome == pluginapi.OutcomeUnavailable {
-				t.Errorf("the Built-in %q answers unavailable to a %s lookup; that is now a "+
-					"TRANSIENT error and this item would be retried instead of parked",
-					reg.Descriptor.Slug, kind)
-			}
-		}
-	}
-}
+// THE "NO BUILT-IN ANSWERS UNAVAILABLE TO A LOOKUP" TEST IS GONE
+// (.scratch/bundled-plugins: issue 08). It walked MetadataPlugins() and asked each
+// shipped registration for a lookup with an empty reference, proving that making
+// `unavailable` transient could not alter what any compiled-in source did — a fact
+// about eight Go providers, checked rather than assumed.
+//
+// There are no compiled-in Metadata providers left to ask (ADR-0059). The
+// equivalent claim about the seven that shipped instead is made where they now
+// live: each plugins/<id>/ suite asserts what its own call paths answer, the SDK's
+// TestUnavailableClassifiesAFetchFailure holds the one classifier they all use,
+// and internal/api's TestASourceOutageRetriesTheItemsAndDoesNotStrikeThePlugin
+// drives a real module through wazero against a stand-in that answers 503 and
+// asserts the items are retried rather than parked.

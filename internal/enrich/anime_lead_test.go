@@ -20,7 +20,7 @@ import "testing"
 // provider, RequiresKey, and shipped globally DISABLED (no seed row) so it appears
 // as a usable authoritative candidate only once keyed.
 func TestAniDBRegistryEntry(t *testing.T) {
-	e, ok := builtinCatalog().Entry(SlugAniDB)
+	e, ok := shippedCatalog().Entry(SlugAniDB)
 	if !ok {
 		t.Fatalf("AniDB not registered")
 	}
@@ -36,7 +36,7 @@ func TestAniDBRegistryEntry(t *testing.T) {
 
 	// It is a Full VIDEO candidate...
 	found := false
-	for _, c := range builtinCatalog().FullProvidersForKind(KindVideo) {
+	for _, c := range shippedCatalog().FullProvidersForKind(KindVideo) {
 		if c.Slug == SlugAniDB {
 			found = true
 		}
@@ -45,12 +45,12 @@ func TestAniDBRegistryEntry(t *testing.T) {
 		t.Errorf("AniDB missing from the Full video candidates")
 	}
 	// ...but NOT the kind default (TMDB is), so adding it changes no existing Library.
-	if builtinCatalog().DefaultAuthoritativeForKind(KindVideo) == SlugAniDB {
+	if shippedCatalog().DefaultAuthoritativeForKind(KindVideo) == SlugAniDB {
 		t.Errorf("AniDB became the video default; want TMDB unchanged")
 	}
 	// Shipped disabled: with NO provider rows, AniDB is neither enabled nor keyed, so
 	// it is not a usable authoritative until configured.
-	states := builtinCatalog().ProviderStatesFromRows(nil)
+	states := shippedCatalog().ProviderStatesFromRows(nil)
 	if s := states[SlugAniDB]; s.Enabled || s.Keyed {
 		t.Errorf("AniDB default state = %+v, want disabled + unkeyed (ships off)", s)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/plugins/signing"
 	"github.com/goozakdev/obelo-server/internal/safefetch"
 	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/useragent"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
@@ -953,7 +954,7 @@ func (m *Manager) get(ctx context.Context, target string, limit int64, what stri
 	if err != nil {
 		return nil, refuse(ReasonSource, "%s is not a URL this server can request", target)
 	}
-	req.Header.Set("User-Agent", "obelo/1.0 (self-hosted; plugin install)")
+	req.Header.Set("User-Agent", useragent.Default)
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil, refuse(ReasonSource, "the plugin's %s could not be fetched from %s: %v", what, target, err)
@@ -988,7 +989,7 @@ func (m *Manager) getOptional(ctx context.Context, target string, limit int64, w
 	if err != nil {
 		return nil, refuse(ReasonSource, "%s is not a URL this server can request", target)
 	}
-	req.Header.Set("User-Agent", "obelo/1.0 (self-hosted; plugin install)")
+	req.Header.Set("User-Agent", useragent.Default)
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return nil, refuse(ReasonSource, "the plugin's %s could not be fetched from %s: %v", what, target, err)
