@@ -57,7 +57,6 @@ import type {
   DevicesResponse,
   EnrichmentAttentionTitle,
   EnrichmentAttentionTitleRaw,
-  EnrichmentCandidate,
   EnrichmentCandidatesResult,
   EpisodeCandidatesResult,
   EnrichmentSearchOptions,
@@ -1016,22 +1015,11 @@ export class ApiClient {
       `/libraries/${encodeURIComponent(libraryId)}/enrichmentCandidates?${params.toString()}`,
       { signal },
     );
-    return { candidates: res.candidates ?? [], hasMore: res.hasMore ?? false };
-  }
-
-  /** `GET /api/v1/libraries/{id}/externalPreview?ref=…` (Admin) — the paste-an-id
-   * counterpart of {@link searchLibraryEnrichmentCandidates}, so an Unmatched row
-   * accepts a pasted provider URL/id like every per-item picker. Read-only; the
-   * apply still goes through fix-match. */
-  previewLibraryExternalCandidate(
-    libraryId: string,
-    ref: string,
-    signal?: AbortSignal,
-  ): Promise<EnrichmentCandidate> {
-    return this.request<EnrichmentCandidate>(
-      `/libraries/${encodeURIComponent(libraryId)}/externalPreview?ref=${encodeURIComponent(ref)}`,
-      { signal },
-    );
+    return {
+      candidates: res.candidates ?? [],
+      hasMore: res.hasMore ?? false,
+      resolvedRef: res.resolvedRef ?? false,
+    };
   }
 
   /** `GET /api/v1/libraries/{id}/enrichment-attention` (Admin) — the Library's
@@ -1148,7 +1136,11 @@ export class ApiClient {
       `/titles/${encodeURIComponent(titleId)}/enrichmentCandidates?${params.toString()}`,
       { signal },
     );
-    return { candidates: res.candidates ?? [], hasMore: res.hasMore ?? false };
+    return {
+      candidates: res.candidates ?? [],
+      hasMore: res.hasMore ?? false,
+      resolvedRef: res.resolvedRef ?? false,
+    };
   }
 
   /** `GET /api/v1/titles/{id}/episodeCandidates?externalId=&season=` (Admin) —
@@ -1275,23 +1267,6 @@ export class ApiClient {
     return res.subtitle;
   }
 
-  /** `GET /api/v1/titles/{id}/externalPreview?ref=…` (Admin) — resolve a pasted
-   * MusicBrainz/TMDB id-or-URL to a single preview candidate WITHOUT searching (the
-   * "paste an id when search isn't enough" escape hatch, item-editing/search-
-   * improvements). A typo'd/stale id throws a NOT_FOUND ApiError; a wrong-kind URL a
-   * BAD_REQUEST. The returned candidate is applied via applyEnrichmentOverride. */
-  async previewExternalCandidate(
-    titleId: string,
-    ref: string,
-    signal?: AbortSignal,
-  ): Promise<EnrichmentCandidate> {
-    const params = new URLSearchParams({ ref });
-    return this.request<EnrichmentCandidate>(
-      `/titles/${encodeURIComponent(titleId)}/externalPreview?${params.toString()}`,
-      { signal },
-    );
-  }
-
   /** `PUT /api/v1/titles/{id}/enrichmentOverride` (Admin) — apply a picked
    * candidate as a durable Enrichment override on this leaf and re-enrich just it
    * (Edit-item "Fix info", ADR-0019). The server pins the authoritative externalId
@@ -1340,24 +1315,11 @@ export class ApiClient {
       `/${entityType}/${encodeURIComponent(entityId)}/enrichmentCandidates?${params.toString()}`,
       { signal },
     );
-    return { candidates: res.candidates ?? [], hasMore: res.hasMore ?? false };
-  }
-
-  /** `GET /api/v1/{shows|artists|albums}/{id}/externalPreview?ref=…` (Admin) — the
-   * parent analogue of previewExternalCandidate: resolve a pasted id-or-URL to a
-   * single preview candidate for a Show/Artist/Album (item-editing/search-
-   * improvements). Applied via applyEntityEnrichmentOverride. */
-  async previewEntityExternalCandidate(
-    entityType: "shows" | "artists" | "albums",
-    entityId: string,
-    ref: string,
-    signal?: AbortSignal,
-  ): Promise<EnrichmentCandidate> {
-    const params = new URLSearchParams({ ref });
-    return this.request<EnrichmentCandidate>(
-      `/${entityType}/${encodeURIComponent(entityId)}/externalPreview?${params.toString()}`,
-      { signal },
-    );
+    return {
+      candidates: res.candidates ?? [],
+      hasMore: res.hasMore ?? false,
+      resolvedRef: res.resolvedRef ?? false,
+    };
   }
 
   /** `GET /api/v1/albums/{id}/editions` (Admin) — the editions of an Album's matched

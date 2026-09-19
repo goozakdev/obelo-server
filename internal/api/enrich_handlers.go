@@ -532,6 +532,34 @@ type enrichmentCandidatesJSON struct {
 	// picker can offer "show more" for a broad common-title query (item-editing/
 	// search-improvements). False on a short/last page.
 	HasMore bool `json:"hasMore,omitempty"`
+	// ResolvedRef says the query was a pasted id-or-URL that the Library's lead read
+	// and resolved: Candidates holds that one record, and the picker selects it
+	// rather than listing it (.scratch/bundled-plugins issue 12). The client never
+	// decides what a reference looks like — only the lead knows its own ids.
+	ResolvedRef bool `json:"resolvedRef,omitempty"`
+}
+
+// writeCandidateSearch answers a picker search. A query the lead read as a
+// reference answers — and fails — exactly as the externalPreview endpoints do; a
+// search fails as a search. subject names what was searched ("item", "library")
+// in the unavailable message.
+func writeCandidateSearch(w http.ResponseWriter, p *providerImageProxy, res enrich.CandidateSearch, err error, subject string) {
+	switch {
+	case err != nil && res.ResolvedRef:
+		writeExternalPreview(w, p, enrich.Candidate{}, err)
+	case errors.Is(err, enrich.ErrSearchUnavailable):
+		writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+			"metadata provider search is unavailable for this "+subject+" — the provider is unconfigured or disabled", nil)
+	case err != nil:
+		writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+			"metadata provider search failed — the source may be unreachable", nil)
+	default:
+		out := toCandidatesJSON(p, res.Candidates)
+		if res.ResolvedRef {
+			out.ResolvedRef, out.HasMore = true, false
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
 }
 
 // toCandidateJSON maps a provider Candidate onto the Edit-item picker wire shape,
@@ -588,8 +616,10 @@ func searchOptionsFrom(r *http.Request) enrich.SearchOptions {
 // handleEnrichmentCandidates searches the authoritative metadata provider for the
 // records that could decorate a leaf Title, so an Admin can pick the right one and
 // apply it as an Enrichment override (GET /titles/{id}/enrichmentCandidates?q=…,
-// Admin-only). The searched kind is the Title's own kind (Movie/Episode → TMDB,
-// Track → MusicBrainz). A blank query returns an empty list (200). When the
+// Admin-only). The searched kind is the Title's own kind, asked of the Title's
+// Library's lead. A query that lead reads as a pasted id-or-URL is resolved instead
+// of searched, and answered with `resolvedRef` (see writeCandidateSearch). A blank
+// query returns an empty list (200). When the
 // provider is unconfigured/disabled or unreachable the response is 503
 // SEARCH_UNAVAILABLE so the box reports why instead of hanging (results are capped
 // server-side). Unknown Title → 404 (hide existence). Reads only — identity and
@@ -604,22 +634,12 @@ func handleEnrichmentCandidates(enrichSvc *enrich.Service, images *providerImage
 		// The service owns the lean existence+kind read (no join-heavy detail fetch):
 		// an unknown Title is store.ErrNotFound → 404 (hide existence).
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		cands, err := enrichSvc.SearchTitleCandidates(r.Context(), titleID, query, searchOptionsFrom(r))
-		switch {
-		case errors.Is(err, store.ErrNotFound):
+		res, err := enrichSvc.FindTitleCandidates(r.Context(), titleID, query, searchOptionsFrom(r))
+		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
 			return
-		case errors.Is(err, enrich.ErrSearchUnavailable):
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search is unavailable for this item — the provider is unconfigured or disabled", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search failed — the source may be unreachable", nil)
-			return
 		}
-
-		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+		writeCandidateSearch(w, images, res, err, "item")
 	}
 }
 
@@ -1146,18 +1166,8 @@ func handleLibraryEnrichmentCandidates(enrichSvc *enrich.Service, images *provid
 			return
 		}
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		cands, err := enrichSvc.SearchCandidates(r.Context(), kind, query, searchOptionsFrom(r))
-		switch {
-		case errors.Is(err, enrich.ErrSearchUnavailable):
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search is unavailable for this library — the provider is unconfigured or disabled", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search failed — the source may be unreachable", nil)
-			return
-		}
-		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+		res, err := enrichSvc.FindCandidatesForKind(r.Context(), kind, query, searchOptionsFrom(r))
+		writeCandidateSearch(w, images, res, err, "library")
 	}
 }
 

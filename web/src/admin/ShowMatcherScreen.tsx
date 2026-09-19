@@ -248,13 +248,11 @@ function SeriesRecordPicker({
   return (
     <FixItemPicker
       seed={openOn}
-      provider="tmdb"
       applyLabel="Use this series"
       applyHint="Then choose which episode's details these slots should show."
       search={(query, pageNumber) =>
         apiClient.searchEntityEnrichmentCandidates("shows", showId, query, { page: pageNumber })
       }
-      preview={(ref) => apiClient.previewEntityExternalCandidate("shows", showId, ref)}
       onApply={async () => {
         /* Unreachable: chooseEpisode is always supplied, so the series is never
            applied on its own — picking it only advances to the record list. */
