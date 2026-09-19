@@ -175,7 +175,7 @@ The single Full provider that leads a Library's Enrichment, supplying the canoni
 _Avoid_: Primary, Master, Agent.
 
 **Supplement**:
-A Metadata provider that only fills descriptive fields the Authoritative provider left empty, never overriding it — every enabled provider that isn't the Authoritative provider, Artwork-only providers included. Runs fill-only.
+A Metadata provider that only fills descriptive fields the Authoritative provider left empty, never overriding it — every enabled provider that isn't the Authoritative provider, Artwork-only providers included. Runs fill-only, in registration order, through one rule shared by the video and music chains; an Overview the Authoritative provider declares synthesized (MusicBrainz's artist blurb) counts as empty. For music it is the providers declaring the supplement role or Artwork-only; an authoritative Full music provider leads or stays out ([ADR-0061](./docs/adr/0061-the-music-chain-composes-every-music-supplement.md)).
 _Avoid_: Fallback, Secondary, Scraper.
 
 **Enrichment policy**:

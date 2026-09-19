@@ -41,7 +41,9 @@ func TestMusicBrainzArtistAlbumTrack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("artist lookup: %v", err)
 	}
-	if !artist.Matched || artist.Overview == "" || len(artist.Genres) == 0 || artist.ExternalID != "mb-1" {
+	// The blurb is composed from type and area, and says so: it is what lets a
+	// Supplement's real biography replace it in the host's chain (ADR-0061).
+	if !artist.Matched || artist.Overview == "" || !artist.OverviewSynthesized || len(artist.Genres) == 0 || artist.ExternalID != "mb-1" {
 		t.Errorf("artist metadata wrong: %+v", artist)
 	}
 

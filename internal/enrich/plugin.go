@@ -414,19 +414,20 @@ func titleRefFromWire(ref pluginapi.MediaRef) TitleRef {
 
 func metadataFromRecord(rec pluginapi.MetadataRecord) TitleMetadata {
 	meta := TitleMetadata{
-		Matched:        rec.Matched,
-		Name:           rec.Name,
-		Year:           rec.Year,
-		Overview:       rec.Overview,
-		Tagline:        rec.Tagline,
-		ContentRating:  rec.ContentRating,
-		ReleaseDate:    rec.ReleaseDate,
-		RuntimeMinutes: rec.RuntimeMinutes,
-		Studio:         rec.Studio,
-		Genres:         rec.Genres,
-		ExternalID:     rec.ExternalID,
-		Source:         rec.Source,
-		FromSearch:     rec.FromSearch,
+		Matched:             rec.Matched,
+		Name:                rec.Name,
+		Year:                rec.Year,
+		Overview:            rec.Overview,
+		OverviewSynthesized: rec.OverviewSynthesized,
+		Tagline:             rec.Tagline,
+		ContentRating:       rec.ContentRating,
+		ReleaseDate:         rec.ReleaseDate,
+		RuntimeMinutes:      rec.RuntimeMinutes,
+		Studio:              rec.Studio,
+		Genres:              rec.Genres,
+		ExternalID:          rec.ExternalID,
+		Source:              rec.Source,
+		FromSearch:          rec.FromSearch,
 	}
 	for _, c := range rec.Cast {
 		meta.Cast = append(meta.Cast, Credit{

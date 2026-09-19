@@ -314,13 +314,18 @@ type TitleMetadata struct {
 	Name string
 	// Year is the source's release / first-air year (0 when unknown). Like Name it
 	// is surfaced for by-id identity resolution, not written by enrichment.
-	Year           int
-	Overview       string
-	Tagline        string
-	ContentRating  string
-	ReleaseDate    string
-	RuntimeMinutes int
-	Studio         string
+	Year     int
+	Overview string
+	// OverviewSynthesized says Overview is a placeholder the source composed from
+	// structured facts, not prose it holds (pluginapi.MetadataRecord's field of the
+	// same name). A chain treats it as empty when a Supplement answers — see
+	// fillFromSupplement.
+	OverviewSynthesized bool
+	Tagline             string
+	ContentRating       string
+	ReleaseDate         string
+	RuntimeMinutes      int
+	Studio              string
 
 	Genres  []string
 	Cast    []Credit

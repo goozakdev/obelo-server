@@ -1042,6 +1042,7 @@ func (p *Provider) artistByID(ctx context.Context, s pluginapi.Settings, mbid st
 	}
 	rec := pluginapi.MetadataRecord{Matched: true, Name: a.Name, ExternalID: a.ID, Source: Source}
 	rec.Overview = artistOverview(a.Disambiguation, a.Type, a.Area.Name)
+	rec.OverviewSynthesized = rec.Overview != ""
 	rec.Genres = topTags(a.Tags)
 	return rec, nil
 }
@@ -1268,6 +1269,7 @@ func (p *Provider) artistByName(ctx context.Context, s pluginapi.Settings, name 
 	a := out.Artists[0]
 	rec := pluginapi.MetadataRecord{Matched: true, ExternalID: a.ID, Source: Source}
 	rec.Overview = artistOverview(a.Disambiguation, a.Type, a.Area.Name)
+	rec.OverviewSynthesized = rec.Overview != ""
 	rec.Genres = topTags(a.Tags)
 	return rec, nil
 }
@@ -1275,7 +1277,9 @@ func (p *Provider) artistByName(ctx context.Context, s pluginapi.Settings, name 
 // artistOverview synthesizes the short artist blurb both artist paths write.
 // MusicBrainz has no bio, so type + area + disambiguation is what keeps the Artist
 // page from being bare (genres carry the real signal). The disambiguation comment
-// wins over the type when there is one, exactly as it did.
+// wins over the type when there is one, exactly as it did. Both paths mark it
+// OverviewSynthesized, which is what lets a Supplement's real biography replace it
+// in the host's music chain (ADR-0061).
 func artistOverview(disambiguation, typ, area string) string {
 	var parts []string
 	if disambiguation != "" {

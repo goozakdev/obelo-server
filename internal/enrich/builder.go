@@ -276,26 +276,32 @@ func (c ProviderConfig) musicEnabled() bool {
 	return c.videoEnabled()
 }
 
-// musicImageSupplements builds the fill-only artist sources that decorate the music
-// lead: the ACTIVE artwork-only music providers, in registry order, minus the lead
-// itself. The music chain still has exactly two slots — a preferred MBID-keyed
-// image source and a fallback image-plus-biography source — so at most two are
-// taken, and registration order is what decides which is which (ADR-0059 decision
-// 3 makes that order the server's own). Composing an arbitrary number of
-// Supplements is a follow-up (.scratch/bundled-plugins issue 11), not this one.
+// musicSupplements builds the fill-only sources that decorate the music lead:
+// every ACTIVE music provider that declares itself a Supplement (its Role) or can
+// only ever be one (an artwork-only Class, which cannot lead), in registry order,
+// minus the lead itself (ADR-0061). The chain composes all of them, so a
+// third-party music Supplement is composed exactly as fanart.tv and TheAudioDB
+// are; registration order is the fill order (ADR-0059 decision 3 makes that order
+// the server's own), and that is what keeps fanart.tv's artist photo ahead of
+// TheAudioDB's.
+//
+// Unlike videoSupplements, a Full music provider that declares the authoritative
+// role is NOT composed behind a repointed lead: a music lead's Lookup of a ref it
+// holds no id for is a relevance search, and a Supplement's search hit is filled
+// in unjudged. No second Full music provider ships, so this changes nothing today;
+// it keeps the music chain from starting to fill from one the day one is installed.
 //
 // A registration with no factory builds to nil and is skipped here exactly as it
-// is everywhere else, so it can never occupy a slot. Cover Art Archive was the one
-// such registration and it is gone (.scratch/bundled-plugins: issue 06) — it was
-// never a source, and it is now the music lead's second URL.
-func (cat Catalog) musicImageSupplements(cfg ProviderConfig, lead string) []MetadataProvider {
+// is everywhere else. Cover Art Archive was the one such registration and it is
+// gone (.scratch/bundled-plugins: issue 06) — it is now the music lead's second URL.
+func (cat Catalog) musicSupplements(cfg ProviderConfig, lead string) []MetadataProvider {
 	var out []MetadataProvider
 	for _, e := range cat.entries() {
-		if len(out) == musicChainSupplementSlots {
-			break
-		}
-		if e.Slug == lead || e.Class != ClassArtworkOnly || !e.Serves(KindMusic) {
+		if e.Slug == lead || !e.Serves(KindMusic) {
 			continue
+		}
+		if e.Role != RoleSupplement && e.Class != ClassArtworkOnly {
+			continue // an authoritative Full source leads or stays out (see above)
 		}
 		if !cfg.providerActive(e.Slug) {
 			continue // switched off → zero calls to it (ADR-0001)
@@ -306,10 +312,6 @@ func (cat Catalog) musicImageSupplements(cfg ProviderConfig, lead string) []Meta
 	}
 	return out
 }
-
-// musicChainSupplementSlots is how many fill-only artist sources MusicChainProvider
-// composes: the preferred image source and the image-plus-biography fallback.
-const musicChainSupplementSlots = 2
 
 // Enablement is the derived per-kind on/off snapshot BuildProvider produces
 // alongside the composed provider. A disabled kind makes no outbound calls and
@@ -383,15 +385,15 @@ func BuilderFor(cat Catalog) BuildFunc { return cat.BuildProvider }
 //     adapter, so every Plugin reaches the chain by exactly the same path
 //     (ADR-0057 decision 5).
 //   - Music composes the Library's Authoritative music provider, wrapped in the
-//     fill-only MusicChainProvider only when an artwork-only music source is active
-//     AND Music is enabled — so an enriched artist also gets a poster (the
-//     preferred, MBID-keyed source) and a real bio (the name-capable one). With no
-//     such source (or Music off) it stays the plain lead, making zero calls to
-//     either host (ADR-0001 explicit opt-in).
+//     fill-only MusicChainProvider only when a music Supplement is active AND Music
+//     is enabled — so an enriched artist also gets a poster and a real bio, and a
+//     track a synopsis, from whichever Supplements answer (ADR-0061). With none
+//     active (or Music off) it stays the plain lead, making zero calls to any of
+//     them (ADR-0001 explicit opt-in).
 //
 // It names no provider. Which source leads a kind is the config's pointer or the
 // catalog's registration order; which sources fill behind it is what the catalog
-// says they ARE (a Full video source, an artwork-only music source) and whether the
+// says they ARE (a Full video source, a music Supplement) and whether the
 // operator switched them on.
 func (cat Catalog) BuildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
 	// Music leads with the Library's Authoritative music provider — the kind's
@@ -411,17 +413,12 @@ func (cat Catalog) BuildProvider(cfg ProviderConfig) (MetadataProvider, Enableme
 		music = cat.newProvider(cfg, musicSlug, KindMusic)
 	}
 	if music != nil && cfg.musicEnabled() {
-		// At least one artist source active: wrap the lead in the fill-only chain.
-		// They are artwork-only, so neither can BE the lead; excluding the lead when
-		// they are gathered is what keeps a source from supplementing itself. With
-		// none active this stays the plain lead, making zero calls to either host
-		// (ADR-0001 explicit opt-in).
-		if supplements := cat.musicImageSupplements(cfg, musicSlug); len(supplements) > 0 {
-			var imageBio MetadataProvider
-			if len(supplements) > 1 {
-				imageBio = supplements[1]
-			}
-			music = NewMusicChainProvider(music, supplements[0], imageBio)
+		// At least one music Supplement active: wrap the lead in the fill-only chain.
+		// Excluding the lead when they are gathered is what keeps a source from
+		// supplementing itself. With none active this stays the plain lead, making zero
+		// calls to any of them (ADR-0001 explicit opt-in).
+		if supplements := cat.musicSupplements(cfg, musicSlug); len(supplements) > 0 {
+			music = NewMusicChainProvider(music, supplements...)
 		}
 	}
 

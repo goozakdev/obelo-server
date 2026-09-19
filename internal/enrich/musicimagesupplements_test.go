@@ -9,10 +9,11 @@ import (
 // REGISTRATION ORDER DECIDES THE MUSIC CHAIN, and after
 // .scratch/bundled-plugins issue 07 nothing in this package holds it any more.
 //
-// Catalog.musicImageSupplements fills the music chain's two fill-only image slots
-// from the catalog in REGISTRATION order: the first active artwork-only music
-// source becomes Image (the PREFERRED, strictly-MBID-keyed artist photo) and the
-// second becomes ImageBio (the FALLBACK image plus the real biography). While
+// Catalog.musicSupplements hands the music chain its fill-only Supplements in
+// REGISTRATION order, and the chain fills in that order: the first image a role
+// receives is the one that stays (ADR-0061). So registration order is what makes
+// fanart.tv's best-liked, MBID-keyed artist photo win over TheAudioDB's single
+// name-matched thumb. While
 // fanart.tv and TheAudioDB were Built-ins, the order was two adjacent literals in
 // MetadataPlugins(). Now they are guests, and what puts fanart.tv first is
 // internal/bundled's ordered id list — a JSON-and-slice fact two packages away
@@ -25,7 +26,7 @@ import (
 // test in this repository would notice.
 
 // TestTheMusicChainKeepsFanartTVAheadOfTheAudioDB is that assertion at the level
-// the slots are filled.
+// the Supplements are gathered.
 func TestTheMusicChainKeepsFanartTVAheadOfTheAudioDB(t *testing.T) {
 	cat := shippedCatalog()
 	cfg := testConfig(
@@ -34,16 +35,16 @@ func TestTheMusicChainKeepsFanartTVAheadOfTheAudioDB(t *testing.T) {
 		withKey(SlugTheAudioDB, "audiodb-key"),
 	)
 
-	supplements := cat.musicImageSupplements(cfg, SlugMusicBrainz)
+	supplements := cat.musicSupplements(cfg, SlugMusicBrainz)
 	if len(supplements) != 2 {
-		t.Fatalf("music image supplements = %d, want 2 (the preferred image and the image+bio fallback)", len(supplements))
+		t.Fatalf("music supplements = %d, want 2 (fanarttv, theaudiodb)", len(supplements))
 	}
 	if got := pluginSlug(supplements[0]); got != SlugFanartTV {
-		t.Errorf("the PREFERRED artist image source is %q, want fanarttv — "+
-			"registration order decides this, and internal/bundled's ordered ids are what hold it", got)
+		t.Errorf("the FIRST music Supplement is %q, want fanarttv — "+
+			"registration order decides whose artist photo wins, and internal/bundled's ordered ids are what hold it", got)
 	}
 	if got := pluginSlug(supplements[1]); got != SlugTheAudioDB {
-		t.Errorf("the image+bio FALLBACK is %q, want theaudiodb", got)
+		t.Errorf("the second music Supplement is %q, want theaudiodb", got)
 	}
 }
 
@@ -62,20 +63,21 @@ func TestTheComposedMusicChainTakesBothGuestsInOrder(t *testing.T) {
 	if !ok {
 		t.Fatalf("music = %T, want *MusicChainProvider", provider.(CompositeProvider).Music)
 	}
-	if got := pluginSlug(chain.MusicBrainz); got != SlugMusicBrainz {
+	if got := pluginSlug(chain.Authoritative); got != SlugMusicBrainz {
 		t.Errorf("the music lead is %q, want musicbrainz", got)
 	}
-	if got := pluginSlug(chain.Image); got != SlugFanartTV {
-		t.Errorf("chain.Image = %q, want fanarttv (the preferred, MBID-keyed artist photo)", got)
+	var got []string
+	for _, s := range chain.Supplements {
+		got = append(got, pluginSlug(s))
 	}
-	if got := pluginSlug(chain.ImageBio); got != SlugTheAudioDB {
-		t.Errorf("chain.ImageBio = %q, want theaudiodb (the fallback image and the real biography)", got)
+	if len(got) != 2 || got[0] != SlugFanartTV || got[1] != SlugTheAudioDB {
+		t.Errorf("chain.Supplements = %v, want [fanarttv theaudiodb] (fanart.tv's photo fills first)", got)
 	}
 }
 
 // TestFanartTVStillSupplementsBothChains: fanart.tv is the one source serving two
 // kinds, and losing either half is a silent regression. As a Bundled plugin it is
-// ONE instance with a view per chain, so both slots must still be filled from the
+// ONE instance with a view per chain, so both chains must still compose the
 // one registration.
 func TestFanartTVStillSupplementsBothChains(t *testing.T) {
 	provider, en := buildProvider(testConfig(
@@ -105,8 +107,8 @@ func TestFanartTVStillSupplementsBothChains(t *testing.T) {
 	if !ok {
 		t.Fatalf("music = %T, want *MusicChainProvider (fanart.tv is the artist-image source)", comp.Music)
 	}
-	if got := pluginSlug(music.Image); got != SlugFanartTV {
-		t.Errorf("chain.Image = %q, want fanarttv", got)
+	if len(music.Supplements) != 1 || pluginSlug(music.Supplements[0]) != SlugFanartTV {
+		t.Errorf("music supplements = %+v, want just the fanarttv Plugin", music.Supplements)
 	}
 }
 
@@ -162,5 +164,51 @@ func requireArtworkSupplement(t *testing.T, d pluginapi.Descriptor) {
 	}
 	if d.Probe == nil {
 		t.Error(`the shipped manifest declares no probe, so "Test connection" cannot work (ADR-0059 decision 8)`)
+	}
+}
+
+// TestAThirdPartyMusicSupplementIsComposed is the gap ADR-0061 closed: an
+// Installed music Supplement was registered, keyable, and never composed, because
+// the chain had two named slots and they were full. It now fills after the
+// shipped pair, in registration order. A third-party AUTHORITATIVE Full music
+// provider is still not composed behind the lead — it leads or stays out.
+func TestAThirdPartyMusicSupplementIsComposed(t *testing.T) {
+	reg := pluginapi.NewRegistry()
+	for _, id := range bundledStandIns() {
+		reg.RegisterMetadataProvider(bundledStandIn(id))
+	}
+	for _, d := range []pluginapi.Descriptor{
+		{Slug: "discogs", Name: "Discogs", Kinds: []string{KindMusic}, Role: RoleSupplement, Class: ClassFull},
+		{Slug: "otherlead", Name: "Other lead", Kinds: []string{KindMusic}, Role: RoleAuthoritative, Class: ClassFull},
+	} {
+		reg.RegisterMetadataProvider(pluginapi.MetadataProviderRegistration{
+			Descriptor: d,
+			New:        func(pluginapi.Settings) (pluginapi.MetadataProvider, error) { return silentPlugin{}, nil },
+		})
+	}
+	provider, _ := NewCatalog(reg).BuildProvider(testConfig(
+		withKey(SlugTMDB, "tmdb-key"),
+		withKey(SlugFanartTV, "fanart-key"),
+		withKey(SlugTheAudioDB, "audiodb-key"),
+		withActive("discogs", true),
+		withActive("otherlead", true),
+	))
+	chain, ok := provider.(CompositeProvider).Music.(*MusicChainProvider)
+	if !ok {
+		t.Fatalf("music = %T, want *MusicChainProvider", provider.(CompositeProvider).Music)
+	}
+	var got []string
+	for _, s := range chain.Supplements {
+		got = append(got, pluginSlug(s))
+	}
+	want := []string{SlugFanartTV, SlugTheAudioDB, "discogs"}
+	if len(got) != len(want) {
+		t.Fatalf("music supplements = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("music supplements = %v, want %v", got, want)
+			break
+		}
 	}
 }

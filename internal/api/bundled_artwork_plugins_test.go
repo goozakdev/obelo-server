@@ -22,8 +22,8 @@ import (
 // COMPOSITION is unchanged. What is new, and what this file covers, is the two
 // facts that moved out of internal/enrich when the registrations left it:
 //
-//  1. fanart.tv must stay AHEAD of TheAudioDB. Catalog.musicImageSupplements fills
-//     the music chain's two fill-only slots in registration order, and what holds
+//  1. fanart.tv must stay AHEAD of TheAudioDB. Catalog.musicSupplements hands
+//     the music chain its Supplements in registration order (the fill order), and what holds
 //     that order now is internal/bundled's ordered id list rather than two adjacent
 //     literals in MetadataPlugins().
 //  2. the ADR-0032 rotator's default fanart.tv key must still land in the

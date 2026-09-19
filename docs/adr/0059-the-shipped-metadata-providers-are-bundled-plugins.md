@@ -152,6 +152,12 @@ every id the host holds, keyed by namespace; the five named fields are v1 mirror
 A Title's record is namespaced in `title_external_ids`, so `videoIDColumnProvider` — the one
 shipped name this ADR's port could not retire — is gone.
 
+*Amended 2026-09-19 ([ADR-0061](./0061-the-music-chain-composes-every-music-supplement.md),
+.scratch/bundled-plugins issue 11): the music chain's gap is closed.* It composes every active
+music Supplement in registration order, the video chain's shape, and MusicBrainz declares its
+synthesized artist Overview so TheAudioDB's biography still replaces it. Decision 4's *reason*
+for rejecting a Cover Art Archive plugin no longer holds; the decision stands.
+
 ## Consequences
 
 - CONTEXT.md gains **Bundled plugin**; **Built-in** now names OpenSubtitles and the Webhook
