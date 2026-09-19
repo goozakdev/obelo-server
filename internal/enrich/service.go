@@ -1479,6 +1479,10 @@ type leafWork struct {
 	// actions from the Admin. Zero (tracklistUnavailable) for every non-Music leaf,
 	// which is correct: no Album had anything to say about a Movie.
 	tracklist tracklistOutcome
+	// showPin is the namespace an Episode's PINNED Show resolves through (showPin),
+	// empty for every other leaf and for an Episode whose Show nobody decided. It
+	// pins the Episode only when the Episode has no decision of its own.
+	showPin string
 }
 
 // acceptSearchHit is where the server decides whether a source's answer is really
@@ -1637,7 +1641,13 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 	// namespace an id it returns belongs to, when the record does not say.
 	provider := snap.provider
 	asked := snap.config.authoritativeSlugFor(t.Kind)
-	if pinSlug, pinned := pinnedProviderFor(t, snap.catalog); pinned && pinSlug != asked {
+	pinSlug, pinned := pinnedProviderFor(t, snap.catalog)
+	// An Episode with no decision of its own follows its pinned Show (showPin): the
+	// Show's provider is the only one that can read the series id it carries.
+	if !pinned && lw.showPin != "" && isAuthoritativeNamespace(snap.catalog, lw.showPin, t.Kind) {
+		pinSlug, pinned = lw.showPin, true
+	}
+	if pinned && pinSlug != asked {
 		if !snap.config.providerReachable(pinSlug) {
 			res.Unmatched++
 			// An ORPHANED override is a policy problem, not one of ADR-0050's five
@@ -1767,6 +1777,8 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 		if rec.ID != "" {
 			showRec = rec
 		}
+		// A pinned Show's Seasons and Episodes follow it to its provider (showPin).
+		pin := s.showPin(sh)
 
 		seasons, err := s.store.SeasonsForShow(sh.ID)
 		if err != nil {
@@ -1776,7 +1788,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 			if _, err := s.enrichParent(ctx, snap, mode, store.EntitySeason, se.ID,
 				withExternalIDs(TitleRef{Kind: "season", SeasonNumber: se.SeasonNumber},
 					idsIn(showRec.Namespace, showRec.ID)),
-				parentRecord{}, parentTrusted); err != nil {
+				pin, parentTrusted); err != nil {
 				return nil, err
 			}
 			eps, err := s.store.EpisodesForSeason(se.ID)
@@ -1814,7 +1826,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 				// collects its own leaves, so without this the pass would quietly look a
 				// repointed Slot up by the numbers it was pinned AWAY from — and a pass is
 				// exactly what runs after a matcher Apply, which is where the pin is now set.
-				leaves = append(leaves, leafWork{title: ep, ref: withEpisodePin(ref, ep)})
+				leaves = append(leaves, leafWork{title: ep, ref: withEpisodePin(ref, ep), showPin: pin.Namespace})
 			}
 		}
 	}
@@ -2139,7 +2151,8 @@ func (s *Service) singleLeafWork(ctx context.Context, snap providerSnapshot, t s
 	tc, fromTracklist, outcome := s.trackAlbumAnchor(ctx, snap, t)
 	ref := withExternalID(refFor(t), pluginapi.NamespaceMusicBrainz, trackAnchorID(t, fromTracklist))
 	ref = withMusicSearchTerms(ref, t, tc)
-	return leafWork{title: t, ref: ref, sparseTitle: t.Kind == "track", tracklist: outcome}
+	return leafWork{title: t, ref: ref, sparseTitle: t.Kind == "track", tracklist: outcome,
+		showPin: s.episodeShowPin(t).Namespace}
 }
 
 // withMusicSearchTerms fills in the terms ADR-0049's LAST tier searches on — the

@@ -431,6 +431,84 @@ func TestAShowsFolderTokenPinsItsNamespace(t *testing.T) {
 	}
 }
 
+// refsOfKind is every ref of one entity kind this source was handed.
+func (s *nsSource) refsOfKind(kind string) []pluginapi.MediaRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []pluginapi.MediaRef
+	for _, r := range s.asked {
+		if r.Kind == kind {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// A pinned Show's Seasons and Episodes follow it to its provider: in an AniDB-led
+// Library, a Show pinned to TMDB — by its folder token or by an Admin's choice —
+// has its Season and Episode asked of TMDB, BY the TMDB series id, and AniDB never
+// sees them. A token-less, unpinned Show next door still goes to the lead with its
+// children, so it is the Show's pin they follow, not TMDB.
+func TestAPinnedShowsSeasonsAndEpisodesFollowIt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tmdbID string // the Show's folder token, or "" for an Admin-chosen pin
+	}{{"folder token", "1399"}, {"chosen record", ""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmdb, anidb := videoSources()
+			f := newNSFixture(t, tmdb, anidb)
+			f.exec(t, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+			f.exec(t, `INSERT INTO shows (id, library_id, title, identity_key, sort_title, tmdb_id)
+			           VALUES ('sh1', 'tv', 'Game of Thrones', 'got', 'got', ?)`, tc.tmdbID)
+			f.exec(t, `INSERT INTO seasons (id, show_id, season_number, identity_key) VALUES ('se1', 'sh1', 1, 'got|s01')`)
+			f.exec(t, `INSERT INTO titles (id, library_id, kind, title, identity_key, sort_title,
+			             season_id, season_number, episode_number)
+			           VALUES ('ep1', 'tv', 'episode', 'Winter Is Coming', 'got|e1', 'winter', 'se1', 1, 1)`)
+			f.exec(t, `INSERT INTO shows (id, library_id, title, identity_key, sort_title)
+			           VALUES ('sh2', 'tv', 'Inception', 'inception', 'inception')`)
+			f.exec(t, `INSERT INTO seasons (id, show_id, season_number, identity_key) VALUES ('se2', 'sh2', 1, 'inc|s01')`)
+			f.exec(t, `INSERT INTO titles (id, library_id, kind, title, identity_key, sort_title,
+			             season_id, season_number, episode_number)
+			           VALUES ('ep2', 'tv', 'episode', 'Dream Within', 'inc|e1', 'dream', 'se2', 1, 1)`)
+			if tc.tmdbID == "" {
+				if err := f.svc.ApplyEntityOverride(context.Background(), store.EntityShow, "sh1",
+					EntityPin{ExternalID: "1399", Namespace: "tmdb"}); err != nil {
+					t.Fatalf("apply entity override: %v", err)
+				}
+			}
+			f.repoint(SlugAniDB, "")
+			tmdb.forget()
+			anidb.forget()
+
+			f.pass(t, "tv", ModeFull)
+			if refs := tmdb.refsOfKind("season"); len(refs) != 1 || refs[0].ID("tmdb") != "1399" {
+				t.Errorf("the pinned Show's Season at TMDB: %+v, want one lookup under series 1399", refs)
+			}
+			if refs := tmdb.refsFor("Winter Is Coming"); len(refs) != 1 || refs[0].ID("tmdb") != "1399" {
+				t.Errorf("the pinned Show's Episode at TMDB: %+v, want one lookup under series 1399", refs)
+			}
+			for _, r := range anidb.refsOfKind("season") {
+				if r.ID("tmdb") == "1399" {
+					t.Errorf("AniDB was handed the pinned Show's Season: %+v", r)
+				}
+			}
+			if n := len(anidb.refsFor("Winter Is Coming")); n != 0 {
+				t.Errorf("AniDB was asked about the pinned Show's Episode %d time(s)", n)
+			}
+			if got := f.title(t, "ep1"); got.EnrichmentStatus != "matched" {
+				t.Errorf("the pinned Show's Episode: status %q, want matched via TMDB", got.EnrichmentStatus)
+			}
+			// The unpinned neighbour and its children stay with the lead.
+			if n := len(anidb.refsFor("Dream Within")); n != 1 {
+				t.Errorf("the unpinned Show's Episode reached the lead %d time(s), want 1", n)
+			}
+			if n := len(tmdb.refsFor("Dream Within")); n != 0 {
+				t.Errorf("TMDB was asked about an unpinned Show's Episode %d time(s)", n)
+			}
+		})
+	}
+}
+
 // A repointed music Library re-resolves auto-matched Tracks via its new lead, and a
 // Track whose recording the Admin chose keeps resolving at MusicBrainz — the music
 // pin used to be a no-op that reported whatever led.
