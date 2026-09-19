@@ -1306,10 +1306,15 @@ export class ApiClient {
      * both when the Admin picked a specific episode after picking the series;
      * identity, the file's place in the library, and watch state are untouched. */
     episode?: { season: number; episode: number },
+    /** The picked candidate's `source` — the namespace `externalId` belongs to
+     * (ADR-0060 decision 5). Omitted means the Library's current lead's. */
+    source?: string,
   ): Promise<TitleDetail> {
-    const body = episode
-      ? { externalId, season: episode.season, episode: episode.episode }
-      : { externalId };
+    const body = {
+      externalId,
+      ...(episode ? { season: episode.season, episode: episode.episode } : {}),
+      ...(source ? { source } : {}),
+    };
     const res = await this.request<TitleDetailRaw>(
       `/titles/${encodeURIComponent(titleId)}/enrichmentOverride`,
       { method: "PUT", body, signal },
@@ -1392,10 +1397,17 @@ export class ApiClient {
     cascade = false,
     releaseId?: string,
     signal?: AbortSignal,
+    /** The picked candidate's `source` — the namespace `externalId` belongs to
+     * (ADR-0060 decision 5). Omitted means the Library's current lead's. */
+    source?: string,
   ): Promise<EntityEnrichmentDetail> {
     return this.request<EntityEnrichmentDetail>(
       `/${entityType}/${encodeURIComponent(entityId)}/enrichmentOverride`,
-      { method: "PUT", body: { externalId, cascade, releaseId: releaseId ?? "" }, signal },
+      {
+        method: "PUT",
+        body: { externalId, cascade, releaseId: releaseId ?? "", ...(source ? { source } : {}) },
+        signal,
+      },
     );
   }
 

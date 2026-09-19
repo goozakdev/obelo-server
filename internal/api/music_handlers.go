@@ -38,6 +38,9 @@ type artistSummaryJSON struct {
 	// Edit-item surface (item-editing/02): on the Artist DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// RecordSource is the External-id namespace of this parent's record, empty when
+	// it has none (ADR-0060 decision 5). Detail only; additive.
+	RecordSource string `json:"recordSource,omitempty"`
 	// Linked/Available: this Artist lives in a mirror of another household's
 	// Library (ADR-0056 §1, §6). Absent on a local Artist.
 	Linked    bool  `json:"linked,omitempty"`
@@ -116,6 +119,9 @@ type albumJSON struct {
 	// Edit-item surface (item-editing/02): on the Album DETAIL only.
 	LockedFields       []string            `json:"lockedFields,omitempty"`
 	EnrichmentOverride *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// RecordSource is the External-id namespace of this parent's record, empty when
+	// it has none (ADR-0060 decision 5). Detail only; additive.
+	RecordSource string `json:"recordSource,omitempty"`
 	// Linked/Available: this Album lives in a mirror of another household's
 	// Library (ADR-0056 §1, §6). Absent on a local Album. An Album row reaches a
 	// client from three places — the Artist detail, the Album detail and a search
@@ -369,6 +375,7 @@ func handleArtistAlbums(deps Deps) http.HandlerFunc {
 			versions, _ := svc.EntityArtworkVersions(store.EntityArtist, []string{artist.ID})
 			decorateArtist(&artistJS, e, roles[artist.ID], versions[artist.ID])
 			artistJS.EnrichmentOverride = entityOverride(e)
+			artistJS.RecordSource = entityRecordSource(e)
 		}
 		artistJS.LockedFields, _ = svc.EntityLockedFields(store.EntityArtist, artist.ID)
 
@@ -441,6 +448,7 @@ func handleAlbumTracks(deps Deps) http.HandlerFunc {
 			versions, _ := svc.EntityArtworkVersions(store.EntityAlbum, []string{album.ID})
 			decorateAlbum(&albumJS, e, roles[album.ID], versions[album.ID])
 			albumJS.EnrichmentOverride = entityOverride(e)
+			albumJS.RecordSource = entityRecordSource(e)
 		}
 		albumJS.LockedFields, _ = svc.EntityLockedFields(store.EntityAlbum, album.ID)
 		// Per-Track durations decorate the list so each row can show its length; a

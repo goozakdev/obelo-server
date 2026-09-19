@@ -511,6 +511,12 @@ type enrichmentCandidateJSON struct {
 	// apply can keep both. The client sends it straight back as the override's
 	// releaseId; absent means the Admin named no edition. Album previews only.
 	ReleaseID string `json:"releaseId,omitempty"`
+	// Source is the External-id namespace externalId belongs to (`tmdb`,
+	// `musicbrainz`, `anidb`, a third party's plugin id), stamped by the server from
+	// the provider that answered the search or read the paste (ADR-0060 decision 5).
+	// The client sends it straight back as the override's `source`, so the pick is
+	// pinned in the namespace it was found in. Omitted only when unknown.
+	Source string `json:"source,omitempty"`
 }
 
 // candidateTrackJSON is one track in an album candidate's tracklist preview.
@@ -547,6 +553,7 @@ func toCandidateJSON(p *providerImageProxy, c enrich.Candidate) enrichmentCandid
 		TypeLabel:      c.TypeLabel,
 		Kind:           c.Kind,
 		ReleaseID:      c.ReleaseID,
+		Source:         c.Source,
 	}
 	for _, tr := range c.Tracklist {
 		jc.Tracklist = append(jc.Tracklist, candidateTrackJSON{
@@ -749,6 +756,41 @@ type enrichmentOverrideRequest struct {
 	// are never touched either way (ADR-0002/0014).
 	Season  int `json:"season,omitempty"`
 	Episode int `json:"episode,omitempty"`
+	// Source is the External-id namespace externalId belongs to: the `source` of the
+	// candidate or paste preview the Admin picked, echoed back (ADR-0060 decision 5).
+	// OMITTED means the item's Library's current lead's namespace for its kind, which
+	// is what the request meant before namespaces existed, so an older client keeps
+	// working. A namespace no registered Authoritative provider of the kind claims is
+	// a 400. An Episode pick (season/episode set) always inherits its Show's
+	// namespace, so there it is only validated.
+	Source string `json:"source,omitempty"`
+}
+
+// unknownNamespaceMessage is the 400 an override naming an unclaimed namespace gets.
+func unknownNamespaceMessage(ns string) string {
+	return fmt.Sprintf("no metadata provider that can lead this item claims the source %q — search again and pick a result", ns)
+}
+
+// checkOverrideSource validates an override request's optional `source` against the
+// item (check is the Service's CheckTitleNamespace/CheckEntityNamespace bound to it),
+// writing the response itself when it fails. It returns the trimmed namespace and
+// whether the caller may continue.
+func checkOverrideSource(w http.ResponseWriter, source string, check func(ns string) error) (string, bool) {
+	ns := strings.TrimSpace(source)
+	if ns == "" {
+		return "", true
+	}
+	switch err := check(ns); {
+	case err == nil:
+		return ns, true
+	case errors.Is(err, enrich.ErrUnknownNamespace):
+		writeError(w, http.StatusBadRequest, codeBadRequest, unknownNamespaceMessage(ns), nil)
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+	default:
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to apply enrichment override", nil)
+	}
+	return "", false
 }
 
 // handleEnrichmentOverride applies a picked candidate as a durable Enrichment
@@ -781,6 +823,12 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 			writeError(w, http.StatusBadRequest, codeBadRequest, "externalId is required", nil)
 			return
 		}
+		source, ok := checkOverrideSource(w, req.Source, func(ns string) error {
+			return enrichSvc.CheckTitleNamespace(r.Context(), titleID, ns)
+		})
+		if !ok {
+			return
+		}
 		// req.Cascade is intentionally ignored here: a leaf (Movie/Episode/Track) has no
 		// children, so there is nothing to cascade to (item-editing/05). The checkbox is
 		// shown only on parents (Album/Show/Artist), whose entity endpoint runs it.
@@ -793,9 +841,9 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 		if req.Episode > 0 {
 			err = enrichSvc.ApplyEpisodeOverride(r.Context(), titleID, externalID, req.Season, req.Episode)
 		} else {
-			// No namespace yet: the Title's Library's current lead's is what the
-			// request means (ADR-0060 decision 5). The API's `source` is issue 16.
-			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID, "")
+			// The picked candidate's namespace; empty means the Title's Library's
+			// current lead's (ADR-0060 decision 5).
+			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID, source)
 		}
 		switch {
 		case errors.Is(err, store.ErrNotFound):

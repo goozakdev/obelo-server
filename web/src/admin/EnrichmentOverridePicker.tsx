@@ -130,7 +130,14 @@ export default function EnrichmentOverridePicker({
       const detail =
         mode === "replace" && onReplace
           ? await onReplace(selected)
-          : await apiClient.applyEnrichmentOverride(titleId, selected.externalId);
+          : await apiClient.applyEnrichmentOverride(
+              titleId,
+              selected.externalId,
+              undefined,
+              undefined,
+              // The namespace the pick was found in (ADR-0060 decision 5).
+              selected.source,
+            );
       onApplied(detail);
       // Reflect the newly-applied change and clear the working state.
       setCandidates(null);
