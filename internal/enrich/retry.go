@@ -3,9 +3,7 @@ package enrich
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -70,6 +68,18 @@ func transient(err error) error {
 //
 // 404 in particular never reaches here as a failure: the providers map it to
 // ErrNoMatch, which is a definitive answer about the record.
+//
+// THE HOST NO LONGER MAKES THE CALL THIS CLASSIFIES (.scratch/bundled-plugins:
+// issue 08), and the rule is worth more than it was. Every Metadata provider is a
+// guest now (ADR-0059); a guest's fetch goes out through the host's `http_fetch`
+// and the guest classifies the status itself, through pluginsdk.RetryableStatus.
+// That list is in a different Go module and cannot import this one, so THIS
+// function is the definition it is held equal to: pluginsdk's
+// TestRetryableStatusMatchesTheServersOwnRule and this package's
+// retry_classification_test.go state the same table on the two sides of the
+// sandbox. Change one without the other and a 503 either parks a matchable Title
+// or — because a Go error from a guest is a strike — takes the whole plugin off
+// the server after three of them.
 func retryableStatus(code int) bool {
 	switch code {
 	case http.StatusRequestTimeout, http.StatusTooManyRequests:
@@ -81,6 +91,16 @@ func retryableStatus(code int) bool {
 // statusError builds the error for a provider's non-2xx response, marking it
 // transient when the status describes the provider rather than the request.
 // source is the provider's short name ("tmdb"), path the request path.
+//
+// Nothing in production builds one any more — the seven sources that did are
+// guests, and what reaches the pass from one is either a Go error the sandbox
+// wrapped or the transient ErrSearchUnavailable pluginProvider.Lookup makes of an
+// `unavailable` outcome. It survives as the enrichment suites' canonical spelling
+// of "the source said 503": a dozen tests about retry, escalation and settled
+// reasons hand one to a fake provider, and spelling that by hand in each would
+// have let the retryableStatus rule above drift out from under them.
+// requestError and decodeError, its two siblings, had no caller left at all and
+// went with the provider clients (.scratch/bundled-plugins: issue 08).
 func statusError(source, path string, code int) error {
 	where := source
 	if path != "" {
@@ -88,152 +108,6 @@ func statusError(source, path string, code int) error {
 	}
 	err := fmt.Errorf("enrich: %s: status %d", where, code)
 	if retryableStatus(code) {
-		return transient(err)
-	}
-	return err
-}
-
-// requestError builds the error for a failed HTTP round-trip (DNS, refused
-// connection, TLS, timeout, a cancelled context). Always transient: the request
-// never reached the provider, so nothing was learned about the item.
-//
-// A cancelled context is included on purpose. It is how a pass ends at shutdown,
-// and marking the Title it was mid-way through as permanently failed meant a
-// restart during a large pass silently parked whatever it was holding.
-func requestError(source string, err error) error {
-	return transient(fmt.Errorf("enrich: %s request: %w", source, err))
-}
-
-// decodeError builds the error for a response body that would not parse.
-// Transient: a truncated body or an HTML error page from an intercepting proxy is
-// a delivery failure, not the provider's answer about the item.
-func decodeError(source string, err error) error {
-	return transient(fmt.Errorf("enrich: decoding %s response: %w", source, err))
-}
-
-// --- Saying WHY a provider refused --------------------------------------------
-
-// maxProviderErrorBody is how much of an error response body is read to quote in
-// the log. Enough for any provider's one-line JSON error, small enough that a
-// misconfigured host serving an HTML page cannot flood the log.
-const maxProviderErrorBody = 512
-
-// ProviderRefusal is what a host said when it turned a request away, in the terms
-// the host itself used. It exists because "status 503" is not a diagnosis: it is
-// the same three digits whether the operator is rate-limited, blocked, or standing
-// in a queue behind everyone else on the internet — and those have opposite
-// remedies. An operator reading "503" reasonably concludes they are blocked and
-// starts throttling themselves, which fixes nothing when the host is shedding load
-// globally.
-//
-// MusicBrainz labels this precisely and the labels were being discarded:
-//
-//	x-ratelimit-zone: search-global    which bucket
-//	x-ratelimit-who:  search-shed      WHOSE bucket — an IP when it is you,
-//	                                   a shed name when it is everyone
-//	x-ratelimit-limit / -remaining     how much of it is left
-type ProviderRefusal struct {
-	Status    int
-	Zone      string
-	Who       string
-	Limit     string
-	Remaining string
-	// Message is the host's own error text, trimmed.
-	Message string
-	// Header is the full response header, kept so a caller can read Retry-After
-	// without a second capture.
-	Header http.Header
-}
-
-// readRefusal captures a refusal from a response, consuming a bounded prefix of
-// the body. Safe on any response; the caller closes the body as usual.
-func readRefusal(resp *http.Response) ProviderRefusal {
-	r := ProviderRefusal{
-		Status:    resp.StatusCode,
-		Zone:      resp.Header.Get("X-RateLimit-Zone"),
-		Who:       resp.Header.Get("X-RateLimit-Who"),
-		Limit:     resp.Header.Get("X-RateLimit-Limit"),
-		Remaining: resp.Header.Get("X-RateLimit-Remaining"),
-		Header:    resp.Header,
-	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProviderErrorBody))
-	r.Message = strings.TrimSpace(collapseSpace(string(body)))
-	return r
-}
-
-// ourQuota reports whether the refusal is about THIS server's own usage — the one
-// case where slowing down helps.
-//
-// The signal is x-ratelimit-who: when the limiter is counting an individual client
-// it names that client (an address), and when it is shedding load across everyone
-// it names the shed bucket ("search-shed"). An address contains a dot or a colon
-// and a shed name does not, which is a crude test — so the host's own wording is
-// consulted first, and an ABSENT who is treated as ours, because a refusal we
-// cannot attribute is one worth slowing down for.
-func (r ProviderRefusal) ourQuota() bool {
-	msg := strings.ToLower(r.Message)
-	switch {
-	case strings.Contains(msg, "exceeding the allowable rate limit"),
-		strings.Contains(msg, "rate limit"):
-		return true
-	case strings.Contains(msg, "currently busy"), strings.Contains(msg, "try again later"):
-		return false
-	}
-	if r.Who == "" {
-		return true
-	}
-	return strings.ContainsAny(r.Who, ".:")
-}
-
-// String renders the refusal for a log line: the host's verdict first, then the
-// counters, then the one sentence an operator needs — whether this is theirs.
-func (r ProviderRefusal) String() string {
-	var b strings.Builder
-	if r.Message != "" {
-		fmt.Fprintf(&b, "%q", r.Message)
-	}
-	var facts []string
-	if r.Zone != "" {
-		facts = append(facts, "zone="+r.Zone)
-	}
-	if r.Who != "" {
-		facts = append(facts, "who="+r.Who)
-	}
-	if r.Remaining != "" || r.Limit != "" {
-		facts = append(facts, "quota="+r.Remaining+"/"+r.Limit)
-	}
-	if len(facts) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(strings.Join(facts, " "))
-	}
-	if b.Len() > 0 {
-		b.WriteString("; ")
-	}
-	if r.ourQuota() {
-		b.WriteString("this is OUR usage — slowing down will help")
-	} else {
-		b.WriteString("the host is shedding load for everyone — not our rate limit, " +
-			"and throttling further will not help")
-	}
-	return b.String()
-}
-
-// collapseSpace flattens whitespace runs so a multi-line HTML error page cannot
-// span a dozen log lines.
-func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
-
-// refusalError is statusError with the host's own explanation attached, so the
-// log says what happened instead of leaving the operator to infer it from three
-// digits.
-func refusalError(source, path string, r ProviderRefusal) error {
-	where := source
-	if path != "" {
-		where = source + " " + path
-	}
-	err := fmt.Errorf("enrich: %s: status %d (%s)", where, r.Status, r)
-	if retryableStatus(r.Status) {
 		return transient(err)
 	}
 	return err

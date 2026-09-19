@@ -2,6 +2,7 @@ package enrich
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -58,9 +59,15 @@ func TestUnmarkedErrorIsPermanent(t *testing.T) {
 
 // Marking an error must not rewrite what it says: the operator reads the log, and
 // the retry machinery is not what they are trying to diagnose.
+//
+// It used to mark the error requestError built for a failed round-trip. The host
+// makes no provider round-trip any anymore — the seven sources are guests, and a
+// failed fetch reaches the pass as the Plugin's own sentence (ADR-0059) — so
+// requestError went with them (.scratch/bundled-plugins: issue 08) and the marker
+// itself is what is under test, wrapping the same sentence it used to be handed.
 func TestTransientPreservesMessageAndChain(t *testing.T) {
 	inner := errors.New("dial tcp: connection refused")
-	err := requestError("tmdb", inner)
+	err := transient(fmt.Errorf("enrich: tmdb request: %w", inner))
 
 	if want := "enrich: tmdb request: dial tcp: connection refused"; err.Error() != want {
 		t.Errorf("message = %q, want %q", err.Error(), want)

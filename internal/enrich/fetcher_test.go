@@ -150,30 +150,3 @@ func TestArtworkFetcherDoesNotMutateAnInjectedClient(t *testing.T) {
 		t.Error("Fetch mutated the caller's client")
 	}
 }
-
-// TestProviderJSONClientsCarryTheRedirectPolicy: every JSON metadata client this
-// package ever built went through providerClient, including when a caller injected
-// its own client — and it never mutated what it was given.
-//
-// It was a table of all seven providers' client() methods. All seven are Bundled
-// plugins now (ADR-0059, .scratch/bundled-plugins issues 04-07): a plugin has no
-// HTTP client at all — its only way out is the host's own guarded fetcher, which
-// carries this policy for every guest at once. What is left to hold is the helper
-// itself, until issue 08 decides whether anything still needs it.
-func TestProviderJSONClientsCarryTheRedirectPolicy(t *testing.T) {
-	injected := &http.Client{}
-	for name, got := range map[string]*http.Client{
-		"injected client": providerClient(injected),
-		"nil client":      providerClient(nil),
-	} {
-		if got.CheckRedirect == nil {
-			t.Errorf("%s: providerClient follows redirects unchecked", name)
-		}
-	}
-	if injected.CheckRedirect != nil {
-		t.Error("providerClient mutated the injected client")
-	}
-	if http.DefaultClient.CheckRedirect != nil {
-		t.Error("http.DefaultClient was mutated")
-	}
-}

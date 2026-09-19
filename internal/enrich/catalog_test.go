@@ -20,17 +20,19 @@ import (
 // It is built per call rather than once in a package variable so no test can leave
 // a mutated catalog behind for the next one.
 
-func builtinCatalog() Catalog {
+func shippedCatalog() Catalog {
 	reg := pluginapi.NewRegistry()
-	// THE BUNDLED PLUGINS FIRST, in the order this server ships them, because
-	// ORDER IS THE CATALOG ORDER: on a real server they register ahead of the
-	// Built-ins (plugins.Set.RegisterEnabledAround), and that is what makes TMDB
+	// THE BUNDLED PLUGINS, in the order this server ships them, because ORDER IS
+	// THE CATALOG ORDER: on a real server they register ahead of whatever else is
+	// installed (plugins.Set.RegisterEnabledAround), and that is what makes TMDB
 	// the default video lead and MusicBrainz the default music lead.
+	//
+	// There is nothing after them any more. This used to end with a second loop
+	// over MetadataPlugins(), the Built-in Metadata providers; there are none left
+	// (.scratch/bundled-plugins: issue 08), so a server's Metadata catalog is
+	// entirely Installed plugins and this composition says so.
 	for _, id := range bundledStandIns() {
 		reg.RegisterMetadataProvider(bundledStandIn(id))
-	}
-	for _, plugin := range MetadataPlugins() {
-		reg.RegisterMetadataProvider(plugin)
 	}
 	return NewCatalog(reg)
 }
@@ -198,7 +200,7 @@ func TestTheBundledTMDBStandInMatchesTheShippedManifest(t *testing.T) {
 // buildProvider composes the chain from the Built-in catalog — the production
 // path (BuilderFor's BuildFunc) with the catalog spelled out.
 func buildProvider(cfg ProviderConfig) (MetadataProvider, Enablement) {
-	return builtinCatalog().BuildProvider(cfg)
+	return shippedCatalog().BuildProvider(cfg)
 }
 
 // pluginSlug reports which registered Plugin a composed video provider IS, or ""

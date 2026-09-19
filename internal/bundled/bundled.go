@@ -136,8 +136,8 @@ var supplied sync.Map // id -> pair
 
 type pair struct{ manifest, module []byte }
 
-// SupplyForTests stands a module built from source in for the embedded one, for
-// the rest of this process. THE SERVER NEVER CALLS IT.
+// SupplyForTests stands a decompressed module in for the embedded one, for the
+// rest of this process. THE SERVER NEVER CALLS IT.
 //
 // It exists because the embedded modules are BUILD OUTPUT and `go test ./...` is
 // run constantly on a tree where `make plugins` has not been run — in which case
@@ -146,6 +146,16 @@ type pair struct{ manifest, module []byte }
 // nothing to do with what it tests. The test harness builds the modules once per
 // process (internal/bundled/bundledtest) and supplies them here, so `go test` on
 // a fresh clone exercises the REAL module through the REAL sandbox.
+//
+// IT HAS A SECOND CALLER NOW, and it is the same door for a reason
+// (.scratch/bundled-plugins: issue 08). bundledtest also supplies the modules
+// this binary WAS built with, decompressed once per process, because a test
+// process boots several hundred servers and each one is a genuine first boot that
+// really installs all seven — 110 ms of gzip per server that produces byte-for-
+// byte the same module every time. [Module] deliberately does NOT cache: a real
+// server decompresses each id at most once in its life, so a cache there would
+// hold ~28 MB of WebAssembly for the life of every server process to save work it
+// will never do again.
 //
 // It is not a general override and must not become one: supplying a module for an
 // id this server does not ship is refused, because the ordered list in this file
@@ -221,6 +231,12 @@ func Manifests() ([]pluginapi.Manifest, error) {
 // it — a stock-Go guest is ~3.9 MB and about a megabyte gzipped, and seven of them
 // uncompressed would be most of the binary's size for bytes that are written to
 // disk at most once in a server's life.
+//
+// THE RESULT IS NOT CACHED, deliberately. Each id is decompressed at most twice in
+// a server's whole life: the boot that installs it, and a "reinstall the shipped
+// version" the Admin asked for. Holding ~4 MB per id against a second call that
+// will not come is memory an operator pays for a test's benefit — see
+// [SupplyForTests] for where the once-per-process copy lives instead.
 func Module(id string) ([]byte, error) {
 	if v, ok := supplied.Load(id); ok {
 		return v.(pair).module, nil

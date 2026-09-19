@@ -2,9 +2,9 @@
 # check=skip=FromPlatformFlagConstDisallowed
 #
 # The skip above is for the runtime stage's `FROM --platform=linux/amd64`, which is
-# a deliberate pin (see stage 3). The OTHER check this file used to trip —
+# a deliberate pin (see stage 4). The OTHER check this file used to trip —
 # SecretsUsedInArgOrEnv — is NOT skipped: the credential ARGs became `--mount=type=secret`
-# in stage 2, so the warning is fixed rather than silenced. If it ever fires again,
+# in the build stage, so the warning is fixed rather than silenced. If it ever fires again,
 # something regressed; do not add it here.
 
 # Multi-stage build for the self-hosted media server, targeting linux/amd64.
@@ -39,7 +39,51 @@ COPY web/ ./
 RUN npm run build
 
 # ---------------------------------------------------------------------------
-# Stage 2 — build: compile the Go binary for linux/amd64 with the embedded SPA.
+# Stage 2 — plugins: compile the seven Bundled plugins to WebAssembly
+# (ADR-0059, .scratch/bundled-plugins).
+#
+# WITHOUT THIS STAGE THE IMAGE SHIPS NO METADATA PROVIDERS AT ALL — a server that
+# starts, serves, scans, and silently never enriches anything. internal/bundled
+# embeds internal/bundled/modules/, that directory is gitignored build output, and
+# it therefore arrives EMPTY in the build stage's COPY. A `go build` over it
+# succeeds. That is the exact shape CLAUDE.md records twice, which is why this is a
+# build stage rather than a line in a runbook.
+#
+# IT RUNS THE SAME SCRIPT `make plugins` RUNS. There is one definition of the build
+# command — scripts/build-bundled-plugins.sh — and both callers pass it a directory
+# to write into. It used to be a five-line loop copied into this file with a
+# comment asking whoever came next to keep the two in step; issue 08 is where they
+# became one file. Read that script for why the command is spelled the way it is.
+#
+# A WASM MODULE IS ARCHITECTURE-INDEPENDENT, so this runs on $BUILDPLATFORM like
+# the web and build stages: the .wasm is the same bytes whatever compiles it, and
+# wazero picks its backend from the machine the SERVER runs on (ADR-0058 decision
+# 1), not from the one that built the module. `make check-amd64` is what proves the
+# amd64 backend runs these seven.
+#
+# ITS CACHE KEY IS ITS INPUTS, which is the point of it being its own stage: it
+# copies only the module files, the contract, the SDK and plugins/, so an ordinary
+# edit under cmd/ or internal/ reuses this layer and costs nothing, while a change
+# to a plugin rebuilds exactly these seven. go.mod/go.sum/go.work come along
+# because the root module is a workspace member and each plugins/<id>/go.mod
+# `replace`s the two local modules by directory path.
+# ---------------------------------------------------------------------------
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS plugins
+WORKDIR /src
+
+COPY go.mod go.sum go.work* ./
+COPY pluginapi/ ./pluginapi/
+COPY pluginsdk/ ./pluginsdk/
+COPY plugins/ ./plugins/
+COPY scripts/build-bundled-plugins.sh ./scripts/
+
+RUN set -eux; \
+    sh ./scripts/build-bundled-plugins.sh /out/modules /tmp/plugins; \
+    ls -l /out/modules/
+
+# ---------------------------------------------------------------------------
+# Stage 3 — build: compile the Go binary for linux/amd64 with the embedded SPA
+# and the embedded plugin modules.
 # Runs on the native build platform and cross-compiles (pure Go, CGO disabled).
 # ---------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
@@ -76,29 +120,11 @@ COPY internal/ ./internal/
 COPY --from=web /src/internal/webui/dist/ ./internal/webui/dist/
 
 # The Bundled plugins (ADR-0059), BEFORE the Go build, because internal/bundled
-# embeds them: every plugins/<id>/ is compiled to WebAssembly with the reference
-# plugin's own command and gzipped into internal/bundled/modules/, which is
-# gitignored and therefore arrives empty in the COPY above.
-#
-# WITHOUT THIS THE IMAGE COMPILES AND SHIPS NO METADATA PROVIDERS AT ALL — a
-# server that starts, serves, scans, and silently never enriches anything. That is
-# the exact shape CLAUDE.md records twice, so it is a build step rather than a note
-# in a runbook.
-#
-# It is the Makefile's `plugins` target, restated here rather than invoked, because
-# this stage is alpine with no make in it and the loop is five lines. Keep the two
-# in step; issue 08 of .scratch/bundled-plugins is where they are meant to become
-# one.
-RUN set -eux; \
-    mkdir -p internal/bundled/modules; \
-    for dir in plugins/*/; do \
-      id=$(basename "$dir"); \
-      ( cd "$dir" && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= \
-          go build -buildmode=c-shared -o "/tmp/$id.wasm" . ); \
-      gzip -9nc "/tmp/$id.wasm" > "internal/bundled/modules/$id.wasm.gz"; \
-      cp "$dir/manifest.json" "internal/bundled/modules/$id.manifest.json"; \
-    done; \
-    ls -l internal/bundled/modules/
+# embeds this directory with go:embed. It is gitignored, so the COPY above brought
+# only its committed .keep marker; these are the seven modules the plugins stage
+# compiled. See that stage for what happens without them, which is worse than a
+# build failure.
+COPY --from=plugins /out/modules/ ./internal/bundled/modules/
 
 # Default metadata credentials (ADR-0032), injected only for OFFICIAL image builds
 # from CI secrets — ABSENT by default so a plain `docker build` bundles no keys and
@@ -187,7 +213,7 @@ RUN --mount=type=secret,id=tmdb_key \
       -o /out/obelo ./cmd/obelo
 
 # ---------------------------------------------------------------------------
-# Stage 3 — runtime: amd64 image with ffmpeg + the GPU userspace + the binary.
+# Stage 4 — runtime: amd64 image with ffmpeg + the GPU userspace + the binary.
 # The platform is pinned to a constant on purpose: it guarantees amd64 CONTENT —
 # an amd64 Debian base to match the amd64 binary compiled above — even when built
 # on an arm64 host. BuildKit's FromPlatformFlagConstDisallowed check flags this;

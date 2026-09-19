@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/goozakdev/obelo-server/internal/useragent"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
@@ -90,7 +91,7 @@ func (m *Manager) Catalog(ctx context.Context) (CatalogResult, error) {
 		out.Note = "The catalog address is not one this server can request."
 		return out, nil
 	}
-	req.Header.Set("User-Agent", "obelo/1.0 (self-hosted; plugin catalog)")
+	req.Header.Set("User-Agent", useragent.Default)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := m.client.Do(req)

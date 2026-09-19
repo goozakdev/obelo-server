@@ -171,16 +171,12 @@ func TestConnectionRunsTheDeclaredProbe(t *testing.T) {
 	})
 }
 
-// TestEveryBuiltInDeclaresItsProbe: the switch connectivity.go used to hold is now
-// eight declarations, and the guard is that none of them went missing in the move.
-func TestEveryBuiltInDeclaresItsProbe(t *testing.T) {
-	for _, r := range MetadataPlugins() {
-		if r.Descriptor.Probe == nil {
-			t.Errorf("%s declares no connection probe; its Test connection would refuse to run", r.Descriptor.Slug)
-			continue
-		}
-		if r.Descriptor.Probe.Kind == "" {
-			t.Errorf("%s declares a probe with no kind", r.Descriptor.Slug)
-		}
-	}
-}
+// TestEveryBuiltInDeclaresItsProbe IS GONE (.scratch/bundled-plugins: issue 08).
+// It walked MetadataPlugins() and required a probe on every registration, because
+// the switch connectivity.go used to hold had just become eight declarations and
+// the risk was that one went missing in the move. There are no Built-in Metadata
+// providers left to walk; the same guard over what actually ships is
+// internal/bundled's TestEveryBundledManifestIsUsable, which requires a probe on
+// every metadata-provider entry of every embedded manifest, and this package's
+// TestEveryBundledStandInMatchesItsShippedManifest, which reads the same
+// manifests off disk.

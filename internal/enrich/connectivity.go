@@ -9,12 +9,6 @@ import (
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
-// A well-known MusicBrainz artist id (Radiohead), used only as a representative
-// probe key for the fanart.tv connectivity test (fanart.tv is keyed by MBID). It
-// lives here beside the test it serves; the Descriptor that declares the probe
-// reads it (see MetadataPlugins).
-const probeArtistMBID = "a74b1b7f-71a5-4011-9441-d0b5e4122711"
-
 // TestConnection performs a best-effort, single-shot connectivity/credential
 // probe for one provider using the supplied (current-or-edited) credentials — the
 // one place the settings surface makes a real outbound call, and only on an

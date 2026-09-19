@@ -66,11 +66,10 @@ func withMetadataLanguage(lang string) func(*ProviderConfig) {
 	return func(c *ProviderConfig) { c.MetadataLanguage = lang }
 }
 
-// withVideoLead / withMusicLead repoint a kind's Authoritative provider.
+// withVideoLead repoints the video kind's Authoritative provider. Its twin
+// withMusicLead went with the last test that repointed music
+// (.scratch/bundled-plugins: issue 08); ProviderConfig.AuthoritativeMusic is set
+// through SettingsToProviderConfig everywhere that still matters.
 func withVideoLead(slug string) func(*ProviderConfig) {
 	return func(c *ProviderConfig) { c.AuthoritativeVideo = slug }
-}
-
-func withMusicLead(slug string) func(*ProviderConfig) {
-	return func(c *ProviderConfig) { c.AuthoritativeMusic = slug }
 }

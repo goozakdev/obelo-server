@@ -60,11 +60,11 @@ func (stubPlugin) ArtworkCandidates(_ context.Context, _ pluginapi.ArtworkCandid
 	return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeNoMatch}, nil
 }
 
+// catalogWith composes a Catalog holding only the registrations a test names. It
+// used to seed the Built-in Metadata providers first; there are none left
+// (.scratch/bundled-plugins: issue 08), so what a test states is the whole of it.
 func catalogWith(regs ...pluginapi.MetadataProviderRegistration) Catalog {
 	reg := pluginapi.NewRegistry()
-	for _, r := range MetadataPlugins() {
-		reg.RegisterMetadataProvider(r)
-	}
 	for _, r := range regs {
 		reg.RegisterMetadataProvider(r)
 	}
