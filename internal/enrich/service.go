@@ -72,6 +72,9 @@ type Store interface {
 	// the pin arrives with nothing but the Episode's id. store.ErrNotFound for a
 	// Title that is not an Episode.
 	EpisodeContextForTitle(titleID string) (store.EpisodeContext, error)
+	// ShowByID reads a Show's folder-asserted ids, which pin it when a single-parent
+	// re-enrich arrives with nothing but its id (ADR-0060 decision 6).
+	ShowByID(id string) (store.Show, error)
 	WriteEntityEnrichment(entityType, entityID string, e store.EntityEnrichmentWrite, locks map[string]bool) error
 	SetEntityEnrichmentStatus(entityType, entityID, status string) error
 	SetEntityEnrichmentRetry(entityType, entityID string, attempts int, retryAt time.Time) error
@@ -1264,7 +1267,8 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID 
 		return err
 	}
 	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, ns, pin.ExternalID)
-	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref, parentTrusted)
+	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref,
+		s.assertedParentRecord(entityType, entityID), parentTrusted)
 	return err
 }
 
@@ -1756,7 +1760,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 		}
 		rec, err := s.enrichParent(ctx, snap, mode, store.EntityShow, sh.ID,
 			withExternalIDs(TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year},
-				idsIn(pluginapi.NamespaceTMDB, sh.TMDBID)), parentTrusted)
+				idsIn(pluginapi.NamespaceTMDB, sh.TMDBID)), showAssertedRecord(sh), parentTrusted)
 		if err != nil {
 			return nil, err
 		}
@@ -1772,7 +1776,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 			if _, err := s.enrichParent(ctx, snap, mode, store.EntitySeason, se.ID,
 				withExternalIDs(TitleRef{Kind: "season", SeasonNumber: se.SeasonNumber},
 					idsIn(showRec.Namespace, showRec.ID)),
-				parentTrusted); err != nil {
+				parentRecord{}, parentTrusted); err != nil {
 				return nil, err
 			}
 			eps, err := s.store.EpisodesForSeason(se.ID)
@@ -1851,13 +1855,13 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
 			withExternalIDs(TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
 				AlbumHints: musicAlbumHints(albums)},
-				idsIn(pluginapi.NamespaceMusicBrainz, ar.MusicbrainzID)), doubted); err != nil {
+				idsIn(pluginapi.NamespaceMusicBrainz, ar.MusicbrainzID)), parentRecord{}, doubted); err != nil {
 			return nil, err
 		}
 		for _, al := range albums {
 			albumRec, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
 				withExternalIDs(TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name},
-					idsIn(pluginapi.NamespaceMusicBrainz, al.MusicbrainzID)), parentTrusted)
+					idsIn(pluginapi.NamespaceMusicBrainz, al.MusicbrainzID)), parentRecord{}, parentTrusted)
 			if err != nil {
 				return nil, err
 			}
@@ -2447,13 +2451,17 @@ func (s *Service) recordParentFailure(entityType, entityID string, cur store.Ent
 // The record it returns carries its NAMESPACE (ADR-0060 decision 3), so a child
 // resolves under its parent's id in the parent's namespace.
 //
-// A parent gets the leaf's pin rule (decision 6). A pinned external_id — chosen or
-// cascaded — resolves through its external_id_namespace's provider when that names
-// a registered Authoritative provider other than the lead, and is ORPHANED to
-// 'unmatched' when that provider is unreachable. An auto-resolved parent is no pin:
-// it is re-resolved by the lead whenever a pass re-asks it, and the write replaces
-// its id and namespace, as a parent's write always has.
-func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, doubted bool) (parentRecord, error) {
+// A parent gets the leaf's pin rule (decision 6), with ADR-0045's precedence: a
+// pinned external_id — chosen or cascaded — first, then the id its FOLDER asserts
+// (asserted: a Show's `{tmdb-…}` token; empty for every other parent). Either one
+// resolves through its namespace's provider when that names a registered
+// Authoritative provider other than the lead, and is ORPHANED to 'unmatched' when
+// that provider is unreachable. An auto-resolved parent is no pin: it is
+// re-resolved by the lead whenever a pass re-asks it, and the write replaces its id
+// and namespace, as a parent's write always has. Only a chosen or cascaded record
+// is written back verbatim; a folder-pinned parent stores what its provider
+// answered, stamped in that provider's namespace — the folder already holds the id.
+func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, asserted parentRecord, doubted bool) (parentRecord, error) {
 	if !snap.enablement.enabledFor(ref.Kind) {
 		return parentRecord{}, s.store.SetEntityEnrichmentStatus(entityType, entityID, "disabled")
 	}
@@ -2487,8 +2495,13 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	asked := snap.config.authoritativeSlugFor(ref.Kind)
 	pinned := cur.ExternalIDOrigin.Locked() && strings.TrimSpace(cur.ExternalID) != ""
 	var pin parentRecord
-	if pinned {
+	switch {
+	case pinned:
 		pin = storedParentRecord(entityType, cur)
+	case strings.TrimSpace(asserted.ID) != "":
+		pin = asserted
+	}
+	if pin.ID != "" {
 		ref = refWithPinnedEntityID(ref, pin.Namespace, pin.ID)
 		if isAuthoritativeNamespace(snap.catalog, pin.Namespace, ref.Kind) && pin.Namespace != asked {
 			if !snap.config.providerReachable(pin.Namespace) {

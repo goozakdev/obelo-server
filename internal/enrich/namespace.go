@@ -219,6 +219,36 @@ func storedParentRecord(entityType string, e store.EntityEnrichment) parentRecor
 	return parentRecord{ID: id, Namespace: ns}
 }
 
+// showAssertedRecord is the record a Show's FOLDER asserts: its `{tmdb-…}` token,
+// else its `{imdb-…}` one (ADR-0002), the same order decisionNamespace reads a
+// Title's in. It is a decision (ADR-0060 decision 6), so it pins the Show to its
+// namespace's provider whenever that is a registered Authoritative one — which
+// `imdb` never is, so an IMDb token leaves the Show with the lead, as a Title's does.
+func showAssertedRecord(sh store.Show) parentRecord {
+	if id := strings.TrimSpace(sh.TMDBID); id != "" {
+		return parentRecord{ID: id, Namespace: pluginapi.NamespaceTMDB}
+	}
+	if id := strings.TrimSpace(sh.IMDBID); id != "" {
+		return parentRecord{ID: id, Namespace: pluginapi.NamespaceIMDB}
+	}
+	return parentRecord{}
+}
+
+// assertedParentRecord is showAssertedRecord for a parent named by type and id: a
+// Show's folder token, and nothing for every other parent, whose ids no folder
+// asserts (an Artist's or Album's tag MBID is decoration, ADR-0049). A failed read
+// asserts nothing, which leaves the parent with its stored record or the lead.
+func (s *Service) assertedParentRecord(entityType, entityID string) parentRecord {
+	if entityType != store.EntityShow {
+		return parentRecord{}
+	}
+	sh, err := s.store.ShowByID(entityID)
+	if err != nil {
+		return parentRecord{}
+	}
+	return showAssertedRecord(sh)
+}
+
 // parentNamespace is the namespace of a parent's stored record, for a child to
 // inherit (ADR-0060 decision 5: an Episode pin and a Cascade inherit the parent's
 // namespace). A parent with no record, or a read that fails, lends its kind's
