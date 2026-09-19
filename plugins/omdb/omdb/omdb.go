@@ -128,7 +128,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 	}
 	s := p.host.Settings()
 
-	imdb := strings.TrimSpace(ref.IMDBID)
+	imdb := ref.ID(pluginapi.NamespaceIMDB)
 	title := strings.TrimSpace(ref.Title)
 
 	q := url.Values{}

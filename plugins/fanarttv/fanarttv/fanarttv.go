@@ -141,7 +141,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 // musiclogo). Only a resolved MBID is served; a blank id (or a record carrying
 // none of the three) is a no-match.
 func (p *Provider) artistLookup(ctx context.Context, s pluginapi.Settings, ref pluginapi.MediaRef) (pluginapi.LookupResponse, error) {
-	mbid := strings.TrimSpace(ref.MusicbrainzID)
+	mbid := ref.ID(pluginapi.NamespaceMusicBrainz)
 	if mbid == "" {
 		return noMatch(), nil // strictly MBID-keyed: no id, no lookup
 	}
@@ -176,9 +176,9 @@ func (p *Provider) videoLookup(ctx context.Context, s pluginapi.Settings, ref pl
 	switch ref.Kind {
 	case "movie":
 		// The movie endpoint accepts either a TMDB or an IMDb id; prefer TMDB.
-		id := strings.TrimSpace(ref.TMDBID)
+		id := ref.ID(pluginapi.NamespaceTMDB)
 		if id == "" {
-			id = strings.TrimSpace(ref.IMDBID)
+			id = ref.ID(pluginapi.NamespaceIMDB)
 		}
 		if id == "" {
 			return noMatch(), nil // strictly id-keyed: no id, no lookup
@@ -186,7 +186,7 @@ func (p *Provider) videoLookup(ctx context.Context, s pluginapi.Settings, ref pl
 		key = "movie:" + id
 		endpoint = "/movies/" + url.PathEscape(id)
 	case "show":
-		id := strings.TrimSpace(ref.TheTVDBID)
+		id := ref.ID(pluginapi.NamespaceTheTVDB)
 		if id == "" {
 			return noMatch(), nil // the tv endpoint is TheTVDB-id keyed
 		}
@@ -234,7 +234,7 @@ func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkC
 		// fanart.tv owns no listable set for this kind. No call is made.
 		return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
 	}
-	mbid := strings.TrimSpace(ref.MusicbrainzID)
+	mbid := ref.ID(pluginapi.NamespaceMusicBrainz)
 	if mbid == "" {
 		// Strictly MBID-keyed: no id, no candidates — and no call.
 		return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeMatched}, nil

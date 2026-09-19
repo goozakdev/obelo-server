@@ -237,7 +237,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 		// A pinned artist MBID (an applied Enrichment override) resolves BY id so a
 		// re-enrich or later pass looks up the exact artist the Admin picked instead
 		// of re-searching by name.
-		if id := strings.TrimSpace(ref.MusicbrainzID); id != "" {
+		if id := ref.ID(pluginapi.NamespaceMusicBrainz); id != "" {
 			return lookupResult(p.artistByID(ctx, s, id))
 		}
 		return lookupResult(p.artistDetails(ctx, s, ref.Title, ref.AlbumHints))
@@ -248,7 +248,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 			return lookupResult(p.releaseGroupForRelease(ctx, s, id))
 		}
 		// A pinned release-group MBID resolves BY id (the durable album override).
-		if id := strings.TrimSpace(ref.MusicbrainzID); id != "" {
+		if id := ref.ID(pluginapi.NamespaceMusicBrainz); id != "" {
 			return lookupResult(p.releaseGroupByID(ctx, s, id))
 		}
 		return lookupResult(p.albumDetails(ctx, s, ref.Album, ref.Artist))
@@ -257,7 +257,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 		// a re-enrich or later pass looks up the exact record the Admin picked instead
 		// of re-searching by name (ADR-0019 durability). No id falls back to the
 		// name+artist search.
-		if id := strings.TrimSpace(ref.MusicbrainzID); id != "" {
+		if id := ref.ID(pluginapi.NamespaceMusicBrainz); id != "" {
 			return lookupResult(p.recordingByID(ctx, s, id))
 		}
 		return lookupResult(p.trackDetails(ctx, s, ref.Track, ref.Artist))
@@ -1416,7 +1416,8 @@ func (p *Provider) trackDetails(ctx context.Context, s pluginapi.Settings, track
 // field.
 func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkCandidatesRequest) (pluginapi.ArtworkCandidatesResponse, error) {
 	ref := req.Ref
-	if ref.Kind != "album" || strings.TrimSpace(ref.MusicbrainzID) == "" {
+	mbid := ref.ID(pluginapi.NamespaceMusicBrainz)
+	if ref.Kind != "album" || mbid == "" {
 		return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeMatched}, nil
 	}
 	ctx, cancel := bounded(ctx)
@@ -1424,7 +1425,7 @@ func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkC
 
 	s := p.host.Settings()
 
-	u := s.URL2 + "/release-group/" + url.PathEscape(ref.MusicbrainzID)
+	u := s.URL2 + "/release-group/" + url.PathEscape(mbid)
 	var out struct {
 		Images []struct {
 			Image      string            `json:"image"`

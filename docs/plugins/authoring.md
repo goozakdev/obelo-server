@@ -1595,6 +1595,27 @@ they answer `unavailable` — the same known state an undeclared capability
 produces. **Declare in your manifest only what you implement**: the host reads the
 declaration before it calls, so an undeclared capability costs no call at all.
 
+### Reading an id off the reference
+
+Every id the host holds for an entity arrives in `MediaRef.ExternalIDs`, keyed by
+**External-id namespace** — `tmdb`, `imdb`, `musicbrainz`, `thetvdb`, `anidb`, or a
+third-party source's own, which is its plugin id (ADR-0060). Read one with
+`ref.ID(ns)`:
+
+```go
+if id := req.Ref.ID(pluginapi.NamespaceTMDB); id != "" {
+	// resolve by id; do not search
+}
+```
+
+`ID` reads the map, falls back to the named field for the five shipped namespaces
+(so a host from before the map existed still answers), and trims whitespace. The
+named fields (`TMDBID`, `IMDBID`, `MusicbrainzID`, `TheTVDBID`, `AniDBID`) are v1
+mirrors kept for guests built before the map; **do not read them directly**. When
+your record resolves an id, return it in `ExternalID` with `Source` set to your
+plugin id: `Source` names the namespace the id is in, and the host hands that id
+back to you under that key next time.
+
 ### Testing it without a sandbox
 
 `sdktest.Host` is a `Host` that answers a fetch from an `http.Handler`, in memory,

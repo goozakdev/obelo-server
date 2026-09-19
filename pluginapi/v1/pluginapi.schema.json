@@ -208,6 +208,12 @@
         "year": {
           "type": "integer"
         },
+        "externalIds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "tmdbId": {
           "type": "string"
         },

@@ -117,7 +117,7 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, ima
 	if entry.DefaultURL2 == "" || !entry.HasCapability(pluginapi.CapabilityArtworkCandidates) {
 		return true, "connection succeeded"
 	}
-	if _, err := provider.ArtworkCandidates(ctx, probeRefWithID(probe, record.ExternalID), "cover"); err != nil &&
+	if _, err := provider.ArtworkCandidates(ctx, probeRefWithID(probe, slug, record), "cover"); err != nil &&
 		!errors.Is(err, ErrNoMatch) {
 		return false, imageHostFailure(imageBase, err)
 	}
@@ -125,28 +125,35 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, ima
 }
 
 // probeRefWithID puts the id the probe lookup resolved into the reference the image
-// call is made with.
+// call is made with, under the External-id namespace it belongs to: the record's
+// Source, which names its ExternalID's namespace, or — for a record that names
+// none — the Plugin's own id, which is a source's namespace (ADR-0060 decision 1).
 //
-// IT FILLS EVERY ID FIELD, and that is not sloppiness. The contract's MediaRef
-// carries one field per id NAMESPACE and no generic "the id you just gave me", so a
-// host that wanted to fill exactly one would have to know which namespace this
-// Plugin owns — which is the switch over shipped slugs .scratch/bundled-plugins
-// issue 01 deleted, reappearing in a new place. This reference is built FOR one
-// Plugin, is used for one call, and is thrown away; a Plugin reads the field it owns
-// and cannot see the others, so "the id this source resolved a moment ago" is true
-// of whichever one it looks at. Follow-up issue 10 — a source-namespaced external-id
-// map on the Title — is what replaces this with one field.
+// It sets the MAP, and wireRefFromTitleRef fills the named v1 mirror from it for the
+// five shipped namespaces, so a v1 guest reading MusicbrainzID and a new one reading
+// ref.ID("musicbrainz") see the same id. This used to fill EVERY named field with
+// the one id, because the contract had no way to say which namespace it was in; now
+// it does, and a Plugin asked about its own record finds it where it reads.
 //
 // An empty id leaves the reference alone: a probe that resolved nothing (a no-match,
 // which is a PASS for the credential test) has no record to ask for images of, and
 // the call then costs whatever a Plugin charges for a reference it cannot use, which
 // for every shipped one is nothing.
-func probeRefWithID(ref TitleRef, externalID string) TitleRef {
-	id := strings.TrimSpace(externalID)
+func probeRefWithID(ref TitleRef, pluginID string, record TitleMetadata) TitleRef {
+	id := strings.TrimSpace(record.ExternalID)
 	if id == "" {
 		return ref
 	}
-	ref.TMDBID, ref.IMDBID, ref.MusicbrainzID, ref.TheTVDBID, ref.AniDBID = id, id, id, id, id
+	ns := strings.TrimSpace(record.Source)
+	if ns == "" {
+		ns = pluginID
+	}
+	ids := make(map[string]string, len(ref.ExternalIDs)+1)
+	for k, v := range ref.ExternalIDs {
+		ids[k] = v
+	}
+	ids[ns] = id
+	ref.ExternalIDs = ids
 	return ref
 }
 

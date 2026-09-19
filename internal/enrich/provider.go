@@ -187,6 +187,12 @@ type TitleRef struct {
 	Title string
 	Year  int
 
+	// ExternalIDs is every id the host holds for the entity, keyed by External-id
+	// namespace (pluginapi.NamespaceTMDB, …, or a third party's plugin id; ADR-0060).
+	// The five named fields below are the same ids for the five shipped namespaces;
+	// wireRefFromTitleRef merges the two, so a caller may set either.
+	ExternalIDs map[string]string
+
 	TMDBID        string
 	IMDBID        string
 	MusicbrainzID string
