@@ -36,4 +36,5 @@ use (
 	./plugins/musicbrainz
 	./plugins/fanarttv
 	./plugins/theaudiodb
+	./plugins/opensubtitles
 )

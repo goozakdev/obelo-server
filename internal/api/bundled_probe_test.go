@@ -36,7 +36,7 @@ func TestEveryBundledPluginsTestConnectionReachesItsSource(t *testing.T) {
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
-	for _, id := range shippedPluginIDs {
+	for _, id := range shippedMetadataIDs {
 		t.Run(id, func(t *testing.T) {
 			var mu sync.Mutex
 			var paths []string
@@ -96,11 +96,16 @@ func testProviderConnectionAtBothHosts(t *testing.T, srv *testharness.Server, to
 // rather than read from internal/bundled on purpose: this is a black-box suite,
 // and a test that asks the code under test what it ships would pass on a server
 // that shipped nothing.
-var shippedPluginIDs = []string{"tmdb", "omdb", "thetvdb", "anidb", "musicbrainz", "fanarttv", "theaudiodb"}
+var shippedPluginIDs = append(append([]string(nil), shippedMetadataIDs...), "opensubtitles")
 
-// TestTheShippedSetIsSevenPluginsInOrder: the list above is what a fresh server
+// shippedMetadataIDs is the Bundled plugins that are Metadata providers — every
+// shipped plugin but OpenSubtitles, which is a Subtitle provider and is tested
+// through the subtitle-providers screen (bundled_opensubtitles_test.go).
+var shippedMetadataIDs = []string{"tmdb", "omdb", "thetvdb", "anidb", "musicbrainz", "fanarttv", "theaudiodb"}
+
+// TestTheShippedSetIsEightPluginsInOrder: the list above is what a fresh server
 // really has, so nothing else in this file can be quietly testing a subset.
-func TestTheShippedSetIsSevenPluginsInOrder(t *testing.T) {
+func TestTheShippedSetIsEightPluginsInOrder(t *testing.T) {
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -110,7 +115,7 @@ func TestTheShippedSetIsSevenPluginsInOrder(t *testing.T) {
 		got = append(got, p.ID)
 	}
 	if len(got) != len(shippedPluginIDs) {
-		t.Fatalf("installed plugins = %v, want the seven bundled ones", got)
+		t.Fatalf("installed plugins = %v, want the eight bundled ones", got)
 	}
 	// The PLUGINS screen sorts by id; the PROVIDERS screen is the one that carries
 	// the shipped order, and that is what decides which source leads a kind.
@@ -131,14 +136,14 @@ func TestTheShippedSetIsSevenPluginsInOrder(t *testing.T) {
 	for _, p := range providers.Providers {
 		order = append(order, p.Slug)
 	}
-	if len(order) != len(shippedPluginIDs) {
+	if len(order) != len(shippedMetadataIDs) {
 		t.Fatalf("providers = %v, want exactly the seven bundled ones — no Built-in metadata "+
 			"provider is compiled into this server any more (.scratch/bundled-plugins: issue 08)", order)
 	}
-	for i, want := range shippedPluginIDs {
+	for i, want := range shippedMetadataIDs {
 		if order[i] != want {
 			t.Fatalf("providers = %v, want %v — registration order decides the default lead of "+
-				"each kind and the music chain's two image slots", order, shippedPluginIDs)
+				"each kind and the music chain's two image slots", order, shippedMetadataIDs)
 		}
 	}
 }

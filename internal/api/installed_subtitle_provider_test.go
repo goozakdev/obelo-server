@@ -199,8 +199,11 @@ func TestAnInstalledSubtitleProviderServesSearchOnlineAndCaches(t *testing.T) {
 	if len(view.Providers) != 2 {
 		t.Fatalf("the screen lists %d providers, want OpenSubtitles and the Installed one: %+v", len(view.Providers), view.Providers)
 	}
-	if builtin := providerNamed(t, view, "opensubtitles"); builtin.Installed {
-		t.Error("the OpenSubtitles Built-in is reported as an Installed plugin")
+	// OpenSubtitles is a Bundled plugin since .scratch/bundled-plugins issue 09,
+	// which IS an Installed plugin as far as this screen can tell — the point of
+	// ADR-0059. Until then it was the Built-in and this said the opposite.
+	if shipped := providerNamed(t, view, "opensubtitles"); !shipped.Installed {
+		t.Error("the bundled OpenSubtitles plugin is not reported as an Installed plugin")
 	}
 	installed := providerNamed(t, view, "example-subs")
 	switch {

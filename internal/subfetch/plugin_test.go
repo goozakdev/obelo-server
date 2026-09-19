@@ -152,6 +152,27 @@ func TestAdapterCarriesTheSearchAcrossTheContract(t *testing.T) {
 	}
 }
 
+// TestAdapterNormalizesACandidatesLanguage: a Plugin answers in its source's own
+// spelling and the adapter maps it onto ISO 639-1, as the OpenSubtitles Built-in
+// once did for itself (.scratch/bundled-plugins issue 09).
+func TestAdapterNormalizesACandidatesLanguage(t *testing.T) {
+	for raw, want := range map[string]string{
+		"pt-br": "pt", "PT-BR": "pt", "en": "en", "ger": "de", "zz": "", "": "",
+	} {
+		plugin := &fakePlugin{searchResp: pluginapi.SubtitleSearchResponse{
+			Outcome:    pluginapi.OutcomeMatched,
+			Candidates: []pluginapi.SubtitleCandidate{{ID: "1", Language: raw}},
+		}}
+		cands, err := ProviderFromPlugin(plugin).Search(context.Background(), SubtitleRef{Title: "X"}, "pt")
+		if err != nil {
+			t.Fatalf("%q: %v", raw, err)
+		}
+		if cands[0].Language != want {
+			t.Errorf("language %q became %q, want %q", raw, cands[0].Language, want)
+		}
+	}
+}
+
 // TestAdapterCapsTheDownload: the contract says the CALLER caps byte payloads, so
 // the host states the cap and re-checks the answer rather than trusting the
 // Plugin's good manners.

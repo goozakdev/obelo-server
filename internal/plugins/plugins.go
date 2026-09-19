@@ -305,13 +305,22 @@ type Plugin struct {
 	// host's caps (ADR-0059 decision 6) and immutable after, like hosts: they are
 	// read on every call and every fetch and never from anything a guest said.
 	//
-	// metaCallBudget is the budget of one Metadata provider call. fetchLimit is
-	// the body cap of one http_fetch — declared on the metadata entry, because
-	// that is where a manifest says how big its documents are, and applied to
-	// every fetch this Plugin makes, because one guest has one linear memory and a
-	// second cap per seam would be a number nobody could predict from the file.
-	metaCallBudget time.Duration
-	fetchLimit     int64
+	// metaCallBudget is the budget of one Metadata provider call, and
+	// subtitleCallBudget of one Subtitle provider call. fetchLimit is the body cap
+	// of one http_fetch — declared on a provider entry, because that is where a
+	// manifest says how big its documents are, and applied to every fetch this
+	// Plugin makes, because one guest has one linear memory and a second cap per
+	// seam would be a number nobody could predict from the file. Two entries that
+	// both ask get the larger.
+	//
+	// The Subtitle provider seam honours both knobs since
+	// .scratch/bundled-plugins issue 09: OpenSubtitles became a Bundled plugin,
+	// and the Built-in it replaced took an 8 MiB subtitle and waited as long as
+	// the request's own 30 s, where the defaults a sink gets are 1 MiB and 10 s.
+	// An Event sink still honours neither — nothing has asked it to.
+	metaCallBudget     time.Duration
+	subtitleCallBudget time.Duration
+	fetchLimit         int64
 	// userAgent is the identity every fetch carries: the host's own, with this
 	// Plugin's id and version appended (ADR-0059 decision 7). Built once from the
 	// manifest, so the string the far end sees can never be assembled from
@@ -436,11 +445,18 @@ func (p *Plugin) Status() Status {
 // being cut off.
 func (p *Plugin) resolveLimits() {
 	p.metaCallBudget = p.opts.MetadataCallBudget
+	p.subtitleCallBudget = p.opts.CallTimeout
 	p.fetchLimit = p.opts.MaxFetchBytes
 	p.userAgent = useragent.ForPlugin(p.id, p.manifest.Version)
 
 	for _, entry := range p.manifest.Provides {
-		if entry.Kind != pluginapi.ExtensionMetadataProvider {
+		var budget *time.Duration
+		switch entry.Kind {
+		case pluginapi.ExtensionMetadataProvider:
+			budget = &p.metaCallBudget
+		case pluginapi.ExtensionSubtitleProvider:
+			budget = &p.subtitleCallBudget
+		default:
 			continue
 		}
 		if entry.CallBudgetMillis > 0 {
@@ -450,7 +466,7 @@ func (p *Plugin) resolveLimits() {
 					p.id, want, p.opts.MaxCallBudget)
 				want = p.opts.MaxCallBudget
 			}
-			p.metaCallBudget = want
+			*budget = want
 		}
 		if entry.MaxFetchBytes > 0 {
 			want := entry.MaxFetchBytes
@@ -459,7 +475,9 @@ func (p *Plugin) resolveLimits() {
 					p.id, want, p.opts.MaxFetchBytesCap)
 				want = p.opts.MaxFetchBytesCap
 			}
-			p.fetchLimit = want
+			if want > p.fetchLimit {
+				p.fetchLimit = want
+			}
 		}
 	}
 }
@@ -643,8 +661,8 @@ type callPolicy struct {
 }
 
 // callGuest makes one call into the guest under the DEFAULT policy: the Event
-// sink's and the Subtitle provider's. A Metadata provider calls callGuestUnder
-// with its own (ADR-0059 decision 6).
+// sink's. A Metadata provider and a Subtitle provider call callGuestUnder with
+// their own budgets (ADR-0059 decision 6).
 func (p *Plugin) callGuest(ctx context.Context, export string, target string, req, out any) error {
 	return p.callGuestUnder(ctx, callPolicy{budget: p.opts.CallTimeout}, export, target, req, out)
 }

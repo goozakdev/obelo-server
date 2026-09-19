@@ -772,7 +772,7 @@ func assertCriterionB(r *report, baseline, after *snapshot, c *counterSnapshot,
 		r.finding("the Show pin written by the 2026-09-17 build changed across the upgrade: %s → %s", wantPin, havePin)
 	}
 
-	// --- seven bundled plugins ---------------------------------------------
+	// --- eight bundled plugins (seven metadata + OpenSubtitles, issue 09) ---
 	bundled := 0
 	var names []string
 	for _, p := range after.Plugins {
@@ -781,10 +781,10 @@ func assertCriterionB(r *report, baseline, after *snapshot, c *counterSnapshot,
 			names = append(names, fmt.Sprint(p["id"]))
 		}
 	}
-	if bundled == 7 {
-		r.add("B", "seven plugins with origin bundled", true, "%s", strings.Join(names, " "))
+	if bundled == 8 {
+		r.add("B", "eight plugins with origin bundled", true, "%s", strings.Join(names, " "))
 	} else {
-		r.add("B", "seven plugins with origin bundled", false,
+		r.add("B", "eight plugins with origin bundled", false,
 			"%d bundled of %d installed: %s", bundled, len(after.Plugins), strings.Join(names, " "))
 	}
 

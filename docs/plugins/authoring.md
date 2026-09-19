@@ -44,7 +44,8 @@ is the whole definition, and it covers two kinds of thing that are deliberately
 indistinguishable downstream:
 
 - a **Built-in** — compiled into the server, registered from the composition root
-  in Go (TMDB, MusicBrainz, OpenSubtitles, the Webhook sink);
+  in Go (today only the Webhook sink; TMDB, MusicBrainz and OpenSubtitles began
+  as Built-ins and now ship as Bundled plugins, under `plugins/`);
 - an **Installed plugin** — a `.wasm` module and a `manifest.json` an Admin put on
   their server, loaded into a sandbox at boot or on upload.
 
@@ -1283,7 +1284,16 @@ Every call into your module runs under a budget:
 | --- | --- | --- |
 | Metadata provider | **30 seconds** | `callBudgetMillis` on your `provides` entry, up to **120 s** |
 | Event sink | 10 seconds, inside a 15-second delivery budget | no |
-| Subtitle provider | 10 seconds | no |
+| Subtitle provider | 10 seconds | `callBudgetMillis` on your `provides` entry, up to **120 s** |
+
+`maxFetchBytes` works on a Subtitle provider's entry the same way, and matters more
+there: it is also the largest subtitle the host will accept back from your
+download. The shipped OpenSubtitles plugin asks for 30 s and 8 MiB
+(`plugins/opensubtitles/manifest.json`) — the numbers its compiled-in predecessor
+had. A Subtitle provider's clean error is still a strike, so answer anything that
+is the SOURCE's state rather than your request's — an outage, a rate limit, a spent
+download quota — as `unavailable`: the viewer sees "nothing found" and nothing is
+counted against you.
 
 A guest that spins past its deadline is **unwound by the runtime, not asked to
 stop**: the module is closed and the instance discarded. Do not retry in a loop, do

@@ -128,10 +128,29 @@ not things this conversion worsens, and each is its own follow-up decision. Open
 stays a Built-in; bundling it is the obvious next use of the machinery and its own decision,
 because a subtitle download is the one call where a byte cap changes what a viewer sees.
 
+*Amended 2026-09-18 (.scratch/bundled-plugins issue 09): OpenSubtitles is a Bundled plugin
+too*, the eighth, registered after the seven because the order only matters to metadata.
+The two numbers the paragraph above left open were decided by **parity**, not raised or
+lowered: the plugin asks for an **8 MiB** fetch limit (`maxFetchBytes`) and a **30-second**
+call budget (`callBudgetMillis`) — exactly what the Built-in accepted (its own and
+`internal/subfetch`'s 8 MiB cap) and waited (the request handler's 30 s). The seam defaults
+a third-party subtitle provider still gets are unchanged at 1 MiB and 10 s. Both knobs were
+honoured on a `metadata-provider` entry only; the host now honours them on a
+`subtitle-provider` entry too, so no subtitle that downloads today is discarded tomorrow
+and no slow search is killed sooner than before. Evidence for the cap was sought and not
+found locally — the development machine holds no fetched-subtitle cache — so it rests on
+parity, and on a typical SubRip file being tens of kilobytes while a heavily typeset ASS
+file runs to single megabytes; the Comments of issue 09 carry the command to measure a real
+library. One behaviour is deliberately NOT parity: OpenSubtitles' spent daily download
+quota (a 406) is answered as `unavailable`, because a Subtitle provider's clean error is
+still a strike and three of them would disable the plugin for the rest of the day. After
+this the word **Built-in** names only the Webhook sink.
+
 ## Consequences
 
 - CONTEXT.md gains **Bundled plugin**; **Built-in** now names OpenSubtitles and the Webhook
-  sink; Cover Art Archive leaves the Artwork-only provider examples.
+  sink; Cover Art Archive leaves the Artwork-only provider examples. *(After issue 09,
+  **Built-in** names only the Webhook sink, and **Bundled plugin** names eight.)*
 - **(2026-09-18, after issue 08)** ADR-0058 decision 7 carries a second amendment closing the
   last behaviour change this conversion made: a Metadata provider guest that runs to completion
   and cleanly answers an error keeps its instance and costs no strike, so a rejected key parks

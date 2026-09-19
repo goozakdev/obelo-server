@@ -981,8 +981,15 @@ func subtitleSearch(ptr, n uint32) uint64 {
 	if err := json.Unmarshal(buf[:n], &call); err != nil {
 		return fail("the request is not a SubtitleSearchCall: " + err.Error())
 	}
-	if mode(call.Settings.Secret) == "nomatch" {
+	switch mode(call.Settings.Secret) {
+	case "nomatch":
 		return reply(subtitleSearchResponse{Outcome: "no-match", Detail: "this source has nothing for that release"})
+	case "spin":
+		// A search that never returns, so a test can read the seam's call budget
+		// off the wall clock (.scratch/bundled-plugins issue 09).
+		for {
+			spun++
+		}
 	}
 	if answer, probing := probeNamespace(call); probing {
 		return answer
