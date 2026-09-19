@@ -411,7 +411,7 @@ func TestAlbumTracklistUnsupportedProviderIsNoTracklist(t *testing.T) {
 func TestAlbumTracklistForwardsThroughTheComposedProvider(t *testing.T) {
 	mb, _ := newTracklistStub(t,
 		stubRelease{ID: "rel-std", Date: "1994-01-01", RGID: "rg-she", Discs: [][]stubTrack{disc("std", 3)}})
-	prov := CompositeProvider{Music: NewMusicChainProvider(mb, nil, nil)}
+	prov := CompositeProvider{Music: NewMusicChainProvider(mb)}
 
 	lister, ok := any(prov).(AlbumTracklister)
 	if !ok {

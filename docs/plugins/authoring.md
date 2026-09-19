@@ -322,7 +322,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -1256,6 +1256,15 @@ not *"this is the right answer"*. A Metadata provider that returns a name for a
 Title the Authoritative provider already named does not rename it; the host merges
 only what was left empty. A sink that is told a play started does not get to decide
 whether it should have.
+
+A Supplement is asked about **every** entity of the kinds it declares, after the
+Authoritative provider, with that provider's resolved id added to the reference
+([ADR-0061](../adr/0061-the-music-chain-composes-every-music-supplement.md)). So answer
+`no-match` — without a fetch — for whatever you don't serve (an artist-only source asked
+about a track, an id-keyed one handed no id). If you lead and your `overview` is a
+placeholder you composed from structured facts rather than prose you hold, set
+`overviewSynthesized`: a Supplement's real text will then replace it, where real text
+of yours would be kept.
 
 ### The allowlist is not yours to widen
 

@@ -174,15 +174,22 @@ type MetadataRecord struct {
 	// Name is the source's canonical title for the entity. It MUST be the
 	// candidate's own title whenever FromSearch is set, because that is the string
 	// the host judges the candidate by.
-	Name           string   `json:"name,omitempty"`
-	Year           int      `json:"year,omitempty"`
-	Overview       string   `json:"overview,omitempty"`
-	Tagline        string   `json:"tagline,omitempty"`
-	ContentRating  string   `json:"contentRating,omitempty"`
-	ReleaseDate    string   `json:"releaseDate,omitempty"`
-	RuntimeMinutes int      `json:"runtimeMinutes,omitempty"`
-	Studio         string   `json:"studio,omitempty"`
-	Genres         []string `json:"genres,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Year     int    `json:"year,omitempty"`
+	Overview string `json:"overview,omitempty"`
+	// OverviewSynthesized says Overview is a placeholder the source composed from
+	// structured facts (MusicBrainz's "English rock band from Oxford") rather than
+	// prose it holds. The host's Supplement composition treats a synthesized
+	// Overview as EMPTY, so a Supplement's real text replaces it where a real one
+	// would be kept (fill-only, ADR-0002). A source that holds real prose leaves it
+	// false, which is the zero value an older guest already sends.
+	OverviewSynthesized bool     `json:"overviewSynthesized,omitempty"`
+	Tagline             string   `json:"tagline,omitempty"`
+	ContentRating       string   `json:"contentRating,omitempty"`
+	ReleaseDate         string   `json:"releaseDate,omitempty"`
+	RuntimeMinutes      int      `json:"runtimeMinutes,omitempty"`
+	Studio              string   `json:"studio,omitempty"`
+	Genres              []string `json:"genres,omitempty"`
 
 	Cast    []Credit     `json:"cast,omitempty"`
 	Artwork []ArtworkRef `json:"artwork,omitempty"`

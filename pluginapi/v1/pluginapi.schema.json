@@ -332,6 +332,9 @@
         "overview": {
           "type": "string"
         },
+        "overviewSynthesized": {
+          "type": "boolean"
+        },
         "tagline": {
           "type": "string"
         },
