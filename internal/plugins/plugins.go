@@ -340,6 +340,11 @@ type Plugin struct {
 	lastError  string
 	failures   int
 	violations int
+	// refusalOnly says lastError was written by noteRefusal — a guest's own clean
+	// error — and by nothing that counted against the Plugin. It is what lets the
+	// next successful call retire that sentence while leaving a real failure's
+	// sentence where an operator can still read it.
+	refusalOnly bool
 
 	// declared is this Plugin's manifest-declared setting VALUES (issue 13),
 	// already decoded into the JSON shapes its own schema names. It is guarded by
@@ -514,6 +519,7 @@ func (p *Plugin) recordViolation(detail string) {
 	defer p.mu.Unlock()
 	p.violations++
 	p.lastError = detail
+	p.refusalOnly = false
 	if p.violations >= p.opts.FailureThreshold && !p.disabled {
 		p.disabled = true
 		p.logf("obelo: plugin %s is disabled after %d allowlist violations: %s", p.id, p.violations, detail)
@@ -528,17 +534,49 @@ func (p *Plugin) recordFailure(err error) {
 	defer p.mu.Unlock()
 	p.failures++
 	p.lastError = err.Error()
+	p.refusalOnly = false
 	if p.failures >= p.opts.FailureThreshold && !p.disabled {
 		p.disabled = true
 		p.logf("obelo: plugin %s is disabled after %d consecutive failures: %v", p.id, p.failures, err)
 	}
 }
 
+// noteRefusal records the sentence behind a guest's own clean error WITHOUT
+// counting a strike (ADR-0058 decision 7 as amended 2026-09-18). Two deliberate
+// choices live here.
+//
+// It SURFACES: `lastError` is the one place an Admin is told anything about a
+// Plugin, and "the guest refused the call: tmdb lookup: status 401" is the most
+// actionable sentence this server can show them — it names the credential, not a
+// broken module. A silently parked movie is not a diagnosis.
+//
+// It does NOT touch the failure streak, in either direction. A guest that ran and
+// answered is neither a failure of the code (so it must not count) nor evidence
+// that the code works (so it must not forgive a run of traps that is two deep).
+// Leaving the counter alone is the reading that cannot turn a refusal into a way
+// of resetting the threshold forever.
+func (p *Plugin) noteRefusal(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastError = err.Error()
+	p.refusalOnly = true
+}
+
 // clearFailures forgets a run of failures after a call that worked.
+//
+// It also clears `lastError` when the sentence there came from noteRefusal and
+// nothing else. A failure's sentence is sticky — a Plugin that failed twice and
+// then worked has still failed twice, and an operator should be able to read
+// about it — but a refusal's is news about a CALL rather than about the Plugin,
+// and a source that answered properly this time has retired it.
 func (p *Plugin) clearFailures() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.failures = 0
+	if p.refusalOnly {
+		p.lastError = ""
+		p.refusalOnly = false
+	}
 }
 
 // beginCall takes the Plugin's permission to run and records the operator's
@@ -567,6 +605,7 @@ func (p *Plugin) endCall() {
 func (p *Plugin) refuse(err error) {
 	p.disabled = true
 	p.lastError = err.Error()
+	p.refusalOnly = false
 }
 
 // Disabled reports whether this server will still call the Plugin.
@@ -581,21 +620,38 @@ func (p *Plugin) Disabled() bool {
 // event was not delivered, and the reason is on the settings screen.
 var ErrDisabled = errors.New("plugin is disabled")
 
-// callGuest makes one call into the guest under the DEFAULT budget: the Event
-// sink's and the Subtitle provider's. A Metadata provider calls callGuestWithin
-// with its own (ADR-0059 decision 6).
-func (p *Plugin) callGuest(ctx context.Context, export string, target string, req, out any) error {
-	return p.callGuestWithin(ctx, p.opts.CallTimeout, export, target, req, out)
+// callPolicy is everything the EXTENSION POINT being called decides about one
+// guest call. It is a parameter rather than a set of Plugin fields for the reason
+// the budget always was: one module may fill two seams, and a sink's rules must
+// not become a provider's because they share a directory.
+type callPolicy struct {
+	// budget bounds the call. Zero means the Plugin's default.
+	budget time.Duration
+	// refusalIsAnAnswer says a guest that ran to completion and cleanly answered
+	// an error — errGuestRefused — has ANSWERED this call rather than failed it:
+	// the instance is kept and no strike is counted. The error itself still
+	// travels to the caller unchanged.
+	//
+	// True for a Metadata provider and for nothing else (ADR-0058 decision 7 as
+	// amended 2026-09-18, ADR-0059). A provider's error is a claim about the
+	// SOURCE — a rejected key, a document it cannot parse — which parks one item
+	// under ADR-0048 and says nothing about whether the module works; three
+	// lookups against a 401 used to take a whole provider off the server. A sink's
+	// or a subtitle provider's error has no item to park and no other channel to
+	// travel down, so for them a refusal stays what it has always been.
+	refusalIsAnAnswer bool
 }
 
-// callGuestWithin makes one call into the guest, serialized, under a deadline,
+// callGuest makes one call into the guest under the DEFAULT policy: the Event
+// sink's and the Subtitle provider's. A Metadata provider calls callGuestUnder
+// with its own (ADR-0059 decision 6).
+func (p *Plugin) callGuest(ctx context.Context, export string, target string, req, out any) error {
+	return p.callGuestUnder(ctx, callPolicy{budget: p.opts.CallTimeout}, export, target, req, out)
+}
+
+// callGuestUnder makes one call into the guest, serialized, under a deadline,
 // with the instance lifecycle ADR-0058 decision 7 requires around it.
-//
-// The budget is a PARAMETER rather than a field because it belongs to the
-// Extension point being called and not to the Plugin: one module may fill two
-// seams, and a sink's ten seconds must not become a provider's thirty because
-// they share a directory.
-func (p *Plugin) callGuestWithin(ctx context.Context, budget time.Duration, export string, target string, req, out any) error {
+func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export string, target string, req, out any) error {
 	p.callMu.Lock()
 	defer p.callMu.Unlock()
 
@@ -609,6 +665,7 @@ func (p *Plugin) callGuestWithin(ctx context.Context, budget time.Duration, expo
 	}
 	defer p.endCall()
 
+	budget := policy.budget
 	if budget <= 0 {
 		budget = p.opts.CallTimeout
 	}
@@ -634,6 +691,19 @@ func (p *Plugin) callGuestWithin(ctx context.Context, budget time.Duration, expo
 		// work as the last one. So the instance is kept and no failure is counted —
 		// only an optional Extension-point call reaches this, and its adapter turns
 		// it into the same "unavailable" an undeclared capability answers.
+		return err
+	}
+	if policy.refusalIsAnAnswer && errors.Is(err, errGuestRefused) {
+		// The guest was entered, it ran, it decided it could not answer, and it came
+		// back to say why. Its memory is intact and its next call is as likely to
+		// work as its last one, so the instance is KEPT and no strike is counted —
+		// the seam is the same one errNoExport above uses, for the same reason.
+		//
+		// The error travels on unchanged: a Metadata provider's caller turns it into
+		// a parked item (ADR-0048, non-transient), which is exactly what the Go
+		// providers this replaced did with a rejected key. What it must not do is
+		// take the provider off the server; see callPolicy.
+		p.noteRefusal(err)
 		return err
 	}
 	if err != nil {

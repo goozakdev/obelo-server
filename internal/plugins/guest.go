@@ -72,6 +72,18 @@ const (
 // errNoExport is what a call into a function the module does not export answers.
 var errNoExport = errors.New("the module does not export that call")
 
+// errGuestRefused is a guest that RAN TO COMPLETION and answered the ABI's `0`
+// with a sentence in last_error(): the module was entered, it did its work, it
+// decided the call could not be answered, and it came back to say so. That is a
+// different fact from a trap, a deadline kill or a response that is not the
+// contract's shape, all of which say the instance is unusable, and
+// callGuestUnder's policy is where the difference is spent.
+//
+// It is a SENTINEL rather than a string match, and the message it wraps is
+// byte-for-byte what it always was — "the guest refused the call: <detail>" —
+// because that sentence is on the Plugins screen and in operators' logs.
+var errGuestRefused = errors.New("the guest refused the call")
+
 // compiled is one Plugin's runtime and the module compiled into it. Compiling is
 // the expensive half — 43 ms for a TinyGo guest, 606 ms for a stock-Go one — so it
 // happens once, at load, and every instance after a trap or a deadline kill is
@@ -257,7 +269,7 @@ func (i *instance) invoke(ctx context.Context, name string, req, out any) (int, 
 		return 0, callErr
 	}
 	if len(packed) == 0 || packed[0] == 0 {
-		return 0, fmt.Errorf("the guest refused the call: %s", i.guestError(ctx))
+		return 0, fmt.Errorf("%w: %s", errGuestRefused, i.guestError(ctx))
 	}
 
 	rptr, rlen := uint32(packed[0]>>32), uint32(packed[0])

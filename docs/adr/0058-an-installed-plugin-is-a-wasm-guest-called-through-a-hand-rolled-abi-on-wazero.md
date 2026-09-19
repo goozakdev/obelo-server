@@ -237,6 +237,38 @@ is cheap — compilation is the expensive half and is kept: 0.03–1.74 ms to in
 > exactly one thing — the guest itself spun — which is what decision 6's threshold was written
 > for. The instance lifecycle of decision 7 is unchanged.
 
+> **Amended again (bundled-plugins, decision on issue 08, 2026-09-18):** the amendment above
+> fixed the slow source and left the REJECTED KEY, and issue 08 recorded it as "the one known
+> difference from the 2026-09-17 build". It is closed here. The host counted *any* error out of
+> `invoke` as a failed call — including the one a guest produces by running to completion and
+> cleanly answering an error through the ABI's `0` and `last_error()`. So three lookups against
+> a source answering 401 disabled a bundled metadata provider, where the Built-in it replaced
+> quietly parked the three items and carried on. The conversion's claim was zero behaviour
+> change, and this was the one place it was not true.
+>
+> **For a Metadata provider call, a guest that runs to completion and answers an error keeps its
+> instance and costs no strike.** The error still reaches the caller unchanged, so the item is
+> still parked `failed` (ADR-0048: a 401 is not transient) exactly as the Built-in parked it, and
+> the guest's sentence still lands in `lastError` for the Admin to read — "status 401" is a more
+> actionable line than three silently parked movies, and the provider is still on the server to
+> serve what it can the moment the key is fixed. A **trap**, a **deadline kill**, a failure to
+> **instantiate** and a response that is **not the contract's shape** still drop the instance and
+> still count, exactly as before: those say the module is broken, and a clean error says
+> something about the *source*.
+>
+> Two boundaries, both deliberate. The rule is per **Extension point**, not per ABI: an Event
+> sink's and a Subtitle provider's clean error still counts a strike, because neither has an item
+> to park or a second channel to say it down — the Plugin's own status is the only record a
+> receiver that can never be written to will ever get. And a clean error **does not clear the
+> consecutive-failure streak** either: a guest that ran and answered is neither a failure of the
+> code nor evidence that it works, and forgiving the streak would let a Plugin that traps two
+> calls in three never reach the threshold at all. `lastError` from a refusal IS retired by the
+> next call that works, which a recorded failure's sentence is not.
+>
+> In code: `errGuestRefused` is the sentinel (wrapping the same sentence it always printed) and
+> `callPolicy.refusalIsAnAnswer` is the per-seam switch, carried beside the call budget for the
+> same reason the budget is carried — one module may fill two seams.
+
 **8. `apiVersion` is checked at install, not at call.** A manifest naming an `apiVersion` this
 server does not speak is refused when it is installed, with a message naming **which side to
 upgrade** — the ADR-0055 posture, applied to a Plugin instead of a Link. A Plugin is never

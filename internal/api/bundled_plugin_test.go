@@ -414,37 +414,42 @@ func TestASourceOutageRetriesTheItemsAndDoesNotStrikeThePlugin(t *testing.T) {
 	}
 }
 
-// THE OTHER HALF, WRITTEN DOWN BECAUSE IT IS A DECISION AND NOT AN ACCIDENT: a
-// REJECTED KEY still disables the plugin after three lookups.
+// THE OTHER HALF, AND SINCE 2026-09-18 IT IS SETTLED TOO: a REJECTED KEY parks
+// the items and LEAVES THE PLUGIN RUNNING.
 //
-// This is a characterization test. It asserts what this server does today so that
-// nobody has to rediscover it, and it will fail the day somebody changes it — at
-// which point the change was deliberate and this test says what it replaced.
+// This test replaces `TestARejectedKeyStillDisablesThePluginAfterThreeLookups`,
+// which was a characterization test of the opposite — three lookups against a 401
+// disabled the bundled TMDB plugin — written to fail the day somebody decided.
+// Somebody decided. This is the new truth and the reasoning behind it.
 //
-// The reasoning, such as it is. A 401 describes OUR REQUEST: the key is wrong, and
-// asking again with the same key gets the same answer forever, so the plugin
-// answers a Go error and the item is parked where an Admin will see it. That much
-// is right, and it is exactly what the Built-in did. What comes WITH it is that
-// the host counts a guest's Go error as a strike, so three parked items also stop
-// the plugin — which the Built-in never did, because a Built-in has no strikes.
+// A 401 describes OUR REQUEST: the key is wrong, asking again with the same key
+// gets the same answer forever, so the guest answers a Go ERROR and the item is
+// parked `failed` where an Admin will see it (ADR-0048: non-transient, not
+// retried). That half never changed and is exactly what the Built-in did.
 //
-// Whether that is the behaviour anybody wants is a real question and is NOT this
-// issue's to answer:
+// What changed is what came WITH it. The host counted any error out of a guest as
+// a strike, including one the guest ran to completion to produce, so three parked
+// movies also stopped the whole provider — which the Built-in never did, because a
+// Built-in has no strikes. The conversion's claim was "zero behaviour change", and
+// this was the one place it was not true. A guest that returns cleanly with a
+// sentence has told the host something about the SOURCE, not about itself; a trap,
+// a deadline kill or a response that is not the contract's shape is what says the
+// module is broken, and those still count. See ADR-0058 decision 7's 2026-09-18
+// amendment and internal/plugins/refusal_test.go.
 //
-//   - FOR: a source that answers 401 to everything is genuinely not working, and a
-//     disabled plugin with "status 401" on the Plugins screen is a louder, more
-//     findable statement than three quietly parked movies. The Admin fixes the key
-//     and presses Re-enable, which is two clicks.
-//   - AGAINST: it conflates "the operator's credential is wrong" with "this code is
-//     broken", and those want different words on the screen. It also means ONE bad
-//     key takes out a provider that would otherwise keep serving the items it can.
+// So what an Admin with a rejected key now gets is what they got from the Built-in
+// — parked items on the attention list — plus the sentence "status 401" on the
+// Plugins screen, from a provider that is still there to serve whatever else it
+// can the moment the key is fixed. No Re-enable, because nothing was disabled.
 //
-// Either way the OUTAGE case above is settled and this one is not, so this test
-// pins the current answer rather than asserting a preference.
-func TestARejectedKeyStillDisablesThePluginAfterThreeLookups(t *testing.T) {
+// The pass count is deliberately past the threshold: TWO passes over the three
+// movie fixtures is six consecutive rejected lookups, twice what used to stop it.
+func TestARejectedKeyParksTheItemsAndLeavesThePluginRunning(t *testing.T) {
 	requireFixtures(t)
 
+	var calls int32
 	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"status_message":"Invalid API key"}`))
@@ -459,33 +464,48 @@ func TestARejectedKeyStillDisablesThePluginAfterThreeLookups(t *testing.T) {
 
 	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
 	scanLib(t, srv, token, libID, "")
-	res := enrichLib(t, srv, token, libID, "full")
-	if res.Total < 3 {
-		t.Skipf("the movie fixture holds %d titles; this needs at least the failure threshold", res.Total)
+
+	for pass := 1; pass <= 2; pass++ {
+		res := enrichLib(t, srv, token, libID, "full")
+		if res.Total < 3 {
+			t.Skipf("the movie fixture holds %d titles; this needs at least the failure threshold", res.Total)
+		}
+		// The items are PARKED, not retried — which is the half that matches the
+		// Built-in exactly. A wrong credential is not worth asking about again.
+		if res.Retrying != 0 {
+			t.Errorf("pass %d: retrying = %d, want 0: a rejected key is not worth asking again", pass, res.Retrying)
+		}
+		if res.Failed != res.Total {
+			t.Errorf("pass %d: failed = %d of %d; a 401 must reach the Admin's attention list",
+				pass, res.Failed, res.Total)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got <= 3 {
+		t.Fatalf("the stand-in saw %d requests; two passes over three fixtures must make more than "+
+			"the %d-strike threshold, or this test proves nothing about the threshold",
+			got, 3)
 	}
 
-	// The items are PARKED, not retried — which is the half that matches the
-	// Built-in exactly.
-	if res.Retrying != 0 {
-		t.Errorf("retrying = %d, want 0: a rejected key is not worth asking again", res.Retrying)
-	}
-	if res.Failed == 0 {
-		t.Errorf("failed = 0 of %d; a 401 must reach the Admin's attention list", res.Total)
-	}
-
-	// And the plugin is stopped, which the Built-in it replaced never was.
+	// AND THE PLUGIN IS STILL RUNNING. This is the assertion that inverted.
 	row := pluginNamed(t, readPlugins(t, srv, token), "tmdb")
-	if !row.DisabledByFailure {
-		t.Fatalf("the plugin survived three rejected lookups: %+v — if this is now deliberate, "+
-			"replace this test with one that says so", row)
+	if row.DisabledByFailure {
+		t.Fatalf("a rejected key DISABLED the bundled TMDB plugin: %+v — a guest that ran and "+
+			"answered an error is not a broken module (ADR-0058 decision 7, amended 2026-09-18)", row)
+	}
+	// The Admin's own switch was never in question, and the sentence is still
+	// there: an Admin reads "status 401" and knows to fix the key, which a silently
+	// parked movie would never have told them.
+	if !row.Enabled {
+		t.Errorf("the Admin's enable switch was flipped by a failure: %+v", row)
 	}
 	if !strings.Contains(row.LastError, "401") {
 		t.Errorf("lastError = %q, want the status in it so the Admin can tell a rejected key "+
 			"from a broken module", row.LastError)
 	}
-	// The Admin's own switch is untouched: it is the LOADER that stopped calling
-	// it, and Re-enable is the verb that forgives that.
-	if !row.Enabled {
-		t.Errorf("the Admin's enable switch was flipped by a failure: %+v", row)
+
+	// And it is still the lead video provider, so the moment the key is fixed the
+	// next pass resolves these titles. That is the whole point of not disabling it.
+	if providers := readMetadataProviders(t, srv, token); len(providers) == 0 || providers[0].Slug != "tmdb" {
+		t.Errorf("after the rejected lookups the providers screen leads with %+v, want tmdb first", providers)
 	}
 }

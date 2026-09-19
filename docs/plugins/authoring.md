@@ -1137,6 +1137,12 @@ tally, per sink, since boot:
 does a `last_error()` after a `0`. Name the target and the status rather than
 restating that something went wrong.
 
+**A `lastError` does not mean you were stopped.** `disabledByFailure` is the only
+field that says that. A Metadata provider that cleanly answers an error — the
+operator's key was rejected — puts its sentence here and **keeps running**; the
+next call that works retires it. See
+[What a failure costs you](#what-a-failure-costs-you).
+
 **When you have rebuilt the module:** *Re-enable* on the Plugins screen clears the
 recorded failure, the consecutive-failure count and the violation count, **and
 reloads the module from disk** — so a fixed `plugin.wasm` gets a genuine second
@@ -1281,8 +1287,10 @@ Every call into your module runs under a budget:
 
 A guest that spins past its deadline is **unwound by the runtime, not asked to
 stop**: the module is closed and the instance discarded. Do not retry in a loop, do
-not busy-wait. Three consecutive failures — a trap, a deadline kill, or answering
-nothing — and you are disabled with a sentence.
+not busy-wait. Three consecutive failures — a trap, a deadline kill, a failure to
+instantiate, or a response that is not the contract's shape — and you are disabled
+with a sentence. See [What a failure costs you](#what-a-failure-costs-you) for the
+one answer that is *not* on that list.
 
 **A slow source is not one of those failures**, and that distinction is the whole
 point of the budget being a number you can see. `http_fetch` returns before your
@@ -1298,6 +1306,57 @@ to its host's exact deadline is a guest that gets unwound, and that IS a strike.
 
 Nothing about a failed delivery is ever shown to a viewer and nothing about it
 slows the server down. Delivery is off the publish path, always.
+
+### What a failure costs you
+
+A call that cannot be answered comes back four different ways and they are not
+priced the same. The host is not reading your mind — it is reading *how* your
+module came back.
+
+| What you do | What the host sees | What it costs |
+| --- | --- | --- |
+| Answer `unavailable` with a detail | a successful call | nothing. The item takes the host's backoff and is tried again |
+| Answer `0` with a sentence in `last_error()` — **Metadata provider** | a call you ran to completion and refused | nothing against the Plugin. The item is parked `failed`, your sentence is on the Plugins screen, you keep your instance and you keep serving |
+| Answer `0` with a sentence — **Event sink / Subtitle provider** | a failed call | **a strike.** Your instance is dropped and three in a row disable you |
+| Trap, spin past the deadline, or answer something that is not the contract's shape | a broken module | **a strike**, always, for every seam |
+
+So, for a **Metadata provider**, the whole of the advice is three lines:
+
+- **The source is not answering right now** — it is down, it timed out, it
+  rate-limited you, the host refused your fetch, your budget ran out (`408`, `429`,
+  `5xx`, any `Error` from `http_fetch`): answer **`unavailable`** with a detail.
+  The item comes back round. Never answer `no-match` for this — that is a claim
+  about the *catalogue* you are in no position to make.
+- **The source answered and the answer is no good** — a rejected key (`401`), a
+  forbidden request (`403`), a malformed one (`400`), a document you cannot parse:
+  **return the error**. The item is parked where the operator will see it on the
+  attention list and your sentence is on your Plugins row, which between them is
+  how an Admin learns their key is wrong. **This costs you nothing.** It used to
+  cost a strike, so three movies against a bad key took a whole provider off the
+  server; ADR-0058 decision 7's 2026-09-18 amendment ended that. A guest that ran
+  and came back to explain itself is working.
+- **Anything else is your code**, and that is what the three strikes are for.
+
+Two things not to read into this. A clean error does **not** clear a run of
+strikes either — it is not a success, so two traps followed by a refusal followed
+by a third trap still disables you. And the exemption is for the **Metadata
+provider seam only**: a sink's refusal has no item to park and no second place to
+be seen, so the Plugin's own status is the only record a receiver that can never
+be written to will ever get.
+
+The SDK draws the line for you and you should let it:
+`pluginsdk.Unavailable(err)` answers `(detail, true)` for exactly the first
+bullet — a host refusal, a transport failure, a spent call budget and a retryable
+status (`pluginsdk.RetryableStatus`: 408, 429, 5xx) — and `("", false)` for
+everything else. Every call path of the seven shipped plugins is the same three
+lines:
+
+```go
+if detail, ok := pluginsdk.Unavailable(err); ok {
+    return pluginapi.LookupResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: detail}, nil
+}
+return pluginapi.LookupResponse{}, err
+```
 
 ### Pace yourself
 
