@@ -301,27 +301,55 @@ func (db *DB) ApplyShowArrangement(a ShowArrangement) error {
 func applyPinsTx(tx *sql.Tx, libraryID string, pins []SlotPin) error {
 	for _, p := range pins {
 		var err error
+		// The pin addresses its Title by key; the record rows are keyed by id.
+		var titleID string
+		switch err := tx.QueryRow(
+			`SELECT id FROM titles WHERE library_id = ? AND identity_key = ?`,
+			libraryID, p.IdentityKey,
+		).Scan(&titleID); {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			return fmt.Errorf("store: resolving the pinned Title %q: %w", p.IdentityKey, err)
+		}
 		if p.Clear {
 			// Nothing is pinned any more, so the record stops being anybody's choice
 			// (ADR-0045): the origin is released along with the numbers, whichever of
-			// the two provenances put it there (ADR-0046).
+			// the two provenances put it there (ADR-0046). The record rows go too and
+			// the Show's own series is written back as the record, in `tmdb` as every
+			// series id is until issue 15 stamps its namespace (ADR-0060).
+			if err := clearRecordIDs(tx, titleID); err != nil {
+				return err
+			}
+			recordNS := ""
+			if p.SeriesID != "" {
+				recordNS = NamespaceTMDB
+				if err := putRecordID(tx, titleID, NamespaceTMDB, p.SeriesID); err != nil {
+					return err
+				}
+			}
 			_, err = tx.Exec(
-				`UPDATE titles SET enrichment_tmdb_id = ?, enrichment_id_origin = '',
+				`UPDATE titles SET enrichment_id_namespace = ?, enrichment_id_origin = '',
 				     enrichment_season = NULL,
 				     enrichment_episode = NULL, enrichment_status = 'pending', `+clearEnrichmentRetry+`,
 				     `+clearEnrichmentReason+`
-				   WHERE library_id = ? AND identity_key = ?`,
-				p.SeriesID, libraryID, p.IdentityKey)
+				   WHERE id = ?`,
+				recordNS, titleID)
 		} else {
+			if p.SeriesID != "" {
+				if err := putRecordID(tx, titleID, NamespaceTMDB, p.SeriesID); err != nil {
+					return err
+				}
+			}
 			_, err = tx.Exec(
 				`UPDATE titles SET
-				     enrichment_tmdb_id = CASE WHEN ? <> '' THEN ? ELSE enrichment_tmdb_id END,
+				     enrichment_id_namespace = CASE WHEN ? <> '' THEN ? ELSE enrichment_id_namespace END,
 				     enrichment_id_origin = CASE WHEN ? <> '' THEN 'chosen' ELSE enrichment_id_origin END,
 				     enrichment_season = ?, enrichment_episode = ?,
 				     enrichment_status = 'pending', `+clearEnrichmentRetry+`,
 				     `+clearEnrichmentReason+`
-				   WHERE library_id = ? AND identity_key = ?`,
-				p.SeriesID, p.SeriesID, p.SeriesID, p.Season, p.Episode, libraryID, p.IdentityKey)
+				   WHERE id = ?`,
+				p.SeriesID, NamespaceTMDB, p.SeriesID, p.Season, p.Episode, titleID)
 		}
 		if err != nil {
 			return fmt.Errorf("store: pinning the record for %q: %w", p.IdentityKey, err)
@@ -772,7 +800,7 @@ type EpisodeSlot struct {
 	SeasonNumber  int
 	EpisodeNumber int
 	// RecordSeries is the provider series this Episode's record resolves against
-	// (the record id: enrichment_tmdb_id, else tmdb_id — ADR-0045). It is the
+	// (the record id: the `tmdb` record row, else tmdb_id — ADR-0045/0060). It is the
 	// Show's own series unless an Enrichment override moved it, and empty for an
 	// Episode with no record of its own. A value here is NOT evidence that anyone
 	// chose it — enrichment_id_origin is that, and this row does not carry it.

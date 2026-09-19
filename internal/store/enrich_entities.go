@@ -47,6 +47,10 @@ type EntityEnrichment struct {
 	Status        string
 	Source        string
 	ExternalID    string
+	// Namespace is the namespace ExternalID belongs to (`tmdb`, `musicbrainz`,
+	// `anidb`, a third party's own — ADR-0060 decision 3); "" exactly when
+	// ExternalID is empty.
+	Namespace string
 	// ExternalIDOrigin says WHOSE choice ExternalID is (ADR-0046). .Locked() is the
 	// old external_id_locked bit — the id is an Admin-pinned durable Enrichment
 	// override (Fix-info on a Show/Artist/Album, ADR-0019) rather than a transient
@@ -109,8 +113,13 @@ type EntityEnrichmentWrite struct {
 	Network       string
 	Source        string
 	ExternalID    string
-	Genres        []string
-	Artwork       []EntityArtworkRow
+	// Namespace is the namespace ExternalID belongs to (ADR-0060). Empty means "the
+	// source that resolved it" when Source is an Authoritative namespace, else the
+	// kind's default lead (`tmdb` for a Show/Season, `musicbrainz` for an
+	// Artist/Album) — the rule migration 0072 applied to the rows already written.
+	Namespace string
+	Genres    []string
+	Artwork   []EntityArtworkRow
 	// Cast is the parent's ordered cast (a Show's series main cast), rebuilt
 	// wholesale into entity_credits unless 'cast' is Locked — the parent analogue
 	// of a Title's title_credits (cast-photos/02). Empty for a parent kind that
@@ -165,15 +174,17 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 	if _, err := tx.Exec(
 		`INSERT INTO entity_enrichment
 		   (entity_type, entity_id, overview, content_rating, network, external_id,
-		    enrichment_status, enriched_at, enrichment_source)
-		 VALUES (?, ?, ?, ?, ?, ?, 'matched', ?, ?)
+		    external_id_namespace, enrichment_status, enriched_at, enrichment_source)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'matched', ?, ?)
 		 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
 		    overview = excluded.overview, content_rating = excluded.content_rating,
 		    network = excluded.network, external_id = excluded.external_id,
+		    external_id_namespace = excluded.external_id_namespace,
 		    enrichment_status = 'matched',
 		    enriched_at = excluded.enriched_at, enrichment_source = excluded.enrichment_source, `+
 			clearEnrichmentRetry,
 		entityType, entityID, overview, contentRating, network, e.ExternalID,
+		entityNamespace(entityType, e.Namespace, e.Source, e.ExternalID),
 		time.Now().UTC().Format(time.RFC3339), e.Source,
 	); err != nil {
 		return fmt.Errorf("store: upserting entity enrichment: %w", err)
@@ -314,11 +325,13 @@ func (db *DB) EntityEnrichmentByID(entityType, entityID string) (EntityEnrichmen
 	e := EntityEnrichment{Status: "pending"}
 	var externalIDOrigin string
 	err := db.QueryRow(
-		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id, external_id_origin,
+		`SELECT overview, content_rating, network, enrichment_status, enrichment_source, external_id,
+		        external_id_namespace, external_id_origin,
 		        external_release_id, enrichment_attempts, enrichment_retry_at
 		   FROM entity_enrichment WHERE entity_type = ? AND entity_id = ?`,
 		entityType, entityID,
-	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID, &externalIDOrigin,
+	).Scan(&e.Overview, &e.ContentRating, &e.Network, &e.Status, &e.Source, &e.ExternalID,
+		&e.Namespace, &externalIDOrigin,
 		&e.ExternalReleaseID, &e.Attempts, &e.RetryAt)
 	e.ExternalIDOrigin = RecordOrigin(externalIDOrigin)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -642,6 +655,10 @@ type EntityRecordPin struct {
 	// artist or release-GROUP id for an Artist/Album. Album identity is unchanged
 	// and stays the release-group (ADR-0038).
 	ExternalID string
+	// Namespace is the namespace ExternalID belongs to (ADR-0060 decision 3). Empty
+	// means the kind's default lead — `tmdb` for a Show/Season, `musicbrainz` for an
+	// Artist/Album — which is what every caller meant before namespaces existed.
+	Namespace string
 	// ReleaseID is the MusicBrainz RELEASE — one edition — the Admin named, when
 	// they named one: a pasted /release/ URL, or a picked edition. It must be an
 	// edition OF ExternalID; the paste path guarantees that by resolving the release
@@ -662,7 +679,7 @@ type EntityRecordPin struct {
 
 // SetEntityExternalMatch pins an Admin-chosen authoritative external id on a
 // browse-parent entity as a durable Enrichment override (Fix-info on a Show/
-// Artist/Album, ADR-0019). It sets external_id + external_id_origin +
+// Artist/Album, ADR-0019). It sets external_id + its namespace + external_id_origin +
 // external_release_id and resets enrichment_status to 'pending' so the next lookup
 // re-resolves BY the pinned id — touching ONLY the override/bookkeeping columns,
 // never identity (the parent's identity_key and the catalog hierarchy are
@@ -677,14 +694,18 @@ type EntityRecordPin struct {
 func (db *DB) SetEntityExternalMatch(entityType, entityID string, pin EntityRecordPin) error {
 	if _, err := db.Exec(
 		`INSERT INTO entity_enrichment
-		   (entity_type, entity_id, external_id, external_id_origin, external_release_id,
-		    enrichment_status, enriched_at)
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?)
+		   (entity_type, entity_id, external_id, external_id_namespace, external_id_origin,
+		    external_release_id, enrichment_status, enriched_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
 		 ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-		    external_id = excluded.external_id, external_id_origin = excluded.external_id_origin,
+		    external_id = excluded.external_id,
+		    external_id_namespace = excluded.external_id_namespace,
+		    external_id_origin = excluded.external_id_origin,
 		    external_release_id = excluded.external_release_id,
 		    enrichment_status = 'pending', enriched_at = excluded.enriched_at`,
-		entityType, entityID, pin.ExternalID, string(pin.Origin), strings.TrimSpace(pin.ReleaseID),
+		entityType, entityID, pin.ExternalID,
+		entityNamespace(entityType, pin.Namespace, "", pin.ExternalID),
+		string(pin.Origin), strings.TrimSpace(pin.ReleaseID),
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("store: setting entity external match: %w", err)

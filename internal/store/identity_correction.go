@@ -26,7 +26,12 @@ import (
 // folder override agree and a rescan updates this same row. Returns ErrNotFound
 // for an unknown Title.
 func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identityKey string) error {
-	res, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: begin rekey title identity: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(
 		// The enrichment record is cleared alongside the identity id: a genuinely
 		// different work is a clean slate (watch state and Locked fields go too), so a
 		// prior Fix-info override must not outlive it and re-decorate the new work
@@ -35,7 +40,7 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 		`UPDATE titles SET
 		     title = ?, year = ?, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = '', enriched_title = '',
-		     enrichment_tmdb_id = '', enrichment_imdb_id = '', enrichment_id_origin = '',
+		     enrichment_id_namespace = '', enrichment_id_origin = '',
 		     enrichment_status = 'pending', enrichment_source = '', `+clearEnrichmentRetry+`,
 		     `+clearEnrichmentReason+`
 		   WHERE id = ?`,
@@ -50,6 +55,13 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 	}
 	if n == 0 {
 		return ErrNotFound
+	}
+	// Every record row goes with the namespace that named one (ADR-0060).
+	if err := clearRecordIDs(tx, titleID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit rekey title identity: %w", err)
 	}
 	return nil
 }

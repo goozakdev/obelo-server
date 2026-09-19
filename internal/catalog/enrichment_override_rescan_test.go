@@ -60,7 +60,7 @@ func (f *rescanFixture) record(season, episode int) (string, int, int) {
 	var series string
 	var pinSeason, pinEpisode int
 	if err := f.db.QueryRow(
-		`SELECT COALESCE(NULLIF(enrichment_tmdb_id, ''), tmdb_id),
+		`SELECT COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), tmdb_id),
 		        COALESCE(enrichment_season, -1), COALESCE(enrichment_episode, -1)
 		   FROM titles WHERE library_id = 'libtv' AND identity_key = ?`,
 		rescanEpisodeKey(season, episode),
@@ -234,7 +234,7 @@ func TestAMoviesFixInfoSurvivesAScanOfAnEmbeddedIDFolder(t *testing.T) {
 
 	var record, identityID, keyAfter string
 	if err := db.QueryRow(
-		`SELECT COALESCE(NULLIF(enrichment_tmdb_id, ''), tmdb_id), tmdb_id, identity_key
+		`SELECT COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), tmdb_id), tmdb_id, identity_key
 		   FROM titles WHERE id = ?`, titleID,
 	).Scan(&record, &identityID, &keyAfter); err != nil {
 		t.Fatalf("reading the Movie after the scan: %v", err)
