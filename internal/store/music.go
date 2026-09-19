@@ -568,12 +568,13 @@ func scanTrackTitle(s scanner) (Title, error) {
 	var needsReview, ambiguous, hidden int
 	var idOrigin string
 	var recordIDs sql.NullString
+	var identTMDB, identIMDB string
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &t.MusicbrainzID, &needsReview, &ambiguous, &hidden,
 		&t.DiscNumber, &t.TrackNumber,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle, &idOrigin,
 		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.MusicbrainzRecordingID,
-		&t.RecordNamespace, &recordIDs); err != nil {
+		&t.RecordNamespace, &recordIDs, &identTMDB, &identIMDB); err != nil {
 		return Title{}, err
 	}
 	ids, err := decodeRecordIDs(recordIDs)
@@ -581,6 +582,7 @@ func scanTrackTitle(s scanner) (Title, error) {
 		return Title{}, err
 	}
 	t.RecordIDs = ids
+	t.IdentityIDs = identityIDs(identTMDB, identIMDB)
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)

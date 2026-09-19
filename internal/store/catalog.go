@@ -50,6 +50,13 @@ type Title struct {
 	// nil elsewhere.
 	RecordIDs       map[string]string
 	RecordNamespace string
+	// IdentityIDs are the ids the FOLDER asserts, keyed by namespace (`tmdb` from
+	// tmdb_id, `imdb` from imdb_id) — the Scanner's identity columns read raw, with
+	// no record row folded in. It is the "asserted by the folder" half of ADR-0060
+	// decision 6's pin rule, which TMDBID cannot answer because TMDBID mixes the two.
+	// Populated by the same reads as RecordIDs; nil elsewhere and when the folder
+	// asserts nothing.
+	IdentityIDs map[string]string
 	// EnrichmentIDOrigin says WHOSE choice this Title's enrichment record is: nobody's
 	// (an id a pass resolved), the Admin's own on this Title (Fix info, an Episode
 	// pin), or its parent's, applied by a Cascade (ADR-0045, ADR-0046). Both choices
@@ -471,6 +478,10 @@ type TitleTree struct {
 	// series onto the co-File sibling rows a split creates, which have no prior row
 	// to keep it on. The Scanner leaves it empty, and writeTitleRow honors it on
 	// INSERT only: an existing row's enrichment columns are never written by a tree.
+	// Despite the name it is a series id in the SHOW's record namespace, not
+	// necessarily TMDB's: the row and enrichment_id_namespace inherit the Show's
+	// namespace (ADR-0060 decision 5). The name is kept because the file matcher's
+	// only lister is TMDB-shaped today.
 	//
 	// It carries the record and NOT enrichment_id_origin, so an inherited record
 	// reads as one nobody chose: the sibling keeps its anchor and stays eligible for
@@ -590,7 +601,16 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 		titleID = tree.Title.ID
 		recordNS := ""
 		if tree.RecordTMDBID != "" {
-			recordNS = NamespaceTMDB
+			// An inherited series record takes its Show's namespace (ADR-0060
+			// decision 5), like every other Episode pin.
+			recordNS = defaultEntityNamespace(EntityShow)
+			if ep.seasonID != "" {
+				ns, err := seriesNamespaceForSeason(tx, ep.seasonID)
+				if err != nil {
+					return "", err
+				}
+				recordNS = ns
+			}
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO titles
@@ -608,7 +628,7 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			return "", fmt.Errorf("store: inserting title: %w", err)
 		}
 		if tree.RecordTMDBID != "" {
-			if err := putRecordID(tx, titleID, NamespaceTMDB, tree.RecordTMDBID); err != nil {
+			if err := putRecordID(tx, titleID, recordNS, tree.RecordTMDBID); err != nil {
 				return "", err
 			}
 		}
@@ -1493,6 +1513,7 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 	var idOrigin string
 	var pinSeason, pinEpisode sql.NullInt64
 	var recordIDs sql.NullString
+	var identTMDB, identIMDB string
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
@@ -1501,7 +1522,7 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 		&pinSeason, &pinEpisode, &idOrigin,
 		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.EnrichmentReason,
 		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
-		&t.RecordNamespace, &recordIDs); err != nil {
+		&t.RecordNamespace, &recordIDs, &identTMDB, &identIMDB); err != nil {
 		return Title{}, err
 	}
 	ids, err := decodeRecordIDs(recordIDs)
@@ -1509,6 +1530,7 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 		return Title{}, err
 	}
 	t.RecordIDs = ids
+	t.IdentityIDs = identityIDs(identTMDB, identIMDB)
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)

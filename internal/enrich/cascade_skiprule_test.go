@@ -64,9 +64,9 @@ func mustSkip(t *testing.T, svc *Service, child store.Title, want bool, why stri
 func TestAnInheritedRecordIsNotAChoice(t *testing.T) {
 	svc := skipService(nil)
 
-	mustSkip(t, svc, store.Title{ID: "ep-auto", Kind: "episode", TMDBID: "1438"}, false,
+	mustSkip(t, svc, store.Title{ID: "ep-auto", Kind: "episode", RecordIDs: map[string]string{"tmdb": "1438"}, RecordNamespace: "tmdb"}, false,
 		"a record id with no lock is what a pass resolved or a Clear wrote back, not an Admin's pick")
-	mustSkip(t, svc, store.Title{ID: "tr-auto", Kind: "track", MusicbrainzID: "rec-auto"}, false,
+	mustSkip(t, svc, store.Title{ID: "tr-auto", Kind: "track", RecordIDs: map[string]string{"musicbrainz": "rec-auto"}, RecordNamespace: "musicbrainz"}, false,
 		"a Track's recording id is filled by every ordinary MusicBrainz lookup")
 }
 

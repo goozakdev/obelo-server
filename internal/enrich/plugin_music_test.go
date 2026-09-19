@@ -270,8 +270,9 @@ func TestAPastedRefKeepsItsGotAndWantAcrossTheContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got != (ExternalRef{ExternalID: "rg-1", ReleaseID: "rel-1"}) {
-		t.Errorf("ref = %+v, want both the release-group and the release", got)
+	// ...stamped with the answering Plugin's id as its namespace (ADR-0060 decision 5).
+	if got != (ExternalRef{ExternalID: "rg-1", ReleaseID: "rel-1", Namespace: "fakemusic"}) {
+		t.Errorf("ref = %+v, want both the release-group and the release, in the plugin's namespace", got)
 	}
 	if source.lastKind != "album" || source.lastPasted != "https://musicbrainz.org/release/rel-1" {
 		t.Errorf("the request did not cross intact: kind=%q pasted=%q", source.lastKind, source.lastPasted)
@@ -331,6 +332,8 @@ func TestAnAlbumCandidateKeepsItsTracklistAndEdition(t *testing.T) {
 	}
 	source := &searchingSource{cands: []Candidate{want}}
 	provider := ProviderFromPlugin(musicCapable(), pluginFromProvider(source))
+	// The host stamps the namespace from the Plugin it asked (ADR-0060 decision 5).
+	want.Source = "fakemusic"
 
 	got, err := provider.Search(context.Background(), "album", "OK Computer", SearchOptions{})
 	if err != nil {

@@ -98,6 +98,9 @@ func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalI
 	if err != nil {
 		return CascadeSummary{}, err
 	}
+	// Each Episode is pinned in the Show's namespace: a Cascade inherits its
+	// parent's (ADR-0060 decision 5).
+	showRec := parentRecord{ID: showExternalID, Namespace: s.parentNamespace(store.EntityShow, showID)}
 	var sum CascadeSummary
 	for _, se := range seasons {
 		eps, err := s.store.EpisodesForSeason(se.ID)
@@ -116,7 +119,7 @@ func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalI
 			// per-episode anchor collectTVLeaves threads) and re-enrich by its
 			// season+episode. Best-effort: a per-child error routes it to attention
 			// rather than aborting the whole cascade.
-			matched, err := s.reenrichEpisode(ctx, ep, showExternalID)
+			matched, err := s.reenrichEpisode(ctx, ep, showRec)
 			if err != nil {
 				// An Episode, so none of ADR-0050's five reasons applies (they are
 				// Music-shaped); the empty reason also clears any prior one.
@@ -147,8 +150,9 @@ func (s *Service) cascadeShowEpisodes(ctx context.Context, showID, showExternalI
 // The pin is recorded as store.OriginCascaded — the SHOW's choice, held by the
 // Episode. That keeps it durable against every pass while leaving the Episode
 // eligible for its Show's next "apply to children" (ADR-0046).
-func (s *Service) reenrichEpisode(ctx context.Context, ep store.Title, showExternalID string) (bool, error) {
-	if err := s.store.SetTitleExternalMatch(ep.ID, store.ExternalMatch{TMDBID: showExternalID}, store.OriginCascaded); err != nil {
+func (s *Service) reenrichEpisode(ctx context.Context, ep store.Title, show parentRecord) (bool, error) {
+	if err := s.store.SetTitleExternalMatch(ep.ID,
+		store.ExternalMatch{Namespace: show.Namespace, ID: show.ID}, store.OriginCascaded); err != nil {
 		return false, err
 	}
 	// Serialize against a concurrent pass over the same Library (as MatchTitle does).
@@ -164,9 +168,14 @@ func (s *Service) reenrichEpisode(ctx context.Context, ep store.Title, showExter
 	}
 
 	var res Result
-	ref := TitleRef{
-		Kind: "episode", Title: ep.Title, TMDBID: showExternalID,
+	ref := withExternalIDs(TitleRef{
+		Kind: "episode", Title: ep.Title,
 		SeasonNumber: ep.SeasonNumber, EpisodeNumber: ep.EpisodeNumber, EpisodeLabel: ep.EpisodeLabel,
+	}, idsIn(show.Namespace, show.ID))
+	// processLeaf reads the Episode's record to decide its pin; the row the cascade
+	// walked predates the write above, so it is re-read.
+	if fresh, err := s.store.TitleForEnrichmentByID(ep.ID); err == nil {
+		ep.RecordIDs, ep.RecordNamespace, ep.EnrichmentIDOrigin = fresh.RecordIDs, fresh.RecordNamespace, fresh.EnrichmentIDOrigin
 	}
 	if err := s.processLeaf(ctx, snap, leafWork{title: ep, ref: ref}, &res); err != nil {
 		return false, err
@@ -199,6 +208,7 @@ func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (Cas
 	if err != nil {
 		return CascadeSummary{}, err
 	}
+	artistNS := s.parentNamespace(store.EntityArtist, artistID)
 	var sum CascadeSummary
 	for _, al := range albums {
 		skip, err := s.albumHasOwnOverride(al.ID)
@@ -230,8 +240,10 @@ func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (Cas
 		// album it is re-pointing may not be the album whose edition was chosen. The
 		// skip above means it never reaches an album whose record the Admin chose ON
 		// IT, which is the only way an edition can be stored (ADR-0046/0052).
+		// The Album is pinned in the ARTIST's namespace: a Cascade inherits its
+		// parent's (ADR-0060 decision 5).
 		if err := s.applyEntityOverride(ctx, store.EntityAlbum, al.ID,
-			EntityPin{ExternalID: cand.ExternalID}, store.OriginCascaded); err != nil {
+			EntityPin{ExternalID: cand.ExternalID, Namespace: artistNS}, store.OriginCascaded); err != nil {
 			attn, aerr := s.routeAlbumTracksToAttention(al.ID)
 			if aerr != nil {
 				return sum, aerr
@@ -310,6 +322,9 @@ func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Cand
 	if cand == nil {
 		declineReason = store.EnrichmentReasonAlbumUnmatched
 	}
+	// A Cascade inherits the parent's namespace (ADR-0060 decision 5): each Track's
+	// recording is pinned in the namespace of the Album it was mapped from.
+	albumNS := s.parentNamespace(store.EntityAlbum, albumID)
 	var sum CascadeSummary
 	for _, tr := range tracks {
 		skip, err := s.childHasOwnOverride(tr)
@@ -330,7 +345,7 @@ func (s *Service) mapAlbumTracks(ctx context.Context, albumID string, cand *Cand
 			sum.Attention++
 			continue
 		}
-		if err := s.applyOverride(ctx, tr.ID, tc.ExternalID, store.OriginCascaded); err != nil {
+		if err := s.applyOverride(ctx, tr.ID, tc.ExternalID, albumNS, store.OriginCascaded); err != nil {
 			// The mapping SUCCEEDED and pinning it failed — a provider or store error,
 			// not a statement about this Track. None of the five fits, so the empty
 			// reason gives the generic sentence rather than a confident wrong one.

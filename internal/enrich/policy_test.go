@@ -12,24 +12,58 @@ import (
 // provider leads its kind, and whether a provider is reachable in an effective
 // config — the inputs processLeaf routes on (override-wins vs. orphaned→attention).
 func TestPinnedProviderPrecedenceHelpers(t *testing.T) {
-	// pinnedProviderFor: a video Title with a TMDB id pins TMDB; a Track with an MBID
-	// pins its Library's MUSIC LEAD, because the column it lives in names no source
-	// (see pinnedProviderFor); a Title with no external id is unpinned.
-	if slug, ok := pinnedProviderFor(store.Title{Kind: "movie", TMDBID: "555"}, ProviderConfig{}); !ok || slug != SlugTMDB {
-		t.Errorf("movie w/ tmdb id: got %q/%v, want tmdb/true", slug, ok)
+	// pinnedProviderFor (ADR-0060 decision 6): a Title is pinned to its record's
+	// NAMESPACE only when the record is a DECISION — chosen or cascaded, or asserted
+	// by the folder — and the namespace names a registered Authoritative provider.
+	cat := shippedCatalog()
+	record := func(kind, ns, id string, origin store.RecordOrigin) store.Title {
+		return store.Title{Kind: kind, RecordIDs: map[string]string{ns: id}, RecordNamespace: ns,
+			EnrichmentIDOrigin: origin}
 	}
-	if slug, ok := pinnedProviderFor(store.Title{Kind: "track", MusicbrainzID: "mb"}, ProviderConfig{}); !ok || slug != SlugMusicBrainz {
-		t.Errorf("track w/ mbid: got %q/%v, want musicbrainz/true", slug, ok)
+	pins := []struct {
+		name     string
+		title    store.Title
+		wantSlug string
+		wantPin  bool
+	}{
+		{"a Fix-info'd movie pins its record's namespace",
+			record("movie", "tmdb", "555", store.OriginChosen), SlugTMDB, true},
+		{"a cascaded Episode pins its record's namespace",
+			record("episode", "anidb", "69", store.OriginCascaded), SlugAniDB, true},
+		{"a chosen Track pins musicbrainz, not the Library's lead",
+			record("track", "musicbrainz", "mb", store.OriginChosen), SlugMusicBrainz, true},
+		{"a folder {tmdb-…} token pins tmdb with no record at all",
+			store.Title{Kind: "movie", IdentityIDs: map[string]string{"tmdb": "603"}}, SlugTMDB, true},
+		// The recorded behaviour change: an id a pass resolved on its own is no pin,
+		// whatever namespace it is in, so a repointed Library re-resolves it.
+		{"an auto-resolved TMDB record is not a pin",
+			record("movie", "tmdb", "555", store.OriginDerived), "", false},
+		{"an auto-resolved MusicBrainz record is not a pin",
+			record("track", "musicbrainz", "mb", store.OriginDerived), "", false},
+		// imdb names no Authoritative provider: the lead handles it, as it always has.
+		{"a folder {imdb-…} token is not a pin",
+			store.Title{Kind: "movie", IdentityIDs: map[string]string{"imdb": "tt0133093"}}, "", false},
+		{"a chosen imdb record is not a pin",
+			record("movie", "imdb", "tt0133093", store.OriginChosen), "", false},
+		// Neither is a namespace no registered provider claims (an uninstalled plugin),
+		// nor one of a provider that cannot lead the kind.
+		{"a chosen record of an unregistered namespace is not a pin",
+			record("movie", "anilist", "1", store.OriginChosen), "", false},
+		{"a chosen video record in a music namespace is not a pin",
+			record("movie", "musicbrainz", "mb", store.OriginChosen), "", false},
+		{"a Title with no id is not a pin", store.Title{Kind: "movie"}, "", false},
 	}
-	// A repointed music Library reads the same record as its own lead's, so the
-	// per-item precedence stays a no-op rather than orphaning every Track.
+	for _, c := range pins {
+		slug, ok := pinnedProviderFor(c.title, cat)
+		if ok != c.wantPin || slug != c.wantSlug {
+			t.Errorf("%s: got %q/%v, want %q/%v", c.name, slug, ok, c.wantSlug, c.wantPin)
+		}
+	}
+	// With no catalog (the fixed-provider path) nothing is registered, so nothing pins.
+	if _, ok := pinnedProviderFor(record("movie", "tmdb", "555", store.OriginChosen), Catalog{}); ok {
+		t.Errorf("a pin resolved against an empty catalog; want every item to ride the lead")
+	}
 	leadElsewhere := ProviderConfig{AuthoritativeMusic: "someplugin"}
-	if slug, _ := pinnedProviderFor(store.Title{Kind: "track", MusicbrainzID: "mb"}, leadElsewhere); slug != "someplugin" {
-		t.Errorf("track w/ mbid under a repointed music lead = %q, want the lead", slug)
-	}
-	if _, ok := pinnedProviderFor(store.Title{Kind: "movie"}, ProviderConfig{}); ok {
-		t.Errorf("movie w/ no id: got pinned, want unpinned")
-	}
 
 	// authoritativeSlugFor: each kind reads its own pointer (default TMDB /
 	// MusicBrainz, or a repoint).

@@ -204,6 +204,9 @@ func (a pluginProvider) Search(ctx context.Context, kind, query string, opts Sea
 			TypeLabel:      c.TypeLabel,
 			Tracklist:      domainTracklist(c.Tracklist),
 			ReleaseID:      c.ReleaseID,
+			// The HOST stamps the namespace from the Plugin it asked (ADR-0060
+			// decision 5): a source's namespace is its plugin id.
+			Source: a.desc.Slug,
 		})
 	}
 	return out, nil
@@ -546,7 +549,9 @@ func (a pluginProvider) ParseExternalRef(ctx context.Context, kind, pasted strin
 		}
 		return ExternalRef{}, err
 	}
-	return ExternalRef{ExternalID: resp.ExternalID, ReleaseID: resp.ReleaseID}, nil
+	// Stamped with the answering Plugin's id: it is the namespace of the id it read
+	// (ADR-0060 decision 5).
+	return ExternalRef{ExternalID: resp.ExternalID, ReleaseID: resp.ReleaseID, Namespace: a.desc.Slug}, nil
 }
 
 // albumTracklister reports whether this Plugin may be asked what an album holds:
