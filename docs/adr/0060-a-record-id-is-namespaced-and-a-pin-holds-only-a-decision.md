@@ -76,7 +76,15 @@ provider, rather than the Library's lead, when the record is:
   (ADR-0002).
 
 When that provider is unreachable the item is ORPHANED and filed to the attention list, as
-before. A record an enrichment pass resolved on its own (origin `''`) in a namespace that is
+before.
+
+**A pinned Show's Seasons and Episodes follow it** (added 2026-09-19). A Season, and an Episode
+with no decision of its own, resolve through their Show's provider whenever the Show is pinned
+(its chosen/cascaded record, else its folder token), because the only id they carry is the
+Show's series id and only that provider can read it. Left with the lead, a TMDB-pinned Show in
+an AniDB-led Library would hand AniDB a TMDB series id for every child. An Episode's own
+decision still outranks its Show's, and a Show that is merely auto-resolved lends its children
+nothing: they go wherever the lead goes, as the Show itself does. A record an enrichment pass resolved on its own (origin `''`) in a namespace that is
 not the current lead's is **not** a pin: the next pass re-resolves it via the lead and replaces
 the id and namespace. Repointing a Library now means what it says.
 

@@ -234,6 +234,40 @@ func showAssertedRecord(sh store.Show) parentRecord {
 	return parentRecord{}
 }
 
+// showPin is the Show's record when that record is a DECISION (ADR-0060 decision 6),
+// in enrichParent's own precedence — a chosen or cascaded record, else the folder's
+// token — and empty when the Show's record is one a pass resolved on its own. It is
+// what a pinned Show's CHILDREN follow: a Season and an Episode have no decision of
+// their own about which source knows their Show, so they resolve through the same
+// provider the Show does. Were they left with the lead, a TMDB-pinned Show in an
+// AniDB-led Library would hand AniDB a TMDB series id for every one of them.
+func (s *Service) showPin(sh store.Show) parentRecord {
+	if e, err := s.store.EntityEnrichmentByID(store.EntityShow, sh.ID); err == nil && e.ExternalIDOrigin.Locked() {
+		if rec := storedParentRecord(store.EntityShow, e); rec.ID != "" {
+			return rec
+		}
+	}
+	return showAssertedRecord(sh)
+}
+
+// episodeShowPin is showPin for an Episode reached on its own (a single-Title
+// re-enrich), which arrives with nothing but its id. Anything that is not an
+// Episode, or whose Show cannot be read, follows no Show.
+func (s *Service) episodeShowPin(t store.Title) parentRecord {
+	if t.Kind != "episode" {
+		return parentRecord{}
+	}
+	ec, err := s.store.EpisodeContextForTitle(t.ID)
+	if err != nil {
+		return parentRecord{}
+	}
+	sh, err := s.store.ShowByID(ec.ShowID)
+	if err != nil {
+		return parentRecord{}
+	}
+	return s.showPin(sh)
+}
+
 // assertedParentRecord is showAssertedRecord for a parent named by type and id: a
 // Show's folder token, and nothing for every other parent, whose ids no folder
 // asserts (an Artist's or Album's tag MBID is decoration, ADR-0049). A failed read
