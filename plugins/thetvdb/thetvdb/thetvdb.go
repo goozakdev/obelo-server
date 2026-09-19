@@ -213,7 +213,7 @@ func (p *Provider) ArtworkCandidates(context.Context, pluginapi.ArtworkCandidate
 // TheTVDB id when present, else the lowercased title. It keeps by-id and by-name
 // lookups of the same show distinct in the cache.
 func seriesKey(ref pluginapi.MediaRef) string {
-	if id := strings.TrimSpace(ref.TheTVDBID); id != "" {
+	if id := ref.ID(pluginapi.NamespaceTheTVDB); id != "" {
 		return "id=" + id
 	}
 	return "name=" + strings.ToLower(strings.TrimSpace(ref.Title))
@@ -259,7 +259,7 @@ func (p *Provider) store(key string, r result) {
 // the top hit of a series search by title. A search with no results is
 // errNoRecord.
 func (p *Provider) seriesID(ctx context.Context, s pluginapi.Settings, ref pluginapi.MediaRef) (string, error) {
-	if id := strings.TrimSpace(ref.TheTVDBID); id != "" {
+	if id := ref.ID(pluginapi.NamespaceTheTVDB); id != "" {
 		return id, nil
 	}
 	title := strings.TrimSpace(ref.Title)

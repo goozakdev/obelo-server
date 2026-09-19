@@ -154,7 +154,7 @@ func (p *Provider) lookupArtist(ctx context.Context, s pluginapi.Settings, ref p
 // recording MBID when present and otherwise by artist+name. No record, or a record
 // with no description, is a no-match. No artwork is returned (out of scope).
 func (p *Provider) lookupTrack(ctx context.Context, s pluginapi.Settings, ref pluginapi.MediaRef) (pluginapi.LookupResponse, error) {
-	mbid := strings.TrimSpace(ref.MusicbrainzID)
+	mbid := ref.ID(pluginapi.NamespaceMusicBrainz)
 	track := strings.TrimSpace(ref.Track)
 	artistName := strings.TrimSpace(ref.Artist)
 
@@ -263,7 +263,7 @@ type artist struct {
 // false when the ref carries neither — nothing to key a lookup by. Shared by the
 // enrichment Lookup and the Artist Photo candidate list.
 func artistRequest(s pluginapi.Settings, ref pluginapi.MediaRef) (key, reqURL string, ok bool) {
-	mbid := strings.TrimSpace(ref.MusicbrainzID)
+	mbid := ref.ID(pluginapi.NamespaceMusicBrainz)
 	name := strings.TrimSpace(ref.Title)
 	if name == "" {
 		name = strings.TrimSpace(ref.Artist)

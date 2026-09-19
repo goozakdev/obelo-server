@@ -82,18 +82,19 @@ func (p *Provider) Host() pluginsdk.Host { return p.host }
 
 // Lookup resolves ref to TMDB metadata, dispatching by kind. Movie/Show resolve
 // the work (search by title+year unless an id is present); Season/Episode resolve
-// the season/episode under the show id carried on the ref. With a TMDBID a record
+// the season/episode under the show id carried on the ref. With a TMDB id (ref.ID) a record
 // is fetched directly; otherwise a search takes the top result. A search with no
 // results (or a missing show id for a season/episode) is OutcomeNoMatch. Music
 // kinds are not TMDB's — they are OutcomeNoMatch too (the MusicBrainz plugin
 // serves them).
 func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (pluginapi.LookupResponse, error) {
 	ref := req.Ref
+	tmdbID := ref.ID(pluginapi.NamespaceTMDB)
 	s := p.host.Settings()
 
 	switch ref.Kind {
 	case "movie":
-		id := ref.TMDBID
+		id := tmdbID
 		if id == "" {
 			found, err := p.searchMovie(ctx, s, ref.Title, ref.Year)
 			if err != nil {
@@ -110,7 +111,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 		}
 		return matched(rec), nil
 	case "show":
-		id := ref.TMDBID
+		id := tmdbID
 		if id == "" {
 			found, err := p.searchTV(ctx, s, ref.Title, ref.Year)
 			if err != nil {
@@ -127,19 +128,19 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 		}
 		return matched(rec), nil
 	case "season":
-		if ref.TMDBID == "" {
+		if tmdbID == "" {
 			return noMatch(), nil // no resolved show id → can't locate a season
 		}
-		rec, err := p.seasonDetails(ctx, s, ref.TMDBID, ref.SeasonNumber)
+		rec, err := p.seasonDetails(ctx, s, tmdbID, ref.SeasonNumber)
 		if err != nil {
 			return lookupFailure(err)
 		}
 		return matched(rec), nil
 	case "episode":
-		if ref.TMDBID == "" {
+		if tmdbID == "" {
 			return noMatch(), nil
 		}
-		rec, err := p.episodeDetails(ctx, s, ref.TMDBID, ref.SeasonNumber, ref.EpisodeNumber)
+		rec, err := p.episodeDetails(ctx, s, tmdbID, ref.SeasonNumber, ref.EpisodeNumber)
 		if err != nil {
 			return lookupFailure(err)
 		}
@@ -241,7 +242,8 @@ func (p *Provider) Search(ctx context.Context, req pluginapi.SearchRequest) (plu
 // OutcomeUnavailable, the picker's "not now". Read-only.
 func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkCandidatesRequest) (pluginapi.ArtworkCandidatesResponse, error) {
 	ref := req.Ref
-	if ref.TMDBID == "" {
+	tmdbID := ref.ID(pluginapi.NamespaceTMDB)
+	if tmdbID == "" {
 		// No resolved record → nothing to list, and no call made.
 		return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeMatched}, nil
 	}
@@ -256,13 +258,13 @@ func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkC
 	var path string
 	switch ref.Kind {
 	case "movie":
-		path = "/movie/" + ref.TMDBID + "/images"
+		path = "/movie/" + tmdbID + "/images"
 	case "show":
-		path = "/tv/" + ref.TMDBID + "/images"
+		path = "/tv/" + tmdbID + "/images"
 	case "season":
-		path = "/tv/" + ref.TMDBID + "/season/" + strconv.Itoa(ref.SeasonNumber) + "/images"
+		path = "/tv/" + tmdbID + "/season/" + strconv.Itoa(ref.SeasonNumber) + "/images"
 	case "episode":
-		path = "/tv/" + ref.TMDBID + "/season/" + strconv.Itoa(ref.SeasonNumber) +
+		path = "/tv/" + tmdbID + "/season/" + strconv.Itoa(ref.SeasonNumber) +
 			"/episode/" + strconv.Itoa(ref.EpisodeNumber) + "/images"
 	default:
 		return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeUnavailable}, nil

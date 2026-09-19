@@ -16,7 +16,7 @@
 // by a source that understands them. It NEVER affects identity or Watch state
 // (ADR-0002/0014) — its ExternalID is the resolved AniDB anime id and nothing
 // more. AniDB ids are not naming-convention-derived, so this provider resolves BY
-// a pinned anime id (MediaRef.AniDBID, set by a Fix-info Enrichment override); a
+// a pinned anime id (the ref's anidb id, set by a Fix-info Enrichment override); a
 // name-based match against the offline titles dump is a deliberate future
 // concern, so a lookup with no anime id is a normal OutcomeNoMatch.
 //
@@ -151,7 +151,7 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 	default:
 		return noMatch(), nil // AniDB serves the video kinds only
 	}
-	aid := strings.TrimSpace(ref.AniDBID)
+	aid := ref.ID(pluginapi.NamespaceAniDB)
 	if aid == "" {
 		return noMatch(), nil // AniDB ids are not naming-derived
 	}
@@ -203,7 +203,7 @@ func (p *Provider) Search(context.Context, pluginapi.SearchRequest) (pluginapi.S
 // role when the ref carries a resolved anime id; every other role/kind yields no
 // candidates and makes no call.
 func (p *Provider) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkCandidatesRequest) (pluginapi.ArtworkCandidatesResponse, error) {
-	aid := strings.TrimSpace(req.Ref.AniDBID)
+	aid := req.Ref.ID(pluginapi.NamespaceAniDB)
 	if req.Role != "poster" || aid == "" {
 		return pluginapi.ArtworkCandidatesResponse{Outcome: pluginapi.OutcomeMatched}, nil
 	}

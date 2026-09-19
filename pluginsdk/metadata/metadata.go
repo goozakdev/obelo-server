@@ -39,6 +39,15 @@
 // The manifest is still what stops the call from being made at all: the host
 // consults the declared capabilities BEFORE it calls, so an undeclared capability
 // costs no call into the guest. Declare only what you implement.
+//
+// # Reading an id
+//
+// Read an external id off the reference you are handed with ref.ID(namespace) —
+// pluginapi.NamespaceTMDB, pluginapi.NamespaceMusicBrainz, or a third party's
+// plugin id — never from the named TMDBID/IMDBID/... fields. ID reads
+// MediaRef.ExternalIDs and falls back to those v1 mirrors, so it answers an older
+// host too (ADR-0060 decision 7). It is a method on the contract's own MediaRef,
+// because that is the type the ref IS here.
 package metadata
 
 import pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"

@@ -258,6 +258,18 @@ func (g *generator) typeSchema(t reflect.Type) (any, error) {
 			return nil, err
 		}
 		return obj().set("type", "array").set("items", items), nil
+	case reflect.Map:
+		// A map crosses the wire as a JSON object with arbitrary keys, and encoding/json
+		// only writes string-keyed maps as objects. MediaRef.ExternalIDs is the one
+		// today: keyed by External-id namespace, which is an open set (ADR-0060).
+		if t.Key().Kind() != reflect.String {
+			return nil, fmt.Errorf("schemagen: map %s has a non-string key", t)
+		}
+		values, err := g.typeSchema(t.Elem())
+		if err != nil {
+			return nil, err
+		}
+		return obj().set("type", "object").set("additionalProperties", values), nil
 	case reflect.Struct:
 		if !g.byName[t.Name()] {
 			// A new wire struct has to be named in spec.go before it can be

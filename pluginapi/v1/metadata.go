@@ -1,6 +1,9 @@
 package v1
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // The Metadata provider Extension point (ADR-0027 behind ADR-0057): resolve a
 // locally-parsed identity to a descriptive record, offer candidates for an Admin
@@ -33,9 +36,20 @@ type MediaRef struct {
 	Title string `json:"title,omitempty"`
 	Year  int    `json:"year,omitempty"`
 
-	// The external ids the host already holds for this entity, each empty unless a
-	// curated token, a prior enrichment or an Admin's correction supplied it. A
-	// Plugin uses the one it owns and ignores the rest.
+	// ExternalIDs is every external id the host already holds for this entity and
+	// its parents, keyed by External-id NAMESPACE — NamespaceTMDB, NamespaceIMDB,
+	// NamespaceMusicBrainz, NamespaceTheTVDB, NamespaceAniDB, or a third-party
+	// source's own, which is its plugin id (ADR-0060 decisions 1 and 7). An id is
+	// there when a curated folder token, a prior enrichment or an Admin's correction
+	// supplied it. It is THE id carrier: a Plugin reads the namespace it owns, or
+	// one it knows how to use, through [MediaRef.ID] and ignores the rest.
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+
+	// The five named id fields are V1 MIRRORS of ExternalIDs for the five shipped
+	// namespaces, kept because a guest built before the map existed reads them. The
+	// host fills each from the same map, so the two never disagree. A new Plugin
+	// should not read them: [MediaRef.ID] reads the map and falls back to these for
+	// an older host that fills only them.
 	TMDBID        string `json:"tmdbId,omitempty"`
 	IMDBID        string `json:"imdbId,omitempty"`
 	MusicbrainzID string `json:"musicbrainzId,omitempty"`
@@ -60,6 +74,62 @@ type MediaRef struct {
 	// than through its name (ADR-0053). They are evidence, not a pin: a Plugin is
 	// free to use none of them.
 	AlbumHints []AlbumHint `json:"albumHints,omitempty"`
+}
+
+// The External-id namespaces this contract names, each the key of an id in
+// MediaRef.ExternalIDs and the value of a MetadataRecord.Source that resolved one.
+// Each shipped source's namespace is its plugin id; IMDb ids belong to no plugin of
+// their own (OMDb reads them), and MusicBrainz ids are read by fanart.tv and
+// TheAudioDB too, which is why an id is keyed by namespace and not by who reads it
+// (ADR-0060 decision 1). A third-party source's namespace is its own plugin id and
+// needs no constant here.
+const (
+	NamespaceTMDB        = "tmdb"
+	NamespaceIMDB        = "imdb"
+	NamespaceMusicBrainz = "musicbrainz"
+	NamespaceTheTVDB     = "thetvdb"
+	NamespaceAniDB       = "anidb"
+)
+
+// NamedNamespaces are the five namespaces that have a named v1 mirror field on
+// MediaRef, in the fields' declaration order. A fresh slice every call.
+func NamedNamespaces() []string {
+	return []string{NamespaceTMDB, NamespaceIMDB, NamespaceMusicBrainz, NamespaceTheTVDB, NamespaceAniDB}
+}
+
+// ID is the id this reference carries in namespace ns, and "" when it carries
+// none. It reads ExternalIDs first and falls back to the named v1 mirror for the
+// five shipped namespaces, so one call answers both a host that fills only the map
+// and an older one that fills only the named fields. The value is trimmed of
+// surrounding whitespace, which every reader wanted and did separately.
+//
+// It is a method on the wire type rather than a helper in the SDK because the ref a
+// guest is handed IS this type (the SDK's Provider is an alias for the contract's
+// interface), and a package cannot declare a method on another package's type.
+func (r MediaRef) ID(ns string) string {
+	if id := strings.TrimSpace(r.ExternalIDs[ns]); id != "" {
+		return id
+	}
+	return strings.TrimSpace(r.NamedID(ns))
+}
+
+// NamedID is the named v1 mirror field for namespace ns, untrimmed, and "" for a
+// namespace that has none. It exists for the host, which fills the mirrors from
+// the map and reads them back into it; a Plugin reads [MediaRef.ID].
+func (r MediaRef) NamedID(ns string) string {
+	switch ns {
+	case NamespaceTMDB:
+		return r.TMDBID
+	case NamespaceIMDB:
+		return r.IMDBID
+	case NamespaceMusicBrainz:
+		return r.MusicbrainzID
+	case NamespaceTheTVDB:
+		return r.TheTVDBID
+	case NamespaceAniDB:
+		return r.AniDBID
+	}
+	return ""
 }
 
 // AlbumHint is one local album offered as corroboration for its artist: the title
@@ -117,9 +187,10 @@ type MetadataRecord struct {
 	Cast    []Credit     `json:"cast,omitempty"`
 	Artwork []ArtworkRef `json:"artwork,omitempty"`
 
-	// ExternalID is the id this source resolved for the entity, and Source its
-	// slug. Together they are what a later pass re-resolves by, and what an Admin's
-	// Enrichment override pins.
+	// ExternalID is the id this source resolved for the entity, and Source names
+	// the External-id NAMESPACE that id belongs to — which, for a source, is its own
+	// plugin id (ADR-0060 decision 1). Together they are a namespaced id: what a
+	// later pass re-resolves by, and what an Admin's Enrichment override pins.
 	ExternalID string `json:"externalId,omitempty"`
 	Source     string `json:"source,omitempty"`
 

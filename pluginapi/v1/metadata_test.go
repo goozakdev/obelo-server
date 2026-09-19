@@ -13,9 +13,12 @@ func metadataWireCases() []wireCase {
 		{
 			name: "MediaRef",
 			value: MediaRef{
-				Kind:          "episode",
-				Title:         "Breaking Bad",
-				Year:          2008,
+				Kind:  "episode",
+				Title: "Breaking Bad",
+				Year:  2008,
+				ExternalIDs: map[string]string{
+					"tmdb": "1396", "imdb": "tt0903747", "anilist": "4242",
+				},
 				TMDBID:        "1396",
 				IMDBID:        "tt0903747",
 				MusicbrainzID: "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
@@ -32,7 +35,8 @@ func metadataWireCases() []wireCase {
 					{Title: "Hotel California", ReleaseGroupMBID: "f2b67b28-6b1b-4c56-b1cd-1a0b4b1c2b21"},
 				},
 			},
-			golden: `{"kind":"episode","title":"Breaking Bad","year":2008,"tmdbId":"1396",` +
+			golden: `{"kind":"episode","title":"Breaking Bad","year":2008,` +
+				`"externalIds":{"anilist":"4242","imdb":"tt0903747","tmdb":"1396"},"tmdbId":"1396",` +
 				`"imdbId":"tt0903747","musicbrainzId":"b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",` +
 				`"thetvdbId":"81189","anidbId":"1","seasonNumber":2,"episodeNumber":5,` +
 				`"episodeLabel":"2x05","artist":"Eagles","album":"Hotel California",` +
