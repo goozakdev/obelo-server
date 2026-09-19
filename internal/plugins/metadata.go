@@ -295,7 +295,14 @@ func (g *guestProvider) call(ctx context.Context, export string, req, out any) e
 	// pacing became the guest's, waits between them; every one of those fetches is
 	// bounded by what is left of this budget, so the guest is always back with an
 	// answer before the deadline that would kill it.
-	return g.p.callGuestWithin(ctx, g.p.metaCallBudget, export, hostOf(g.settings.URL), req, out)
+	//
+	// And the policy is the METADATA one: a guest that runs to completion and
+	// cleanly answers an error has ANSWERED — the item is parked, the instance is
+	// kept, and no strike is counted (see callPolicy).
+	return g.p.callGuestUnder(ctx, callPolicy{
+		budget:            g.p.metaCallBudget,
+		refusalIsAnAnswer: true,
+	}, export, hostOf(g.settings.URL), req, out)
 }
 
 // setCallSettings publishes (or withdraws) the Settings settings_get answers with.

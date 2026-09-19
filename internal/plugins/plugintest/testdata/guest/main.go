@@ -281,6 +281,12 @@ func itoa(n int) string {
 
 var spun uint64
 
+// refusals counts the calls THIS INSTANCE has answered with a clean error. It is
+// package state in a guest's linear memory, so it lives exactly as long as the
+// instance does — which makes it the suite's proof of whether the host kept the
+// instance or rebuilt it.
+var refusals uint64
+
 func misbehave(req deliverRequest) (uint64, bool) {
 	switch mode(req.Settings.URL) {
 	case "panic":
@@ -291,6 +297,14 @@ func misbehave(req deliverRequest) (uint64, bool) {
 		for {
 			spun++
 		}
+	case "refuse":
+		// The SINK's clean error: it ran to completion and answered `0` with a
+		// sentence. A Metadata provider gets to do that for free (ADR-0058 decision
+		// 7 as amended 2026-09-18); a sink does not, and the count in the sentence
+		// is what proves it — every one of these reads "refusal 1", because the
+		// instance that answered it is dropped before the next call.
+		refusals++
+		return fail("this sink cannot deliver and says so cleanly (refusal " + itoa(int(refusals)) + " from this instance)"), true
 	case "forbidden":
 		return reply(reportRefusal(fetch(fetchRequest{URL: "https://not-allowed.example.test/steal"}))), true
 	case "metadata":
@@ -637,6 +651,18 @@ func metadataLookup(ptr, n uint32) uint64 {
 		return reply(lookupResponse{Outcome: outcomeMatched, Detail: detail, Record: metadataRecord{
 			Matched: true, Name: req.Ref.Title, Overview: detail, Source: "installed",
 		}})
+
+	case "refuse":
+		// A CLEAN error: the guest ran to completion, decided it cannot answer this
+		// call, and came back through the ABI's `0` with a sentence — which is what
+		// a real provider does with a rejected key (401) or a document it cannot
+		// parse. For a Metadata provider the host keeps this instance and counts no
+		// strike, so the sentence carries `refusals`, which counts the calls THIS
+		// instance has answered and starts again from 1 in a rebuilt one. A test
+		// reading 1, 2, 3, 4, 5 is reading proof that one instance answered them all.
+		refusals++
+		return fail("the source rejected this credential: status 401 (refusal " +
+			itoa(int(refusals)) + " from this instance)")
 
 	case "spin":
 		// A lookup that never returns. `hang` above is the sink's; this is the

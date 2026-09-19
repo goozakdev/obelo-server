@@ -132,6 +132,13 @@ because a subtitle download is the one call where a byte cap changes what a view
 
 - CONTEXT.md gains **Bundled plugin**; **Built-in** now names OpenSubtitles and the Webhook
   sink; Cover Art Archive leaves the Artwork-only provider examples.
+- **(2026-09-18, after issue 08)** ADR-0058 decision 7 carries a second amendment closing the
+  last behaviour change this conversion made: a Metadata provider guest that runs to completion
+  and cleanly answers an error keeps its instance and costs no strike, so a rejected key parks
+  the items exactly as the Built-in did instead of disabling the provider after three. Traps,
+  deadline kills and malformed responses still count, and an Event sink's or Subtitle provider's
+  clean error still counts. `internal/api:TestARejectedKeyParksTheItemsAndLeavesThePluginRunning`
+  replaces the characterization test that pinned the old answer.
 - ADR-0058 decision 5 is amended (throttle withdrawn, User-Agent host-owned) and decisions 6
   and 7 are amended (fetch bounded inside the call budget; 30-second metadata budget). ADR-0057
   decision 5 gains a note that "Built-ins go first" was carried out and then superseded for
