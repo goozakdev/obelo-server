@@ -660,16 +660,17 @@ func TestFileDecisionsByLibraryIsOneRead(t *testing.T) {
 	}
 }
 
-// TestEpisodePinCommentDoesNotContradictContext guards the 0047 comment against
-// the claim ADR-0044 reverses. The pin used to be described as keeping a file's
-// "place in the library" while ALSO being the fix for a misnumbered season — which
-// cannot both be true now that Placement moves a file and the pin only repoints
-// what decorates the Slot it sits on. The comment is load-bearing documentation
-// for a schema that cannot be re-migrated, so it is worth a test.
+// TestEpisodePinCommentDoesNotContradictContext guards the enrichment_season/
+// enrichment_episode comment in the schema against the claim ADR-0044
+// reverses: the pin must not be described as keeping a file's "place in the
+// library" while ALSO being the fix for a misnumbered season — which cannot
+// both be true, since Placement moves a file and the pin only repoints what
+// decorates the Slot it sits on. The comment is load-bearing documentation,
+// so it is worth a test.
 func TestEpisodePinCommentDoesNotContradictContext(t *testing.T) {
-	body, err := os.ReadFile("migrations/0047_episode_enrichment_pin.sql")
+	body, err := os.ReadFile("migrations/0001_init.sql")
 	if err != nil {
-		t.Fatalf("read 0047: %v", err)
+		t.Fatalf("read 0001_init.sql: %v", err)
 	}
 	text := string(body)
 
@@ -678,17 +679,16 @@ func TestEpisodePinCommentDoesNotContradictContext(t *testing.T) {
 		"the file keeps its\n-- place in the library",
 	} {
 		if strings.Contains(text, banned) {
-			t.Errorf("0047's comment still claims %q, which ADR-0044 reverses", banned)
+			t.Errorf("the schema's enrichment_season/enrichment_episode comment still claims %q, which ADR-0044 reverses", banned)
 		}
 	}
 	// It must instead point at the decision that DOES move a file.
 	if !strings.Contains(text, "ADR-0044") || !strings.Contains(text, "Placement") {
-		t.Errorf("0047's comment does not say that Placement, not the pin, moves a file")
+		t.Errorf("the schema's enrichment_season/enrichment_episode comment does not say that Placement, not the pin, moves a file")
 	}
-	// And the SQL itself must be untouched: 0047 may already have run on a
-	// developer's database, so only the comment is safe to edit.
-	if !strings.Contains(text, "ALTER TABLE titles ADD COLUMN enrichment_season INTEGER;") ||
-		!strings.Contains(text, "ALTER TABLE titles ADD COLUMN enrichment_episode INTEGER;") {
-		t.Errorf("0047's SQL changed; an already-applied migration's statements must not be edited")
+	// And the columns themselves must exist on titles.
+	if !strings.Contains(text, "enrichment_season        INTEGER") ||
+		!strings.Contains(text, "enrichment_episode       INTEGER") {
+		t.Errorf("titles is missing enrichment_season/enrichment_episode")
 	}
 }
