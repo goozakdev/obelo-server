@@ -131,8 +131,8 @@ type redemption struct {
 	Token string
 	// DeviceID is the Device the sharer created for this Server (ADR-0055 §4). It
 	// is kept for one purpose — the unlink, which deletes it so no ghost with a
-	// last-seen is left behind. redeem rejects a response that omits it, so this
-	// is never empty.
+	// last-seen is left behind. redeem rejects a response whose device id is
+	// blank or whitespace-only, so this is never empty, and stores it trimmed.
 	DeviceID string
 }
 
@@ -176,16 +176,34 @@ func (s *Service) redeem(ctx context.Context, client *http.Client, origin string
 		LinkProtocolVersion int `json:"linkProtocolVersion"`
 	}
 	if err := decodeBody(resp, &out); err != nil || out.Token == "" {
-		return redemption{}, fmt.Errorf("%w: it accepted the invite but returned no token", ErrNotObelo)
+		// A decode error can still have populated Token before it hit the field
+		// that failed (e.g. a device id that is not a string): encoding/json fills
+		// what it can and reports the mismatch afterward. The sharer has already
+		// minted that bearer, so this is still a refusal that revokes it.
+		if out.Token != "" {
+			s.logoutBestEffort(ctx, client, origin, out.Token)
+		}
+		return redemption{}, fmt.Errorf("%w: it accepted the invite but returned no usable token", ErrNotObelo)
 	}
-	if out.Device.ID == "" {
-		// A redemption without a Device id can never be surrendered cleanly on
-		// unlink (surrender has one path, and it needs the id to name what to
-		// delete) — the same "this design cannot build on it" refusal as no
-		// token at all.
+	deviceID := strings.TrimSpace(out.Device.ID)
+	if deviceID == "" {
+		// A redemption without a usable Device id can never be surrendered cleanly
+		// on unlink (surrender has one path, and it needs the id to name what to
+		// delete) — the same "this design cannot build on it" refusal as no token
+		// at all. The sharer has already minted a bearer for it, though, so this
+		// revokes that bearer with a best-effort logout before refusing.
+		s.logoutBestEffort(ctx, client, origin, out.Token)
 		return redemption{}, fmt.Errorf("%w: it accepted the invite but the redemption named no device", ErrNotObelo)
 	}
-	return redemption{Token: out.Token, DeviceID: out.Device.ID}, nil
+	return redemption{Token: out.Token, DeviceID: deviceID}, nil
+}
+
+// logoutBestEffort revokes the bearer a refused redemption minted. The sharer
+// has already spent the invite and cannot be told to un-mint it, so this is
+// the only cleanup available; its own failure changes nothing the caller
+// sees — the refusal stands either way.
+func (s *Service) logoutBestEffort(ctx context.Context, client *http.Client, origin, token string) {
+	_ = s.call(ctx, client, http.MethodPost, origin+apiPrefix+"/auth/logout", token)
 }
 
 // redeemFailure turns the sharer's error envelope into one of this package's
