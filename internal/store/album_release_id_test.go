@@ -6,8 +6,8 @@ import (
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// albums.musicbrainz_release_id (migration 0055, ADR-0050) is the exact edition
-// the FILES name. Like the release-group and artist ids beside it, it is FILLED
+// albums.musicbrainz_release_id (ADR-0050) is the exact edition the FILES name.
+// Like the release-group and artist ids beside it, it is FILLED
 // but NEVER BLANKED: an Album is assembled from many files, and an incremental
 // scan legitimately re-upserts it having seen only the untagged half of them.
 // Blanking on that pass would take the album's tracklist anchor away and send
@@ -67,7 +67,7 @@ func TestAlbumReleaseIDIsFilledButNeverBlanked(t *testing.T) {
 	db := openTemp(t)
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libmus','Music','music')`)
 
-	// A first scan that saw no id at all: the column is the migration's default.
+	// A first scan that saw no id at all: the column defaults empty.
 	if err := db.UpsertArtistTree(albumTree("")); err != nil {
 		t.Fatalf("seed scan: %v", err)
 	}

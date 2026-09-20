@@ -8,9 +8,8 @@ import (
 
 // Stream tokens (.scratch/session-stream-tokens): the short-lived, session-scoped
 // media credential a player can carry in a URL path, for receivers that can send
-// neither a bearer header nor the ms_media cookie. See
-// migrations/0045_stream_tokens.sql for why this is a second table rather than an
-// auth_tokens row.
+// neither a bearer header nor the ms_media cookie — a second table rather than an
+// auth_tokens row, since it is scoped to one playback session, not a login.
 //
 // Every timestamp crossing this file is an RFC3339-UTC string supplied by the
 // caller, never SQLite's datetime('now') — the same rule device_auth.go states,

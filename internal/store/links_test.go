@@ -9,10 +9,10 @@ import (
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// The links table added by migration 0062 (ADR-0055, ADR-0056 §6). What is
-// asserted here is the SQL and the one constraint that carries a design
-// decision: server_id is UNIQUE, which is what makes a fresh invite from a
-// friend a RE-KEY of the existing Link rather than a second one beside it.
+// The links table (ADR-0055, ADR-0056 §6). What is asserted here is the SQL and
+// the one constraint that carries a design decision: server_id is UNIQUE, which
+// is what makes a fresh invite from a friend a RE-KEY of the existing Link rather
+// than a second one beside it.
 
 func aLink(id, serverID string, origins ...string) store.Link {
 	if len(origins) == 0 {

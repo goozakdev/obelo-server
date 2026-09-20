@@ -57,9 +57,9 @@ type Store interface {
 	// Unmatched files and needs-review Titles.
 	TitlesNeedingMatch(libraryID string) ([]store.Title, error)
 	// Needs-review attention surface (identity, not enrichment): the scanner-set
-	// needs_review flag is now Admin-resolvable. The two reads collect every still-
+	// needs_review flag is Admin-resolvable. The two reads collect every still-
 	// flagged Title / Show of a Library; the two writes dismiss a flag the parse got
-	// right (sticky across rescans, migration 0012).
+	// right, sticky across rescans.
 	TitlesNeedingReview(libraryID string) ([]store.NeedsReviewItem, error)
 	ShowsNeedingReview(libraryID string) ([]store.NeedsReviewItem, error)
 	// CollidingFilePaths names the Files behind an `ambiguous` Title — the two (or

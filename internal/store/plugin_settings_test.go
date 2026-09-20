@@ -14,7 +14,7 @@ import (
 //   - a save REPLACES the set, so a field a manifest stopped declaring stops
 //     existing rather than lingering invisibly and still reaching the guest.
 //
-// And one that is not: uninstall takes them with it, which migration 0067's own
+// And one that is not: uninstall takes them with it, which the schema's own
 // comment promises and DeletePlugin's transaction is what keeps.
 
 func TestPluginSettingsAreScopedAndReplacedWhole(t *testing.T) {

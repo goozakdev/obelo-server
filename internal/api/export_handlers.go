@@ -118,11 +118,11 @@ func decodeExportCursor(s string) (store.ExportCursor, error) {
 }
 
 // exportCursorAge reports how long ago a cursor's instant was, and whether it
-// could be read at all. Stored stamps are RFC3339 with milliseconds (migration
-// 0061); a value that predates it may still be in SQLite's datetime('now')
-// shape, which formatTimestamp already knows how to read, so both are accepted
-// — an unreadable one is treated as ancient rather than as "just now", which is
-// the safe direction (a RESYNC costs a full pull; a wrong "fresh" loses rows).
+// could be read at all. Stored stamps are RFC3339 with milliseconds (the touch
+// triggers, 0001_init.sql); formatTimestamp also reads SQLite's plain
+// datetime('now') shape, so both are accepted — an unreadable one is treated as
+// ancient rather than as "just now", which is the safe direction (a RESYNC costs
+// a full pull; a wrong "fresh" loses rows).
 func exportCursorAge(c store.ExportCursor, now time.Time) (time.Duration, bool) {
 	if c.IsZero() {
 		return 0, false
@@ -239,8 +239,8 @@ func handleLibraryExport(deps Deps, libraryID string) http.HandlerFunc {
 }
 
 // exportTimestamp normalizes a stored stamp to RFC3339 like formatTimestamp,
-// but keeps the sub-second part when the value already IS RFC3339. Migration
-// 0061 writes updated_at with milliseconds and the feed is ordered on it, so
+// but keeps the sub-second part when the value already IS RFC3339. The touch
+// triggers write updated_at with milliseconds and the feed is ordered on it, so
 // truncating to whole seconds here would publish a coarser instant than the one
 // the cursor seeks against — two rows a millisecond apart would read as
 // simultaneous to anybody comparing the field instead of the cursor.

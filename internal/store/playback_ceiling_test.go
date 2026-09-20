@@ -7,9 +7,9 @@ import (
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// The Playback-ceiling columns added by migration 0059 (ADR-0054 §2): three
-// nullable knobs beside rating_ceiling, whose UNSET state must read back as the
-// zero value so every pre-existing User stays uncapped.
+// The Playback-ceiling columns (ADR-0054 §2): three nullable knobs beside
+// rating_ceiling, whose UNSET state must read back as the zero value so a User
+// with none of them set stays uncapped.
 
 func TestPlaybackCeilingDefaultsToUncapped(t *testing.T) {
 	db := openTemp(t)

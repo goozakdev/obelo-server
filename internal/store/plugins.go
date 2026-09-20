@@ -12,7 +12,7 @@ import (
 // compile; these rows carry what the files cannot say — the Admin's enable
 // switch, the provenance, the install time, and the last thing that went wrong.
 //
-// See migrations/0067_plugins.sql for why each column exists.
+// See migrations/0001_init.sql's `plugins` table for why each column exists.
 
 // PluginRow is one row of the plugins table. Name, Version, APIVersion and
 // Provides are copied from the manifest at install time so the Plugins screen can
@@ -41,8 +41,8 @@ type PluginRow struct {
 	// when the server ships a newer version, an admin row's are never touched — and
 	// the one sentence the Plugins screen shows instead of an upload name.
 	//
-	// See migrations/0070_bundled_plugins.sql for why the column defaults to
-	// "admin" rather than to the empty string.
+	// See migrations/0001_init.sql's `plugins` table for why the column defaults
+	// to "admin" rather than to the empty string.
 	Origin string
 }
 
@@ -287,7 +287,7 @@ func (db *DB) SetPluginLastError(id, message string) error {
 // THE TWO PROVIDER TABLES ARE THE SAME ROW, ONE SEAM OVER. An Installed Metadata
 // provider's enable switch, API key and base-URL override live in
 // metadata_providers keyed by slug, and an Installed Subtitle provider's in
-// subtitle_providers — exactly where a Built-in's do (migrations 0018 and 0027).
+// subtitle_providers — exactly where a Built-in's do.
 // Until issue 17 an uninstall left both behind, so the settings screens skipped the
 // row forever (nothing registers that slug any more) while a reinstall under the
 // same id picked the previous operator's credential straight back up. They go for

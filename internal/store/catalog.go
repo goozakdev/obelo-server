@@ -6,12 +6,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-
-	"github.com/goozakdev/obelo-server/internal/naming"
 )
 
 // The catalog rows produced by a scan: Title → Edition → File → Stream
-// (CONTEXT.md). These typed structs mirror the 0004_catalog schema and are the
+// (CONTEXT.md). These typed structs mirror the catalog schema and are the
 // persistence shapes the scanner writes and the browse API reads. Identity
 // (title + year) is derived by the scanner from on-disk paths only (ADR-0002);
 // the technical attributes come from ffprobe.
@@ -36,10 +34,9 @@ type Title struct {
 	// folder-anchored Match override. A tree that wants to seed the enrichment
 	// record instead sets TitleTree.RecordTMDBID.
 	//
-	// Both are DERIVED since migration 0072 (ADR-0060): the record is a row in
-	// title_external_ids, and TMDBID is "the record-or-identity id in namespace
-	// tmdb" (IMDBID the same in imdb). RecordIDs / RecordNamespace below are the
-	// rows themselves.
+	// Both are DERIVED (ADR-0060): the record is a row in title_external_ids, and
+	// TMDBID is "the record-or-identity id in namespace tmdb" (IMDBID the same in
+	// imdb). RecordIDs / RecordNamespace below are the rows themselves.
 	TMDBID string
 	IMDBID string
 	// RecordIDs are the Title's RECORD ids keyed by namespace (`tmdb`, `imdb`,
@@ -94,8 +91,8 @@ type Title struct {
 	// the scanner, and never affect identity (ADR-0002). They are zero on an
 	// un-enriched Title and populated only by the enriched read paths (ListTitles /
 	// TitleByID); the other readers (search/home) leave them zero. MusicbrainzID is
-	// the Music external-match anchor (analogous to TMDBID for video): since
-	// migration 0072 it is derived, the record row in namespace musicbrainz.
+	// the Music external-match anchor (analogous to TMDBID for video): it is
+	// derived (ADR-0060), the record row in namespace musicbrainz.
 	Overview       string
 	Tagline        string
 	ContentRating  string
@@ -238,11 +235,11 @@ type File struct {
 	// soft-delete so it (and its Title) can return on a later scan (ADR-0008).
 	Present bool
 	// PartOrdinal is this File's 1-based position among the parts of its Edition,
-	// 0 when nothing numbered it. It is the STORED play order (migration 0049):
-	// Edition.Files is read back in (part_ordinal, path) order, so a multi-part
-	// Edition an Admin assembled by Placement plays in the order they chose rather
-	// than in filename order (ADR-0044). It mirrors file_decisions.ordinal for a
-	// placed File and filename.go's partNumber() for a parse-numbered one.
+	// 0 when nothing numbered it. It is the STORED play order: Edition.Files is
+	// read back in (part_ordinal, path) order, so a multi-part Edition an Admin
+	// assembled by Placement plays in the order they chose rather than in filename
+	// order (ADR-0044). It mirrors file_decisions.ordinal for a placed File and
+	// filename.go's partNumber() for a parse-numbered one.
 	PartOrdinal int
 	Streams     []Stream
 }
@@ -280,21 +277,11 @@ func (e Edition) PresentFiles() []File {
 // Edition plays its first File and nothing else, and the Ambiguous flag on its
 // Title is what tells the Admin why (needsreview.go).
 //
-// Numbered means, in order:
-//
-//   - part_ordinal > 0 on EVERY present File — the stored order, written by the
-//     scanner from the filename and by Placement from the Admin's own choice
-//     (migration 0049). Some-but-not-all numbered is a collision, not a part set:
-//     `Movie - part1.mkv` beside a bare `Movie.mkv` is exactly the ambiguous case.
-//   - failing that — NO present File carries an ordinal at all — the FILENAMES.
-//     part_ordinal was added with no backfill, so every File row written before
-//     migration 0049 sits at 0 until a scan rewrites it. Reading only the column
-//     would make every legitimate multi-part Movie and Episode on an install that
-//     has not rescanned play its first part and stop, and would put the ~90%
-//     Watched threshold back on that one part — a far worse regression than the bug
-//     this rule fixes (see internal/playback/multipart_test.go). Before 0049 the
-//     ONLY way to get a multi-part Edition was to name the files for it, so the
-//     names still carry the answer for exactly the rows the column cannot.
+// Numbered means part_ordinal > 0 on EVERY present File — the stored order,
+// written by the scanner from the filename and carried forward by Placement from
+// whatever a prior scan or Admin choice already stored. Some-but-not-all
+// numbered is a collision, not a part set: `Movie - part1.mkv` beside a bare
+// `Movie.mkv` is exactly the ambiguous case.
 func (e Edition) Parts() []File {
 	present := e.PresentFiles()
 	if len(present) < 2 || !numberedParts(present) {
@@ -307,19 +294,10 @@ func (e Edition) Parts() []File {
 }
 
 // numberedParts reports whether these Files are a numbered part set — see Parts
-// for the rule and for why the filename fallback exists.
+// for the rule.
 func numberedParts(present []File) bool {
-	stored := 0
 	for _, f := range present {
-		if f.PartOrdinal > 0 {
-			stored++
-		}
-	}
-	if stored > 0 {
-		return stored == len(present)
-	}
-	for _, f := range present {
-		if naming.PartNumber(f.Path) == 0 {
+		if f.PartOrdinal <= 0 {
 			return false
 		}
 	}
@@ -565,9 +543,8 @@ type episodeColumns struct {
 //
 // The record an Admin chose — "Fix info" on a Movie or Track, an Episode pin's
 // series, a Cascade — and the record an enrichment pass resolved live in
-// title_external_ids (ADR-0060; the enrichment_tmdb_id / enrichment_imdb_id /
-// musicbrainz_id columns before migration 0072), which this function NEVER writes
-// for an existing row. That is what makes an Enrichment override
+// title_external_ids (ADR-0060), which this function NEVER writes for an existing
+// row. That is what makes an Enrichment override
 // durable across a scan (ADR-0019, CONTEXT.md): not a guard that has to be
 // remembered, but a column the Scanner has no statement to make about.
 //
@@ -639,7 +616,7 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 		// files, so the Title is no longer hidden. The subtree is rebuilt by caller.
 		// needs_review is recomputed from the parse EXCEPT on a row an Admin has
 		// dismissed (reviewed = 1), where it stays cleared so the dismissal survives
-		// rescans (migration 0012). reviewed itself is never written by the scanner.
+		// rescans. reviewed itself is never written by the scanner.
 		if _, err := tx.Exec(
 			`UPDATE titles SET title = ?, year = ?, sort_title = ?,
 			    tmdb_id = ?, imdb_id = ?,
@@ -893,15 +870,15 @@ type UnmatchedFile struct {
 	ID   string
 	Path string
 	// Kind is why: UnmatchedUnidentified or UnmatchedUnreadable. Empty reads as
-	// unidentified, which is what every row written before the distinction existed
-	// meant.
+	// unidentified, the common case (scanner/tv_resolve.go's unmatchedFile never
+	// bothers setting it).
 	Kind    string
 	Reason  string
 	AddedAt string
 }
 
-// KindOrDefault is Kind with the empty value resolved to unidentified, so a caller
-// that predates the distinction (or a test that does not care) still writes a
+// KindOrDefault is Kind with the empty value resolved to unidentified, so a
+// caller that never sets Kind (or a test that does not care) still writes a
 // meaningful row.
 func (u UnmatchedFile) KindOrDefault() string {
 	if u.Kind == "" {
@@ -1333,11 +1310,10 @@ func (db *DB) LibraryAndRatingOfFile(fileID string) (libraryID, contentRating st
 }
 
 func (db *DB) filesForEdition(editionID string) ([]File, error) {
-	// (part_ordinal, path), not path alone: Edition.Files is a PLAY order, and once
-	// an Admin can assemble a multi-part Edition by Placement the filenames no
-	// longer carry the part order (ADR-0044, migration 0049). part_ordinal is 0 on
-	// every File nothing numbered, so a filename-derived Edition still falls
-	// through to path exactly as before.
+	// (part_ordinal, path), not path alone: Edition.Files is a PLAY order, and an
+	// Admin assembling a multi-part Edition by Placement (ADR-0044) means the
+	// filenames do not carry the part order. part_ordinal is 0 on every File
+	// nothing numbered, so a filename-derived Edition still falls through to path.
 	rows, err := db.Query(
 		`SELECT id, edition_id, path, container, video_codec, audio_codec, width, height,
 		        bitrate, duration_ms, size_bytes, added_at, mtime, present, part_ordinal
@@ -1468,8 +1444,8 @@ var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sor
 // The expressions are named back to `tmdb_id` / `imdb_id` so a CTE that projects
 // them keeps the column names its outer SELECT already uses.
 //
-// Since migration 0072 the override is a row in title_external_ids (ADR-0060), so
-// each half is recordIDExpr over that namespace; the rule reads the same.
+// The override is a row in title_external_ids (ADR-0060), so each half is
+// recordIDExpr over that namespace; the rule reads the same.
 func recordExternalIDs(alias string) string {
 	return recordTMDBID(alias) + " AS tmdb_id, " +
 		recordIDExpr(alias, NamespaceIMDB) + " AS imdb_id"

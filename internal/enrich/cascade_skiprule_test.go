@@ -122,35 +122,21 @@ func TestALockedFieldStillSkips(t *testing.T) {
 		"a child with neither a chosen record nor a locked field takes the Cascade")
 }
 
-// TestABackfilledRowKeepsItsOldReading documents what an EXISTING install gets.
-//
-// Migration 0050 marks every pre-upgrade record locked, and 0051 reads every such
-// lock as 'chosen', because after the fact nothing could tell an Admin's pick from
-// an id a pass echoed back — nor, now, from a record a Cascade itself wrote. So on
-// an old library the value over-reports: rows nobody chose, and rows a Cascade
-// chose, both read as chosen and keep being skipped. That is the deliberate
-// direction in both migrations — the alternative lets the next Cascade silently
-// overwrite a correction an Admin really did make — and it means an old library
-// sees the benefit only on records written after upgrading. Nothing can narrow it
-// without the history the migrations did not have; a Fix info, a Wrong item or a
-// cleared pin on the child re-states its record and settles the origin honestly.
-//
-// internal/store/record_origin_migration_internal_test.go pins the migration end
-// of this; here is what the rule then does with the row.
-func TestABackfilledRowKeepsItsOldReading(t *testing.T) {
+// TestOriginChosenIsSkippedUntilTheOriginIsCleared: the rule reads OriginChosen at
+// face value regardless of how the row got there — it does not (and cannot)
+// distinguish an Admin's pick from any other route to the same value — and only a
+// Fix info, a Wrong item, or a cleared pin (which resets the origin to
+// OriginDerived) rejoins the row to its parent's Cascade.
+func TestOriginChosenIsSkippedUntilTheOriginIsCleared(t *testing.T) {
 	svc := skipService(nil)
 
-	// Exactly the shape 0050 + 0051 leave behind: a record moved out of the
-	// identity column and marked chosen, whatever put it there.
-	backfilled := store.Title{
-		ID: "ep-legacy", Kind: "episode", TMDBID: "1438", EnrichmentIDOrigin: store.OriginChosen,
+	row := store.Title{
+		ID: "ep-chosen", Kind: "episode", TMDBID: "1438", EnrichmentIDOrigin: store.OriginChosen,
 	}
-	mustSkip(t, svc, backfilled, true,
-		"a pre-upgrade row is treated as the Admin's, as it was before the upgrade")
+	mustSkip(t, svc, row, true, "OriginChosen always wins, whatever set it")
 
-	// The same row after the Admin re-states it (or after a Clear releases the
-	// origin) is honest again and rejoins the Cascade.
-	backfilled.EnrichmentIDOrigin = store.OriginDerived
-	mustSkip(t, svc, backfilled, false,
+	// Clearing the origin is honest again and rejoins the Cascade.
+	row.EnrichmentIDOrigin = store.OriginDerived
+	mustSkip(t, svc, row, false,
 		"once the origin is settled honestly the row takes its parent's Cascade")
 }

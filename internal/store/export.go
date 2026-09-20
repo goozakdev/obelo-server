@@ -21,8 +21,8 @@ import (
 //
 // Ordering is a keyset seek on (updated_at, type, id) — the same shape as
 // ListTitles' (sort_title, id), extended by the type because the feed
-// interleaves ten tables. updated_at is maintained by the triggers migration
-// 0061 installs, so a row's stamp does not depend on the writer remembering.
+// interleaves ten tables. updated_at is maintained by the touch triggers
+// (0001_init.sql), so a row's stamp does not depend on the writer remembering.
 
 // Export entity type names. They are the wire values of `type` and, because the
 // keyset tuple is (updated_at, type, id), also the tie-break order — compared as
@@ -340,9 +340,9 @@ func exportSources() []exportSource {
 // answer, which is nobody else's business and means nothing on their side), and
 // reviewed (an Admin's dismissal of a local attention flag).
 //
-// musicbrainz_id is the one record id the wire has always carried, and it keeps
-// carrying it: since migration 0072 it is read from the Title's `musicbrainz` record
-// row (ADR-0060), under the column name the scanner below already expects.
+// musicbrainz_id is the one record id the wire carries, read from the Title's
+// `musicbrainz` record row (ADR-0060) under the column name the scanner below
+// already expects.
 var exportTitleColumns = `updated_at, id, kind, title, year, sort_title, identity_key,
 	tmdb_id, imdb_id, ` + recordRowExpr("", NamespaceMusicBrainz) + ` AS musicbrainz_id, musicbrainz_recording_id,
 	needs_review, ambiguous, hidden,
@@ -582,8 +582,8 @@ func scanExportStream(rows *sql.Rows) (ExportEntity, error) {
 // a Title's genres and cast (title_genres / title_credits) and a Show's /
 // Season's / Artist's / Album's enrichment, genres and cast (the polymorphic
 // entity_* tables). Both are bulk reads over the page, never per row, and both
-// are covered by migration 0061's triggers so a write to either advances the
-// owner's updated_at and the change actually reaches the mirror.
+// are covered by triggers so a write to either advances the owner's updated_at
+// and the change actually reaches the mirror.
 func (db *DB) decorateExport(entities []ExportEntity) error {
 	var titleIDs []string
 	byTitle := map[string]*ExportEntity{}

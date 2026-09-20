@@ -19,8 +19,7 @@ import (
 // double-length duration and a resume that lands in the wrong copy.
 //
 // The rule that separates the two is NUMBERING (store.Edition.Parts). These pin
-// both directions of it, and — most importantly — the degradation for rows written
-// before migration 0049 added part_ordinal with no backfill.
+// both directions of it.
 
 // ambiguousEdition is the range-vs-standalone collision: one Edition, two present
 // Files, neither of them numbered.
@@ -74,35 +73,6 @@ func TestAmbiguousEditionStillDirectPlays(t *testing.T) {
 	}
 	if dec.File.ID != "f1" {
 		t.Errorf("playing %s, want the first File", dec.File.ID)
-	}
-}
-
-// TestUnbackfilledOrdinalsFallBackToTheFilenames is the regression this rule is
-// most at risk of causing. Migration 0049 added part_ordinal with `DEFAULT 0` and
-// no backfill, so on an install that has not rescanned since, EVERY File row sits
-// at 0 — including both halves of a legitimate two-part movie. Reading only the
-// column would truncate every one of them to part 1 and put the ~90% Watched
-// threshold back at the end of that part, which is precisely the defect
-// multipart_test.go exists to prevent.
-//
-// Before 0049 the only way to get a multi-part Edition was to NAME the files for
-// it, so for exactly the rows the column cannot answer, the names still can.
-func TestUnbackfilledOrdinalsFallBackToTheFilenames(t *testing.T) {
-	ed := twoPartEdition() // part1/part2 names, part_ordinal 0 on both — a pre-0049 row
-	for _, f := range ed.Files {
-		if f.PartOrdinal != 0 {
-			t.Fatalf("fixture %s carries ordinal %d; this test only means something at 0", f.ID, f.PartOrdinal)
-		}
-	}
-	if !ed.IsMultiPart() {
-		t.Fatal("a pre-0049 two-part Edition stopped being multi-part: every un-rescanned " +
-			"multi-part movie and episode now plays only its first half")
-	}
-	if got := ed.TotalDurationMs(); got != 2_700_000 {
-		t.Errorf("total = %d, want the summed 2700000", got)
-	}
-	if got := sessionDurationMs(Decision{Edition: ed, File: ed.Files[0]}); got != 2_700_000 {
-		t.Errorf("session duration = %d, want 2700000 — the watched threshold moved back onto part 1", got)
 	}
 }
 

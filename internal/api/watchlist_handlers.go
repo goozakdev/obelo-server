@@ -9,13 +9,13 @@ import (
 )
 
 // The Watchlist surface: a thin, dedicated façade over the per-User system
-// Watchlist Playlist (migration 0021). Every route is owner == caller (requireAuth,
-// no Admin override), exactly like the ordinary /playlists surface. Its whole reason
-// to exist as a NAMED endpoint — rather than making callers discover the Watchlist's
+// Watchlist Playlist. Every route is owner == caller (requireAuth, no Admin
+// override), exactly like the ordinary /playlists surface. Its whole reason to
+// exist as a NAMED endpoint — rather than making callers discover the Watchlist's
 // id first — is that the Watchlist is a fixed, always-present entity: the client
-// (and future features) say "the Watchlist" and the server resolves/creates it. Each
-// handler ENSURES the Watchlist exists before acting, so a User who never had one
-// (created after the back-fill) gets it seeded on first touch.
+// (and future features) say "the Watchlist" and the server resolves/creates it.
+// Each handler ENSURES the Watchlist exists before acting, so a User who never had
+// one gets it seeded on first touch.
 //
 //   - GET    /watchlist              → the Watchlist + its decorated members (Scope)
 //   - POST   /watchlist/items        → append a Title { titleId } (→ 204)

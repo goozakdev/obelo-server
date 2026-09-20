@@ -20,8 +20,9 @@ import (
 //     HDR remux).
 //   - FrameRate: the stream's average frame rate (e.g. 23.976), 0 when unknown.
 //
-// These are not in the scan-time store (older scans predate the need), so they are
-// probed per session — a header-only ffprobe, cheap even on a large remote file.
+// These are never written to the scan-time store — no File row carries them —
+// so they are probed per session instead, a header-only ffprobe, cheap even on a
+// large remote file.
 type VideoTraits struct {
 	VideoRange string
 	FrameRate  float64

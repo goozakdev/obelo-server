@@ -677,9 +677,9 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 
 // originOf reads a row's origin, defaulting an empty column to OriginAdmin.
 //
-// The column has that default, so this only fires for a row this server never
-// wrote — a database restored from before the migration, or a test's fake store.
-// "Admin" is the honest answer for both: whatever put it there, it was not this
+// A stored row always carries an origin, so this only fires when there is no row
+// at all — a Plugin an operator placed on disk by hand, which List shows with a
+// zero row. "Admin" is the honest answer: whatever put it there, it was not this
 // binary's shipped set.
 func originOf(raw string) string {
 	if raw == "" {

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -672,7 +673,10 @@ func TestEpisodePinCommentDoesNotContradictContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read 0001_init.sql: %v", err)
 	}
-	text := string(body)
+	// Column alignment whitespace is authoring style, not the thing under test —
+	// collapse every run of spaces/tabs to one so a re-alignment of the CREATE
+	// TABLE block cannot break this on its own.
+	text := regexp.MustCompile(`[ \t]+`).ReplaceAllString(string(body), " ")
 
 	for _, banned := range []string{
 		"keeps its parsed numbers",
@@ -687,8 +691,8 @@ func TestEpisodePinCommentDoesNotContradictContext(t *testing.T) {
 		t.Errorf("the schema's enrichment_season/enrichment_episode comment does not say that Placement, not the pin, moves a file")
 	}
 	// And the columns themselves must exist on titles.
-	if !strings.Contains(text, "enrichment_season        INTEGER") ||
-		!strings.Contains(text, "enrichment_episode       INTEGER") {
+	if !strings.Contains(text, "enrichment_season INTEGER") ||
+		!strings.Contains(text, "enrichment_episode INTEGER") {
 		t.Errorf("titles is missing enrichment_season/enrichment_episode")
 	}
 }

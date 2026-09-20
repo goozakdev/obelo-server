@@ -56,7 +56,7 @@ type Album struct {
 	ArtworkPath string
 	// ReleaseType is the album's normalized primary release type from tags
 	// ("album", "single", "ep", …), "" when untagged. Descriptive only — the
-	// browse UI badges non-album types (migration 0044, ADR-0038).
+	// browse UI badges non-album types (ADR-0038).
 	ReleaseType string
 	Hidden      bool
 	AddedAt     string

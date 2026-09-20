@@ -102,8 +102,7 @@ const (
 //     override its base URL — the one entry with no factory, resolved into the
 //     music lead's second URL by a special case in three files. It is the
 //     MusicBrainz plugin's own `settings.defaultUrl2` now, the way image.tmdb.org
-//     is TMDB's, and migration 0071 carried a mirrored host across
-//     (.scratch/bundled-plugins: issue 06).
+//     is TMDB's (.scratch/bundled-plugins: issue 06).
 //   - FANART.TV IS ONE INSTANCE, not two. It serves `kinds: [video, music]` from
 //     one module with one linear memory, and the host's factory hands each chain a
 //     view over it (internal/plugins/metadata.go), serializing every call — the

@@ -12,9 +12,9 @@ import (
 // issue 16, ADR-0058 decision 5): the key-value namespace an Installed plugin
 // wrote for itself.
 //
-// Issue 11 gave every Plugin that namespace and promised in three places —
-// migration 0068, the comment on the kv_* host functions, and its own hand-off —
-// that uninstall drops it. Issue 10's uninstall never took the hand-off, so a
+// Issue 11 gave every Plugin that namespace and promised in three places — the
+// schema, the comment on the kv_* host functions, and its own hand-off — that
+// uninstall drops it. Issue 10's uninstall never took the hand-off, so a
 // guest's cursors and caches outlived the Plugin, and a reinstall under the same
 // id — by the same author, or by anyone who picked the same slug — read them back
 // through kv_get as if it had written them. An uninstall is supposed to leave

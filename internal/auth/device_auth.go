@@ -488,9 +488,9 @@ func (s *Service) chargeApproveFailure(userID string) {
 
 // --- time ------------------------------------------------------------------
 
-// formatTime renders a timestamp the one way this feature stores them. See
-// migrations/0041_device_auth.sql: expiry is compared in SQL, and RFC3339 does
-// not compare against SQLite's datetime('now') format.
+// formatTime renders a timestamp the one way this feature stores them: expiry is
+// compared in SQL, and RFC3339 does not compare against SQLite's datetime('now')
+// format.
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }

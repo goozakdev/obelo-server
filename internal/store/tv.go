@@ -182,8 +182,8 @@ func upsertShow(tx *sql.Tx, s Show) (string, error) {
 	default:
 		// Existing Show: refresh descriptive fields. hidden is recomputed below.
 		// needs_review is recomputed from the parse EXCEPT on a row an Admin has
-		// dismissed (reviewed = 1), where it stays cleared (migration 0012, mirrors
-		// the Title rule in writeTitleRow). reviewed is never written by the scanner.
+		// dismissed (reviewed = 1), where it stays cleared (mirrors the Title rule
+		// in writeTitleRow). reviewed is never written by the scanner.
 		if _, err := tx.Exec(
 			`UPDATE shows SET title = ?, year = ?, sort_title = ?, tmdb_id = ?, imdb_id = ?,
 			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,

@@ -39,7 +39,7 @@ type Playlist struct {
 	// System is the slug of the system Playlist this is ("watchlist"), or "" for an
 	// ordinary User-created Playlist. A non-empty System marks a Playlist the User
 	// owns but may NOT rename or delete (the organize service enforces this), and is
-	// what makes each system Playlist unique per owner (migration 0021).
+	// what makes each system Playlist unique per owner.
 	System string
 	// ItemCount is the raw number of item rows (including Missing/duplicates). It is
 	// populated only by ListPlaylistsByOwner (the list-card metadata); single-row
@@ -116,11 +116,10 @@ func (db *DB) systemPlaylist(ownerUserID, system string) (Playlist, error) {
 
 // EnsureSystemPlaylist returns ownerUserID's system Playlist with the given slug,
 // creating it (named `name`) if it does not exist yet — the lazy get-or-create that
-// makes a system Playlist "always exist" for a User created after migration 0021's
-// back-fill (or whose row was somehow removed). Idempotent: a second call returns
-// the same row. The partial unique index on (owner_user_id, system) is the backstop
-// against a concurrent double-create — a losing INSERT is swallowed and the existing
-// row re-read.
+// makes a system Playlist "always exist", even for a User whose row was somehow
+// removed. Idempotent: a second call returns the same row. The partial unique
+// index on (owner_user_id, system) is the backstop against a concurrent
+// double-create — a losing INSERT is swallowed and the existing row re-read.
 func (db *DB) EnsureSystemPlaylist(ownerUserID, system, name string) (Playlist, error) {
 	if p, err := db.systemPlaylist(ownerUserID, system); err == nil {
 		return p, nil
@@ -194,8 +193,8 @@ func (db *DB) UpdatePlaylistName(id, name string) (Playlist, error) {
 	return db.PlaylistByID(id)
 }
 
-// DeletePlaylist removes a Playlist; its item rows cascade away (migration 0017).
-// ErrNotFound for an unknown id.
+// DeletePlaylist removes a Playlist; its item rows cascade away (FK ON DELETE
+// CASCADE). ErrNotFound for an unknown id.
 func (db *DB) DeletePlaylist(id string) error {
 	res, err := db.Exec(`DELETE FROM playlists WHERE id = ?`, id)
 	if err != nil {
@@ -299,8 +298,8 @@ func (db *DB) AppendPlaylistItem(playlistID, titleID, mappedKind string) (string
 // Validating against the VISIBLE set — not every row — is what makes reorder
 // reachable at all. A member whose Title went Missing (titles.hidden = 1, ADR-0008)
 // or fell outside the caller's Scope is omitted from the resolved view while its
-// item row persists (0017_playlists.sql), so a client can neither see that row nor
-// name its item id. Validating against every row therefore froze the order of any
+// item row persists, so a client can neither see that row nor name its item id.
+// Validating against every row therefore froze the order of any
 // Playlist that had ever lost a file: the only payload the client could build was
 // the visible one, and it could never match. Hidden items instead keep their INDEX
 // in the sequence — the visible ids are merged back around them — so they neither

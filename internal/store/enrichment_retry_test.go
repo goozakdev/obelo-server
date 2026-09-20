@@ -180,33 +180,6 @@ func TestSettlingResetsTheFailureStreak(t *testing.T) {
 	}
 }
 
-// The migration hands every pre-existing 'failed' row one retry. Without it the
-// fix would apply only to failures that happen after the upgrade, and the rows
-// already stranded by the old behavior would stay stranded.
-func TestMigrationSchedulesOneRetryForRowsTheOldBehaviorParked(t *testing.T) {
-	db := openTemp(t)
-	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('lib', 'Movies', 'movie')`)
-	// Write the row the way the pre-0053 server did: status only, no retry columns.
-	mustExec(t, db, `INSERT INTO titles (id, library_id, kind, title, identity_key, sort_title,
-	                                     enrichment_status)
-	                 VALUES ('old', 'lib', 'movie', 'Heat', 'heat|1995', 'heat', 'failed')`)
-	mustExec(t, db, `UPDATE titles SET enrichment_retry_at = '1970-01-01T00:00:00Z'
-	                  WHERE enrichment_status = 'failed'`)
-
-	got, err := db.TitlesForEnrichment("lib", store.EnrichPending, time.Now())
-	if err != nil {
-		t.Fatalf("TitlesForEnrichment: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "old" {
-		t.Fatalf("collected %v, want [old] — the backfilled retry is not due, so every failure "+
-			"the old server recorded stays parked after the upgrade", titleIDs(got))
-	}
-	if got[0].EnrichmentAttempts != 0 {
-		t.Errorf("backfilled attempts = %d, want 0 so the retry that follows gets the shortest "+
-			"backoff rather than the ceiling", got[0].EnrichmentAttempts)
-	}
-}
-
 // A parent (Show/Artist/Album) carries the same bookkeeping. It matters more
 // there: enrichParent skips any non-pending parent, so one parked Show used to
 // hold every Season and Episode under it un-enriched.

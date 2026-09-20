@@ -331,10 +331,10 @@ type Config struct {
 	//
 	// The three behavior knobs below — AutoEnrichAfterScan, EnrichInterval, and
 	// MusicBrainzRateLimit — are ALSO DB-authoritative after first boot as of
-	// enrichment-runtime-settings: they seed the DB-backed settings once (SeedIfEmpty
-	// on a fresh install; an idempotent per-column backfill on an upgrade boot), then
-	// the running server reads them from the DB, so an Admin changes them from the
-	// same settings UI with no restart and this env value is ignored at runtime.
+	// enrichment-runtime-settings: they seed the DB-backed settings once on a fresh
+	// install (SeedIfEmpty), then the running server reads them from the DB, so an
+	// Admin changes them from the same settings UI with no restart and this env
+	// value is ignored at runtime.
 	//
 	// Enrichment is OFF until configured (ADR-0001 offline-first): with no provider
 	// key the optional Enrichment step is a logged no-op and every Title's status is

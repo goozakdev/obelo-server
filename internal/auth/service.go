@@ -36,8 +36,8 @@ const (
 	// code — and it is its own ROLE rather than a flag on a Member so that every
 	// guard reads as one field test.
 	//
-	// What it does NOT have, all enforced here or in the schema (0058_remote_role):
-	// a password (its only credential is the token an Invite leaves behind,
+	// What it does NOT have, all enforced here or in the schema: a password (its
+	// only credential is the token an Invite leaves behind,
 	// ADR-0055), a way to log in, a place in the roster, watch state, or any route
 	// to another role.
 	RoleRemote = "remote"
@@ -473,8 +473,8 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 		return store.User{}, ErrInvalidUser
 	}
 	// A Remote User stores the empty hash — the one state the schema's CHECK
-	// admits for exactly this role (0058_remote_role.sql). Nothing hashes here for
-	// it, so creating one never queues on the KDF.
+	// admits for exactly this role. Nothing hashes here for it, so creating one
+	// never queues on the KDF.
 	hash := ""
 	if password != "" {
 		var err error

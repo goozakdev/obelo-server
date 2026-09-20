@@ -293,8 +293,8 @@ func (db *DB) ApplyShowArrangement(a ShowArrangement) error {
 // matcher triggers moments later.
 //
 // NULL is "not pinned — decorate from the Slot's own numbers", so clearing writes
-// NULL rather than a number (migration 0047: season 0 is Specials, so 0 cannot
-// mean unset). Both branches reset enrichment_status so the next pass resolves the
+// NULL rather than a number (season 0 is Specials, so 0 cannot mean unset). Both
+// branches reset enrichment_status so the next pass resolves the
 // record the Admin just chose; a pin whose Slot has no Title — a Placement onto a
 // File the catalog has never probed — simply matches no row, and the file is
 // already reported as Deferred.
@@ -654,7 +654,7 @@ func foldWatchStateTx(tx *sql.Tx, libraryID string, fold WatchFold) error {
 		}
 		if watchedAll {
 			// A row with watched = 1 always has resume 0: crossing the ceiling clears
-			// the resume (migration 0007).
+			// the resume.
 			resume = 0
 		}
 		if _, err := tx.Exec(

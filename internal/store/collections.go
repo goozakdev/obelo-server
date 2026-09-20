@@ -61,8 +61,8 @@ func (db *DB) UpdateCollection(id, name, description string) (Collection, error)
 	return db.CollectionByID(id)
 }
 
-// DeleteCollection removes a Collection; its membership rows cascade away
-// (migration 0016). ErrNotFound for an unknown id.
+// DeleteCollection removes a Collection; its membership rows cascade away (FK ON
+// DELETE CASCADE). ErrNotFound for an unknown id.
 func (db *DB) DeleteCollection(id string) error {
 	res, err := db.Exec(`DELETE FROM collections WHERE id = ?`, id)
 	if err != nil {
