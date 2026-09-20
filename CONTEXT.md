@@ -163,15 +163,19 @@ A Metadata provider that supplies complete descriptive records — titles, overv
 _Avoid_: Full source (collides with Artwork source).
 
 **Artwork-only provider**:
-A Metadata provider that supplies only images, so it can never lead — only ever act as a Supplement (fanart.tv, Cover Art Archive, TheAudioDB).
+A Metadata provider that supplies only images, so it can never lead — only ever act as a Supplement (fanart.tv, TheAudioDB). Cover Art Archive is not one: it is the cover-art host the MusicBrainz provider reads, not a provider of its own.
 _Avoid_: Art source, Image provider.
+
+**External-id namespace**:
+The id space an external id belongs to — `tmdb`, `imdb`, `musicbrainz`, `thetvdb`, `anidb`, or a third-party source's own — as distinct from the Plugin that reads it: IMDb ids have no plugin of their own and are read by OMDb; MusicBrainz ids are read by fanart.tv and TheAudioDB too. A record's `Source` names its id's namespace, a source's namespace is its plugin id, and every id the host holds is keyed by one ([ADR-0060](./docs/adr/0060-a-record-id-is-namespaced-and-a-pin-holds-only-a-decision.md)). An entity's record **pins** it to its namespace's provider only when the record is a decision — chosen, cascaded, or asserted by the folder — never merely because a pass once resolved it there.
+_Avoid_: Source id (ambiguous with the Plugin id), provider id.
 
 **Authoritative provider**:
 The single Full provider that leads a Library's Enrichment, supplying the canonical record the Supplements fill around. A per-Library choice that inherits a global default per media kind (TMDB for video, MusicBrainz for music) and can be repointed through the Library's Enrichment policy. When enrichment is on it always runs — even if that provider is disabled for general use — as long as it is usable (credentialed). Constrained to Full providers of the Library's kind ([ADR-0027](./docs/adr/0027-per-library-enrichment-policy-sparse-override.md)).
 _Avoid_: Primary, Master, Agent.
 
 **Supplement**:
-A Metadata provider that only fills descriptive fields the Authoritative provider left empty, never overriding it — every enabled provider that isn't the Authoritative provider, Artwork-only providers included. Runs fill-only.
+A Metadata provider that only fills descriptive fields the Authoritative provider left empty, never overriding it — every enabled provider that isn't the Authoritative provider, Artwork-only providers included. Runs fill-only, in registration order, through one rule shared by the video and music chains; an Overview the Authoritative provider declares synthesized (MusicBrainz's artist blurb) counts as empty. For music it is the providers declaring the supplement role or Artwork-only; an authoritative Full music provider leads or stays out ([ADR-0061](./docs/adr/0061-the-music-chain-composes-every-music-supplement.md)).
 _Avoid_: Fallback, Secondary, Scraper.
 
 **Enrichment policy**:
@@ -193,7 +197,7 @@ The provenance of the image filling a role — one of three: **Local** (a file i
 _Avoid_: Origin, Provider (a provider is one supplier of Fetched candidates, not the source axis).
 
 **Artwork candidate**:
-One selectable image offered for a role, shown as a thumbnail in an artwork tab. Provider candidates are queried **live** from the metadata providers each time the tab opens (TMDB posters/backdrops, Cover Art Archive covers, fanart.tv/TheAudioDB artist photos) and are never persisted; only the image an Admin selects is stored. Distinct from the resolved Artwork (the single image actually serving the role).
+One selectable image offered for a role, shown as a thumbnail in an artwork tab. Provider candidates are queried **live** from the metadata providers each time the tab opens (TMDB posters/backdrops, MusicBrainz covers — served from the Cover Art Archive, its second host — fanart.tv/TheAudioDB artist photos) and are never persisted; only the image an Admin selects is stored. Distinct from the resolved Artwork (the single image actually serving the role).
 _Avoid_: Option, Variant.
 
 **Uploaded artwork**:
@@ -376,12 +380,16 @@ One of the closed set of seams a Plugin may implement: Metadata provider, Subtit
 _Avoid_: Hook (the Broker's word), Slot (a transcode slot is something else), Interface (the Go word for the seam, not the domain concept).
 
 **Built-in**:
-A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; the eight metadata providers and OpenSubtitles are Built-ins. That the Built-ins go first is what proves the contract honest.
+A Plugin compiled into the server and registered through the same contract an Installed plugin would use. Not sandboxed, because it is the server's own code; the Webhook sink is the only Built-in. The shipped metadata providers and OpenSubtitles were Built-ins first, which is what proved the contract honest, and are now Bundled plugins.
 _Avoid_: Core provider, Native plugin, Bundled plugin.
 
 **Installed plugin**:
 A Plugin an Admin added to a running server as a module and a manifest, without a rebuild. The module is WebAssembly, run in a wazero sandbox that grants it no filesystem, no sockets and no processes, and reached through a hand-rolled JSON ABI ([ADR-0058](./docs/adr/0058-an-installed-plugin-is-a-wasm-guest-called-through-a-hand-rolled-abi-on-wazero.md)). It reaches the network only through what the host grants it, and a failing one is recorded and disabled, never allowed to stop a boot. It lives in its own directory under the data directory, named by its Manifest's id, holding the module and that manifest; the id is also the key its settings row is stored under, so a Plugin may not claim an id another Plugin on this server already has.
 _Avoid_: Third-party plugin (the maintainer writes the first one), External plugin (says where it came from, not what it is), Module (the file format).
+
+**Bundled plugin**:
+An Installed plugin the server shipped with, placed on the server at first boot exactly as if an Admin had uploaded it, and shown to the Admin as having come with the server rather than from them. Otherwise indistinguishable from any other Installed plugin: same sandbox, same contract, same lifecycle. It is re-asserted on every boot, which is what lets an upgrade ship a newer module, and the two ways an operator can have said otherwise both win: a plugin they uploaded under the same id is left alone, and one they **uninstalled stays uninstalled** — the server remembers the refusal rather than reinstating it on the next boot, and offers *"reinstall the shipped version"* as the way back ([ADR-0059](./docs/adr/0059-the-shipped-metadata-providers-are-bundled-plugins.md)). The seven shipped metadata providers — TMDB, OMDb, TheTVDB, AniDB, MusicBrainz, fanart.tv, TheAudioDB — and the OpenSubtitles Subtitle provider are the Bundled plugins.
+_Avoid_: Built-in (that is compiled-in code), Default plugin (says nothing about origin), Pre-installed (a mechanism, not a kind), Read-only plugin (nothing about it is).
 
 **Manifest**:
 The JSON document an Installed plugin's author ships beside the module: its id, name, version, the contract major it was built against, what it provides, the hosts it may reach, and what settings it needs. It is the Installed half of the self-description a Built-in writes in Go, and it is a **claim**, never an authority — the host checks the contract major, refuses an id another Plugin holds, and enforces the host allowlist itself, from the file, on every fetch. A manifest the server cannot read, or one naming a contract major it does not speak, is refused with a message naming which side to upgrade, and the server still starts.

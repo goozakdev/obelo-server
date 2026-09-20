@@ -281,6 +281,12 @@ func itoa(n int) string {
 
 var spun uint64
 
+// refusals counts the calls THIS INSTANCE has answered with a clean error. It is
+// package state in a guest's linear memory, so it lives exactly as long as the
+// instance does — which makes it the suite's proof of whether the host kept the
+// instance or rebuilt it.
+var refusals uint64
+
 func misbehave(req deliverRequest) (uint64, bool) {
 	switch mode(req.Settings.URL) {
 	case "panic":
@@ -291,6 +297,14 @@ func misbehave(req deliverRequest) (uint64, bool) {
 		for {
 			spun++
 		}
+	case "refuse":
+		// The SINK's clean error: it ran to completion and answered `0` with a
+		// sentence. A Metadata provider gets to do that for free (ADR-0058 decision
+		// 7 as amended 2026-09-18); a sink does not, and the count in the sentence
+		// is what proves it — every one of these reads "refusal 1", because the
+		// instance that answered it is dropped before the next call.
+		refusals++
+		return fail("this sink cannot deliver and says so cleanly (refusal " + itoa(int(refusals)) + " from this instance)"), true
 	case "forbidden":
 		return reply(reportRefusal(fetch(fetchRequest{URL: "https://not-allowed.example.test/steal"}))), true
 	case "metadata":
@@ -448,6 +462,7 @@ type externalRefResponse struct {
 const (
 	outcomeMatched           = "matched"
 	outcomeNoMatch           = "no-match"
+	outcomeUnavailable       = "unavailable"
 	outcomeRefKindMismatch   = "ref-kind-mismatch"
 	outcomeRefUnsupportedKnd = "ref-unsupported-kind"
 )
@@ -499,6 +514,10 @@ const (
 	guestOverview    = "Filled from inside the sandbox by an Installed plugin."
 	guestWrongTitle  = "An Entirely Different Record"
 	guestArtworkPath = "/art/poster.jpg"
+	// guestAgent is an identity this guest asks the host to send and the host
+	// never does (ADR-0059 decision 7). A stand-in that ever sees it is a stand-in
+	// looking at a bug.
+	guestAgent = "guest-agent/9.9 ( nobody@example.test )"
 )
 
 //go:wasmexport metadata_lookup
@@ -587,6 +606,71 @@ func metadataLookup(ptr, n uint32) uint64 {
 		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
 			Matched: true, Name: req.Ref.Title, Overview: string(value), Source: "installed",
 		}})
+
+	case "fetch-slow":
+		// THREE fetches in one lookup, which is the shape a real provider has:
+		// resolve the id, decorate the record, ask for artwork. The stand-in the
+		// test points URL2 at answers each one slowly, so this is where the host's
+		// call budget is either enough or it is not.
+		//
+		// A fetch that comes back as an ERROR is "the source is not answering right
+		// now", and this guest says so — `unavailable`, which sends the item to the
+		// host's backoff — rather than `no-match`, which would be a claim about the
+		// source's catalogue it is in no position to make. That the guest gets to
+		// answer at all is the property under test: before ADR-0059 decision 6 the
+		// call deadline killed the instance mid-fetch and the Plugin took the blame.
+		for i := 1; i <= 3; i++ {
+			resp := fetch(fetchRequest{URL: s.URL2})
+			if resp.Refused != "" {
+				return reply(lookupResponse{Outcome: outcomeUnavailable, Detail: "fetch " + itoa(i) + " refused: " + resp.Refused})
+			}
+			if resp.Error != "" {
+				return reply(lookupResponse{Outcome: outcomeUnavailable, Detail: "fetch " + itoa(i) + " failed: " + resp.Error})
+			}
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Record: metadataRecord{
+			Matched: true, Name: req.Ref.Title, Overview: guestOverview, Source: "installed",
+		}})
+
+	case "fetch-once":
+		// ONE fetch, carrying headers of this guest's own — including a User-Agent,
+		// which the host drops in favour of its own identity, and an ordinary one,
+		// which travels. What came back is reported as a sentence the test reads:
+		// how many bytes arrived, or the refusal that stopped them.
+		resp := fetch(fetchRequest{URL: s.URL2, Headers: []header{
+			{Name: "User-Agent", Value: guestAgent},
+			{Name: "X-Guest-Header", Value: "yes"},
+		}})
+		detail := "bytes=" + itoa(len(resp.Body))
+		switch {
+		case resp.Refused != "":
+			detail = "refused: " + resp.Refused
+		case resp.Error != "":
+			detail = "failed: " + resp.Error
+		}
+		return reply(lookupResponse{Outcome: outcomeMatched, Detail: detail, Record: metadataRecord{
+			Matched: true, Name: req.Ref.Title, Overview: detail, Source: "installed",
+		}})
+
+	case "refuse":
+		// A CLEAN error: the guest ran to completion, decided it cannot answer this
+		// call, and came back through the ABI's `0` with a sentence — which is what
+		// a real provider does with a rejected key (401) or a document it cannot
+		// parse. For a Metadata provider the host keeps this instance and counts no
+		// strike, so the sentence carries `refusals`, which counts the calls THIS
+		// instance has answered and starts again from 1 in a rebuilt one. A test
+		// reading 1, 2, 3, 4, 5 is reading proof that one instance answered them all.
+		refusals++
+		return fail("the source rejected this credential: status 401 (refusal " +
+			itoa(int(refusals)) + " from this instance)")
+
+	case "spin":
+		// A lookup that never returns. `hang` above is the sink's; this is the
+		// provider's, and it is what a deadline kill must still mean now that a
+		// slow SOURCE no longer produces one.
+		for {
+			spun++
+		}
 
 	default:
 		// The ordinary Full provider: resolve by lookup, answer a record. Music and
@@ -897,8 +981,15 @@ func subtitleSearch(ptr, n uint32) uint64 {
 	if err := json.Unmarshal(buf[:n], &call); err != nil {
 		return fail("the request is not a SubtitleSearchCall: " + err.Error())
 	}
-	if mode(call.Settings.Secret) == "nomatch" {
+	switch mode(call.Settings.Secret) {
+	case "nomatch":
 		return reply(subtitleSearchResponse{Outcome: "no-match", Detail: "this source has nothing for that release"})
+	case "spin":
+		// A search that never returns, so a test can read the seam's call budget
+		// off the wall clock (.scratch/bundled-plugins issue 09).
+		for {
+			spun++
+		}
 	}
 	if answer, probing := probeNamespace(call); probing {
 		return answer

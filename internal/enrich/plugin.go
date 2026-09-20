@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -12,21 +13,27 @@ import (
 // Plugin now: the server asks it through pluginapi's wire types and it answers
 // with an Outcome, and this file is the only place the two vocabularies meet.
 //
-// It has two halves, because the video Built-ins still live in this package while
-// an Installed plugin never will:
+// IT HAS ONE HALF LEFT, which is the point of .scratch/bundled-plugins. It used to
+// have two, because the shipped sources lived a few files away in this package:
 //
-//   - the PLUGIN side (pluginFromProvider) dresses one of this package's sources
-//     as a Plugin: domain values out, wire types back, sentinels turned into
-//     Outcomes. It is what a Built-in's registration factory returns.
+//   - the PLUGIN side (pluginFromProvider) dressed one of them as a Plugin — domain
+//     values out, wire types back, sentinels turned into Outcomes — and was what a
+//     Built-in's registration factory returned;
 //   - the HOST side (ProviderFromPlugin) turns any Plugin back into the
 //     MetadataProvider the chains and the Service have always called, consulting
 //     the Descriptor before an optional call and mapping each Outcome back to the
 //     sentinel `errors.Is` callers already match on.
 //
-// Nothing above the host side knows the contract exists; nothing below the Plugin
-// side knows the server's sentinels exist. When Phase 2 puts a sandbox boundary
-// under pluginapi, only the host half stays — the Plugin half is what an external
-// author writes for themselves, and this is the shape of it.
+// That file comment used to end "when Phase 2 puts a sandbox boundary under
+// pluginapi, only the host half stays — the Plugin half is what an external author
+// writes for themselves". Phase 2 landed, the seven shipped sources are
+// WebAssembly guests (ADR-0059), and the Plugin half is now the SDK's dispatcher
+// (pluginsdk/metadata) on the other side of the sandbox. What is left here is the
+// host half and the shared vocabulary it needs. The Plugin half survives only as a
+// test double — see plugin_side_test.go — which is what still drives the
+// round-trip assertions this edge is worth having.
+//
+// Nothing above the host side knows the contract exists.
 
 // errOutcomeNotInPoint is what a Plugin gets for answering with an Outcome this
 // build has never heard of. It is a programming error in the Plugin, not a domain
@@ -51,7 +58,11 @@ var errOutcomeNotInPoint = errors.New("enrich: outcome is not part of the Metada
 //   - unavailable          → ErrSearchUnavailable, the "this kind cannot be searched
 //     right now" the Edit-item box reports to the Admin instead
 //     of an empty result set. It is also what an UNDECLARED
-//     capability answers, without the Plugin being called
+//     capability answers, without the Plugin being called.
+//     ONE CALLER READS IT DIFFERENTLY: pluginProvider.Lookup
+//     marks it transient as well, because on a lookup it means
+//     "we could not ask" rather than "there is nothing to show"
+//     (see lookupUnavailable)
 //   - ref-invalid          → ErrExternalRefInvalid
 //   - ref-kind-mismatch    → ErrExternalRefKindMismatch. The got/want kinds that
 //     make the message specific are carried by the external-ref
@@ -78,166 +89,6 @@ func outcomeError(o pluginapi.Outcome) error {
 	default:
 		return fmt.Errorf("%w: %q", errOutcomeNotInPoint, o)
 	}
-}
-
-// errorOutcome is outcomeError's inverse, used by the Plugin side: it reports
-// which Outcome a domain error IS, or ok=false when the error is not a domain
-// outcome at all. That second case is the important one — a transport failure, a
-// 503, a context deadline is NOT an outcome, it is a Go error that travels
-// alongside the response and the host retries rather than settling the item
-// (ADR-0048). Squashing it into an outcome here would turn every outage into a
-// permanent "no match".
-//
-// The order matters: ErrMatchRejected WRAPS ErrNoMatch, so it has to be tested
-// first or every rejection would be reported as a plain no-match and the
-// `search-rejected` reason would disappear.
-func errorOutcome(err error) (pluginapi.Outcome, bool) {
-	switch {
-	case err == nil:
-		return pluginapi.OutcomeMatched, true
-	case errors.Is(err, ErrMatchRejected):
-		return pluginapi.OutcomeRejected, true
-	case errors.Is(err, ErrNoMatch):
-		return pluginapi.OutcomeNoMatch, true
-	case errors.Is(err, ErrSearchUnavailable):
-		return pluginapi.OutcomeUnavailable, true
-	case errors.Is(err, ErrExternalRefKindMismatch):
-		return pluginapi.OutcomeRefKindMismatch, true
-	case errors.Is(err, ErrExternalRefUnsupportedKind):
-		return pluginapi.OutcomeRefUnsupportedKind, true
-	case errors.Is(err, ErrExternalRefInvalid):
-		return pluginapi.OutcomeRefInvalid, true
-	default:
-		return "", false
-	}
-}
-
-// --- the Plugin side: a source in this package, dressed as a Plugin -----------
-
-// pluginFromProvider wraps one of this package's sources so it can be registered
-// as a Built-in Metadata provider Plugin. It is the factory's return value, and it
-// is deliberately total: an optional operation the wrapped source does not
-// implement answers OutcomeUnavailable rather than failing, which is the same
-// thing the host would answer for an undeclared capability.
-func pluginFromProvider(p MetadataProvider) pluginapi.MetadataProvider {
-	return builtinPlugin{provider: p}
-}
-
-// builtinPlugin is the Plugin half of the adapter: wire types in, wire types out.
-type builtinPlugin struct{ provider MetadataProvider }
-
-func (b builtinPlugin) Lookup(ctx context.Context, req pluginapi.LookupRequest) (pluginapi.LookupResponse, error) {
-	meta, err := b.provider.Lookup(ctx, titleRefFromWire(req.Ref))
-	outcome, ok := errorOutcome(err)
-	if !ok {
-		return pluginapi.LookupResponse{}, err // a transport failure is not an outcome
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.LookupResponse{Outcome: outcome}, nil
-	}
-	return pluginapi.LookupResponse{Outcome: outcome, Record: recordFromMetadata(meta)}, nil
-}
-
-func (b builtinPlugin) Search(ctx context.Context, req pluginapi.SearchRequest) (pluginapi.SearchResponse, error) {
-	cands, err := b.provider.Search(ctx, req.Kind, req.Query, SearchOptions{
-		Artist:  req.Artist,
-		Release: req.Release,
-		Limit:   req.Limit,
-		Offset:  req.Offset,
-	})
-	outcome, ok := errorOutcome(err)
-	if !ok {
-		return pluginapi.SearchResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.SearchResponse{Outcome: outcome}, nil
-	}
-	out := make([]pluginapi.SearchCandidate, 0, len(cands))
-	for _, c := range cands {
-		out = append(out, pluginapi.SearchCandidate{
-			ExternalID:     c.ExternalID,
-			Title:          c.Title,
-			Year:           c.Year,
-			ThumbnailURL:   c.ThumbnailURL,
-			Disambiguation: c.Disambiguation,
-			Kind:           c.Kind,
-			TypeLabel:      c.TypeLabel,
-			// An album candidate carries its tracklist preview and, when the Admin named
-			// one, the edition it came from. Both are album-only and both were left off
-			// the wire until music crossed it; dropping them here would have quietly
-			// emptied the picker's track preview and cleared a pasted /release/ URL's
-			// chosen edition (ADR-0052).
-			Tracklist: wireTracklist(c.Tracklist),
-			ReleaseID: c.ReleaseID,
-		})
-	}
-	return pluginapi.SearchResponse{Outcome: outcome, Candidates: out}, nil
-}
-
-func (b builtinPlugin) ArtworkCandidates(ctx context.Context, req pluginapi.ArtworkCandidatesRequest) (pluginapi.ArtworkCandidatesResponse, error) {
-	cands, err := b.provider.ArtworkCandidates(ctx, titleRefFromWire(req.Ref), req.Role)
-	outcome, ok := errorOutcome(err)
-	if !ok {
-		return pluginapi.ArtworkCandidatesResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.ArtworkCandidatesResponse{Outcome: outcome}, nil
-	}
-	out := make([]pluginapi.ArtworkCandidate, 0, len(cands))
-	for _, c := range cands {
-		out = append(out, pluginapi.ArtworkCandidate{URL: c.URL, Width: c.Width, Height: c.Height, Source: c.Source})
-	}
-	return pluginapi.ArtworkCandidatesResponse{Outcome: outcome, Candidates: out}, nil
-}
-
-// SeriesSeasons / SeasonEpisodes are the CapabilityEpisodeList half. A wrapped
-// source that does not implement EpisodeLister answers OutcomeUnavailable — the
-// same thing the type assertion the chains used to make degraded to.
-func (b builtinPlugin) SeriesSeasons(ctx context.Context, req pluginapi.SeriesSeasonsRequest) (pluginapi.SeriesSeasonsResponse, error) {
-	lister, ok := b.provider.(EpisodeLister)
-	if !ok {
-		return pluginapi.SeriesSeasonsResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
-	}
-	seasons, err := lister.SeriesSeasons(ctx, req.SeriesID)
-	outcome, known := errorOutcome(err)
-	if !known {
-		return pluginapi.SeriesSeasonsResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.SeriesSeasonsResponse{Outcome: outcome}, nil
-	}
-	out := make([]pluginapi.SeasonSummary, 0, len(seasons))
-	for _, s := range seasons {
-		out = append(out, pluginapi.SeasonSummary{Season: s.Season, EpisodeCount: s.EpisodeCount})
-	}
-	return pluginapi.SeriesSeasonsResponse{Outcome: outcome, Seasons: out}, nil
-}
-
-func (b builtinPlugin) SeasonEpisodes(ctx context.Context, req pluginapi.SeasonEpisodesRequest) (pluginapi.SeasonEpisodesResponse, error) {
-	lister, ok := b.provider.(EpisodeLister)
-	if !ok {
-		return pluginapi.SeasonEpisodesResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
-	}
-	eps, err := lister.SeasonEpisodes(ctx, req.SeriesID, req.Season)
-	outcome, known := errorOutcome(err)
-	if !known {
-		return pluginapi.SeasonEpisodesResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.SeasonEpisodesResponse{Outcome: outcome}, nil
-	}
-	out := make([]pluginapi.EpisodeCandidate, 0, len(eps))
-	for _, e := range eps {
-		out = append(out, pluginapi.EpisodeCandidate{
-			Season:   e.Season,
-			Episode:  e.Episode,
-			Name:     e.Name,
-			Overview: e.Overview,
-			AirDate:  e.AirDate,
-			StillURL: e.StillURL,
-		})
-	}
-	return pluginapi.SeasonEpisodesResponse{Outcome: outcome, Episodes: out}, nil
 }
 
 // --- the host side: a Plugin, called as a MetadataProvider -------------------
@@ -269,15 +120,52 @@ type pluginProvider struct {
 // Lookup is the one call no capability gates: resolving a ref to a record is what
 // a Metadata provider IS, and a Plugin that cannot do it has no business
 // registering.
+//
+// OutcomeUnavailable ON A LOOKUP IS TRANSIENT, and that is the one place this
+// adapter reads an Outcome as more than outcomeError does. See lookupUnavailable.
 func (a pluginProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMetadata, error) {
 	resp, err := a.plugin.Lookup(ctx, pluginapi.LookupRequest{Ref: wireRefFromTitleRef(ref)})
 	if err != nil {
 		return TitleMetadata{}, err
 	}
+	if resp.Outcome == pluginapi.OutcomeUnavailable {
+		return TitleMetadata{}, lookupUnavailable(resp.Detail)
+	}
 	if err := outcomeError(resp.Outcome); err != nil {
 		return TitleMetadata{}, err
 	}
 	return metadataFromRecord(resp.Record), nil
+}
+
+// lookupUnavailable is what a Plugin answering OutcomeUnavailable to a LOOKUP
+// means, and it is deliberately not what the same Outcome means anywhere else.
+//
+// # Why one call reads it differently
+//
+// Everywhere else — search, the artwork picker, the episode chooser, a pasted
+// reference — "unavailable" is a fact about the SOURCE'S CATALOGUE that a human
+// is looking at right now: this source owns no listable set for this kind, so the
+// picker says "not now" and offers the upload path instead. There is nothing to
+// retry and nobody waiting.
+//
+// A LOOKUP is the enrichment pass, and a pass has exactly one question to answer
+// about a failed lookup (ADR-0048): did we manage to ask? A Plugin says
+// "unavailable" to a lookup when the host refused its fetch, when the fetch ran
+// out of the call's budget, or when the source answered 503 — none of which is a
+// statement about the item, and all of which ADR-0059 decision 6 says must take
+// the backoff rather than park the Title. Without this, a guest that answered
+// honestly would settle a perfectly matchable movie as 'failed' on one bad
+// afternoon, which is the exact failure ADR-0048 exists to prevent and which the
+// Built-in it replaced never had.
+//
+// The error satisfies BOTH matchers on purpose: errors.Is(err, ErrSearchUnavailable)
+// keeps every existing caller that tells this apart from a no-match working, and
+// IsTransient(err) is what recordLeafFailure and recordParentFailure read.
+func lookupUnavailable(detail string) error {
+	if strings.TrimSpace(detail) == "" {
+		return transient(ErrSearchUnavailable)
+	}
+	return transient(fmt.Errorf("%w: %s", ErrSearchUnavailable, detail))
 }
 
 // Search asks the Plugin for candidates. An undeclared CapabilitySearch is the
@@ -316,6 +204,9 @@ func (a pluginProvider) Search(ctx context.Context, kind, query string, opts Sea
 			TypeLabel:      c.TypeLabel,
 			Tracklist:      domainTracklist(c.Tracklist),
 			ReleaseID:      c.ReleaseID,
+			// The HOST stamps the namespace from the Plugin it asked (ADR-0060
+			// decision 5): a source's namespace is its plugin id.
+			Source: a.desc.Slug,
 		})
 	}
 	return out, nil
@@ -411,16 +302,25 @@ func (a pluginProvider) episodeLister() (pluginapi.EpisodeLister, bool) {
 
 // --- the two vocabularies' value translations --------------------------------
 
+// wireRefFromTitleRef sends every id the TitleRef holds in BOTH carriers
+// (ADR-0060 decision 7): ExternalIDs is the TitleRef's map merged with its five
+// named fields, and each named MediaRef field is then set FROM that merged map. So a
+// caller that sets only the named fields (every caller until the store keeps ids by
+// namespace) still sends a populated map to a new guest, and a caller that sets
+// only the map still fills the named mirrors a v1 guest reads — TheTVDBID and
+// AniDBID included, which no caller used to fill.
 func wireRefFromTitleRef(ref TitleRef) pluginapi.MediaRef {
+	ids := mergedExternalIDs(ref)
 	out := pluginapi.MediaRef{
 		Kind:          ref.Kind,
 		Title:         ref.Title,
 		Year:          ref.Year,
-		TMDBID:        ref.TMDBID,
-		IMDBID:        ref.IMDBID,
-		MusicbrainzID: ref.MusicbrainzID,
-		TheTVDBID:     ref.TheTVDBID,
-		AniDBID:       ref.AniDBID,
+		ExternalIDs:   ids,
+		TMDBID:        ids[pluginapi.NamespaceTMDB],
+		IMDBID:        ids[pluginapi.NamespaceIMDB],
+		MusicbrainzID: ids[pluginapi.NamespaceMusicBrainz],
+		TheTVDBID:     ids[pluginapi.NamespaceTheTVDB],
+		AniDBID:       ids[pluginapi.NamespaceAniDB],
 		SeasonNumber:  ref.SeasonNumber,
 		EpisodeNumber: ref.EpisodeNumber,
 		EpisodeLabel:  ref.EpisodeLabel,
@@ -438,16 +338,63 @@ func wireRefFromTitleRef(ref TitleRef) pluginapi.MediaRef {
 	return out
 }
 
+// mergedExternalIDs is the TitleRef's ExternalIDs with its five named fields folded
+// in, or nil when it holds no id at all. The map is the carrier, so where a
+// namespace is set in both and they differ the MAP'S ENTRY WINS; the host never
+// builds such a ref on purpose, but a rule is still needed for when it does. A
+// blank value is no id and is dropped, whichever side it came from. The caller's
+// map is never written to.
+func mergedExternalIDs(ref TitleRef) map[string]string {
+	named := pluginapi.MediaRef{
+		TMDBID: ref.TMDBID, IMDBID: ref.IMDBID, MusicbrainzID: ref.MusicbrainzID,
+		TheTVDBID: ref.TheTVDBID, AniDBID: ref.AniDBID,
+	}
+	var out map[string]string
+	put := func(ns, id string) {
+		if out == nil {
+			out = make(map[string]string)
+		}
+		out[ns] = id
+	}
+	for ns, id := range ref.ExternalIDs {
+		if id = strings.TrimSpace(id); id != "" && ns != "" {
+			put(ns, id)
+		}
+	}
+	for _, ns := range pluginapi.NamedNamespaces() {
+		if _, ok := out[ns]; ok {
+			continue
+		}
+		if id := strings.TrimSpace(named.NamedID(ns)); id != "" {
+			put(ns, id)
+		}
+	}
+	return out
+}
+
+// titleRefFromWire is the reverse, for a reference a Plugin DECLARED (its connection
+// probe): both carriers are read the way a guest reads them, through MediaRef.ID, so
+// a Descriptor written against either shape yields the same TitleRef.
 func titleRefFromWire(ref pluginapi.MediaRef) TitleRef {
+	var ids map[string]string
+	for ns := range ref.ExternalIDs {
+		if id := ref.ID(ns); id != "" && ns != "" {
+			if ids == nil {
+				ids = make(map[string]string)
+			}
+			ids[ns] = id
+		}
+	}
 	out := TitleRef{
 		Kind:          ref.Kind,
 		Title:         ref.Title,
 		Year:          ref.Year,
-		TMDBID:        ref.TMDBID,
-		IMDBID:        ref.IMDBID,
-		MusicbrainzID: ref.MusicbrainzID,
-		TheTVDBID:     ref.TheTVDBID,
-		AniDBID:       ref.AniDBID,
+		ExternalIDs:   ids,
+		TMDBID:        ref.ID(pluginapi.NamespaceTMDB),
+		IMDBID:        ref.ID(pluginapi.NamespaceIMDB),
+		MusicbrainzID: ref.ID(pluginapi.NamespaceMusicBrainz),
+		TheTVDBID:     ref.ID(pluginapi.NamespaceTheTVDB),
+		AniDBID:       ref.ID(pluginapi.NamespaceAniDB),
 		SeasonNumber:  ref.SeasonNumber,
 		EpisodeNumber: ref.EpisodeNumber,
 		EpisodeLabel:  ref.EpisodeLabel,
@@ -465,53 +412,22 @@ func titleRefFromWire(ref pluginapi.MediaRef) TitleRef {
 	return out
 }
 
-func recordFromMetadata(meta TitleMetadata) pluginapi.MetadataRecord {
-	rec := pluginapi.MetadataRecord{
-		Matched:        meta.Matched,
-		Name:           meta.Name,
-		Year:           meta.Year,
-		Overview:       meta.Overview,
-		Tagline:        meta.Tagline,
-		ContentRating:  meta.ContentRating,
-		ReleaseDate:    meta.ReleaseDate,
-		RuntimeMinutes: meta.RuntimeMinutes,
-		Studio:         meta.Studio,
-		Genres:         meta.Genres,
-		ExternalID:     meta.ExternalID,
-		Source:         meta.Source,
-		FromSearch:     meta.FromSearch,
-	}
-	for _, c := range meta.Cast {
-		rec.Cast = append(rec.Cast, pluginapi.Credit{
-			Person:    c.Person,
-			Role:      c.Role,
-			Character: c.Character,
-			Kind:      c.Kind,
-			PersonRef: c.PersonRef,
-			ImageURL:  c.ImageURL,
-		})
-	}
-	for _, a := range meta.Artwork {
-		rec.Artwork = append(rec.Artwork, pluginapi.ArtworkRef{Role: a.Role, URL: a.URL})
-	}
-	return rec
-}
-
 func metadataFromRecord(rec pluginapi.MetadataRecord) TitleMetadata {
 	meta := TitleMetadata{
-		Matched:        rec.Matched,
-		Name:           rec.Name,
-		Year:           rec.Year,
-		Overview:       rec.Overview,
-		Tagline:        rec.Tagline,
-		ContentRating:  rec.ContentRating,
-		ReleaseDate:    rec.ReleaseDate,
-		RuntimeMinutes: rec.RuntimeMinutes,
-		Studio:         rec.Studio,
-		Genres:         rec.Genres,
-		ExternalID:     rec.ExternalID,
-		Source:         rec.Source,
-		FromSearch:     rec.FromSearch,
+		Matched:             rec.Matched,
+		Name:                rec.Name,
+		Year:                rec.Year,
+		Overview:            rec.Overview,
+		OverviewSynthesized: rec.OverviewSynthesized,
+		Tagline:             rec.Tagline,
+		ContentRating:       rec.ContentRating,
+		ReleaseDate:         rec.ReleaseDate,
+		RuntimeMinutes:      rec.RuntimeMinutes,
+		Studio:              rec.Studio,
+		Genres:              rec.Genres,
+		ExternalID:          rec.ExternalID,
+		Source:              rec.Source,
+		FromSearch:          rec.FromSearch,
 	}
 	for _, c := range rec.Cast {
 		meta.Cast = append(meta.Cast, Credit{
@@ -531,126 +447,22 @@ func metadataFromRecord(rec pluginapi.MetadataRecord) TitleMetadata {
 
 // --- the music-only calls: album tracklist, album editions, external refs ----
 
-// tracklistCallOutcome is the AlbumTracklist call's OWN error→Outcome mapping, and it
-// is deliberately not errorOutcome. Within this one call "no-match" MEANS "this
-// album has no tracklist": the call guarantees a matched answer is never empty
+// tracklistError is the AlbumTracklist call's OWN Outcome→error mapping, and it is
+// deliberately not outcomeError. Within this one call "no-match" MEANS "this album
+// has no tracklist": the call guarantees a matched answer is never empty
 // (ErrNoTracklist exists precisely so an empty list cannot stand in for it —
 // ADR-0050), so the two values round-trip losslessly and the contract needs no
 // eighth Outcome that only one Extension point could ever mean anything by.
 //
-// Everything else — including a bare ErrNoMatch, which is what a 404 on the
-// release browse produces — is NOT an outcome here and travels as a Go error, so
-// the host still retries a failed fetch (ADR-0048) instead of settling the album
-// as "has no tracklist". Collapsing those two would turn an outage into a
-// diagnosis, which is the mistake ADR-0049 spent an outage learning.
-func tracklistCallOutcome(err error) (pluginapi.Outcome, bool) {
-	switch {
-	case err == nil:
-		return pluginapi.OutcomeMatched, true
-	case errors.Is(err, ErrNoTracklist):
-		return pluginapi.OutcomeNoMatch, true
-	default:
-		return "", false
-	}
-}
-
-// tracklistCallError is tracklistCallOutcome's inverse on the host side: the same
-// call-scoped reading of no-match, so what the Plugin said is what the caller
-// gets. An Outcome this call has no meaning for is still mapped by the domain's
-// general table, so a Plugin answering "unavailable" is reported as such rather
-// than silently read as an album with nothing on it.
+// An Outcome this call has no meaning for is still mapped by the domain's general
+// table, so a Plugin answering "unavailable" is reported as such rather than
+// silently read as an album with nothing on it. Collapsing those two would turn an
+// outage into a diagnosis, which is the mistake ADR-0049 spent an outage learning.
 func tracklistError(o pluginapi.Outcome) error {
 	if o == pluginapi.OutcomeNoMatch {
 		return ErrNoTracklist
 	}
 	return outcomeError(o)
-}
-
-// AlbumTracklist (Plugin side) exposes a wrapped source's optional
-// AlbumTracklister. A source that does not implement it answers OutcomeNoMatch —
-// "this album has no tracklist" — which is exactly what the chains degraded to
-// when the type assertion they used to make failed.
-func (b builtinPlugin) AlbumTracklist(ctx context.Context, req pluginapi.TracklistRequest) (pluginapi.TracklistResponse, error) {
-	lister, ok := b.provider.(AlbumTracklister)
-	if !ok {
-		return pluginapi.TracklistResponse{Outcome: pluginapi.OutcomeNoMatch}, nil
-	}
-	tracks, err := lister.AlbumTracklist(ctx, TracklistRequest{
-		ReleaseGroupID:  req.ReleaseGroupID,
-		ReleaseID:       req.ReleaseID,
-		ReleaseIDChosen: req.ReleaseIDChosen,
-		LocalTrackCount: req.LocalTrackCount,
-	})
-	outcome, known := tracklistCallOutcome(err)
-	if !known {
-		return pluginapi.TracklistResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.TracklistResponse{Outcome: outcome}, nil
-	}
-	return pluginapi.TracklistResponse{Outcome: outcome, Tracks: wireTracklist(tracks)}, nil
-}
-
-// ReleaseGroupEditions (Plugin side) exposes a wrapped source's optional
-// AlbumEditionLister. A source that does not implement it answers
-// OutcomeUnavailable — the picker's "not now", which is what the failed type
-// assertion produced — and NOT the no-match a missing tracklist answers: an album
-// with no editions to choose from is a real, matched answer.
-func (b builtinPlugin) ReleaseGroupEditions(ctx context.Context, req pluginapi.ReleaseEditionsRequest) (pluginapi.ReleaseEditionsResponse, error) {
-	lister, ok := b.provider.(AlbumEditionLister)
-	if !ok {
-		return pluginapi.ReleaseEditionsResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
-	}
-	eds, err := lister.ReleaseGroupEditions(ctx, req.ReleaseGroupID)
-	outcome, known := errorOutcome(err)
-	if !known {
-		return pluginapi.ReleaseEditionsResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		return pluginapi.ReleaseEditionsResponse{Outcome: outcome}, nil
-	}
-	out := make([]pluginapi.ReleaseEdition, 0, len(eds))
-	for _, e := range eds {
-		out = append(out, pluginapi.ReleaseEdition{
-			ReleaseID:      e.ReleaseID,
-			Date:           e.Date,
-			Country:        e.Country,
-			Format:         e.Format,
-			TrackCount:     e.TrackCount,
-			Disambiguation: e.Disambiguation,
-		})
-	}
-	return pluginapi.ReleaseEditionsResponse{Outcome: outcome, Editions: out}, nil
-}
-
-// ParseExternalRef (Plugin side) exposes a wrapped source's optional
-// ExternalRefParser, turning its three refusal sentinels into the three distinct
-// Outcomes and lifting a kind mismatch's got/want kinds out of the typed error
-// into the response — where they survive a boundary, which an error's Go type
-// does not.
-func (b builtinPlugin) ParseExternalRef(ctx context.Context, req pluginapi.ExternalRefRequest) (pluginapi.ExternalRefResponse, error) {
-	parser, ok := b.provider.(ExternalRefParser)
-	if !ok {
-		return pluginapi.ExternalRefResponse{Outcome: pluginapi.OutcomeUnavailable}, nil
-	}
-	ref, err := parser.ParseExternalRef(ctx, req.Kind, req.Pasted)
-	outcome, known := errorOutcome(err)
-	if !known {
-		return pluginapi.ExternalRefResponse{}, err
-	}
-	if outcome != pluginapi.OutcomeMatched {
-		resp := pluginapi.ExternalRefResponse{Outcome: outcome}
-		var mismatch *ExternalRefKindMismatchError
-		if errors.As(err, &mismatch) {
-			resp.GotKind, resp.WantKind = mismatch.Got, mismatch.Want
-		}
-		return resp, nil
-	}
-	return pluginapi.ExternalRefResponse{
-		Outcome:    outcome,
-		ExternalID: ref.ExternalID,
-		ReleaseID:  ref.ReleaseID,
-	}, nil
 }
 
 // AlbumTracklist (host side) asks the Plugin what its album holds. An undeclared
@@ -738,7 +550,9 @@ func (a pluginProvider) ParseExternalRef(ctx context.Context, kind, pasted strin
 		}
 		return ExternalRef{}, err
 	}
-	return ExternalRef{ExternalID: resp.ExternalID, ReleaseID: resp.ReleaseID}, nil
+	// Stamped with the answering Plugin's id: it is the namespace of the id it read
+	// (ADR-0060 decision 5).
+	return ExternalRef{ExternalID: resp.ExternalID, ReleaseID: resp.ReleaseID, Namespace: a.desc.Slug}, nil
 }
 
 // albumTracklister reports whether this Plugin may be asked what an album holds:
@@ -752,25 +566,9 @@ func (a pluginProvider) albumTracklister() (pluginapi.AlbumTracklister, bool) {
 	return lister, ok
 }
 
-// wireTracklist / domainTracklist translate a tracklist between the two
-// vocabularies. An entry with no recording id keeps its position on both sides:
-// it still CLAIMS that position for the host's match rule (ADR-0050).
-func wireTracklist(tracks []TrackCandidate) []pluginapi.TrackCandidate {
-	if len(tracks) == 0 {
-		return nil
-	}
-	out := make([]pluginapi.TrackCandidate, 0, len(tracks))
-	for _, t := range tracks {
-		out = append(out, pluginapi.TrackCandidate{
-			Disc:       t.Disc,
-			Position:   t.Position,
-			Title:      t.Title,
-			ExternalID: t.ExternalID,
-		})
-	}
-	return out
-}
-
+// domainTracklist translates a tracklist from the contract's vocabulary into this
+// package's. An entry with no recording id keeps its position: it still CLAIMS
+// that position for the host's match rule (ADR-0050).
 func domainTracklist(tracks []pluginapi.TrackCandidate) []TrackCandidate {
 	if len(tracks) == 0 {
 		return nil

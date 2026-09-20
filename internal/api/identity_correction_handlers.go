@@ -103,7 +103,10 @@ func handleTitleIdentityCorrection(deps Deps, titleID string) http.HandlerFunc {
 		// Pin the picked record + re-enrich clean (locks were just cleared, so every
 		// field refreshes from the new work). Best-effort: a re-enrich failure does not
 		// undo the identity change (the override + re-key already stuck).
-		if err := deps.Enrich.ApplyOverride(r.Context(), titleID, externalID); err != nil &&
+		// The picked id was just written as the Title's IDENTITY tmdb_id (FixMatch
+		// above), so it is a `tmdb` id by construction and its record is stamped so
+		// (ADR-0060 decision 5), whatever the Library leads with.
+		if err := deps.Enrich.ApplyOverride(r.Context(), titleID, externalID, store.NamespaceTMDB); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to re-enrich corrected item", nil)
 			return
@@ -158,8 +161,10 @@ func handleShowIdentityCorrection(deps Deps, showID string) http.HandlerFunc {
 		}
 		// A Show has no edition to name (ADR-0052 is Album-shaped), so the pin carries
 		// the record alone.
+		// The pin is a `tmdb` id by construction: it was just written as the Show's
+		// identity id (ADR-0060 decision 5).
 		if err := deps.Enrich.ApplyEntityOverride(r.Context(), store.EntityShow, showID,
-			enrich.EntityPin{ExternalID: externalID}); err != nil &&
+			enrich.EntityPin{ExternalID: externalID, Namespace: store.NamespaceTMDB}); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to re-enrich corrected item", nil)
 			return

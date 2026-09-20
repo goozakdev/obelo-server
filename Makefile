@@ -47,8 +47,20 @@ RELEASE_TAGS := tailscale
 #
 # AMD64_PKGS is the package list. Widening it is one edit, deliberately: start with
 # what touches a guest and grow when the emulated run time says it can.
-AMD64_PKGS ?= ./pluginapi/... ./internal/plugins/... ./internal/eventsink/... \
-              ./internal/subfetch/... ./internal/enrich/... ./internal/api/
+#
+# ./internal/bundled/... and the seven ./plugins/<id>/... joined it in
+# .scratch/bundled-plugins issue 08, and they are the reason this target now
+# matters more than it did. Until then the only guest compiled and called under
+# the amd64 backend was a TEST guest; now the seven modules the server SHIPS are
+# built inside the container by the `plugins` recipe below and driven through
+# wazero by ./internal/api and ./internal/bundled — which is the proof that the
+# image an operator pulls enriches, on the architecture it runs on. `plugins/`
+# cannot be spelled `./plugins/...`: a pattern crosses into a workspace module
+# only when it names that module's own directory (see GOPKGS), so this is the
+# same per-directory wildcard.
+AMD64_PKGS ?= ./pluginapi/... ./pluginsdk/... ./internal/plugins/... ./internal/bundled/... \
+              ./internal/eventsink/... ./internal/subfetch/... ./internal/enrich/... \
+              ./internal/api/ $(PLUGIN_PKGS)
 AMD64_IMAGE ?= golang:1.26
 
 # ffmpeg, installed into the container before the run. This is not incidental and it
@@ -70,7 +82,14 @@ AMD64_SETUP ?= apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive a
 # hang and is not one. Raised rather than narrowed, because the package IS the
 # end-to-end plugin coverage: install, uninstall, catalog, signing, the declared
 # settings form and the Discord fixture all reach a guest through real HTTP.
-AMD64_TIMEOUT ?= 30m
+#
+# RAISED TO 60m for the Bundled plugins (.scratch/bundled-plugins: issue 08).
+# internal/api is 462 s natively now that every server it boots installs and
+# compiles seven real modules, and MEASURED 2026-09-18 it is 1054 s in the
+# container — 2.3x, and 17.6 minutes. That is more than half of the old 30, which
+# is close enough that a slower host or a busy one would hit the wall and report a
+# hang rather than a failure.
+AMD64_TIMEOUT ?= 60m
 
 # One named test, run with -v BEFORE the quiet run, so the output carries proof
 # rather than an inference: it compiles the wasm guest from source with the same
@@ -100,12 +119,47 @@ LDFLAGS := -X $(CONFIG_PKG).bootstrapTMDBKey=$(BOOTSTRAP_TMDB_OBF) \
            -X $(CONFIG_PKG).kAppEncKey=$(OBELO_APP_ENC_KEY) \
            -X $(CONFIG_PKG).DefaultKeyRotationURL=$(OBELO_ROTATION_URL)
 
-.PHONY: all build build-release web go-build go-build-release keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-credentials-free check-web fmt clean
+# GOPKGS is what `go test` and `go vet` walk, and it is three patterns rather than
+# one because this repository is three Go modules joined by go.work (ADR-0059
+# decision 9): the server, `pluginapi` and `pluginsdk`.
+#
+# `./...` DOES NOT COVER A WORKSPACE. Inside a workspace it still expands only to
+# the packages of the module the working directory belongs to, so after the module
+# split a plain `go test ./...` silently stopped running the contract's own
+# round-trip and schema-staleness suites while reporting success — the shape
+# CLAUDE.md records. An explicit subdirectory pattern DOES cross into a workspace
+# module, which is why these three are spelled out. A module added to go.work
+# belongs here too.
+#
+# A module added to go.work belongs here too — and `./plugins/...` DOES NOT WORK
+# for the Bundled plugins: a pattern crosses into a workspace module only when it
+# names that module's own directory, so `./plugins/tmdb/...` is covered and
+# `./plugins/...` silently matches nothing ("matched no packages", exit 0). The
+# wildcard below spells one pattern per plugin directory, so adding a plugin is a
+# directory and not a Makefile edit — which matters, because three agents adding
+# three plugins in parallel would otherwise conflict here every time.
+# The Bundled plugins (ADR-0059, .scratch/bundled-plugins). Each plugins/<id>/ is
+# a Go module with a manifest.json beside it; `make plugins` compiles each to
+# WebAssembly and writes the module and the manifest into BUNDLED_DIR, which
+# internal/bundled embeds. DISCOVERY IS THE FILESYSTEM: a new plugin is a new
+# directory with a manifest in it, and nothing here names one.
+BUNDLED_DIR := internal/bundled/modules
+PLUGIN_DIRS := $(patsubst %/manifest.json,%,$(wildcard plugins/*/manifest.json))
+PLUGIN_PKGS := $(patsubst %,./%/...,$(PLUGIN_DIRS))
+# Where the uncompressed module lands on its way to being gzipped. NOT inside
+# BUNDLED_DIR: that whole directory is embedded, so a stray .wasm left beside the
+# .wasm.gz would be compiled into the binary twice over.
+PLUGIN_BUILD_DIR := bin/plugins
+
+GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
+
+.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web differential fmt clean
 
 all: build
 
-## build: frontend bundle first, then the Go binary that embeds it.
-build: web go-build
+## build: the Bundled plugin modules and the frontend bundle first, then the Go
+## binary that embeds both.
+build: plugins web go-build
 
 ## web: install deps (if needed) and produce the SPA bundle into the embed dir.
 web:
@@ -122,13 +176,28 @@ web:
 go-build:
 	go build $(GOTAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/obelo
 
-## build-release: the artifact that ships — the SPA bundle plus the Go binary WITH
-## the `tailscale` tag (ADR-0043), matching what docker/Dockerfile produces.
-build-release: web go-build-release
+## build-release: the artifact that ships — the Bundled plugin modules, the SPA
+## bundle, and the Go binary WITH the `tailscale` tag (ADR-0043), matching what
+## docker/Dockerfile produces.
+build-release: plugins web go-build-release
 
 ## go-build-release: go-build with the release tags.
 go-build-release:
 	$(MAKE) go-build TAGS="$(RELEASE_TAGS)"
+
+## plugins: build every Bundled plugin under plugins/*/ into internal/bundled/modules
+## (ADR-0059 decision 10, .scratch/bundled-plugins).
+##
+## THE RECIPE IS A SCRIPT AND NOT A LOOP HERE, deliberately. docker/Dockerfile has
+## to build the same seven modules before `go build` — internal/bundled/modules/ is
+## gitignored, so an image built without that step compiles, boots, scans and
+## silently enriches NOTHING — and for one release that loop existed twice, in this
+## file and in that one, with a comment asking the next person to keep them in
+## step. scripts/build-bundled-plugins.sh is now the single definition, and the
+## Dockerfile's `plugins` stage runs the same file. Read it for why the build
+## command is spelled the way it is (.scratch/bundled-plugins: issue 08).
+plugins:
+	@./scripts/build-bundled-plugins.sh $(BUNDLED_DIR) $(PLUGIN_BUILD_DIR)
 
 ## keytool: build the offline maintainer key-rotation CLI (ADR-0032). Seals default
 ## provider keys into the rotation envelope for the runbook — never bundles a secret,
@@ -158,8 +227,21 @@ run: build
 test: test-go test-web test-e2e
 
 ## test-go: Go unit/integration tests (uses the committed placeholder bundle).
+##
+## THE -timeout IS NOT DECORATION (.scratch/bundled-plugins: issue 08). Go's
+## default is ten minutes PER PACKAGE and internal/api had quietly grown to within
+## a minute of it: one module made it 325 s, seven make it ~530 s, and every server
+## that package boots — several hundred of them — installs all seven Bundled
+## plugins and compiles them under wazero. A suite that panics at 10m00s mid-test
+## reads like a hang and is not one; it is the same failure the amd64 target
+## already hit and raised for, one architecture over. The number is deliberately
+## generous rather than snug, because the machine that will hit it first is a
+## slower one than this or a busy one, and a gate that fails on a laptop under load
+## teaches people to pass -timeout themselves.
+TEST_TIMEOUT ?= 30m
+
 test-go:
-	go test $(GOTAGS) ./...
+	go test $(GOTAGS) -timeout $(TEST_TIMEOUT) $(GOPKGS)
 
 ## test-go-tailscale: the same suite with the `tailscale` build tag — the OTHER
 ## half of the matrix, and the variant that actually ships (ADR-0043).
@@ -189,12 +271,27 @@ test-go-tailscale:
 ## Override AMD64_PKGS to widen or narrow it; override TAGS for the shipped variant (or
 ## use test-go-amd64-tailscale).
 ##
+## IT BUILDS THE SEVEN BUNDLED PLUGINS INSIDE THE CONTAINER, with the same script
+## `make plugins` runs, before any test (.scratch/bundled-plugins: issue 08). That
+## is the whole reason this target is worth more than it was: until now the only
+## guest ever compiled and called under the amd64 backend was a TEST guest, and the
+## modules the server actually SHIPS ran on exactly one architecture — the
+## development machine's — while the image runs the other. The build writes into
+## the mounted tree, so a run leaves the host's internal/bundled/modules/ holding
+## container-built (linux/amd64 toolchain) modules; they are gitignored build
+## output and valid either way, and `make plugins` puts the host's back.
+##
 ## MEASURED 2026-09-17 on an arm64 Mac, Docker 29: 14 min 47 s cold, of which
 ## internal/api is 835 s (315 s native, so emulation costs 2.7x) and the ffmpeg install
 ## ~40 s. A SECOND run with no source change is 47 s, because Go's test cache answers
 ## for every package — the proof test above is `-count=1` precisely so that something
 ## still really runs. Everything passes, with no behavioural difference between
 ## wazero's two backends; the full result is the ADR-0058 "Carried out" note.
+## RE-MEASURED 2026-09-18, with the seven real modules built inside the container and
+## in the package list: `make check-amd64` (both halves) is 37 min 51 s, of which
+## internal/api is 1054 s against 462 s natively. Everything still passes and nothing
+## behaves differently between the two backends — which is now a statement about the
+## providers an operator depends on, not only about a test guest.
 test-go-amd64:
 	@docker info >/dev/null 2>&1 || { \
 	  echo "ERROR: test-go-amd64 needs a RUNNING DOCKER DAEMON."; \
@@ -212,6 +309,7 @@ test-go-amd64:
 	    echo "container kernel arch: $$(uname -m)"; \
 	    go version; \
 	    $(AMD64_SETUP); \
+	    ./scripts/build-bundled-plugins.sh $(BUNDLED_DIR) $(PLUGIN_BUILD_DIR); \
 	    go test $(GOTAGS) -count=1 -v -run "^$(AMD64_PROOF_TEST)\$$" ./internal/plugins/ | tee /proof.log; \
 	    grep -q "^--- PASS: $(AMD64_PROOF_TEST)" /proof.log || { \
 	      echo "ERROR: $(AMD64_PROOF_TEST) did not PASS, so no guest was compiled and"; \
@@ -267,7 +365,19 @@ test-e2e:
 ## IT RUNS ON ONE ARCHITECTURE — whichever one you are sitting at — and it deliberately
 ## stays that way: it must work with Docker closed. The second architecture is
 ## check-amd64, which is a release-time gate for the same reason check-bundle is.
-check: check-fmt vet vet-tailscale check-placeholder check-credentials-free check-web test-go test-go-tailscale
+##
+## IT BUILDS THE BUNDLED PLUGINS FIRST (.scratch/bundled-plugins: issue 08), which
+## is why `plugins` leads the list. internal/bundled embeds build output, and the
+## Go suite drives the REAL seven modules through the REAL sandbox; without this a
+## fresh clone would either fail `go test ./internal/bundled` with "run make
+## plugins" or spend two seconds per module compiling them from source inside every
+## test binary that boots a server. Note the consequence, because it reads as a
+## contradiction and is not one: this target therefore never FAILS with "run make
+## plugins" — it builds them. That sentence is what a developer running
+## `go test ./internal/bundled` by hand gets, and it is the guard that stops a
+## release shipping a server with no providers; check-no-bundled-modules-tracked
+## below is the other half, and wants the opposite thing on purpose.
+check: plugins check-fmt vet vet-tailscale check-placeholder check-no-bundled-modules-tracked check-credentials-free check-web test-go test-go-tailscale
 
 ## check-amd64: the RELEASE-side gate, beside `check` rather than inside it
 ## (.scratch/plugin-system issue 18). Run it before building an image to push.
@@ -293,9 +403,9 @@ check-fmt:
 	  echo "ERROR: not gofmt-clean (run 'make fmt'):"; echo "$$files"; exit 1; \
 	else echo "ok: gofmt clean"; fi
 
-## vet: go vet over the whole module.
+## vet: go vet over every module in the workspace (see GOPKGS).
 vet:
-	@go vet $(GOTAGS) ./... && echo "ok: go vet clean"
+	@go vet $(GOTAGS) $(GOPKGS) && echo "ok: go vet clean"
 
 ## vet-tailscale: go vet over the tagged variant. A file behind a build tag is
 ## invisible to the default vet, which is the whole problem with build tags.
@@ -334,6 +444,32 @@ check-placeholder:
 ## the opposite. Do not "reconcile" them.
 check-bundle:
 	@go run ./internal/webui/cmd/checkbundle
+
+## check-no-bundled-modules-tracked: fail if a built plugin module or manifest was
+## ever committed (ADR-0059 decision 10).
+##
+## It is THE OTHER HALF of the pair `go test ./internal/bundled` makes, and the two
+## want opposite things on purpose — the same shape CLAUDE.md records for the SPA
+## bundle, and the reason both halves are automated here rather than one of them.
+## The test fails when the modules are MISSING, so a clone that has not run
+## `make plugins` cannot quietly ship a server with no providers; this fails when
+## they are PRESENT in git, so nobody ever "fixes" that by committing 7 MB of
+## build output that no reviewer can read and that goes stale the moment a plugin
+## changes.
+##
+## `git ls-files` inspects what is TRACKED, not what is on disk: a developer who
+## has run `make plugins` has the modules sitting right there, and a check that
+## failed for them would be disabled within a week.
+check-no-bundled-modules-tracked:
+	@git rev-parse --git-dir >/dev/null 2>&1 || { \
+	  echo "ERROR: not a git repository — cannot inspect the tracked plugin modules"; exit 1; }
+	@tracked=$$(git ls-files $(BUNDLED_DIR) | grep -v '^$(BUNDLED_DIR)/\.keep$$' || true); \
+	if [ -n "$$tracked" ]; then \
+	  echo "ERROR: built plugin modules are tracked in git:"; echo "$$tracked"; \
+	  echo "       $(BUNDLED_DIR) holds BUILD OUTPUT. Remove them with:"; \
+	  echo "         git rm --cached $$tracked"; \
+	  exit 1; \
+	else echo "ok: no built plugin modules are tracked"; fi
 
 ## check-credentials-free: fail if a bundled-credential var carries a non-empty
 ## literal in source (ADR-0032) — the repo must be credential-free against
@@ -385,6 +521,35 @@ check-web:
 	  exit 1; }
 	cd $(WEB_DIR) && npm run typecheck
 	cd $(WEB_DIR) && npm test
+
+## differential: prove this build against the 2026-09-17 build, end to end.
+##
+## Boots BOTH binaries — this tree's, and one built from a throwaway clone
+## checked out at $(DIFFERENTIAL_BASE) — against one set of local stand-in
+## metadata sources and one fixture library, and diffs what they enriched and
+## what they asked for. It closes the two success criteria of
+## .scratch/bundled-plugins/PRD.md that issue 08 could only argue: "enriches a
+## movie and an album on the first pass exactly as the 2026-09-17 build does",
+## and "an existing server upgraded across issue 08 keeps every provider key,
+## every per-Library override and every item pin; the Cover Art Archive row is
+## gone; nothing re-enriches".
+##
+## It is deliberately NOT in `check`. It needs a second checkout and two full Go
+## builds — minutes, not seconds — and `check` is a pre-commit gate that people
+## have to be willing to run. It needs ffmpeg (the fixture library is generated)
+## and it needs NO network: every source it calls is on loopback.
+##
+## It never writes to bin/, never touches the developer's data directory, never
+## binds a fixed port and never modifies a tracked file. Its one prerequisite
+## inside the tree is `plugins`, which writes gitignored build output that
+## `make check` writes anyway — without it this tree's binary ships no providers
+## and the comparison would be against nothing.
+##
+## DIFFERENTIAL_KEEP=1 keeps the work directory on success (it is always kept on
+## failure, and the driver says where).
+DIFFERENTIAL_BASE ?= cf5da34
+differential: plugins
+	@DIFFERENTIAL_BASE=$(DIFFERENTIAL_BASE) ./scripts/differential/run.sh
 
 ## fmt: gofmt the Go tree.
 fmt:

@@ -289,6 +289,8 @@ func TestSearchAndArtworkCarryTheirPagingAndPayload(t *testing.T) {
 		ExternalID: "438631", Title: "Dune", Year: 2021,
 		ThumbnailURL: "https://i/t.jpg", Disambiguation: "part one",
 		Kind: "movie", TypeLabel: "Album · Soundtrack",
+		// Stamped by the host from the Plugin it asked (ADR-0060 decision 5).
+		Source: fullyCapable().Slug,
 	}
 	if len(cands) != 1 || !reflect.DeepEqual(cands[0], wantCand) {
 		t.Fatalf("candidates = %+v, want one %+v", cands, wantCand)

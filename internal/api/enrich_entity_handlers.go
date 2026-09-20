@@ -47,6 +47,9 @@ type entityEnrichmentDetailJSON struct {
 	EnrichmentStatus string              `json:"enrichmentStatus,omitempty"`
 	LockedFields     []string            `json:"lockedFields,omitempty"`
 	Override         *entityOverrideJSON `json:"enrichmentOverride,omitempty"`
+	// RecordSource is the External-id namespace of this parent's record, empty when
+	// it has none (ADR-0060 decision 5). Detail only; additive.
+	RecordSource string `json:"recordSource,omitempty"`
 	// Cascade is the "also apply to children" summary (item-editing/05): present only
 	// on an override/Wrong-item apply that ran the cascade (updated N children, sent M
 	// to the attention list). Omitted when no cascade ran.
@@ -95,6 +98,14 @@ func entityOverride(e store.EntityEnrichment) *entityOverrideJSON {
 		ReleaseID: e.ChosenReleaseID()}
 }
 
+// entityRecordSource is the namespace of a parent's record, "" when it has none.
+func entityRecordSource(e store.EntityEnrichment) string {
+	if strings.TrimSpace(e.ExternalID) == "" {
+		return ""
+	}
+	return strings.TrimSpace(e.Namespace)
+}
+
 // buildEntityDetail assembles a parent's enrichment detail (fields + lockedFields +
 // active override) for the Edit-item endpoints' response.
 func buildEntityDetail(cat *catalog.Service, entityType, entityID string) (entityEnrichmentDetailJSON, error) {
@@ -115,6 +126,7 @@ func buildEntityDetail(cat *catalog.Service, entityType, entityID string) (entit
 		Network:       e.Network,
 		LockedFields:  locked,
 		Override:      entityOverride(e),
+		RecordSource:  entityRecordSource(e),
 	}
 	if e.Status != "" && e.Status != "pending" {
 		d.EnrichmentStatus = e.Status
@@ -141,19 +153,8 @@ func handleEntityEnrichmentCandidates(enrichSvc *enrich.Service, images *provide
 			return
 		}
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		cands, err := enrichSvc.SearchEntityCandidates(r.Context(), entityType, entityID, query, searchOptionsFrom(r))
-		switch {
-		case errors.Is(err, enrich.ErrSearchUnavailable):
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search is unavailable for this item — the provider is unconfigured or disabled", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search failed — the source may be unreachable", nil)
-			return
-		}
-
-		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+		res, err := enrichSvc.FindEntityCandidates(r.Context(), entityType, entityID, query, searchOptionsFrom(r))
+		writeCandidateSearch(w, images, res, err, "item")
 	}
 }
 
@@ -198,13 +199,19 @@ func handleEntityEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Serv
 			writeError(w, http.StatusBadRequest, codeBadRequest, "externalId is required", nil)
 			return
 		}
+		source, ok := checkOverrideSource(w, req.Source, func(ns string) error {
+			return enrichSvc.CheckEntityNamespace(r.Context(), entityType, entityID, ns)
+		})
+		if !ok {
+			return
+		}
 		// releaseId is the exact EDITION the Admin named, when they named one — the
 		// release a pasted /release/ URL points at, which the preview resolved to its
 		// parent release-group and carried back beside it (ADR-0052). Absent means "no
 		// edition", which is also what CLEARS a previously chosen one: a picked search
 		// candidate and a pasted /release-group/ URL both name a less specific thing.
 		err := enrichSvc.ApplyEntityOverride(r.Context(), entityType, entityID,
-			enrich.EntityPin{ExternalID: externalID, ReleaseID: strings.TrimSpace(req.ReleaseID)})
+			enrich.EntityPin{ExternalID: externalID, ReleaseID: strings.TrimSpace(req.ReleaseID), Namespace: source})
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)

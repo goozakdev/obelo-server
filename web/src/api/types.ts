@@ -639,6 +639,11 @@ export interface EnrichmentCandidate {
    * Send it straight back as the override's `releaseId`; absent means the Admin named
    * no edition, which CLEARS any edition the album had. Album previews only. */
   releaseId?: string;
+  /** The External-id namespace `externalId` belongs to (`tmdb`, `musicbrainz`,
+   * `anidb`, a third party's plugin id), stamped by the server from the provider that
+   * answered (ADR-0060 decision 5). Send it straight back as the override's `source`
+   * so the pick is pinned where it was found. Absent from an older server. */
+  source?: string;
 }
 
 /** One track in an album candidate's tracklist preview. */
@@ -669,6 +674,11 @@ export interface EnrichmentCandidatesResult {
   /** Another page likely exists (a full page came back), so the picker can offer
    * "show more" for a broad common-title query (item-editing/search-improvements). */
   hasMore?: boolean;
+  /** The query was a pasted id-or-URL that the Library's lead read and resolved
+   * (.scratch/bundled-plugins issue 12): `candidates` holds that one record and the
+   * picker selects it. The client never decides what a reference looks like — only
+   * the lead knows its own ids. */
+  resolvedRef?: boolean;
 }
 
 /** One image the provider offers for a role in the Edit-item image picker (Fix
@@ -752,6 +762,10 @@ export type EditionSource = "chosen" | "tagged" | "fit";
 export interface AlbumEditions {
   albumId: string;
   releaseGroupId?: string;
+  /** The External-id namespace `releaseGroupId` belongs to (ADR-0060 decision 5).
+   * Sent back as the apply's `source` so choosing an edition keeps the album's
+   * record where it is. Absent from an older server. */
+  source?: string;
   chosenReleaseId?: string;
   inUseReleaseId?: string;
   inUseSource?: EditionSource;
@@ -2534,6 +2548,20 @@ export interface InstalledPlugin {
    * publisher advertises; nothing is verified against it. */
   publisher?: string;
   keyId?: string;
+  /** Where this plugin came from (ADR-0059): `"bundled"` for one the server
+   * shipped and installed itself, `"admin"` for one a person uploaded, pasted a
+   * URL for, or placed in the data directory by hand.
+   *
+   * It is what the screen shows INSTEAD of an upload name or URL — "Shipped with
+   * Obelo" — and it is the one visible difference between a bundled plugin and any
+   * other. Everything else about it is identical: same sandbox, same allowlist,
+   * same lifecycle, same controls. */
+  origin?: "bundled" | "admin";
+  /** The row's lifecycle state when it is not simply installed. Today there is
+   * exactly one value — `"declined"`, a bundled plugin the Admin uninstalled — and
+   * its row carries no files, no version and no status: it exists so the screen can
+   * offer "Reinstall the shipped version", which is the only way back. */
+  state?: "declined";
   settingsSchema?: PluginSettingsField[];
   settings?: PluginSettingsValues;
 }

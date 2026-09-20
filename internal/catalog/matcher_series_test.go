@@ -188,7 +188,7 @@ func clearedSlotRecord(t *testing.T, f *fixture, season, episode int) (series st
 	t.Helper()
 	var origin string
 	if err := f.db.QueryRow(
-		`SELECT enrichment_tmdb_id, enrichment_id_origin
+		`SELECT IFNULL((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), enrichment_id_origin
 		   FROM titles WHERE library_id = 'libtv' AND identity_key = ?`,
 		episodeKey(season, episode)).Scan(&series, &origin); err != nil {
 		t.Fatalf("reading the cleared Slot's record: %v", err)

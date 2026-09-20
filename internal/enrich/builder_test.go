@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
 // TestBuildProviderComposition asserts BuildProvider reproduces the boot-time
@@ -11,12 +13,12 @@ import (
 // byte behavior the prefactor must preserve.
 func TestBuildProviderComposition(t *testing.T) {
 	t.Run("no image key => plain MusicBrainz (no chain)", func(t *testing.T) {
-		provider, en := buildProvider(ProviderConfig{
-			TMDBAPIKey:           "tmdb-key",
-			MusicBrainzEnabled:   true,
-			MusicBrainzRateLimit: 2 * time.Second,
-			CoverArtBaseURL:      "https://cover.test",
-		})
+		provider, en := buildProvider(testConfig(
+			withKey(SlugTMDB, "tmdb-key"),
+			withActive(SlugMusicBrainz, true),
+			withRateLimit(2*time.Second),
+			withURLs(SlugMusicBrainz, shippedMusicBrainzBaseURL(t), "https://cover.test"),
+		))
 		if en != (Enablement{Video: true, Music: true}) {
 			t.Errorf("enablement = %+v, want video+music on", en)
 		}
@@ -31,27 +33,46 @@ func TestBuildProviderComposition(t *testing.T) {
 		if got := pluginSlug(comp.Music); got != SlugMusicBrainz {
 			t.Fatalf("music = %q (%T), want the plain musicbrainz Plugin", got, comp.Music)
 		}
-		// The operator's throttle policy is threaded through to the host — now through
-		// the Plugin's Settings, so this asserts the whole path the setting takes.
-		mb := musicBrainzBehind(comp.Music)
-		if mb == nil {
-			t.Fatalf("music Plugin is not built around a *MusicBrainzProvider: %T", comp.Music)
+	})
+
+	// The operator's throttle policy and the COVER ART HOST reach the music lead as
+	// Settings, which is the whole path either setting takes since ADR-0059 — there
+	// is no concrete provider behind the Plugin to read them off any more, and
+	// looking through the contract at a guest is not something a test can do.
+	//
+	// The second URL is the substantive change .scratch/bundled-plugins issue 06
+	// made: the Cover Art Archive used to be a factory-less registration whose row
+	// the host resolved into THIS Plugin's URL2 through a special case. It is now an
+	// ordinary second host, arriving by exactly the route TMDB's image CDN does.
+	t.Run("the music lead's settings carry the pacing and the cover-art host", func(t *testing.T) {
+		spy := &settingsSpy{outcome: pluginapi.OutcomeNoMatch}
+		cat := catalogWith(musicGuestLike(SlugMusicBrainz, spy))
+
+		cfg := testConfig(
+			withActive(SlugMusicBrainz, true),
+			withRateLimit(2*time.Second),
+			withURLs(SlugMusicBrainz, "https://mb.test/ws/2", "https://cover.test"),
+		)
+		if p := cat.newProvider(cfg, SlugMusicBrainz, KindMusic); p == nil {
+			t.Fatal("the music lead was not built")
 		}
-		if mb.MinInterval != 2*time.Second {
-			t.Errorf("MinInterval = %v, want 2s (honoring MusicBrainzRateLimit)", mb.MinInterval)
+		if spy.got.RateLimitMillis == nil || *spy.got.RateLimitMillis != 2000 {
+			t.Errorf("rateLimitMillis = %v, want the operator's 2000", spy.got.RateLimitMillis)
 		}
-		// And the Cover Art Archive host reaches it as the Plugin's SECOND url, which
-		// is the whole of what Cover Art Archive's factory-less registration does.
-		if mb.CoverArtURL != "https://cover.test" {
-			t.Errorf("CoverArtURL = %q, want the configured Cover Art host", mb.CoverArtURL)
+		if spy.got.URL != "https://mb.test/ws/2" {
+			t.Errorf("url = %q, want the configured web service", spy.got.URL)
+		}
+		if spy.got.URL2 != "https://cover.test" {
+			t.Errorf("url2 = %q, want the configured Cover Art host — it is the music lead's "+
+				"SECOND URL now, not a provider row of its own", spy.got.URL2)
 		}
 	})
 
 	t.Run("image key + music => MusicChain", func(t *testing.T) {
-		provider, en := buildProvider(ProviderConfig{
-			TMDBAPIKey:     "tmdb-key",
-			FanartTVAPIKey: "fanart-key",
-		})
+		provider, en := buildProvider(testConfig(
+			withKey(SlugTMDB, "tmdb-key"),
+			withKey(SlugFanartTV, "fanart-key"),
+		))
 		if en != (Enablement{Video: true, Music: true}) {
 			t.Errorf("enablement = %+v, want video+music on", en)
 		}
@@ -64,7 +85,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("music image key but music off => no chain", func(t *testing.T) {
 		// An image key alone must NOT turn Music on, and must NOT wrap the chain
 		// (MusicImageEnabled && MusicEnrichmentEnabled — both required).
-		provider, en := buildProvider(ProviderConfig{FanartTVAPIKey: "fanart-key"})
+		provider, en := buildProvider(testConfig(withKey(SlugFanartTV, "fanart-key")))
 		if en != (Enablement{Video: false, Music: false}) {
 			t.Errorf("enablement = %+v, want both off", en)
 		}
@@ -75,10 +96,10 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("omdb + tmdb => Video is the chain", func(t *testing.T) {
-		provider, en := buildProvider(ProviderConfig{
-			TMDBAPIKey: "tmdb-key",
-			OMDbAPIKey: "omdb-key",
-		})
+		provider, en := buildProvider(testConfig(
+			withKey(SlugTMDB, "tmdb-key"),
+			withKey(SlugOMDb, "omdb-key"),
+		))
 		if !en.Video {
 			t.Errorf("enablement = %+v, want video on", en)
 		}
@@ -89,10 +110,10 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("thetvdb + tmdb => Video is the chain", func(t *testing.T) {
-		provider, en := buildProvider(ProviderConfig{
-			TMDBAPIKey:    "tmdb-key",
-			TheTVDBAPIKey: "tvdb-key",
-		})
+		provider, en := buildProvider(testConfig(
+			withKey(SlugTMDB, "tmdb-key"),
+			withKey(SlugTheTVDB, "tvdb-key"),
+		))
 		if !en.Video {
 			t.Errorf("enablement = %+v, want video on", en)
 		}
@@ -105,7 +126,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("thetvdb key but tmdb off => video off, plain (no chain)", func(t *testing.T) {
 		// A supplement can't enable the video kinds on its own; with no TMDB key
 		// video stays off and Video stays plain TMDB (zero calls to TheTVDB).
-		provider, en := buildProvider(ProviderConfig{TheTVDBAPIKey: "tvdb-key"})
+		provider, en := buildProvider(testConfig(withKey(SlugTheTVDB, "tvdb-key")))
 		if en.Video {
 			t.Errorf("enablement = %+v, want video off (supplement can't enable a kind)", en)
 		}
@@ -116,11 +137,11 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("omdb + thetvdb + tmdb => both supplements in the chain", func(t *testing.T) {
-		provider, _ := buildProvider(ProviderConfig{
-			TMDBAPIKey:    "tmdb-key",
-			OMDbAPIKey:    "omdb-key",
-			TheTVDBAPIKey: "tvdb-key",
-		})
+		provider, _ := buildProvider(testConfig(
+			withKey(SlugTMDB, "tmdb-key"),
+			withKey(SlugOMDb, "omdb-key"),
+			withKey(SlugTheTVDB, "tvdb-key"),
+		))
 		comp := provider.(CompositeProvider)
 		chain, ok := comp.Video.(*VideoChainProvider)
 		if !ok {
@@ -143,7 +164,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("omdb key but tmdb off => video still off, plain (no chain)", func(t *testing.T) {
 		// A supplement can't enable the video kinds on its own; with no TMDB key
 		// video stays off and Video stays plain TMDB (zero calls to OMDb).
-		provider, en := buildProvider(ProviderConfig{OMDbAPIKey: "omdb-key"})
+		provider, en := buildProvider(testConfig(withKey(SlugOMDb, "omdb-key")))
 		if en.Video {
 			t.Errorf("enablement = %+v, want video off (supplement can't enable a kind)", en)
 		}
@@ -156,10 +177,10 @@ func TestBuildProviderComposition(t *testing.T) {
 	t.Run("fanarttv + tmdb => fanart.tv wired into BOTH the video and music chains", func(t *testing.T) {
 		// The same fanart.tv key feeds both chains: it supplies artist images in the
 		// music chain AND movie/show artwork in the video chain.
-		provider, en := buildProvider(ProviderConfig{
-			TMDBAPIKey:     "tmdb-key",
-			FanartTVAPIKey: "fanart-key",
-		})
+		provider, en := buildProvider(testConfig(
+			withKey(SlugTMDB, "tmdb-key"),
+			withKey(SlugFanartTV, "fanart-key"),
+		))
 		if !en.Video || !en.Music {
 			t.Errorf("enablement = %+v, want video+music on", en)
 		}
@@ -188,7 +209,7 @@ func TestBuildProviderComposition(t *testing.T) {
 		// A supplement (even fanart.tv, which now serves video) can't enable the video
 		// kinds on its own; with no TMDB key video stays off and Video stays plain TMDB
 		// (zero calls to fanart.tv on the video side).
-		provider, en := buildProvider(ProviderConfig{FanartTVAPIKey: "fanart-key"})
+		provider, en := buildProvider(testConfig(withKey(SlugFanartTV, "fanart-key")))
 		if en.Video {
 			t.Errorf("enablement = %+v, want video off (supplement can't enable a kind)", en)
 		}
@@ -199,7 +220,7 @@ func TestBuildProviderComposition(t *testing.T) {
 	})
 
 	t.Run("omdb disabled => plain TMDB (no chain)", func(t *testing.T) {
-		provider, en := buildProvider(ProviderConfig{TMDBAPIKey: "tmdb-key"})
+		provider, en := buildProvider(testConfig(withKey(SlugTMDB, "tmdb-key")))
 		if !en.Video {
 			t.Errorf("enablement = %+v, want video on", en)
 		}
@@ -213,12 +234,12 @@ func TestBuildProviderComposition(t *testing.T) {
 		// A Library led by a keyed OMDb: OMDb is the chain's authoritative, and the
 		// remaining keyed video providers (TMDB, TheTVDB) run as fill-only supplements
 		// in registry order — the anime-swap mechanism, demoable without AniDB.
-		provider, en := buildProvider(ProviderConfig{
-			AuthoritativeVideo: SlugOMDb,
-			TMDBAPIKey:         "tmdb-key",
-			OMDbAPIKey:         "omdb-key",
-			TheTVDBAPIKey:      "tvdb-key",
-		})
+		provider, en := buildProvider(testConfig(
+			withVideoLead(SlugOMDb),
+			withKey(SlugTMDB, "tmdb-key"),
+			withKey(SlugOMDb, "omdb-key"),
+			withKey(SlugTheTVDB, "tvdb-key"),
+		))
 		if !en.Video {
 			t.Errorf("enablement = %+v, want video on (OMDb keyed)", en)
 		}
@@ -251,10 +272,10 @@ func TestBuildProviderComposition(t *testing.T) {
 		// A globally-disabled-but-keyed authoritative leads even when TMDB is unkeyed:
 		// video is on because the AUTHORITATIVE is keyed, not because TMDB is. With no
 		// other keyed source it is a plain OMDb lead (no chain wrap).
-		provider, en := buildProvider(ProviderConfig{
-			AuthoritativeVideo: SlugOMDb,
-			OMDbAPIKey:         "omdb-key",
-		})
+		provider, en := buildProvider(testConfig(
+			withVideoLead(SlugOMDb),
+			withKey(SlugOMDb, "omdb-key"),
+		))
 		if !en.Video {
 			t.Errorf("enablement = %+v, want video on (authoritative OMDb keyed)", en)
 		}

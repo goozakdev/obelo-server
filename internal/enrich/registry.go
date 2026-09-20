@@ -31,9 +31,26 @@ const (
 	SlugTheTVDB     = "thetvdb"
 	SlugAniDB       = "anidb"
 	SlugMusicBrainz = "musicbrainz"
-	SlugCoverArt    = "coverart"
 	SlugFanartTV    = "fanarttv"
 	SlugTheAudioDB  = "theaudiodb"
+)
+
+// defaultVideoLeadSlug / defaultMusicLeadSlug are the providers this binary ships
+// as each kind's default Authoritative lead — the value a ProviderConfig falls back
+// to when no Enrichment policy repointed its kind (ADR-0027).
+//
+// They live HERE, beside the registrations, and nowhere else in the host
+// (.scratch/bundled-plugins: issue 01). Catalog.DefaultAuthoritativeForKind derives
+// the same two answers from registration order and is what every path with a
+// Catalog in hand uses; these constants exist only for ProviderConfig, which is a
+// plain value with no registry to ask. They are the last compiled-in mention of a
+// shipped provider outside this file, and ADR-0059 decision 3 is what replaces them:
+// once the seven are Bundled plugins the server's ORDERED bundled list is what puts
+// TMDB first for video and MusicBrainz first for music, and the lead rule reads it
+// off the catalog exactly as it does today.
+const (
+	defaultVideoLeadSlug = SlugTMDB
+	defaultMusicLeadSlug = SlugMusicBrainz
 )
 
 // The coarse Enrichment media-kind groups (Video vs. Music), the Plugin's default
@@ -52,247 +69,50 @@ const (
 	ClassArtworkOnly = pluginapi.ClassArtworkOnly
 )
 
-// Default base URLs — the public endpoints each source talks to when the operator
-// sets no override. They mirror config's Default*BaseURL constants (config keeps
-// its own for env defaulting; the Descriptors are the runtime catalog).
-const (
-	registryTMDBBaseURL        = "https://api.themoviedb.org/3"
-	registryTMDBImageBaseURL   = "https://image.tmdb.org/t/p/original"
-	registryOMDbBaseURL        = "https://www.omdbapi.com"
-	registryTheTVDBBaseURL     = "https://api4.thetvdb.com/v4"
-	registryAniDBBaseURL       = "http://api.anidb.net:9001/httpapi"
-	registryMusicBrainzBaseURL = "https://musicbrainz.org/ws/2"
-	registryCoverArtBaseURL    = "https://coverartarchive.org"
-	registryFanartTVBaseURL    = "https://webservice.fanart.tv/v3"
-	registryTheAudioDBBaseURL  = "https://www.theaudiodb.com/api/v1/json"
-)
-
-// MetadataPlugins is the ordered set of Metadata provider Built-ins this binary
-// ships: what each one IS (its Descriptor) and how to build it from an Admin's
-// Settings. internal/builtins hands the
-// whole list to the Registry from the composition root — explicitly, with no
-// init() side effect anywhere — and app.New then derives the Catalog from that
-// Registry.
+// THERE ARE NO BUILT-IN METADATA PROVIDERS LEFT, and this note is the whole trace
+// the seven of them leave in this package (.scratch/bundled-plugins: issue 08).
 //
-// The registrations live beside the implementations they describe, because these
-// sources are still in this package: a Built-in is code plus its own
-// self-description, and splitting the two would make "what does fanart.tv
-// require" answerable in one place and "what does fanart.tv do" in another.
-// OpenSubtitles differs only because its client moved to internal/builtins, so
-// its Descriptor moved with it.
+// This file used to hold MetadataPlugins() — the ordered list of Built-in
+// registrations, each a Descriptor plus a factory that built a Go client living a
+// few files away. All seven are Bundled plugins now (ADR-0059): WebAssembly
+// modules built from plugins/<id>/, carried in the binary by internal/bundled, and
+// installed into <dataDir>/plugins/<id>/ on first boot exactly as an Admin's
+// upload would be. Each one's Descriptor — its name, its kinds, its Role and
+// Class, its capabilities, its key requirement, its default URLs, the copy the
+// settings screen shows and its connection probe — is that module's
+// manifest.json, word for word.
 //
-// ORDER IS THE CATALOG ORDER and three things read it: the settings screen lists
-// sources in it, the fill-only Supplements are composed behind the Authoritative
-// provider in it (ADR-0027 keeps one global order), and the first
-// authoritative-role Full provider of a kind is that kind's default lead.
+// Three facts the deleted list used to carry, because each is still load-bearing
+// somewhere else:
 //
-// EVERY source here is now reached through its factory — no provider is composed
-// outside the contract — with exactly one permanent exception: Cover Art Archive
-// has no factory and never will. It is not a client; it is the artwork HOST of the
-// MusicBrainz Plugin, registered so an Admin can see it, read what it is, and
-// override its base URL. The host resolves that override into MusicBrainz's second
-// URL (see SettingsToProviderConfig and providerSettings), which is the same thing
-// TMDB's image host is, arriving from a neighbouring registration instead of its
-// own. Inventing a client for it so that every registration could carry a factory
-// would have added a source nothing calls.
-func MetadataPlugins() []pluginapi.MetadataProviderRegistration {
-	return []pluginapi.MetadataProviderRegistration{
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugTMDB,
-				Name:        "The Movie Database (TMDB)",
-				Kinds:       []string{KindVideo},
-				Role:        RoleAuthoritative,
-				Class:       ClassFull,
-				RequiresKey: true,
-				// TMDB is the only video source that owns a candidate list, a listable
-				// image set AND an episode list — which is why the assertions the chains
-				// used to make on the concrete type are now three declared capabilities.
-				Capabilities: []pluginapi.Capability{
-					pluginapi.CapabilitySearch,
-					pluginapi.CapabilityArtworkCandidates,
-					pluginapi.CapabilityEpisodeList,
-				},
-				DefaultURL: registryTMDBBaseURL,
-				// TMDB serves its images from a host distinct from its API — the one
-				// source with a second URL, and the reason the contract's Settings has one.
-				DefaultURL2: registryTMDBImageBaseURL,
-				Description: "Authoritative source for movies and TV: titles, overviews, cast, genres, and artwork.",
-				DocsURL:     "https://www.themoviedb.org/settings/api",
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewTMDBProvider(s.Secret, s.Language, s.URL, s.URL2)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugOMDb,
-				Name:        "OMDb API",
-				Kinds:       []string{KindVideo},
-				Role:        RoleSupplement,
-				Class:       ClassFull,
-				RequiresKey: true,
-				// A fill-only supplement owns no candidate list and no listable image set
-				// (ADR-0019), so it declares neither capability and is never asked for one.
-				DefaultURL:  registryOMDbBaseURL,
-				Description: "Fills a movie's plot, content rating, and genres from the Open Movie Database. Fill-only supplement; requires an API key.",
-				DocsURL:     "https://www.omdbapi.com/apikey.aspx",
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewOMDbProvider(s.Secret, s.URL)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugTheTVDB,
-				Name:        "TheTVDB",
-				Kinds:       []string{KindVideo},
-				Role:        RoleSupplement,
-				Class:       ClassFull,
-				RequiresKey: true,
-				DefaultURL:  registryTheTVDBBaseURL,
-				Description: "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
-				DocsURL:     "https://thetvdb.com/api-information",
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewTheTVDBProvider(s.Secret, s.URL)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:  SlugAniDB,
-				Name:  "AniDB",
-				Kinds: []string{KindVideo},
-				// A Full, authoritative-capable anime source. It is NOT the global default
-				// authoritative (TMDB, registered first, is) — AniDB ships globally DISABLED
-				// (no seed row) so it touches no Library until one explicitly points its
-				// Authoritative provider at it (ADR-0027). RequiresKey: the AniDB HTTP API
-				// needs a registered client name, so it is selectable only once configured.
-				Role:        RoleAuthoritative,
-				Class:       ClassFull,
-				RequiresKey: true,
-				// It declares search even though its HTTP API offers none: the declaration
-				// says "ask me and I will answer", and AniDB's answer is an EMPTY candidate
-				// list, which the Edit-item box renders as "no results" rather than as the
-				// "search unavailable" an undeclared capability means. Those are different
-				// sentences and an anime Library leading with AniDB sees the right one.
-				Capabilities: []pluginapi.Capability{
-					pluginapi.CapabilitySearch,
-					pluginapi.CapabilityArtworkCandidates,
-				},
-				DefaultURL:  registryAniDBBaseURL,
-				Description: "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
-				DocsURL:     "https://wiki.anidb.net/HTTP_API_Definition",
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewAniDBProvider(s.Secret, s.URL, s.Language)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugMusicBrainz,
-				Name:        "MusicBrainz",
-				Kinds:       []string{KindMusic},
-				Role:        RoleAuthoritative,
-				Class:       ClassFull,
-				RequiresKey: false,
-				Capabilities: []pluginapi.Capability{
-					pluginapi.CapabilitySearch,
-					pluginapi.CapabilityArtworkCandidates,
-					pluginapi.CapabilityAlbumTracklist,
-					pluginapi.CapabilityExternalRef,
-				},
-				DefaultURL: registryMusicBrainzBaseURL,
-				// NO DefaultURL2, deliberately, even though this Plugin is built with two
-				// hosts: DefaultURL2 is what the settings screen renders as a source's own
-				// image-host field, and MusicBrainz does not have one — the Cover Art
-				// Archive is a separate registration with a separate row and a separate
-				// override. The host reads that row and hands it over as URL2.
-				Description: "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
-				DocsURL:     "https://musicbrainz.org/doc/MusicBrainz_API",
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				mb := NewMusicBrainzProvider(s.URL, s.URL2, s.Language)
-				// A nil rate limit keeps the constructor's own ~1 req/sec default, which is
-				// the public host's policy; an explicit 0 is the operator saying their
-				// mirror has none (ADR-0049). The two are different instructions and the
-				// pointer is what keeps them apart.
-				if s.RateLimitMillis != nil {
-					mb.MinInterval = time.Duration(*s.RateLimitMillis) * time.Millisecond
-				}
-				return pluginFromProvider(mb), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:        SlugCoverArt,
-				Name:        "Cover Art Archive",
-				Kinds:       []string{KindMusic},
-				Role:        RoleSupplement,
-				Class:       ClassArtworkOnly,
-				RequiresKey: false,
-				DefaultURL:  registryCoverArtBaseURL,
-				Description: "Album cover artwork keyed to MusicBrainz releases. No API key required; used alongside MusicBrainz.",
-				DocsURL:     "https://coverartarchive.org/",
-			},
-			// FACTS ONLY, permanently — the one registration with no factory. Cover Art
-			// Archive has no client of its own: it is the host MusicBrainz's album cover
-			// URLs point at, and the MusicBrainz Plugin is what talks to it. What this
-			// registration buys is everything the facts are for and nothing more — a row
-			// on the settings screen with a name, a description and a docs link; a
-			// base-URL override an operator can point at a mirror, which the host hands
-			// to the MusicBrainz Plugin as its second URL; and ClassArtworkOnly, so the
-			// Authoritative-provider pointer can never select it (ADR-0027). It declares
-			// no capabilities because it answers no calls.
-			//
-			// buildPlugin skips a nil factory rather than erroring, which is what makes
-			// "registered, never built" a state the composition can hold.
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug: SlugFanartTV,
-				Name: "fanart.tv",
-				// The one source that serves BOTH kinds from one client and one key.
-				Kinds:        []string{KindVideo, KindMusic},
-				Role:         RoleSupplement,
-				Class:        ClassArtworkOnly,
-				RequiresKey:  true,
-				Capabilities: []pluginapi.Capability{pluginapi.CapabilityArtworkCandidates},
-				DefaultURL:   registryFanartTVBaseURL,
-				Description:  "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
-				DocsURL:      "https://fanart.tv/get-an-api-key/",
-			},
-			// ONE factory, both kinds. The video chain and the music chain each build
-			// their fanart.tv from this registration with the same Settings, so the
-			// split the video slice left behind — a Plugin on one side, a direct
-			// constructor on the other — is closed. It is still two INSTANCES, exactly
-			// as it was two instances before the contract existed: one client, one key,
-			// one process-wide host throttle, two positions in the composition. Sharing
-			// one instance between the chains would be a cache-sharing change nothing
-			// asked for, where two is the composition this Plugin has always had.
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewFanartTVProvider(s.Secret, s.URL)), nil
-			},
-		},
-		{
-			Descriptor: pluginapi.Descriptor{
-				Slug:         SlugTheAudioDB,
-				Name:         "TheAudioDB",
-				Kinds:        []string{KindMusic},
-				Role:         RoleSupplement,
-				Class:        ClassArtworkOnly,
-				RequiresKey:  true,
-				Capabilities: []pluginapi.Capability{pluginapi.CapabilityArtworkCandidates},
-				DefaultURL:   registryTheAudioDBBaseURL,
-				Description:  "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
-				DocsURL:      "https://www.theaudiodb.com/api_guide.php",
-			},
-			New: func(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-				return pluginFromProvider(NewTheAudioDBProvider(s.Secret, s.URL, s.Language)), nil
-			},
-		},
-	}
-}
+//   - ORDER IS THE CATALOG ORDER, and it is now internal/bundled's ordered `ids`
+//     rather than a literal here. The settings screen lists sources in it, the
+//     fill-only Supplements are composed behind the Authoritative provider in it
+//     (ADR-0027 keeps one global order), and the first authoritative-role Full
+//     provider of a kind is that kind's default lead — which is what keeps TMDB
+//     leading video and MusicBrainz leading music with no provider name in the
+//     host. plugins.Set.RegisterEnabledAround registers the Bundled ids in that
+//     order, then the Built-ins, then every other Installed plugin alphabetically.
+//     Keeping fanart.tv ahead of TheAudioDB there is what keeps fanart.tv the
+//     music chain's preferred image source (Catalog.musicImageSupplements fills
+//     its two slots in registration order); internal/enrich's
+//     musicimagesupplements_test.go is what holds it.
+//   - THE COVER ART ARCHIVE WAS NEVER A SOURCE. It was the artwork HOST the music
+//     lead's cover URLs point at, registered as a provider so an Admin could
+//     override its base URL — the one entry with no factory, resolved into the
+//     music lead's second URL by a special case in three files. It is the
+//     MusicBrainz plugin's own `settings.defaultUrl2` now, the way image.tmdb.org
+//     is TMDB's, and migration 0071 carried a mirrored host across
+//     (.scratch/bundled-plugins: issue 06).
+//   - FANART.TV IS ONE INSTANCE, not two. It serves `kinds: [video, music]` from
+//     one module with one linear memory, and the host's factory hands each chain a
+//     view over it (internal/plugins/metadata.go), serializing every call — the
+//     same one key and one pace the two Go instances used to share by convention,
+//     made structural.
+//
+// What composes the catalog now is internal/builtins.Register (OpenSubtitles and
+// the Webhook sink) plus the Installed-plugin loader, and NewCatalog below reads
+// whatever that produced.
 
 // Catalog is the enrichment domain's view of the registered Metadata provider
 // Plugins: the ordered Descriptors, read from the registry they came from. It is a
@@ -390,7 +210,7 @@ func (c Catalog) FullProvidersForKind(kind string) []pluginapi.Descriptor {
 // Library can force on/off via its per-provider Supplement tri-state (ADR-0027),
 // in catalog order: the key-bearing providers (RequiresKey) — the ones the
 // resolver activates/mutes by injecting or clearing a key. Keyless providers
-// (MusicBrainz, Cover Art Archive) have no independent per-Library toggle (their
+// (MusicBrainz) have no independent per-Library toggle (their
 // activation rides their authoritative), so they are excluded. The caller removes
 // the current Authoritative provider (its off-switch is enrich_enabled, not a
 // per-provider toggle) before presenting the list.
@@ -422,9 +242,11 @@ func (c Catalog) DefaultAuthoritativeForKind(kind string) string {
 // buildPlugin constructs the Plugin registered under a slug from the Settings the
 // host resolved, and adapts it back to the MetadataProvider the chains call. It
 // returns nil when no Plugin claims the slug, when the registration carries no
-// factory (facts only — Cover Art Archive, see MetadataPlugins), or when
-// the factory refuses these settings: a Plugin that cannot be built makes no calls
-// at all rather than half-working (ADR-0001), and the caller composes without it.
+// factory (a registration that is facts only; nothing this binary ships is in that
+// state since .scratch/bundled-plugins issue 06 retired the Cover Art Archive
+// row), or when the factory refuses these settings: a Plugin that cannot be built
+// makes no calls at all rather than half-working (ADR-0001), and the caller
+// composes without it.
 func (c Catalog) buildPlugin(slug string, s pluginapi.Settings) MetadataProvider {
 	registration, ok := c.registry.MetadataProvider(slug)
 	if !ok || registration.New == nil {
@@ -467,7 +289,7 @@ func (c Catalog) ProviderStatesFromRows(rows []store.MetadataProviderRow) map[st
 		out[e.Slug] = ProviderState{
 			Enabled: ok && r.Enabled,
 			// A key-requiring provider is keyed only with a key on file; a keyless one
-			// (MusicBrainz, Cover Art Archive) is always keyed (nothing to configure).
+			// (MusicBrainz) is always keyed (nothing to configure).
 			Keyed:  !e.RequiresKey || (ok && r.APIKey != ""),
 			APIKey: r.APIKey,
 		}
@@ -476,12 +298,18 @@ func (c Catalog) ProviderStatesFromRows(rows []store.MetadataProviderRow) map[st
 }
 
 // FixedProviderInputs carries the non-per-provider Enrichment inputs threaded into
-// every rebuild: the MusicBrainz throttle policy. As of enrichment-runtime-settings
+// every rebuild: the operator's pacing policy. As of enrichment-runtime-settings
 // this is DB-authoritative like the rest of the settings surface — the Manager reads
 // it from store.EnrichmentBehavior on each Reload and the settings API reads it the
 // same way, so a saved rate-limit change hot-swaps into the rebuilt provider with no
-// restart. (The TMDB image host is DB-backed via each provider's own image_base_url
-// override — see SettingsToProviderConfig.)
+// restart. (Each source's own hosts are DB-backed via its row's base_url /
+// image_base_url overrides — see SettingsToProviderConfig.)
+//
+// The field keeps the name the DB column and the environment variable have carried
+// since the throttle existed for one host. What CHANGED in
+// .scratch/bundled-plugins issue 01 is who receives it: this one number is now
+// stated to every Metadata provider's Settings, not to MusicBrainz by name
+// (ADR-0059 decision 5).
 type FixedProviderInputs struct {
 	MusicBrainzRateLimit time.Duration
 }
@@ -490,10 +318,13 @@ type FixedProviderInputs struct {
 // decoupled ProviderConfig the builder consumes, applying each Descriptor's default
 // base URL where a row has no override. Only rows that are BOTH enabled and (for a
 // key-requiring source) hold a key contribute an active source; anything else
-// leaves that source off, so the derived Enablement reports it disabled
-// (ADR-0001). Cover Art Archive has no independent switch — it is part of the
-// MusicBrainz provider — so its row contributes only its base-URL override and
-// rides MusicBrainz's enablement.
+// leaves that source off, so the derived Enablement reports it disabled (ADR-0001).
+//
+// It treats every registered Plugin the same way (.scratch/bundled-plugins: issue
+// 01). It used to fill eight named struct fields from eight named slugs and then
+// loop over "everything else"; now there is only the loop, so a Plugin that
+// arrives as an Installed module is keyed, pointed at its hosts and switched on by
+// exactly the code that does it for one the server shipped.
 func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, language string, fixed FixedProviderInputs) ProviderConfig {
 	byslug := make(map[string]store.MetadataProviderRow, len(rows))
 	for _, r := range rows {
@@ -501,10 +332,10 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	}
 	// ONE read of the catalog for the whole derivation. The entries come from the
 	// live registry (see Catalog), so a Plugin could in principle be installed or
-	// uninstalled between two reads inside this function and leave the named fields
-	// and the open maps describing different sets of Plugins. Reading once removes
-	// the question rather than answering it, and it is also why the three closures
-	// below look a Descriptor up in a map instead of asking the registry per slug.
+	// uninstalled between two reads inside this function and leave two halves of the
+	// result describing different sets of Plugins. Reading once removes the question
+	// rather than answering it, and it is also why the closures below look a
+	// Descriptor up in a map instead of asking the registry per slug.
 	entries := c.entries()
 	descs := make(map[string]pluginapi.Descriptor, len(entries))
 	for _, e := range entries {
@@ -519,7 +350,7 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		return e.DefaultURL
 	}
 	// imageBaseURL returns the row's image-host override or the Descriptor default,
-	// for the sources that serve artwork from a distinct host (today only TMDB).
+	// for the sources that serve artwork from a distinct host.
 	imageBaseURL := func(slug string) string {
 		e := descs[slug]
 		if r, ok := byslug[slug]; ok && r.ImageBaseURL != "" {
@@ -528,7 +359,9 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		return e.DefaultURL2
 	}
 	// active reports whether a source contributes: its row is enabled and, when the
-	// source requires a key, a key is on file.
+	// source requires a key, a key is on file. This is the rule an Admin would state
+	// — enabled, and holding a secret or needing none — and it is the ONE place the
+	// answer is derived for every Plugin alike.
 	active := func(slug string) bool {
 		r, ok := byslug[slug]
 		if !ok || !r.Enabled {
@@ -541,96 +374,47 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		return true
 	}
 
+	// The operator's pacing policy, stated for every provider (ADR-0059 decision 5)
+	// including the 0 that means "do not throttle": it is DB-authoritative and this
+	// config carries it, so leaving it absent would silently substitute a Plugin's
+	// own default for a saved setting (ADR-0049).
+	rateLimitMs := int(fixed.MusicBrainzRateLimit / time.Millisecond)
 	cfg := ProviderConfig{
-		MetadataLanguage:     language,
-		MusicBrainzRateLimit: fixed.MusicBrainzRateLimit,
-		TMDBBaseURL:          baseURL(SlugTMDB),
-		TMDBImageBaseURL:     imageBaseURL(SlugTMDB),
-		OMDbBaseURL:          baseURL(SlugOMDb),
-		TheTVDBBaseURL:       baseURL(SlugTheTVDB),
-		AniDBBaseURL:         baseURL(SlugAniDB),
-		MusicBrainzBaseURL:   baseURL(SlugMusicBrainz),
-		CoverArtBaseURL:      baseURL(SlugCoverArt),
-		FanartTVBaseURL:      baseURL(SlugFanartTV),
-		TheAudioDBBaseURL:    baseURL(SlugTheAudioDB),
+		MetadataLanguage:  language,
+		RateLimitMillis:   &rateLimitMs,
+		ProviderKeys:      map[string]string{},
+		ProviderEndpoints: map[string]ProviderEndpoint{},
+		ProviderActive:    map[string]bool{},
 	}
-	if active(SlugTMDB) {
-		cfg.TMDBAPIKey = byslug[SlugTMDB].APIKey
-	}
-	if active(SlugOMDb) {
-		cfg.OMDbAPIKey = byslug[SlugOMDb].APIKey
-	}
-	if active(SlugTheTVDB) {
-		cfg.TheTVDBAPIKey = byslug[SlugTheTVDB].APIKey
-	}
-	if active(SlugAniDB) {
-		cfg.AniDBAPIKey = byslug[SlugAniDB].APIKey
-	}
-	if active(SlugMusicBrainz) {
-		cfg.MusicBrainzEnabled = true
-	}
-	if active(SlugFanartTV) {
-		cfg.FanartTVAPIKey = byslug[SlugFanartTV].APIKey
-	}
-	if active(SlugTheAudioDB) {
-		cfg.TheAudioDBAPIKey = byslug[SlugTheAudioDB].APIKey
-	}
-	// Every OTHER registered Plugin's key goes in the open map. The eight Built-ins
-	// have named fields above because their own constructors read them; a Plugin
-	// this binary was not written around — from Phase 2, every Installed one — has
-	// nowhere else to put a key, and without one it could be registered, keyed and
-	// pointed at by a Library's policy and still be built unconfigured.
 	for _, e := range entries {
-		if hasNamedKeyField(e.Slug) || !active(e.Slug) {
-			continue
-		}
-		if cfg.ProviderKeys == nil {
-			cfg.ProviderKeys = map[string]string{}
-		}
-		cfg.ProviderKeys[e.Slug] = byslug[e.Slug].APIKey
-	}
-	// And every such Plugin's ENDPOINTS, whether or not it is active — a URL is not
-	// a credential, and a Plugin the resolver activates for one Library (by
-	// injecting its key) must already know where its source lives. Same resolution
-	// as the named fields: the row's override, else the Descriptor's default, which
-	// for an Installed plugin is what its manifest declared.
-	//
-	// And, beside it, the EXPLICIT ACTIVE FACT (.scratch/plugin-system issue 13).
-	// `active` is already the rule the issue asks for — the row is enabled, and a
-	// key is on file unless the Descriptor says none is needed — so the only thing
-	// missing was somewhere to record the answer for a source with no key to infer
-	// it from. Stated for every Plugin without a named field, true and false alike,
-	// because the absence of an entry means "infer it from the key" and a
-	// switched-off keyless Plugin must say so rather than fall through to a rule
-	// that cannot see it.
-	for _, e := range entries {
-		if hasNamedKeyField(e.Slug) {
-			continue
-		}
-		if cfg.ProviderEndpoints == nil {
-			cfg.ProviderEndpoints = map[string]ProviderEndpoint{}
-		}
+		// ENDPOINTS for every Plugin, active or not — a URL is not a credential, and a
+		// Plugin the per-Library resolver activates (by injecting its key) must already
+		// know where its source lives. The row's override, else the Descriptor's
+		// default, which for an Installed plugin is what its manifest declared.
 		cfg.ProviderEndpoints[e.Slug] = ProviderEndpoint{
 			URL:  baseURL(e.Slug),
 			URL2: imageBaseURL(e.Slug),
 		}
-		if cfg.ProviderActive == nil {
-			cfg.ProviderActive = map[string]bool{}
-		}
+		// The EXPLICIT ACTIVE FACT, stated for every Plugin, true and false alike: the
+		// absence of an entry means "infer it from the key", and a switched-off keyless
+		// Plugin must say so rather than fall through to a rule that cannot see it
+		// (.scratch/plugin-system issue 13).
 		cfg.ProviderActive[e.Slug] = active(e.Slug)
+		// The KEY, for an active source only. An inactive source's key stays in the DB
+		// and out of the composition, which is what makes "switched off" mean zero
+		// calls rather than "built but hopefully unused" (ADR-0001).
+		if active(e.Slug) {
+			cfg.ProviderKeys[e.Slug] = byslug[e.Slug].APIKey
+		}
 	}
-	return cfg
-}
 
-// hasNamedKeyField reports whether ProviderConfig carries a dedicated API-key field
-// for a slug. Its twin is the switch in setProviderKey, and the two change together:
-// one decides where a key is READ from, the other where it is WRITTEN, and a slug
-// listed by only one of them would be keyed in a place nothing looks.
-func hasNamedKeyField(slug string) bool {
-	switch slug {
-	case SlugTMDB, SlugOMDb, SlugTheTVDB, SlugAniDB, SlugFanartTV, SlugTheAudioDB,
-		SlugMusicBrainz, SlugCoverArt:
-		return true
-	}
-	return false
+	// THERE IS NO SPECIAL CASE LEFT (.scratch/bundled-plugins: issue 06). The Cover
+	// Art Archive's row used to be resolved into the music lead's SECOND URL here,
+	// because that registration had no client of its own and was really a base URL
+	// wearing a provider's clothes. It is now the MusicBrainz plugin's own second
+	// host, declared by its manifest and read from its row's image_base_url by the
+	// same imageBaseURL closure every other Plugin's second host goes through — so
+	// this derivation treats every registered Plugin identically, with no exceptions
+	// at all.
+	return cfg
 }

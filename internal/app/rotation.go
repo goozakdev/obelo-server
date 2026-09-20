@@ -84,7 +84,7 @@ func newKeyRotator(cfg config.Config, db *store.DB, manager *enrich.Manager, url
 	// independent ways (with the disable flag) to reach zero maintainer contact. A
 	// partial BYOK still runs, so the un-BYOK'd provider can still rotate; the
 	// per-provider resolver + provenance guard keep the BYOK'd one untouched.
-	if cfg.TMDBAPIKey != "" && cfg.FanartTVAPIKey != "" {
+	if cfg.ProviderKey(config.ProviderTMDB) != "" && cfg.ProviderKey(config.ProviderFanartTV) != "" {
 		return nil
 	}
 
@@ -252,6 +252,12 @@ func (kr *keyRotator) propagate(rot config.RotationKeys) (bool, error) {
 		byslug[r.Slug] = r
 	}
 
+	// The rotator's two default-key ids. They are the maintainer's bundled
+	// credentials (ADR-0032), so which sources they belong to is a fact about the
+	// RELEASE rather than about the provider set — which is why they survive the
+	// prefactor that took every other provider name out of the host
+	// (.scratch/bundled-plugins: issue 01) and will survive the port to Bundled
+	// plugins too: the ids, the rows and the precedence chain are all unchanged.
 	tmdbKey, tmdbSrc := kr.cfg.ResolveTMDBKey(rot)
 	tmdbChanged, err := kr.applyDefault(enrich.SlugTMDB, byslug, tmdbKey, tmdbSrc, &kr.plantedTMDB)
 	if err != nil {

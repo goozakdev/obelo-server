@@ -30,7 +30,7 @@ import (
 // Issue 01 held the line with a guard — a scan may FILL an external id it actually
 // has and must leave alone one it has nothing to say about. ADR-0045 replaced the
 // guard with the separation it was standing in for: the record lives in
-// enrichment_tmdb_id / enrichment_imdb_id / musicbrainz_id, which no tree write
+// title_external_ids (ADR-0060; three named columns before it), which no tree write
 // touches on an existing row, and the scanner owns tmdb_id / imdb_id outright.
 //
 // So these tests read the RECORD — COALESCE(enrichment id, folder id), which is
@@ -183,7 +183,7 @@ func TestATracksFixInfoSurvivesARescan(t *testing.T) {
 		t.Fatalf("rescan: %v", err)
 	}
 	var mbid string
-	if err := db.QueryRow(`SELECT musicbrainz_id FROM titles WHERE id = 'tr1'`).Scan(&mbid); err != nil {
+	if err := db.QueryRow(`SELECT IFNULL((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'musicbrainz'), '') FROM titles WHERE id = 'tr1'`).Scan(&mbid); err != nil {
 		t.Fatalf("read musicbrainz_id: %v", err)
 	}
 	if mbid != pickedMBID {
@@ -408,8 +408,8 @@ func assertExternalIDs(t *testing.T, db *store.DB, titleID, wantTMDB, wantIMDB s
 	t.Helper()
 	var tmdbID, imdbID string
 	if err := db.QueryRow(
-		`SELECT COALESCE(NULLIF(enrichment_tmdb_id, ''), tmdb_id),
-		        COALESCE(NULLIF(enrichment_imdb_id, ''), imdb_id)
+		`SELECT COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), tmdb_id),
+		        COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'imdb'), ''), imdb_id)
 		   FROM titles WHERE id = ?`, titleID,
 	).Scan(&tmdbID, &imdbID); err != nil {
 		t.Fatalf("read external ids of %q: %v", titleID, err)
@@ -470,7 +470,7 @@ func assertEpisodePin(t *testing.T, db *store.DB, titleID, wantSeries string, wa
 	var series string
 	var season, episode int
 	if err := db.QueryRow(
-		`SELECT COALESCE(NULLIF(enrichment_tmdb_id, ''), tmdb_id),
+		`SELECT COALESCE(NULLIF((SELECT x.external_id FROM title_external_ids x WHERE x.title_id = titles.id AND x.namespace = 'tmdb'), ''), tmdb_id),
 		        COALESCE(enrichment_season, -1), COALESCE(enrichment_episode, -1)
 		   FROM titles WHERE id = ?`, titleID,
 	).Scan(&series, &season, &episode); err != nil {

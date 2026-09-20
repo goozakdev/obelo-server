@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/subtitle"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
@@ -21,8 +22,9 @@ import (
 // boundary under pluginapi, this file is the only thing between it and the domain.
 
 // SlugOpenSubtitles is the stable provider slug persisted in the subtitle settings
-// rows and used in the settings API routes. It is the same string the OpenSubtitles
-// Built-in registers under (opensubtitles.Slug) — the subtitle domain keeps its own
+// rows and used in the settings API routes. It is the id of the bundled
+// OpenSubtitles plugin (plugins/opensubtitles/manifest.json), which registers
+// under it exactly as the Built-in before it did — the subtitle domain keeps its own
 // copy because a settings row it seeds must not depend on which Plugins happen to
 // be registered, and a row whose slug no Plugin claims is simply never built.
 const SlugOpenSubtitles = "opensubtitles"
@@ -81,8 +83,13 @@ func (a pluginProvider) Search(ctx context.Context, ref SubtitleRef, lang string
 	out := make([]Candidate, 0, len(resp.Candidates))
 	for _, c := range resp.Candidates {
 		out = append(out, Candidate{
-			ID:              c.ID,
-			Language:        c.Language,
+			ID: c.ID,
+			// The source's own code, mapped onto the server's ISO 639-1 vocabulary
+			// HERE rather than in each Plugin: which codes exist is the subtitle
+			// domain's knowledge, and a guest cannot import it. The OpenSubtitles
+			// Built-in did this itself; its plugin sends "pt-br" and this makes it
+			// "pt", as before (.scratch/bundled-plugins issue 09).
+			Language:        subtitle.NormalizeLang(c.Language),
 			Format:          c.Format,
 			Release:         c.Release,
 			HearingImpaired: c.HearingImpaired,

@@ -10,8 +10,9 @@
 //
 // The network is isolated behind one seam — SubtitleProvider — mirroring how the
 // scanner fakes the Prober and enrich fakes MetadataProvider. Since ADR-0057 the
-// code on the far side of that seam is a Plugin: app.New registers the
-// OpenSubtitles Built-in into the Plugin registry and BuilderFor composes it
+// code on the far side of that seam is a Plugin: the Installed-plugin loader
+// registers the bundled OpenSubtitles plugin (plugins/opensubtitles, since
+// .scratch/bundled-plugins issue 09) into the Plugin registry and BuilderFor composes it
 // through the wire-shaped contract (plugin.go adapts its Outcomes back to the
 // sentinels below). Tests inject a fake through the same BuildFunc, so the
 // black-box HTTP tests drive the whole fetch flow with zero network. The Service

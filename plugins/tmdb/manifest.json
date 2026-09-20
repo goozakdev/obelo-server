@@ -1,0 +1,31 @@
+{
+  "id": "tmdb",
+  "name": "The Movie Database (TMDB)",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Authoritative source for movies and TV: titles, overviews, cast, genres, and artwork.",
+  "docsUrl": "https://www.themoviedb.org/settings/api",
+  "provides": [
+    {
+      "kind": "metadata-provider",
+      "kinds": ["video"],
+      "role": "authoritative",
+      "class": "full",
+      "capabilities": ["search", "artwork-candidates", "episode-list"],
+      "requiresSecret": true,
+      "probe": {
+        "kind": "movie",
+        "title": "Inception",
+        "year": 2010
+      }
+    }
+  ],
+  "network": {
+    "hosts": ["api.themoviedb.org", "image.tmdb.org"]
+  },
+  "settings": {
+    "requiresSecret": true,
+    "defaultUrl": "https://api.themoviedb.org/3",
+    "defaultUrl2": "https://image.tmdb.org/t/p/original"
+  }
+}

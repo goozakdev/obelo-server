@@ -122,6 +122,9 @@ export default function AlbumEditionPicker({
         data.releaseGroupId,
         true,
         e.releaseId,
+        undefined,
+        // Re-pin the release-group in the namespace it already lives in (ADR-0060).
+        data.source,
       );
       setSummary(detail.cascade ?? null);
       onApplied?.(detail);

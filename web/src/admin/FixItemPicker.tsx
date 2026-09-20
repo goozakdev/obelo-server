@@ -9,7 +9,6 @@ import {
 } from "react";
 import type { EnrichmentCandidate, EnrichmentCandidatesResult } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
-import { looksLikeRef, type Provider } from "./searchRef";
 
 // The fix surface on a Needs-Fixing row: the provider search the old Attention
 // screen never had.
@@ -21,8 +20,7 @@ import { looksLikeRef, type Provider } from "./searchRef";
 // top hit is called out as the **best guess** and applied with one button, because
 // on this screen the Admin is working a list of twenty, not perfecting one item.
 //
-// It stays ignorant of WHICH endpoint backs it: the caller passes `search` and
-// `preview`, because a row whose fix is an identity correction searches the Library
+// It stays ignorant of WHICH endpoint backs it: the caller passes `search`, because a row whose fix is an identity correction searches the Library
 // (an Unmatched file has no Title to anchor a per-item search to) while a row whose
 // fix is a metadata correction searches through its own Title. The two apply to
 // different things (ADR-0002/0014) and the row, not this component, decides which.
@@ -40,11 +38,9 @@ export default function FixItemPicker({
   seed,
   artistScope,
   albumScope,
-  provider,
   applyLabel,
   applyHint,
   search,
-  preview,
   onApply,
   onCancel,
   chooseEpisode,
@@ -64,21 +60,18 @@ export default function FixItemPicker({
    * or "She" answerable at all. Same rules: editable, blank widens, undefined on a
    * row with no release axis. */
   albumScope?: string;
-  /** Which provider a pasted bare id belongs to, so a UUID isn't read as a TMDB id. */
-  provider: Provider;
   /** Label for the apply button ("Use this"), which differs by what applying means. */
   applyLabel: string;
   /** One line under the buttons saying what applying will actually do. */
   applyHint: string;
-  /** Run a free-text search (page is 0-based), narrowed by whatever scope terms the
-   * Admin left filled in. `scope` is `{}` on every row with no narrowing axis. */
+  /** Run a search (page is 0-based), narrowed by whatever scope terms the Admin left
+   * filled in. `scope` is `{}` on every row with no narrowing axis. The server reads
+   * a pasted id-or-URL itself and answers it `resolvedRef`, which selects it. */
   search: (
     query: string,
     page: number,
     scope: FixSearchScope,
   ) => Promise<EnrichmentCandidatesResult>;
-  /** Resolve a pasted provider URL/id to a single candidate. */
-  preview: (ref: string) => Promise<EnrichmentCandidate>;
   /** Apply the chosen record. Rejecting leaves the picker open with the error. */
   onApply: (candidate: EnrichmentCandidate) => Promise<void>;
   /** Close the picker without applying. */
@@ -132,6 +125,8 @@ export default function FixItemPicker({
       try {
         const res = await search(term, nextPage, scope());
         setCandidates((prev) => (append && prev ? [...prev, ...res.candidates] : res.candidates));
+        // A pasted URL/id the lead resolved auto-selects its one record.
+        if (res.resolvedRef) setSelected(res.candidates[0] ?? null);
         setHasMore(res.hasMore ?? false);
         setPage(nextPage);
       } catch (err) {
@@ -143,39 +138,15 @@ export default function FixItemPicker({
     [search, scope],
   );
 
-  const runPreview = useCallback(
-    async (ref: string) => {
-      setSearching(true);
-      setError(null);
-      try {
-        const candidate = await preview(ref);
-        setCandidates([candidate]);
-        setSelected(candidate);
-        setHasMore(false);
-      } catch (err) {
-        setCandidates(null);
-        setSelected(null);
-        setError(errorMessage(err));
-      } finally {
-        setSearching(false);
-      }
-    },
-    [preview],
-  );
-
   // Open with the answer already on screen where we can guess it. A seed that is
-  // itself a bare id/URL previews instead — same branch the submit takes.
+  // itself a bare id/URL is read by the server exactly as a submitted one is.
   useEffect(() => {
     if (autoSearched.current) return;
     autoSearched.current = true;
     const term = seed.trim();
     if (term === "") return;
-    if (looksLikeRef(term, provider)) {
-      void runPreview(term);
-    } else {
-      void runSearch(term, 0, false);
-    }
-  }, [seed, provider, runSearch, runPreview]);
+    void runSearch(term, 0, false);
+  }, [seed, runSearch]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -183,11 +154,7 @@ export default function FixItemPicker({
     const q = query.trim();
     if (q === "") return;
     setSelected(null);
-    if (looksLikeRef(q, provider)) {
-      void runPreview(q);
-    } else {
-      void runSearch(q, 0, false);
-    }
+    void runSearch(q, 0, false);
   }
 
   async function apply(candidate: EnrichmentCandidate) {

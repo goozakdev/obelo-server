@@ -161,6 +161,15 @@ type Candidate struct {
 	// to an album CLEARS any edition it had, because the Admin just named a less
 	// specific thing.
 	ReleaseID string
+	// Source is the External-id NAMESPACE ExternalID belongs to — the slug of the
+	// provider that produced this candidate, STAMPED BY THE HOST (ADR-0060 decision
+	// 5): a Plugin's adapter sets it from the Plugin's Descriptor, the service fills
+	// it for an in-process provider from the lead it searched, and a pasted id's
+	// preview carries the namespace the paste resolved in. The contract's
+	// SearchCandidate carries nothing of the kind — a guest cannot know which
+	// provider it is any better than the host does. An apply echoes it back so the
+	// pick is pinned in the namespace it came from.
+	Source string
 }
 
 // TrackCandidate is one track in an album candidate's tracklist preview: its
@@ -186,6 +195,12 @@ type TitleRef struct {
 	Kind  string // "movie" | "episode" | "track"
 	Title string
 	Year  int
+
+	// ExternalIDs is every id the host holds for the entity, keyed by External-id
+	// namespace (pluginapi.NamespaceTMDB, …, or a third party's plugin id; ADR-0060).
+	// The five named fields below are the same ids for the five shipped namespaces;
+	// wireRefFromTitleRef merges the two, so a caller may set either.
+	ExternalIDs map[string]string
 
 	TMDBID        string
 	IMDBID        string
@@ -299,13 +314,18 @@ type TitleMetadata struct {
 	Name string
 	// Year is the source's release / first-air year (0 when unknown). Like Name it
 	// is surfaced for by-id identity resolution, not written by enrichment.
-	Year           int
-	Overview       string
-	Tagline        string
-	ContentRating  string
-	ReleaseDate    string
-	RuntimeMinutes int
-	Studio         string
+	Year     int
+	Overview string
+	// OverviewSynthesized says Overview is a placeholder the source composed from
+	// structured facts, not prose it holds (pluginapi.MetadataRecord's field of the
+	// same name). A chain treats it as empty when a Supplement answers — see
+	// fillFromSupplement.
+	OverviewSynthesized bool
+	Tagline             string
+	ContentRating       string
+	ReleaseDate         string
+	RuntimeMinutes      int
+	Studio              string
 
 	Genres  []string
 	Cast    []Credit
@@ -534,6 +554,10 @@ type AlbumEditionLister interface {
 type ExternalRef struct {
 	ExternalID string
 	ReleaseID  string
+	// Namespace is the External-id namespace ExternalID was read in (ADR-0060
+	// decision 5): the id of the Plugin that answered, or the host's own reader's
+	// (`tmdb`, `musicbrainz`). Stamped by the host, never by the guest.
+	Namespace string
 }
 
 // ExternalRefParser is an OPTIONAL provider capability: reading a string an Admin

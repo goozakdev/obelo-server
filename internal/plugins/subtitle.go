@@ -12,7 +12,7 @@ import (
 // ADR-0057, .scratch/plugin-system issue 12).
 //
 // Like sink.go there is deliberately nothing clever here. An Installed Subtitle
-// provider is a pluginapi.SubtitleProvider the way the OpenSubtitles Built-in is,
+// provider is a pluginapi.SubtitleProvider like any other,
 // so subfetch.BuildProvider composes it from the same settings row, the same
 // adapter in internal/subfetch/plugin.go maps its Outcomes back to the domain's
 // sentinels, the settings screen lists it beside OpenSubtitles, and the player's
@@ -36,7 +36,7 @@ const (
 // reg, refused ones included — their factory refuses with the reason, so a Plugin
 // an operator placed is on the subtitle-providers screen either way.
 //
-// A slug already claimed — by the OpenSubtitles Built-in, or by another directory
+// A slug already claimed — by a Built-in, or by another directory
 // — is NOT registered and says so, for the reason a sink is not: an Admin's API
 // key must never move onto code the maintainer did not write.
 func (s *Set) registerSubtitleProvider(reg *pluginapi.Registry, p *Plugin, entry pluginapi.ManifestProvides) {
@@ -88,6 +88,14 @@ type guestSubtitleProvider struct {
 
 var _ pluginapi.SubtitleProvider = (*guestSubtitleProvider)(nil)
 
+// call makes one contract call under this seam's policy: the Plugin's resolved
+// Subtitle provider budget — the host's 10 s default, or what the manifest asked
+// for up to the cap — and a clean error still counted as a strike, because a
+// subtitle search has no item to park it on (see callPolicy).
+func (g *guestSubtitleProvider) call(ctx context.Context, export string, req, out any) error {
+	return g.p.callGuestUnder(ctx, callPolicy{budget: g.p.subtitleCallBudget}, export, hostOf(g.settings.URL), req, out)
+}
+
 // SearchSubtitles asks the guest for the candidates it offers for one Title in
 // one language.
 //
@@ -102,7 +110,7 @@ func (g *guestSubtitleProvider) SearchSubtitles(ctx context.Context, req plugina
 	call := pluginapi.SubtitleSearchCall{Request: req, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SubtitleSearchResponse
 
-	if err := g.p.callGuest(ctx, exportSubtitleSearch, hostOf(g.settings.URL), call, &resp); err != nil {
+	if err := g.call(ctx, exportSubtitleSearch, call, &resp); err != nil {
 		return pluginapi.SubtitleSearchResponse{}, g.wrap("searching for "+req.Language, err)
 	}
 	return resp, nil
@@ -130,7 +138,7 @@ func (g *guestSubtitleProvider) DownloadSubtitle(ctx context.Context, req plugin
 	call := pluginapi.SubtitleDownloadCall{Request: req, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SubtitleDownloadResponse
 
-	if err := g.p.callGuest(ctx, exportSubtitleDownload, hostOf(g.settings.URL), call, &resp); err != nil {
+	if err := g.call(ctx, exportSubtitleDownload, call, &resp); err != nil {
 		return pluginapi.SubtitleDownloadResponse{}, g.wrap("downloading "+req.Candidate.ID, err)
 	}
 	if int64(len(resp.Data)) > limit {
@@ -180,14 +188,19 @@ func (g *guestSubtitleProvider) wrap(what string, err error) error {
 // for one subtitle: the smaller of what the caller asked for and what the loader
 // allows.
 //
-// MaxFetchBytes is the right number and not an approximation of one. It is
+// The fetch limit is the right number and not an approximation of one. It is
 // already the cap on a body the host hands a guest through http_fetch, so a
 // subtitle larger than it could not have reached the guest through the only way
 // out it has; a bigger answer than that is a guest synthesizing bytes, which is
 // precisely the case the host-side check exists for. It also bounds what lands in
 // the guest's linear memory, which only ever grows (ADR-0058 decision 7).
+//
+// It is the RESOLVED limit — this Plugin's own, which its manifest may have
+// raised up to the host's cap (ADR-0059 decision 6) — rather than the Options
+// default, because otherwise that first sentence stops being true the moment a
+// manifest raises it.
 func (p *Plugin) downloadLimit(requested int64) int64 {
-	limit := p.opts.MaxFetchBytes
+	limit := p.fetchLimit
 	if requested > 0 && requested < limit {
 		return requested
 	}

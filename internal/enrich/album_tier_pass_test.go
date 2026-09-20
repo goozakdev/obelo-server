@@ -160,7 +160,7 @@ type seedTrack struct {
 	id, title    string
 	num          int
 	recordingTag string // musicbrainz_recording_id — what the FILE asserts
-	record       string // musicbrainz_id — the enrichment RECORD
+	record       string // the `musicbrainz` title_external_ids row — the enrichment RECORD
 	origin       string // enrichment_id_origin ('' derived, 'chosen', 'cascaded')
 	status       string // enrichment_status ('' → the 'pending' default)
 	retryAt      string // enrichment_retry_at ('' → parked; an instant → in-flight, ADR-0048)
@@ -223,13 +223,18 @@ func newAlbumFixture(t *testing.T, prov MetadataProvider, al seedAlbum) (*Servic
 		}
 		exec(`INSERT INTO titles
 		        (id, library_id, kind, title, identity_key, sort_title, album_id, disc_number, track_number,
-		         musicbrainz_id, musicbrainz_recording_id, enrichment_id_origin, enrichment_status,
+		         musicbrainz_recording_id, enrichment_id_origin, enrichment_status,
 		         enrichment_retry_at, enrichment_reason)
-		      VALUES (?, 'lib', 'track', ?, ?, ?, 'al1', 1, ?, ?, ?, ?, ?, ?, ?)`,
+		      VALUES (?, 'lib', 'track', ?, ?, ?, 'al1', 1, ?, ?, ?, ?, ?, ?)`,
 			tr.id, tr.title,
 			"artist:harry connick jr|album:she|d01t"+fmt.Sprintf("%02d", tr.num)+":"+strings.ToLower(tr.title),
 			strings.ToLower(tr.title), tr.num,
-			tr.record, tr.recordingTag, tr.origin, status, tr.retryAt, tr.reason)
+			tr.recordingTag, tr.origin, status, tr.retryAt, tr.reason)
+		if tr.record != "" {
+			exec(`INSERT INTO title_external_ids (title_id, namespace, external_id) VALUES (?, 'musicbrainz', ?)`,
+				tr.id, tr.record)
+			exec(`UPDATE titles SET enrichment_id_namespace = 'musicbrainz' WHERE id = ?`, tr.id)
+		}
 	}
 	svc := NewService(db, prov, noArtwork{}, Enablement{Video: true, Music: true}, t.TempDir(), 0)
 	svc.SetClock(func() time.Time { return time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC) })

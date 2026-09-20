@@ -40,7 +40,8 @@ func eaglesDoubtFixture(albumStatus string) func(exec func(string, ...any)) {
 		      VALUES ('artist', 'ar1', ?, 'matched')`, britishEaglesMBID)
 		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
 		      VALUES ('album', 'al1', '', ?)`, albumStatus)
-		exec(`UPDATE titles SET enrichment_status = 'matched', musicbrainz_id = 'rec-1' WHERE id = 't1'`)
+		exec(`UPDATE titles SET enrichment_status = 'matched', enrichment_id_namespace = 'musicbrainz' WHERE id = 't1'`)
+		exec(`INSERT INTO title_external_ids (title_id, namespace, external_id) VALUES ('t1', 'musicbrainz', 'rec-1')`)
 	}
 }
 

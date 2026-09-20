@@ -113,6 +113,47 @@ type ManifestProvides struct {
 	// Built-in does: enabling an unsigned sink hands the operator a receiver they
 	// cannot defend.
 	RequiresSecret bool `json:"requiresSecret,omitempty"`
+	// Probe is the connection probe for a Metadata provider entry (ADR-0059
+	// decision 8): one media reference the author knows their source answers. The
+	// host copies it onto the Descriptor, runs an ordinary lookup with it when an
+	// Admin presses "Test connection", and keeps the judgment — matched or no-match
+	// passes, unavailable / refused / a fetch error fails.
+	//
+	// Additive and optional: a manifest written before this field existed declares
+	// no probe, and its Plugin's connection test says exactly that rather than
+	// inventing a reference. Ignored for an Event sink, which has nothing to look up.
+	Probe *MediaRef `json:"probe,omitempty"`
+	// CallBudgetMillis is how long ONE call into this entry may take, including
+	// every fetch the guest makes inside it and every pause it takes between them
+	// (ADR-0059 decision 6). Absent — the ordinary case — means the host's own
+	// default for the Extension point, which is 30 seconds for a Metadata
+	// provider.
+	//
+	// It is a REQUEST and not a setting: the host honours it up to a cap of its
+	// own and CLAMPS anything above, with a line in the log at load rather than a
+	// refusal, because a manifest asking for an hour is an author misjudging a
+	// number and not a Plugin that should fail to install. An author raises it
+	// when their source is slow or their own pacing is deliberate — a provider
+	// that waits a second between requests to be polite (ADR-0059 decision 5 moved
+	// that pacing into the guest) spends its budget waiting, and the budget has to
+	// have room for it.
+	//
+	// Whatever it says, a fetch still returns BEFORE the call's deadline: the host
+	// bounds each one by what is left of the budget, so the guest always gets the
+	// chance to answer.
+	CallBudgetMillis int `json:"callBudgetMillis,omitempty"`
+	// MaxFetchBytes is the largest response body this Plugin's guest may be handed
+	// from one http_fetch. Absent means the host's default of 1 MiB, which is
+	// generous for the JSON and XML a metadata source answers with and deliberate
+	// about what it excludes: a guest returns artwork URLs and never artwork bytes
+	// (the HOST downloads those), so a Plugin needing megabytes is usually a
+	// Plugin doing the host's job.
+	//
+	// Like CallBudgetMillis it is a request, clamped to a host cap with a log line
+	// rather than refused, and a body over the resolved limit is REFUSED whole
+	// rather than truncated — a shortened document is one a guest parses as
+	// complete.
+	MaxFetchBytes int64 `json:"maxFetchBytes,omitempty"`
 }
 
 // ManifestNetwork is the outbound allowlist, and it is the most load-bearing

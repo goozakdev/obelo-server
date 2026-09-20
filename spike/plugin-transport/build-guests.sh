@@ -7,6 +7,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# GOWORK=off: this repository has a go.work at its root (ADR-0059 decision 9) and
+# none of the spike's modules are in it, so a build run from in here would be in
+# workspace mode and fail with "main module does not contain package". Off is also
+# what these guests are meant to be built under — each is a standalone module,
+# like a plugin author's.
+export GOWORK=off
+
 OUT=build
 mkdir -p "$OUT"
 

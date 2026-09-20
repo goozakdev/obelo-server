@@ -195,8 +195,13 @@ func TestTheDiscordPluginPostsAScanAndAPlay(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json — Discord refuses anything else", scanPost.ContentType)
 	}
 	// The host writes the User-Agent and names the Plugin in it, so an operator
-	// reading Discord's own logs can tell which code posted.
-	if !strings.Contains(scanPost.UserAgent, "plugin discord") {
+	// reading Discord's own logs can tell which code posted. Since
+	// .scratch/bundled-plugins issue 02 that identity is the SERVER's own, built
+	// from server.Version and the project contact, with the plugin id and version
+	// appended as a comment — "… plugin/discord/1.0.0" (ADR-0059 decision 7) —
+	// rather than the hardcoded "obelo/1.0 (self-hosted; plugin discord)" this
+	// line was written against.
+	if !strings.Contains(scanPost.UserAgent, "plugin/discord") {
 		t.Errorf("User-Agent = %q, want the host's own, naming the plugin", scanPost.UserAgent)
 	}
 	m := scanMessage.FindStringSubmatch(scanPost.Message.Content)

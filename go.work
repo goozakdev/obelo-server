@@ -1,0 +1,40 @@
+// The Go workspace that joins this repository's modules (ADR-0059 decision 9).
+//
+// Three modules live here, and the split is not bookkeeping:
+//
+//   - `.`            the server. It has the whole dependency graph.
+//   - `./pluginapi`  the contract. No requires, ever — a plugin author imports
+//                    the wire types without importing the server.
+//   - `./pluginsdk`  the Go SDK for plugin authors. Requires pluginapi and
+//                    nothing else.
+//
+// The workspace is what makes `go build ./...`, `go vet ./...` and `go test ./...`
+// from the repository root cover all three at once while each still resolves its
+// own imports the way a consumer outside this repository would. The server's
+// go.mod carries a `replace` for the two local modules as well, so a build with
+// GOWORK=off — which is what a plugin's own `GOOS=wasip1` build runs under — still
+// resolves them from the working tree rather than from a proxy that has never
+// heard of them.
+//
+// Each `./plugins/<id>` is a Bundled plugin: its own module, requiring the SDK
+// and nothing else, built to WebAssembly by `make plugins` and embedded by
+// internal/bundled. They are listed here so that `go build`, `go vet` and
+// `go test` over the explicit patterns in the Makefile's GOPKGS cover them — and
+// so that a plugin's own guest build resolves pluginapi and pluginsdk from this
+// working tree rather than from a proxy that has never heard of them. Each new
+// plugin adds ONE line below (.scratch/bundled-plugins: issues 05-07).
+go 1.26.5
+
+use (
+	.
+	./pluginapi
+	./pluginsdk
+	./plugins/tmdb
+	./plugins/omdb
+	./plugins/thetvdb
+	./plugins/anidb
+	./plugins/musicbrainz
+	./plugins/fanarttv
+	./plugins/theaudiodb
+	./plugins/opensubtitles
+)

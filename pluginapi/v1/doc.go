@@ -149,6 +149,28 @@
 // a JSON writer of its own, which is exactly why it is a neighbouring package
 // under internal/schemagen and not a function here.
 //
+// # Its own module, and what that costs (.scratch/bundled-plugins issue 03)
+//
+// pluginapi is a Go MODULE of its own — `github.com/goozakdev/obelo-server/
+// pluginapi`, with NO requires — joined to the server by go.work and by a
+// directory `replace` in the server's go.mod (ADR-0059 decision 9). A plugin
+// author importing these wire types therefore pulls the standard library and
+// nothing else: not wazero, not SQLite, not Tailscale. The seven bundled
+// providers of ADR-0059 are compiled to WebAssembly against exactly this module,
+// and a WebAssembly guest could not carry the server's dependency graph anyway.
+//
+// The `replace` has one consequence worth stating where it will be looked for:
+//
+//	go install github.com/goozakdev/obelo-server/cmd/obelo@latest
+//
+// NO LONGER WORKS, because `go install pkg@version` refuses a module with a
+// directory `replace`. Nobody minds. ADR-0006 makes the Docker image the
+// supported way to run this server, and that command could not work here even
+// without the replace: the binary embeds internal/webui/dist, which is a
+// committed PLACEHOLDER until `make web` has run (CLAUDE.md), so a `go install`
+// would have produced a server that serves a blank page. The supported builds are
+// `make build`, `docker build -f docker/Dockerfile .`, and a clone.
+//
 // Imported as `pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"`.
 package v1
 

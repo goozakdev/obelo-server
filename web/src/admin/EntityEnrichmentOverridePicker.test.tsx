@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // The album's Fix-info surface, for the one thing issue 12 adds to it: the EDITION
 // section under the matched album (ADR-0052).
@@ -12,12 +13,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 const {
   listAlbumEditions,
   searchEntityEnrichmentCandidates,
-  previewEntityExternalCandidate,
   applyEntityEnrichmentOverride,
 } = vi.hoisted(() => ({
   listAlbumEditions: vi.fn(),
   searchEntityEnrichmentCandidates: vi.fn(),
-  previewEntityExternalCandidate: vi.fn(),
   applyEntityEnrichmentOverride: vi.fn(),
 }));
 
@@ -29,7 +28,6 @@ vi.mock("../api/client", async () => {
       listAlbumEditions: (...a: unknown[]) => listAlbumEditions(...a),
       searchEntityEnrichmentCandidates: (...a: unknown[]) =>
         searchEntityEnrichmentCandidates(...a),
-      previewEntityExternalCandidate: (...a: unknown[]) => previewEntityExternalCandidate(...a),
       applyEntityEnrichmentOverride: (...a: unknown[]) => applyEntityEnrichmentOverride(...a),
     },
   };
@@ -104,5 +102,61 @@ describe("EntityEnrichmentOverridePicker — the Edition section", () => {
 
     expect(await screen.findByTestId("album-editions-unavailable")).toBeInTheDocument();
     expect(screen.getByTestId("entity-enrichment-search-input")).toBeInTheDocument();
+  });
+});
+
+describe("EntityEnrichmentOverridePicker — a pasted reference", () => {
+  // The picker never decides what a reference looks like: the search endpoint asks
+  // the Library's lead to read it and answers `resolvedRef`, which selects the one
+  // record (.scratch/bundled-plugins issue 12). An Artist led by any source works
+  // the same way, so there is no provider to name here at all.
+  beforeEach(() => {
+    listAlbumEditions.mockReset();
+    searchEntityEnrichmentCandidates.mockReset();
+    applyEntityEnrichmentOverride.mockReset();
+  });
+
+  it("selects the record the server resolved, and applies it in its namespace", async () => {
+    searchEntityEnrichmentCandidates.mockResolvedValue({
+      candidates: [{ externalId: "aid-42", title: "Resolved", kind: "artist", source: "someplugin" }],
+      hasMore: false,
+      resolvedRef: true,
+    });
+    applyEntityEnrichmentOverride.mockResolvedValue({});
+    render(
+      <EntityEnrichmentOverridePicker entityType="artists" entityId="ar1" onApplied={vi.fn()} />,
+    );
+
+    await userEvent.type(screen.getByTestId("entity-enrichment-search-input"), "someplugin:42");
+    await userEvent.click(screen.getByTestId("entity-enrichment-search-button"));
+
+    await waitFor(() =>
+      expect(searchEntityEnrichmentCandidates).toHaveBeenCalledWith(
+        "artists",
+        "ar1",
+        "someplugin:42",
+        expect.objectContaining({ page: 0 }),
+      ),
+    );
+    const row = await screen.findByTestId("entity-enrichment-candidate");
+    expect(row).toHaveAttribute("data-external-id", "aid-42");
+    expect(row).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("leaves a searched term's hits unselected", async () => {
+    searchEntityEnrichmentCandidates.mockResolvedValue({
+      candidates: [{ externalId: "a1", title: "Radiohead", kind: "artist", source: "musicbrainz" }],
+      hasMore: false,
+      resolvedRef: false,
+    });
+    render(
+      <EntityEnrichmentOverridePicker entityType="artists" entityId="ar1" onApplied={vi.fn()} />,
+    );
+
+    await userEvent.type(screen.getByTestId("entity-enrichment-search-input"), "Radiohead");
+    await userEvent.click(screen.getByTestId("entity-enrichment-search-button"));
+
+    const row = await screen.findByTestId("entity-enrichment-candidate");
+    expect(row).toHaveAttribute("aria-pressed", "false");
   });
 });

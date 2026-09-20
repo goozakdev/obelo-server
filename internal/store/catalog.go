@@ -35,8 +35,28 @@ type Title struct {
 	// the identity id and nothing else: the embedded {tmdb-…}/{imdb-tt…} token or a
 	// folder-anchored Match override. A tree that wants to seed the enrichment
 	// record instead sets TitleTree.RecordTMDBID.
+	//
+	// Both are DERIVED since migration 0072 (ADR-0060): the record is a row in
+	// title_external_ids, and TMDBID is "the record-or-identity id in namespace
+	// tmdb" (IMDBID the same in imdb). RecordIDs / RecordNamespace below are the
+	// rows themselves.
 	TMDBID string
 	IMDBID string
+	// RecordIDs are the Title's RECORD ids keyed by namespace (`tmdb`, `imdb`,
+	// `musicbrainz`, `anidb`, a third party's own) — the rows of title_external_ids,
+	// never the identity columns (ADR-0060 decision 2). RecordNamespace names the one
+	// that is the Title's record, "" when it has none. Populated only by the reads
+	// that feed enrichment (enrichedTitleColumns, EpisodesForSeason, TracksForAlbum);
+	// nil elsewhere.
+	RecordIDs       map[string]string
+	RecordNamespace string
+	// IdentityIDs are the ids the FOLDER asserts, keyed by namespace (`tmdb` from
+	// tmdb_id, `imdb` from imdb_id) — the Scanner's identity columns read raw, with
+	// no record row folded in. It is the "asserted by the folder" half of ADR-0060
+	// decision 6's pin rule, which TMDBID cannot answer because TMDBID mixes the two.
+	// Populated by the same reads as RecordIDs; nil elsewhere and when the folder
+	// asserts nothing.
+	IdentityIDs map[string]string
 	// EnrichmentIDOrigin says WHOSE choice this Title's enrichment record is: nobody's
 	// (an id a pass resolved), the Admin's own on this Title (Fix info, an Episode
 	// pin), or its parent's, applied by a Cascade (ADR-0045, ADR-0046). Both choices
@@ -74,7 +94,8 @@ type Title struct {
 	// the scanner, and never affect identity (ADR-0002). They are zero on an
 	// un-enriched Title and populated only by the enriched read paths (ListTitles /
 	// TitleByID); the other readers (search/home) leave them zero. MusicbrainzID is
-	// the Music external-match anchor (analogous to TMDBID for video).
+	// the Music external-match anchor (analogous to TMDBID for video): since
+	// migration 0072 it is derived, the record row in namespace musicbrainz.
 	Overview       string
 	Tagline        string
 	ContentRating  string
@@ -457,6 +478,10 @@ type TitleTree struct {
 	// series onto the co-File sibling rows a split creates, which have no prior row
 	// to keep it on. The Scanner leaves it empty, and writeTitleRow honors it on
 	// INSERT only: an existing row's enrichment columns are never written by a tree.
+	// Despite the name it is a series id in the SHOW's record namespace, not
+	// necessarily TMDB's: the row and enrichment_id_namespace inherit the Show's
+	// namespace (ADR-0060 decision 5). The name is kept because the file matcher's
+	// only lister is TMDB-shaped today.
 	//
 	// It carries the record and NOT enrichment_id_origin, so an inherited record
 	// reads as one nobody chose: the sibling keeps its anchor and stays eligible for
@@ -540,8 +565,9 @@ type episodeColumns struct {
 //
 // The record an Admin chose — "Fix info" on a Movie or Track, an Episode pin's
 // series, a Cascade — and the record an enrichment pass resolved live in
-// enrichment_tmdb_id / enrichment_imdb_id / musicbrainz_id, which this function
-// NEVER writes on an existing row. That is what makes an Enrichment override
+// title_external_ids (ADR-0060; the enrichment_tmdb_id / enrichment_imdb_id /
+// musicbrainz_id columns before migration 0072), which this function NEVER writes
+// for an existing row. That is what makes an Enrichment override
 // durable across a scan (ADR-0019, CONTEXT.md): not a guard that has to be
 // remembered, but a column the Scanner has no statement to make about.
 //
@@ -552,7 +578,7 @@ type episodeColumns struct {
 // half silently re-aimed the lookup at the Show's own series at the borrowed
 // numbering — a real record, confidently wrong (ADR-0044).
 //
-// The INSERT branch additionally seeds enrichment_tmdb_id from tree.RecordTMDBID,
+// The INSERT branch additionally seeds a `tmdb` record row from tree.RecordTMDBID,
 // which only the file matcher's Apply sets (see TitleTree.RecordTMDBID); a
 // brand-new row has no override of its own to protect.
 func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error) {
@@ -573,20 +599,38 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		titleID = tree.Title.ID
+		recordNS := ""
+		if tree.RecordTMDBID != "" {
+			// An inherited series record takes its Show's namespace (ADR-0060
+			// decision 5), like every other Episode pin.
+			recordNS = defaultEntityNamespace(EntityShow)
+			if ep.seasonID != "" {
+				ns, err := seriesNamespaceForSeason(tx, ep.seasonID)
+				if err != nil {
+					return "", err
+				}
+				recordNS = ns
+			}
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO titles
 			   (id, library_id, kind, title, year, identity_key, sort_title,
-			    tmdb_id, imdb_id, enrichment_tmdb_id, needs_review, ambiguous, hidden,
+			    tmdb_id, imdb_id, enrichment_id_namespace, needs_review, ambiguous, hidden,
 			    season_id, season_number, episode_number, episode_label,
 			    album_id, disc_number, track_number, musicbrainz_recording_id)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			titleID, tree.LibraryID, tree.Kind, tree.Title.Title, nullableYear(tree.Year),
-			tree.IdentityKey, tree.SortTitle, tree.TMDBID, tree.IMDBID, tree.RecordTMDBID,
+			tree.IdentityKey, tree.SortTitle, tree.TMDBID, tree.IMDBID, recordNS,
 			boolToInt(tree.NeedsReview), boolToInt(tree.Ambiguous),
 			seasonID, ep.seasonNumber, ep.episodeNumber, ep.episodeLabel,
 			albumID, ep.discNumber, ep.trackNumber, tree.MusicbrainzRecordingID,
 		); err != nil {
 			return "", fmt.Errorf("store: inserting title: %w", err)
+		}
+		if tree.RecordTMDBID != "" {
+			if err := putRecordID(tx, titleID, recordNS, tree.RecordTMDBID); err != nil {
+				return "", err
+			}
 		}
 	case err != nil:
 		return "", fmt.Errorf("store: resolving title identity: %w", err)
@@ -607,7 +651,7 @@ func writeTitleRow(tx *sql.Tx, tree TitleTree, ep episodeColumns) (string, error
 			    -- for the same reason tmdb_id is: it is the LOCAL claim, re-derived
 			    -- from the file's tags on every scan, so a retagged file must be able
 			    -- to change it and a de-tagged one to withdraw it. The Admin's record
-			    -- lives in musicbrainz_id and is untouched here (ADR-0045/0049).
+			    -- lives in title_external_ids and is untouched here (ADR-0045/0049).
 			    musicbrainz_recording_id = ?
 			  WHERE id = ?`,
 			tree.Title.Title, nullableYear(tree.Year), tree.SortTitle,
@@ -1403,11 +1447,12 @@ func scanTitle(s scanner) (Title, error) {
 var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sort_title, added_at,
 	        ` + recordExternalIDs("") + `, needs_review, ambiguous, hidden,
 	        overview, tagline, content_rating, release_date, runtime_minutes, studio,
-	        musicbrainz_id, musicbrainz_recording_id,
+	        ` + recordIDExpr("", NamespaceMusicBrainz) + `, musicbrainz_recording_id,
 	        enrichment_status, enriched_at, enrichment_source, enriched_title,
 	        enrichment_season, enrichment_episode, enrichment_id_origin,
 	        enrichment_attempts, enrichment_retry_at, enrichment_reason,
-	        season_number, episode_number, episode_label`
+	        season_number, episode_number, episode_label,
+	        ` + recordIDsColumns("")
 
 // recordExternalIDs is the ONE spelling of "which external record does this Title
 // resolve against", as a pair of SELECT expressions in the order (tmdb, imdb) that
@@ -1422,15 +1467,18 @@ var enrichedTitleColumns = `id, library_id, kind, title, year, identity_key, sor
 // yields the folder's id and drops the correction an Admin made on top of it.
 // The expressions are named back to `tmdb_id` / `imdb_id` so a CTE that projects
 // them keeps the column names its outer SELECT already uses.
+//
+// Since migration 0072 the override is a row in title_external_ids (ADR-0060), so
+// each half is recordIDExpr over that namespace; the rule reads the same.
 func recordExternalIDs(alias string) string {
 	return recordTMDBID(alias) + " AS tmdb_id, " +
-		"COALESCE(NULLIF(" + alias + "enrichment_imdb_id, ''), " + alias + "imdb_id) AS imdb_id"
+		recordIDExpr(alias, NamespaceIMDB) + " AS imdb_id"
 }
 
 // recordTMDBID is recordExternalIDs' first half alone, for the reads that only
 // need the series/record id (ShowEpisodeSlots).
 func recordTMDBID(alias string) string {
-	return "COALESCE(NULLIF(" + alias + "enrichment_tmdb_id, ''), " + alias + "tmdb_id)"
+	return recordIDExpr(alias, NamespaceTMDB)
 }
 
 // EpisodePin reports the provider season/episode this Episode is pinned to, and
@@ -1464,6 +1512,8 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 	var needsReview, ambiguous, hidden int
 	var idOrigin string
 	var pinSeason, pinEpisode sql.NullInt64
+	var recordIDs sql.NullString
+	var identTMDB, identIMDB string
 	if err := s.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 		&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&t.Overview, &t.Tagline, &t.ContentRating, &t.ReleaseDate, &t.RuntimeMinutes, &t.Studio,
@@ -1471,9 +1521,16 @@ func scanEnrichedTitle(s scanner) (Title, error) {
 		&t.EnrichmentStatus, &t.EnrichedAt, &t.EnrichmentSource, &t.EnrichedTitle,
 		&pinSeason, &pinEpisode, &idOrigin,
 		&t.EnrichmentAttempts, &t.EnrichmentRetryAt, &t.EnrichmentReason,
-		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel); err != nil {
+		&t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
+		&t.RecordNamespace, &recordIDs, &identTMDB, &identIMDB); err != nil {
 		return Title{}, err
 	}
+	ids, err := decodeRecordIDs(recordIDs)
+	if err != nil {
+		return Title{}, err
+	}
+	t.RecordIDs = ids
+	t.IdentityIDs = identityIDs(identTMDB, identIMDB)
 	t.EnrichmentIDOrigin = RecordOrigin(idOrigin)
 	if year.Valid {
 		t.Year = int(year.Int64)
