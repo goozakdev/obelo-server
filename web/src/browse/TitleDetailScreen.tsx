@@ -413,7 +413,7 @@ function Detail({
   // the hero without a page refresh. NOT the row `path`: the fetched-artwork
   // cache filename is stable per (Title, role), so a replaced image reuses the
   // same path and the browser would keep serving the stale bytes. Falls back to
-  // the path for an older server that doesn't send artworkVersion.
+  // the path when the Title has no artwork (no artworkVersion to bust on).
   const logoArt = title.artwork.find((a) => a.role === "logo");
   const logoSrc = logoArt
     ? posterUrl(title.id, "logo", title.artworkVersion ?? logoArt.path)
@@ -1211,7 +1211,7 @@ function FixLabelField({
 // a fetched track is tagged "online". Renders nothing when the Title has no subtitle.
 function SubtitleSummary({ subtitles }: { subtitles: SubtitleTrack[] }) {
   // Defensive: the normalized TitleDetail always carries a list, but a hand-built
-  // fixture (or an older server response) may omit it — treat that as "none".
+  // test fixture may omit it — treat that as "none".
   if (!subtitles || subtitles.length === 0) return null;
   return (
     <div className="edition-subtitles" data-testid="detail-subtitles">
@@ -1301,8 +1301,8 @@ function FileRow({ file }: { file: MediaFile }) {
 // becomes meaningful with alternates. The default carries the container disposition
 // at browse time. Per CONTEXT.md these are video Streams, not a coined "Video track".
 function VideoStreamChips({ streams }: { streams: VideoStream[] }) {
-  // Defensive: a hand-built fixture (or an older server response) may omit the
-  // list. Only surface the chips when there's a genuine choice (≥2).
+  // Defensive: a hand-built test fixture may omit the list. Only surface the
+  // chips when there's a genuine choice (≥2).
   if (!streams || streams.length < 2) return null;
   return (
     <div className="file-video" data-testid="file-video">
@@ -1337,8 +1337,8 @@ function VideoStreamChips({ streams }: { streams: VideoStream[] }) {
 // attributes for the integration test. Per CONTEXT.md these are audio Streams,
 // not a coined "Audio track". Renders nothing when the File has no audio.
 function AudioStreamChips({ streams }: { streams: AudioStream[] }) {
-  // Defensive: a hand-built fixture (or an older server response) may omit the
-  // list — treat that as "none".
+  // Defensive: a hand-built test fixture may omit the list — treat that as
+  // "none".
   if (!streams || streams.length === 0) return null;
   return (
     <div className="file-audio" data-testid="file-audio">

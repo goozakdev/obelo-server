@@ -35,9 +35,9 @@ func withArtworkVersion(rawURL, version string) string {
 type showSummaryJSON struct {
 	ID string `json:"id"`
 	// LibraryID is the Library this Show belongs to — the client's Show-detail
-	// "Back" link returns to its owning Library. Set on the detail; harmless on the
-	// grid (each grid Show already carries it).
-	LibraryID string `json:"libraryId,omitempty"`
+	// "Back" link returns to its owning Library. Every Show row has one; never
+	// omitted, on the grid or the detail.
+	LibraryID string `json:"libraryId"`
 	Kind      string `json:"kind"` // always "show" — lets the client branch in the grid
 	Title     string `json:"title"`
 	Year      int    `json:"year,omitempty"`

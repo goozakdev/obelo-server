@@ -195,8 +195,8 @@ func TestSubtitleOriginalDeliveryToCapableClient(t *testing.T) {
 	}
 }
 
-// TestSubtitleVTTFallbackForBrowserProfile: a profile declaring only webvtt keeps
-// the pre-ADR-0033 behavior byte-for-byte — every text URL is .vtt (the .ass
+// TestSubtitleVTTFallbackForBrowserProfile: a profile declaring only webvtt gets
+// the WebVTT-only behavior byte-for-byte — every text URL is .vtt (the .ass
 // sidecar converted, styling stripped) and format says "vtt".
 func TestSubtitleVTTFallbackForBrowserProfile(t *testing.T) {
 	requireSubtitleOriginalFixtures(t)

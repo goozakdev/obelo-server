@@ -46,9 +46,9 @@ export function loadQueue(storage: Storage, userId: string | null): QueueState {
     const length = candidate.entries.length;
     const currentIndex =
       length === 0 ? -1 : Math.min(Math.max(candidate.currentIndex, 0), length - 1);
-    // Normalize the walk-order modifiers (slice 04). An OLDER stored Queue lacking
-    // these fields — or one with a garbled value — loads with the safe defaults
-    // (repeat off, not shuffled) rather than being rejected as corrupt.
+    // Normalize the walk-order modifiers (slice 04). A stored Queue lacking these
+    // fields — or one with a garbled value — loads with the safe defaults (repeat
+    // off, not shuffled) rather than being rejected as corrupt.
     const repeat =
       candidate.repeat === "all" || candidate.repeat === "one" ? candidate.repeat : "off";
     const authoredOrder =

@@ -40,8 +40,10 @@ export interface RosterUser {
   signedIn: boolean;
 }
 
-/** The per-server storage key (a server with no advertised id buckets under
- * "unknown", so the roster still works against a pre-ADR-0034 server). */
+/** The per-server storage key. `serverId` is null before the first handshake of
+ * this browser session has resolved (or ever has, on a fresh browser) — that
+ * window buckets under "unknown" so the roster still works while the id is
+ * still loading. */
 export function rosterStorageKey(serverId: string | null): string {
   return `${STORAGE_PREFIX}.${serverId ?? "unknown"}`;
 }
@@ -130,8 +132,10 @@ export function rememberUser(
  * no password, `POST /auth/login` refuses the role outright, and offering it as a
  * switch-user row would put a permanently un-signinable name in the household's
  * face. It is filtered out of the reconciliation input rather than at render, so
- * the same pass that refuses to seed one also PRUNES any that a previous version
- * seeded — an entry the server still knows but this surface no longer lists. */
+ * the same pass that refuses to seed one also PRUNES any stray entry already in
+ * storage for a `remote` id — belt-and-suspenders against a roster written some
+ * other way (corrupted storage, a future write path that skips this filter), not
+ * just fresh seeding. */
 function isPerson(u: RosterIdentity): boolean {
   return u.role !== "remote";
 }
@@ -241,10 +245,8 @@ export function loadServerId(): string | null {
   }
 }
 
-/** Record the Server identity id (from the `GET /server` handshake). A null/blank
- * id (a pre-ADR-0034 server) is ignored so a prior good id isn't wiped. */
-export function saveServerId(id: string | null | undefined): void {
-  if (!id) return;
+/** Record the Server identity id (from the `GET /server` handshake). */
+export function saveServerId(id: string): void {
   try {
     window.localStorage.setItem(SERVER_ID_KEY, id);
   } catch {

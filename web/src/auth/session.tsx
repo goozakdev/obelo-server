@@ -183,9 +183,9 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   }, [client]);
 
   // Learn the Server identity id for roster keying. Best-effort and guarded: a
-  // stub client (tests) has no getServerInfo, and an offline/pre-ADR-0034 server
-  // simply leaves the roster on its stored key. Persisted so a later authed load
-  // (which never renders the login gates) still keys the roster correctly.
+  // stub client (tests) has no getServerInfo, and an unreachable server simply
+  // leaves the roster on its stored key. Persisted so a later authed load (which
+  // never renders the login gates) still keys the roster correctly.
   useEffect(() => {
     if (typeof client.getServerInfo !== "function") return;
     const controller = new AbortController();
@@ -193,6 +193,11 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
     client
       .getServerInfo(controller.signal)
       .then((info) => {
+        // Guarded on id, not just presence: the handshake TYPE requires id (a
+        // running server always resolves one, D021), but a zero-Identity test
+        // harness built outside boot is a legal ServerInfo without it — and
+        // saveServerId(undefined) would persist the literal string "undefined"
+        // as the roster key.
         if (active && info?.id) {
           saveServerId(info.id);
           setServerId(info.id);
@@ -250,6 +255,8 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
     if (typeof client.getServerInfo !== "function") return null;
     try {
       const info = await client.getServerInfo();
+      // Same id guard as the mount-time handshake above: a legal zero-Identity
+      // test harness must not persist an absent id.
       if (info?.id) {
         saveServerId(info.id);
         setServerId(info.id);

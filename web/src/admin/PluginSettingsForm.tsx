@@ -40,8 +40,9 @@ import type {
 /** fieldErrorsOf pulls the per-field messages out of a refusal.
  *
  * The server sends `details.fields = [{key, message}]` beside the ordinary
- * message. Anything else — a network failure, a 500, an older server — has no
- * field detail, and the caller falls back to the one sentence it did get. */
+ * message. Anything else — a network failure, a 500, a refusal with no field to
+ * blame — has no field detail, and the caller falls back to the one sentence it
+ * did get. */
 function fieldErrorsOf(err: unknown): Record<string, string> {
   if (!(err instanceof ApiError) || !err.details) return {};
   const raw = err.details.fields;

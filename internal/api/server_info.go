@@ -12,10 +12,12 @@ import (
 // in docs/api-contract.md: the Server identity, server version, supported API
 // versions, a feature-flags map, setupRequired, and the Tailnet address.
 type serverInfoResponse struct {
-	// ID and Name are the Server identity (ADR-0034). Both are omitempty, which is
-	// what makes them additive: a client written against this contract must treat
-	// them as optional, and a server that cannot resolve an identity degrades to
-	// the pre-ADR-0034 shape rather than advertising empty strings.
+	// ID and Name are the Server identity (ADR-0034). A running server always
+	// resolves both (LoadOrCreateIdentity mints one on first boot or the process
+	// fails to start) — omitempty stays only because server.Metadata itself
+	// documents a zero Identity as legal (server.NewMetadata), for a test harness
+	// that builds one without going through boot; that path advertises no id/name
+	// rather than empty strings.
 	//
 	// Neither is a secret — this endpoint is [Unauthenticated], the id is an opaque
 	// UUID granting nothing, and the name is chosen by the operator.

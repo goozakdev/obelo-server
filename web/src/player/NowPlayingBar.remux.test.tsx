@@ -11,7 +11,8 @@ import { savePreference, type PlaybackPreference } from "./playbackPreference";
 // the resolved draft is otherwise pure direct play AND the server advertises
 // `features.remuxSelectedOnly`. A Quality-cap downscale or the AAC narrowing drops
 // the field (the session already leaves direct play), and an absent flag keeps a
-// stored choice off the wire entirely (an older server rejects the unknown field).
+// stored choice off the wire entirely (a server without the route rejects the
+// unknown field).
 
 const { getTitle, startPlayback, reportProgress, endSession } = vi.hoisted(() => ({
   getTitle: vi.fn(),
@@ -191,7 +192,7 @@ describe("NowPlayingBar — Force Remux replay", () => {
     expect(opts.remuxSelectedOnly).toBeUndefined();
   });
 
-  it("an absent feature flag keeps even a stored choice off the wire (older server)", async () => {
+  it("an absent feature flag keeps even a stored choice off the wire", async () => {
     savePreference(
       window.localStorage,
       "u1",

@@ -320,6 +320,7 @@ describe("Episode detail context", () => {
   it("shows the Show · SxxExx parent context on an Episode's Title detail", async () => {
     const episode: TitleDetail = {
       id: "t1",
+      libraryId: "lib1",
       kind: "episode",
       title: "System",
       year: 0,
@@ -328,6 +329,7 @@ describe("Episode detail context", () => {
       hidden: false,
       resumePositionMs: 0,
       watched: false,
+      subtitles: [],
       editions: [
         {
           id: "ed1",

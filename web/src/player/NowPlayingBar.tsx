@@ -870,9 +870,9 @@ function CurrentPlayer({
   // failed to load, degrades to Auto / Direct Play rather than blocking.
   const userId = persistedUserId();
   // Force Remux (issue 07) is FLAG-GATED end to end: even a stored `remuxSelectedOnly`
-  // preference must not reach the wire unless the server advertises the feature (an
-  // older server rejects the unknown request field). Optional so a bare test mount
-  // (no provider) degrades to off, exactly like an absent flag.
+  // preference must not reach the wire unless the server advertises the feature (a
+  // server without the route rejects the unknown request field). Optional so a
+  // bare test mount (no provider) degrades to off, exactly like an absent flag.
   const remuxAllowed = useOptionalFeature("remuxSelectedOnly");
   const prefTitle =
     entry.title.kind === "episode"

@@ -59,7 +59,8 @@ describe("ApiClient.startPlayback (conditional body fields)", () => {
   });
 
   it("omits the field when absent or false — never `false` on the wire", async () => {
-    // Absent: an older server rejects the unknown field, so off must be OMISSION.
+    // Absent: a server without the route rejects the unknown field, so off must
+    // be OMISSION.
     let body = await captureBody({ deviceProfile: profile, constraints });
     expect("remuxSelectedOnly" in body).toBe(false);
     // Explicit false: same — the server defaults the absent field to false.

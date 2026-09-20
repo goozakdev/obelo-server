@@ -49,6 +49,8 @@ function renderHeader() {
   // context. This suite is about the roster, not gating, so seed a ready handshake
   // with the utility links on.
   const serverInfo = {
+    id: "srv-1",
+    name: "Test Server",
     features: { playlists: true, collections: true },
   } as unknown as ServerInfo;
 

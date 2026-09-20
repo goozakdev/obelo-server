@@ -329,9 +329,10 @@ export class ApiClient {
    * the PREVIOUS user's token until the server rewrites it. This is that rewrite.
    *
    * Bearer-only server-side: a lone media cookie cannot authorize its own
-   * re-issue. Callers gate this on the `mediaCookieRefresh` feature flag — an older
-   * server without the route simply doesn't get the refresh (media falls back to
-   * today's behaviour), so this is never called blind. 204 No Content on success. */
+   * re-issue. Callers gate this on the `mediaCookieRefresh` feature flag — a server
+   * that does not advertise the flag simply doesn't get the refresh (media falls
+   * back to today's behaviour), so this is never called blind. 204 No Content on
+   * success. */
   async refreshMediaCookie(signal?: AbortSignal): Promise<void> {
     await this.request<void>("/auth/media-cookie", { method: "POST", signal });
   }
@@ -2284,7 +2285,8 @@ export class ApiClient {
     if (opts.audioStreamId) body.audioStreamId = opts.audioStreamId;
     if (opts.videoStreamId) body.videoStreamId = opts.videoStreamId;
     // Conditional like the ids above: only ever `true` on the wire, never `false`
-    // (the server defaults the absent field to false; older servers reject it).
+    // (the server defaults the absent field to false; send it only when
+    // features.remuxSelectedOnly says this server negotiates it).
     if (opts.remuxSelectedOnly) body.remuxSelectedOnly = true;
     return this.request<PlaybackDecision>(
       `/titles/${encodeURIComponent(titleId)}/playback`,

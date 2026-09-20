@@ -164,7 +164,7 @@ export default function PlaybackOptionsSheet({
 
   // Force Remux (issue 07) renders only when the server advertises the feature.
   // Optional so a bare test mount (no ServerInfoProvider) degrades to hidden,
-  // exactly like an absent flag on an older server.
+  // exactly like a server that does not advertise the flag.
   const remuxAvailable = useOptionalFeature("remuxSelectedOnly");
   // Whether the DRAFT already leaves direct play — the same two signals the resolver
   // reads (issue 03's Quality constraints, issue 06's AAC flag). A genuine downscale
@@ -274,7 +274,7 @@ export default function PlaybackOptionsSheet({
             onSelect={setVideoStreamId}
           />
           <SubtitlesSection
-            subtitles={title.subtitles ?? []}
+            subtitles={title.subtitles}
             selected={draft.subtitle}
             onSelect={(subtitle) => setDraft((d) => ({ ...d, subtitle }))}
           />

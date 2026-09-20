@@ -20,8 +20,9 @@ import (
 type artistSummaryJSON struct {
 	ID string `json:"id"`
 	// LibraryID is the Music Library this Artist belongs to — the client's
-	// Artist-detail "Back" link returns to its owning Library.
-	LibraryID string `json:"libraryId,omitempty"`
+	// Artist-detail "Back" link returns to its owning Library. Every Artist row
+	// has one; never omitted.
+	LibraryID string `json:"libraryId"`
 	Kind      string `json:"kind"` // always "artist" — lets the client branch in the list
 	Name      string `json:"name"`
 	// Enrichment (issue 03): bio (overview) + genres + fetched artwork, all
