@@ -32,12 +32,16 @@ type stubPeer struct {
 	// the version disagreement at the REDEEM rather than at the probe.
 	redeemStatus int
 	redeemBody   string
+	// logoutStatus overrides the /auth/logout response; 0 means 204.
+	logoutStatus int
 
-	mu       sync.Mutex
-	probes   int
-	redeems  int
-	spent    bool
-	lastBody map[string]any
+	mu             sync.Mutex
+	probes         int
+	redeems        int
+	logouts        int
+	lastLogoutAuth string
+	spent          bool
+	lastBody       map[string]any
 }
 
 func newStubPeer(t *testing.T, p *stubPeer) *httptest.Server {
@@ -87,6 +91,16 @@ func newStubPeer(t *testing.T, p *stubPeer) *httptest.Server {
 				"device":              map[string]any{"id": "d1", "name": "Home", "platform": "server"},
 				"linkProtocolVersion": p.version,
 			})
+		case "/api/v1/auth/logout":
+			p.mu.Lock()
+			p.logouts++
+			p.lastLogoutAuth = r.Header.Get("Authorization")
+			status := p.logoutStatus
+			p.mu.Unlock()
+			if status == 0 {
+				status = http.StatusNoContent
+			}
+			w.WriteHeader(status)
 		default:
 			http.NotFound(w, r)
 		}
@@ -99,6 +113,12 @@ func (p *stubPeer) counts() (probes, redeems int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.probes, p.redeems
+}
+
+func (p *stubPeer) logoutCalls() (int, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.logouts, p.lastLogoutAuth
 }
 
 // memStore is an in-memory Store, so the flow can be exercised without a
@@ -727,6 +747,185 @@ func TestARedemptionThatNamesNoDeviceIsRefused(t *testing.T) {
 	}
 	if links, _ := st.Links(); len(links) != 0 {
 		t.Errorf("%d links stored after a redemption naming no device, want 0", len(links))
+	}
+}
+
+// TestARedemptionWithAWhitespaceOnlyDeviceIdIsRefused is D007: a device id
+// that is only whitespace is not a usable Device id, so it is refused the
+// same way an empty one is — ErrNotObelo, nothing stored.
+func TestARedemptionWithAWhitespaceOnlyDeviceIdIsRefused(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"obelo_tok","device":{"id":"  "},"linkProtocolVersion":1}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if links, _ := st.Links(); len(links) != 0 {
+		t.Errorf("%d links stored after a redemption naming a whitespace-only device id, want 0", len(links))
+	}
+}
+
+// TestARefusedDevicelessRedemptionLogsOutTheMintedBearer is D007: the sharer
+// has already minted a bearer by the time redeem sees there is no usable
+// Device id, so refusing it also revokes that bearer with a best-effort
+// POST /auth/logout carrying it.
+func TestARefusedDevicelessRedemptionLogsOutTheMintedBearer(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"obelo_tok","linkProtocolVersion":1}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if logouts, auth := peer.logoutCalls(); logouts != 1 || auth != "Bearer obelo_tok" {
+		t.Errorf("logout calls = %d, last Authorization = %q, want 1 call with \"Bearer obelo_tok\"", logouts, auth)
+	}
+}
+
+// TestALogoutFailureStillRefusesTheDevicelessRedemption is D007: the logout
+// is best-effort, so a sharer that answers it with a 500 changes nothing the
+// caller sees — the redemption is still refused with ErrNotObelo.
+func TestALogoutFailureStillRefusesTheDevicelessRedemption(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"obelo_tok","linkProtocolVersion":1}`,
+		logoutStatus: http.StatusInternalServerError,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if links, _ := st.Links(); len(links) != 0 {
+		t.Errorf("%d links stored after a logout failure, want 0", len(links))
+	}
+	if logouts, _ := peer.logoutCalls(); logouts != 1 {
+		t.Errorf("logout calls = %d, want 1 — the attempt happens even though it answers 500", logouts)
+	}
+}
+
+// TestARedemptionWithANonStringDeviceIdIsRefusedAndLogsOut is D007: a body that decodes the token but fails on the device id (it is not a
+// string) still carries a token the sharer minted, so the refusal logs it out
+// the same as a response that decodes cleanly with no device id at all.
+func TestARedemptionWithANonStringDeviceIdIsRefusedAndLogsOut(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"obelo_tok","device":{"id":5}}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if links, _ := st.Links(); len(links) != 0 {
+		t.Errorf("%d links stored after a non-string device id, want 0", len(links))
+	}
+	if logouts, auth := peer.logoutCalls(); logouts != 1 || auth != "Bearer obelo_tok" {
+		t.Errorf("logout calls = %d, last Authorization = %q, want 1 call with \"Bearer obelo_tok\"", logouts, auth)
+	}
+}
+
+// TestARedemptionsDeviceIdIsStoredTrimmed is D007: the Device id
+// check trims whitespace, and so must what gets stored — otherwise unlink
+// would DELETE a path carrying the untrimmed id.
+func TestARedemptionsDeviceIdIsStoredTrimmed(t *testing.T) {
+	var deletedPath string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/server":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "amy-server-id", "features": map[string]bool{"serverLinking": true},
+				"linkProtocolVersion": 1,
+			})
+		case r.URL.Path == "/api/v1/auth/link/redeem":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token":  "obelo_tok",
+				"device": map[string]any{"id": "  d1  "},
+			})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/devices/"):
+			deletedPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer peer.Close()
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	l, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), peer.URL))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if l.DeviceID != "d1" {
+		t.Errorf("stored DeviceID = %q, want the trimmed %q", l.DeviceID, "d1")
+	}
+	if err := svc.Unlink(context.Background(), l.ID); err != nil {
+		t.Fatalf("Unlink: %v", err)
+	}
+	if deletedPath != "/api/v1/devices/d1" {
+		t.Errorf("unlink deleted %q, want /api/v1/devices/d1", deletedPath)
+	}
+}
+
+// TestASuccessfulRedemptionSendsNoLogout is D007: logout is for a REFUSAL that
+// still carries a minted bearer; a redemption that succeeds must never call it.
+func TestASuccessfulRedemptionSendsNoLogout(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true}
+	live := newStubPeer(t, peer)
+
+	svc := newService(t, &memStore{}, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if logouts, _ := peer.logoutCalls(); logouts != 0 {
+		t.Errorf("logout calls = %d, want 0 — the redemption succeeded", logouts)
+	}
+}
+
+// TestARefusalWithAnEmptyTokenSendsNoLogout is D007: there is nothing to
+// revoke when the sharer never minted a bearer in the first place.
+func TestARefusalWithAnEmptyTokenSendsNoLogout(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"linkProtocolVersion":1}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if logouts, _ := peer.logoutCalls(); logouts != 0 {
+		t.Errorf("logout calls = %d, want 0 — no token was ever minted", logouts)
 	}
 }
 
