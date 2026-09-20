@@ -238,9 +238,9 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 			return fmt.Errorf("store: clearing entity artwork %q: %w", a.Role, err)
 		}
 		if _, err := tx.Exec(
-			// added_at is set explicitly (its column default is ''), so each
-			// re-enrich stamps a fresh time and the per-entity MAX(added_at) version
-			// advances — busting the client's poster cache.
+			// added_at is set explicitly so each re-enrich stamps a fresh time and
+			// the per-entity MAX(added_at) version advances — busting the client's
+			// poster cache.
 			`INSERT INTO entity_artwork (id, entity_type, entity_id, role, path, source, added_at)
 			 VALUES (?, ?, ?, ?, ?, 'fetched', datetime('now'))`,
 			uuid.NewString(), entityType, entityID, a.Role, a.Path,

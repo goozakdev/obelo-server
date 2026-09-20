@@ -3,6 +3,7 @@ package store_test
 import (
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -194,7 +195,7 @@ func seedTwoPlugins(t *testing.T, db *store.DB) {
 	for _, id := range []string{"alpha", "beta"} {
 		if err := db.InsertPlugin(store.PluginInsert{
 			ID: id, Name: "Test " + id, Version: "1.0.0", APIVersion: 1,
-			Provides: []string{"event-sink"}, Source: "upload",
+			Provides: []string{"event-sink"}, Source: "upload", Origin: plugins.OriginAdmin,
 		}); err != nil {
 			t.Fatalf("InsertPlugin %s: %v", id, err)
 		}

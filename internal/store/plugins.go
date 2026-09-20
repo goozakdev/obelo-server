@@ -40,9 +40,6 @@ type PluginRow struct {
 	// fact the boot-time re-assert turns on — a bundled row's files are replaced
 	// when the server ships a newer version, an admin row's are never touched — and
 	// the one sentence the Plugins screen shows instead of an upload name.
-	//
-	// See migrations/0001_init.sql's `plugins` table for why the column defaults
-	// to "admin" rather than to the empty string.
 	Origin string
 }
 
@@ -56,9 +53,8 @@ type PluginInsert struct {
 	APIVersion int
 	Provides   []string
 	Source     string
-	// Origin is "bundled" or "admin" (see PluginRow.Origin). The EMPTY value means
-	// "admin", so every caller written before Bundled plugins existed keeps
-	// recording what it always recorded.
+	// Origin is "bundled" or "admin" (see PluginRow.Origin). Every caller names it
+	// explicitly; there is no default.
 	Origin string
 }
 
@@ -132,10 +128,6 @@ func (db *DB) InsertPlugin(p PluginInsert) error {
 	if err != nil {
 		return fmt.Errorf("store: encoding what plugin %q provides: %w", p.ID, err)
 	}
-	origin := p.Origin
-	if origin == "" {
-		origin = "admin"
-	}
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
@@ -145,7 +137,7 @@ func (db *DB) InsertPlugin(p PluginInsert) error {
 	if _, err := tx.Exec(
 		`INSERT INTO plugins (id, name, version, api_version, provides, enabled, last_error, source, installed_at, origin)
 		      VALUES (?, ?, ?, ?, ?, 1, NULL, ?, datetime('now'), ?)`,
-		p.ID, p.Name, p.Version, p.APIVersion, string(provides), p.Source, origin); err != nil {
+		p.ID, p.Name, p.Version, p.APIVersion, string(provides), p.Source, p.Origin); err != nil {
 		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
 	}
 	if _, err := tx.Exec(`DELETE FROM declined_plugins WHERE id = ?`, p.ID); err != nil {
