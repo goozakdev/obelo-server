@@ -43,17 +43,14 @@ const (
 )
 
 // parseHWAccel maps a OBELO_HARDWARE_ACCEL value to a HWAccel, reporting
-// whether it was recognized. It is lenient and back-compatible (mirrors the
-// "garbage stays off" policy of the other knobs): the explicit names parse to
-// themselves; off/false/0/no/"" → off; and the legacy bool-true spellings
-// (true/1/on/yes) → auto, preserving the old "true turns HW on" behavior (auto
-// itself resolves to CPU until the detector lands). An unrecognized value is not
-// recognized (false), so the caller keeps the safe default.
+// whether it was recognized. The explicit names parse to themselves; ""
+// (unset) → off. An unrecognized value is not recognized (false), so the
+// caller keeps the safe default (garbage stays off).
 func parseHWAccel(v string) (HWAccel, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "off", "false", "0", "no":
+	case "", "off":
 		return HWAccelOff, true
-	case "auto", "true", "1", "on", "yes":
+	case "auto":
 		return HWAccelAuto, true
 	case "nvenc":
 		return HWAccelNVENC, true
@@ -97,10 +94,11 @@ const (
 )
 
 // parseTLSMode maps an OBELO_TLS_MODE value to a TLSMode, reporting whether it
-// was recognized. It mirrors parseHWAccel's shape — the same lenient spellings
-// for "off" — but not its failure policy: an unrecognized value is returned
-// VERBATIM rather than replaced with the default, so Validate can quote back
-// exactly what the operator typed instead of a value nobody wrote.
+// was recognized. "off" accepts several lenient spellings — "", "off",
+// "false", "0", "no", "disabled" — since turning TLS off is the safe default
+// to fall back to on a typo. An unrecognized value is returned VERBATIM rather
+// than replaced with the default, so Validate can quote back exactly what the
+// operator typed instead of a value nobody wrote.
 func parseTLSMode(v string) (TLSMode, bool) {
 	trimmed := strings.TrimSpace(v)
 	switch strings.ToLower(trimmed) {
@@ -342,12 +340,10 @@ type Config struct {
 	//
 	// Providers is EVERY provider the environment configured, keyed by provider id,
 	// in the fixed settings shape: its key, its hosts, and (for a keyless source)
-	// its explicit opt-in. It replaces the ten named fields this struct used to
-	// carry, one per shipped source, and it is filled by ONE TABLE — see
-	// providers.go, which is also where the environment variable names, their
-	// defaults and the first-boot enablement rules now live
-	// (.scratch/bundled-plugins: issue 01). Read it through ProviderKey /
-	// ProviderURL / ProviderURL2 / ProviderEnabled.
+	// its explicit opt-in. It is filled by ONE TABLE — see providers.go, which is
+	// also where the environment variable names, their defaults and the
+	// first-boot enablement rules live. Read it through ProviderKey / ProviderURL
+	// / ProviderURL2 / ProviderEnabled.
 	Providers map[string]ProviderSettings
 	// MetadataLanguage is the preferred metadata language/region for lookups
 	// (e.g. "en-US"). Defaults to DefaultMetadataLanguage.
@@ -895,9 +891,9 @@ func FromEnv() Config {
 		}
 	}
 	if v := os.Getenv("OBELO_HARDWARE_ACCEL"); v != "" {
-		// Off by default; an explicit backend name (or the legacy bool true→auto)
-		// selects it. An unrecognized value leaves the default off (the safe CPU
-		// path), mirroring the other knobs' lenient "garbage stays safe" policy.
+		// Off by default; a recognized backend name or "auto" selects it. An
+		// unrecognized value leaves the default off (the safe CPU path),
+		// mirroring the other knobs' lenient "garbage stays safe" policy.
 		if a, ok := parseHWAccel(v); ok {
 			c.HardwareAccel = a
 		}
@@ -906,8 +902,8 @@ func FromEnv() Config {
 	// its absence keeps the offline-first no-op posture. The base-URL overrides
 	// exist so tests/e2e point at a local stub.
 	//
-	// ONE LOOP over the provider table (providers.go), where there used to be ten
-	// named `if`s writing ten named fields (.scratch/bundled-plugins: issue 01). The
+	// ONE LOOP over the provider table (providers.go), instead of ten named
+	// `if`s writing ten named fields (.scratch/bundled-plugins: issue 01). The
 	// variable names, their defaults and their meaning are unchanged; a keyless
 	// source's opt-in ("enabled") is the only one that parses rather than copies, and
 	// only a clearly-true value flips it on (an unparseable value leaves the

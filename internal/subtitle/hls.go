@@ -72,38 +72,12 @@ type Rendition struct {
 	Forced   bool
 }
 
-// MasterPlaylist builds the HLS master playlist for an HLS session carrying
-// subtitles: one video #EXT-X-STREAM-INF (referencing videoURI, the existing
-// media playlist) bound to a SUBTITLES group listing every renditions entry. It
-// stays single video rendition — no ABR (ADR-0004 amendment). videoURI and each
-// Rendition.URI are session-relative names the /hls route serves from the same
-// directory. Always emits the video rendition; renditions may be empty (a master
-// with no subtitle group is still valid, though the caller only points at the
-// master when there is at least one deliverable text track).
-func MasterPlaylist(videoURI string, renditions []Rendition) []byte {
-	var b strings.Builder
-	b.WriteString("#EXTM3U\n")
-	b.WriteString("#EXT-X-VERSION:3\n")
-	b.WriteString(RenditionLines(renditions))
-	// The single video rendition, tied to the subtitle group so the player exposes
-	// the subtitles alongside it. No RESOLUTION/CODECS — the one rendition is
-	// self-describing via its media playlist; BANDWIDTH is the only required attr.
-	fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", HLSMasterBandwidth)
-	if len(renditions) > 0 {
-		fmt.Fprintf(&b, `,SUBTITLES="%s"`, HLSSubtitleGroupID)
-	}
-	b.WriteByte('\n')
-	b.WriteString(videoURI)
-	b.WriteByte('\n')
-	return []byte(b.String())
-}
-
 // RenditionLines writes the `#EXT-X-MEDIA:TYPE=SUBTITLES` lines for a master
 // playlist — one per rendition, in order — with no trailing STREAM-INF. It is
-// exported so a UNIFIED master builder (audio-streams/03) that carries BOTH an AUDIO
-// group and this SUBTITLES group can compose the two rendition blocks without
-// duplicating the subtitle line format. MasterPlaylist itself uses it, so the
-// subtitle-only output is unchanged.
+// exported so the unified master builder (audio.MasterPlaylist,
+// audio-streams/03), which carries BOTH an AUDIO group and this SUBTITLES
+// group, can compose the two rendition blocks without duplicating the subtitle
+// line format.
 func RenditionLines(renditions []Rendition) string {
 	var b strings.Builder
 	for _, r := range renditions {

@@ -227,8 +227,8 @@ func (n *tsnetNode) Listen(network, addr string) (net.Listener, error) {
 // requests matters most — was the one path that could not have HTTP/2, while the
 // port-forwarded deployment of ADR-0041 got it for free.
 //
-// ADR-0043 originally recorded that as unfixable "without reimplementing ListenTLS
-// against unexported internals". That was wrong. tsnet's own getCert is
+// ADR-0043 records that as unfixable "without reimplementing ListenTLS against
+// unexported internals". That is wrong. tsnet's own getCert is
 //
 //	lc, err := s.LocalClient(); return lc.GetCertificate(hi)
 //

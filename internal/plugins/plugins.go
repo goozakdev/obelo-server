@@ -77,12 +77,11 @@ const (
 	// and it is three times DefaultCallTimeout on purpose (ADR-0059 decision 6).
 	//
 	// A sink delivers one document to one receiver. A provider makes SEVERAL
-	// fetches inside one lookup and — since the host-side throttle was withdrawn
-	// and pacing became the guest's — deliberately waits between them. Ten seconds
-	// for that is not a deadline, it is a coin flip on a slow source, and losing it
-	// used to cost three strikes against the whole Plugin rather than one item's
-	// backoff. A budget the guest can plan inside is what makes a deadline kill
-	// mean what decision 6's threshold was written for: the guest itself spun.
+	// fetches inside one lookup and paces itself between them. Ten seconds for
+	// that is not a deadline, it is a coin flip on a slow source, and losing it
+	// costs one item's backoff (ADR-0048), not the whole Plugin. A budget the
+	// guest can plan inside is what makes a deadline kill mean what decision 6's
+	// threshold was written for: the guest itself spun.
 	DefaultMetadataCallBudget = 30 * time.Second
 	// DefaultMaxCallBudget is the ceiling a manifest's callBudgetMillis is clamped
 	// to. Two minutes is long enough for any honest source and short enough that a
@@ -653,10 +652,10 @@ type callPolicy struct {
 	// True for a Metadata provider and for nothing else (ADR-0058 decision 7 as
 	// amended 2026-09-18, ADR-0059). A provider's error is a claim about the
 	// SOURCE — a rejected key, a document it cannot parse — which parks one item
-	// under ADR-0048 and says nothing about whether the module works; three
-	// lookups against a 401 used to take a whole provider off the server. A sink's
-	// or a subtitle provider's error has no item to park and no other channel to
-	// travel down, so for them a refusal stays what it has always been.
+	// under ADR-0048 and says nothing about whether the module works, so three
+	// lookups against a 401 do not take the whole provider off the server. A
+	// sink's or a subtitle provider's error has no item to park and no other
+	// channel to travel down, so for them a refusal counts as a failure.
 	refusalIsAnAnswer bool
 }
 

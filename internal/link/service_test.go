@@ -707,3 +707,62 @@ func TestUnlinkAbortsRatherThanOrphaningWhenTheMirrorCannotBeRemoved(t *testing.
 		t.Errorf("worker stop/restart = (%d, %d), want (1, 1)", len(removed), len(added))
 	}
 }
+
+// TestARedemptionThatNamesNoDeviceIsRefused is D018: a redemption response with
+// a token but no device id is not a peer this design can unlink cleanly, so it
+// is refused the same way an empty token is — ErrNotObelo, nothing stored.
+func TestARedemptionThatNamesNoDeviceIsRefused(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"obelo_tok","linkProtocolVersion":1}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if links, _ := st.Links(); len(links) != 0 {
+		t.Errorf("%d links stored after a redemption naming no device, want 0", len(links))
+	}
+}
+
+// TestSurrenderDeletesTheDeviceAndNeverCallsLogout pins the one path surrender
+// has left now that the logout fallback is gone: a Link with a Token and a
+// DeviceID issues DELETE .../devices/{id} with the bearer, and nothing ever
+// hits /auth/logout.
+func TestSurrenderDeletesTheDeviceAndNeverCallsLogout(t *testing.T) {
+	var deleted []string
+	var loggedOut bool
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/auth/logout":
+			loggedOut = true
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/devices/"):
+			if r.Header.Get("Authorization") != "Bearer obelo_tok" {
+				t.Errorf("device delete carried %q", r.Header.Get("Authorization"))
+			}
+			deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/api/v1/devices/"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer peer.Close()
+
+	svc := newService(t, &memStore{}, Options{})
+	l := store.Link{ID: "L1", ActiveOrigin: peer.URL, Token: "obelo_tok", DeviceID: "device-42"}
+	if err := svc.surrender(context.Background(), svc.client(), l); err != nil {
+		t.Fatalf("surrender: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "device-42" {
+		t.Errorf("devices deleted = %v, want [device-42]", deleted)
+	}
+	if loggedOut {
+		t.Error("surrender called /auth/logout; the only path left is deleting the device")
+	}
+}

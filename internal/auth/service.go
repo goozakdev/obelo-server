@@ -366,9 +366,18 @@ func (s *Service) Login(ctx context.Context, username, password string, dev Devi
 	return s.issueSession(user, dev)
 }
 
-// dummyHash is a valid hash of a random value, used to equalize login timing
-// when the username is unknown so attackers can't distinguish "no such user"
-// from "wrong password" by response time.
+// dummyHashFallback is the hash of a discarded random value — 32 bytes from
+// crypto/rand, hashed once outside this repo and thrown away with no record
+// of the plaintext — encoded at the package's current argon2id parameters. It
+// is used only if the HashPassword call below ever fails at package
+// initialization (it does not, in practice); TestDummyHashFallbackParamsMatchCurrent
+// pins its parameters to argon2Memory/argon2Time/argon2Threads so a future
+// cost bump cannot silently leave it hashed at stale, cheaper cost.
+const dummyHashFallback = "argon2id$v=19$m=65536,t=3,p=2$ZfsTl0/ez/6MQD+vNKpQdw$RFjX+UhvWtmUDshzco0je5ZEFpv2JAYj26H9Gnsq22Q"
+
+// dummyHash is a well-formed argon2id hash, used to equalize login timing when
+// the username is unknown so attackers can't distinguish "no such user" from
+// "wrong password" by response time.
 //
 // It is derived once, at package initialization, via the uncancellable
 // HashPassword — there is no request to hang up on here, and the KDF semaphore it
@@ -379,9 +388,10 @@ func (s *Service) Login(ctx context.Context, username, password string, dev Devi
 var dummyHash = func() string {
 	h, err := HashPassword("dummy-password-for-timing-equalization")
 	if err != nil {
-		// Falling back to a fixed well-formed hash keeps VerifyPassword on the
-		// same code path; correctness of the value is irrelevant (it never matches).
-		return "pbkdf2-sha256$210000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		// Falling back to dummyHashFallback (current cost parameters) keeps
+		// VerifyPassword on the same code path with the same work; no plaintext
+		// that produced it is known, so it never matches a real login attempt.
+		return dummyHashFallback
 	}
 	return h
 }()

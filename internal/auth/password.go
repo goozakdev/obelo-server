@@ -2,16 +2,12 @@ package auth
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"hash"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -22,9 +18,8 @@ import (
 //
 // Hashes are stored as a self-describing PHC-style string, so the algorithm and
 // its cost parameters can evolve without a schema change: VerifyPassword
-// dispatches on the recorded prefix. argon2id is produced for new hashes; the
-// legacy pbkdf2-sha256 format is still accepted on verify so older stored hashes
-// keep working through an algorithm migration.
+// dispatches on the recorded prefix and checks the embedded parameters, so
+// raising the cost constants below only affects newly hashed passwords.
 //
 // All comparisons of derived keys are constant-time.
 
@@ -40,9 +35,6 @@ const (
 	argon2Threads = 2
 	argon2KeyLen  = 32 // bytes
 	argon2SaltLen = 16 // bytes
-
-	// Legacy PBKDF2 parameters, retained for verifying pre-migration hashes.
-	pbkdf2Prefix = "pbkdf2-sha256"
 )
 
 // ErrPasswordMismatch is returned by VerifyPassword when the password does not
@@ -98,8 +90,7 @@ func HashPasswordContext(ctx context.Context, password string) (string, error) {
 // VerifyPassword checks password against a stored hash string. It returns nil on
 // a match, ErrPasswordMismatch on a mismatch, and a descriptive error if the
 // stored hash is malformed/unsupported. The derived-key comparison is
-// constant-time. It dispatches on the stored algorithm prefix so both argon2id
-// (current) and legacy pbkdf2-sha256 hashes verify.
+// constant-time. It dispatches on the stored algorithm prefix.
 //
 // Like HashPassword it waits uncancellably for a KDF slot; request paths want
 // VerifyPasswordContext.
@@ -111,10 +102,7 @@ func VerifyPassword(stored, password string) error {
 // returning ctx.Err() if the caller goes away before one frees up.
 //
 // The slot is taken before the algorithm dispatch rather than around the argon2
-// call alone. Parsing a PHC string is microseconds, so the bound is unaffected,
-// and it means the legacy pbkdf2 path — which is not memory-hard but is exactly
-// as unauthenticated and exactly as expensive to spam — queues in the same line
-// instead of quietly escaping the meter.
+// call alone. Parsing a PHC string is microseconds, so the bound is unaffected.
 func VerifyPasswordContext(ctx context.Context, stored, password string) error {
 	release, err := acquireKDF(ctx)
 	if err != nil {
@@ -122,14 +110,10 @@ func VerifyPasswordContext(ctx context.Context, stored, password string) error {
 	}
 	defer release()
 
-	switch {
-	case strings.HasPrefix(stored, argon2idPrefix+"$"):
-		return verifyArgon2id(stored, password)
-	case strings.HasPrefix(stored, pbkdf2Prefix+"$"):
-		return verifyPBKDF2(stored, password)
-	default:
+	if !strings.HasPrefix(stored, argon2idPrefix+"$") {
 		return fmt.Errorf("auth: unsupported or malformed password hash")
 	}
+	return verifyArgon2id(stored, password)
 }
 
 // verifyArgon2id parses and checks an argon2id PHC string:
@@ -159,33 +143,6 @@ func verifyArgon2id(stored, password string) error {
 		return fmt.Errorf("auth: invalid key in password hash")
 	}
 	got := argon2.IDKey([]byte(password), salt, time, mem, threads, uint32(len(want)))
-	if subtle.ConstantTimeCompare(got, want) != 1 {
-		return ErrPasswordMismatch
-	}
-	return nil
-}
-
-// verifyPBKDF2 checks a legacy pbkdf2-sha256 PHC string:
-//
-//	pbkdf2-sha256$<iterations>$<b64salt>$<b64key>
-func verifyPBKDF2(stored, password string) error {
-	parts := strings.Split(stored, "$")
-	if len(parts) != 4 {
-		return fmt.Errorf("auth: malformed pbkdf2 hash")
-	}
-	iter, err := strconv.Atoi(parts[1])
-	if err != nil || iter < 1 {
-		return fmt.Errorf("auth: invalid iteration count in password hash")
-	}
-	salt, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil {
-		return fmt.Errorf("auth: invalid salt in password hash")
-	}
-	want, err := base64.RawStdEncoding.DecodeString(parts[3])
-	if err != nil {
-		return fmt.Errorf("auth: invalid key in password hash")
-	}
-	got := pbkdf2(sha256.New, []byte(password), salt, iter, len(want))
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return ErrPasswordMismatch
 	}
@@ -270,37 +227,4 @@ func acquireKDF(ctx context.Context) (release func(), err error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-}
-
-// pbkdf2 implements PBKDF2 (RFC 8018) over the given PRF hash, retained only to
-// verify legacy pre-migration hashes. New hashes use argon2id.
-func pbkdf2(h func() hash.Hash, password, salt []byte, iter, keyLen int) []byte {
-	prf := hmac.New(h, password)
-	hashLen := prf.Size()
-	numBlocks := (keyLen + hashLen - 1) / hashLen
-
-	var out []byte
-	buf := make([]byte, 4)
-	block := make([]byte, hashLen)
-	for i := 1; i <= numBlocks; i++ {
-		prf.Reset()
-		prf.Write(salt)
-		buf[0] = byte(i >> 24)
-		buf[1] = byte(i >> 16)
-		buf[2] = byte(i >> 8)
-		buf[3] = byte(i)
-		prf.Write(buf)
-		u := prf.Sum(nil)
-		copy(block, u)
-		for n := 2; n <= iter; n++ {
-			prf.Reset()
-			prf.Write(u)
-			u = prf.Sum(u[:0])
-			for x := range block {
-				block[x] ^= u[x]
-			}
-		}
-		out = append(out, block...)
-	}
-	return out[:keyLen]
 }
