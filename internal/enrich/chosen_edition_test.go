@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -170,7 +169,7 @@ func TestPastingAReleaseGroupURLClearsTheChosenEdition(t *testing.T) {
 // and would license position-alone mapping (issue 11) against a release nobody
 // asserted — the stranger's-tracklist decoration ADR-0052 forbids.
 func TestAChosenStrangerReleaseIsNotSilentlySwappedForAFit(t *testing.T) {
-	build := func(t *testing.T) (*MusicBrainzProvider, *tracklistStub) {
+	build := func(t *testing.T) (*tracklistStub, *tracklistStub) {
 		return newTracklistStub(t,
 			stubRelease{ID: "rel-std", Date: "1994-06-21", RGID: "rg-she",
 				Discs: [][]stubTrack{disc("std", 3)}},
@@ -243,7 +242,7 @@ func TestTracklistPrefersTheChosenEditionOverTagAndFit(t *testing.T) {
 		t.Fatalf("made %d requests, want 1 — the pin answers in the call it needed anyway: %v",
 			len(reqs), reqs)
 	}
-	if !strings.HasPrefix(reqs[0], "/release/rel-chosen?") {
+	if reqs[0] != "/release/rel-chosen" {
 		t.Errorf("asked for %q, want the chosen edition — the tag release is the FALLBACK now", reqs[0])
 	}
 }
@@ -327,7 +326,7 @@ func TestATransientFailureUnderAPinIsNotAFallBack(t *testing.T) {
 		stubRelease{ID: "rel-tag", Date: "1994-06-21", RGID: "rg-she", Discs: [][]stubTrack{disc("tag", 3)}},
 		stubRelease{ID: "rel-chosen", Date: "2011-01-01", RGID: "rg-she", Discs: [][]stubTrack{disc("chosen", 3)}},
 	)
-	stub.fail("/release/rel-chosen", http.StatusServiceUnavailable)
+	stub.fail("/release/rel-chosen", errShed)
 
 	_, err := svc.albumTracklistFor(context.Background(), snap, TracklistRequest{
 		ReleaseGroupID: "rg-she", ReleaseID: "rel-tag", LocalTrackCount: 3,

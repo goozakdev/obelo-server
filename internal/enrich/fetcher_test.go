@@ -150,32 +150,3 @@ func TestArtworkFetcherDoesNotMutateAnInjectedClient(t *testing.T) {
 		t.Error("Fetch mutated the caller's client")
 	}
 }
-
-// TestProviderJSONClientsCarryTheRedirectPolicy: all seven JSON metadata clients go
-// through providerClient, including when a caller injects its own client — and none
-// of them mutates what it was given. These clients only parse what comes back, so
-// the risk they close is blind internal probing (a hop that connects and a hop that
-// does not are distinguishable), not body disclosure.
-func TestProviderJSONClientsCarryTheRedirectPolicy(t *testing.T) {
-	injected := &http.Client{}
-	for name, got := range map[string]*http.Client{
-		"tmdb":        (&TMDBProvider{HTTPClient: injected}).client(),
-		"musicbrainz": (&MusicBrainzProvider{HTTPClient: injected}).client(),
-		"fanarttv":    (&FanartTVProvider{HTTPClient: injected}).client(),
-		"theaudiodb":  (&TheAudioDBProvider{HTTPClient: injected}).client(),
-		"anidb":       (&AniDBProvider{HTTPClient: injected}).client(),
-		"omdb":        (&OMDbProvider{HTTPClient: injected}).client(),
-		"thetvdb":     (&TheTVDBProvider{HTTPClient: injected}).client(),
-		"nil client":  (&TMDBProvider{}).client(),
-	} {
-		if got.CheckRedirect == nil {
-			t.Errorf("%s: client() follows redirects unchecked", name)
-		}
-	}
-	if injected.CheckRedirect != nil {
-		t.Error("client() mutated the injected client")
-	}
-	if http.DefaultClient.CheckRedirect != nil {
-		t.Error("http.DefaultClient was mutated")
-	}
-}

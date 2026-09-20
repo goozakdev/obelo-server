@@ -2,11 +2,8 @@ package enrich
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -264,39 +261,41 @@ func TestTransientParentFailureIsRetried(t *testing.T) {
 	}
 }
 
-// The payoff of ADR-0049: a tagged library resolves by LOOKUP, never touching the
-// search endpoint that is the thing actually falling over. This asserts the URL
-// path, because "it still matched" would pass just as well with a search.
-func TestTaggedTracksResolveByLookupNotSearch(t *testing.T) {
+// The payoff of ADR-0049: a tagged library resolves BY ID, never touching the
+// search endpoint that is the thing actually falling over.
+//
+// This used to assert the URL PATH — "/recording/<mbid>", not "/recording?query=" —
+// against a real MusicBrainz provider. The path is the source's business now and is
+// asserted where the source is (plugins/musicbrainz/musicbrainz:
+// TestMusicBrainzTrackLookupByPinnedMBID). What is left here is the host's half,
+// and it is the half that decides everything: the REF the pass hands over carries
+// the tagged recording id, so a source that honours an id — which every source
+// must, ADR-0049 — never reaches its search.
+func TestTaggedTracksResolveByIDNotSearch(t *testing.T) {
 	const recording = "b9ad642e-b012-41c7-b72a-42cf4911a0f1"
-	var paths []string
-	var mu sync.Mutex
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		paths = append(paths, r.URL.Path)
-		mu.Unlock()
-		fmt.Fprint(w, `{"id":"`+recording+`","title":"Roygbiv"}`)
-	}))
-	defer srv.Close()
+	spy := &refSpy{}
 
-	p := NewMusicBrainzProvider(srv.URL, srv.URL, "en")
-	p.MinInterval = 0
-
-	// A Track whose file carried a recording id in its tags.
-	_, err := p.Lookup(context.Background(), TitleRef{
+	_, _ = spy.Lookup(context.Background(), TitleRef{
 		Kind: "track", Track: "Roygbiv", Artist: "Boards of Canada",
 		MusicbrainzID: trackRecordID(store.Title{MusicbrainzRecordingID: recording}),
 	})
-	if err != nil {
-		t.Fatalf("lookup: %v", err)
+	if spy.last.MusicbrainzID != recording {
+		t.Fatalf("the ref carried musicbrainzId %q, want the tagged recording %q — a source "+
+			"with no id to resolve has nothing to do but search, which is the cluster "+
+			"ADR-0049 measured shedding load", spy.last.MusicbrainzID, recording)
 	}
-	mu.Lock()
-	got := paths
-	mu.Unlock()
-	if len(got) != 1 || got[0] != "/recording/"+recording {
-		t.Fatalf("requested %v, want a single /recording/<mbid> lookup — a tagged library is "+
-			"still going through /recording?query=, the search cluster that sheds load", got)
-	}
+}
+
+// refSpy records the last ref it was asked about, so a test can assert what the
+// PASS handed the source rather than what the source did with it.
+type refSpy struct {
+	fakeProvider
+	last TitleRef
+}
+
+func (s *refSpy) Lookup(_ context.Context, ref TitleRef) (TitleMetadata, error) {
+	s.last = ref
+	return TitleMetadata{Matched: true, Name: ref.Track, ExternalID: ref.MusicbrainzID}, nil
 }
 
 // The precedence between the two ids a Track can carry. Getting this backwards
@@ -305,7 +304,7 @@ func TestTrackRecordIDPrefersTheAdminsRecordOverTheTag(t *testing.T) {
 	const record = "11111111-1111-4111-8111-111111111111"
 	const tagged = "22222222-2222-4222-8222-222222222222"
 
-	if got := trackRecordID(store.Title{MusicbrainzID: record, MusicbrainzRecordingID: tagged}); got != record {
+	if got := trackRecordID(store.Title{RecordIDs: map[string]string{"musicbrainz": record}, MusicbrainzRecordingID: tagged}); got != record {
 		t.Errorf("got %q, want the enrichment record %q — the file's tag is overruling a "+
 			"human's correction, which every scan would then re-apply", got, record)
 	}

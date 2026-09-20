@@ -35,6 +35,7 @@ import (
 //	POST   /settings/plugins/{id}/enable
 //	POST   /settings/plugins/{id}/disable
 //	POST   /settings/plugins/{id}/reenable
+//	POST   /settings/plugins/{id}/reinstall-shipped → put a declined Bundled plugin back
 //	PUT    /settings/plugins/{id}/settings → the plugin's OWN declared settings
 //	DELETE /settings/plugins/{id}       → uninstall
 //
@@ -61,6 +62,12 @@ type PluginManager interface {
 	Reenable(ctx context.Context, id string) (plugins.Installed, error)
 	SaveSettings(ctx context.Context, id string, values map[string]json.RawMessage) (plugins.Installed, error)
 	Uninstall(ctx context.Context, id string) error
+	// ReinstallShipped puts back a Bundled plugin the Admin uninstalled (ADR-0059
+	// decision 2). It is its own verb rather than a flavour of install because the
+	// Admin supplies nothing: there is no file to choose, no URL to trust and no
+	// signature to check, and what they get back has to be BUNDLED again so the
+	// next upgrade keeps maintaining it.
+	ReinstallShipped(ctx context.Context, id string) (plugins.Installed, error)
 
 	// The optional catalog and the pinned publisher keys (issue 15). Both are OFF
 	// by default and both are an Admin's own choice; a server that has made
@@ -193,6 +200,8 @@ func handlePluginSettingsSubtree(deps Deps, rest string) http.HandlerFunc {
 				requireMethod(http.MethodPost, handleSetPluginEnabled(deps, id, false))(w, r)
 			case "reenable":
 				requireMethod(http.MethodPost, handleReenablePlugin(deps, id))(w, r)
+			case "reinstall-shipped":
+				requireMethod(http.MethodPost, handleReinstallShippedPlugin(deps, id))(w, r)
 			case "settings":
 				requireMethod(http.MethodPut, handleSavePluginSettings(deps, id))(w, r)
 			default:
@@ -296,6 +305,23 @@ func handleReenablePlugin(deps Deps, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, err := deps.PluginManager.Reenable(r.Context(), id); err != nil {
 			writePluginError(w, err, "failed to re-enable the plugin")
+			return
+		}
+		writePluginList(w, r, deps)
+	}
+}
+
+// handleReinstallShippedPlugin brings back a plugin this server ships and the
+// Admin removed (ADR-0059 decision 2).
+//
+// It is the ONLY way back, and that is why it is a route rather than a note in a
+// changelog: uninstalling a Bundled plugin writes a declined mark precisely so the
+// next boot does not put it back, and without a verb to clear that mark an Admin
+// who changed their mind would have to edit the database.
+func handleReinstallShippedPlugin(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, err := deps.PluginManager.ReinstallShipped(r.Context(), id); err != nil {
+			writePluginError(w, err, "failed to reinstall the shipped plugin")
 			return
 		}
 		writePluginList(w, r, deps)

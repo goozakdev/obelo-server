@@ -288,7 +288,21 @@ func (g *guestProvider) call(ctx context.Context, export string, req, out any) e
 	// beside the manifest allowlist, because an author cannot know which mirror an
 	// operator points their base-URL override at (ADR-0058 decision 5, as amended
 	// by issue 09). For a provider that URL is the source's base URL.
-	return g.p.callGuest(ctx, export, hostOf(g.settings.URL), req, out)
+	//
+	// The budget is the METADATA one — thirty seconds by default, or what this
+	// manifest asked for up to the host's cap — and not the ten-second default a
+	// sink gets (ADR-0059 decision 6). A lookup makes several fetches and, since
+	// pacing became the guest's, waits between them; every one of those fetches is
+	// bounded by what is left of this budget, so the guest is always back with an
+	// answer before the deadline that would kill it.
+	//
+	// And the policy is the METADATA one: a guest that runs to completion and
+	// cleanly answers an error has ANSWERED — the item is parked, the instance is
+	// kept, and no strike is counted (see callPolicy).
+	return g.p.callGuestUnder(ctx, callPolicy{
+		budget:            g.p.metaCallBudget,
+		refusalIsAnAnswer: true,
+	}, export, hostOf(g.settings.URL), req, out)
 }
 
 // setCallSettings publishes (or withdraws) the Settings settings_get answers with.

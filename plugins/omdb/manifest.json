@@ -1,0 +1,29 @@
+{
+  "id": "omdb",
+  "name": "OMDb API",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Fills a movie's plot, content rating, and genres from the Open Movie Database. Fill-only supplement; requires an API key.",
+  "docsUrl": "https://www.omdbapi.com/apikey.aspx",
+  "provides": [
+    {
+      "kind": "metadata-provider",
+      "kinds": ["video"],
+      "role": "supplement",
+      "class": "full",
+      "requiresSecret": true,
+      "probe": {
+        "kind": "movie",
+        "title": "Inception",
+        "year": 2010
+      }
+    }
+  ],
+  "network": {
+    "hosts": ["www.omdbapi.com"]
+  },
+  "settings": {
+    "requiresSecret": true,
+    "defaultUrl": "https://www.omdbapi.com"
+  }
+}

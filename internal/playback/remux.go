@@ -136,6 +136,11 @@ type hlsRuntime struct {
 	// (a HW-init failure). It is buffered (cap 1) and replaced on every startLocked;
 	// jobs no one probes (CPU, remux, realignment) simply leave it unread.
 	exited chan error
+	// jobDone is closed once the current job's process has been reaped (its Wait
+	// returned). Unlike exited it is never consumed, so teardown can wait on it:
+	// Kill only SIGNALS ffmpeg, and removing the scratch dir before the process is
+	// gone lets a last segment write land in a directory that is being deleted.
+	jobDone chan struct{}
 }
 
 // EnsureStarted lazily launches the ffmpeg job exactly once at the from-the-top
@@ -272,6 +277,8 @@ func (rt *hlsRuntime) startLocked(seek transcode.SeekOffset) error {
 	rt.jobExited = false
 	exited := make(chan error, 1)
 	rt.exited = exited
+	done := make(chan struct{})
+	rt.jobDone = done
 	sess := filepath.Base(rt.scratchDir)
 	go func() {
 		// Wait() returns nil for a deliberate Kill (teardown/realign) and a non-nil
@@ -280,6 +287,7 @@ func (rt *hlsRuntime) startLocked(seek transcode.SeekOffset) error {
 		// mount) is visible in the server log instead of surfacing only as a silent HLS
 		// 404 when the playlist/segment never appears.
 		err := job.Wait()
+		close(done)
 		rt.mu.Lock()
 		// Superseded (a realign killed us and started a fresh job)? Then we are NOT
 		// the current job: don't mark it exited, and don't self-check — our playlist
@@ -416,6 +424,12 @@ func (rt *hlsRuntime) killCurrentLocked() {
 	}
 }
 
+// teardownExitWait bounds how long teardown waits for a killed ffmpeg to exit
+// before removing its scratch dir. A SIGKILLed process is gone in milliseconds;
+// the bound only matters if something is badly wrong, and then a leaked file in a
+// scratch dir that boot clears anyway beats a hung request.
+const teardownExitWait = 5 * time.Second
+
 // teardown kills the current ffmpeg job and removes the scratch directory. It is
 // safe to call even if no job ever started and is the single cleanup path shared by
 // Manager.End and Manager.Reap. It marks the runtime torn down so a concurrent
@@ -423,8 +437,20 @@ func (rt *hlsRuntime) killCurrentLocked() {
 func (rt *hlsRuntime) teardown() {
 	rt.mu.Lock()
 	rt.torndown = true
+	done := rt.jobDone
 	rt.killCurrentLocked()
 	rt.mu.Unlock()
+	// Kill only signals ffmpeg. Wait for the process to actually be gone before its
+	// scratch dir is removed, or a segment it was mid-way through writing can land in
+	// the directory RemoveAll is deleting ("directory not empty"). Bounded, so a
+	// process the kernel is slow to reap can never hang a DELETE or a shutdown; the
+	// wait happens outside rt.mu because the exit watcher takes it after Wait.
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(teardownExitWait):
+		}
+	}
 	// A shared-scratch runtime (a demuxed audio rendition) does NOT own the directory
 	// — the session's video runtime removes it. Only kill the job here so reaping one
 	// rendition never deletes the video variant / sibling renditions' files.

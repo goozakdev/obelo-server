@@ -29,8 +29,12 @@ func liveVideoPlugin(slug string) pluginapi.MetadataProviderRegistration {
 			RequiresKey: true,
 			DefaultURL:  "https://" + slug + ".example.test/v1",
 		},
+		// It builds a source that answers "nothing here" to everything: these tests
+		// are about the CATALOG following its registry, and nothing in them ever
+		// looks anything up. (It used to construct an OMDb client, which stopped
+		// being possible when OMDb became a Bundled plugin.)
 		New: func(pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-			return pluginFromProvider(NewOMDbProvider("k", "https://"+slug+".example.test/v1")), nil
+			return silentPlugin{}, nil
 		},
 	}
 }

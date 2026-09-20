@@ -340,7 +340,6 @@ function Detail({
           node: (
             <EnrichmentOverridePicker
               titleId={title.id}
-              provider="tmdb"
               currentExternalId={title.tmdbId}
               initialQuery={title.title}
               onApplied={(d) => {

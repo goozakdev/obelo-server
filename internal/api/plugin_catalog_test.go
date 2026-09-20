@@ -240,8 +240,11 @@ func TestAnEntryResolvingToAPrivateAddressIsRefused(t *testing.T) {
 	if !strings.Contains(refusal.Error.Message, "upload the file instead") {
 		t.Fatalf("message = %q, want the same sentence a pasted URL gets", refusal.Error.Message)
 	}
-	if got := readPlugins(t, srv, token); len(got.Plugins) != 0 {
-		t.Fatalf("a refused catalog install left %+v behind", got.Plugins)
+	// notShipped, because a fresh server is no longer empty: it installs the
+	// plugins it ships (ADR-0059). What this asserts is unchanged — nothing the
+	// Admin tried landed.
+	if got := notShipped(readPlugins(t, srv, token).Plugins); len(got) != 0 {
+		t.Fatalf("a refused catalog install left %+v behind", got)
 	}
 }
 

@@ -55,37 +55,44 @@ func TestSettingsToProviderConfig(t *testing.T) {
 		{Slug: SlugTheAudioDB, Enabled: false, APIKey: "adk"}, // has key but disabled → inactive
 	}
 	fixed := FixedProviderInputs{MusicBrainzRateLimit: 2 * time.Second}
-	cfg := builtinCatalog().SettingsToProviderConfig(rows, "en-GB", fixed)
+	cfg := shippedCatalog().SettingsToProviderConfig(rows, "en-GB", fixed)
 
-	if cfg.TMDBAPIKey != "tk" {
-		t.Errorf("TMDBAPIKey = %q, want tk", cfg.TMDBAPIKey)
+	if cfg.ProviderKeys[SlugTMDB] != "tk" {
+		t.Errorf("tmdb key = %q, want tk", cfg.ProviderKeys[SlugTMDB])
 	}
-	if cfg.TMDBBaseURL != "http://tmdb.stub" {
-		t.Errorf("TMDBBaseURL = %q, want override", cfg.TMDBBaseURL)
+	if cfg.ProviderEndpoints[SlugTMDB].URL != "http://tmdb.stub" {
+		t.Errorf("tmdb url = %q, want override", cfg.ProviderEndpoints[SlugTMDB].URL)
 	}
-	if cfg.TMDBImageBaseURL != "http://img.stub" {
-		t.Errorf("TMDBImageBaseURL = %q, want the row's image-host override", cfg.TMDBImageBaseURL)
+	if cfg.ProviderEndpoints[SlugTMDB].URL2 != "http://img.stub" {
+		t.Errorf("tmdb url2 = %q, want the row's image-host override", cfg.ProviderEndpoints[SlugTMDB].URL2)
 	}
 	// A tmdb row with no image-host override falls back to the registry default.
-	noOverride := builtinCatalog().SettingsToProviderConfig(
+	noOverride := shippedCatalog().SettingsToProviderConfig(
 		[]store.MetadataProviderRow{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}}, "en-GB", fixed)
-	if noOverride.TMDBImageBaseURL != registryTMDBImageBaseURL {
-		t.Errorf("TMDBImageBaseURL = %q, want registry default %q", noOverride.TMDBImageBaseURL, registryTMDBImageBaseURL)
+	if noOverride.ProviderEndpoints[SlugTMDB].URL2 != shippedTMDBImageBaseURL {
+		t.Errorf("tmdb url2 = %q, want registry default %q", noOverride.ProviderEndpoints[SlugTMDB].URL2, shippedTMDBImageBaseURL)
 	}
-	if cfg.MusicBrainzBaseURL != registryMusicBrainzBaseURL {
-		t.Errorf("MusicBrainzBaseURL = %q, want registry default", cfg.MusicBrainzBaseURL)
+	if cfg.ProviderEndpoints[SlugMusicBrainz].URL != shippedMusicBrainzBaseURL(t) {
+		t.Errorf("musicbrainz url = %q, want registry default", cfg.ProviderEndpoints[SlugMusicBrainz].URL)
 	}
-	if !cfg.MusicBrainzEnabled {
-		t.Errorf("MusicBrainzEnabled = false, want true")
+	// The COVER ART ARCHIVE is the music lead's SECOND URL now, defaulted by its own
+	// manifest rather than resolved out of a `coverart` row
+	// (.scratch/bundled-plugins: issue 06).
+	if got := cfg.ProviderEndpoints[SlugMusicBrainz].URL2; got != shippedCoverArtBaseURL(t) {
+		t.Errorf("musicbrainz url2 = %q, want the manifest's cover-art default %q",
+			got, shippedCoverArtBaseURL(t))
 	}
-	if cfg.FanartTVAPIKey != "" {
-		t.Errorf("FanartTVAPIKey = %q, want empty (key-requiring, no key → inactive)", cfg.FanartTVAPIKey)
+	if !cfg.ProviderActive[SlugMusicBrainz] {
+		t.Errorf("musicbrainz active = false, want true")
 	}
-	if cfg.TheAudioDBAPIKey != "" {
-		t.Errorf("TheAudioDBAPIKey = %q, want empty (disabled → inactive)", cfg.TheAudioDBAPIKey)
+	if cfg.ProviderKeys[SlugFanartTV] != "" {
+		t.Errorf("fanarttv key = %q, want empty (key-requiring, no key → inactive)", cfg.ProviderKeys[SlugFanartTV])
 	}
-	if cfg.MetadataLanguage != "en-GB" || cfg.MusicBrainzRateLimit != 2*time.Second {
-		t.Errorf("language/rate = %q/%v, want en-GB/2s", cfg.MetadataLanguage, cfg.MusicBrainzRateLimit)
+	if cfg.ProviderKeys[SlugTheAudioDB] != "" {
+		t.Errorf("theaudiodb key = %q, want empty (disabled → inactive)", cfg.ProviderKeys[SlugTheAudioDB])
+	}
+	if cfg.MetadataLanguage != "en-GB" || cfg.RateLimitMillis == nil || *cfg.RateLimitMillis != 2000 {
+		t.Errorf("language/rate = %q/%v, want en-GB/2000ms", cfg.MetadataLanguage, cfg.RateLimitMillis)
 	}
 }
 
@@ -106,7 +113,7 @@ func TestManagerReload(t *testing.T) {
 	if svc.EnrichmentEnabled() {
 		t.Fatalf("precondition: service starts disabled")
 	}
-	mgr := NewManager(st, svc, builtinCatalog(), build)
+	mgr := NewManager(st, svc, shippedCatalog(), build)
 
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -120,8 +127,8 @@ func TestManagerReload(t *testing.T) {
 	if !svc.EnrichmentEnabled() {
 		t.Errorf("EnrichmentEnabled = false after enabling video")
 	}
-	if len(builtCfgs) != 1 || builtCfgs[0].TMDBAPIKey != "tk" {
-		t.Errorf("build received %+v, want one cfg with TMDBAPIKey=tk", builtCfgs)
+	if len(builtCfgs) != 1 || builtCfgs[0].ProviderKeys[SlugTMDB] != "tk" {
+		t.Errorf("build received %+v, want one cfg with the tmdb key tk", builtCfgs)
 	}
 
 	// Idempotent: a repeated reload with unchanged settings rebuilds equivalently.
@@ -157,7 +164,7 @@ func TestManagerReloadConsentGate(t *testing.T) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, builtinCatalog(), build)
+	mgr := NewManager(st, svc, shippedCatalog(), build)
 
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload (consent withheld): %v", err)
@@ -207,7 +214,7 @@ func TestManagerDisplayViewsAreConsentGated(t *testing.T) {
 				policies:         map[string]store.LibraryEnrichmentPolicy{}, // "lib" inherits
 			}
 			svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-			mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+			mgr := NewManager(st, svc, shippedCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 				return CompositeProvider{}, DeriveEnablement(cfg)
 			}))
 			if err := mgr.Reload(context.Background()); err != nil {
@@ -274,7 +281,7 @@ func TestManagerDisplayViewsAreConsentGated(t *testing.T) {
 func TestManagerDisplayViewsSeparateConsentFromConfiguration(t *testing.T) {
 	st := &fakeManagerStore{lang: "en-US"} // no provider rows; consent granted
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+	mgr := NewManager(st, svc, shippedCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}))
 	if err := mgr.Reload(context.Background()); err != nil {
@@ -305,12 +312,12 @@ func TestManagerReloadRateLimit(t *testing.T) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, builtinCatalog(), build)
+	mgr := NewManager(st, svc, shippedCatalog(), build)
 
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
-	if got := builtCfgs[0].MusicBrainzRateLimit; got != time.Second {
+	if got := rebuiltRateLimit(t, builtCfgs[0]); got != time.Second {
 		t.Errorf("first rebuild rate = %v, want 1s (from the store)", got)
 	}
 
@@ -319,7 +326,7 @@ func TestManagerReloadRateLimit(t *testing.T) {
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload after rate change: %v", err)
 	}
-	if got := builtCfgs[1].MusicBrainzRateLimit; got != 250*time.Millisecond {
+	if got := rebuiltRateLimit(t, builtCfgs[1]); got != 250*time.Millisecond {
 		t.Errorf("second rebuild rate = %v, want 250ms (DB-sourced hot-swap)", got)
 	}
 
@@ -328,9 +335,19 @@ func TestManagerReloadRateLimit(t *testing.T) {
 	if err := mgr.Reload(context.Background()); err != nil {
 		t.Fatalf("Reload after zeroing rate: %v", err)
 	}
-	if got := builtCfgs[2].MusicBrainzRateLimit; got != 0 {
+	if got := rebuiltRateLimit(t, builtCfgs[2]); got != 0 {
 		t.Errorf("third rebuild rate = %v, want 0 (throttling disabled)", got)
 	}
+}
+
+// rebuiltRateLimit reads the pacing policy a rebuild was handed. It is stated for
+// every provider now, as one number on the config, so there is one place to read it.
+func rebuiltRateLimit(t *testing.T, cfg ProviderConfig) time.Duration {
+	t.Helper()
+	if cfg.RateLimitMillis == nil {
+		t.Fatalf("rebuild received no rate limit; the settings derivation always states one")
+	}
+	return time.Duration(*cfg.RateLimitMillis) * time.Millisecond
 }
 
 // TestManagerPerLibraryResolution proves the installed per-Library resolver
@@ -349,7 +366,7 @@ func TestManagerPerLibraryResolution(t *testing.T) {
 		},
 	}
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+	mgr := NewManager(st, svc, shippedCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}))
 	if err := mgr.Reload(context.Background()); err != nil {
@@ -389,7 +406,7 @@ func TestManagerLibraryCacheInvalidation(t *testing.T) {
 	}
 	var built int
 	svc := NewService(nil, CompositeProvider{}, nil, Enablement{}, "", 0)
-	mgr := NewManager(st, svc, builtinCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
+	mgr := NewManager(st, svc, shippedCatalog(), BuildFunc(func(cfg ProviderConfig) (MetadataProvider, Enablement) {
 		built++
 		return CompositeProvider{}, DeriveEnablement(cfg)
 	}))
@@ -479,13 +496,15 @@ func TestSeedIfEmpty(t *testing.T) {
 	t.Run("reproduces env enablement", func(t *testing.T) {
 		s := newFakeSeedStore(true)
 		seeded, err := SeedIfEmpty(s, SeedInput{
-			TMDBAPIKey:         "tk",
-			TMDBBaseURL:        "http://tmdb.stub",
-			TMDBImageBaseURL:   "http://img.stub",
-			MetadataLanguage:   "en-US",
-			MusicBrainzEnabled: true,
-			FanartTVAPIKey:     "fk",
-			// TheAudioDB has no key → its source stays off (not seeded).
+			Providers: []ProviderSeed{
+				{Slug: SlugTMDB, Enabled: true, APIKey: "tk", BaseURL: "http://tmdb.stub", ImageBaseURL: "http://img.stub"},
+				// One music row, carrying the cover-art host as its image base
+				// (.scratch/bundled-plugins: issue 06 — `coverart` is not a provider).
+				{Slug: SlugMusicBrainz, Enabled: true, ImageBaseURL: "http://caa.stub"},
+				{Slug: SlugFanartTV, Enabled: true, APIKey: "fk"},
+				// TheAudioDB has no key → the seeding table emits no row for it.
+			},
+			MetadataLanguage:       "en-US",
 			AutoEnrichAfterScan:    true,
 			EnrichIntervalSeconds:  21600,
 			MusicBrainzRateLimitMs: 1000,
@@ -499,11 +518,12 @@ func TestSeedIfEmpty(t *testing.T) {
 		if u, ok := s.upserts[SlugTMDB]; !ok || !u.Enabled || u.APIKey != "tk" || u.BaseURL != "http://tmdb.stub" || u.ImageBaseURL != "http://img.stub" {
 			t.Errorf("tmdb seed = %+v (ok %v), want enabled/tk/stub/img", u, ok)
 		}
-		if u, ok := s.upserts[SlugMusicBrainz]; !ok || !u.Enabled {
-			t.Errorf("musicbrainz seed = %+v (ok %v), want enabled", u, ok)
+		if u, ok := s.upserts[SlugMusicBrainz]; !ok || !u.Enabled || u.ImageBaseURL != "http://caa.stub" {
+			t.Errorf("musicbrainz seed = %+v (ok %v), want enabled carrying the cover-art host", u, ok)
 		}
-		if u, ok := s.upserts[SlugCoverArt]; !ok || !u.Enabled {
-			t.Errorf("coverart seed = %+v (ok %v), want enabled (rides MusicBrainz)", u, ok)
+		if _, ok := s.upserts["coverart"]; ok {
+			t.Error("a `coverart` row was seeded; it stopped being a provider in " +
+				".scratch/bundled-plugins issue 06 and is the music lead's second host")
 		}
 		if u, ok := s.upserts[SlugFanartTV]; !ok || !u.Enabled || u.APIKey != "fk" {
 			t.Errorf("fanarttv seed = %+v (ok %v), want enabled/fk", u, ok)
@@ -522,7 +542,7 @@ func TestSeedIfEmpty(t *testing.T) {
 				Slug: u.Slug, Enabled: u.Enabled, APIKey: u.APIKey, BaseURL: u.BaseURL,
 			})
 		}
-		en := DeriveEnablement(builtinCatalog().SettingsToProviderConfig(rows, s.language, FixedProviderInputs{}))
+		en := DeriveEnablement(shippedCatalog().SettingsToProviderConfig(rows, s.language, FixedProviderInputs{}))
 		if !en.Video || !en.Music {
 			t.Errorf("reproduced enablement = %+v, want video+music on", en)
 		}
@@ -530,7 +550,9 @@ func TestSeedIfEmpty(t *testing.T) {
 
 	t.Run("no-op when not empty", func(t *testing.T) {
 		s := newFakeSeedStore(false)
-		seeded, err := SeedIfEmpty(s, SeedInput{TMDBAPIKey: "tk"})
+		seeded, err := SeedIfEmpty(s, SeedInput{
+			Providers: []ProviderSeed{{Slug: SlugTMDB, Enabled: true, APIKey: "tk"}},
+		})
 		if err != nil || seeded {
 			t.Fatalf("SeedIfEmpty on non-empty = %v, %v; want false, nil", seeded, err)
 		}

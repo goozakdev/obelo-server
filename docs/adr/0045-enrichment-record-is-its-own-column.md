@@ -125,3 +125,11 @@ hardest, because it is the only one whose record the Scanner also writes.
   against"**, which is what the Edit-item picker already assumed when it fed
   `title.tmdbId` in as the currently-pinned id. Nothing in the contract changes
   shape.
+
+*Amended 2026-09-19 ([ADR-0060](./0060-a-record-id-is-namespaced-and-a-pin-holds-only-a-decision.md)):
+the column shape is superseded.* A Title's record ids are rows in `title_external_ids`, keyed by
+namespace, with `titles.enrichment_id_namespace` naming the record; `enrichment_tmdb_id`,
+`enrichment_imdb_id` and `titles.musicbrainz_id` are gone. The precedence above and the
+identity/record split stand unchanged, and `tmdb_id` / `imdb_id` remain the Scanner's identity
+columns. The "one opaque `enrichment_external_id`" rejected above was rejected for lacking a
+namespace tag; a keyed table is that tag.

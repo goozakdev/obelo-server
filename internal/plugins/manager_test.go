@@ -46,6 +46,10 @@ type memStore struct {
 	// catalogURL is the singleton catalog setting; "" is the shipped default and
 	// means this server browses no catalog.
 	catalogURL string
+	// declined is declined_plugins (ADR-0059 decision 2): the Bundled plugins an
+	// Admin uninstalled, which the boot-time re-assert leaves alone. Empty is
+	// every server that has never removed one.
+	declined map[string]bool
 }
 
 func newMemStore() *memStore {
@@ -53,7 +57,36 @@ func newMemStore() *memStore {
 		rows:       map[string]store.PluginRow{},
 		settings:   map[string][]store.PluginSetting{},
 		publishers: map[string]store.PluginPublisher{},
+		declined:   map[string]bool{},
 	}
+}
+
+func (s *memStore) DeclinedPluginIDs() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for id, yes := range s.declined {
+		if yes {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (s *memStore) DeclinePlugin(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.declined[id] = true
+	return nil
+}
+
+func (s *memStore) UndeclinePlugin(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	had := s.declined[id]
+	delete(s.declined, id)
+	return had, nil
 }
 
 func (s *memStore) PluginSettings(pluginID string) ([]store.PluginSetting, error) {

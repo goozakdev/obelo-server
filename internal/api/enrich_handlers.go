@@ -511,6 +511,12 @@ type enrichmentCandidateJSON struct {
 	// apply can keep both. The client sends it straight back as the override's
 	// releaseId; absent means the Admin named no edition. Album previews only.
 	ReleaseID string `json:"releaseId,omitempty"`
+	// Source is the External-id namespace externalId belongs to (`tmdb`,
+	// `musicbrainz`, `anidb`, a third party's plugin id), stamped by the server from
+	// the provider that answered the search or read the paste (ADR-0060 decision 5).
+	// The client sends it straight back as the override's `source`, so the pick is
+	// pinned in the namespace it was found in. Omitted only when unknown.
+	Source string `json:"source,omitempty"`
 }
 
 // candidateTrackJSON is one track in an album candidate's tracklist preview.
@@ -526,6 +532,34 @@ type enrichmentCandidatesJSON struct {
 	// picker can offer "show more" for a broad common-title query (item-editing/
 	// search-improvements). False on a short/last page.
 	HasMore bool `json:"hasMore,omitempty"`
+	// ResolvedRef says the query was a pasted id-or-URL that the Library's lead read
+	// and resolved: Candidates holds that one record, and the picker selects it
+	// rather than listing it (.scratch/bundled-plugins issue 12). The client never
+	// decides what a reference looks like — only the lead knows its own ids.
+	ResolvedRef bool `json:"resolvedRef,omitempty"`
+}
+
+// writeCandidateSearch answers a picker search. A query the lead read as a
+// reference answers — and fails — exactly as the externalPreview endpoints do; a
+// search fails as a search. subject names what was searched ("item", "library")
+// in the unavailable message.
+func writeCandidateSearch(w http.ResponseWriter, p *providerImageProxy, res enrich.CandidateSearch, err error, subject string) {
+	switch {
+	case err != nil && res.ResolvedRef:
+		writeExternalPreview(w, p, enrich.Candidate{}, err)
+	case errors.Is(err, enrich.ErrSearchUnavailable):
+		writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+			"metadata provider search is unavailable for this "+subject+" — the provider is unconfigured or disabled", nil)
+	case err != nil:
+		writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
+			"metadata provider search failed — the source may be unreachable", nil)
+	default:
+		out := toCandidatesJSON(p, res.Candidates)
+		if res.ResolvedRef {
+			out.ResolvedRef, out.HasMore = true, false
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
 }
 
 // toCandidateJSON maps a provider Candidate onto the Edit-item picker wire shape,
@@ -547,6 +581,7 @@ func toCandidateJSON(p *providerImageProxy, c enrich.Candidate) enrichmentCandid
 		TypeLabel:      c.TypeLabel,
 		Kind:           c.Kind,
 		ReleaseID:      c.ReleaseID,
+		Source:         c.Source,
 	}
 	for _, tr := range c.Tracklist {
 		jc.Tracklist = append(jc.Tracklist, candidateTrackJSON{
@@ -581,8 +616,10 @@ func searchOptionsFrom(r *http.Request) enrich.SearchOptions {
 // handleEnrichmentCandidates searches the authoritative metadata provider for the
 // records that could decorate a leaf Title, so an Admin can pick the right one and
 // apply it as an Enrichment override (GET /titles/{id}/enrichmentCandidates?q=…,
-// Admin-only). The searched kind is the Title's own kind (Movie/Episode → TMDB,
-// Track → MusicBrainz). A blank query returns an empty list (200). When the
+// Admin-only). The searched kind is the Title's own kind, asked of the Title's
+// Library's lead. A query that lead reads as a pasted id-or-URL is resolved instead
+// of searched, and answered with `resolvedRef` (see writeCandidateSearch). A blank
+// query returns an empty list (200). When the
 // provider is unconfigured/disabled or unreachable the response is 503
 // SEARCH_UNAVAILABLE so the box reports why instead of hanging (results are capped
 // server-side). Unknown Title → 404 (hide existence). Reads only — identity and
@@ -597,22 +634,12 @@ func handleEnrichmentCandidates(enrichSvc *enrich.Service, images *providerImage
 		// The service owns the lean existence+kind read (no join-heavy detail fetch):
 		// an unknown Title is store.ErrNotFound → 404 (hide existence).
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		cands, err := enrichSvc.SearchTitleCandidates(r.Context(), titleID, query, searchOptionsFrom(r))
-		switch {
-		case errors.Is(err, store.ErrNotFound):
+		res, err := enrichSvc.FindTitleCandidates(r.Context(), titleID, query, searchOptionsFrom(r))
+		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
 			return
-		case errors.Is(err, enrich.ErrSearchUnavailable):
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search is unavailable for this item — the provider is unconfigured or disabled", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search failed — the source may be unreachable", nil)
-			return
 		}
-
-		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+		writeCandidateSearch(w, images, res, err, "item")
 	}
 }
 
@@ -749,6 +776,41 @@ type enrichmentOverrideRequest struct {
 	// are never touched either way (ADR-0002/0014).
 	Season  int `json:"season,omitempty"`
 	Episode int `json:"episode,omitempty"`
+	// Source is the External-id namespace externalId belongs to: the `source` of the
+	// candidate or paste preview the Admin picked, echoed back (ADR-0060 decision 5).
+	// OMITTED means the item's Library's current lead's namespace for its kind, which
+	// is what the request meant before namespaces existed, so an older client keeps
+	// working. A namespace no registered Authoritative provider of the kind claims is
+	// a 400. An Episode pick (season/episode set) always inherits its Show's
+	// namespace, so there it is only validated.
+	Source string `json:"source,omitempty"`
+}
+
+// unknownNamespaceMessage is the 400 an override naming an unclaimed namespace gets.
+func unknownNamespaceMessage(ns string) string {
+	return fmt.Sprintf("no metadata provider that can lead this item claims the source %q — search again and pick a result", ns)
+}
+
+// checkOverrideSource validates an override request's optional `source` against the
+// item (check is the Service's CheckTitleNamespace/CheckEntityNamespace bound to it),
+// writing the response itself when it fails. It returns the trimmed namespace and
+// whether the caller may continue.
+func checkOverrideSource(w http.ResponseWriter, source string, check func(ns string) error) (string, bool) {
+	ns := strings.TrimSpace(source)
+	if ns == "" {
+		return "", true
+	}
+	switch err := check(ns); {
+	case err == nil:
+		return ns, true
+	case errors.Is(err, enrich.ErrUnknownNamespace):
+		writeError(w, http.StatusBadRequest, codeBadRequest, unknownNamespaceMessage(ns), nil)
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+	default:
+		writeError(w, http.StatusInternalServerError, codeInternal, "failed to apply enrichment override", nil)
+	}
+	return "", false
 }
 
 // handleEnrichmentOverride applies a picked candidate as a durable Enrichment
@@ -781,6 +843,12 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 			writeError(w, http.StatusBadRequest, codeBadRequest, "externalId is required", nil)
 			return
 		}
+		source, ok := checkOverrideSource(w, req.Source, func(ns string) error {
+			return enrichSvc.CheckTitleNamespace(r.Context(), titleID, ns)
+		})
+		if !ok {
+			return
+		}
 		// req.Cascade is intentionally ignored here: a leaf (Movie/Episode/Track) has no
 		// children, so there is nothing to cascade to (item-editing/05). The checkbox is
 		// shown only on parents (Album/Show/Artist), whose entity endpoint runs it.
@@ -793,7 +861,9 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 		if req.Episode > 0 {
 			err = enrichSvc.ApplyEpisodeOverride(r.Context(), titleID, externalID, req.Season, req.Episode)
 		} else {
-			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID)
+			// The picked candidate's namespace; empty means the Title's Library's
+			// current lead's (ADR-0060 decision 5).
+			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID, source)
 		}
 		switch {
 		case errors.Is(err, store.ErrNotFound):
@@ -1096,18 +1166,8 @@ func handleLibraryEnrichmentCandidates(enrichSvc *enrich.Service, images *provid
 			return
 		}
 		query := strings.TrimSpace(r.URL.Query().Get("q"))
-		cands, err := enrichSvc.SearchCandidates(r.Context(), kind, query, searchOptionsFrom(r))
-		switch {
-		case errors.Is(err, enrich.ErrSearchUnavailable):
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search is unavailable for this library — the provider is unconfigured or disabled", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusServiceUnavailable, codeSearchUnavailable,
-				"metadata provider search failed — the source may be unreachable", nil)
-			return
-		}
-		writeJSON(w, http.StatusOK, toCandidatesJSON(images, cands))
+		res, err := enrichSvc.FindCandidatesForKind(r.Context(), kind, query, searchOptionsFrom(r))
+		writeCandidateSearch(w, images, res, err, "library")
 	}
 }
 

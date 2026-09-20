@@ -335,12 +335,16 @@ func exportSources() []exportSource {
 // descriptive fields Enrichment writes — the same set the browse API surfaces.
 // Deliberately absent: enrichment_source / enrichment_id_origin /
 // enrichment_attempts / enrichment_retry_at / enrichment_reason /
-// enrichment_tmdb_id / enrichment_imdb_id / enrichment_season /
+// enrichment_id_namespace / every record row but `musicbrainz` / enrichment_season /
 // enrichment_episode (this Server's bookkeeping about how it reached its own
 // answer, which is nobody else's business and means nothing on their side), and
 // reviewed (an Admin's dismissal of a local attention flag).
-const exportTitleColumns = `updated_at, id, kind, title, year, sort_title, identity_key,
-	tmdb_id, imdb_id, musicbrainz_id, musicbrainz_recording_id,
+//
+// musicbrainz_id is the one record id the wire has always carried, and it keeps
+// carrying it: since migration 0072 it is read from the Title's `musicbrainz` record
+// row (ADR-0060), under the column name the scanner below already expects.
+var exportTitleColumns = `updated_at, id, kind, title, year, sort_title, identity_key,
+	tmdb_id, imdb_id, ` + recordRowExpr("", NamespaceMusicBrainz) + ` AS musicbrainz_id, musicbrainz_recording_id,
 	needs_review, ambiguous, hidden,
 	season_id, season_number, episode_number, episode_label,
 	album_id, disc_number, track_number,

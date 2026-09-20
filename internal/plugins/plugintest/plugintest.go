@@ -76,8 +76,17 @@ func build() {
 	// list) have nothing to do with a separate module that imports only the
 	// standard library, and inheriting them is how this build breaks on somebody
 	// else's machine.
+	//
+	// GOWORK IS OFF FOR THE SAME REASON, and it is not optional
+	// (.scratch/bundled-plugins issue 03). Since the repository gained a go.work
+	// (ADR-0059 decision 9), a `go build` run anywhere under the repository is in
+	// WORKSPACE mode, and this directory is not one of the workspace's modules —
+	// so the build failed with "main module does not contain package ...", every
+	// test here at once. Off is also the truthful setting: this guest stands in
+	// for a plugin author's project, which is not inside this repository and has
+	// no workspace around it.
 	cmd.Env = append(os.Environ(),
-		"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS=",
+		"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS=", "GOWORK=off",
 	)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		buildErr = fmt.Errorf("go build in %s: %w\n%s", dir, err, combined)

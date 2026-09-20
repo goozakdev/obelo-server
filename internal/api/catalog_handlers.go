@@ -287,6 +287,11 @@ type titleDetailJSON struct {
 	Hidden bool   `json:"hidden,omitempty"`
 	TMDBID string `json:"tmdbId,omitempty"`
 	IMDBID string `json:"imdbId,omitempty"`
+	// RecordSource is the External-id namespace of the record this item resolves
+	// against (`tmdb`, `musicbrainz`, `anidb`, a third party's plugin id), empty when
+	// it is unmatched (ADR-0060 decision 5). Additive: tmdbId/imdbId keep their
+	// meaning. Detail only.
+	RecordSource string `json:"recordSource,omitempty"`
 	// Watch state (issue 08), per calling User. A client reads resumePositionMs to
 	// pass as startPosition on the next playback negotiation (issue 07 unchanged).
 	ResumePositionMs int64         `json:"resumePositionMs,omitempty"`
@@ -423,6 +428,7 @@ func toTitleDetail(d store.TitleDetail, ws store.WatchState) titleDetailJSON {
 		Hidden:           d.Hidden,
 		TMDBID:           d.TMDBID,
 		IMDBID:           d.IMDBID,
+		RecordSource:     titleRecordSource(d.Title),
 		ResumePositionMs: ws.ResumePositionMs,
 		Watched:          ws.Watched,
 		AddedAt:          formatTimestamp(d.AddedAt),
@@ -1600,4 +1606,13 @@ func pathParam(path, prefix, suffix string) string {
 		return ""
 	}
 	return id
+}
+
+// titleRecordSource is the namespace of the record a Title resolves against: the
+// record row its enrichment_id_namespace names, "" when it has none (unmatched).
+func titleRecordSource(t store.Title) string {
+	if t.RecordNamespace == "" || t.RecordID(t.RecordNamespace) == "" {
+		return ""
+	}
+	return t.RecordNamespace
 }

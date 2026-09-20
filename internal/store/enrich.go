@@ -225,7 +225,15 @@ func (o RecordOrigin) OwnChoice() bool { return o == OriginChosen }
 // are written; identity_key and watch state are NEVER touched (ADR-0002/0014) —
 // this is the metadata match, deliberately distinct from an identity fix-match
 // (which re-keys identity).
+//
+// Since ADR-0060 an id is keyed by NAMESPACE. Namespace/ID name one id in any
+// namespace (a third party's own included); the named fields keep working and mean
+// namespaces `tmdb`, `imdb` and `musicbrainz`. When several are set, the RECORD —
+// the row enrichment_id_namespace names — is the first in ExternalMatch.ids' order:
+// Namespace/ID, then TMDB, then MusicBrainz, then IMDb.
 type ExternalMatch struct {
+	Namespace     string
+	ID            string
 	TMDBID        string
 	IMDBID        string
 	MusicbrainzID string
@@ -242,8 +250,8 @@ type ExternalMatch struct {
 
 // SetTitleExternalMatch writes the supplied external id(s) onto a Title as an
 // Admin's Enrichment override and resets its enrichment_status to 'pending' so the
-// next lookup re-resolves by the new id. It touches ONLY the ENRICHMENT external-id
-// columns, the enrichment episode pin, and status — never identity_key, never
+// next lookup re-resolves by the new id. It touches ONLY the Title's record rows
+// (title_external_ids) and record namespace, the enrichment episode pin, and status — never identity_key, never
 // tmdb_id/imdb_id, never the Title's own season/episode numbers — so the Title
 // keeps its parsed identity, its place in the library, and every User's watch state
 // (ADR-0002/0014). An empty id leaves that column unchanged. Returns ErrNotFound
@@ -275,21 +283,25 @@ func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch, origin Reco
 	// A call that supplies no id at all is a pin-only edit (or a pin clear), which
 	// is not itself a statement about WHICH RECORD decorates the Title — so it must
 	// not claim an origin for a record nobody picked.
-	setOrigin := 0
-	if m.TMDBID != "" || m.IMDBID != "" || m.MusicbrainzID != "" {
-		setOrigin = 1
+	ids := m.ids()
+	setOrigin, recordNS := 0, ""
+	if len(ids) > 0 {
+		setOrigin, recordNS = 1, ids[0].ns
 	}
-	res, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: begin external match: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(
 		`UPDATE titles SET
-		     enrichment_tmdb_id = CASE WHEN ? <> '' THEN ? ELSE enrichment_tmdb_id END,
-		     enrichment_imdb_id = CASE WHEN ? <> '' THEN ? ELSE enrichment_imdb_id END,
-		     musicbrainz_id     = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END,
+		     enrichment_id_namespace = CASE WHEN ? = 1 THEN ? ELSE enrichment_id_namespace END,
 		     enrichment_id_origin = CASE WHEN ? = 1 THEN ? ELSE enrichment_id_origin END,
 		     enrichment_season  = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_season END,
 		     enrichment_episode = CASE WHEN ? = 1 THEN ? WHEN ? = 1 THEN NULL ELSE enrichment_episode END,
 		     enrichment_status = 'pending', `+clearEnrichmentRetry+`, `+clearEnrichmentReason+`
 		   WHERE id = ?`,
-		m.TMDBID, m.TMDBID, m.IMDBID, m.IMDBID, m.MusicbrainzID, m.MusicbrainzID,
+		setOrigin, recordNS,
 		setOrigin, string(origin),
 		setPin, pinSeason, clearPin,
 		setPin, pinEpisode, clearPin,
@@ -304,6 +316,16 @@ func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch, origin Reco
 	}
 	if n == 0 {
 		return ErrNotFound
+	}
+	// Only the namespaces the call names are written; every other row stands, as an
+	// empty id left its column standing before ADR-0060.
+	for _, x := range ids {
+		if err := putRecordID(tx, titleID, x.ns, x.id); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit external match: %w", err)
 	}
 	return nil
 }
@@ -907,7 +929,20 @@ type TitleEnrichment struct {
 	// analogue of EntityEnrichmentWrite.ExternalID — without it a search-resolved
 	// Title has no stored id for the LIVE artwork-candidate lookup to key on, and
 	// every Edit-item image tab comes back empty.
+	//
+	// The first pair ExternalIDs names (ExternalMatch.Namespace/ID) is the record the
+	// pass resolved, in the namespace the host stamped from the provider it asked
+	// (ADR-0060 decision 5).
 	ExternalIDs ExternalMatch
+	// ReplaceRecord turns the fill into a REPLACE of the Title's record: the old
+	// record row is deleted and ExternalIDs' first pair becomes the record, row and
+	// namespace both. It is ADR-0060 decision 6's deliberate exception to the
+	// fill-only rule above, for exactly one case the caller has already established:
+	// the record was a pass's own resolution (OriginDerived), it sits in a namespace that
+	// is not the one the pass just resolved through, and nothing about it was a
+	// decision. Repointing a Library means what it says; without this the old id
+	// would stand for ever beside the new lead's answer.
+	ReplaceRecord bool
 }
 
 // WriteTitleEnrichment persists a matched enrichment result for a Title in one
@@ -965,21 +1000,20 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 	if _, err := tx.Exec(
 		`UPDATE titles SET overview = ?, tagline = ?, content_rating = ?, release_date = ?,
 		     runtime_minutes = ?, studio = ?, enriched_title = ?, enrichment_status = 'matched',
-		     enriched_at = ?, enrichment_source = ?, `+clearEnrichmentRetry+`, `+clearEnrichmentReason+`,
-		     enrichment_tmdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_tmdb_id, '') = ''
-		                                AND IFNULL(tmdb_id, '') = '' THEN ? ELSE enrichment_tmdb_id END,
-		     enrichment_imdb_id = CASE WHEN ? <> '' AND IFNULL(enrichment_imdb_id, '') = ''
-		                                AND IFNULL(imdb_id, '') = '' THEN ? ELSE enrichment_imdb_id END,
-		     musicbrainz_id     = CASE WHEN ? <> '' AND IFNULL(musicbrainz_id, '') = '' THEN ? ELSE musicbrainz_id END
+		     enriched_at = ?, enrichment_source = ?, `+clearEnrichmentRetry+`, `+clearEnrichmentReason+`
 		   WHERE id = ?`,
 		overview, tagline, contentRating, releaseDate, runtime, studio, enrichedTitle,
 		time.Now().UTC().Format(time.RFC3339), e.Source,
-		e.ExternalIDs.TMDBID, e.ExternalIDs.TMDBID,
-		e.ExternalIDs.IMDBID, e.ExternalIDs.IMDBID,
-		e.ExternalIDs.MusicbrainzID, e.ExternalIDs.MusicbrainzID,
 		titleID,
 	); err != nil {
 		return fmt.Errorf("store: updating enriched title: %w", err)
+	}
+	writeIDs := fillRecordIDsTx
+	if e.ReplaceRecord {
+		writeIDs = replaceRecordTx
+	}
+	if err := writeIDs(tx, titleID, e.ExternalIDs); err != nil {
+		return err
 	}
 
 	// Genres + cast: rebuilt wholesale (idempotent) unless the group is locked.
@@ -1037,6 +1071,55 @@ func (db *DB) WriteTitleEnrichment(titleID string, e TitleEnrichment, locks map[
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit write enrichment: %w", err)
+	}
+	return nil
+}
+
+// fillRecordIDsTx is ADR-0045's fill-only rule over record ROWS, applied PER
+// NAMESPACE (ADR-0060): an id is written only when the Title holds neither a record
+// row nor an identity id in that namespace, so an Admin's override and a folder's
+// token both outrank a pass's echo. The record namespace moves only when a fill
+// happened AND the Title had no live record to point at — a fill beside an existing
+// record is a cross-reference, not a new record. The origin is never touched.
+func fillRecordIDsTx(tx *sql.Tx, titleID string, m ExternalMatch) error {
+	return fillRecordPairsTx(tx, titleID, m.ids())
+}
+
+// fillRecordPairsTx is fillRecordIDsTx over pairs already listed in record order.
+func fillRecordPairsTx(tx *sql.Tx, titleID string, pairs []namespacedID) error {
+	filled := ""
+	for _, x := range pairs {
+		cond := `NOT EXISTS (SELECT 1 FROM title_external_ids
+		                      WHERE title_id = ? AND namespace = ? AND external_id <> '')`
+		args := []any{titleID, x.ns}
+		if col := identityColumnFor(x.ns); col != "" {
+			cond += ` AND IFNULL((SELECT ` + col + ` FROM titles WHERE id = ?), '') = ''`
+			args = append(args, titleID)
+		}
+		res, err := tx.Exec(
+			`INSERT OR REPLACE INTO title_external_ids (title_id, namespace, external_id)
+			 SELECT ?, ?, ? WHERE `+cond,
+			append([]any{titleID, x.ns, x.id}, args...)...)
+		if err != nil {
+			return fmt.Errorf("store: filling %s record id: %w", x.ns, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 && filled == "" {
+			filled = x.ns
+		}
+	}
+	if filled == "" {
+		return nil
+	}
+	if _, err := tx.Exec(
+		`UPDATE titles SET enrichment_id_namespace = ?
+		   WHERE id = ?
+		     AND NOT EXISTS (SELECT 1 FROM title_external_ids
+		                      WHERE title_id = titles.id
+		                        AND namespace = titles.enrichment_id_namespace
+		                        AND namespace <> ?)`,
+		filled, titleID, filled,
+	); err != nil {
+		return fmt.Errorf("store: naming the filled record: %w", err)
 	}
 	return nil
 }

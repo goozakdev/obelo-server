@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -71,6 +72,18 @@ const (
 // errNoExport is what a call into a function the module does not export answers.
 var errNoExport = errors.New("the module does not export that call")
 
+// errGuestRefused is a guest that RAN TO COMPLETION and answered the ABI's `0`
+// with a sentence in last_error(): the module was entered, it did its work, it
+// decided the call could not be answered, and it came back to say so. That is a
+// different fact from a trap, a deadline kill or a response that is not the
+// contract's shape, all of which say the instance is unusable, and
+// callGuestUnder's policy is where the difference is spent.
+//
+// It is a SENTINEL rather than a string match, and the message it wraps is
+// byte-for-byte what it always was — "the guest refused the call: <detail>" —
+// because that sentence is on the Plugins screen and in operators' logs.
+var errGuestRefused = errors.New("the guest refused the call")
+
 // compiled is one Plugin's runtime and the module compiled into it. Compiling is
 // the expensive half — 43 ms for a TinyGo guest, 606 ms for a stock-Go one — so it
 // happens once, at load, and every instance after a trap or a deadline kill is
@@ -79,6 +92,28 @@ type compiled struct {
 	rt     wazero.Runtime
 	module wazero.CompiledModule
 }
+
+// compilationCache is ONE in-memory compilation cache for this whole process,
+// shared by every Plugin's runtime (wazero supports exactly that, and it is what
+// the type is for).
+//
+// Compiling a stock-Go guest is the expensive half — measured at ~670 ms for the
+// bundled TMDB module, against ~20 ms when the cache answers — and this server
+// compiles the SAME module far more often than once. Every install, uninstall,
+// enable, disable and settings save goes through the Manager's rebuild-and-swap,
+// which re-reads the whole plugins directory and recompiles EVERY module in it
+// (that is deliberate: "a rebuild produces what a reboot would"). With the seven
+// Bundled plugins of ADR-0059 that is about five seconds of recompilation each
+// time an Admin flicks a switch, for bytes that did not change.
+//
+// It is keyed by the module's own bytes, so two Plugins that happen to ship the
+// same module share the compiled code and a Plugin whose module was REPLACED
+// compiles afresh — which is what the boot-time re-assert needs.
+//
+// It holds compiled code for the lifetime of the process, which is bounded by the
+// number of DISTINCT modules a server has: a handful. It is created lazily so a
+// binary that never loads a Plugin never allocates one.
+var compilationCache = sync.OnceValue(wazero.NewCompilationCache)
 
 // newRuntime builds the sandbox ADR-0058 decision 4 describes and compiles wasm
 // into it: WASI instantiated and nothing inside it granted, the host module with
@@ -89,7 +124,7 @@ type compiled struct {
 // costs roughly 78 µs per call and is bought without argument, because the call it
 // guards exists to make an HTTP request that takes 100–500 ms.
 func newRuntime(ctx context.Context, wasm []byte, host *hostFuncs) (*compiled, error) {
-	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
+	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true).WithCompilationCache(compilationCache())
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		_ = rt.Close(ctx)
@@ -234,7 +269,7 @@ func (i *instance) invoke(ctx context.Context, name string, req, out any) (int, 
 		return 0, callErr
 	}
 	if len(packed) == 0 || packed[0] == 0 {
-		return 0, fmt.Errorf("the guest refused the call: %s", i.guestError(ctx))
+		return 0, fmt.Errorf("%w: %s", errGuestRefused, i.guestError(ctx))
 	}
 
 	rptr, rlen := uint32(packed[0]>>32), uint32(packed[0])

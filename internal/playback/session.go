@@ -825,11 +825,28 @@ func (m *Manager) notify(e SessionEvent) {
 func (m *Manager) Reap(idle time.Duration) int {
 	m.mu.Lock()
 	cutoff := m.now().Add(-idle)
+	m.mu.Unlock()
+	return m.endWhere(func(s Session) bool { return s.LastSeen.Before(cutoff) })
+}
+
+// EndAll ends every session exactly as Reap ends an idle one — ffmpeg killed and
+// waited for, scratch removed, transcode slots released, `ended` announced — and
+// returns how many it ended. It is what a server shutting down owes its sessions:
+// an in-flight remux otherwise outlives the App that started it and keeps writing
+// into a scratch dir nobody owns any more.
+func (m *Manager) EndAll() int {
+	return m.endWhere(func(Session) bool { return true })
+}
+
+// endWhere is Reap's and EndAll's one teardown path: it ends every session end
+// selects, outside the lock for the slow part.
+func (m *Manager) endWhere(end func(Session) bool) int {
+	m.mu.Lock()
 	var dead []*hlsRuntime
 	var ended []SessionEvent
 	n := 0
 	for id, s := range m.sessions {
-		if s.LastSeen.Before(cutoff) {
+		if end(s) {
 			delete(m.sessions, id)
 			// Reap the session's demuxed audio rendition runtimes first (shared-scratch,
 			// so they only kill ffmpeg) so an abandoned rendition encode never outlives

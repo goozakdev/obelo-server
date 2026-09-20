@@ -93,6 +93,18 @@ jobs:
           uname -m
           go version
 
+      # The Bundled plugins (ADR-0059). internal/bundled embeds BUILD OUTPUT that is
+      # gitignored, so a checkout has none: `go test ./internal/bundled/...` fails
+      # with "run make plugins", and the package list below now includes it and the
+      # seven plugins/<id>/ modules. The `check` job needs no such step — `make check`
+      # depends on `plugins` — but this job calls `go test` directly.
+      #
+      # It is also what makes this job worth more than a compile: these seven are the
+      # modules the server SHIPS, compiled to wasm here and then executed under
+      # wazero's amd64 backend by ./internal/api and ./internal/bundled.
+      - name: The bundled plugin modules
+        run: make plugins
+
       # -count=1 on purpose: a cached PASS would print `(cached)` and prove nothing,
       # and a -run pattern that matches nothing exits 0. This step is the proof.
       - name: One guest, compiled from source and called, verbosely

@@ -12,9 +12,9 @@ import (
 // Full provider a Library's Enrichment policy points at — ADR-0027) leads the video
 // kinds (movie/show/season/episode); the fill-only supplements add only what it
 // left empty — a text field only when the authoritative result carried none, and
-// artwork only for a role not already present (reusing mergeArtwork). It mirrors
-// MusicChainProvider so the fill-only contract, swallow-and-continue error handling,
-// and artwork role-merge are identical across kinds.
+// artwork only for a role not already present. It shares fillFromSupplement with
+// MusicChainProvider, so the fill-only contract, swallow-and-continue error
+// handling, and artwork role-merge are identical across kinds (ADR-0061).
 //
 // It runs the authoritative source first, then composes each supplement in order
 // over the result. Each supplement self-gates by kind (a no-match for a kind it
@@ -79,23 +79,10 @@ func (p *VideoChainProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMet
 		if !ok {
 			continue
 		}
-		// Fill-only: a text field is taken only when TMDB left it empty; artwork is
-		// merged only for a role TMDB didn't already carry; identity is never touched.
-		// A supplied Name is a display-only override taken only when TMDB left it
-		// empty (an episode/show canonical title) — never identity (ADR-0002).
-		if meta.Name == "" {
-			meta.Name = sup.Name
-		}
-		if meta.Overview == "" {
-			meta.Overview = sup.Overview
-		}
-		if meta.ContentRating == "" {
-			meta.ContentRating = sup.ContentRating
-		}
-		if len(meta.Genres) == 0 {
-			meta.Genres = sup.Genres
-		}
-		meta.Artwork = mergeArtwork(meta.Artwork, sup.Artwork)
+		// Fill-only, by the rule the music chain shares: a field is taken only when the
+		// lead left it empty (or synthesized), artwork only for a role it didn't carry,
+		// and identity is never touched (ADR-0002).
+		meta = fillFromSupplement(meta, sup)
 	}
 	return meta, nil
 }

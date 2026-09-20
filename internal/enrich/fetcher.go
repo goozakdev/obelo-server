@@ -10,25 +10,22 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/safefetch"
+	"github.com/goozakdev/obelo-server/internal/useragent"
 )
 
-// providerClient is the one place the JSON metadata clients (tmdb.go, musicbrainz.go,
-// fanarttv.go, theaudiodb.go, anidb.go, omdb.go, thetvdb.go) turn their injectable
-// HTTPClient field into the client they actually use, so all seven get the shared
-// redirect policy and none of them can quietly opt out.
+// THERE IS NO providerClient HERE ANY MORE (.scratch/bundled-plugins: issue 08).
+// It was the one place the seven JSON metadata clients turned their injectable
+// HTTPClient field into the client they actually used, so that all of them got
+// safefetch's redirect policy and none could quietly opt out. Every one of those
+// sources is a WebAssembly guest now (ADR-0059) and has no HTTP client at all: its
+// only way out is the host's own `http_fetch`, which applies the allowlist, the
+// private-address rule and the same redirect policy to every guest at once
+// (internal/plugins/hostfuncs.go). One control, one place, for a source the
+// maintainer ships and one an Admin uploaded alike.
 //
-// Those clients only PARSE what comes back, so a hop inward leaks no body — the
-// reason they are covered anyway is that "connected" and "did not connect" are
-// distinguishable by timing and by which error surfaces, which is enough to map an
-// internal network blindly from a provider's Location header. It costs nothing:
-// only redirect TARGETS are checked, so an operator's own mirror is still a
-// perfectly good base URL (ADR-0001), and none of these APIs redirects off-host in
-// normal operation.
-//
-// Guard copies rather than mutating, which matters here because the nil case used
-// to be http.DefaultClient — a process-global whose redirect behaviour is not ours
-// to change.
-func providerClient(c *http.Client) *http.Client { return safefetch.Guard(c) }
+// What is left in this file is the ARTWORK fetcher, which is the host's own
+// outbound call and still needs the policy for the same reason it always did: the
+// URL is a third party's choice and so is the redirect off it.
 
 // ErrArtworkNotFound is the benign "the source has no image at this URL" outcome
 // (an HTTP 404) — e.g. a Cover Art Archive release-group with no cover. It is
@@ -61,7 +58,7 @@ type HTTPArtworkFetcher struct {
 	// MaxBytes caps a downloaded image; 0 uses defaultMaxArtworkBytes.
 	MaxBytes int64
 	// UserAgent identifies Obelo on the image download itself; empty uses
-	// DefaultUserAgent. The bytes behind a Cover Art Archive cover come from here,
+	// useragent.Default. The bytes behind a Cover Art Archive cover come from here,
 	// not from the MusicBrainz provider's own request, so leaving this unset sent
 	// every cover fetch out as Go's "Go-http-client/1.1" — precisely the anonymous
 	// agent MusicBrainz throttles hardest — while the manifest request beside it was
@@ -91,7 +88,7 @@ func (f HTTPArtworkFetcher) Fetch(ctx context.Context, url string) ([]byte, stri
 	}
 	ua := f.UserAgent
 	if ua == "" {
-		ua = DefaultUserAgent
+		ua = useragent.Default
 	}
 	req.Header.Set("User-Agent", ua)
 	resp, err := client.Do(req)

@@ -26,7 +26,6 @@ import {
   type FixItem,
   type FixProblem,
 } from "./needsFixing";
-import type { Provider } from "./searchRef";
 
 // The Admin "Needs Fixing" tab — what used to be "Attention".
 //
@@ -225,11 +224,6 @@ export default function AdminNeedsFixingScreen() {
     }
   }, [localLibs, selected]);
 
-  const library = useMemo(
-    () => localLibs.find((l) => l.id === selected),
-    [localLibs, selected],
-  );
-
   // Per-Library open counts, so the selector answers "where is the work?" before the
   // Admin has to click through each Library to find out. Best-effort — an
   // uncountable Library just shows no number.
@@ -329,7 +323,6 @@ export default function AdminNeedsFixingScreen() {
             <LibraryQueue
               key={selected}
               libraryId={selected}
-              libraryKind={library?.kind ?? "movie"}
               reloadToken={reloadToken}
             />
           )}
@@ -349,11 +342,9 @@ export default function AdminNeedsFixingScreen() {
 // effect, and a separate effect would double-fetch every list on mount.
 function LibraryQueue({
   libraryId,
-  libraryKind,
   reloadToken = 0,
 }: {
   libraryId: string;
-  libraryKind: string;
   reloadToken?: number;
 }) {
   const needsReview = useNeedsReview(libraryId);
@@ -512,10 +503,6 @@ function LibraryQueue({
 
   const shown = filter === "all" ? items : items.filter((it) => hasProblem(it, filter));
 
-  // A bare id pasted into a picker is provider-specific, and a Library's kind is
-  // what decides which provider its records come from.
-  const provider: Provider = libraryKind === "music" ? "musicbrainz" : "tmdb";
-
   const settled = overrides.filter((o) => !o.orphaned);
 
   async function rescan() {
@@ -622,7 +609,6 @@ function LibraryQueue({
                 key={item.key}
                 item={item}
                 libraryId={libraryId}
-                provider={provider}
                 onResolved={reloadAll}
                 onIdentityCorrected={() => setPendingRescan((n) => n + 1)}
               />

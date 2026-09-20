@@ -162,7 +162,7 @@ describe("AlbumEditionPicker", () => {
     // THE gesture. One call, the album's EXISTING apply — release-group as the
     // record, the picked release as the edition, cascade on — and no second apply
     // path anywhere.
-    listAlbumEditions.mockResolvedValue(editions());
+    listAlbumEditions.mockResolvedValue(editions({ source: "musicbrainz" }));
     applyEntityEnrichmentOverride.mockResolvedValue(detail());
     const onApplied = vi.fn();
     render(<AlbumEditionPicker albumId="al1" onApplied={onApplied} />);
@@ -170,8 +170,18 @@ describe("AlbumEditionPicker", () => {
     const rows = await screen.findAllByTestId("album-edition");
     await userEvent.click(within(rows[1]).getByTestId("album-edition-use"));
 
+    // The release-group is re-pinned in the namespace the editions were listed for
+    // (ADR-0060 decision 5), not in whatever the Library's lead is now.
     await waitFor(() =>
-      expect(applyEntityEnrichmentOverride).toHaveBeenCalledWith("albums", "al1", RG, true, XE),
+      expect(applyEntityEnrichmentOverride).toHaveBeenCalledWith(
+        "albums",
+        "al1",
+        RG,
+        true,
+        XE,
+        undefined,
+        "musicbrainz",
+      ),
     );
     expect(onApplied).toHaveBeenCalled();
   });

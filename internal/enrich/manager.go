@@ -427,17 +427,21 @@ func (m *Manager) EffectiveEnablementView(ctx context.Context, libraryID string)
 // mirrors the config provider knobs so SeedIfEmpty can reproduce a pre-feature
 // deployment's enablement in the DB.
 type SeedInput struct {
-	TMDBAPIKey         string
-	TMDBBaseURL        string
-	TMDBImageBaseURL   string
-	MetadataLanguage   string
-	MusicBrainzEnabled bool
-	MusicBrainzBaseURL string
-	CoverArtBaseURL    string
-	FanartTVAPIKey     string
-	FanartTVBaseURL    string
-	TheAudioDBAPIKey   string
-	TheAudioDBBaseURL  string
+	// Providers are the provider rows this first boot writes, already decided: the
+	// composition root read them off ONE TABLE in internal/config that maps each
+	// provider environment variable to a (provider id, field) pair, applied the
+	// default-credential chain (ADR-0032), and handed the result over.
+	//
+	// It is a LIST and not eleven named fields (.scratch/bundled-plugins: issue 01).
+	// The named fields, and the five-slug ladder of `if`s below that read them, were
+	// the last place a fresh install's shape was written into the enrichment domain
+	// rather than derived: which sources exist, which one's key turns another one on,
+	// which have a second host. None of that is this function's business — it writes
+	// the rows it is given — and ADR-0059 moves all of it into the plugins
+	// themselves.
+	Providers []ProviderSeed
+	// MetadataLanguage is the server-wide preferred metadata language.
+	MetadataLanguage string
 	// Behavior knobs (enrichment-runtime-settings): the server-wide Enrichment
 	// behavior seeded from config on first boot, then DB-authoritative. Interval is
 	// in seconds (0 disables the scheduled sweep); the rate limit is in milliseconds
@@ -454,6 +458,27 @@ type SeedInput struct {
 	ConsentGranted *bool
 }
 
+// ProviderSeed is one provider row a first boot writes: which source, whether the
+// environment turned it on, and the credentials and hosts it was configured with.
+// It is the enrichment domain's own vocabulary for a config.ProviderSeedRow, so
+// enrich still never imports config (ADR-0006).
+type ProviderSeed struct {
+	// Slug is the provider id the row is keyed by.
+	Slug string
+	// Enabled is whether this fresh install starts with the source switched ON. A
+	// row is written whether or not it is (a disabled row still carries the host
+	// override a deployment set), which is the same posture SeedIfEmpty had: it only
+	// ever wrote rows it meant to enable, and the caller now decides that.
+	Enabled bool
+	// APIKey, BaseURL and ImageBaseURL are the row's credentials and host overrides,
+	// captured verbatim so a deployment (or a test/e2e) pointing a source at a mirror
+	// or a local stub keeps working byte-for-byte. An empty base URL falls back to the
+	// Descriptor default at build time.
+	APIKey       string
+	BaseURL      string
+	ImageBaseURL string
+}
+
 // SeedStore is the persistence SeedIfEmpty writes through.
 type SeedStore interface {
 	MetadataSettingsEmpty() (bool, error)
@@ -465,12 +490,20 @@ type SeedStore interface {
 
 // SeedIfEmpty seeds the DB-backed provider settings from a pre-feature
 // deployment's config exactly once — only when the settings tables are empty
-// (first boot). It reproduces the old env-driven enablement: a TMDB key enables
-// tmdb; MusicBrainzEnabled enables musicbrainz + coverart; a fanart.tv /
-// TheAudioDB key enables that source; the language is written to the singleton.
-// After seeding (or on any boot where settings already exist) it is a no-op — the
-// DB is authoritative and config provider values are ignored at runtime. Returns
-// whether it seeded.
+// (first boot). It writes the provider rows the seeding table produced, the three
+// behavior knobs, any headless consent decision, and the language singleton. After
+// seeding (or on any boot where settings already exist) it is a no-op — the DB is
+// authoritative and config provider values are ignored at runtime. Returns whether
+// it seeded.
+//
+// The env-driven enablement rules it used to encode by name — a TMDB key enables
+// tmdb, the MusicBrainz opt-in (or a TMDB key) enables musicbrainz, a
+// fanart.tv / TheAudioDB key enables that source — are now ONE TABLE in
+// internal/config, read into SeedInput.Providers before this is called
+// (.scratch/bundled-plugins: issue 01). The rules themselves are unchanged; what
+// changed is that they live where the environment variables they are about live,
+// so deleting a shipped provider is one table row rather than a branch in the
+// enrichment domain.
 //
 // Base URLs are captured verbatim from config so a deployment (or a test/e2e)
 // pointing a source at a mirror or a local stub keeps working byte-for-byte; a
@@ -484,41 +517,16 @@ func SeedIfEmpty(s SeedStore, in SeedInput) (bool, error) {
 		return false, nil
 	}
 
-	// Video: a TMDB key both enables and authenticates the authoritative video
-	// source (mirrors config.VideoEnrichmentEnabled).
-	if in.TMDBAPIKey != "" {
+	// One loop over the rows the seeding table produced. Which sources a fresh
+	// install starts with switched on, and what turns each of them on, is the
+	// caller's (internal/config's table); this writes what it is handed.
+	for _, p := range in.Providers {
 		if err := s.UpsertMetadataProvider(store.MetadataProviderUpsert{
-			Slug: SlugTMDB, Enabled: true, APIKey: in.TMDBAPIKey,
-			BaseURL: in.TMDBBaseURL, ImageBaseURL: in.TMDBImageBaseURL,
-		}); err != nil {
-			return false, err
-		}
-	}
-	// Music: MusicBrainz + Cover Art Archive need no key, so the explicit opt-in
-	// (or a TMDB key, which historically turned on every kind) enables them.
-	if in.MusicBrainzEnabled || in.TMDBAPIKey != "" {
-		if err := s.UpsertMetadataProvider(store.MetadataProviderUpsert{
-			Slug: SlugMusicBrainz, Enabled: true, BaseURL: in.MusicBrainzBaseURL,
-		}); err != nil {
-			return false, err
-		}
-		if err := s.UpsertMetadataProvider(store.MetadataProviderUpsert{
-			Slug: SlugCoverArt, Enabled: true, BaseURL: in.CoverArtBaseURL,
-		}); err != nil {
-			return false, err
-		}
-	}
-	// Music image supplements: enabled only when a key was configured.
-	if in.FanartTVAPIKey != "" {
-		if err := s.UpsertMetadataProvider(store.MetadataProviderUpsert{
-			Slug: SlugFanartTV, Enabled: true, APIKey: in.FanartTVAPIKey, BaseURL: in.FanartTVBaseURL,
-		}); err != nil {
-			return false, err
-		}
-	}
-	if in.TheAudioDBAPIKey != "" {
-		if err := s.UpsertMetadataProvider(store.MetadataProviderUpsert{
-			Slug: SlugTheAudioDB, Enabled: true, APIKey: in.TheAudioDBAPIKey, BaseURL: in.TheAudioDBBaseURL,
+			Slug:         p.Slug,
+			Enabled:      p.Enabled,
+			APIKey:       p.APIKey,
+			BaseURL:      p.BaseURL,
+			ImageBaseURL: p.ImageBaseURL,
 		}); err != nil {
 			return false, err
 		}

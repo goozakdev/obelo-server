@@ -2,13 +2,13 @@ import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { apiClient } from "../api/client";
 import type { EnrichmentCandidate, TitleDetail } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
-import { looksLikeRef, type Provider } from "./searchRef";
 
 // Edit-item unified "Search" tab for a leaf Title (Movie/Episode/Track — ADR-0019).
 // The Admin types ONE input that accepts a search term, a provider URL, or a bare
-// id: a URL/id routes to the externalPreview endpoint (a by-id lookup that
-// auto-selects the resolved record), everything else runs a free-text provider
-// search (TMDB for video, MusicBrainz for music). The Admin selects a candidate
+// id. The picker never decides which: the search endpoint asks the Library's lead
+// to read the input as a reference first, and a resolved one comes back flagged
+// `resolvedRef` and is auto-selected; anything else is a free-text search by that
+// lead (.scratch/bundled-plugins issue 12). The Admin selects a candidate
 // row, then applies with a button at the bottom:
 //   • Update (primary) — an Enrichment override (Fix info): re-points WHICH record
 //     decorates the item; identity_key and watch state are never touched, Locked
@@ -28,7 +28,6 @@ export default function EnrichmentOverridePicker({
   currentExternalId,
   artistScope,
   initialQuery,
-  provider,
   onApplied,
   onReplace,
 }: {
@@ -43,9 +42,6 @@ export default function EnrichmentOverridePicker({
    * value so an album/track search can be narrowed to the item's artist. Omit for a
    * video leaf, where narrowing by artist has no meaning. */
   artistScope?: string;
-  /** Which provider this leaf resolves against, so a pasted bare id is detected
-   * correctly (TMDB = numeric video ids, MusicBrainz = music UUIDs). */
-  provider: Provider;
   /** Called with the re-enriched Title detail so the page reflects the fix (both an
    * Update and a Replace return a full, fresh TitleDetail). */
   onApplied: (detail: TitleDetail) => void;
@@ -79,6 +75,8 @@ export default function EnrichmentOverridePicker({
       setCandidates((prev) =>
         append && prev ? [...prev, ...res.candidates] : res.candidates,
       );
+      // A pasted URL/id the lead resolved auto-selects its one record.
+      if (res.resolvedRef) setSelected(res.candidates[0] ?? null);
       setHasMore(res.hasMore ?? false);
       setPage(nextPage);
     } catch (err) {
@@ -88,38 +86,14 @@ export default function EnrichmentOverridePicker({
     }
   }
 
-  // A pasted provider URL/id resolves a single candidate via externalPreview and
-  // AUTO-SELECTS it; a typo'd/stale id or wrong-kind URL surfaces the server's
-  // actionable error.
-  async function runPreview(ref: string) {
-    setSearching(true);
-    setError(null);
-    try {
-      const candidate = await apiClient.previewExternalCandidate(titleId, ref);
-      setCandidates([candidate]);
-      setSelected(candidate);
-      setHasMore(false);
-    } catch (err) {
-      setCandidates(null);
-      setSelected(null);
-      setError(errorMessage(err));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  // The single input branches: a URL/id previews (auto-select), a term searches.
+  // The single input: the server reads a URL/id and searches for a term.
   function submit(e: FormEvent) {
     e.preventDefault();
     if (searching) return;
     const q = query.trim();
     if (q === "") return;
     setSelected(null);
-    if (looksLikeRef(q, provider)) {
-      void runPreview(q);
-    } else {
-      void runSearch(0, false);
-    }
+    void runSearch(0, false);
   }
 
   async function doApply(mode: "update" | "replace") {
@@ -130,7 +104,14 @@ export default function EnrichmentOverridePicker({
       const detail =
         mode === "replace" && onReplace
           ? await onReplace(selected)
-          : await apiClient.applyEnrichmentOverride(titleId, selected.externalId);
+          : await apiClient.applyEnrichmentOverride(
+              titleId,
+              selected.externalId,
+              undefined,
+              undefined,
+              // The namespace the pick was found in (ADR-0060 decision 5).
+              selected.source,
+            );
       onApplied(detail);
       // Reflect the newly-applied change and clear the working state.
       setCandidates(null);

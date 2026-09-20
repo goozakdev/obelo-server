@@ -39,9 +39,6 @@ const {
   searchEnrichmentCandidates,
   searchLibraryEnrichmentCandidates,
   searchEntityEnrichmentCandidates,
-  previewExternalCandidate,
-  previewLibraryExternalCandidate,
-  previewEntityExternalCandidate,
   applyEntityEnrichmentOverride,
   listAlbumEditions,
   listShowProblems,
@@ -64,9 +61,6 @@ const {
   searchEnrichmentCandidates: vi.fn(),
   searchLibraryEnrichmentCandidates: vi.fn(),
   searchEntityEnrichmentCandidates: vi.fn(),
-  previewExternalCandidate: vi.fn(),
-  previewLibraryExternalCandidate: vi.fn(),
-  previewEntityExternalCandidate: vi.fn(),
   applyEntityEnrichmentOverride: vi.fn(),
   listAlbumEditions: vi.fn(),
   listShowProblems: vi.fn(),
@@ -97,11 +91,6 @@ vi.mock("../api/client", async () => {
         searchLibraryEnrichmentCandidates(...a),
       searchEntityEnrichmentCandidates: (...a: unknown[]) =>
         searchEntityEnrichmentCandidates(...a),
-      previewExternalCandidate: (...a: unknown[]) => previewExternalCandidate(...a),
-      previewLibraryExternalCandidate: (...a: unknown[]) =>
-        previewLibraryExternalCandidate(...a),
-      previewEntityExternalCandidate: (...a: unknown[]) =>
-        previewEntityExternalCandidate(...a),
       applyEntityEnrichmentOverride: (...a: unknown[]) =>
         applyEntityEnrichmentOverride(...a),
       listAlbumEditions: (...a: unknown[]) => listAlbumEditions(...a),
@@ -267,9 +256,6 @@ beforeEach(() => {
     searchEnrichmentCandidates,
     searchLibraryEnrichmentCandidates,
     searchEntityEnrichmentCandidates,
-    previewExternalCandidate,
-    previewLibraryExternalCandidate,
-    previewEntityExternalCandidate,
     applyEntityEnrichmentOverride,
     listShowProblems,
     reviewShowEpisodes,
@@ -453,7 +439,7 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
       enrichmentItem({ id: "e1", kind: "movie", title: "Arrival", showTitle: "", showId: "" }),
     ]);
     searchEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "1438" })],
+      candidates: [candidate({ externalId: "1438", source: "tmdb" })],
       hasMore: false,
     });
     render();
@@ -461,7 +447,11 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
     await userEvent.click(await screen.findByTestId("fix-item-toggle"));
     await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
 
-    await waitFor(() => expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438"));
+    // The candidate's namespace rides back with its id (ADR-0060 decision 5), so
+    // the pick is pinned where it was found and not in whatever the lead is now.
+    await waitFor(() =>
+      expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438", undefined, undefined, "tmdb"),
+    );
     // A metadata pin is not an identity change, so nothing is re-filed and no scan
     // is offered (ADR-0014).
     expect(fixMatch).not.toHaveBeenCalled();
@@ -471,7 +461,7 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
   it("applies an identity correction as a fix-match, dismisses the flag, and queues ONE rescan", async () => {
     listNeedsReview.mockResolvedValue([reviewItem()]);
     searchLibraryEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate()],
+      candidates: [candidate({ source: "tmdb" })],
       hasMore: false,
     });
     render();
@@ -532,10 +522,40 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
     );
   });
 
-  it("routes a pasted provider id to the by-id preview instead of a search", async () => {
+  it("sends fix-match no TMDB id for a pick another source answered", async () => {
+    // fix-match stores a TMDB identity id and nothing else, so the pick's `source`
+    // decides — not the Library's kind (.scratch/bundled-plugins issue 12).
+    listNeedsReview.mockResolvedValue([reviewItem()]);
+    searchLibraryEnrichmentCandidates.mockResolvedValue({
+      candidates: [candidate({ source: "anidb" })],
+      hasMore: false,
+    });
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
+
+    await waitFor(() =>
+      expect(fixMatch).toHaveBeenCalledWith("lib1", {
+        folderPath: "/media/movies/Yearless Movie",
+        title: "Dune",
+        year: 2021,
+        tmdbId: undefined,
+      }),
+    );
+    expect(applyEnrichmentOverride).not.toHaveBeenCalled();
+  });
+
+  it("sends a pasted id to the ordinary search and selects the record the server resolved", async () => {
+    // The picker no longer decides what a reference looks like: the Library's lead
+    // reads it server-side and answers `resolvedRef` (.scratch/bundled-plugins
+    // issue 12).
     listEnrichmentAttention.mockResolvedValue([movieEnrichmentItem()]);
-    searchEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
-    previewExternalCandidate.mockResolvedValue(candidate({ externalId: "1438" }));
+    searchEnrichmentCandidates.mockImplementation(async (_id: string, q: string) =>
+      q === "1438"
+        ? { candidates: [candidate({ externalId: "1438", source: "tmdb" })], hasMore: false, resolvedRef: true }
+        : { candidates: [], hasMore: false, resolvedRef: false },
+    );
     render();
 
     await userEvent.click(await screen.findByTestId("fix-item-toggle"));
@@ -544,7 +564,12 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
     await userEvent.type(input, "1438");
     await userEvent.click(screen.getByTestId("fix-picker-search-button"));
 
-    await waitFor(() => expect(previewExternalCandidate).toHaveBeenCalledWith("e1", "1438"));
+    await waitFor(() =>
+      expect(searchEnrichmentCandidates).toHaveBeenCalledWith("e1", "1438", { page: 0 }),
+    );
+    const row = await screen.findByTestId("fix-candidate");
+    expect(row).toHaveAttribute("data-external-id", "1438");
+    expect(row).toHaveAttribute("aria-pressed", "true");
   });
 });
 
@@ -958,7 +983,9 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
       albumTrack("2", "album-unmatched"),
     ]);
     searchEntityEnrichmentCandidates.mockResolvedValue({
-      candidates: [candidate({ externalId: "mbid-bh", title: "Braveheart", year: 1995 })],
+      candidates: [
+        candidate({ externalId: "mbid-bh", title: "Braveheart", year: 1995, source: "musicbrainz" }),
+      ],
       hasMore: false,
     });
     applyEntityEnrichmentOverride.mockResolvedValue({
@@ -981,6 +1008,9 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         // A SEARCHED candidate names no edition (ADR-0052) — only a pasted
         // /release/ URL does — so the apply carries none, and clears any stored one.
         undefined,
+        undefined,
+        // ...and its namespace rides back with its id (ADR-0060 decision 5).
+        "musicbrainz",
       ),
     );
     const summary = await screen.findByTestId("fix-item-cascade");
@@ -1051,6 +1081,7 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
     listAlbumEditions.mockResolvedValue({
       albumId: "al-bh",
       releaseGroupId: "rg-bh",
+      source: "musicbrainz",
       localTrackCount: 16,
       inUseReleaseId: "rel-a",
       inUseSource: "fit",
@@ -1079,6 +1110,8 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         "rg-bh",
         true,
         "rel-b",
+        undefined,
+        "musicbrainz",
       ),
     );
     expect(await screen.findByTestId("album-edition-cascade")).toHaveTextContent(

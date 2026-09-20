@@ -47,14 +47,17 @@ func TestNewKeyRotatorGating(t *testing.T) {
 			wantNil:     true,
 		},
 		{
-			name:        "full BYOK bypasses",
-			mutate:      func(c *config.Config) { c.TMDBAPIKey, c.FanartTVAPIKey = "op-t", "op-f" },
+			name: "full BYOK bypasses",
+			mutate: func(c *config.Config) {
+				c.SetProviderKey(config.ProviderTMDB, "op-t")
+				c.SetProviderKey(config.ProviderFanartTV, "op-f")
+			},
 			encOverride: "enc",
 			wantNil:     true,
 		},
 		{
 			name:        "partial BYOK still runs",
-			mutate:      func(c *config.Config) { c.TMDBAPIKey = "op-t" },
+			mutate:      func(c *config.Config) { c.SetProviderKey(config.ProviderTMDB, "op-t") },
 			encOverride: "enc",
 			wantNil:     false,
 		},
