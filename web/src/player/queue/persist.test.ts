@@ -97,9 +97,9 @@ describe("Queue persistence", () => {
     expect(loadQueue(storage, "u1")).toEqual(shuffledRepeat);
   });
 
-  it("loads an OLDER stored Queue (no repeat/authoredOrder) with defaults (off, not shuffled)", () => {
+  it("loads a stored Queue lacking repeat/authoredOrder with defaults (off, not shuffled)", () => {
     const storage = new FakeStorage();
-    // A pre-slice-04 payload has only entries + currentIndex.
+    // A payload predating the walk-order modifiers has only entries + currentIndex.
     storage.setItem(
       queueStorageKey("u1"),
       JSON.stringify({ entries: state.entries, currentIndex: 1 }),

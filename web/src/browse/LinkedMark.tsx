@@ -17,9 +17,9 @@ import { LinkIcon } from "./ActionIcons";
 //   • BADGE — a linked row wears a chain LinkIcon and, when the wire named it
 //     (issue 18: `linkedServer` now rides the row itself, not the Admin-only
 //     /links join), the sharing Server's name — so a Member reads "🔗 Kate's
-//     Obelo", not a bare "Linked". A row with no name yet (an older server, a
-//     document that carries the pair but not the name) falls back to the icon
-//     plus the word "Linked". Nothing else changes about the row: it keeps its
+//     Obelo", not a bare "Linked". A row with no name yet (a document that
+//     carries the pair but not the name) falls back to the icon plus the word
+//     "Linked". Nothing else changes about the row: it keeps its
 //     poster, its position, its link and its actions, because a mirrored Title
 //     is a Title.
 //   • GREY — `available: false` means the household that provides it cannot be
@@ -82,8 +82,8 @@ export default function LinkedMark({
   if (!isLinked(entity)) return null;
   const away = isUnavailable(entity);
   // The name the wire put on the row itself (issue 18); a bare "Linked" only
-  // when it is absent — an older server, or a document that carries the pair but
-  // not the name (the detail headers, which use `providedBy` for it instead).
+  // when it is absent — a document that carries the pair but not the name (the
+  // detail headers, which use `providedBy` for it instead).
   const name = entity?.linkedServer;
   return (
     <>

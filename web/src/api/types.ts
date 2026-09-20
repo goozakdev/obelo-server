@@ -4,13 +4,12 @@
 
 /** The handshake payload from `GET /api/v1/server`. */
 export interface ServerInfo {
-  /** The Server identity id (ADR-0034): an opaque, stable UUID. Both `id` and
-   * `name` are additive/`omitempty` — a server predating ADR-0034 omits them, so
-   * treat them as optional. `id` keys the per-server remembered-Users roster
-   * (appletv-parity/10). */
-  id?: string;
+  /** The Server identity id (ADR-0034): an opaque, stable UUID, minted on first
+   * boot and always present on a running server. `id` keys the per-server
+   * remembered-Users roster (appletv-parity/10). */
+  id: string;
   /** The operator-chosen display name (ADR-0034). Cosmetic; nothing keys on it. */
-  name?: string;
+  name: string;
   version: string;
   supportedVersions: number[];
   features: Record<string, boolean>;
@@ -36,8 +35,9 @@ export interface EnrichmentConsent {
   state: EnrichmentConsentState;
   /** RFC3339 timestamp of the decision; absent while `unset`. */
   grantedAt?: string;
-  /** Whose API key the decision covers. Absent from an older server, in which
-   * case the prompt falls back to source-neutral wording. */
+  /** Whose API key the decision covers. Absent when the server has no metadata
+   * credential wiring at all, in which case the prompt falls back to
+   * source-neutral wording. */
   credentialSource?: MetadataCredentialSource;
 }
 
@@ -304,8 +304,9 @@ export interface UnmatchedFile {
   path: string;
   /** The folder a fix-match for this file must be keyed to, derived server-side
    * from the Library's kind — the file's own directory is the right answer only in
-   * a Movie library (a TV file's directory is a Season folder, not the Show). "" on
-   * an older server that did not send it. */
+   * a Movie library (a TV file's directory is a Season folder, not the Show). ""
+   * for the `unreadable` kind, for which the server withholds it (ADR-0047, see
+   * {@link kind} below). */
   folderPath: string;
   /** WHY no Title came out of this file, and the only thing that decides what the queue may
    * offer to do about it:
@@ -556,9 +557,9 @@ export interface NeedsReviewItemRaw extends FixContextRaw {
   folderPath?: string;
   reason?: NeedsReviewReason;
   enrichmentStatus?: EnrichmentStatus;
-  /** Sent even when false, so an older server that omits it is distinguishable
-   * from one saying "this row is not a needs-review row". */
-  needsReview?: boolean;
+  /** Always sent, even when false — it is the flag itself, not a marker of
+   * absence. */
+  needsReview: boolean;
   ambiguous?: boolean;
   collidingPaths?: string[];
 }
@@ -601,7 +602,7 @@ export interface NeedsReviewItem extends FixContext {
    * unless {@link ambiguous}. */
   collidingPaths: string[];
   /** Whether there is a matched provider record to confirm the filing against.
-   * "pending" on an older server that did not send it. */
+   * "pending" when the item has not been through Enrichment. */
   enrichmentStatus: EnrichmentStatus;
 }
 
@@ -642,7 +643,7 @@ export interface EnrichmentCandidate {
   /** The External-id namespace `externalId` belongs to (`tmdb`, `musicbrainz`,
    * `anidb`, a third party's plugin id), stamped by the server from the provider that
    * answered (ADR-0060 decision 5). Send it straight back as the override's `source`
-   * so the pick is pinned where it was found. Absent from an older server. */
+   * so the pick is pinned where it was found. Omitted only when unknown. */
   source?: string;
 }
 
@@ -691,8 +692,10 @@ export interface ArtworkCandidate {
   url: string;
   /** Same-origin URL to PREVIEW this candidate with, proxied through the server so
    * the grid never makes the browser contact TMDB / the Cover Art Archive itself
-   * (ADR-0001; the CSP is `img-src 'self'`). Absent only from an older server, in
-   * which case the raw `url` is the fallback and the CSP will block it. */
+   * (ADR-0001; the CSP is `img-src 'self'`). Absent only when the server could not
+   * sign a proxy URL (no proxy wired, or the provider's URL was relative/
+   * malformed), in which case the raw `url` is the fallback and the CSP will
+   * block it. */
   thumbnailUrl?: string;
   width?: number;
   height?: number;
@@ -764,7 +767,7 @@ export interface AlbumEditions {
   releaseGroupId?: string;
   /** The External-id namespace `releaseGroupId` belongs to (ADR-0060 decision 5).
    * Sent back as the apply's `source` so choosing an edition keeps the album's
-   * record where it is. Absent from an older server. */
+   * record where it is. Absent when the album has no matched release-group. */
   source?: string;
   chosenReleaseId?: string;
   inUseReleaseId?: string;
@@ -1306,8 +1309,8 @@ export type EnrichmentStatus =
 export interface TitleDetailRaw {
   id: string;
   /** The Library this Title belongs to; drives the detail's parent "Back" link
-   * for a Movie. Absent on an older server. */
-  libraryId?: string;
+   * for a Movie. */
+  libraryId: string;
   kind: string;
   title: string;
   year?: number;
@@ -1323,13 +1326,13 @@ export interface TitleDetailRaw {
   extras?: unknown[];
   artwork?: Artwork[];
   /** Opaque per-Title artwork cache-bust token (newest artwork timestamp); absent
-   * when the Title has no artwork or on an older server. Appended to the hero's
-   * Logo/Background URLs so a re-fetched/picked image reloads in place. */
+   * when the Title has no artwork. Appended to the hero's Logo/Background URLs
+   * so a re-fetched/picked image reloads in place. */
   artworkVersion?: string;
   /** Every selectable Subtitle track the Title offers, from all sources (embedded
    * Streams + sidecar/fetched rows), deduped and labeled by the server (ADR-0020).
-   * Absent on an older server; normalized to []. */
-  subtitles?: SubtitleTrack[];
+   * Non-nil; empty when the Title has none. */
+  subtitles: SubtitleTrack[];
   // Enrichment (external-metadata-enrichment): descriptive decoration.
   overview?: string;
   tagline?: string;
@@ -1379,8 +1382,8 @@ export interface MetadataEditInput {
 export interface ShowSummaryRaw extends LinkedMarks {
   id: string;
   /** The Library this Show belongs to; drives the Show detail's parent "Back"
-   * link. Absent on an older server. */
-  libraryId?: string;
+   * link. */
+  libraryId: string;
   kind: string; // "show"
   title: string;
   year?: number;
@@ -1413,8 +1416,8 @@ export interface ShowSummaryRaw extends LinkedMarks {
 /** A Show summary with holes filled — the TV grid entry. */
 export interface ShowSummary extends LinkedMarks {
   id: string;
-  /** The Library this Show belongs to, "" when absent — the Show detail's parent
-   * "Back" link returns to its owning Library. */
+  /** The Library this Show belongs to — the Show detail's parent "Back" link
+   * returns to its owning Library. */
   libraryId: string;
   kind: string;
   title: string;
@@ -1618,8 +1621,8 @@ export interface EpisodeContext {
 export interface ArtistSummaryRaw extends LinkedMarks {
   id: string;
   /** The Music Library this Artist belongs to; drives the Artist detail's parent
-   * "Back" link. Absent on an older server. */
-  libraryId?: string;
+   * "Back" link. */
+  libraryId: string;
   kind: string; // "artist"
   name: string;
   // Enrichment (issue 03): bio (overview) + genres + a fetched image URL, all
@@ -1640,8 +1643,8 @@ export interface ArtistSummaryRaw extends LinkedMarks {
 /** An Artist summary — the Music list entry (and the Artist detail header). */
 export interface ArtistSummary extends LinkedMarks {
   id: string;
-  /** The Music Library this Artist belongs to, "" when absent — the Artist
-   * detail's parent "Back" link returns to its owning Library. */
+  /** The Music Library this Artist belongs to — the Artist detail's parent
+   * "Back" link returns to its owning Library. */
   libraryId: string;
   kind: string;
   name: string;
@@ -2094,8 +2097,8 @@ export interface StartPlaybackOptions {
    * directStream carrying just the selected video + audio Stream (bandwidth saving
    * without a transcode — it never consumes a transcode cap slot). A no-op when the
    * session already remuxes/transcodes for another reason. Send ONLY when the server
-   * advertises `features.remuxSelectedOnly` (an older server rejects the unknown
-   * field); omit for today's behaviour. */
+   * advertises `features.remuxSelectedOnly` (a server without the route rejects the
+   * unknown field); omit for today's behaviour. */
   remuxSelectedOnly?: boolean;
 }
 

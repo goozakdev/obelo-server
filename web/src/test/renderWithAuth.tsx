@@ -51,6 +51,8 @@ const DEFAULT_FEATURES: Record<string, boolean> = {
 
 function seededServerInfo(features?: Record<string, boolean>): ServerInfo {
   return {
+    id: "srv1",
+    name: "Test Server",
     version: "test",
     supportedVersions: [1],
     features: { ...DEFAULT_FEATURES, ...features },

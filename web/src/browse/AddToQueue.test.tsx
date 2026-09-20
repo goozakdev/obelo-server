@@ -35,6 +35,7 @@ import { useQueue } from "../player/queue/useQueue";
 function movieDetail(id: string, name: string): TitleDetail {
   return {
     id,
+    libraryId: "lib1",
     kind: "movie",
     title: name,
     year: 2021,
@@ -43,6 +44,7 @@ function movieDetail(id: string, name: string): TitleDetail {
     hidden: false,
     resumePositionMs: 0,
     watched: false,
+    subtitles: [],
     editions: [
       {
         id: "ed1",

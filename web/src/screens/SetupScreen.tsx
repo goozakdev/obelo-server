@@ -47,8 +47,9 @@ export default function SetupScreen() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // What the server says it would enrich WITH — bundled default keys, the
-  // operator's own, or none. Undefined until the consent GET answers (and on an
-  // older server that doesn't report it), which the copy handles as "unknown".
+  // operator's own, or none. Undefined until the consent GET answers (or when
+  // the metadata credential wiring is absent), which the copy handles as
+  // "unknown".
   const [credentialSource, setCredentialSource] = useState<
     MetadataCredentialSource | undefined
   >(undefined);
@@ -73,10 +74,10 @@ export default function SetupScreen() {
     // The admin exists — from here on, nothing may bounce the operator back to a
     // form they already completed. Read the current consent decision: a headless
     // deploy can pre-seed it (OBELO_ENRICHMENT_CONSENT), and a question already
-    // answered must not be asked again. Anything unexpected (an older server, a
-    // failed read) skips straight to Home rather than blocking setup on a
-    // secondary concern — the consent gate still holds server-side, so skipping
-    // the ask can only ever leave enrichment OFF.
+    // answered must not be asked again. Anything unexpected (a failed read) skips
+    // straight to Home rather than blocking setup on a secondary concern — the
+    // consent gate still holds server-side, so skipping the ask can only ever
+    // leave enrichment OFF.
     try {
       const consent = await apiClient.getEnrichmentConsent();
       if (consent.state !== "unset") {

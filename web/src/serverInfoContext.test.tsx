@@ -16,6 +16,8 @@ import type { ServerInfo } from "./api/types";
 
 function info(features: ServerInfo["features"]): ServerInfo {
   return {
+    id: "srv1",
+    name: "Test Server",
     version: "test",
     supportedVersions: [1],
     features,
@@ -43,8 +45,8 @@ describe("readFeature", () => {
   });
 
   it("tolerates a missing features map", () => {
-    // An older/partial handshake with no `features` key at all must not throw.
-    const partial = { version: "old", supportedVersions: [1], setupRequired: false };
+    // A malformed handshake with no `features` key at all must not throw.
+    const partial = { id: "srv1", name: "Test Server", version: "test", supportedVersions: [1], setupRequired: false };
     expect(readFeature(partial as unknown as ServerInfo, "playlists")).toBe(false);
   });
 

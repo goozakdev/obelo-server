@@ -275,8 +275,8 @@ type titleDetailJSON struct {
 	ID string `json:"id"`
 	// LibraryID is the Library this Title belongs to — the client's detail "Back"
 	// link returns a Movie to its owning Library (an Episode returns to its Show
-	// via the Episode context below).
-	LibraryID   string `json:"libraryId,omitempty"`
+	// via the Episode context below). Every Title row has one; never omitted.
+	LibraryID   string `json:"libraryId"`
 	Kind        string `json:"kind"`
 	Title       string `json:"title"`
 	Year        int    `json:"year,omitempty"`
@@ -1185,9 +1185,9 @@ type needsReviewItemJSON struct {
 	FolderPath string `json:"folderPath,omitempty"`
 	// NeedsReview and Ambiguous say which flags put this item on the list. Both can
 	// be set. NeedsReview is sent even when false — unlike every other flag here it
-	// must be distinguishable from absent, because a client that read an absent
-	// field as false would silently stop stating the uncertain-parse problem on
-	// every row of an older server.
+	// is not `omitempty`, because an item on this list with `needsReview` false is
+	// here for Ambiguous alone, and the client must branch on the flag rather than
+	// infer it from presence.
 	NeedsReview bool `json:"needsReview"`
 	Ambiguous   bool `json:"ambiguous,omitempty"`
 	// CollidingPaths are the Files that claim one Edition between them, in play

@@ -98,8 +98,8 @@ describe("LinkedMark — the rules", () => {
   });
 
   it("falls back to 'Linked' when the row is a mirror but carries no name", () => {
-    // An older server, or a document that marks the row without naming the
-    // Server (the detail headers, which use `providedBy` instead).
+    // A document that marks the row without naming the Server (the detail
+    // headers, which use `providedBy` instead).
     render(<LinkedMark entity={{ linked: true }} />);
     const badge = screen.getByTestId("linked-badge");
     expect(badge).toHaveTextContent("Linked");

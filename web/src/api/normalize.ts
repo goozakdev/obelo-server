@@ -324,9 +324,9 @@ export function normalizeEnrichmentAttentionTitle(
     title: raw.title,
     year: raw.year ?? 0,
     enrichmentStatus: raw.enrichmentStatus,
-    // An older server sends no reason at all, and so does any outcome with no
-    // diagnosis. Both fill to "", which the row copy treats exactly as it treats a
-    // value it does not recognize: the generic sentence.
+    // An outcome with no diagnosis to give sends no reason at all; it fills to "",
+    // which the row copy treats exactly as it treats a value it does not
+    // recognize: the generic sentence.
     enrichmentReason: raw.enrichmentReason ?? "",
     ...normalizeFixContext(raw),
   };
@@ -354,20 +354,16 @@ export function normalizeFixContext(raw: FixContextRaw): FixContext {
 }
 
 /** The reason the scanner flags an item is decided by its kind (see the server's
- * needsReviewReason), so an older server that omits the field still yields the
- * right sentence rather than a blank one. */
+ * needsReviewReason); the server omits `reason` for an item flagged only as
+ * `ambiguous` (nothing said its parse was a guess), so this fallback still yields
+ * the right sentence rather than a blank one. */
 function reasonForKind(kind: string): NeedsReviewReason {
   if (kind === "episode") return "episode-numbering";
   if (kind === "track") return "untagged";
   return "no-year";
 }
 
-/** Fill an identity-attention item's holes (year → 0, folderPath → "").
- *
- * `needsReview` defaults to TRUE rather than false: the list carried nothing but
- * needs-review items before the flag was sent, so an absent field means "an older
- * server", not "not a needs-review row". Defaulting it the other way would silently
- * stop every row on such a server from stating its problem. */
+/** Fill an identity-attention item's holes (year → 0, folderPath → ""). */
 export function normalizeNeedsReviewItem(
   raw: NeedsReviewItemRaw,
 ): NeedsReviewItem {
@@ -378,7 +374,7 @@ export function normalizeNeedsReviewItem(
     year: raw.year ?? 0,
     folderPath: raw.folderPath ?? "",
     reason: raw.reason ?? reasonForKind(raw.kind),
-    needsReview: raw.needsReview !== false,
+    needsReview: raw.needsReview,
     ambiguous: raw.ambiguous ?? false,
     collidingPaths: raw.collidingPaths ?? [],
     enrichmentStatus: raw.enrichmentStatus ?? "pending",
@@ -452,7 +448,7 @@ function normalizeEdition(raw: EditionRaw): Edition {
 export function normalizeTitleDetail(raw: TitleDetailRaw): TitleDetail {
   return {
     id: raw.id,
-    libraryId: raw.libraryId ?? "",
+    libraryId: raw.libraryId,
     kind: raw.kind,
     title: raw.title,
     year: raw.year ?? 0,
@@ -467,7 +463,7 @@ export function normalizeTitleDetail(raw: TitleDetailRaw): TitleDetail {
     editions: (raw.editions ?? []).map(normalizeEdition),
     artwork: raw.artwork ?? [],
     artworkVersion: raw.artworkVersion,
-    subtitles: raw.subtitles ?? [],
+    subtitles: raw.subtitles,
     // Enrichment holes filled: strings → "", numbers → 0, lists → [].
     overview: raw.overview ?? "",
     tagline: raw.tagline ?? "",
@@ -491,7 +487,7 @@ export function normalizeTitleDetail(raw: TitleDetailRaw): TitleDetail {
 export function normalizeShowSummary(raw: ShowSummaryRaw): ShowSummary {
   return {
     id: raw.id,
-    libraryId: raw.libraryId ?? "",
+    libraryId: raw.libraryId,
     kind: raw.kind,
     title: raw.title,
     year: raw.year ?? 0,
@@ -602,7 +598,7 @@ export function normalizeSeasonEpisodes(
 export function normalizeArtistSummary(raw: ArtistSummaryRaw): ArtistSummary {
   return {
     id: raw.id,
-    libraryId: raw.libraryId ?? "",
+    libraryId: raw.libraryId,
     kind: raw.kind,
     name: raw.name,
     overview: raw.overview ?? "",

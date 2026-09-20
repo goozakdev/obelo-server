@@ -725,9 +725,10 @@ export function buildFixItems(input: {
     titleId: "",
     showId: "",
     albumId: "",
-    // The server derives the anchor from the Library's kind; folderOf is the
-    // fallback for a server that predates that field, and is only ever right for a
-    // Movie library (a TV file's own directory is a Season folder, not the Show).
+    // The server derives the anchor from the Library's kind and withholds it only
+    // for the `unreadable` kind (routed to unreadableFileRow, never here), so
+    // f.folderPath is never empty for a row this function builds; `folderOf` is
+    // unreachable dead code kept only as a defensive fallback.
     folderPath: f.folderPath || folderOf(f.path),
     overrideId: "",
     canDismiss: false,

@@ -72,7 +72,7 @@ describe("roster store", () => {
     expect(getRosterEntry(storage(), SERVER, "u1")?.token).toBe("tok-ana");
   });
 
-  it("never seeds a linked server, and prunes one a previous version seeded", () => {
+  it("never seeds a linked server, and prunes a stray entry already in storage", () => {
     // A `remote` User is another household's Server (ADR-0054): no password, login
     // refused for the role outright. Offering it as a switch-user row would put a
     // permanently un-signinable name in front of the household.

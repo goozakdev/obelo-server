@@ -520,9 +520,11 @@ describe("PlaybackOptionsSheet — Subtitle axis", () => {
 
 /** Mount under a ready handshake advertising `remuxSelectedOnly` — the sheet reads
  * the flag through useOptionalFeature, so a bare mount (no provider, as every other
- * describe in this file uses) is exactly the absent-flag / older-server case. */
+ * describe in this file uses) is exactly the absent-flag case. */
 function withRemuxFlag(ui: ReactElement, on = true): ReactElement {
   const info: ServerInfo = {
+    id: "srv1",
+    name: "Test Server",
     version: "test",
     supportedVersions: [1],
     features: { remuxSelectedOnly: on },
@@ -536,7 +538,7 @@ function withRemuxFlag(ui: ReactElement, on = true): ReactElement {
 describe("PlaybackOptionsSheet — Force Remux checkbox", () => {
   const prefT1 = () => loadPreference(window.localStorage, "u1", { kind: "title", id: "t1" });
 
-  it("is hidden entirely without the feature flag (bare mount = older server)", () => {
+  it("is hidden entirely without the feature flag (bare mount = no provider)", () => {
     render(
       <PlaybackOptionsSheet title={movieDetail()} userId="u1" open onClose={() => {}} onPlay={() => {}} />,
     );

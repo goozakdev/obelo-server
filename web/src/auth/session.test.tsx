@@ -289,3 +289,28 @@ describe("AuthProvider — roster switch-user", () => {
     });
   });
 });
+
+describe("AuthProvider — Server identity id guard (D021)", () => {
+  it("leaves obelo.serverId untouched when the handshake has no id (a zero-Identity test harness)", async () => {
+    // The TS ServerInfo type requires `id`, but D021's zero-Identity test harness
+    // is a real ServerInfo built outside boot with the identity fields omitted —
+    // the handshake can still arrive over the wire without one. saveServerId must
+    // not be called with that absent id (it would persist the literal string
+    // "undefined" as the roster key).
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+      if (url.endsWith("/api/v1/server")) {
+        return new Response(
+          JSON.stringify({ version: "t", supportedVersions: [1], features: {}, setupRequired: false }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const client = new ApiClient({ fetchImpl });
+    renderApp(client);
+
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("none"));
+    expect(window.localStorage.getItem("obelo.serverId")).toBeNull();
+  });
+});

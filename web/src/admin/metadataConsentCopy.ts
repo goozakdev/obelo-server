@@ -62,8 +62,9 @@ export function credentialNote(source?: MetadataCredentialSource): string {
         `still turn this on now — it takes effect as soon as a key is in place.`
       );
     default:
-      // Source unknown (an older server, or wiring absent): say only what holds on
-      // every build. Never invent a specific provenance for a privacy prompt.
+      // Source unknown (the metadata credential wiring is absent): say only what
+      // holds on every build. Never invent a specific provenance for a privacy
+      // prompt.
       return (
         `You can add your own ${METADATA_SERVICES} API keys under ` +
         `${METADATA_SETTINGS_PATH} at any time.`

@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeAlbumTracks,
   normalizeArtistAlbums,
+  normalizeArtistSummary,
   normalizeHome,
   normalizeLibrary,
+  normalizeNeedsReviewItem,
   normalizeSeasonEpisodes,
   normalizeShowSummary,
   normalizeMatchOverride,
@@ -14,6 +16,7 @@ import {
   normalizeTitleDetail,
   normalizeUnmatchedFile,
 } from "./normalize";
+import type { ArtistSummaryRaw, NeedsReviewItemRaw, ShowSummaryRaw, TitleDetailRaw } from "./types";
 
 describe("normalize (omitempty holes filled)", () => {
   it("treats absent booleans as false and absent numbers as 0 on a summary", () => {
@@ -139,14 +142,45 @@ describe("normalize (omitempty holes filled)", () => {
   it("fills nested holes on a detail (editions/files/streams → arrays)", () => {
     const d = normalizeTitleDetail({
       id: "t1",
+      libraryId: "lib1",
       kind: "movie",
       title: "Dune",
+      needsReview: true,
+      subtitles: [],
       editions: [{ id: "e1", name: "1080p", files: [{ id: "f1", path: "/x.mp4", container: "mp4" }] }],
     });
     expect(d.watched).toBe(false);
     expect(d.editions[0].files[0].missing).toBe(false);
     expect(d.editions[0].files[0].streams).toEqual([]);
     expect(d.artwork).toEqual([]);
+  });
+
+  it("passes libraryId, subtitles and needsReview through a detail unchanged (always sent, never defaulted)", () => {
+    const d = normalizeTitleDetail({
+      id: "t1",
+      libraryId: "lib1",
+      kind: "movie",
+      title: "Dune",
+      needsReview: true,
+      subtitles: [{ id: "s1", label: "English", language: "en", source: "embedded", kind: "text", forced: false }],
+    });
+    expect(d.libraryId).toBe("lib1");
+    expect(d.needsReview).toBe(true);
+    expect(d.subtitles).toEqual([
+      { id: "s1", label: "English", language: "en", source: "embedded", kind: "text", forced: false },
+    ]);
+  });
+
+  it("leaves libraryId and subtitles undefined on a detail that omits them, rather than defaulting them", () => {
+    const raw = {
+      id: "t1",
+      kind: "movie",
+      title: "Dune",
+      needsReview: true,
+    } as unknown as TitleDetailRaw;
+    const d = normalizeTitleDetail(raw);
+    expect(d.libraryId).toBeUndefined();
+    expect(d.subtitles).toBeUndefined();
   });
 
   it("fills an Unmatched file's absent reason with an empty string", () => {
@@ -163,6 +197,44 @@ describe("normalize (omitempty holes filled)", () => {
       addedAt: "2026-06-23T10:00:00Z",
     });
     expect(full).toMatchObject({ reason: "no title in filename", addedAt: "2026-06-23T10:00:00Z" });
+  });
+
+  it("passes a Show/Artist summary's libraryId through unchanged (always sent, never defaulted)", () => {
+    expect(normalizeShowSummary({ id: "s1", libraryId: "lib1", kind: "show", title: "S" }).libraryId).toBe(
+      "lib1",
+    );
+    expect(
+      normalizeArtistSummary({ id: "ar1", libraryId: "lib2", kind: "artist", name: "A" }).libraryId,
+    ).toBe("lib2");
+  });
+
+  it("leaves a Show summary's libraryId undefined when omitted, rather than defaulting it", () => {
+    const raw = { id: "s1", kind: "show", title: "S" } as unknown as ShowSummaryRaw;
+    expect(normalizeShowSummary(raw).libraryId).toBeUndefined();
+  });
+
+  it("leaves an Artist summary's libraryId undefined when omitted, rather than defaulting it", () => {
+    const raw = { id: "ar1", kind: "artist", name: "A" } as unknown as ArtistSummaryRaw;
+    expect(normalizeArtistSummary(raw).libraryId).toBeUndefined();
+  });
+
+  it("passes a needs-review item's needsReview flag through unchanged, both ways (always sent, never defaulted)", () => {
+    const flagged = normalizeNeedsReviewItem({ id: "n1", kind: "movie", title: "Dune", needsReview: true });
+    expect(flagged.needsReview).toBe(true);
+
+    const collisionOnly = normalizeNeedsReviewItem({
+      id: "n2",
+      kind: "movie",
+      title: "Dune",
+      needsReview: false,
+      ambiguous: true,
+    });
+    expect(collisionOnly.needsReview).toBe(false);
+  });
+
+  it("leaves a needs-review item's needsReview undefined when omitted, rather than defaulting it to true", () => {
+    const raw = { id: "n3", kind: "movie", title: "Dune" } as unknown as NeedsReviewItemRaw;
+    expect(normalizeNeedsReviewItem(raw).needsReview).toBeUndefined();
   });
 
   it("normalizes a Match override (absent orphaned/year → false/0)", () => {
@@ -296,7 +368,7 @@ describe("normalize (the mirror pair)", () => {
 
     expect(normalizeTitleSummary({ id: "t", kind: "movie", title: "T", ...marks }))
       .toMatchObject(marks);
-    expect(normalizeShowSummary({ id: "s", kind: "show", title: "S", ...marks }))
+    expect(normalizeShowSummary({ id: "s", libraryId: "lib1", kind: "show", title: "S", ...marks }))
       .toMatchObject(marks);
     expect(
       normalizeHome({ continueWatching: [{ id: "t", kind: "movie", title: "T", ...marks }] })
@@ -310,7 +382,7 @@ describe("normalize (the mirror pair)", () => {
     ).toMatchObject(marks);
 
     const artistAlbums = normalizeArtistAlbums({
-      artist: { id: "ar", kind: "artist", name: "A", ...marks },
+      artist: { id: "ar", libraryId: "lib1", kind: "artist", name: "A", ...marks },
       albums: [{ id: "al", artistId: "ar", title: "AL", ...marks }],
     });
     expect(artistAlbums.artist).toMatchObject(marks);

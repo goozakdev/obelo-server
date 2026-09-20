@@ -7,11 +7,11 @@ import type { ServerInfo } from "./api/types";
 //
 // The GET /server handshake advertises a `features` map — the server's own
 // statement of which capabilities it exposes. A client MUST gate on those flags,
-// NEVER on the server version: an older server simply omits a flag, and the
-// correct behaviour is to keep the feature off (the TV client does exactly this
-// via `serverInfo.feature("…")`). This provider runs the handshake once, above
-// the auth scope, and hands the whole tree a `feature(name)` gate plus the raw
-// handshake state the first-run gates render from.
+// NEVER on the server version: a server without a given capability simply omits
+// its flag, and the correct behaviour is to keep the feature off (the TV client
+// does exactly this via `serverInfo.feature("…")`). This provider runs the
+// handshake once, above the auth scope, and hands the whole tree a `feature(name)`
+// gate plus the raw handshake state the first-run gates render from.
 
 interface ServerInfoContextValue {
   /** The handshake state (loading/ready/unreachable/error) — the first-run gates
