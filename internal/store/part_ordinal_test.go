@@ -154,7 +154,6 @@ func partEpisode(titleID, identityKey string, season, episode int, fileID, path 
 	return et
 }
 
-
 // TestCollidingFilesAreNotAPartSet is the other half: two files the scanner flagged
 // ambiguous (docs/naming-convention.md's collision rule) share one Edition and are
 // numbered by nothing — not the column, not their names. They are two claims on one
