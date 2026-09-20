@@ -300,7 +300,7 @@ func TestSearchAndArtworkCarryTheirPagingAndPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("artwork candidates: %v", err)
 	}
-	if plugin.lastArtwork.Role != "poster" || plugin.lastArtwork.Ref.TMDBID != "438631" {
+	if plugin.lastArtwork.Role != "poster" || plugin.lastArtwork.Ref.ID("tmdb") != "438631" {
 		t.Fatalf("the artwork request did not cross intact: %+v", plugin.lastArtwork)
 	}
 	wantImage := ArtworkCandidate{URL: "https://i/p.jpg", Width: 2000, Height: 3000, Source: "fake"}

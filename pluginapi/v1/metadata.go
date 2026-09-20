@@ -45,17 +45,6 @@ type MediaRef struct {
 	// one it knows how to use, through [MediaRef.ID] and ignores the rest.
 	ExternalIDs map[string]string `json:"externalIds,omitempty"`
 
-	// The five named id fields are V1 MIRRORS of ExternalIDs for the five shipped
-	// namespaces, kept because a guest built before the map existed reads them. The
-	// host fills each from the same map, so the two never disagree. A new Plugin
-	// should not read them: [MediaRef.ID] reads the map and falls back to these for
-	// an older host that fills only them.
-	TMDBID        string `json:"tmdbId,omitempty"`
-	IMDBID        string `json:"imdbId,omitempty"`
-	MusicbrainzID string `json:"musicbrainzId,omitempty"`
-	TheTVDBID     string `json:"thetvdbId,omitempty"`
-	AniDBID       string `json:"anidbId,omitempty"`
-
 	// TV coordinates. EpisodeLabel is the raw on-disk label for a file whose
 	// numbering the parser could not resolve to a season/episode pair.
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
@@ -91,45 +80,15 @@ const (
 	NamespaceAniDB       = "anidb"
 )
 
-// NamedNamespaces are the five namespaces that have a named v1 mirror field on
-// MediaRef, in the fields' declaration order. A fresh slice every call.
-func NamedNamespaces() []string {
-	return []string{NamespaceTMDB, NamespaceIMDB, NamespaceMusicBrainz, NamespaceTheTVDB, NamespaceAniDB}
-}
-
 // ID is the id this reference carries in namespace ns, and "" when it carries
-// none. It reads ExternalIDs first and falls back to the named v1 mirror for the
-// five shipped namespaces, so one call answers both a host that fills only the map
-// and an older one that fills only the named fields. The value is trimmed of
-// surrounding whitespace, which every reader wanted and did separately.
+// none. The value is trimmed of surrounding whitespace, which every reader
+// wanted and did separately.
 //
 // It is a method on the wire type rather than a helper in the SDK because the ref a
 // guest is handed IS this type (the SDK's Provider is an alias for the contract's
 // interface), and a package cannot declare a method on another package's type.
 func (r MediaRef) ID(ns string) string {
-	if id := strings.TrimSpace(r.ExternalIDs[ns]); id != "" {
-		return id
-	}
-	return strings.TrimSpace(r.NamedID(ns))
-}
-
-// NamedID is the named v1 mirror field for namespace ns, untrimmed, and "" for a
-// namespace that has none. It exists for the host, which fills the mirrors from
-// the map and reads them back into it; a Plugin reads [MediaRef.ID].
-func (r MediaRef) NamedID(ns string) string {
-	switch ns {
-	case NamespaceTMDB:
-		return r.TMDBID
-	case NamespaceIMDB:
-		return r.IMDBID
-	case NamespaceMusicBrainz:
-		return r.MusicbrainzID
-	case NamespaceTheTVDB:
-		return r.TheTVDBID
-	case NamespaceAniDB:
-		return r.AniDBID
-	}
-	return ""
+	return strings.TrimSpace(r.ExternalIDs[ns])
 }
 
 // AlbumHint is one local album offered as corroboration for its artist: the title

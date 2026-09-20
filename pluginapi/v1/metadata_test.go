@@ -17,13 +17,9 @@ func metadataWireCases() []wireCase {
 				Title: "Breaking Bad",
 				Year:  2008,
 				ExternalIDs: map[string]string{
-					"tmdb": "1396", "imdb": "tt0903747", "anilist": "4242",
+					"tmdb": "1396", "imdb": "tt0903747", "musicbrainz": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+					"thetvdb": "81189", "anidb": "1", "anilist": "4242",
 				},
-				TMDBID:        "1396",
-				IMDBID:        "tt0903747",
-				MusicbrainzID: "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
-				TheTVDBID:     "81189",
-				AniDBID:       "1",
 				SeasonNumber:  2,
 				EpisodeNumber: 5,
 				EpisodeLabel:  "2x05",
@@ -36,9 +32,9 @@ func metadataWireCases() []wireCase {
 				},
 			},
 			golden: `{"kind":"episode","title":"Breaking Bad","year":2008,` +
-				`"externalIds":{"anilist":"4242","imdb":"tt0903747","tmdb":"1396"},"tmdbId":"1396",` +
-				`"imdbId":"tt0903747","musicbrainzId":"b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",` +
-				`"thetvdbId":"81189","anidbId":"1","seasonNumber":2,"episodeNumber":5,` +
+				`"externalIds":{"anidb":"1","anilist":"4242","imdb":"tt0903747",` +
+				`"musicbrainz":"b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d","thetvdb":"81189","tmdb":"1396"},` +
+				`"seasonNumber":2,"episodeNumber":5,` +
 				`"episodeLabel":"2x05","artist":"Eagles","album":"Hotel California",` +
 				`"track":"Wasted Time","releaseMbid":"9c9f1380-2516-4fc9-a3e6-f9f61941d090",` +
 				`"albumHints":[{"title":"Hotel California","releaseGroupMbid":"f2b67b28-6b1b-4c56-b1cd-1a0b4b1c2b21"}]}`,
@@ -154,11 +150,11 @@ func metadataWireCases() []wireCase {
 		{
 			name: "ArtworkCandidatesRequest",
 			value: ArtworkCandidatesRequest{
-				Ref:  MediaRef{Kind: "movie", TMDBID: "438631"},
+				Ref:  MediaRef{Kind: "movie", ExternalIDs: map[string]string{NamespaceTMDB: "438631"}},
 				Role: "poster",
 				Page: Page{Limit: 30},
 			},
-			golden: `{"ref":{"kind":"movie","tmdbId":"438631"},"role":"poster","limit":30}`,
+			golden: `{"ref":{"kind":"movie","externalIds":{"tmdb":"438631"}},"role":"poster","limit":30}`,
 		},
 		{
 			name:   "ArtworkCandidate",

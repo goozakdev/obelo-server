@@ -77,7 +77,7 @@ func lookup(t *testing.T, p *Provider, ref pluginapi.MediaRef) pluginapi.LookupR
 func TestOMDbResolvesByIMDbID(t *testing.T) {
 	p, host := stub(t, movieJSON)
 
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", Title: "Shawshank", IMDBID: "tt0111161"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", Title: "Shawshank", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt0111161"}})
 	if resp.Outcome != pluginapi.OutcomeMatched {
 		t.Fatalf("outcome = %q, want matched", resp.Outcome)
 	}
@@ -115,7 +115,7 @@ func TestOMDbTreatsNAAsEmpty(t *testing.T) {
 	// A record that resolves but carries only "N/A" fields contributes nothing —
 	// the fill-only supplement reports it as a no-match.
 	p, _ := stub(t, `{"Rated":"N/A","Genre":"N/A","Plot":"N/A","Response":"True"}`)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", IMDBID: "tt1"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1"}})
 	if resp.Outcome != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match (all fields N/A)", resp.Outcome)
 	}
@@ -123,7 +123,7 @@ func TestOMDbTreatsNAAsEmpty(t *testing.T) {
 
 func TestOMDbSplitsGenresAndDropsNA(t *testing.T) {
 	p, _ := stub(t, `{"Genre":"Action, N/A, Sci-Fi","Response":"True"}`)
-	got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", IMDBID: "tt1"}).Record
+	got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1"}}).Record
 	if len(got.Genres) != 2 || got.Genres[0] != "Action" || got.Genres[1] != "Sci-Fi" {
 		t.Errorf("genres = %v, want [Action Sci-Fi] (N/A dropped)", got.Genres)
 	}
@@ -131,7 +131,7 @@ func TestOMDbSplitsGenresAndDropsNA(t *testing.T) {
 
 func TestOMDbResponseFalseIsNoMatch(t *testing.T) {
 	p, _ := stub(t, `{"Response":"False","Error":"Movie not found!"}`)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", IMDBID: "tt404"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt404"}})
 	if resp.Outcome != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match for Response:False", resp.Outcome)
 	}
@@ -152,7 +152,7 @@ func TestOMDbNon2xxIsNotAMatch(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", IMDBID: "tt1"},
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1"}},
 	})
 	if err != nil {
 		t.Fatalf("a 500 became a Go error, which the host counts against the plugin: %v", err)
@@ -165,7 +165,7 @@ func TestOMDbNon2xxIsNotAMatch(t *testing.T) {
 func TestOMDbNonMovieKindIsNoMatch(t *testing.T) {
 	p, host := stub(t, movieJSON)
 	for _, kind := range []string{"show", "season", "episode", "artist"} {
-		resp := lookup(t, p, pluginapi.MediaRef{Kind: kind, IMDBID: "tt1"})
+		resp := lookup(t, p, pluginapi.MediaRef{Kind: kind, ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1"}})
 		if resp.Outcome != pluginapi.OutcomeNoMatch {
 			t.Errorf("kind %q: outcome = %q, want no-match (OMDb serves movies only)", kind, resp.Outcome)
 		}
@@ -177,7 +177,7 @@ func TestOMDbNonMovieKindIsNoMatch(t *testing.T) {
 
 func TestOMDbCachesRepeatLookup(t *testing.T) {
 	p, host := stub(t, movieJSON)
-	ref := pluginapi.MediaRef{Kind: "movie", IMDBID: "tt0111161"}
+	ref := pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt0111161"}}
 
 	lookup(t, p, ref)
 	lookup(t, p, ref)
@@ -192,7 +192,7 @@ func TestOMDbCachesRepeatLookup(t *testing.T) {
 // enrichment pass.
 func TestOMDbCachesANoMatch(t *testing.T) {
 	p, host := stub(t, `{"Response":"False","Error":"Movie not found!"}`)
-	ref := pluginapi.MediaRef{Kind: "movie", IMDBID: "tt404"}
+	ref := pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt404"}}
 
 	for i := 0; i < 3; i++ {
 		if resp := lookup(t, p, ref); resp.Outcome != pluginapi.OutcomeNoMatch {
@@ -221,11 +221,11 @@ func TestOMDbNoKeyToResolveByIsNoMatch(t *testing.T) {
 func TestOMDbReadsItsSettingsOnEveryCall(t *testing.T) {
 	p, host := stub(t, movieJSON)
 
-	lookup(t, p, pluginapi.MediaRef{Kind: "movie", IMDBID: "tt1"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1"}})
 	s := settings()
 	s.Secret = "rotated"
 	host.SetSettings(s)
-	lookup(t, p, pluginapi.MediaRef{Kind: "movie", IMDBID: "tt2"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt2"}})
 
 	seen := queries(t, host)
 	if len(seen) != 2 {
@@ -251,7 +251,7 @@ func TestOMDbAnswersNeitherSearchNorArtwork(t *testing.T) {
 		t.Errorf("search = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}
 	if resp, err := p.ArtworkCandidates(ctx, pluginapi.ArtworkCandidatesRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", IMDBID: "tt1"}, Role: "poster",
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1"}}, Role: "poster",
 	}); err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
 		t.Errorf("artwork candidates = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}

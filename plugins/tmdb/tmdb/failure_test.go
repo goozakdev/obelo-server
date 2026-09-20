@@ -97,7 +97,7 @@ func TestEveryTMDBCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) {
 	ctx := context.Background()
 
 	if resp, err := p.Lookup(ctx, pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"},
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}},
 	}); err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
 		t.Errorf("lookup = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}
@@ -106,7 +106,7 @@ func TestEveryTMDBCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) {
 		t.Errorf("search = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}
 	if resp, err := p.ArtworkCandidates(ctx, pluginapi.ArtworkCandidatesRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"}, Role: "poster",
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}}, Role: "poster",
 	}); err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
 		t.Errorf("artwork candidates = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}
@@ -145,7 +145,7 @@ func TestTMDBAHostRefusalIsUnavailable(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"},
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}},
 	})
 	if err != nil {
 		t.Fatalf("a refusal became a Go error, which the host counts against the plugin: %v", err)
@@ -198,7 +198,7 @@ func TestTMDBASpentBudgetIsUnavailable(t *testing.T) {
 		t.Errorf("search = (%q, %v), want unavailable and no error", sr.Outcome, err)
 	}
 	ar, err := p.ArtworkCandidates(context.Background(), pluginapi.ArtworkCandidatesRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"}, Role: "poster",
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}}, Role: "poster",
 	})
 	if err != nil || ar.Outcome != pluginapi.OutcomeUnavailable {
 		t.Errorf("artwork candidates = (%q, %v), want unavailable and no error", ar.Outcome, err)

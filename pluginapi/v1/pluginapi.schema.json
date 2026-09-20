@@ -214,21 +214,6 @@
             "type": "string"
           }
         },
-        "tmdbId": {
-          "type": "string"
-        },
-        "imdbId": {
-          "type": "string"
-        },
-        "musicbrainzId": {
-          "type": "string"
-        },
-        "thetvdbId": {
-          "type": "string"
-        },
-        "anidbId": {
-          "type": "string"
-        },
         "seasonNumber": {
           "type": "integer"
         },

@@ -458,7 +458,7 @@ func TestAnArtistWithNoNameAndNoAlbumsAsksNothing(t *testing.T) {
 func TestTheTagArtistMBIDStillWinsOverCorroboration(t *testing.T) {
 	p, stub := theEaglesStub(t)
 	ref := artistRef("The Eagles", pluginapi.AlbumHint{Title: "Hell Freezes Over", ReleaseGroupMBID: hellFreezesOverRGID})
-	ref.MusicbrainzID = americanEaglesMBID
+	ref.ExternalIDs = map[string]string{pluginapi.NamespaceMusicBrainz: americanEaglesMBID}
 
 	meta, err := lookup(p, ref)
 	if err != nil {

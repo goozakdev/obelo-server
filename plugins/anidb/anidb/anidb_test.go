@@ -77,7 +77,7 @@ func TestAniDBLookupByID(t *testing.T) {
 	p, host := stub(t, animeXML)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", Title: "whatever", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", Title: "whatever", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	})
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
@@ -114,7 +114,7 @@ func TestAniDBSendsItsRegisteredClientOnEveryRequest(t *testing.T) {
 	p, host := stub(t, animeXML)
 
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	}); err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestAniDBSendsItsRegisteredClientOnEveryRequest(t *testing.T) {
 	s.Secret = "obelo-client-2"
 	host.SetSettings(s)
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "2"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "2"}},
 	}); err != nil {
 		t.Fatalf("second Lookup: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestAniDBKeepsThePlainHTTPBaseAndItsExplicitPort(t *testing.T) {
 	p, host := stub(t, animeXML)
 
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	}); err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestAniDBNonVideoKindIsNoMatch(t *testing.T) {
 
 	for _, kind := range []string{"artist", "album", "track"} {
 		resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-			Ref: pluginapi.MediaRef{Kind: kind, AniDBID: "1"},
+			Ref: pluginapi.MediaRef{Kind: kind, ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 		})
 		if err != nil {
 			t.Fatalf("kind %q: %v", kind, err)
@@ -223,7 +223,7 @@ func TestAniDBUnknownAIDIsNoMatch(t *testing.T) {
 	p, _ := stub(t, `<error>Unknown anime</error>`)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", AniDBID: "999999"},
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "999999"}},
 	})
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
@@ -240,7 +240,7 @@ func TestAniDBABannedClientIsAGoError(t *testing.T) {
 	p, _ := stub(t, `<error>Client Banned</error>`)
 
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	}); err == nil {
 		t.Fatal("a banned client answered with no error; it must reach the operator")
 	}
@@ -267,7 +267,7 @@ func TestAniDBPrefersTheConfiguredLanguagesTitle(t *testing.T) {
 			}),
 		)
 		resp, err := New(host).Lookup(context.Background(), pluginapi.LookupRequest{
-			Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+			Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 		})
 		if err != nil {
 			t.Fatalf("%s: %v", lang, err)
@@ -301,7 +301,7 @@ func TestAniDBAnEmptyRecordIsNoMatch(t *testing.T) {
 	p, _ := stub(t, `<anime id="1"></anime>`)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	})
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
@@ -315,7 +315,7 @@ func TestAniDBAnEmptyRecordIsNoMatch(t *testing.T) {
 // which matters more here than anywhere else, because AniDB bans bursty clients.
 func TestAniDBCachesRepeatLookups(t *testing.T) {
 	p, host := stub(t, animeXML)
-	ref := pluginapi.MediaRef{Kind: "show", AniDBID: "1"}
+	ref := pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}}
 
 	for i := 0; i < 3; i++ {
 		if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref}); err != nil {
@@ -360,7 +360,7 @@ func TestAniDBSearchAnswersNoCandidatesWithoutAsking(t *testing.T) {
 // anime, and nothing at all for any other role — without a call.
 func TestAniDBArtworkCandidates(t *testing.T) {
 	p, host := stub(t, animeXML)
-	ref := pluginapi.MediaRef{Kind: "show", AniDBID: "1"}
+	ref := pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}}
 
 	resp, err := p.ArtworkCandidates(context.Background(), pluginapi.ArtworkCandidatesRequest{
 		Ref: ref, Role: "poster",

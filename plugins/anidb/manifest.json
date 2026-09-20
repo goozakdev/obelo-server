@@ -16,7 +16,7 @@
       "probe": {
         "kind": "show",
         "title": "Cowboy Bebop",
-        "anidbId": "1"
+        "externalIds": {"anidb": "1"}
       }
     }
   ],

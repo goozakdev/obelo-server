@@ -30,7 +30,7 @@ import (
 func TestTheAudioDBAServerErrorIsUnavailable(t *testing.T) {
 	p, _ := audiodbStub(t, `{}`, http.StatusServiceUnavailable)
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+		Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 	})
 	if err != nil {
 		t.Fatalf("a 503 must not be a Go error (it is a strike against the plugin): %v", err)
@@ -46,7 +46,7 @@ func TestTheAudioDBAServerErrorIsUnavailable(t *testing.T) {
 // TestTheAudioDBStatusErrorsCarryTheirClassification states the whole line, in
 // both directions.
 func TestTheAudioDBStatusErrorsCarryTheirClassification(t *testing.T) {
-	ref := pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}
+	ref := pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}
 
 	t.Run("a status describing the source is unavailable", func(t *testing.T) {
 		for _, status := range []int{408, 429, 500, 502, 503, 504} {
@@ -82,8 +82,8 @@ func TestTheAudioDBStatusErrorsCarryTheirClassification(t *testing.T) {
 		// is OutcomeNoMatch now, on both the artist and the track path.
 		p, _ := audiodbStub(t, `{}`, http.StatusNotFound)
 		for _, r := range []pluginapi.MediaRef{
-			{Kind: "artist", MusicbrainzID: mbid},
-			{Kind: "track", MusicbrainzID: mbid},
+			{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
+			{Kind: "track", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 		} {
 			resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: r})
 			if err != nil || resp.Outcome != pluginapi.OutcomeNoMatch {
@@ -107,7 +107,7 @@ func TestEveryTheAudioDBCallPathTreatsARetryableStatusAsUnavailable(t *testing.T
 
 	t.Run("artist lookup", func(t *testing.T) {
 		p, _ := audiodbStub(t, `{}`, http.StatusInternalServerError)
-		resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}})
+		resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}})
 		requireUnavailableLookup(t, resp, err)
 	})
 
@@ -120,7 +120,7 @@ func TestEveryTheAudioDBCallPathTreatsARetryableStatusAsUnavailable(t *testing.T
 	t.Run("artwork candidates", func(t *testing.T) {
 		p, _ := audiodbStub(t, `{}`, http.StatusInternalServerError)
 		resp, err := p.ArtworkCandidates(ctx, pluginapi.ArtworkCandidatesRequest{
-			Ref:  pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+			Ref:  pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 			Role: "poster",
 		})
 		if err != nil {
@@ -142,7 +142,7 @@ func TestTheAudioDBARefusedFetchIsUnavailable(t *testing.T) {
 	)
 	p := New(host)
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+		Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 	})
 	if err != nil {
 		t.Fatalf("a refusal must not be a Go error: %v", err)
@@ -168,7 +168,7 @@ func TestTheAudioDBDoesNotCacheAFailedFetch(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}
+	ref := pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}
 	if resp, _ := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref}); resp.Outcome != pluginapi.OutcomeUnavailable {
 		t.Fatalf("first outcome = %q, want unavailable", resp.Outcome)
 	}
@@ -212,7 +212,7 @@ func TestTheAudioDBPacesItsFetches(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, _ = p.Lookup(context.Background(), pluginapi.LookupRequest{
-				Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: id},
+				Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: id}},
 			})
 		}()
 	}

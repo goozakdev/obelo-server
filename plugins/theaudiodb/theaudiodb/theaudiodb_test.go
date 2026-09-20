@@ -108,7 +108,7 @@ func candidates(t *testing.T, p *Provider, ref pluginapi.MediaRef, role string) 
 
 func TestTheAudioDBByMBID(t *testing.T) {
 	p, seen := audiodbStub(t, audiodbArtistJSON, 0)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}})
 	if resp.Outcome != pluginapi.OutcomeMatched {
 		t.Fatalf("outcome = %q, want matched", resp.Outcome)
 	}
@@ -176,7 +176,7 @@ func TestTheAudioDBNoArtistsIsNoMatch(t *testing.T) {
 func TestTheAudioDBNonArtistOrNoKeySkips(t *testing.T) {
 	p, seen := audiodbStub(t, audiodbArtistJSON, 0)
 	// A non-artist kind is not TheAudioDB's.
-	if got := lookup(t, p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: mbid}).Outcome; got != pluginapi.OutcomeNoMatch {
+	if got := lookup(t, p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("album outcome = %q, want no-match", got)
 	}
 	// An artist with neither MBID nor name has nothing to key a lookup by.
@@ -193,7 +193,7 @@ func TestTheAudioDBNonArtistOrNoKeySkips(t *testing.T) {
 // reusing the cached artist lookup.
 func TestTheAudioDBArtistCandidates(t *testing.T) {
 	p, seen := audiodbStub(t, audiodbArtistJSON, 0)
-	resp := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "poster")
+	resp := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "poster")
 	if resp.Outcome != pluginapi.OutcomeMatched {
 		t.Fatalf("outcome = %q, want matched", resp.Outcome)
 	}
@@ -230,12 +230,12 @@ func TestTheAudioDBArtistCandidatesNonArtistOrNoThumb(t *testing.T) {
 	// was the Go provider's word for it; the contract's is OutcomeUnavailable, and
 	// the host maps one back to the other.
 	p, _ := audiodbStub(t, audiodbArtistJSON, 0)
-	if got := candidates(t, p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: mbid}, "cover").Outcome; got != pluginapi.OutcomeUnavailable {
+	if got := candidates(t, p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "cover").Outcome; got != pluginapi.OutcomeUnavailable {
 		t.Errorf("album outcome = %q, want unavailable", got)
 	}
 	// A record with a bio but no thumb yields no candidates.
 	p2, _ := audiodbStub(t, `{"artists":[{"strBiographyEN":"words, no image"}]}`, 0)
-	resp := candidates(t, p2, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "poster")
+	resp := candidates(t, p2, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "poster")
 	if resp.Outcome != pluginapi.OutcomeMatched || len(resp.Candidates) != 0 {
 		t.Errorf("no-thumb = %+v, want matched with no candidates", resp)
 	}
@@ -267,7 +267,7 @@ const audiodbArtistArtworkJSON = `{
 // alongside the thumb poster — so it can fill a logo/background fanart.tv left empty.
 func TestTheAudioDBArtistArtworkRoles(t *testing.T) {
 	p, _ := audiodbStub(t, audiodbArtistArtworkJSON, 0)
-	meta := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}).Record
+	meta := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Record
 	got := map[string]string{}
 	for _, a := range meta.Artwork {
 		got[a.Role] = a.URL
@@ -289,11 +289,11 @@ func TestTheAudioDBArtistArtworkRoles(t *testing.T) {
 // order, skipping the absent Fanart2).
 func TestTheAudioDBArtistCandidatesByRole(t *testing.T) {
 	p, _ := audiodbStub(t, audiodbArtistArtworkJSON, 0)
-	logo := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "logo").Candidates
+	logo := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "logo").Candidates
 	if len(logo) != 1 || logo[0].URL != "https://theaudiodb.com/logo.png" {
 		t.Errorf("logo candidates = %+v, want the single strArtistLogo", logo)
 	}
-	bg := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "background").Candidates
+	bg := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "background").Candidates
 	want := []string{"https://theaudiodb.com/fan1.jpg", "https://theaudiodb.com/fan3.jpg"}
 	if len(bg) != len(want) {
 		t.Fatalf("background candidates = %d, want %d", len(bg), len(want))
@@ -320,7 +320,7 @@ const audiodbTrackJSON = `{
 
 func TestTheAudioDBTrackByMBID(t *testing.T) {
 	p, seen := audiodbStub(t, audiodbTrackJSON, 0)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "track", MusicbrainzID: mbid})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "track", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}})
 	meta := resp.Record
 	if resp.Outcome != pluginapi.OutcomeMatched || !meta.Matched || meta.Source != "theaudiodb" {
 		t.Errorf("meta = %+v (outcome %q), want matched theaudiodb result", meta, resp.Outcome)
@@ -405,7 +405,7 @@ func TestTheAudioDBTrackNoKeySkips(t *testing.T) {
 func TestTheAudioDBCaches(t *testing.T) {
 	p, seen := audiodbStub(t, audiodbArtistJSON, 0)
 	for i := 0; i < 3; i++ {
-		if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}).Outcome; got != pluginapi.OutcomeMatched {
+		if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Outcome; got != pluginapi.OutcomeMatched {
 			t.Fatalf("Lookup %d outcome = %q, want matched", i, got)
 		}
 	}
@@ -423,11 +423,11 @@ func TestTheAudioDBArtistAndTrackCachesDoNotCollide(t *testing.T) {
       "track":[{"strDescriptionEN":"a synopsis"}]
     }`
 	p, seen := audiodbStub(t, body, 0)
-	artist := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}).Record
+	artist := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Record
 	if len(artist.Artwork) != 1 || artist.Artwork[0].URL != "https://x/artist.jpg" {
 		t.Errorf("artist artwork = %+v, want the strArtistThumb", artist.Artwork)
 	}
-	track := lookup(t, p, pluginapi.MediaRef{Kind: "track", MusicbrainzID: mbid}).Record
+	track := lookup(t, p, pluginapi.MediaRef{Kind: "track", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Record
 	if track.Overview != "a synopsis" {
 		t.Errorf("track overview = %q, want the strDescriptionEN", track.Overview)
 	}
@@ -454,9 +454,9 @@ func TestTheAudioDBReadsItsSettingsPerCall(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "one"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "one"}})
 	host.SetSettings(pluginapi.Settings{Enabled: true, Secret: "second", URL: baseURL, Language: "en-US"})
-	lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "two"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "two"}})
 
 	if len(paths) != 2 || !strings.HasPrefix(paths[0], "/first/") || !strings.HasPrefix(paths[1], "/second/") {
 		t.Errorf("paths = %v, want the key read per call (/first/… then /second/…)", paths)

@@ -35,7 +35,7 @@ func statusHost(t *testing.T, status int) (*Provider, *sdktest.Host) {
 func TestFanartTVAServerErrorIsUnavailable(t *testing.T) {
 	p, _ := statusHost(t, http.StatusServiceUnavailable)
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+		Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 	})
 	if err != nil {
 		t.Fatalf("a 503 must not be a Go error (it is a strike against the plugin): %v", err)
@@ -55,7 +55,7 @@ func TestFanartTVStatusErrorsCarryTheirClassification(t *testing.T) {
 		for _, status := range []int{408, 429, 500, 502, 503, 504} {
 			p, _ := statusHost(t, status)
 			resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-				Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+				Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 			})
 			if err != nil {
 				t.Errorf("status %d: err = %v, want the unavailable answer", status, err)
@@ -74,7 +74,7 @@ func TestFanartTVStatusErrorsCarryTheirClassification(t *testing.T) {
 		for _, status := range []int{400, 401, 403} {
 			p, _ := statusHost(t, status)
 			_, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-				Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+				Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 			})
 			if err == nil {
 				t.Errorf("status %d: err = nil, want a real error", status)
@@ -92,9 +92,9 @@ func TestFanartTVStatusErrorsCarryTheirClassification(t *testing.T) {
 		// about the ITEM. It was ErrNoMatch before the port and it is OutcomeNoMatch now.
 		p, _ := statusHost(t, http.StatusNotFound)
 		for _, ref := range []pluginapi.MediaRef{
-			{Kind: "artist", MusicbrainzID: mbid},
-			{Kind: "movie", TMDBID: "438631"},
-			{Kind: "show", TheTVDBID: "121361"},
+			{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
+			{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}},
+			{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}},
 		} {
 			resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
 			if err != nil || resp.Outcome != pluginapi.OutcomeNoMatch {
@@ -106,7 +106,7 @@ func TestFanartTVStatusErrorsCarryTheirClassification(t *testing.T) {
 	t.Run("a document this code cannot read stays a Go error", func(t *testing.T) {
 		p, _ := fanartStub(t, `oops, not json`, 0)
 		if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-			Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+			Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 		}); err == nil {
 			t.Error("err = nil, want the decode failure as a real error")
 		}
@@ -124,20 +124,20 @@ func TestEveryFanartTVCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) 
 
 	t.Run("artist lookup", func(t *testing.T) {
 		p, _ := statusHost(t, http.StatusInternalServerError)
-		resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}})
+		resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}})
 		requireUnavailableLookup(t, resp, err)
 	})
 
 	t.Run("video lookup", func(t *testing.T) {
 		p, _ := statusHost(t, http.StatusInternalServerError)
-		resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "438631"}})
+		resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}}})
 		requireUnavailableLookup(t, resp, err)
 	})
 
 	t.Run("artwork candidates", func(t *testing.T) {
 		p, _ := statusHost(t, http.StatusInternalServerError)
 		resp, err := p.ArtworkCandidates(ctx, pluginapi.ArtworkCandidatesRequest{
-			Ref:  pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+			Ref:  pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 			Role: "poster",
 		})
 		if err != nil {
@@ -159,7 +159,7 @@ func TestFanartTVARefusedFetchIsUnavailable(t *testing.T) {
 	)
 	p := New(host)
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+		Ref: pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 	})
 	if err != nil {
 		t.Fatalf("a refusal must not be a Go error: %v", err)
@@ -185,7 +185,7 @@ func TestFanartTVDoesNotCacheAFailedFetch(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}
+	ref := pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}
 	if resp, _ := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref}); resp.Outcome != pluginapi.OutcomeUnavailable {
 		t.Fatalf("first outcome = %q, want unavailable", resp.Outcome)
 	}

@@ -38,7 +38,7 @@ const fanartTVShowJSON = `{
 
 func TestFanartTVMovieArtworkByTMDBID(t *testing.T) {
 	p, host := fanartStub(t, fanartMovieJSON, 0)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "438631"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}})
 	meta := resp.Record
 	if resp.Outcome != pluginapi.OutcomeMatched || !meta.Matched || meta.Source != "fanart.tv" {
 		t.Errorf("meta = %+v (outcome %q), want matched fanart.tv result", meta, resp.Outcome)
@@ -67,7 +67,7 @@ func TestFanartTVMovieArtworkByTMDBID(t *testing.T) {
 func TestFanartTVMovieArtworkByIMDBID(t *testing.T) {
 	// No TMDB id on the ref: the movie endpoint falls back to the IMDb id.
 	p, host := fanartStub(t, fanartMovieJSON, 0)
-	meta := lookup(t, p, pluginapi.MediaRef{Kind: "movie", IMDBID: "tt1160419"}).Record
+	meta := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt1160419"}}).Record
 	if len(meta.Artwork) != 2 || meta.Artwork[0].Role != "poster" {
 		t.Errorf("artwork = %+v, want poster + background", meta.Artwork)
 	}
@@ -79,7 +79,7 @@ func TestFanartTVMovieArtworkByIMDBID(t *testing.T) {
 
 func TestFanartTVShowArtworkByTheTVDBID(t *testing.T) {
 	p, host := fanartStub(t, fanartTVShowJSON, 0)
-	meta := lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "121361"}).Record
+	meta := lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}}).Record
 	if len(meta.Artwork) != 2 {
 		t.Fatalf("artwork = %+v, want poster + background", meta.Artwork)
 	}
@@ -107,7 +107,7 @@ func TestFanartTVVideoNoIDIsNoMatch(t *testing.T) {
 		t.Errorf("no-id show outcome = %q, want no-match", got)
 	}
 	// Season/episode are not served by the video path (fanart.tv keys by series id only).
-	ep := pluginapi.MediaRef{Kind: "episode", TheTVDBID: "121361", SeasonNumber: 1, EpisodeNumber: 5}
+	ep := pluginapi.MediaRef{Kind: "episode", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}, SeasonNumber: 1, EpisodeNumber: 5}
 	if got := lookup(t, p, ep).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("episode outcome = %q, want no-match", got)
 	}
@@ -119,7 +119,7 @@ func TestFanartTVVideoNoIDIsNoMatch(t *testing.T) {
 func TestFanartTVVideoNotFoundIsNoMatch(t *testing.T) {
 	// fanart.tv answers an unknown id with 404 — the normal "no record" outcome.
 	p, _ := fanartStub(t, `{"status":"error","error message":"Not found"}`, http.StatusNotFound)
-	if got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "0"}).Outcome; got != pluginapi.OutcomeNoMatch {
+	if got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "0"}}).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match", got)
 	}
 }
@@ -127,7 +127,7 @@ func TestFanartTVVideoNotFoundIsNoMatch(t *testing.T) {
 func TestFanartTVVideoEmptyImagesIsNoMatch(t *testing.T) {
 	// A 200 with no poster/background lists has nothing to contribute.
 	p, _ := fanartStub(t, `{"name":"Dune","tmdb_id":"438631"}`, 0)
-	if got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "438631"}).Outcome; got != pluginapi.OutcomeNoMatch {
+	if got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}}).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match", got)
 	}
 }
@@ -144,11 +144,11 @@ func TestFanartTVVideoAndArtistCachesDoNotCollide(t *testing.T) {
     }`
 	p, host := fanartStub(t, both, 0)
 	// Same raw id "123" used as an MBID and as a TMDB id — distinct cache namespaces.
-	artist := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "123"}).Record
+	artist := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "123"}}).Record
 	if len(artist.Artwork) != 1 || artist.Artwork[0].URL != "https://x/artist.jpg" {
 		t.Errorf("artist artwork = %+v, want the artistthumb", artist.Artwork)
 	}
-	movie := lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "123"}).Record
+	movie := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "123"}}).Record
 	if len(movie.Artwork) != 2 || movie.Artwork[0].URL != "https://x/movie-poster.jpg" {
 		t.Errorf("movie artwork = %+v, want the movieposter+moviebackground", movie.Artwork)
 	}
@@ -165,7 +165,7 @@ func TestFanartTVVideoAndArtistCachesDoNotCollide(t *testing.T) {
 func TestFanartTVVideoCachesByID(t *testing.T) {
 	p, host := fanartStub(t, fanartMovieJSON, 0)
 	for i := 0; i < 3; i++ {
-		if got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "438631"}).Outcome; got != pluginapi.OutcomeMatched {
+		if got := lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}}).Outcome; got != pluginapi.OutcomeMatched {
 			t.Fatalf("Lookup %d outcome = %q, want matched", i, got)
 		}
 	}

@@ -253,7 +253,7 @@ func TestMusicBrainz503BacksOffWithPacingDisabled(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"mbid-1","title":"Doolittle"}`))
 	}, noPacing())
 
-	md, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "mbid-1"})
+	md, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "mbid-1"}})
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestMusicBrainz503GivesUpAfterMaxAttemptsAndIsUnavailable(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}, noPacing())
 
-	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "mbid-1"})
+	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "mbid-1"}})
 	assertUnavailable(t, err, "a persistent 503")
 	if !strings.Contains(err.Error(), "503") {
 		t.Errorf("the detail %q should name the status", err)
@@ -337,7 +337,7 @@ func TestARetryAfterTheBudgetCannotPayForIsNotTaken(t *testing.T) {
 	}, noPacing())
 
 	start := time.Now()
-	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "mbid-1"})
+	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "mbid-1"}})
 	elapsed := time.Since(start)
 
 	assertUnavailable(t, err, "a Retry-After longer than the budget")
@@ -373,7 +373,7 @@ func TestBudgetAllows(t *testing.T) {
 func TestEveryCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) {
 	paths := map[string]func(*Provider) error{
 		"lookup": func(p *Provider) error {
-			_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"})
+			_, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}})
 			return err
 		},
 		"search": func(p *Provider) error {
@@ -381,7 +381,7 @@ func TestEveryCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) {
 			return err
 		},
 		"artwork-candidates": func(p *Provider) error {
-			_, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"}, "cover")
+			_, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}}, "cover")
 			return err
 		},
 		"album-tracklist": func(p *Provider) error {
@@ -430,7 +430,7 @@ func TestAHostRefusalIsUnavailable(t *testing.T) {
 		sdktest.WithHandlerFunc(jsonHandler(`{}`)),
 	)
 	p := New(host)
-	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"})
+	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}})
 	assertUnavailable(t, err, "a refused fetch")
 }
 
@@ -443,7 +443,7 @@ func TestAnUnreadableAnswerStaysAGoError(t *testing.T) {
 		_, _ = w.Write([]byte(`<html>this is not JSON</html>`))
 	}, noPacing())
 
-	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"})
+	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}})
 	assertGoError(t, err, "an unparseable body")
 	var fe *pluginsdk.FetchError
 	if !errors.As(err, &fe) || fe.Decode == nil {

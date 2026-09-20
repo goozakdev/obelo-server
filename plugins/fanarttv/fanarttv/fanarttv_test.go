@@ -83,7 +83,7 @@ func candidates(t *testing.T, p *Provider, ref pluginapi.MediaRef, role string) 
 
 func TestFanartTVBestArtistThumb(t *testing.T) {
 	p, host := fanartStub(t, fanartArtistJSON, 0)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}})
 	if resp.Outcome != pluginapi.OutcomeMatched {
 		t.Fatalf("outcome = %q, want matched", resp.Outcome)
 	}
@@ -120,7 +120,7 @@ func TestFanartTVBackgroundOrLogoOnlyMatches(t *testing.T) {
 	// A record with no artist photo still matches when it carries a background or a
 	// logo — those roles stand on their own (the artist photo is no longer required).
 	p, _ := fanartStub(t, `{"name":"X","artistbackground":[{"url":"https://x/bg.jpg","likes":"1"}]}`, 0)
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}})
 	if len(resp.Record.Artwork) != 1 || resp.Record.Artwork[0].Role != "background" {
 		t.Errorf("artwork = %+v, want a single background ref", resp.Record.Artwork)
 	}
@@ -130,7 +130,7 @@ func TestFanartTVNoImageIsNoMatch(t *testing.T) {
 	// A 200 carrying none of the three image roles (thumb/background/logo) is a
 	// no-match — there is nothing for the fill-only chain to contribute.
 	p, _ := fanartStub(t, `{"name":"X"}`, 0)
-	if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}).Outcome; got != pluginapi.OutcomeNoMatch {
+	if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match", got)
 	}
 }
@@ -138,7 +138,7 @@ func TestFanartTVNoImageIsNoMatch(t *testing.T) {
 func TestFanartTVNotFoundIsNoMatch(t *testing.T) {
 	// fanart.tv answers an unknown MBID with 404 — the normal "no record" outcome.
 	p, _ := fanartStub(t, `{"status":"error","error message":"Not found"}`, http.StatusNotFound)
-	if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}).Outcome; got != pluginapi.OutcomeNoMatch {
+	if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match", got)
 	}
 }
@@ -146,7 +146,7 @@ func TestFanartTVNotFoundIsNoMatch(t *testing.T) {
 func TestFanartTVNonArtistOrNoMBIDSkips(t *testing.T) {
 	p, host := fanartStub(t, fanartArtistJSON, 0)
 	// A non-artist (non-video) kind is not fanart.tv's.
-	if got := lookup(t, p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: mbid}).Outcome; got != pluginapi.OutcomeNoMatch {
+	if got := lookup(t, p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Outcome; got != pluginapi.OutcomeNoMatch {
 		t.Errorf("album outcome = %q, want no-match", got)
 	}
 	// An artist with no MBID is skipped entirely — fanart.tv is strictly MBID-keyed.
@@ -161,7 +161,7 @@ func TestFanartTVNonArtistOrNoMBIDSkips(t *testing.T) {
 func TestFanartTVCachesByMBID(t *testing.T) {
 	p, host := fanartStub(t, fanartArtistJSON, 0)
 	for i := 0; i < 3; i++ {
-		if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}).Outcome; got != pluginapi.OutcomeMatched {
+		if got := lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}).Outcome; got != pluginapi.OutcomeMatched {
 			t.Fatalf("Lookup %d outcome = %q, want matched", i, got)
 		}
 	}
@@ -177,7 +177,7 @@ func TestFanartTVCachesByMBID(t *testing.T) {
 // MBID-keyed.
 func TestFanartTVArtistCandidates(t *testing.T) {
 	p, host := fanartStub(t, fanartArtistJSON, 0)
-	resp := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "poster")
+	resp := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "poster")
 	if resp.Outcome != pluginapi.OutcomeMatched {
 		t.Fatalf("outcome = %q, want matched", resp.Outcome)
 	}
@@ -213,7 +213,7 @@ func TestFanartTVArtistCandidates(t *testing.T) {
 // within its own set, and the artist-photo grid is unaffected.
 func TestFanartTVArtistCandidatesByRole(t *testing.T) {
 	p, _ := fanartStub(t, fanartArtistJSON, 0)
-	bg := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "background").Candidates
+	bg := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "background").Candidates
 	wantBG := []string{"https://assets.fanart.tv/bg-best.jpg", "https://assets.fanart.tv/bg-low.jpg"}
 	if len(bg) != len(wantBG) {
 		t.Fatalf("background candidates = %d, want %d", len(bg), len(wantBG))
@@ -223,7 +223,7 @@ func TestFanartTVArtistCandidatesByRole(t *testing.T) {
 			t.Errorf("background[%d].URL = %q, want %q", i, bg[i].URL, w)
 		}
 	}
-	logos := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "logo").Candidates
+	logos := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "logo").Candidates
 	// HD logo leads the SD one despite the SD's higher likes (HD is prepended first).
 	wantLogos := []string{"https://assets.fanart.tv/hdlogo.png", "https://assets.fanart.tv/logo-sd.png"}
 	if len(logos) != len(wantLogos) {
@@ -241,7 +241,7 @@ func TestFanartTVArtistCandidatesNonArtistOrNoMBID(t *testing.T) {
 	// A non-artist kind: fanart.tv owns no listable set there (video lists via the
 	// video lead). ErrSearchUnavailable was the Go provider's word for it; the
 	// contract's is OutcomeUnavailable, and the host maps one back to the other.
-	if got := candidates(t, p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: mbid}, "cover").Outcome; got != pluginapi.OutcomeUnavailable {
+	if got := candidates(t, p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "cover").Outcome; got != pluginapi.OutcomeUnavailable {
 		t.Errorf("album outcome = %q, want unavailable", got)
 	}
 	// An artist with no MBID is skipped entirely — strictly MBID-keyed — no call, no
@@ -258,7 +258,7 @@ func TestFanartTVArtistCandidatesNonArtistOrNoMBID(t *testing.T) {
 func TestFanartTVArtistCandidatesNotFoundIsEmpty(t *testing.T) {
 	// A 404 (unknown MBID) is the normal "no images" outcome — empty, not an error.
 	p, _ := fanartStub(t, `{"status":"error","error message":"Not found"}`, http.StatusNotFound)
-	resp := candidates(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid}, "poster")
+	resp := candidates(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}}, "poster")
 	if resp.Outcome != pluginapi.OutcomeMatched || len(resp.Candidates) != 0 {
 		t.Errorf("404 = %+v, want matched with no candidates", resp)
 	}

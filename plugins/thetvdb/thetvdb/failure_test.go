@@ -47,7 +47,7 @@ func statusHost(code int) *sdktest.Host {
 }
 
 func TestTheTVDBStatusErrorsCarryTheirClassification(t *testing.T) {
-	ref := pluginapi.MediaRef{Kind: "show", Title: "Breaking Bad", TheTVDBID: "81189"}
+	ref := pluginapi.MediaRef{Kind: "show", Title: "Breaking Bad", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "81189"}}
 
 	// A status the SOURCE owns: unavailable, with the status in the Detail, and no
 	// Go error for the host to count against the plugin.
@@ -128,7 +128,7 @@ func TestTheTVDBARetryableLoginFailureIsUnavailable(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "81189"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "81189"}},
 	})
 	if err != nil {
 		t.Fatalf("a 503 on the login became a Go error: %v", err)
@@ -153,7 +153,7 @@ func TestTheTVDBARejectedKeyOnLoginIsAGoError(t *testing.T) {
 	p := New(host)
 
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "81189"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "81189"}},
 	}); err == nil {
 		t.Fatal("a rejected apikey answered with no error; it must reach the operator")
 	}
@@ -173,7 +173,7 @@ func TestTheTVDBALoginWithNoTokenIsAGoError(t *testing.T) {
 	p := New(host)
 
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "81189"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "81189"}},
 	}); err == nil {
 		t.Fatal("a tokenless login answered with no error")
 	}
@@ -193,7 +193,7 @@ func TestTheTVDBAHostRefusalIsUnavailable(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "121361"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}},
 	})
 	if err != nil {
 		t.Fatalf("a refusal became a Go error, which the host counts against the plugin: %v", err)
@@ -226,7 +226,7 @@ func TestTheTVDBASpentBudgetIsUnavailable(t *testing.T) {
 
 	for _, kind := range []string{"show", "season", "episode"} {
 		resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-			Ref: pluginapi.MediaRef{Kind: kind, Title: "Breaking Bad", TheTVDBID: "81189",
+			Ref: pluginapi.MediaRef{Kind: kind, Title: "Breaking Bad", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "81189"},
 				SeasonNumber: 1, EpisodeNumber: 1},
 		})
 		if err != nil {
@@ -264,7 +264,7 @@ func TestTheTVDBDoesNotCacheAFailure(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "show", TheTVDBID: "121361"}
+	ref := pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}}
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
 	if err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
