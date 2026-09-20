@@ -449,9 +449,7 @@ describe("AdminNeedsFixingScreen — fixing without typing an id", () => {
 
     // The candidate's namespace rides back with its id (ADR-0060 decision 5), so
     // the pick is pinned where it was found and not in whatever the lead is now.
-    await waitFor(() =>
-      expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438", undefined, undefined, "tmdb"),
-    );
+    await waitFor(() => expect(applyEnrichmentOverride).toHaveBeenCalledWith("e1", "1438", "tmdb"));
     // A metadata pin is not an identity change, so nothing is re-filed and no scan
     // is offered (ADR-0014).
     expect(fixMatch).not.toHaveBeenCalled();
@@ -1004,13 +1002,12 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         "albums",
         "al-bh",
         "mbid-bh",
+        // The namespace the pick was found in (ADR-0060 decision 5).
+        "musicbrainz",
         true,
         // A SEARCHED candidate names no edition (ADR-0052) — only a pasted
         // /release/ URL does — so the apply carries none, and clears any stored one.
         undefined,
-        undefined,
-        // ...and its namespace rides back with its id (ADR-0060 decision 5).
-        "musicbrainz",
       ),
     );
     const summary = await screen.findByTestId("fix-item-cascade");
@@ -1108,10 +1105,9 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         "al-bh",
         // The release-GROUP stays the record (ADR-0038); the release is the edition.
         "rg-bh",
+        "musicbrainz",
         true,
         "rel-b",
-        undefined,
-        "musicbrainz",
       ),
     );
     expect(await screen.findByTestId("album-edition-cascade")).toHaveTextContent(

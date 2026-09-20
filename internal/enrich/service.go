@@ -635,11 +635,11 @@ func (s *Service) SearchCandidates(ctx context.Context, kind, query string, opts
 }
 
 // searchIn is SearchCandidates against a given snapshot. The item-scoped searches
-// (a Title's, a parent's) pass their Library's snapshot, so the lead that answers
-// is the lead an apply without a `source` means (ADR-0060 decision 5): in a
-// repointed Library the picker must not offer TMDB records for a pick that would
-// then be read as AniDB ids. For a Library with no policy of its own the Library's
-// snapshot is the global one, so nothing changes there.
+// (a Title's, a parent's) pass their Library's snapshot, so the lead's namespace
+// stamps every candidate the provider left unnamed (ADR-0060 decision 5): in a
+// repointed Library the picker must not offer TMDB records stamped as AniDB. For a
+// Library with no policy of its own the Library's snapshot is the global one, so
+// nothing changes there.
 func (s *Service) searchIn(ctx context.Context, snap providerSnapshot, kind, query string, opts SearchOptions) ([]Candidate, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
@@ -924,11 +924,12 @@ func (s *Service) PreviewTitleExternal(ctx context.Context, titleID, pastedRef s
 //
 // namespace is the External-id namespace externalID belongs to — the `source` of the
 // candidate the Admin picked, which the host stamped from the provider it asked
-// (ADR-0060 decision 5). An empty namespace means the Title's Library's CURRENT
-// lead's namespace for the Title's kind, so a caller that names none (an older
-// client) keeps meaning what it always meant. Nothing here maps an id onto a
-// namespace by media kind any more: that was ExternalMatchForKind, and it is how an
-// AniDB-led Library's aids ended up recorded as TMDB ids.
+// (ADR-0060 decision 5). An override always names its namespace: the HTTP API
+// requires `source` (D029), and every other caller — the Cascade, a Service-level
+// test — passes the one it means (usually the Library's lead). An empty namespace is
+// ErrUnknownNamespace. Nothing here maps an id onto a namespace by media kind any
+// more: that was ExternalMatchForKind, and it is how an AniDB-led Library's aids
+// ended up recorded as TMDB ids.
 //
 // Like FindTitleCandidates it owns the lean Title read. store.ErrNotFound for an
 // unknown Title flows to the handler as a 404. Identity/watch state are untouched.
@@ -941,14 +942,11 @@ func (s *Service) ApplyOverride(ctx context.Context, titleID, externalID, namesp
 
 // applyOverride is ApplyOverride with the record's origin spelled out.
 func (s *Service) applyOverride(ctx context.Context, titleID, externalID, namespace string, origin store.RecordOrigin) error {
-	t, err := s.store.TitleForEnrichmentByID(titleID)
-	if err != nil {
+	if _, err := s.store.TitleForEnrichmentByID(titleID); err != nil {
 		return err // ErrNotFound flows through
 	}
 	if namespace == "" {
-		if namespace, err = s.leadNamespace(ctx, t.LibraryID, t.Kind); err != nil {
-			return err
-		}
+		return ErrUnknownNamespace
 	}
 	return s.matchTitle(ctx, titleID, store.ExternalMatch{Namespace: namespace, ID: externalID}, origin)
 }
@@ -1005,9 +1003,9 @@ func (s *Service) PreviewExternalForKind(ctx context.Context, kind, pastedRef st
 // a disabled/unconfigured provider ErrSearchUnavailable, and an unknown id ErrNoMatch
 // (so a stale id previews as "not found" instead of hanging or 500ing).
 func (s *Service) previewExternal(ctx context.Context, snap providerSnapshot, kind, pastedRef string) (Candidate, error) {
-	// The caller hands in the snapshot (the item's Library's, so the paste is read by
-	// the lead an apply without a `source` means). It is needed BEFORE the parse
-	// because the parse may be the provider's
+	// The caller hands in the snapshot (the item's Library's, so a bare paste with no
+	// namespace of its own reads by that Library's current lead). It is needed BEFORE
+	// the parse because the parse may be the provider's
 	// (see externalRef) — and the parse still comes before the enablement gate, so a
 	// misread paste on a switched-off kind is still "that isn't an id" rather than
 	// "enrichment is off", which is the order the two 400s have always had.
@@ -1190,9 +1188,10 @@ func externalIDForKind(kind, pasted string) (string, error) {
 type EntityPin struct {
 	ExternalID string
 	// Namespace is the External-id namespace ExternalID belongs to: the `source` of
-	// the candidate the Admin picked (ADR-0060 decision 5). Empty means the parent's
-	// Library's current lead's namespace for its kind, which is what every caller
-	// meant before namespaces existed.
+	// the candidate the Admin picked (ADR-0060 decision 5). Always named: the HTTP
+	// API requires a caller to name one (D029), and every other caller — the
+	// Cascade, a Service-level test — passes the one it means (usually the
+	// Library's lead). An empty Namespace is ErrUnknownNamespace.
 	Namespace string
 	// ReleaseID is the release (one edition) the Admin named, when they named one —
 	// a pasted /release/ URL, which resolves to its parent release-group for
@@ -1228,9 +1227,7 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID 
 	}
 	ns := pin.Namespace
 	if ns == "" {
-		if ns, err = s.leadNamespace(ctx, libraryID, entityKind(entityType)); err != nil {
-			return err
-		}
+		return ErrUnknownNamespace
 	}
 	if err := s.store.SetEntityExternalMatch(entityType, entityID, store.EntityRecordPin{
 		ExternalID: pin.ExternalID, Namespace: ns, ReleaseID: pin.ReleaseID, Origin: origin,
@@ -2576,17 +2573,12 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 // refWithPinnedEntityID rebuilds a lookup ref to resolve BY a pinned record id in
 // its namespace (ADR-0060): the id goes into the ref's namespaced carrier, and the
 // named mirror for that namespace follows. The kind is preserved so the provider
-// dispatches to the right by-id path. A blank namespace reads as the kind's default
-// lead, which is what every pinned parent meant before namespaces existed.
+// dispatches to the right by-id path. Every caller's namespace already names the
+// record it came from — storedParentRecord and showAssertedRecord default their own
+// blanks to the kind's lead before this ever sees them, and an override's is
+// required by the caller above — so a blank namespace here just means a blank id
+// too; withExternalID's own guard is what actually handles that case.
 func refWithPinnedEntityID(ref TitleRef, namespace, externalID string) TitleRef {
-	if namespace == "" {
-		switch ref.Kind {
-		case "artist", "album", "track":
-			namespace = pluginapi.NamespaceMusicBrainz
-		default:
-			namespace = pluginapi.NamespaceTMDB
-		}
-	}
 	return withExternalID(ref, namespace, externalID)
 }
 

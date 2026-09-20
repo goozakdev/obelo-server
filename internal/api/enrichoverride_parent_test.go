@@ -102,11 +102,21 @@ func searchEntityCandidates(t *testing.T, srv *testharness.Server, token, kindPa
 	return res
 }
 
+// entityNamespaceForTest is the `source` these helpers send when a test does not
+// care which namespace applies (D029 requires one): the kind's default lead, which
+// every fixture here is led by unless it repoints explicitly.
+func entityNamespaceForTest(kindPath string) string {
+	if kindPath == "artists" || kindPath == "albums" {
+		return "musicbrainz"
+	}
+	return "tmdb"
+}
+
 func applyEntityOverride(t *testing.T, srv *testharness.Server, token, kindPath, id, externalID string) entityDetailResp {
 	t.Helper()
 	var d entityDetailResp
 	status, body := srv.JSON(http.MethodPut, "/api/v1/"+kindPath+"/"+id+"/enrichmentOverride",
-		token, map[string]any{"externalId": externalID}, &d)
+		token, map[string]any{"externalId": externalID, "source": entityNamespaceForTest(kindPath)}, &d)
 	if status != http.StatusOK {
 		t.Fatalf("PUT %s override = %d, want 200; body: %s", kindPath, status, body)
 	}
@@ -321,7 +331,7 @@ func TestEnrichEpisodeOverrideDurable(t *testing.T) {
 	epID := eps.Episodes[0].ID
 
 	// Apply an Episode override (via the leaf endpoint) → corrected overview now.
-	applied := applyOverride(t, srv, token, epID, "ep-right-show")
+	applied := applyOverride(t, srv, token, epID, "ep-right-show", "tmdb")
 	if applied.Overview != "CORRECTED episode overview." {
 		t.Fatalf("episode override not applied: overview=%q", applied.Overview)
 	}

@@ -307,21 +307,16 @@ func defaultParentNamespace(entityType string) string {
 }
 
 // leadNamespace is the namespace of the Library's CURRENT lead for an entity kind —
-// the lead's slug, since a source's namespace is its plugin id. It is what an
-// Admin's pick means when the caller names no namespace (ADR-0060 decision 5), so an
-// older client that sends no `source` keeps working.
+// the lead's slug, since a source's namespace is its plugin id. It answers
+// seriesNamespace's fallback for an Episode whose Show carries no record namespace
+// yet (ADR-0060 decision 5); every override now names its namespace explicitly
+// (D029), so this is its only remaining caller.
 func (s *Service) leadNamespace(ctx context.Context, libraryID, kind string) (string, error) {
 	snap, err := s.snapshotFor(ctx, libraryID)
 	if err != nil {
 		return "", err
 	}
 	return snap.config.authoritativeSlugFor(kind), nil
-}
-
-// LeadNamespace is leadNamespace for the API layer: the namespace an Enrichment
-// override on an item of `kind` in this Library means when the request names none.
-func (s *Service) LeadNamespace(ctx context.Context, libraryID, kind string) (string, error) {
-	return s.leadNamespace(ctx, libraryID, kind)
 }
 
 // ErrUnknownNamespace is an Admin's pick naming a namespace no registered

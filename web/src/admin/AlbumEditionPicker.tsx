@@ -109,7 +109,9 @@ export default function AlbumEditionPicker({
   }, [load]);
 
   async function choose(e: AlbumEdition) {
-    if (applying || !data?.releaseGroupId) return;
+    // source is absent only when the album has no matched release-group (types.ts),
+    // which the releaseGroupId guard already rules out.
+    if (applying || !data?.releaseGroupId || !data.source) return;
     setApplying(e.releaseId);
     setError(null);
     try {
@@ -120,11 +122,10 @@ export default function AlbumEditionPicker({
         "albums",
         albumId,
         data.releaseGroupId,
-        true,
-        e.releaseId,
-        undefined,
         // Re-pin the release-group in the namespace it already lives in (ADR-0060).
         data.source,
+        true,
+        e.releaseId,
       );
       setSummary(detail.cascade ?? null);
       onApplied?.(detail);

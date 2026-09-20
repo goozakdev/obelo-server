@@ -41,6 +41,10 @@ function editions(over: Partial<AlbumEditions> = {}): AlbumEditions {
   return {
     albumId: "al1",
     releaseGroupId: RG,
+    // A matched release-group always carries the namespace it was found in (server:
+    // absent only when there is no releaseGroupId at all), so every fixture with one
+    // carries a source too, unless a test overrides it.
+    source: "musicbrainz",
     localTrackCount: 16,
     inUseReleaseId: IT,
     inUseSource: "fit",
@@ -177,10 +181,9 @@ describe("AlbumEditionPicker", () => {
         "albums",
         "al1",
         RG,
+        "musicbrainz",
         true,
         XE,
-        undefined,
-        "musicbrainz",
       ),
     );
     expect(onApplied).toHaveBeenCalled();
