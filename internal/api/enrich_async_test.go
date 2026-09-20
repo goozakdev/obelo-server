@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -279,6 +281,58 @@ func TestEnrichUnknownLibraryIsNotFound(t *testing.T) {
 	}
 	if status, _ := srv.JSON(http.MethodPost, "/api/v1/libraries/nope/enrich", token, nil, nil); status != http.StatusNotFound {
 		t.Errorf("POST /libraries/nope/enrich = %d, want 404", status)
+	}
+}
+
+// An unrecognized mode is a 400 naming the accepted values, on both the query
+// string and the JSON body (D029: the API no longer guesses at a mode it does not
+// have — see enrichMode).
+func TestEnrichUnknownModeIsBadRequest(t *testing.T) {
+	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
+	token := adminToken(t, srv)
+	libID := createMovieLibrary(t, srv, token, t.TempDir())
+
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/libraries/"+libID+"/enrich?mode=turbo", token, nil, nil); status != http.StatusBadRequest {
+		t.Errorf("POST enrich?mode=turbo = %d, want 400; body: %s", status, body)
+	}
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/libraries/"+libID+"/enrich", token,
+		map[string]any{"mode": "turbo"}, nil); status != http.StatusBadRequest {
+		t.Errorf("POST enrich {mode: turbo} = %d, want 400; body: %s", status, body)
+	}
+}
+
+// A body that fails to decode at all is best-effort, not a 400: docs/api-contract.md
+// promises the scan/enrich trigger bodies "fall back to the default mode" on a
+// malformed body, same as an absent one (D029 only closed the gap for a body that
+// DECODES but names a mode this build doesn't have).
+func TestEnrichMalformedBodyFallsBackToTheDefaultMode(t *testing.T) {
+	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
+	token := adminToken(t, srv)
+	libID := createMovieLibrary(t, srv, token, t.TempDir())
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL("/api/v1/libraries/"+libID+"/enrich"),
+		strings.NewReader("{not valid json"))
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST enrich with a malformed body: %v", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST enrich with a malformed body = %d, want 202", resp.StatusCode)
+	}
+	if out.Mode != enrich.ModeNew.String() {
+		t.Errorf("mode = %q, want the default %q", out.Mode, enrich.ModeNew.String())
 	}
 }
 

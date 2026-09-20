@@ -642,9 +642,10 @@ export interface EnrichmentCandidate {
   releaseId?: string;
   /** The External-id namespace `externalId` belongs to (`tmdb`, `musicbrainz`,
    * `anidb`, a third party's plugin id), stamped by the server from the provider that
-   * answered (ADR-0060 decision 5). Send it straight back as the override's `source`
-   * so the pick is pinned where it was found. Omitted only when unknown. */
-  source?: string;
+   * answered (ADR-0060 decision 5) — every registered lead's slug is non-empty, so a
+   * search hit or paste preview always carries one. Send it straight back as the
+   * override's `source`, which the apply now requires. */
+  source: string;
 }
 
 /** One track in an album candidate's tracklist preview. */

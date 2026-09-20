@@ -10,7 +10,7 @@ import (
 )
 
 // The API half of ADR-0051: `?mode=recheck` and `{"mode":"recheck"}` both select
-// the new mode, and an unrecognized mode still falls back to the default.
+// the new mode, and an unrecognized mode is refused (D029).
 //
 // This matters more than a mode string usually would. Before this endpoint gained
 // the mode there was NO way for an operator to re-ask a settled non-answer short
@@ -149,28 +149,28 @@ func TestEnrichBodyModeRecheckSelectsTheSameMode(t *testing.T) {
 	}
 }
 
-// An unrecognized mode keeps today's behaviour — the default pass — rather than
-// 400-ing. The handler has always been best-effort about the mode (a malformed
-// body leaves the default too), and an older or newer client naming a mode this
-// build does not have should get the cheap, safe pass rather than an error.
-func TestEnrichUnknownModeFallsBackToTheDefault(t *testing.T) {
+// An unrecognized mode is a 400 naming the accepted values, never a silent
+// fallback (D029) — the API requires the current request shape, in the query or a
+// well-formed body. "?mode=" (absent) still means the default pass.
+func TestEnrichUnknownModeIsRefused(t *testing.T) {
 	srv, prov, token, libID := recheckHarness(t)
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }
 	before := prov.calls()
 
-	for _, mode := range []string{"?mode=deep", "?mode=", "?mode=RECHECKS"} {
-		res := postEnrich(t, srv, token, "/api/v1/libraries/"+libID+"/enrich"+mode, nil)
-		if res.Total != 0 {
-			t.Errorf("%q visited %d Titles, want 0 — an unknown mode must fall back to the "+
-				"default, not to the widest thing available", mode, res.Total)
+	for _, mode := range []string{"?mode=deep", "?mode=RECHECKS"} {
+		if status, body := srv.JSON(http.MethodPost, "/api/v1/libraries/"+libID+"/enrich"+mode, token, nil, nil); status != http.StatusBadRequest {
+			t.Errorf("POST enrich%s = %d, want 400; body: %s", mode, status, body)
 		}
 	}
-	if res := postEnrich(t, srv, token, "/api/v1/libraries/"+libID+"/enrich",
-		map[string]any{"mode": "deep"}); res.Total != 0 {
-		t.Errorf(`{"mode":"deep"} visited %d Titles, want 0`, res.Total)
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/libraries/"+libID+"/enrich", token,
+		map[string]any{"mode": "deep"}, nil); status != http.StatusBadRequest {
+		t.Errorf(`POST enrich {"mode":"deep"} = %d, want 400; body: %s`, status, body)
+	}
+	if res := postEnrich(t, srv, token, "/api/v1/libraries/"+libID+"/enrich"+"?mode=", nil); res.Total != 0 {
+		t.Errorf("absent mode visited %d Titles, want 0 (the default pass)", res.Total)
 	}
 	if prov.calls() != before {
-		t.Errorf("an unknown mode made %d provider calls", prov.calls()-before)
+		t.Errorf("a refused or absent mode made %d provider calls", prov.calls()-before)
 	}
 }
 

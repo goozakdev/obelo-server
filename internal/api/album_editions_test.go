@@ -96,7 +96,7 @@ func editionsFixture(t *testing.T, prov enrich.MetadataProvider) (*testharness.S
 	// The album has to BE something before it has editions: pin the release-group,
 	// which is what an album is (ADR-0038).
 	if st, body := srv.JSON(http.MethodPut, "/api/v1/albums/"+albumID+"/enrichmentOverride",
-		token, map[string]any{"externalId": editionRG}, nil); st != http.StatusOK {
+		token, map[string]any{"externalId": editionRG, "source": "musicbrainz"}, nil); st != http.StatusOK {
 		t.Fatalf("seed album record = %d; body: %s", st, body)
 	}
 	return srv, token, albumID
@@ -178,7 +178,7 @@ func TestChoosingAnEditionAppliesThroughTheAlbumOverrideAndIsThenInUse(t *testin
 
 	var applied cascadeDetailResp
 	st, body := srv.JSON(http.MethodPut, "/api/v1/albums/"+albumID+"/enrichmentOverride", token,
-		map[string]any{"externalId": listed.ReleaseGroupID, "releaseId": editionDelux, "cascade": true},
+		map[string]any{"externalId": listed.ReleaseGroupID, "releaseId": editionDelux, "cascade": true, "source": "musicbrainz"},
 		&applied)
 	if st != http.StatusOK {
 		t.Fatalf("apply edition = %d, want 200; body: %s", st, body)

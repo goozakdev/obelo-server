@@ -1277,19 +1277,19 @@ export class ApiClient {
   async applyEnrichmentOverride(
     titleId: string,
     externalId: string,
+    /** The picked candidate's `source` — the namespace `externalId` belongs to
+     * (ADR-0060 decision 5). Required. */
+    source: string,
     signal?: AbortSignal,
     /** Pin WHICH provider episode decorates this file, for the lookup only. Pass
      * both when the Admin picked a specific episode after picking the series;
      * identity, the file's place in the library, and watch state are untouched. */
     episode?: { season: number; episode: number },
-    /** The picked candidate's `source` — the namespace `externalId` belongs to
-     * (ADR-0060 decision 5). Omitted means the Library's current lead's. */
-    source?: string,
   ): Promise<TitleDetail> {
     const body = {
       externalId,
+      source,
       ...(episode ? { season: episode.season, episode: episode.episode } : {}),
-      ...(source ? { source } : {}),
     };
     const res = await this.request<TitleDetailRaw>(
       `/titles/${encodeURIComponent(titleId)}/enrichmentOverride`,
@@ -1326,7 +1326,7 @@ export class ApiClient {
   /** `GET /api/v1/albums/{id}/editions` (Admin) — the editions of an Album's matched
    * release-group, so an Admin can choose the exact one their files are WITHOUT
    * leaving Obelo (ADR-0052). Reads only: choosing one is
-   * `applyEntityEnrichmentOverride("albums", id, releaseGroupId, true, releaseId)`,
+   * `applyEntityEnrichmentOverride("albums", id, releaseGroupId, source, true, releaseId)`,
    * the album's existing apply carrying the edition — there is no second apply path.
    *
    * An album with no matched release-group answers an empty list rather than an
@@ -1357,18 +1357,18 @@ export class ApiClient {
     entityType: "shows" | "artists" | "albums",
     entityId: string,
     externalId: string,
+    /** The picked candidate's `source` — the namespace `externalId` belongs to
+     * (ADR-0060 decision 5). Required. */
+    source: string,
     cascade = false,
     releaseId?: string,
     signal?: AbortSignal,
-    /** The picked candidate's `source` — the namespace `externalId` belongs to
-     * (ADR-0060 decision 5). Omitted means the Library's current lead's. */
-    source?: string,
   ): Promise<EntityEnrichmentDetail> {
     return this.request<EntityEnrichmentDetail>(
       `/${entityType}/${encodeURIComponent(entityId)}/enrichmentOverride`,
       {
         method: "PUT",
-        body: { externalId, cascade, releaseId: releaseId ?? "", ...(source ? { source } : {}) },
+        body: { externalId, source, cascade, releaseId: releaseId ?? "" },
         signal,
       },
     );

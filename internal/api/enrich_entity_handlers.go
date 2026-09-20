@@ -187,7 +187,7 @@ func handleEntityExternalPreview(enrichSvc *enrich.Service, images *providerImag
 // up BY it) and refreshes the unlocked fields/artwork from that record. Identity and
 // watch state are NEVER touched (ADR-0002/0014); Locked fields are honored. Emits a
 // libraryUpdated SSE nudge and returns the updated parent detail. Missing externalId
-// → 400; unknown parent → 404.
+// or source → 400; unknown parent → 404.
 func handleEntityEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, broker *events.Broker, entityType, entityID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req enrichmentOverrideRequest
@@ -199,7 +199,8 @@ func handleEntityEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Serv
 			writeError(w, http.StatusBadRequest, codeBadRequest, "externalId is required", nil)
 			return
 		}
-		source, ok := checkOverrideSource(w, req.Source, func(ns string) error {
+		// A browse parent never takes an Episode pick, so source is always required here.
+		source, ok := checkOverrideSource(w, req.Source, true, func(ns string) error {
 			return enrichSvc.CheckEntityNamespace(r.Context(), entityType, entityID, ns)
 		})
 		if !ok {

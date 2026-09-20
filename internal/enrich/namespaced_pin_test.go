@@ -2,6 +2,7 @@ package enrich
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -221,8 +222,8 @@ func TestARepointedVideoLibraryReResolvesOnlyWhatNobodyDecided(t *testing.T) {
 	if got := f.title(t, "auto"); got.RecordNamespace != "tmdb" || got.RecordID("tmdb") != "27205" {
 		t.Fatalf("auto-matched record = %q %v, want tmdb 27205", got.RecordNamespace, got.RecordIDs)
 	}
-	// The Admin Fix-infos The Matrix to 604 with no namespace named: the lead's.
-	if err := f.svc.ApplyOverride(ctx, "fixed", "604", ""); err != nil {
+	// The Admin Fix-infos The Matrix to 604, naming the lead's namespace.
+	if err := f.svc.ApplyOverride(ctx, "fixed", "604", SlugTMDB); err != nil {
 		t.Fatalf("apply override: %v", err)
 	}
 	if got := f.title(t, "fixed"); got.RecordNamespace != "tmdb" || got.RecordID("tmdb") != "604" ||
@@ -345,7 +346,7 @@ func TestAParentPinnedToTMDBInARepointedLibraryResolvesViaTMDB(t *testing.T) {
 	           VALUES ('sh1', 'tv', 'Game of Thrones', 'game of thrones', 'game of thrones')`)
 	ctx := context.Background()
 
-	if err := f.svc.ApplyEntityOverride(ctx, store.EntityShow, "sh1", EntityPin{ExternalID: "1399"}); err != nil {
+	if err := f.svc.ApplyEntityOverride(ctx, store.EntityShow, "sh1", EntityPin{ExternalID: "1399", Namespace: SlugTMDB}); err != nil {
 		t.Fatalf("apply entity override: %v", err)
 	}
 	e, err := f.db.EntityEnrichmentByID(store.EntityShow, "sh1")
@@ -576,7 +577,7 @@ func TestAnEpisodePinAndACascadeInheritTheShowsNamespace(t *testing.T) {
 	}
 	f.repoint(SlugAniDB, "")
 	ctx := context.Background()
-	if err := f.svc.ApplyEntityOverride(ctx, store.EntityShow, "sh1", EntityPin{ExternalID: "a-show"}); err != nil {
+	if err := f.svc.ApplyEntityOverride(ctx, store.EntityShow, "sh1", EntityPin{ExternalID: "a-show", Namespace: SlugAniDB}); err != nil {
 		t.Fatalf("apply entity override: %v", err)
 	}
 
@@ -594,5 +595,39 @@ func TestAnEpisodePinAndACascadeInheritTheShowsNamespace(t *testing.T) {
 		got.EnrichmentIDOrigin != store.OriginCascaded {
 		t.Errorf("cascaded Episode recorded %q %v (%q), want cascaded a-show in anidb",
 			got.RecordNamespace, got.RecordIDs, got.EnrichmentIDOrigin)
+	}
+}
+
+// An override always names its namespace: a direct Service call naming none is
+// ErrUnknownNamespace, not a silent fall to the lead.
+func TestApplyOverrideWithNoNamespaceIsRefused(t *testing.T) {
+	tmdb, anidb := videoSources()
+	f := newNSFixture(t, tmdb, anidb)
+	f.seedMovies(t)
+	ctx := context.Background()
+
+	if err := f.svc.ApplyOverride(ctx, "fixed", "604", ""); !errors.Is(err, ErrUnknownNamespace) {
+		t.Errorf("ApplyOverride with no namespace = %v, want ErrUnknownNamespace", err)
+	}
+
+	f.exec(t, `INSERT INTO libraries (id, name, kind) VALUES ('tv', 'TV', 'tv')`)
+	f.exec(t, `INSERT INTO shows (id, library_id, title, identity_key, sort_title)
+	           VALUES ('sh1', 'tv', 'Game of Thrones', 'game of thrones', 'game of thrones')`)
+	if err := f.svc.ApplyEntityOverride(ctx, store.EntityShow, "sh1", EntityPin{ExternalID: "1399"}); !errors.Is(err, ErrUnknownNamespace) {
+		t.Errorf("ApplyEntityOverride with no namespace = %v, want ErrUnknownNamespace", err)
+	}
+}
+
+// refWithPinnedEntityID no longer defaults a blank namespace to a kind's lead: every
+// current caller's namespace already names the record (storedParentRecord and
+// showAssertedRecord never hand back a non-empty id with a blank namespace — an
+// EntityEnrichment's own contract is "Namespace is \"\" exactly when ExternalID is
+// empty", store/enrich_entities.go). A blank namespace here is just withExternalID's
+// existing no-op guard, proven by a ref that carries NO id for it rather than one
+// silently filed under tmdb/musicbrainz.
+func TestRefWithPinnedEntityIDDoesNotDefaultABlankNamespace(t *testing.T) {
+	ref := refWithPinnedEntityID(TitleRef{Kind: "show"}, "", "1399")
+	if ref.TMDBID != "" || ref.MusicbrainzID != "" || len(ref.ExternalIDs) != 0 {
+		t.Errorf("ref with a blank namespace = %+v, want no id recorded at all", ref)
 	}
 }

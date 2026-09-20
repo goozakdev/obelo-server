@@ -89,7 +89,7 @@ func TestExternalPreviewPasteMusicBrainzID(t *testing.T) {
 	}
 
 	// After previewing, the pasted id applies through the EXISTING override endpoint.
-	applied := applyOverride(t, srv, token, trackID, goodID)
+	applied := applyOverride(t, srv, token, trackID, goodID, "musicbrainz")
 	if applied.ID != trackID {
 		t.Errorf("apply of pasted id returned wrong detail: %+v", applied)
 	}

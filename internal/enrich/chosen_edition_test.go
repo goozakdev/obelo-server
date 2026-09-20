@@ -94,7 +94,7 @@ func TestPastingAReleaseURLKeepsBothTheGroupAndTheEdition(t *testing.T) {
 	}
 
 	if err := svc.ApplyEntityOverride(context.Background(), store.EntityAlbum, "al1",
-		EntityPin{ExternalID: cand.ExternalID, ReleaseID: cand.ReleaseID}); err != nil {
+		EntityPin{ExternalID: cand.ExternalID, ReleaseID: cand.ReleaseID, Namespace: SlugMusicBrainz}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestPastingAReleaseGroupURLClearsTheChosenEdition(t *testing.T) {
 		tracks: []seedTrack{{id: "t1", title: "Nessun Dorma", num: 1}},
 	})
 	if err := svc.ApplyEntityOverride(context.Background(), store.EntityAlbum, "al1",
-		EntityPin{ExternalID: viaggioGroup, ReleaseID: viaggioRelease}); err != nil {
+		EntityPin{ExternalID: viaggioGroup, ReleaseID: viaggioRelease, Namespace: SlugMusicBrainz}); err != nil {
 		t.Fatalf("pin the edition: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestPastingAReleaseGroupURLClearsTheChosenEdition(t *testing.T) {
 		t.Errorf("a /release-group/ paste previewed releaseId %q, want none", cand.ReleaseID)
 	}
 	if err := svc.ApplyEntityOverride(context.Background(), store.EntityAlbum, "al1",
-		EntityPin{ExternalID: cand.ExternalID, ReleaseID: cand.ReleaseID}); err != nil {
+		EntityPin{ExternalID: cand.ExternalID, ReleaseID: cand.ReleaseID, Namespace: SlugMusicBrainz}); err != nil {
 		t.Fatalf("apply the group: %v", err)
 	}
 

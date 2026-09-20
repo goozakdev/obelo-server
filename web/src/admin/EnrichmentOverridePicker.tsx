@@ -107,8 +107,6 @@ export default function EnrichmentOverridePicker({
           : await apiClient.applyEnrichmentOverride(
               titleId,
               selected.externalId,
-              undefined,
-              undefined,
               // The namespace the pick was found in (ADR-0060 decision 5).
               selected.source,
             );

@@ -27,19 +27,26 @@ type enrichRequest struct {
 	Mode string `json:"mode"`
 }
 
-// enrichMode maps a wire mode string onto an enrich.Mode. An UNRECOGNIZED value
-// (including "" and "new") falls back to the default only-new pass rather than
-// 400-ing: this handler has always been best-effort about the mode — a malformed
-// body leaves the default too — and an older client naming a mode this build does
-// not have should get the safe, cheap pass, not an error.
-func enrichMode(s string) enrich.Mode {
+// enrichMode maps a wire mode string onto an enrich.Mode: "" and "new" are the
+// default only-new pass, "full" and "recheck" the other two documented values.
+// Anything else is not recognized (ok=false), which the caller turns into a 400
+// naming the accepted values — the API requires the current request shape (D029).
+func enrichMode(s string) (mode enrich.Mode, ok bool) {
 	switch {
+	case s == "" || strings.EqualFold(s, "new"):
+		return enrich.ModeNew, true
 	case strings.EqualFold(s, "full"):
-		return enrich.ModeFull
+		return enrich.ModeFull, true
 	case strings.EqualFold(s, "recheck"):
-		return enrich.ModeRecheck
+		return enrich.ModeRecheck, true
 	}
-	return enrich.ModeNew
+	return enrich.ModeNew, false
+}
+
+// enrichModeMessage is the 400 an unrecognized mode gets, naming the values this
+// build accepts.
+func enrichModeMessage(mode string) string {
+	return fmt.Sprintf("mode %q is not recognized — use \"new\", \"full\", or \"recheck\"", mode)
 }
 
 type enrichResultJSON struct {
@@ -200,13 +207,25 @@ func handleEnrich(deps Deps) http.HandlerFunc {
 		}
 
 		// The query string wins when it names a mode this build knows; otherwise the
-		// body is consulted. Both spellings select the same three modes.
-		mode := enrichMode(r.URL.Query().Get("mode"))
+		// body is consulted. Both spellings select the same three modes. An
+		// unrecognized mode is a 400 naming the accepted values, from whichever of the
+		// two named one.
+		mode, ok := enrichMode(r.URL.Query().Get("mode"))
+		if !ok {
+			writeError(w, http.StatusBadRequest, codeBadRequest, enrichModeMessage(r.URL.Query().Get("mode")), nil)
+			return
+		}
 		if mode == enrich.ModeNew && r.ContentLength > 0 {
 			var req enrichRequest
-			// Best-effort: a malformed body just leaves the default mode.
+			// Best-effort about a malformed BODY: a body that fails to decode just
+			// leaves the default mode, exactly as an absent body does. A body that
+			// decodes fine but names a mode this build does not have is a 400.
 			if json.NewDecoder(r.Body).Decode(&req) == nil {
-				mode = enrichMode(req.Mode)
+				mode, ok = enrichMode(req.Mode)
+				if !ok {
+					writeError(w, http.StatusBadRequest, codeBadRequest, enrichModeMessage(req.Mode), nil)
+					return
+				}
 			}
 		}
 
@@ -778,12 +797,11 @@ type enrichmentOverrideRequest struct {
 	Episode int `json:"episode,omitempty"`
 	// Source is the External-id namespace externalId belongs to: the `source` of the
 	// candidate or paste preview the Admin picked, echoed back (ADR-0060 decision 5).
-	// OMITTED means the item's Library's current lead's namespace for its kind, which
-	// is what the request meant before namespaces existed, so an older client keeps
-	// working. A namespace no registered Authoritative provider of the kind claims is
-	// a 400. An Episode pick (season/episode set) always inherits its Show's
-	// namespace, so there it is only validated.
-	Source string `json:"source,omitempty"`
+	// Required on every apply EXCEPT an Episode pick (season/episode set), which
+	// always inherits its Show's namespace instead — there `source` is only
+	// validated when present, never required. A namespace no registered
+	// Authoritative provider of the kind claims is a 400 either way.
+	Source string `json:"source"`
 }
 
 // unknownNamespaceMessage is the 400 an override naming an unclaimed namespace gets.
@@ -791,13 +809,26 @@ func unknownNamespaceMessage(ns string) string {
 	return fmt.Sprintf("no metadata provider that can lead this item claims the source %q — search again and pick a result", ns)
 }
 
-// checkOverrideSource validates an override request's optional `source` against the
-// item (check is the Service's CheckTitleNamespace/CheckEntityNamespace bound to it),
-// writing the response itself when it fails. It returns the trimmed namespace and
+// missingSourceMessage is the 400 an override naming no source gets: source is
+// required, so this is always a client bug rather than something an Admin acts on
+// directly, but it names the field to make that obvious.
+func missingSourceMessage() string {
+	return "source is required — the External-id namespace the picked externalId belongs to"
+}
+
+// checkOverrideSource validates an override request's `source` against the item
+// (check is the Service's CheckTitleNamespace/CheckEntityNamespace bound to it),
+// writing the response itself when it fails. required is false only for an Episode
+// pick, whose namespace always comes from its Show, so a missing source there is
+// not an error — an unclaimed one still is. It returns the trimmed namespace and
 // whether the caller may continue.
-func checkOverrideSource(w http.ResponseWriter, source string, check func(ns string) error) (string, bool) {
+func checkOverrideSource(w http.ResponseWriter, source string, required bool, check func(ns string) error) (string, bool) {
 	ns := strings.TrimSpace(source)
 	if ns == "" {
+		if required {
+			writeError(w, http.StatusBadRequest, codeBadRequest, missingSourceMessage(), nil)
+			return "", false
+		}
 		return "", true
 	}
 	switch err := check(ns); {
@@ -821,7 +852,7 @@ func checkOverrideSource(w http.ResponseWriter, source string, check func(ns str
 // the MatchTitle primitive. Identity_key and every User's watch state are NEVER
 // touched (ADR-0002/0014); Locked fields are honored. On success it emits a
 // libraryUpdated SSE nudge (ADR-0016) so browse reflects the fix live, and returns
-// the updated Title detail. Missing externalId → 400; unknown Title → 404.
+// the updated Title detail. Missing externalId or source → 400; unknown Title → 404.
 func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, broker *events.Broker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
@@ -843,7 +874,9 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 			writeError(w, http.StatusBadRequest, codeBadRequest, "externalId is required", nil)
 			return
 		}
-		source, ok := checkOverrideSource(w, req.Source, func(ns string) error {
+		// source is required except on an Episode pick (season/episode set), whose
+		// namespace always comes from its Show rather than the request.
+		source, ok := checkOverrideSource(w, req.Source, req.Episode <= 0, func(ns string) error {
 			return enrichSvc.CheckTitleNamespace(r.Context(), titleID, ns)
 		})
 		if !ok {
@@ -861,8 +894,8 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 		if req.Episode > 0 {
 			err = enrichSvc.ApplyEpisodeOverride(r.Context(), titleID, externalID, req.Season, req.Episode)
 		} else {
-			// The picked candidate's namespace; empty means the Title's Library's
-			// current lead's (ADR-0060 decision 5).
+			// The picked candidate's namespace (ADR-0060 decision 5); checkOverrideSource
+			// has already required and validated it.
 			err = enrichSvc.ApplyOverride(r.Context(), titleID, externalID, source)
 		}
 		switch {

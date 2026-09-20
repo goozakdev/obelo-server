@@ -111,13 +111,7 @@ export default function FixItemRow({
       tmdbId: candidate.source === "tmdb" ? candidate.externalId : undefined,
     });
     if (item.titleId !== "" && candidate.source === "tmdb") {
-      await apiClient.applyEnrichmentOverride(
-        item.titleId,
-        candidate.externalId,
-        undefined,
-        undefined,
-        candidate.source,
-      );
+      await apiClient.applyEnrichmentOverride(item.titleId, candidate.externalId, candidate.source);
     }
     if (item.canDismiss) {
       if (item.showId !== "") await apiClient.reviewShow(item.showId);
@@ -130,14 +124,8 @@ export default function FixItemRow({
   // it. Identity and every User's watch state are untouched (ADR-0014) — no rescan
   // is needed or wanted, so this route never reports an identity correction.
   async function applyMetadata(candidate: EnrichmentCandidate) {
-    await apiClient.applyEnrichmentOverride(
-      item.titleId,
-      candidate.externalId,
-      undefined,
-      undefined,
-      // The namespace the pick was found in (ADR-0060 decision 5).
-      candidate.source,
-    );
+    // The namespace the pick was found in (ADR-0060 decision 5).
+    await apiClient.applyEnrichmentOverride(item.titleId, candidate.externalId, candidate.source);
   }
 
   // The ALBUM correction, and the reason this row exists (ADR-0050). Pinning the
@@ -151,13 +139,13 @@ export default function FixItemRow({
       "albums",
       item.albumId,
       candidate.externalId,
+      // The namespace the pick was found in (ADR-0060 decision 5).
+      candidate.source,
       true,
       // When the Admin pasted a MusicBrainz /release/ URL, that EDITION is what the
       // cascade decorates from (ADR-0052) instead of picking one by track-count fit.
       // A searched candidate carries none, which clears any edition previously named.
       candidate.releaseId,
-      undefined,
-      candidate.source,
     );
     setCascade(detail.cascade ?? null);
   }

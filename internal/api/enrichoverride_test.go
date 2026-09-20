@@ -48,12 +48,13 @@ func searchCandidates(t *testing.T, srv *testharness.Server, token, titleID, q s
 }
 
 // applyOverride drives PUT /titles/{id}/enrichmentOverride, asserting 200, and
-// returns the updated Title detail.
-func applyOverride(t *testing.T, srv *testharness.Server, token, titleID, externalID string) enrichedDetailResp {
+// returns the updated Title detail. source is required (D029) — the namespace the
+// picked externalID belongs to.
+func applyOverride(t *testing.T, srv *testharness.Server, token, titleID, externalID, source string) enrichedDetailResp {
 	t.Helper()
 	var d enrichedDetailResp
 	status, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+titleID+"/enrichmentOverride",
-		token, map[string]any{"externalId": externalID}, &d)
+		token, map[string]any{"externalId": externalID, "source": source}, &d)
 	if status != http.StatusOK {
 		t.Fatalf("PUT enrichmentOverride = %d, want 200; body: %s", status, body)
 	}
@@ -145,7 +146,7 @@ func TestEnrichOverrideMovieSearchApplyDurable(t *testing.T) {
 
 	// (AC) Apply a candidate → detail carries the picked record + supplements re-fill
 	// off the pinned id (the fetched poster URL from the picked record's artwork).
-	applied := applyOverride(t, srv, token, id, "999")
+	applied := applyOverride(t, srv, token, id, "999", "tmdb")
 	if applied.EnrichmentStatus != "matched" {
 		t.Errorf("status after apply = %q, want matched", applied.EnrichmentStatus)
 	}
@@ -222,7 +223,7 @@ func TestEnrichOverrideHonorsLockedFields(t *testing.T) {
 	}
 
 	// Apply an override whose record has a different overview + tagline.
-	applied := applyOverride(t, srv, token, id, "999")
+	applied := applyOverride(t, srv, token, id, "999", "tmdb")
 	if applied.Overview != "MY hand-written overview." {
 		t.Errorf("locked overview was overwritten by the picked record: %q", applied.Overview)
 	}
@@ -251,7 +252,7 @@ func TestEnrichOverrideSSE(t *testing.T) {
 	defer cancel()
 	lines := openEventStream(t, ctx, srv, token)
 
-	applyOverride(t, srv, token, id, "999")
+	applyOverride(t, srv, token, id, "999", "tmdb")
 
 	waitForLine(t, lines, func(s string) bool {
 		return strings.Contains(s, "event: "+"libraryUpdated") ||
@@ -375,9 +376,10 @@ func TestEnrichOverrideAdminOnly(t *testing.T) {
 		map[string]any{"externalId": "999"}, nil); status != http.StatusForbidden {
 		t.Errorf("member PUT override = %d, want 403", status)
 	}
-	// Admin: unknown Title → 404; missing externalId → 400.
+	// Admin: unknown Title → 404 (a well-formed body, so hide-existence is what's
+	// under test, not source-requiredness); missing externalId → 400.
 	if status, _ := srv.JSON(http.MethodPut, "/api/v1/titles/nope/enrichmentOverride", token,
-		map[string]any{"externalId": "999"}, nil); status != http.StatusNotFound {
+		map[string]any{"externalId": "999", "source": "tmdb"}, nil); status != http.StatusNotFound {
 		t.Errorf("override on unknown Title = %d, want 404", status)
 	}
 	if status, _ := srv.JSON(http.MethodPut, "/api/v1/titles/"+id+"/enrichmentOverride", token,
@@ -440,7 +442,7 @@ func TestEnrichOverrideEpisode(t *testing.T) {
 		t.Fatalf("episode search candidates unexpected: %+v", cands.Candidates)
 	}
 
-	applied := applyOverride(t, srv, token, epID, "42")
+	applied := applyOverride(t, srv, token, epID, "42", "tmdb")
 	if applied.Overview != "Corrected episode overview." {
 		t.Errorf("episode override not applied: overview=%q", applied.Overview)
 	}
@@ -513,7 +515,7 @@ func TestEnrichOverrideTrack(t *testing.T) {
 		t.Fatalf("track search candidates unexpected: %+v", cands.Candidates)
 	}
 
-	applied := applyOverride(t, srv, token, trackID, "mb-right")
+	applied := applyOverride(t, srv, token, trackID, "mb-right", "musicbrainz")
 	if applied.Overview != "Corrected track synopsis." {
 		t.Errorf("track override not applied: overview=%q", applied.Overview)
 	}
@@ -596,7 +598,7 @@ func TestEnrichOverrideTrackPreservesTagTitle(t *testing.T) {
 		t.Fatalf("precondition: track has no tag title to protect")
 	}
 
-	applied := applyOverride(t, srv, token, trackID, "mb-x")
+	applied := applyOverride(t, srv, token, trackID, "mb-x", "musicbrainz")
 	// The override still decorated the Track (overview applied)...
 	if applied.Overview != "Applied synopsis." {
 		t.Errorf("override did not decorate the track: overview=%q", applied.Overview)

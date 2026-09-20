@@ -516,6 +516,9 @@ func TestEveryWriterRefusesALinkedLibrary(t *testing.T) {
 			if status == http.StatusConflict && env.Error.Code == "LINKED_LIBRARY" {
 				t.Fatalf("%s %s refused a LOCAL Library as a mirror", tc.method, tc.path)
 			}
+			if tc.wantLocalStatus != 0 && status != tc.wantLocalStatus {
+				t.Fatalf("%s %s = %d %q, want %d", tc.method, tc.path, status, env.Error.Code, tc.wantLocalStatus)
+			}
 		})
 	}
 }
@@ -529,6 +532,10 @@ type writerRoute struct {
 	path      string
 	body      any
 	multipart bool
+	// wantLocalStatus, when set, is the exact status the LOCAL leg must answer
+	// (rather than only "not 409 LINKED_LIBRARY") — for a route whose body is
+	// well-formed enough to reach the handler's success path.
+	wantLocalStatus int
 }
 
 func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerRoute {
@@ -545,7 +552,11 @@ func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerR
 		{name: "title review", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/review", body: map[string]any{}},
 		{name: "title metadata", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/metadata", body: map[string]any{"overview": "no"}},
 		{name: "title lock release", method: http.MethodDelete, path: "/api/v1/titles/" + titleID + "/metadata/locks/overview"},
-		{name: "title enrichment override", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentOverride", body: map[string]any{"externalId": "1"}},
+		// wantLocalStatus is 404, not 200: this table's own "library delete" case
+		// above already deleted movieLib by the time this one runs (both share the
+		// route slice), so titleID is gone too — a well-formed source only gets it
+		// past the 400 the brief closed, not past a Library this same test removed.
+		{name: "title enrichment override", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "tmdb"}, wantLocalStatus: http.StatusNotFound},
 		{name: "title enrichment match", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentMatch", body: map[string]any{"tmdbId": "1"}},
 		{name: "title identity correction", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/identityCorrection", body: map[string]any{"externalId": "1"}},
 		{name: "title artwork pick", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
@@ -558,20 +569,20 @@ func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerR
 		{name: "show identity correction", method: http.MethodPut, path: "/api/v1/shows/" + showID + "/identityCorrection", body: map[string]any{"externalId": "1"}},
 		{name: "show matcher apply", method: http.MethodPut, path: "/api/v1/shows/" + showID + "/matcher", body: map[string]any{"groups": []any{}}},
 		{name: "show metadata", method: http.MethodPut, path: "/api/v1/shows/" + showID + "/metadata", body: map[string]any{"overview": "no"}},
-		{name: "show enrichment override", method: http.MethodPut, path: "/api/v1/shows/" + showID + "/enrichmentOverride", body: map[string]any{"externalId": "1"}},
+		{name: "show enrichment override", method: http.MethodPut, path: "/api/v1/shows/" + showID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "tmdb"}, wantLocalStatus: http.StatusOK},
 		{name: "show artwork pick", method: http.MethodPut, path: "/api/v1/shows/" + showID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
 		{name: "show artwork upload", method: http.MethodPost, path: "/api/v1/shows/" + showID + "/artworkUpload?role=poster", multipart: true},
 		{name: "show lock release", method: http.MethodDelete, path: "/api/v1/shows/" + showID + "/metadata/locks/overview"},
 
 		{name: "artist targeted scan", method: http.MethodPost, path: "/api/v1/artists/" + artistID + "/scan", body: map[string]any{}},
 		{name: "artist metadata", method: http.MethodPut, path: "/api/v1/artists/" + artistID + "/metadata", body: map[string]any{"overview": "no"}},
-		{name: "artist enrichment override", method: http.MethodPut, path: "/api/v1/artists/" + artistID + "/enrichmentOverride", body: map[string]any{"externalId": "1"}},
+		{name: "artist enrichment override", method: http.MethodPut, path: "/api/v1/artists/" + artistID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "musicbrainz"}, wantLocalStatus: http.StatusOK},
 		{name: "artist artwork pick", method: http.MethodPut, path: "/api/v1/artists/" + artistID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
 		{name: "artist artwork upload", method: http.MethodPost, path: "/api/v1/artists/" + artistID + "/artworkUpload?role=poster", multipart: true},
 
 		{name: "album targeted scan", method: http.MethodPost, path: "/api/v1/albums/" + albumID + "/scan", body: map[string]any{}},
 		{name: "album metadata", method: http.MethodPut, path: "/api/v1/albums/" + albumID + "/metadata", body: map[string]any{"overview": "no"}},
-		{name: "album enrichment override", method: http.MethodPut, path: "/api/v1/albums/" + albumID + "/enrichmentOverride", body: map[string]any{"externalId": "1"}},
+		{name: "album enrichment override", method: http.MethodPut, path: "/api/v1/albums/" + albumID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "musicbrainz"}, wantLocalStatus: http.StatusOK},
 		{name: "album artwork pick", method: http.MethodPut, path: "/api/v1/albums/" + albumID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
 		{name: "album artwork upload", method: http.MethodPost, path: "/api/v1/albums/" + albumID + "/artworkUpload?role=poster", multipart: true},
 	}

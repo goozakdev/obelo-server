@@ -13,8 +13,8 @@ import (
 
 // Black-box tests for ADR-0060 decision 5 at the API: a pick carries the namespace
 // it was found in. The candidate JSON says where its id means something (`source`),
-// the apply sends it back, an apply without one means the Library's current lead,
-// an unclaimed namespace is a 400, and the paste preview's namespace round-trips.
+// the apply sends it back, an apply naming no source is a 400 (required, D029), an
+// unclaimed namespace is a 400, and the paste preview's namespace round-trips.
 //
 // Two contract-level music Plugins are registered beside the Built-ins and the
 // Library is pointed at one of them, so the lead's namespace and a picked
@@ -150,7 +150,8 @@ func titleRecordSource(t *testing.T, srv *testharness.Server, token, titleID str
 
 // TestAPickIsPinnedInTheNamespaceItNames: the search stamps its candidates with the
 // Library's lead, a pick naming another Authoritative namespace pins THAT one, a
-// pick naming none pins the lead's, and a namespace nothing claims is refused.
+// pick naming none is refused (source is required), and a namespace nothing claims
+// is refused.
 func TestAPickIsPinnedInTheNamespaceItNames(t *testing.T) {
 	srv, token, libID := namespacedMusicServer(t)
 	trackID := firstTrackID(t, srv, token, libID)
@@ -186,11 +187,13 @@ func TestAPickIsPinnedInTheNamespaceItNames(t *testing.T) {
 		t.Errorf("GET recordSource = %q, want %q", got, nsOtherSlug)
 	}
 
-	// A pick without one means the Library's current lead, which is what an older
-	// client has always meant.
-	d = putTitleOverride(t, srv, token, trackID, map[string]any{"externalId": "lead-1"}, http.StatusOK)
-	if d.RecordSource != nsLeadSlug {
-		t.Errorf("recordSource after a pick with no source = %q, want the lead %q", d.RecordSource, nsLeadSlug)
+	// A pick with no source is refused: the API requires the current request shape,
+	// which always names the namespace a pick was found in (D029).
+	var noSource pasteErrorResp
+	status, raw := srv.JSON(http.MethodPut, "/api/v1/titles/"+trackID+"/enrichmentOverride", token,
+		map[string]any{"externalId": "lead-1"}, &noSource)
+	if status != http.StatusBadRequest {
+		t.Fatalf("no-source pick = %d, want 400; body: %s", status, raw)
 	}
 
 	// A namespace no registered Authoritative music source claims is a 400 with a
@@ -206,8 +209,8 @@ func TestAPickIsPinnedInTheNamespaceItNames(t *testing.T) {
 			t.Errorf("400 message %q does not name the source %q", e.Error.Message, ns)
 		}
 	}
-	if got := titleRecordSource(t, srv, token, trackID); got != nsLeadSlug {
-		t.Errorf("a refused pick changed the record: recordSource = %q, want %q", got, nsLeadSlug)
+	if got := titleRecordSource(t, srv, token, trackID); got != nsOtherSlug {
+		t.Errorf("a refused pick changed the record: recordSource = %q, want %q", got, nsOtherSlug)
 	}
 }
 
@@ -260,13 +263,10 @@ func TestAParentPickIsPinnedInTheNamespaceItNames(t *testing.T) {
 		t.Errorf("album recordSource = %q, want %q", d.RecordSource, nsOtherSlug)
 	}
 
-	d = namespacedDetail{}
-	status, raw = srv.JSON(http.MethodPut, path, token, map[string]any{"externalId": "alb-2"}, &d)
-	if status != http.StatusOK {
-		t.Fatalf("PUT album override = %d; body: %s", status, raw)
-	}
-	if d.RecordSource != nsLeadSlug {
-		t.Errorf("album recordSource with no source = %q, want the lead %q", d.RecordSource, nsLeadSlug)
+	// A pick with no source is refused on a browse parent too (D029): the entity
+	// endpoint twin of the leaf case above.
+	if status, raw := srv.JSON(http.MethodPut, path, token, map[string]any{"externalId": "alb-2"}, nil); status != http.StatusBadRequest {
+		t.Fatalf("album no-source pick = %d, want 400; body: %s", status, raw)
 	}
 
 	if status, raw := srv.JSON(http.MethodPut, path, token, map[string]any{"externalId": "alb-3", "source": "nope"}, nil); status != http.StatusBadRequest {

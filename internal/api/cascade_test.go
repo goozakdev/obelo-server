@@ -49,7 +49,7 @@ func applyEntityOverrideCascade(t *testing.T, srv *testharness.Server, token, ki
 	t.Helper()
 	var d cascadeDetailResp
 	status, body := srv.JSON(http.MethodPut, "/api/v1/"+kindPath+"/"+id+"/enrichmentOverride",
-		token, map[string]any{"externalId": externalID, "cascade": true}, &d)
+		token, map[string]any{"externalId": externalID, "cascade": true, "source": entityNamespaceForTest(kindPath)}, &d)
 	if status != http.StatusOK {
 		t.Fatalf("PUT %s override (cascade) = %d, want 200; body: %s", kindPath, status, body)
 	}
@@ -315,7 +315,7 @@ func TestCascadeSkipsChildOwnOverrideAndLock(t *testing.T) {
 	albumID, airbagID, paranoidID := okComputerAlbum(t, srv, token, libID)
 
 	// Paranoid gets its OWN prior track override (a durable musicbrainz_id pin).
-	if p := applyOverride(t, srv, token, paranoidID, "rec-para-manual"); p.Overview != "MANUAL Paranoid" {
+	if p := applyOverride(t, srv, token, paranoidID, "rec-para-manual", "musicbrainz"); p.Overview != "MANUAL Paranoid" {
 		t.Fatalf("seed track override failed: overview=%q", p.Overview)
 	}
 	// Airbag gets a hand-edited (Locked) overview.
@@ -682,7 +682,7 @@ func TestCascadeReachesAnEpisodeWithAnUnchosenRecord(t *testing.T) {
 	// One of the two gets a record the Admin really did pick, so the same cascade
 	// has to tell the two apart rather than treating both the same way — which is
 	// the whole point, and what makes a green run mean something.
-	if d := applyOverride(t, srv, token, s1EpIDs[0], "999"); d.Overview != "HAND-PICKED episode." {
+	if d := applyOverride(t, srv, token, s1EpIDs[0], "999", "tmdb"); d.Overview != "HAND-PICKED episode." {
 		t.Fatalf("seeding the per-Episode override failed: overview=%q", d.Overview)
 	}
 
@@ -747,7 +747,7 @@ func TestCascadeOptInAndLeafIgnored(t *testing.T) {
 	// still a valid 200 apply.
 	var leaf map[string]any
 	if st, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+airbagID+"/enrichmentOverride", token,
-		map[string]any{"externalId": "rec-airbag", "cascade": true}, &leaf); st != http.StatusOK {
+		map[string]any{"externalId": "rec-airbag", "cascade": true, "source": "musicbrainz"}, &leaf); st != http.StatusOK {
 		t.Fatalf("leaf override with cascade flag = %d, want 200; body: %s", st, body)
 	}
 	if _, ok := leaf["cascade"]; ok {
@@ -962,7 +962,7 @@ func TestCascadeRerunsOnTheChildrenItAlreadyReached(t *testing.T) {
 
 	// (AC) The protection issue 03 added is intact: an Episode the Admin corrects
 	// DIRECTLY is the Episode's own choice and outranks the Show's next cascade.
-	if d := applyOverride(t, srv, token, s1EpIDs[0], "999"); d.Overview != "HAND-PICKED episode." {
+	if d := applyOverride(t, srv, token, s1EpIDs[0], "999", "tmdb"); d.Overview != "HAND-PICKED episode." {
 		t.Fatalf("seeding the per-Episode override failed: overview=%q", d.Overview)
 	}
 	third := applyEntityOverrideCascade(t, srv, token, "shows", showID, "777")
@@ -1090,7 +1090,7 @@ func TestCascadeRerunsFromTheSameArtist(t *testing.T) {
 	// choice and must survive its Artist's next cascade — the promise issue 03 made,
 	// which this change may not spend.
 	if st, body := srv.JSON(http.MethodPut, "/api/v1/albums/"+losslessID+"/enrichmentOverride",
-		token, map[string]any{"externalId": "alb-loss-manual"}, nil); st != http.StatusOK {
+		token, map[string]any{"externalId": "alb-loss-manual", "source": "musicbrainz"}, nil); st != http.StatusOK {
 		t.Fatalf("seed album override = %d; body: %s", st, body)
 	}
 
