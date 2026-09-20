@@ -169,13 +169,8 @@ func extraTypeFromFolder(dir string) string {
 }
 
 // partNumber returns the multi-part number parsed from a filename (1-based), or
-// 0 when the file is not a part.
-//
-// The rule itself lives in internal/naming because the STORE has to apply it too:
-// migration 0049's part_ordinal is 0 on every row written before it, so an Edition
-// read back from an install that has not rescanned since can only tell a genuine
-// multi-part Edition from an ambiguous collision by re-reading the names
-// (store.Edition.Parts). One implementation, two readers.
+// 0 when the file is not a part. The rule itself lives in internal/naming
+// (docs/naming-convention.md) so there is exactly one implementation of it.
 func partNumber(name string) int { return naming.PartNumber(name) }
 
 // editionName derives the Edition label for a main video file. An explicit

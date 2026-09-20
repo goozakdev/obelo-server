@@ -24,7 +24,8 @@ import (
 //
 // Everything here is kind-neutral. A Slot is one numbered position within a
 // browsable parent, so TV supplies season+episode and Music will supply disc+track
-// through the same columns and the same reads; see 0048_file_decisions.sql.
+// through the same columns and the same reads; see migrations/0001_init.sql's
+// `file_decisions` table for the column shapes.
 
 // The three states of a File decision. A File with NO row is a fourth,
 // deliberately distinct case: nothing was said, so the Placement is derived from

@@ -1761,7 +1761,7 @@ func (s *Service) SessionAudioContext(userID, sessionID string) (SessionAudioCon
 		Height:     height,
 	}
 	// Probe the video-range/frame-rate traits Safari's master validation needs (a
-	// header-only ffprobe; the scan-time store predates these fields). Best-effort:
+	// header-only ffprobe; the scan-time store never carries them). Best-effort:
 	// a failure degrades to omitting the attributes — but for an HDR stream that
 	// means Safari will refuse the variant, so the failure is logged.
 	if videoCodec != "" && file.Path != "" {

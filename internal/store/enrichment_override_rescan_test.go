@@ -212,8 +212,8 @@ func TestAnEmbeddedIDIsStillAdoptedOnARescan(t *testing.T) {
 	}
 	assertExternalIDs(t, db, "m1", pickedMovie, "")
 
-	// Wipe the column behind the scanner's back — a row that predates the id, an
-	// interrupted migration, anything. The next scan still has the id and says so.
+	// Wipe the column behind the scanner's back — an operator's SQL, a bug,
+	// anything. The next scan still has the id and says so.
 	// (The scanner now writes it unconditionally rather than through issue 01's
 	// fill-only guard, so this is a stronger statement than it used to be.)
 	mustExec(t, db, `UPDATE titles SET tmdb_id = '' WHERE id = 'm1'`)

@@ -16,10 +16,9 @@ import (
 // is the identity authority for its own files (ADR-0002, ADR-0019), so a value
 // that did not cross the Link does not exist on this side either.
 //
-// Rows are matched by remote_id and NEVER by title. That is the whole reason
-// migration 0063 adds the column: a rename on the sharer's side updates the row
-// in place, so this household's Watch state — keyed to the local Title id —
-// survives it.
+// Rows are matched by remote_id and NEVER by title. That is the whole reason the
+// column exists: a rename on the sharer's side updates the row in place, so this
+// household's Watch state — keyed to the local Title id — survives it.
 
 // MirrorEntity is one row of an Export as the mirror consumes it: the wire
 // entity with its `data` still a decoded JSON object. The field names are the
@@ -650,8 +649,9 @@ func (m *mirrorTx) writeEdition(id string, isNew bool, titleID string, e MirrorE
 
 // writeFile stores a File with an EMPTY path, and that is the point: the bytes
 // are on the other household's disk and arrive through the relay (ADR-0056 §5),
-// so there is no path here to invent. Migration 0063 relaxed the UNIQUE
-// (edition_id, path) constraint to a partial index for exactly this row.
+// so there is no path here to invent. idx_files_edition_path (0001_init.sql) is
+// a partial UNIQUE index on (edition_id, path) that excludes the empty path,
+// for exactly this row.
 //
 // The feed's `deletedAt` becomes present = 0, which is the same soft-delete a
 // Missing File carries locally (ADR-0008), so every read path already knows what
@@ -790,8 +790,8 @@ func (m *mirrorTx) writeEntityExtras(entityType, id string, d map[string]any) er
 // `artworkVersion`. Called for a mirrored Show/Season/Artist/Album and a mirrored
 // Movie (entity_type 'title'). Nothing servable is written — the bytes are
 // relayed on demand and cached (link.RelayArtwork, ADR-0056 §5) — so this lands
-// in the SIGNAL-ONLY linked_entity_artwork table (migration 0064) and never in
-// entity_artwork / the artwork table, whose rows carry a servable path.
+// in the SIGNAL-ONLY linked_entity_artwork table and never in entity_artwork /
+// the artwork table, whose rows carry a servable path.
 //
 // REPLACE-per-entity, exactly like writeEntityExtras: the sharer dropping all of
 // an entity's art leaves an empty `artworkRoles`, the DELETE clears the rows, and

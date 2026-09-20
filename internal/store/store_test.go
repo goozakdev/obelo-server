@@ -202,8 +202,8 @@ func TestArtworkVersionsForTitles(t *testing.T) {
 // poster cache-bust token is the newest entity_artwork added_at, keyed by entity
 // id, scoped to the entity_type, and absent when the entity has no fetched
 // artwork. Mirrors the title-keyed TestArtworkVersionsForTitles — the parent
-// table gained added_at in migration 0013 so a re-enrich (which replaces the row)
-// advances the version.
+// table's added_at means a re-enrich (which replaces the row) advances the
+// version.
 func TestEntityArtworkVersionsForMany(t *testing.T) {
 	db := openTemp(t)
 	ins := func(entityType, entityID, role, source, addedAt string) {

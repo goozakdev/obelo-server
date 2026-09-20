@@ -29,8 +29,8 @@ func TestWatchlistExistsAndImmutable(t *testing.T) {
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
-	// A brand-new caller (created after the back-fill migration) has no Watchlist
-	// row yet; GET /watchlist seeds and returns it.
+	// A brand-new caller has no Watchlist row yet; GET /watchlist seeds and
+	// returns it.
 	var wl watchlistDetailResp
 	if st, body := srv.AuthGET("/api/v1/watchlist", admin, &wl); st != http.StatusOK {
 		t.Fatalf("GET /watchlist: status %d; body: %s", st, body)

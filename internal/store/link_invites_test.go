@@ -8,13 +8,13 @@ import (
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// The link_invites table added by migration 0060 (ADR-0055 §1). What is asserted
-// here is the SQL, because that is where the rules live: single use and expiry
-// are both WHERE clauses on one UPDATE, and a test that went through the service
-// would be asserting the service's ordering rather than the statement's.
+// The link_invites table (ADR-0055 §1). What is asserted here is the SQL,
+// because that is where the rules live: single use and expiry are both WHERE
+// clauses on one UPDATE, and a test that went through the service would be
+// asserting the service's ordering rather than the statement's.
 
 // seedRemote inserts a `remote` User — no password, which is the one state the
-// 0058 CHECK admits for the role.
+// schema's CHECK admits for the role.
 func seedRemote(t *testing.T, db *store.DB, id string) {
 	t.Helper()
 	mustExec(t, db,
@@ -77,8 +77,8 @@ func TestLinkInviteExpiryIsAWhereClause(t *testing.T) {
 		t.Fatalf("InsertLinkInvite: %v", err)
 	}
 
-	// One second past the expiry. Note both operands are RFC3339-UTC: this is the
-	// comparison 0041_device_auth.sql records as unsurvivable if the two formats
+	// One second past the expiry. Note both operands are RFC3339-UTC: the
+	// comparison is a plain string compare in SQL, which breaks if the two formats
 	// are ever mixed.
 	if _, err := db.RedeemLinkInvite("hash-1", rfc3339(expires.Add(time.Second))); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("redeem past expiry: err = %v, want ErrNotFound", err)

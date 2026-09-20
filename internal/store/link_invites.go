@@ -7,13 +7,12 @@ import (
 )
 
 // Link invites (ADR-0055 §1): the one-time credential a sharing Admin mints for
-// a `remote` User and another Server redeems exactly once. See
-// migrations/0060_link_invites.sql for the shape and for why there is only one
-// secret here where the Device authorization grant has two.
+// a `remote` User and another Server redeems exactly once — one secret here
+// where the Device authorization grant has two.
 //
 // Every timestamp crossing this file is an RFC3339-UTC string supplied by the
 // caller, never SQLite's datetime('now') — expiry is compared in SQL and the two
-// formats do not compare (0041_device_auth.sql records the bug).
+// formats do not compare.
 
 // LinkInvite is one minted invite. It never carries the raw code — only its
 // hash, which is the lookup key and the only form that is ever stored.

@@ -6,7 +6,7 @@ import (
 )
 
 // An Installed plugin's MANIFEST-DECLARED settings (.scratch/plugin-system issue
-// 13): the rows migration 0067 created and left unwritten, filled at last.
+// 13): rows this table holds no value for until a save writes one.
 //
 // The fixed five-field Settings of ADR-0057 are NOT here and must not move here.
 // They live in the Extension point's own table — an Installed Event sink is an
@@ -14,7 +14,7 @@ import (
 // keyed by the Plugin id, so the settings API, the screens and the Managers work
 // on a Plugin and a Built-in with no difference at all. What lives here is the
 // other half: the fields a manifest declares for itself, whose names this server
-// cannot know at migration time.
+// cannot know ahead of time.
 //
 // # The value column holds JSON, uniformly
 //
@@ -29,7 +29,7 @@ import (
 // `secret` marks a value the settings API must never return. It is exactly the
 // protection `metadata_providers.api_key` and `event_sinks.secret` have — masking
 // and access control, not a column cipher; nothing in this repo encrypts a
-// credential column (see migrations/0067_plugins.sql).
+// credential column.
 
 // PluginSetting is one manifest-declared setting of one Plugin: the key its
 // manifest declared, the value as JSON, and whether it is a secret the API must

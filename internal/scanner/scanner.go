@@ -1067,9 +1067,8 @@ func groupEditions(ps []probedFile) ([]store.Edition, bool) {
 			f.Mtime = p.mtime
 			f.Present = true
 			// Persist the part order rather than leaving it to be re-derived from
-			// the filename on read (migration 0049). For a parse-numbered part this
-			// is partNumber(); for a placed one it is the Admin's ordinal, which no
-			// filename carries.
+			// the filename on read. For a parse-numbered part this is partNumber();
+			// for a placed one it is the Admin's ordinal, which no filename carries.
 			f.PartOrdinal = p.cf.part
 			// SizeBytes is the change-detection key alongside mtime, so it must be
 			// the on-disk stat size (authoritative and matching the snapshot),

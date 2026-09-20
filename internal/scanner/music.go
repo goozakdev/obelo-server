@@ -112,9 +112,8 @@ var albumFolderYearRe = regexp.MustCompile(`^(.*?)[\s_]*\((19\d{2}|20\d{2})\)\s*
 //     so "The Smashing Pumpkins" and "Smashing Pumpkins" resolve to ONE Artist.
 //
 // Both folds apply AFTER normalization — unlike sortTitle, which strips from
-// the raw name — so the new key is derivable from the stored key text alone,
-// which migrations 0042/0043 rely on to merge pre-existing rows without
-// re-probing any file. The "and" drop runs first: it can expose a leading
+// the raw name — so the key is derivable from the stored key text alone, with no
+// need to re-probe any file. The "and" drop runs first: it can expose a leading
 // article ("And The X" → "the x" → "x"), mirroring how "& The X" normalizes.
 func artistIdentityKey(albumArtist string) string {
 	name := stripAndWords(normalizeTitle(albumArtist))
@@ -124,8 +123,8 @@ func artistIdentityKey(albumArtist string) string {
 // stripAndWords drops every standalone "and" word from an already-normalized
 // (lower-cased, single-spaced) name. normalizeTitle collapses "&" and "+" to a
 // space but the WORD "and" survives it, so the two spellings of one band keyed
-// apart; dropping the word folds them together (ADR-0037 amendment, migration
-// 0043). A name consisting ONLY of "and" is kept whole — a key never empties.
+// apart; dropping the word folds them together (ADR-0037 amendment). A name
+// consisting ONLY of "and" is kept whole — a key never empties.
 func stripAndWords(s string) string {
 	fields := strings.Fields(s)
 	kept := fields[:0]

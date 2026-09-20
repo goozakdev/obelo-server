@@ -95,8 +95,8 @@ func (db *DB) LocalIDForRemote(kind, remoteID string) (string, error) {
 // It is the relayed artwork cache's freshness signal (issue 09): the bytes behind
 // a mirrored poster are cached under a name keyed by the sharer's id, and a
 // cached file older than the row it belongs to is re-fetched. The stamp is
-// maintained by migration 0061's triggers, so it moves whenever ApplyMirror
-// writes the row and not otherwise.
+// maintained by triggers, so it moves whenever ApplyMirror writes the row and not
+// otherwise.
 func (db *DB) MirrorStamp(kind, id string) (string, error) {
 	table := remoteIDTable(kind)
 	if table == "" || id == "" {

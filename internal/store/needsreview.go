@@ -14,8 +14,8 @@ import (
 //
 //   - `needs_review` — the parse was a guess: a folder with no year, a TV Episode
 //     numbered by date or absolute number, a Track with no usable tags. It browses
-//     fine, but the identity is uncertain. An Admin can dismiss it (`reviewed = 1`,
-//     migration 0012), which sticks across rescans (writeTitleRow / upsertShow).
+//     fine, but the identity is uncertain. An Admin can dismiss it (`reviewed = 1`),
+//     which sticks across rescans (writeTitleRow / upsertShow).
 //   - `ambiguous` — the collision rule: two Files parsed to the same Edition
 //     identity and are not parts, so the convention refuses to guess which is the
 //     real one ("flagged ambiguous in the web app, never silently guessed",

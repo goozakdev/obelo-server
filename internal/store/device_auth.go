@@ -8,13 +8,13 @@ import (
 )
 
 // Device authorization requests (ADR-0036): the short-lived rows backing the
-// "sign the TV in from your phone" flow. See migrations/0041_device_auth.sql for
-// why the two codes are stored so differently.
+// "sign the TV in from your phone" flow. device_code_hash is stored hashed (the
+// TV's long-lived poll secret); user_code is stored plain (the short code a
+// person reads off the TV and types on their phone, never a secret on its own).
 //
 // Every timestamp crossing this file is an RFC3339-UTC string supplied by the
-// caller, never SQLite's datetime('now'). The migration comment explains why:
-// this is the first table that compares timestamps in SQL, and the two formats
-// do not compare.
+// caller, never SQLite's datetime('now'): expiry is compared in SQL, and the two
+// formats do not compare.
 
 // Device authorization request states. There is no 'denied': approval is
 // immediate on code entry, so no screen exists to refuse from. See

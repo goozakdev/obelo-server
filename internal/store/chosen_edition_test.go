@@ -6,8 +6,8 @@ import (
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
-// entity_enrichment.external_release_id (migration 0057, ADR-0052) is the exact
-// EDITION an ADMIN named for an Album — the release a pasted /release/ URL points
+// entity_enrichment.external_release_id (ADR-0052) is the exact EDITION an ADMIN
+// named for an Album — the release a pasted /release/ URL points
 // at — stored beside the release-GROUP their choice resolved to.
 //
 // The whole reason it is a column of its own rather than a value written into

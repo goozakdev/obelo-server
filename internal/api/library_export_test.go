@@ -223,7 +223,7 @@ func replay(t *testing.T, dst *testharness.Server, lib struct {
 				str(d, "overview"), str(d, "tagline"), str(d, "contentRating"), str(d, "releaseDate"),
 				num(d, "runtimeMinutes"), str(d, "studio"),
 				str(d, "musicbrainzRecordingId"), status, str(d, "displayTitle"))
-			// A Track's record id is a `musicbrainz` row since migration 0072 (ADR-0060).
+			// A Track's record id is a `musicbrainz` row in title_external_ids (ADR-0060).
 			if mbid := str(d, "musicbrainzId"); mbid != "" {
 				dst.Exec(`INSERT INTO title_external_ids (title_id, namespace, external_id)
 				          VALUES (?, 'musicbrainz', ?)`, e.ID, mbid)

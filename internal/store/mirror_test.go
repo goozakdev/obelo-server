@@ -66,10 +66,11 @@ func count(t *testing.T, db *store.DB, query string, args ...any) int {
 	return n
 }
 
-// TestAMirroredFileNamesNoDisk is what migration 0063's table rebuild exists for.
-// Two Files under ONE Edition — a two-part film, which is exactly what
-// part_ordinal is for — both carrying the empty path, would have collided on the
-// UNIQUE (edition_id, path) the schema carried since 0008.
+// TestAMirroredFileNamesNoDisk pins the schema's partial UNIQUE index on
+// (edition_id, path), scoped to a non-empty path. Two Files under ONE Edition — a
+// two-part film, which is exactly what part_ordinal is for — both carrying the
+// empty path (a mirrored file has no local path to invent) must NOT collide on
+// that constraint.
 func TestAMirroredFileNamesNoDisk(t *testing.T) {
 	db := openTemp(t)
 	linkID, lib := mirrorLibrary(t, db, "movie")

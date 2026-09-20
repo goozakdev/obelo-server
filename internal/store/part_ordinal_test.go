@@ -9,9 +9,8 @@ import (
 // Edition.Files is a PLAY order, not a listing order (Edition.PartAt /
 // TotalDurationMs / PartStartMs all walk it), and Placement lets an Admin build a
 // multi-part Edition out of two files whose names say nothing about part order
-// (ADR-0044). These pin migration 0049: the order is a stored column, and the
-// default of 0 leaves every pre-existing Edition sorting by path exactly as
-// before.
+// (ADR-0044). These pin the stored part_ordinal column as that order's source of
+// truth, overriding whatever order the filenames or paths would otherwise imply.
 
 // partEdition builds a one-Title tree whose single Edition holds the given files,
 // in the given (id, path, part ordinal) order.
@@ -70,9 +69,8 @@ func TestPartOrdinalOverridesFilenameOrder(t *testing.T) {
 }
 
 // TestUnnumberedPartsStillSortByPath: an Edition nothing numbered — every
-// part_ordinal at the migration default of 0 — keeps sorting by path, exactly as
-// it did before the column existed. This is what makes 0049 a no-op for every
-// multi-part Edition already in a database.
+// part_ordinal at its default of 0 (numbered means ordinal > 0) — keeps sorting
+// by path instead.
 func TestUnnumberedPartsStillSortByPath(t *testing.T) {
 	db := openTemp(t)
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libtv', 'TV', 'movie')`)
@@ -156,46 +154,6 @@ func partEpisode(titleID, identityKey string, season, episode int, fileID, path 
 	return et
 }
 
-// TestPreBackfillMultiPartStillPlaysTheWholeWork is the un-backfilled install, run
-// through the real write/read path. Migration 0049 added part_ordinal with
-// `DEFAULT 0` and no backfill, so until a scan rewrites them BOTH halves of a
-// legitimate two-part movie sit at 0 — indistinguishable, by the column alone,
-// from two files colliding on one Edition.
-//
-// Telling them apart by the column alone would truncate every such Edition to its
-// first half and move the ~90% Watched threshold onto that half, which is the exact
-// defect internal/playback/multipart_test.go exists to prevent. The filenames are
-// what still separate the two cases here: before 0049, naming the files was the
-// ONLY way to make a multi-part Edition at all.
-func TestPreBackfillMultiPartStillPlaysTheWholeWork(t *testing.T) {
-	db := openTemp(t)
-	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libtv', 'TV', 'movie')`)
-
-	tree := partEdition("t1", "long movie|2020", []store.File{
-		{ID: "f1", Path: "/media/Long Movie (2020)/Long Movie - part1.mkv", DurationMs: 60_000},
-		{ID: "f2", Path: "/media/Long Movie (2020)/Long Movie - part2.mkv", DurationMs: 30_000},
-	})
-	if err := db.UpsertTitleTree(tree); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	detail, err := db.TitleByID("t1")
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	ed := detail.Editions[0]
-	for _, f := range ed.Files {
-		if f.PartOrdinal != 0 {
-			t.Fatalf("%s came back with ordinal %d; this test only means something at the migration default", f.Path, f.PartOrdinal)
-		}
-	}
-	if !ed.IsMultiPart() {
-		t.Fatal("a pre-backfill two-part Edition is no longer multi-part — every un-rescanned " +
-			"multi-part title would play only its first half")
-	}
-	if got := ed.TotalDurationMs(); got != 90_000 {
-		t.Errorf("total = %d, want the summed 90000", got)
-	}
-}
 
 // TestCollidingFilesAreNotAPartSet is the other half: two files the scanner flagged
 // ambiguous (docs/naming-convention.md's collision rule) share one Edition and are

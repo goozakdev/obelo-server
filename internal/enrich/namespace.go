@@ -204,9 +204,8 @@ type parentRecord struct {
 	Namespace string
 }
 
-// storedParentRecord reads a parent's record off its enrichment row. A row that has
-// an id but predates its namespace reads as its kind's default lead, the rule
-// migration 0072 backfilled with.
+// storedParentRecord reads a parent's record off its enrichment row. A row that
+// has an id but no namespace reads as its kind's default lead.
 func storedParentRecord(entityType string, e store.EntityEnrichment) parentRecord {
 	id := strings.TrimSpace(e.ExternalID)
 	if id == "" {

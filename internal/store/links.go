@@ -9,13 +9,11 @@ import (
 
 // Links (ADR-0055, ADR-0056 §6): the home half of linking — this Server's
 // standing relationship with another household's Server, the credential it
-// redeemed, the addresses it may be reached at, and which of them answered. See
-// migrations/0062_links.sql for the shape and for why the token is stored the
-// way provider keys are.
+// redeemed, the addresses it may be reached at, and which of them answered. The
+// token is stored the way provider keys are.
 //
 // Every timestamp crossing this file is an RFC3339-UTC string supplied by the
-// caller, never SQLite's datetime('now') — the format 0041_device_auth.sql
-// records the comparison bug for.
+// caller, never SQLite's datetime('now') — the two formats do not compare in SQL.
 
 // The three states a Link is in (ADR-0056 §6). They are the wire spellings and
 // the column's CHECK values at once, so a typo cannot reach the database.

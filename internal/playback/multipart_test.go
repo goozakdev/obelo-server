@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/naming"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/transcode"
 )
@@ -20,11 +21,14 @@ import (
 // of two crossed the ~90% ceiling and marked the WHOLE work watched with its resume
 // cleared, losing the viewer's place and moving the Up Next anchor (ADR-0028).
 
+// partFile builds a Fixture File the way the scanner does: PartOrdinal parsed
+// from the filename (naming.PartNumber), since Edition.Parts reads the stored
+// column, not the name.
 func partFile(id, path string, durationMs int64) store.File {
 	return store.File{
 		ID: id, Path: path, DurationMs: durationMs, Present: true,
 		Container: "mp4", VideoCodec: "h264", AudioCodec: "aac",
-		Width: 1920, Height: 1080,
+		Width: 1920, Height: 1080, PartOrdinal: naming.PartNumber(path),
 	}
 }
 

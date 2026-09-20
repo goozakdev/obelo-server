@@ -1066,9 +1066,8 @@ type enrichmentAttentionTitleJSON struct {
 	// The value travels as a KEY, never a sentence: the copy lives in the client with
 	// the rest of the copy, and a closed set is what stops a failure path inventing a
 	// category nothing renders. Omitted when empty, and a client must render an
-	// absent OR unrecognized value as its existing generic sentence — that is what
-	// lets a library not yet re-passed since migration 0056, and any value a later
-	// server adds, both degrade to what the screen already said.
+	// absent OR unrecognized value as its existing generic sentence, so any value a
+	// later server adds degrades to what the screen already said.
 	EnrichmentReason string `json:"enrichmentReason,omitempty"`
 	fixContextJSON
 }
@@ -1292,7 +1291,7 @@ func handleListNeedsReview(svc *catalog.Service) http.HandlerFunc {
 
 // handleReviewTitle dismisses a Title's (Movie / Episode / Track) needs_review
 // flag — POST /titles/{id}/review, Admin-only. Idempotent confirmation that the
-// uncertain parse is fine; the dismissal sticks across rescans (migration 0012).
+// uncertain parse is fine; the dismissal sticks across rescans.
 // Unknown Title → 404. titleID is parsed by the caller (subtree router).
 func handleReviewTitle(svc *catalog.Service, titleID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -99,8 +99,7 @@ func TestMetadataProvidersRoundTrip(t *testing.T) {
 // TestEnrichmentBehaviorRoundTrip covers the three behavior knobs
 // (enrichment-runtime-settings): an unset column reads back as a nil (unset) field
 // distinct from a real 0; SetEnrichmentBehavior round-trips concrete values and
-// leaves metadata_language intact; and the upgrade-backfill fills ONLY the NULL
-// columns (preserving an existing value).
+// leaves metadata_language intact.
 func TestEnrichmentBehaviorRoundTrip(t *testing.T) {
 	db := openTemp(t)
 
@@ -146,44 +145,5 @@ func TestEnrichmentBehaviorRoundTrip(t *testing.T) {
 	}
 	if lang, _ := db.MetadataLanguage(); lang != "es-ES" {
 		t.Errorf("language after SetEnrichmentBehavior = %q, want es-ES (untouched)", lang)
-	}
-}
-
-// TestBackfillEnrichmentBehaviorIfUnset proves the upgrade backfill fills ONLY the
-// NULL columns from the config-derived seed, preserving an operator's already-set
-// value (so a restart never reverts a UI change).
-func TestBackfillEnrichmentBehaviorIfUnset(t *testing.T) {
-	db := openTemp(t)
-
-	// Simulate the upgrade state: a 0018 row exists (language set) but the 0019
-	// behavior columns are NULL (never written).
-	if err := db.SetMetadataLanguage("en-US"); err != nil {
-		t.Fatalf("SetMetadataLanguage: %v", err)
-	}
-	beh, _ := db.EnrichmentBehavior()
-	if beh.AutoEnrichAfterScan != nil || beh.EnrichIntervalSeconds != nil || beh.MusicBrainzRateLimitMs != nil {
-		t.Fatalf("precondition: behavior columns = %+v, want all-nil (upgrade state)", beh)
-	}
-
-	// Backfill fills every NULL column from config-derived seed values.
-	if err := db.BackfillEnrichmentBehaviorIfUnset(true, 21600, 1000); err != nil {
-		t.Fatalf("Backfill: %v", err)
-	}
-	beh, _ = db.EnrichmentBehavior()
-	if !beh.Auto() || beh.IntervalSeconds() != 21600 || beh.RateLimitMs() != 1000 {
-		t.Errorf("after backfill = auto %v/%d/%d, want true/21600/1000", beh.Auto(), beh.IntervalSeconds(), beh.RateLimitMs())
-	}
-
-	// An operator then changes the interval (a UI save). A LATER boot's backfill (a
-	// different config seed) must NOT revert it — COALESCE keeps the set value.
-	if err := db.SetEnrichmentBehavior(false, 120, 2000); err != nil {
-		t.Fatalf("SetEnrichmentBehavior (UI save): %v", err)
-	}
-	if err := db.BackfillEnrichmentBehaviorIfUnset(true, 21600, 1000); err != nil {
-		t.Fatalf("Backfill again: %v", err)
-	}
-	beh, _ = db.EnrichmentBehavior()
-	if beh.Auto() || beh.IntervalSeconds() != 120 || beh.RateLimitMs() != 2000 {
-		t.Errorf("after second backfill = auto %v/%d/%d, want false/120/2000 (preserved, not reverted)", beh.Auto(), beh.IntervalSeconds(), beh.RateLimitMs())
 	}
 }

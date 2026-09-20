@@ -116,7 +116,7 @@ type EntityEnrichmentWrite struct {
 	// Namespace is the namespace ExternalID belongs to (ADR-0060). Empty means "the
 	// source that resolved it" when Source is an Authoritative namespace, else the
 	// kind's default lead (`tmdb` for a Show/Season, `musicbrainz` for an
-	// Artist/Album) — the rule migration 0072 applied to the rows already written.
+	// Artist/Album).
 	Namespace string
 	Genres    []string
 	Artwork   []EntityArtworkRow
@@ -238,10 +238,9 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 			return fmt.Errorf("store: clearing entity artwork %q: %w", a.Role, err)
 		}
 		if _, err := tx.Exec(
-			// added_at is set explicitly (its column default is '' — SQLite forbids a
-			// datetime('now') default on the ADD COLUMN that introduced it, 0013), so
-			// each re-enrich stamps a fresh time and the per-entity MAX(added_at)
-			// version advances — busting the client's poster cache.
+			// added_at is set explicitly (its column default is ''), so each
+			// re-enrich stamps a fresh time and the per-entity MAX(added_at) version
+			// advances — busting the client's poster cache.
 			`INSERT INTO entity_artwork (id, entity_type, entity_id, role, path, source, added_at)
 			 VALUES (?, ?, ?, ?, ?, 'fetched', datetime('now'))`,
 			uuid.NewString(), entityType, entityID, a.Role, a.Path,
@@ -480,7 +479,7 @@ func (db *DB) EntityArtworkByRole(entityType, entityID, role string) (Artwork, e
 // UpsertPersonArtwork records a cast member's fetched headshot as a person row
 // in entity_artwork (entity_type='person', entity_id=<person ref>, role,
 // source='fetched'), keyed + de-duplicated by the person ref (cast-photos/01).
-// The UNIQUE(entity_type, entity_id, role, source) constraint (0011) makes the
+// The UNIQUE(entity_type, entity_id, role, source) constraint makes the
 // upsert idempotent: a re-fetched headshot replaces the path in place and stamps
 // a fresh added_at (busting the client's cached photo). Because the row is keyed
 // by ref, one actor's headshot is stored ONCE across every Title they appear in.

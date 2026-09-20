@@ -8,8 +8,8 @@ import (
 
 // A Title's RECORD ids live in title_external_ids, one row per (Title, namespace),
 // and titles.enrichment_id_namespace names the row that is the Title's record — the
-// one a pin is keyed on (ADR-0060 decision 2, migration 0072). A parent keeps one
-// id in entity_enrichment.external_id with its namespace beside it in
+// one a pin is keyed on (ADR-0060 decision 2). A parent keeps one id in
+// entity_enrichment.external_id with its namespace beside it in
 // external_id_namespace (decision 3).
 //
 // A namespace is where an id means something: `tmdb`, `imdb`, `musicbrainz`,

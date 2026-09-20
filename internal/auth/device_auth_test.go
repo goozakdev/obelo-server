@@ -169,8 +169,8 @@ func TestDeviceCodeExpires(t *testing.T) {
 	}
 }
 
-// TestExpiryComparesAcrossTheDatetimeFormatBoundary pins the trap the migration
-// comment documents. SQLite's datetime('now') writes "2026-07-15 12:00:00" while
+// TestExpiryComparesAcrossTheDatetimeFormatBoundary pins the trap the schema
+// comment (0001_init.sql, device_auth_requests) documents. SQLite's datetime('now') writes "2026-07-15 12:00:00" while
 // this table writes RFC3339 "2026-07-15T12:00:00Z", and 'T' sorts after ' ' — so
 // a row written in the wrong format compares as unexpired FOREVER, and every
 // code in the system would be immortal. A same-day expiry is exactly where the

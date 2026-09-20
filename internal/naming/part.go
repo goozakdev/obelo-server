@@ -1,12 +1,13 @@
-// Package naming holds the fragments of the on-disk naming convention
-// (docs/naming-convention.md) that MORE THAN ONE layer has to agree on.
+// Package naming holds the multi-part suffix rule from the on-disk naming
+// convention (docs/naming-convention.md): `- part1` / `cd1` / `pt1` / `disc1` /
+// `disk1`.
 //
 // Almost all of the grammar lives in the scanner, which is where it belongs: the
 // scanner is the only writer of identity (ADR-0002), and every other layer reads
-// the structures it produced rather than re-parsing paths. This package is the
-// narrow exception — a rule the store must apply to rows the scanner may not have
-// rewritten yet — and it exists so there is still exactly ONE implementation of
-// that rule rather than a copy on each side that can drift.
+// the structures it produced rather than re-parsing paths. This one rule lives
+// here instead, standalone, so a test fixture that builds a multi-part set can
+// call the scanner's own parser rather than hand-writing a second regex that can
+// drift from it.
 package naming
 
 import (

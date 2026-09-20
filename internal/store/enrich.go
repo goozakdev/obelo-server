@@ -66,9 +66,7 @@ const clearEnrichmentRetry = `enrichment_attempts = 0, enrichment_retry_at = ''`
 // It is a closed enum rather than free text so the copy lives in the client with
 // the rest of the copy, and so no failure path can invent a category nothing
 // renders. Every reader must treat an UNRECOGNIZED value exactly as it treats the
-// empty one — that is what lets a later value ship without breaking an older
-// client, and what lets a library that has not been re-passed since migration 0056
-// keep rendering the sentence it rendered before.
+// empty one, so a later value can ship without breaking an older client.
 const (
 	// EnrichmentReasonNone is the absence of a diagnosis, and the value written by
 	// every settled outcome that has none to offer: a match, an Admin's re-pin, an

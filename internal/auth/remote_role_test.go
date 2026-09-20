@@ -14,8 +14,8 @@ import (
 // this one (ADR-0054, .scratch/linked-servers issue 01).
 //
 // They run against a REAL store because half of what is under test is a schema
-// CHECK (0058_remote_role.sql): "only a remote User may lack a password" is a
-// constraint, and a fake store would assert the fake. The other half is the
+// CHECK: "only a remote User may lack a password" is a constraint, and a fake
+// store would assert the fake. The other half is the
 // login refusal, which is a rule about ORDER — and the order is only interesting
 // against the same VerifyPasswordContext every real login runs.
 

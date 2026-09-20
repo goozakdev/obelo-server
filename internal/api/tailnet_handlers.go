@@ -214,9 +214,9 @@ func handleUpdateTailnet(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
-		// A hostname was never seeded (a settings row that predates this feature, or a
-		// narrow install) and none was supplied: fill the default rather than joining
-		// under "", which the coordination server would reject at the worst moment.
+		// A hostname was never seeded (a narrow install, or SeedIfEmpty never ran) and
+		// none was supplied: fill the default rather than joining under "", which the
+		// coordination server would reject at the worst moment.
 		if desired.Hostname == "" {
 			desired.Hostname = tailnet.FallbackHostname
 		}

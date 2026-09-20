@@ -10,10 +10,9 @@ import (
 // issue 15): the two rows an Admin writes to opt into trust and discovery, and
 // the two this server ships none of.
 //
-// See migrations/0069_plugin_signing_and_catalog.sql for why each column exists.
-// The short version is ADR-0001: an empty plugin_publishers table and an empty
-// catalog URL are the shipped state, and they are the state in which everything
-// behaves exactly as it did before either feature existed.
+// ADR-0001: an empty plugin_publishers table and an empty catalog URL are the
+// shipped state, so an Admin who opts into neither gets no signature trust and no
+// discovery — both features stay fully off until deliberately turned on.
 
 // PluginPublisher is one publisher an Admin has pinned a key against.
 //
@@ -100,7 +99,7 @@ func (db *DB) DeletePluginPublisher(publisher string) (bool, error) {
 
 // SetPluginSigner records WHO SIGNED an installed plugin, and is called only
 // after a signature has verified against a pinned key. An unverified claim never
-// reaches this function — see the migration.
+// reaches this function — see the plugins table comment (0001_init.sql).
 func (db *DB) SetPluginSigner(id, publisher, keyID string) error {
 	_, err := db.Exec(
 		`UPDATE plugins SET publisher = ?, key_id = ? WHERE id = ?`, publisher, keyID, id)

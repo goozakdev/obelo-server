@@ -453,8 +453,7 @@ type SeedInput struct {
 	// first boot: nil leaves it UNDECIDED (the fresh-install default — the SPA
 	// prompts and the server makes no outbound calls), while a non-nil value records
 	// that decision (a headless deploy pre-consenting via OBELO_ENRICHMENT_CONSENT,
-	// or the test harness granting it). An upgrade never reaches here (settings
-	// aren't empty); its row was grandfathered to granted by migration 0040.
+	// or the test harness granting it).
 	ConsentGranted *bool
 }
 

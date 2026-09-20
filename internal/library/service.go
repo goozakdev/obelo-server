@@ -27,8 +27,7 @@ const (
 	KindMusic = "music"
 )
 
-// validKinds is the set library.Create accepts. Widened from movie-only to the
-// full vocabulary (the schema CHECK widened to match in migration 0008).
+// validKinds is the set library.Create accepts, matching the schema CHECK.
 var validKinds = map[string]bool{KindMovie: true, KindTV: true, KindMusic: true}
 
 // Domain errors, mapped to HTTP envelopes by the api layer. They are coarse and

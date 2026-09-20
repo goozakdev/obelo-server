@@ -8,10 +8,10 @@ import (
 )
 
 // The Library Export is a "what changed since" feed (ADR-0056 §4), so every
-// catalog write has to leave a mark. Migration 0061 gives the eight exportable
-// tables an updated_at kept by triggers rather than by callers, and these tests
-// are the audit the issue asks for: one case per production writer of those
-// tables, plus the ancestor propagation (a Stream change is a Title change).
+// catalog write has to leave a mark. Eight exportable tables carry an updated_at
+// kept by triggers rather than by callers (0001_init.sql), and these tests are
+// the audit the issue asks for: one case per production writer of those tables,
+// plus the ancestor propagation (a Stream change is a Title change).
 //
 // A missed bump is invisible in every other test in this repo — the row simply
 // stops reaching the friend's Server — which is exactly why it is asserted here
@@ -398,9 +398,8 @@ func TestMusicWritersBumpTheStamp(t *testing.T) {
 }
 
 // TestStampsAreComparableRFC3339: the feed's keyset seek compares these values
-// as strings in SQL, so a mixture of formats would silently mis-order (the bug
-// migration 0041 records — 'T' sorts after ' '). Every stamp the triggers write
-// is RFC3339-UTC, and so is every backfilled one.
+// as strings in SQL, so a mixture of formats would silently mis-order ('T' sorts
+// after ' '). Every stamp the triggers write is RFC3339-UTC.
 func TestStampsAreComparableRFC3339(t *testing.T) {
 	db := openTemp(t)
 	_, titleID, _, _, _ := seedMovie(t, db)

@@ -449,13 +449,6 @@ func (s *Service) findAlbumCandidate(ctx context.Context, title string, year int
 // are independent): the origin is only ever set together with an id, and a leaf's
 // record spans two namespaces, so an imdb-only override would read as unchosen if
 // this insisted on a TMDB id being present — the same guess again in a smaller hat.
-//
-// On a library that predates migration 0050 EVERY row that had a record was
-// backfilled locked, and 0051 reads every such lock as 'chosen' — after the fact
-// nothing could tell an Admin's pick from an id a pass echoed back, or from a
-// Cascade's own write — so those rows keep the old behaviour (skipped) rather than
-// being retroactively demoted into something a Cascade may overwrite. The
-// improvement applies to every record written since the upgrade.
 func (s *Service) childHasOwnOverride(t store.Title) (bool, error) {
 	if t.EnrichmentIDOrigin.OwnChoice() {
 		return true, nil

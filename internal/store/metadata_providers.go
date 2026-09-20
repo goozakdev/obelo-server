@@ -124,9 +124,8 @@ func (db *DB) SetMetadataLanguage(language string) error {
 // completed scan auto-enriches, the scheduled-sweep cadence (seconds), and the
 // MusicBrainz throttle (milliseconds). Each field is a POINTER so a NULL column
 // ("unset") is distinguishable from a real 0 — 0 is a meaningful "disabled" value
-// for the interval and rate limit. After the first-boot seed / upgrade backfill the
-// columns are never NULL; the resolver accessors below default a stray NULL to a
-// safe value anyway.
+// for the interval and rate limit. After the first-boot seed the columns are never
+// NULL; the resolver accessors below default a stray NULL to a safe value anyway.
 type EnrichmentBehavior struct {
 	AutoEnrichAfterScan    *bool
 	EnrichIntervalSeconds  *int
@@ -159,8 +158,8 @@ func (b EnrichmentBehavior) RateLimitMs() int {
 
 // EnrichmentBehavior reads the three behavior knobs from the singleton
 // metadata_settings row. A missing row (settings never seeded) or a NULL column
-// comes back as a nil field — "unset" — which the caller resolves (the boot
-// backfill fills it from config; the resolver accessors default it at read time).
+// comes back as a nil field — "unset" — which the caller resolves (the first-boot
+// seed fills it from config; the resolver accessors default it at read time).
 func (db *DB) EnrichmentBehavior() (EnrichmentBehavior, error) {
 	var (
 		auto           sql.NullBool
@@ -208,29 +207,6 @@ func (db *DB) SetEnrichmentBehavior(autoEnrichAfterScan bool, enrichIntervalSeco
 		autoEnrichAfterScan, enrichIntervalSeconds, musicBrainzRateLimitMs)
 	if err != nil {
 		return fmt.Errorf("store: setting enrichment behavior: %w", err)
-	}
-	return nil
-}
-
-// BackfillEnrichmentBehaviorIfUnset fills ONLY the NULL behavior columns from the
-// given config-derived seed values, preserving any column an operator already set
-// (from a prior boot's seed or a UI save). It handles the upgrade case — a
-// deployment that ran 0018 has a metadata_settings row with the three 0019 columns
-// NULL, so SeedIfEmpty won't fire (settings aren't empty) yet the columns still need
-// their first value. Idempotent: COALESCE keeps a non-NULL column, so re-running on
-// a fully-set row is a no-op (it never reverts a UI change on restart). Also creates
-// the row if somehow absent, so the runtime readers always see resolved values.
-func (db *DB) BackfillEnrichmentBehaviorIfUnset(autoEnrichAfterScan bool, enrichIntervalSeconds, musicBrainzRateLimitMs int) error {
-	_, err := db.Exec(
-		`INSERT INTO metadata_settings (id, auto_enrich_after_scan, enrich_interval_seconds, musicbrainz_rate_limit_ms, updated_at)
-		      VALUES (1, ?, ?, ?, datetime('now'))
-		 ON CONFLICT(id) DO UPDATE SET
-		      auto_enrich_after_scan    = COALESCE(auto_enrich_after_scan, excluded.auto_enrich_after_scan),
-		      enrich_interval_seconds   = COALESCE(enrich_interval_seconds, excluded.enrich_interval_seconds),
-		      musicbrainz_rate_limit_ms = COALESCE(musicbrainz_rate_limit_ms, excluded.musicbrainz_rate_limit_ms)`,
-		autoEnrichAfterScan, enrichIntervalSeconds, musicBrainzRateLimitMs)
-	if err != nil {
-		return fmt.Errorf("store: backfilling enrichment behavior: %w", err)
 	}
 	return nil
 }

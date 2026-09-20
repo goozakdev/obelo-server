@@ -678,24 +678,13 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 	// First-boot seed + source-of-truth handoff (metadata-providers 02): if the
 	// DB-backed provider settings have never been written, seed them from
-	// config.Config so an existing env-configured deployment behaves identically.
-	// Thereafter the DB is authoritative and the config provider values are ignored
-	// at runtime (documented in config.go). Idempotent — seeds only when empty.
+	// config.Config. Thereafter the DB is authoritative and the config provider
+	// values are ignored at runtime (documented in config.go). Idempotent — seeds
+	// only when empty.
 	seedInput := seedInputFromConfig(cfg, rotKeys)
 	if _, err := enrich.SeedIfEmpty(db, seedInput); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("app: seeding metadata provider settings: %w", err)
-	}
-	// Upgrade backfill (enrichment-runtime-settings): a deployment that already ran
-	// 0018 has a metadata_settings row (language set) but the three 0019 behavior
-	// columns NULL — SeedIfEmpty won't fire (settings aren't empty), so fill any
-	// still-NULL column from config here. Idempotent (COALESCE keeps an operator's
-	// existing value), so a later boot never reverts a UI-saved change.
-	if err := db.BackfillEnrichmentBehaviorIfUnset(
-		seedInput.AutoEnrichAfterScan, seedInput.EnrichIntervalSeconds, seedInput.MusicBrainzRateLimitMs,
-	); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("app: backfilling enrichment behavior: %w", err)
 	}
 
 	// The provider Manager reads settings → builds → atomically swaps the running
@@ -1800,12 +1789,12 @@ func providerConfigFromConfig(cfg config.Config) enrich.ProviderConfig {
 // builds — so a fresh OFFICIAL install seeds the bundled default and enriches out
 // of the box (still gated by the first-run consent decision, which is undecided on
 // a fresh install). A build-from-source binary has no bootstrap key, so this
-// resolves to the operator key or none, exactly as before this feature. Seeding
-// only ever fires on a fresh install (settings empty), so an upgrade — already
-// grandfathered to consent granted by migration 0040 — never silently adopts the
-// bundled default. On a fresh install rot is empty (no fetch has happened — consent
-// is undecided), so the seed uses the bootstrap key; the rotation layer's live
-// effect is applied post-boot by the key rotator (see rotation.go).
+// resolves to the operator key or none. Seeding only ever fires on a fresh install
+// (settings empty), so a deployment whose consent decision is already recorded
+// never has it silently overwritten. On a fresh install rot is empty (no fetch has
+// happened — consent is undecided), so the seed uses the bootstrap key; the
+// rotation layer's live effect is applied post-boot by the key rotator (see
+// rotation.go).
 func seedInputFromConfig(cfg config.Config, rot config.RotationKeys) enrich.SeedInput {
 	rows := cfg.SeedProviderRows(resolvedDefaultKeys(cfg, rot))
 	providers := make([]enrich.ProviderSeed, 0, len(rows))

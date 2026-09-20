@@ -654,8 +654,8 @@ CREATE TABLE files (
     id           TEXT PRIMARY KEY,
     edition_id   TEXT NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
     -- path is the absolute on-disk path for a locally-scanned File and '' for
-    -- a mirrored one. Still NOT NULL: "no path" is a fact about linked
-    -- Libraries, not a missing value.
+    -- a mirrored one. NOT NULL: "no path" is a fact about linked Libraries,
+    -- not a missing value.
     path         TEXT NOT NULL,
     container    TEXT NOT NULL DEFAULT '',
     video_codec  TEXT NOT NULL DEFAULT '',
