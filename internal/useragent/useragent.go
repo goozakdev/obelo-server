@@ -1,8 +1,8 @@
 // Package useragent holds the ONE outbound identity this server sends, and the
 // one function that stamps a Plugin's name onto it.
 //
-// It lives here rather than in internal/enrich because it is no longer only
-// enrichment's (ADR-0059 decision 7): every fetch a sandboxed guest makes through
+// It lives here rather than in internal/enrich because it is not enrichment's
+// alone (ADR-0059 decision 7): every fetch a sandboxed guest makes through
 // the host's `http_fetch` carries this same identity, stamped by the host, and a
 // second copy of the string in internal/plugins would be a second thing to keep
 // in step. The package depends on internal/server for the build version and on

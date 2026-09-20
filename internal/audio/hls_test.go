@@ -60,18 +60,22 @@ func TestMasterPlaylistComposesAudioAndSubtitles(t *testing.T) {
 	}
 }
 
-// TestMasterPlaylistNoAudioMatchesSubtitleOnly: with no audio renditions the output
-// is byte-identical to subtitle.MasterPlaylist — a subtitle-only session is
-// unchanged by this slice (the regression pin for the composed builder).
-func TestMasterPlaylistNoAudioMatchesSubtitleOnly(t *testing.T) {
+// TestMasterPlaylistNoAudioMatchesGolden: with no audio renditions the output is
+// byte-identical to a subtitle-only master — this slice's builder must not
+// change that shape (the regression pin for the composed builder).
+func TestMasterPlaylistNoAudioMatchesGolden(t *testing.T) {
 	subs := []subtitle.Rendition{
 		{URI: "subs_x.m3u8", Name: "English", Language: "en"},
 		{URI: "subs_y.m3u8", Name: "Forced", Language: "en", Forced: true},
 	}
+	const golden = "#EXTM3U\n#EXT-X-VERSION:3\n" +
+		`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,URI="subs_x.m3u8"` + "\n" +
+		`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="Forced",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,FORCED=YES,URI="subs_y.m3u8"` + "\n" +
+		`#EXT-X-STREAM-INF:BANDWIDTH=2000000,SUBTITLES="subs"` + "\n" +
+		"index.m3u8\n"
 	unified := string(MasterPlaylist("index.m3u8", Variant{}, nil, subs))
-	legacy := string(subtitle.MasterPlaylist("index.m3u8", subs))
-	if unified != legacy {
-		t.Errorf("unified master (no audio) diverged from subtitle.MasterPlaylist:\n--- unified ---\n%s\n--- legacy ---\n%s", unified, legacy)
+	if unified != golden {
+		t.Errorf("unified master (no audio) diverged from golden:\n--- got ---\n%s\n--- want ---\n%s", unified, golden)
 	}
 }
 

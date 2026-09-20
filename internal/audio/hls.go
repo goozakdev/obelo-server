@@ -20,8 +20,8 @@ import (
 // one master carries BOTH an AUDIO group and a SUBTITLES group, and the video
 // variant references whichever groups exist. It reuses the subtitle package's
 // rendition-line format (subtitle.RenditionLines) so the two blocks stay
-// consistent, and emits byte-identical output to subtitle.MasterPlaylist when there
-// are no audio renditions — so a subtitle-only session is unchanged.
+// consistent, and with no audio renditions the output is a subtitle-only
+// master (no AUDIO group or attribute).
 
 // HLSAudioGroupID is the GROUP-ID tying the master's `#EXT-X-MEDIA:TYPE=AUDIO`
 // renditions to the single video `#EXT-X-STREAM-INF`. A fixed id is fine: there is
@@ -72,10 +72,9 @@ type Variant struct {
 // video rendition — no ABR (ADR-0004 amendment). Every URI is a session-relative
 // name the /hls route serves.
 //
-// With no audio renditions and a zero Variant the output is byte-identical to
-// subtitle.MasterPlaylist, so a subtitle-only (or bare) master is unchanged. A
-// master with neither group is still valid (the caller only points at the master
-// when there is a group to carry).
+// With no audio renditions the output is a subtitle-only (or bare) master: no
+// AUDIO group or attribute. A master with neither group is still valid (the
+// caller only points at the master when there is a group to carry).
 func MasterPlaylist(videoURI string, v Variant, audioRenditions []Rendition, subtitleRenditions []subtitle.Rendition) []byte {
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")

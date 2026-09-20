@@ -112,9 +112,9 @@ func (s *Service) probe(ctx context.Context, client *http.Client, origin string)
 		return Peer{}, ErrNotObelo
 	}
 	if body.ID == "" {
-		// A Server predating ADR-0034 has no identity, and without one a re-key
-		// could never find this Link again. That is not a version mismatch, it is
-		// something this design cannot build on.
+		// No identity (ADR-0034) means a re-key could never find this Link again.
+		// That is not a version mismatch, it is something this design cannot build
+		// on — the responder is not an Obelo server.
 		return Peer{}, ErrNotObelo
 	}
 	return Peer{
@@ -131,7 +131,8 @@ type redemption struct {
 	Token string
 	// DeviceID is the Device the sharer created for this Server (ADR-0055 §4). It
 	// is kept for one purpose — the unlink, which deletes it so no ghost with a
-	// last-seen is left behind. Empty from a Server that does not report one.
+	// last-seen is left behind. redeem rejects a response that omits it, so this
+	// is never empty.
 	DeviceID string
 }
 
@@ -177,6 +178,13 @@ func (s *Service) redeem(ctx context.Context, client *http.Client, origin string
 	if err := decodeBody(resp, &out); err != nil || out.Token == "" {
 		return redemption{}, fmt.Errorf("%w: it accepted the invite but returned no token", ErrNotObelo)
 	}
+	if out.Device.ID == "" {
+		// A redemption without a Device id can never be surrendered cleanly on
+		// unlink (surrender has one path, and it needs the id to name what to
+		// delete) — the same "this design cannot build on it" refusal as no
+		// token at all.
+		return redemption{}, fmt.Errorf("%w: it accepted the invite but the redemption named no device", ErrNotObelo)
+	}
 	return redemption{Token: out.Token, DeviceID: out.Device.ID}, nil
 }
 
@@ -218,27 +226,22 @@ func (s *Service) redeemFailure(resp *http.Response) error {
 // best-effort call so the sharer's Device row disappears instead of lingering as
 // a ghost with a last-seen.
 //
-// IT IS `DELETE /devices/{id}` AND NOT THE `POST /auth/logout` THE ADR NAMES,
-// and the difference is the whole requirement. Logout deletes a TOKEN; the
-// Device row survives it, still listed on the sharer's Users page with the date
-// this household last called. Deleting the Device removes both — its tokens
-// cascade — which is the outcome the ADR describes in the same sentence. The
-// logout is kept as the fallback for a Link made before the Device id was
-// recorded, so the credential is surrendered either way.
+// IT DELETES THE DEVICE, not just its token, and the difference is the whole
+// requirement: a token-only revoke leaves the Device row behind, still listed
+// on the sharer's Users page with the date this household last called.
+// Deleting the Device removes both — its tokens cascade — which is the outcome
+// the ADR describes. establish always records the Device id the redeem
+// response names, so this has one path.
 //
 // Every error here is returned for LOGGING and never acted on. A friend whose
 // server is off must not be able to prevent this household from unlinking — the
 // whole point of unlink is that this side is done.
 func (s *Service) surrender(ctx context.Context, client *http.Client, l store.Link) error {
-	if l.ActiveOrigin == "" || l.Token == "" {
+	if l.ActiveOrigin == "" || l.Token == "" || l.DeviceID == "" {
 		return nil
 	}
-	if l.DeviceID != "" {
-		return s.call(ctx, client, http.MethodDelete,
-			l.ActiveOrigin+apiPrefix+"/devices/"+url.PathEscape(l.DeviceID), l.Token)
-	}
-	return s.call(ctx, client, http.MethodPost,
-		l.ActiveOrigin+apiPrefix+"/auth/logout", l.Token)
+	return s.call(ctx, client, http.MethodDelete,
+		l.ActiveOrigin+apiPrefix+"/devices/"+url.PathEscape(l.DeviceID), l.Token)
 }
 
 func (s *Service) call(ctx context.Context, client *http.Client, method, target, token string) error {

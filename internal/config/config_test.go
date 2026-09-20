@@ -89,8 +89,8 @@ func TestTranscodeCapFromEnv(t *testing.T) {
 }
 
 // TestHardwareAccelFromEnv: the widened HW-accel knob (ADR-0009) defaults OFF,
-// parses each explicit backend name, accepts off/false/0 → off, keeps the legacy
-// bool true → auto (back-compat), and leaves garbage off (the safe CPU path).
+// parses each explicit backend name, and leaves garbage off (the safe CPU
+// path).
 func TestHardwareAccelFromEnv(t *testing.T) {
 	if d := config.Defaults().HardwareAccel; d != config.HWAccelOff {
 		t.Errorf("HardwareAccel default = %q, want %q (CPU path by default)", d, config.HWAccelOff)
@@ -108,15 +108,15 @@ func TestHardwareAccelFromEnv(t *testing.T) {
 		{"qsv", config.HWAccelQSV},
 		{"videotoolbox", config.HWAccelVideoToolbox},
 		{"VideoToolbox", config.HWAccelVideoToolbox}, // case-insensitive
-		// off/false/0/no → off (the full "turn it off" vocabulary).
+		// Unrecognized values (including bare booleans) are not a supported
+		// spelling and fall back to the safe default: off.
 		{"false", config.HWAccelOff},
 		{"0", config.HWAccelOff},
 		{"no", config.HWAccelOff},
-		// Legacy bool true → auto (back-compat: old "true turns HW on"); on/yes too.
-		{"true", config.HWAccelAuto},
-		{"1", config.HWAccelAuto},
-		{"on", config.HWAccelAuto},
-		{"yes", config.HWAccelAuto},
+		{"true", config.HWAccelOff},
+		{"1", config.HWAccelOff},
+		{"on", config.HWAccelOff},
+		{"yes", config.HWAccelOff},
 		// Surrounding whitespace is trimmed before matching.
 		{"  videotoolbox  ", config.HWAccelVideoToolbox},
 		{" auto ", config.HWAccelAuto},

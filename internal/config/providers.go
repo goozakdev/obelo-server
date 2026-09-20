@@ -75,13 +75,8 @@ func ProviderEnvTable() []ProviderEnvVar {
 		{Env: "OBELO_MUSICBRAINZ_ENABLED", Provider: ProviderMusicBrainz, Field: ProviderFieldEnabled},
 		{Env: "OBELO_MUSICBRAINZ_BASE_URL", Provider: ProviderMusicBrainz, Field: ProviderFieldURL, Default: DefaultMusicBrainzBaseURL},
 
-		// OBELO_COVERART_BASE_URL now fills the MUSICBRAINZ row's SECOND host
-		// (.scratch/bundled-plugins: issue 06). The variable's name, its meaning and
-		// its default are unchanged — it is still "where the album covers come from" —
-		// but the thing it configures is no longer a provider of its own. The Cover Art
-		// Archive was a base URL wearing a provider's clothes: nothing read its enable
-		// switch, it had no client, and its only live effect was the second host the
-		// music lead was built with. It is now the MusicBrainz plugin's `url2`,
+		// OBELO_COVERART_BASE_URL fills the MUSICBRAINZ row's SECOND host — where
+		// album cover art comes from. It configures the MusicBrainz plugin's `url2`,
 		// declared by that plugin's manifest, and this row plants an operator's
 		// override straight into it.
 		{Env: "OBELO_COVERART_BASE_URL", Provider: ProviderMusicBrainz, Field: ProviderFieldURL2, Default: DefaultCoverArtBaseURL},
@@ -95,8 +90,7 @@ func ProviderEnvTable() []ProviderEnvVar {
 }
 
 // ProviderSettings is one provider's environment-supplied configuration, in the
-// fixed settings shape. It replaces the ten named Config fields the table's rows
-// used to be spelled out as.
+// fixed settings shape the table's rows populate.
 //
 // Like every provider value on Config it is a FIRST-BOOT SEED and nothing more:
 // once the DB-backed provider settings exist they are authoritative and these are
@@ -199,20 +193,17 @@ func (c *Config) setProvider(id string, p ProviderSettings) {
 // providerSeedRule is one row of the SEEDING table: a provider a fresh install may
 // write a row for, and what turns that row on. SeedProviderRows walks it in order.
 //
-// Every rule here is the rule SeedIfEmpty used to spell out in a ladder of `if`s,
-// moved beside the environment variables it is about and stated once. The clauses
-// read oddly because the behaviour they preserve is odd — and preserving it exactly
-// is the point of a prefactor (ADR-0059 decision 11).
+// Each rule sits beside the environment variables it is about and is stated once.
+// The clauses read oddly because the behaviour they describe is odd (ADR-0059
+// decision 11).
 type providerSeedRule struct {
 	// Provider is the id the row is keyed by.
 	Provider string
 	// EnabledBy is the provider whose own environment opt-in turns this row on.
 	// Empty means "this source has no opt-in — a key is what turns it on". It is a
-	// field rather than always the row's own provider because it once had to be: the
-	// `coverart` row rode MusicBrainz's switch, having none of its own. That row is
-	// gone (.scratch/bundled-plugins: issue 06) and every remaining rule names
-	// itself, so the field is now a generality with one degenerate user — left as it
-	// is because the next keyless source to arrive will want it.
+	// field rather than always the row's own provider so a keyless source (one
+	// with no opt-in of its own) can name the provider whose switch it rides;
+	// every current rule names itself.
 	EnabledBy string
 	// RidesVideoKey preserves the original single-switch behaviour: a configured
 	// video source historically turned on every kind, so a deployment that set only
@@ -225,12 +216,9 @@ type providerSeedRule struct {
 func providerSeedTable() []providerSeedRule {
 	return []providerSeedRule{
 		{Provider: ProviderTMDB},
-		// The `coverart` rule is GONE (.scratch/bundled-plugins: issue 06). It seeded a
-		// row that was really a second host, which is why it was the only rule whose
-		// EnabledBy named a DIFFERENT provider — it had no switch of its own because it
-		// was not a source. That host now rides the MusicBrainz row as its
-		// image_base_url, which SeedProviderRows writes from p.URL2 for every provider
-		// alike, so one row carries what two used to.
+		// MusicBrainz's second host (its cover-art image base URL) rides this same
+		// row as image_base_url, which SeedProviderRows writes from p.URL2 for every
+		// provider alike — one row, one source.
 		{Provider: ProviderMusicBrainz, EnabledBy: ProviderMusicBrainz, RidesVideoKey: true},
 		{Provider: ProviderFanartTV},
 		{Provider: ProviderTheAudioDB},

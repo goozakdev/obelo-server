@@ -98,8 +98,7 @@ type Metadata struct {
 
 // NewMetadata builds a Metadata backed by the given user counter, advertising the
 // given Identity (ADR-0034) and the given startup-resolved Capabilities. A zero
-// Identity is legal — the handshake simply omits the fields, which is what a
-// client sees from a server predating ADR-0034.
+// Identity is legal — the handshake simply omits the fields.
 func NewMetadata(users UserCounter, identity Identity, caps Capabilities) *Metadata {
 	return &Metadata{users: users, identity: identity, caps: caps}
 }

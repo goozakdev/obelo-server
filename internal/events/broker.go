@@ -79,8 +79,8 @@ type AudienceKind int
 
 const (
 	// AudienceBroadcast reaches every subscriber. It is the zero value, so an
-	// Event built without an explicit audience broadcasts (back-compatible with
-	// the original fan-to-all behavior). enrichProgress uses this.
+	// Event built without an explicit audience broadcasts. enrichProgress uses
+	// this.
 	AudienceBroadcast AudienceKind = iota
 	// AudienceAdmin reaches only subscribers whose identity is Admin.
 	AudienceAdmin

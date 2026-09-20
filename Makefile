@@ -153,7 +153,7 @@ PLUGIN_BUILD_DIR := bin/plugins
 
 GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
 
-.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web differential fmt clean
+.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
 
 all: build
 
@@ -521,35 +521,6 @@ check-web:
 	  exit 1; }
 	cd $(WEB_DIR) && npm run typecheck
 	cd $(WEB_DIR) && npm test
-
-## differential: prove this build against the 2026-09-17 build, end to end.
-##
-## Boots BOTH binaries — this tree's, and one built from a throwaway clone
-## checked out at $(DIFFERENTIAL_BASE) — against one set of local stand-in
-## metadata sources and one fixture library, and diffs what they enriched and
-## what they asked for. It closes the two success criteria of
-## .scratch/bundled-plugins/PRD.md that issue 08 could only argue: "enriches a
-## movie and an album on the first pass exactly as the 2026-09-17 build does",
-## and "an existing server upgraded across issue 08 keeps every provider key,
-## every per-Library override and every item pin; the Cover Art Archive row is
-## gone; nothing re-enriches".
-##
-## It is deliberately NOT in `check`. It needs a second checkout and two full Go
-## builds — minutes, not seconds — and `check` is a pre-commit gate that people
-## have to be willing to run. It needs ffmpeg (the fixture library is generated)
-## and it needs NO network: every source it calls is on loopback.
-##
-## It never writes to bin/, never touches the developer's data directory, never
-## binds a fixed port and never modifies a tracked file. Its one prerequisite
-## inside the tree is `plugins`, which writes gitignored build output that
-## `make check` writes anyway — without it this tree's binary ships no providers
-## and the comparison would be against nothing.
-##
-## DIFFERENTIAL_KEEP=1 keeps the work directory on success (it is always kept on
-## failure, and the driver says where).
-DIFFERENTIAL_BASE ?= cf5da34
-differential: plugins
-	@DIFFERENTIAL_BASE=$(DIFFERENTIAL_BASE) ./scripts/differential/run.sh
 
 ## fmt: gofmt the Go tree.
 fmt:

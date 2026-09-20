@@ -96,12 +96,10 @@ func (s *Service) Search(ctx context.Context, ref FetchRef, lang string) ([]Cand
 // yields ErrProviderDisabled (the caller reports nothing found); a genuine
 // download failure is a real error.
 //
-// Keeping the original (ADR-0033) — not the pre-converted WebVTT this used to
-// cache — means the row behaves exactly like a Sidecar subtitle at serve time: the
-// .vtt endpoint converts on demand (the same subtitle.ToWebVTT path), and a client
-// that declares the format in its Capability profile gets the original bytes with
-// ASS styling intact. Rows written before this change carry codec "vtt" and keep
-// serving through the conversion path's passthrough unchanged.
+// Keeping the original (ADR-0033) means the row behaves exactly like a Sidecar
+// subtitle at serve time: the .vtt endpoint converts on demand (the same
+// subtitle.ToWebVTT path), and a client that declares the format in its
+// Capability profile gets the original bytes with ASS styling intact.
 func (s *Service) Pick(ctx context.Context, ref FetchRef, candidate Candidate, lang string) (store.Subtitle, error) {
 	lang = subtitle.NormalizeLang(lang)
 	data, format, err := s.current().Download(ctx, candidate)

@@ -117,50 +117,34 @@ func TestSubtitleMediaPlaylistShape(t *testing.T) {
 	}
 }
 
-func TestMasterPlaylistCarriesSubtitleRendition(t *testing.T) {
-	master := string(MasterPlaylist("index.m3u8", []Rendition{
+func TestRenditionLinesCarriesSubtitleRendition(t *testing.T) {
+	lines := RenditionLines([]Rendition{
 		{URI: "subs_en.m3u8", Name: "English", Language: "en", Forced: false},
 		{URI: "subs_es.m3u8", Name: "Spanish (Forced)", Language: "es", Forced: true},
-	}))
+	})
 	for _, want := range []string{
-		"#EXTM3U",
 		`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs"`,
 		`NAME="English"`,
 		`LANGUAGE="en"`,
 		`URI="subs_en.m3u8"`,
 		`URI="subs_es.m3u8"`,
-		`#EXT-X-STREAM-INF:BANDWIDTH=`,
-		`SUBTITLES="subs"`,
-		"index.m3u8",
 	} {
-		if !strings.Contains(master, want) {
-			t.Errorf("master playlist missing %q:\n%s", want, master)
+		if !strings.Contains(lines, want) {
+			t.Errorf("rendition lines missing %q:\n%s", want, lines)
 		}
 	}
 	// The forced track is the auto-display default; the plain one is off.
-	if !strings.Contains(master, `NAME="Spanish (Forced)",LANGUAGE="es",DEFAULT=YES,AUTOSELECT=YES,FORCED=YES`) {
-		t.Errorf("forced rendition not marked DEFAULT/FORCED:\n%s", master)
+	if !strings.Contains(lines, `NAME="Spanish (Forced)",LANGUAGE="es",DEFAULT=YES,AUTOSELECT=YES,FORCED=YES`) {
+		t.Errorf("forced rendition not marked DEFAULT/FORCED:\n%s", lines)
 	}
-	if !strings.Contains(master, `NAME="English",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO`) {
-		t.Errorf("non-forced rendition not marked DEFAULT=NO:\n%s", master)
-	}
-	// The video rendition line must be the LAST line (the URI following STREAM-INF).
-	if !strings.HasSuffix(strings.TrimRight(master, "\n"), "\nindex.m3u8") {
-		t.Errorf("video rendition URI not at the end:\n%s", master)
+	if !strings.Contains(lines, `NAME="English",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO`) {
+		t.Errorf("non-forced rendition not marked DEFAULT=NO:\n%s", lines)
 	}
 }
 
-func TestMasterPlaylistNoRenditions(t *testing.T) {
-	// Defensive: a master with no subtitle renditions is still a valid single-
-	// rendition playlist (no SUBTITLES group attribute).
-	master := string(MasterPlaylist("index.m3u8", nil))
-	if strings.Contains(master, "EXT-X-MEDIA") {
-		t.Errorf("empty master should carry no EXT-X-MEDIA:\n%s", master)
-	}
-	if strings.Contains(master, "SUBTITLES=") {
-		t.Errorf("empty master should not reference a SUBTITLES group:\n%s", master)
-	}
-	if !strings.Contains(master, "#EXT-X-STREAM-INF:BANDWIDTH=") || !strings.Contains(master, "index.m3u8") {
-		t.Errorf("empty master missing the video rendition:\n%s", master)
+func TestRenditionLinesEmpty(t *testing.T) {
+	// Defensive: no subtitle renditions yields no EXT-X-MEDIA lines at all.
+	if lines := RenditionLines(nil); lines != "" {
+		t.Errorf("RenditionLines(nil) = %q, want empty", lines)
 	}
 }
