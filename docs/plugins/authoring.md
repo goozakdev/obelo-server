@@ -1617,10 +1617,10 @@ if id := req.Ref.ID(pluginapi.NamespaceTMDB); id != "" {
 }
 ```
 
-`ID` reads the map, falls back to the named field for the five shipped namespaces
-(so a host from before the map existed still answers), and trims whitespace. The
-named fields (`TMDBID`, `IMDBID`, `MusicbrainzID`, `TheTVDBID`, `AniDBID`) are v1
-mirrors kept for guests built before the map; **do not read them directly**. When
+`ID` reads the map and trims whitespace; it returns `""` for a namespace the
+reference does not carry. `ExternalIDs` is the only carrier of namespaced ids on
+`MediaRef`; the music coordinates (`ReleaseMBID`,
+`AlbumHints[].ReleaseGroupMBID`) are separate, kind-specific pins. When
 your record resolves an id, return it in `ExternalID` with `Source` set to your
 plugin id: `Source` names the namespace the id is in, and the host hands that id
 back to you under that key next time.
