@@ -68,7 +68,7 @@ func TestMusicBrainzTrackLookupByPinnedMBID(t *testing.T) {
 	p, host := newProvider(t, pathHandler("/recording/rec-42",
 		`{"id": "rec-42", "title": "Corrected Title"}`), noPacing())
 
-	meta, err := lookup(p, pluginapi.MediaRef{Kind: "track", MusicbrainzID: "rec-42", Track: "ignored"})
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "track", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rec-42"}, Track: "ignored"})
 	if err != nil {
 		t.Fatalf("Lookup by MBID: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestMusicBrainzArtistLookupByPinnedMBID(t *testing.T) {
 	p, host := newProvider(t, pathHandler("/artist/art-42",
 		`{"id": "art-42", "name": "Corrected Artist", "type": "Group", "tags": [{"name": "grunge"}]}`), noPacing())
 
-	meta, err := lookup(p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "art-42", Title: "ignored"})
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "art-42"}, Title: "ignored"})
 	if err != nil {
 		t.Fatalf("Lookup by MBID: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestMusicBrainzAlbumLookupByPinnedMBID(t *testing.T) {
 		`{"id": "rg-42", "title": "Corrected Album", "first-release-date": "2000-01-01", "tags": [{"name": "rock"}]}`),
 		noPacing())
 
-	meta, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-42", Album: "ignored"})
+	meta, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-42"}, Album: "ignored"})
 	if err != nil {
 		t.Fatalf("Lookup by MBID: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestMusicBrainzLookupResolvesReleaseToReleaseGroup(t *testing.T) {
 func TestMusicBrainzLookupNotFoundIsNoMatch(t *testing.T) {
 	p, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, noPacing())
 
-	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-gone"})
+	_, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-gone"}})
 	if !errors.Is(err, errNoMatch) {
 		t.Errorf("err = %v, want no-match", err)
 	}

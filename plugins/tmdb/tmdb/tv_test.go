@@ -64,12 +64,12 @@ func TestTMDBShowSeasonEpisode(t *testing.T) {
 		t.Errorf("show artwork roles = %+v", show.Artwork)
 	}
 
-	season := lookup(t, p, pluginapi.MediaRef{Kind: "season", TMDBID: "1399", SeasonNumber: 1}).Record
+	season := lookup(t, p, pluginapi.MediaRef{Kind: "season", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "1399"}, SeasonNumber: 1}).Record
 	if !season.Matched || len(season.Artwork) != 1 || season.Artwork[0].Role != "poster" {
 		t.Errorf("season lookup wrong: %+v", season)
 	}
 
-	ep := lookup(t, p, pluginapi.MediaRef{Kind: "episode", TMDBID: "1399", SeasonNumber: 1, EpisodeNumber: 1}).Record
+	ep := lookup(t, p, pluginapi.MediaRef{Kind: "episode", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "1399"}, SeasonNumber: 1, EpisodeNumber: 1}).Record
 	if ep.Name != "Winter Is Coming" || ep.Overview == "" {
 		t.Errorf("episode metadata wrong: %+v", ep)
 	}

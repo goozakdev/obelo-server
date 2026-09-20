@@ -302,13 +302,10 @@ func (a pluginProvider) episodeLister() (pluginapi.EpisodeLister, bool) {
 
 // --- the two vocabularies' value translations --------------------------------
 
-// wireRefFromTitleRef sends every id the TitleRef holds in BOTH carriers
-// (ADR-0060 decision 7): ExternalIDs is the TitleRef's map merged with its five
-// named fields, and each named MediaRef field is then set FROM that merged map. So a
+// wireRefFromTitleRef sends every id the TitleRef holds through ExternalIDs, the
+// map merged with the TitleRef's own five named fields (ADR-0060 decision 7). So a
 // caller that sets only the named fields (every caller until the store keeps ids by
-// namespace) still sends a populated map to a new guest, and a caller that sets
-// only the map still fills the named mirrors a v1 guest reads — TheTVDBID and
-// AniDBID included, which no caller used to fill.
+// namespace) still sends a populated map to the Plugin.
 func wireRefFromTitleRef(ref TitleRef) pluginapi.MediaRef {
 	ids := mergedExternalIDs(ref)
 	out := pluginapi.MediaRef{
@@ -316,11 +313,6 @@ func wireRefFromTitleRef(ref TitleRef) pluginapi.MediaRef {
 		Title:         ref.Title,
 		Year:          ref.Year,
 		ExternalIDs:   ids,
-		TMDBID:        ids[pluginapi.NamespaceTMDB],
-		IMDBID:        ids[pluginapi.NamespaceIMDB],
-		MusicbrainzID: ids[pluginapi.NamespaceMusicBrainz],
-		TheTVDBID:     ids[pluginapi.NamespaceTheTVDB],
-		AniDBID:       ids[pluginapi.NamespaceAniDB],
 		SeasonNumber:  ref.SeasonNumber,
 		EpisodeNumber: ref.EpisodeNumber,
 		EpisodeLabel:  ref.EpisodeLabel,
@@ -345,9 +337,12 @@ func wireRefFromTitleRef(ref TitleRef) pluginapi.MediaRef {
 // blank value is no id and is dropped, whichever side it came from. The caller's
 // map is never written to.
 func mergedExternalIDs(ref TitleRef) map[string]string {
-	named := pluginapi.MediaRef{
-		TMDBID: ref.TMDBID, IMDBID: ref.IMDBID, MusicbrainzID: ref.MusicbrainzID,
-		TheTVDBID: ref.TheTVDBID, AniDBID: ref.AniDBID,
+	named := map[string]string{
+		pluginapi.NamespaceTMDB:        ref.TMDBID,
+		pluginapi.NamespaceIMDB:        ref.IMDBID,
+		pluginapi.NamespaceMusicBrainz: ref.MusicbrainzID,
+		pluginapi.NamespaceTheTVDB:     ref.TheTVDBID,
+		pluginapi.NamespaceAniDB:       ref.AniDBID,
 	}
 	var out map[string]string
 	put := func(ns, id string) {
@@ -361,11 +356,11 @@ func mergedExternalIDs(ref TitleRef) map[string]string {
 			put(ns, id)
 		}
 	}
-	for _, ns := range pluginapi.NamedNamespaces() {
+	for ns, id := range named {
 		if _, ok := out[ns]; ok {
 			continue
 		}
-		if id := strings.TrimSpace(named.NamedID(ns)); id != "" {
+		if id = strings.TrimSpace(id); id != "" {
 			put(ns, id)
 		}
 	}
@@ -373,8 +368,7 @@ func mergedExternalIDs(ref TitleRef) map[string]string {
 }
 
 // titleRefFromWire is the reverse, for a reference a Plugin DECLARED (its connection
-// probe): both carriers are read the way a guest reads them, through MediaRef.ID, so
-// a Descriptor written against either shape yields the same TitleRef.
+// probe): every id is read through MediaRef.ID, off the map.
 func titleRefFromWire(ref pluginapi.MediaRef) TitleRef {
 	var ids map[string]string
 	for ns := range ref.ExternalIDs {

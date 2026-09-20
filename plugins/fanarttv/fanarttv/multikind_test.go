@@ -84,7 +84,7 @@ func TestAConcurrentVideoAndMusicCallArePacedByOneInterval(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-			Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "438631"},
+			Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}},
 		})
 		video = answer{artwork: resp.Record.Artwork, outcome: resp.Outcome, err: err}
 	}()
@@ -92,7 +92,7 @@ func TestAConcurrentVideoAndMusicCallArePacedByOneInterval(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		resp, err := p.ArtworkCandidates(context.Background(), pluginapi.ArtworkCandidatesRequest{
-			Ref:  pluginapi.MediaRef{Kind: "artist", MusicbrainzID: mbid},
+			Ref:  pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: mbid}},
 			Role: "poster",
 		})
 		music = answer{cands: resp.Candidates, outcome: resp.Outcome, err: err}
@@ -140,8 +140,8 @@ func TestAConcurrentVideoAndMusicCallArePacedByOneInterval(t *testing.T) {
 func TestAVideoArtworkCandidatesCallIsUnavailableAndCostsNoRequest(t *testing.T) {
 	p, host := fanartStub(t, fanartMovieJSON, 0)
 	for _, ref := range []pluginapi.MediaRef{
-		{Kind: "movie", TMDBID: "438631"},
-		{Kind: "show", TheTVDBID: "121361"},
+		{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}},
+		{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}},
 	} {
 		resp := candidates(t, p, ref, "poster")
 		if resp.Outcome != pluginapi.OutcomeUnavailable {
@@ -163,8 +163,8 @@ func TestOneInstanceServesBothChainsFromOneCachePair(t *testing.T) {
     }`, 0)
 	ctx := context.Background()
 	refs := []pluginapi.MediaRef{
-		{Kind: "artist", MusicbrainzID: "shared-id"},
-		{Kind: "movie", TMDBID: "shared-id"},
+		{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "shared-id"}},
+		{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "shared-id"}},
 	}
 	// Two passes: the second must be served entirely from the caches.
 	for pass := 0; pass < 2; pass++ {
@@ -197,9 +197,9 @@ func TestFanartTVReadsItsSettingsPerCall(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "one"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "one"}})
 	host.SetSettings(pluginapi.Settings{Enabled: true, Secret: "second", URL: baseURL})
-	lookup(t, p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "two"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "two"}})
 
 	if len(keys) != 2 || keys[0] != "first" || keys[1] != "second" {
 		t.Errorf("api keys sent = %v, want [first second] — the key is read per call", keys)

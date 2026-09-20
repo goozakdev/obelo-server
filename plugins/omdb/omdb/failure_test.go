@@ -108,7 +108,7 @@ func TestOMDbAHostRefusalIsUnavailable(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", IMDBID: "tt0111161"},
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt0111161"}},
 	})
 	if err != nil {
 		t.Fatalf("a refusal became a Go error, which the host counts against the plugin: %v", err)
@@ -171,7 +171,7 @@ func TestOMDbDoesNotCacheAFailure(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "movie", IMDBID: "tt0111161"}
+	ref := pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceIMDB: "tt0111161"}}
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
 	if err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {

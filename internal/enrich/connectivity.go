@@ -129,9 +129,8 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, ima
 // Source, which names its ExternalID's namespace, or — for a record that names
 // none — the Plugin's own id, which is a source's namespace (ADR-0060 decision 1).
 //
-// It sets the MAP, and wireRefFromTitleRef fills the named v1 mirror from it for the
-// five shipped namespaces, so a v1 guest reading MusicbrainzID and a new one reading
-// ref.ID("musicbrainz") see the same id. This used to fill EVERY named field with
+// It sets the MAP, which wireRefFromTitleRef sends as-is, so a Plugin reading
+// ref.ID("musicbrainz") finds it there. This used to fill EVERY named field with
 // the one id, because the contract had no way to say which namespace it was in; now
 // it does, and a Plugin asked about its own record finds it where it reads.
 //

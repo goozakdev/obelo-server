@@ -202,7 +202,7 @@ func TestMusicBrainzArtworkCandidatesAlbumCovers(t *testing.T) {
 			http.NotFound(w, r)
 		})
 
-	cands, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-123"}, "cover")
+	cands, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-123"}}, "cover")
 	if err != nil {
 		t.Fatalf("ArtworkCandidates: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestMusicBrainzArtworkCandidatesAlbumCovers(t *testing.T) {
 func TestMusicBrainzArtworkCandidatesArtistNone(t *testing.T) {
 	p, host := newProvider(t, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, noPacing())
 
-	cands, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "artist", MusicbrainzID: "art-1"}, "poster")
+	cands, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "artist", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "art-1"}}, "poster")
 	if err != nil {
 		t.Fatalf("ArtworkCandidates: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestMusicBrainzArtworkCandidatesUnresolvedAlbumNone(t *testing.T) {
 func TestMusicBrainzArtworkCandidatesNoArt404(t *testing.T) {
 	p, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, noPacing())
 
-	cands, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-none"}, "cover")
+	cands, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-none"}}, "cover")
 	if err != nil {
 		t.Fatalf("ArtworkCandidates: %v", err)
 	}
@@ -278,10 +278,10 @@ func TestTheGuestSendsNoUserAgentOfItsOwn(t *testing.T) {
 		jsonHandler(`{"id":"mbid-1","title":"Doolittle"}`),
 		jsonHandler(`{"images":[{"image":"http://img/1.jpg","front":true}]}`))
 
-	if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "mbid-1"}); err != nil {
+	if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "mbid-1"}}); err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if _, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "mbid-1"}, "cover"); err != nil {
+	if _, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "mbid-1"}}, "cover"); err != nil {
 		t.Fatalf("artwork candidates: %v", err)
 	}
 	reqs := host.Requests()

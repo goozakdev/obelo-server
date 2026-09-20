@@ -38,7 +38,7 @@ func statusHost(code int) *sdktest.Host {
 }
 
 func TestAniDBStatusErrorsCarryTheirClassification(t *testing.T) {
-	ref := pluginapi.MediaRef{Kind: "show", Title: "Cowboy Bebop", AniDBID: "1"}
+	ref := pluginapi.MediaRef{Kind: "show", Title: "Cowboy Bebop", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}}
 
 	// A status the SOURCE owns: unavailable, with the status in the Detail, and no
 	// Go error for the host to count against the plugin.
@@ -102,7 +102,7 @@ func TestAniDBStatusErrorsCarryTheirClassification(t *testing.T) {
 func TestEveryAniDBCallPathTreatsARetryableStatusAsUnavailable(t *testing.T) {
 	p := New(statusHost(http.StatusServiceUnavailable))
 	ctx := context.Background()
-	ref := pluginapi.MediaRef{Kind: "show", AniDBID: "1"}
+	ref := pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}}
 
 	if resp, err := p.Lookup(ctx, pluginapi.LookupRequest{Ref: ref}); err != nil ||
 		resp.Outcome != pluginapi.OutcomeUnavailable {
@@ -137,7 +137,7 @@ func TestAniDBAHostRefusalIsUnavailable(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	})
 	if err != nil {
 		t.Fatalf("a refusal became a Go error, which the host counts against the plugin: %v", err)
@@ -163,7 +163,7 @@ func TestAniDBsAllowlistedHostCoversItsExplicitPort(t *testing.T) {
 	)
 
 	resp, err := New(host).Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	})
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
@@ -193,7 +193,7 @@ func TestAniDBASpentBudgetIsUnavailable(t *testing.T) {
 	p := New(host)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	})
 	if err != nil {
 		t.Fatalf("a spent budget became a Go error: %v", err)
@@ -212,7 +212,7 @@ func TestAniDBAnUnreadableBodyIsAGoError(t *testing.T) {
 	p, _ := stub(t, `{"this":"is json, not the http api"}`)
 
 	if _, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", AniDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}},
 	}); err == nil {
 		t.Fatal("an unreadable body answered with no error")
 	}
@@ -235,7 +235,7 @@ func TestAniDBDoesNotCacheAFailure(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "show", AniDBID: "1"}
+	ref := pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceAniDB: "1"}}
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{Ref: ref})
 	if err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {

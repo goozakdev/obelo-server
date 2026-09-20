@@ -126,7 +126,7 @@ func TestASDKBuiltGuestAnswersTheThreeMandatoryCalls(t *testing.T) {
 	}
 
 	art, err := provider.ArtworkCandidates(context.Background(), pluginapi.ArtworkCandidatesRequest{
-		Ref: pluginapi.MediaRef{Kind: "movie", TMDBID: "1"}, Role: "poster",
+		Ref: pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "1"}}, Role: "poster",
 	})
 	if err != nil {
 		t.Fatalf("ArtworkCandidates: %v", err)

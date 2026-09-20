@@ -82,7 +82,7 @@ func TestTwoLibrariesEnrichingConcurrentlyKeepTheInterval(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 3 {
-				if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"}); err != nil {
+				if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}}); err != nil {
 					t.Errorf("library %d lookup: %v", lib, err)
 					return
 				}
@@ -115,7 +115,7 @@ func TestRateLimitMillisChangesTheObservedInterval(t *testing.T) {
 		interval := time.Duration(ms) * time.Millisecond
 		p, requests := pacedProvider(t, ms)
 		for range 3 {
-			if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"}); err != nil {
+			if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}}); err != nil {
 				t.Fatalf("lookup: %v", err)
 			}
 		}
@@ -161,7 +161,7 @@ func TestPacingOffCostsNothing(t *testing.T) {
 	p, requests := pacedProvider(t, 0)
 	start := time.Now()
 	for range 6 {
-		if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"}); err != nil {
+		if _, err := lookup(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}}); err != nil {
 			t.Fatalf("lookup: %v", err)
 		}
 	}
@@ -207,7 +207,7 @@ func TestTheCoverArtHostIsPacedToo(t *testing.T) {
 	p := New(pluginsdk.PacedHost(inner, DefaultInterval))
 
 	for range 3 {
-		if _, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", MusicbrainzID: "rg-1"}, "cover"); err != nil {
+		if _, err := artworkCandidates(p, pluginapi.MediaRef{Kind: "album", ExternalIDs: map[string]string{pluginapi.NamespaceMusicBrainz: "rg-1"}}, "cover"); err != nil {
 			t.Fatalf("artwork candidates: %v", err)
 		}
 	}

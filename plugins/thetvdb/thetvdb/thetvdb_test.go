@@ -128,7 +128,7 @@ func TestTheTVDBShowByIDLoginThenReuse(t *testing.T) {
 	}}
 	p, _ := provider(t, s)
 
-	got := lookup(t, p, pluginapi.MediaRef{Kind: "show", Title: "GoT", TheTVDBID: "121361"}).Record
+	got := lookup(t, p, pluginapi.MediaRef{Kind: "show", Title: "GoT", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}}).Record
 	if got.Source != Source || !got.Matched {
 		t.Errorf("source/matched = %q/%v, want thetvdb/true", got.Source, got.Matched)
 	}
@@ -154,7 +154,7 @@ func TestTheTVDBShowByIDLoginThenReuse(t *testing.T) {
 	}
 
 	// A second, uncached lookup reuses the token — no second login.
-	lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "999"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "999"}})
 	if s.logins != 1 {
 		t.Errorf("logins = %d after a second lookup, want still 1 (token reused)", s.logins)
 	}
@@ -184,7 +184,7 @@ func TestTheTVDBEpisodeByIDResolvesBySeasonNumber(t *testing.T) {
 	p, _ := provider(t, s)
 
 	got := lookup(t, p, pluginapi.MediaRef{
-		Kind: "episode", TheTVDBID: "121361", SeasonNumber: 1, EpisodeNumber: 5,
+		Kind: "episode", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}, SeasonNumber: 1, EpisodeNumber: 5,
 	}).Record
 	if got.Name != "The Wolf and the Lion" {
 		t.Errorf("name = %q, want the S1E5 title", got.Name)
@@ -204,7 +204,7 @@ func TestTheTVDBEpisodeUnknownNumberIsNoMatch(t *testing.T) {
 	p, _ := provider(t, s)
 
 	resp := lookup(t, p, pluginapi.MediaRef{
-		Kind: "episode", TheTVDBID: "121361", SeasonNumber: 9, EpisodeNumber: 99,
+		Kind: "episode", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}, SeasonNumber: 9, EpisodeNumber: 99,
 	})
 	if resp.Outcome != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match (no such episode)", resp.Outcome)
@@ -219,7 +219,7 @@ func TestTheTVDBTreatsNAAndEmptyAsEmpty(t *testing.T) {
 	}}
 	p, _ := provider(t, s)
 
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "1"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "1"}})
 	if resp.Outcome != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match (all fields N/A/empty)", resp.Outcome)
 	}
@@ -230,7 +230,7 @@ func TestTheTVDBUnknownIDIsNoMatch(t *testing.T) {
 	s := &stub{handlers: map[string]http.HandlerFunc{}}
 	p, _ := provider(t, s)
 
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "404"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "404"}})
 	if resp.Outcome != pluginapi.OutcomeNoMatch {
 		t.Errorf("outcome = %q, want no-match for a 404", resp.Outcome)
 	}
@@ -261,7 +261,7 @@ func TestTheTVDBNon2xxIsNotAMatch(t *testing.T) {
 	p, _ := provider(t, s)
 
 	resp, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "1"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "1"}},
 	})
 	if err != nil {
 		t.Fatalf("a 500 became a Go error, which the host counts against the plugin: %v", err)
@@ -276,7 +276,7 @@ func TestTheTVDBNonTVKindIsNoMatch(t *testing.T) {
 	p, host := provider(t, s)
 
 	for _, kind := range []string{"movie", "artist", "album", "track"} {
-		resp := lookup(t, p, pluginapi.MediaRef{Kind: kind, TheTVDBID: "1", Title: "x"})
+		resp := lookup(t, p, pluginapi.MediaRef{Kind: kind, ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "1"}, Title: "x"})
 		if resp.Outcome != pluginapi.OutcomeNoMatch {
 			t.Errorf("kind %q: outcome = %q, want no-match (TheTVDB serves TV only)", kind, resp.Outcome)
 		}
@@ -291,7 +291,7 @@ func TestTheTVDBNonTVKindIsNoMatch(t *testing.T) {
 func TestTheTVDBCachesRepeatLookup(t *testing.T) {
 	s := &stub{handlers: map[string]http.HandlerFunc{"/series/121361": json200(seriesJSON)}}
 	p, _ := provider(t, s)
-	ref := pluginapi.MediaRef{Kind: "show", TheTVDBID: "121361"}
+	ref := pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}}
 
 	lookup(t, p, ref)
 	lookup(t, p, ref)
@@ -316,7 +316,7 @@ func TestTheTVDBA401RefreshesTheTokenAndRetriesOnce(t *testing.T) {
 	}
 	p, _ := provider(t, s)
 
-	got := lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "121361"}).Record
+	got := lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}}).Record
 	if got.Name != "Game of Thrones" {
 		t.Fatalf("name = %q, want the record the retry fetched", got.Name)
 	}
@@ -345,7 +345,7 @@ func TestTheTVDBASecondUnauthorizedIsAGoError(t *testing.T) {
 	p, _ := provider(t, s)
 
 	_, err := p.Lookup(context.Background(), pluginapi.LookupRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "121361"},
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "121361"}},
 	})
 	if err == nil {
 		t.Fatal("a rejected apikey answered with no error; it must reach the operator")
@@ -366,7 +366,7 @@ func TestTheTVDBReadsItsSettingsOnEveryCall(t *testing.T) {
 	}
 	p, host := provider(t, s)
 
-	lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "1"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "1"}})
 	if s.lastToken != "tok-k-1" {
 		t.Fatalf("token = %q, want one minted from the original key", s.lastToken)
 	}
@@ -376,7 +376,7 @@ func TestTheTVDBReadsItsSettingsOnEveryCall(t *testing.T) {
 	host.SetSettings(rotated)
 	s.unauthorizeNext = 1 // the old token is now stale
 	s.handlers["/series/2"] = json200(strings.Replace(seriesJSON, "121361", "2", 1))
-	lookup(t, p, pluginapi.MediaRef{Kind: "show", TheTVDBID: "2"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "2"}})
 
 	if s.lastToken != "tok-rotated-2" {
 		t.Errorf("token = %q, want one minted from the rotated key", s.lastToken)
@@ -396,7 +396,7 @@ func TestTheTVDBAnswersNeitherSearchNorArtwork(t *testing.T) {
 		t.Errorf("search = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}
 	if resp, err := p.ArtworkCandidates(ctx, pluginapi.ArtworkCandidatesRequest{
-		Ref: pluginapi.MediaRef{Kind: "show", TheTVDBID: "1"}, Role: "poster",
+		Ref: pluginapi.MediaRef{Kind: "show", ExternalIDs: map[string]string{pluginapi.NamespaceTheTVDB: "1"}}, Role: "poster",
 	}); err != nil || resp.Outcome != pluginapi.OutcomeUnavailable {
 		t.Errorf("artwork candidates = (%q, %v), want unavailable and no error", resp.Outcome, err)
 	}

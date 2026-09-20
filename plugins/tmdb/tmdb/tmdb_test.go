@@ -96,7 +96,7 @@ func lookup(t *testing.T, p *Provider, ref pluginapi.MediaRef) pluginapi.LookupR
 
 func TestTMDBLookupByID(t *testing.T) {
 	p, host := stub(t, "")
-	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", Title: "Dune", Year: 2021, TMDBID: "12345"})
+	resp := lookup(t, p, pluginapi.MediaRef{Kind: "movie", Title: "Dune", Year: 2021, ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}})
 	if resp.Outcome != pluginapi.OutcomeMatched {
 		t.Fatalf("outcome = %q, want matched", resp.Outcome)
 	}
@@ -191,12 +191,12 @@ func TestTMDBNonMovieKindIsNoMatch(t *testing.T) {
 // the next lookup without the plugin being rebuilt.
 func TestTMDBReadsItsSettingsOnEveryCall(t *testing.T) {
 	p, host := stub(t, "")
-	lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}})
 
 	next := settings()
 	next.Secret = "rotated"
 	host.SetSettings(next)
-	lookup(t, p, pluginapi.MediaRef{Kind: "movie", TMDBID: "12345"})
+	lookup(t, p, pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "12345"}})
 
 	reqs := host.Requests()
 	if len(reqs) != 2 {

@@ -54,7 +54,7 @@ func TestTMDBArtworkCandidatesMoviePosters(t *testing.T) {
 		}),
 	)
 	p := New(host)
-	ref := pluginapi.MediaRef{Kind: "movie", TMDBID: "438631"}
+	ref := pluginapi.MediaRef{Kind: "movie", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "438631"}}
 
 	cands := artworkCandidates(t, p, ref, "poster")
 	if seen := host.Paths(); len(seen) != 1 || seen[0] != "/movie/438631/images" {
@@ -102,7 +102,7 @@ func TestTMDBArtworkCandidatesEpisodeStills(t *testing.T) {
 	p := New(host)
 
 	cands := artworkCandidates(t, p,
-		pluginapi.MediaRef{Kind: "episode", TMDBID: "1399", SeasonNumber: 2, EpisodeNumber: 5}, "poster")
+		pluginapi.MediaRef{Kind: "episode", ExternalIDs: map[string]string{pluginapi.NamespaceTMDB: "1399"}, SeasonNumber: 2, EpisodeNumber: 5}, "poster")
 	if len(cands) != 1 || cands[0].URL != "https://img//still.jpg" {
 		t.Errorf("episode still candidates = %+v", cands)
 	}

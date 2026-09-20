@@ -266,14 +266,14 @@ func TestARepointedVideoLibraryReResolvesOnlyWhatNobodyDecided(t *testing.T) {
 		t.Errorf("AniDB was asked about the Fix-info'd Movie %d time(s); a chosen record pins its namespace", n)
 	}
 
-	// The next pass looks the AniDB record up BY AniDB — in its own namespace, with
-	// the v1 mirror filled for the first time — and never at TMDB.
+	// The next pass looks the AniDB record up BY AniDB — in its own namespace — and
+	// never at TMDB.
 	tmdb.forget()
 	anidb.forget()
 	f.pass(t, "lib", ModeFull)
 	refs := anidb.refsFor("Inception")
-	if len(refs) != 1 || refs[0].ID("anidb") != "a-1" || refs[0].AniDBID != "a-1" {
-		t.Errorf("AniDB's next lookup of its own record = %+v, want it BY anidb a-1 (map and mirror)", refs)
+	if len(refs) != 1 || refs[0].ID("anidb") != "a-1" {
+		t.Errorf("AniDB's next lookup of its own record = %+v, want it BY anidb a-1", refs)
 	}
 	if refs := tmdb.refsFor("Inception"); len(refs) != 0 {
 		t.Errorf("TMDB was asked about an AniDB record: %+v", refs)
