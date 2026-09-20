@@ -45,8 +45,7 @@ func TestUnmatchedFilesKindRequiresAValue(t *testing.T) {
 }
 
 // TestArtworkSourceRequiresAValue: every writer (catalog.go, enrich.go) names
-// source, so the column no longer carries a default; an INSERT that omits it
-// fails rather than silently landing 'local'.
+// source, so the column carries no default; an INSERT that omits it fails.
 func TestArtworkSourceRequiresAValue(t *testing.T) {
 	db := openTemp(t)
 	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('lib', 'Movies', 'movie')`)
@@ -64,9 +63,8 @@ func TestArtworkSourceRequiresAValue(t *testing.T) {
 	}
 }
 
-// TestPluginsOriginRequiresAValue: InsertPlugin no longer defaults an empty
-// Origin to "admin"; the column itself carries no default either, so an
-// INSERT that omits origin fails.
+// TestPluginsOriginRequiresAValue: the column carries no default, so an INSERT
+// that omits origin fails.
 func TestPluginsOriginRequiresAValue(t *testing.T) {
 	db := openTemp(t)
 
