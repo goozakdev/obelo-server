@@ -182,7 +182,7 @@ CREATE TABLE unmatched_files (
     id         TEXT PRIMARY KEY,
     library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
     path       TEXT NOT NULL UNIQUE,
-    kind       TEXT NOT NULL DEFAULT 'unidentified',
+    kind       TEXT NOT NULL,
     reason     TEXT NOT NULL DEFAULT '',
     added_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -806,7 +806,7 @@ CREATE TABLE artwork (
     title_id TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
     role     TEXT NOT NULL CHECK (role IN ('poster', 'background', 'logo')),
     path     TEXT NOT NULL,
-    source   TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local', 'fetched', 'uploaded')),
+    source   TEXT NOT NULL CHECK (source IN ('local', 'fetched', 'uploaded')),
     added_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (title_id, role, source)
 );
@@ -821,7 +821,7 @@ CREATE TABLE entity_artwork (
     role        TEXT NOT NULL,
     path        TEXT NOT NULL,
     source      TEXT NOT NULL DEFAULT 'fetched' CHECK (source IN ('local', 'fetched', 'uploaded')),
-    added_at    TEXT NOT NULL DEFAULT '',
+    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (entity_type, entity_id, role, source)
 );
 CREATE INDEX idx_entity_artwork ON entity_artwork(entity_type, entity_id);
@@ -1148,7 +1148,7 @@ CREATE TABLE plugins (
     -- for one an Admin installed by hand, distinct from a Bundled plugin.
     publisher    TEXT NOT NULL DEFAULT '',
     key_id       TEXT NOT NULL DEFAULT '',
-    origin       TEXT NOT NULL DEFAULT 'admin',
+    origin       TEXT NOT NULL CHECK (origin IN ('admin', 'bundled')),
     source       TEXT NOT NULL DEFAULT '',
     enabled      INTEGER NOT NULL DEFAULT 1,
     last_error   TEXT,

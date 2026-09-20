@@ -23,8 +23,7 @@ import (
 // column holds and what the settings API returns.
 const (
 	// OriginAdmin is a plugin a person put here: an upload, a pasted URL, or a
-	// directory they placed by hand. It is the column's DEFAULT, since nothing
-	// else could have installed a plugin before Bundled plugins existed.
+	// directory they placed by hand.
 	OriginAdmin = "admin"
 	// OriginBundled is a plugin this server shipped and installed itself.
 	OriginBundled = "bundled"

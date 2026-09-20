@@ -3,6 +3,7 @@ package store_test
 import (
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -65,7 +66,7 @@ func TestPluginSettingsAreScopedAndReplacedWhole(t *testing.T) {
 func TestUninstallTakesTheDeclaredSettingsWithIt(t *testing.T) {
 	db := openTemp(t)
 
-	if err := db.InsertPlugin(store.PluginInsert{ID: "alpha", Name: "Alpha", APIVersion: 1}); err != nil {
+	if err := db.InsertPlugin(store.PluginInsert{ID: "alpha", Name: "Alpha", APIVersion: 1, Origin: plugins.OriginAdmin}); err != nil {
 		t.Fatalf("InsertPlugin: %v", err)
 	}
 	if err := db.ReplacePluginSettings("alpha", []store.PluginSetting{

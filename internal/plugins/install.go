@@ -820,6 +820,7 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 			APIVersion: man.APIVersion,
 			Provides:   providesOf(man),
 			Source:     source,
+			Origin:     OriginAdmin,
 		}); err != nil {
 			// Nothing is left behind by a failed install, including here.
 			_ = os.RemoveAll(m.pluginDir(man.ID))
@@ -1085,6 +1086,7 @@ func (m *Manager) ensureRow(id string) error {
 		APIVersion: man.APIVersion,
 		Provides:   providesOf(man),
 		Source:     "placed by hand",
+		Origin:     OriginAdmin,
 	})
 }
 
