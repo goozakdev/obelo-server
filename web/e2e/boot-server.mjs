@@ -258,7 +258,17 @@ const tmdbStub = createServer((req, res) => {
     // resolved id back to the caller, so the stub echoes the requested MBID
     // rather than a constant — a caller keying off which recording it asked
     // for (the album-tracklist anchor) gets ITS id back, not always "mb-rec".
-    const id = decodeURIComponent(url.slice("/recording/".length).split("?")[0]);
+    let id;
+    try {
+      id = decodeURIComponent(url.slice("/recording/".length).split("?")[0]);
+    } catch {
+      // A malformed %-escape (decodeURIComponent throws URIError) must answer
+      // 400 and leave the stub running for the next request, not crash the
+      // whole process on an unhandled exception.
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "malformed recording id" }));
+      return;
+    }
     json(JSON.stringify({ id, title: "Canonical Title" }));
   } else if (url.startsWith("/recording")) {
     json(stubRecording);
