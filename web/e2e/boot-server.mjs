@@ -105,7 +105,6 @@ const stubReleaseGroup = JSON.stringify({
 // through (recordingByID), and the two must not share a reply or that lookup
 // reads an empty title and never matches.
 const stubRecording = JSON.stringify({ recordings: [{ id: "mb-rec", title: "Canonical Title" }] });
-const stubRecordingByID = JSON.stringify({ id: "mb-rec", title: "Canonical Title" });
 // Release-group edition browse (`GET /release?release-group=…`), the album-
 // tracklist matching a Music library pass reads to anchor each local Track to a
 // recording id (bestFitTracklist → pickReleaseByFit). Two stub editions — one
@@ -255,7 +254,12 @@ const tmdbStub = createServer((req, res) => {
   } else if (url.startsWith("/release?")) {
     json(stubReleases);
   } else if (url.startsWith("/recording/")) {
-    json(stubRecordingByID);
+    // recordingByID (musicbrainz.go) reads {id, title} and reports the
+    // resolved id back to the caller, so the stub echoes the requested MBID
+    // rather than a constant — a caller keying off which recording it asked
+    // for (the album-tracklist anchor) gets ITS id back, not always "mb-rec".
+    const id = decodeURIComponent(url.slice("/recording/".length).split("?")[0]);
+    json(JSON.stringify({ id, title: "Canonical Title" }));
   } else if (url.startsWith("/recording")) {
     json(stubRecording);
   } else {

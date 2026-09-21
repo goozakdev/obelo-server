@@ -153,7 +153,7 @@ PLUGIN_BUILD_DIR := bin/plugins
 
 GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
 
-.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
+.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
 
 all: build
 
@@ -393,6 +393,31 @@ check: plugins check-fmt vet vet-tailscale check-placeholder check-no-bundled-mo
 ## Dockerfile because a build is not a test run. docker/README.md's publish checklist
 ## is where it is called from.
 check-amd64: test-go-amd64 test-go-amd64-tailscale
+
+## check-release: the full release-time gate (.claude/scratch/issue-08-followups
+## D003) — a real frontend bundle, check-bundle, the Playwright E2E suite
+## (test-e2e), then check-amd64, run together in that order. Needs a running
+## Docker daemon and about 45 minutes. It ALWAYS restores the committed
+## placeholder embed (CLAUDE.md "Build artifacts") and rebuilds the host's own
+## plugin modules afterward — even when an earlier step failed — so it leaves
+## the tree exactly as it found it, and exits non-zero if any step failed.
+##
+## Stops at the first failing step (a real bundle or providers a later step
+## silently ran without are not worth reporting on) but the restore-and-rebuild
+## cleanup below still runs unconditionally.
+##
+## CHECK_RELEASE_SKIP_AMD64=1 skips check-amd64 (its own ~40-minute Docker
+## cost), so the rest of this target can be proven without waiting on it.
+## Unset (the default) runs everything.
+CHECK_RELEASE_SKIP_AMD64 ?=
+check-release:
+	@( $(MAKE) plugins && \
+	   $(MAKE) web && \
+	   $(MAKE) check-bundle && \
+	   $(MAKE) test-e2e $(if $(CHECK_RELEASE_SKIP_AMD64),,&& $(MAKE) check-amd64) ); status=$$?; \
+	git checkout -- $(EMBED_DIR)/index.html || status=1; \
+	$(MAKE) plugins || status=1; \
+	exit $$status
 
 ## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.
 ## This exists because nothing enforced formatting and it silently drifted to
