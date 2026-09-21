@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/bundled"
 	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
@@ -116,6 +117,41 @@ var probeIDCarriedAt = map[string]func(r *http.Request) bool{
 	"fanarttv": func(r *http.Request) bool {
 		return strings.HasSuffix(r.URL.Path, "/music/a74b1b7f-71a5-4011-9441-d0b5e4122711")
 	},
+}
+
+// TestProbeIDCarriedAtMatchesTheManifests: probeIDCarriedAt names EXACTLY the
+// Bundled plugins whose manifest probe declares an externalIds — the set above is
+// hand-maintained, and nothing else fails when a NEW Bundled provider ships an
+// id-keyed probe and is not added to the table (it would simply never be checked).
+// Read through internal/bundled.Manifests() — the embedded copies every other
+// test in this package already depends on being present — rather than the source
+// plugins/*/manifest.json, since a black-box test in this package has no relative
+// path back to the repo root that survives `go test ./...` from any directory.
+func TestProbeIDCarriedAtMatchesTheManifests(t *testing.T) {
+	manifests, err := bundled.Manifests()
+	if err != nil {
+		t.Fatalf("reading the embedded manifests: %v (run make plugins)", err)
+	}
+	declared := map[string]bool{}
+	for _, m := range manifests {
+		for _, p := range m.Provides {
+			if p.Probe != nil && len(p.Probe.ExternalIDs) > 0 {
+				declared[m.ID] = true
+			}
+		}
+	}
+	for id := range declared {
+		if _, ok := probeIDCarriedAt[id]; !ok {
+			t.Errorf("%s's manifest probe declares an externalIds, but probeIDCarriedAt has no "+
+				"entry for it — add one so this suite actually checks its id reaches the wire", id)
+		}
+	}
+	for id := range probeIDCarriedAt {
+		if !declared[id] {
+			t.Errorf("probeIDCarriedAt has an entry for %s, but its manifest probe declares no "+
+				"externalIds — remove the entry (or the table checks an id that was never there)", id)
+		}
+	}
 }
 
 // TestBundledProbeCarriesItsExternalID: for the providers whose manifest probe

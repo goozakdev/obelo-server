@@ -209,40 +209,48 @@ func TestAssertInstallsOnAFirstBoot(t *testing.T) {
 	}
 }
 
+// TestAssertReplacesAnOlderBundledCopy covers every shipped id (shipped()), not
+// just tmdb: the replace-an-older-copy path is the same code for all eight, and a
+// ninth plugin arriving with it broken would otherwise ship silently until an
+// operator noticed a stale probe.
 func TestAssertReplacesAnOlderBundledCopy(t *testing.T) {
 	requireModules(t)
-	dir := t.TempDir()
-	st := newAssertStore()
-	pluginDir := filepath.Join(dir, plugins.DirName, "tmdb")
-	mustMkdir(t, pluginDir)
-	writeFile(t, filepath.Join(pluginDir, plugins.ManifestFile),
-		`{"id":"tmdb","name":"The Movie Database (TMDB)","version":"0.9.0","apiVersion":1,`+
-			`"provides":[{"kind":"metadata-provider"}]}`)
-	writeFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile), "an old module")
-	st.put("tmdb", plugins.OriginBundled, "0.9.0")
+	for _, id := range shipped() {
+		t.Run(id, func(t *testing.T) {
+			dir := t.TempDir()
+			st := newAssertStore()
+			pluginDir := filepath.Join(dir, plugins.DirName, id)
+			mustMkdir(t, pluginDir)
+			writeFile(t, filepath.Join(pluginDir, plugins.ManifestFile),
+				`{"id":"`+id+`","name":"`+id+`","version":"0.9.0","apiVersion":1,`+
+					`"provides":[{"kind":"metadata-provider"}]}`)
+			writeFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile), "an old module")
+			st.put(id, plugins.OriginBundled, "0.9.0")
 
-	// Assert ONE id, not all of them: the counters below are the fake store's totals,
-	// and every other plugin this server ships installs beside this one.
-	mustAssert(t, NewSource(dir, st, quiet(t)), "tmdb")
+			// Assert ONE id, not all of them: the counters below are the fake store's
+			// totals, and every other plugin this server ships installs beside this one.
+			mustAssert(t, NewSource(dir, st, quiet(t)), id)
 
-	module := readFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile))
-	if module == "an old module" {
-		t.Fatal("the older bundled copy was not replaced")
-	}
-	shippedManifest, err := Manifest("tmdb")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := versionOnDisk(t, pluginDir); got != shippedManifest.Version {
-		t.Errorf("the manifest on disk says %q, want the shipped %q", got, shippedManifest.Version)
-	}
-	row, _ := st.row("tmdb")
-	if row.Version != shippedManifest.Version {
-		t.Errorf("the row still says %q, want %q", row.Version, shippedManifest.Version)
-	}
-	if st.insertsOf["tmdb"] != 0 {
-		t.Errorf("a replace inserted a row (%d); the id is the same, so the settings row, the "+
-			"per-Library overrides and the item pins must all survive", st.insertsOf["tmdb"])
+			module := readFile(t, filepath.Join(pluginDir, plugins.DefaultModuleFile))
+			if module == "an old module" {
+				t.Fatal("the older bundled copy was not replaced")
+			}
+			shippedManifest, err := Manifest(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := versionOnDisk(t, pluginDir); got != shippedManifest.Version {
+				t.Errorf("the manifest on disk says %q, want the shipped %q", got, shippedManifest.Version)
+			}
+			row, _ := st.row(id)
+			if row.Version != shippedManifest.Version {
+				t.Errorf("the row still says %q, want %q", row.Version, shippedManifest.Version)
+			}
+			if st.insertsOf[id] != 0 {
+				t.Errorf("a replace inserted a row (%d); the id is the same, so the settings row, the "+
+					"per-Library overrides and the item pins must all survive", st.insertsOf[id])
+			}
+		})
 	}
 }
 

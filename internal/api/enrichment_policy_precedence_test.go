@@ -109,6 +109,67 @@ func TestPolicyReEnrichOverrideWinsWhileReachable(t *testing.T) {
 	})
 }
 
+// TestPolicyReEnrichOverrideWinsWhenLeaderChanges: a per-item override keeps
+// resolving through its PINNED provider (ADR-0060 decision 6) even when a policy
+// change repoints the Library's authoritative to a DIFFERENT provider that stays
+// reachable — the pin outranks the new leader, not just "whatever the leader
+// happens to already agree with" (which is all the same-leader case above can
+// prove). Driven through the REAL bundled tmdb/omdb plugins against local
+// httptest stand-ins (zero real network), so the pinned resolution demonstrably
+// goes through TMDB's guest and not OMDb's: OMDb's stand-in never matches
+// anything, so a re-enrich that (wrongly) asked OMDb for the pinned Title would
+// leave it 'unmatched', and TMDB's stand-in's overview changes on the second
+// call, so a 'matched' status with the NEW overview proves the RE-ENRICH itself
+// resolved the pin — not a stale answer left over from applying the override.
+func TestPolicyReEnrichOverrideWinsWhenLeaderChanges(t *testing.T) {
+	requireFixtures(t)
+	tmdbOverview := "TMDB pin v1"
+	tmdb := standIn(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":555,"title":"Dune","overview":"` + tmdbOverview + `","release_date":"2021-01-01"}`))
+	})
+	// OMDb's stand-in reports no record for every query — the "wrong leader" a
+	// broken pin would be asked resolves nothing, so a mistakenly-unpinned Dune
+	// surfaces as 'unmatched' rather than a plausible-looking wrong match.
+	omdb := standIn(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Response":"False"}`))
+	})
+
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	putProviders(t, srv, token, map[string]any{"providers": []map[string]any{
+		{"slug": "tmdb", "enabled": true, "apiKey": "tmdb-key", "baseURL": tmdb.URL},
+		{"slug": "omdb", "enabled": true, "apiKey": "omdb-key", "baseURL": omdb.URL},
+	}}, http.StatusOK)
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+	scanLib(t, srv, token, libID, "")
+	id := titleIDByName(t, srv, token, libID, "Dune")
+
+	// Pin Dune to TMDB record 555 (a per-item Enrichment override) → matched via
+	// TMDB's v1 overview.
+	matched := applyOverride(t, srv, token, id, "555", "tmdb")
+	if matched.EnrichmentStatus != "matched" || matched.Overview != tmdbOverview {
+		t.Fatalf("pinned Dune = %q/%q, want matched/%q", matched.EnrichmentStatus, matched.Overview, tmdbOverview)
+	}
+
+	// Bump TMDB's answer BEFORE the policy change starts its background re-enrich
+	// pass, so the stand-in's handler goroutine never reads tmdbOverview while this
+	// goroutine is still writing it. A 'matched' status with the NEW overview below
+	// can only come from the RE-ENRICH pass actually resolving through TMDB again.
+	tmdbOverview = "TMDB pin v2"
+
+	// Repoint the Library's authoritative to OMDb (TMDB is no longer the leader)
+	// while TMDB stays enabled/keyed — reachable. The override must keep resolving
+	// through TMDB, the pin's own provider, not OMDb the new leader.
+	putPolicy(t, srv, token, libID, map[string]any{"authoritativeProvider": "omdb"}, http.StatusOK)
+
+	waitFor(t, "the override to keep resolving through its pinned provider after the leader changed", func() bool {
+		d := getEnrichedDetail(t, srv, token, id)
+		return d.EnrichmentStatus == "matched" && d.Overview == tmdbOverview
+	})
+}
+
 // TestPolicyReEnrichOrphansOverrideToAttention: when a policy change makes a pinned
 // Title's provider UNREACHABLE (repoint the authoritative away from TMDB and mute
 // TMDB), the orphaned override is filed to the attention list — not silently

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -474,6 +475,7 @@ func TestEveryWriterRefusesALinkedLibrary(t *testing.T) {
 	f := linkFixtures(t, "movie", "tv", "music")
 
 	mirrored := writerRoutes(
+		t,
 		f.mirror["movie"],
 		firstMirroredTitleID(t, f),
 		firstMirroredID(t, f, "tv", "shows"),
@@ -538,14 +540,19 @@ type writerRoute struct {
 	wantLocalStatus int
 }
 
-func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerRoute {
+func writerRoutes(t *testing.T, movieLib, titleID, showID, artistID, albumID string) []writerRoute {
+	t.Helper()
+	// A path under t.TempDir() that does not exist: real, so it can't collide with
+	// another test or a leftover /tmp entry, but never created, so "add root" still
+	// exercises the not-found row this table wants.
+	noRoot := filepath.Join(t.TempDir(), "nope")
 	return []writerRoute{
 		{name: "library scan", method: http.MethodPost, path: "/api/v1/libraries/" + movieLib + "/scan", body: map[string]any{}},
 		{name: "library enrich", method: http.MethodPost, path: "/api/v1/libraries/" + movieLib + "/enrich", body: map[string]any{}},
 		{name: "library enrichment policy", method: http.MethodPut, path: "/api/v1/libraries/" + movieLib + "/enrichment-policy", body: map[string]any{"tmdbEnabled": true}},
 		{name: "library fix-match", method: http.MethodPost, path: "/api/v1/libraries/" + movieLib + "/fix-match", body: map[string]any{"folderPath": "/x", "title": "X"}},
 		{name: "library override delete", method: http.MethodDelete, path: "/api/v1/libraries/" + movieLib + "/overrides/whatever"},
-		{name: "library add root", method: http.MethodPatch, path: "/api/v1/libraries/" + movieLib, body: map[string]any{"addRootFolders": []string{"/tmp/obelo-nope"}}},
+		{name: "library add root", method: http.MethodPatch, path: "/api/v1/libraries/" + movieLib, body: map[string]any{"addRootFolders": []string{noRoot}}},
 
 		{name: "title targeted scan", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/scan", body: map[string]any{}},
 		{name: "title review", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/review", body: map[string]any{}},
@@ -611,7 +618,7 @@ func localWriterFixture(t *testing.T, srv *testharness.Server, admin string) []w
 	if len(rows) == 0 {
 		t.Fatal("the local music fixture has no Albums")
 	}
-	return writerRoutes(movieLib, titleID, showID, artistID, str(rows[0], "id"))
+	return writerRoutes(t, movieLib, titleID, showID, artistID, str(rows[0], "id"))
 }
 
 func firstGridID(t *testing.T, srv *testharness.Server, token, libID, key string) string {
