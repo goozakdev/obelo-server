@@ -545,18 +545,17 @@ func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerR
 		{name: "library enrichment policy", method: http.MethodPut, path: "/api/v1/libraries/" + movieLib + "/enrichment-policy", body: map[string]any{"tmdbEnabled": true}},
 		{name: "library fix-match", method: http.MethodPost, path: "/api/v1/libraries/" + movieLib + "/fix-match", body: map[string]any{"folderPath": "/x", "title": "X"}},
 		{name: "library override delete", method: http.MethodDelete, path: "/api/v1/libraries/" + movieLib + "/overrides/whatever"},
-		{name: "library delete", method: http.MethodDelete, path: "/api/v1/libraries/" + movieLib},
 		{name: "library add root", method: http.MethodPatch, path: "/api/v1/libraries/" + movieLib, body: map[string]any{"addRootFolders": []string{"/tmp/obelo-nope"}}},
 
 		{name: "title targeted scan", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/scan", body: map[string]any{}},
 		{name: "title review", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/review", body: map[string]any{}},
 		{name: "title metadata", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/metadata", body: map[string]any{"overview": "no"}},
 		{name: "title lock release", method: http.MethodDelete, path: "/api/v1/titles/" + titleID + "/metadata/locks/overview"},
-		// wantLocalStatus is 404, not 200: this table's own "library delete" case
-		// above already deleted movieLib by the time this one runs (both share the
-		// route slice), so titleID is gone too — a well-formed source only gets it
-		// past the 400 the brief closed, not past a Library this same test removed.
-		{name: "title enrichment override", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "tmdb"}, wantLocalStatus: http.StatusNotFound},
+		// wantLocalStatus is 200: a well-formed source reaches the handler's success
+		// path, which is what distinguishes this leg from the LINKED leg's 409 above —
+		// "library delete" runs last in this slice precisely so movieLib and titleID
+		// are still there when this row runs.
+		{name: "title enrichment override", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "tmdb"}, wantLocalStatus: http.StatusOK},
 		{name: "title identity correction", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/identityCorrection", body: map[string]any{"externalId": "1"}},
 		{name: "title artwork pick", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
 		{name: "title artwork upload", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/artworkUpload?role=poster", multipart: true},
@@ -584,6 +583,10 @@ func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerR
 		{name: "album enrichment override", method: http.MethodPut, path: "/api/v1/albums/" + albumID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "musicbrainz"}, wantLocalStatus: http.StatusOK},
 		{name: "album artwork pick", method: http.MethodPut, path: "/api/v1/albums/" + albumID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
 		{name: "album artwork upload", method: http.MethodPost, path: "/api/v1/albums/" + albumID + "/artworkUpload?role=poster", multipart: true},
+
+		// "library delete" runs LAST: every row above shares this slice and needs
+		// movieLib (and titleID, which lives under it) still present when it runs.
+		{name: "library delete", method: http.MethodDelete, path: "/api/v1/libraries/" + movieLib},
 	}
 }
 

@@ -3,6 +3,10 @@ package store_test
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/goozakdev/obelo-server/internal/plugins"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // These four columns carry no default a writer could lean on:
@@ -90,6 +94,57 @@ func TestPluginsOriginCheckRejectsUnknownValue(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "CHECK") {
 		t.Errorf("error = %v, want a CHECK constraint failure", err)
+	}
+}
+
+// TestInsertPluginRejectsAnEmptyOrigin: InsertPlugin (the Go writer, not raw
+// SQL) with Origin: "" hits the same CHECK as TestPluginsOriginCheckRejectsUnknownValue,
+// and the failed transaction leaves no row at all — not a plugin an Admin
+// installed with no idea who put it there.
+func TestInsertPluginRejectsAnEmptyOrigin(t *testing.T) {
+	db := openTemp(t)
+
+	err := db.InsertPlugin(store.PluginInsert{ID: "p1", Name: "P1", Source: "upload", Origin: ""})
+	if err == nil {
+		t.Fatal("InsertPlugin with Origin \"\" succeeded, want a CHECK failure")
+	}
+	if !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("error = %v, want a CHECK constraint failure", err)
+	}
+
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'p1'`).Scan(&n); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("plugins with id p1 = %d, want 0 (the failed insert stored nothing)", n)
+	}
+}
+
+// pluginsInstalledAtLayout is the shape datetime('now') emits, which InsertPlugin
+// writes into installed_at.
+const pluginsInstalledAtLayout = "2006-01-02 15:04:05"
+
+// TestInsertPluginInstalledAtIsARealRecentTimestamp: installed_at is not just
+// non-empty, it parses under datetime('now')'s own layout and lands within a
+// minute of now — the shape a Plugins screen actually renders as an install time.
+func TestInsertPluginInstalledAtIsARealRecentTimestamp(t *testing.T) {
+	db := openTemp(t)
+
+	if err := db.InsertPlugin(store.PluginInsert{ID: "p1", Name: "P1", Source: "upload", Origin: plugins.OriginAdmin}); err != nil {
+		t.Fatalf("InsertPlugin: %v", err)
+	}
+
+	var installedAt string
+	if err := db.QueryRow(`SELECT installed_at FROM plugins WHERE id = 'p1'`).Scan(&installedAt); err != nil {
+		t.Fatalf("select installed_at: %v", err)
+	}
+	got, err := time.Parse(pluginsInstalledAtLayout, installedAt)
+	if err != nil {
+		t.Fatalf("installed_at = %q, want the datetime('now') layout %q: %v", installedAt, pluginsInstalledAtLayout, err)
+	}
+	if age := time.Since(got.UTC()); age < 0 || age > time.Minute {
+		t.Errorf("installed_at = %q, %s ago, want within a minute of now (UTC)", installedAt, age)
 	}
 }
 

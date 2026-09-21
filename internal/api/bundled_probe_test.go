@@ -92,6 +92,65 @@ func testProviderConnectionAtBothHosts(t *testing.T, srv *testharness.Server, to
 	return out.OK, out.Detail
 }
 
+// probeIDCarriedAt is, for a provider whose manifest probe declares an External
+// id (plugins/<id>/manifest.json's provides[].probe.externalIds), an exact check
+// that the id reached the outgoing request — read from the provider's own
+// request-building code below, never a loose substring match (the query string
+// carries other digits too, e.g. anidb's constant protover=1, which a bare
+// strings.Contains("1") would satisfy for free).
+// TestEveryBundledPluginsTestConnectionReachesItsSource proves a request
+// happens; it does not prove the id in the probe reached the wire, and 5 of
+// these 7 providers would pass that test just as well with an id-less probe,
+// because their outgoing request is built from the OTHER probe fields
+// (title/year/kind), never from an id: omdb, tmdb and thetvdb resolve by title
+// search, musicbrainz's probe is a release search by artist/album, and
+// theaudiodb's is an artist-name lookup. anidb and fanarttv are the two whose
+// probe is id-keyed — anidb.Provider.Lookup reads ref.ID(NamespaceAniDB) and
+// puts it on the query string ("aid="), fanarttv's artistLookup reads
+// ref.ID(NamespaceMusicBrainz) and puts it in the request path ("/music/<mbid>")
+// — so those two are the ones this test can actually hold to carrying it.
+var probeIDCarriedAt = map[string]func(r *http.Request) bool{
+	"anidb": func(r *http.Request) bool {
+		return r.URL.Query().Get("aid") == "1"
+	},
+	"fanarttv": func(r *http.Request) bool {
+		return strings.HasSuffix(r.URL.Path, "/music/a74b1b7f-71a5-4011-9441-d0b5e4122711")
+	},
+}
+
+// TestBundledProbeCarriesItsExternalID: for the providers whose manifest probe
+// declares an id, that id reaches the outgoing request — not just a request.
+func TestBundledProbeCarriesItsExternalID(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	for id, carries := range probeIDCarriedAt {
+		t.Run(id, func(t *testing.T) {
+			var mu sync.Mutex
+			var requests []string
+			found := false
+			src := standIn(t, func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				requests = append(requests, r.URL.RequestURI())
+				if carries(r) {
+					found = true
+				}
+				mu.Unlock()
+				w.WriteHeader(http.StatusNotFound)
+			})
+			testProviderConnectionAtBothHosts(t, srv, token, id, "a-key", src.URL, src.URL)
+
+			mu.Lock()
+			got := append([]string(nil), requests...)
+			ok := found
+			mu.Unlock()
+			if !ok {
+				t.Errorf("%s: no outgoing request carried the probe's external id; requests: %v", id, got)
+			}
+		})
+	}
+}
+
 // shippedPluginIDs is every Bundled plugin, in shipped order. It is restated here
 // rather than read from internal/bundled on purpose: this is a black-box suite,
 // and a test that asks the code under test what it ships would pass on a server

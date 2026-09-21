@@ -1,7 +1,9 @@
 package store_test
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -51,9 +53,22 @@ func TestWALAndFTS5(t *testing.T) {
 }
 
 // TestMigrateIdempotent confirms migrations run once and re-running Migrate is
-// a no-op (the startup contract).
+// a no-op (the startup contract). The expected count comes from the migrations
+// directory itself (the same one Migrate's //go:embed reads), not a literal, so
+// a migration added or removed from the set does not silently drift this test.
 func TestMigrateIdempotent(t *testing.T) {
 	db := openTemp(t)
+
+	entries, err := os.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("reading migrations dir: %v", err)
+	}
+	want := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			want++
+		}
+	}
 
 	// Already migrated by openTemp; run again and confirm no error / no dupes.
 	if err := db.Migrate(); err != nil {
@@ -64,8 +79,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&applied); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if applied < 1 {
-		t.Fatalf("applied migrations = %d, want >= 1", applied)
+	if applied != want {
+		t.Fatalf("applied migrations = %d, want exactly %d (one per embedded migrations/*.sql)", applied, want)
 	}
 
 	// Run a third time for good measure; count must not grow.
