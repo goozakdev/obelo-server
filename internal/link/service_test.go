@@ -779,7 +779,7 @@ func TestARedemptionWithAWhitespaceOnlyDeviceIdIsRefused(t *testing.T) {
 func TestARefusedDevicelessRedemptionLogsOutTheMintedBearer(t *testing.T) {
 	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
 		redeemStatus: http.StatusOK,
-		redeemBody:   `{"token":"obelo_tok","linkProtocolVersion":1}`,
+		redeemBody:   `{"token":"  obelo_tok  ","linkProtocolVersion":1}`,
 	}
 	live := newStubPeer(t, peer)
 
@@ -926,6 +926,107 @@ func TestARefusalWithAnEmptyTokenSendsNoLogout(t *testing.T) {
 	}
 	if logouts, _ := peer.logoutCalls(); logouts != 0 {
 		t.Errorf("logout calls = %d, want 0 — no token was ever minted", logouts)
+	}
+}
+
+// TestARedemptionWithAWhitespaceOnlyTokenIsRefused is D007: a token that is
+// only whitespace is not a usable token, so it is refused the same way an
+// empty one is — ErrNotObelo, nothing stored, and no logout (there is no real
+// bearer to revoke).
+func TestARedemptionWithAWhitespaceOnlyTokenIsRefused(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"   ","device":{"id":"d1"},"linkProtocolVersion":1}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if links, _ := st.Links(); len(links) != 0 {
+		t.Errorf("%d links stored after a whitespace-only token, want 0", len(links))
+	}
+	if logouts, _ := peer.logoutCalls(); logouts != 0 {
+		t.Errorf("logout calls = %d, want 0 — a whitespace-only token is no real bearer", logouts)
+	}
+}
+
+// TestARedemptionsTokenIsStoredTrimmed is D007: the token emptiness check
+// trims whitespace, and so must what gets stored — otherwise a surrender
+// would present "Bearer <token with surrounding whitespace>".
+func TestARedemptionsTokenIsStoredTrimmed(t *testing.T) {
+	var lastDeleteAuth string
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/server":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "amy-server-id", "features": map[string]bool{"serverLinking": true},
+				"linkProtocolVersion": 1,
+			})
+		case r.URL.Path == "/api/v1/auth/link/redeem":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token":  "  obelo_tok  ",
+				"device": map[string]any{"id": "d1"},
+			})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/devices/"):
+			lastDeleteAuth = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer peer.Close()
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	l, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), peer.URL))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if l.Token != "obelo_tok" {
+		t.Errorf("stored Token = %q, want the trimmed %q", l.Token, "obelo_tok")
+	}
+	if err := svc.surrender(context.Background(), svc.client(), l); err != nil {
+		t.Fatalf("surrender: %v", err)
+	}
+	if lastDeleteAuth != "Bearer obelo_tok" {
+		t.Errorf("surrender Authorization = %q, want %q", lastDeleteAuth, "Bearer obelo_tok")
+	}
+}
+
+// TestADecodeFailureWithATokenPresentSaysSoAndLogsOut is D006: a response
+// whose token decoded fine but some OTHER field did not (linkProtocolVersion
+// of the wrong type here) must not be reported as "no usable token" — that
+// wording is for when the sharer's answer never carried one at all. It is
+// still a refusal that revokes the bearer the sharer already minted.
+func TestADecodeFailureWithATokenPresentSaysSoAndLogsOut(t *testing.T) {
+	peer := &stubPeer{id: "amy-server-id", serverLinking: true,
+		redeemStatus: http.StatusOK,
+		redeemBody:   `{"token":"  obelo_tok  ","device":{"id":"d1"},"linkProtocolVersion":"x"}`,
+	}
+	live := newStubPeer(t, peer)
+
+	st := &memStore{}
+	svc := newService(t, st, Options{})
+	_, _, err := svc.Create(context.Background(),
+		inviteFor(t, "amy-server-id", 1, time.Now().Add(time.Hour), live.URL))
+	if !errors.Is(err, ErrNotObelo) {
+		t.Fatalf("Create error = %v, want ErrNotObelo", err)
+	}
+	if strings.Contains(err.Error(), "no usable token") {
+		t.Errorf("Create error = %q, want the did-not-decode wording, not the no-token one", err)
+	}
+	if !strings.Contains(err.Error(), "did not decode") {
+		t.Errorf("Create error = %q, want it to say the response did not decode", err)
+	}
+	if logouts, auth := peer.logoutCalls(); logouts != 1 || auth != "Bearer obelo_tok" {
+		t.Errorf("logout calls = %d, last Authorization = %q, want 1 call with \"Bearer obelo_tok\"", logouts, auth)
 	}
 }
 

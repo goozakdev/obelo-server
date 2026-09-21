@@ -175,14 +175,19 @@ func (s *Service) redeem(ctx context.Context, client *http.Client, origin string
 		} `json:"device"`
 		LinkProtocolVersion int `json:"linkProtocolVersion"`
 	}
-	if err := decodeBody(resp, &out); err != nil || out.Token == "" {
+	if err := decodeBody(resp, &out); err != nil {
 		// A decode error can still have populated Token before it hit the field
 		// that failed (e.g. a device id that is not a string): encoding/json fills
 		// what it can and reports the mismatch afterward. The sharer has already
-		// minted that bearer, so this is still a refusal that revokes it.
-		if out.Token != "" {
-			s.logoutBestEffort(ctx, client, origin, out.Token)
+		// minted that bearer, so this is still a refusal that revokes it — worded
+		// as what actually happened, not as the separate "no token at all" case.
+		if token := strings.TrimSpace(out.Token); token != "" {
+			s.logoutBestEffort(ctx, client, origin, token)
 		}
+		return redemption{}, fmt.Errorf("%w: it accepted the invite but its response did not decode", ErrNotObelo)
+	}
+	token := strings.TrimSpace(out.Token)
+	if token == "" {
 		return redemption{}, fmt.Errorf("%w: it accepted the invite but returned no usable token", ErrNotObelo)
 	}
 	deviceID := strings.TrimSpace(out.Device.ID)
@@ -192,10 +197,10 @@ func (s *Service) redeem(ctx context.Context, client *http.Client, origin string
 		// delete) — the same "this design cannot build on it" refusal as no token
 		// at all. The sharer has already minted a bearer for it, though, so this
 		// revokes that bearer with a best-effort logout before refusing.
-		s.logoutBestEffort(ctx, client, origin, out.Token)
+		s.logoutBestEffort(ctx, client, origin, token)
 		return redemption{}, fmt.Errorf("%w: it accepted the invite but the redemption named no device", ErrNotObelo)
 	}
-	return redemption{Token: out.Token, DeviceID: deviceID}, nil
+	return redemption{Token: token, DeviceID: deviceID}, nil
 }
 
 // logoutBestEffort revokes the bearer a refused redemption minted. The sharer

@@ -7,7 +7,7 @@ import (
 )
 
 func TestStoredParentRecordBlankNamespaceReadsAsNoRecord(t *testing.T) {
-	rec := storedParentRecord(store.EntityShow, store.EntityEnrichment{
+	rec := storedParentRecord(store.EntityEnrichment{
 		ExternalID: "123", Namespace: "",
 	})
 	if rec != (parentRecord{}) {
@@ -18,7 +18,7 @@ func TestStoredParentRecordBlankNamespaceReadsAsNoRecord(t *testing.T) {
 // TestStoredParentRecordBlankIDReadsAsNoRecord: the reverse shape, a namespace
 // beside a blank id, reads as no record too.
 func TestStoredParentRecordBlankIDReadsAsNoRecord(t *testing.T) {
-	rec := storedParentRecord(store.EntityAlbum, store.EntityEnrichment{
+	rec := storedParentRecord(store.EntityEnrichment{
 		ExternalID: "", Namespace: "musicbrainz",
 	})
 	if rec != (parentRecord{}) {
@@ -29,7 +29,7 @@ func TestStoredParentRecordBlankIDReadsAsNoRecord(t *testing.T) {
 // TestStoredParentRecordReadsAnAlbumsIDAndNamespace: a music entity with both
 // an id and a namespace reads as that record.
 func TestStoredParentRecordReadsAnAlbumsIDAndNamespace(t *testing.T) {
-	rec := storedParentRecord(store.EntityAlbum, store.EntityEnrichment{
+	rec := storedParentRecord(store.EntityEnrichment{
 		ExternalID: "rg-1", Namespace: "musicbrainz",
 	})
 	want := parentRecord{ID: "rg-1", Namespace: "musicbrainz"}
