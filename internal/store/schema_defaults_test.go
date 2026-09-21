@@ -92,3 +92,28 @@ func TestPluginsOriginCheckRejectsUnknownValue(t *testing.T) {
 		t.Errorf("error = %v, want a CHECK constraint failure", err)
 	}
 }
+
+// TestEntityEnrichmentIDNamespaceCheck: entity_enrichment is CHECKed so a
+// non-empty external_id always carries a non-empty external_id_namespace —
+// the shape entityNamespace (internal/store/record_ids.go) already leaves on
+// every row either writer (WriteEntityEnrichment, SetEntityExternalMatch)
+// produces. The reverse — a namespace beside a blank id — is not CHECKed:
+// entityNamespace returns "" whenever externalID == "", so neither writer
+// ever produces that shape either, and the schema has no need to reject it.
+func TestEntityEnrichmentIDNamespaceCheck(t *testing.T) {
+	db := openTemp(t)
+
+	_, err := db.Exec(
+		`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace)
+		 VALUES ('show', 's1', 'tt1', '')`)
+	if err == nil {
+		t.Fatal("insert with an id and a blank namespace succeeded, want a CHECK failure")
+	}
+	if !strings.Contains(err.Error(), "CHECK") {
+		t.Errorf("error = %v, want a CHECK constraint failure", err)
+	}
+
+	mustExec(t, db,
+		`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace)
+		 VALUES ('show', 's2', '', 'tmdb')`)
+}

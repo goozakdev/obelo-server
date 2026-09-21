@@ -204,16 +204,18 @@ type parentRecord struct {
 	Namespace string
 }
 
-// storedParentRecord reads a parent's record off its enrichment row. A row that
-// has an id but no namespace reads as its kind's default lead.
+// storedParentRecord reads a parent's record off its enrichment row. Both writers
+// of the id/namespace pair (WriteEntityEnrichment, SetEntityExternalMatch) route
+// the namespace through entityNamespace, which never stores a non-empty id under
+// a blank namespace (store.EntityEnrichment.Namespace's own invariant, held by
+// entity_enrichment's CHECK constraint), so a row with an id but no namespace
+// does not occur; if it somehow did, it reads as no record at all, the same as a
+// blank id.
 func storedParentRecord(entityType string, e store.EntityEnrichment) parentRecord {
 	id := strings.TrimSpace(e.ExternalID)
-	if id == "" {
-		return parentRecord{}
-	}
 	ns := strings.TrimSpace(e.Namespace)
-	if ns == "" {
-		ns = defaultParentNamespace(entityType)
+	if id == "" || ns == "" {
+		return parentRecord{}
 	}
 	return parentRecord{ID: id, Namespace: ns}
 }

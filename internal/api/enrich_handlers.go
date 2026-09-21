@@ -839,6 +839,9 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
 			return
+		case errors.Is(err, enrich.ErrUnknownNamespace):
+			writeError(w, http.StatusBadRequest, codeBadRequest, unknownNamespaceMessage(source), nil)
+			return
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to apply enrichment override", nil)
 			return

@@ -109,9 +109,13 @@ export default function AlbumEditionPicker({
   }, [load]);
 
   async function choose(e: AlbumEdition) {
-    // source is absent only when the album has no matched release-group (types.ts),
-    // which the releaseGroupId guard already rules out.
-    if (applying || !data?.releaseGroupId || !data.source) return;
+    if (applying || !data?.releaseGroupId) return;
+    // source names the release-group's namespace (ADR-0060); the apply call requires
+    // it, so a release-group with no source is one this section cannot re-pin.
+    if (!data.source) {
+      setError("This edition can't be applied: the album's namespace is unknown.");
+      return;
+    }
     setApplying(e.releaseId);
     setError(null);
     try {

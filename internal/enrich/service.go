@@ -2574,8 +2574,8 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 // its namespace (ADR-0060): the id goes into the ref's namespaced carrier, and the
 // named mirror for that namespace follows. The kind is preserved so the provider
 // dispatches to the right by-id path. Every caller's namespace already names the
-// record it came from — storedParentRecord and showAssertedRecord default their own
-// blanks to the kind's lead before this ever sees them, and an override's is
+// record it came from — storedParentRecord and showAssertedRecord both read "" as
+// "no record" rather than defaulting to the kind's lead, and an override's is
 // required by the caller above — so a blank namespace here just means a blank id
 // too; withExternalID's own guard is what actually handles that case.
 func refWithPinnedEntityID(ref TitleRef, namespace, externalID string) TitleRef {
