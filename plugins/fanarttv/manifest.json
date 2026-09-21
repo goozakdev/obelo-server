@@ -1,7 +1,7 @@
 {
   "id": "fanarttv",
   "name": "fanart.tv",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 1,
   "description": "High-quality artwork to fill what the authoritative sources lack: artist images for music, plus movie/show posters and backgrounds for video. Fill-only supplement; requires an API key.",
   "docsUrl": "https://fanart.tv/get-an-api-key/",
