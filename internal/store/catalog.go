@@ -1407,9 +1407,9 @@ func scanTitle(s scanner) (Title, error) {
 // season_number / episode_number / episode_label are here because they were MISSING,
 // and their absence was a live bug rather than a tidiness issue: every single-Title
 // re-enrich reads through TitleForEnrichmentByID, so an Episode corrected by hand
-// (enrichmentMatch, enrichmentOverride) was looked up as season 0, episode 0 — a
-// guaranteed 404 — while a full-library pass, which collects its own leaves with the
-// numbers attached, resolved the same Episode correctly. Any read that builds a
+// (enrichmentOverride) was looked up as season 0, episode 0 — a guaranteed 404 —
+// while a full-library pass, which collects its own leaves with the numbers
+// attached, resolved the same Episode correctly. Any read that builds a
 // Title for a lookup must carry the fields the lookup is keyed on.
 //
 // musicbrainz_recording_id is here for EXACTLY THE SAME REASON, one media kind

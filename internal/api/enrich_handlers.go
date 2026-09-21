@@ -418,74 +418,11 @@ func handleReleaseLock(svc *catalog.Service, titleID, field string) http.Handler
 	}
 }
 
-// --- Enrichment-match correction (PUT /titles/{id}/enrichmentMatch) ----------
-
-// enrichmentMatchRequest is the body of PUT /titles/{id}/enrichmentMatch: the
-// external id an Admin assigns to correct a wrong or missing metadata match. At
-// least one id must be present. Setting it re-points the Enrichment lookup anchor
-// and re-enriches the Title — it is deliberately DISTINCT from identity fix-match
-// and NEVER touches identity_key / watch state (ADR-0002/0014).
-type enrichmentMatchRequest struct {
-	TMDBID        string `json:"tmdbId"`
-	IMDBID        string `json:"imdbId"`
-	MusicbrainzID string `json:"musicbrainzId"`
-}
-
-// handleEnrichmentMatch sets the external id used for a Title's Enrichment lookup
-// and re-enriches just that Title immediately (PRD stories 22, 25). Watch state
-// and identity are preserved (ADR-0014); the descriptive fields/artwork refresh
-// (unlocked only). On a successful match the Title's enrichmentStatus becomes
-// 'matched' and it leaves the attention surface. Returns the updated Title detail.
-// At least one external id is required (400 otherwise); an unknown Title → 404
-// (hide existence). Admin-only.
-func handleEnrichmentMatch(enrichSvc *enrich.Service, cat *catalog.Service, broker *events.Broker) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ident, ok := identityFrom(r.Context())
-		if !ok {
-			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
-			return
-		}
-		titleID := pathParam(r.URL.Path, "/titles/", "/enrichmentMatch")
-		if titleID == "" {
-			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
-			return
-		}
-		var req enrichmentMatchRequest
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		m := store.ExternalMatch{
-			TMDBID:        strings.TrimSpace(req.TMDBID),
-			IMDBID:        strings.TrimSpace(req.IMDBID),
-			MusicbrainzID: strings.TrimSpace(req.MusicbrainzID),
-		}
-		if m.TMDBID == "" && m.IMDBID == "" && m.MusicbrainzID == "" {
-			writeError(w, http.StatusBadRequest, codeBadRequest,
-				"at least one external id (tmdbId, imdbId, or musicbrainzId) is required", nil)
-			return
-		}
-
-		err := enrichSvc.MatchTitle(r.Context(), titleID, m)
-		switch {
-		case errors.Is(err, store.ErrNotFound):
-			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusInternalServerError, codeInternal, "failed to set enrichment match", nil)
-			return
-		}
-		// Shared re-enrich tail: read the updated detail, emit the libraryUpdated SSE
-		// nudge, and write the Title detail (identical to enrichmentOverride).
-		writeReEnrichedDetail(w, cat, broker, ident.User.ID, titleID)
-	}
-}
-
-// writeReEnrichedDetail is the shared response tail for the apply-Enrichment-
-// override endpoints (PUT /enrichmentMatch and PUT /enrichmentOverride): after a
-// successful single-Title re-enrich it reads the updated detail unscoped (an Admin
-// is all-access), emits the libraryUpdated SSE nudge (ADR-0016) so browse reflects
-// the fix live, and writes the Title detail. Centralizing it keeps the two twin
-// endpoints behaving identically (both run the same MatchTitle re-enrich).
+// writeReEnrichedDetail is the shared response tail for the handlers that
+// re-enrich a single Title: after a successful re-enrich it reads the updated
+// detail unscoped (an Admin is all-access), emits the libraryUpdated SSE nudge
+// (ADR-0016) so browse reflects the fix live, and writes the Title detail.
+// Centralizing it keeps them behaving identically.
 func writeReEnrichedDetail(w http.ResponseWriter, cat *catalog.Service, broker *events.Broker, userID, titleID string) {
 	d, err := cat.GetTitle(access.AllAccess(), titleID)
 	if err != nil {
@@ -907,7 +844,7 @@ func handleEnrichmentOverride(enrichSvc *enrich.Service, cat *catalog.Service, b
 			return
 		}
 		// Shared re-enrich tail: read the updated detail, emit the libraryUpdated SSE
-		// nudge, and write the Title detail (identical to enrichmentMatch).
+		// nudge, and write the Title detail.
 		writeReEnrichedDetail(w, cat, broker, ident.User.ID, titleID)
 	}
 }

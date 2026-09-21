@@ -11,9 +11,9 @@ import (
 //
 // enrichedTitleColumns did not select season_number / episode_number, so
 // TitleForEnrichmentByID — the read behind EVERY single-Title re-enrich
-// (enrichmentMatch, enrichmentOverride, the episode pin) — returned zeros. The
-// provider lookup is keyed on exactly those numbers, so a hand-corrected Episode
-// was fetched as /tv/{show}/season/0/episode/0 and 404'd every time, while a
+// (enrichmentOverride, the episode pin) — returned zeros. The provider lookup
+// is keyed on exactly those numbers, so a hand-corrected Episode was fetched as
+// /tv/{show}/season/0/episode/0 and 404'd every time, while a
 // full-library pass resolved the same Episode fine because it collects its leaves
 // with the numbers attached. The symptom read as "this episode cannot be matched";
 // the cause was a projection that dropped the fields the lookup is keyed on.

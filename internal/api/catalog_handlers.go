@@ -1130,7 +1130,7 @@ type enrichmentAttentionResponse struct {
 // handleListEnrichmentAttention returns a Library's Titles whose enrichment
 // status is 'unmatched' or 'failed' (CONTEXT.md) — the Admin attention surface
 // for correcting a wrong/missing metadata match via PUT
-// /titles/{id}/enrichmentMatch. It is a NEW dimension on the attention surface,
+// /titles/{id}/enrichmentOverride. It is a NEW dimension on the attention surface,
 // separate from the identity Unmatched files and the needs-review list. Admin-only.
 // Unknown Library → 404 (hide-existence).
 func handleListEnrichmentAttention(svc *catalog.Service) http.HandlerFunc {

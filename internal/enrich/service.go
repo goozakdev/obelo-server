@@ -2113,7 +2113,7 @@ func (s *Service) albumTrackAnchors(ctx context.Context, snap providerSnapshot,
 }
 
 // singleLeafWork builds the leafWork for a re-enrich of ONE Title — the
-// single-Title path (MatchTitle, PUT /titles/{id}/enrichmentMatch, a Cascade's
+// single-Title path (MatchTitle, PUT /titles/{id}/enrichmentOverride, a Cascade's
 // per-child applyOverride) — which is refFor's tiers plus the two things refFor
 // cannot supply because they are not on the Title's own row: ADR-0050's album
 // tier (tier three) and, when that tier does not answer, the SEARCH TERMS a

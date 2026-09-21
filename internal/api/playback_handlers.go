@@ -327,8 +327,8 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 			return
 		}
 		// GET {id}/enrichmentCandidates?q=: search the authoritative provider for the
-		// Enrichment-override picker (Admin, ADR-0019). Matched before /enrichmentMatch
-		// (distinct suffix); read-only, never touches identity.
+		// Enrichment-override picker (Admin, ADR-0019). Read-only, never touches
+		// identity.
 		if id, ok := strings.CutSuffix(rest, "/enrichmentCandidates"); ok {
 			if id == "" || strings.Contains(id, "/") {
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -374,19 +374,6 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 			requireMethod(http.MethodPut,
 				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
 					handleEnrichmentOverride(deps.Enrich, deps.Catalog, deps.Events)))))(w, r)
-			return
-		}
-		// PUT {id}/enrichmentMatch: re-point the external metadata match + re-enrich
-		// JUST this Title (Admin). Distinct from identity fix-match — it never touches
-		// identity_key or watch state (ADR-0002/0014).
-		if id, ok := strings.CutSuffix(rest, "/enrichmentMatch"); ok {
-			if id == "" || strings.Contains(id, "/") {
-				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
-				return
-			}
-			requireMethod(http.MethodPut,
-				requireAuth(deps.Auth, requireAdmin(requireLocalTitle(deps, id,
-					handleEnrichmentMatch(deps.Enrich, deps.Catalog, deps.Events)))))(w, r)
 			return
 		}
 		// PUT {id}/metadata: hand-edit + Lock descriptive fields (Admin).
