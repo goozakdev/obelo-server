@@ -404,20 +404,27 @@ check-amd64: test-go-amd64 test-go-amd64-tailscale
 ##
 ## Stops at the first failing step (a real bundle or providers a later step
 ## silently ran without are not worth reporting on) but the restore-and-rebuild
-## cleanup below still runs unconditionally.
+## cleanup below still runs unconditionally, INCLUDING when the run is killed
+## (TERM/ALRM to make's pid, or HUP/INT/QUIT to the whole process group — see
+## scripts/check-release.sh for why make's pid alone can't take HUP/INT/QUIT)
+## mid-step — see scripts/check-release.sh for how backgrounding a step lets
+## the cleanup trap actually reach the whole tree (npm, playwright, chromium,
+## the booted obelo binary, vite) instead of leaving it running on :8099 with
+## a real bundle stuck in the tracked placeholder. SIGKILL cannot be caught,
+## so it still skips all of this and leaves the tree exactly as the kill
+## found it.
+##
+## The recipe below is one script call and deliberately never contains a
+## literal $(MAKE) reference: GNU make always executes (not just prints) any
+## recipe line that does, even under `make -n`, which used to make `-n
+## check-release` build the real thing instead of describing it.
 ##
 ## CHECK_RELEASE_SKIP_AMD64=1 skips check-amd64 (its own ~40-minute Docker
 ## cost), so the rest of this target can be proven without waiting on it.
 ## Unset (the default) runs everything.
 CHECK_RELEASE_SKIP_AMD64 ?=
 check-release:
-	@( $(MAKE) plugins && \
-	   $(MAKE) web && \
-	   $(MAKE) check-bundle && \
-	   $(MAKE) test-e2e $(if $(CHECK_RELEASE_SKIP_AMD64),,&& $(MAKE) check-amd64) ); status=$$?; \
-	git checkout -- $(EMBED_DIR)/index.html || status=1; \
-	$(MAKE) plugins || status=1; \
-	exit $$status
+	@CHECK_RELEASE_SKIP_AMD64="$(CHECK_RELEASE_SKIP_AMD64)" EMBED_DIR="$(EMBED_DIR)" ./scripts/check-release.sh
 
 ## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.
 ## This exists because nothing enforced formatting and it silently drifted to
