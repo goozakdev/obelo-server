@@ -28,6 +28,13 @@ import (
 // DELIBERATE manifest change with:
 //
 //	go test ./internal/bundled/ -run TestBundledManifestsMatchTheirGolden -update
+//
+// -update REFUSES to rewrite a row whose version is unchanged from the golden
+// but whose hash differs (D002): that combination is exactly a same-version
+// content change, and rewriting it would launder the change through the tool
+// meant to catch it. Bump the version first, then rerun -update. A brand-new
+// shipped id (absent from the golden) is written; an id no longer shipped is
+// dropped.
 
 // updateManifestGuardGolden is the regeneration seam (D005): -update writes the
 // current source manifests' versions+hashes to the golden and passes, rather than
@@ -51,13 +58,17 @@ type manifestGuardEntry struct {
 //   - a different version than the golden (whatever the hash) → FAIL: the golden
 //     always mirrors what ships, so a real version bump needs the golden updated too.
 //   - shipped but absent from the golden, or in the golden but not shipped → FAIL.
+//
+// -update follows the same same-version-different-hash refusal (D002); see
+// updateGuardGolden.
 func TestBundledManifestsMatchTheirGolden(t *testing.T) {
 	checkShippedMatchesPluginsDir(t)
 
 	src := currentManifestGuardEntries(t)
 
 	if *updateManifestGuardGolden {
-		writeManifestGuardGolden(t, src)
+		old := readOptionalGuardGolden(t, manifestGuardGoldenPath)
+		updateGuardGolden(t, manifestGuardGoldenPath, src, old, writeManifestGuardGolden)
 		return
 	}
 
@@ -192,4 +203,46 @@ func writeManifestGuardGolden(t *testing.T, entries map[string]manifestGuardEntr
 	if err := os.WriteFile(manifestGuardGoldenPath, append(raw, '\n'), 0o644); err != nil {
 		t.Fatalf("writing %s: %v", manifestGuardGoldenPath, err)
 	}
+}
+
+// readOptionalGuardGolden reads a golden file for -update's refusal check
+// (D002): unlike readManifestGuardGolden/readSourceGuardGolden, a MISSING file
+// is not an error here — it means every id is new — but a present-and-invalid
+// file still fails loudly.
+func readOptionalGuardGolden(t *testing.T, path string) map[string]manifestGuardEntry {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]manifestGuardEntry{}
+		}
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	var m map[string]manifestGuardEntry
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("%s is not valid JSON: %v", path, err)
+	}
+	return m
+}
+
+// updateGuardGolden implements the -update refusal shared by both guards
+// (D002): a row whose version matches the existing golden but whose hash does
+// not is a same-version content change, and -update must not rewrite it —
+// doing so would launder the change instead of catching it. Every other row
+// in src (a brand-new id, a genuine version bump, or an unchanged row) is
+// written; an id present in old but no longer in src (no longer shipped) is
+// dropped by never being carried into out.
+func updateGuardGolden(t *testing.T, path string, src, old map[string]manifestGuardEntry, write func(*testing.T, map[string]manifestGuardEntry)) {
+	t.Helper()
+	out := make(map[string]manifestGuardEntry, len(src))
+	for id, cur := range src {
+		if prev, ok := old[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
+			t.Errorf("%s's content changed without a version bump; -update refuses to launder this — "+
+				"bump \"version\" in plugins/%s/manifest.json, then rerun with -update", id, id)
+			out[id] = prev
+			continue
+		}
+		out[id] = cur
+	}
+	write(t, out)
 }
