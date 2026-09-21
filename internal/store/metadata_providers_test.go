@@ -97,43 +97,37 @@ func TestMetadataProvidersRoundTrip(t *testing.T) {
 }
 
 // TestEnrichmentBehaviorRoundTrip covers the three behavior knobs
-// (enrichment-runtime-settings): an unset column reads back as a nil (unset) field
-// distinct from a real 0; SetEnrichmentBehavior round-trips concrete values and
-// leaves metadata_language intact.
+// (enrichment-runtime-settings, NOT NULL columns): a missing row reads back the
+// same defaults the DDL gives an inserted row (auto true, interval/rate 0);
+// SetEnrichmentBehavior round-trips concrete values, including 0, and leaves
+// metadata_language intact.
 func TestEnrichmentBehaviorRoundTrip(t *testing.T) {
 	db := openTemp(t)
 
-	// A fresh (migrated) DB has no settings row → every field reads unset (nil), and
-	// the resolver accessors default sensibly (auto true, interval/rate 0).
+	// A fresh (migrated) DB has no settings row → resolves to the DDL defaults.
 	beh, err := db.EnrichmentBehavior()
 	if err != nil {
 		t.Fatalf("EnrichmentBehavior on fresh DB: %v", err)
 	}
-	if beh.AutoEnrichAfterScan != nil || beh.EnrichIntervalSeconds != nil || beh.MusicBrainzRateLimitMs != nil {
-		t.Errorf("fresh behavior = %+v, want all-nil (unset)", beh)
-	}
-	if !beh.Auto() || beh.IntervalSeconds() != 0 || beh.RateLimitMs() != 0 {
-		t.Errorf("fresh resolved = auto %v/interval %d/rate %d, want true/0/0", beh.Auto(), beh.IntervalSeconds(), beh.RateLimitMs())
+	if !beh.AutoEnrichAfterScan || beh.EnrichIntervalSeconds != 0 || beh.MusicBrainzRateLimitMs != 0 {
+		t.Errorf("fresh behavior = %+v, want true/0/0", beh)
 	}
 
-	// Write concrete values; they round-trip as non-nil fields.
+	// Write concrete values; they round-trip.
 	if err := db.SetEnrichmentBehavior(false, 3600, 250); err != nil {
 		t.Fatalf("SetEnrichmentBehavior: %v", err)
 	}
 	beh, _ = db.EnrichmentBehavior()
-	if beh.AutoEnrichAfterScan == nil || *beh.AutoEnrichAfterScan != false ||
-		beh.EnrichIntervalSeconds == nil || *beh.EnrichIntervalSeconds != 3600 ||
-		beh.MusicBrainzRateLimitMs == nil || *beh.MusicBrainzRateLimitMs != 250 {
-		t.Errorf("behavior after set = %+v, want false/3600/250 (all set)", beh)
+	if beh.AutoEnrichAfterScan || beh.EnrichIntervalSeconds != 3600 || beh.MusicBrainzRateLimitMs != 250 {
+		t.Errorf("behavior after set = %+v, want false/3600/250", beh)
 	}
-	// A real 0 is distinguishable from unset — it reads back as a set field.
+	// A real 0 round-trips like any other value.
 	if err := db.SetEnrichmentBehavior(true, 0, 0); err != nil {
 		t.Fatalf("SetEnrichmentBehavior zeros: %v", err)
 	}
 	beh, _ = db.EnrichmentBehavior()
-	if beh.EnrichIntervalSeconds == nil || *beh.EnrichIntervalSeconds != 0 ||
-		beh.MusicBrainzRateLimitMs == nil || *beh.MusicBrainzRateLimitMs != 0 {
-		t.Errorf("behavior after zero-set = %+v, want 0/0 as SET (not nil)", beh)
+	if beh.EnrichIntervalSeconds != 0 || beh.MusicBrainzRateLimitMs != 0 {
+		t.Errorf("behavior after zero-set = %+v, want 0/0", beh)
 	}
 
 	// SetEnrichmentBehavior touches only the three columns, leaving language intact.
@@ -145,5 +139,49 @@ func TestEnrichmentBehaviorRoundTrip(t *testing.T) {
 	}
 	if lang, _ := db.MetadataLanguage(); lang != "es-ES" {
 		t.Errorf("language after SetEnrichmentBehavior = %q, want es-ES (untouched)", lang)
+	}
+}
+
+// TestEnrichmentBehaviorColumnsAreNotNull pins the schema (0001_init.sql): each
+// of the three behavior columns rejects an explicit SQL NULL. Setting
+// auto_enrich_after_scan's declaration back to bare INTEGER (no NOT NULL) makes
+// this fail on that column alone, confirming the assertion is live.
+func TestEnrichmentBehaviorColumnsAreNotNull(t *testing.T) {
+	db := openTemp(t)
+	if err := db.SetEnrichmentBehavior(true, 60, 500); err != nil {
+		t.Fatalf("SetEnrichmentBehavior: %v", err)
+	}
+	for _, col := range []string{"auto_enrich_after_scan", "enrich_interval_seconds", "musicbrainz_rate_limit_ms"} {
+		if _, err := db.Exec("UPDATE metadata_settings SET " + col + " = NULL WHERE id = 1"); err == nil {
+			t.Errorf("UPDATE %s = NULL succeeded, want a NOT NULL constraint failure", col)
+		}
+	}
+}
+
+// TestEnrichmentBehaviorNoRowMatchesConsentOnlyRow pins the no-row defaults
+// EnrichmentBehavior() returns in Go against the DDL defaults themselves,
+// rather than restating the numbers a second time: a fresh DB with no
+// metadata_settings row at all must read back identically to a DB where
+// SetEnrichmentConsent alone (never SetEnrichmentBehavior) created row 1, since
+// that INSERT never names the three columns and takes the DDL defaults. If a
+// DDL default drifted from the Go no-row fallback, only the first DB would show
+// it.
+func TestEnrichmentBehaviorNoRowMatchesConsentOnlyRow(t *testing.T) {
+	noRow := openTemp(t)
+	want, err := noRow.EnrichmentBehavior()
+	if err != nil {
+		t.Fatalf("EnrichmentBehavior (no row): %v", err)
+	}
+
+	consentOnly := openTemp(t)
+	if err := consentOnly.SetEnrichmentConsent(true); err != nil {
+		t.Fatalf("SetEnrichmentConsent: %v", err)
+	}
+	got, err := consentOnly.EnrichmentBehavior()
+	if err != nil {
+		t.Fatalf("EnrichmentBehavior (consent-only row): %v", err)
+	}
+	if got != want {
+		t.Errorf("consent-only row behavior = %+v, want %+v (the no-row default)", got, want)
 	}
 }

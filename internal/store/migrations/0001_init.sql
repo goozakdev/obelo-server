@@ -991,9 +991,9 @@ CREATE TABLE metadata_providers (
 CREATE TABLE metadata_settings (
     id                         INTEGER PRIMARY KEY CHECK (id = 1),
     metadata_language          TEXT NOT NULL DEFAULT '',
-    auto_enrich_after_scan     INTEGER,
-    enrich_interval_seconds    INTEGER,
-    musicbrainz_rate_limit_ms  INTEGER,
+    auto_enrich_after_scan     INTEGER NOT NULL DEFAULT 1,
+    enrich_interval_seconds    INTEGER NOT NULL DEFAULT 0,
+    musicbrainz_rate_limit_ms  INTEGER NOT NULL DEFAULT 0,
     enrichment_consent_granted INTEGER,
     enrichment_consent_at      TEXT,
     updated_at                 TEXT NOT NULL DEFAULT (datetime('now'))

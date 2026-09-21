@@ -122,70 +122,32 @@ func (db *DB) SetMetadataLanguage(language string) error {
 // EnrichmentBehavior is the trio of server-wide Enrichment BEHAVIOR knobs stored
 // on the singleton metadata_settings row (enrichment-runtime-settings): whether a
 // completed scan auto-enriches, the scheduled-sweep cadence (seconds), and the
-// MusicBrainz throttle (milliseconds). Each field is a POINTER so a NULL column
-// ("unset") is distinguishable from a real 0 — 0 is a meaningful "disabled" value
-// for the interval and rate limit. After the first-boot seed the columns are never
-// NULL; the resolver accessors below default a stray NULL to a safe value anyway.
+// MusicBrainz throttle (milliseconds). The columns are NOT NULL (DEFAULT 1 / 0 /
+// 0), so these are plain values read directly by callers — a row inserted by
+// SetEnrichmentConsent or SetMetadataLanguage without naming the trio takes the
+// DDL defaults, and a missing row (settings never seeded) resolves to the same
+// defaults below.
 type EnrichmentBehavior struct {
-	AutoEnrichAfterScan    *bool
-	EnrichIntervalSeconds  *int
-	MusicBrainzRateLimitMs *int
-}
-
-// Auto resolves the auto-enrich-after-scan flag, defaulting an unset column to
-// true (the config default).
-func (b EnrichmentBehavior) Auto() bool {
-	return b.AutoEnrichAfterScan == nil || *b.AutoEnrichAfterScan
-}
-
-// IntervalSeconds resolves the scheduled-enrich cadence, defaulting an unset
-// column to 0 (scheduler disabled — the safe posture).
-func (b EnrichmentBehavior) IntervalSeconds() int {
-	if b.EnrichIntervalSeconds == nil {
-		return 0
-	}
-	return *b.EnrichIntervalSeconds
-}
-
-// RateLimitMs resolves the MusicBrainz throttle, defaulting an unset column to 0
-// (no throttle).
-func (b EnrichmentBehavior) RateLimitMs() int {
-	if b.MusicBrainzRateLimitMs == nil {
-		return 0
-	}
-	return *b.MusicBrainzRateLimitMs
+	AutoEnrichAfterScan    bool
+	EnrichIntervalSeconds  int
+	MusicBrainzRateLimitMs int
 }
 
 // EnrichmentBehavior reads the three behavior knobs from the singleton
-// metadata_settings row. A missing row (settings never seeded) or a NULL column
-// comes back as a nil field — "unset" — which the caller resolves (the first-boot
-// seed fills it from config; the resolver accessors default it at read time).
+// metadata_settings row. A missing row (settings never seeded) resolves to the
+// same values the DDL defaults an inserted row to: auto true, interval 0
+// (scheduler disabled), rate limit 0 (no throttle).
 func (db *DB) EnrichmentBehavior() (EnrichmentBehavior, error) {
-	var (
-		auto           sql.NullBool
-		interval, rate sql.NullInt64
-	)
+	var out EnrichmentBehavior
 	err := db.QueryRow(
 		`SELECT auto_enrich_after_scan, enrich_interval_seconds, musicbrainz_rate_limit_ms
-		   FROM metadata_settings WHERE id = 1`).Scan(&auto, &interval, &rate)
+		   FROM metadata_settings WHERE id = 1`).
+		Scan(&out.AutoEnrichAfterScan, &out.EnrichIntervalSeconds, &out.MusicBrainzRateLimitMs)
 	if errors.Is(err, sql.ErrNoRows) {
-		return EnrichmentBehavior{}, nil
+		return EnrichmentBehavior{AutoEnrichAfterScan: true}, nil
 	}
 	if err != nil {
 		return EnrichmentBehavior{}, fmt.Errorf("store: reading enrichment behavior: %w", err)
-	}
-	var out EnrichmentBehavior
-	if auto.Valid {
-		v := auto.Bool
-		out.AutoEnrichAfterScan = &v
-	}
-	if interval.Valid {
-		v := int(interval.Int64)
-		out.EnrichIntervalSeconds = &v
-	}
-	if rate.Valid {
-		v := int(rate.Int64)
-		out.MusicBrainzRateLimitMs = &v
 	}
 	return out, nil
 }

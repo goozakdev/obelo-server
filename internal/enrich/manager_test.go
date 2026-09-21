@@ -30,8 +30,7 @@ func (f *fakeManagerStore) MetadataProviders() ([]store.MetadataProviderRow, err
 }
 func (f *fakeManagerStore) MetadataLanguage() (string, error) { return f.lang, nil }
 func (f *fakeManagerStore) EnrichmentBehavior() (store.EnrichmentBehavior, error) {
-	ms := f.rateLimitMs
-	return store.EnrichmentBehavior{MusicBrainzRateLimitMs: &ms}, nil
+	return store.EnrichmentBehavior{AutoEnrichAfterScan: true, MusicBrainzRateLimitMs: f.rateLimitMs}, nil
 }
 func (f *fakeManagerStore) LibraryEnrichmentPolicy(libraryID string) (store.LibraryEnrichmentPolicy, error) {
 	return f.policies[libraryID], nil
@@ -482,9 +481,9 @@ func (f *fakeSeedStore) SetEnrichmentConsent(granted bool) error {
 }
 func (f *fakeSeedStore) SetEnrichmentBehavior(auto bool, intervalSeconds, rateLimitMs int) error {
 	f.behavior = store.EnrichmentBehavior{
-		AutoEnrichAfterScan:    &auto,
-		EnrichIntervalSeconds:  &intervalSeconds,
-		MusicBrainzRateLimitMs: &rateLimitMs,
+		AutoEnrichAfterScan:    auto,
+		EnrichIntervalSeconds:  intervalSeconds,
+		MusicBrainzRateLimitMs: rateLimitMs,
 	}
 	f.behaviorSet = true
 	return nil
@@ -512,7 +511,7 @@ func TestSeedIfEmpty(t *testing.T) {
 		if err != nil || !seeded {
 			t.Fatalf("SeedIfEmpty = %v, %v; want true, nil", seeded, err)
 		}
-		if !s.behaviorSet || !s.behavior.Auto() || s.behavior.IntervalSeconds() != 21600 || s.behavior.RateLimitMs() != 1000 {
+		if !s.behaviorSet || !s.behavior.AutoEnrichAfterScan || s.behavior.EnrichIntervalSeconds != 21600 || s.behavior.MusicBrainzRateLimitMs != 1000 {
 			t.Errorf("behavior seed = %+v (set %v), want auto/21600s/1000ms", s.behavior, s.behaviorSet)
 		}
 		if u, ok := s.upserts[SlugTMDB]; !ok || !u.Enabled || u.APIKey != "tk" || u.BaseURL != "http://tmdb.stub" || u.ImageBaseURL != "http://img.stub" {

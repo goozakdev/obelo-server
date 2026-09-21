@@ -1338,7 +1338,7 @@ func (a *App) enqueueEnrichAfterScan(libraryID string) {
 		log.Printf("obelo: reading auto-enrich setting: %v", err)
 		return
 	}
-	if !behavior.Auto() {
+	if !behavior.AutoEnrichAfterScan {
 		return
 	}
 	a.enqueueEnrichIfEnabled(libraryID)
@@ -1576,7 +1576,7 @@ func (a *App) enrichIntervalSeconds() int {
 		log.Printf("obelo: reading enrich interval: %v", err)
 		return 0
 	}
-	return behavior.IntervalSeconds()
+	return behavior.EnrichIntervalSeconds
 }
 
 // sweepEnrich enqueues a background enrich pass for every Library (the safety-net

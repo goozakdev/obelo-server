@@ -155,7 +155,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 		return fmt.Errorf("enrich: manager reload: %w", err)
 	}
 	fixed := FixedProviderInputs{
-		MusicBrainzRateLimit: time.Duration(behavior.RateLimitMs()) * time.Millisecond,
+		MusicBrainzRateLimit: time.Duration(behavior.MusicBrainzRateLimitMs) * time.Millisecond,
 	}
 	// The first-run consent decision (ADR-0032) gates ALL outbound enrichment: read
 	// it here so a consent change (applied via a Reload, like any settings save)
