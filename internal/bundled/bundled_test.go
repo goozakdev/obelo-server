@@ -242,6 +242,9 @@ func TestAssertReplacesAnOlderBundledCopy(t *testing.T) {
 			if got := versionOnDisk(t, pluginDir); got != shippedManifest.Version {
 				t.Errorf("the manifest on disk says %q, want the shipped %q", got, shippedManifest.Version)
 			}
+			if got := nameOnDisk(t, pluginDir); got != shippedManifest.Name {
+				t.Errorf("the manifest on disk still says the name %q, want the shipped %q", got, shippedManifest.Name)
+			}
 			row, _ := st.row(id)
 			if row.Version != shippedManifest.Version {
 				t.Errorf("the row still says %q, want %q", row.Version, shippedManifest.Version)
@@ -351,6 +354,21 @@ func versionOnDisk(t *testing.T, dir string) string {
 		t.Fatalf("the manifest on disk is not JSON: %v", err)
 	}
 	return m.Version
+}
+
+// nameOnDisk is versionOnDisk's twin for "name": InstallFiles writes the shipped
+// manifest bytes verbatim, so a replace refreshes every field the old copy had
+// stale, not just the version this guard's siblings already check.
+func nameOnDisk(t *testing.T, dir string) string {
+	t.Helper()
+	raw := readFile(t, filepath.Join(dir, plugins.ManifestFile))
+	var m struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("the manifest on disk is not JSON: %v", err)
+	}
+	return m.Name
 }
 
 // --- The fake store and the small file helpers ---------------------------------

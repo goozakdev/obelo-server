@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,6 +92,16 @@ func TestBundledManifestsMatchTheirGolden(t *testing.T) {
 // shipped() does not list is not a Bundled plugin by this guard's rule ("add it
 // to shipped() and the golden, or it is not a Bundled plugin"), and an id in
 // shipped() with no such directory is equally wrong.
+//
+// A symlink is followed, not skipped: os.ReadDir's DirEntry reports the LINK's
+// own type, which is never a directory even when it points at one, so `!e.IsDir()`
+// alone would let a symlinked plugin dir through this guard unseen. A
+// manifest.json stat error other than "not exist" (e.g. permissions) is not
+// silently treated as absent — it FAILS, because "the guard could not tell" is
+// not the same claim as "there is no manifest here". A DANGLING manifest.json
+// symlink is not distinguishable from that case: os.Stat on it returns ENOENT,
+// so it stats as not-exist and is skipped exactly like a genuinely absent
+// manifest.
 func checkShippedMatchesPluginsDir(t *testing.T) {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join("..", "..", "plugins"))
@@ -98,11 +110,19 @@ func checkShippedMatchesPluginsDir(t *testing.T) {
 	}
 	onDisk := make(map[string]bool)
 	for _, e := range entries {
-		if !e.IsDir() {
+		isDir := e.IsDir()
+		if e.Type()&fs.ModeSymlink != 0 {
+			info, err := os.Stat(filepath.Join("..", "..", "plugins", e.Name()))
+			isDir = err == nil && info.IsDir()
+		}
+		if !isDir {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join("..", "..", "plugins", e.Name(), "manifest.json")); err != nil {
-			continue
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			t.Fatalf("stat plugins/%s/manifest.json: %v", e.Name(), err)
 		}
 		onDisk[e.Name()] = true
 	}
