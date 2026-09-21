@@ -38,17 +38,17 @@ const musicLib: Library = { id: "lib1", name: "Music", kind: "music", rootFolder
 
 const artistsPage: ArtistsPage = {
   artists: [
-    { id: "ar1", libraryId: "lib1", kind: "artist", name: "Radiohead", overview: "", genres: ["Alt Rock"] } as ArtistsPage["artists"][number],
-    { id: "ar2", libraryId: "lib1", kind: "artist", name: "Portishead", overview: "", genres: [] } as ArtistsPage["artists"][number],
+    { id: "ar1", libraryId: "lib1", kind: "artist", name: "Radiohead", overview: "", genres: ["Alt Rock"] },
+    { id: "ar2", libraryId: "lib1", kind: "artist", name: "Portishead", overview: "", genres: [] },
   ],
   nextCursor: null,
 };
 
 const radioheadAlbums: ArtistAlbums = {
   // A libraryId so the Album grid can key its layout per (Music) Library.
-  artist: { id: "ar1", kind: "artist", name: "Radiohead", libraryId: "lib1", overview: "", genres: [] } as ArtistAlbums["artist"],
+  artist: { id: "ar1", kind: "artist", name: "Radiohead", libraryId: "lib1", overview: "", genres: [] },
   albums: [
-    { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 12, releaseType: "album", genres: [] } as ArtistAlbums["albums"][number],
+    { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 12, releaseType: "album", genres: [] },
   ],
 };
 

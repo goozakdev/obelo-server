@@ -31,12 +31,25 @@ export async function waitEnrichPass(
   const qs = opts?.mode ? `?mode=${encodeURIComponent(opts.mode)}` : "";
   const start = await request.post(`/api/v1/libraries/${libId}/enrich${qs}`, { headers: auth });
   expect(start.ok(), `enrich: ${start.status()} ${await start.text()}`).toBeTruthy();
+  const startBody = await start.json();
+  // `started: false` means the POST found a pass ALREADY running and reported
+  // that one instead of starting a new one — its counts belong to whichever
+  // caller actually started it, not to this call. Fail loudly rather than hand
+  // back somebody else's numbers.
+  expect(
+    startBody.started,
+    `enrich on library ${libId} did not start a new pass — one was already running: ${JSON.stringify(startBody)}`,
+  ).toBeTruthy();
 
   const deadline = Date.now() + (opts?.timeoutMs ?? 15_000);
+  let lastStatus = -1;
+  let lastBody = "";
   while (Date.now() < deadline) {
     const res = await request.get(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
+    lastStatus = res.status();
+    lastBody = await res.text();
     if (res.ok()) {
-      const status = await res.json();
+      const status = JSON.parse(lastBody);
       if (
         status.state === "idle" &&
         status.lastPass &&
@@ -47,5 +60,7 @@ export async function waitEnrichPass(
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`enrich pass on library ${libId} did not settle within timeout`);
+  throw new Error(
+    `enrich pass on library ${libId} did not settle within timeout (last status GET: ${lastStatus} ${lastBody})`,
+  );
 }

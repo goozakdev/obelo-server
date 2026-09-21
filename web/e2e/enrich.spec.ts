@@ -55,6 +55,27 @@ async function login(request: APIRequestContext): Promise<string> {
   return (await res.json()).token as string;
 }
 
+// waitScanSettled polls GET /libraries/{id}/scan until the Library leaves the
+// "running" state (or it times out), returning the settled status (mirrors
+// enrich-tv-music.spec.ts).
+async function waitScanSettled(
+  request: APIRequestContext,
+  auth: Record<string, string>,
+  libId: string,
+): Promise<{ state: string; titlesFound: number }> {
+  const deadline = Date.now() + 15_000;
+  let last: { state: string; titlesFound: number } = { state: "running", titlesFound: 0 };
+  while (Date.now() < deadline) {
+    const res = await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth });
+    if (res.ok()) {
+      last = (await res.json()) as { state: string; titlesFound: number };
+      if (last.state !== "running") return last;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return last;
+}
+
 async function uiLogin(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/login");
   await expect(page.getByTestId("login-screen")).toBeVisible();
@@ -97,13 +118,8 @@ test.describe.serial("enrichment: decorate movies + render enriched detail", () 
 
     // The scan POST is async (202, "running"); wait for it to settle so the
     // enrich pass below sees the scanned Title (avoids a scan/enrich race).
-    for (let i = 0; i < 100; i++) {
-      const st = await (
-        await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth })
-      ).json();
-      if (st.state && st.state !== "running") break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    const settled = await waitScanSettled(request, auth, libId);
+    expect(settled.state).toBe("idle");
 
     // Trigger an Enrichment pass against the local TMDB stub and wait for it to
     // finish; the pass is asynchronous (202), so counts are read back from

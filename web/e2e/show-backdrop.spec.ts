@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitEnrichPass } from "./enrich-wait";
 
 // End-to-end Show detail backdrop (show-detail redesign): the Show's fetched
 // TMDB Background renders as a viewport-pinned layer behind the page, and the
@@ -102,15 +103,13 @@ async function scanAndEnrich(
     if (res.ok()) settled = (await res.json()) as typeof settled;
   }
   expect(settled.titlesFound, `scan found no titles: ${JSON.stringify(settled)}`).toBeGreaterThan(0);
-  const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-  expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
-  const result = await enrich.json();
-  // This fixture root is shared with enrich-tv-music.spec.ts, so the library may
-  // already be fully enriched by the time this spec runs (total 0). Only a run
-  // that HAD candidates and matched none is a failure.
-  if (result.total > 0) {
-    expect(result.matched, `enrich matched none: ${JSON.stringify(result)}`).toBeGreaterThan(0);
-  }
+  // This fixture root is shared with enrich-tv-music.spec.ts, which runs first
+  // (alphabetical file order) and leaves every leaf already matched — a default
+  // "new" pass here would find nothing left to do and never really exercise a
+  // match. mode: "full" re-enriches every visible leaf regardless, so the
+  // assertion below always executes against a real pass.
+  const result = await waitEnrichPass(request, auth, libId, { mode: "full" });
+  expect(result.matched, `enrich matched none: ${JSON.stringify(result)}`).toBeGreaterThan(0);
 }
 
 async function uiLogin(page: import("@playwright/test").Page): Promise<void> {
