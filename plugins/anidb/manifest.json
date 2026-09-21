@@ -1,7 +1,7 @@
 {
   "id": "anidb",
   "name": "AniDB",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 1,
   "description": "Anime-specialist source for anime movies and series: titles, synopses, and cover art. A Full provider you can lead an anime Library with (its Authoritative provider); ships disabled and requires a registered AniDB HTTP-API client.",
   "docsUrl": "https://wiki.anidb.net/HTTP_API_Definition",
