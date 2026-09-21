@@ -96,7 +96,7 @@ test.describe.serial("first-run, login, logout, and the 401 path", () => {
 
     // The media cookie was set by the server at login.
     const cookies = await page.context().cookies();
-    expect(cookies.some((c) => c.name === "ms_media" && c.value.length > 0)).toBeTruthy();
+    expect(cookies.some((c) => c.name === "ms_media_plain" && c.value.length > 0)).toBeTruthy();
 
     // Logout → back to login, and the media cookie is cleared. Sign out lives in
     // the account (username) dropdown.
@@ -104,7 +104,7 @@ test.describe.serial("first-run, login, logout, and the 401 path", () => {
     await page.getByTestId("logout-button").click();
     await expect(page.getByTestId("login-screen")).toBeVisible();
     const afterLogout = await page.context().cookies();
-    expect(afterLogout.some((c) => c.name === "ms_media" && c.value.length > 0)).toBeFalsy();
+    expect(afterLogout.some((c) => c.name === "ms_media_plain" && c.value.length > 0)).toBeFalsy();
 
     // Returning login from the same screen lands back on Home.
     await page.getByTestId("login-username").fill(ADMIN_USER);

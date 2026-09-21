@@ -3,6 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitEnrichPass } from "./enrich-wait";
 
 // End-to-end Edit-item "Fix info" (item-editing/01, ADR-0019) against the REAL
 // embedded Go server with its TMDB stub. A Movie the stub initially no-matches
@@ -111,9 +112,9 @@ test.describe.serial("edit-item: search a provider and apply an Enrichment overr
       await new Promise((r) => setTimeout(r, 50));
     }
 
-    const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-    expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
-    const result = await enrich.json();
+    // The pass is asynchronous (202), so wait for it to finish and read counts
+    // from GET's lastPass.
+    const result = await waitEnrichPass(request, auth, libId);
     expect(result.total, `expected the scanned Title: ${JSON.stringify(result)}`).toBeGreaterThan(0);
 
     await request.dispose();

@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitEnrichPass } from "./enrich-wait";
 
 // End-to-end TV + Music Enrichment (external-metadata-enrichment issue 03)
 // against the REAL embedded Go server, whose providers are pointed at the local
@@ -95,9 +96,9 @@ async function scanAndEnrich(
   // enriches an empty (still-scanning) Library and matches nothing.
   const settled = await waitScanSettled(request, auth, libId);
   expect(settled.titlesFound, `scan found no titles: ${JSON.stringify(settled)}`).toBeGreaterThan(0);
-  const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-  expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
-  const result = await enrich.json();
+  // The pass is asynchronous (202), so wait for it to finish and read counts
+  // from GET's lastPass.
+  const result = await waitEnrichPass(request, auth, libId);
   expect(result.matched, `enrich matched none: ${JSON.stringify(result)}`).toBeGreaterThan(0);
 }
 

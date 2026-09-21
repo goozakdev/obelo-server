@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitEnrichPass } from "./enrich-wait";
 
 // End-to-end Enrichment flow (external-metadata-enrichment issue 01) against the
 // REAL embedded Go server, whose TMDBProvider + ArtworkFetcher are pointed at the
@@ -94,10 +95,20 @@ test.describe.serial("enrichment: decorate movies + render enriched detail", () 
     const scan = await request.post(`/api/v1/libraries/${libId}/scan`, { headers: auth });
     expect(scan.ok(), `scan: ${scan.status()}`).toBeTruthy();
 
-    // Trigger an Enrichment pass against the local TMDB stub.
-    const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-    expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
-    const result = await enrich.json();
+    // The scan POST is async (202, "running"); wait for it to settle so the
+    // enrich pass below sees the scanned Title (avoids a scan/enrich race).
+    for (let i = 0; i < 100; i++) {
+      const st = await (
+        await request.get(`/api/v1/libraries/${libId}/scan`, { headers: auth })
+      ).json();
+      if (st.state && st.state !== "running") break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    // Trigger an Enrichment pass against the local TMDB stub and wait for it to
+    // finish; the pass is asynchronous (202), so counts are read back from
+    // GET's lastPass once state returns to idle.
+    const result = await waitEnrichPass(request, auth, libId);
     expect(result.matched, `enrich matched none: ${JSON.stringify(result)}`).toBeGreaterThan(0);
 
     await request.dispose();
