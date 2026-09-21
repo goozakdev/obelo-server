@@ -7,7 +7,7 @@ import {
   type Route,
 } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,16 +79,22 @@ async function login(request: APIRequestContext): Promise<string> {
   return (await res.json()).token as string;
 }
 
-// seedMovies creates a Movie library at the `movies` fixtures and scans it,
-// returning { libId, token, titles } where titles maps a title name → id.
+// seedMovies creates a Movie library at a PRIVATE copy of the `movies` fixtures
+// (a fresh mkdtempSync root per call, like the other specs' fixturesDir and this
+// file's own generate*Fixture roots — none of which this file cleans up either)
+// and scans it, returning { libId, titles } where titles maps a title name → id.
+// A fresh root per call means `--repeat-each` never sees FOLDER_OVERLAP and never
+// reuses a prior call's (possibly mutated) library.
 async function seedMovies(
   request: APIRequestContext,
   token: string,
 ): Promise<{ libId: string; titles: Record<string, string> }> {
   const auth = { Authorization: `Bearer ${token}` };
+  const root = mkdtempSync(join(tmpdir(), "e2e-movies-"));
+  cpSync(FIXTURES, root, { recursive: true });
   const create = await request.post("/api/v1/libraries", {
     headers: auth,
-    data: { name: "Films", kind: "movie", rootFolders: [FIXTURES] },
+    data: { name: "Films", kind: "movie", rootFolders: [root] },
   });
   expect(
     create.ok(),
@@ -381,6 +387,14 @@ function waitForResponseBody(
         const body = await response.json();
         await route.fulfill({ response });
         await page.unroute("**/*", handler);
+        if (!response.ok()) {
+          reject(
+            new Error(
+              `waitForResponseBody: ${request.url()} answered ${response.status()}: ${JSON.stringify(body)}`,
+            ),
+          );
+          return;
+        }
         resolveBody(body);
       } catch (err) {
         await page.unroute("**/*", handler);
@@ -860,14 +874,13 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
 
     // Selecting it re-negotiates: a new POST /playback carrying burnSubtitleId,
     // whose decision escalates to the transcode tier.
-    const burnNeg = page.waitForResponse(
+    const burnNeg = waitForResponseBody(
+      page,
       (r) => r.request().method() === "POST" && /\/titles\/[^/]+\/playback$/.test(r.url()) && (r.request().postDataJSON()?.burnSubtitleId ?? "") !== "",
     );
     await imageItem.click();
 
-    const resp = await burnNeg;
-    expect(resp.status(), `burn negotiation status ${resp.status()}`).toBe(200);
-    const decision = await resp.json();
+    const decision = (await burnNeg) as any;
     expect(decision.tier, "image-sub selection escalates to transcode").toBe("transcode");
 
     // Clean up the burn session we created so it doesn't hold the shared transcode
@@ -1100,7 +1113,8 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
 
     // Pick the non-default Stream → a fresh negotiation carrying audioStreamId (the
     // one escalating switch: direct play carries only the default audio).
-    const escNeg = page.waitForResponse(
+    const escNeg = waitForResponseBody(
+      page,
       (r) =>
         r.request().method() === "POST" &&
         /\/titles\/[^/]+\/playback$/.test(r.url()) &&
@@ -1114,9 +1128,7 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
       .locator(`[data-audio-id="${nonDefault.id}"]`)
       .click();
 
-    const resp = await escNeg;
-    expect(resp.status(), `escalation status ${resp.status()}`).toBe(200);
-    const esc = await resp.json();
+    const esc = (await escNeg) as any;
     // Non-default audio escalates off direct play into a remux (directStream).
     expect(esc.tier, "non-default audio escalates to remux").toBe("directStream");
     // The Decision reports the picked Stream as the resolved/delivered audio.
@@ -1176,7 +1188,8 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
 
     // Switch to AC3 → a fresh negotiation carrying audioStreamId; the browser can't
     // decode AC3, so the server transcodes the audio and copies the h264 video.
-    const escNeg = page.waitForResponse(
+    const escNeg = waitForResponseBody(
+      page,
       (r) =>
         r.request().method() === "POST" &&
         /\/titles\/[^/]+\/playback$/.test(r.url()) &&
@@ -1184,7 +1197,7 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
     );
     await page.getByTestId("now-playing-audio").click();
     await page.getByTestId("now-playing-audio-menu").locator(`[data-audio-id="${ac3.id}"]`).click();
-    const esc = await (await escNeg).json();
+    const esc = (await escNeg) as any;
     expect(esc.tier, "AC3 escalates to a transcode (audio re-encoded)").toBe("transcode");
 
     // The real bug: playback must SUSTAIN across MANY segment boundaries, not stop

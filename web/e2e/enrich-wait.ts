@@ -1,5 +1,12 @@
 import { expect, type APIRequestContext } from "@playwright/test";
 
+// isPlainObject rejects null, arrays, and scalars — `typeof x === "object"`
+// alone lets `[]` and `null` through, which then read as "no lastPass yet"
+// instead of failing loudly.
+function isPlainObject(v: unknown): boolean {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 // waitEnrichPass — the shared "start a pass, wait for it to finish, read its
 // counts" step for specs against POST/GET /libraries/{id}/enrich
 // (internal/api/enrich_handlers.go). The endpoint is asynchronous: POST answers
@@ -25,13 +32,35 @@ export async function waitEnrichPass(
   retrying: number;
 }> {
   const before = await request.get(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-  expect(before.ok(), `enrich status: ${before.status()} ${await before.text()}`).toBeTruthy();
-  const baselineFinishedAt = (await before.json()).lastPass?.finishedAt ?? null;
+  const beforeText = await before.text();
+  expect(before.ok(), `enrich status: ${before.status()} ${beforeText}`).toBeTruthy();
+  let beforeJson;
+  try {
+    beforeJson = JSON.parse(beforeText);
+  } catch (err) {
+    throw new Error(
+      `enrich status on library ${libId} returned a non-JSON 200 body: ${before.status()} ${beforeText} (${err})`,
+    );
+  }
+  if (!isPlainObject(beforeJson)) {
+    throw new Error(
+      `enrich status on library ${libId} returned a JSON body that isn't an object: ${before.status()} ${beforeText}`,
+    );
+  }
+  const baselineFinishedAt = beforeJson?.lastPass?.finishedAt ?? null;
 
   const qs = opts?.mode ? `?mode=${encodeURIComponent(opts.mode)}` : "";
   const start = await request.post(`/api/v1/libraries/${libId}/enrich${qs}`, { headers: auth });
-  expect(start.ok(), `enrich: ${start.status()} ${await start.text()}`).toBeTruthy();
-  const startBody = await start.json();
+  const startText = await start.text();
+  expect(start.ok(), `enrich: ${start.status()} ${startText}`).toBeTruthy();
+  let startBody;
+  try {
+    startBody = JSON.parse(startText);
+  } catch (err) {
+    throw new Error(
+      `enrich start on library ${libId} returned a non-JSON 200 body: ${start.status()} ${startText} (${err})`,
+    );
+  }
   // `started: false` means the POST found a pass ALREADY running and reported
   // that one instead of starting a new one — its counts belong to whichever
   // caller actually started it, not to this call. Fail loudly rather than hand
@@ -55,6 +84,11 @@ export async function waitEnrichPass(
       } catch (err) {
         throw new Error(
           `enrich status on library ${libId} returned a non-JSON 200 body: ${lastStatus} ${lastBody} (${err})`,
+        );
+      }
+      if (!isPlainObject(status)) {
+        throw new Error(
+          `enrich status on library ${libId} returned a JSON body that isn't an object: ${lastStatus} ${lastBody}`,
         );
       }
       if (

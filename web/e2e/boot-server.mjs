@@ -265,6 +265,7 @@ const tmdbStub = createServer((req, res) => {
       // A malformed %-escape (decodeURIComponent throws URIError) must answer
       // 400 and leave the stub running for the next request, not crash the
       // whole process on an unhandled exception.
+      console.log(`[boot-server] malformed recording id, answering 400: ${url}`);
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "malformed recording id" }));
       return;
