@@ -219,7 +219,7 @@ func (o RecordOrigin) Locked() bool { return o != OriginDerived }
 func (o RecordOrigin) OwnChoice() bool { return o == OriginChosen }
 
 // ExternalMatch is the external id an Admin assigns to re-point a Title's
-// Enrichment lookup (PUT /titles/{id}/enrichmentMatch). Only the non-empty ids
+// Enrichment lookup (PUT /titles/{id}/enrichmentOverride). Only the non-empty ids
 // are written; identity_key and watch state are NEVER touched (ADR-0002/0014) —
 // this is the metadata match, deliberately distinct from an identity fix-match
 // (which re-keys identity).
@@ -329,7 +329,7 @@ func (db *DB) SetTitleExternalMatch(titleID string, m ExternalMatch, origin Reco
 }
 
 // TitleForEnrichmentByID returns one Title with its enrichment columns for a
-// single-Title re-enrich (PUT /enrichmentMatch). ErrNotFound for an unknown id.
+// single-Title re-enrich (PUT /enrichmentOverride). ErrNotFound for an unknown id.
 func (db *DB) TitleForEnrichmentByID(titleID string) (Title, error) {
 	row := db.QueryRow(`SELECT `+enrichedTitleColumns+` FROM titles WHERE id = ?`, titleID)
 	t, err := scanEnrichedTitle(row)

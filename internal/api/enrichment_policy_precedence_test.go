@@ -93,11 +93,7 @@ func TestPolicyReEnrichOverrideWinsWhileReachable(t *testing.T) {
 	id := titleIDByName(t, srv, token, libID, "Dune")
 
 	// Pin Dune to TMDB record 555 (a per-item Enrichment override) → matched.
-	var matched enrichedDetailResp
-	if status, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+id+"/enrichmentMatch", token,
-		map[string]any{"tmdbId": "555"}, &matched); status != http.StatusOK {
-		t.Fatalf("PUT enrichmentMatch = %d; body: %s", status, body)
-	}
+	matched := applyOverride(t, srv, token, id, "555", "tmdb")
 	if matched.EnrichmentStatus != "matched" {
 		t.Fatalf("pinned Dune status = %q, want matched", matched.EnrichmentStatus)
 	}
@@ -141,11 +137,7 @@ func TestPolicyReEnrichOrphansOverrideToAttention(t *testing.T) {
 	id := titleIDByName(t, srv, token, libID, "Dune")
 
 	// Pin Dune to a TMDB record → matched, and off the attention list.
-	var matched enrichedDetailResp
-	if status, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+id+"/enrichmentMatch", token,
-		map[string]any{"tmdbId": "555"}, &matched); status != http.StatusOK {
-		t.Fatalf("PUT enrichmentMatch = %d; body: %s", status, body)
-	}
+	applyOverride(t, srv, token, id, "555", "tmdb")
 	if _, on := attentionHas(listEnrichmentAttention(t, srv, token, libID), "Dune"); on {
 		t.Fatalf("pinned+matched Dune should not be on the attention list yet")
 	}

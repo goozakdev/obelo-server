@@ -9,14 +9,14 @@ import (
 	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
-// External-metadata-enrichment issue 05 black-box tests: enrichment-match
-// correction + the attention surface. An Admin re-points a Title's external
-// metadata id via PUT /titles/{id}/enrichmentMatch and the Title re-enriches
-// immediately WITHOUT disturbing identity or watch state (ADR-0014); the Titles
-// that enrichment could not match (unmatched/failed) surface for the Admin on a
-// new attention dimension, distinct from the identity Unmatched bucket. All driven
-// through the HTTP API with the FAKE MetadataProvider + ArtworkFetcher (zero
-// network), like the other enrichment specs.
+// External-metadata-enrichment issue 05 black-box tests: the attention surface. An
+// Admin re-points a Title's external metadata id via PUT
+// /titles/{id}/enrichmentOverride and the Title re-enriches immediately WITHOUT
+// disturbing identity or watch state (ADR-0014); the Titles that enrichment could
+// not match (unmatched/failed) surface for the Admin on a new attention dimension,
+// distinct from the identity Unmatched bucket. All driven through the HTTP API
+// with the FAKE MetadataProvider + ArtworkFetcher (zero network), like the other
+// enrichment specs.
 
 // --- Wire shapes ------------------------------------------------------------
 
@@ -58,8 +58,8 @@ func attentionHas(res attentionResp, title string) (attentionTitleResp, bool) {
 // --- Tests ------------------------------------------------------------------
 
 // TestEnrichmentMatchCorrectsAndLeavesAttention is the core acceptance loop: a
-// Title that no-matched appears on the attention surface; an enrichmentMatch with
-// a valid id (faked provider) re-enriches it; it becomes 'matched', keeps its
+// Title that no-matched appears on the attention surface; an enrichmentOverride
+// with a valid id (faked provider) re-enriches it; it becomes 'matched', keeps its
 // identity + watch state, and leaves the attention list. A separate provider-error
 // Title ('failed') stays on the list, proving the list tracks both states.
 func TestEnrichmentMatchCorrectsAndLeavesAttention(t *testing.T) {
@@ -123,13 +123,8 @@ func TestEnrichmentMatchCorrectsAndLeavesAttention(t *testing.T) {
 	srv.JSON(http.MethodPut, "/api/v1/titles/"+br.ID+"/watchState", token,
 		map[string]any{"watched": true}, nil)
 
-	// Correct the match: re-point to tmdbId 999 and re-enrich just this Title.
-	var matched enrichedDetailResp
-	status, body := srv.JSON(http.MethodPut, "/api/v1/titles/"+br.ID+"/enrichmentMatch", token,
-		map[string]any{"tmdbId": "999"}, &matched)
-	if status != http.StatusOK {
-		t.Fatalf("PUT enrichmentMatch = %d, want 200; body: %s", status, body)
-	}
+	// Correct the match: re-point to tmdb id 999 and re-enrich just this Title.
+	matched := applyOverride(t, srv, token, br.ID, "999", "tmdb")
 	if matched.EnrichmentStatus != "matched" {
 		t.Errorf("status after match = %q, want matched", matched.EnrichmentStatus)
 	}
@@ -209,9 +204,11 @@ func TestEnrichmentMatchDistinctFromIdentityUnmatched(t *testing.T) {
 	}
 }
 
-// TestEnrichmentMatchRequiresAdmin: a Member cannot read the enrichment attention
-// list or correct a Title's match (both 403).
-func TestEnrichmentMatchRequiresAdmin(t *testing.T) {
+// TestEnrichmentAttentionRequiresAdmin: a Member cannot read the enrichment
+// attention list (403). Correcting a match is covered by
+// TestEnrichOverrideAdminOnly (enrichoverride_test.go), the endpoint that now
+// carries the correction.
+func TestEnrichmentAttentionRequiresAdmin(t *testing.T) {
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) {
 		return enrich.TitleMetadata{}, enrich.ErrNoMatch
@@ -225,7 +222,6 @@ func TestEnrichmentMatchRequiresAdmin(t *testing.T) {
 	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
 	scanLib(t, srv, token, libID, "")
 	enrichLib(t, srv, token, libID, "")
-	id := titleIDByName(t, srv, token, libID, "Dune")
 
 	srv.CreateMember("m", "memberpass123")
 	mTok := login(t, srv, "m", "memberpass123", "P", "ios", "mc").Token
@@ -233,16 +229,14 @@ func TestEnrichmentMatchRequiresAdmin(t *testing.T) {
 	if status, _ := srv.AuthGET("/api/v1/libraries/"+libID+"/enrichment-attention", mTok, nil); status != http.StatusForbidden {
 		t.Errorf("member GET enrichment-attention = %d, want 403", status)
 	}
-	status, _ := srv.JSON(http.MethodPut, "/api/v1/titles/"+id+"/enrichmentMatch", mTok,
-		map[string]any{"tmdbId": "999"}, nil)
-	if status != http.StatusForbidden {
-		t.Errorf("member PUT enrichmentMatch = %d, want 403", status)
-	}
 }
 
-// TestEnrichmentMatchValidation: an empty body (no external id) is 400; an unknown
-// Title is 404 (hide existence).
-func TestEnrichmentMatchValidation(t *testing.T) {
+// TestEnrichmentMatchIsNotARoute: PUT /titles/{id}/enrichmentMatch is not a route —
+// a Title's match is corrected via PUT /titles/{id}/enrichmentOverride.
+// No CutSuffix in handleTitleSubtree claims it, so it falls to the router's
+// ordinary bare-{id} GET handler, which answers a non-GET method 405 (the same
+// answer any other unrecognized title sub-resource PUT gets) — even for an Admin.
+func TestEnrichmentMatchIsNotARoute(t *testing.T) {
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -256,11 +250,7 @@ func TestEnrichmentMatchValidation(t *testing.T) {
 	id := titleIDByName(t, srv, token, libID, "Dune")
 
 	if status, _ := srv.JSON(http.MethodPut, "/api/v1/titles/"+id+"/enrichmentMatch", token,
-		map[string]any{}, nil); status != http.StatusBadRequest {
-		t.Errorf("empty enrichmentMatch body = %d, want 400", status)
-	}
-	if status, _ := srv.JSON(http.MethodPut, "/api/v1/titles/does-not-exist/enrichmentMatch", token,
-		map[string]any{"tmdbId": "999"}, nil); status != http.StatusNotFound {
-		t.Errorf("enrichmentMatch on unknown Title = %d, want 404", status)
+		map[string]any{"tmdbId": "1"}, nil); status != http.StatusMethodNotAllowed {
+		t.Errorf("PUT enrichmentMatch (admin) = %d, want 405 (not a route)", status)
 	}
 }

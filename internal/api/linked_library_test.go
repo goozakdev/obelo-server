@@ -557,7 +557,6 @@ func writerRoutes(movieLib, titleID, showID, artistID, albumID string) []writerR
 		// route slice), so titleID is gone too — a well-formed source only gets it
 		// past the 400 the brief closed, not past a Library this same test removed.
 		{name: "title enrichment override", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentOverride", body: map[string]any{"externalId": "1", "source": "tmdb"}, wantLocalStatus: http.StatusNotFound},
-		{name: "title enrichment match", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/enrichmentMatch", body: map[string]any{"tmdbId": "1"}},
 		{name: "title identity correction", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/identityCorrection", body: map[string]any{"externalId": "1"}},
 		{name: "title artwork pick", method: http.MethodPut, path: "/api/v1/titles/" + titleID + "/artwork", body: map[string]any{"role": "poster", "ref": "x"}},
 		{name: "title artwork upload", method: http.MethodPost, path: "/api/v1/titles/" + titleID + "/artworkUpload?role=poster", multipart: true},

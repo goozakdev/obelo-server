@@ -531,8 +531,8 @@ export interface FixContext {
 
 /** An enrichment-attention Title with its `omitempty` holes filled (year → 0):
  * a browsable Title missing its descriptive metadata, listed for the Admin to
- * correct via {@link ApiClient.setEnrichmentMatch}. Distinct from the identity
- * Unmatched files and needs-review Titles. */
+ * correct via {@link ApiClient.applyEnrichmentOverride}. Distinct from the
+ * identity Unmatched files and needs-review Titles. */
 export interface EnrichmentAttentionTitle extends FixContext {
   id: string;
   kind: string;
@@ -604,16 +604,6 @@ export interface NeedsReviewItem extends FixContext {
   /** Whether there is a matched provider record to confirm the filing against.
    * "pending" when the item has not been through Enrichment. */
   enrichmentStatus: EnrichmentStatus;
-}
-
-/** Body of `PUT /api/v1/titles/{id}/enrichmentMatch`: the external id an Admin
- * assigns to correct a wrong/missing metadata match. At least one id is required.
- * Setting it re-enriches just that Title and NEVER touches identity (distinct from
- * fix-match). */
-export interface EnrichmentMatchInput {
-  tmdbId?: string;
-  imdbId?: string;
-  musicbrainzId?: string;
 }
 
 /** One provider search result in the Edit-item "Fix info" picker (CONTEXT.md

@@ -61,7 +61,6 @@ import type {
   EpisodeCandidatesResult,
   EnrichmentSearchOptions,
   EntityEnrichmentDetail,
-  EnrichmentMatchInput,
   FixMatchInput,
   NeedsReviewItem,
   NeedsReviewItemRaw,
@@ -1099,24 +1098,6 @@ export class ApiClient {
       `/shows/${encodeURIComponent(showId)}/review`,
       { method: "POST", signal },
     );
-  }
-
-  /** `PUT /api/v1/titles/{id}/enrichmentMatch` (Admin) — set the external id used
-   * for a Title's Enrichment lookup and re-enrich JUST that Title immediately. It
-   * refreshes the descriptive fields/artwork but NEVER touches identity/watch
-   * state (ADR-0014) — deliberately distinct from identity fix-match. At least one
-   * id (tmdbId/imdbId/musicbrainzId) is required (400 otherwise). Returns the
-   * updated, normalized Title detail (now `enrichmentStatus: "matched"`). */
-  async setEnrichmentMatch(
-    titleId: string,
-    input: EnrichmentMatchInput,
-    signal?: AbortSignal,
-  ): Promise<TitleDetail> {
-    const res = await this.request<TitleDetailRaw>(
-      `/titles/${encodeURIComponent(titleId)}/enrichmentMatch`,
-      { method: "PUT", body: input, signal },
-    );
-    return normalizeTitleDetail(res);
   }
 
   /** `GET /api/v1/titles/{id}/enrichmentCandidates?q=…` (Admin) — search the
@@ -2505,7 +2486,6 @@ export type {
   DeviceProfile,
   Edition,
   EnrichmentAttentionTitle,
-  EnrichmentMatchInput,
   EpisodeContext,
   EpisodeSummary,
   FixMatchInput,
