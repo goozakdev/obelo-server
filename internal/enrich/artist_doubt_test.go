@@ -36,8 +36,8 @@ import (
 // only calls a pass can make are parent calls.
 func eaglesDoubtFixture(albumStatus string) func(exec func(string, ...any)) {
 	return func(exec func(string, ...any)) {
-		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
-		      VALUES ('artist', 'ar1', ?, 'matched')`, britishEaglesMBID)
+		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace, enrichment_status)
+		      VALUES ('artist', 'ar1', ?, 'musicbrainz', 'matched')`, britishEaglesMBID)
 		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
 		      VALUES ('album', 'al1', '', ?)`, albumStatus)
 		exec(`UPDATE titles SET enrichment_status = 'matched', enrichment_id_namespace = 'musicbrainz' WHERE id = 't1'`)
@@ -132,8 +132,8 @@ func TestARecheckOverACorroboratedMusicLibraryStillMakesNoProviderCalls(t *testi
 // to be told the same thing by the same name search.
 func TestARecheckDoesNotDoubtAnArtistThatHasNoAlbums(t *testing.T) {
 	svc, _, stub := newEaglesLibrary(t, hellFreezesOverRGID, func(exec func(string, ...any)) {
-		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
-		      VALUES ('artist', 'ar1', ?, 'matched')`, britishEaglesMBID)
+		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace, enrichment_status)
+		      VALUES ('artist', 'ar1', ?, 'musicbrainz', 'matched')`, britishEaglesMBID)
 		exec(`DELETE FROM titles WHERE album_id = 'al1'`)
 		exec(`DELETE FROM albums WHERE id = 'al1'`)
 	})

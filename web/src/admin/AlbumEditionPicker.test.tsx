@@ -189,6 +189,22 @@ describe("AlbumEditionPicker", () => {
     expect(onApplied).toHaveBeenCalled();
   });
 
+  it("shows an error and does not apply when the release-group has no source", async () => {
+    // A malformed fixture (releaseGroupId with no source) must not reach the API —
+    // apply requires a namespace, and a silent no-op leaves the Admin's click with
+    // no feedback at all.
+    listAlbumEditions.mockResolvedValue(editions({ source: undefined }));
+    render(<AlbumEditionPicker albumId="al1" />);
+
+    const rows = await screen.findAllByTestId("album-edition");
+    await userEvent.click(within(rows[0]).getByTestId("album-edition-use"));
+
+    expect(await screen.findByTestId("album-edition-error")).toHaveTextContent(
+      /namespace is unknown/i,
+    );
+    expect(applyEntityEnrichmentOverride).not.toHaveBeenCalled();
+  });
+
   it("reports the mapped and attention counts after applying", async () => {
     // The operator's proof the pin was right. A wrong pin propagates confidently
     // (ADR-0052), and the count is what makes a nonsense one visible immediately.

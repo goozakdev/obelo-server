@@ -317,9 +317,9 @@ func TestAPassCorroboratesTheArtistThroughItsAlbum(t *testing.T) {
 // pinned Artist resolves BY the pinned id every pass and never corroborates.
 func TestAnAdminsFixInfoStillWinsOverCorroboration(t *testing.T) {
 	svc, db, stub := newEaglesLibrary(t, hellFreezesOverRGID, func(exec func(string, ...any)) {
-		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_origin,
-		                                     enrichment_status)
-		      VALUES ('artist', 'ar1', ?, 'chosen', 'pending')`, britishEaglesMBID)
+		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace,
+		                                     external_id_origin, enrichment_status)
+		      VALUES ('artist', 'ar1', ?, 'musicbrainz', 'chosen', 'pending')`, britishEaglesMBID)
 	})
 
 	if _, err := svc.EnrichLibrary(context.Background(), "lib", ModeNew); err != nil {

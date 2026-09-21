@@ -390,12 +390,14 @@ func selectedByMusicPath(t *testing.T, population []struct{ name, status, retryA
 	      VALUES ('ar1', 'lib', 'A', 'artist:a', 'a')`)
 	exec(`INSERT INTO albums (id, artist_id, title, identity_key, sort_title)
 	      VALUES ('al1', 'ar1', 'B', 'artist:a|album:b', 'b')`)
-	// Both parents already matched: a recheck short-circuits them, so the only
-	// variable left is the leaf rule.
-	exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
-	      VALUES ('artist', 'ar1', 'artist-1', 'matched')`)
-	exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
-	      VALUES ('album', 'al1', 'rg-1', 'matched')`)
+	// Both parents already matched, giving every leaf an anchored id to resolve
+	// by lookup; this test varies the leaf rule alone (the parent short-circuit
+	// itself is pinned by TestRecheckOnAFullyMatchedLibraryMakesNoProviderCalls
+	// and TestRecheckDoesNotReAskAMatchedAlbumButStillUsesItsStoredID, not here).
+	exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace, enrichment_status)
+	      VALUES ('artist', 'ar1', 'artist-1', 'musicbrainz', 'matched')`)
+	exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace, enrichment_status)
+	      VALUES ('album', 'al1', 'rg-1', 'musicbrainz', 'matched')`)
 	for i, l := range population {
 		exec(`INSERT INTO titles (id, library_id, kind, title, identity_key, sort_title,
 		                          album_id, disc_number, track_number,

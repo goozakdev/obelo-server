@@ -874,7 +874,9 @@ CREATE TABLE entity_enrichment (
     -- show's TMDB id), kept so a child Season/Episode lookup can resolve
     -- under it on a later only-new pass without re-fetching the parent.
     external_id            TEXT NOT NULL DEFAULT '',
-    external_id_namespace  TEXT NOT NULL DEFAULT '',
+    -- a non-empty external_id always carries a non-empty namespace (entityNamespace, record_ids.go)
+    external_id_namespace  TEXT NOT NULL DEFAULT ''
+        CHECK (external_id = '' OR external_id_namespace <> ''),
     external_id_origin     TEXT NOT NULL DEFAULT '',
     external_release_id    TEXT NOT NULL DEFAULT '',
     enrichment_status      TEXT NOT NULL DEFAULT 'pending'

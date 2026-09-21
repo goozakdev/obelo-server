@@ -209,13 +209,20 @@ func newAlbumFixture(t *testing.T, prov MetadataProvider, al seedAlbum) (*Servic
 		if status == "" {
 			status = "matched"
 		}
-		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
-		      VALUES ('album', 'al1', ?, ?)`, al.entityRecord, status)
+		// A namespace beside the id, exactly as a real writer always leaves one
+		// (entityNamespace, store/record_ids.go) — storedParentRecord reads a
+		// blank namespace as no record at all.
+		ns := ""
+		if al.entityRecord != "" {
+			ns = "musicbrainz"
+		}
+		exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace, enrichment_status)
+		      VALUES ('album', 'al1', ?, ?, ?)`, al.entityRecord, ns, status)
 	}
 	// The Artist is already settled so an only-new pass spends no call on it; these
 	// tests are about the Album.
-	exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, enrichment_status)
-	      VALUES ('artist', 'ar1', 'artist-1', 'matched')`)
+	exec(`INSERT INTO entity_enrichment (entity_type, entity_id, external_id, external_id_namespace, enrichment_status)
+	      VALUES ('artist', 'ar1', 'artist-1', 'musicbrainz', 'matched')`)
 	for _, tr := range al.tracks {
 		status := tr.status
 		if status == "" {
