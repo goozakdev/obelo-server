@@ -355,20 +355,15 @@ func handleUpdateProviders(deps Deps) http.HandlerFunc {
 					"failed to read provider settings", nil)
 				return
 			}
-			auto := cur.Auto()
-			interval := cur.IntervalSeconds()
-			rate := cur.RateLimitMs()
+			desiredBehavior = cur
 			if req.AutoEnrichAfterScan != nil {
-				auto = *req.AutoEnrichAfterScan
+				desiredBehavior.AutoEnrichAfterScan = *req.AutoEnrichAfterScan
 			}
 			if req.EnrichIntervalSeconds != nil {
-				interval = *req.EnrichIntervalSeconds
+				desiredBehavior.EnrichIntervalSeconds = *req.EnrichIntervalSeconds
 			}
 			if req.MusicBrainzRateLimitMs != nil {
-				rate = *req.MusicBrainzRateLimitMs
-			}
-			desiredBehavior = store.EnrichmentBehavior{
-				AutoEnrichAfterScan: &auto, EnrichIntervalSeconds: &interval, MusicBrainzRateLimitMs: &rate,
+				desiredBehavior.MusicBrainzRateLimitMs = *req.MusicBrainzRateLimitMs
 			}
 		}
 
@@ -389,9 +384,9 @@ func handleUpdateProviders(deps Deps) http.HandlerFunc {
 		}
 		if behaviorChanged {
 			if err := deps.Providers.SetEnrichmentBehavior(
-				*desiredBehavior.AutoEnrichAfterScan,
-				*desiredBehavior.EnrichIntervalSeconds,
-				*desiredBehavior.MusicBrainzRateLimitMs,
+				desiredBehavior.AutoEnrichAfterScan,
+				desiredBehavior.EnrichIntervalSeconds,
+				desiredBehavior.MusicBrainzRateLimitMs,
 			); err != nil {
 				writeError(w, http.StatusInternalServerError, codeInternal,
 					"failed to save provider settings", nil)
@@ -615,9 +610,9 @@ func buildProvidersResponse(deps Deps) (providersResponse, error) {
 
 	out := providersResponse{
 		MetadataLanguage:       lang,
-		AutoEnrichAfterScan:    behavior.Auto(),
-		EnrichIntervalSeconds:  behavior.IntervalSeconds(),
-		MusicBrainzRateLimitMs: behavior.RateLimitMs(),
+		AutoEnrichAfterScan:    behavior.AutoEnrichAfterScan,
+		EnrichIntervalSeconds:  behavior.EnrichIntervalSeconds,
+		MusicBrainzRateLimitMs: behavior.MusicBrainzRateLimitMs,
 	}
 	for _, e := range metadataCatalog(deps).Entries() {
 		row, has := bySlug[e.Slug]
