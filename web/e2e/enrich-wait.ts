@@ -49,7 +49,14 @@ export async function waitEnrichPass(
     lastStatus = res.status();
     lastBody = await res.text();
     if (res.ok()) {
-      const status = JSON.parse(lastBody);
+      let status;
+      try {
+        status = JSON.parse(lastBody);
+      } catch (err) {
+        throw new Error(
+          `enrich status on library ${libId} returned a non-JSON 200 body: ${lastStatus} ${lastBody} (${err})`,
+        );
+      }
       if (
         status.state === "idle" &&
         status.lastPass &&
