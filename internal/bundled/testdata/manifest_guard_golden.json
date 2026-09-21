@@ -1,0 +1,34 @@
+{
+  "anidb": {
+    "version": "1.0.1",
+    "hash": "3d6838856dd77c611c04ff125592d9c16e8e21a05db368e468bbedd38c49df6f"
+  },
+  "fanarttv": {
+    "version": "1.0.1",
+    "hash": "f39549aa4fbabd057dde2a2cf61d48d2dab07425de871a657da21ade5e73dadf"
+  },
+  "musicbrainz": {
+    "version": "1.1.0",
+    "hash": "b2d3f2079ead780802763721bec4445b0ffb1d660d1c13125f2e25fa139651d1"
+  },
+  "omdb": {
+    "version": "1.0.0",
+    "hash": "46d97fdd7bea2da26d1aab9df25f05baa3b073fcb89d3684f874f168bbc9bd9f"
+  },
+  "opensubtitles": {
+    "version": "1.0.0",
+    "hash": "a16e9e2a608d7f113fc5d201255a11b48e7228cad1b6ac55bfb110fec5f31adf"
+  },
+  "theaudiodb": {
+    "version": "1.0.0",
+    "hash": "aa1d8319ba5003b1777e9c32ffb3314fc958d2f780cab55437d374b065264a33"
+  },
+  "thetvdb": {
+    "version": "1.0.0",
+    "hash": "27ecad4aa5a254e5e2dc467793d0bde90dec30394a35835012ec58e04700c319"
+  },
+  "tmdb": {
+    "version": "1.0.0",
+    "hash": "284b74a74191967782eabae6ddc953a4f4a7588d4c5cfb1ddcc35c09f29f8fc0"
+  }
+}

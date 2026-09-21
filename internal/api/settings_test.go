@@ -397,10 +397,42 @@ func TestProvidersEnrichmentBehavior(t *testing.T) {
 			v.AutoEnrichAfterScan, v.EnrichIntervalSeconds, v.MusicBrainzRateLimitMs)
 	}
 
+	// An EMPTY PUT (no behavior key at all) and a PUT naming other keys but none of
+	// the three behavior keys must both be pure no-ops for behavior: the stored
+	// non-default values survive untouched (omit=unchanged, not omit=zero-value).
+	putProviders(t, srv, token, map[string]any{"musicBrainzRateLimitMs": 1500}, http.StatusOK)
+	if v := getProviders(t, srv, token); !v.AutoEnrichAfterScan || v.EnrichIntervalSeconds != 3600 || v.MusicBrainzRateLimitMs != 1500 {
+		t.Fatalf("precondition before empty PUT = auto %v/interval %d/rate %d, want true/3600/1500",
+			v.AutoEnrichAfterScan, v.EnrichIntervalSeconds, v.MusicBrainzRateLimitMs)
+	}
+	putProviders(t, srv, token, map[string]any{}, http.StatusOK)
+	if v := getProviders(t, srv, token); !v.AutoEnrichAfterScan || v.EnrichIntervalSeconds != 3600 || v.MusicBrainzRateLimitMs != 1500 {
+		t.Errorf("after empty PUT = auto %v/interval %d/rate %d, want unchanged true/3600/1500",
+			v.AutoEnrichAfterScan, v.EnrichIntervalSeconds, v.MusicBrainzRateLimitMs)
+	}
+	putProviders(t, srv, token, map[string]any{"metadataLanguage": "en-US"}, http.StatusOK)
+	if v := getProviders(t, srv, token); !v.AutoEnrichAfterScan || v.EnrichIntervalSeconds != 3600 || v.MusicBrainzRateLimitMs != 1500 {
+		t.Errorf("after PUT naming only unrelated keys = auto %v/interval %d/rate %d, want unchanged true/3600/1500",
+			v.AutoEnrichAfterScan, v.EnrichIntervalSeconds, v.MusicBrainzRateLimitMs)
+	}
+
 	// Toggling auto off is reflected in the GET view.
 	putProviders(t, srv, token, map[string]any{"autoEnrichAfterScan": false}, http.StatusOK)
 	if getProviders(t, srv, token).AutoEnrichAfterScan {
 		t.Errorf("autoEnrichAfterScan still true after toggling off")
+	}
+
+	// The same two no-op PUTs, repeated now that auto-enrich is stored FALSE: an
+	// omitted autoEnrichAfterScan must stay omit=unchanged, not fall back to true.
+	putProviders(t, srv, token, map[string]any{}, http.StatusOK)
+	if v := getProviders(t, srv, token); v.AutoEnrichAfterScan || v.EnrichIntervalSeconds != 3600 || v.MusicBrainzRateLimitMs != 1500 {
+		t.Errorf("after empty PUT (auto stored false) = auto %v/interval %d/rate %d, want unchanged false/3600/1500",
+			v.AutoEnrichAfterScan, v.EnrichIntervalSeconds, v.MusicBrainzRateLimitMs)
+	}
+	putProviders(t, srv, token, map[string]any{"metadataLanguage": "en-US"}, http.StatusOK)
+	if v := getProviders(t, srv, token); v.AutoEnrichAfterScan || v.EnrichIntervalSeconds != 3600 || v.MusicBrainzRateLimitMs != 1500 {
+		t.Errorf("after PUT naming only unrelated keys (auto stored false) = auto %v/interval %d/rate %d, want unchanged false/3600/1500",
+			v.AutoEnrichAfterScan, v.EnrichIntervalSeconds, v.MusicBrainzRateLimitMs)
 	}
 
 	// Negatives are rejected 422 PROVIDER_INVALID_SETTING (settings unchanged).
