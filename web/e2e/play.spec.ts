@@ -1,4 +1,11 @@
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type Request,
+  type Route,
+} from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -342,6 +349,53 @@ async function uiLogin(page: Page): Promise<void> {
   await page.getByTestId("login-password").fill(ADMIN_PASS);
   await page.getByTestId("login-submit").click();
   await expect(page.getByTestId("home-screen")).toBeVisible();
+}
+
+// waitForResponseBody arms a route BEFORE the action that triggers the matching
+// request and fetches the response itself via route.fetch(), so the body is read
+// from Playwright's own fetch rather than asked back from Chromium's network
+// stack — even reading response.json() inside a page.on("response") handler can
+// still lose the race to a navigation the action triggers (CDP getResponseBody
+// "no resource with given identifier" once the browser has moved on), so this is
+// the reliable option. Reject on timeout so a body that never arrives fails the
+// test instead of hanging. The predicate keeps the same (method + URL regex)
+// shape as a page.on("response") predicate: it is handed a probe exposing
+// request()/url() as a Response would.
+function waitForResponseBody(
+  page: Page,
+  predicate: (probe: { request: () => Request; url: () => string }) => boolean,
+  timeout = 30_000,
+): Promise<unknown> {
+  return new Promise((resolveBody, reject) => {
+    let settled = false;
+    const handler = async (route: Route) => {
+      const request = route.request();
+      if (settled || !predicate({ request: () => request, url: () => request.url() })) {
+        await route.fallback();
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      try {
+        const response = await route.fetch();
+        const body = await response.json();
+        await route.fulfill({ response });
+        await page.unroute("**/*", handler);
+        resolveBody(body);
+      } catch (err) {
+        await page.unroute("**/*", handler);
+        reject(err);
+      }
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      page.unroute("**/*", handler).finally(() => {
+        reject(new Error(`waitForResponseBody: no matching request within ${timeout}ms`));
+      });
+    }, timeout);
+    page.route("**/*", handler);
+  });
 }
 
 // Start playback the way a user does: open the Title's detail and click Play. The
@@ -861,11 +915,12 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
       }
     });
 
-    const negResp = page.waitForResponse(
+    const negResp = waitForResponseBody(
+      page,
       (r) => r.request().method() === "POST" && /\/titles\/[^/]+\/playback$/.test(r.url()),
     );
     await playFromDetail(page, id!);
-    const decision = await (await negResp).json();
+    const decision = (await negResp) as any;
     expect(decision.tier, "container-only mismatch remuxes to HLS").toBe("directStream");
     expect(decision.audioStreams?.length, "two selectable audio Streams").toBe(2);
     const nonDefault = decision.audioStreams.find((s: { isDefault: boolean }) => !s.isDefault);
@@ -952,11 +1007,12 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
     await uiLogin(page);
 
     // First play: default resolves to English; pick Japanese in-band.
-    const negResp = page.waitForResponse(
+    const negResp = waitForResponseBody(
+      page,
       (r) => r.request().method() === "POST" && /\/titles\/[^/]+\/playback$/.test(r.url()),
     );
     await playFromDetail(page, id!);
-    const decision = await (await negResp).json();
+    const decision = (await negResp) as any;
     const nonDefault = decision.audioStreams.find((s: { isDefault: boolean }) => !s.isDefault);
     expect(nonDefault, "a non-default (Japanese) audio Stream exists").toBeTruthy();
 
@@ -987,11 +1043,12 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
     await page.goto(`/titles/${id}`);
     await expect(page.getByTestId("detail")).toBeVisible();
 
-    const replayResp = page.waitForResponse(
+    const replayResp = waitForResponseBody(
+      page,
       (r) => r.request().method() === "POST" && /\/titles\/[^/]+\/playback$/.test(r.url()),
     );
     await playFromDetail(page, id!);
-    const replay = await (await replayResp).json();
+    const replay = (await replayResp) as any;
     // Server-side memory resolved the Japanese Stream as the session default.
     expect(replay.audioStream?.index, "replay resolves the remembered Japanese Stream").toBe(
       nonDefault.index,
@@ -1024,11 +1081,12 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
 
     await uiLogin(page);
 
-    const negResp = page.waitForResponse(
+    const negResp = waitForResponseBody(
+      page,
       (r) => r.request().method() === "POST" && /\/titles\/[^/]+\/playback$/.test(r.url()),
     );
     await playFromDetail(page, id!);
-    const decision = await (await negResp).json();
+    const decision = (await negResp) as any;
     expect(decision.tier, "mp4/h264/aac direct-plays").toBe("directPlay");
     const nonDefault = decision.audioStreams.find((s: { isDefault: boolean }) => !s.isDefault);
     expect(nonDefault, "a non-default audio Stream exists").toBeTruthy();
@@ -1099,11 +1157,12 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
 
     await uiLogin(page);
 
-    const negResp = page.waitForResponse(
+    const negResp = waitForResponseBody(
+      page,
       (r) => r.request().method() === "POST" && /\/titles\/[^/]+\/playback$/.test(r.url()),
     );
     await playFromDetail(page, id!);
-    const decision = await (await negResp).json();
+    const decision = (await negResp) as any;
     expect(decision.tier, "mp4/h264/aac direct-plays").toBe("directPlay");
     const ac3 = decision.audioStreams.find((s: { codec: string }) => s.codec === "ac3");
     expect(ac3, "an AC3 audio Stream exists").toBeTruthy();
