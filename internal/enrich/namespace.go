@@ -211,7 +211,7 @@ type parentRecord struct {
 // entity_enrichment's CHECK constraint), so a row with an id but no namespace
 // does not occur; if it somehow did, it reads as no record at all, the same as a
 // blank id.
-func storedParentRecord(entityType string, e store.EntityEnrichment) parentRecord {
+func storedParentRecord(e store.EntityEnrichment) parentRecord {
 	id := strings.TrimSpace(e.ExternalID)
 	ns := strings.TrimSpace(e.Namespace)
 	if id == "" || ns == "" {
@@ -244,7 +244,7 @@ func showAssertedRecord(sh store.Show) parentRecord {
 // AniDB-led Library would hand AniDB a TMDB series id for every one of them.
 func (s *Service) showPin(sh store.Show) parentRecord {
 	if e, err := s.store.EntityEnrichmentByID(store.EntityShow, sh.ID); err == nil && e.ExternalIDOrigin.Locked() {
-		if rec := storedParentRecord(store.EntityShow, e); rec.ID != "" {
+		if rec := storedParentRecord(e); rec.ID != "" {
 			return rec
 		}
 	}
@@ -290,7 +290,7 @@ func (s *Service) assertedParentRecord(entityType, entityID string) parentRecord
 // default lead — a bookkeeping read must not be able to fail a Cascade.
 func (s *Service) parentNamespace(entityType, entityID string) string {
 	if e, err := s.store.EntityEnrichmentByID(entityType, entityID); err == nil {
-		if rec := storedParentRecord(entityType, e); rec.Namespace != "" {
+		if rec := storedParentRecord(e); rec.Namespace != "" {
 			return rec.Namespace
 		}
 	}

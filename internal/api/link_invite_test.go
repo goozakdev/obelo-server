@@ -429,3 +429,54 @@ func TestHandshakeAdvertisesLinking(t *testing.T) {
 			info.LinkProtocolVersion, server.LinkProtocolVersion)
 	}
 }
+
+// TestALoggedOutRedemptionBearerStopsAuthorizing drives the request that
+// internal/link's refusal logout (peer.go's logoutBestEffort) sends against the
+// REAL sharer handlers — redeem an invite for an ordinary Device-bound bearer,
+// confirm it authenticates, then POST /auth/logout with it exactly as
+// logoutBestEffort does, and confirm it no longer does.
+//
+// It also records, not fixes, what a token-only revoke leaves behind: the
+// Device row minted for the redemption. surrender's own comment already says
+// why that row exists — deleting it is surrender's job, not logout's — so a
+// live Device after a logout is the documented split, not a bug.
+func TestALoggedOutRedemptionBearerStopsAuthorizing(t *testing.T) {
+	srv := testharness.New(t)
+	admin := adminToken(t, srv)
+	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
+	code := decodeInvite(t, mintInvite(t, srv, admin, peerID, "https://media.example.org").Invite).Code
+
+	var res struct {
+		Token  string `json:"token"`
+		Device struct {
+			ID string `json:"id"`
+		} `json:"device"`
+	}
+	status, body := redeem(t, srv, code, server.LinkProtocolVersion, testHomeServerID, testHomeServerName, &res)
+	if status != http.StatusOK {
+		t.Fatalf("redeem: status %d, want 200; body: %s", status, body)
+	}
+
+	if status, body := srv.AuthGET("/api/v1/devices", res.Token, nil); status != http.StatusOK {
+		t.Fatalf("pre-logout GET /devices status = %d, want 200; body: %s", status, body)
+	}
+
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/auth/logout", res.Token, nil, nil); status != http.StatusNoContent {
+		t.Fatalf("logout: status %d, want 204; body: %s", status, body)
+	}
+
+	if status, _ := srv.AuthGET("/api/v1/devices", res.Token, nil); status != http.StatusUnauthorized {
+		t.Errorf("post-logout GET /devices status = %d, want 401", status)
+	}
+
+	// What remains on the sharer: the Device row the redemption minted. Today's
+	// behaviour — recorded, not asserted as correct or incorrect beyond what
+	// surrender's own comment already documents — is that logout revokes only
+	// the token, so the Admin list still shows this `remote` User as having a
+	// Device (a non-empty lastSeenAt), same as before the logout.
+	entry := entryFor(t, listUsersAdmin(t, srv, admin), peerID)
+	if entry.LastSeenAt == "" {
+		t.Errorf("remote user's lastSeenAt is empty after logout, want it still set — "+
+			"the Device row (id %q) is expected to survive a token-only logout", res.Device.ID)
+	}
+}

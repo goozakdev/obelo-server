@@ -891,7 +891,7 @@ func (s *Service) seriesNamespace(ctx context.Context, titleID string) (string, 
 	}
 	if ec, err := s.store.EpisodeContextForTitle(titleID); err == nil {
 		if e, err := s.store.EntityEnrichmentByID(store.EntityShow, ec.ShowID); err == nil {
-			if rec := storedParentRecord(store.EntityShow, e); rec.Namespace != "" {
+			if rec := storedParentRecord(e); rec.Namespace != "" {
 				return rec.Namespace, nil
 			}
 		}
@@ -1316,7 +1316,7 @@ func (s *Service) ListEntityArtworkCandidates(ctx context.Context, entityType, e
 	if cached, ok := s.candidates.get(key); ok {
 		return cached, nil
 	}
-	rec := storedParentRecord(entityType, cur)
+	rec := storedParentRecord(cur)
 	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, rec.Namespace, rec.ID)
 	cands, err := s.ArtworkCandidates(ctx, ref, role)
 	if err != nil {
@@ -2475,7 +2475,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) &&
 		!(mode == ModeRecheck && (settledNonAnswer(cur.Status, cur.RetryAt) ||
 			uncorroboratedMatch(cur.Status, doubted))) {
-		return storedParentRecord(entityType, cur), nil // already settled; reuse its resolved record
+		return storedParentRecord(cur), nil // already settled; reuse its resolved record
 	}
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id
 	// every pass (New or Full) rather than re-searching by name, so the correction
@@ -2488,7 +2488,7 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	var pin parentRecord
 	switch {
 	case pinned:
-		pin = storedParentRecord(entityType, cur)
+		pin = storedParentRecord(cur)
 	case strings.TrimSpace(asserted.ID) != "":
 		pin = asserted
 	}
