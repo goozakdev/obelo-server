@@ -4,7 +4,7 @@ import { renderWithAuth } from "../test/renderWithAuth";
 import type { MediaFile, PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";
 import { saveQueue } from "./queue/persist";
-import { savePreference } from "./playbackPreference";
+import { AUTO_PREFERENCE, savePreference } from "./playbackPreference";
 
 // Quality-cap REPLAY through the persistent player (appletv-web-parity §1/§3): a
 // committed Quality rung is resolved by the bar (from the store + the entry's detail's
@@ -125,7 +125,7 @@ describe("NowPlayingBar — Quality cap replay", () => {
   });
 
   it("a committed rung reaches startPlayback as the paired maxResolution + maxBitrate", async () => {
-    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { editionName: null, qualityCap: "720p" });
+    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { ...AUTO_PREFERENCE, qualityCap: "720p" });
     seedAndRender([entryFromTitle(movieSummary("t1", "Dune"))]);
     await screen.findByTestId("player-video");
     await waitFor(() =>

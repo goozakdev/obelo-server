@@ -63,9 +63,9 @@ describe("playbackPreference — persistence", () => {
   });
 
   it("keys per user, per scope, and per anon bucket (no bleed)", () => {
-    savePreference(window.localStorage, "u1", titleScope, { editionName: "4K", qualityCap: null, subtitle: null });
-    savePreference(window.localStorage, "u2", titleScope, { editionName: "1080p", qualityCap: null, subtitle: null });
-    savePreference(window.localStorage, "u1", showScope, { editionName: "Extended", qualityCap: null, subtitle: null });
+    savePreference(window.localStorage, "u1", titleScope, { ...AUTO_PREFERENCE, editionName: "4K" });
+    savePreference(window.localStorage, "u2", titleScope, { ...AUTO_PREFERENCE, editionName: "1080p" });
+    savePreference(window.localStorage, "u1", showScope, { ...AUTO_PREFERENCE, editionName: "Extended" });
     expect(loadPreference(window.localStorage, "u1", titleScope).editionName).toBe("4K");
     expect(loadPreference(window.localStorage, "u2", titleScope).editionName).toBe("1080p");
     expect(loadPreference(window.localStorage, "u1", showScope).editionName).toBe("Extended");
@@ -112,8 +112,7 @@ describe("playbackPreference — persistence", () => {
 
   it("round-trips a committed Subtitle track BY LANGUAGE (+ forced), not id", () => {
     savePreference(window.localStorage, "u1", titleScope, {
-      editionName: null,
-      qualityCap: null,
+      ...AUTO_PREFERENCE,
       subtitle: { language: "en", forced: false },
     });
     expect(loadPreference(window.localStorage, "u1", titleScope).subtitle).toEqual({
@@ -144,9 +143,7 @@ describe("playbackPreference — persistence", () => {
 
   it("round-trips the committed AAC-stereo toggle (issue 06)", () => {
     savePreference(window.localStorage, "u1", titleScope, {
-      editionName: null,
-      qualityCap: null,
-      subtitle: null,
+      ...AUTO_PREFERENCE,
       aacStereo: true,
     });
     expect(loadPreference(window.localStorage, "u1", titleScope).aacStereo).toBe(true);
@@ -195,19 +192,13 @@ describe("playbackPreference — persistence", () => {
 
   it("loadPreferenceForTitle derives the scope (Episode → Show)", () => {
     savePreference(window.localStorage, "u1", showScope, {
+      ...AUTO_PREFERENCE,
       editionName: "Director's Cut",
-      qualityCap: null,
-      subtitle: null,
     });
     const pref = loadPreferenceForTitle(window.localStorage, "u1", {
       id: "ep1",
       kind: "episode",
-      episode: {
-        showId: "sh1",
-        showTitle: "The Bear",
-        seasonId: "s1",
-        seasonNumber: 1,
-      },
+      episode: { showId: "sh1" },
     });
     expect(pref.editionName).toBe("Director's Cut");
   });

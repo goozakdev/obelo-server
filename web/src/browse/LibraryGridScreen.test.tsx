@@ -51,17 +51,17 @@ function pageFor(sort: TitleSort): TitlesPage {
   if (sort === "dateAdded") {
     return {
       titles: [
-        { id: "t3", kind: "movie", title: "Zulu", year: 1964, needsReview: false, ambiguous: false, resumePositionMs: 0, watched: false },
-        { id: "t1", kind: "movie", title: "Alien", year: 1979, needsReview: false, ambiguous: false, resumePositionMs: 0, watched: true },
+        movie("t3", "Zulu", { year: 1964 }),
+        movie("t1", "Alien", { year: 1979, watched: true }),
       ],
       nextCursor: null,
     };
   }
   return {
     titles: [
-      { id: "t1", kind: "movie", title: "Alien", year: 1979, needsReview: false, ambiguous: false, resumePositionMs: 0, watched: true },
-      { id: "t2", kind: "movie", title: "Dune", year: 2021, needsReview: false, ambiguous: false, resumePositionMs: 42000, watched: false },
-      { id: "t3", kind: "movie", title: "Zulu", year: 1964, needsReview: false, ambiguous: false, resumePositionMs: 0, watched: false },
+      movie("t1", "Alien", { year: 1979, watched: true }),
+      movie("t2", "Dune", { year: 2021, resumePositionMs: 42000 }),
+      movie("t3", "Zulu", { year: 1964 }),
     ],
     nextCursor: null,
   };

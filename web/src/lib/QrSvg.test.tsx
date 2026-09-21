@@ -18,7 +18,7 @@ describe("QrSvg", () => {
     const paths = svg.querySelectorAll("path");
     expect(paths).toHaveLength(1);
     const dark = modules.flat().filter(Boolean).length;
-    expect(paths[0].getAttribute("d")?.split("M").length - 1).toBe(dark);
+    expect((paths[0].getAttribute("d")?.split("M").length ?? 0) - 1).toBe(dark);
   });
 
   it("names itself for a reader that cannot see it", () => {

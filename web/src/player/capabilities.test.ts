@@ -8,7 +8,7 @@ import { deriveCapabilityProfile } from "./capabilities";
 
 afterEach(() => vi.restoreAllMocks());
 
-function stubCanPlay(fn: (mime: string) => string) {
+function stubCanPlay(fn: (mime: string) => CanPlayTypeResult) {
   vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockImplementation(fn);
 }
 

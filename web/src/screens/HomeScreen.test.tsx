@@ -27,13 +27,13 @@ import HomeScreen from "./HomeScreen";
 function rows(over: Partial<HomeRows> = {}): HomeRows {
   return {
     continueWatching: [
-      { id: "t2", kind: "movie", title: "Dune", year: 2021, needsReview: false, ambiguous: false, resumePositionMs: 42000, watched: false },
-      { id: "t1", kind: "movie", title: "Alien", year: 1979, needsReview: false, ambiguous: false, resumePositionMs: 12000, watched: false },
+      { id: "t2", kind: "movie", title: "Dune", year: 2021, needsReview: false, ambiguous: false, resumePositionMs: 42000, watched: false , genres: [] },
+      { id: "t1", kind: "movie", title: "Alien", year: 1979, needsReview: false, ambiguous: false, resumePositionMs: 12000, watched: false , genres: [] },
     ],
     upNext: [],
     recentlyAdded: [
-      { id: "t3", kind: "movie", title: "Zulu", year: 1964, needsReview: false, ambiguous: false, resumePositionMs: 0, watched: false },
-      { id: "t2", kind: "movie", title: "Dune", year: 2021, needsReview: false, ambiguous: false, resumePositionMs: 42000, watched: false },
+      { id: "t3", kind: "movie", title: "Zulu", year: 1964, needsReview: false, ambiguous: false, resumePositionMs: 0, watched: false , genres: [] },
+      { id: "t2", kind: "movie", title: "Dune", year: 2021, needsReview: false, ambiguous: false, resumePositionMs: 42000, watched: false , genres: [] },
     ],
     ...over,
   };
@@ -91,6 +91,7 @@ describe("HomeScreen", () => {
             ambiguous: false,
             resumePositionMs: 0,
             watched: false,
+            genres: [],
             episode: {
               showId: "sh1",
               showTitle: "The Bear",
@@ -110,6 +111,7 @@ describe("HomeScreen", () => {
             ambiguous: false,
             resumePositionMs: 30000,
             watched: false,
+            genres: [],
             episode: {
               showId: "sh1",
               showTitle: "The Bear",

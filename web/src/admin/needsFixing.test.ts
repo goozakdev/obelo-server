@@ -42,11 +42,14 @@ const emptyContext = {
  * the list itself does — an uncertain PARSE with no file collision, which is what
  * every item on it meant before the collision rule was surfaced. A test about a
  * collision opts in with `ambiguous` + `collidingPaths`. */
-type ReviewFixture = Omit<NeedsReviewItem, "needsReview" | "ambiguous" | "collidingPaths"> &
-  Partial<Pick<NeedsReviewItem, "needsReview" | "ambiguous" | "collidingPaths">>;
+type ReviewFixture = Omit<
+  NeedsReviewItem,
+  "needsReview" | "ambiguous" | "collidingPaths" | "enrichmentStatus"
+> &
+  Partial<Pick<NeedsReviewItem, "needsReview" | "ambiguous" | "collidingPaths" | "enrichmentStatus">>;
 
 function reviewItem(f: ReviewFixture): NeedsReviewItem {
-  return { needsReview: true, ambiguous: false, collidingPaths: [], ...f };
+  return { needsReview: true, ambiguous: false, collidingPaths: [], enrichmentStatus: "pending", ...f };
 }
 
 /** An enrichment-attention fixture may leave the REASON out, and it defaults to
@@ -577,7 +580,7 @@ describe("buildFixItems — evidence for a confirmation", () => {
     // Neither has an entity to fetch an image for; the correction still states the
     // identity it asserts, which is what the Admin is deciding whether to keep.
     const [file] = build({
-      unmatched: [{ id: "u", path: "/m/x.mkv", folderPath: "/m", reason: "" }],
+      unmatched: [{ id: "u", path: "/m/x.mkv", folderPath: "/m", kind: "unidentified", reason: "" }],
     });
     expect(file.artworkUrl).toBe("");
     expect(file.matchedAs).toBe("");
@@ -725,8 +728,8 @@ describe("buildFixItems — a Show's episode problems are one row", () => {
   it("does not list an unmatched file twice — as a row and as a Show's count", () => {
     const rows = build({
       unmatched: [
-        { id: "u1", path: "/media/tv/Batman/Season 03/stray.mkv", folderPath: "", reason: "" },
-        { id: "u2", path: "/media/tv/loose-at-the-root.mkv", folderPath: "", reason: "" },
+        { id: "u1", path: "/media/tv/Batman/Season 03/stray.mkv", folderPath: "", kind: "unidentified", reason: "" },
+        { id: "u2", path: "/media/tv/loose-at-the-root.mkv", folderPath: "", kind: "unidentified", reason: "" },
       ],
       showProblems: [
         showProblems({
@@ -992,7 +995,7 @@ describe("buildFixItems — corrections", () => {
 describe("buildFixItems — ordering", () => {
   it("puts the most-broken problems first, regardless of which list they came from", () => {
     const rows = build({
-      unmatched: [{ id: "u", path: "/m/x.mkv", folderPath: "/m", reason: "" }],
+      unmatched: [{ id: "u", path: "/m/x.mkv", folderPath: "/m", kind: "unidentified", reason: "" }],
       needsReview: [
         { ...emptyContext, id: "m", kind: "movie", title: "A", year: 0, folderPath: "/m/A", reason: "no-year" },
       ],
@@ -1023,6 +1026,7 @@ describe("buildFixItems — the fix anchor for an unmatched file", () => {
           id: "u",
           path: "/media/tv/The Wire/Season 01/loose.mkv",
           folderPath: "/media/tv/The Wire",
+          kind: "unidentified",
           reason: "",
         },
       ],
@@ -1032,7 +1036,7 @@ describe("buildFixItems — the fix anchor for an unmatched file", () => {
 
   it("falls back to the file's directory when the server sent no anchor", () => {
     const [row] = build({
-      unmatched: [{ id: "u", path: "/media/movies/x.mkv", folderPath: "", reason: "" }],
+      unmatched: [{ id: "u", path: "/media/movies/x.mkv", folderPath: "", kind: "unidentified", reason: "" }],
     });
     expect(row.folderPath).toBe("/media/movies");
   });
@@ -1313,7 +1317,7 @@ describe("buildFixItems — one row per Album", () => {
 
   it("keeps its place in the queue's most-stuck ordering rather than floating to one end", () => {
     const rows = build({
-      unmatched: [{ id: "u", path: "/m/1080p.mkv", folderPath: "/m", reason: "" }],
+      unmatched: [{ id: "u", path: "/m/1080p.mkv", folderPath: "/m", kind: "unidentified", reason: "" }],
       enrichment: [
         { ...emptyContext, id: "mA", kind: "movie", title: "A", year: 0, enrichmentStatus: "unmatched" },
         albumTrack("1", "album-unmatched"),

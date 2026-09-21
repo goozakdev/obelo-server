@@ -75,8 +75,11 @@ const lib: Library = { id: "lib1", name: "Music", kind: "music", rootFolders: []
 function artists(prefix: string, n: number): ArtistSummary[] {
   return Array.from({ length: n }, (_, i) => ({
     id: `${prefix}${i}`,
+    libraryId: "lib1",
     kind: "artist" as const,
     name: `${prefix}${i}`,
+    overview: "",
+    genres: [],
   }));
 }
 

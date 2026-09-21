@@ -77,10 +77,12 @@ function albumTracks(): AlbumTracks {
     album: {
       id: "al1",
       artistId: "ar1",
+      artistName: "Radiohead",
       title: "OK Computer",
       year: 1997,
       hasArtwork: false,
       trackCount: 3,
+      releaseType: "album",
       genres: [],
     },
     tracks: [1, 2, 3].map((n) => ({
@@ -89,6 +91,7 @@ function albumTracks(): AlbumTracks {
       title: `Track ${n}`,
       discNumber: 1,
       trackNumber: n,
+      durationMs: 200000,
       needsReview: false,
       resumePositionMs: 0,
       watched: false,
@@ -100,6 +103,7 @@ function albumTracks(): AlbumTracks {
 const showSeasons: ShowSeasons = {
   show: {
     id: "sh1",
+    libraryId: "lib1",
     kind: "show",
     title: "The Bear",
     year: 2022,
@@ -109,6 +113,7 @@ const showSeasons: ShowSeasons = {
     unwatchedEpisodeCount: 3,
     overview: "",
     genres: [],
+    cast: [],
   },
   seasons: [
     { id: "s1", showId: "sh1", seasonNumber: 1, specials: false, episodeCount: 2 },

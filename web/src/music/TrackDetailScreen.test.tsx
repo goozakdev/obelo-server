@@ -34,6 +34,7 @@ import TrackDetailScreen from "./TrackDetailScreen";
 function trackDetail(id: string, opts: Partial<TitleDetail> = {}): TitleDetail {
   return {
     id,
+    libraryId: "lib1",
     kind: "track",
     title: "Paranoid Android",
     year: 0,
@@ -42,12 +43,13 @@ function trackDetail(id: string, opts: Partial<TitleDetail> = {}): TitleDetail {
     hidden: false,
     resumePositionMs: 0,
     watched: false,
+    subtitles: [],
     editions: [
       {
         id: "ed1",
         name: "",
         files: [
-          { id: "f1", path: "/music/x.flac", container: "flac", width: 0, height: 0, bitrate: 0, durationMs: 200000, sizeBytes: 0, missing: false, streams: [] },
+          { id: "f1", path: "/music/x.flac", container: "flac", width: 0, height: 0, bitrate: 0, durationMs: 200000, sizeBytes: 0, missing: false, streams: [], audioStreams: [], videoStreams: [] },
         ],
       },
     ],
@@ -77,16 +79,18 @@ function trackDetail(id: string, opts: Partial<TitleDetail> = {}): TitleDetail {
 }
 
 const albumTracks: AlbumTracks = {
-  album: { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 3 },
+  album: { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 3, releaseType: "album", genres: [] },
   tracks: [1, 2, 3].map((n) => ({
     id: `t${n}`,
     kind: "track" as const,
     title: `Track ${n}`,
     discNumber: 1,
     trackNumber: n,
+    durationMs: 200000,
     needsReview: false,
     resumePositionMs: 0,
     watched: false,
+    overview: "",
   })),
 };
 

@@ -80,12 +80,12 @@ vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 // requestFullscreen on the STAGE WRAPPER element (not the bare <video>). Provide
 // prototype-level no-ops so components can call them and tests can spy on the
 // target (same minimal, generic style as the IntersectionObserver stub above).
-if (!("requestFullscreen" in Element.prototype)) {
+if (typeof Element.prototype.requestFullscreen !== "function") {
   Element.prototype.requestFullscreen = function () {
     return Promise.resolve();
   };
 }
-if (!("exitFullscreen" in Document.prototype)) {
+if (typeof Document.prototype.exitFullscreen !== "function") {
   Document.prototype.exitFullscreen = function () {
     return Promise.resolve();
   };

@@ -11,8 +11,11 @@ const { HlsMock, instances } = vi.hoisted(() => {
     loadSource: ReturnType<typeof vi.fn>;
     attachMedia: ReturnType<typeof vi.fn>;
     destroy: ReturnType<typeof vi.fn>;
+    startLoad: ReturnType<typeof vi.fn>;
+    recoverMediaError: ReturnType<typeof vi.fn>;
+    swapAudioCodec: ReturnType<typeof vi.fn>;
     on: ReturnType<typeof vi.fn>;
-    handlers: Record<string, () => void>;
+    handlers: Record<string, (...args: unknown[]) => void>;
     subtitleTrack: number;
     subtitleDisplay: boolean;
     audioTrack: number;

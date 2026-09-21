@@ -4,7 +4,7 @@ import { renderWithAuth } from "../test/renderWithAuth";
 import type { PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";
 import { saveQueue } from "./queue/persist";
-import { savePreference } from "./playbackPreference";
+import { AUTO_PREFERENCE, savePreference } from "./playbackPreference";
 
 // Edition REPLAY through the persistent player (appletv-web-parity §1/§2): a
 // committed Playback preference is resolved by the bar (from the store + the entry's
@@ -131,7 +131,7 @@ describe("NowPlayingBar — Edition preference replay", () => {
   });
 
   it("a committed Movie preference reaches startPlayback as the resolved editionId", async () => {
-    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { editionName: "Final Cut", qualityCap: null });
+    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { ...AUTO_PREFERENCE, editionName: "Final Cut" });
     seedAndRender([entryFromTitle(movieSummary("t1", "Dune"))]);
     await screen.findByTestId("player-video");
     await waitFor(() =>
@@ -144,7 +144,7 @@ describe("NowPlayingBar — Edition preference replay", () => {
   });
 
   it("a Show preference replays across Episodes by NAME (each Episode's own id)", async () => {
-    savePreference(window.localStorage, "u1", { kind: "show", id: "sh1" }, { editionName: "Director's Cut", qualityCap: null });
+    savePreference(window.localStorage, "u1", { kind: "show", id: "sh1" }, { ...AUTO_PREFERENCE, editionName: "Director's Cut" });
     // Episode 7's "Director's Cut" is id ep7-dc; the entry carries showId (as a Show
     // walk would thread it), so the Show preference keys synchronously.
     getTitle.mockResolvedValue(episodeDetail("ep7", "ep7-dc"));

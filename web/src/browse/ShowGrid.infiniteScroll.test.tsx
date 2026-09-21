@@ -73,11 +73,15 @@ const lib: Library = { id: "lib1", name: "Shows", kind: "tv", rootFolders: [] };
 function shows(prefix: string, n: number): ShowSummary[] {
   return Array.from({ length: n }, (_, i) => ({
     id: `${prefix}${i}`,
+    libraryId: "lib1",
     kind: "show" as const,
     title: `${prefix}${i}`,
     year: 2022,
     needsReview: false,
     unwatchedEpisodeCount: 0,
+    overview: "",
+    genres: [],
+    cast: [],
   }));
 }
 

@@ -50,11 +50,15 @@ const lib: Library = { id: "lib1", name: "Shows", kind: "tv", rootFolders: [] };
 function shows(titles: string[]): ShowSummary[] {
   return titles.map((title) => ({
     id: title,
+    libraryId: "lib1",
     kind: "show" as const,
     title,
     year: 2022,
     needsReview: false,
     unwatchedEpisodeCount: 0,
+    overview: "",
+    genres: [],
+    cast: [],
   }));
 }
 

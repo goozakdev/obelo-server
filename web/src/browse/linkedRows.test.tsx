@@ -99,7 +99,7 @@ import TitleDetailScreen from "./TitleDetailScreen";
 function title(
   id: string,
   name: string,
-  marks: { linked?: boolean; available?: boolean } = {},
+  marks: { linked?: boolean; available?: boolean; linkedServer?: string } = {},
 ) {
   return {
     id,

@@ -61,6 +61,8 @@ function movieDetail(id: string, name: string): TitleDetail {
             sizeBytes: 1,
             missing: false,
             streams: [],
+            audioStreams: [],
+            videoStreams: [],
           },
         ],
       },

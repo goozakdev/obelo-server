@@ -4,7 +4,7 @@ import { renderWithAuth } from "../test/renderWithAuth";
 import type { MediaFile, PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";
 import { saveQueue } from "./queue/persist";
-import { savePreference } from "./playbackPreference";
+import { AUTO_PREFERENCE, savePreference } from "./playbackPreference";
 
 // AAC-stereo REPLAY through the persistent player (appletv-web-parity §7, issue 06):
 // the toggle has NO contract field — a committed `aacStereo: true` must reach
@@ -134,7 +134,7 @@ describe("NowPlayingBar — AAC-stereo replay", () => {
       window.localStorage,
       "u1",
       { kind: "title", id: "t1" },
-      { editionName: null, qualityCap: null, subtitle: null, aacStereo: true },
+      { ...AUTO_PREFERENCE, aacStereo: true },
     );
     seedAndRender([entryFromTitle(movieSummary("t1", "Dune"))]);
     await screen.findByTestId("player-video");
@@ -161,7 +161,7 @@ describe("NowPlayingBar — AAC-stereo replay", () => {
       window.localStorage,
       "u1",
       { kind: "title", id: "t1" },
-      { editionName: null, qualityCap: null, subtitle: null, aacStereo: true },
+      { ...AUTO_PREFERENCE, aacStereo: true },
     );
     // The detail never resolves — the flag needs no name→id / source-height context,
     // so negotiation must not be held `pending` on it.
