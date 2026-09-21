@@ -3,6 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitEnrichPass } from "./enrich-wait";
 
 // End-to-end enrichment-match correction on the Needs-Fixing queue against the
 // REAL embedded Go server with its TMDB stub. A Title the stub cannot match
@@ -112,9 +113,9 @@ test.describe.serial("enrichment match: attention surface + correct a no-match",
     expect(status.state).toBe("idle");
 
     // Enrich the library: "Nomatch Movie" no-matches → enrichmentStatus unmatched.
-    const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-    expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
-    const result = await enrich.json();
+    // The pass is asynchronous (202), so wait for it to finish and read counts
+    // from GET's lastPass.
+    const result = await waitEnrichPass(request, auth, libId);
     expect(result.unmatched, `expected an unmatched title: ${JSON.stringify(result)}`).toBeGreaterThan(0);
 
     await request.dispose();

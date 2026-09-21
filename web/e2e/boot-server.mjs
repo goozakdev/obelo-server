@@ -99,7 +99,35 @@ const stubReleaseGroup = JSON.stringify({
     { id: "mb-rg", "first-release-date": "1997-05-21", tags: [{ name: "alternative rock" }] },
   ],
 });
+// /recording?query=… (SEARCH: plural, list-shaped) and /recording/{id} (a single
+// fetch by MBID, flat-shaped — the two are different MusicBrainz endpoints with
+// different bodies) — the second is what an Album-tracklist anchor resolves
+// through (recordingByID), and the two must not share a reply or that lookup
+// reads an empty title and never matches.
 const stubRecording = JSON.stringify({ recordings: [{ id: "mb-rec", title: "Canonical Title" }] });
+const stubRecordingByID = JSON.stringify({ id: "mb-rec", title: "Canonical Title" });
+// Release-group edition browse (`GET /release?release-group=…`), the album-
+// tracklist matching a Music library pass reads to anchor each local Track to a
+// recording id (bestFitTracklist → pickReleaseByFit). Two stub editions — one
+// 1-track, one 2-track — so a fit-by-count match exists for every enrich-music
+// fixture album (Lossless Single / The Wall have 1 track; OK Computer / Summer
+// Hits have 2); the /recording/{id} stub above answers any of the ids below.
+const mbTrack = (n) => ({
+  number: String(n),
+  position: n,
+  title: `Track ${n}`,
+  recording: { id: `mb-rec-stub-${n}` },
+});
+const stubReleases = JSON.stringify({
+  releases: [
+    { id: "mb-release-1", date: "1997-05-21", media: [{ position: 1, format: "CD", tracks: [mbTrack(1)] }] },
+    {
+      id: "mb-release-2",
+      date: "1997-05-21",
+      media: [{ position: 1, format: "CD", tracks: [mbTrack(1), mbTrack(2)] }],
+    },
+  ],
+});
 
 const tmdbStub = createServer((req, res) => {
   const url = req.url ?? "";
@@ -224,6 +252,10 @@ const tmdbStub = createServer((req, res) => {
     } else {
       json(stubReleaseGroup);
     }
+  } else if (url.startsWith("/release?")) {
+    json(stubReleases);
+  } else if (url.startsWith("/recording/")) {
+    json(stubRecordingByID);
   } else if (url.startsWith("/recording")) {
     json(stubRecording);
   } else {
