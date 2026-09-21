@@ -4,7 +4,7 @@ import { renderWithAuth } from "../test/renderWithAuth";
 import type { PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";
 import { saveQueue } from "./queue/persist";
-import { savePreference } from "./playbackPreference";
+import { AUTO_PREFERENCE, savePreference } from "./playbackPreference";
 
 // Pre-play Audio / Video Stream picks (appletv-web-parity §1, issue 04) reaching the
 // persistent player: the Playback Options sheet's Play seeds them onto the TRANSIENT
@@ -141,7 +141,7 @@ describe("NowPlayingBar — pre-play Audio / Video Stream picks", () => {
   });
 
   it("seeds alongside a stored Edition preference (both reach startPlayback)", async () => {
-    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { editionName: "Default", qualityCap: null });
+    savePreference(window.localStorage, "u1", { kind: "title", id: "t1" }, { ...AUTO_PREFERENCE, editionName: "Default" });
     const entry: QueueEntry = {
       ...entryFromTitle(movieSummary("t1", "Dune")),
       audioStreamId: "a-en",

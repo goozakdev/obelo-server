@@ -63,24 +63,24 @@ const musicLib: Library = { id: "lib1", name: "Music", kind: "music", rootFolder
 const artistsPage: ArtistsPage = {
   artists: [
     // ar1 has a fetched image (the grid must show it); ar2 has none (placeholder).
-    { id: "ar1", kind: "artist", name: "Radiohead", artworkUrl: "/api/v1/artists/ar1/artwork/poster" },
-    { id: "ar2", kind: "artist", name: "Various Artists" },
+    { id: "ar1", libraryId: "lib1", kind: "artist", name: "Radiohead", overview: "", genres: [], artworkUrl: "/api/v1/artists/ar1/artwork/poster" },
+    { id: "ar2", libraryId: "lib1", kind: "artist", name: "Various Artists", overview: "", genres: [] },
   ],
   nextCursor: null,
 };
 
 const radioheadAlbums: ArtistAlbums = {
-  artist: { id: "ar1", kind: "artist", name: "Radiohead" },
+  artist: { id: "ar1", libraryId: "lib1", kind: "artist", name: "Radiohead", overview: "", genres: [] },
   albums: [
-    { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 2 },
+    { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 2, releaseType: "album", genres: [] },
   ],
 };
 
 const okComputerTracks: AlbumTracks = {
-  album: { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 2 },
+  album: { id: "al1", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 2, releaseType: "album", genres: [] },
   tracks: [
-    { id: "t1", kind: "track", title: "Airbag", discNumber: 1, trackNumber: 1, durationMs: 284000, needsReview: false, resumePositionMs: 0, watched: true },
-    { id: "t2", kind: "track", title: "Paranoid Android", discNumber: 1, trackNumber: 2, durationMs: 383000, needsReview: false, resumePositionMs: 30000, watched: false },
+    { id: "t1", kind: "track", title: "Airbag", discNumber: 1, trackNumber: 1, durationMs: 284000, needsReview: false, resumePositionMs: 0, watched: true, overview: "" },
+    { id: "t2", kind: "track", title: "Paranoid Android", discNumber: 1, trackNumber: 2, durationMs: 383000, needsReview: false, resumePositionMs: 30000, watched: false, overview: "" },
   ],
 };
 
@@ -258,12 +258,12 @@ describe("Artist detail", () => {
       trackCount: 1,
     }));
     getArtistAlbums.mockResolvedValue({
-      artist: { id: "ar1", kind: "artist", name: "Radiohead" },
+      artist: { id: "ar1", libraryId: "lib1", kind: "artist", name: "Radiohead", overview: "", genres: [] },
       albums: [
         ...filler,
-        { id: "al-bends", artistId: "ar1", artistName: "Radiohead", title: "The Bends", year: 1995, hasArtwork: false, trackCount: 1 },
-        { id: "al-ok", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 1 },
-        { id: "al-kida", artistId: "ar1", artistName: "Radiohead", title: "Kid A", year: 2000, hasArtwork: false, trackCount: 1 },
+        { id: "al-bends", artistId: "ar1", artistName: "Radiohead", title: "The Bends", year: 1995, hasArtwork: false, trackCount: 1, releaseType: "album", genres: [] },
+        { id: "al-ok", artistId: "ar1", artistName: "Radiohead", title: "OK Computer", year: 1997, hasArtwork: false, trackCount: 1, releaseType: "album", genres: [] },
+        { id: "al-kida", artistId: "ar1", artistName: "Radiohead", title: "Kid A", year: 2000, hasArtwork: false, trackCount: 1, releaseType: "album", genres: [] },
       ],
     });
 
@@ -415,6 +415,7 @@ describe("Edit-item artwork tabs (Admin)", () => {
     const user = userEvent.setup();
     getTitle.mockResolvedValue({
       id: "t2",
+      libraryId: "lib1",
       kind: "track",
       title: "Paranoid Android",
       year: 0,
@@ -459,6 +460,7 @@ describe("Track detail context", () => {
   it("shows the Artist · Album parent context on a Track's detail", async () => {
     const track: TitleDetail = {
       id: "t2",
+      libraryId: "lib1",
       kind: "track",
       title: "Paranoid Android",
       year: 0,
@@ -467,12 +469,13 @@ describe("Track detail context", () => {
       hidden: false,
       resumePositionMs: 0,
       watched: false,
+      subtitles: [],
       editions: [
         {
           id: "ed1",
           name: "",
           files: [
-            { id: "f1", path: "/music/x.flac", container: "flac", width: 0, height: 0, bitrate: 0, durationMs: 200000, sizeBytes: 0, missing: false, streams: [] },
+            { id: "f1", path: "/music/x.flac", container: "flac", width: 0, height: 0, bitrate: 0, durationMs: 200000, sizeBytes: 0, missing: false, streams: [], audioStreams: [], videoStreams: [] },
           ],
         },
       ],
@@ -520,10 +523,10 @@ describe("Release-type badge (ADR-0038)", () => {
   // An LP and its title single now split into two Albums; the badge is what
   // tells the entries apart. A plain album renders no badge.
   const suburbsAlbums: ArtistAlbums = {
-    artist: { id: "ar9", kind: "artist", name: "Ben Folds" },
+    artist: { id: "ar9", libraryId: "lib1", kind: "artist", name: "Ben Folds", overview: "", genres: [] },
     albums: [
-      { id: "al-lp", artistId: "ar9", artistName: "Ben Folds", title: "Rockin’ the Suburbs", year: 2001, hasArtwork: false, trackCount: 12, releaseType: "album" },
-      { id: "al-single", artistId: "ar9", artistName: "Ben Folds", title: "Rockin' the Suburbs", year: 2001, hasArtwork: false, trackCount: 3, releaseType: "single" },
+      { id: "al-lp", artistId: "ar9", artistName: "Ben Folds", title: "Rockin’ the Suburbs", year: 2001, hasArtwork: false, trackCount: 12, releaseType: "album", genres: [] },
+      { id: "al-single", artistId: "ar9", artistName: "Ben Folds", title: "Rockin' the Suburbs", year: 2001, hasArtwork: false, trackCount: 3, releaseType: "single", genres: [] },
     ],
   };
 

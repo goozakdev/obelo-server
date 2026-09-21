@@ -137,6 +137,7 @@ const detail: TitleDetail = {
           missing: false,
           streams: [],
           audioStreams: [],
+          videoStreams: [],
         },
       ],
     },

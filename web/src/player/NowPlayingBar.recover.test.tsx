@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { screen, waitFor, act } from "@testing-library/react";
 import { renderWithAuth } from "../test/renderWithAuth";
 import type { PlaybackDecision, TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";

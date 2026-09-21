@@ -120,6 +120,7 @@ function track(id: string, trackNumber: number): TrackSummary {
     title: id.toUpperCase(),
     discNumber: 1,
     trackNumber,
+    durationMs: 200000,
     needsReview: false,
     resumePositionMs: 0,
     watched: false,
@@ -132,10 +133,12 @@ function albumTracks(ids: number[]): AlbumTracks {
     album: {
       id: "al1",
       artistId: "ar1",
+      artistName: "Radiohead",
       title: "OK Computer",
       year: 1997,
       hasArtwork: true,
       trackCount: ids.length,
+      releaseType: "album",
       genres: [],
     },
     tracks: ids.map((n) => track(`tr${n}`, n)),
@@ -217,6 +220,7 @@ function showSeasons(seasonIds: { id: string; n: number }[]): ShowSeasons {
   return {
     show: {
       id: "sh1",
+      libraryId: "lib1",
       kind: "show",
       title: "The Bear",
       year: 2022,
@@ -224,6 +228,7 @@ function showSeasons(seasonIds: { id: string; n: number }[]): ShowSeasons {
       unwatchedEpisodeCount: 0,
       overview: "",
       genres: [],
+      cast: [],
     },
     seasons: seasonIds.map((s) => ({
       id: s.id,
@@ -232,6 +237,7 @@ function showSeasons(seasonIds: { id: string; n: number }[]): ShowSeasons {
       specials: false,
       episodeCount: 0,
     })),
+    resumePoint: null,
   };
 }
 

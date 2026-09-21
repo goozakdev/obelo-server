@@ -51,32 +51,33 @@ const tvLib: Library = { id: "lib1", name: "Shows", kind: "tv", rootFolders: [] 
 
 const showsPage: ShowsPage = {
   shows: [
-    { id: "sh1", kind: "show", title: "The Bear", year: 2022, needsReview: false, unwatchedEpisodeCount: 3 },
-    { id: "sh2", kind: "show", title: "Double Show", year: 2020, needsReview: false, unwatchedEpisodeCount: 0 },
+    { id: "sh1", libraryId: "lib1", kind: "show", title: "The Bear", year: 2022, needsReview: false, unwatchedEpisodeCount: 3, overview: "", genres: [], cast: [] },
+    { id: "sh2", libraryId: "lib1", kind: "show", title: "Double Show", year: 2020, needsReview: false, unwatchedEpisodeCount: 0, overview: "", genres: [], cast: [] },
   ],
   nextCursor: null,
 };
 
 const bearSeasons: ShowSeasons = {
-  show: { id: "sh1", kind: "show", title: "The Bear", year: 2022, needsReview: false, unwatchedEpisodeCount: 3 },
+  show: { id: "sh1", libraryId: "lib1", kind: "show", title: "The Bear", year: 2022, needsReview: false, unwatchedEpisodeCount: 3, overview: "", genres: [], cast: [] },
   seasons: [
     { id: "se0", showId: "sh1", seasonNumber: 0, specials: true, episodeCount: 1 },
     { id: "se1", showId: "sh1", seasonNumber: 1, specials: false, episodeCount: 2 },
   ],
+  resumePoint: null,
 };
 
 const season1Episodes: SeasonEpisodes = {
   season: { id: "se1", showId: "sh1", seasonNumber: 1, specials: false, episodeCount: 2 },
   episodes: [
-    { id: "t1", kind: "episode", title: "System", seasonNumber: 1, episodeNumber: 1, episodeLabel: "", needsReview: false, resumePositionMs: 0, watched: true },
-    { id: "t2", kind: "episode", title: "Hands", seasonNumber: 1, episodeNumber: 2, episodeLabel: "", needsReview: false, resumePositionMs: 30000, watched: false },
+    { id: "t1", kind: "episode", title: "System", seasonNumber: 1, episodeNumber: 1, episodeLabel: "", needsReview: false, resumePositionMs: 0, watched: true, overview: "" },
+    { id: "t2", kind: "episode", title: "Hands", seasonNumber: 1, episodeNumber: 2, episodeLabel: "", needsReview: false, resumePositionMs: 30000, watched: false, overview: "" },
   ],
 };
 
 const specialsEpisodes: SeasonEpisodes = {
   season: { id: "se0", showId: "sh1", seasonNumber: 0, specials: true, episodeCount: 1 },
   episodes: [
-    { id: "t0", kind: "episode", title: "Behind the Bear", seasonNumber: 0, episodeNumber: 1, episodeLabel: "", needsReview: false, resumePositionMs: 0, watched: false },
+    { id: "t0", kind: "episode", title: "Behind the Bear", seasonNumber: 0, episodeNumber: 1, episodeLabel: "", needsReview: false, resumePositionMs: 0, watched: false, overview: "" },
   ],
 };
 
@@ -335,7 +336,7 @@ describe("Episode detail context", () => {
           id: "ed1",
           name: "",
           files: [
-            { id: "f1", path: "/tv/x.mkv", container: "mkv", width: 1920, height: 1080, bitrate: 0, durationMs: 1000, sizeBytes: 0, missing: false, streams: [] },
+            { id: "f1", path: "/tv/x.mkv", container: "mkv", width: 1920, height: 1080, bitrate: 0, durationMs: 1000, sizeBytes: 0, missing: false, streams: [], audioStreams: [], videoStreams: [] },
           ],
         },
       ],

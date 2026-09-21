@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, waitFor, act } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import { renderWithAuth } from "../test/renderWithAuth";
-import type { Library, TitlesPage, TitleSort, TitleSummary } from "../api/types";
+import type { Library, TitlesPage, TitleSummary } from "../api/types";
 
 // Regression test for the Movies-grid pagination bug: the infinite-scroll
 // sentinel renders only AFTER the first page loads, so the old observer wiring

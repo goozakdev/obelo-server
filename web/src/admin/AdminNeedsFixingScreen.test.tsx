@@ -189,6 +189,7 @@ function unmatchedFile(over: Partial<UnmatchedFile> = {}): UnmatchedFile {
     id: "f1",
     path: "/media/movies/1080p.mkv",
     folderPath: "/media/movies",
+    kind: "unidentified",
     reason: "no identity",
     ...over,
   };
