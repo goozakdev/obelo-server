@@ -34,8 +34,11 @@ import (
 //
 //	go test ./internal/bundled/ -run TestBundledSourceMatchesTheirGolden -update
 //
-// -update refuses the same same-version-different-hash row as the manifest
-// guard (D002; see updateGuardGolden) — bump the version first.
+// -update refuses the same same-version-different-hash check as the manifest
+// guard, against both the working golden and the golden at git HEAD, writing
+// nothing to ITS golden when it fires (D002; see updateGuardGolden — the
+// manifest guard decides for its own golden separately) — bump the version
+// first.
 //
 // The hash also covers the in-repo packages a plugin's build reaches outside
 // its own plugins/<id>/ (D003, sharedSourceRoots below): assert.go only
@@ -81,7 +84,8 @@ func TestBundledSourceMatchesTheirGolden(t *testing.T) {
 
 	if *updateManifestGuardGolden {
 		old := readOptionalGuardGolden(t, sourceGuardGoldenPath)
-		updateGuardGolden(t, sourceGuardGoldenPath, src, old, writeSourceGuardGolden)
+		head := readHeadGuardGolden(t, sourceGuardGoldenPath)
+		updateGuardGolden(t, sourceGuardGoldenPath, src, old, head, writeSourceGuardGolden)
 		return
 	}
 
