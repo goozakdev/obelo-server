@@ -282,6 +282,20 @@ await new Promise((ready) => tmdbStub.listen(0, "127.0.0.1", ready));
 const tmdbPort = tmdbStub.address().port;
 console.log(`[boot-server] TMDB stub on :${tmdbPort}`);
 
+// The stub listens on an ephemeral port only this script knows; a spec that
+// wants to hit it directly (e.g. the malformed-%-escape /recording/{id} 400
+// path, which no server-under-test request ever reaches) reads its base URL
+// from this file, the same way the setup spec reads .claim-token. Cleared
+// before write for the same reason the claim token is (no stale URL from an
+// earlier run); removed again in shutdown() below.
+const tmdbStubURLFile = join(here, ".tmdb-stub-url");
+try {
+  rmSync(tmdbStubURLFile, { force: true });
+} catch {
+  // best effort
+}
+writeFileSync(tmdbStubURLFile, `http://127.0.0.1:${tmdbPort}`, "utf8");
+
 // The auth E2E needs the one-time first-Admin claim token, which the server
 // prints to its logs on a fresh data dir (ADR-0013) and never exposes over the
 // API. We capture it from the child's stdout and write it to this file so the
@@ -398,6 +412,11 @@ function shutdown(signal) {
   }
   try {
     rmSync(claimTokenFile, { force: true });
+  } catch {
+    // best effort
+  }
+  try {
+    rmSync(tmdbStubURLFile, { force: true });
   } catch {
     // best effort
   }

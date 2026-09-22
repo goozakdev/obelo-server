@@ -7,7 +7,7 @@ import {
   type Route,
 } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
 const FIXTURES = join(repoRoot, "internal", "api", "testdata", "movies");
 const CLAIM_TOKEN_FILE = join(here, ".claim-token");
+
+// Every mkdtemp root this file creates (seedMovies + the generate*Fixture
+// helpers below), removed in one afterAll — see D004.
+const tempRoots: string[] = [];
 
 const ADMIN_USER = "operator";
 const ADMIN_PASS = "correct horse battery staple";
@@ -81,16 +85,17 @@ async function login(request: APIRequestContext): Promise<string> {
 
 // seedMovies creates a Movie library at a PRIVATE copy of the `movies` fixtures
 // (a fresh mkdtempSync root per call, like the other specs' fixturesDir and this
-// file's own generate*Fixture roots — none of which this file cleans up either)
-// and scans it, returning { libId, titles } where titles maps a title name → id.
-// A fresh root per call means `--repeat-each` never sees FOLDER_OVERLAP and never
-// reuses a prior call's (possibly mutated) library.
+// file's own generate*Fixture roots — all collected in tempRoots and removed in
+// this file's afterAll) and scans it, returning { libId, titles } where titles
+// maps a title name → id. A fresh root per call means `--repeat-each` never sees
+// FOLDER_OVERLAP and never reuses a prior call's (possibly mutated) library.
 async function seedMovies(
   request: APIRequestContext,
   token: string,
 ): Promise<{ libId: string; titles: Record<string, string> }> {
   const auth = { Authorization: `Bearer ${token}` };
   const root = mkdtempSync(join(tmpdir(), "e2e-movies-"));
+  tempRoots.push(root);
   cpSync(FIXTURES, root, { recursive: true });
   const create = await request.post("/api/v1/libraries", {
     headers: auth,
@@ -147,6 +152,7 @@ function ffmpegAvailable(): boolean {
 // from the checked-in fixtures so it disturbs no other test.
 function generateSubtitledRemuxFixture(): string {
   const root = mkdtempSync(join(tmpdir(), "e2e-subs-"));
+  tempRoots.push(root);
   const movieDir = join(root, "Subbed Movie (2004)");
   mkdirSync(movieDir, { recursive: true });
   execFileSync("ffmpeg", [
@@ -173,6 +179,7 @@ function generateSubtitledRemuxFixture(): string {
 // a real bitmap subtitle no lavfi source can synthesize — see the Go args tests).
 function generateImageSubtitleFixture(): string {
   const root = mkdtempSync(join(tmpdir(), "e2e-imgsub-"));
+  tempRoots.push(root);
   const movieDir = join(root, "Bitmap Movie (2006)");
   mkdirSync(movieDir, { recursive: true });
   execFileSync("ffmpeg", [
@@ -198,6 +205,7 @@ function generateImageSubtitleFixture(): string {
 // checked-in fixtures so it disturbs no other test.
 function generateMultiAudioMkvFixture(): string {
   const root = mkdtempSync(join(tmpdir(), "e2e-multiaudio-mkv-"));
+  tempRoots.push(root);
   const movieDir = join(root, "Dubbed Movie (2010)");
   mkdirSync(movieDir, { recursive: true });
   execFileSync("ffmpeg", [
@@ -224,6 +232,7 @@ function generateMultiAudioMkvFixture(): string {
 // so the browser plays it progressively.
 function generateMultiAudioMp4Fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "e2e-multiaudio-mp4-"));
+  tempRoots.push(root);
   const movieDir = join(root, "Dubbed Feature (2011)");
   mkdirSync(movieDir, { recursive: true });
   execFileSync("ffmpeg", [
@@ -250,6 +259,7 @@ function generateMultiAudioMp4Fixture(): string {
 // session spans several segments and playback must cross segment boundaries.
 function generateAacAc3Mp4Fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "e2e-aac-ac3-mp4-"));
+  tempRoots.push(root);
   const movieDir = join(root, "Bee Movie (2007)");
   mkdirSync(movieDir, { recursive: true });
   execFileSync("ffmpeg", [
@@ -434,6 +444,19 @@ test.describe.serial("play: direct play, HLS transcode, progress, resume, server
     ({ titles } = await seedMovies(request, token));
     await request.dispose();
     expect(Object.keys(titles).length, "movies seeded").toBeGreaterThan(0);
+  });
+
+  // The library rows created above point at these roots; deleting the roots
+  // here (after all tests, once nothing will scan or stream from them again)
+  // leaves those rows pointing at now-missing folders. That's fine: the
+  // webServer process, and every library row it created, dies with this run —
+  // no other spec's afterAll or a later run reads this run's rows back. Checked
+  // against the API, not assumed: show-backdrop/smoke/tv/wrong-item (the specs
+  // that alphabetically run after this file, so after this afterAll) all still
+  // pass a full `make test-e2e` — none of them lists titles across ALL
+  // libraries or re-scans this one, so a dangling row is never actually read.
+  test.afterAll(() => {
+    for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
   });
 
   function titleId(...candidates: string[]): string {
