@@ -27,6 +27,10 @@ cr_sh="${CR_SH:-$here/check-release.sh}"
 pass=0
 fail=0
 
+# Fed into every run's stdin (m8 catch, see stub/e2e-step.sh below): must
+# match the literal string that stub compares against.
+stdin_marker="OBELO-STDIN-MARKER"
+
 log() { printf '%s\n' "$*" >&2; }
 
 # ---- stub repo ---------------------------------------------------------
@@ -51,6 +55,13 @@ wait
 EOF
   cat > "$dir/stub/e2e-step.sh" <<'EOF'
 #!/usr/bin/env bash
+# Observes its own stdin: catches a run_step that forgot the
+# `</dev/null` redirect check-release.sh:211 requires (mutant m8). A short,
+# bounded read — never a leak with the real redirect in place, since /dev/null
+# gives an immediate EOF, not a hang — so this never slows an unmutated run.
+if IFS= read -r -t 2 line && [ "$line" = "OBELO-STDIN-MARKER" ]; then
+  echo stdin-leaked > stdin-leaked
+fi
 # Imitates Playwright's webServer: regroups into a NEW process group before
 # forking a grandchild that outlives this step — the same shape
 # check-release.sh's ppid-walking kill_tree has to survive. Only the
@@ -94,7 +105,17 @@ trap 'forward QUIT' QUIT
 # control), and bash cannot trap a signal that was ignored on entry — so the
 # int-/quit-to-process-group cases would never reach its trap. Reset both to
 # default in front of it.
-perl -e '$SIG{INT} = "DEFAULT"; $SIG{QUIT} = "DEFAULT"; exec @ARGV' "$CR_TARGET" &
+# The same "asynchronous list in a shell without job control" POSIX rule
+# above also redirects an async command's OWN stdin from /dev/null before any
+# explicit redirection — which would silently defeat the m8 stdin-leak case
+# below no matter what check-release.sh does, since the marker would never
+# get past this wrapper. An explicit `<&0` redirection on the async command
+# itself suppresses that (POSIX: only applies "before any explicit
+# redirections"); MEASURED it does NOT also give cr_pid its own process
+# group the way enabling job control (`set -m`) would have — the
+# group-signal cases below still need cr_pid to stay in the SAME group as
+# this wrapper.
+perl -e '$SIG{INT} = "DEFAULT"; $SIG{QUIT} = "DEFAULT"; exec @ARGV' "$CR_TARGET" <&0 &
 cr_pid=$!
 # A trapped signal caught DURING `wait` makes bash's `wait` return early with
 # a 128+signal pseudo-status of its own — the real script is still running
@@ -135,9 +156,15 @@ check-bundle:
 test-e2e:
 	@./stub/e2e-step.sh pids.txt
 EOF
+  # CHECK_RELEASE_MAKE := $(MAKE), set outside the recipe and only referenced
+  # on it, matches the real Makefile's own mechanism exactly (needed so
+  # case_check_release_make_with_args below actually exercises it — the
+  # invoking `$(MAKE)` value, arguments included, only reaches
+  # check-release.sh through this forwarding).
   {
-    printf '\ncheck-release:\n'
-    printf '\t@CHECK_RELEASE_SKIP_AMD64=1 EMBED_DIR=internal/webui/dist CR_TARGET=%s ./stub/run-and-record.sh\n' "$cr_sh"
+    printf '\nCHECK_RELEASE_MAKE := $(MAKE)\n'
+    printf 'check-release:\n'
+    printf '\t@CHECK_RELEASE_SKIP_AMD64=1 EMBED_DIR=internal/webui/dist CR_TARGET=%s CHECK_RELEASE_MAKE="$(CHECK_RELEASE_MAKE)" ./stub/run-and-record.sh\n' "$cr_sh"
   } >> "$dir/Makefile"
 
   ( cd "$dir" \
@@ -264,17 +291,25 @@ teardown_case() {
 # fresh process image) can take.
 start_run() {
   ( cd "$repo" && export SELFTEST_E2E_SLOW=1 SELFTEST_PLUGINS_SLOW="${SELFTEST_PLUGINS_SLOW:-}" \
-    && exec perl -e '$SIG{INT}="DEFAULT"; $SIG{QUIT}="DEFAULT"; setpgrp(0,0); exec @ARGV' -- "$@" ) &
+    && exec perl -e '$SIG{INT}="DEFAULT"; $SIG{QUIT}="DEFAULT"; setpgrp(0,0); exec @ARGV' -- "$@" ) <<<"$stdin_marker" &
   runner_pid=$!
 }
 
 assert_case() { # name want-status want-completions
   local name="$1" want_status="$2" want_completions="${3:-2}" ok=1 reason=""
   local rc=""
-  if [ -f "$repo/status.txt" ]; then
+  # Bounded poll, not a single check: by the time a caller has confirmed the
+  # script pid is gone (wait_for_gone, kill-0-based), the wrapper's own
+  # reaping `wait` has already returned — but the wrapper still has to reach
+  # its `echo "$rc" > status.txt` line after that, and nothing makes that
+  # instantaneous. See F016 in the issue bucket for the confirmed repro.
+  if wait_for_lines "$repo/status.txt" 1 15; then
     rc=$(cat "$repo/status.txt")
   else
     ok=0; reason="no-status.txt"
+  fi
+  if [ -f "$repo/stdin-leaked" ]; then
+    ok=0; reason="$reason stdin-leaked"
   fi
   if [ -n "$rc" ] && [ "$rc" != "$want_status" ]; then
     ok=0; reason="$reason rc=$rc want $want_status"
@@ -324,7 +359,7 @@ assert_case() { # name want-status want-completions
 
 case_normal() {
   setup_case
-  ( cd "$repo" && make --no-print-directory check-release ) >/dev/null 2>&1
+  ( cd "$repo" && make --no-print-directory check-release ) >/dev/null 2>&1 <<<"$stdin_marker"
   assert_case "normal-run-exits-0" 0
   teardown_case
 }
@@ -344,9 +379,26 @@ case_differently_named_make() {
   # exercise the code under test. Resolve past it where present.
   real_make=$(xcrun -f make 2>/dev/null || command -v make)
   ln -s "$real_make" "$bindir/gmake"
-  ( cd "$repo" && PATH="$bindir:$PATH" gmake --no-print-directory check-release ) >/dev/null 2>&1
+  ( cd "$repo" && PATH="$bindir:$PATH" gmake --no-print-directory check-release ) >/dev/null 2>&1 <<<"$stdin_marker"
   assert_case "differently-named-make" 0
   rm -rf "$bindir"
+  teardown_case
+}
+
+# CHECK_RELEASE_MAKE can carry the invoking $(MAKE)'s own arguments, not
+# just a binary name (see check-release.sh:97-109) — MEASURED: `make
+# MAKE="make --no-print-directory" ...` on the command line overrides
+# $(MAKE) to that literal two-word text on both GNU make 3.81 (macOS) and
+# 4.4.1 (Linux); plain `MAKE=...` in the environment does NOT do this (a
+# command-line variable assignment is required to override a variable a
+# makefile itself also sets). Confirms check-release.sh's word-split execs
+# that as two argv words, not one nonexistent binary named with an embedded
+# space.
+case_check_release_make_with_args() {
+  setup_case
+  ( cd "$repo" && make MAKE="make --no-print-directory" --no-print-directory check-release ) \
+    >/dev/null 2>&1 <<<"$stdin_marker"
+  assert_case "check-release-make-with-args" 0
   teardown_case
 }
 
@@ -426,6 +478,7 @@ echo "make: $(make --version | head -1)"
 
 case_normal
 case_differently_named_make
+case_check_release_make_with_args
 case_failing_step_keeps_status
 run_and_signal "term-to-make-pid"        TERM pid          143
 run_and_signal "alrm-to-make-pid"        ALRM pid          143
