@@ -33,6 +33,7 @@
 # server's logs and writes for 00-first-run.spec.ts to read (D002) — rewritten
 # every e2e run, so tracking it only dirties the tree.
 /web/e2e/.claim-token
+/web/e2e/.tmdb-stub-url
 node_modules/
 # TypeScript incremental-build cache (local build state only).
 *.tsbuildinfo

@@ -13,9 +13,11 @@ import { fileURLToPath } from "node:url";
 // admin UI itself end-to-end.
 //
 // FOLDER_OVERLAP avoidance: the Playwright webServer is reused for the whole run,
-// so libraries created in browse/play/home specs PERSIST and own the checked-in
-// fixtures dirs (internal/api/testdata/naming and /movies). Creating a library at
-// those roots would 409. So this spec builds its OWN unique temp fixtures dir
+// so libraries created in browse/home/enrich specs PERSIST and own
+// the checked-in fixtures dir (internal/api/testdata/naming). Creating a library
+// at that root would 409. (testdata/movies has no such owner: play.spec.ts only
+// copies from it into a private per-call temp root.) So this spec builds its OWN
+// unique temp fixtures dir
 // under the OS temp dir, copies a couple of tiny real clips into it (so a scan
 // finds >0 titles), points the library there, and DELETES the library at the end
 // for cleanliness. The temp dir is removed in afterAll.

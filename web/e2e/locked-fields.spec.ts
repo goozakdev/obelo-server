@@ -1,7 +1,9 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitEnrichPass } from "./enrich-wait";
 
 // End-to-end Locked-field loop (external-metadata-enrichment issue 04) against the
 // REAL embedded Go server with its TMDB stub (no live network). An Admin hand-edits
@@ -9,10 +11,23 @@ import { fileURLToPath } from "node:url";
 // leaves the hand-edit intact (the lock wins), and releasing the lock lets the next
 // pass refresh it again. We edit "Extras Movie" so we never disturb the "Pinned
 // Movie" assertions in enrich.spec.ts (the suite runs serially, workers: 1).
+//
+// Fixtures: a PRIVATE mkdtempSync copy of `naming` per run (not the shared root
+// other specs point a library at), so `--repeat-each` gets a brand-new Library
+// every time instead of reusing one via a 409. Reusing the shared library was the
+// residue: this spec's own re-enrich calls never waited for the pass they started
+// (see enrich.spec.ts's waitEnrichPass, absent here until now), so a repeat could
+// still have an EARLIER repeat's pass in flight against the same Library ID; the
+// server's per-Library "a pass is already running" dedup (enrich_handlers.go's
+// handleEnrich) then answers a later POST with THAT stale pass instead of starting
+// a new one, and the stale pass had snapshotted the lock as held, so it never
+// rewrote the overview back to the stub value. A fresh Library per run has no
+// earlier pass to collide with; waitEnrichPass on every call closes the same race
+// within a single run too. The temp dir is removed in afterAll.
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
-const FIXTURES = join(repoRoot, "internal", "api", "testdata", "naming");
+const NAMING = join(repoRoot, "internal", "api", "testdata", "naming");
 const CLAIM_TOKEN_FILE = join(here, ".claim-token");
 
 const ADMIN_USER = "operator";
@@ -73,6 +88,7 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
   let libId = "";
   let token = "";
   let baseURLRef = "";
+  let fixturesDir = "";
 
   test.beforeAll(async ({ playwright, baseURL }) => {
     baseURLRef = baseURL ?? "";
@@ -81,23 +97,15 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
     token = await login(request);
     const auth = { Authorization: `Bearer ${token}` };
 
-    // Find-or-create a Movie library at the naming fixtures (shared with other
-    // enrichment specs; reuse on a 409 since roots can't overlap).
+    fixturesDir = mkdtempSync(join(tmpdir(), "e2e-locked-fields-"));
+    cpSync(NAMING, fixturesDir, { recursive: true });
+
     const create = await request.post("/api/v1/libraries", {
       headers: auth,
-      data: { name: "Enriched Movies", kind: "movie", rootFolders: [FIXTURES] },
+      data: { name: "Enriched Movies", kind: "movie", rootFolders: [fixturesDir] },
     });
-    if (create.ok()) {
-      libId = (await create.json()).id as string;
-    } else if (create.status() === 409) {
-      const libs = (await (await request.get("/api/v1/libraries", { headers: auth })).json())
-        .libraries as Array<{ id: string; rootFolders: Array<{ path: string }> }>;
-      const existing = libs.find((l) => l.rootFolders.some((r) => r.path === FIXTURES));
-      expect(existing, "library at fixtures root not found after 409").toBeTruthy();
-      libId = existing!.id;
-    } else {
-      throw new Error(`create: ${create.status()} ${await create.text()}`);
-    }
+    expect(create.ok(), `create: ${create.status()} ${await create.text()}`).toBeTruthy();
+    libId = (await create.json()).id as string;
 
     const scan = await request.post(`/api/v1/libraries/${libId}/scan`, { headers: auth });
     expect(scan.ok(), `scan: ${scan.status()}`).toBeTruthy();
@@ -110,10 +118,13 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
       if (st.state && st.state !== "running") break;
       await new Promise((r) => setTimeout(r, 50));
     }
-    const enrich = await request.post(`/api/v1/libraries/${libId}/enrich`, { headers: auth });
-    expect(enrich.ok(), `enrich: ${enrich.status()} ${await enrich.text()}`).toBeTruthy();
+    await waitEnrichPass(request, auth, libId);
 
     await request.dispose();
+  });
+
+  test.afterAll(() => {
+    if (fixturesDir) rmSync(fixturesDir, { recursive: true, force: true });
   });
 
   test("edit overview locks it, survives a full re-enrich, then releases back to auto", async ({
@@ -122,9 +133,29 @@ test.describe.serial("locked fields: hand-edit survives re-enrich, releasable", 
   }) => {
     const request = await playwright.request.newContext({ baseURL: baseURLRef });
     const auth = { Authorization: `Bearer ${token}` };
+    // Not waitEnrichPass: its baseline is "a lastPass whose finishedAt differs from
+    // the one read just before POSTing", which this test's two BACK-TO-BACK full
+    // passes over a 7-title library (fast enough to finish inside the same
+    // wall-clock SECOND — finishedAt has no sub-second resolution) can fail even
+    // though each POST genuinely started its own pass: `started: true` already says
+    // so unambiguously, with no earlier-pass ambiguity to resolve via a timestamp
+    // diff (this Library is private to this run — nothing else can be racing it).
+    // So: assert `started`, then just poll for `state === "idle"`.
     const reEnrichFull = async () => {
-      const r = await request.post(`/api/v1/libraries/${libId}/enrich?mode=full`, { headers: auth });
-      expect(r.ok(), `re-enrich: ${r.status()} ${await r.text()}`).toBeTruthy();
+      const start = await request.post(`/api/v1/libraries/${libId}/enrich?mode=full`, { headers: auth });
+      const startBody = await start.json();
+      expect(
+        startBody.started,
+        `re-enrich did not start a new pass: ${JSON.stringify(startBody)}`,
+      ).toBeTruthy();
+      for (let i = 0; i < 150; i++) {
+        const st = await (
+          await request.get(`/api/v1/libraries/${libId}/enrich`, { headers: auth })
+        ).json();
+        if (st.state === "idle") return;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error(`re-enrich on library ${libId} did not settle within timeout`);
     };
 
     await uiLogin(page);

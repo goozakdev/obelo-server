@@ -61,6 +61,11 @@ export async function waitEnrichPass(
       `enrich start on library ${libId} returned a non-JSON 200 body: ${start.status()} ${startText} (${err})`,
     );
   }
+  if (!isPlainObject(startBody)) {
+    throw new Error(
+      `enrich start on library ${libId} returned a JSON body that isn't an object: ${start.status()} ${startText}`,
+    );
+  }
   // `started: false` means the POST found a pass ALREADY running and reported
   // that one instead of starting a new one — its counts belong to whichever
   // caller actually started it, not to this call. Fail loudly rather than hand
@@ -91,12 +96,19 @@ export async function waitEnrichPass(
           `enrich status on library ${libId} returned a JSON body that isn't an object: ${lastStatus} ${lastBody}`,
         );
       }
-      if (
-        status.state === "idle" &&
-        status.lastPass &&
-        status.lastPass.finishedAt !== baselineFinishedAt
-      ) {
-        return status.lastPass;
+      if (status.state === "idle" && status.lastPass) {
+        // A truthy `lastPass` that isn't a plain object (e.g. a bare string
+        // or number) can't be compared against the baseline or read back by
+        // the caller — fail loudly instead of forwarding it as though it
+        // were a finished pass's counts.
+        if (!isPlainObject(status.lastPass)) {
+          throw new Error(
+            `enrich status on library ${libId} returned a lastPass that isn't an object: ${lastStatus} ${lastBody}`,
+          );
+        }
+        if (status.lastPass.finishedAt !== baselineFinishedAt) {
+          return status.lastPass;
+        }
       }
     }
     await new Promise((r) => setTimeout(r, 100));
