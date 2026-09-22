@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -76,7 +78,7 @@ func TestBundledManifestsMatchTheirGolden(t *testing.T) {
 
 	if *updateManifestGuardGolden {
 		old := readOptionalGuardGolden(t, manifestGuardGoldenPath)
-		head := readHeadGuardGolden(t, manifestGuardGoldenPath)
+		head := readHeadGuardGolden(t, filepath.Join("..", ".."), manifestGuardGoldenPath)
 		updateGuardGolden(t, manifestGuardGoldenPath, src, old, head, writeManifestGuardGolden)
 		return
 	}
@@ -243,27 +245,48 @@ func readOptionalGuardGolden(t *testing.T, path string) map[string]manifestGuard
 // no git binary, cwd not inside a repository — FAILS the -update run: the
 // refusal check cannot run without it, even though the plain (non -update)
 // test path above never invokes git at all.
-func readHeadGuardGolden(t *testing.T, path string) map[string]manifestGuardEntry {
+func readHeadGuardGolden(t *testing.T, repoDir, path string) map[string]manifestGuardEntry {
 	t.Helper()
 	cmd := exec.Command("git", "show", "HEAD:internal/bundled/"+path)
-	cmd.Dir = filepath.Join("..", "..")
+	cmd.Dir = repoDir
+	// LC_ALL=C: classifyHeadGuardGolden's stderr match below is English text
+	// git emits; without pinning the locale a non-English git could produce
+	// different stderr and be misclassified as a fatal error.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.Output()
-	if err != nil {
-		stderr := ""
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			stderr = string(exitErr.Stderr)
-		}
-		if strings.Contains(stderr, "does not exist in") || strings.Contains(stderr, "exists on disk, but not in") {
-			return map[string]manifestGuardEntry{}
-		}
-		t.Fatalf("-update's refusal check needs git to read %s as committed at HEAD, and it failed: %v (%s)", path, err, strings.TrimSpace(stderr))
+	stderr := ""
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		stderr = string(exitErr.Stderr)
 	}
-	var m map[string]manifestGuardEntry
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatalf("HEAD:internal/bundled/%s is not valid JSON: %v", path, err)
+	m, fatal := classifyHeadGuardGolden(path, out, err, stderr)
+	if fatal != "" {
+		t.Fatalf("%s", fatal)
 	}
 	return m
+}
+
+// classifyHeadGuardGolden is readHeadGuardGolden's decision, pulled out as a
+// pure function so it is testable without a real git failure: given the raw
+// result of running `git show HEAD:internal/bundled/<path>` (its stdout,
+// its error, and — when err is a non-nil *exec.ExitError — its stderr),
+// return either the parsed golden or, when fatal is non-empty, the message
+// readHeadGuardGolden should t.Fatalf with. A path absent at HEAD entirely
+// (git's "does not exist in" / "exists on disk, but not in" stderr) is an
+// empty map, matching readOptionalGuardGolden's "missing file" semantics for
+// the working golden; any other git failure, or output that is not valid
+// JSON, is fatal.
+func classifyHeadGuardGolden(path string, out []byte, err error, stderr string) (m map[string]manifestGuardEntry, fatal string) {
+	if err != nil {
+		if strings.Contains(stderr, "does not exist in") || strings.Contains(stderr, "exists on disk, but not in") {
+			return map[string]manifestGuardEntry{}, ""
+		}
+		return nil, fmt.Sprintf("-update's refusal check needs git to read %s as committed at HEAD, and it failed: %v (%s)", path, err, strings.TrimSpace(stderr))
+	}
+	if err := json.Unmarshal(out, &m); err != nil {
+		return nil, fmt.Sprintf("HEAD:internal/bundled/%s is not valid JSON: %v", path, err)
+	}
+	return m, ""
 }
 
 // updateGuardGolden implements the -update refusal shared by both guards
@@ -278,20 +301,18 @@ func readHeadGuardGolden(t *testing.T, path string) map[string]manifestGuardEntr
 // never being carried into out.
 func updateGuardGolden(t *testing.T, path string, src, old, head map[string]manifestGuardEntry, write func(*testing.T, map[string]manifestGuardEntry)) {
 	t.Helper()
-	refused := false
-	for id, cur := range src {
-		if prev, ok := old[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
+	refused := refusedGuardRows(src, old, head)
+	for _, r := range refused {
+		if r.matchedOld {
 			t.Errorf("%s's content changed without a version bump (working golden %s); -update refuses to "+
-				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", id, path, id)
-			refused = true
+				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", r.id, path, r.id)
 		}
-		if prev, ok := head[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
+		if r.matchedHead {
 			t.Errorf("%s's content changed without a version bump (golden at git HEAD %s); -update refuses to "+
-				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", id, path, id)
-			refused = true
+				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", r.id, path, r.id)
 		}
 	}
-	if refused {
+	if len(refused) > 0 {
 		return
 	}
 	out := make(map[string]manifestGuardEntry, len(src))
@@ -299,4 +320,45 @@ func updateGuardGolden(t *testing.T, path string, src, old, head map[string]mani
 		out[id] = cur
 	}
 	write(t, out)
+}
+
+// refusedGuardRow is one id refusedGuardRows flagged, naming which golden(s)
+// (the working copy, the one at git HEAD, or both) it matched.
+type refusedGuardRow struct {
+	id                      string
+	matchedOld, matchedHead bool
+}
+
+// refusedGuardRows is updateGuardGolden's refusal decision (D002), pulled out
+// as a pure function so it is testable without a real *testing.T failing:
+// an id in src whose version equals its version in old (the working golden)
+// or head (the golden as committed at git HEAD) but whose hash differs is a
+// same-version content change, and is refused — once per id in the returned
+// slice, even when it matches both old and head, so the caller can still
+// report each match as its own message. An id present in old or head but no
+// longer in src (no longer shipped) is not examined here at all: it is
+// simply dropped by never being carried into updateGuardGolden's write, not
+// refused. The result is sorted by id for deterministic output.
+func refusedGuardRows(src, old, head map[string]manifestGuardEntry) []refusedGuardRow {
+	ids := make([]string, 0, len(src))
+	for id := range src {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []refusedGuardRow
+	for _, id := range ids {
+		cur := src[id]
+		var r refusedGuardRow
+		if prev, ok := old[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
+			r.matchedOld = true
+		}
+		if prev, ok := head[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
+			r.matchedHead = true
+		}
+		if r.matchedOld || r.matchedHead {
+			r.id = id
+			out = append(out, r)
+		}
+	}
+	return out
 }
