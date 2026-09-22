@@ -162,8 +162,12 @@ EOF
   # invoking `$(MAKE)` value, arguments included, only reaches
   # check-release.sh through this forwarding).
   {
+    # shellcheck disable=SC2016 # literal Makefile text for the stub's own
+    # Makefile, not a shell expansion — $(MAKE) must reach the file as-is.
     printf '\nCHECK_RELEASE_MAKE := $(MAKE)\n'
     printf 'check-release:\n'
+    # shellcheck disable=SC2016 # same: $(CHECK_RELEASE_MAKE) is Makefile
+    # variable syntax for the generated recipe line, not meant to expand here.
     printf '\t@CHECK_RELEASE_SKIP_AMD64=1 EMBED_DIR=internal/webui/dist CR_TARGET=%s CHECK_RELEASE_MAKE="$(CHECK_RELEASE_MAKE)" ./stub/run-and-record.sh\n' "$cr_sh"
   } >> "$dir/Makefile"
 
@@ -179,8 +183,11 @@ EOF
 
 # ---- small bounded waits (not open-ended loops: each has a timeout) ----
 
+# On failure, sets $wfl_seen/$wfl_elapsed to what was actually observed (line
+# count, whole seconds waited) so a caller's failure message can report the
+# real numbers instead of guessing (D041).
 wait_for_lines() { # file min-lines timeout-seconds
-  local f="$1" n="$2" t="$3" i=0
+  local f="$1" n="$2" t="$3" i=0 t0=$SECONDS
   while [ "$i" -lt "$((t * 10))" ]; do
     if [ -f "$f" ] && [ "$(wc -l < "$f" 2>/dev/null || echo 0)" -ge "$n" ]; then
       return 0
@@ -188,6 +195,12 @@ wait_for_lines() { # file min-lines timeout-seconds
     sleep 0.1
     i=$((i + 1))
   done
+  wfl_seen=$([ -f "$f" ] && wc -l < "$f" 2>/dev/null || echo 0)
+  wfl_seen=$(printf '%s' "$wfl_seen" | tr -d ' ')
+  # Wall-clock, not the ceiling: each poll is a fork plus 0.1 s, so under
+  # load the loop overruns $t by exactly the latency this wait exists to
+  # survive (measured +24% under 16 nice'd loops).
+  wfl_elapsed=$((SECONDS - t0))
   return 1
 }
 
@@ -431,8 +444,12 @@ run_and_signal() { # name sig target(pid|group|script-pid) want-status
   local name="$1" sig="$2" target="$3" want_status="$4"
   setup_case
   start_run make --no-print-directory check-release
-  if ! wait_for_lines "$repo/pids.txt" 3 15; then
-    echo "FAIL $name -e2e-did-not-start"
+  # 60s ceiling, not 15s: builder-01 (D004, FINDINGS.md) measured ~19-24x
+  # wall-clock inflation under 16-core saturation with flat CPU time — pure
+  # scheduling latency, not a hang — for a chain whose unloaded start-up is
+  # a few seconds; the early-exit poll keeps a healthy run just as fast.
+  if ! wait_for_lines "$repo/pids.txt" 3 60; then
+    echo "FAIL $name -e2e-did-not-start ($wfl_seen lines after ${wfl_elapsed}s)"
     fail=$((fail + 1))
     teardown_case
     return
@@ -512,8 +529,10 @@ second_signal_during_cleanup() { # name second-sig
   local name="$1" sig2="$2"
   setup_case
   SELFTEST_PLUGINS_SLOW=1 start_run make --no-print-directory check-release
-  if ! wait_for_lines "$repo/pids.txt" 3 15; then
-    echo "FAIL $name -e2e-did-not-start"
+  # Same 60s ceiling and basis as run_and_signal above: same stub chain
+  # start-up gate, same scheduler-latency evidence (D004/D041).
+  if ! wait_for_lines "$repo/pids.txt" 3 60; then
+    echo "FAIL $name -e2e-did-not-start ($wfl_seen lines after ${wfl_elapsed}s)"
     fail=$((fail + 1))
     teardown_case
     return
