@@ -93,23 +93,38 @@ skip_amd64="${CHECK_RELEASE_SKIP_AMD64:-}"
 # executes even under -n, the reason this script exists as a separate file
 # at all). Run by hand, with no CHECK_RELEASE_MAKE set, this defaults to the
 # plain "make" on PATH.
+#
+# $(MAKE) can carry more than a binary name: MEASURED (D012) on GNU make 3.81
+# (macOS) and 4.4.1 (Linux) alike, `make MAKE="gmake -j2" check-release` on
+# the command line overrides the MAKE variable's own value to the literal
+# text "gmake -j2" — an ordinary command-line variable assignment, nothing
+# make-specific about $(MAKE) stops it — and CHECK_RELEASE_MAKE inherits that
+# same text verbatim. Split on whitespace into argv words so "gmake -j2"
+# execs as two words, not one nonexistent binary literally named with an
+# embedded space. The same split makes a make binary whose OWN path contains
+# whitespace unsupported (MEASURED: "/…/my dir/mk" execs as "/…/my", rc
+# 127) — put such a binary on PATH or behind a symlink instead. A blank or
+# whitespace-only value falls back to plain "make" like an unset one.
 make_bin="${CHECK_RELEASE_MAKE:-make}"
+read -ra make_cmd <<< "$make_bin"
+[ "${#make_cmd[@]}" -eq 0 ] && make_cmd=(make)
 
 # Finds the PID of the process actually running $make_bin, for the ALRM
 # watchdog (watch_parent below) — needed because on Linux (GNU make 4.4.1)
 # $PPID names an intervening /bin/sh -c, not make itself, MEASURED (see
 # watch_parent's comment). Walks up to 3 ancestors from $PPID comparing
-# `ps -o comm=`'s basename against $make_bin's own basename; NEVER executes
-# a candidate ancestor to ask what it is (the earlier approach did, running
-# each candidate with --version — rejected once a plain Makefile variable
-# indirection was measured to hand over the real binary without one, see
-# D007 in the issue bucket). No match — e.g. run by hand, where an
-# intervening shell isn't make at all — leaves make_pid empty; watch_parent
-# then never runs, which is harmless: no ALRM-to-TERM translation happens,
-# exactly as if there were no watchdog.
+# `ps -o comm=`'s basename against ${make_cmd[0]}'s own basename (the first
+# word of $make_bin — any following words are arguments, never part of the
+# binary's own name); NEVER executes a candidate ancestor to ask what it is
+# (the earlier approach did, running each candidate with --version —
+# rejected once a plain Makefile variable indirection was measured to hand
+# over the real binary without one, see D007 in the issue bucket). No match
+# — e.g. run by hand, where an intervening shell isn't make at all — leaves
+# make_pid empty; watch_parent then never runs, which is harmless: no
+# ALRM-to-TERM translation happens, exactly as if there were no watchdog.
 find_make_pid() {
   local target base pid="$PPID" cand depth=0
-  target=$(basename -- "$make_bin")
+  target=$(basename -- "${make_cmd[0]}")
   while [ "$depth" -lt 3 ] && [ -n "$pid" ] && [ "$pid" != 0 ]; do
     cand=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ')
     base=$(basename -- "$cand")
@@ -181,7 +196,7 @@ cleanup() {
     status=$((128 + signo))
   fi
   git checkout -- "$embed_dir/index.html" || { [ "$status" -eq 0 ] && status=1; }
-  "$make_bin" --no-print-directory plugins || { [ "$status" -eq 0 ] && status=1; }
+  "${make_cmd[@]}" --no-print-directory plugins || { [ "$status" -eq 0 ] && status=1; }
   exit "$status"
 }
 trap 'cleanup 1' HUP
@@ -201,12 +216,12 @@ run_step() {
   return $rc
 }
 
-if run_step "$make_bin" --no-print-directory plugins \
-  && run_step "$make_bin" --no-print-directory web \
-  && run_step "$make_bin" --no-print-directory check-bundle \
-  && run_step "$make_bin" --no-print-directory test-e2e; then
+if run_step "${make_cmd[@]}" --no-print-directory plugins \
+  && run_step "${make_cmd[@]}" --no-print-directory web \
+  && run_step "${make_cmd[@]}" --no-print-directory check-bundle \
+  && run_step "${make_cmd[@]}" --no-print-directory test-e2e; then
   if [ -z "$skip_amd64" ]; then
-    run_step "$make_bin" --no-print-directory check-amd64 || status=$?
+    run_step "${make_cmd[@]}" --no-print-directory check-amd64 || status=$?
   fi
 else
   status=$?
