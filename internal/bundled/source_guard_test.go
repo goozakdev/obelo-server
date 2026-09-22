@@ -84,7 +84,7 @@ func TestBundledSourceMatchesTheirGolden(t *testing.T) {
 
 	if *updateManifestGuardGolden {
 		old := readOptionalGuardGolden(t, sourceGuardGoldenPath)
-		head := readHeadGuardGolden(t, sourceGuardGoldenPath)
+		head := readHeadGuardGolden(t, filepath.Join("..", ".."), sourceGuardGoldenPath)
 		updateGuardGolden(t, sourceGuardGoldenPath, src, old, head, writeSourceGuardGolden)
 		return
 	}
