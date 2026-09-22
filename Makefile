@@ -419,12 +419,28 @@ check-amd64: test-go-amd64 test-go-amd64-tailscale
 ## recipe line that does, even under `make -n`, which used to make `-n
 ## check-release` build the real thing instead of describing it.
 ##
+## After an ALRM kill, `make` itself returns (rc 142) up to ~8s before the
+## orphaned check-release.sh finishes cleanup and actually exits — and on
+## Linux the same race applies to TERM/HUP/INT/QUIT too, not just ALRM (see
+## scripts/check-release.sh for why). Wait for the tree to go quiet, not
+## just for this target to return.
+##
 ## CHECK_RELEASE_SKIP_AMD64=1 skips check-amd64 (its own ~40-minute Docker
 ## cost), so the rest of this target can be proven without waiting on it.
 ## Unset (the default) runs everything.
+##
+## CHECK_RELEASE_MAKE (set below, outside the recipe) hands the script the
+## invoking make itself — a variable REFERENCED on the recipe line doesn't
+## trip the "any line containing a literal $(MAKE) always runs, even under
+## -n" rule above; only a literal $(MAKE) on the recipe line itself does
+## (MEASURED). This lets scripts/check-release.sh call the same make binary
+## back (e.g. a `gmake` install) instead of a hardcoded "make", and find its
+## PID for the ALRM watchdog without ever executing an ancestor process —
+## see scripts/check-release.sh for why that used to be necessary and isn't.
 CHECK_RELEASE_SKIP_AMD64 ?=
+CHECK_RELEASE_MAKE := $(MAKE)
 check-release:
-	@CHECK_RELEASE_SKIP_AMD64="$(CHECK_RELEASE_SKIP_AMD64)" EMBED_DIR="$(EMBED_DIR)" ./scripts/check-release.sh
+	@CHECK_RELEASE_SKIP_AMD64="$(CHECK_RELEASE_SKIP_AMD64)" EMBED_DIR="$(EMBED_DIR)" CHECK_RELEASE_MAKE="$(CHECK_RELEASE_MAKE)" ./scripts/check-release.sh
 
 ## check-fmt: fail if anything is not gofmt-clean. Run `make fmt` to fix.
 ## This exists because nothing enforced formatting and it silently drifted to
