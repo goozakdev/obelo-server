@@ -47,6 +47,15 @@ export async function waitEnrichPass(
       `enrich status on library ${libId} returned a JSON body that isn't an object: ${before.status()} ${beforeText}`,
     );
   }
+  // A truthy `lastPass` that isn't a plain object (e.g. a bare string or
+  // number) can't be compared against later polls — fail loudly instead of
+  // silently reading a null baseline (issue-11 D030; matches the poll side
+  // below).
+  if (beforeJson?.lastPass && !isPlainObject(beforeJson.lastPass)) {
+    throw new Error(
+      `enrich status on library ${libId} returned a lastPass that isn't an object: ${before.status()} ${beforeText}`,
+    );
+  }
   const baselineFinishedAt = beforeJson?.lastPass?.finishedAt ?? null;
 
   const qs = opts?.mode ? `?mode=${encodeURIComponent(opts.mode)}` : "";

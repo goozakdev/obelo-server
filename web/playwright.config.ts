@@ -21,6 +21,9 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
+  // The suite races the server's single transcode slot across workers (issue
+  // 12) — refuse to start rather than run it. See e2e/global-setup.ts.
+  globalSetup: "./e2e/global-setup.ts",
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL: BASE_URL,
@@ -40,5 +43,12 @@ export default defineConfig({
     },
     stdout: "pipe",
     stderr: "pipe",
+    // Without this, Playwright SIGKILLs boot-server.mjs at teardown and its
+    // shutdown() (which removes the run's obelo-data-*/obelo-bin-* temp dirs
+    // and .claim-token/.tmdb-stub-url) never runs, leaking one of each per
+    // run (issue 12). The timeout must exceed boot-server.mjs's own 12 s
+    // bound on waiting for obelo (10 s drain + margin), or Playwright's group
+    // SIGKILL lands before that cleanup runs.
+    gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
   },
 });

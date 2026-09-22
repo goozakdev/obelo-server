@@ -316,7 +316,8 @@ function run(cmd, args, opts = {}) {
 run("npm", ["run", "build"], { cwd: webDir });
 
 // 2. Build the server binary that embeds the freshly built bundle.
-const binPath = join(mkdtempSync(join(tmpdir(), "obelo-bin-")), "obelo");
+const binDir = mkdtempSync(join(tmpdir(), "obelo-bin-"));
+const binPath = join(binDir, "obelo");
 run("go", ["build", "-o", binPath, "./cmd/obelo"], { cwd: repoRoot });
 
 // 3. Boot the binary against a fresh temp data dir. Scheduled scan + session
@@ -399,14 +400,23 @@ child.stderr.on("data", (buf) => {
   captureToken(text);
 });
 
-function shutdown(signal) {
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    // already gone
-  }
+// shutdown() removes everything this run created (data dir, bin dir, claim
+// token, TMDB-stub-url file) and exits. Playwright's webServer teardown
+// (playwright.config.ts webServer.gracefulShutdown) sends SIGTERM instead of
+// SIGKILLing us, so this actually runs at the end of a normal `test:e2e`. On
+// a signal we wait for the child obelo process to actually exit before
+// removing dataDir, so nothing is still writing into it; `shuttingDown`
+// guards against the child's own "exit" handler below racing this same
+// cleanup.
+let shuttingDown = false;
+function cleanupTempFiles() {
   try {
     rmSync(dataDir, { recursive: true, force: true });
+  } catch {
+    // best effort
+  }
+  try {
+    rmSync(binDir, { recursive: true, force: true });
   } catch {
     // best effort
   }
@@ -425,11 +435,45 @@ function shutdown(signal) {
   } catch {
     // best effort
   }
-  if (signal) process.exit(0);
+}
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (child.exitCode !== null || child.signalCode !== null) {
+    // Child is already gone (it exited on its own, which is handled below).
+    cleanupTempFiles();
+    if (signal) process.exit(0);
+    return;
+  }
+  // Bounded: obelo drains in-flight requests for up to 10 s on SIGTERM
+  // (cmd/obelo/main.go), so give it 12 s, then SIGKILL it and clean up anyway.
+  // playwright.config.ts's gracefulShutdown.timeout must stay ABOVE this
+  // bound, or Playwright SIGKILLs the whole group first and nothing below runs.
+  const forceKill = setTimeout(() => {
+    console.log("[boot-server] obelo did not exit within 12s, killing it");
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
+  }, 12_000);
+  child.once("exit", () => {
+    clearTimeout(forceKill);
+    cleanupTempFiles();
+    if (signal) process.exit(0);
+  });
+  try {
+    child.kill(signal ?? "SIGTERM");
+  } catch {
+    // already gone
+  }
 }
 
 child.on("exit", (code) => {
-  shutdown(null);
+  if (shuttingDown) return; // already being handled by shutdown() above
+  shuttingDown = true;
+  cleanupTempFiles();
   process.exit(code ?? 0);
 });
 process.on("SIGTERM", () => shutdown("SIGTERM"));
