@@ -8,7 +8,9 @@ import (
 	"flag"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,12 +31,18 @@ import (
 //
 //	go test ./internal/bundled/ -run TestBundledManifestsMatchTheirGolden -update
 //
-// -update REFUSES to rewrite a row whose version is unchanged from the golden
-// but whose hash differs (D002): that combination is exactly a same-version
-// content change, and rewriting it would launder the change through the tool
-// meant to catch it. Bump the version first, then rerun -update. A brand-new
-// shipped id (absent from the golden) is written; an id no longer shipped is
-// dropped.
+// -update REFUSES to write THIS golden when any shipped id's version is
+// unchanged from it — either the working copy or the one committed at git
+// HEAD — but its hash differs (D002): that combination is exactly a
+// same-version content change, and writing even the other, legitimate rows
+// would launder it through the tool meant to catch it. Each guard decides
+// for its own golden only: the source guard, run in the same `go test`
+// invocation, may still write its golden when it has nothing to refuse, so
+// a refused run can leave the two goldens disagreeing on a bumped version
+// until the refusal is fixed and -update rerun. Bump the version
+// first, then rerun -update. A brand-new shipped id (absent from both
+// goldens) is written; an id no longer shipped is dropped. The refusal check
+// needs git; the plain (non -update) run above does not.
 
 // updateManifestGuardGolden is the regeneration seam (D005): -update writes the
 // current source manifests' versions+hashes to the golden and passes, rather than
@@ -68,7 +76,8 @@ func TestBundledManifestsMatchTheirGolden(t *testing.T) {
 
 	if *updateManifestGuardGolden {
 		old := readOptionalGuardGolden(t, manifestGuardGoldenPath)
-		updateGuardGolden(t, manifestGuardGoldenPath, src, old, writeManifestGuardGolden)
+		head := readHeadGuardGolden(t, manifestGuardGoldenPath)
+		updateGuardGolden(t, manifestGuardGoldenPath, src, old, head, writeManifestGuardGolden)
 		return
 	}
 
@@ -225,23 +234,68 @@ func readOptionalGuardGolden(t *testing.T, path string) map[string]manifestGuard
 	return m
 }
 
-// updateGuardGolden implements the -update refusal shared by both guards
-// (D002): a row whose version matches the existing golden but whose hash does
-// not is a same-version content change, and -update must not rewrite it —
-// doing so would launder the change instead of catching it. Every other row
-// in src (a brand-new id, a genuine version bump, or an unchanged row) is
-// written; an id present in old but no longer in src (no longer shipped) is
-// dropped by never being carried into out.
-func updateGuardGolden(t *testing.T, path string, src, old map[string]manifestGuardEntry, write func(*testing.T, map[string]manifestGuardEntry)) {
+// readHeadGuardGolden reads path as committed at git HEAD (D002): the working
+// golden alone cannot catch a bump/un-bump round trip or a hand-deleted row
+// (issue 11), since both erase the working golden's memory of the old row
+// before -update ever runs. A path absent at HEAD entirely (a golden that has
+// never been committed) is an empty map, matching readOptionalGuardGolden's
+// "missing file" semantics for the working golden. Any other git failure —
+// no git binary, cwd not inside a repository — FAILS the -update run: the
+// refusal check cannot run without it, even though the plain (non -update)
+// test path above never invokes git at all.
+func readHeadGuardGolden(t *testing.T, path string) map[string]manifestGuardEntry {
 	t.Helper()
-	out := make(map[string]manifestGuardEntry, len(src))
+	cmd := exec.Command("git", "show", "HEAD:internal/bundled/"+path)
+	cmd.Dir = filepath.Join("..", "..")
+	out, err := cmd.Output()
+	if err != nil {
+		stderr := ""
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderr = string(exitErr.Stderr)
+		}
+		if strings.Contains(stderr, "does not exist in") || strings.Contains(stderr, "exists on disk, but not in") {
+			return map[string]manifestGuardEntry{}
+		}
+		t.Fatalf("-update's refusal check needs git to read %s as committed at HEAD, and it failed: %v (%s)", path, err, strings.TrimSpace(stderr))
+	}
+	var m map[string]manifestGuardEntry
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("HEAD:internal/bundled/%s is not valid JSON: %v", path, err)
+	}
+	return m
+}
+
+// updateGuardGolden implements the -update refusal shared by both guards
+// (D002): a row whose version matches either the working golden (old) or the
+// golden as committed at git HEAD (head) but whose hash differs is a
+// same-version content change. Any such row anywhere in src makes -update
+// write NOTHING to that golden — it ends byte-identical to before the run —
+// because writing even the other, legitimate rows would launder the flagged
+// change through the same run. When nothing is refused, every row in src is
+// written (a brand-new id, a genuine version bump, or an unchanged row); an
+// id present in old but no longer in src (no longer shipped) is dropped by
+// never being carried into out.
+func updateGuardGolden(t *testing.T, path string, src, old, head map[string]manifestGuardEntry, write func(*testing.T, map[string]manifestGuardEntry)) {
+	t.Helper()
+	refused := false
 	for id, cur := range src {
 		if prev, ok := old[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
-			t.Errorf("%s's content changed without a version bump; -update refuses to launder this — "+
-				"bump \"version\" in plugins/%s/manifest.json, then rerun with -update", id, id)
-			out[id] = prev
-			continue
+			t.Errorf("%s's content changed without a version bump (working golden %s); -update refuses to "+
+				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", id, path, id)
+			refused = true
 		}
+		if prev, ok := head[id]; ok && prev.Version == cur.Version && prev.Hash != cur.Hash {
+			t.Errorf("%s's content changed without a version bump (golden at git HEAD %s); -update refuses to "+
+				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", id, path, id)
+			refused = true
+		}
+	}
+	if refused {
+		return
+	}
+	out := make(map[string]manifestGuardEntry, len(src))
+	for id, cur := range src {
 		out[id] = cur
 	}
 	write(t, out)
