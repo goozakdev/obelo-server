@@ -52,15 +52,77 @@
 # `kill -ALRM <make pid>` is never one make catches and forwards; make just
 # dies on the spot (under 1s), on the OS's own default disposition for
 # SIGALRM, and this script never receives anything. A background watchdog
-# polls its own $PPID (bash's $PPID is fixed at shell start, so it stays the
-# original make pid even after reparenting) and sends itself SIGTERM the first
-# time that parent is gone — which reduces "make died of ALRM without telling
-# anyone" to the ordinary TERM path above.
+# polls the actual make pid found by find_make_pid below (not this script's
+# own $PPID, which on Linux names an intervening /bin/sh -c — see
+# watch_parent's comment) and sends itself SIGTERM the first time that pid is
+# gone — which reduces "make died of ALRM without telling anyone" to the
+# ordinary TERM path above.
+#
+# MEASURED: because make dies on ALRM the instant it receives it (see above),
+# `make check-release` returns rc 142 up to ~8s before this orphaned script
+# (still running under the watchdog's 1s poll of make_pid) finishes cleanup and
+# actually exits. A caller that treats make's return as "cleanup is done" —
+# e.g. checking out index.html or starting another build right after — can
+# race this script's own cleanup(). Wait for the tree to go quiet, not just
+# for `make` to return.
+#
+# MEASURED this same "make returns before cleanup is actually done" race
+# also applies to every OTHER signal above (TERM/HUP/INT/QUIT), but only on
+# Linux: GNU make 3.81 (macOS) forks this script as its own direct child, so
+# on macOS `wait`ing on make's pid does block until this script's cleanup()
+# has exited. GNU make 4.4.1 (Linux) runs the same VAR=val-prefixed recipe
+# line through an intervening `/bin/sh -c`, and that intervening shell dies
+# on the forwarded signal without waiting for ITS OWN child (this script) —
+# so on Linux, `make check-release` can return while cleanup is still
+# running orphaned, for TERM/HUP/INT/QUIT exactly as it already could for
+# ALRM. A caller on any platform should wait for the tree to go quiet, not
+# just for `make` to return — see scripts/check-release-selftest.sh, which
+# polls for the orphaned script rather than trusting make's own wait().
 set -uo pipefail
 set -m
 
 embed_dir="${EMBED_DIR:-internal/webui/dist}"
 skip_amd64="${CHECK_RELEASE_SKIP_AMD64:-}"
+
+# The steps below call the same make binary that invoked this script, not a
+# hardcoded "make". This matters when the invoking binary isn't literally
+# named "make" (e.g. a `gmake` install). The Makefile hands it over as
+# CHECK_RELEASE_MAKE := $(MAKE), set OUTSIDE the recipe and only REFERENCED
+# on the recipe line — MEASURED (F007): that survives `make -n` untouched
+# (unlike a literal $(MAKE) on the recipe line, which GNU make always
+# executes even under -n, the reason this script exists as a separate file
+# at all). Run by hand, with no CHECK_RELEASE_MAKE set, this defaults to the
+# plain "make" on PATH.
+make_bin="${CHECK_RELEASE_MAKE:-make}"
+
+# Finds the PID of the process actually running $make_bin, for the ALRM
+# watchdog (watch_parent below) — needed because on Linux (GNU make 4.4.1)
+# $PPID names an intervening /bin/sh -c, not make itself, MEASURED (see
+# watch_parent's comment). Walks up to 3 ancestors from $PPID comparing
+# `ps -o comm=`'s basename against $make_bin's own basename; NEVER executes
+# a candidate ancestor to ask what it is (the earlier approach did, running
+# each candidate with --version — rejected once a plain Makefile variable
+# indirection was measured to hand over the real binary without one, see
+# D007 in the issue bucket). No match — e.g. run by hand, where an
+# intervening shell isn't make at all — leaves make_pid empty; watch_parent
+# then never runs, which is harmless: no ALRM-to-TERM translation happens,
+# exactly as if there were no watchdog.
+find_make_pid() {
+  local target base pid="$PPID" cand depth=0
+  target=$(basename -- "$make_bin")
+  while [ "$depth" -lt 3 ] && [ -n "$pid" ] && [ "$pid" != 0 ]; do
+    cand=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d ' ')
+    base=$(basename -- "$cand")
+    if [ -n "$cand" ] && [ "$base" = "$target" ]; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    depth=$((depth + 1))
+  done
+  return 1
+}
+make_pid=$(find_make_pid) || make_pid=""
 
 status=0
 step_pid=""
@@ -78,10 +140,20 @@ kill_tree() {
   kill -TERM "$pid" 2>/dev/null || true
 }
 
+# MEASURED this can't watch for "my $PPID changed" (the original approach,
+# and still correct on macOS): on Linux, make's own direct child is the
+# intervening /bin/sh -c (see find_make_pid above), and THAT survives an
+# ALRM to make untouched — it just sits in its own wait() for this script,
+# unaware its own parent died — so this script's $PPID never changes and
+# never would. Watch the actual make pid found above instead, on every
+# platform; that pid is what SIGALRM kills out from under this script. If
+# find_make_pid found no match (e.g. run by hand, $make_pid empty), there is
+# nothing to watch — this exits immediately without ever touching self_pid,
+# so a missing watchdog target never gets mistaken for "make died".
 watch_parent() {
+  [ -n "$make_pid" ] || return 0
   while kill -0 "$self_pid" 2>/dev/null; do
-    current_ppid=$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')
-    if [ -n "$current_ppid" ] && [ "$current_ppid" != "$PPID" ]; then
+    if ! kill -0 "$make_pid" 2>/dev/null; then
       kill -TERM "$self_pid" 2>/dev/null
       break
     fi
@@ -94,7 +166,12 @@ disown "$watchdog_pid" 2>/dev/null || true
 
 cleanup() {
   local signo="${1:-}"
-  trap - TERM INT HUP QUIT ALRM
+  # Ignore (not restore-to-default) further TERM/INT/HUP/QUIT/ALRM here: a
+  # SECOND signal arriving mid-cleanup used to hit the default disposition
+  # (kill) and could cut `make plugins` off partway through, leaving the
+  # gitignored internal/bundled/modules/ partially rebuilt. Cleanup itself is
+  # not interruptible; SIGKILL still is (nothing can stop that).
+  trap '' TERM INT HUP QUIT ALRM
   kill "$watchdog_pid" 2>/dev/null || true
   if [ -n "$step_pid" ]; then
     kill_tree "$step_pid"
@@ -104,7 +181,7 @@ cleanup() {
     status=$((128 + signo))
   fi
   git checkout -- "$embed_dir/index.html" || { [ "$status" -eq 0 ] && status=1; }
-  make --no-print-directory plugins || { [ "$status" -eq 0 ] && status=1; }
+  "$make_bin" --no-print-directory plugins || { [ "$status" -eq 0 ] && status=1; }
   exit "$status"
 }
 trap 'cleanup 1' HUP
@@ -124,12 +201,12 @@ run_step() {
   return $rc
 }
 
-if run_step make --no-print-directory plugins \
-  && run_step make --no-print-directory web \
-  && run_step make --no-print-directory check-bundle \
-  && run_step make --no-print-directory test-e2e; then
+if run_step "$make_bin" --no-print-directory plugins \
+  && run_step "$make_bin" --no-print-directory web \
+  && run_step "$make_bin" --no-print-directory check-bundle \
+  && run_step "$make_bin" --no-print-directory test-e2e; then
   if [ -z "$skip_amd64" ]; then
-    run_step make --no-print-directory check-amd64 || status=$?
+    run_step "$make_bin" --no-print-directory check-amd64 || status=$?
   fi
 else
   status=$?
