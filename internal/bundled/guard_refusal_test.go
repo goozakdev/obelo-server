@@ -20,12 +20,14 @@ package bundled
 // and output instead of this process's *testing.T.
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRefusedGuardRows(t *testing.T) {
@@ -150,7 +152,11 @@ func TestUpdateGuardGoldenWritesOnNoRefusal(t *testing.T) {
 
 // TestUpdateGuardGoldenRefusedWritesNothing covers the refusal path via a
 // re-exec'd child process (see the file doc comment for why): write must
-// never be called, and the child must exit nonzero naming the refused id.
+// never be called, and the child must exit nonzero with ONE error line for
+// the refused id naming both goldens it matched (the scenario matches src
+// against both old and head so the "and golden at git HEAD" clause — the one
+// piece of the merged message nothing else in this package asserts — is
+// exercised here too).
 func TestUpdateGuardGoldenRefusedWritesNothing(t *testing.T) {
 	out, exitCode := runGuardRefusalHelper(t, "update-refused")
 	if exitCode == 0 {
@@ -159,8 +165,10 @@ func TestUpdateGuardGoldenRefusedWritesNothing(t *testing.T) {
 	if strings.Contains(out, "write must not be called on refusal") {
 		t.Errorf("write was called despite the refusal; output:\n%s", out)
 	}
-	if !strings.Contains(out, `tmdb's content changed without a version bump (working golden testdata/x.json)`) {
-		t.Errorf("expected the working-golden refusal message in output:\n%s", out)
+	const want = `tmdb's content changed without a version bump (matches working golden testdata/x.json and ` +
+		`golden at git HEAD testdata/x.json); nothing was written to testdata/x.json`
+	if !strings.Contains(out, want) {
+		t.Errorf("expected the merged refusal message in output:\n%s\nwant it to contain:\n%s", out, want)
 	}
 }
 
@@ -308,7 +316,7 @@ func TestGuardRefusalHelperProcess(t *testing.T) {
 		}
 		src := map[string]manifestGuardEntry{"tmdb": entry("1.0.0", "new")}
 		old := map[string]manifestGuardEntry{"tmdb": entry("1.0.0", "old")}
-		head := map[string]manifestGuardEntry{}
+		head := map[string]manifestGuardEntry{"tmdb": entry("1.0.0", "old")}
 		updateGuardGolden(t, "testdata/x.json", src, old, head, func(*testing.T, map[string]manifestGuardEntry) {
 			t.Error("write must not be called on refusal")
 		})
@@ -324,15 +332,35 @@ func TestGuardRefusalHelperProcess(t *testing.T) {
 	}
 }
 
+// guardRefusalHelperTimeout bounds the re-exec'd child from the outside
+// (exec.CommandContext): a child that hangs is killed and this function
+// still returns, rather than hanging forever with it. The child's own
+// -test.timeout is guardRefusalHelperInnerTimeout, strictly SHORTER, so in
+// the ordinary hang the child's test machinery gets to print its goroutine
+// dump before the outer kill would have silenced it (measured: with both at
+// 60 s the parent failed on time but with EMPTY output).
+const guardRefusalHelperTimeout = 60 * time.Second
+
+// guardRefusalHelperInnerTimeout is the child's -test.timeout; see above.
+const guardRefusalHelperInnerTimeout = 45 * time.Second
+
 // runGuardRefusalHelper re-execs the current test binary with -test.run
 // pinned to TestGuardRefusalHelperProcess and scenario selected via
 // guardRefusalHelperScenarioEnv, returning the child's combined output and
 // exit code.
 func runGuardRefusalHelper(t *testing.T, scenario string) (output string, exitCode int) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestGuardRefusalHelperProcess$", "-test.v")
+	ctx, cancel := context.WithTimeout(context.Background(), guardRefusalHelperTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0],
+		"-test.run=^TestGuardRefusalHelperProcess$", "-test.v",
+		"-test.timeout="+guardRefusalHelperInnerTimeout.String())
 	cmd.Env = append(os.Environ(), guardRefusalHelperScenarioEnv+"="+scenario)
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("guard-refusal helper process exceeded its %s timeout and was killed; output:\n%s",
+			guardRefusalHelperTimeout, out)
+	}
 	if err == nil {
 		return string(out), 0
 	}

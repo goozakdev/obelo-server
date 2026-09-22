@@ -247,12 +247,7 @@ func readOptionalGuardGolden(t *testing.T, path string) map[string]manifestGuard
 // test path above never invokes git at all.
 func readHeadGuardGolden(t *testing.T, repoDir, path string) map[string]manifestGuardEntry {
 	t.Helper()
-	cmd := exec.Command("git", "show", "HEAD:internal/bundled/"+path)
-	cmd.Dir = repoDir
-	// LC_ALL=C: classifyHeadGuardGolden's stderr match below is English text
-	// git emits; without pinning the locale a non-English git could produce
-	// different stderr and be misclassified as a fatal error.
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	cmd := buildHeadGoldenCmd(repoDir, path)
 	out, err := cmd.Output()
 	stderr := ""
 	var exitErr *exec.ExitError
@@ -264,6 +259,42 @@ func readHeadGuardGolden(t *testing.T, repoDir, path string) map[string]manifest
 		t.Fatalf("%s", fatal)
 	}
 	return m
+}
+
+// buildHeadGoldenCmd builds the `git show HEAD:internal/bundled/<path>`
+// command readHeadGuardGolden runs, pulled out so TestBuildHeadGoldenCmdPinsLocale
+// can inspect cmd.Env directly: dropping LC_ALL=C (see the comment below) has
+// no observable effect without a non-English git installed, so asserting on
+// the built *exec.Cmd is the only seam that catches the regression in CI.
+func buildHeadGoldenCmd(repoDir, path string) *exec.Cmd {
+	cmd := exec.Command("git", "show", "HEAD:internal/bundled/"+path)
+	cmd.Dir = repoDir
+	// LC_ALL=C: classifyHeadGuardGolden's stderr match below is English text
+	// git emits; without pinning the locale a non-English git could produce
+	// different stderr and be misclassified as a fatal error.
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	return cmd
+}
+
+// TestBuildHeadGoldenCmdPinsLocale is the seam for readHeadGuardGolden's
+// LC_ALL=C pin (see buildHeadGoldenCmd's doc comment): dropping it from the
+// real runner produces no observable stdout/stderr difference on an English
+// git, so nothing else in this package would notice the regression.
+func TestBuildHeadGoldenCmdPinsLocale(t *testing.T) {
+	cmd := buildHeadGoldenCmd("/some/repo", "testdata/x.json")
+	if cmd.Dir != "/some/repo" {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, "/some/repo")
+	}
+	found := false
+	for _, kv := range cmd.Env {
+		if kv == "LC_ALL=C" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("cmd.Env = %v, want it to contain %q", cmd.Env, "LC_ALL=C")
+	}
 }
 
 // classifyHeadGuardGolden is readHeadGuardGolden's decision, pulled out as a
@@ -295,7 +326,9 @@ func classifyHeadGuardGolden(path string, out []byte, err error, stderr string) 
 // same-version content change. Any such row anywhere in src makes -update
 // write NOTHING to that golden — it ends byte-identical to before the run —
 // because writing even the other, legitimate rows would launder the flagged
-// change through the same run. When nothing is refused, every row in src is
+// change through the same run. Each refused id gets exactly one t.Errorf,
+// naming every golden it matched (working, HEAD, or both) rather than one
+// line per matched golden. When nothing is refused, every row in src is
 // written (a brand-new id, a genuine version bump, or an unchanged row); an
 // id present in old but no longer in src (no longer shipped) is dropped by
 // never being carried into out.
@@ -303,14 +336,16 @@ func updateGuardGolden(t *testing.T, path string, src, old, head map[string]mani
 	t.Helper()
 	refused := refusedGuardRows(src, old, head)
 	for _, r := range refused {
+		var matched []string
 		if r.matchedOld {
-			t.Errorf("%s's content changed without a version bump (working golden %s); -update refuses to "+
-				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", r.id, path, r.id)
+			matched = append(matched, fmt.Sprintf("working golden %s", path))
 		}
 		if r.matchedHead {
-			t.Errorf("%s's content changed without a version bump (golden at git HEAD %s); -update refuses to "+
-				"write anything this run — bump \"version\" in plugins/%s/manifest.json, then rerun with -update", r.id, path, r.id)
+			matched = append(matched, fmt.Sprintf("golden at git HEAD %s", path))
 		}
+		t.Errorf("%s's content changed without a version bump (matches %s); nothing was written to %s — "+
+			"bump \"version\" in plugins/%s/manifest.json, then rerun with -update",
+			r.id, strings.Join(matched, " and "), path, r.id)
 	}
 	if len(refused) > 0 {
 		return
@@ -334,8 +369,8 @@ type refusedGuardRow struct {
 // an id in src whose version equals its version in old (the working golden)
 // or head (the golden as committed at git HEAD) but whose hash differs is a
 // same-version content change, and is refused — once per id in the returned
-// slice, even when it matches both old and head, so the caller can still
-// report each match as its own message. An id present in old or head but no
+// slice, with matchedOld/matchedHead saying which golden(s) it hit, so the
+// caller can name them in one message. An id present in old or head but no
 // longer in src (no longer shipped) is not examined here at all: it is
 // simply dropped by never being carried into updateGuardGolden's write, not
 // refused. The result is sorted by id for deterministic output.
