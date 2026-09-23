@@ -321,7 +321,7 @@ func TestARecheckedTrackThatFailsAgainKeepsItsStatusAndGetsAFreshReason(t *testi
 // what a recheck means.
 //
 // This drives BOTH paths over the same seeded population and asserts they select
-// the same leaves, in ModeNew and in ModeRecheck.
+// the same leaves, in ModeNew, ModeRecheck and ModeMissing.
 func TestMovieSQLAndTheMusicWalkSelectTheSamePopulation(t *testing.T) {
 	// The clock every path measures "due" against.
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -345,7 +345,7 @@ func TestMovieSQLAndTheMusicWalkSelectTheSamePopulation(t *testing.T) {
 	for _, mode := range []struct {
 		name string
 		mode Mode
-	}{{"ModeNew", ModeNew}, {"ModeRecheck", ModeRecheck}} {
+	}{{"ModeNew", ModeNew}, {"ModeRecheck", ModeRecheck}, {"ModeMissing", ModeMissing}} {
 		t.Run(mode.name, func(t *testing.T) {
 			movie := selectedByMoviePath(t, population, mode.mode, now)
 			music := selectedByMusicPath(t, population, mode.mode, now)
@@ -354,6 +354,14 @@ func TestMovieSQLAndTheMusicWalkSelectTheSamePopulation(t *testing.T) {
 					"are twins by shouldProcessLeaf's own comment, and a mode they disagree "+
 					"about means a Movie library and a Music library get different answers "+
 					"from the same button", movie, music)
+			}
+			if mode.mode == ModeMissing {
+				want := []string{"Parked", "Pending", "RetryDue", "RetryFuture", "Unmatched"}
+				if !sameStrings(movie, want) {
+					t.Fatalf("ModeMissing selected %v, want %v — every pending/unmatched/failed "+
+						"item regardless of retry_at, excluding Matched and Disabled (ADR-0062)",
+						movie, want)
+				}
 			}
 			t.Logf("%s selects %v (both paths)", mode.name, movie)
 		})

@@ -9,12 +9,22 @@ import ConfirmDialog from "./ConfirmDialog";
 // One Library row in the redesigned admin hub: its kind icon + name on the left,
 // and a right-hand action cluster — a "three dots" (⋮) menu alongside a compact
 // scan-status indicator. The menu (same click-outside / Escape dropdown as the
-// browse EpisodeActionsMenu) gathers the row's actions: Edit, Scan, Full scan, and
-// a destructive Delete. Scan/Full scan stay disabled
+// browse EpisodeActionsMenu) gathers the row's actions: Edit, Scan, Full scan,
+// Refresh missing metadata, Refresh all metadata, and a destructive Delete.
+// Scan/Full scan/the two refresh actions stay disabled
 // for the whole running scan so a second pick can't start a concurrent scan; the
 // row still owns its own scan poller (useScanStatus) so each Library tracks its
 // scan independently, and a trigger seeds the poller from the response (`begin`),
 // which polls only while the scan is running.
+//
+// The two refresh actions START an Enrichment pass (ADR-0062) exactly like Scan
+// starts a scan — a POST that returns as soon as the pass is queued, never
+// awaited by this row. "Refresh missing metadata" (mode `missing`) starts at
+// once; "Refresh all metadata" (mode `full`) goes through the same ConfirmDialog
+// Delete uses, because a full re-fetch of every item can take a long time. A
+// `started: false` ack (a pass was already running) and a request error both
+// surface as a visible inline message — there is no client-side wait for either
+// pass to finish.
 //
 // Delete is the row's single destructive path (the Edit dialog carries no delete):
 // picking it opens a confirmation modal (ConfirmDialog) — deleting a Library and
@@ -53,6 +63,9 @@ export default function LibraryAdminRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmingRefreshAll, setConfirmingRefreshAll] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const status = scan.status;
@@ -67,6 +80,7 @@ export default function LibraryAdminRow({
     if (scanRunning) return;
     setScanning(true);
     setActionError(null);
+    setRefreshError(null);
     try {
       const status = await apiClient.scanLibrary(library.id, { mode });
       // Seed the poller; it keeps polling only while the scan is still running.
@@ -75,6 +89,26 @@ export default function LibraryAdminRow({
       setActionError(errorMessage(err));
     } finally {
       setScanning(false);
+    }
+  }
+
+  // Refresh missing / Refresh all metadata (ADR-0062): a POST /enrich, started
+  // and never awaited — exactly like onScan above. `started: false` means a pass
+  // was already running for this Library, which is a normal outcome (not an
+  // error) but still worth a visible message so the click doesn't feel ignored.
+  async function onRefresh(mode: "missing" | "full") {
+    if (scanRunning || refreshing) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const state = await apiClient.enrichLibrary(library.id, { mode });
+      if (!state.started) {
+        setRefreshError(`A metadata pass is already running for “${library.name}”.`);
+      }
+    } catch (err) {
+      setRefreshError(errorMessage(err));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -229,6 +263,37 @@ export default function LibraryAdminRow({
                 <li className="row-menu-item" role="none">
                   <button
                     type="button"
+                    className="row-menu-button"
+                    role="menuitem"
+                    data-testid="refresh-missing-button"
+                    disabled={scanRunning}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void onRefresh("missing");
+                    }}
+                  >
+                    Refresh missing metadata
+                  </button>
+                </li>
+                <li className="row-menu-item" role="none">
+                  <button
+                    type="button"
+                    className="row-menu-button"
+                    role="menuitem"
+                    data-testid="refresh-all-button"
+                    disabled={scanRunning}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setRefreshError(null);
+                      setConfirmingRefreshAll(true);
+                    }}
+                  >
+                    Refresh all metadata
+                  </button>
+                </li>
+                <li className="row-menu-item" role="none">
+                  <button
+                    type="button"
                     className="row-menu-button row-menu-button-danger"
                     role="menuitem"
                     data-testid="delete-library-button"
@@ -247,11 +312,26 @@ export default function LibraryAdminRow({
         </div>
       </div>
 
-      {(scan.error || actionError) && (
+      {(scan.error || actionError || refreshError) && (
         <p className="status status-error" data-testid="admin-action-error" role="alert">
           <span className="dot dot-error" aria-hidden="true" />
-          {actionError ?? scan.error}
+          {actionError ?? refreshError ?? scan.error}
         </p>
+      )}
+
+      {confirmingRefreshAll && (
+        <ConfirmDialog
+          title="Refresh all metadata"
+          message={`Re-fetch metadata for every item in “${library.name}” from the provider? This may take a long time.`}
+          confirmLabel="Refresh all"
+          busyLabel="Starting…"
+          busy={refreshing}
+          onConfirm={() => {
+            setConfirmingRefreshAll(false);
+            void onRefresh("full");
+          }}
+          onCancel={() => setConfirmingRefreshAll(false)}
+        />
       )}
 
       {confirmingDelete && (

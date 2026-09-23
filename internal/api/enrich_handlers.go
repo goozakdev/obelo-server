@@ -21,16 +21,18 @@ import (
 
 // enrichRequest is the optional JSON body of POST /libraries/{id}/enrich. mode
 // "full" re-enriches every visible Title (unlocked-only); "recheck" adds the
-// settled non-answers to the only-new population (ADR-0051); absent/"new"
+// settled non-answers to the only-new population (ADR-0051); "missing" adds
+// every non-matched item regardless of retry_at (ADR-0062); absent/"new"
 // enriches only Titles never successfully enriched.
 type enrichRequest struct {
 	Mode string `json:"mode"`
 }
 
 // enrichMode maps a wire mode string onto an enrich.Mode: "" and "new" are the
-// default only-new pass, "full" and "recheck" the other two documented values.
-// Anything else is not recognized (ok=false), which the caller turns into a 400
-// naming the accepted values — the API requires the current request shape (D029).
+// default only-new pass, "full", "recheck" and "missing" the other documented
+// values. Anything else is not recognized (ok=false), which the caller turns
+// into a 400 naming the accepted values — the API requires the current request
+// shape (D029).
 func enrichMode(s string) (mode enrich.Mode, ok bool) {
 	switch {
 	case s == "" || strings.EqualFold(s, "new"):
@@ -39,6 +41,8 @@ func enrichMode(s string) (mode enrich.Mode, ok bool) {
 		return enrich.ModeFull, true
 	case strings.EqualFold(s, "recheck"):
 		return enrich.ModeRecheck, true
+	case strings.EqualFold(s, "missing"):
+		return enrich.ModeMissing, true
 	}
 	return enrich.ModeNew, false
 }
@@ -46,7 +50,7 @@ func enrichMode(s string) (mode enrich.Mode, ok bool) {
 // enrichModeMessage is the 400 an unrecognized mode gets, naming the values this
 // build accepts.
 func enrichModeMessage(mode string) string {
-	return fmt.Sprintf("mode %q is not recognized — use \"new\", \"full\", or \"recheck\"", mode)
+	return fmt.Sprintf("mode %q is not recognized — use \"new\", \"full\", \"recheck\", or \"missing\"", mode)
 }
 
 type enrichResultJSON struct {
@@ -169,10 +173,12 @@ func libraryMustExist(w http.ResponseWriter, deps Deps, libraryID string) bool {
 
 // handleEnrich STARTS an Enrichment pass over a Library (Admin) and returns 202
 // Accepted immediately. By default it is the only-new mode (Titles with status
-// 'pending'); pass {"mode":"full"} or ?mode=full for a full refresh, or
+// 'pending'); pass {"mode":"full"} or ?mode=full for a full refresh,
 // {"mode":"recheck"} / ?mode=recheck to re-ask the settled non-answers as well
 // (ADR-0051) — the mode the Needs Fixing screen's "Re-check unmatched items"
-// button uses after a matching improvement ships.
+// button uses after a matching improvement ships — or {"mode":"missing"} /
+// ?mode=missing to re-ask every non-matched item now, including one whose
+// backoff retry is still scheduled in the future (ADR-0062).
 //
 // It used to run the pass INSIDE the request, and the doc comment here said so.
 // That was harmless while the only caller was a human with curl and immediately
@@ -207,7 +213,7 @@ func handleEnrich(deps Deps) http.HandlerFunc {
 		}
 
 		// The query string wins when it names a mode this build knows; otherwise the
-		// body is consulted. Both spellings select the same three modes. An
+		// body is consulted. Both spellings select the same four modes. An
 		// unrecognized mode is a 400 naming the accepted values, from whichever of the
 		// two named one.
 		mode, ok := enrichMode(r.URL.Query().Get("mode"))

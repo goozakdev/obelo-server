@@ -22,6 +22,7 @@ const {
   deleteLibrary,
   scanLibrary,
   getScanStatus,
+  enrichLibrary,
 } = vi.hoisted(() => ({
   listLibraries: vi.fn(),
   createLibrary: vi.fn(),
@@ -29,6 +30,7 @@ const {
   deleteLibrary: vi.fn(),
   scanLibrary: vi.fn(),
   getScanStatus: vi.fn(),
+  enrichLibrary: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -42,6 +44,7 @@ vi.mock("../api/client", async () => {
       deleteLibrary: (...a: unknown[]) => deleteLibrary(...a),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
       getScanStatus: (...a: unknown[]) => getScanStatus(...a),
+      enrichLibrary: (...a: unknown[]) => enrichLibrary(...a),
     },
   };
 });
@@ -85,6 +88,7 @@ beforeEach(() => {
   deleteLibrary.mockReset();
   scanLibrary.mockReset();
   getScanStatus.mockReset();
+  enrichLibrary.mockReset();
   // Each row reads its scan status on mount; default to a settled idle so rows
   // don't start polling unless a test opts in.
   getScanStatus.mockResolvedValue(status({ state: "idle" }));
@@ -308,6 +312,103 @@ describe("AdminLibrariesScreen", () => {
     expect(deleteLibrary).not.toHaveBeenCalled();
     expect(screen.getByTestId("admin-library-row")).toBeInTheDocument();
   });
+
+  it("Refresh missing metadata starts a `missing` pass with no dialog", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    enrichLibrary.mockResolvedValue({ libraryId: "lib1", running: true, started: true });
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("refresh-missing-button"));
+
+    await waitFor(() =>
+      expect(enrichLibrary).toHaveBeenCalledWith("lib1", { mode: "missing" }),
+    );
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+  });
+
+  it("Refresh missing metadata shows an already-running message on started:false", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    enrichLibrary.mockResolvedValue({ libraryId: "lib1", running: true, started: false });
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("refresh-missing-button"));
+
+    const err = await screen.findByTestId("admin-action-error");
+    expect(err).toHaveTextContent(/already running/i);
+  });
+
+  it("Refresh missing metadata shows a readable error on request failure", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    enrichLibrary.mockRejectedValue(new ApiError(503, "ENRICH_UNAVAILABLE", "no worker running"));
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("refresh-missing-button"));
+
+    const err = await screen.findByTestId("admin-action-error");
+    expect(err).toHaveTextContent(/no worker running/i);
+  });
+
+  it("Refresh all metadata opens a confirm dialog and calls with mode full only on confirm", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    enrichLibrary.mockResolvedValue({ libraryId: "lib1", running: true, started: true });
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("refresh-all-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    expect(within(dialog).getByTestId("confirm-dialog-message")).toHaveTextContent(
+      /Movies/,
+    );
+    expect(enrichLibrary).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByTestId("confirm-dialog-confirm"));
+    await waitFor(() =>
+      expect(enrichLibrary).toHaveBeenCalledWith("lib1", { mode: "full" }),
+    );
+  });
+
+  it("Cancel on the refresh-all confirmation calls nothing", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("refresh-all-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    await user.click(within(dialog).getByTestId("confirm-dialog-cancel"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
+    );
+    expect(enrichLibrary).not.toHaveBeenCalled();
+  });
 });
 
 describe("AdminLibrariesScreen scan controls (fake timers)", () => {
@@ -357,6 +458,46 @@ describe("AdminLibrariesScreen scan controls (fake timers)", () => {
     // Menu is still open; the controls are re-enabled once the scan settles.
     expect(screen.getByTestId("scan-button")).toBeEnabled();
     expect(screen.getByTestId("full-scan-button")).toBeEnabled();
+  });
+
+  it("refresh actions are disabled while a scan runs", async () => {
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    getScanStatus.mockResolvedValue(status({ state: "idle" }));
+    scanLibrary.mockResolvedValue(status({ state: "running" }));
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await flush();
+
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
+    fireEvent.click(screen.getByTestId("scan-button"));
+    await flush();
+    expect(screen.getByTestId("scan-status")).toHaveAttribute("data-state", "running");
+
+    // Reopen the menu: the refresh actions stay disabled for the whole running scan,
+    // same as Scan / Full scan.
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
+    expect(screen.getByTestId("refresh-missing-button")).toBeDisabled();
+    expect(screen.getByTestId("refresh-all-button")).toBeDisabled();
+  });
+
+  it("starting a Scan clears a stale refresh 'already running' message", async () => {
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    getScanStatus.mockResolvedValue(status({ state: "idle" }));
+    enrichLibrary.mockResolvedValue({ libraryId: "lib1", running: true, started: false });
+    scanLibrary.mockResolvedValue(status({ state: "running" }));
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await flush();
+
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
+    fireEvent.click(screen.getByTestId("refresh-missing-button"));
+    await flush();
+    expect(screen.getByTestId("admin-action-error")).toHaveTextContent(/already running/i);
+
+    fireEvent.click(screen.getByTestId("library-menu-toggle"));
+    fireEvent.click(screen.getByTestId("scan-button"));
+    await flush();
+    expect(screen.queryByTestId("admin-action-error")).not.toBeInTheDocument();
   });
 
   it("full scan hits the full endpoint", async () => {
