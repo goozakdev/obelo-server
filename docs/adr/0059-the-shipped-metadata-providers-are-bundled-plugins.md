@@ -167,6 +167,42 @@ A resolved one comes back flagged `resolvedRef` and is selected. The host reader
 answers for a lead whose namespace it isn't, so an AniDB-led Library's bare number is a
 search term, not a TMDB id.
 
+*Amended 2026-09-22: a guest's real clocks gained a cap.*
+Decision 6's fetch-bounded-by-budget rule assumed a guest paces
+itself with a Nanosleep that measures nothing, because that is what wazero
+defaulted to; enabling the REAL walltime, nanotime and Nanosleep a guest needs to
+pace at all (`pluginsdk.Pacer.Wait` is a no-op against a fake clock) turned out to
+reopen the hole decision 6 closed: wazero's own deadline enforcement
+(`WithCloseOnContextDone`) only takes effect when the guest re-enters wasm, not
+while it is blocked inside a real `time.Sleep`, so a guest that slept past its
+call budget was killed anyway, just LATER — at however long the sleep ran, not at
+the budget, still counted as a strike. Two mechanisms, host and SDK, close it. The
+host caps every guest's Nanosleep at what remains of the CURRENT call's deadline
+(`internal/plugins/guest.go`), so a deadline kill — when one still happens —
+happens at the budget, never later; that is a backstop and nothing more, and a
+guest that sleeps past its budget still pays for it with a kill, exactly as one
+that traps does. The HOST additionally tells a guest the time REMAINING until
+the deadline it is actually enforcing on the wire
+(`pluginapi.Settings.CallRemainingMillis`, additive and optional, resolved after
+any wait for the Plugin's own call lock) and the SDK builds a
+`context.WithTimeout` a margin short of it for every export
+(`pluginsdk.CallContext`), so a guest that honours ctx — `Pacer.Wait`, `GetJSON`
+— notices first and answers `unavailable` instead of being killed at all, which
+the host counts as an answer, not a failure. `plugins/musicbrainz`'s own
+guest-side 88-second guard is unaffected; the other seven Bundled plugins now get
+the same protection without a guard of their own.
+
+*Amended 2026-09-23: the remaining time is stamped after the call lock, at
+every seam.* The number above has to be the time actually left once a call
+clears `internal/plugins`' own serializing lock on its Plugin, not the seam's
+nominal budget computed before that wait — a call queued behind another
+in-flight call on the same Plugin that was told the nominal number could build
+a ctx that already outlives the host's real deadline, turning a clean
+`unavailable` back into the deadline kill this amendment exists to avoid. Every
+seam — `deliver`, the two subtitle calls, `settings_get` for a Metadata
+provider — reads it from the bounded context `callGuestUnder` builds after
+taking that lock.
+
 ## Consequences
 
 - CONTEXT.md gains **Bundled plugin**; **Built-in** now names OpenSubtitles and the Webhook

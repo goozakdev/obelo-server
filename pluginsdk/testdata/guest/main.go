@@ -29,6 +29,8 @@ import (
 	"github.com/goozakdev/obelo-server/pluginsdk"
 	"github.com/goozakdev/obelo-server/pluginsdk/internal/testprovider"
 	"github.com/goozakdev/obelo-server/pluginsdk/metadata"
+	"github.com/goozakdev/obelo-server/pluginsdk/sink"
+	"github.com/goozakdev/obelo-server/pluginsdk/subtitle"
 )
 
 // sdk-sample:begin serve
@@ -47,3 +49,21 @@ func init() {
 }
 
 // sdk-sample:end serve
+
+// A second init() registers the same testprovider.Provider SHAPE, on its own
+// Host, as this module's Subtitle provider too — one module filling two seams
+// (ADR-0058 decision 3), kept out of the marked sample above so the
+// authoring guide's minimal single-seam example does not grow a second
+// provider it does not need to show.
+func init() {
+	subtitle.Serve(testprovider.New(pluginsdk.PacedHost(pluginsdk.Sandbox(), 5*time.Millisecond)))
+}
+
+// A third init() registers [testprovider.Sink] as this module's Event sink, one
+// module filling a third seam. It is the smallest sink the SDK's own proofs
+// need — see testprovider.Sink — kept out of the marked sample above for the
+// same reason the second init() is: the authoring guide's minimal example shows
+// one seam.
+func init() {
+	sink.Serve(testprovider.NewSink(pluginsdk.PacedHost(pluginsdk.Sandbox(), 5*time.Millisecond)))
+}

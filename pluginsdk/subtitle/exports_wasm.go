@@ -3,8 +3,6 @@
 package subtitle
 
 import (
-	"context"
-
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/pluginsdk"
 )
@@ -22,7 +20,9 @@ func subtitleSearch(ptr, n uint32) uint64 {
 	withdraw := pluginsdk.PublishCallSettings(call.Settings)
 	defer withdraw()
 
-	resp, err := p.SearchSubtitles(context.Background(), call.Request)
+	ctx, cancel := pluginsdk.CallContext(call.Settings.CallRemainingMillis)
+	defer cancel()
+	resp, err := p.SearchSubtitles(ctx, call.Request)
 	if err != nil {
 		return pluginsdk.Fail("subtitle search: " + err.Error())
 	}
@@ -42,7 +42,9 @@ func subtitleDownload(ptr, n uint32) uint64 {
 	withdraw := pluginsdk.PublishCallSettings(call.Settings)
 	defer withdraw()
 
-	resp, err := p.DownloadSubtitle(context.Background(), call.Request)
+	ctx, cancel := pluginsdk.CallContext(call.Settings.CallRemainingMillis)
+	defer cancel()
+	resp, err := p.DownloadSubtitle(ctx, call.Request)
 	if err != nil {
 		return pluginsdk.Fail("subtitle download: " + err.Error())
 	}

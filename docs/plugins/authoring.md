@@ -322,7 +322,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",

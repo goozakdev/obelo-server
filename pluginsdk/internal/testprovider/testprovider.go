@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/pluginsdk"
@@ -40,7 +41,16 @@ const (
 	KVKey = "sdk-guest-marker"
 	// FetchPath is the path the "fetch" mode asks the operator's own URL for.
 	FetchPath = "/record"
+	// SubtitlePath is the path SearchSubtitles asks the operator's own URL for.
+	SubtitlePath = "/subtitles"
 )
+
+// BlindSleepDuration is how long the "blind-sleep" mode sleeps for. It is the
+// HOST backstop's own proof (ADR-0059 decision 6): this mode calls time.Sleep
+// directly and never looks at ctx, so nothing about the SDK's own deadline can
+// save it — only a wazero Nanosleep capped at the call's deadline can, and this
+// mode exists to prove that cap by itself, with no other mechanism helping.
+const BlindSleepDuration = 3 * time.Second
 
 // Provider is a Metadata provider written the way the SDK asks for one: it holds
 // a [pluginsdk.Host] and nothing else, and every outbound request, log line,
@@ -51,11 +61,19 @@ const (
 // declares `external-ref` against this provider gets OutcomeUnavailable from the
 // SDK's dispatcher rather than a broken call, which is the degradation ADR-0057
 // decision 3 asks for and is one of this issue's acceptance criteria.
+//
+// It ALSO implements [pluginapi.SubtitleProvider] — SearchSubtitles below —
+// proving that one module can fill two seams (ADR-0058 decision 3), and giving
+// the Subtitle provider Extension point the same ctx-deadline proof the
+// Metadata one has.
 type Provider struct {
 	host pluginsdk.Host
 }
 
-var _ pluginapi.MetadataProvider = (*Provider)(nil)
+var (
+	_ pluginapi.MetadataProvider = (*Provider)(nil)
+	_ pluginapi.SubtitleProvider = (*Provider)(nil)
+)
 
 // New builds the provider on a Host. In the sandbox that Host is
 // pluginsdk.Sandbox(); in a test it is sdktest.New(...). The provider cannot tell,
@@ -79,6 +97,15 @@ func (p *Provider) Lookup(ctx context.Context, req pluginapi.LookupRequest) (plu
 	}
 
 	switch Mode(s.URL) {
+	case "blind-sleep":
+		// A guest that ignores ctx entirely, the way plugintest's SDK-free guest and
+		// any author who never reads the parameter can. time.Sleep in a wasip1 guest
+		// runs through WASI's poll_oneoff, which is what the host's Nanosleep cap
+		// intercepts — so this mode proves that cap on its own, without the SDK's
+		// ctx deadline in the way.
+		time.Sleep(BlindSleepDuration)
+		return p.record(req.Ref, Overview, s), nil
+
 	case "kv":
 		// The plugin-scoped namespace, round-tripped: write this plugin's own
 		// secret under a key every guest in the suite uses, read it back, and
@@ -155,6 +182,63 @@ func (p *Provider) ArtworkCandidates(_ context.Context, req pluginapi.ArtworkCan
 }
 
 // sdk-sample:end artwork
+
+// SearchSubtitles paces itself through the SAME [pluginsdk.GetJSON] call the
+// "fetch" Lookup mode uses, against the operator's own URL — enough to give the
+// Subtitle provider seam its own proof that a ctx-honouring guest notices a call
+// budget it cannot fit and answers "unavailable" instead of being killed for it.
+func (p *Provider) SearchSubtitles(ctx context.Context, req pluginapi.SubtitleSearchRequest) (pluginapi.SubtitleSearchResponse, error) {
+	s := p.host.Settings()
+	var out struct {
+		Candidates []pluginapi.SubtitleCandidate `json:"candidates"`
+	}
+	if err := pluginsdk.GetJSON(ctx, p.host, baseOf(s.URL)+SubtitlePath, nil, &out); err != nil {
+		p.host.Log(pluginsdk.LevelError, "the subtitle search could not be made: "+err.Error())
+		return pluginapi.SubtitleSearchResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: err.Error()}, nil
+	}
+	return pluginapi.SubtitleSearchResponse{Outcome: pluginapi.OutcomeMatched, Candidates: out.Candidates}, nil
+}
+
+// DownloadSubtitle answers unavailable, always: nothing in the SDK's own proofs
+// needs a candidate's bytes back, only SearchSubtitles' ctx-deadline seam above.
+func (p *Provider) DownloadSubtitle(_ context.Context, _ pluginapi.SubtitleDownloadRequest) (pluginapi.SubtitleDownloadResponse, error) {
+	return pluginapi.SubtitleDownloadResponse{Outcome: pluginapi.OutcomeUnavailable, Detail: "not implemented by the test guest"}, nil
+}
+
+// Sink is the smallest Event sink the SDK's own proofs need: it paces one
+// Deliver through the SAME [PacedHost] pattern SearchSubtitles does, and NOTHING
+// else, giving the Event sink Extension point its own ctx-deadline proof without
+// a fetch to a second server. A pace that cannot fit is reported as a VALUE — a
+// clean "not delivered" (sink.go's file comment: a sink reports failure as a
+// value, never as a failed call) — never as a raised Go error, which is what lets
+// a guest that honours ctx answer cleanly instead of being killed for it.
+type Sink struct {
+	host pluginsdk.Host
+}
+
+// NewSink builds the sink on a Host, exactly as [New] builds the provider.
+func NewSink(h pluginsdk.Host) *Sink { return &Sink{host: h} }
+
+var _ pluginapi.EventSink = (*Sink)(nil)
+
+// Deliver paces itself against the operator's RateLimitMillis — via the Pacer a
+// [PacedHost] carries, read the same way [PacedHost.Fetch] reads it — and
+// reports the pace not fitting inside ctx as the delivery's own failure, not the
+// call's.
+func (s *Sink) Deliver(ctx context.Context, _ pluginapi.SinkEvent) error {
+	pacer := pluginsdk.PacerOf(s.host)
+	if pacer == nil {
+		return nil
+	}
+	pacer.SetInterval(pluginsdk.IntervalFrom(s.host.Settings(), sinkOwnDefaultPace))
+	return pacer.Wait(ctx)
+}
+
+// sinkOwnDefaultPace is this sink's own pacing default, absent an operator
+// override — the same number the other two seams' [pluginsdk.PacedHost] calls
+// use in pluginsdk/testdata/guest/main.go, so all three behave identically when
+// nobody has set RateLimitMillis.
+const sinkOwnDefaultPace = 5 * time.Millisecond
 
 // record is the matched answer, with the overview the mode produced.
 func (p *Provider) record(ref pluginapi.MediaRef, overview string, s pluginapi.Settings) pluginapi.LookupResponse {

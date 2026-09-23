@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -184,7 +185,9 @@ type instance struct {
 	calls     map[string]api.Function
 }
 
-// instantiate creates a fresh guest from the compiled artifact.
+// instantiate creates a fresh guest from the compiled artifact, owned by p for
+// the life of the instance: p.callDeadline is what caps this instance's Nanosleep
+// (see below), and it moves every call callGuestUnder makes.
 //
 // WithStartFunctions("_initialize") is NOT optional. A -buildmode=c-shared guest
 // exports _initialize rather than _start, wazero runs _start by default, and
@@ -192,11 +195,41 @@ type instance struct {
 // WithName("") keeps instances anonymous so a rebuilt one does not collide with
 // the module it replaces.
 //
-// Nothing else is configured, and that absence is the sandbox: no preopened
-// directory, no WithFS/WithFSConfig, no environment, no stdio, and wazero has no
-// host sockets to withhold.
-func (c *compiled) instantiate(ctx context.Context) (*instance, error) {
-	cfg := wazero.NewModuleConfig().WithName("").WithStartFunctions("_initialize")
+// WithSysWalltime/WithSysNanotime opt OUT of wazero's default fake clock, which
+// advances 1 ms per read: pacing and retry backoff are the GUEST's job (ADR-0059
+// decision 5), and pluginsdk.Pacer.Wait needs a clock it did not advance itself.
+// Wall time and elapsed time are not secrets, so a real clock leaks nothing; what
+// a real Nanosleep would cost is a guest that outlives its call deadline by
+// sleeping past it, which is why the closure below caps it (see below).
+//
+// Nanosleep is real too, but NOT wazero's WithSysNanosleep: that is a plain
+// time.Sleep with no ctx (internal/platform/time.go), and wazero's own deadline
+// enforcement (WithCloseOnContextDone) only takes effect when the guest RE-ENTERS
+// wasm — not while it is blocked inside a host call — so an uncapped real sleep
+// lets a guest outlive its call budget by sleeping past it, and the eventual kill
+// still costs a strike for however long the sleep ran. The closure below
+// is real time.Sleep CAPPED at what is left of p.callDeadline: a guest still pays
+// for oversleeping with a deadline kill, but the call returns at its budget
+// rather than however long the guest asked to sleep for (ADR-0059 decision 6,
+// the host backstop). Pairs with the SDK-side deadline
+// (pluginapi.Settings.CallRemainingMillis, ADR-0059 decision 6), which lets a
+// guest that honours ctx avoid the kill entirely by answering "unavailable"
+// first; this is the backstop for the guest that does not.
+func (c *compiled) instantiate(ctx context.Context, p *Plugin) (*instance, error) {
+	cfg := wazero.NewModuleConfig().WithName("").WithStartFunctions("_initialize").
+		WithSysWalltime().WithSysNanotime().
+		WithNanosleep(func(ns int64) {
+			d := time.Duration(ns)
+			if d <= 0 {
+				return
+			}
+			if remain := time.Until(p.callDeadline); remain < d {
+				d = remain
+			}
+			if d > 0 {
+				time.Sleep(d)
+			}
+		})
 	mod, err := c.rt.InstantiateModule(ctx, c.module, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("instantiating the module: %w", err)

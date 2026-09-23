@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -130,6 +131,10 @@ type receiver struct {
 type post struct {
 	body      []byte
 	signature string
+	// callRemainingMillis is X-Obelo-Call-Remaining-Millis, the plugintest sink
+	// guest's echo of Settings.CallRemainingMillis (empty when the guest was not
+	// asked to send one, which never happens today — every seam stamps one).
+	callRemainingMillis string
 }
 
 func newReceiver(t *testing.T) *receiver {
@@ -138,7 +143,11 @@ func newReceiver(t *testing.T) *receiver {
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
 		r.mu.Lock()
-		r.posts = append(r.posts, post{body: body, signature: req.Header.Get("X-Obelo-Signature")})
+		r.posts = append(r.posts, post{
+			body:                body,
+			signature:           req.Header.Get("X-Obelo-Signature"),
+			callRemainingMillis: req.Header.Get("X-Obelo-Call-Remaining-Millis"),
+		})
 		r.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -434,6 +443,57 @@ func TestACallerDeadlineBoundsAGuestBelowItsOwnBudget(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("the call took %v, want it bounded by the caller's 300ms deadline", elapsed)
+	}
+}
+
+// TestASinkGuestReceivesTheRemainingBudgetNotTheNominalOne is ADR-0059 decision
+// 6 at the Event sink seam: Settings.CallRemainingMillis carries the time
+// REMAINING until the deadline callGuestUnder is actually enforcing — min(the
+// caller's own ctx deadline, the sink's CallTimeout) — not CallTimeout itself.
+//
+// CallTimeout here is 10 s, but the CALLER's own ctx allows only 3 s. The guest
+// echoes the number it was told back to the receiver in a header (plugintest's
+// sink guest, extended for exactly this), so this is a straight read of what the
+// host actually sent rather than a timing inference: it must be positive and
+// close to the caller's 3 s, not the nominal 10 s.
+func TestASinkGuestReceivesTheRemainingBudgetNotTheNominalOne(t *testing.T) {
+	const callerDeadline = 3 * time.Second
+	const callTimeout = 10 * time.Second
+
+	dataDir := t.TempDir()
+	target := newReceiver(t)
+	plugintest.Install(t, dataDir, plugintest.SinkManifest("budget-sink"))
+
+	set := loadWith(t, dataDir, &logSink{}, plugins.Options{CallTimeout: callTimeout})
+	sink := sinkFor(t, set, "budget-sink", pluginapi.Settings{
+		Enabled: true, Secret: "s", URL: target.srv.URL,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), callerDeadline)
+	defer cancel()
+	if err := sink.Deliver(ctx, scanEvent()); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	posts := target.received()
+	if len(posts) != 1 {
+		t.Fatalf("the receiver saw %d posts, want 1", len(posts))
+	}
+	raw := posts[0].callRemainingMillis
+	if raw == "" {
+		t.Fatal("X-Obelo-Call-Remaining-Millis was never sent")
+	}
+	got, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("X-Obelo-Call-Remaining-Millis = %q, not an integer: %v", raw, err)
+	}
+	if got <= 0 {
+		t.Errorf("callRemainingMillis = %d, want > 0", got)
+	}
+	const tolerance = 300
+	if got > int(callerDeadline/time.Millisecond)+tolerance {
+		t.Errorf("callRemainingMillis = %d, want close to the caller's %v deadline, not the %v nominal CallTimeout",
+			got, callerDeadline, callTimeout)
 	}
 }
 

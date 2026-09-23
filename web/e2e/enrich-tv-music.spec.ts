@@ -98,7 +98,10 @@ async function scanAndEnrich(
   expect(settled.titlesFound, `scan found no titles: ${JSON.stringify(settled)}`).toBeGreaterThan(0);
   // The pass is asynchronous (202), so wait for it to finish and read counts
   // from GET's lastPass.
-  const result = await waitEnrichPass(request, auth, libId);
+  // Real per-provider pacing (default 1 s/request, MusicBrainz) makes the
+  // Music library's pass take ~17 s measured; 60 s covers 3× that with room
+  // to spare.
+  const result = await waitEnrichPass(request, auth, libId, { timeoutMs: 60_000 });
   expect(result.matched, `enrich matched none: ${JSON.stringify(result)}`).toBeGreaterThan(0);
 }
 
@@ -142,7 +145,14 @@ test.describe.serial("enrichment: TV & Music decorated detail", () => {
   let tvLibId = "";
   let musicLibId = "";
 
-  test.beforeAll(async ({ playwright, baseURL }) => {
+  test.beforeAll(async ({ playwright, baseURL }, testInfo) => {
+    // Two sequential scanAndEnrich calls follow, each with its own 15 s
+    // waitScanSettled and 60 s waitEnrichPass above (real MusicBrainz pacing
+    // pushes the music one well past Playwright's default 30 s hook timeout);
+    // the hook timeout has to clear their worst case COMBINED — 2 x (15 s +
+    // 60 s) = 150 s — with margin.
+    testInfo.setTimeout(180_000);
+
     const request = await playwright.request.newContext({ baseURL });
     await ensureAdmin(request);
     const token = await login(request);

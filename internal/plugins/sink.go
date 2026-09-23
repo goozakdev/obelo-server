@@ -66,11 +66,17 @@ var _ pluginapi.EventSink = (*guestSink)(nil)
 func (g *guestSink) Deliver(ctx context.Context, ev pluginapi.SinkEvent) error {
 	// The declared settings are stamped on at CALL time (issue 13): the fixed half
 	// was resolved when this sink was built, the manifest-declared half is read now,
-	// so a settings save reaches the next delivery without a rebuild.
-	req := pluginapi.SinkDeliverRequest{Event: ev, Settings: g.p.withSettingValues(g.settings)}
+	// so a settings save reaches the next delivery without a rebuild. Only the
+	// remaining-time half comes from callCtx — the bounded context callGuestUnder
+	// builds AFTER taking callMu — so Settings.CallRemainingMillis tells the guest
+	// what is left once any lock wait behind another in-flight call on this
+	// Plugin is over, not the seam's nominal CallTimeout.
 	var resp pluginapi.SinkDeliverResponse
+	buildReq := func(callCtx context.Context) any {
+		return pluginapi.SinkDeliverRequest{Event: ev, Settings: g.p.withSettingValues(g.settings, callCtx)}
+	}
 
-	err := g.p.callGuest(ctx, exportDeliver, hostOf(g.settings.URL), req, &resp)
+	err := g.p.callGuest(ctx, exportDeliver, hostOf(g.settings.URL), buildReq, &resp)
 	if err != nil {
 		if errors.Is(err, ErrDisabled) {
 			// A disabled Plugin is not called at all. The event is counted as a

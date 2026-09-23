@@ -1,7 +1,7 @@
 {
   "id": "theaudiodb",
   "name": "TheAudioDB",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 1,
   "description": "Artist images (name-matched) and biographies. Fill-only supplement; requires an API key.",
   "docsUrl": "https://www.theaudiodb.com/api_guide.php",

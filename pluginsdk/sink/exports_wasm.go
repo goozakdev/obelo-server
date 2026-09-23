@@ -3,8 +3,6 @@
 package sink
 
 import (
-	"context"
-
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 	"github.com/goozakdev/obelo-server/pluginsdk"
 )
@@ -32,7 +30,9 @@ func deliver(ptr, n uint32) uint64 {
 	withdraw := pluginsdk.PublishCallSettings(req.Settings)
 	defer withdraw()
 
-	if err := s.Deliver(context.Background(), req.Event); err != nil {
+	ctx, cancel := pluginsdk.CallContext(req.Settings.CallRemainingMillis)
+	defer cancel()
+	if err := s.Deliver(ctx, req.Event); err != nil {
 		return pluginsdk.Reply(pluginapi.SinkDeliverResponse{Error: err.Error()})
 	}
 	return pluginsdk.Reply(pluginapi.SinkDeliverResponse{Delivered: true})

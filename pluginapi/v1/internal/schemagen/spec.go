@@ -121,6 +121,15 @@ func fieldOverrides() map[string]any {
 				"for a self-hosted mirror with no rate policy. The two are different instructions and neither is the "+
 				"other's default, so a guest must distinguish a missing key from a present 0 and must never substitute "+
 				"one for the other."),
+		"Settings.callRemainingMillis": obj().
+			set("type", "integer").
+			set("minimum", 0).
+			set("description", "The time REMAINING, in milliseconds, until the deadline the host will enforce "+
+				"on the call this Settings rides with, HOST-resolved like rateLimitMillis. ABSENT means the host "+
+				"is not telling this seam a budget, which a guest must read exactly as it would have before this "+
+				"field existed (context.Background() in the Go SDK); present means a guest that honours it may "+
+				"build a deadline a margin short of this number so a pace or a fetch that cannot fit answers "+
+				"cleanly instead of being killed mid-call."),
 		"Settings.events": obj().
 			set("type", "array").
 			set("items", ref("EventType")).

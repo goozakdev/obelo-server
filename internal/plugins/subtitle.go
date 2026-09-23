@@ -92,8 +92,13 @@ var _ pluginapi.SubtitleProvider = (*guestSubtitleProvider)(nil)
 // Subtitle provider budget — the host's 10 s default, or what the manifest asked
 // for up to the cap — and a clean error still counted as a strike, because a
 // subtitle search has no item to park it on (see callPolicy).
-func (g *guestSubtitleProvider) call(ctx context.Context, export string, req, out any) error {
-	return g.p.callGuestUnder(ctx, callPolicy{budget: g.p.subtitleCallBudget}, export, hostOf(g.settings.URL), req, out)
+//
+// buildReq is handed the bounded callCtx callGuestUnder built AFTER taking
+// callMu, so a caller that stamps Settings.CallRemainingMillis from it (both
+// callers below do) tells the guest what is left once any lock wait is over,
+// not the seam's nominal budget.
+func (g *guestSubtitleProvider) call(ctx context.Context, export string, buildReq func(callCtx context.Context) any, out any) error {
+	return g.p.callGuestUnder(ctx, callPolicy{budget: g.p.subtitleCallBudget}, export, hostOf(g.settings.URL), buildReq, out)
 }
 
 // SearchSubtitles asks the guest for the candidates it offers for one Title in
@@ -107,10 +112,12 @@ func (g *guestSubtitleProvider) call(ctx context.Context, export string, req, ou
 // an empty candidate list, so a viewer sees "nothing found" rather than a failure
 // (ADR-0001).
 func (g *guestSubtitleProvider) SearchSubtitles(ctx context.Context, req pluginapi.SubtitleSearchRequest) (pluginapi.SubtitleSearchResponse, error) {
-	call := pluginapi.SubtitleSearchCall{Request: req, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SubtitleSearchResponse
+	buildReq := func(callCtx context.Context) any {
+		return pluginapi.SubtitleSearchCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+	}
 
-	if err := g.call(ctx, exportSubtitleSearch, call, &resp); err != nil {
+	if err := g.call(ctx, exportSubtitleSearch, buildReq, &resp); err != nil {
 		return pluginapi.SubtitleSearchResponse{}, g.wrap("searching for "+req.Language, err)
 	}
 	return resp, nil
@@ -135,10 +142,12 @@ func (g *guestSubtitleProvider) DownloadSubtitle(ctx context.Context, req plugin
 	limit := g.p.downloadLimit(req.MaxBytes)
 	req.MaxBytes = limit
 
-	call := pluginapi.SubtitleDownloadCall{Request: req, Settings: g.p.withSettingValues(g.settings)}
 	var resp pluginapi.SubtitleDownloadResponse
+	buildReq := func(callCtx context.Context) any {
+		return pluginapi.SubtitleDownloadCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+	}
 
-	if err := g.call(ctx, exportSubtitleDownload, call, &resp); err != nil {
+	if err := g.call(ctx, exportSubtitleDownload, buildReq, &resp); err != nil {
 		return pluginapi.SubtitleDownloadResponse{}, g.wrap("downloading "+req.Candidate.ID, err)
 	}
 	if int64(len(resp.Data)) > limit {

@@ -64,6 +64,10 @@ func main() {}
 type settings struct {
 	URL    string `json:"url"`
 	Secret string `json:"secret"`
+	// CallRemainingMillis is echoed back to the receiver as a header (see post
+	// below), so a native test can read the number the host actually stamped on
+	// this call without this guest needing an opinion about it.
+	CallRemainingMillis *int `json:"callRemainingMillis,omitempty"`
 }
 
 type deliverRequest struct {
@@ -126,14 +130,18 @@ func post(req deliverRequest) deliverResponse {
 	mac := hmac.New(sha256.New, []byte(req.Settings.Secret))
 	mac.Write(body)
 
+	headers := []header{
+		{Name: "Content-Type", Value: "application/json"},
+		{Name: "X-Obelo-Signature", Value: "sha256=" + hex.EncodeToString(mac.Sum(nil))},
+	}
+	if req.Settings.CallRemainingMillis != nil {
+		headers = append(headers, header{Name: "X-Obelo-Call-Remaining-Millis", Value: itoa(*req.Settings.CallRemainingMillis)})
+	}
 	resp := fetch(fetchRequest{
-		Method: "POST",
-		URL:    req.Settings.URL,
-		Headers: []header{
-			{Name: "Content-Type", Value: "application/json"},
-			{Name: "X-Obelo-Signature", Value: "sha256=" + hex.EncodeToString(mac.Sum(nil))},
-		},
-		Body: body,
+		Method:  "POST",
+		URL:     req.Settings.URL,
+		Headers: headers,
+		Body:    body,
 	})
 
 	switch {
