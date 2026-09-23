@@ -132,6 +132,31 @@ func Manifest(id, mode string, p pluginapi.ManifestProvides, allowedHosts ...str
 	return m
 }
 
+// SubtitleManifest is the manifest of the SDK guest as a Subtitle provider:
+// plugintest's document, naming this compiled module. It exists beside
+// Manifest for the same reason plugintest.SubtitleManifest exists beside
+// SinkManifest — one module CAN fill two seams, and testprovider.Provider now
+// does (SearchSubtitles). The caller sets Settings.URL to the source it wants
+// SearchSubtitles to ask, exactly as a Metadata provider test does.
+func SubtitleManifest(id string, allowedHosts ...string) pluginapi.Manifest {
+	m := plugintest.SubtitleManifest(id, allowedHosts...)
+	m.Name = "SDK Source (" + id + ")"
+	m.Description = "A Subtitle provider built with the Obelo Go SDK, compiled from source by the test suite."
+	return m
+}
+
+// SinkManifest is the manifest of the SDK guest as an Event sink: plugintest's
+// document, naming this compiled module. It exists beside Manifest and
+// SubtitleManifest for the reason both do — one module fills a third seam
+// (testprovider.Sink) — and the caller sets Settings.RateLimitMillis to pace it,
+// exactly as a Subtitle provider test does.
+func SinkManifest(id string, allowedHosts ...string) pluginapi.Manifest {
+	m := plugintest.SinkManifest(id, allowedHosts...)
+	m.Name = "SDK Source (" + id + ")"
+	m.Description = "An Event sink built with the Obelo Go SDK, compiled from source by the test suite."
+	return m
+}
+
 // Install places the manifest and the compiled SDK guest under
 // <dataDir>/plugins/<id>/, the way an Admin does by hand.
 func Install(t *testing.T, dataDir string, m pluginapi.Manifest) string {

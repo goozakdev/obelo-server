@@ -92,10 +92,13 @@ func (p *Pacer) Wait(ctx context.Context) error {
 
 // sleepFor waits, and stops early if the call's deadline arrives first.
 //
-// In the sandbox ctx.Done() is usually nil — the host enforces its deadline by
-// unwinding the guest rather than by cancelling something the guest holds — so
-// this is a plain sleep there and a cancellable one in a native test. Both are
-// correct; only the second can be asserted.
+// In the sandbox ctx.Done() is non-nil whenever the host told this call a
+// budget (pluginapi.Settings.CallRemainingMillis, ADR-0059 decision 6): the export
+// dispatcher builds ctx from it with [pluginsdk.CallContext], and this is the
+// cancellable branch a real deadline reaches. It is nil only for a guest built
+// before that field existed, or a call the host genuinely told nothing —
+// context.Background() — where this is a plain sleep instead. Both are
+// correct; only the cancellable one can be asserted from outside the sandbox.
 func (p *Pacer) sleepFor(ctx context.Context, d time.Duration) error {
 	if p.sleep != nil {
 		p.sleep(d)

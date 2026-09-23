@@ -302,7 +302,7 @@ func (g *guestProvider) call(ctx context.Context, export string, req, out any) e
 	return g.p.callGuestUnder(ctx, callPolicy{
 		budget:            g.p.metaCallBudget,
 		refusalIsAnAnswer: true,
-	}, export, hostOf(g.settings.URL), req, out)
+	}, export, hostOf(g.settings.URL), func(context.Context) any { return req }, out)
 }
 
 // setCallSettings publishes (or withdraws) the Settings settings_get answers with.
@@ -321,7 +321,12 @@ func (p *Plugin) setCallSettings(s *pluginapi.Settings) {
 // for this call, and — since issue 13 — the manifest-declared values in Values,
 // read fresh so a save takes effect on the next call rather than on the next
 // rebuild. Outside a call neither half is answered, declared secrets included.
-func (p *Plugin) currentSettings() pluginapi.Settings {
+//
+// ctx is the wazero call ctx settings_get was invoked with — the SAME bounded
+// callCtx callGuestUnder built this call's deadline from — so
+// callRemainingMillis(ctx) reads that deadline straight back rather than
+// restating the nominal budget (ADR-0059 decision 6).
+func (p *Plugin) currentSettings(ctx context.Context) pluginapi.Settings {
 	p.mu.Lock()
 	inFlight := p.meta.settings != nil
 	var s pluginapi.Settings
@@ -332,7 +337,7 @@ func (p *Plugin) currentSettings() pluginapi.Settings {
 	if !inFlight {
 		return pluginapi.Settings{}
 	}
-	return p.withSettingValues(s)
+	return p.withSettingValues(s, ctx)
 }
 
 // unavailable reports whether an error means "this module does not answer that

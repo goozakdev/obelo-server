@@ -510,7 +510,7 @@ func (h *hostFuncs) kvDelete(ctx context.Context, mod api.Module, ptr, n uint32)
 // Settings ride with it, while a provider has eight, and eight per-call envelopes
 // carrying the same document would be eight places for a secret to be forgotten.
 func (h *hostFuncs) settingsGet(ctx context.Context, mod api.Module) uint64 {
-	return h.emit(ctx, mod, h.p.currentSettings())
+	return h.emit(ctx, mod, h.p.currentSettings(ctx))
 }
 
 // readRequest decodes one host-function request out of guest memory. The pointer

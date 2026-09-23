@@ -15,13 +15,18 @@ import (
 //
 // # The context
 //
-// context.Background(), and that is not a shrug. The host's deadline is enforced
-// by UNWINDING the guest (wazero's WithCloseOnContextDone), not by cancelling
-// something the guest holds, so there is no deadline in here to pass on and a
-// plugin cannot outlive its budget by ignoring a ctx. The parameter is on the
-// contract's interfaces because a Built-in is called in-process, where the
-// deadline is real; a plugin gets a context it can pass to an SDK helper and
-// nothing more.
+// callCtx() reads Settings.CallRemainingMillis — the host-resolved time
+// remaining this call is under, riding the wire exactly as RateLimitMillis does
+// — and builds either
+// context.Background() (no budget stated) or a context.WithTimeout a margin
+// short of it ([pluginsdk.CallContext]). The host's OWN deadline is still
+// enforced the hard way, by unwinding the guest (wazero's WithCloseOnContextDone)
+// and capping any real sleep at what is left of it (ADR-0059 decision 6,
+// internal/plugins/guest.go): a plugin that ignores this ctx entirely still
+// cannot outlive its budget. What this ctx buys a plugin that DOES honour it —
+// [pluginsdk.Pacer.Wait], [pluginsdk.GetJSON] — is the chance to notice first and
+// answer OutcomeUnavailable instead of being killed mid-call, which the host
+// counts as an answer rather than a failure (ADR-0059 decision 6).
 //
 // # Errors
 //
@@ -30,6 +35,15 @@ import (
 // the 0-and-last_error the ABI reserves for exactly that, so the host counts a
 // failure — which is what an error IS. A source that simply has nothing is
 // OutcomeNoMatch and is not an error.
+
+// callCtx builds the ctx every export hands to served provider code: see the
+// package comment above for what it does and why. It reads Settings itself,
+// rather than trusting the provider to have read them first, because a plugin
+// that never calls Host.Settings() must still get a bounded ctx exactly like one
+// that does.
+func callCtx() (context.Context, context.CancelFunc) {
+	return pluginsdk.CallContext(pluginsdk.Sandbox().Settings().CallRemainingMillis)
+}
 
 //go:wasmexport metadata_lookup
 func metadataLookup(ptr, n uint32) uint64 {
@@ -41,7 +55,9 @@ func metadataLookup(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not a LookupRequest")
 	}
-	resp, err := p.Lookup(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := p.Lookup(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("lookup: " + err.Error())
 	}
@@ -58,7 +74,9 @@ func metadataSearch(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not a SearchRequest")
 	}
-	resp, err := p.Search(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := p.Search(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("search: " + err.Error())
 	}
@@ -75,7 +93,9 @@ func metadataArtworkCandidates(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not an ArtworkCandidatesRequest")
 	}
-	resp, err := p.ArtworkCandidates(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := p.ArtworkCandidates(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("artwork candidates: " + err.Error())
 	}
@@ -95,7 +115,9 @@ func metadataSeriesSeasons(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not a SeriesSeasonsRequest")
 	}
-	resp, err := lister.SeriesSeasons(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := lister.SeriesSeasons(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("series seasons: " + err.Error())
 	}
@@ -115,7 +137,9 @@ func metadataSeasonEpisodes(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not a SeasonEpisodesRequest")
 	}
-	resp, err := lister.SeasonEpisodes(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := lister.SeasonEpisodes(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("season episodes: " + err.Error())
 	}
@@ -146,7 +170,9 @@ func metadataAlbumTracklist(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not a TracklistRequest")
 	}
-	resp, err := lister.AlbumTracklist(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := lister.AlbumTracklist(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("album tracklist: " + err.Error())
 	}
@@ -166,7 +192,9 @@ func metadataReleaseEditions(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not a ReleaseEditionsRequest")
 	}
-	resp, err := lister.ReleaseGroupEditions(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := lister.ReleaseGroupEditions(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("release editions: " + err.Error())
 	}
@@ -186,7 +214,9 @@ func metadataExternalRef(ptr, n uint32) uint64 {
 	if !pluginsdk.TakeRequest(ptr, n, &req) {
 		return pluginsdk.Fail("the request is not an ExternalRefRequest")
 	}
-	resp, err := parser.ParseExternalRef(context.Background(), req)
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := parser.ParseExternalRef(ctx, req)
 	if err != nil {
 		return pluginsdk.Fail("external ref: " + err.Error())
 	}

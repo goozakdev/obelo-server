@@ -1,7 +1,7 @@
 {
   "id": "opensubtitles",
   "name": "OpenSubtitles",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 1,
   "description": "Community subtitle database. Matches your exact release by content hash for in-sync subtitles; requires a free API key.",
   "docsUrl": "https://www.opensubtitles.com/en/consumers",

@@ -32,17 +32,18 @@ func wireCases() []wireCase {
 		{
 			name: "Settings",
 			value: Settings{
-				Enabled:         true,
-				Secret:          "sk-123",
-				URL:             "https://api.example.test/v1",
-				URL2:            "https://images.example.test",
-				Events:          []string{"scan.completed", "playback.started"},
-				Language:        "en-US",
-				RateLimitMillis: intPtr(1000),
+				Enabled:             true,
+				Secret:              "sk-123",
+				URL:                 "https://api.example.test/v1",
+				URL2:                "https://images.example.test",
+				Events:              []string{"scan.completed", "playback.started"},
+				Language:            "en-US",
+				RateLimitMillis:     intPtr(1000),
+				CallRemainingMillis: intPtr(30000),
 			},
 			golden: `{"enabled":true,"secret":"sk-123","url":"https://api.example.test/v1",` +
 				`"url2":"https://images.example.test","events":["scan.completed","playback.started"],` +
-				`"language":"en-US","rateLimitMillis":1000}`,
+				`"language":"en-US","rateLimitMillis":1000,"callRemainingMillis":30000}`,
 		},
 		{
 			// A rate limit of ZERO is the operator's "do not throttle at all" and has to

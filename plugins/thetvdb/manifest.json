@@ -1,7 +1,7 @@
 {
   "id": "thetvdb",
   "name": "TheTVDB",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 1,
   "description": "Fills TV show/episode titles, overviews, and stills TMDB missed. Fill-only supplement; requires an API key.",
   "docsUrl": "https://thetvdb.com/api-information",

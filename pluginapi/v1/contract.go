@@ -200,6 +200,39 @@ type Settings struct {
 	// host with each Library correctly believing it was well behaved), so the
 	// interval has to be known when the Plugin is built, before any call.
 	RateLimitMillis *int `json:"rateLimitMillis,omitempty"`
+	// CallRemainingMillis is HOST-resolved, like Secret and URL: the time
+	// REMAINING, in milliseconds, until the deadline callGuestUnder is actually
+	// enforcing on the call this Settings rides with — min(the caller's own
+	// context deadline, the seam's nominal budget), read back from the bounded
+	// ctx AFTER callGuestUnder has taken its lock and built it, so a call that
+	// queued behind another one on the same Plugin is told what is left once the
+	// wait is over, not the seam's nominal budget. A caller whose own context is
+	// shorter than the seam's budget (an admin's "Test connection", say) is
+	// common, and telling the guest the longer number there would have it build a
+	// ctx that outlives the deadline the host is about to enforce, turning a clean
+	// "unavailable" into a deadline kill. It is filled for every call at every
+	// seam — metadata_lookup and its seven siblings, deliver, the two subtitle
+	// calls — so a guest that reads it is never told a number the host does not
+	// also mean. It is named RemainingMillis and not BudgetMillis so it is never
+	// confused with a manifest's own provides[].callBudgetMillis — that is the
+	// nominal cap an author asked for; this is what is actually left of the
+	// call the host is enforcing.
+	//
+	// It is OPTIONAL and ADDITIVE (ADR-0059 decision 6): a guest built before this
+	// field existed ignores it and gets exactly today's behaviour. One that honours
+	// it can build a context.WithTimeout a margin short of the deadline, so a
+	// Pacer.Wait or a fetch that cannot fit inside the remaining time returns an
+	// error the guest turns into a clean "unavailable" ANSWER, rather than being
+	// unwound mid-call by the runtime's own deadline enforcement — which is a
+	// strike, and this is not.
+	//
+	// Absent means the host knows of no deadline at all — context.Background(),
+	// same as today. Present always means at least 1: the host never sends 0,
+	// even for a callCtx whose deadline has already passed by the time this is
+	// built (buildReq can run after instantiate has eaten the whole budget), so
+	// the SDK's "absent-or-zero means no deadline" reading of the field is never
+	// handed a deadline the host actually meant (ADR-0059 decision 6).
+	CallRemainingMillis *int `json:"callRemainingMillis,omitempty"`
 	// Values is the SECOND VARIANT of this field (.scratch/plugin-system issue 13):
 	// the values of the settings an Installed plugin's manifest declared for
 	// itself, keyed by the SettingsField.Key that declared them, in the JSON shape

@@ -116,6 +116,11 @@
           "minimum": 0,
           "description": "Minimum interval between two requests to this source's host, in milliseconds. ABSENT means 'use your own default pacing'; 0 means 'do not throttle at all', which an operator sets for a self-hosted mirror with no rate policy. The two are different instructions and neither is the other's default, so a guest must distinguish a missing key from a present 0 and must never substitute one for the other."
         },
+        "callRemainingMillis": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The time REMAINING, in milliseconds, until the deadline the host will enforce on the call this Settings rides with, HOST-resolved like rateLimitMillis. ABSENT means the host is not telling this seam a budget, which a guest must read exactly as it would have before this field existed (context.Background() in the Go SDK); present means a guest that honours it may build a deadline a margin short of this number so a pace or a fetch that cannot fit answers cleanly instead of being killed mid-call."
+        },
         "values": {
           "type": "object",
           "description": "The values of the settings an INSTALLED plugin's manifest declared for itself (settings.fields), keyed by the field key that declared them and carrying the JSON shape that field's type names. Beside the fixed fields above, never instead of them: empty for every Built-in and for any plugin that declares no fields. A field the Admin never filled is ABSENT rather than present as a zero, unless the manifest declared a default. A declared secret field's value is here only while a call is on the stack, exactly as `secret` is."

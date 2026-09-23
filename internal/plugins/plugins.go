@@ -48,6 +48,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -338,6 +339,12 @@ type Plugin struct {
 	callMu   sync.Mutex
 	instance *instance
 	bytes    int64
+	// callDeadline is the CURRENT call's deadline, set in callGuestUnder before the
+	// instance is touched and read by the Nanosleep closure instantiate hands
+	// wazero (guest.go). It needs no lock of its own: callMu already serializes
+	// every call and the guest's own Nanosleep host call runs, synchronously, on
+	// that same goroutine and inside that same call.
+	callDeadline time.Time
 
 	mu sync.Mutex
 	// target is the host of the URL the Admin configured, for the duration of one
@@ -394,8 +401,8 @@ func (p *Plugin) settingValues() map[string]any {
 	return out
 }
 
-// withSettingValues stamps the declared values onto the fixed Settings the host
-// resolved for one call.
+// withSettingValues stamps the declared values and the time remaining on
+// callCtx onto the fixed Settings the host resolved for one call.
 //
 // It is called at CALL time and not when the Plugin is built, which is the whole
 // of why a settings save takes effect immediately: the seam adapters hold the
@@ -403,9 +410,36 @@ func (p *Plugin) settingValues() map[string]any {
 // fresh each time. It is also where SECRETS AT CALL TIME ONLY stays true of the
 // declared secrets — they exist in a Settings value the host is handing into a
 // call, and nowhere else.
-func (p *Plugin) withSettingValues(s pluginapi.Settings) pluginapi.Settings {
+//
+// callCtx must be the bounded context callGuestUnder is actually about to
+// invoke the guest under — read back AFTER callMu is held and
+// context.WithTimeout has built it, never the caller's own ctx and never
+// computed ahead of the lock, so a call that queued behind another one on the
+// same Plugin is told what is left once the wait is over. See
+// pluginapi.Settings.CallRemainingMillis and ADR-0059 decision 6.
+func (p *Plugin) withSettingValues(s pluginapi.Settings, callCtx context.Context) pluginapi.Settings {
 	s.Values = p.settingValues()
+	s.CallRemainingMillis = callRemainingMillis(callCtx)
 	return s
+}
+
+// callRemainingMillis is callCtx's own deadline, expressed as the wire field
+// wants it: nil means callCtx has no deadline at all — the only meaning
+// "absent" carries. A callCtx that does have a deadline always yields at
+// least 1, even one whose deadline has already passed by the time buildReq
+// runs (instantiate can eat the whole remaining budget) — never 0, so the
+// SDK's own "absent-or-zero means no deadline" reading of the field is never
+// handed a deadline the host actually meant.
+func callRemainingMillis(callCtx context.Context) *int {
+	deadline, ok := callCtx.Deadline()
+	if !ok {
+		return nil
+	}
+	ms := int(math.Ceil(float64(time.Until(deadline)) / float64(time.Millisecond)))
+	if ms < 1 {
+		ms = 1
+	}
+	return &ms
 }
 
 // ID is the Plugin's stable identity: the manifest id, the settings slug and the
@@ -662,13 +696,24 @@ type callPolicy struct {
 // callGuest makes one call into the guest under the DEFAULT policy: the Event
 // sink's. A Metadata provider and a Subtitle provider call callGuestUnder with
 // their own budgets (ADR-0059 decision 6).
-func (p *Plugin) callGuest(ctx context.Context, export string, target string, req, out any) error {
-	return p.callGuestUnder(ctx, callPolicy{budget: p.opts.CallTimeout}, export, target, req, out)
+func (p *Plugin) callGuest(ctx context.Context, export string, target string, buildReq func(callCtx context.Context) any, out any) error {
+	return p.callGuestUnder(ctx, callPolicy{budget: p.opts.CallTimeout}, export, target, buildReq, out)
 }
 
 // callGuestUnder makes one call into the guest, serialized, under a deadline,
 // with the instance lifecycle ADR-0058 decision 7 requires around it.
-func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export string, target string, req, out any) error {
+//
+// buildReq builds the request AFTER callMu is held, callCtx exists, the
+// already-expired check below has passed, and the instance is instantiated —
+// not before: a seam whose request carries Settings.CallRemainingMillis
+// (sink.go, subtitle.go) must stamp it from callCtx as it stands right before
+// invoke, not from ctx and a nominal budget computed ahead of the lock, so a
+// call queued behind another one on this same Plugin is told what is actually
+// left once its wait AND its instantiate are over (ADR-0059 decision 6). A
+// seam whose request carries no Settings (metadata.go, which hands its
+// Settings to the guest through settings_get instead) just returns the same
+// req every time.
+func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export string, target string, buildReq func(callCtx context.Context) any, out any) error {
 	p.callMu.Lock()
 	defer p.callMu.Unlock()
 
@@ -688,9 +733,23 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 	}
 	callCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
+	if deadline, ok := callCtx.Deadline(); ok {
+		p.callDeadline = deadline
+	} else {
+		p.callDeadline = time.Time{}
+	}
+
+	if err := callCtx.Err(); err != nil {
+		// The caller's own deadline was already gone before this call ever reached
+		// the front of the queue — nothing here ran or could have. The instance is
+		// untouched and this is not a fact about the module, so it is kept and no
+		// failure is counted; the caller's timeout is not the plugin's fault. See
+		// ADR-0059 decision 6.
+		return fmt.Errorf("plugin %s: call queued past its caller's deadline: %w", p.id, err)
+	}
 
 	if p.instance == nil {
-		inst, err := p.compiled.instantiate(callCtx)
+		inst, err := p.compiled.instantiate(callCtx, p)
 		if err != nil {
 			p.recordFailure(err)
 			return err
@@ -698,6 +757,8 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 		p.instance = inst
 		p.bytes = 0
 	}
+
+	req := buildReq(callCtx)
 
 	n, err := p.instance.invoke(callCtx, export, req, out)
 	p.bytes += int64(n)
