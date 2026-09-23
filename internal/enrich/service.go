@@ -135,6 +135,14 @@ const (
 	// ModeFull: a 'matched' parent still short-circuits to its stored id, so a
 	// recheck over a healthy Library costs zero provider calls.
 	ModeRecheck
+	// ModeMissing enriches every visible Title/parent with no settled match:
+	// 'pending', 'unmatched', and 'failed' — 'failed' REGARDLESS of retry_at, so a
+	// scheduled backoff retry can be asked now instead of waited out (ADR-0062). It
+	// is a superset of ModeNew and a strict subset of ModeFull, and — unlike
+	// ModeRecheck — it always includes a future-retry 'failed' item; unlike
+	// ModeFull, it never re-asks 'matched'. It does not apply ADR-0053 doubt: an
+	// Artist already matched is not missing, even an uncorroborated one.
+	ModeMissing
 )
 
 // settledNonAnswer reports whether an item's Enrichment SETTLED without a record
@@ -153,6 +161,17 @@ const (
 // This is the Go twin of store.settledNonAnswerClause; they change together.
 func settledNonAnswer(status, retryAt string) bool {
 	return status == "unmatched" || (status == "failed" && retryAt == "")
+}
+
+// missingAnswer reports whether an item counts as "missing" for ModeMissing
+// (ADR-0062): 'unmatched', or 'failed' regardless of retry_at. It is
+// settledNonAnswer's twin without the retry-at exclusion — the whole point of
+// the mode is to reach a 'failed' item whose retry is still in the future
+// instead of waiting for it, so retryAt plays no part in the answer here.
+//
+// This is the Go twin of store.missingClause; they change together.
+func missingAnswer(status string) bool {
+	return status == "unmatched" || status == "failed"
 }
 
 // uncorroboratedMatch reports whether a parent's `matched` answer is contradicted
@@ -501,6 +520,8 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 			sel = store.EnrichAll
 		case ModeRecheck:
 			sel = store.EnrichRecheck
+		case ModeMissing:
+			sel = store.EnrichMissing
 		}
 		var titles []store.Title
 		titles, err = s.store.TitlesForEnrichment(libraryID, sel, s.clock())
@@ -2336,7 +2357,8 @@ func (s *Service) albumNeedsTracklist(snap providerSnapshot, mode Mode, tracks [
 // leaf in ModeFull (or when its kind is disabled in the resolved snapshot, so it
 // still gets marked 'disabled'); in ModeNew, the never-enriched ('pending') leaves
 // plus any whose transient failure has come due for another try (ADR-0048); in
-// ModeRecheck, those PLUS the settled non-answers (ADR-0051).
+// ModeRecheck, those PLUS the settled non-answers (ADR-0051); in ModeMissing,
+// those PLUS every 'unmatched'/'failed' leaf regardless of retry_at (ADR-0062).
 // Enablement is read from the pass's resolved snapshot (the Library's effective
 // policy), not the global one.
 //
@@ -2352,6 +2374,9 @@ func (s *Service) shouldProcessLeaf(snap providerSnapshot, mode Mode, t store.Ti
 	}
 	if t.EnrichmentStatus == "pending" || s.retryDue(t.EnrichmentStatus, t.EnrichmentRetryAt) {
 		return true
+	}
+	if mode == ModeMissing {
+		return missingAnswer(t.EnrichmentStatus)
 	}
 	return mode == ModeRecheck && settledNonAnswer(t.EnrichmentStatus, t.EnrichmentRetryAt)
 }
@@ -2474,7 +2499,8 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	// healthy library doubts nothing, so the zero-provider-calls floor holds.
 	if mode != ModeFull && cur.Status != "pending" && !s.retryDue(cur.Status, cur.RetryAt) &&
 		!(mode == ModeRecheck && (settledNonAnswer(cur.Status, cur.RetryAt) ||
-			uncorroboratedMatch(cur.Status, doubted))) {
+			uncorroboratedMatch(cur.Status, doubted))) &&
+		!(mode == ModeMissing && missingAnswer(cur.Status)) {
 		return storedParentRecord(cur), nil // already settled; reuse its resolved record
 	}
 	// A durable Fix-info override (ADR-0019): resolve the parent BY the pinned id

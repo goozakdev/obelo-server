@@ -886,10 +886,14 @@ export type ScanMode = "incremental" | "full";
  *   a matching improvement shipped and the rows it was written for will otherwise
  *   never be asked again. A matched item is untouched, so a recheck over a
  *   healthy Library costs nothing.
+ * - `"missing"` — `new` PLUS every `unmatched`/`failed` item regardless of
+ *   `retryAt`, including one whose scheduled backoff retry is still in the
+ *   future — asked now instead of waited out (ADR-0062). A matched item is
+ *   untouched.
  * - `"full"` — re-resolve every visible Title. Correct, and on a real library 16x
  *   the requests of a recheck, against a provider that sheds load (ADR-0049).
  */
-export type EnrichMode = "new" | "recheck" | "full";
+export type EnrichMode = "new" | "recheck" | "missing" | "full";
 
 /** The summary of a FINISHED enrichment pass. The counts are LEAVES (Movies /
  * Episodes / Tracks); browse parents are enriched as a side effect and not

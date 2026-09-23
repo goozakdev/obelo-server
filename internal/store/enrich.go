@@ -37,6 +37,13 @@ const (
 	// (ADR-0048), and re-asking it early would erase the distinction between "the
 	// provider had no record" and "we could not reach the provider".
 	EnrichRecheck
+	// EnrichMissing selects every visible Title with no settled match: 'pending',
+	// 'unmatched', and 'failed' — 'failed' REGARDLESS of retry_at (ADR-0062). It is
+	// what an Admin asks for to pre-empt a scheduled retry rather than wait up to
+	// 24h for it: strictly larger than EnrichRecheck (which excludes a future
+	// retry) and strictly smaller than EnrichAll (which also re-asks 'matched').
+	// Excludes 'matched' and 'disabled', same as EnrichRecheck.
+	EnrichMissing
 )
 
 // EnrichRetryEscalateAfter is how many consecutive failed lookups an item may
@@ -132,6 +139,14 @@ const retryDueClause = `(enrichment_status = 'failed'
 const settledNonAnswerClause = `(enrichment_status = 'unmatched'
 	    OR (enrichment_status = 'failed' AND enrichment_retry_at = ''))`
 
+// missingClause matches a Title with no settled match (ADR-0062): 'unmatched',
+// or 'failed' — regardless of retry_at, including one still in the future. It is
+// settledNonAnswerClause without the retry-at exclusion, because ModeMissing's
+// whole purpose is to reach the in-flight retry early rather than wait for it.
+//
+// This is the SQL half of enrich.missingAnswer; they change together.
+const missingClause = `(enrichment_status = 'unmatched' OR enrichment_status = 'failed')`
+
 // TitlesForEnrichment returns the visible (non-hidden) Titles of a Library that
 // a pass should consider, oldest-added first for a stable order. Hidden
 // (all-Files-Missing) Titles are skipped — enrichment doesn't spend calls on
@@ -154,6 +169,11 @@ func (db *DB) TitlesForEnrichment(libraryID string, sel EnrichSelect, now time.T
 		where += " AND (enrichment_status = 'pending' OR " + retryDueClause +
 			" OR " + settledNonAnswerClause + ")"
 		args = append(args, now.UTC().Format(time.RFC3339))
+	case EnrichMissing:
+		// 'pending' plus the missing population (ADR-0062); missingClause already
+		// covers every 'failed' row regardless of retry_at, so no separate due-retry
+		// alternative or `now` argument is needed here.
+		where += " AND (enrichment_status = 'pending' OR " + missingClause + ")"
 	}
 	rows, err := db.Query(
 		`SELECT `+enrichedTitleColumns+`

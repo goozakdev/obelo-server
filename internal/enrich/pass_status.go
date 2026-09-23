@@ -44,15 +44,18 @@ var (
 	ErrLinkedLibrary = errors.New("enrich: this library is a mirror of another server's and is never enriched")
 )
 
-// String names a Mode on the wire and in a log line: "new", "full", "recheck".
-// The API's request parser (api.enrichMode) reads exactly these spellings, so the
-// mode a client asks for and the mode a status report names are the same word.
+// String names a Mode on the wire and in a log line: "new", "full", "recheck",
+// "missing". The API's request parser (api.enrichMode) reads exactly these
+// spellings, so the mode a client asks for and the mode a status report names
+// are the same word.
 func (m Mode) String() string {
 	switch m {
 	case ModeFull:
 		return "full"
 	case ModeRecheck:
 		return "recheck"
+	case ModeMissing:
+		return "missing"
 	default:
 		return "new"
 	}
