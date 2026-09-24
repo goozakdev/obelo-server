@@ -727,6 +727,12 @@ A new decision is required only when constraints change (e.g. bandwidth drop →
 | --- | --- | --- |
 | `GET /sessions/{id}/markers` — [Public] | bearer only | → `200` `{ "markers": [ { "kind": "intro|recap|credits|preview", "source": "local|detected|fetched", "startMs", "endMs" } ] }` in start order: the **Markers** of the File the session is playing, times on that File's own timeline ([ADR-0065](./adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)). A player offers Skip while the position is inside one of a kind it recognizes. Only **Local** Markers exist today (the File's chapters or `.edl`, read by the Scanner). A File with none → `200` with `[]`. Owner-only like `/progress`: unknown, ended or another User's session → `404` `"session not found"`. A Credits Marker starting at or past half the File's duration is also that File's **Watched** ceiling: `/progress` marks the Title watched once the position crosses the Credits start instead of at ~90%; one starting earlier is ignored. |
 
+#### Lyrics
+
+| Endpoint | Auth | Notes |
+| --- | --- | --- |
+| `GET /titles/{id}/lyrics` — [Public] | bearer only | → `200` `{ "lyrics": null \| { "kind", "source", "lines", "text" } }`: the Track's **Local lyrics**, which the Scanner reads from a sidecar `.lrc`, an embedded ID3 `SYLT` (synced) or `USLT` (plain) frame, or a `LYRICS` tag, and stores against the Track on every scan. `kind` is `synced` — `lines` is `[ { "startMs", "text" } ]` in time order and `text` is `""` — or `plain` — `text` is the words and `lines` is `[]`. `source` is `local`. Synced outranks Plain whatever its source; within a shape a sidecar outranks the file's own tags. No lyrics (or a Title that is not a Track) → `200` with `"lyrics": null`, never an error. Any User, Members included. Unknown or out-of-scope Title → `404`. |
+
 #### Subtitles
 
 | Endpoint | Auth | Notes |

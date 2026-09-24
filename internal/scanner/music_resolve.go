@@ -207,6 +207,7 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 			TitleTree:   tree,
 			DiscNumber:  id.Disc,
 			TrackNumber: id.Track,
+			Lyrics:      trackLyrics(path, media),
 		})
 	}
 

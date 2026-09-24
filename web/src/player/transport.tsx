@@ -32,6 +32,12 @@ export interface PlaybackTransport {
   /** Player-core internal: register (or clear, with null) the toggle bound to the
    * live element. Called on mount/unmount of the active player. */
   registerToggle: (fn: (() => void) | null) => void;
+  /** The current element's playback position in ms, read on demand (the lyrics
+   * view polls it to follow along); 0 when nothing is loaded. */
+  positionMs: () => number;
+  /** Player-core internal: register (or clear, with null) the position read bound
+   * to the live element. Called on mount/unmount of the active player. */
+  registerPosition: (fn: (() => number) | null) => void;
 }
 
 const TransportContext = createContext<PlaybackTransport | null>(null);
@@ -49,10 +55,17 @@ export function PlaybackTransportProvider({ children }: { children: ReactNode })
   const registerToggle = useCallback((fn: (() => void) | null) => {
     toggleRef.current = fn;
   }, []);
+  // The position read is a ref for the same reason: the position changes many
+  // times a second, and only a consumer that asks for it should pay for that.
+  const positionRef = useRef<(() => number) | null>(null);
+  const positionMs = useCallback(() => positionRef.current?.() ?? 0, []);
+  const registerPosition = useCallback((fn: (() => number) | null) => {
+    positionRef.current = fn;
+  }, []);
 
   const value = useMemo<PlaybackTransport>(
-    () => ({ playing, toggle, publishPlaying, registerToggle }),
-    [playing, toggle, publishPlaying, registerToggle],
+    () => ({ playing, toggle, publishPlaying, registerToggle, positionMs, registerPosition }),
+    [playing, toggle, publishPlaying, registerToggle, positionMs, registerPosition],
   );
 
   return (
@@ -75,4 +88,6 @@ const IDLE_TRANSPORT: PlaybackTransport = {
   toggle: noop,
   publishPlaying: noop,
   registerToggle: noop,
+  positionMs: () => 0,
+  registerPosition: noop,
 };

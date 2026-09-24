@@ -3121,3 +3121,21 @@ export interface Marker {
   startMs: number;
   endMs: number;
 }
+
+/** One timed line of Synced lyrics: `text` is shown from `startMs` until the next
+ * line begins. An empty `text` is a deliberate gap (an instrumental break). */
+export interface LyricLine {
+  startMs: number;
+  text: string;
+}
+
+/** A Track's lyrics (`GET /titles/{id}/lyrics`). Synced lyrics carry `lines` in
+ * time order (and an empty `text`); Plain lyrics carry `text` (and no `lines`).
+ * `source` is where they came from — `local` is what the Scanner read from the
+ * file or the `.lrc` beside it. */
+export interface Lyrics {
+  kind: "synced" | "plain";
+  source: "local";
+  lines: LyricLine[];
+  text: string;
+}

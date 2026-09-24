@@ -19,6 +19,7 @@ import { useAuth } from "../auth/session";
 import { titleDetailSummary } from "../browse/titleSummary";
 import { formatTimecode } from "../time";
 import MusicShell from "./MusicShell";
+import LyricsView from "./LyricsView";
 
 // The music Track detail (/music/tracks/:titleId) — the music counterpart of the
 // movie/episode TitleDetailScreen, split out so the track page can be customized
@@ -91,6 +92,9 @@ function TrackDetail({ title }: { title: TitleDetail }) {
   const [toggleError, setToggleError] = useState<string | null>(null);
   // Inline confirmation for the Queue affordances (queue/03).
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  // Whether the lyrics view is open. It asks for the lyrics when it opens, not
+  // when the page loads.
+  const [lyricsOpen, setLyricsOpen] = useState(false);
 
   const resuming = !watched && resumeMs > 0;
   const playable = title.editions.some((ed) => ed.files.some((f) => !f.missing));
@@ -282,6 +286,19 @@ function TrackDetail({ title }: { title: TitleDetail }) {
           <AddToPlaylist titleId={title.id} titleKind={title.kind} />
         </div>
       </div>
+
+      {/* Lyrics: any User opens the Track's lyrics under the hero; Synced lines
+          follow the song while this Track is the one playing. */}
+      <button
+        className="nav-link lyrics-toggle"
+        data-testid="lyrics-button"
+        type="button"
+        aria-expanded={lyricsOpen}
+        onClick={() => setLyricsOpen((v) => !v)}
+      >
+        {lyricsOpen ? "Hide lyrics" : "Lyrics"}
+      </button>
+      {lyricsOpen && <LyricsView titleId={title.id} />}
     </article>
   );
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/goozakdev/obelo-server/internal/access"
+	"github.com/goozakdev/obelo-server/internal/lyrics"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -195,6 +196,9 @@ type Store interface {
 	// version (newest entity_artwork added_at), keyed by id, so a browse client
 	// reloads a parent poster only when its fetched image actually changed.
 	EntityArtworkVersionsForMany(entityType string, ids []string) (map[string]string, error)
+	// LocalLyrics reads the Local lyrics the Scanner stored for a Track (found=false
+	// when it has none), behind the lyrics view.
+	LocalLyrics(titleID string) (lyrics.Lyrics, bool, error)
 }
 
 // Service implements the browse operations.

@@ -145,6 +145,7 @@ import type {
   WebReference,
   Marker,
 } from "./types";
+import type { Lyrics } from "./types";
 
 // ApiClient is the SINGLE place in the app that talks HTTP to /api/v1
 // (PRD: "the one seam"). Components and hooks call its typed methods; they must
@@ -2485,6 +2486,17 @@ export class ApiClient {
       return undefined as T;
     }
     return (await res.json()) as T;
+  }
+
+  /** `GET /api/v1/titles/{id}/lyrics` — the Track's Local lyrics for the lyrics
+   * view, Synced or Plain. Any User (Members included). `null` is the normal "no
+   * lyrics for this track", never an error. */
+  async getLyrics(titleId: string, signal?: AbortSignal): Promise<Lyrics | null> {
+    const res = await this.request<{ lyrics?: Lyrics | null }>(
+      `/titles/${encodeURIComponent(titleId)}/lyrics`,
+      { signal },
+    );
+    return res.lyrics ?? null;
   }
 }
 
