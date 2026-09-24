@@ -30,6 +30,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/lyricfetch"
+	"github.com/goozakdev/obelo-server/internal/markerdetect"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -144,6 +145,11 @@ type App struct {
 	// will have replaced.
 	pluginManager *plugins.Manager
 
+	// markerDetector is Marker detection (ADR-0065 §4): the one worker that
+	// listens to a TV Library's Seasons after a scan, yielding to Transcodes.
+	// Closed with the App before the DB, killing any decoder in flight.
+	markerDetector *markerdetect.Detector
+
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
 	// enrich); each closes its done channel once it has fully exited, so Close
@@ -247,6 +253,17 @@ type options struct {
 	// A test injects a known value so it can then prove that value reaches no table,
 	// no log line, and no API response.
 	tailnetAuthKey func() string
+	// markerAnalyzer overrides how Marker detection listens to a File (default:
+	// markerdetect.FFmpeg with the resolved ffmpeg binary). The test harness pins
+	// one that decodes nothing, so the many TV fixtures scanned across the suite
+	// do not each spawn decoders; a detection test injects a recording one, or the
+	// real one.
+	markerAnalyzer markerdetect.Analyzer
+}
+
+// WithMarkerAnalyzer overrides how Marker detection listens to a File (tests).
+func WithMarkerAnalyzer(a markerdetect.Analyzer) Option {
+	return func(o *options) { o.markerAnalyzer = a }
 }
 
 // WithMetadataProvider overrides the Enrichment MetadataProvider (tests inject a
@@ -522,6 +539,30 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		MaxConcurrentTranscodes: cfg.MaxConcurrentTranscodes,
 		Accel:                   backendResolution.Accel,
 	})
+	// Marker detection (ADR-0065 §4): queued after a scan and by an Admin's
+	// "detect markers now", one Season at a time. It never starts while ffmpeg
+	// re-encodes anything on this host — cap-exempt video copies, audio-only
+	// encodes and a remux encoding its audio included — and holds no slot of the
+	// cap. Without ffmpeg there is nothing to listen with, so it does not run at
+	// all rather than recording every File as heard with nothing found.
+	var markerDetector *markerdetect.Detector
+	if ffmpegAvailability.Available {
+		markerAnalyzer := o.markerAnalyzer
+		if markerAnalyzer == nil {
+			markerAnalyzer = markerdetect.FFmpeg{Binary: ffmpegAvailability.Binary}
+		}
+		markerDetector = markerdetect.New(db, markerAnalyzer, markerdetect.Options{
+			Busy: func() bool { return playbackSvc.Sessions().LocalTranscodes() > 0 },
+		})
+	} else {
+		log.Printf("obelo: marker detection: off — no usable ffmpeg")
+	}
+	// Handed to the API as an interface: a nil *Detector must reach it as nil, so
+	// a scan queues nothing and "detect markers now" answers 503.
+	var markerDetection api.MarkerDetector
+	if markerDetector != nil {
+		markerDetection = markerDetector
+	}
 	// The handshake advertises what THIS host can do (ADR-0034 identity + the
 	// feature flags). Built here, after the setup-time resolutions above, so
 	// Metadata.Info() only ever reads already-resolved values — an unauthenticated
@@ -985,6 +1026,10 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		sinkTranslator:   sinkTranslator,
 		installedPlugins: installed,
 		pluginManager:    pluginManager,
+		markerDetector:   markerDetector,
+	}
+	if markerDetector != nil {
+		markerDetector.Start()
 	}
 	queueDepth := enrichQueueDepth
 	if o.enrichQueueSize > 0 {
@@ -1106,6 +1151,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 		// The password-flow Sign-in providers and their Admin order (ADR-0063).
 		SignInProviders: signInSource,
+
+		// Marker detection (ADR-0065 §4): the post-scan queue, "detect markers now",
+		// and the per-Library toggle.
+		MarkerDetection:       markerDetection,
+		MarkerDetectionToggle: db,
 	})
 
 	// Top-level composition (ADR-0012): /api/v1 stays the API's; every other
@@ -1309,6 +1359,10 @@ func (a *App) runScheduledScans(ctx context.Context, interval time.Duration) {
 				// newly-added/changed Titles (non-blocking; a live no-op when
 				// AutoEnrichAfterScan is off or no kind is currently enabled).
 				a.enqueueEnrichAfterScan(lib.ID)
+				// Marker detection runs after a completed scan (ADR-0065 §4).
+				if a.markerDetector != nil {
+					a.markerDetector.AfterScan(lib.ID)
+				}
 			}
 		}
 	}
@@ -1639,6 +1693,11 @@ func (a *App) Close() error {
 			<-a.rotationDone
 		}
 		a.cancel = nil
+	}
+	// Stop Marker detection before anything it reads goes away; its in-flight
+	// decoder is killed and waited for.
+	if a.markerDetector != nil {
+		a.markerDetector.Close()
 	}
 	// End every Playback session once the reaper has stopped, so no remux or
 	// transcode ffmpeg outlives the server: each is killed and WAITED for before its

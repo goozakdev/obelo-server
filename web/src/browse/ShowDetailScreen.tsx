@@ -73,6 +73,17 @@ export default function ShowDetailScreen() {
     scan: runScan,
   } = useTargetedScan(() => setReloadKey((k) => k + 1));
   const libraryName = useLibraryName(show?.libraryId);
+  // "Detect markers now" (ADR-0065 §4): queued, never awaited — the notice says
+  // it has started, or why it could not.
+  const [markersNotice, setMarkersNotice] = useState<string | null>(null);
+  async function detectMarkers(id: string) {
+    try {
+      await apiClient.detectShowMarkers(id);
+      setMarkersNotice("Detecting intros and credits in the background.");
+    } catch (err) {
+      setMarkersNotice(errorMessage(err));
+    }
+  }
   // The Show summary carries the mirror pair itself; the providing Server's name
   // is joined from GET /links when it is cheaply in hand, else the badge stands
   // alone.
@@ -404,6 +415,12 @@ export default function ShowDetailScreen() {
                       isAdmin ? () => runScan("shows", state.data.show.id) : undefined
                     }
                     scanning={scanning}
+                    /* "Detect markers now" (ADR-0065 §4), Admin-only: queue
+                       this Show's intro/credits detection ahead of any
+                       post-scan work. */
+                    onDetectMarkers={
+                      isAdmin ? () => void detectMarkers(state.data.show.id) : undefined
+                    }
                     /* The file matcher (ADR-0044), Admin-only. Reachable from
                        here as well as from the Needs Fixing queue, because an
                        Admin often knows a Show is mis-sorted before anything
@@ -414,6 +431,11 @@ export default function ShowDetailScreen() {
                   />
                 </div>
 
+                {markersNotice && (
+                  <p className="status status-ok" data-testid="markers-notice" role="status">
+                    {markersNotice}
+                  </p>
+                )}
                 {scanMessage && (
                   <p className="status status-ok" data-testid="scan-notice" role="status">
                     {scanMessage}
@@ -634,6 +656,7 @@ function ShowOverflowMenu({
   onPlayNext,
   onScan,
   scanning,
+  onDetectMarkers,
   matcherPath,
 }: {
   onAddToQueue: () => void;
@@ -641,6 +664,8 @@ function ShowOverflowMenu({
   /** Present only for an Admin: a Targeted scan of this Show's folder (ADR-0030). */
   onScan?: () => void;
   scanning: boolean;
+  /** Present only for an Admin: "detect markers now" for this Show (ADR-0065). */
+  onDetectMarkers?: () => void;
   /** Present only for an Admin: the file matcher for this Show (ADR-0044). */
   matcherPath?: string;
 }) {
@@ -728,6 +753,18 @@ function ShowOverflowMenu({
               onClick={pick(onScan)}
             >
               {scanning ? "Scanning…" : "Scan"}
+            </button>
+          )}
+          {onDetectMarkers && (
+            <button
+              className="overflow-menu-item detect-markers-item"
+              type="button"
+              role="menuitem"
+              data-testid="detect-markers-item"
+              title="Compare this show's episodes now to find intros and credits"
+              onClick={pick(onDetectMarkers)}
+            >
+              Detect markers now
             </button>
           )}
         </div>

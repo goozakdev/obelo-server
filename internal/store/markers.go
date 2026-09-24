@@ -47,7 +47,9 @@ func (db *DB) ReplaceLocalMarkers(path string, ms []Marker) error {
 
 // MarkersForFile lists the Markers of the File with this id, in start order. A
 // File with none — or a mirrored File, which has no path on this disk — answers
-// an empty list.
+// an empty list. A Detected Marker overlapping any Local one is left out: Local
+// outranks Detected (ADR-0065 §1), and the File's own chapters or `.edl` saying
+// what that span is settle it.
 func (db *DB) MarkersForFile(fileID string) ([]Marker, error) {
 	rows, err := db.Query(
 		`SELECT m.kind, m.source, m.start_ms, m.end_ms
@@ -66,5 +68,37 @@ func (db *DB) MarkersForFile(fileID string) ([]Marker, error) {
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return withoutShadowedDetected(out), nil
+}
+
+// withoutShadowedDetected drops every Detected Marker that overlaps a Local one.
+func withoutShadowedDetected(ms []Marker) []Marker {
+	var local []Marker
+	for _, m := range ms {
+		if m.Source == "local" {
+			local = append(local, m)
+		}
+	}
+	if len(local) == 0 {
+		return ms
+	}
+	out := ms[:0]
+	for _, m := range ms {
+		shadowed := false
+		if m.Source == "detected" {
+			for _, l := range local {
+				if m.StartMs < l.EndMs && l.StartMs < m.EndMs {
+					shadowed = true
+					break
+				}
+			}
+		}
+		if !shadowed {
+			out = append(out, m)
+		}
+	}
+	return out
 }

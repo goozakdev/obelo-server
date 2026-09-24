@@ -100,6 +100,7 @@ func handleTargetedScan(deps Deps, entityKind, id string) http.HandlerFunc {
 			if deps.EnrichTrigger != nil {
 				deps.EnrichTrigger(libID)
 			}
+			markersAfterScan(deps)(libID)
 			if deps.Events != nil {
 				deps.Events.PublishLibraryUpdated(libID)
 			}

@@ -1,11 +1,14 @@
 package playback
 
 import (
+	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/store"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // Unit tests for the transcode-governance accounting (ADR-0009): only the
@@ -211,5 +214,143 @@ func TestSuggestBusyBitrate(t *testing.T) {
 				t.Errorf("suggestion %d is not below base %d", got, base)
 			}
 		})
+	}
+}
+
+// TestLocalTranscodesCountsEveryReencodeRunHere: every live Transcode this host
+// runs counts — a video encode, a video copy re-encoding only its audio, an
+// audio-only encode — whether or not it holds a cap slot; a direct play, a remux
+// and a relayed transcode (running on the sharer) do not.
+func TestLocalTranscodesCountsEveryReencodeRunHere(t *testing.T) {
+	m := NewManager()
+	copyVideo := transcodeDecision("copy")
+	copyVideo.VideoCopy = true
+	audioOnly := transcodeDecision("audio")
+	audioOnly.AudioOnly = true
+	relayed := transcodeDecision("relay")
+	relayed.Relay = &Relayed{LinkID: "l", RemoteSessionID: "r", RemoteTitleID: "t"}
+
+	for _, d := range []Decision{{Tier: TierDirectPlay}, {Tier: TierDirectStream}, relayed} {
+		m.Create(CreateInput{UserID: "u"}, d)
+	}
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Fatalf("local transcodes = %d with only direct play, remux and a relay, want 0", n)
+	}
+	var ids []string
+	for i, d := range []Decision{copyVideo, audioOnly, transcodeDecision("video")} {
+		s, err := m.CreateGoverned(CreateInput{UserID: "u"}, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, s.ID)
+		if n := m.LocalTranscodes(); n != i+1 {
+			t.Fatalf("local transcodes = %d after %d re-encodes, want %d", n, i+1, i+1)
+		}
+	}
+	for i, id := range ids {
+		m.End(id)
+		if n := m.LocalTranscodes(); n != len(ids)-i-1 {
+			t.Fatalf("local transcodes = %d after ending %d, want %d", n, i+1, len(ids)-i-1)
+		}
+	}
+}
+
+// heldRunner starts jobs that run until killed, like a real ffmpeg partway
+// through a long File, so a test can observe what is running.
+type heldRunner struct{}
+
+func (heldRunner) Start(_ context.Context, _ []string) (transcode.Job, error) {
+	return &heldJob{done: make(chan struct{})}, nil
+}
+
+type heldJob struct {
+	once sync.Once
+	done chan struct{}
+}
+
+func (j *heldJob) Wait() error { <-j.done; return nil }
+func (j *heldJob) Kill() error { j.once.Do(func() { close(j.done) }); return nil }
+
+// TestLocalTranscodesCountsRemuxReencodingAudioAfterSeek: a remux copies every
+// stream from the top, but once a seek realigns it the job re-encodes the audio
+// (transcode.SeekOffset.mustEncodeCopiedAudio) — from then on it counts.
+func TestLocalTranscodesCountsRemuxReencodingAudioAfterSeek(t *testing.T) {
+	m := NewRemuxManager(heldRunner{}, t.TempDir())
+	dec := Decision{Tier: TierDirectStream, Edition: store.Edition{ID: "e1"}, File: store.File{ID: "f1", Path: "/m/x.mkv", DurationMs: 60_000}}
+	s := m.Create(CreateInput{
+		UserID: "u",
+		BuildHLSArgs: func(dir string, seek transcode.SeekOffset) []string {
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: dec.File.Path, OutputDir: dir, Seek: seek})
+		},
+	}, dec)
+	rt, _ := m.remuxRuntimeFor(s.ID)
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Fatalf("local transcodes = %d with a pure copy remux, want 0", n)
+	}
+	if err := rt.realign(5); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.LocalTranscodes(); n != 1 {
+		t.Fatalf("local transcodes = %d with a remux re-encoding its audio after a seek, want 1", n)
+	}
+	m.End(s.ID)
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Fatalf("local transcodes = %d after the remux ended, want 0", n)
+	}
+}
+
+// TestLocalTranscodesCountsRemuxEncodingAnAudioRendition: a demuxed remux copies
+// its video, but an audio rendition the client cannot decode (TrueHD, DTS) is
+// encoded to AAC (ADR-0022) — the session counts while that rendition runs, and
+// not for a rendition that is copied.
+func TestLocalTranscodesCountsRemuxEncodingAnAudioRendition(t *testing.T) {
+	m := NewRemuxManager(heldRunner{}, t.TempDir())
+	dec := demuxedDecision()
+	s := m.Create(CreateInput{
+		UserID: "u",
+		BuildHLSArgs: func(dir string, seek transcode.SeekOffset) []string {
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: dec.File.Path, OutputDir: dir, Seek: seek, VideoOnly: true})
+		},
+		BuildAudioRenditionArgs: func(streamID, dir string, seek transcode.SeekOffset) []string {
+			return transcode.AudioRenditionArgs(transcode.AudioRenditionJob{
+				SourcePath:     dec.File.Path,
+				OutputDir:      dir,
+				Copy:           streamID == "a1",
+				PlaylistName:   transcode.AudioRenditionPlaylist(streamID),
+				SegmentPattern: transcode.AudioRenditionSegmentPattern(streamID),
+				Seek:           seek,
+			})
+		},
+	}, dec)
+	rt, _ := m.remuxRuntimeFor(s.ID)
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatal(err)
+	}
+	copied, err := m.EnsureAudioRuntime(s.ID, "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := copied.EnsureStarted(); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Fatalf("local transcodes = %d with a video copy and a copied rendition, want 0", n)
+	}
+	encoded, err := m.EnsureAudioRuntime(s.ID, "a2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := encoded.EnsureStarted(); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.LocalTranscodes(); n != 1 {
+		t.Fatalf("local transcodes = %d with a rendition encoding to AAC, want 1", n)
+	}
+	m.End(s.ID)
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Fatalf("local transcodes = %d after the session ended, want 0", n)
 	}
 }
