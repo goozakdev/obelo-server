@@ -71,15 +71,16 @@ func validateManifest(m pluginapi.Manifest) error {
 	for _, p := range m.Provides {
 		switch p.Kind {
 		case pluginapi.ExtensionEventSink, pluginapi.ExtensionMetadataProvider, pluginapi.ExtensionSubtitleProvider,
-			pluginapi.ExtensionWebReferenceProvider, pluginapi.ExtensionSignInProvider, pluginapi.ExtensionLyricProvider:
+			pluginapi.ExtensionWebReferenceProvider, pluginapi.ExtensionSignInProvider, pluginapi.ExtensionLyricProvider,
+			pluginapi.ExtensionMarkerProvider:
 		case "":
 			return fmt.Errorf("a provides entry names no kind")
 		default:
-			return fmt.Errorf("unknown extension point %q; this server knows %s, %s, %s, %s, %s and %s",
+			return fmt.Errorf("unknown extension point %q; this server knows %s, %s, %s, %s, %s, %s and %s",
 				p.Kind, pluginapi.ExtensionMetadataProvider,
 				pluginapi.ExtensionSubtitleProvider, pluginapi.ExtensionEventSink,
 				pluginapi.ExtensionWebReferenceProvider, pluginapi.ExtensionSignInProvider,
-				pluginapi.ExtensionLyricProvider)
+				pluginapi.ExtensionLyricProvider, pluginapi.ExtensionMarkerProvider)
 		}
 	}
 	// The module is a FILE NAME beside the manifest, never a path. A manifest that

@@ -297,6 +297,26 @@ func LyricManifest(id, sourceURL string) pluginapi.Manifest {
 	}
 }
 
+// MarkerManifest is the manifest of an Installed Marker provider serving video
+// whose source is sourceURL: the guest POSTs each request to <sourceURL>/markers
+// and answers whatever comes back (see the guest's marker_provider_markers). The
+// source is the manifest's default URL, which is the host a call may reach, so it
+// declares no network hosts of its own and no secret.
+func MarkerManifest(id, sourceURL string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "Test Markers (" + id + ")",
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:  pluginapi.ExtensionMarkerProvider,
+			Kinds: []string{pluginapi.KindVideo},
+		}},
+		Settings:    pluginapi.ManifestSettings{DefaultURL: sourceURL},
+		Description: "An Installed Marker provider, built from source by the test suite.",
+	}
+}
+
 // EverySettingsFieldType is one declared settings field of every type the contract
 // defines, in AllSettingsFieldTypes order, with the labels, help, defaults, options
 // and bounds a real manifest would carry.

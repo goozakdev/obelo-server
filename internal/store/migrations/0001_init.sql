@@ -1375,3 +1375,18 @@ CREATE TABLE lyric_rejections (
     rejected_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (title_id, answer)
 );
+
+-- ===========================================================================
+-- fetched markers (ADR-0065)
+-- ===========================================================================
+
+-- The question the Marker providers were last asked about a File, as a digest
+-- (the providers asked and everything the request carried), keyed by path like
+-- markers. Its Fetched Markers, if any, are the 'fetched' rows in markers; a row
+-- here with none is a remembered miss. The providers are asked again only once
+-- the question changes. question is '' when a provider failed: what the others
+-- answered is kept, but nothing is remembered as settled.
+CREATE TABLE marker_fetches (
+    file_path TEXT PRIMARY KEY CHECK (file_path <> ''),
+    question  TEXT NOT NULL
+);

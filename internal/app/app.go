@@ -31,6 +31,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/lyricfetch"
 	"github.com/goozakdev/obelo-server/internal/markerdetect"
+	"github.com/goozakdev/obelo-server/internal/markerfetch"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -1140,6 +1141,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// Admin's order they are asked in.
 		Lyrics:             lyricfetch.New(db, registry),
 		LyricProviderOrder: db,
+
+		// Marker providers: asked when a session first reads its File's Markers.
+		MarkerFetch: markerfetch.New(db, registry),
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
