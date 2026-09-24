@@ -721,6 +721,12 @@ A new decision is required only when constraints change (e.g. bandwidth drop →
 | --- | --- | --- |
 | `GET /titles/{id}/webReferences` — [Public] | bearer only | → `200` `{ "references": [ { "label", "url" } ] }`: where a person can read about the Title elsewhere, answered by the **Web reference provider** plugins from the external ids this server holds for the Title (the folder's, and any record row, which outranks it). Any User, Members included. The server keeps a reference only when `url` is `https` and it is keyed to an id the Title holds; anything else is dropped, never shown and never flagged. No provider, no ids, or a provider that failed → `200` with `[]`, never an error. Unknown or out-of-scope Title → `404`. |
 
+#### Markers
+
+| Endpoint | Auth | Notes |
+| --- | --- | --- |
+| `GET /sessions/{id}/markers` — [Public] | bearer only | → `200` `{ "markers": [ { "kind": "intro|recap|credits|preview", "source": "local|detected|fetched", "startMs", "endMs" } ] }` in start order: the **Markers** of the File the session is playing, times on that File's own timeline ([ADR-0065](./adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)). A player offers Skip while the position is inside one of a kind it recognizes. Only **Local** Markers exist today (the File's chapters or `.edl`, read by the Scanner). A File with none → `200` with `[]`. Owner-only like `/progress`: unknown, ended or another User's session → `404` `"session not found"`. A Credits Marker starting at or past half the File's duration is also that File's **Watched** ceiling: `/progress` marks the Title watched once the position crosses the Credits start instead of at ~90%; one starting earlier is ignored. |
+
 #### Subtitles
 
 | Endpoint | Auth | Notes |

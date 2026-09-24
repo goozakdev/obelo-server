@@ -52,7 +52,9 @@ var ErrVideoStreamNotFound = errors.New("playback: video stream not found")
 // session File's DurationMs when a progress report arrives:
 //
 //   - At or above WatchedCeiling (~90%) the Title is marked watched and its
-//     resume is cleared, so it leaves Continue Watching.
+//     resume is cleared, so it leaves Continue Watching. A File whose Credits
+//     Marker starts at or past CreditsFloor (50%) uses that Credits start
+//     instead (ADR-0065, markers.go).
 //   - Below StartedFloor (~2%) the position counts as "not started": no resume is
 //     recorded, so a quick open-then-close never clutters Continue Watching.
 //   - In between, the raw position is stored as the resume offset.
@@ -159,6 +161,11 @@ type Service struct {
 	// unit tests) — in which case no User is treated as remote and every write
 	// proceeds, the pre-linked-servers behavior.
 	roles UserRoleStore
+	// markers reads a File's stored Markers for the Credits Watched ceiling
+	// (ADR-0065 §5, markers.go), or nil when the passed store does not implement
+	// MarkerStore (a fake in some unit tests) — every File then uses the flat
+	// WatchedCeiling, the pre-Marker behavior.
+	markers MarkerStore
 	// relay is the one-hop playback relay for a mirrored Title (ADR-0056 §5,
 	// relay.go), installed by SetRelay after the link Service exists. Nil on every
 	// Server that holds no Links, and on every unit test — a mirrored Title is then
@@ -228,6 +235,11 @@ func NewService(s interface {
 	// the guard off, so every pre-linked-servers unit test behaves as before.
 	if rs, ok := s.(UserRoleStore); ok {
 		svc.roles = rs
+	}
+	// Markers (ADR-0065), wired the same way: a fake that cannot list them runs
+	// with the flat Watched ceiling only.
+	if ms, ok := s.(MarkerStore); ok {
+		svc.markers = ms
 	}
 	return svc
 }
@@ -1369,7 +1381,9 @@ type ProgressOutcome struct {
 // keepalive (Touches the session) AND the single place the Watched threshold is
 // applied — SERVER-side, against the session File's DurationMs:
 //
-//   - position ≥ WatchedCeiling*duration → mark the Title watched, clear resume;
+//   - position ≥ WatchedCeiling*duration → mark the Title watched, clear resume
+//     (or ≥ the File's Credits start, when that is at or past CreditsFloor —
+//     ADR-0065, markers.go);
 //   - position < StartedFloor*duration   → record no resume (leave it as-is for a
 //     fresh Title; a below-floor stop never enters Continue Watching);
 //   - otherwise                          → store the raw position as the resume.
@@ -1446,8 +1460,9 @@ func (s *Service) ReportProgress(userID, sessionID string, positionMs int64, aud
 
 	frac := float64(positionMs) / float64(sess.DurationMs)
 	switch {
-	case frac >= WatchedCeiling:
-		// Crossed the ceiling: watched, resume cleared so it leaves Continue Watching.
+	case frac >= s.watchedCeiling(sess):
+		// Crossed the ceiling — the flat WatchedCeiling, or the File's Credits start
+		// (ADR-0065, markers.go): watched, resume cleared so it leaves Continue Watching.
 		out.Watched = true
 		out.ResumePositionMs = 0
 		if err := s.watch.SaveWatchState(userID, sess.TitleID, 0, true, true); err != nil {

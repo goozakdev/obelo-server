@@ -143,6 +143,7 @@ import type {
   UsersResponse,
   WatchStateResult,
   WebReference,
+  Marker,
 } from "./types";
 
 // ApiClient is the SINGLE place in the app that talks HTTP to /api/v1
@@ -2339,6 +2340,17 @@ export class ApiClient {
       method: "DELETE",
       signal,
     });
+  }
+
+  /** `GET /api/v1/sessions/{id}/markers` — the Markers of the File a session is
+   * playing (ADR-0065), for the player's Skip button. Owner-only like progress;
+   * a File with none answers an empty list. */
+  async getSessionMarkers(sessionId: string, signal?: AbortSignal): Promise<Marker[]> {
+    const res = await this.request<{ markers?: Marker[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/markers`,
+      { signal },
+    );
+    return res.markers ?? [];
   }
 
   /** `PUT /api/v1/titles/{id}/watchState` — manually mark watched/unwatched,

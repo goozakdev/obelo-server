@@ -3109,3 +3109,15 @@ export interface SeriesSlotsRaw {
   group?: { number?: number };
   slots?: MatcherSlotRaw[];
 }
+
+/** A Marker (ADR-0065): a timed span of the playing File a player can offer to
+ * skip. `kind` is one of the four the server stores today (intro | recap |
+ * credits | preview), typed as a plain string so a kind a later server adds is
+ * carried rather than rejected — the player shows Skip only for kinds it
+ * recognizes. Times are ms on the session File's own timeline. */
+export interface Marker {
+  kind: string;
+  source: string;
+  startMs: number;
+  endMs: number;
+}

@@ -6156,3 +6156,23 @@ textarea.metadata-input {
   align-items: center;
   gap: 0.35rem;
 }
+
+/* The player's Skip button (ADR-0065): shown on the stage while the position is
+   inside a Marker. Pinned bottom-LEFT, above the transport, so it never sits on the
+   bottom-right Up Next card during the credits; z-index as that card's. */
+.skip-marker {
+  position: fixed;
+  left: clamp(0.75rem, 3vw, 1.5rem);
+  bottom: calc(var(--now-playing-bar-height) + 1rem);
+  z-index: 65;
+  padding: 0.55rem 1.1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.skip-marker:hover {
+  border-color: var(--accent);
+}

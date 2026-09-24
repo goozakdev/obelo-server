@@ -72,6 +72,16 @@ Local on-disk assets are honored before, and instead of, external Enrichment. **
   `Season 1.png` and `Specials.jpg` (season 0) work too. A `Season NN.jpg` naming a season no
   media backs is ignored rather than conjuring an empty Season.
 
+### Markers: chapters and `.edl`
+A video File's own chapters, or an edit-decision sidecar `<media-basename>.edl` beside it, give it
+**Local** Markers — Intro, Recap, Credits, Preview ([ADR-0065](./adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
+- A chapter becomes a Marker when its title names one: `Intro`/`Opening`/`OP`, `Recap`/`Previously on`,
+  `Credits`/`Ending`/`Outro`/`ED`, `Preview`/`Next episode`. `Chapter 3` names nothing and is skipped.
+- An `.edl` line is `start end [action] label`, times in seconds; the label (optionally after `#`) names
+  the kind, because the classic action number (cut/mute/scene/commercial) does not: `0 84.5 0 Intro`,
+  `1290.2 1380 3 # Credits`. A line without a recognizable label is skipped.
+- An `.edl` that names anything outranks the chapters; otherwise the chapters count.
+
 ## Unmatched and needs-review files
 
 A recognized-extension file that doesn't cleanly match is never silently dropped. Two tiers:
