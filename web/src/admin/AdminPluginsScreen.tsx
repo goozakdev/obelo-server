@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import PluginSettingsForm from "./PluginSettingsForm";
 import SignInProviderOrder from "./SignInProviderOrder";
+import RedirectSignInProviders from "./RedirectSignInProviders";
 import type {
   InstalledPlugin,
   InstalledPluginsView,
@@ -627,6 +628,7 @@ export default function AdminPluginsScreen() {
         )}
 
         <SignInProviderOrder />
+        <RedirectSignInProviders />
 
         <div className="provider-card" data-testid="plugin-install-upload">
           <div className="provider-head">

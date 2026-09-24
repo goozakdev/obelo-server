@@ -51,6 +51,13 @@ func TestTheSDKsSubtitleExportNamesAreTheHosts(t *testing.T) {
 	assertSameList(t, "the Subtitle provider exports", host, pluginsdk.SubtitleExports())
 }
 
+// TestTheSDKsSignInRedirectExportNamesAreTheHosts is the same for the Sign-in
+// provider's redirect flow.
+func TestTheSDKsSignInRedirectExportNamesAreTheHosts(t *testing.T) {
+	host := []string{exportSignInAuthorizeURL, exportSignInExchange}
+	assertSameList(t, "the redirect Sign-in provider exports", host, pluginsdk.SignInRedirectExports())
+}
+
 // TestTheSDKsABIExportNamesAreTheHosts covers the plumbing every module provides
 // whatever seam it fills, plus the Event sink's one call and the host module's
 // namespace.

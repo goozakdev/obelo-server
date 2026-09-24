@@ -11,7 +11,8 @@ import "context"
 // Two flows exist by ADR, and a Plugin declares which it implements as a
 // Capability on its provides entry. This contract carries the PASSWORD flow: the
 // host hands over a username and password typed into the ordinary login form, and
-// the Plugin answers accepted (with an identity) or not.
+// the Plugin answers accepted (with an identity) or not. The REDIRECT flow is at
+// the end of this file.
 //
 // The identity is keyed by (Plugin id, Subject), never by username (ADR-0063
 // decision 3). A username is chosen by a person at a source this server does not
@@ -77,5 +78,76 @@ type SignInProviderRegistration struct {
 // SignInPasswordResponse.
 type SignInPasswordCall struct {
 	Request  SignInPasswordRequest `json:"request"`
+	Settings Settings              `json:"settings"`
+}
+
+// The REDIRECT flow (ADR-0063 decision 2). The host owns the whole round trip:
+// it mints state, the PKCE verifier and the nonce, serves the callback, and
+// verifies what comes back. A Plugin supplies exactly two things — where to send
+// the browser, and how to turn the code it returns with into an identity — and a
+// Plugin that declares this flow implements SignInRedirectProvider on the value
+// its factory builds. It never serves a route of its own.
+
+// SignInAuthorizeRequest is what the host hands a redirect provider to build the
+// URL a browser is sent to. Every value is the host's: the Plugin puts them in
+// the URL and keeps none of them.
+type SignInAuthorizeRequest struct {
+	// State is the host's opaque value for this one round trip.
+	State string `json:"state"`
+	// CodeChallenge is the PKCE challenge for the verifier only the host holds,
+	// by CodeChallengeMethod (always "S256").
+	CodeChallenge       string `json:"codeChallenge"`
+	CodeChallengeMethod string `json:"codeChallengeMethod"`
+	// Nonce is the value an ID token must carry back. A provider that issues none
+	// may ignore it.
+	Nonce string `json:"nonce"`
+	// RedirectURI is where the provider must send the browser back to: the host's
+	// own callback.
+	RedirectURI string `json:"redirectUri"`
+}
+
+// SignInAuthorizeResponse is the URL the browser is sent to.
+type SignInAuthorizeResponse struct {
+	URL string `json:"url"`
+}
+
+// SignInExchangeRequest is the code the browser came back with, and the PKCE
+// verifier and redirect URI the token request must repeat.
+type SignInExchangeRequest struct {
+	Code         string `json:"code"`
+	CodeVerifier string `json:"codeVerifier"`
+	RedirectURI  string `json:"redirectUri"`
+}
+
+// SignInExchangeResponse is what an exchange answers. Accepted with an Identity
+// is the only answer anyone is signed in on. IDToken is the raw ID token when the
+// provider issued one; the host verifies it and takes the subject and groups from
+// IT, never from Identity, so a Plugin cannot vouch for anybody the token does
+// not name.
+type SignInExchangeResponse struct {
+	Accepted bool            `json:"accepted"`
+	Identity *SignInIdentity `json:"identity,omitempty"`
+	IDToken  string          `json:"idToken,omitempty"`
+}
+
+// SignInRedirectProvider is the Go call surface of the redirect flow. An error
+// is the Plugin failing, and the host refuses the sign-in.
+type SignInRedirectProvider interface {
+	AuthorizeURL(ctx context.Context, req SignInAuthorizeRequest) (SignInAuthorizeResponse, error)
+	Exchange(ctx context.Context, req SignInExchangeRequest) (SignInExchangeResponse, error)
+}
+
+// SignInAuthorizeCall is what the host hands an INSTALLED redirect provider to
+// build an authorize URL: the request and the resolved Settings. The response is
+// un-enveloped — a plain SignInAuthorizeResponse.
+type SignInAuthorizeCall struct {
+	Request  SignInAuthorizeRequest `json:"request"`
+	Settings Settings               `json:"settings"`
+}
+
+// SignInExchangeCall is what the host hands an INSTALLED redirect provider for
+// one exchange. The response is un-enveloped — a plain SignInExchangeResponse.
+type SignInExchangeCall struct {
+	Request  SignInExchangeRequest `json:"request"`
 	Settings Settings              `json:"settings"`
 }

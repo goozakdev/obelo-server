@@ -191,16 +191,16 @@ func TestBundledProbeCarriesItsExternalID(t *testing.T) {
 // rather than read from internal/bundled on purpose: this is a black-box suite,
 // and a test that asks the code under test what it ships would pass on a server
 // that shipped nothing.
-var shippedPluginIDs = append(append([]string(nil), shippedMetadataIDs...), "opensubtitles")
+var shippedPluginIDs = append(append([]string(nil), shippedMetadataIDs...), "opensubtitles", "oidc")
 
 // shippedMetadataIDs is the Bundled plugins that are Metadata providers — every
 // shipped plugin but OpenSubtitles, which is a Subtitle provider and is tested
 // through the subtitle-providers screen (bundled_opensubtitles_test.go).
 var shippedMetadataIDs = []string{"tmdb", "omdb", "thetvdb", "anidb", "musicbrainz", "fanarttv", "theaudiodb"}
 
-// TestTheShippedSetIsEightPluginsInOrder: the list above is what a fresh server
+// TestTheShippedSetIsNinePluginsInOrder: the list above is what a fresh server
 // really has, so nothing else in this file can be quietly testing a subset.
-func TestTheShippedSetIsEightPluginsInOrder(t *testing.T) {
+func TestTheShippedSetIsNinePluginsInOrder(t *testing.T) {
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -210,7 +210,7 @@ func TestTheShippedSetIsEightPluginsInOrder(t *testing.T) {
 		got = append(got, p.ID)
 	}
 	if len(got) != len(shippedPluginIDs) {
-		t.Fatalf("installed plugins = %v, want the eight bundled ones", got)
+		t.Fatalf("installed plugins = %v, want the nine bundled ones", got)
 	}
 	// The PLUGINS screen sorts by id; the PROVIDERS screen is the one that carries
 	// the shipped order, and that is what decides which source leads a kind.

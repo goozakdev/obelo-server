@@ -41,6 +41,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/markerdetect"
 	"github.com/goozakdev/obelo-server/internal/plugins"
+	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 	"github.com/goozakdev/obelo-server/internal/transcode"
@@ -1188,4 +1189,17 @@ func copyTree(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+// ExternalIdentities returns the External identities a User holds (ADR-0063),
+// with the groups last recorded on each. It is a direct-DB seam because nothing
+// in the API shows them yet, and a sign-in test has to be able to say WHICH
+// subject and groups a sign-in was recorded under, not merely that it worked.
+func (s *Server) ExternalIdentities(userID string) []store.ExternalIdentity {
+	s.t.Helper()
+	ids, err := s.app.DB.ExternalIdentitiesByUser(userID)
+	if err != nil {
+		s.t.Fatalf("testharness: listing external identities for %q: %v", userID, err)
+	}
+	return ids
 }

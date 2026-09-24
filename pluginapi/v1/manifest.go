@@ -154,6 +154,29 @@ type ManifestProvides struct {
 	// rather than truncated — a shortened document is one a guest parses as
 	// complete.
 	MaxFetchBytes int64 `json:"maxFetchBytes,omitempty"`
+	// IDToken is a redirect-flow Sign-in provider's statement that its exchange
+	// returns an OpenID Connect ID token, and which of its OWN declared settings
+	// hold the issuer and the client id the operator typed (ADR-0063 decision 2).
+	// The HOST reads those two values and verifies every token against them —
+	// signature against the issuer's JWKS, iss, aud, nonce, exp — so a Plugin that
+	// declares this never vouches for the person itself.
+	//
+	// Absent is a plain OAuth2 provider: nothing to verify, the host relies on
+	// state and PKCE alone, and the Admin screen says the identity is not
+	// independently verified. Ignored for every other Extension point.
+	IDToken *ManifestIDToken `json:"idToken,omitempty"`
+}
+
+// ManifestIDToken names the two declared settings a redirect-flow Sign-in
+// provider's ID tokens are verified against. Both must be declared fields with no
+// default — the operator types them, never the author — the issuer a url field
+// and the client id a string field.
+type ManifestIDToken struct {
+	// IssuerSetting is the key of the declared url field holding the issuer.
+	IssuerSetting string `json:"issuerSetting"`
+	// ClientIDSetting is the key of the declared string field holding the client
+	// id, which a token's aud must name.
+	ClientIDSetting string `json:"clientIdSetting"`
 }
 
 // ManifestNetwork is the outbound allowlist, and it is the most load-bearing

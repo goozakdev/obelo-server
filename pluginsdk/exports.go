@@ -1,7 +1,7 @@
 package pluginsdk
 
 // The guest export names, one per contract call, COPIED from the host
-// (internal/plugins/guest.go, metadata.go, subtitle.go).
+// (internal/plugins/guest.go, metadata.go, subtitle.go, signin.go).
 //
 // They are copied and not imported, because this module may not import the
 // server — that is the point of the module split. A copy is a thing that drifts,
@@ -39,6 +39,10 @@ const (
 	// The Subtitle provider Extension point's two calls.
 	ExportSubtitleSearch   = "obelo_subtitle_search"
 	ExportSubtitleDownload = "obelo_subtitle_download"
+
+	// The Sign-in provider Extension point's redirect-flow calls.
+	ExportSignInAuthorizeURL = "sign_in_authorize_url"
+	ExportSignInExchange     = "sign_in_exchange"
 )
 
 // HostModule is the namespace the six host functions are imported from. A module
@@ -76,6 +80,12 @@ func MetadataExports() []string {
 // SubtitleExports is both Subtitle provider exports, in contract order.
 func SubtitleExports() []string {
 	return []string{ExportSubtitleSearch, ExportSubtitleDownload}
+}
+
+// SignInRedirectExports is both redirect-flow Sign-in provider exports, in
+// contract order.
+func SignInRedirectExports() []string {
+	return []string{ExportSignInAuthorizeURL, ExportSignInExchange}
 }
 
 // ABIExports is the plumbing every module provides, in the order the host looks

@@ -48,6 +48,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"unsafe"
 )
@@ -1539,4 +1540,120 @@ func markerProviderMarkers(ptr, n uint32) uint64 {
 		return fail("the source answered " + itoa(resp.Status))
 	}
 	return reply(json.RawMessage(resp.Body))
+}
+
+// =============================================================================
+// The Sign-in provider seam, redirect flow.
+// =============================================================================
+//
+// Two exports, a plain OAuth2 provider with no network: the authorize URL is the
+// declared `authorize` setting with the host's values on it, and the exchange
+// reads the identity out of the code itself.
+//
+//	sign_in_authorize_url(ptr u32, len u32) -> i64   a SignInAuthorizeCall in,
+//	                                                 a SignInAuthorizeResponse out
+//	sign_in_exchange(ptr u32, len u32) -> i64        a SignInExchangeCall in,
+//	                                                 a SignInExchangeResponse out
+//
+// A code is `subject|username|groups` (groups `,`-separated). `reject` is
+// refused; a `token|` prefix also answers an ID token nobody can verify.
+//
+// SignInRedirectFailsWithTheSecrets, as the code or as the last path segment of
+// the `authorize` setting, is a provider that logs what the call handed it —
+// the code and verifier, or the state, nonce and challenge, and the
+// `client_secret` setting — and then fails the call with the same in its error.
+
+// SignInRedirectFailsWithTheSecrets is the hostile redirect provider above.
+const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"
+
+type signInAuthorizeCall struct {
+	Request struct {
+		State         string `json:"state"`
+		CodeChallenge string `json:"codeChallenge"`
+		Nonce         string `json:"nonce"`
+		RedirectURI   string `json:"redirectUri"`
+	} `json:"request"`
+	Settings struct {
+		Values map[string]any `json:"values"`
+	} `json:"settings"`
+}
+
+type signInExchangeCall struct {
+	Request struct {
+		Code         string `json:"code"`
+		CodeVerifier string `json:"codeVerifier"`
+	} `json:"request"`
+	Settings struct {
+		Values map[string]any `json:"values"`
+	} `json:"settings"`
+}
+
+type signInExchangeResponse struct {
+	Accepted bool            `json:"accepted"`
+	Identity *signInIdentity `json:"identity,omitempty"`
+	IDToken  string          `json:"idToken,omitempty"`
+}
+
+//go:wasmexport sign_in_authorize_url
+func signInAuthorizeURL(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call signInAuthorizeCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SignInAuthorizeCall: " + err.Error())
+	}
+	base, _ := call.Settings.Values["authorize"].(string)
+	if strings.HasSuffix(base, "/"+SignInRedirectFailsWithTheSecrets) {
+		secret, _ := call.Settings.Values["client_secret"].(string)
+		said := "the guest was handed state=" + call.Request.State + " nonce=" + call.Request.Nonce +
+			" challenge=" + call.Request.CodeChallenge + " secret=" + secret
+		logLine(levelError, said)
+		return fail(said)
+	}
+	q := url.Values{}
+	q.Set("state", call.Request.State)
+	q.Set("nonce", call.Request.Nonce)
+	q.Set("code_challenge", call.Request.CodeChallenge)
+	q.Set("redirect_uri", call.Request.RedirectURI)
+	return reply(map[string]string{"url": base + "?" + q.Encode()})
+}
+
+//go:wasmexport sign_in_exchange
+func signInExchange(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call signInExchangeCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SignInExchangeCall: " + err.Error())
+	}
+	code := call.Request.Code
+	if code == SignInRedirectFailsWithTheSecrets {
+		secret, _ := call.Settings.Values["client_secret"].(string)
+		said := "the guest was handed code=" + code + " verifier=" + call.Request.CodeVerifier + " secret=" + secret
+		logLine(levelError, said)
+		return fail(said)
+	}
+	if code == "reject" {
+		return reply(signInExchangeResponse{})
+	}
+	var resp signInExchangeResponse
+	if rest, ok := strings.CutPrefix(code, "token|"); ok {
+		code = rest
+		resp.IDToken = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."
+	}
+	f := strings.Split(code, "|")
+	if len(f) != 3 {
+		return fail("the code is not subject|username|groups")
+	}
+	id := &signInIdentity{Subject: f[0], Username: f[1]}
+	if f[2] != "" {
+		id.Groups = strings.Split(f[2], ",")
+	}
+	resp.Accepted = true
+	resp.Identity = id
+	return reply(resp)
 }

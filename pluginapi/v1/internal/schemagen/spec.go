@@ -55,6 +55,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.CapabilityExternalRef),
 				string(pluginapi.CapabilityEpisodeList),
 				string(pluginapi.CapabilityPasswordSignIn),
+				string(pluginapi.CapabilityRedirectSignIn),
 			},
 		},
 		{
@@ -327,6 +328,13 @@ func contractTypes() []typeSpec {
 				"the host's Enrichment policy decides whether to honour it.",
 		},
 		{
+			value: pluginapi.ManifestIDToken{},
+			doc: "A redirect-flow Sign-in provider's statement that its exchange returns an OpenID Connect ID " +
+				"token, naming which of its own declared settings hold the operator-typed issuer (a url field) and " +
+				"client id (a string field), neither with a default. The host verifies every token against those " +
+				"two values; a provider that declares no idToken is shown to the Admin as not independently verified.",
+		},
+		{
 			value: pluginapi.ManifestNetwork{},
 			doc: "The outbound allowlist, and the most load-bearing claim in the document — which is why it is " +
 				"the one the host trusts least. Hosts are bare names with no scheme, port, path or wildcard " +
@@ -509,6 +517,37 @@ func contractTypes() []typeSpec {
 			doc: "What the host hands an INSTALLED Marker provider for one call: the request a Built-in would " +
 				"receive and the Settings the host resolved, travelling together as a Subtitle provider's do. " +
 				"The response is un-enveloped — a plain MarkersResponse.",
+		},
+		{
+			value: pluginapi.SignInAuthorizeRequest{},
+			doc: "What the host hands a redirect-flow Sign-in provider to build the URL a browser is sent to. " +
+				"Every value is the host's — state, the PKCE challenge for a verifier only the host holds, the " +
+				"nonce an ID token must carry back, and the host's own callback — and the Plugin keeps none of them.",
+		},
+		{
+			value: pluginapi.SignInAuthorizeResponse{},
+			doc:   "The URL the browser is sent to.",
+		},
+		{
+			value: pluginapi.SignInExchangeRequest{},
+			doc: "The code the browser came back with, and the PKCE verifier and redirect URI the token request " +
+				"must repeat.",
+		},
+		{
+			value: pluginapi.SignInExchangeResponse{},
+			doc: "What an exchange answers. Only accepted:true with an identity signs anyone in. idToken is the " +
+				"raw ID token when the provider issued one: the host verifies it against the operator-typed " +
+				"issuer and takes subject and groups from IT, never from identity.",
+		},
+		{
+			value: pluginapi.SignInAuthorizeCall{},
+			doc: "What the host hands an INSTALLED redirect-flow Sign-in provider to build an authorize URL: the " +
+				"request and the resolved Settings. The response is un-enveloped — a plain SignInAuthorizeResponse.",
+		},
+		{
+			value: pluginapi.SignInExchangeCall{},
+			doc: "What the host hands an INSTALLED redirect-flow Sign-in provider for one exchange: the request " +
+				"and the resolved Settings. The response is un-enveloped — a plain SignInExchangeResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},

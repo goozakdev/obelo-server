@@ -3153,6 +3153,35 @@ export interface SignInProvider {
  * Local password — the Admin's order first, then any the Admin has not placed. */
 export interface SignInProvidersView {
   providers: SignInProvider[];
+  /** Every redirect-flow Sign-in provider, with whether its identity is verified
+   * (ADR-0063 decision 2). Absent from a server older than the redirect flow. */
+  redirect?: RedirectSignInProvider[];
+}
+
+/** A redirect-flow Sign-in provider as the Admin screen lists it (ADR-0063
+ * decision 2). `verified` is false for a plain OAuth2 provider whose identity the
+ * server accepts on state and PKCE alone — "identity not independently
+ * verified". `configured` is false until a verifying provider's issuer and
+ * client id are typed. */
+export interface RedirectSignInProvider {
+  id: string;
+  name: string;
+  verified: boolean;
+  configured: boolean;
+}
+
+/** `GET /api/v1/auth/sign-in-providers` — the redirect-flow Sign-in providers a
+ * person can use now, for the login screen's buttons. */
+export interface RedirectSignInProvidersView {
+  providers: SignInProvider[];
+}
+
+/** `POST /api/v1/auth/redirect/callback` — what the provider sent the browser
+ * back with, and the device signing in. Answers a LoginResult. */
+export interface RedirectSignInCallbackRequest {
+  state: string;
+  code: string;
+  device: DeviceInput;
 }
 
 /** A TV Library's Marker detection toggle (ADR-0065 §4): whether the server

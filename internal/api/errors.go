@@ -66,6 +66,9 @@ const (
 	// refusal: a Sign-in provider accepted the credential, and the new identity's
 	// username is already a User here (ADR-0063 decision 7).
 	codeSignInUsernameTaken = "SIGN_IN_USERNAME_TAKEN"
+	// codeSignInRefused (401) is every refused redirect sign-in, whichever check
+	// refused it (ADR-0063 decision 2).
+	codeSignInRefused = "SIGN_IN_REFUSED"
 	// Device authorization grant (ADR-0036). The first four are the RFC 8628 poll
 	// states, respelled into this envelope's SCREAMING_SNAKE vocabulary — the
 	// state machine is the RFC's, the wire spelling is ours, because a client

@@ -4,6 +4,7 @@ import { RequireAdmin, RequireAuth } from "./auth/guards";
 import { ServerInfoProvider, useServerInfoContext } from "./serverInfoContext";
 import SetupScreen from "./screens/SetupScreen";
 import LoginScreen from "./screens/LoginScreen";
+import SignInCallbackScreen from "./screens/SignInCallbackScreen";
 import LinkScreen from "./screens/LinkScreen";
 import HomeScreen from "./screens/HomeScreen";
 import AdminScreen from "./screens/AdminScreen";
@@ -33,6 +34,7 @@ import ScrollToTop from "./ScrollToTop";
 // Routes:
 //   /setup   first-run only (handshake setupRequired) → create first Admin
 //   /login   credentials → session
+//   /sign-in/callback  a redirect-flow Sign-in provider's return (ADR-0063)
 //   /link/:code?  approve a TV's sign-in code (RequireAuth) — ADR-0036
 //   /        authed landing (RequireAuth)
 //   /admin   admin-only placeholder (RequireAdmin)
@@ -71,6 +73,9 @@ export default function App() {
         <Routes>
           <Route path="/setup" element={<SetupGate />} />
           <Route path="/login" element={<LoginGate />} />
+          {/* Where a redirect-flow Sign-in provider sends the browser back to
+              (ADR-0063). Outside RequireAuth: nobody is signed in yet. */}
+          <Route path="/sign-in/callback" element={<SignInCallbackScreen />} />
           {/* /link is where a TV's QR code lands (ADR-0036). RequireAuth is what
               implements "ask for a password first if you aren't signed in" — it
               bounces to /login and comes back — so this route needs no auth

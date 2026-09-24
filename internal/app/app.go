@@ -1160,6 +1160,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// and the per-Library toggle.
 		MarkerDetection:       markerDetection,
 		MarkerDetectionToggle: db,
+
+		// The redirect flow of the same Sign-in providers, over the same registry.
+		SignInRedirect: signin.NewRedirects(registry),
 	})
 
 	// Top-level composition (ADR-0012): /api/v1 stays the API's; every other

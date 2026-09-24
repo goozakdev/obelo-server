@@ -63,15 +63,16 @@ const inRepoModulePrefix = "github.com/goozakdev/obelo-server"
 // sharedSourceRoots (D003) are the in-repo packages, outside a plugin's own
 // plugins/<id>/, that a Bundled plugin's build actually reaches. Determined
 // from source: every plugin's non-test .go files import pluginapi/v1,
-// pluginsdk, and pluginsdk/metadata or pluginsdk/subtitle; those four
-// packages import only each other (pluginsdk/sink, pluginsdk/sdktest and the
-// internal/ packages are test-only or unused by shipped code and so are not
-// pinned). Pinned as an explicit list rather than derived, so an import
+// pluginsdk, and pluginsdk/metadata, pluginsdk/subtitle or pluginsdk/signin;
+// those five packages import only each other (pluginsdk/sink, pluginsdk/sdktest
+// and the internal/ packages are test-only or unused by shipped code and so are
+// not pinned). Pinned as an explicit list rather than derived, so an import
 // outside it fails loudly instead of the list going stale silently.
 var sharedSourceRoots = []string{
 	"pluginsdk",
 	"pluginsdk/metadata",
 	"pluginsdk/subtitle",
+	"pluginsdk/signin",
 	"pluginapi/v1",
 }
 

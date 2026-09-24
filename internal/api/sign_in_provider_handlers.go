@@ -14,6 +14,9 @@ import (
 //	                                        answers 409 SIGN_IN_USERNAME_TAKEN
 //	GET  /settings/sign-in-providers        → { "providers": [ { "id", "name" } ] }
 //	PUT  /settings/sign-in-providers        { "order": [ id, ... ] } → the same
+//	                                        (both also list "redirect": every
+//	                                        redirect-flow provider, verified or
+//	                                        not; see sign_in_redirect_handlers.go)
 //
 // The list is the order a login asks the password-flow Sign-in providers in
 // after the Local password; the first to accept wins.
@@ -26,6 +29,10 @@ const signInUsernameTakenMessage = "Your sign-in was accepted, but an account wi
 
 type signInProvidersResponse struct {
 	Providers []signin.Provider `json:"providers"`
+	// Redirect is every redirect-flow Sign-in provider, with whether the host
+	// verifies its ID tokens: false is shown as "identity not independently
+	// verified" (ADR-0063 decision 2).
+	Redirect []signin.RedirectProvider `json:"redirect"`
 }
 
 type signInOrderRequest struct {
@@ -65,6 +72,10 @@ func handleSignInProviders(deps Deps) http.HandlerFunc {
 		if providers == nil {
 			providers = []signin.Provider{}
 		}
-		writeJSON(w, http.StatusOK, signInProvidersResponse{Providers: providers})
+		redirect := []signin.RedirectProvider{}
+		if deps.SignInRedirect != nil {
+			redirect = append(redirect, deps.SignInRedirect.Providers()...)
+		}
+		writeJSON(w, http.StatusOK, signInProvidersResponse{Providers: providers, Redirect: redirect})
 	}
 }

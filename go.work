@@ -37,4 +37,5 @@ use (
 	./plugins/fanarttv
 	./plugins/theaudiodb
 	./plugins/opensubtitles
+	./plugins/oidc
 )

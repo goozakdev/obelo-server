@@ -1,7 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { safeReturnPath } from "../auth/returnPath";
 import { useAuth } from "../auth/session";
+import type { SignInProvider } from "../api/types";
 import { errorMessage } from "./errorMessage";
+import { rememberRedirectSignIn } from "./SignInCallbackScreen";
 
 // Login (PRD user story 3). Exchanges credentials for a session via the auth
 // provider, then returns the user to wherever they were headed before the guard
@@ -22,14 +25,41 @@ export default function LoginScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { login } = useAuth();
+  const { login, redirectProviders, startRedirectSignIn } = useAuth();
   const [username, setUsername] = useState(() => searchParams.get("user") ?? "");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const from = (location.state as FromState | null)?.from?.pathname ?? "/";
+  const [providers, setProviders] = useState<SignInProvider[]>([]);
+
+  const from = safeReturnPath((location.state as FromState | null)?.from?.pathname);
+
+  // The redirect-flow Sign-in providers (ADR-0063 decision 2): one button each,
+  // below the form, and nothing at all on a server that has none.
+  useEffect(() => {
+    let live = true;
+    void redirectProviders().then((list) => {
+      if (live) setProviders(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, [redirectProviders]);
+
+  async function onRedirect(provider: string) {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const url = await startRedirectSignIn(provider);
+      rememberRedirectSignIn({ from, remember });
+      window.location.assign(url);
+    } catch (err) {
+      setError(errorMessage(err));
+      setSubmitting(false);
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -100,6 +130,19 @@ export default function LoginScreen() {
         >
           {submitting ? "Signing in…" : "Sign in"}
         </button>
+
+        {providers.map((p) => (
+          <button
+            key={p.id}
+            className="auth-submit"
+            data-testid={`login-redirect-${p.id}`}
+            type="button"
+            disabled={submitting}
+            onClick={() => void onRedirect(p.id)}
+          >
+            Sign in with {p.name}
+          </button>
+        ))}
       </form>
     </div>
   );
