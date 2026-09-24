@@ -464,6 +464,17 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				requireAuth(deps.Auth, requireScope(deps.Access, handleTitleWebReferences(deps, id))))(w, r)
 			return
 		}
+		// GET {id}/lyrics: the Track's Local lyrics for the lyrics view. Any User,
+		// Member included — requireAuth + requireScope, NOT requireAdmin.
+		if id, ok := strings.CutSuffix(rest, "/lyrics"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireAuth(deps.Auth, requireScope(deps.Access, handleTitleLyrics(deps, id))))(w, r)
+			return
+		}
 		// GET {id}/subtitles/{subId}.vtt: the out-of-band WebVTT media GET a browser
 		// reaches via a <track> src — bearer OR media cookie, like the artwork leaf.
 		// Matched before /artwork/ (distinct suffix) so it isn't shadowed by the

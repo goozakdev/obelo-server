@@ -313,3 +313,44 @@
 .music-theme .detail-poster {
   position: relative;
 }
+
+/* Lyrics view under the Track hero. Synced lines are dim until the song reaches
+   them; the current one is full-strength accent. Plain lyrics keep the line
+   breaks they were written with. The block scrolls on its own so a long song
+   does not push the page, and the current line is kept in view inside it. */
+.lyrics-toggle {
+  margin-top: 1.5rem;
+}
+
+.lyrics-view {
+  margin-top: 1rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  line-height: 1.7;
+}
+
+.lyrics-empty {
+  color: var(--text-dim);
+}
+
+.lyrics-plain {
+  margin: 0;
+  white-space: pre-line;
+  color: var(--text);
+}
+
+.lyrics-synced {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lyric-line {
+  color: var(--text-dim);
+  min-height: 1.7em;
+}
+
+.lyric-line-active {
+  color: var(--accent);
+  font-weight: 600;
+}

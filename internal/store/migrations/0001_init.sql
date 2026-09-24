@@ -1259,3 +1259,18 @@ CREATE TABLE markers (
     CHECK (end_ms > start_ms)
 );
 CREATE INDEX idx_markers_file_path ON markers(file_path, source);
+
+-- ===========================================================================
+-- lyrics
+-- ===========================================================================
+
+-- A Track's words. 'local' rows are the Scanner's — read from a sidecar .lrc or
+-- the file's own tags — and a rescan rewrites them. kind says which shape body
+-- holds: 'synced' is a JSON array of {"startMs","text"} lines, 'plain' the text.
+CREATE TABLE lyrics (
+    title_id   TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+    source     TEXT NOT NULL CHECK (source IN ('local')),
+    kind       TEXT NOT NULL CHECK (kind IN ('synced', 'plain')),
+    body       TEXT NOT NULL,
+    PRIMARY KEY (title_id, source)
+);

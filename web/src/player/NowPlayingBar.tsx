@@ -1630,6 +1630,14 @@ function CurrentPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transport.registerToggle, transport.publishPlaying]);
 
+  // Register this element's position read the same way, so the lyrics view can
+  // follow the song; cleared on unmount so it never reads a stale element.
+  useEffect(() => {
+    transport.registerPosition(positionMs);
+    return () => transport.registerPosition(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transport.registerPosition]);
+
   // Seek to an absolute position (seconds), clamped to the media bounds, and fire
   // a progress report so resume position + Watch state stay accurate — reusing the
   // same session.report() path onSeeked uses (jsdom doesn't emit a `seeked` event

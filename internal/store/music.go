@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/goozakdev/obelo-server/internal/lyrics"
 )
 
 // Music catalog persistence (issue tv-music/03): the explicit Artist → Album
@@ -82,6 +83,9 @@ type TrackTree struct {
 	TitleTree
 	DiscNumber  int
 	TrackNumber int
+	// Lyrics are the Track's Local lyrics as the scanner read them, nil when it
+	// found none. The upsert replaces the stored 'local' row with them.
+	Lyrics *lyrics.Lyrics
 }
 
 // AlbumTree is one Album and the Tracks resolved within it. ArtworkPath/Year are
@@ -227,7 +231,10 @@ func upsertTrackTitle(tx *sql.Tx, albumID string, tr TrackTree, written map[stri
 	if err != nil {
 		return err
 	}
-	return writeTitleSubtree(tx, titleID, tr.TitleTree, written)
+	if err := writeTitleSubtree(tx, titleID, tr.TitleTree, written); err != nil {
+		return err
+	}
+	return writeLocalLyrics(tx, titleID, tr.Lyrics)
 }
 
 // --- Browse reads ----------------------------------------------------------
