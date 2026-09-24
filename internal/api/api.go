@@ -304,6 +304,11 @@ type Deps struct {
 	// (ADR-0063, Admin-scope /settings/sign-in-providers). Nil in a narrow test,
 	// and the route then answers 503 with a sentence.
 	SignInProviders *signin.Source
+
+	// SignInRedirect is the redirect flow of the Sign-in providers (ADR-0063
+	// decision 2): the public /auth/redirect routes and the Admin screen's
+	// verified flag. Nil in a narrow test, and the routes then answer 503.
+	SignInRedirect *signin.Redirects
 }
 
 // Handler builds the root http.Handler for the whole API, mounted at /api/v1.
@@ -575,6 +580,16 @@ func Handler(deps Deps) http.Handler {
 	// without that dispatcher knowing it exists.
 	mux.HandleFunc("/settings/sign-in-providers",
 		requireAuth(deps.Auth, requireAdmin(handleSignInProviders(deps))))
+
+	// The redirect flow (ADR-0063 decisions 2 and 8), web-only. Public for the
+	// reason /auth/login is: the caller has no session yet. See
+	// sign_in_redirect_handlers.go.
+	mux.HandleFunc("/auth/sign-in-providers",
+		requireMethod(http.MethodGet, handleRedirectSignInProviders(deps)))
+	mux.HandleFunc("/auth/redirect/start",
+		requireMethod(http.MethodPost, handleRedirectSignInStart(deps)))
+	mux.HandleFunc("/auth/redirect/callback",
+		requireMethod(http.MethodPost, handleRedirectSignInCallback(deps)))
 
 	// Catch-all: anything not matched returns the standard NOT_FOUND envelope.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

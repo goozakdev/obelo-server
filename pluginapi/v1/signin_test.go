@@ -8,6 +8,10 @@ import "testing"
 func signInWireCases() []wireCase {
 	req := SignInPasswordRequest{Username: "alice", Password: "correct horse"}
 	id := SignInIdentity{Subject: "u-1001", Username: "alice", Groups: []string{"family", "media"}}
+	authorize := SignInAuthorizeRequest{
+		State: "st-1", CodeChallenge: "ch-1", CodeChallengeMethod: "S256", Nonce: "n-1",
+		RedirectURI: "https://obelo.example/sign-in/callback",
+	}
 	return []wireCase{
 		{
 			name:   "SignInPasswordRequest",
@@ -35,6 +39,36 @@ func signInWireCases() []wireCase {
 			value: SignInPasswordCall{Request: req, Settings: Settings{Enabled: true}},
 			golden: `{"request":{"username":"alice","password":"correct horse"},` +
 				`"settings":{"enabled":true}}`,
+		},
+		{
+			name:  "SignInAuthorizeCall",
+			value: SignInAuthorizeCall{Request: authorize, Settings: Settings{Enabled: true}},
+			golden: `{"request":{"state":"st-1","codeChallenge":"ch-1","codeChallengeMethod":"S256",` +
+				`"nonce":"n-1","redirectUri":"https://obelo.example/sign-in/callback"},"settings":{"enabled":true}}`,
+		},
+		{
+			name:   "SignInAuthorizeResponse",
+			value:  SignInAuthorizeResponse{URL: "https://idp.example/authorize?state=st-1"},
+			golden: `{"url":"https://idp.example/authorize?state=st-1"}`,
+		},
+		{
+			name: "SignInExchangeCall",
+			value: SignInExchangeCall{Request: SignInExchangeRequest{
+				Code: "code-1", CodeVerifier: "v-1", RedirectURI: "https://obelo.example/sign-in/callback",
+			}, Settings: Settings{Enabled: true}},
+			golden: `{"request":{"code":"code-1","codeVerifier":"v-1",` +
+				`"redirectUri":"https://obelo.example/sign-in/callback"},"settings":{"enabled":true}}`,
+		},
+		{
+			name:  "SignInExchangeResponse",
+			value: SignInExchangeResponse{Accepted: true, Identity: &id, IDToken: "h.p.s"},
+			golden: `{"accepted":true,"identity":{"subject":"u-1001","username":"alice",` +
+				`"groups":["family","media"]},"idToken":"h.p.s"}`,
+		},
+		{
+			name:   "SignInExchangeResponse without an ID token",
+			value:  SignInExchangeResponse{Accepted: true, Identity: &SignInIdentity{Subject: "u-1001"}},
+			golden: `{"accepted":true,"identity":{"subject":"u-1001"}}`,
 		},
 	}
 }

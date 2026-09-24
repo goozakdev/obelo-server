@@ -97,6 +97,9 @@ func validateManifest(m pluginapi.Manifest) error {
 	if err := validateSettingsFields(m.Settings.Fields); err != nil {
 		return err
 	}
+	if err := validateIDToken(m); err != nil {
+		return err
+	}
 	for _, h := range m.Network.Hosts {
 		if h != normalizeHost(h) || h == "" {
 			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port or path", h)
@@ -106,6 +109,58 @@ func validateManifest(m pluginapi.Manifest) error {
 		}
 	}
 	return nil
+}
+
+// validateIDToken checks a redirect provider's idToken declaration against its
+// own settings schema. The two settings it names are what the host verifies every
+// ID token against, so they must be fields the OPERATOR fills — declared, of the
+// right type, and with no default an author could have typed for them.
+func validateIDToken(m pluginapi.Manifest) error {
+	for _, p := range m.Provides {
+		if p.IDToken == nil {
+			continue
+		}
+		if p.Kind != pluginapi.ExtensionSignInProvider || !hasCapability(p.Capabilities, pluginapi.CapabilityRedirectSignIn) {
+			return fmt.Errorf("an idToken declaration belongs on a %s entry declaring %s",
+				pluginapi.ExtensionSignInProvider, pluginapi.CapabilityRedirectSignIn)
+		}
+		for _, want := range []struct {
+			what, key string
+			typ       pluginapi.SettingsFieldType
+		}{
+			{"issuer", p.IDToken.IssuerSetting, pluginapi.FieldURL},
+			{"client id", p.IDToken.ClientIDSetting, pluginapi.FieldString},
+		} {
+			f, ok := declaredField(m.Settings.Fields, want.key)
+			switch {
+			case !ok:
+				return fmt.Errorf("the idToken %s setting %q is not a declared settings field", want.what, want.key)
+			case f.Type != want.typ:
+				return fmt.Errorf("the idToken %s setting %q must be a %s field", want.what, want.key, want.typ)
+			case len(f.Default) > 0:
+				return fmt.Errorf("the idToken %s setting %q declares a default; the operator types it, never the author", want.what, want.key)
+			}
+		}
+	}
+	return nil
+}
+
+func hasCapability(caps []pluginapi.Capability, c pluginapi.Capability) bool {
+	for _, have := range caps {
+		if have == c {
+			return true
+		}
+	}
+	return false
+}
+
+func declaredField(fields []pluginapi.SettingsField, key string) (pluginapi.SettingsField, bool) {
+	for _, f := range fields {
+		if f.Key == key && key != "" {
+			return f, true
+		}
+	}
+	return pluginapi.SettingsField{}, false
 }
 
 // checkAPIVersion is ADR-0058 decision 8 and the ADR-0055 posture in one function:

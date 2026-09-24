@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -109,6 +110,22 @@ func (s *Service) signInExternally(ctx context.Context, username, password strin
 		return s.issueSession(user, dev)
 	}
 	return LoginResult{}, errNoProviderAccepted
+}
+
+// SignInExternal signs in the person a redirect-flow Sign-in provider vouched
+// for, once the host has judged the answer (internal/signin). It resolves exactly
+// as the password flow does — by (providerID, subject), never by username, with
+// the same new-Member rule and the same ErrUsernameCollision — and issues the
+// same session a login does.
+func (s *Service) SignInExternal(providerID string, answer ExternalAnswer, dev DeviceInput) (LoginResult, error) {
+	if dev.ClientID == "" {
+		return LoginResult{}, fmt.Errorf("auth: device.clientId is required")
+	}
+	user, err := s.resolveExternalIdentity(providerID, answer)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	return s.issueSession(user, dev)
 }
 
 // resolveExternalIdentity turns an accepted answer into the User it signs in as:

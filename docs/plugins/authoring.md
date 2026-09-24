@@ -114,6 +114,8 @@ Then, per seam:
 | | `metadata_series_seasons` / `metadata_season_episodes` | behind capability `episode-list` |
 | | `metadata_album_tracklist` / `metadata_release_editions` | behind capability `album-tracklist` |
 | | `metadata_external_ref` | behind capability `external-ref` |
+| Sign-in provider | `sign_in_password(ptr, len) -> i64` | behind capability `password-sign-in` |
+| | `sign_in_authorize_url(ptr, len) -> i64` / `sign_in_exchange(ptr, len) -> i64` | behind capability `redirect-sign-in` |
 
 > **The Event sink's call is `deliver`, not `obelo_deliver`.** The three seams
 > landed in three slices and their export names are not harmonised: the sink's is
@@ -136,6 +138,26 @@ Two things a Metadata provider author gets wrong, both learned the hard way:
   through its own guarded fetcher and files it.
 - **A role the host does not file for that kind is refused at the store.** Use
   `poster`, `background` or `logo`.
+
+A Sign-in provider's redirect flow (ADR-0063 decision 2) owns almost nothing. The
+host mints `state`, the PKCE verifier and the nonce, serves the callback, and hands
+you only what goes in the authorize URL and the code to exchange. If your exchange
+gets an OpenID Connect ID token, return it raw in `idToken` and declare
+`idToken: { "issuerSetting": ..., "clientIdSetting": ... }` on the provides entry,
+naming two of your own declared settings — a `url` field and a `string` field,
+neither with a default — that the operator types. The host verifies every token
+against them and takes the subject and groups from the token, not from your
+`identity`. Declare no `idToken` and the host takes your identity as given, and
+the Admin screen says it is not independently verified. The Bundled
+`plugins/oidc` is the worked example.
+
+The host hands you `redirectUri`, and it is built from the origin the browser's
+request arrived on — the server has no configured external URL. Pass it through
+unchanged, and tell operators to register that exact URI,
+`<the server's origin>/sign-in/callback`, with their identity provider: no
+wildcards, so the provider itself refuses to send a code anywhere else. Say so
+where the operator will read it — in a setting's `help` — as the Bundled
+`plugins/oidc` does on its Client ID field.
 
 And one a Subtitle provider author gets wrong:
 
@@ -322,7 +344,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -1537,6 +1559,7 @@ comes with either. Four packages:
 | `pluginsdk` | `Host` — the six host functions, typed. `Sandbox()` returns the one that calls them. `obelo_alloc`, `obelo_free` and `last_error` are exported from here, once. Also `Pacer`/`PacedHost`, and `Do`/`DoJSON`/`GetJSON` with a `FetchError` that tells a refusal from an outage from a 404. |
 | `pluginsdk/metadata` | `Serve(p)` — the eight `//go:wasmexport` Metadata provider calls, in front of the contract's own `pluginapi.MetadataProvider`. |
 | `pluginsdk/sink`, `pluginsdk/subtitle` | The same for the other two seams: `deliver`, and the two subtitle exports. |
+| `pluginsdk/signin` | `ServeRedirect(p)` — a Sign-in provider's redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`. |
 | `pluginsdk/sdktest` | An in-memory `Host` for NATIVE tests: a routing table of `http.Handler`s, a captured log, an in-memory kv and fixed settings. |
 
 ### Your `main.go`

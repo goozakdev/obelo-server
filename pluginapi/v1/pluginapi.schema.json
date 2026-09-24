@@ -26,7 +26,8 @@
         "album-tracklist",
         "external-ref",
         "episode-list",
-        "password-sign-in"
+        "password-sign-in",
+        "redirect-sign-in"
       ]
     },
     "Outcome": {
@@ -1214,10 +1215,29 @@
         },
         "maxFetchBytes": {
           "type": "integer"
+        },
+        "idToken": {
+          "$ref": "#/$defs/ManifestIDToken"
         }
       },
       "required": [
         "kind"
+      ]
+    },
+    "ManifestIDToken": {
+      "type": "object",
+      "description": "A redirect-flow Sign-in provider's statement that its exchange returns an OpenID Connect ID token, naming which of its own declared settings hold the operator-typed issuer (a url field) and client id (a string field), neither with a default. The host verifies every token against those two values; a provider that declares no idToken is shown to the Admin as not independently verified.",
+      "properties": {
+        "issuerSetting": {
+          "type": "string"
+        },
+        "clientIdSetting": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuerSetting",
+        "clientIdSetting"
       ]
     },
     "ManifestNetwork": {
@@ -1721,6 +1741,116 @@
       "properties": {
         "request": {
           "$ref": "#/$defs/MarkersRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "SignInAuthorizeRequest": {
+      "type": "object",
+      "description": "What the host hands a redirect-flow Sign-in provider to build the URL a browser is sent to. Every value is the host's — state, the PKCE challenge for a verifier only the host holds, the nonce an ID token must carry back, and the host's own callback — and the Plugin keeps none of them.",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "codeChallenge": {
+          "type": "string"
+        },
+        "codeChallengeMethod": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "redirectUri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "codeChallenge",
+        "codeChallengeMethod",
+        "nonce",
+        "redirectUri"
+      ]
+    },
+    "SignInAuthorizeResponse": {
+      "type": "object",
+      "description": "The URL the browser is sent to.",
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "SignInExchangeRequest": {
+      "type": "object",
+      "description": "The code the browser came back with, and the PKCE verifier and redirect URI the token request must repeat.",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "codeVerifier": {
+          "type": "string"
+        },
+        "redirectUri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "codeVerifier",
+        "redirectUri"
+      ]
+    },
+    "SignInExchangeResponse": {
+      "type": "object",
+      "description": "What an exchange answers. Only accepted:true with an identity signs anyone in. idToken is the raw ID token when the provider issued one: the host verifies it against the operator-typed issuer and takes subject and groups from IT, never from identity.",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "identity": {
+          "$ref": "#/$defs/SignInIdentity"
+        },
+        "idToken": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accepted"
+      ]
+    },
+    "SignInAuthorizeCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED redirect-flow Sign-in provider to build an authorize URL: the request and the resolved Settings. The response is un-enveloped — a plain SignInAuthorizeResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SignInAuthorizeRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "SignInExchangeCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED redirect-flow Sign-in provider for one exchange: the request and the resolved Settings. The response is un-enveloped — a plain SignInExchangeResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SignInExchangeRequest"
         },
         "settings": {
           "$ref": "#/$defs/Settings"

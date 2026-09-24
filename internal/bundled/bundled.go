@@ -1,6 +1,7 @@
 // Package bundled is the plugins this server ships — the seven metadata
 // providers and OpenSubtitles — as WebAssembly modules carried inside the binary
 // (ADR-0059 decisions 1-3; OpenSubtitles since .scratch/bundled-plugins issue 09).
+// The OpenID Connect Sign-in provider ships the same way (ADR-0063 decision 1).
 //
 // A Bundled plugin is an Installed plugin the server shipped with. It is placed
 // under <dataDir>/plugins/<id>/ on first boot exactly as an Admin's upload would
@@ -89,6 +90,10 @@ var ids = []string{
 	// about subtitles reads it. It arrived after the seven (.scratch/
 	// bundled-plugins issue 09, ADR-0059 decision 11 as amended).
 	"opensubtitles",
+	// A Sign-in provider (ADR-0063 decision 1), after everything whose order
+	// decides anything: no metadata or subtitle list reads it, and a login asks
+	// redirect providers only when a person picks one.
+	"oidc",
 }
 
 // IDs is the ordered list of Bundled plugin ids. The slice is a copy.

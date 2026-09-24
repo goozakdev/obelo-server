@@ -146,6 +146,8 @@ import type {
   Marker,
   SignInProvidersView,
   MarkerDetection,
+  RedirectSignInProvidersView,
+  RedirectSignInCallbackRequest,
 } from "./types";
 import type { Lyrics } from "./types";
 
@@ -2481,6 +2483,45 @@ export class ApiClient {
       body: { order },
       signal,
     });
+  }
+
+  /** `GET /api/v1/auth/sign-in-providers` (public) — the redirect-flow Sign-in
+   * providers the login screen offers a button for (ADR-0063 decision 2). */
+  listRedirectSignInProviders(signal?: AbortSignal): Promise<RedirectSignInProvidersView> {
+    return this.request<RedirectSignInProvidersView>("/auth/sign-in-providers", {
+      signal,
+      skipUnauthorizedHandler: true,
+    });
+  }
+
+  /** `POST /api/v1/auth/redirect/start` (public) — start a redirect sign-in and
+   * answer the provider URL to send the browser to. The server also sets the
+   * HttpOnly cookie that binds the callback to this browser. */
+  async startRedirectSignIn(provider: string, signal?: AbortSignal): Promise<string> {
+    const res = await this.request<{ url: string }>("/auth/redirect/start", {
+      method: "POST",
+      body: { provider },
+      signal,
+      skipUnauthorizedHandler: true,
+    });
+    return res.url;
+  }
+
+  /** `POST /api/v1/auth/redirect/callback` (public) — finish a redirect sign-in
+   * with what the provider sent the browser back with. Like login, it STORES the
+   * token; a 401 is a refused sign-in for the screen, not a session expiry. */
+  async completeRedirectSignIn(
+    req: RedirectSignInCallbackRequest,
+    signal?: AbortSignal,
+  ): Promise<LoginResult> {
+    const res = await this.request<LoginResult>("/auth/redirect/callback", {
+      method: "POST",
+      body: req,
+      signal,
+      skipUnauthorizedHandler: true,
+    });
+    this.setToken(res.token);
+    return res;
   }
 
   // --- Core request --------------------------------------------------------

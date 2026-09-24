@@ -46,6 +46,7 @@ func shipped() []string {
 		"fanarttv",
 		"theaudiodb",
 		"opensubtitles",
+		"oidc",
 	}
 }
 
@@ -66,7 +67,7 @@ func requireModules(t *testing.T) {
 // Full provider of a kind is that kind's default lead, so TMDB must lead this
 // list or it stops leading video.
 func TestTheShippedOrderIsTheRegistrationOrder(t *testing.T) {
-	want := []string{"tmdb", "omdb", "thetvdb", "anidb", "musicbrainz", "fanarttv", "theaudiodb", "opensubtitles"}
+	want := []string{"tmdb", "omdb", "thetvdb", "anidb", "musicbrainz", "fanarttv", "theaudiodb", "opensubtitles", "oidc"}
 	got := IDs()
 	if len(got) != len(want) {
 		t.Fatalf("IDs() = %v, want %v", got, want)

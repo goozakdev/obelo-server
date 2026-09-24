@@ -459,3 +459,43 @@ func marshalManifest(m pluginapi.Manifest) ([]byte, error) {
 	}
 	return append(raw, '\n'), nil
 }
+
+// RedirectSignInManifest is the manifest of an Installed Sign-in provider
+// implementing the redirect flow as a plain OAuth2 provider: it declares no
+// idToken, so the host has nothing to verify. Its authorize URL is the declared
+// `authorize` setting, whose default is the authorize argument, with the host's
+// state, nonce, challenge and callback on it. Its exchange reads the code as
+// `subject|username|groups` (groups `,`-separated) and accepts that identity; a
+// code of `reject` is refused, and one prefixed `token|` also answers an ID token
+// (see the guest's sign_in_exchange). Its `client_secret` setting is a secret the
+// guest only ever repeats: see SignInRedirectFailsWithTheSecrets.
+func RedirectSignInManifest(id, authorize string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "Test OAuth (" + id + ")",
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:         pluginapi.ExtensionSignInProvider,
+			Capabilities: []pluginapi.Capability{pluginapi.CapabilityRedirectSignIn},
+		}},
+		Settings: pluginapi.ManifestSettings{Fields: []pluginapi.SettingsField{{
+			Key:     "authorize",
+			Type:    pluginapi.FieldURL,
+			Label:   "Authorize URL",
+			Default: json.RawMessage(strconv.Quote(authorize)),
+		}, {
+			Key:   "client_secret",
+			Type:  pluginapi.FieldSecret,
+			Label: "Client secret",
+		}}},
+		Description: "An Installed OAuth2 Sign-in provider, built from source by the test suite.",
+	}
+}
+
+// SignInRedirectFailsWithTheSecrets, as the code a redirect provider built from
+// RedirectSignInManifest exchanges or as the last path segment of its
+// `authorize` setting, is a provider that logs what the call handed it and the
+// `client_secret` setting, marked "the guest was handed", and then fails the
+// call with the same in its error.
+const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"

@@ -78,6 +78,12 @@ const (
 	// provider may implement either flow or both, and the host asks only the ones
 	// that declared this before a login form's password goes anywhere.
 	CapabilityPasswordSignIn Capability = "password-sign-in"
+	// CapabilityRedirectSignIn is a Sign-in provider's redirect flow: an
+	// authorize URL the browser is sent to, and an exchange of the code it comes
+	// back with (ADR-0063 decisions 1 and 2). The host owns everything else of
+	// the round trip — the callback, state, PKCE and the nonce — and it is
+	// web-only (decision 8).
+	CapabilityRedirectSignIn Capability = "redirect-sign-in"
 )
 
 // Outcome is what happened, as a VALUE at the contract edge (ADR-0057 decision 2).

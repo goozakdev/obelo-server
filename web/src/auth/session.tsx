@@ -11,7 +11,7 @@ import { apiClient, type ApiClient } from "../api/client";
 import { NetworkError } from "../api/errors";
 import { useOptionalFeature } from "../serverInfoContext";
 import { browserDevice } from "./clientId";
-import type { LoginResult, Role, User } from "../api/types";
+import type { LoginResult, Role, SignInProvider, User } from "../api/types";
 import {
   demoteUser,
   forgetUser,
@@ -71,6 +71,14 @@ interface AuthContextValue {
    * true (default) → durable localStorage; false → session-only, gone on tab
    * close. Throws ApiError on failure (the caller shows the message). */
   login(username: string, password: string, remember?: boolean): Promise<void>;
+  /** The redirect-flow Sign-in providers the login screen offers a button for
+   * (ADR-0063 decision 2). Empty when there are none or the server cannot say. */
+  redirectProviders(): Promise<SignInProvider[]>;
+  /** Start a redirect sign-in; answers the provider URL to send the browser to. */
+  startRedirectSignIn(provider: string): Promise<string>;
+  /** Finish a redirect sign-in with what the provider sent the browser back
+   * with. On success the session is populated exactly as by `login`. */
+  completeRedirectSignIn(state: string, code: string, remember?: boolean): Promise<void>;
   /** Log out: revoke server-side, clear token + media cookie + local session. The
    * user stays a Known roster entry (demoted from Signed-in) for quick re-login. */
   logout(): Promise<void>;
@@ -268,17 +276,11 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
     return null;
   }, [client, serverId]);
 
-  const login = useCallback(
-    async (username: string, password: string, remember = true) => {
-      // Choose token retention BEFORE the client stores the token: durable
-      // (localStorage) when Remember me is on, session-only otherwise. NO password
-      // is stored either way — only the opaque bearer token.
-      client.setTokenDurable(remember);
-      const res = await client.login({
-        username,
-        password,
-        device: browserDevice(),
-      });
+  // adoptLogin is everything past a successful sign-in, shared by the password
+  // form and the redirect flow's callback: the two differ only in how they got a
+  // LoginResult.
+  const adoptLogin = useCallback(
+    async (res: LoginResult, remember: boolean) => {
       writeUser(res.user, remember);
       setSession({ token: res.token, user: res.user });
       const sid = await resolveServerId();
@@ -304,6 +306,46 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       }
     },
     [client, resolveServerId, bumpRoster],
+  );
+
+  const login = useCallback(
+    async (username: string, password: string, remember = true) => {
+      // Choose token retention BEFORE the client stores the token: durable
+      // (localStorage) when Remember me is on, session-only otherwise. NO password
+      // is stored either way — only the opaque bearer token.
+      client.setTokenDurable(remember);
+      const res = await client.login({
+        username,
+        password,
+        device: browserDevice(),
+      });
+      await adoptLogin(res, remember);
+    },
+    [client, adoptLogin],
+  );
+
+  const redirectProviders = useCallback(async () => {
+    // A stub client (tests) may not have the call; no providers is the answer.
+    if (typeof client.listRedirectSignInProviders !== "function") return [];
+    try {
+      return (await client.listRedirectSignInProviders()).providers ?? [];
+    } catch {
+      return [];
+    }
+  }, [client]);
+
+  const startRedirectSignIn = useCallback(
+    (provider: string) => client.startRedirectSignIn(provider),
+    [client],
+  );
+
+  const completeRedirectSignIn = useCallback(
+    async (state: string, code: string, remember = true) => {
+      client.setTokenDurable(remember);
+      const res = await client.completeRedirectSignIn({ state, code, device: browserDevice() });
+      await adoptLogin(res, remember);
+    },
+    [client, adoptLogin],
   );
 
   const logout = useCallback(async () => {
@@ -402,6 +444,9 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       isAuthenticated: session !== null,
       isAdmin: hasRole(session?.user.role, "admin"),
       login,
+      redirectProviders,
+      startRedirectSignIn,
+      completeRedirectSignIn,
       logout,
       adopt,
       roster,
@@ -413,6 +458,9 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       session,
       ready,
       login,
+      redirectProviders,
+      startRedirectSignIn,
+      completeRedirectSignIn,
       logout,
       adopt,
       roster,
