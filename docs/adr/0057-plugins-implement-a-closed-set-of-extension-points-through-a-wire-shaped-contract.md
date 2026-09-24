@@ -19,6 +19,14 @@ one**: ADR-0001 says the server owns identity and delegates to no IdP; LDAP/OIDC
 trust-model question for its own ADR, not a loader question. The set grows by ADR, not by a
 Plugin asking.
 
+> **Superseded in part (sign-in providers, 2026-09-23):** the set grows. Four more Extension
+> points join it: **Sign-in provider**, **Web reference provider**, **Lyric provider** and
+> **Marker provider** ([ADR-0063](./0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md),
+> [ADR-0065](./0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
+> "Authentication is not one" no longer holds: ADR-0063 draws the trust-model line this
+> decision deferred, delegating credential-checking — never identity, never session issuance —
+> to a source the operator controls. The set still grows by ADR, not by a Plugin asking.
+
 **2. The contract is wire-shaped from day one.** Plain structs that round-trip through JSON;
 no interfaces, callbacks or streams in a signature; every call takes a context with a
 deadline; byte payloads come back whole and size-capped; paging is offset-based. Outcomes

@@ -37,6 +37,13 @@ The server depends on no third-party service the operator does not control. Acco
 
 The server must function **fully offline**. External metadata enrichment (cover art, descriptions, cast) from public sources is **optional** and read-only: if the server has no internet access, everything still works, just with sparser metadata.
 
+> **Superseded in part (sign-in providers, 2026-09-23):** [ADR-0063](./0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md)
+> narrows the Consequences bullet below. The server still owns identity, session issuance and
+> every judgment about what a credential answer is worth; what may now be delegated is the one
+> step of checking a password or a redirect answer, and only to a source the operator
+> configured themselves — their own LDAP, their own Authentik. A cloud IdP the maintainer would
+> have to trust on the operator's behalf remains refused.
+
 ## Consequences
 - We own identity, session management, and authorization — no delegating to an external IdP.
 - Remote access is the operator's responsibility; we provide no NAT-punching relay. We may help with reverse-proxy/TLS guidance but do not host infrastructure.
