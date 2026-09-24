@@ -41,6 +41,7 @@ import { resolvePlayback } from "./playbackResolver";
 import { useOptionalFeature } from "../serverInfoContext";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
+import SkipMarkerButton from "./SkipMarkerButton";
 import { useQueue } from "./queue/useQueue";
 import type { QueueEntry } from "./queue/model";
 import { formatTimecode } from "../time";
@@ -1795,6 +1796,16 @@ function CurrentPlayer({
                 </button>
               </div>
             </>
+          )}
+
+          {/* Skip (ADR-0065): on the stage, while the position is inside a
+              Marker the player recognizes. Seeking reports progress like any seek. */}
+          {video && surface === "stage" && (
+            <SkipMarkerButton
+              sessionId={status.decision.sessionId}
+              positionMs={currentTime * 1000}
+              onSkip={(ms) => seekTo(ms / 1000)}
+            />
           )}
 
           {hlsError && (

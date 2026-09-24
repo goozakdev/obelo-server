@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/goozakdev/obelo-server/internal/markers"
 )
 
 // MediaInfo is the technical attributes the scanner extracts from one video
@@ -27,6 +29,10 @@ type MediaInfo struct {
 	// track/disc/date/title/genre from here. Empty for files with no tags. The
 	// existing Prober seam is reused — no new dependency, no new interface.
 	Tags map[string]string
+	// Chapters are the container's own chapters, in order (ffprobe
+	// -show_chapters). The Scanner reads Local Markers from their titles
+	// (ADR-0065, markers.go); nothing else consumes them.
+	Chapters []markers.Chapter
 }
 
 // Tag returns a metadata tag by (lower-cased) key, "" when absent.
@@ -92,7 +98,7 @@ type Prober interface {
 
 // FFprobe is the production Prober: it invokes the `ffprobe` binary on PATH with
 //
-//	-v quiet -print_format json -show_format -show_streams
+//	-v quiet -print_format json -show_format -show_streams -show_chapters
 //
 // and parses the JSON. Determinism/offline (ADR-0002) holds: ffprobe reads only
 // the local file. Binary names the executable so a test or deployment can point
@@ -136,6 +142,7 @@ func (f FFprobe) Probe(ctx context.Context, path string) (MediaInfo, error) {
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
+		"-show_chapters",
 		path,
 	)
 	out, err := cmd.Output()
@@ -173,8 +180,15 @@ func probeDetail(err error) string {
 // ffprobe JSON shapes — only the fields we consume. Numeric fields arrive as
 // strings in ffprobe's JSON, so they are parsed leniently.
 type ffprobeOutput struct {
-	Streams []ffprobeStream `json:"streams"`
-	Format  ffprobeFormat   `json:"format"`
+	Streams  []ffprobeStream  `json:"streams"`
+	Format   ffprobeFormat    `json:"format"`
+	Chapters []ffprobeChapter `json:"chapters"`
+}
+
+type ffprobeChapter struct {
+	StartTime string            `json:"start_time"`
+	EndTime   string            `json:"end_time"`
+	Tags      map[string]string `json:"tags"`
 }
 
 type ffprobeFormat struct {
@@ -208,6 +222,13 @@ func parseFFprobe(data []byte) (MediaInfo, error) {
 		Bitrate:    parseInt64(raw.Format.BitRate),
 		SizeBytes:  parseInt64(raw.Format.Size),
 		Tags:       collectTags(raw),
+	}
+	for _, c := range raw.Chapters {
+		info.Chapters = append(info.Chapters, markers.Chapter{
+			StartMs: secondsToMs(c.StartTime),
+			EndMs:   secondsToMs(c.EndTime),
+			Title:   strings.TrimSpace(c.Tags["title"]),
+		})
 	}
 
 	for _, s := range raw.Streams {

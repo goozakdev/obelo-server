@@ -870,6 +870,16 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 			requireMethod(http.MethodPost, requireAuth(deps.Auth, handleSessionProgress(svc, id)))(w, r)
 			return
 		}
+		// GET {id}/markers: the Markers of the session's File, for the player's Skip
+		// button (ADR-0065). Bearer only and owner-only, like progress.
+		if id, ok := strings.CutSuffix(rest, "/markers"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleSessionMarkers(svc, id)))(w, r)
+			return
+		}
 		// Bare /sessions/{id} → DELETE ends it.
 		if strings.Contains(rest, "/") {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)

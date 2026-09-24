@@ -920,6 +920,9 @@ func (s *Service) assembleTitle(
 		// NOT re-ffprobed (the expensive step — skipping it is the whole point).
 		if sc.unchanged(cf.path, size, mtime) {
 			if stored, err := s.store.LoadStoredFile(cf.path); err == nil {
+				if err := s.refreshEDLMarkers(cf.path, stored.DurationMs); err != nil {
+					return store.TitleTree{}, err
+				}
 				sc.seen[cf.path] = true
 				ps = append(ps, probedFile{
 					cf: cf, mtime: mtime, size: size, reused: true, stored: stored,
@@ -941,6 +944,9 @@ func (s *Service) assembleTitle(
 				unreadableDetail = probeDetail(err)
 			}
 			continue
+		}
+		if err := s.recordLocalMarkers(cf.path, media); err != nil {
+			return store.TitleTree{}, err
 		}
 		sc.seen[cf.path] = true
 		video, _ := media.PrimaryVideo()

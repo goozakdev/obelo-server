@@ -1239,3 +1239,23 @@ CREATE TABLE tailnet_settings (
     https_enabled INTEGER NOT NULL DEFAULT 0,
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ===========================================================================
+-- markers (ADR-0065)
+-- ===========================================================================
+
+-- A Marker is a timed span of a File a player can offer to skip. It is keyed by
+-- the File's PATH, not its id: a rescan deletes and re-inserts every files row
+-- under a rebuilt Edition, so a file_id foreign key would cascade the Markers
+-- away on every scan, and an unchanged File is not re-probed to put them back.
+-- The path is what a Marker is measured against anyway — these exact bytes.
+CREATE TABLE markers (
+    id        TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL CHECK (file_path <> ''),
+    kind      TEXT NOT NULL CHECK (kind IN ('intro', 'recap', 'credits', 'preview')),
+    source    TEXT NOT NULL CHECK (source IN ('local', 'detected', 'fetched')),
+    start_ms  INTEGER NOT NULL CHECK (start_ms >= 0),
+    end_ms    INTEGER NOT NULL,
+    CHECK (end_ms > start_ms)
+);
+CREATE INDEX idx_markers_file_path ON markers(file_path, source);
