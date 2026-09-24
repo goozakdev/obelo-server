@@ -1331,3 +1331,116 @@ func misbehaveLinks(call webReferencesCall) (uint64, bool) {
 	}
 	return 0, false
 }
+
+// =============================================================================
+// The Sign-in provider seam, password flow.
+// =============================================================================
+//
+// Appended like the halves above it, for the same reason: nothing above
+// changes. One export: a username and password in, accepted-with-an-identity or
+// not out. The "directory" it checks against is a declared `accounts` setting,
+// so a test can stand up two directories that disagree without a network:
+//
+//	sign_in_password(ptr u32, len u32) -> i64   a SignInPasswordCall in,
+//	                                            a SignInPasswordResponse out
+//
+// `accounts` is `;`-separated entries of `login:password:subject:name:groups`,
+// where name is the username the directory reports (empty: the login typed) and
+// groups is a `,`-separated list. Two logins may share a subject — that is how
+// the suite plays a person renamed at the source.
+
+// --- the shapes, copied from the contract's JSON schema ----------------------
+
+type signInPasswordCall struct {
+	Request struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"request"`
+	Settings struct {
+		Values map[string]any `json:"values"`
+	} `json:"settings"`
+}
+
+type signInIdentity struct {
+	Subject  string   `json:"subject"`
+	Username string   `json:"username,omitempty"`
+	Groups   []string `json:"groups,omitempty"`
+}
+
+type signInPasswordResponse struct {
+	Accepted bool            `json:"accepted"`
+	Identity *signInIdentity `json:"identity,omitempty"`
+}
+
+// --- what this Plugin actually does ------------------------------------------
+
+// SignInFailsWithThePassword, as the whole `accounts` value, is a directory that
+// logs the password it was handed and then fails the call with it in the error:
+// the hostile answer the host must keep out of every sentence it stores or logs.
+const SignInFailsWithThePassword = "fail-with-the-password"
+
+// SignInHangs, as the whole `accounts` value, is a directory that never answers:
+// only the host's deadline ends its call.
+const SignInHangs = "hang"
+
+// The directories below each put the password they were handed somewhere the
+// host keeps or logs text, and then reject the login: the password in a fetched
+// URL's query (after SignInFetchesWithThePassword, the URL it is appended to), as
+// the name of the host fetched, in a key-value key, and in a log line.
+const (
+	SignInFetchesWithThePassword = "fetch-with-the-password:"
+	SignInFetchesThePasswordHost = "fetch-the-password-host"
+	SignInStoresThePassword      = "store-the-password"
+	SignInLogsThePassword        = "log-the-password"
+)
+
+//go:wasmexport sign_in_password
+func signInPassword(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call signInPasswordCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SignInPasswordCall: " + err.Error())
+	}
+	accounts, _ := call.Settings.Values["accounts"].(string)
+	if accounts == SignInFailsWithThePassword {
+		logLine(levelError, "checking the password "+call.Request.Password)
+		return fail("the directory rejected the password " + call.Request.Password)
+	}
+	if accounts == SignInHangs {
+		for {
+			spun++
+		}
+	}
+	switch {
+	case strings.HasPrefix(accounts, SignInFetchesWithThePassword):
+		fetch(fetchRequest{URL: strings.TrimPrefix(accounts, SignInFetchesWithThePassword) + call.Request.Password})
+		return reply(signInPasswordResponse{})
+	case accounts == SignInFetchesThePasswordHost:
+		fetch(fetchRequest{URL: "http://" + call.Request.Password + ".example.test/"})
+		return reply(signInPasswordResponse{})
+	case accounts == SignInStoresThePassword:
+		kvSet("session-"+call.Request.Password, []byte("1"))
+		return reply(signInPasswordResponse{})
+	case accounts == SignInLogsThePassword:
+		logLine(levelInfo, "the password is "+call.Request.Password)
+		return reply(signInPasswordResponse{})
+	}
+	for _, entry := range strings.Split(accounts, ";") {
+		f := strings.Split(entry, ":")
+		if len(f) != 5 || f[0] != call.Request.Username || f[1] != call.Request.Password {
+			continue
+		}
+		id := &signInIdentity{Subject: f[2], Username: f[3]}
+		if id.Username == "" {
+			id.Username = call.Request.Username
+		}
+		if f[4] != "" {
+			id.Groups = strings.Split(f[4], ",")
+		}
+		return reply(signInPasswordResponse{Accepted: true, Identity: id})
+	}
+	return reply(signInPasswordResponse{})
+}

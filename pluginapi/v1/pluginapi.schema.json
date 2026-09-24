@@ -11,7 +11,8 @@
         "metadata-provider",
         "subtitle-provider",
         "event-sink",
-        "web-reference-provider"
+        "web-reference-provider",
+        "sign-in-provider"
       ]
     },
     "Capability": {
@@ -22,7 +23,8 @@
         "artwork-candidates",
         "album-tracklist",
         "external-ref",
-        "episode-list"
+        "episode-list",
+        "password-sign-in"
       ]
     },
     "Outcome": {
@@ -1472,6 +1474,74 @@
       "properties": {
         "request": {
           "$ref": "#/$defs/WebReferencesRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "SignInPasswordRequest": {
+      "type": "object",
+      "description": "One password check for a Sign-in provider's password flow: exactly the username and password typed into the login form. The host never stores the password and hands it to nothing but the Plugin being asked.",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "password"
+      ]
+    },
+    "SignInIdentity": {
+      "type": "object",
+      "description": "Who the source says the person is. subject is the source's own stable id and, with the Plugin's id, the ONLY key the host resolves by — never username, which is a label that names a new User once and is otherwise only remembered. groups are stored on the identity; what they are worth is the host's decision.",
+      "properties": {
+        "subject": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "subject"
+      ]
+    },
+    "SignInPasswordResponse": {
+      "type": "object",
+      "description": "What a password check answers. Only accepted:true with an identity carrying a subject signs anyone in; everything else is a rejection, which the host never explains at the login form.",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "identity": {
+          "$ref": "#/$defs/SignInIdentity"
+        }
+      },
+      "required": [
+        "accepted"
+      ]
+    },
+    "SignInPasswordCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Sign-in provider for one password check: the request and the Settings the host resolved, travelling together as a Subtitle provider's do. The response is un-enveloped — a plain SignInPasswordResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SignInPasswordRequest"
         },
         "settings": {
           "$ref": "#/$defs/Settings"

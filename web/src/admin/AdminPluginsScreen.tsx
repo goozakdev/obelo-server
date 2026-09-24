@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import PluginSettingsForm from "./PluginSettingsForm";
+import SignInProviderOrder from "./SignInProviderOrder";
 import type {
   InstalledPlugin,
   InstalledPluginsView,
@@ -55,6 +56,7 @@ import type {
 const EXTENSION_POINT_LABELS: Record<string, string> = {
   "event-sink": "Event sink",
   "metadata-provider": "Metadata provider",
+  "sign-in-provider": "Sign-in provider",
   "subtitle-provider": "Subtitle provider",
   "web-reference-provider": "Web reference provider",
 };
@@ -621,6 +623,8 @@ export default function AdminPluginsScreen() {
             {notice}
           </p>
         )}
+
+        <SignInProviderOrder />
 
         <div className="provider-card" data-testid="plugin-install-upload">
           <div className="provider-head">

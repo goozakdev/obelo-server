@@ -3139,3 +3139,15 @@ export interface Lyrics {
   lines: LyricLine[];
   text: string;
 }
+
+/** One password-flow Sign-in provider (`GET /settings/sign-in-providers`). */
+export interface SignInProvider {
+  id: string;
+  name: string;
+}
+
+/** The password-flow Sign-in providers in the order a login asks them, after the
+ * Local password — the Admin's order first, then any the Admin has not placed. */
+export interface SignInProvidersView {
+  providers: SignInProvider[];
+}

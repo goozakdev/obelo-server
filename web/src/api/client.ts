@@ -144,6 +144,7 @@ import type {
   WatchStateResult,
   WebReference,
   Marker,
+  SignInProvidersView,
 } from "./types";
 import type { Lyrics } from "./types";
 
@@ -2430,6 +2431,22 @@ export class ApiClient {
       es.addEventListener(type, handle(type));
     }
     return () => es.close();
+  }
+
+  /** `GET /api/v1/settings/sign-in-providers` (Admin) — the password-flow Sign-in
+   * providers in the order the login form asks them after the Local password. */
+  getSignInProviders(signal?: AbortSignal): Promise<SignInProvidersView> {
+    return this.request<SignInProvidersView>("/settings/sign-in-providers", { signal });
+  }
+
+  /** `PUT /api/v1/settings/sign-in-providers` (Admin) — save the order, first-asked
+   * first. Returns the list in its new order. */
+  setSignInProviderOrder(order: string[], signal?: AbortSignal): Promise<SignInProvidersView> {
+    return this.request<SignInProvidersView>("/settings/sign-in-providers", {
+      method: "PUT",
+      body: { order },
+      signal,
+    });
   }
 
   // --- Core request --------------------------------------------------------

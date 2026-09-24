@@ -30,10 +30,13 @@ func TestAnOfflineCallRefusesEveryFetchBeforeItIsSent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p := &Plugin{id: "refs", hosts: map[string]struct{}{}, opts: Options{
+	p := newPlugin("refs", "", Options{
 		Logf: func(string, ...any) {},
-	}.withDefaults()}
+	}.withDefaults())
 	p.resolveLimits()
+	// close takes the call slot, as every call does: a Plugin built without one
+	// would hang here.
+	defer p.close(context.Background())
 	h := &hostFuncs{p: p}
 	req := pluginapi.FetchRequest{URL: source.URL + "/probe"}
 

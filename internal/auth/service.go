@@ -90,6 +90,11 @@ type Store interface {
 	LiveStreamTokenForSession(hash, sessionID, now string) (store.StreamToken, error)
 	DeleteStreamTokensForSession(sessionID string) error
 	DeleteExpiredStreamTokens(now string) error
+	// External identities (ADR-0063): keyed by (plugin id, subject), each held by
+	// exactly one User. See sign_in.go.
+	ExternalIdentityUser(pluginID, subject string) (store.User, error)
+	RecordExternalSignIn(pluginID, subject, username string, groups []string) error
+	CreateExternalMember(id, username, pluginID, subject, providerUsername string, groups []string) (store.User, error)
 }
 
 // Common service errors, mapped to HTTP envelopes by the api layer. They are
@@ -160,6 +165,10 @@ type Service struct {
 	loginIPFails     *fixedWindowLimiter
 	deviceStartQuota *fixedWindowLimiter
 	linkRedeemFails  *fixedWindowLimiter
+
+	// signIn is the ordered password-flow Sign-in providers a login asks after
+	// the Local password (ADR-0063). Empty unless UseSignInProviders was called.
+	signIn signIn
 }
 
 // Option configures the Service. Present for the clock seam; NewService's
@@ -314,56 +323,56 @@ func (s *Service) Login(ctx context.Context, username, password string, dev Devi
 	}
 
 	user, err := s.store.UserByUsername(username)
-	if errors.Is(err, store.ErrNotFound) {
-		// Run a verification anyway to keep timing roughly uniform, then fail. It
-		// goes through VerifyPasswordContext like the real one, so it queues on the
-		// same KDF semaphore: a dummy verify that skipped the queue would return
-		// instantly under load while a real one waited, which is the timing
-		// difference this call exists to erase, reintroduced by the fix for a
-		// different problem.
-		if verr := VerifyPasswordContext(ctx, dummyHash, password); kdfAbandoned(verr) {
-			return LoginResult{}, verr
-		}
-		s.chargeLoginFailure(username, clientIP)
-		return LoginResult{}, ErrInvalidCredentials
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		// A store failure is our fault, not the caller's; charging it would let a
 		// sick database lock out the people trying to use it.
 		return LoginResult{}, err
 	}
-	if user.Role == RoleRemote {
-		// A linked Server has no password to verify (ADR-0054): its only credential
-		// is the token an Invite leaves behind, and password login is refused for the
-		// role outright, with any password.
-		//
-		// It is refused down the UNKNOWN-USERNAME path — the dummy verify, then the
-		// same generic ErrInvalidCredentials — and not with an early return, which is
-		// the shape this guard reads like it wants. An early return would answer
-		// instantly while every real login queued on the KDF semaphore, making the
-		// role of any name an attacker can guess readable off the clock; the comment
-		// above the dummy verify is the record of that exact bug being fixed once
-		// already for the unknown-username case. Refusing a role must not reintroduce
-		// it: on this path the ONLY thing a caller learns is "those credentials are
-		// not good", which is all any of the three refusals says.
-		if verr := VerifyPasswordContext(ctx, dummyHash, password); kdfAbandoned(verr) {
-			return LoginResult{}, verr
-		}
-		s.chargeLoginFailure(username, clientIP)
-		return LoginResult{}, ErrInvalidCredentials
+	// The Local password is tried first, and ALWAYS costs one verification. When
+	// there is no Local password to try — no such username; a `remote` User, which
+	// has none and may never log in with one (ADR-0054); a Member minted from an
+	// External identity, which has none either (ADR-0063) — the verification runs
+	// against dummyHash instead, and fails.
+	//
+	// Every one of those goes through VerifyPasswordContext like the real one, so it
+	// queues on the same KDF semaphore: a dummy verify that skipped the queue would
+	// return instantly under load while a real one waited, which is the timing
+	// difference this call exists to erase, reintroduced by the fix for a different
+	// problem. The `remote` refusal in particular must not become an early return,
+	// which is the shape that guard reads like it wants: an early return would
+	// answer instantly while every real login queued on the KDF semaphore, making
+	// the role of any name an attacker can guess readable off the clock; the
+	// unknown-username case is the record of that exact bug being fixed once
+	// already. On every refusal the ONLY thing a caller learns is "those credentials
+	// are not good", which is all any of them says.
+	local := err == nil && user.Role != RoleRemote && user.PasswordHash != ""
+	hash := dummyHash
+	if local {
+		hash = user.PasswordHash
 	}
-	if verr := VerifyPasswordContext(ctx, user.PasswordHash, password); verr != nil {
-		if kdfAbandoned(verr) {
-			return LoginResult{}, verr
-		}
-		s.chargeLoginFailure(username, clientIP)
-		return LoginResult{}, ErrInvalidCredentials
+	verr := VerifyPasswordContext(ctx, hash, password)
+	if kdfAbandoned(verr) {
+		return LoginResult{}, verr
+	}
+	if local && verr == nil {
+		// Everything past "the password was right" is shared with the device-code
+		// grant (ADR-0036), which authenticates differently but must produce an
+		// identical session. issueSession is that shared tail; see device_auth.go.
+		return s.issueSession(user, dev)
 	}
 
-	// Everything past "the password was right" is shared with the device-code
-	// grant (ADR-0036), which authenticates differently but must produce an
-	// identical session. issueSession is that shared tail; see device_auth.go.
-	return s.issueSession(user, dev)
+	// Then each enabled password-flow Sign-in provider, in the Admin's order; the
+	// first to accept wins (ADR-0063 decision 6). This runs on EVERY path the Local
+	// password did not sign in — wrong password, unknown username, no Local
+	// password — so a refusal costs the same work whichever refusal it is, and an
+	// accepted answer resolves by External identity, never by the username typed
+	// here. See sign_in.go.
+	res, err := s.signInExternally(ctx, username, password, dev)
+	if errors.Is(err, errNoProviderAccepted) {
+		s.chargeLoginFailure(username, clientIP)
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	return res, err
 }
 
 // dummyHashFallback is the hash of a discarded random value — 32 bytes from
@@ -477,16 +486,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	if role == "" {
 		role = RoleMember
 	}
-	switch role {
-	case RoleAdmin, RoleMember:
-		if password == "" {
-			return store.User{}, ErrInvalidUser
-		}
-	case RoleRemote:
-		if password != "" {
-			return store.User{}, ErrInvalidUser
-		}
-	default:
+	if !passwordRuleAdmits(role, password, false) {
 		return store.User{}, ErrInvalidUser
 	}
 	// A Remote User stores the empty hash — the one state the schema's CHECK
@@ -508,6 +508,26 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 		return store.User{}, err
 	}
 	return user, nil
+}
+
+// passwordRuleAdmits is CreateUser's per-role password rule, and the only place
+// it is written. An Admin or a Member must have a password and a Remote User must
+// NOT (ADR-0054) — with ONE relaxation: a Member minted from a first-time
+// External identity has no Local password, because its Sign-in provider is how
+// it signs in (ADR-0063). fromExternalIdentity is true only on that path
+// (sign_in.go); the Admin /users surface always asks with false, so an Admin
+// still cannot create a password-less Member by hand. An unknown role is never
+// admitted.
+func passwordRuleAdmits(role, password string, fromExternalIdentity bool) bool {
+	switch role {
+	case RoleAdmin:
+		return password != ""
+	case RoleMember:
+		return password != "" || fromExternalIdentity
+	case RoleRemote:
+		return password == ""
+	}
+	return false
 }
 
 // Users lists every User (for the Admin user-management view).

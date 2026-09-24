@@ -137,6 +137,12 @@ func handleLogin(svc *auth.Service) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, codeInvalidLogin,
 				"invalid username or password", nil)
 			return
+		case errors.Is(err, auth.ErrUsernameCollision):
+			// NOT a refusal: a Sign-in provider accepted the credential, and the new
+			// identity's username is already a User here (ADR-0063 decision 7). It
+			// gets its own answer; see sign_in_provider_handlers.go.
+			writeError(w, http.StatusConflict, codeSignInUsernameTaken, signInUsernameTakenMessage, nil)
+			return
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, codeInternal,
 				"login failed", nil)
