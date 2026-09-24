@@ -44,6 +44,7 @@ type registryState struct {
 	webReferences     []WebReferenceProviderRegistration
 	signInProviders   []SignInProviderRegistration
 	lyricProviders    []LyricProviderRegistration
+	markerProviders   []MarkerProviderRegistration
 }
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
@@ -80,6 +81,7 @@ func (r *Registry) mutate(f func(*registryState)) {
 		webReferences:     append([]WebReferenceProviderRegistration(nil), cur.webReferences...),
 		signInProviders:   append([]SignInProviderRegistration(nil), cur.signInProviders...),
 		lyricProviders:    append([]LyricProviderRegistration(nil), cur.lyricProviders...),
+		markerProviders:   append([]MarkerProviderRegistration(nil), cur.markerProviders...),
 	}
 	f(next)
 	r.state.Store(next)
@@ -382,4 +384,47 @@ func (r *Registry) LyricProvider(slug string) (LyricProviderRegistration, bool) 
 		}
 	}
 	return LyricProviderRegistration{}, false
+}
+
+// RegisterMarkerProvider adds one Marker provider Plugin, under the same rules as
+// a Lyric provider: registration order is preserved — it is the order the host
+// asks in — and a malformed or duplicate registration PANICS at the composition
+// root.
+func (r *Registry) RegisterMarkerProvider(reg MarkerProviderRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: marker provider registered with no slug")
+	}
+	if reg.New == nil {
+		panic(fmt.Sprintf("pluginapi: marker provider %q registered with no factory", reg.Descriptor.Slug))
+	}
+	if _, exists := r.MarkerProvider(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: marker provider %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionMarkerProvider
+	r.mutate(func(s *registryState) {
+		s.markerProviders = append(s.markerProviders, reg)
+	})
+}
+
+// MarkerProviders returns the registered Marker providers in registration order,
+// as a copy.
+func (r *Registry) MarkerProviders() []MarkerProviderRegistration {
+	if r == nil {
+		return nil
+	}
+	cur := r.load()
+	out := make([]MarkerProviderRegistration, len(cur.markerProviders))
+	copy(out, cur.markerProviders)
+	return out
+}
+
+// MarkerProvider returns the registration for a slug, or ok=false for a slug no
+// Plugin claimed.
+func (r *Registry) MarkerProvider(slug string) (MarkerProviderRegistration, bool) {
+	for _, reg := range r.load().markerProviders {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return MarkerProviderRegistration{}, false
 }

@@ -13,7 +13,8 @@
         "event-sink",
         "web-reference-provider",
         "sign-in-provider",
-        "lyric-provider"
+        "lyric-provider",
+        "marker-provider"
       ]
     },
     "Capability": {
@@ -1624,6 +1625,102 @@
       "properties": {
         "request": {
           "$ref": "#/$defs/LyricsRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "MarkersRequest": {
+      "type": "object",
+      "description": "Asks a Marker provider for one File's Markers: the item's kind ('movie' or 'episode'), title, year and the external ids the host holds for it; for an Episode its Show's title and ids and its season and episode numbers; and durationMs, the length of the File being played. The host asks the first time the File is played, and again only once the question changes.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "year": {
+          "type": "integer"
+        },
+        "ids": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "showTitle": {
+          "type": "string"
+        },
+        "showIds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "seasonNumber": {
+          "type": "integer"
+        },
+        "episodeNumber": {
+          "type": "integer"
+        },
+        "durationMs": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "durationMs"
+      ]
+    },
+    "MarkerCandidate": {
+      "type": "object",
+      "description": "One Marker a provider found: kind (intro, recap, credits or preview), a half-open [startMs, endMs) span, and durationMs, the length of the recording it was measured on. The HOST drops a candidate whose durationMs is missing or more than a few seconds off the File's own length, and uses one only where the File has no Local or Detected Marker of that kind.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "startMs": {
+          "type": "integer"
+        },
+        "endMs": {
+          "type": "integer"
+        },
+        "durationMs": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "startMs",
+        "endMs",
+        "durationMs"
+      ]
+    },
+    "MarkersResponse": {
+      "type": "object",
+      "description": "What a Marker provider answers: its candidates; none is the normal 'nothing found'.",
+      "properties": {
+        "markers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MarkerCandidate"
+          }
+        }
+      }
+    },
+    "MarkersCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Marker provider for one call: the request a Built-in would receive and the Settings the host resolved, travelling together as a Subtitle provider's do. The response is un-enveloped — a plain MarkersResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/MarkersRequest"
         },
         "settings": {
           "$ref": "#/$defs/Settings"

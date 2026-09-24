@@ -901,7 +901,7 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 				return
 			}
-			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleSessionMarkers(svc, id)))(w, r)
+			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleSessionMarkers(svc, deps.MarkerFetch, id)))(w, r)
 			return
 		}
 		// Bare /sessions/{id} → DELETE ends it.

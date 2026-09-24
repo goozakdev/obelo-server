@@ -31,6 +31,9 @@ const (
 	// ExtensionLyricProvider finds a track's words by artist, title and duration,
 	// Synced or Plain, when the track has no Local lyrics or only Plain ones.
 	ExtensionLyricProvider ExtensionPoint = "lyric-provider"
+	// ExtensionMarkerProvider looks up where a Movie's or an Episode's Intro,
+	// Recap, Credits and Preview are, as measured on a recording of stated length.
+	ExtensionMarkerProvider ExtensionPoint = "marker-provider"
 )
 
 // Capability names an OPTIONAL operation a Plugin declares it implements, so the

@@ -1493,3 +1493,50 @@ func lyricProviderLyrics(ptr, n uint32) uint64 {
 	}
 	return reply(json.RawMessage(resp.Body))
 }
+
+// =============================================================================
+// The Marker provider seam.
+// =============================================================================
+//
+// Appended like the Lyric provider half, and shaped the same: the request is
+// POSTed as JSON to the source at `<settings.url>/markers`, and whatever the
+// source answers is this Plugin's answer, verbatim. The test's source decides
+// every candidate — timed for this File's length or another's — and counts every
+// question.
+//
+//	marker_provider_markers(ptr u32, len u32) -> i64   a MarkersCall in,
+//	                                                   a MarkersResponse out
+
+type markersCall struct {
+	Request  json.RawMessage `json:"request"`
+	Settings struct {
+		URL string `json:"url"`
+	} `json:"settings"`
+}
+
+//go:wasmexport marker_provider_markers
+func markerProviderMarkers(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call markersCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a MarkersCall: " + err.Error())
+	}
+	resp := fetch(fetchRequest{
+		Method:  "POST",
+		URL:     call.Settings.URL + "/markers",
+		Headers: []header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    call.Request,
+	})
+	switch {
+	case resp.Refused != "":
+		return fail("the source was refused: " + resp.Refused)
+	case resp.Error != "":
+		return fail("the source could not be reached: " + resp.Error)
+	case resp.Status != 200:
+		return fail("the source answered " + itoa(resp.Status))
+	}
+	return reply(json.RawMessage(resp.Body))
+}

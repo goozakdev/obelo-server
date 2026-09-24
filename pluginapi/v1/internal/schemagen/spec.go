@@ -41,6 +41,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.ExtensionWebReferenceProvider),
 				string(pluginapi.ExtensionSignInProvider),
 				string(pluginapi.ExtensionLyricProvider),
+				string(pluginapi.ExtensionMarkerProvider),
 			},
 		},
 		{
@@ -484,6 +485,30 @@ func contractTypes() []typeSpec {
 			doc: "What the host hands an INSTALLED Lyric provider for one call: the request a Built-in would " +
 				"receive and the Settings the host resolved, travelling together as a Subtitle provider's do. " +
 				"The response is un-enveloped — a plain LyricsResponse.",
+		},
+		{
+			value: pluginapi.MarkersRequest{},
+			doc: "Asks a Marker provider for one File's Markers: the item's kind ('movie' or 'episode'), " +
+				"title, year and the external ids the host holds for it; for an Episode its Show's title and " +
+				"ids and its season and episode numbers; and durationMs, the length of the File being played. " +
+				"The host asks the first time the File is played, and again only once the question changes.",
+		},
+		{
+			value: pluginapi.MarkerCandidate{},
+			doc: "One Marker a provider found: kind (intro, recap, credits or preview), a half-open " +
+				"[startMs, endMs) span, and durationMs, the length of the recording it was measured on. The " +
+				"HOST drops a candidate whose durationMs is missing or more than a few seconds off the File's " +
+				"own length, and uses one only where the File has no Local or Detected Marker of that kind.",
+		},
+		{
+			value: pluginapi.MarkersResponse{},
+			doc:   "What a Marker provider answers: its candidates; none is the normal 'nothing found'.",
+		},
+		{
+			value: pluginapi.MarkersCall{},
+			doc: "What the host hands an INSTALLED Marker provider for one call: the request a Built-in would " +
+				"receive and the Settings the host resolved, travelling together as a Subtitle provider's do. " +
+				"The response is un-enveloped — a plain MarkersResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},

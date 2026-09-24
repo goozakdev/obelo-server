@@ -47,9 +47,9 @@ func (db *DB) ReplaceLocalMarkers(path string, ms []Marker) error {
 
 // MarkersForFile lists the Markers of the File with this id, in start order. A
 // File with none — or a mirrored File, which has no path on this disk — answers
-// an empty list. A Detected Marker overlapping any Local one is left out: Local
-// outranks Detected (ADR-0065 §1), and the File's own chapters or `.edl` saying
-// what that span is settle it.
+// an empty list. Sources are ranked Local > Detected > Fetched (ADR-0065 §1), and
+// a lower source's Marker is left out wherever a higher source already speaks:
+// when one of that kind is kept for the File, or one of any kind it overlaps.
 func (db *DB) MarkersForFile(fileID string) ([]Marker, error) {
 	rows, err := db.Query(
 		`SELECT m.kind, m.source, m.start_ms, m.end_ms
@@ -71,32 +71,37 @@ func (db *DB) MarkersForFile(fileID string) ([]Marker, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return withoutShadowedDetected(out), nil
+	return withPrecedence(out), nil
 }
 
-// withoutShadowedDetected drops every Detected Marker that overlaps a Local one.
-func withoutShadowedDetected(ms []Marker) []Marker {
-	var local []Marker
-	for _, m := range ms {
-		if m.Source == "local" {
-			local = append(local, m)
-		}
-	}
-	if len(local) == 0 {
-		return ms
-	}
-	out := ms[:0]
-	for _, m := range ms {
-		shadowed := false
-		if m.Source == "detected" {
-			for _, l := range local {
-				if m.StartMs < l.EndMs && l.StartMs < m.EndMs {
-					shadowed = true
+// sourceRank orders the Marker sources, highest first.
+var sourceRank = map[string]int{"local": 0, "detected": 1, "fetched": 2}
+
+// withPrecedence keeps, source by source from the highest, every Marker whose
+// kind no higher source kept and which overlaps nothing a higher source kept.
+// Markers of one source never shadow each other. The start order of ms is kept.
+func withPrecedence(ms []Marker) []Marker {
+	keep := make([]bool, len(ms))
+	for rank := 0; rank < len(sourceRank); rank++ {
+		for i, m := range ms {
+			if sourceRank[m.Source] != rank {
+				continue
+			}
+			keep[i] = true
+			for j, h := range ms {
+				if !keep[j] || sourceRank[h.Source] >= rank {
+					continue
+				}
+				if h.Kind == m.Kind || (m.StartMs < h.EndMs && h.StartMs < m.EndMs) {
+					keep[i] = false
 					break
 				}
 			}
 		}
-		if !shadowed {
+	}
+	out := ms[:0]
+	for i, m := range ms {
+		if keep[i] {
 			out = append(out, m)
 		}
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
 	"github.com/goozakdev/obelo-server/internal/lyricfetch"
+	"github.com/goozakdev/obelo-server/internal/markerfetch"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -231,6 +232,11 @@ type Deps struct {
 	// /settings/lyric-providers). *store.DB satisfies it. May be nil in narrow
 	// tests, and the route then answers 503.
 	LyricProviderOrder LyricProviderOrderStore
+
+	// MarkerFetch asks a played File's Marker providers the first time a session
+	// reads its Markers (internal/markerfetch). Nil in narrow tests, where GET
+	// /sessions/{id}/markers serves the stored Markers alone.
+	MarkerFetch *markerfetch.Service
 
 	// EventSinks is the DB-backed Event sink settings store (Admin-scope
 	// /settings/event-sinks). *store.DB satisfies it. May be nil in narrow tests,
