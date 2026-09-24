@@ -368,6 +368,14 @@ const (
 	//                               well-formed absolute http(s) URL.
 	codeTailnetInvalidHostname   = "TAILNET_INVALID_HOSTNAME"
 	codeTailnetInvalidControlURL = "TAILNET_INVALID_CONTROL_URL"
+	// codeNoFetchedLyrics (409): "wrong lyrics" (POST /titles/{id}/lyrics/wrong)
+	// on a Track that shows no Lyric provider's answer — its own Local lyrics, or
+	// none — so there is nothing to reject.
+	codeNoFetchedLyrics = "NO_FETCHED_LYRICS"
+	// codeLyricsChanged (409): "wrong lyrics" named a Lyric provider answer the
+	// Track no longer shows — another press already replaced it — so nothing is
+	// rejected. details.lyrics is what the Track shows now.
+	codeLyricsChanged = "LYRICS_CHANGED"
 )
 
 // decodeJSON reads the request body as JSON into dst. It returns false (after

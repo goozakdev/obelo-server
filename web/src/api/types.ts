@@ -3133,10 +3133,12 @@ export interface LyricLine {
  * time order (and an empty `text`); Plain lyrics carry `text` (and no `lines`).
  * `source` is where they came from — `local` is what the Scanner read from the
  * file or the `.lrc` beside it, `fetched` what a Lyric provider plugin answered
- * when the lyrics view was first opened. */
+ * when the lyrics view was first opened. A `fetched` answer carries `id`, which
+ * names it for "wrong lyrics". */
 export interface Lyrics {
   kind: "synced" | "plain";
   source: "local" | "fetched";
+  id?: string;
   lines: LyricLine[];
   text: string;
 }

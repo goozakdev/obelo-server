@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
-import type { LyricLine } from "../api/types";
+import type { LyricLine, Lyrics } from "../api/types";
 import { useAsync } from "../browse/useAsync";
+import { errorMessage } from "../screens/errorMessage";
 import { useQueue } from "../player/queue/useQueue";
 import { usePlaybackTransport } from "../player/transport";
 
@@ -11,6 +12,10 @@ import { usePlaybackTransport } from "../player/transport";
 // Plain lyrics are static text. A Track with none shows a quiet empty state —
 // having no lyrics is normal, never an error. The view fetches when it mounts,
 // so the caller mounts it only when someone opens it.
+//
+// Lyrics a Lyric provider found carry a "Wrong lyrics" button for any User. It
+// rejects that answer for the Track — for everyone, not just this viewer — and
+// the view shows whatever the server settles on instead, which may be nothing.
 
 export interface LyricsViewProps {
   titleId: string;
@@ -21,7 +26,31 @@ export interface LyricsViewProps {
 const FOLLOW_INTERVAL_MS = 250;
 
 export default function LyricsView({ titleId }: LyricsViewProps) {
-  const state = useAsync((signal) => apiClient.getLyrics(titleId, signal), [titleId]);
+  const loaded = useAsync((signal) => apiClient.getLyrics(titleId, signal), [titleId]);
+  // What the server answered "wrong lyrics" with, for the Track it was pressed on.
+  const [replaced, setReplaced] = useState<{ titleId: string; lyrics: Lyrics | null } | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectError, setRejectError] = useState<{ titleId: string; message: string } | null>(null);
+  const state =
+    loaded.status === "ready" && replaced?.titleId === titleId
+      ? { status: "ready" as const, data: replaced.lyrics }
+      : loaded;
+  // The fetched answer on show, by the id "wrong lyrics" sends back to name it.
+  const shownId =
+    state.status === "ready" && state.data?.source === "fetched" ? state.data.id : undefined;
+
+  const markWrong = async (answerId: string) => {
+    setRejecting(true);
+    setRejectError(null);
+    try {
+      const lyrics = await apiClient.markLyricsWrong(titleId, answerId);
+      setReplaced({ titleId, lyrics });
+    } catch (err) {
+      setRejectError({ titleId, message: errorMessage(err) });
+    } finally {
+      setRejecting(false);
+    }
+  };
 
   return (
     <section className="lyrics-view" data-testid="lyrics-view" aria-label="Lyrics">
@@ -48,6 +77,23 @@ export default function LyricsView({ titleId }: LyricsViewProps) {
       )}
       {state.status === "ready" && state.data?.kind === "synced" && (
         <SyncedLyrics titleId={titleId} lines={state.data.lines} />
+      )}
+      {shownId && (
+        <button
+          className="nav-link lyrics-reject-button"
+          data-testid="lyrics-reject-button"
+          type="button"
+          disabled={rejecting}
+          onClick={() => void markWrong(shownId)}
+        >
+          Wrong lyrics
+        </button>
+      )}
+      {rejectError?.titleId === titleId && (
+        <p className="status status-error" data-testid="lyrics-reject-error" role="alert">
+          <span className="dot dot-error" aria-hidden="true" />
+          {rejectError.message}
+        </p>
       )}
     </section>
   );

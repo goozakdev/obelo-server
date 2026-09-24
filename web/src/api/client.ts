@@ -2549,6 +2549,28 @@ export class ApiClient {
     );
     return res.lyrics ?? null;
   }
+
+  /** `POST /api/v1/titles/{id}/lyrics/wrong` — "wrong lyrics": reject the Lyric
+   * provider answer named `answerId` (the `id` it was shown with), for every
+   * User, and get what the Track shows now (`null` when no other acceptable
+   * answer is left). Any person (Members included; not a linked Server). A `409`
+   * — the Track shows Local lyrics, none, or another answer than `answerId` —
+   * rejected nothing and carries what the Track shows now, which is returned the
+   * same way. */
+  async markLyricsWrong(titleId: string, answerId: string, signal?: AbortSignal): Promise<Lyrics | null> {
+    try {
+      const res = await this.request<{ lyrics?: Lyrics | null }>(
+        `/titles/${encodeURIComponent(titleId)}/lyrics/wrong`,
+        { method: "POST", body: { id: answerId }, signal },
+      );
+      return res.lyrics ?? null;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.details && "lyrics" in err.details) {
+        return (err.details.lyrics as Lyrics | null) ?? null;
+      }
+      throw err;
+    }
+  }
 }
 
 export { ApiError, NetworkError };

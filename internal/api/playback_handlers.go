@@ -464,6 +464,19 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 				requireAuth(deps.Auth, requireScope(deps.Access, handleTitleWebReferences(deps, id))))(w, r)
 			return
 		}
+		// POST {id}/lyrics/wrong: "wrong lyrics" from the lyrics view. Any User,
+		// Member included — requireAuth + requireScope, NOT requireAdmin; the
+		// rejection is the Track's, so every User sees what follows it. The
+		// handler itself refuses the remote role.
+		if id, ok := strings.CutSuffix(rest, "/lyrics/wrong"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPost,
+				requireAuth(deps.Auth, requireScope(deps.Access, handleWrongLyrics(deps, id))))(w, r)
+			return
+		}
 		// GET {id}/lyrics: the Track's Local lyrics for the lyrics view. Any User,
 		// Member included — requireAuth + requireScope, NOT requireAdmin.
 		if id, ok := strings.CutSuffix(rest, "/lyrics"); ok {
