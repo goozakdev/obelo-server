@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -226,6 +227,53 @@ func WebReferenceManifest(id, mode string) pluginapi.Manifest {
 			Default: json.RawMessage(`"` + mode + `"`),
 		}}},
 		Description: "An Installed Web reference provider, built from source by the test suite.",
+	}
+}
+
+// SignInFailsWithThePassword, passed as SignInManifest's accounts, is a
+// directory whose guest logs the password it was handed and then fails the call
+// with the password in its error.
+const SignInFailsWithThePassword = "fail-with-the-password"
+
+// SignInHangs, passed as SignInManifest's accounts, is a directory whose guest
+// never answers: only the host's deadline ends its call.
+const SignInHangs = "hang"
+
+// The directories below, passed as SignInManifest's accounts, each put the
+// password they were handed somewhere the host keeps or logs text, and then
+// reject the login. SignInFetchesWithThePassword is a prefix: the guest fetches
+// the URL that follows it with the password appended.
+const (
+	SignInFetchesWithThePassword = "fetch-with-the-password:"
+	SignInFetchesThePasswordHost = "fetch-the-password-host"
+	SignInStoresThePassword      = "store-the-password"
+	SignInLogsThePassword        = "log-the-password"
+)
+
+// SignInManifest is the manifest of an Installed Sign-in provider implementing
+// the password flow. Its "directory" is one declared setting, `accounts`, whose
+// manifest default is the accounts argument: `;`-separated entries of
+// `login:password:subject:name:groups` (see the guest's sign_in_password). It
+// declares whatever hosts the test means to allow, usually none — the guest checks
+// what it was handed and nothing else.
+func SignInManifest(id, accounts string, allowedHosts ...string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "Test Directory (" + id + ")",
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:         pluginapi.ExtensionSignInProvider,
+			Capabilities: []pluginapi.Capability{pluginapi.CapabilityPasswordSignIn},
+		}},
+		Network: pluginapi.ManifestNetwork{Hosts: allowedHosts},
+		Settings: pluginapi.ManifestSettings{Fields: []pluginapi.SettingsField{{
+			Key:     "accounts",
+			Type:    pluginapi.FieldString,
+			Label:   "Accounts",
+			Default: json.RawMessage(strconv.Quote(accounts)),
+		}}},
+		Description: "An Installed Sign-in provider, built from source by the test suite.",
 	}
 }
 

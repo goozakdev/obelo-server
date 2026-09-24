@@ -311,7 +311,7 @@ func wireCases() []wireCase {
 			golden: `{"id":"5b4e28ba-2fa1-11d2-883f-0016d3cca427","type":"library.changed",` +
 				`"at":"2026-09-16T12:00:00Z","library":{"id":"lib-2","name":"Shows","kind":"show"}}`,
 		},
-	}, append(append(metadataWireCases(), installedWireCases()...), webReferenceWireCases()...)...)
+	}, append(append(append(metadataWireCases(), installedWireCases()...), webReferenceWireCases()...), signInWireCases()...)...)
 }
 
 // installedWireCases pins the documents an INSTALLED plugin deals in (ADR-0058):

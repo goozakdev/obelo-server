@@ -24,6 +24,10 @@ const (
 	// ExtensionWebReferenceProvider turns the external ids an item already holds
 	// into labelled https addresses, as a pure computation with no network.
 	ExtensionWebReferenceProvider ExtensionPoint = "web-reference-provider"
+	// ExtensionSignInProvider proves who someone is on behalf of a source the
+	// operator controls, answering with an External identity and its groups; the
+	// server decides what that is worth (ADR-0063).
+	ExtensionSignInProvider ExtensionPoint = "sign-in-provider"
 )
 
 // Capability names an OPTIONAL operation a Plugin declares it implements, so the
@@ -62,6 +66,12 @@ const (
 	// provider interface — folding it in would force every music source and every
 	// artwork-only supplement to carry a stub.
 	CapabilityEpisodeList Capability = "episode-list"
+	// CapabilityPasswordSignIn is a Sign-in provider's password flow: checking a
+	// username and password typed into the ordinary login form (ADR-0063 decision
+	// 1). A capability rather than the whole Extension point because a Sign-in
+	// provider may implement either flow or both, and the host asks only the ones
+	// that declared this before a login form's password goes anywhere.
+	CapabilityPasswordSignIn Capability = "password-sign-in"
 )
 
 // Outcome is what happened, as a VALUE at the contract edge (ADR-0057 decision 2).

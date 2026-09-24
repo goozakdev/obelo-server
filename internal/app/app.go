@@ -36,6 +36,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
+	"github.com/goozakdev/obelo-server/internal/signin"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
@@ -1020,6 +1021,13 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	enrichStart := app.StartEnrichPass
 	enrichStatus := app.EnrichPassStatus
 
+	// Sign-in providers (ADR-0063): the password-flow ones a login asks after the
+	// Local password, in the Admin's order, read from the SAME registry value the
+	// plugin Manager swaps — so an install or an enable switch is seen by the very
+	// next login with no rewiring here.
+	signInSource := signin.NewSource(registry, db)
+	authSvc.UseSignInProviders(signInSource)
+
 	apiHandler := api.Handler(api.Deps{
 		Meta:          meta,
 		Auth:          authSvc,
@@ -1089,6 +1097,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		// Which upstreams may assert a client address / original scheme
 		// (OBELO_TRUSTED_PROXIES). Empty trusts nothing — see api/forwarded.go.
 		TrustedProxies: trustedProxies,
+
+		// The password-flow Sign-in providers and their Admin order (ADR-0063).
+		SignInProviders: signInSource,
 	})
 
 	// Top-level composition (ADR-0012): /api/v1 stays the API's; every other

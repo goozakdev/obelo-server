@@ -39,6 +39,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.ExtensionSubtitleProvider),
 				string(pluginapi.ExtensionEventSink),
 				string(pluginapi.ExtensionWebReferenceProvider),
+				string(pluginapi.ExtensionSignInProvider),
 			},
 		},
 		{
@@ -51,6 +52,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.CapabilityAlbumTracklist),
 				string(pluginapi.CapabilityExternalRef),
 				string(pluginapi.CapabilityEpisodeList),
+				string(pluginapi.CapabilityPasswordSignIn),
 			},
 		},
 		{
@@ -432,6 +434,30 @@ func contractTypes() []typeSpec {
 				"would receive and the Settings the host resolved, travelling together as a Subtitle provider's " +
 				"do. http_fetch is refused for the whole of this call. The response is un-enveloped — a plain " +
 				"WebReferencesResponse.",
+		},
+		{
+			value: pluginapi.SignInPasswordRequest{},
+			doc: "One password check for a Sign-in provider's password flow: exactly the username and password " +
+				"typed into the login form. The host never stores the password and hands it to nothing but the " +
+				"Plugin being asked.",
+		},
+		{
+			value: pluginapi.SignInIdentity{},
+			doc: "Who the source says the person is. subject is the source's own stable id and, with the Plugin's " +
+				"id, the ONLY key the host resolves by — never username, which is a label that names a new User " +
+				"once and is otherwise only remembered. groups are stored on the identity; what they are worth is " +
+				"the host's decision.",
+		},
+		{
+			value: pluginapi.SignInPasswordResponse{},
+			doc: "What a password check answers. Only accepted:true with an identity carrying a subject signs " +
+				"anyone in; everything else is a rejection, which the host never explains at the login form.",
+		},
+		{
+			value: pluginapi.SignInPasswordCall{},
+			doc: "What the host hands an INSTALLED Sign-in provider for one password check: the request and the " +
+				"Settings the host resolved, travelling together as a Subtitle provider's do. The response is " +
+				"un-enveloped — a plain SignInPasswordResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},

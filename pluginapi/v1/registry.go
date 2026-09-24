@@ -42,6 +42,7 @@ type registryState struct {
 	subtitleProviders []SubtitleProviderRegistration
 	eventSinks        []EventSinkRegistration
 	webReferences     []WebReferenceProviderRegistration
+	signInProviders   []SignInProviderRegistration
 }
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
@@ -76,6 +77,7 @@ func (r *Registry) mutate(f func(*registryState)) {
 		subtitleProviders: append([]SubtitleProviderRegistration(nil), cur.subtitleProviders...),
 		eventSinks:        append([]EventSinkRegistration(nil), cur.eventSinks...),
 		webReferences:     append([]WebReferenceProviderRegistration(nil), cur.webReferences...),
+		signInProviders:   append([]SignInProviderRegistration(nil), cur.signInProviders...),
 	}
 	f(next)
 	r.state.Store(next)
@@ -292,4 +294,47 @@ func (r *Registry) WebReferenceProvider(slug string) (WebReferenceProviderRegist
 		}
 	}
 	return WebReferenceProviderRegistration{}, false
+}
+
+// RegisterSignInProvider adds one Sign-in provider Plugin, under the same rules
+// as an Event sink: registration order is preserved — it is the order a login is
+// tried in until an Admin sets one — and a malformed or duplicate registration
+// PANICS at the composition root.
+func (r *Registry) RegisterSignInProvider(reg SignInProviderRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: sign-in provider registered with no slug")
+	}
+	if reg.New == nil {
+		panic(fmt.Sprintf("pluginapi: sign-in provider %q registered with no factory", reg.Descriptor.Slug))
+	}
+	if _, exists := r.SignInProvider(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: sign-in provider %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionSignInProvider
+	r.mutate(func(s *registryState) {
+		s.signInProviders = append(s.signInProviders, reg)
+	})
+}
+
+// SignInProviders returns the registered Sign-in providers in registration
+// order, as a copy.
+func (r *Registry) SignInProviders() []SignInProviderRegistration {
+	if r == nil {
+		return nil
+	}
+	cur := r.load()
+	out := make([]SignInProviderRegistration, len(cur.signInProviders))
+	copy(out, cur.signInProviders)
+	return out
+}
+
+// SignInProvider returns the registration for a slug, or ok=false for a slug no
+// Plugin claimed.
+func (r *Registry) SignInProvider(slug string) (SignInProviderRegistration, bool) {
+	for _, reg := range r.load().signInProviders {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return SignInProviderRegistration{}, false
 }

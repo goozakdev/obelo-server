@@ -55,6 +55,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/safefetch"
@@ -335,8 +336,10 @@ type Plugin struct {
 	compiled *compiled
 
 	// callMu serializes guest calls. One instance means one linear memory, and two
-	// calls into it at once would share it.
-	callMu   sync.Mutex
+	// calls into it at once would share it. A one-slot channel rather than a
+	// sync.Mutex so a call whose policy says so (callPolicy.queueInBudget) can give
+	// up waiting for it.
+	callMu   chan struct{}
 	instance *instance
 	bytes    int64
 	// callDeadline is the CURRENT call's deadline, set in callGuestUnder before the
@@ -345,6 +348,13 @@ type Plugin struct {
 	// every call and the guest's own Nanosleep host call runs, synchronously, on
 	// that same goroutine and inside that same call.
 	callDeadline time.Time
+	// secret is the CURRENT call's callPolicy.secret, false between calls. It is
+	// atomic rather than under mu because host functions read it from inside the
+	// call, some of them with mu held.
+	secret atomic.Bool
+	// withheldLog is whether the current secret call has already written the one
+	// line that stands in for its guest's log lines. Touched only inside a call.
+	withheldLog bool
 
 	mu sync.Mutex
 	// target is the host of the URL the Admin configured, for the duration of one
@@ -520,6 +530,13 @@ func (p *Plugin) resolveLimits() {
 
 func (p *Plugin) logf(format string, args ...any) { p.opts.Logf(format, args...) }
 
+// secretCall reports whether the call in flight carries a credential
+// (callPolicy.secret). While it does, every line the Plugin logs and every
+// sentence it records is a fixed one of the host's plus the kind of thing that
+// happened — never a URL, a host, a key, an error's text or anything the guest
+// wrote, because any of them can carry what the call was handed.
+func (p *Plugin) secretCall() bool { return p.secret.Load() }
+
 func (p *Plugin) httpClient() *http.Client { return p.opts.HTTPClient }
 
 // audit writes the line an operator greps for when a Plugin is not doing what they
@@ -527,6 +544,11 @@ func (p *Plugin) httpClient() *http.Client { return p.opts.HTTPClient }
 // when the guest goes on to ignore the refusal, because the whole point is that
 // the attempt is visible whatever the Plugin does about it.
 func (p *Plugin) audit(host, reason string) {
+	if p.secretCall() {
+		p.logf("obelo: plugin audit: refused a fetch during a call that carries a credential: plugin=%s reason=%s",
+			p.id, reason)
+		return
+	}
 	p.logf("obelo: plugin audit: refused a fetch: plugin=%s host=%s reason=%s",
 		p.id, sanitizeLine(host), reason)
 }
@@ -614,6 +636,25 @@ func (p *Plugin) noteRefusal(err error) {
 	defer p.mu.Unlock()
 	p.lastError = err.Error()
 	p.refusalOnly = true
+}
+
+// noteFailure records a failed call's sentence WITHOUT counting a strike, for a
+// call made under callPolicy.noStrike. The sentence is sticky like a failure's.
+func (p *Plugin) noteFailure(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastError = err.Error()
+	p.refusalOnly = false
+}
+
+// recordCallFailure is recordFailure, or noteFailure for a call whose policy
+// counts no strikes.
+func (p *Plugin) recordCallFailure(policy callPolicy, err error) {
+	if policy.noStrike {
+		p.noteFailure(err)
+		return
+	}
+	p.recordFailure(err)
 }
 
 // clearFailures forgets a run of failures after a call that worked.
@@ -709,6 +750,50 @@ type callPolicy struct {
 	// for a Web reference provider, whose call is a pure computation over what the
 	// request already carries, and for nothing else.
 	offline bool
+	// secret marks a call whose request carries a credential — a password. While
+	// it runs the host records and logs no text but its own (see secretCall):
+	// what the guest logs is withheld, and a refused fetch or a failed key-value
+	// call is named by its kind alone. describe does the same for the call's own
+	// error.
+	secret bool
+	// describe, when set, replaces a failed call's error with this fixed
+	// description and the KIND of failure (see outcomeOnly): nothing the guest
+	// said, and nothing of the request, reaches the caller, the last error or a
+	// log line. For a Sign-in provider, whose request is a credential.
+	describe string
+	// noStrike records a failed call without counting it toward the auto-disable
+	// threshold. For a Sign-in provider: anyone can make a login, so a failing
+	// login must not be a way to take the provider off the server.
+	noStrike bool
+	// queueInBudget makes budget cover the wait for callMu as well as the call:
+	// a call still queued when it runs out gives up, invoking nothing and
+	// counting nothing. For a Sign-in provider: a login is waited on by a person,
+	// and logins behind a guest that hangs must not each wait out every call
+	// ahead of them in turn.
+	queueInBudget bool
+}
+
+// errCallFailed is outcomeOnly's kind for a failure that is not a refusal, a
+// missing export or a deadline: a trap, or an answer not in the contract's shape.
+var errCallFailed = errors.New("the call failed")
+
+// errCallTimedOut is outcomeOnly's kind for a call its deadline ended.
+var errCallTimedOut = errors.New("the call ran out of time")
+
+// outcomeOnly is a failed call's error as callPolicy.describe says it: the fixed
+// description and the kind of failure, keeping the sentinels callGuestUnder's
+// policy checks read.
+func outcomeOnly(describe string, err error, timedOut bool) error {
+	switch {
+	case errors.Is(err, errNoExport):
+		return fmt.Errorf("%s: %w", describe, errNoExport)
+	case errors.Is(err, errGuestRefused):
+		return fmt.Errorf("%s: %w", describe, errGuestRefused)
+	case timedOut:
+		return fmt.Errorf("%s: %w", describe, errCallTimedOut)
+	default:
+		return fmt.Errorf("%s: %w", describe, errCallFailed)
+	}
 }
 
 // callGuest makes one call into the guest under the DEFAULT policy: the Event
@@ -732,8 +817,24 @@ func (p *Plugin) callGuest(ctx context.Context, export string, target string, bu
 // Settings to the guest through settings_get instead) just returns the same
 // req every time.
 func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export string, target string, buildReq func(callCtx context.Context) any, out any) error {
-	p.callMu.Lock()
-	defer p.callMu.Unlock()
+	budget := policy.budget
+	if budget <= 0 {
+		budget = p.opts.CallTimeout
+	}
+	var callCtx context.Context
+	var cancel context.CancelFunc
+	if policy.queueInBudget {
+		callCtx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+		select {
+		case p.callMu <- struct{}{}:
+		case <-callCtx.Done():
+			return fmt.Errorf("plugin %s: call queued past its caller's deadline: %w", p.id, callCtx.Err())
+		}
+	} else {
+		p.callMu <- struct{}{}
+	}
+	defer func() { <-p.callMu }()
 
 	if p.compiled == nil {
 		return fmt.Errorf("%w: the module was never loaded", ErrDisabled)
@@ -744,13 +845,16 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 		return err
 	}
 	defer p.endCall()
-
-	budget := policy.budget
-	if budget <= 0 {
-		budget = p.opts.CallTimeout
+	if policy.secret {
+		p.secret.Store(true)
+		p.withheldLog = false
+		defer p.secret.Store(false)
 	}
-	callCtx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
+
+	if callCtx == nil {
+		callCtx, cancel = context.WithTimeout(ctx, budget)
+		defer cancel()
+	}
 	if deadline, ok := callCtx.Deadline(); ok {
 		p.callDeadline = deadline
 	} else {
@@ -769,7 +873,10 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 	if p.instance == nil {
 		inst, err := p.compiled.instantiate(callCtx, p)
 		if err != nil {
-			p.recordFailure(err)
+			if policy.describe != "" {
+				err = outcomeOnly(policy.describe, err, callCtx.Err() != nil)
+			}
+			p.recordCallFailure(policy, err)
 			return err
 		}
 		p.instance = inst
@@ -780,6 +887,9 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 
 	n, err := p.instance.invoke(callCtx, export, req, out)
 	p.bytes += int64(n)
+	if err != nil && policy.describe != "" {
+		err = outcomeOnly(policy.describe, err, callCtx.Err() != nil)
+	}
 	if errors.Is(err, errNoExport) {
 		// NOT a trap (issue 11). The module simply does not export this call, which
 		// is a fact about the module rather than a failure of the instance: nothing
@@ -808,7 +918,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 		// and the next call rebuilds from the retained compiled artifact.
 		p.instance.close(context.Background())
 		p.instance = nil
-		p.recordFailure(err)
+		p.recordCallFailure(policy, err)
 		return err
 	}
 	if p.bytes >= p.opts.RecycleBytes {
@@ -822,8 +932,8 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 }
 
 func (p *Plugin) close(ctx context.Context) {
-	p.callMu.Lock()
-	defer p.callMu.Unlock()
+	p.callMu <- struct{}{}
+	defer func() { <-p.callMu }()
 	if p.instance != nil {
 		p.instance.close(ctx)
 		p.instance = nil
@@ -880,11 +990,18 @@ func Load(ctx context.Context, dir string, opts Options) (*Set, error) {
 	return set, nil
 }
 
+// newPlugin is a Plugin with nothing loaded yet and every field a call relies on
+// in place — its call slot above all, since a nil channel would block the first
+// call forever.
+func newPlugin(id, dir string, opts Options) *Plugin {
+	return &Plugin{id: id, dir: dir, opts: opts, hosts: map[string]struct{}{}, callMu: make(chan struct{}, 1)}
+}
+
 // loadOne reads one Plugin directory. It ALWAYS returns a Plugin, because a Plugin
 // an operator placed and this server refused has to be visible; what it does not
 // always return is a Plugin with a module behind it.
 func loadOne(ctx context.Context, dir, dirName string, opts Options) *Plugin {
-	p := &Plugin{id: dirName, dir: dir, opts: opts, hosts: map[string]struct{}{}}
+	p := newPlugin(dirName, dir, opts)
 	// The host's own numbers, in place BEFORE the manifest is read, so a Plugin
 	// refused at any point below still has a budget, a byte cap and an identity
 	// rather than three zeroes.
@@ -1013,6 +1130,12 @@ func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 		// webref.go, beside the adapter it registers.
 		if entry.Kind == pluginapi.ExtensionWebReferenceProvider {
 			s.registerWebReferenceProvider(reg, p, entry)
+			continue
+		}
+		// The Sign-in provider Extension point. Its whole branch is in signin.go,
+		// beside the adapter it registers.
+		if entry.Kind == pluginapi.ExtensionSignInProvider {
+			s.registerSignInProvider(reg, p, entry)
 			continue
 		}
 		if entry.Kind != pluginapi.ExtensionEventSink {

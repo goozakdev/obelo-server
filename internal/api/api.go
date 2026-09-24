@@ -25,6 +25,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/playback"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/server"
+	"github.com/goozakdev/obelo-server/internal/signin"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
@@ -273,6 +274,11 @@ type Deps struct {
 	// /providerImage route that verifies them — because a second instance would carry
 	// a second key and would refuse every reference the first one signed.
 	providerImages *providerImageProxy
+
+	// SignInProviders is the ordered set of password-flow Sign-in providers
+	// (ADR-0063, Admin-scope /settings/sign-in-providers). Nil in a narrow test,
+	// and the route then answers 503 with a sentence.
+	SignInProviders *signin.Source
 }
 
 // Handler builds the root http.Handler for the whole API, mounted at /api/v1.
@@ -537,6 +543,13 @@ func Handler(deps Deps) http.Handler {
 	// rationale as the media GETs); native clients may use the bearer header.
 	mux.HandleFunc("/events",
 		requireMethod(http.MethodGet, requireAuthAllowCookie(deps.Auth, requireScope(deps.Access, handleEvents(deps.Events)))))
+
+	// Sign-in providers (ADR-0063): GET/PUT /settings/sign-in-providers, the order
+	// a login asks the password-flow Sign-in providers in after the Local password.
+	// Admin-only. An exact pattern, so it wins over the /settings/ subtree above
+	// without that dispatcher knowing it exists.
+	mux.HandleFunc("/settings/sign-in-providers",
+		requireAuth(deps.Auth, requireAdmin(handleSignInProviders(deps))))
 
 	// Catch-all: anything not matched returns the standard NOT_FOUND envelope.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

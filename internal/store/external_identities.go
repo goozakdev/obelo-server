@@ -1,0 +1,167 @@
+package store
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// External identities and the Sign-in provider order (ADR-0063). An External
+// identity is keyed by (plugin id, subject) — never by username — and is held by
+// exactly one User; the table's primary key and its foreign key say both.
+
+// ErrExternalIdentityTaken is what CreateExternalMember answers when the
+// identity was claimed by a concurrent first sign-in between the caller's lookup
+// and its insert. The caller resolves the identity again rather than guessing.
+var ErrExternalIdentityTaken = errors.New("store: external identity already held")
+
+// ExternalIdentityUser returns the User holding the External identity
+// (pluginID, subject), or ErrNotFound for an identity this server has never seen.
+func (db *DB) ExternalIdentityUser(pluginID, subject string) (User, error) {
+	return db.scanUser(db.QueryRow(
+		`SELECT u.id, u.username, u.role, COALESCE(u.password_hash, ''), u.created_at
+		   FROM external_identities x JOIN users u ON u.id = x.user_id
+		  WHERE x.plugin_id = ? AND x.subject = ?`, pluginID, subject))
+}
+
+// RecordExternalSignIn remembers what a provider said about a returning identity:
+// its current username at the source and its groups. Neither is resolved by.
+func (db *DB) RecordExternalSignIn(pluginID, subject, username string, groups []string) error {
+	g, err := encodeGroups(groups)
+	if err != nil {
+		return err
+	}
+	res, err := db.Exec(
+		`UPDATE external_identities
+		    SET username = ?, groups = ?, last_seen_at = datetime('now')
+		  WHERE plugin_id = ? AND subject = ?`, username, g, pluginID, subject)
+	if err != nil {
+		return fmt.Errorf("store: recording external sign-in: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ExternalIdentity is one row of external_identities as the host sees it.
+type ExternalIdentity struct {
+	PluginID string
+	Subject  string
+	UserID   string
+	Username string
+	Groups   []string
+}
+
+// ExternalIdentitiesByUser lists the External identities a User holds, oldest
+// first.
+func (db *DB) ExternalIdentitiesByUser(userID string) ([]ExternalIdentity, error) {
+	rows, err := db.Query(
+		`SELECT plugin_id, subject, user_id, username, groups
+		   FROM external_identities WHERE user_id = ? ORDER BY created_at, plugin_id, subject`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing external identities: %w", err)
+	}
+	defer rows.Close()
+	var out []ExternalIdentity
+	for rows.Next() {
+		var x ExternalIdentity
+		var groups string
+		if err := rows.Scan(&x.PluginID, &x.Subject, &x.UserID, &x.Username, &groups); err != nil {
+			return nil, fmt.Errorf("store: scanning external identity: %w", err)
+		}
+		if err := json.Unmarshal([]byte(groups), &x.Groups); err != nil {
+			return nil, fmt.Errorf("store: decoding external identity groups: %w", err)
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// CreateExternalMember mints a Member with no Local password and gives it the
+// External identity (pluginID, subject), in ONE transaction: a password-less
+// Member without the identity that justifies it must never exist, even for an
+// instant. The row is marked external_origin, which is the one thing the users
+// CHECK accepts in place of a password for a person.
+//
+// A username already held here surfaces as the UNIQUE-constraint error for the
+// caller to map — the collision ADR-0063 decision 7 refuses rather than merges.
+// An identity claimed by a concurrent first sign-in is ErrExternalIdentityTaken.
+func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUsername string, groups []string) (User, error) {
+	g, err := encodeGroups(groups)
+	if err != nil {
+		return User{}, err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return User{}, fmt.Errorf("store: creating external member: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
+		`INSERT INTO users (id, username, role, password_hash, external_origin)
+		 VALUES (?, ?, 'member', NULL, 1)`, id, username); err != nil {
+		return User{}, fmt.Errorf("store: creating external member: %w", err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO external_identities (plugin_id, subject, user_id, username, groups)
+		 VALUES (?, ?, ?, ?, ?)`, pluginID, subject, id, providerUsername, g); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return User{}, ErrExternalIdentityTaken
+		}
+		return User{}, fmt.Errorf("store: linking external identity: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, fmt.Errorf("store: creating external member: %w", err)
+	}
+	return db.UserByID(id)
+}
+
+func encodeGroups(groups []string) (string, error) {
+	if groups == nil {
+		groups = []string{}
+	}
+	b, err := json.Marshal(groups)
+	if err != nil {
+		return "", fmt.Errorf("store: encoding groups: %w", err)
+	}
+	return string(b), nil
+}
+
+// SignInProviderOrder returns the plugin ids the Admin ordered, first-asked
+// first. A provider absent from it has no Admin-set place.
+func (db *DB) SignInProviderOrder() ([]string, error) {
+	rows, err := db.Query(`SELECT plugin_id FROM sign_in_provider_order ORDER BY position, plugin_id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading sign-in provider order: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: scanning sign-in provider order: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetSignInProviderOrder replaces the Admin's order with ids, whole.
+func (db *DB) SetSignInProviderOrder(ids []string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: setting sign-in provider order: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM sign_in_provider_order`); err != nil {
+		return fmt.Errorf("store: setting sign-in provider order: %w", err)
+	}
+	for i, id := range ids {
+		if _, err := tx.Exec(
+			`INSERT INTO sign_in_provider_order (plugin_id, position) VALUES (?, ?)`, id, i); err != nil {
+			return fmt.Errorf("store: setting sign-in provider order: %w", err)
+		}
+	}
+	return tx.Commit()
+}

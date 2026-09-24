@@ -21,9 +21,18 @@ CREATE TABLE users (
     max_bitrate    INTEGER,
     max_streams    INTEGER,
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    -- Only a 'remote' User may lack a password: it authenticates over the Link
-    -- protocol, never by logging in locally (ADR-0058).
-    CHECK (COALESCE(password_hash, '') <> '' OR role = 'remote')
+    -- external_origin is 1 for a User minted by a Sign-in provider the first
+    -- time it vouched for an External identity (ADR-0063 decision 3). It is set
+    -- once, at creation, and is the only reason a person may lack a password.
+    external_origin INTEGER NOT NULL DEFAULT 0 CHECK (external_origin IN (0, 1)),
+    -- Only two kinds of User may lack a password: a 'remote' User, which
+    -- authenticates over the Link protocol and never by logging in locally
+    -- (ADR-0054), and a Member minted from a first-time External identity, which
+    -- signs in through its Sign-in provider (ADR-0063). Every other person has a
+    -- Local password, whoever inserted the row.
+    CHECK (COALESCE(password_hash, '') <> ''
+           OR role = 'remote'
+           OR (role = 'member' AND external_origin = 1))
 );
 
 CREATE TABLE devices (
@@ -1273,4 +1282,32 @@ CREATE TABLE lyrics (
     kind       TEXT NOT NULL CHECK (kind IN ('synced', 'plain')),
     body       TEXT NOT NULL,
     PRIMARY KEY (title_id, source)
+);
+
+-- ===========================================================================
+-- sign-in providers (ADR-0063)
+-- ===========================================================================
+
+-- An External identity: a Sign-in provider's own stable id for a person, keyed
+-- by (plugin_id, subject) and never by username, held by exactly one User.
+-- username and groups are what the provider said at the last sign-in — kept, never
+-- resolved by. groups is a JSON array.
+CREATE TABLE external_identities (
+    plugin_id    TEXT NOT NULL,
+    subject      TEXT NOT NULL,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username     TEXT NOT NULL DEFAULT '',
+    groups       TEXT NOT NULL DEFAULT '[]',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (plugin_id, subject)
+);
+CREATE INDEX idx_external_identities_user ON external_identities(user_id);
+
+-- The Admin's order for password-flow Sign-in providers: lower position is asked
+-- first. A provider with no row is asked after every one that has one, in the
+-- order the server registered it.
+CREATE TABLE sign_in_provider_order (
+    plugin_id TEXT PRIMARY KEY,
+    position  INTEGER NOT NULL
 );

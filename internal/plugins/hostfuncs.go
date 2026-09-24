@@ -102,6 +102,15 @@ func (h *hostFuncs) log(_ context.Context, mod api.Module, level, ptr, n uint32)
 	if !ok {
 		return
 	}
+	if h.p.secretCall() {
+		// The guest was handed a credential, so nothing it writes is logged: one
+		// fixed line says that it wrote something, and the rest are dropped.
+		if !h.p.withheldLog {
+			h.p.withheldLog = true
+			h.p.logf("obelo: plugin %s: its log lines during a call that carries a credential are withheld", h.p.id)
+		}
+		return
+	}
 	h.p.logf("obelo: plugin %s [%s] %s", h.p.id, levelName(level), sanitizeLine(string(msg)))
 }
 
@@ -186,7 +195,7 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 	operatorChose := host != "" && host == h.p.operatorHost()
 	if !operatorChose && !h.p.allows(host) {
 		h.p.audit(host, auditAllowlist)
-		h.p.recordViolation(fmt.Sprintf("fetched %s, which its manifest does not allow", host))
+		h.violation("allowlist", fmt.Sprintf("fetched %s, which its manifest does not allow", host))
 		return pluginapi.FetchResponse{Refused: refusedAllowlist}
 	}
 
@@ -210,7 +219,7 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 	if !operatorChose {
 		if refusal := h.refuseInternal(fctx, target.Hostname()); refusal != "" {
 			h.p.audit(host, auditPrivate)
-			h.p.recordViolation(fmt.Sprintf("fetched %s, which resolves into address space a plugin may not reach", host))
+			h.violation("private address", fmt.Sprintf("fetched %s, which resolves into address space a plugin may not reach", host))
 			return pluginapi.FetchResponse{Refused: refusal}
 		}
 	}
@@ -268,7 +277,7 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 		// and it is reported to the guest as a refusal so it does not retry.
 		if isPolicyRefusal(err) {
 			h.p.audit(host, auditBlocked)
-			h.p.recordViolation(fmt.Sprintf("fetched %s, which this server's fetch policy refused: %v", host, err))
+			h.violation("redirect", fmt.Sprintf("fetched %s, which this server's fetch policy refused: %v", host, err))
 			return pluginapi.FetchResponse{Refused: refusedUnreached}
 		}
 		return pluginapi.FetchResponse{Error: fetchErrorText(err)}
@@ -297,6 +306,16 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 		}
 	}
 	return out
+}
+
+// violation records a fetch the policy refused, as detail — or, during a call
+// that carries a credential, as a fixed sentence and kind: detail quotes a host
+// and an error the guest's URL chose, and either can carry the credential.
+func (h *hostFuncs) violation(kind, detail string) {
+	if h.p.secretCall() {
+		detail = "a fetch during a call that carries a credential was blocked: " + kind
+	}
+	h.p.recordViolation(detail)
 }
 
 // deadline derives the context ONE fetch runs under, and it is the whole of
@@ -450,7 +469,7 @@ func (h *hostFuncs) kvGet(ctx context.Context, mod api.Module, ptr, n uint32) ui
 	}
 	value, found, err := kv.PluginKV(h.p.id, req.Key)
 	if err != nil {
-		h.p.logf("obelo: plugin %s: reading its key %q failed: %v", h.p.id, sanitizeLine(req.Key), err)
+		h.kvFailed("reading", req.Key, err)
 		return h.emit(ctx, mod, pluginapi.KVGetResponse{Error: "the key could not be read"})
 	}
 	return h.emit(ctx, mod, pluginapi.KVGetResponse{Found: found, Value: value})
@@ -476,7 +495,7 @@ func (h *hostFuncs) kvSet(ctx context.Context, mod api.Module, ptr, n uint32) ui
 		return h.emit(ctx, mod, pluginapi.KVWriteResponse{Error: kvRefusedNoStore})
 	}
 	if err := kv.SetPluginKV(h.p.id, req.Key, req.Value); err != nil {
-		h.p.logf("obelo: plugin %s: writing its key %q failed: %v", h.p.id, sanitizeLine(req.Key), err)
+		h.kvFailed("writing", req.Key, err)
 		return h.emit(ctx, mod, pluginapi.KVWriteResponse{Error: "the key could not be written"})
 	}
 	return h.emit(ctx, mod, pluginapi.KVWriteResponse{OK: true})
@@ -501,7 +520,7 @@ func (h *hostFuncs) kvDelete(ctx context.Context, mod api.Module, ptr, n uint32)
 		return h.emit(ctx, mod, pluginapi.KVWriteResponse{Error: kvRefusedNoStore})
 	}
 	if err := kv.DeletePluginKV(h.p.id, req.Key); err != nil {
-		h.p.logf("obelo: plugin %s: deleting its key %q failed: %v", h.p.id, sanitizeLine(req.Key), err)
+		h.kvFailed("deleting", req.Key, err)
 		return h.emit(ctx, mod, pluginapi.KVWriteResponse{Error: "the key could not be deleted"})
 	}
 	return h.emit(ctx, mod, pluginapi.KVWriteResponse{OK: true})
@@ -537,6 +556,17 @@ func (h *hostFuncs) readRequest(mod api.Module, ptr, n uint32, out any) error {
 		return fmt.Errorf("the request is not the shape this call takes: %w", err)
 	}
 	return nil
+}
+
+// kvFailed logs a key-value call the store failed — naming neither the key nor
+// the store's error during a call that carries a credential, since the guest
+// chose the key and the error may quote it.
+func (h *hostFuncs) kvFailed(op, key string, err error) {
+	if h.p.secretCall() {
+		h.p.logf("obelo: plugin %s: %s one of its keys failed during a call that carries a credential", h.p.id, op)
+		return
+	}
+	h.p.logf("obelo: plugin %s: %s its key %q failed: %v", h.p.id, op, sanitizeLine(key), err)
 }
 
 // checkKey is the key half of the size cap, shared by the three kv calls so a
