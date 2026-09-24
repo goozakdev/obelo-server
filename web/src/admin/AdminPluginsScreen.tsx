@@ -55,6 +55,7 @@ import type {
 // nothing.
 const EXTENSION_POINT_LABELS: Record<string, string> = {
   "event-sink": "Event sink",
+  "lyric-provider": "Lyric provider",
   "metadata-provider": "Metadata provider",
   "sign-in-provider": "Sign-in provider",
   "subtitle-provider": "Subtitle provider",

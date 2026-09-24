@@ -1444,3 +1444,52 @@ func signInPassword(ptr, n uint32) uint64 {
 	}
 	return reply(signInPasswordResponse{})
 }
+
+// =============================================================================
+// The Lyric provider seam.
+// =============================================================================
+//
+// Appended like the Web reference provider half, for the same reason. One
+// export, and it is a thin wrapper: the request is POSTed as JSON to the
+// source at `<settings.url>/lyrics`, and whatever the source answers is this
+// Plugin's answer, verbatim. The suite's source is an httptest server, so the
+// test decides every answer — well timed, mistimed, for another recording — and
+// counts every question. The host judges what comes back; this guest does not
+// have to know how.
+//
+//	lyric_provider_lyrics(ptr u32, len u32) -> i64   a LyricsCall in,
+//	                                                 a LyricsResponse out
+
+type lyricsCall struct {
+	Request  json.RawMessage `json:"request"`
+	Settings struct {
+		URL string `json:"url"`
+	} `json:"settings"`
+}
+
+//go:wasmexport lyric_provider_lyrics
+func lyricProviderLyrics(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call lyricsCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a LyricsCall: " + err.Error())
+	}
+	resp := fetch(fetchRequest{
+		Method:  "POST",
+		URL:     call.Settings.URL + "/lyrics",
+		Headers: []header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    call.Request,
+	})
+	switch {
+	case resp.Refused != "":
+		return fail("the source was refused: " + resp.Refused)
+	case resp.Error != "":
+		return fail("the source could not be reached: " + resp.Error)
+	case resp.Status != 200:
+		return fail("the source answered " + itoa(resp.Status))
+	}
+	return reply(json.RawMessage(resp.Body))
+}

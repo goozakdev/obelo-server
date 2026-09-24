@@ -3132,10 +3132,11 @@ export interface LyricLine {
 /** A Track's lyrics (`GET /titles/{id}/lyrics`). Synced lyrics carry `lines` in
  * time order (and an empty `text`); Plain lyrics carry `text` (and no `lines`).
  * `source` is where they came from — `local` is what the Scanner read from the
- * file or the `.lrc` beside it. */
+ * file or the `.lrc` beside it, `fetched` what a Lyric provider plugin answered
+ * when the lyrics view was first opened. */
 export interface Lyrics {
   kind: "synced" | "plain";
-  source: "local";
+  source: "local" | "fetched";
   lines: LyricLine[];
   text: string;
 }

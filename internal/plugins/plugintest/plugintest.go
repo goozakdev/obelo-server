@@ -277,6 +277,26 @@ func SignInManifest(id, accounts string, allowedHosts ...string) pluginapi.Manif
 	}
 }
 
+// LyricManifest is the manifest of an Installed Lyric provider serving music
+// whose source is sourceURL: the guest POSTs each request to <sourceURL>/lyrics
+// and answers whatever comes back (see the guest's lyric_provider_lyrics). The
+// source is the manifest's default URL, which is the host a call may reach, so
+// it declares no network hosts of its own and no secret.
+func LyricManifest(id, sourceURL string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "Test Lyrics (" + id + ")",
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:  pluginapi.ExtensionLyricProvider,
+			Kinds: []string{pluginapi.KindMusic},
+		}},
+		Settings:    pluginapi.ManifestSettings{DefaultURL: sourceURL},
+		Description: "An Installed Lyric provider, built from source by the test suite.",
+	}
+}
+
 // EverySettingsFieldType is one declared settings field of every type the contract
 // defines, in AllSettingsFieldTypes order, with the labels, help, defaults, options
 // and bounds a real manifest would carry.
