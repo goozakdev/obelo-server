@@ -220,6 +220,18 @@ A User role that can only browse and play, limited to the libraries granted to t
 The User role a *linked Server* holds on this one ([ADR-0054](./docs/adr/0054-a-linked-server-is-a-user-with-the-remote-role.md)): granted libraries, a Rating ceiling and a Playback ceiling exactly like a Member, and otherwise nothing a person has — no password (its only credential is the token an Invite leaves behind), no place in the roster, no watch state, and no way to become another role. Its username is the label the sharing Admin chose ("Brandon's server"). Created `remote` and dies `remote`: a role change either way is refused, and a password login is refused for the role on the *same* path an unknown username takes, so the role is not enumerable from timing. It is granted **nothing** at creation — "all libraries by default" is a friendly default inside a household and a disclosure of the whole collection to a machine in someone else's. On the Admin Users page it carries its Device's last-seen, which is the one thing that distinguishes a linked Server from one that was never linked. What the sharer sees in a session list is this User, never a person behind it. A Library this Server itself received over a Link can never be granted to it — the grant is refused and the role's resolved Scope subtracts one anyway: sharing does not travel, even past the API.
 _Avoid_: Peer (that is any other Server, seen from here), Guest (implies a person), Federated user / Service account (borrowed vocabularies with the wrong shape), Share (a verb, not the thing that holds the grant).
 
+**Local password**:
+A password a User holds on this Server itself. A User who has one is exempt from every Group mapping and can sign in with the network and every Sign-in provider down; the Server never lets the last Admin with one disappear ([ADR-0063](./docs/adr/0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md)).
+_Avoid_: Local account (the User is the account either way), Break-glass account (one use of it, not what it is).
+
+**External identity**:
+A Sign-in provider's own stable id for a person, held by exactly one User and keyed by that Plugin and that id — never by username. A User may hold several, and a Local password besides. One seen for the first time becomes a new Member granted nothing; an existing User gains one only by attaching it while signed in as themselves ([ADR-0063](./docs/adr/0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md)).
+_Avoid_: Linked account / Linked identity (a Link is a Server-to-Server thing), SSO account, Subject (the protocol's word).
+
+**Group mapping**:
+An Admin's rule from a Sign-in provider's groups to a role and library grants, re-applied whenever the Server re-checks an External identity. It governs only Users without a Local password ([ADR-0063](./docs/adr/0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md)).
+_Avoid_: Role sync, Claim mapping.
+
 **Watch state**:
 Per-(User, Title) playback data: resume position, watched/unwatched, when the Title was last *played*, personal rating, the Remembered audio, and the Remembered video. Belongs to the User, never to the Title. "Last played" is deliberately distinct from "last touched": a manual mark-watched changes watched/unwatched but does **not** count as playing, so it never moves the played recency the Up Next anchor reads ([ADR-0028](./docs/adr/0028-up-next-anchors-on-most-recently-played.md)).
 _Avoid_: Progress, History (history is a future, separate concept).
@@ -233,7 +245,7 @@ A User's explicit video Stream pick for a Title, stored in Watch state and reapp
 _Avoid_: Video preference (no such client hint exists), Last video, Quality preference.
 
 **Watched threshold**:
-Core server constant: crossing ~90% played marks a Title watched (removing it from Continue Watching and advancing TV Up Next); below a ~2% floor it counts as not started. Not per-User configurable in v1.
+Core server constant: crossing ~90% played marks a Title watched (removing it from Continue Watching and advancing TV Up Next); below a ~2% floor it counts as not started. A File whose Credits Marker starts at or past its halfway point is watched at that Marker instead ([ADR-0065](./docs/adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)). Not per-User configurable in v1.
 _Avoid_: Completed.
 
 **Continue Watching / Up Next / Recently Added**:
@@ -372,11 +384,11 @@ _Avoid_: Proxy (true of the bytes, but a proxy implies transparency and this sid
 ## Plugins
 
 **Plugin**:
-A unit of code that implements one or more Extension points and *provides* a Metadata provider, a Subtitle provider, or an Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). The word names the code, not the source: TMDB is a Metadata provider; the TMDB Plugin is what talks to it. Every Plugin, Built-in or Installed, goes through the same contract, and the host — never the Plugin — decides whether to believe what it returns. A Plugin decorates a Title the Scanner already filed; it never decides what a file *is*.
+A unit of code that implements one or more Extension points and *provides* a Metadata provider, a Subtitle provider, an Event sink, a Sign-in provider, a Web reference provider, a Lyric provider, or a Marker provider ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). The word names the code, not the source: TMDB is a Metadata provider; the TMDB Plugin is what talks to it. Every Plugin, Built-in or Installed, goes through the same contract, and the host — never the Plugin — decides whether to believe what it returns. A Plugin decorates a Title the Scanner already filed; it never decides what a file *is*.
 _Avoid_: Extension (too broad; collides with browser and file extensions), Add-on, Scraper, Agent (Plex/Kodi), Provider (that is what a Plugin provides).
 
 **Extension point**:
-One of the closed set of seams a Plugin may implement: Metadata provider, Subtitle provider, Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). Identity, transcoding and authentication are deliberately not among them. The set grows by decision, not by a Plugin asking.
+One of the closed set of seams a Plugin may implement: Metadata provider, Subtitle provider, Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)), Sign-in provider, Web reference provider, Lyric provider, Marker provider. Identity (what a file *is*) and transcoding are deliberately not among them. The set grows by decision, not by a Plugin asking.
 _Avoid_: Hook (the Broker's word), Slot (a transcode slot is something else), Interface (the Go word for the seam, not the domain concept).
 
 **Built-in**:
@@ -398,3 +410,27 @@ _Avoid_: Plugin descriptor (the Go value the host builds *from* a manifest), Met
 **Event sink**:
 A Plugin that consumes a small curated set of terminal server events — a scan or enrichment pass completing, a play starting or stopping, a Library changing — and may only *emit* outbound HTTP in response. It sees what an Admin would see, never a viewer's audience-gated stream, and a session relayed over a Link names the Link, not a person. Delivery is best-effort and every event carries a stable id, so a sink is idempotent by construction. A Webhook is one Event sink.
 _Avoid_: Webhook (one kind of sink), Listener, Notifier, Subscriber (an SSE client is a subscriber; a sink acts for the operator).
+
+**Sign-in provider**:
+A Plugin that proves who someone is on behalf of an operator-controlled source, through one or both **flows**: *password* (it checks a username and password) and *redirect* (the Server sends the browser away and the Plugin turns what comes back into an identity). It answers with an External identity and the groups it belongs to; the Server — never the Plugin — issues the session, and decides what the answer is worth. OIDC is one Sign-in provider ([ADR-0063](./docs/adr/0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md)).
+_Avoid_: IdP (that is the operator's server, not the Plugin), SSO (names only the redirect flow), Auth plugin, Authentication provider.
+
+**Web reference provider**:
+A Plugin that turns the external ids a Title, Artist or Album already holds into **Web references** — a label and an `https` address where a person can read about it elsewhere ("IMDb", "Trakt"). It needs no network and decides nothing: the Server shows a reference only for an id it holds, and only over `https`. A Plugin that reads a namespace usually provides its references too.
+_Avoid_: External link / Link (a Link is between Servers), External ref (the reverse: reading a pasted address *into* an id), Bookmark.
+
+**Lyric provider**:
+A Plugin that finds a track's words by artist, title and duration, returning **Synced lyrics** (each line timed, so a player can follow along) or **Plain lyrics** (just the text). Asked only when a track has no Local lyrics or only Plain ones, and only when someone first opens the lyrics for it. The Server judges every answer: one timed for a recording of a different length is kept only as Plain, and one anybody marks wrong is never offered for that track again.
+_Avoid_: Lyrics source (says where, not what), Scraper, Karaoke (a use of Synced lyrics, not the thing).
+
+**Marker**:
+A timed span of a File of one **kind** — Intro, Recap, Credits or Preview — that a player can offer to skip. Its **source** is **Local** (the File's own chapters or an edit-decision sidecar), **Detected** (found by Marker detection) or **Fetched** (from a Marker provider), and a Local one outranks a Detected one, which outranks a Fetched one, because each is measured on something less like this exact File than the last ([ADR-0065](./docs/adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
+_Avoid_: Segment (an HLS segment is a piece of a stream), Chapter (a Local Marker is read *from* chapters; a chapter is not a Marker), Intro (one kind), Skip (what a player does with one).
+
+**Marker provider**:
+A Plugin that supplies Markers someone else measured for an episode, and says how long the recording they measured was. The Server refuses Markers timed for a recording more than a few seconds different in length ([ADR-0065](./docs/adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
+_Avoid_: Intro provider, Segment provider.
+
+**Marker detection**:
+The Server's own work of finding Intros and Credits by comparing the sound of a Show's episodes with each other. Runs only when nothing is transcoding, gives way the moment something starts, and never counts against the transcode cap. Not a Plugin: it needs the media itself ([ADR-0065](./docs/adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
+_Avoid_: Fingerprinting (the technique, not the job), Intro detection (it finds Credits too), Analysis.

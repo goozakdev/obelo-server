@@ -129,6 +129,14 @@ guest, compiled by the ordinary command with no special flags, was told this (§
 No filesystem, no spawn, no raw sockets, no clock beyond WASI's, no host function that returns
 a handle. Every one of these is request-response and JSON-shaped, like the contract itself.
 
+> **Amended in part (sign-in providers, 2026-09-23):** [ADR-0064](./0064-sign-in-providers-may-open-sockets-to-where-the-operator-pointed-them.md)
+> grants a narrow exception to "no raw sockets" and "no host function that returns a handle."
+> A sixth host function opens a raw TCP connection, gated to a Plugin providing a Sign-in
+> provider, only to the host:port the operator typed into that Plugin's settings, with TLS
+> terminated and verified host-side; the handle it returns is valid only within the call that
+> opened it and is closed at that call's deadline. Every other Extension point, and every other
+> target, is unaffected.
+
 > **Carried out in part (plugin-system issue 09, 2026-09-17):** the first loader ships **two** of
 > the four — `http_fetch` and `log` — under the module name `obelo`. `kv_get`/`kv_set` and
 > `settings_get` arrive with the Extension points that need them (issues 11 and 12); an Event
