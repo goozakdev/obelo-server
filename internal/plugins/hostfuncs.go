@@ -39,6 +39,7 @@ const (
 	refusedUnreached  = "the target could not be reached under this server's fetch policy"
 	refusedOversize   = "the response is larger than a plugin may receive"
 	refusedNoResponse = "the request could not be built"
+	refusedOffline    = "this call has no network"
 )
 
 // errFetchDeadline is what a fetch answers when the call's own budget ran out
@@ -60,6 +61,7 @@ const (
 	auditBadURL    = "bad-url"
 	auditBlocked   = "fetch-policy"
 	auditOversize  = "oversize"
+	auditOffline   = "no-network-call"
 )
 
 // hostFuncs is the host half of the ABI for ONE Plugin. It closes over that
@@ -156,6 +158,16 @@ func (h *hostFuncs) httpFetch(ctx context.Context, mod api.Module, ptr, n uint32
 
 // fetch is httpFetch without the memory, so it can be tested as the policy it is.
 func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) pluginapi.FetchResponse {
+	// A call made under a no-network policy — a Web reference provider's — has no
+	// way out at all. Refused FIRST, before the URL is so much as parsed, so no
+	// name is resolved and nothing reaches the fetcher; and counted as a
+	// violation, because a pure computation reaching for the network is a Plugin
+	// doing something its Extension point says it does not.
+	if h.p.offlineCall() {
+		h.p.audit(req.URL, auditOffline)
+		h.p.recordViolation("tried to fetch during a call that has no network")
+		return pluginapi.FetchResponse{Refused: refusedOffline}
+	}
 	target, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
 		h.p.audit(req.URL, auditBadURL)

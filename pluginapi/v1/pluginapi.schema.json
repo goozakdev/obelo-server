@@ -10,7 +10,8 @@
       "enum": [
         "metadata-provider",
         "subtitle-provider",
-        "event-sink"
+        "event-sink",
+        "web-reference-provider"
       ]
     },
     "Capability": {
@@ -1401,6 +1402,76 @@
       "properties": {
         "request": {
           "$ref": "#/$defs/SubtitleDownloadRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "WebReferencesRequest": {
+      "type": "object",
+      "description": "Asks a Web reference provider for the references one item's ids point at. kind is the fine entity kind; ids is every external id the host holds for THIS item, keyed by namespace, and they are the only ids a reference may be keyed to. The call is a pure computation: it needs no network and the host gives it none.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "ids": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "WebReference": {
+      "type": "object",
+      "description": "One place a person can read about the item: a label and an absolute address, plus the namespace and id it was built from. The HOST keeps it only when url is https and the namespace/id pair is one the request carried; anything else is dropped before a response is written, never shown and never flagged.",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "id",
+        "label",
+        "url"
+      ]
+    },
+    "WebReferencesResponse": {
+      "type": "object",
+      "description": "What a Web reference provider answers. An empty list is the normal 'nothing to link to'. There is no outcome: there is no source to be unavailable, and the only judgment is the host's.",
+      "properties": {
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WebReference"
+          }
+        }
+      }
+    },
+    "WebReferencesCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Web reference provider for one call: the request a Built-in would receive and the Settings the host resolved, travelling together as a Subtitle provider's do. http_fetch is refused for the whole of this call. The response is un-enveloped — a plain WebReferencesResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/WebReferencesRequest"
         },
         "settings": {
           "$ref": "#/$defs/Settings"

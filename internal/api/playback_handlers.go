@@ -452,6 +452,18 @@ func handleTitleSubtree(deps Deps) http.HandlerFunc {
 					handleSubtitleFetch(deps, id)))))(w, r)
 			return
 		}
+		// GET {id}/webReferences: where a person can read about this Title elsewhere
+		// (the Web reference provider Extension point). Any User, Member included —
+		// requireAuth + requireScope, NOT requireAdmin.
+		if id, ok := strings.CutSuffix(rest, "/webReferences"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodGet,
+				requireAuth(deps.Auth, requireScope(deps.Access, handleTitleWebReferences(deps, id))))(w, r)
+			return
+		}
 		// GET {id}/subtitles/{subId}.vtt: the out-of-band WebVTT media GET a browser
 		// reaches via a <track> src — bearer OR media cookie, like the artwork leaf.
 		// Matched before /artwork/ (distinct suffix) so it isn't shadowed by the

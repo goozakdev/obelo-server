@@ -38,6 +38,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.ExtensionMetadataProvider),
 				string(pluginapi.ExtensionSubtitleProvider),
 				string(pluginapi.ExtensionEventSink),
+				string(pluginapi.ExtensionWebReferenceProvider),
 			},
 		},
 		{
@@ -405,6 +406,32 @@ func contractTypes() []typeSpec {
 				"length of what comes back anyway. An oversize answer is DISCARDED and recorded as a failure, " +
 				"never truncated — a truncated subtitle is one the host would cache and a viewer would play as " +
 				"though it were whole. The response is un-enveloped — a plain SubtitleDownloadResponse.",
+		},
+		{
+			value: pluginapi.WebReferencesRequest{},
+			doc: "Asks a Web reference provider for the references one item's ids point at. kind is the fine " +
+				"entity kind; ids is every external id the host holds for THIS item, keyed by namespace, and " +
+				"they are the only ids a reference may be keyed to. The call is a pure computation: it needs " +
+				"no network and the host gives it none.",
+		},
+		{
+			value: pluginapi.WebReference{},
+			doc: "One place a person can read about the item: a label and an absolute address, plus the " +
+				"namespace and id it was built from. The HOST keeps it only when url is https and the " +
+				"namespace/id pair is one the request carried; anything else is dropped before a response is " +
+				"written, never shown and never flagged.",
+		},
+		{
+			value: pluginapi.WebReferencesResponse{},
+			doc: "What a Web reference provider answers. An empty list is the normal 'nothing to link to'. " +
+				"There is no outcome: there is no source to be unavailable, and the only judgment is the host's.",
+		},
+		{
+			value: pluginapi.WebReferencesCall{},
+			doc: "What the host hands an INSTALLED Web reference provider for one call: the request a Built-in " +
+				"would receive and the Settings the host resolved, travelling together as a Subtitle provider's " +
+				"do. http_fetch is refused for the whole of this call. The response is un-enveloped — a plain " +
+				"WebReferencesResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},

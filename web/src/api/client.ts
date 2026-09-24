@@ -142,6 +142,7 @@ import type {
   UserDetailRaw,
   UsersResponse,
   WatchStateResult,
+  WebReference,
 } from "./types";
 
 // ApiClient is the SINGLE place in the app that talks HTTP to /api/v1
@@ -1213,6 +1214,17 @@ export class ApiClient {
       { signal },
     );
     return normalizeSeriesSlots(res);
+  }
+
+  /** `GET /api/v1/titles/{id}/webReferences` — where a person can read about this
+   * Title elsewhere, from the Web reference provider plugins. Any User (Members
+   * included). An empty list is the normal "nothing to link to". */
+  async getWebReferences(titleId: string, signal?: AbortSignal): Promise<WebReference[]> {
+    const res = await this.request<{ references?: WebReference[] }>(
+      `/titles/${encodeURIComponent(titleId)}/webReferences`,
+      { signal },
+    );
+    return res.references ?? [];
   }
 
   /** `POST /api/v1/titles/{id}/subtitles/search` — "search online" for a subtitle

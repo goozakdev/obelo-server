@@ -25,6 +25,7 @@ import { errorMessage } from "../screens/errorMessage";
 import { posterUrl } from "./Poster";
 import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
+import WebReferences from "./WebReferences";
 import DetailBackdrop from "./DetailBackdrop";
 import AppHeader from "./AppHeader";
 import BackLink, { useLibraryName } from "./BackLink";
@@ -692,6 +693,11 @@ function Detail({
           width rather than being confined to the info column. Renders nothing when
           the cast is empty. */}
       <CastStrip cast={title.cast} />
+
+      {/* Web references: where to read about this Title elsewhere, from the Web
+          reference provider plugins. Every role sees them; renders nothing when
+          there are none. */}
+      <WebReferences titleId={title.id} />
 
       <section className="detail-editions">
         <h2 className="section-title">Editions &amp; files</h2>

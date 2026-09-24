@@ -18,7 +18,7 @@ import (
 // like an empty one so a narrow test that wires no Plugins reads as "no Plugins"
 // rather than panicking.
 // It is also SWAPPABLE, and that is the one thing about it worth reading twice.
-// The three slices live behind an atomic pointer rather than in the struct, so a
+// The slices live behind an atomic pointer rather than in the struct, so a
 // reader — the enrichment Catalog, the subtitle builder, the event-sink Manager,
 // the settings handlers — holds the same *Registry for the life of the process and
 // still sees a whole new set of Plugins the instant one is installed (Swap, below).
@@ -41,6 +41,7 @@ type registryState struct {
 	metadataProviders []MetadataProviderRegistration
 	subtitleProviders []SubtitleProviderRegistration
 	eventSinks        []EventSinkRegistration
+	webReferences     []WebReferenceProviderRegistration
 }
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
@@ -74,6 +75,7 @@ func (r *Registry) mutate(f func(*registryState)) {
 		metadataProviders: append([]MetadataProviderRegistration(nil), cur.metadataProviders...),
 		subtitleProviders: append([]SubtitleProviderRegistration(nil), cur.subtitleProviders...),
 		eventSinks:        append([]EventSinkRegistration(nil), cur.eventSinks...),
+		webReferences:     append([]WebReferenceProviderRegistration(nil), cur.webReferences...),
 	}
 	f(next)
 	r.state.Store(next)
@@ -247,4 +249,47 @@ func (r *Registry) EventSink(slug string) (EventSinkRegistration, bool) {
 		}
 	}
 	return EventSinkRegistration{}, false
+}
+
+// RegisterWebReferenceProvider adds one Web reference provider Plugin, under the
+// same rules as an Event sink: registration order is preserved — it is the order
+// an item's references are listed in — and a malformed or duplicate registration
+// PANICS at the composition root.
+func (r *Registry) RegisterWebReferenceProvider(reg WebReferenceProviderRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: web reference provider registered with no slug")
+	}
+	if reg.New == nil {
+		panic(fmt.Sprintf("pluginapi: web reference provider %q registered with no factory", reg.Descriptor.Slug))
+	}
+	if _, exists := r.WebReferenceProvider(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: web reference provider %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionWebReferenceProvider
+	r.mutate(func(s *registryState) {
+		s.webReferences = append(s.webReferences, reg)
+	})
+}
+
+// WebReferenceProviders returns the registered Web reference providers in
+// registration order, as a copy.
+func (r *Registry) WebReferenceProviders() []WebReferenceProviderRegistration {
+	if r == nil {
+		return nil
+	}
+	cur := r.load()
+	out := make([]WebReferenceProviderRegistration, len(cur.webReferences))
+	copy(out, cur.webReferences)
+	return out
+}
+
+// WebReferenceProvider returns the registration for a slug, or ok=false for a
+// slug no Plugin claimed.
+func (r *Registry) WebReferenceProvider(slug string) (WebReferenceProviderRegistration, bool) {
+	for _, reg := range r.load().webReferences {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return WebReferenceProviderRegistration{}, false
 }

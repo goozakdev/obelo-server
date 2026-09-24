@@ -21,6 +21,9 @@ const (
 	// ExtensionEventSink consumes the curated terminal server events and may only
 	// emit outbound HTTP in response (ADR-0057 decision 6).
 	ExtensionEventSink ExtensionPoint = "event-sink"
+	// ExtensionWebReferenceProvider turns the external ids an item already holds
+	// into labelled https addresses, as a pure computation with no network.
+	ExtensionWebReferenceProvider ExtensionPoint = "web-reference-provider"
 )
 
 // Capability names an OPTIONAL operation a Plugin declares it implements, so the
