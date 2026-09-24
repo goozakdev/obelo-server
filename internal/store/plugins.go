@@ -324,6 +324,7 @@ func (db *DB) DeletePlugin(id string) error {
 		`DELETE FROM event_sinks WHERE slug = ?`,
 		`DELETE FROM metadata_providers WHERE slug = ?`,
 		`DELETE FROM subtitle_providers WHERE slug = ?`,
+		`DELETE FROM lyric_provider_order WHERE slug = ?`,
 		`DELETE FROM library_provider_override WHERE provider = ?`,
 		// The one UPDATE in the list: the Authoritative pointer is a COLUMN on a row
 		// that carries a Library's other policy keys, so deleting the row would take

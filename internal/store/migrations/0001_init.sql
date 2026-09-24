@@ -1274,13 +1274,22 @@ CREATE INDEX idx_markers_file_path ON markers(file_path, source);
 -- ===========================================================================
 
 -- A Track's words. 'local' rows are the Scanner's — read from a sidecar .lrc or
--- the file's own tags — and a rescan rewrites them. kind says which shape body
--- holds: 'synced' is a JSON array of {"startMs","text"} lines, 'plain' the text.
+-- the file's own tags — and a rescan rewrites them. 'fetched' rows are what the
+-- Lyric providers answered, asked the first time someone opened the lyrics view;
+-- they live only here, never in the library folder, and a scan never touches
+-- them. kind says which shape body holds: 'synced' is a JSON array of
+-- {"startMs","text"} lines, 'plain' the text, and 'none' — fetched only — a
+-- remembered miss with an empty body. provider is the slug that answered ('' for
+-- local rows and misses); question is what the providers were asked, so a miss
+-- is asked again only once the question changes (ADR-0051).
 CREATE TABLE lyrics (
     title_id   TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
-    source     TEXT NOT NULL CHECK (source IN ('local')),
-    kind       TEXT NOT NULL CHECK (kind IN ('synced', 'plain')),
+    source     TEXT NOT NULL CHECK (source IN ('local', 'fetched')),
+    kind       TEXT NOT NULL CHECK (kind IN ('synced', 'plain', 'none')),
     body       TEXT NOT NULL,
+    provider   TEXT NOT NULL DEFAULT '',
+    question   TEXT NOT NULL DEFAULT '',
+    CHECK (kind <> 'none' OR source = 'fetched'),
     PRIMARY KEY (title_id, source)
 );
 
@@ -1310,4 +1319,16 @@ CREATE INDEX idx_external_identities_user ON external_identities(user_id);
 CREATE TABLE sign_in_provider_order (
     plugin_id TEXT PRIMARY KEY,
     position  INTEGER NOT NULL
+);
+
+-- ===========================================================================
+-- lyric providers
+-- ===========================================================================
+
+-- The Admin's order for the Lyric providers: the first acceptable Synced answer,
+-- in this order, wins. A registered provider with no row is asked after every
+-- one that has one, in registration order.
+CREATE TABLE lyric_provider_order (
+    slug     TEXT PRIMARY KEY,
+    position INTEGER NOT NULL
 );

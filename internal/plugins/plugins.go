@@ -1138,6 +1138,11 @@ func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 			s.registerSignInProvider(reg, p, entry)
 			continue
 		}
+		// The Lyric provider Extension point, likewise all in lyrics.go.
+		if entry.Kind == pluginapi.ExtensionLyricProvider {
+			s.registerLyricProvider(reg, p, entry)
+			continue
+		}
 		if entry.Kind != pluginapi.ExtensionEventSink {
 			// An Extension point this build does not know. Saying so beats silence:
 			// an operator who installs one learns why it did nothing.

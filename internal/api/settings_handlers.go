@@ -170,6 +170,12 @@ func handleSettingsSubtree(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		// Lyric provider settings: the order the providers are asked in.
+		if rest == "lyric-providers" || strings.HasPrefix(rest, "lyric-providers/") {
+			handleLyricProviderSettingsSubtree(deps, rest)(w, r)
+			return
+		}
+
 		// Installed-plugin management (ADR-0058, plugin-system issue 10): install,
 		// enable, disable, re-enable, uninstall. Branched alongside the three
 		// Extension-point settings subtrees, before the /test suffix handling, and

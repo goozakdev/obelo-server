@@ -40,6 +40,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.ExtensionEventSink),
 				string(pluginapi.ExtensionWebReferenceProvider),
 				string(pluginapi.ExtensionSignInProvider),
+				string(pluginapi.ExtensionLyricProvider),
 			},
 		},
 		{
@@ -458,6 +459,31 @@ func contractTypes() []typeSpec {
 			doc: "What the host hands an INSTALLED Sign-in provider for one password check: the request and the " +
 				"Settings the host resolved, travelling together as a Subtitle provider's do. The response is " +
 				"un-enveloped — a plain SignInPasswordResponse.",
+		},
+		{
+			value: pluginapi.LyricsRequest{},
+			doc: "Asks a Lyric provider for one track's words: artist, title, album, the track's own duration " +
+				"in milliseconds, and the MusicBrainz recording id the host holds for it, when it holds one. " +
+				"The host asks only when the track has no Local lyrics or only Plain ones, and only when someone " +
+				"first opens the lyrics view for it.",
+		},
+		{
+			value: pluginapi.LyricLine{},
+			doc:   "One timed line of a Synced answer: the text shown from startMs until the next line begins.",
+		},
+		{
+			value: pluginapi.LyricsResponse{},
+			doc: "What a Lyric provider answers: kind 'synced' with lines, or 'plain' with text; no kind is the " +
+				"normal 'nothing found'. durationMs is the length the lines were timed against and recordingId " +
+				"the recording the answer is for. The HOST keeps a Synced answer as Synced only when durationMs " +
+				"is within a few seconds of the track's own, keeping it as Plain otherwise, and drops an answer " +
+				"whose recordingId differs from the one the request carried.",
+		},
+		{
+			value: pluginapi.LyricsCall{},
+			doc: "What the host hands an INSTALLED Lyric provider for one call: the request a Built-in would " +
+				"receive and the Settings the host resolved, travelling together as a Subtitle provider's do. " +
+				"The response is un-enveloped — a plain LyricsResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},

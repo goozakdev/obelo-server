@@ -28,6 +28,9 @@ const (
 	// operator controls, answering with an External identity and its groups; the
 	// server decides what that is worth (ADR-0063).
 	ExtensionSignInProvider ExtensionPoint = "sign-in-provider"
+	// ExtensionLyricProvider finds a track's words by artist, title and duration,
+	// Synced or Plain, when the track has no Local lyrics or only Plain ones.
+	ExtensionLyricProvider ExtensionPoint = "lyric-provider"
 )
 
 // Capability names an OPTIONAL operation a Plugin declares it implements, so the

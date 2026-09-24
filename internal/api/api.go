@@ -20,6 +20,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/gpu"
 	"github.com/goozakdev/obelo-server/internal/library"
 	"github.com/goozakdev/obelo-server/internal/link"
+	"github.com/goozakdev/obelo-server/internal/lyricfetch"
 	"github.com/goozakdev/obelo-server/internal/match"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -220,6 +221,16 @@ type Deps struct {
 	// unit tests reads as "no Plugins": the settings list is empty and every slug is
 	// unknown, rather than a panic.
 	Plugins *pluginapi.Registry
+
+	// Lyrics answers a Track's lyrics, asking its Lyric providers the first time
+	// the lyrics view is opened for a Track with no usable Local lyrics
+	// (internal/lyricfetch). Nil in narrow tests, where GET /titles/{id}/lyrics
+	// serves the Local lyrics alone.
+	Lyrics *lyricfetch.Service
+	// LyricProviderOrder persists the Admin's Lyric provider order (Admin-scope
+	// /settings/lyric-providers). *store.DB satisfies it. May be nil in narrow
+	// tests, and the route then answers 503.
+	LyricProviderOrder LyricProviderOrderStore
 
 	// EventSinks is the DB-backed Event sink settings store (Admin-scope
 	// /settings/event-sinks). *store.DB satisfies it. May be nil in narrow tests,

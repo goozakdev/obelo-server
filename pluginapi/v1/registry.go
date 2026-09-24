@@ -43,6 +43,7 @@ type registryState struct {
 	eventSinks        []EventSinkRegistration
 	webReferences     []WebReferenceProviderRegistration
 	signInProviders   []SignInProviderRegistration
+	lyricProviders    []LyricProviderRegistration
 }
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
@@ -78,6 +79,7 @@ func (r *Registry) mutate(f func(*registryState)) {
 		eventSinks:        append([]EventSinkRegistration(nil), cur.eventSinks...),
 		webReferences:     append([]WebReferenceProviderRegistration(nil), cur.webReferences...),
 		signInProviders:   append([]SignInProviderRegistration(nil), cur.signInProviders...),
+		lyricProviders:    append([]LyricProviderRegistration(nil), cur.lyricProviders...),
 	}
 	f(next)
 	r.state.Store(next)
@@ -337,4 +339,47 @@ func (r *Registry) SignInProvider(slug string) (SignInProviderRegistration, bool
 		}
 	}
 	return SignInProviderRegistration{}, false
+}
+
+// RegisterLyricProvider adds one Lyric provider Plugin, under the same rules as a
+// Web reference provider: registration order is preserved — it is the order the
+// host asks in until an Admin sets one — and a malformed or duplicate
+// registration PANICS at the composition root.
+func (r *Registry) RegisterLyricProvider(reg LyricProviderRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: lyric provider registered with no slug")
+	}
+	if reg.New == nil {
+		panic(fmt.Sprintf("pluginapi: lyric provider %q registered with no factory", reg.Descriptor.Slug))
+	}
+	if _, exists := r.LyricProvider(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: lyric provider %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionLyricProvider
+	r.mutate(func(s *registryState) {
+		s.lyricProviders = append(s.lyricProviders, reg)
+	})
+}
+
+// LyricProviders returns the registered Lyric providers in registration order,
+// as a copy.
+func (r *Registry) LyricProviders() []LyricProviderRegistration {
+	if r == nil {
+		return nil
+	}
+	cur := r.load()
+	out := make([]LyricProviderRegistration, len(cur.lyricProviders))
+	copy(out, cur.lyricProviders)
+	return out
+}
+
+// LyricProvider returns the registration for a slug, or ok=false for a slug no
+// Plugin claimed.
+func (r *Registry) LyricProvider(slug string) (LyricProviderRegistration, bool) {
+	for _, reg := range r.load().lyricProviders {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return LyricProviderRegistration{}, false
 }
