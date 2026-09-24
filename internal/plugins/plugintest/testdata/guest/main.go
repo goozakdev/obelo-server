@@ -1192,3 +1192,142 @@ func probeNamespace(call subtitleSearchCall) (uint64, bool) {
 		MatchedBy: "query",
 	}}}), true
 }
+
+// =============================================================================
+// The Web reference provider seam.
+// =============================================================================
+//
+// Appended like the Subtitle provider half, for the same reason: nothing above
+// changes. One export, and it is a pure computation — the ids arrive in the
+// request, the answer is built from them, and nothing is fetched. The host
+// refuses http_fetch for the whole of this call, and keeps only https references
+// keyed to ids it sent; this guest does not have to know either rule.
+//
+//	web_reference_links(ptr u32, len u32) -> i64   a WebReferencesCall in,
+//	                                               a WebReferencesResponse out
+
+// --- the shapes, copied from the contract's JSON schema ----------------------
+
+type webReferencesCall struct {
+	Request struct {
+		Kind string            `json:"kind"`
+		IDs  map[string]string `json:"ids"`
+	} `json:"request"`
+	Settings struct {
+		Values map[string]any `json:"values"`
+	} `json:"settings"`
+}
+
+type webReference struct {
+	Namespace string `json:"namespace"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	URL       string `json:"url"`
+}
+
+type webReferencesResponse struct {
+	References []webReference `json:"references,omitempty"`
+}
+
+// --- what this Plugin actually does ------------------------------------------
+
+//go:wasmexport web_reference_links
+func webReferenceLinks(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call webReferencesCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a WebReferencesCall: " + err.Error())
+	}
+	if out, done := misbehaveLinks(call); done {
+		return out
+	}
+	var refs []webReference
+	for _, ns := range sortedKeys(call.Request.IDs) {
+		id := call.Request.IDs[ns]
+		refs = append(refs, webReference{
+			Namespace: ns,
+			ID:        id,
+			Label:     "Example " + ns,
+			URL:       "https://refs.example.test/" + call.Request.Kind + "/" + ns + "/" + id,
+		})
+	}
+	return reply(webReferencesResponse{References: refs})
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+// --- scaffolding, again ------------------------------------------------------
+//
+// The parts the suite needs a Web reference provider to play, chosen by a
+// declared `mode` setting because the call carries no URL and no secret:
+//
+//	http     every held id, linked over plain http only
+//	foreign  one good https reference, plus two keyed to ids the host never sent
+//	fetch    reaches for http_fetch and reports what the host answered
+func misbehaveLinks(call webReferencesCall) (uint64, bool) {
+	mode, _ := call.Settings.Values["mode"].(string)
+	ids := call.Request.IDs
+	switch mode {
+	case "http":
+		var refs []webReference
+		for _, ns := range sortedKeys(ids) {
+			refs = append(refs, webReference{
+				Namespace: ns, ID: ids[ns], Label: "Plain " + ns,
+				URL: "http://refs.example.test/" + ns + "/" + ids[ns],
+			})
+		}
+		return reply(webReferencesResponse{References: refs}), true
+	case "foreign":
+		var refs []webReference
+		for _, ns := range sortedKeys(ids) {
+			refs = append(refs,
+				webReference{
+					Namespace: ns, ID: ids[ns], Label: "Held " + ns,
+					URL: "https://refs.example.test/" + ns + "/" + ids[ns],
+				},
+				// The right namespace, somebody else's id.
+				webReference{
+					Namespace: ns, ID: ids[ns] + "0", Label: "Wrong id " + ns,
+					URL: "https://refs.example.test/" + ns + "/" + ids[ns] + "0",
+				})
+		}
+		// A namespace the host sent nothing in at all.
+		refs = append(refs, webReference{
+			Namespace: "never-sent", ID: "1", Label: "Never sent",
+			URL: "https://refs.example.test/never-sent/1",
+		})
+		return reply(webReferencesResponse{References: refs}), true
+	case "fetch":
+		resp := fetch(fetchRequest{URL: "https://refs.example.test/probe"})
+		verdict := "fetched " + itoa(resp.Status)
+		switch {
+		case resp.Refused != "":
+			verdict = "refused: " + resp.Refused
+		case resp.Error != "":
+			verdict = "error: " + resp.Error
+		}
+		var refs []webReference
+		for _, ns := range sortedKeys(ids) {
+			refs = append(refs, webReference{
+				Namespace: ns, ID: ids[ns], Label: verdict,
+				URL: "https://refs.example.test/" + ns + "/" + ids[ns],
+			})
+		}
+		return reply(webReferencesResponse{References: refs}), true
+	}
+	return 0, false
+}

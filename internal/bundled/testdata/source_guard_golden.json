@@ -1,34 +1,34 @@
 {
   "anidb": {
-    "version": "1.0.2",
-    "hash": "4d608c8d4056a6c469df541bdb0752f4bae2933e706a47595636104b1682db66"
+    "version": "1.0.3",
+    "hash": "c85a407bb67e918d360351a0d9876d98aa7b676f2ad7950ea62975483353d428"
   },
   "fanarttv": {
-    "version": "1.0.2",
-    "hash": "f849ac8ebd70efb6b938ca3acb33f715a103a051fd928201d122873edbf8d1a7"
+    "version": "1.0.3",
+    "hash": "866236db4994b6e4bf40a4a525cc17eed0065032432ed8dc65bb85dad6eb4d26"
   },
   "musicbrainz": {
-    "version": "1.1.1",
-    "hash": "4556c1f71fe954f0d4c6bc9158c901f3a09074fc6f2d566461c9689ad0844190"
+    "version": "1.1.2",
+    "hash": "760d8037f57268ca87da56c793919b5b5558bde2561e90ec8e0569f6fb76142b"
   },
   "omdb": {
-    "version": "1.0.1",
-    "hash": "18f12e9ca8a42d3d7d1b7b43353e0877ade4da325ac63f3f33c4dcd4781d71d2"
+    "version": "1.0.2",
+    "hash": "56ca21b3d051d88bdff998ab41293e2980b099f59db04b1e9fc7af9f8b5d269c"
   },
   "opensubtitles": {
-    "version": "1.0.1",
-    "hash": "9f0b9d9d0f6d47fd8d995c6cd1e0b9a6160019ec87ca034507a069c6b5636dc1"
+    "version": "1.0.2",
+    "hash": "5b9bc8147d7490c9065f0e55507bb1782d50b0313687bbb8f2b2c436181779c8"
   },
   "theaudiodb": {
-    "version": "1.0.1",
-    "hash": "8ca42bc7428b47ec6832acbf29441c82412c783c479ca8de8ea0ce8f72acc3f6"
+    "version": "1.0.2",
+    "hash": "e19000eee009906e3f325376b36e7a2e5a4c0213bd2ede3edd55e01c95010e02"
   },
   "thetvdb": {
-    "version": "1.0.1",
-    "hash": "fa871eca2fe5573147a847819ac57eb9daadb42805c15049502434510d7eed26"
+    "version": "1.0.2",
+    "hash": "69a21bef75f13b5839a2f1c72446ba50ade90a3604deea3b74ba2a20705d531c"
   },
   "tmdb": {
-    "version": "1.0.1",
-    "hash": "e7b5537a3f177178aa7a1da15cda7dd01bfd996faea02bcc96fb32cf804319fb"
+    "version": "1.0.2",
+    "hash": "f80472bb4e3e9bc3df4c8a1029875515320a7f920ecfabcf0bd0c82c96b45363"
   }
 }

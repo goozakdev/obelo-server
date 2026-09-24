@@ -2151,6 +2151,14 @@ export interface SubtitleCandidate {
   label: string;
 }
 
+/** One Web reference (`GET /titles/{id}/webReferences`): a label and an https
+ * address where a person can read about the Title elsewhere. The server has
+ * already kept only https addresses keyed to ids it holds for the Title. */
+export interface WebReference {
+  label: string;
+  url: string;
+}
+
 export interface PlaybackDecision {
   sessionId: string;
   tier: PlaybackTier;

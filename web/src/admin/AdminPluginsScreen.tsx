@@ -56,6 +56,7 @@ const EXTENSION_POINT_LABELS: Record<string, string> = {
   "event-sink": "Event sink",
   "metadata-provider": "Metadata provider",
   "subtitle-provider": "Subtitle provider",
+  "web-reference-provider": "Web reference provider",
 };
 
 function providesLabel(provides: string[]): string {

@@ -350,7 +350,10 @@ type Plugin struct {
 	// target is the host of the URL the Admin configured, for the duration of one
 	// call. It is what makes "the operator chose this one" a fact the fetch policy
 	// can read without the guest being able to claim it.
-	target     string
+	target string
+	// offline is true for the duration of a call made under a no-network policy
+	// (callPolicy.offline), and http_fetch refuses everything while it is.
+	offline    bool
 	disabled   bool
 	lastError  string
 	failures   int
@@ -632,13 +635,14 @@ func (p *Plugin) clearFailures() {
 
 // beginCall takes the Plugin's permission to run and records the operator's
 // target for the fetch policy, or reports why the call will not happen.
-func (p *Plugin) beginCall(target string) error {
+func (p *Plugin) beginCall(target string, offline bool) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.disabled {
 		return fmt.Errorf("%w: %s", ErrDisabled, p.lastError)
 	}
 	p.target = target
+	p.offline = offline
 	return nil
 }
 
@@ -648,6 +652,15 @@ func (p *Plugin) endCall() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.target = ""
+	p.offline = false
+}
+
+// offlineCall reports whether the call in flight was made under a policy that
+// grants no network at all.
+func (p *Plugin) offlineCall() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.offline
 }
 
 // refuse marks a Plugin unusable from the moment it is loaded. A refused Plugin is
@@ -691,6 +704,11 @@ type callPolicy struct {
 	// sink's or a subtitle provider's error has no item to park and no other
 	// channel to travel down, so for them a refusal counts as a failure.
 	refusalIsAnAnswer bool
+	// offline says this call has NO network: every http_fetch the guest makes
+	// while it runs is refused before anything is parsed, resolved or sent. True
+	// for a Web reference provider, whose call is a pure computation over what the
+	// request already carries, and for nothing else.
+	offline bool
 }
 
 // callGuest makes one call into the guest under the DEFAULT policy: the Event
@@ -722,7 +740,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 	}
 	// The operator's URL for this call, readable by the fetch policy and by
 	// nothing else.
-	if err := p.beginCall(target); err != nil {
+	if err := p.beginCall(target, policy.offline); err != nil {
 		return err
 	}
 	defer p.endCall()
@@ -989,6 +1007,12 @@ func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 		// is in metadata.go, beside the adapter, so this stays a dispatch.
 		if entry.Kind == pluginapi.ExtensionMetadataProvider {
 			s.registerMetadataProvider(reg, p, entry)
+			continue
+		}
+		// The Web reference provider Extension point. Its whole branch is in
+		// webref.go, beside the adapter it registers.
+		if entry.Kind == pluginapi.ExtensionWebReferenceProvider {
+			s.registerWebReferenceProvider(reg, p, entry)
 			continue
 		}
 		if entry.Kind != pluginapi.ExtensionEventSink {

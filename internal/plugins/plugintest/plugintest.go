@@ -203,6 +203,32 @@ func KeylessMetadataProviderManifest(id string, p pluginapi.ManifestProvides, al
 	return m
 }
 
+// WebReferenceManifest is the manifest of an Installed Web reference provider
+// serving video items. It declares no network hosts and no secret — the seam
+// needs neither — and one setting of its own, `mode`, whose manifest default
+// picks the part the guest plays: "https" (the well-behaved example), "http",
+// "foreign" or "fetch" (see the guest's web_reference_links).
+func WebReferenceManifest(id, mode string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "Test References (" + id + ")",
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:  pluginapi.ExtensionWebReferenceProvider,
+			Kinds: []string{pluginapi.KindVideo},
+		}},
+		Settings: pluginapi.ManifestSettings{Fields: []pluginapi.SettingsField{{
+			Key:     "mode",
+			Type:    pluginapi.FieldEnum,
+			Label:   "Mode",
+			Options: []string{"https", "http", "foreign", "fetch"},
+			Default: json.RawMessage(`"` + mode + `"`),
+		}}},
+		Description: "An Installed Web reference provider, built from source by the test suite.",
+	}
+}
+
 // EverySettingsFieldType is one declared settings field of every type the contract
 // defines, in AllSettingsFieldTypes order, with the labels, help, defaults, options
 // and bounds a real manifest would carry.

@@ -715,6 +715,12 @@ A new decision is required only when constraints change (e.g. bandwidth drop →
 
 `{ "watched": true|false }` → `200` `{ "titleId", "resumePositionMs", "watched" }`. Bypasses the threshold; marking either way clears resume. A manual mark does **not** count as "played" for the Up Next anchor ([ADR-0028](./adr/0028-up-next-anchors-on-most-recently-played.md)).
 
+#### Web references
+
+| Endpoint | Auth | Notes |
+| --- | --- | --- |
+| `GET /titles/{id}/webReferences` — [Public] | bearer only | → `200` `{ "references": [ { "label", "url" } ] }`: where a person can read about the Title elsewhere, answered by the **Web reference provider** plugins from the external ids this server holds for the Title (the folder's, and any record row, which outranks it). Any User, Members included. The server keeps a reference only when `url` is `https` and it is keyed to an id the Title holds; anything else is dropped, never shown and never flagged. No provider, no ids, or a provider that failed → `200` with `[]`, never an error. Unknown or out-of-scope Title → `404`. |
+
 #### Subtitles
 
 | Endpoint | Auth | Notes |
