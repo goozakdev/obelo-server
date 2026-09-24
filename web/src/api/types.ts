@@ -3152,3 +3152,13 @@ export interface SignInProvider {
 export interface SignInProvidersView {
   providers: SignInProvider[];
 }
+
+/** A TV Library's Marker detection toggle (ADR-0065 §4): whether the server
+ * listens to its Seasons after a scan to find Intros and Credits. Only a TV
+ * Library has one; any other kind answers 404 — absent, not off. */
+export interface MarkerDetection {
+  enabled: boolean;
+  /** False on a host with no usable ffmpeg: detection does not run at all,
+   * whatever `enabled` says. */
+  available: boolean;
+}

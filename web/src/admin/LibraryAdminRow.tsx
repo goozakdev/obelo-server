@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library, ScanMode } from "../api/types";
 import { LibraryKindIcon } from "../browse/kindIcons";
+import { isLinked } from "../browse/LinkedMark";
 import { useScanStatus } from "./useScanStatus";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -38,6 +39,10 @@ import ConfirmDialog from "./ConfirmDialog";
 // own incremental scan (reusing this row's poller/`begin`), so the shared control
 // stays reactive without the parent reaching into row state.
 //
+// A TV Library's menu also carries its Marker detection toggle (ADR-0065 §4),
+// read when the menu first opens and flipped in place. Only a local TV Library
+// has one — for music, movies and a mirror the item is absent, not merely off.
+//
 // This row is only ever a LOCAL Library: the hub filters mirrors out of the list
 // entirely (issue 16), so there is no linked branch here and no disabled cluster.
 // A linked Library (ADR-0056 §1) refuses every writer below with 409
@@ -66,7 +71,14 @@ export default function LibraryAdminRow({
   const [confirmingRefreshAll, setConfirmingRefreshAll] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  // The Marker detection toggle: null until read (or when the read failed).
+  // Unavailable when the server has no usable ffmpeg — then it is not on,
+  // whatever the stored setting says.
+  const [detection, setDetection] = useState<boolean | null>(null);
+  const [detectionAvailable, setDetectionAvailable] = useState(true);
+  const [savingDetection, setSavingDetection] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const hasDetection = library.kind === "tv" && !isLinked(library);
 
   const status = scan.status;
   const state = status?.state ?? "idle";
@@ -136,6 +148,41 @@ export default function LibraryAdminRow({
     if (scanAllSignal > 0) void onScanRef.current("incremental");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanAllSignal]);
+
+  // Read the Marker detection toggle the first time a TV row's menu opens.
+  useEffect(() => {
+    if (!menuOpen || !hasDetection || detection !== null) return;
+    let live = true;
+    (async () => {
+      try {
+        const got = await apiClient.getMarkerDetection(library.id);
+        if (live) {
+          setDetection(got.enabled);
+          setDetectionAvailable(got.available);
+        }
+      } catch {
+        // Leave it unknown; the item stays disabled rather than guessing.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [menuOpen, hasDetection, detection, library.id]);
+
+  async function onToggleDetection() {
+    if (detection === null || !detectionAvailable || savingDetection) return;
+    setSavingDetection(true);
+    setActionError(null);
+    try {
+      const got = await apiClient.setMarkerDetection(library.id, !detection);
+      setDetection(got.enabled);
+      setDetectionAvailable(got.available);
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setSavingDetection(false);
+    }
+  }
 
   // Close the actions menu on outside click / Escape (mirrors EpisodeActionsMenu).
   useEffect(() => {
@@ -291,6 +338,33 @@ export default function LibraryAdminRow({
                     Refresh all metadata
                   </button>
                 </li>
+                {hasDetection && (
+                  <li className="row-menu-item" role="none">
+                    <button
+                      type="button"
+                      className="row-menu-button"
+                      role="menuitemcheckbox"
+                      aria-checked={detection === true && detectionAvailable}
+                      data-testid="marker-detection-button"
+                      title={
+                        detectionAvailable
+                          ? "After a scan, compare episodes to find intros and credits"
+                          : "The server has no usable ffmpeg, so it cannot listen to episodes"
+                      }
+                      disabled={detection === null || !detectionAvailable || savingDetection}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void onToggleDetection();
+                      }}
+                    >
+                      {detection === null
+                        ? "Detect intros & credits…"
+                        : !detectionAvailable
+                          ? "Detect intros & credits: Unavailable"
+                          : `Detect intros & credits: ${detection ? "On" : "Off"}`}
+                    </button>
+                  </li>
+                )}
                 <li className="row-menu-item" role="none">
                   <button
                     type="button"

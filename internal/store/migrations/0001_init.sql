@@ -1332,3 +1332,32 @@ CREATE TABLE lyric_provider_order (
     slug     TEXT PRIMARY KEY,
     position INTEGER NOT NULL
 );
+
+-- ===========================================================================
+-- marker detection (ADR-0065 §4)
+-- ===========================================================================
+
+-- The per-Library Marker detection toggle. Only a TV Library has one; a TV
+-- Library with no row is ON (the default), so a row exists only once an Admin
+-- has set it.
+CREATE TABLE library_marker_detection (
+    library_id TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+    enabled    INTEGER NOT NULL
+);
+
+-- The Files Marker detection has already listened to, at the mtime it heard.
+-- Keyed by path like markers, for the same reason: a rescan re-inserts files
+-- rows, and an unchanged File must not be listened to again after every scan.
+CREATE TABLE marker_detection_files (
+    file_path TEXT PRIMARY KEY CHECK (file_path <> ''),
+    mtime     TEXT NOT NULL
+);
+
+-- How many detection runs in a row failed to decode a File, at the mtime they
+-- failed on. A File that keeps failing unchanged stops being retried after every
+-- scan; a count at an older mtime reads as none, so a changed File starts over.
+CREATE TABLE marker_detection_failures (
+    file_path TEXT PRIMARY KEY CHECK (file_path <> ''),
+    mtime     TEXT NOT NULL,
+    failures  INTEGER NOT NULL CHECK (failures > 0)
+);

@@ -768,6 +768,44 @@ func (m *Manager) ActiveTranscodes() int {
 	return m.activeTranscodes
 }
 
+// LocalTranscodes returns how many live sessions are a Transcode running on this
+// host (CONTEXT.md "Transcode": re-encoding video and/or audio) — a video
+// encode, a video copy re-encoding only its audio, an audio-only encode, and a
+// remux whose ffmpeg is re-encoding audio right now: after a seek realigned it
+// (transcode.SeekOffset.mustEncodeCopiedAudio) or in an audio rendition the
+// client cannot decode (ADR-0022). Unlike ActiveTranscodes it counts the ones the
+// cap exempts, because it answers "is ffmpeg re-encoding here?" rather than "how
+// full is the cap?". A pure copy remux and direct play are not counted, nor is a
+// relayed session, whose encode runs on the sharer (ADR-0056 §5).
+func (m *Manager) LocalTranscodes() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, s := range m.sessions {
+		if s.IsRelay() {
+			continue
+		}
+		if s.Tier == TierTranscode || m.reencodingLocked(id) {
+			n++
+		}
+	}
+	return n
+}
+
+// reencodingLocked reports whether any ffmpeg job of the session — its video
+// variant or one of its audio renditions — is re-encoding. The caller holds m.mu.
+func (m *Manager) reencodingLocked(id string) bool {
+	if rt := m.runtimes[id]; rt != nil && rt.isReencoding() {
+		return true
+	}
+	for _, rt := range m.audioRuntimes[id] {
+		if rt.isReencoding() {
+			return true
+		}
+	}
+	return false
+}
+
 // TranscodeLoad is a snapshot of the governance counters (ADR-0009): the live
 // full-transcode count and the configured concurrency cap (0 = unlimited). It is
 // the read accessor the admin /transcoding surface (ADR-0029) projects, so the api

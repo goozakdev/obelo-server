@@ -652,7 +652,7 @@ type scanRequest struct {
 // failure it emits a terminal scanProgress (Complete=true) so a client's
 // "scanning…" indicator clears instead of hanging. broker may be nil (events
 // simply aren't published).
-func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger func(string), broker *events.Broker) http.HandlerFunc {
+func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger func(string), broker *events.Broker, detectMarkers func(string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := pathParam(r.URL.Path, "/libraries/", "/scan")
 		if id == "" {
@@ -696,6 +696,11 @@ func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger fu
 			// Auto-after-scan: enqueue a background Enrichment pass (non-blocking).
 			if enrichTrigger != nil {
 				enrichTrigger(id)
+			}
+			// Marker detection (ADR-0065 §4) runs after a scan completes and on no
+			// other schedule; it is queued, and waits its turn behind any Transcode.
+			if detectMarkers != nil {
+				detectMarkers(id)
 			}
 			// The Library's contents may have changed: nudge connected clients to
 			// refetch (library-scoped, so only subscribers who can see it — and any
@@ -1533,11 +1538,25 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 					"method not allowed", nil)
 			}
 			return
+		case strings.HasSuffix(rest, "/marker-detection"):
+			// Admin: read / set the Library's Marker detection toggle (ADR-0065 §4),
+			// which only a TV Library has.
+			switch r.Method {
+			case http.MethodGet:
+				requireAdmin(handleMarkerDetectionToggle(deps))(w, r)
+			case http.MethodPut:
+				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest), handleMarkerDetectionToggle(deps)))(w, r)
+			default:
+				w.Header().Set("Allow", "GET, PUT")
+				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+					"method not allowed", nil)
+			}
+			return
 		case strings.HasSuffix(rest, "/scan"):
 			switch r.Method {
 			case http.MethodPost:
 				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
-					handleScan(deps.Scanner, deps.ScanStatus, deps.EnrichTrigger, deps.Events)))(w, r)
+					handleScan(deps.Scanner, deps.ScanStatus, deps.EnrichTrigger, deps.Events, markersAfterScan(deps))))(w, r)
 			case http.MethodGet:
 				handleScanStatus(deps.ScanStatus, deps.Libraries, deps.TitleCounts)(w, r)
 			default:

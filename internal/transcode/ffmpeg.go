@@ -1419,6 +1419,34 @@ func normCodec(c string) string {
 	return string(out)
 }
 
+// Reencodes reports whether an ffmpeg argument vector re-encodes any video or
+// audio stream — a codec option (`-c`, `-c:v`, `-c:a`, with or without a stream
+// index) naming anything but `copy`. A pure remux (`-c copy`) does not; a remux
+// realigned past its start (`-c:v copy -c:a aac`) and an audio rendition encoding
+// to AAC do. It is what "is ffmpeg transcoding here?" means for a running job
+// (CONTEXT.md "Transcode"), whatever tier the session was negotiated at.
+func Reencodes(args []string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if isCodecOption(args[i]) && args[i+1] != "copy" {
+			return true
+		}
+	}
+	return false
+}
+
+func isCodecOption(a string) bool {
+	switch a {
+	case "-c", "-codec", "-vcodec", "-acodec":
+		return true
+	}
+	for _, p := range []string{"-c:v", "-c:a", "-codec:v", "-codec:a"} {
+		if a == p || strings.HasPrefix(a, p+":") {
+			return true
+		}
+	}
+	return false
+}
+
 // Runner runs an ffmpeg job to completion (or until its context is cancelled).
 // It is the seam: the real FFmpeg shells out to the binary; unit tests fake it.
 // Start launches the process and returns a handle the caller can wait on or

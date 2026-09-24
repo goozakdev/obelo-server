@@ -145,6 +145,7 @@ import type {
   WebReference,
   Marker,
   SignInProvidersView,
+  MarkerDetection,
 } from "./types";
 import type { Lyrics } from "./types";
 
@@ -2353,6 +2354,39 @@ export class ApiClient {
       { signal },
     );
     return res.markers ?? [];
+  }
+
+  /** `GET /api/v1/libraries/{id}/marker-detection` (Admin) — whether Marker
+   * detection runs after a scan of this TV Library (ADR-0065 §4). 404 for any
+   * other Library: it has no toggle at all. */
+  getMarkerDetection(libraryId: string, signal?: AbortSignal): Promise<MarkerDetection> {
+    return this.request<MarkerDetection>(
+      `/libraries/${encodeURIComponent(libraryId)}/marker-detection`,
+      { signal },
+    );
+  }
+
+  /** `PUT /api/v1/libraries/{id}/marker-detection` (Admin) — turn Marker
+   * detection on or off for a TV Library; answers the saved state. */
+  setMarkerDetection(
+    libraryId: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<MarkerDetection> {
+    return this.request<MarkerDetection>(
+      `/libraries/${encodeURIComponent(libraryId)}/marker-detection`,
+      { method: "PUT", body: { enabled }, signal },
+    );
+  }
+
+  /** `POST /api/v1/shows/{id}/detect-markers` (Admin) — "detect markers now"
+   * for one Show (ADR-0065 §4). 202 as soon as it is queued; the listening
+   * happens in the background and waits for any transcode to finish. */
+  detectShowMarkers(showId: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/shows/${encodeURIComponent(showId)}/detect-markers`, {
+      method: "POST",
+      signal,
+    });
   }
 
   /** `PUT /api/v1/titles/{id}/watchState` — manually mark watched/unwatched,

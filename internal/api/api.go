@@ -278,6 +278,14 @@ type Deps struct {
 	// the security property.
 	TrustedProxies []netip.Prefix
 
+	// MarkerDetection is Marker detection (ADR-0065 §4): queued by a completed
+	// scan and by an Admin's "detect markers now" on a Show. MarkerDetectionToggle
+	// persists the per-Library toggle, which only a TV Library has. Either may be
+	// nil in a narrow unit test: a scan then queues nothing, and the routes answer
+	// 503.
+	MarkerDetection       MarkerDetector
+	MarkerDetectionToggle MarkerDetectionToggleStore
+
 	// providerImages signs + serves the metadata-provider thumbnail proxy
 	// (provider_image.go). Unexported on purpose: it is not a wiring choice a caller
 	// gets to make. Handler builds it with a fresh per-boot key and threads THAT

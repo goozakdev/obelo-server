@@ -131,6 +131,11 @@ type hlsRuntime struct {
 	// reason). The sequential gate reads it: once the job is done, the last segment
 	// (which has no successor) is complete and servable. Cleared on each (re)launch.
 	jobExited bool
+	// reencoding is set while the current job re-encodes a stream
+	// (transcode.Reencodes): a transcode, or a copy re-encoding its audio after a
+	// realignment or for a rendition the client cannot decode. Cleared when the
+	// job exits or is killed. Manager.LocalTranscodes reads it.
+	reencoding bool
 	// exited carries the current job's process-exit error so the initial-launch
 	// probe can detect a hardware encoder that execs fine but dies immediately
 	// (a HW-init failure). It is buffered (cap 1) and replaced on every startLocked;
@@ -259,13 +264,15 @@ func (rt *hlsRuntime) startLocked(seek transcode.SeekOffset) error {
 		return os.ErrClosed
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	job, err := rt.runner.Start(ctx, rt.argsFor(seek))
+	args := rt.argsFor(seek)
+	job, err := rt.runner.Start(ctx, args)
 	if err != nil {
 		cancel()
 		return err
 	}
 	rt.cancel = cancel
 	rt.job = job
+	rt.reencoding = transcode.Reencodes(args)
 	rt.startNumber = seek.StartNumber
 	rt.startedAt = time.Now()
 	// Publish the process exit on a fresh buffered channel so the initial-launch
@@ -295,6 +302,7 @@ func (rt *hlsRuntime) startLocked(seek transcode.SeekOffset) error {
 		superseded := rt.exited != exited
 		if !superseded {
 			rt.jobExited = true
+			rt.reencoding = false
 		}
 		rt.mu.Unlock()
 		if err != nil {
@@ -422,6 +430,15 @@ func (rt *hlsRuntime) killCurrentLocked() {
 		_ = rt.job.Kill()
 		rt.job = nil
 	}
+	rt.reencoding = false
+}
+
+// isReencoding reports whether the runtime's current ffmpeg job is re-encoding a
+// stream right now.
+func (rt *hlsRuntime) isReencoding() bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.reencoding
 }
 
 // teardownExitWait bounds how long teardown waits for a killed ffmpeg to exit

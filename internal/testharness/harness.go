@@ -39,6 +39,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
 	"github.com/goozakdev/obelo-server/internal/gpu"
+	"github.com/goozakdev/obelo-server/internal/markerdetect"
 	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/subfetch"
 	"github.com/goozakdev/obelo-server/internal/tailnet"
@@ -423,6 +424,22 @@ func WithSubtitleProviderBuilder(build subfetch.BuildFunc) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithSubtitleProviderBuilder(build)) }
 }
 
+// WithMarkerAnalyzer sets how Marker detection listens to a File (ADR-0065 §4).
+// By default a harness server's detection hears nothing — its queue, triggers and
+// transcode gate all run, but no decoder is spawned for the TV fixtures scanned
+// all over the suite. A detection test passes a recording Analyzer, or
+// markerdetect.FFmpeg{} for the real thing.
+func WithMarkerAnalyzer(a markerdetect.Analyzer) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMarkerAnalyzer(a)) }
+}
+
+// silentAnalyzer is the harness default Analyzer: it hears nothing at all.
+type silentAnalyzer struct{}
+
+func (silentAnalyzer) Analyze(context.Context, string, int64, int64) (markerdetect.Print, error) {
+	return markerdetect.Print{}, nil
+}
+
 // New boots a server against a temp data root and returns it ready to serve.
 // The httptest server and database are torn down automatically via t.Cleanup.
 func New(t *testing.T, opts ...Option) *Server {
@@ -449,6 +466,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	// enrich as before. A consent-gate test overrides this with WithEnrichmentConsent.
 	granted := true
 	b.cfg.EnrichmentConsentGranted = &granted
+	// Marker detection hears nothing unless a test opts in with WithMarkerAnalyzer
+	// (applied after this, so it wins).
+	b.appOpts = append(b.appOpts, app.WithMarkerAnalyzer(silentAnalyzer{}))
 	for _, o := range opts {
 		o(b)
 	}
