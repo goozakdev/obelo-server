@@ -15,16 +15,20 @@ import (
 
 // --- fakes -------------------------------------------------------------------
 
-// memStore is the lyrics table and the Admin's order, in memory.
+// memStore is the lyrics table, the rejected answers and the Admin's order, in
+// memory.
 type memStore struct {
-	local   map[string]lyrics.Lyrics
-	fetched map[string]store.FetchedLyrics
-	order   []string
-	writes  int
+	local    map[string]lyrics.Lyrics
+	fetched  map[string]store.FetchedLyrics
+	rejected map[string][]string
+	order    []string
+	writes   int
 }
 
 func newMemStore() *memStore {
-	return &memStore{local: map[string]lyrics.Lyrics{}, fetched: map[string]store.FetchedLyrics{}}
+	return &memStore{
+		local: map[string]lyrics.Lyrics{}, fetched: map[string]store.FetchedLyrics{}, rejected: map[string][]string{},
+	}
 }
 
 func (m *memStore) LocalLyrics(id string) (lyrics.Lyrics, bool, error) {
@@ -44,6 +48,14 @@ func (m *memStore) WriteFetchedLyrics(id string, f store.FetchedLyrics) error {
 }
 
 func (m *memStore) LyricProviderOrder() ([]string, error) { return m.order, nil }
+
+func (m *memStore) RejectedLyrics(id string) ([]string, error) { return m.rejected[id], nil }
+
+func (m *memStore) RejectFetchedLyrics(id, answer string) error {
+	m.rejected[id] = append(m.rejected[id], answer)
+	delete(m.fetched, id)
+	return nil
+}
 
 // fakeProvider answers every question with resp (or err), counting the calls
 // and appending its slug to a shared log so a test can read the asking order.
@@ -476,4 +488,186 @@ func (s syncStore) WriteFetchedLyrics(id string, f store.FetchedLyrics) error {
 func (s syncStore) LyricProviderOrder() ([]string, error) {
 	defer s.lock()()
 	return s.m.LyricProviderOrder()
+}
+
+func (s syncStore) RejectedLyrics(id string) ([]string, error) {
+	defer s.lock()()
+	return s.m.RejectedLyrics(id)
+}
+
+func (s syncStore) RejectFetchedLyrics(id, answer string) error {
+	defer s.lock()()
+	return s.m.RejectFetchedLyrics(id, answer)
+}
+
+// --- wrong lyrics --------------------------------------------------------------
+
+// reject presses "wrong lyrics" on what tr shows.
+func reject(t *testing.T, svc *lyricfetch.Service, tr lyricfetch.Track) (lyricfetch.Answer, bool) {
+	t.Helper()
+	shown, _ := open(t, svc, tr)
+	a, ok, err := svc.Reject(context.Background(), tr, shown.ID)
+	if err != nil {
+		t.Fatalf("Reject: %v", err)
+	}
+	return a, ok
+}
+
+// TestWrongLyricsAdvancesToTheNextCandidate: a's Synced answer is stored and
+// marked wrong. Every provider is asked again — a first, still answering the same
+// — and a's answer is passed over for b's, which is what is stored and shown.
+func TestWrongLyricsAdvancesToTheNextCandidate(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	a := &fakeProvider{slug: "a", resp: synced(track().DurationMs, "Wrong song")}
+	b := &fakeProvider{slug: "b", resp: synced(track().DurationMs, "Right song")}
+	register(reg, a, b)
+	svc := lyricfetch.New(st, reg)
+
+	if got, _ := open(t, svc, track()); got.Lyrics.Lines[0].Text != "Wrong song" {
+		t.Fatalf("first answer = %+v, want a's", got)
+	}
+	got, ok := reject(t, svc, track())
+	want := lyrics.Lyrics{Kind: lyrics.Synced, Lines: syncedLines("Right song")}
+	if !ok || got.Source != lyricfetch.SourceFetched || !reflect.DeepEqual(got.Lyrics, want) {
+		t.Fatalf("after wrong lyrics = %+v (found %v), want b's %+v", got, ok, want)
+	}
+	if f := st.fetched["t1"]; f.Provider != "b" || f.Lyrics == nil || !reflect.DeepEqual(*f.Lyrics, want) {
+		t.Fatalf("stored = %+v, want b's answer", f)
+	}
+	if a.calls != 2 || b.calls != 1 {
+		t.Fatalf("asked a %d, b %d times; want a re-asked (2) and b once", a.calls, b.calls)
+	}
+	if again, _ := open(t, svc, track()); !reflect.DeepEqual(again, got) || a.calls != 2 {
+		t.Fatalf("next open = %+v with a asked %d times, want b's from the cache", again, a.calls)
+	}
+}
+
+// TestARejectedAnswerIsNeverStoredAgain: the only provider keeps giving the
+// answer marked wrong. The track ends with no lyrics — not the rejected answer,
+// and not a stale hit — and the remembered outcome is a miss, so the next open
+// still shows none.
+func TestARejectedAnswerIsNeverStoredAgain(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	a := &fakeProvider{slug: "a", resp: synced(track().DurationMs, "Wrong song")}
+	register(reg, a)
+	svc := lyricfetch.New(st, reg)
+
+	open(t, svc, track())
+	if got, ok := reject(t, svc, track()); ok {
+		t.Fatalf("after wrong lyrics = %+v, want none", got)
+	}
+	if f, have := st.fetched["t1"]; !have || f.Lyrics != nil {
+		t.Fatalf("stored = %+v (present %v), want a remembered miss", f, have)
+	}
+	if got, ok := open(t, svc, track()); ok {
+		t.Fatalf("next open = %+v, want none", got)
+	}
+	if a.calls != 2 {
+		t.Fatalf("a asked %d times, want 2: once first, once re-asked", a.calls)
+	}
+}
+
+// TestEveryRejectedAnswerStaysExcluded: a's answer is rejected, then b's. With
+// only those two on offer, nothing is left — a's first rejection is not
+// forgotten when b's is recorded.
+func TestEveryRejectedAnswerStaysExcluded(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	register(reg,
+		&fakeProvider{slug: "a", resp: synced(track().DurationMs, "First wrong")},
+		&fakeProvider{slug: "b", resp: plain("Second wrong")})
+	svc := lyricfetch.New(st, reg)
+
+	open(t, svc, track())
+	if got, _ := reject(t, svc, track()); got.Lyrics.Text != "Second wrong" {
+		t.Fatalf("after the first rejection = %+v, want b's Plain answer", got)
+	}
+	if got, ok := reject(t, svc, track()); ok {
+		t.Fatalf("after the second rejection = %+v, want none", got)
+	}
+}
+
+// TestARejectedPlainAnswerIsExcludedEvenAsAFallback: a's mistimed Synced answer
+// was kept as Plain and rejected. The same words from the same answer are not
+// offered again as the fallback; b's Plain answer is.
+func TestARejectedPlainAnswerIsExcludedEvenAsAFallback(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	register(reg,
+		&fakeProvider{slug: "a", resp: synced(track().DurationMs+10000, "Mistimed")},
+		&fakeProvider{slug: "b", resp: plain("Other words")})
+	svc := lyricfetch.New(st, reg)
+
+	if got, _ := open(t, svc, track()); got.Lyrics.Text != "Mistimed" {
+		t.Fatalf("first answer = %+v, want a's as Plain", got)
+	}
+	if got, _ := reject(t, svc, track()); got.Lyrics.Text != "Other words" {
+		t.Fatalf("after wrong lyrics = %+v, want b's", got)
+	}
+}
+
+// TestWrongLyricsNeedsAFetchedAnswerOnShow: with nothing fetched, or with the
+// track showing its own Local lyrics, there is no provider answer to reject.
+func TestWrongLyricsNeedsAFetchedAnswerOnShow(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	register(reg, &fakeProvider{slug: "a", resp: plain("Fetched words")})
+	svc := lyricfetch.New(st, reg)
+	if _, _, err := svc.Reject(context.Background(), track(), "some-answer"); !errors.Is(err, lyricfetch.ErrNothingToReject) {
+		t.Fatalf("Reject before any open = %v, want ErrNothingToReject", err)
+	}
+
+	st.local["t1"] = lyrics.Lyrics{Kind: lyrics.Plain, Text: "Local words"}
+	open(t, svc, track())
+	if _, _, err := svc.Reject(context.Background(), track(), "some-answer"); !errors.Is(err, lyricfetch.ErrNothingToReject) {
+		t.Fatalf("Reject with Local lyrics on show = %v, want ErrNothingToReject", err)
+	}
+	if len(st.rejected["t1"]) != 0 || st.fetched["t1"].Lyrics == nil {
+		t.Fatalf("rejected %v, stored %+v; want nothing rejected and the fetched answer kept",
+			st.rejected["t1"], st.fetched["t1"])
+	}
+}
+
+// TestARejectionNamingAnAnswerNoLongerShownRejectsNothing: two viewers see a's
+// answer. The first marks it wrong and b's is shown. The second, still naming
+// a's, presses too: b's answer is not the one named, so nothing is rejected and
+// b's stays.
+func TestARejectionNamingAnAnswerNoLongerShownRejectsNothing(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	c := &fakeProvider{slug: "c", resp: synced(track().DurationMs, "Third song")}
+	register(reg,
+		&fakeProvider{slug: "a", resp: synced(track().DurationMs, "Wrong song")},
+		&fakeProvider{slug: "b", resp: synced(track().DurationMs, "Right song")}, c)
+	svc := lyricfetch.New(st, reg)
+
+	stale, _ := open(t, svc, track())
+	if stale.ID == "" {
+		t.Fatalf("a's answer = %+v, want it named", stale)
+	}
+	after, _ := reject(t, svc, track())
+	if _, _, err := svc.Reject(context.Background(), track(), stale.ID); !errors.Is(err, lyricfetch.ErrNotShown) {
+		t.Fatalf("Reject naming a's answer again = %v, want ErrNotShown", err)
+	}
+	if len(st.rejected["t1"]) != 1 || c.calls != 0 {
+		t.Fatalf("rejected %d answers and asked c %d times; want only a's rejected, c never asked",
+			len(st.rejected["t1"]), c.calls)
+	}
+	if got, _ := open(t, svc, track()); !reflect.DeepEqual(got, after) {
+		t.Fatalf("shown = %+v, want b's %+v", got, after)
+	}
+}
+
+// TestWhitespaceAndCaseVariantsOfARejectedAnswerStayExcluded: "A" is rejected.
+// "A " and "a" are the same answer to a reader, so neither is kept in its place.
+func TestWhitespaceAndCaseVariantsOfARejectedAnswerStayExcluded(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	register(reg,
+		&fakeProvider{slug: "a", resp: synced(track().DurationMs, "A")},
+		&fakeProvider{slug: "b", resp: synced(track().DurationMs, "A ")},
+		&fakeProvider{slug: "c", resp: synced(track().DurationMs, "a")})
+	svc := lyricfetch.New(st, reg)
+
+	if got, _ := open(t, svc, track()); got.Lyrics.Lines[0].Text != "A" {
+		t.Fatalf("first answer = %+v, want a's", got)
+	}
+	if got, ok := reject(t, svc, track()); ok {
+		t.Fatalf("after rejecting \"A\" = %+v, want none: \"A \" and \"a\" are the same answer", got)
+	}
 }

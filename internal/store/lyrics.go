@@ -122,6 +122,45 @@ func (db *DB) WriteFetchedLyrics(titleID string, f FetchedLyrics) error {
 	return nil
 }
 
+// RejectedLyrics returns the answers marked wrong for a Track, as the ids
+// internal/lyricfetch named them.
+func (db *DB) RejectedLyrics(titleID string) ([]string, error) {
+	rows, err := db.Query(`SELECT answer FROM lyric_rejections WHERE title_id = ?`, titleID)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading rejected lyrics: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var answer string
+		if err := rows.Scan(&answer); err != nil {
+			return nil, fmt.Errorf("store: scanning rejected lyrics: %w", err)
+		}
+		out = append(out, answer)
+	}
+	return out, rows.Err()
+}
+
+// RejectFetchedLyrics records answer as wrong for a Track and forgets the
+// Track's remembered Lyric provider answer, together, so the next open asks
+// again knowing what to pass over.
+func (db *DB) RejectFetchedLyrics(titleID, answer string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: beginning lyrics rejection: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
+		`INSERT INTO lyric_rejections (title_id, answer) VALUES (?, ?) ON CONFLICT DO NOTHING`, titleID, answer,
+	); err != nil {
+		return fmt.Errorf("store: recording rejected lyrics: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM lyrics WHERE title_id = ? AND source = 'fetched'`, titleID); err != nil {
+		return fmt.Errorf("store: forgetting rejected lyrics: %w", err)
+	}
+	return tx.Commit()
+}
+
 // LyricProviderOrder returns the Admin's Lyric provider order, first first.
 func (db *DB) LyricProviderOrder() ([]string, error) {
 	rows, err := db.Query(`SELECT slug FROM lyric_provider_order ORDER BY position, slug`)

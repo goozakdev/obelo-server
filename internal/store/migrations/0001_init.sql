@@ -1361,3 +1361,17 @@ CREATE TABLE marker_detection_failures (
     mtime     TEXT NOT NULL,
     failures  INTEGER NOT NULL CHECK (failures > 0)
 );
+
+-- ===========================================================================
+-- wrong lyrics
+-- ===========================================================================
+
+-- The Lyric provider answers someone marked wrong for a Track. answer names the
+-- answer as the host kept it (internal/lyricfetch), whichever provider gave it,
+-- so none is kept for that Track again. Shared: one row is every User's view.
+CREATE TABLE lyric_rejections (
+    title_id    TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+    answer      TEXT NOT NULL,
+    rejected_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (title_id, answer)
+);

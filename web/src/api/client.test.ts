@@ -467,3 +467,44 @@ describe("ApiClient.getEnrichPassState", () => {
     });
   });
 });
+
+describe("ApiClient.markLyricsWrong", () => {
+  const shown = { kind: "plain", source: "fetched", id: "answer-2", lines: [], text: "Now shown" };
+
+  function clientAnswering(status: number, payload: unknown) {
+    const calls: { url: string; method?: string; body: unknown }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method, body: JSON.parse(init.body as string) });
+      return new Response(JSON.stringify(payload), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    return { client: new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl }), calls };
+  }
+
+  it("names the answer it was pressed on and returns what the Track shows after", async () => {
+    const { client, calls } = clientAnswering(200, { lyrics: shown });
+    await expect(client.markLyricsWrong("t1", "answer-1")).resolves.toEqual(shown);
+    expect(calls).toEqual([
+      { url: "/api/v1/titles/t1/lyrics/wrong", method: "POST", body: { id: "answer-1" } },
+    ]);
+  });
+
+  it("returns what the Track shows now when the server rejected nothing (409)", async () => {
+    const { client } = clientAnswering(409, {
+      error: { code: "LYRICS_CHANGED", message: "changed", details: { lyrics: shown } },
+    });
+    await expect(client.markLyricsWrong("t1", "answer-1")).resolves.toEqual(shown);
+
+    const none = clientAnswering(409, {
+      error: { code: "NO_FETCHED_LYRICS", message: "local", details: { lyrics: null } },
+    });
+    await expect(none.client.markLyricsWrong("t1", "answer-1")).resolves.toBeNull();
+  });
+
+  it("still throws any other refusal", async () => {
+    const { client } = clientAnswering(403, { error: { code: "FORBIDDEN", message: "no" } });
+    await expect(client.markLyricsWrong("t1", "answer-1")).rejects.toMatchObject({ status: 403 });
+  });
+});

@@ -9,9 +9,10 @@ import type { Lyrics, TitleDetail } from "../api/types";
 // none. Driven against a faked apiClient, a faked Queue (which Track is current)
 // and a faked transport (where playback is).
 
-const { getLyrics, getTitle, playback } = vi.hoisted(() => ({
+const { getLyrics, getTitle, markLyricsWrong, playback } = vi.hoisted(() => ({
   getLyrics: vi.fn(),
   getTitle: vi.fn(),
+  markLyricsWrong: vi.fn(),
   playback: { currentId: null as string | null, positionMs: 0 },
 }));
 
@@ -22,6 +23,7 @@ vi.mock("../api/client", async () => {
     apiClient: {
       getLyrics: (...a: unknown[]) => getLyrics(...a),
       getTitle: (...a: unknown[]) => getTitle(...a),
+      markLyricsWrong: (...a: unknown[]) => markLyricsWrong(...a),
     },
   };
 });
@@ -161,6 +163,55 @@ describe("LyricsView", () => {
 
     expect(await screen.findByTestId("lyrics-empty")).toHaveTextContent("No lyrics for this track yet.");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("Wrong lyrics", () => {
+  const fetched: Lyrics = { ...synced, source: "fetched", id: "answer-1" };
+
+  beforeEach(() => {
+    getLyrics.mockReset();
+    markLyricsWrong.mockReset();
+    playback.currentId = null;
+  });
+
+  it("rejects the provider's answer on show, by its id, and shows what replaces it", async () => {
+    getLyrics.mockResolvedValue(fetched);
+    markLyricsWrong.mockResolvedValue({ ...plain, source: "fetched", text: "The right words" });
+    render(<LyricsView titleId="t1" />);
+
+    fireEvent.click(await screen.findByTestId("lyrics-reject-button"));
+    expect(await screen.findByTestId("lyrics-plain")).toHaveTextContent("The right words");
+    expect(markLyricsWrong).toHaveBeenCalledWith("t1", "answer-1");
+    expect(screen.queryAllByTestId("lyric-line")).toHaveLength(0);
+  });
+
+  it("shows the empty state when no other answer is left", async () => {
+    getLyrics.mockResolvedValue(fetched);
+    markLyricsWrong.mockResolvedValue(null);
+    render(<LyricsView titleId="t1" />);
+
+    fireEvent.click(await screen.findByTestId("lyrics-reject-button"));
+    expect(await screen.findByTestId("lyrics-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("lyrics-reject-button")).toBeNull();
+  });
+
+  it("is not offered on Local lyrics", async () => {
+    getLyrics.mockResolvedValue(synced);
+    render(<LyricsView titleId="t1" />);
+
+    await screen.findAllByTestId("lyric-line");
+    expect(screen.queryByTestId("lyrics-reject-button")).toBeNull();
+  });
+
+  it("keeps the lyrics on screen and says so when the rejection fails", async () => {
+    getLyrics.mockResolvedValue(fetched);
+    markLyricsWrong.mockRejectedValue(new Error("server unreachable"));
+    render(<LyricsView titleId="t1" />);
+
+    fireEvent.click(await screen.findByTestId("lyrics-reject-button"));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getAllByTestId("lyric-line")).toHaveLength(3);
   });
 });
 

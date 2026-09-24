@@ -354,3 +354,7 @@
   color: var(--accent);
   font-weight: 600;
 }
+
+.lyrics-reject-button {
+  margin-top: 0.75rem;
+}
