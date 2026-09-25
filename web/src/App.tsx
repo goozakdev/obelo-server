@@ -5,6 +5,7 @@ import { ServerInfoProvider, useServerInfoContext } from "./serverInfoContext";
 import SetupScreen from "./screens/SetupScreen";
 import LoginScreen from "./screens/LoginScreen";
 import SignInCallbackScreen from "./screens/SignInCallbackScreen";
+import ProfileScreen from "./screens/ProfileScreen";
 import LinkScreen from "./screens/LinkScreen";
 import HomeScreen from "./screens/HomeScreen";
 import AdminScreen from "./screens/AdminScreen";
@@ -36,6 +37,7 @@ import ScrollToTop from "./ScrollToTop";
 //   /login   credentials → session
 //   /sign-in/callback  a redirect-flow Sign-in provider's return (ADR-0063)
 //   /link/:code?  approve a TV's sign-in code (RequireAuth) — ADR-0036
+//   /profile the caller's own sign-ins, and attaching another (RequireAuth)
 //   /        authed landing (RequireAuth)
 //   /admin   admin-only placeholder (RequireAdmin)
 //   *        unknown client routes fall back to the landing (which redirects to
@@ -141,6 +143,16 @@ export default function App() {
               grid. Owner-private — NOT role-gated; a non-owned playlist 404s
               (rendered as "not found"). Reorder (04) / play-through (05) extend
               the detail. */}
+          {/* The caller's own profile: the sign-ins attached to their account,
+              and attaching another (ADR-0063 decision 3). */}
+          <Route
+            path="/profile"
+            element={
+              <RequireAuth>
+                <ProfileScreen />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/playlists"
             element={

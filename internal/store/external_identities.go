@@ -117,6 +117,33 @@ func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUser
 	return db.UserByID(id)
 }
 
+// AttachExternalIdentity gives the existing User userID the External identity
+// (pluginID, subject), which that User asked for while signed in as themselves.
+// Attaching one the User already holds records what the provider said, like a
+// returning sign-in. One held by a different User is ErrExternalIdentityTaken,
+// and nothing changes: the insert and the check are one statement, so no
+// concurrent attach or sign-in can move an identity between Users.
+func (db *DB) AttachExternalIdentity(userID, pluginID, subject, providerUsername string, groups []string) error {
+	g, err := encodeGroups(groups)
+	if err != nil {
+		return err
+	}
+	res, err := db.Exec(
+		`INSERT INTO external_identities (plugin_id, subject, user_id, username, groups)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT (plugin_id, subject) DO UPDATE
+		    SET username = excluded.username, groups = excluded.groups, last_seen_at = datetime('now')
+		  WHERE external_identities.user_id = excluded.user_id`,
+		pluginID, subject, userID, providerUsername, g)
+	if err != nil {
+		return fmt.Errorf("store: attaching external identity: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrExternalIdentityTaken
+	}
+	return nil
+}
+
 func encodeGroups(groups []string) (string, error) {
 	if groups == nil {
 		groups = []string{}

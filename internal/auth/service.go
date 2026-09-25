@@ -95,6 +95,8 @@ type Store interface {
 	ExternalIdentityUser(pluginID, subject string) (store.User, error)
 	RecordExternalSignIn(pluginID, subject, username string, groups []string) error
 	CreateExternalMember(id, username, pluginID, subject, providerUsername string, groups []string) (store.User, error)
+	AttachExternalIdentity(userID, pluginID, subject, providerUsername string, groups []string) error
+	ExternalIdentitiesByUser(userID string) ([]store.ExternalIdentity, error)
 }
 
 // Common service errors, mapped to HTTP envelopes by the api layer. They are
@@ -169,6 +171,9 @@ type Service struct {
 	// signIn is the ordered password-flow Sign-in providers a login asks after
 	// the Local password (ADR-0063). Empty unless UseSignInProviders was called.
 	signIn signIn
+
+	// reauth is the live re-auth grants an attach can present (reauth.go).
+	reauth reauthGrants
 }
 
 // Option configures the Service. Present for the clock seam; NewService's

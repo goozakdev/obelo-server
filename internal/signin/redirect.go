@@ -108,6 +108,16 @@ type pendingRedirect struct {
 	expires     time.Time
 	// seq orders the starts, oldest lowest, for eviction.
 	seq uint64
+	// purpose is what this round trip was started for. Each is good only at
+	// its own callback.
+	purpose roundTrip
+}
+
+// roundTrip is what a redirect was started for: a sign-in (the zero value), or,
+// for the signed-in User user, an attach or a re-authentication.
+type roundTrip struct {
+	user   string
+	reauth bool
 }
 
 // NewRedirects returns the redirect flow over reg's Sign-in providers.
@@ -190,6 +200,30 @@ func audienceOf(p pluginapi.SignInRedirectProvider) (issuer, clientID string, de
 // Start mints a sign-in with providerID that will come back to redirectURI, for
 // the client at the address client.
 func (r *Redirects) Start(ctx context.Context, providerID, redirectURI, client string) (Started, error) {
+	return r.start(ctx, providerID, redirectURI, client, roundTrip{})
+}
+
+// StartAttach mints a round trip with providerID that attaches what it comes
+// back with to the signed-in User userID (ADR-0063 decision 3). It is checked
+// exactly as a sign-in is, and is good only at CompleteAttach, for that User.
+func (r *Redirects) StartAttach(ctx context.Context, providerID, redirectURI, client, userID string) (Started, error) {
+	if userID == "" {
+		return Started{}, ErrRedirectRefused
+	}
+	return r.start(ctx, providerID, redirectURI, client, roundTrip{user: userID})
+}
+
+// StartReauth mints a round trip with providerID that re-authenticates the
+// signed-in User userID before an attach. It is checked exactly as a sign-in is,
+// and is good only at CompleteReauth, for that User.
+func (r *Redirects) StartReauth(ctx context.Context, providerID, redirectURI, client, userID string) (Started, error) {
+	if userID == "" {
+		return Started{}, ErrRedirectRefused
+	}
+	return r.start(ctx, providerID, redirectURI, client, roundTrip{user: userID, reauth: true})
+}
+
+func (r *Redirects) start(ctx context.Context, providerID, redirectURI, client string, purpose roundTrip) (Started, error) {
 	p, err := r.provider(providerID)
 	if err != nil {
 		return Started{}, err
@@ -251,6 +285,7 @@ func (r *Redirects) Start(ctx context.Context, providerID, redirectURI, client s
 		binding:     sha256.Sum256([]byte(binding)),
 		expires:     now.Add(redirectTTL),
 		seq:         r.started,
+		purpose:     purpose,
 	}
 	return Started{URL: u.String(), Binding: binding}, nil
 }
@@ -275,11 +310,40 @@ func (r *Redirects) take(state string) (pendingRedirect, bool) {
 // came back with, and answers who it signs in as: the provider's id and the
 // judged answer, ready for auth.Service.SignInExternal.
 func (r *Redirects) Complete(ctx context.Context, state, code, binding string) (string, auth.ExternalAnswer, error) {
+	return r.complete(ctx, state, code, binding, roundTrip{})
+}
+
+// CompleteAttach finishes the attach userID started under state, and answers
+// the identity to attach to them. A sign-in's state, or an attach another User
+// started, is refused like any other failed check.
+func (r *Redirects) CompleteAttach(ctx context.Context, state, code, binding, userID string) (string, auth.ExternalAnswer, error) {
+	if userID == "" {
+		return "", auth.ExternalAnswer{}, ErrRedirectRefused
+	}
+	return r.complete(ctx, state, code, binding, roundTrip{user: userID})
+}
+
+// CompleteReauth finishes the re-authentication userID started under state, and
+// answers the identity it came back as. Any other round trip's state is refused
+// like any other failed check.
+func (r *Redirects) CompleteReauth(ctx context.Context, state, code, binding, userID string) (string, auth.ExternalAnswer, error) {
+	if userID == "" {
+		return "", auth.ExternalAnswer{}, ErrRedirectRefused
+	}
+	return r.complete(ctx, state, code, binding, roundTrip{user: userID, reauth: true})
+}
+
+// complete is Complete, CompleteAttach and CompleteReauth: purpose is what the
+// round trip must have been started for.
+func (r *Redirects) complete(ctx context.Context, state, code, binding string, purpose roundTrip) (string, auth.ExternalAnswer, error) {
 	if state == "" || code == "" {
 		return "", auth.ExternalAnswer{}, ErrRedirectRefused
 	}
 	pending, ok := r.take(state)
 	if !ok {
+		return "", auth.ExternalAnswer{}, ErrRedirectRefused
+	}
+	if pending.purpose != purpose {
 		return "", auth.ExternalAnswer{}, ErrRedirectRefused
 	}
 	presented := sha256.Sum256([]byte(binding))

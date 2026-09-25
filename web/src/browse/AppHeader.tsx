@@ -19,7 +19,7 @@ import type { Library } from "../api/types";
 // derived from the caller's Libraries, each fronted by its icon. A kind with a
 // single Library is a direct link; a kind with several becomes a dropdown so the
 // user picks which one. A kind with no Libraries shows nothing. The user's
-// utility links (Playlists, Collections, Admin, Sign out) and the Auto-skip
+// utility links (Profile, Playlists, Collections, Admin, Sign out) and the Auto-skip
 // switches live in a dropdown under the username on the right.
 
 // Inline Lucide icons (kept local so the header has no icon-lib dependency).
@@ -158,7 +158,7 @@ export default function AppHeader() {
 }
 
 // UserMenu is the far-right account dropdown: the username toggles a menu of the
-// utility links (Playlists, Collections, admin-only Admin), a Switch user section
+// utility links (Profile, Playlists, Collections, admin-only Admin), a Switch user section
 // (the remembered-Users roster, appletv-parity/10), plus Sign out. Closes on
 // outside click, on Escape, and on selection.
 //
@@ -242,6 +242,17 @@ function UserMenu({
           role="menu"
           data-testid="user-menu"
         >
+          <li role="none">
+            <Link
+              role="menuitem"
+              className="nav-dropdown-item"
+              to="/profile"
+              data-testid="nav-profile"
+              onClick={() => setOpen(false)}
+            >
+              Profile
+            </Link>
+          </li>
           {showPlaylists && (
             <li role="none">
               <Link

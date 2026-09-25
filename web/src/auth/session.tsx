@@ -11,6 +11,7 @@ import { apiClient, type ApiClient } from "../api/client";
 import { NetworkError } from "../api/errors";
 import { useOptionalFeature } from "../serverInfoContext";
 import { browserDevice } from "./clientId";
+import { forgetReauthGrant } from "./reauthGrant";
 import type { LoginResult, Role, SignInProvider, User } from "../api/types";
 import {
   demoteUser,
@@ -184,7 +185,10 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   // it should against a server too old to advertise the route.
   const canRefreshMediaCookie = useOptionalFeature("mediaCookieRefresh");
 
+  // Every change of hands forgets a kept re-auth grant (reauthGrant.ts): it was
+  // the previous User's, from the previous session.
   const clearSession = useCallback(() => {
+    forgetReauthGrant();
     client.setToken(null);
     writeUser(null, true);
     setSession(null);
@@ -281,6 +285,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   // LoginResult.
   const adoptLogin = useCallback(
     async (res: LoginResult, remember: boolean) => {
+      forgetReauthGrant();
       writeUser(res.user, remember);
       setSession({ token: res.token, user: res.user });
       const sid = await resolveServerId();
@@ -355,6 +360,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
     } finally {
       // logout() already dropped the token; clear the rest regardless of network.
       // The user stays remembered as a Known entry (its token was just revoked).
+      forgetReauthGrant();
       if (uid) {
         demoteUser(window.localStorage, serverId, uid);
         bumpRoster();
@@ -367,6 +373,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   const adopt = useCallback(
     (result: LoginResult) => {
       // The client stored the token durably by default; record a Signed-in entry.
+      forgetReauthGrant();
       writeUser(result.user, true);
       setSession({ token: result.token, user: result.user });
       rememberUser(window.localStorage, serverId, result.user, result.token);
@@ -383,6 +390,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
     async (userId: string) => {
       const entry = getRosterEntry(window.localStorage, serverId, userId);
       if (!entry?.token) return;
+      forgetReauthGrant();
       client.setTokenDurable(true);
       client.setToken(entry.token);
       const user: User = {
