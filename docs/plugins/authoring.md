@@ -26,7 +26,7 @@ with its own marker syntax so none can see another's blocks:
 1. [What a Plugin is](#1-what-a-plugin-is)
 2. [The three Extension points, and what each is asked](#2-the-three-extension-points-and-what-each-is-asked)
 3. [The manifest, by example](#3-the-manifest-by-example)
-4. [The ABI: four exports and six imports](#4-the-abi-four-exports-and-six-imports)
+4. [The ABI: four exports and seven imports](#4-the-abi-four-exports-and-seven-imports)
 5. [The host functions, and what they refuse](#5-the-host-functions-and-what-they-refuse)
 6. [How settings reach the guest](#6-how-settings-reach-the-guest)
 7. [Build and install locally](#7-build-and-install-locally)
@@ -158,6 +158,28 @@ unchanged, and tell operators to register that exact URI,
 wildcards, so the provider itself refuses to send a code anywhere else. Say so
 where the operator will read it — in a setting's `help` — as the Bundled
 `plugins/oidc` does on its Client ID field.
+
+A Sign-in provider that must speak something other than HTTP — an LDAP directory
+for the password flow — declares `"socket": true` on its provides entry and gets
+the one exception to "no sockets"
+([ADR-0064](../adr/0064-sign-in-providers-may-open-sockets-to-where-the-operator-pointed-them.md)):
+the `socket` import, during its sign-in calls and no others. The host adds four
+settings to your form after your own — `socket_address` (the host:port the
+operator types, the **only** address you can reach), `socket_tls` (`tls`,
+`starttls` or `none`, default `tls`), `socket_allow_plaintext` (the operator's
+opt-out, shown with a warning) and `socket_trusted_ca` (a PEM CA used instead of
+the system's) — and you read them in `values` like your own. A `SocketRequest`
+`{op: open|write|read|starttls|close, address?, handle, data, max}` answers a
+`SocketResponse`. `open` connects to the operator's address — name another in
+`address` and it is refused — and the host dials, encrypts and verifies the
+certificate itself: you write and read your protocol's plaintext and never see TLS.
+When `open` answers `upgradePending`, the operator chose StartTLS: write your
+protocol's upgrade request (LDAP's StartTLS extended operation), read the answer,
+then send `starttls`; until then the connection carries that one write and nothing
+more. A handle is good for the call that opened it: every connection is closed
+when the call returns or at its deadline, and a handle kept for the next call
+names nothing. As with a fetch, `refused` and `error` are the host's sentences,
+never to be branched on.
 
 And one a Subtitle provider author gets wrong:
 
@@ -344,7 +366,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -376,7 +398,7 @@ for a plugin that paces itself:
 
 ---
 
-## 4. The ABI: four exports and six imports
+## 4. The ABI: four exports and seven imports
 
 The whole calling convention, and it is small enough to state in full.
 
@@ -396,9 +418,10 @@ IMPORTS the host provides, in module "obelo"
   kv_set(ptr u32, len u32) -> i64
   kv_delete(ptr u32, len u32) -> i64
   settings_get() -> i64
+  socket(ptr u32, len u32) -> i64
 ```
 
-Six imports, and **that is the whole world**. A module importing any other
+Seven imports, and **that is the whole world**. A module importing any other
 namespace is refused *before* it is instantiated, so "what can this code call" is
 answered by reading the module rather than by watching it run.
 
@@ -745,6 +768,10 @@ Rules the host enforces, at **load** and again at **save**:
   refuse **refuses the whole Plugin at load** — so test your manifest by
   installing it.
 - `options` belong to `enum`/`multi-select` only; `min`/`max` to `integer` only.
+- `warning` belongs to a `bool` only: a sentence the form shows beside the switch
+  while it is on, for a switch that weakens something.
+- `socket_address`, `socket_tls`, `socket_allow_plaintext` and `socket_trusted_ca`
+  are the host's own socket settings (below) and may not be declared.
 - `required` is never applied to a `bool`: `false` is an answer, and "a required
   switch" means "a switch that must be on", which you should express by having no
   switch.
@@ -1556,7 +1583,7 @@ comes with either. Four packages:
 
 | Package | What it gives you |
 | --- | --- |
-| `pluginsdk` | `Host` — the six host functions, typed. `Sandbox()` returns the one that calls them. `obelo_alloc`, `obelo_free` and `last_error` are exported from here, once. Also `Pacer`/`PacedHost`, and `Do`/`DoJSON`/`GetJSON` with a `FetchError` that tells a refusal from an outage from a 404. |
+| `pluginsdk` | `Host` — the six host functions, typed, and `Socket` for a Sign-in provider declaring `socket`. `Sandbox()` returns the one that calls them. `obelo_alloc`, `obelo_free` and `last_error` are exported from here, once. Also `Pacer`/`PacedHost`, and `Do`/`DoJSON`/`GetJSON` with a `FetchError` that tells a refusal from an outage from a 404. |
 | `pluginsdk/metadata` | `Serve(p)` — the eight `//go:wasmexport` Metadata provider calls, in front of the contract's own `pluginapi.MetadataProvider`. |
 | `pluginsdk/sink`, `pluginsdk/subtitle` | The same for the other two seams: `deliver`, and the two subtitle exports. |
 | `pluginsdk/signin` | `ServeRedirect(p)` — a Sign-in provider's redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`. |

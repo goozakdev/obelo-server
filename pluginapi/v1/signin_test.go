@@ -70,6 +70,31 @@ func signInWireCases() []wireCase {
 			value:  SignInExchangeResponse{Accepted: true, Identity: &SignInIdentity{Subject: "u-1001"}},
 			golden: `{"accepted":true,"identity":{"subject":"u-1001"}}`,
 		},
+		{
+			name:   "SocketRequest open",
+			value:  SocketRequest{Op: SocketOpOpen, Address: "ldap.example:636"},
+			golden: `{"op":"open","address":"ldap.example:636"}`,
+		},
+		{
+			name:   "SocketRequest write",
+			value:  SocketRequest{Op: SocketOpWrite, Handle: 1, Data: []byte("bind")},
+			golden: `{"op":"write","handle":1,"data":"YmluZA=="}`,
+		},
+		{
+			name:   "SocketResponse open",
+			value:  SocketResponse{Handle: 1, UpgradePending: true},
+			golden: `{"handle":1,"upgradePending":true}`,
+		},
+		{
+			name:   "SocketResponse read",
+			value:  SocketResponse{Encrypted: true, Data: []byte("ok"), EOF: true},
+			golden: `{"encrypted":true,"data":"b2s=","eof":true}`,
+		},
+		{
+			name:   "SocketResponse refused",
+			value:  SocketResponse{Refused: "only the address the operator configured may be reached"},
+			golden: `{"refused":"only the address the operator configured may be reached"}`,
+		},
 	}
 }
 

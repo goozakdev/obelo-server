@@ -2607,6 +2607,9 @@ export interface PluginSettingsField {
   type: PluginSettingsFieldType;
   label?: string;
   help?: string;
+  /** Shown beside a `bool` control while it is on: a switch that weakens
+   * something, such as a Sign-in provider's "allow unencrypted connection". */
+  warning?: string;
   required?: boolean;
   /** The value used when nothing is filled in, as JSON of this field's own type. */
   default?: unknown;

@@ -203,6 +203,30 @@ describe("a plugin's manifest-declared settings form", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("shows a switch's warning beside it while the switch is on", async () => {
+    const warning = "Passwords will cross the network unencrypted.";
+    const p = plugin({
+      settingsSchema: [
+        {
+          key: "socket_allow_plaintext",
+          type: "bool",
+          label: "Allow unencrypted connection (plaintext passwords)",
+          warning,
+        },
+      ],
+      settings: { values: {}, secrets: {} },
+    });
+    render(<PluginSettingsForm plugin={p} onSaved={() => {}} />);
+
+    const row = screen.getByTestId("plugin-field-example-source-socket_allow_plaintext-row");
+    expect(row.textContent).not.toContain(warning);
+    await userEvent.click(screen.getByTestId("plugin-field-example-source-socket_allow_plaintext"));
+    expect(
+      screen.getByTestId("plugin-field-example-source-socket_allow_plaintext-warning").textContent,
+    ).toBe(warning);
+    expect(row.textContent).toContain(warning);
+  });
+
   it("says what it cannot draw rather than drawing the wrong control", () => {
     const p = plugin({
       settingsSchema: [{ key: "palette", type: "colour-wheel", label: "Palette" }],

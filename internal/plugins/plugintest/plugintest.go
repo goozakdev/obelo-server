@@ -499,3 +499,17 @@ func RedirectSignInManifest(id, authorize string) pluginapi.Manifest {
 // `client_secret` setting, marked "the guest was handed", and then fails the
 // call with the same in its error.
 const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"
+
+// SignInSocketScript, as the prefix of a Sign-in provider's `accounts` value, is
+// a directory that runs the `|`-separated socket steps after it and answers
+// accepted, subject "socket", with one group per step saying what the host
+// answered (see the guest's runSocketScript for the steps and the outcomes).
+const SignInSocketScript = "socket:"
+
+// SocketSignInManifest is SignInManifest asking for the socket grant, whose
+// directory runs script (see SignInSocketScript).
+func SocketSignInManifest(id, script string) pluginapi.Manifest {
+	m := SignInManifest(id, SignInSocketScript+script)
+	m.Provides[0].Socket = true
+	return m
+}

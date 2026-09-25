@@ -117,6 +117,7 @@ func (g *guestSignInProvider) CheckPassword(ctx context.Context, req pluginapi.S
 		describe:      "password sign-in",
 		noStrike:      true,
 		queueInBudget: true,
+		socket:        true,
 	}
 	if err := g.p.callGuestUnder(ctx, policy, exportSignInPassword, "", buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
@@ -168,6 +169,7 @@ func (g *guestSignInProvider) redirectPolicy(describe string) callPolicy {
 		describe:      describe,
 		noStrike:      true,
 		queueInBudget: true,
+		socket:        true,
 	}
 }
 

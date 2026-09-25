@@ -34,6 +34,21 @@ func hostKVDelete(ptr, n uint32) uint64
 //go:wasmimport obelo settings_get
 func hostSettingsGet() uint64
 
+//go:wasmimport obelo socket
+func hostSocket(ptr, n uint32) uint64
+
+// Socket is one request to the socket host function (ADR-0064), for a Sign-in
+// provider whose manifest declares socket, during a sign-in call. It is not on
+// [Host]: no other plugin may use it. The error is only the ABI failing; a
+// refusal or a network failure is in the response.
+func Socket(req pluginapi.SocketRequest) (pluginapi.SocketResponse, error) {
+	var resp pluginapi.SocketResponse
+	if !hostRoundTrip(hostSocket, req, &resp) {
+		return pluginapi.SocketResponse{}, errHostSilent
+	}
+	return resp, nil
+}
+
 // errHostSilent is the one error [Host.Fetch] returns: the host function answered
 // 0, which means the ABI itself went wrong rather than the request failing. A
 // plugin cannot do anything about it and should report it and stop.

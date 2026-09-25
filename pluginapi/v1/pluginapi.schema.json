@@ -80,6 +80,17 @@
         "integer"
       ]
     },
+    "SocketOp": {
+      "type": "string",
+      "description": "What one request to the socket host function asks for: open a connection to the operator's address, write to it, read from it, upgrade it to TLS in place, or close it.",
+      "enum": [
+        "open",
+        "write",
+        "read",
+        "starttls",
+        "close"
+      ]
+    },
     "EventType": {
       "type": "string",
       "description": "One of the curated terminal events an Event sink may be told about. The set is closed and grows by decision: a translator that cannot derive an event honestly is a reason not to have it.",
@@ -1218,6 +1229,9 @@
         },
         "idToken": {
           "$ref": "#/$defs/ManifestIDToken"
+        },
+        "socket": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1287,6 +1301,9 @@
           "type": "string"
         },
         "help": {
+          "type": "string"
+        },
+        "warning": {
           "type": "string"
         },
         "required": {
@@ -2031,6 +2048,62 @@
       "required": [
         "ok"
       ]
+    },
+    "SocketRequest": {
+      "type": "object",
+      "description": "One request to the socket host function, which only a Sign-in provider declaring socket may use, and only during a sign-in call (ADR-0064). open connects to the host:port the OPERATOR typed into the Plugin's settings: address may repeat it and any other address is refused. The host dials, encrypts and verifies TLS itself; the guest reads and writes its protocol's plaintext. A handle is valid only inside the call that opened it.",
+      "properties": {
+        "op": {
+          "$ref": "#/$defs/SocketOp"
+        },
+        "address": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "max": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    "SocketResponse": {
+      "type": "object",
+      "description": "What one socket request answers. refused is the host declining, error is the network or the far end failing — both in the host's own words, never to be branched on — and otherwise the op did what it asked. data is the protocol's plaintext, never a TLS record. upgradePending on open says the operator chose StartTLS: send your protocol's upgrade request, then starttls.",
+      "properties": {
+        "handle": {
+          "type": "integer"
+        },
+        "encrypted": {
+          "type": "boolean"
+        },
+        "upgradePending": {
+          "type": "boolean"
+        },
+        "written": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "eof": {
+          "type": "boolean"
+        },
+        "refused": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      }
     }
   }
 }

@@ -320,6 +320,21 @@ func misbehave(req deliverRequest) (uint64, bool) {
 		// A host the manifest DOES allowlist, whose address is one no plugin may
 		// reach. The allowlist is a claim; the address rule is the answer.
 		return reply(reportRefusal(fetch(fetchRequest{URL: "http://169.254.169.254/latest/meta-data/"}))), true
+	case "socket":
+		// A socket to the receiver's own address, from a call that is not a
+		// sign-in call. The host must refuse it before anything is dialled.
+		u, err := url.Parse(req.Settings.URL)
+		if err != nil {
+			return fail(err.Error()), true
+		}
+		resp := hostSocketCall(socketRequest{Op: "open", Address: u.Host})
+		switch {
+		case resp.Refused != "":
+			return reply(deliverResponse{Error: "refused: " + resp.Refused}), true
+		case resp.Error != "":
+			return reply(deliverResponse{Error: "error: " + resp.Error}), true
+		}
+		return reply(deliverResponse{Error: "the host opened a socket it should have refused, handle " + itoa(resp.Handle)}), true
 	}
 	return 0, false
 }
@@ -1428,6 +1443,11 @@ func signInPassword(ptr, n uint32) uint64 {
 	case accounts == SignInLogsThePassword:
 		logLine(levelInfo, "the password is "+call.Request.Password)
 		return reply(signInPasswordResponse{})
+	case strings.HasPrefix(accounts, SignInSocketScript):
+		return reply(signInPasswordResponse{Accepted: true, Identity: &signInIdentity{
+			Subject: "socket",
+			Groups:  runSocketScript(strings.TrimPrefix(accounts, SignInSocketScript)),
+		}})
 	}
 	for _, entry := range strings.Split(accounts, ";") {
 		f := strings.Split(entry, ":")
@@ -1656,4 +1676,140 @@ func signInExchange(ptr, n uint32) uint64 {
 	resp.Accepted = true
 	resp.Identity = id
 	return reply(resp)
+}
+
+// =============================================================================
+// The socket grant (ADR-0064).
+// =============================================================================
+//
+// A Sign-in provider that declares `socket` may open a TCP connection, during a
+// sign-in call, to the host:port the operator typed — and nowhere else. The host
+// dials, encrypts and verifies; this side reads and writes the plaintext of the
+// protocol it speaks.
+//
+//	socket(ptr u32, len u32) -> i64   a SocketRequest in, a SocketResponse out
+//
+// SignInSocketScript, as the prefix of the `accounts` value, is a directory that
+// runs the `|`-separated steps after it and answers accepted, subject "socket",
+// with one group per step saying what the host answered:
+//
+//	open           open the operator's address      ok:h=<handle>[:tls][:upgrade]
+//	open=ADDR      open, naming ADDR
+//	write=TEXT     write TEXT on the current handle ok:<bytes written>
+//	read           read once                        ok:<data>[:eof]
+//	read=N         read once, asking for at most N bytes
+//	starttls       upgrade the current handle       ok[:tls]
+//	close          close the current handle         ok
+//	keep           remember the current handle for a LATER call
+//	kept           make the remembered handle the current one
+//	hang           never return
+//
+// A refusal answers "refused" and a failure "error", and the step after it runs
+// anyway: a handle an open did not answer is 0, which the host refuses.
+
+const SignInSocketScript = "socket:"
+
+//go:wasmimport obelo socket
+func hostSocket(ptr, n uint32) uint64
+
+type socketRequest struct {
+	Op      string `json:"op"`
+	Address string `json:"address,omitempty"`
+	Handle  int    `json:"handle,omitempty"`
+	Data    []byte `json:"data,omitempty"`
+	Max     int    `json:"max,omitempty"`
+}
+
+type socketResponse struct {
+	Handle         int    `json:"handle,omitempty"`
+	Encrypted      bool   `json:"encrypted,omitempty"`
+	UpgradePending bool   `json:"upgradePending,omitempty"`
+	Written        int    `json:"written,omitempty"`
+	Data           []byte `json:"data,omitempty"`
+	EOF            bool   `json:"eof,omitempty"`
+	Refused        string `json:"refused,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
+// keptHandle outlives the call that set it: this instance's memory does. The host
+// must not let it name anything in the next call.
+var keptHandle int
+
+func hostSocketCall(req socketRequest) socketResponse {
+	var resp socketResponse
+	if !hostRoundTrip(hostSocket, req, &resp) {
+		return socketResponse{Error: "the host answered nothing"}
+	}
+	return resp
+}
+
+func runSocketScript(script string) []string {
+	var out []string
+	handle := 0
+	for _, step := range strings.Split(script, "|") {
+		op, arg, _ := strings.Cut(step, "=")
+		var resp socketResponse
+		switch op {
+		case "open":
+			resp = hostSocketCall(socketRequest{Op: "open", Address: arg})
+			handle = resp.Handle
+		case "write":
+			resp = hostSocketCall(socketRequest{Op: "write", Handle: handle, Data: []byte(arg)})
+		case "read":
+			limit := 0
+			for _, d := range arg {
+				limit = limit*10 + int(d-'0')
+			}
+			resp = hostSocketCall(socketRequest{Op: "read", Handle: handle, Max: limit})
+		case "starttls":
+			resp = hostSocketCall(socketRequest{Op: "starttls", Handle: handle})
+		case "close":
+			resp = hostSocketCall(socketRequest{Op: "close", Handle: handle})
+		case "keep":
+			keptHandle = handle
+			out = append(out, "ok")
+			continue
+		case "kept":
+			handle = keptHandle
+			out = append(out, "ok")
+			continue
+		case "hang":
+			for {
+				spun++
+			}
+		default:
+			out = append(out, "unknown step "+op)
+			continue
+		}
+		out = append(out, socketOutcome(op, resp))
+	}
+	return out
+}
+
+func socketOutcome(op string, resp socketResponse) string {
+	switch {
+	case resp.Refused != "":
+		return "refused"
+	case resp.Error != "":
+		return "error"
+	}
+	out := "ok"
+	switch op {
+	case "open":
+		out += ":h=" + itoa(resp.Handle)
+	case "write":
+		out += ":" + itoa(resp.Written)
+	case "read":
+		out += ":" + string(resp.Data)
+		if resp.EOF {
+			out += ":eof"
+		}
+	}
+	if resp.Encrypted {
+		out += ":tls"
+	}
+	if resp.UpgradePending {
+		out += ":upgrade"
+	}
+	return out
 }
