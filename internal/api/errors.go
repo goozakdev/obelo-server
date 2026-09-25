@@ -69,6 +69,15 @@ const (
 	// codeSignInRefused (401) is every refused redirect sign-in, whichever check
 	// refused it (ADR-0063 decision 2).
 	codeSignInRefused = "SIGN_IN_REFUSED"
+	// codeExternalIdentityHeld (409): the External identity a User tried to
+	// attach from their profile already belongs to a different User, and an
+	// attach never moves or shares one (ADR-0063 decision 3).
+	codeExternalIdentityHeld = "EXTERNAL_IDENTITY_HELD"
+	// codeReauthRequired (403): an attach carried no proof the caller is the
+	// User — no Local password, a wrong one, or no live re-auth grant of theirs
+	// from this session — or a re-auth came back as an identity they do not
+	// hold. The session itself is still good.
+	codeReauthRequired = "REAUTH_REQUIRED"
 	// Device authorization grant (ADR-0036). The first four are the RFC 8628 poll
 	// states, respelled into this envelope's SCREAMING_SNAKE vocabulary — the
 	// state machine is the RFC's, the wire spelling is ours, because a client

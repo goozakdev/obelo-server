@@ -169,3 +169,89 @@ func (s *Service) resolveExternalIdentity(providerID string, answer ExternalAnsw
 	}
 	return user, nil
 }
+
+// Attaching an External identity (ADR-0063 decision 3): the ONE way an existing
+// User gains one. The User is the caller, signed in as themselves; the identity
+// is whatever a Sign-in provider just vouched for, by either flow. It never mints
+// a Member and is never the username collision, because nothing resolves by
+// username here — and it never moves an identity: one another User holds is
+// ErrExternalIdentityHeld, and neither User's identities change.
+
+// ErrExternalIdentityHeld: the identity being attached already belongs to a
+// different User. An External identity is held by exactly one User, and an
+// attach neither reassigns nor shares it.
+var ErrExternalIdentityHeld = errors.New("auth: that external identity is held by another user")
+
+// ErrUnknownSignInProvider: an attach named no enabled password-flow Sign-in
+// provider.
+var ErrUnknownSignInProvider = errors.New("auth: no such password sign-in provider")
+
+// AttachExternal links the answer providerID vouched for to the existing User
+// userID. A `remote` User is a linked Server, which may never sign in as a person
+// (ADR-0054), so it may not hold an identity that would let it: ErrForbidden.
+func (s *Service) AttachExternal(userID, providerID string, answer ExternalAnswer) error {
+	user, err := s.store.UserByID(userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if user.Role == RoleRemote {
+		return ErrForbidden
+	}
+	err = s.store.AttachExternalIdentity(user.ID, providerID, answer.Subject, answer.Username, answer.Groups)
+	if errors.Is(err, store.ErrExternalIdentityTaken) {
+		return ErrExternalIdentityHeld
+	}
+	return err
+}
+
+// ExternalIdentities lists the External identities userID holds, oldest first.
+func (s *Service) ExternalIdentities(userID string) ([]store.ExternalIdentity, error) {
+	return s.store.ExternalIdentitiesByUser(userID)
+}
+
+// AttachWithPassword asks the one password-flow Sign-in provider providerID
+// about a credential and, on an accepted answer, attaches it to userID. It
+// needs proof first — see reauth.go — and only then puts the password to the
+// directory, exactly as a login does, so it is limited and charged exactly as a
+// login is: the same counters, keyed the same way, or it would be the way round
+// them. A rejection is ErrInvalidCredentials.
+func (s *Service) AttachWithPassword(ctx context.Context, userID, session string, proof Reauth, providerID, username, password, clientIP string) (ExternalAnswer, error) {
+	if err := s.CheckReauth(ctx, userID, session, proof, clientIP); err != nil {
+		return ExternalAnswer{}, err
+	}
+	answer, err := s.checkWithProvider(ctx, providerID, username, password, clientIP)
+	if err != nil {
+		return ExternalAnswer{}, err
+	}
+	if err := s.AttachExternal(userID, providerID, answer); err != nil {
+		return ExternalAnswer{}, err
+	}
+	return answer, nil
+}
+
+// checkWithProvider asks the one password-flow Sign-in provider providerID
+// about a credential, limited and charged as a login is.
+func (s *Service) checkWithProvider(ctx context.Context, providerID, username, password, clientIP string) (ExternalAnswer, error) {
+	var provider PasswordProvider
+	for _, p := range s.passwordProviders() {
+		if p.ID() == providerID {
+			provider = p
+			break
+		}
+	}
+	if provider == nil {
+		return ExternalAnswer{}, ErrUnknownSignInProvider
+	}
+	if err := s.refuseLogin(username, clientIP); err != nil {
+		return ExternalAnswer{}, err
+	}
+	answer, ok := provider.CheckPassword(ctx, username, password)
+	if !ok {
+		s.chargeLoginFailure(username, clientIP)
+		return ExternalAnswer{}, ErrInvalidCredentials
+	}
+	return answer, nil
+}

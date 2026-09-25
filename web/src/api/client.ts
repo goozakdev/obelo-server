@@ -149,6 +149,10 @@ import type {
   RedirectSignInProvidersView,
   RedirectSignInCallbackRequest,
   MarkerAutoSkip,
+  ExternalIdentity,
+  ExternalIdentitiesView,
+  AttachProof,
+  ReauthGrant,
 } from "./types";
 import type { Lyrics } from "./types";
 
@@ -2539,6 +2543,91 @@ export class ApiClient {
     });
     this.setToken(res.token);
     return res;
+  }
+
+  /** `GET /api/v1/auth/external-identities` — the caller's own External
+   * identities, and the Sign-in providers they can attach one from. */
+  listExternalIdentities(signal?: AbortSignal): Promise<ExternalIdentitiesView> {
+    return this.request<ExternalIdentitiesView>("/auth/external-identities", { signal });
+  }
+
+  /** `POST /api/v1/auth/external-identities/password` — attach the identity a
+   * password-flow provider vouches for to the caller, with `proof` that the
+   * caller is the User. A 401 is the provider refusing those credentials, not a
+   * session expiry. */
+  async attachPasswordIdentity(
+    provider: string,
+    username: string,
+    password: string,
+    proof: AttachProof,
+    signal?: AbortSignal,
+  ): Promise<ExternalIdentity> {
+    const res = await this.request<{ identity: ExternalIdentity }>("/auth/external-identities/password", {
+      method: "POST",
+      body: { provider, username, password, ...proof },
+      signal,
+      skipUnauthorizedHandler: true,
+    });
+    return res.identity;
+  }
+
+  /** `POST /api/v1/auth/redirect/attach/start` — start a round trip that attaches
+   * the identity it comes back with to the caller, with `proof` that the caller
+   * is the User; answers the provider URL. */
+  async startAttachRedirect(provider: string, proof: AttachProof, signal?: AbortSignal): Promise<string> {
+    const res = await this.request<{ url: string }>("/auth/redirect/attach/start", {
+      method: "POST",
+      body: { provider, ...proof },
+      signal,
+    });
+    return res.url;
+  }
+
+  /** `POST /api/v1/auth/redirect/attach/callback` — finish an attach with what
+   * the provider sent the browser back with. A 401 is a refused round trip. */
+  async completeAttachRedirect(state: string, code: string, signal?: AbortSignal): Promise<ExternalIdentity> {
+    const res = await this.request<{ identity: ExternalIdentity }>("/auth/redirect/attach/callback", {
+      method: "POST",
+      body: { state, code },
+      signal,
+      skipUnauthorizedHandler: true,
+    });
+    return res.identity;
+  }
+
+  /** `POST /api/v1/auth/reauth/password` — confirm it is the caller through a
+   * password-flow sign-in they already hold; answers a re-auth grant. A 401 is
+   * the provider refusing those credentials, not a session expiry. */
+  reauthPassword(provider: string, username: string, password: string, signal?: AbortSignal): Promise<ReauthGrant> {
+    return this.request<ReauthGrant>("/auth/reauth/password", {
+      method: "POST",
+      body: { provider, username, password },
+      signal,
+      skipUnauthorizedHandler: true,
+    });
+  }
+
+  /** `POST /api/v1/auth/redirect/reauth/start` — start a round trip that confirms
+   * it is the caller through a redirect sign-in they already hold. */
+  async startReauthRedirect(provider: string, signal?: AbortSignal): Promise<string> {
+    const res = await this.request<{ url: string }>("/auth/redirect/reauth/start", {
+      method: "POST",
+      body: { provider },
+      signal,
+    });
+    return res.url;
+  }
+
+  /** `POST /api/v1/auth/redirect/reauth/callback` — finish a re-auth with what
+   * the provider sent the browser back with; answers a re-auth grant. A 401 is a
+   * refused round trip. */
+  completeReauthRedirect(state: string, code: string, signal?: AbortSignal): Promise<ReauthGrant> {
+    return this.request<ReauthGrant>("/auth/redirect/reauth/callback", {
+      method: "POST",
+      body: { state, code },
+      signal,
+      skipUnauthorizedHandler: true,
+    });
   }
 
   // --- Core request --------------------------------------------------------

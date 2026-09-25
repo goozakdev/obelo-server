@@ -595,6 +595,24 @@ func Handler(deps Deps) http.Handler {
 		requireMethod(http.MethodPost, handleRedirectSignInStart(deps)))
 	mux.HandleFunc("/auth/redirect/callback",
 		requireMethod(http.MethodPost, handleRedirectSignInCallback(deps)))
+	// Attaching an External identity to the caller's own User (ADR-0063
+	// decision 3), by either flow, and the re-authentication an attach needs.
+	// Authenticated: the User is always the caller. See
+	// external_identity_handlers.go.
+	mux.HandleFunc("/auth/external-identities",
+		requireMethod(http.MethodGet, requireAuth(deps.Auth, handleExternalIdentities(deps))))
+	mux.HandleFunc("/auth/external-identities/password",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleAttachPasswordIdentity(deps))))
+	mux.HandleFunc("/auth/redirect/attach/start",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleAttachRedirectStart(deps))))
+	mux.HandleFunc("/auth/redirect/attach/callback",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleAttachRedirectCallback(deps))))
+	mux.HandleFunc("/auth/reauth/password",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleReauthPassword(deps))))
+	mux.HandleFunc("/auth/redirect/reauth/start",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleReauthRedirectStart(deps))))
+	mux.HandleFunc("/auth/redirect/reauth/callback",
+		requireMethod(http.MethodPost, requireAuth(deps.Auth, handleReauthRedirectCallback(deps))))
 
 	// GET/PUT /me/marker-auto-skip: the caller's own auto-skip kinds (ADR-0065 §6).
 	// Any authenticated User, and only ever their own.

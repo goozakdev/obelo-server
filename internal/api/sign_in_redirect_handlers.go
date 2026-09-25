@@ -106,22 +106,28 @@ func handleRedirectSignInStart(deps Deps) http.HandlerFunc {
 			return
 		}
 		started, err := deps.SignInRedirect.Start(r.Context(), req.Provider, externalBaseURL(r)+signInCallbackPath, clientIP(r))
-		switch {
-		case errors.Is(err, signin.ErrUnknownRedirectProvider):
-			writeError(w, http.StatusNotFound, codeNotFound, "no such sign-in provider", nil)
-			return
-		case errors.Is(err, signin.ErrRedirectNotConfigured):
-			writeError(w, http.StatusServiceUnavailable, codeServiceUnavailable,
-				"this sign-in provider is not configured yet", nil)
-			return
-		case err != nil:
-			writeError(w, http.StatusBadGateway, codeServiceUnavailable,
-				"the sign-in provider could not be reached", nil)
-			return
-		}
-		setSignInBindingCookie(w, r, started.Binding, signInBindingCookieMaxAge)
-		writeJSON(w, http.StatusOK, redirectStartResponse{URL: started.URL})
+		writeRedirectStart(w, r, started, err)
 	}
+}
+
+// writeRedirectStart answers a start — a sign-in's or an attach's — with the
+// authorize URL and the binding cookie, or with what went wrong.
+func writeRedirectStart(w http.ResponseWriter, r *http.Request, started signin.Started, err error) {
+	switch {
+	case errors.Is(err, signin.ErrUnknownRedirectProvider):
+		writeError(w, http.StatusNotFound, codeNotFound, "no such sign-in provider", nil)
+		return
+	case errors.Is(err, signin.ErrRedirectNotConfigured):
+		writeError(w, http.StatusServiceUnavailable, codeServiceUnavailable,
+			"this sign-in provider is not configured yet", nil)
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, codeServiceUnavailable,
+			"the sign-in provider could not be reached", nil)
+		return
+	}
+	setSignInBindingCookie(w, r, started.Binding, signInBindingCookieMaxAge)
+	writeJSON(w, http.StatusOK, redirectStartResponse{URL: started.URL})
 }
 
 type redirectCallbackRequest struct {

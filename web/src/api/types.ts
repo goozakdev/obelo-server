@@ -3204,6 +3204,38 @@ export interface RedirectSignInCallbackRequest {
   device: DeviceInput;
 }
 
+/** One External identity the signed-in User holds (ADR-0063 decision 3): which
+ * Sign-in provider vouches for it, and the name that provider last knew them by. */
+export interface ExternalIdentity {
+  provider: string;
+  providerName: string;
+  username: string;
+}
+
+/** `GET /api/v1/auth/external-identities` — the caller's own External
+ * identities, and the providers of each flow they can attach one from. */
+export interface ExternalIdentitiesView {
+  identities: ExternalIdentity[];
+  /** Whether the caller has a Local password — then it is what an attach
+   * carries as proof; without one, a re-auth grant is. */
+  hasPassword: boolean;
+  password: SignInProvider[];
+  redirect: SignInProvider[];
+}
+
+/** The proof an attach carries that the caller is the User: their Local
+ * password, or — for a User without one — a re-auth grant. */
+export interface AttachProof {
+  currentPassword?: string;
+  reauthGrant?: string;
+}
+
+/** A re-auth grant: good once, from this session, for `expiresIn` seconds. */
+export interface ReauthGrant {
+  grant: string;
+  expiresIn: number;
+}
+
 /** A TV Library's Marker detection toggle (ADR-0065 §4): whether the server
  * listens to its Seasons after a scan to find Intros and Credits. Only a TV
  * Library has one; any other kind answers 404 — absent, not off. */
