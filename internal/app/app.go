@@ -162,6 +162,12 @@ type App struct {
 	// the Broker goes, so a last state transition still has somewhere to land.
 	linkSyncer *link.Syncer
 
+	// signInRecheck re-checks External identities between sign-ins (ADR-0063
+	// decision 4). Its loop has its own cancel, stopped by Close.
+	signInRecheck *signin.Rechecker
+	recheckCancel context.CancelFunc
+	recheckDone   chan struct{}
+
 	cancel          context.CancelFunc
 	schedDone       chan struct{}
 	reaperDone      chan struct{}
@@ -1075,6 +1081,12 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	signInSource := signin.NewSource(registry, db)
 	authSvc.UseSignInProviders(signInSource)
 
+	// The periodic re-check of External identities (ADR-0063 decision 4), over
+	// the same registry, applying Group mappings and revoking sessions through
+	// the auth service a sign-in uses.
+	signInRecheck := signin.NewRechecker(registry, db, authSvc)
+	app.signInRecheck = signInRecheck
+
 	apiHandler := api.Handler(api.Deps{
 		Meta:          meta,
 		Auth:          authSvc,
@@ -1163,6 +1175,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 		// The redirect flow of the same Sign-in providers, over the same registry.
 		SignInRedirect: signin.NewRedirects(registry),
+		// Group mappings, their re-check and "re-sync now".
+		SignInRecheck: signInRecheck,
+		GroupMappings: db,
 		// Each User's auto-skip kinds (ADR-0065 §6).
 		MarkerAutoSkip: db,
 	})
@@ -1247,6 +1262,17 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			"their libraries stay, marked unavailable", err)
 	}
 
+	// The sign-in re-check (ADR-0063 decision 4). Started unconditionally, like
+	// the Link syncer: its interval is each provider's own, read on every pass,
+	// and a server with no External identity asks nobody.
+	recheckCtx, recheckCancel := context.WithCancel(context.Background())
+	app.recheckCancel = recheckCancel
+	app.recheckDone = make(chan struct{})
+	go func() {
+		defer close(app.recheckDone)
+		signInRecheck.Run(recheckCtx, signInRecheckTick)
+	}()
+
 	// An ENABLED Tailnet node connects at boot (ADR-0043). This is the whole point
 	// of persisting the desire rather than treating connect as a live-only action:
 	// otherwise a power cut strands the operator outside a house they cannot reach,
@@ -1272,6 +1298,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 	return app, nil
 }
+
+// signInRecheckTick is how often the sign-in re-check looks for identities
+// that are due. Each provider's interval decides which are; this only bounds how
+// late past it one is asked.
+const signInRecheckTick = 5 * time.Minute
 
 // runSessionReaper sweeps idle Playback sessions on each tick until ctx is
 // cancelled, ending any whose last progress report is older than idle. Errors
@@ -1684,6 +1715,11 @@ func (a *App) sweepEnrich(ctx context.Context) {
 // enrich), waits for each to exit, closes the realtime Broker (releasing any SSE
 // subscribers), and closes the database.
 func (a *App) Close() error {
+	if a.recheckCancel != nil {
+		a.recheckCancel()
+		<-a.recheckDone
+		a.recheckCancel = nil
+	}
 	if a.cancel != nil {
 		a.cancel()
 		if a.schedDone != nil {

@@ -26,7 +26,9 @@ func (db *DB) ExternalIdentityUser(pluginID, subject string) (User, error) {
 }
 
 // RecordExternalSignIn remembers what a provider said about a returning identity:
-// its current username at the source and its groups. Neither is resolved by.
+// its current username at the source and its groups. Neither is resolved by. A
+// sign-in is the provider answering, so a pending re-check retry and the count
+// of failed verifications are cleared.
 func (db *DB) RecordExternalSignIn(pluginID, subject, username string, groups []string) error {
 	g, err := encodeGroups(groups)
 	if err != nil {
@@ -34,7 +36,7 @@ func (db *DB) RecordExternalSignIn(pluginID, subject, username string, groups []
 	}
 	res, err := db.Exec(
 		`UPDATE external_identities
-		    SET username = ?, groups = ?, last_seen_at = datetime('now')
+		    SET username = ?, groups = ?, last_seen_at = datetime('now'), retry_at = '', check_failures = 0
 		  WHERE plugin_id = ? AND subject = ?`, username, g, pluginID, subject)
 	if err != nil {
 		return fmt.Errorf("store: recording external sign-in: %w", err)

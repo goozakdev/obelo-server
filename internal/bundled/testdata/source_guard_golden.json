@@ -1,38 +1,38 @@
 {
   "anidb": {
-    "version": "1.0.8",
-    "hash": "31d7aed86c809d7cd4a83b15a1b468a42668b61a4df4b41d152975aba5e18795"
+    "version": "1.0.9",
+    "hash": "985040a3ddba53218dd95ea9f71ce85f9e1dcd635ae62797ebe37f2e4133cee8"
   },
   "fanarttv": {
-    "version": "1.0.8",
-    "hash": "d947baef60329b2c53ea7dbd740c9630a9057f851f7d7b46a1406919e62dd279"
+    "version": "1.0.9",
+    "hash": "c0e2cc7e458abf89cb45a46f409a56008686b98187fe148120865fb5650fbea7"
   },
   "musicbrainz": {
-    "version": "1.1.7",
-    "hash": "1afd0c712fdd5a8f5c06b1f6130a805ad9ee0c686e7fa1372bbfbdc9a32a9af3"
+    "version": "1.1.8",
+    "hash": "afcb6270d8c09ad27241cc189ec83fb34895618cbf08588dec9592fd15440c1b"
   },
   "oidc": {
-    "version": "1.0.2",
-    "hash": "c53f22cb71cb13b8c490cde770f28c48cf4872c1fbbd4d4e731b3339544e82ef"
+    "version": "1.0.5",
+    "hash": "48c9f4198664e715a98915ee528da300082aaa7b965eed5ac0af04b90af405ec"
   },
   "omdb": {
-    "version": "1.0.7",
-    "hash": "2af5b2a82b7d3a59668249d7d85ec7a69a2a3c22a4969807c843f01c33408456"
+    "version": "1.0.8",
+    "hash": "a76ed7b61257047a11bb62ee84e7aa773cc38dc625d3a6078af8d9e80584379b"
   },
   "opensubtitles": {
-    "version": "1.0.7",
-    "hash": "6ce7e901b5923d6e359c169bfc876579291aee3c3bab5aac8e6861f4e25c4938"
+    "version": "1.0.8",
+    "hash": "e9ac919e4e923a76f114b4dbc7cceeb0135525fd1e75f46dc2fbec44a8aead28"
   },
   "theaudiodb": {
-    "version": "1.0.7",
-    "hash": "244e40ca3c4f1321f7191480b3841bca023300e52e65a02e8146dc7dd45416fb"
+    "version": "1.0.8",
+    "hash": "77bb1520d46d7b7848d853ed6b1f631c8f9959d79669d0d0264f81b7387902d9"
   },
   "thetvdb": {
-    "version": "1.0.7",
-    "hash": "ba9b4a0f3bc9cb18939bb4d6c38bcc77cef991d114ac7f7ba1eaa0b6cc5ea009"
+    "version": "1.0.8",
+    "hash": "bee46e035fdc333c2602ca0c728d2a91f7f79097405d2bf173cf05d6fd5e3da0"
   },
   "tmdb": {
-    "version": "1.0.7",
-    "hash": "f84c5c9b6244180498f0fcd72bef108d01d592d9090fa06772b7eac713ba4320"
+    "version": "1.0.8",
+    "hash": "c51c526097bec1e125ed7231e8d0ccfcc16d5ee359082b4327eca3edbe729f79"
   }
 }

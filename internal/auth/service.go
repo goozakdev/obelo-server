@@ -97,6 +97,13 @@ type Store interface {
 	CreateExternalMember(id, username, pluginID, subject, providerUsername string, groups []string) (store.User, error)
 	AttachExternalIdentity(userID, pluginID, subject, providerUsername string, groups []string) error
 	ExternalIdentitiesByUser(userID string) ([]store.ExternalIdentity, error)
+	SetExternalRefreshToken(pluginID, subject, token string) error
+	// Group mapping (ADR-0063 decisions 4 and 5). See group_mapping.go.
+	GroupMapping(pluginID string) ([]store.GroupMappingRule, error)
+	ApplyMappedAccess(userID, role string, libraryIDs []string) (bool, error)
+	CountLocalPasswordAdmins() (int, error)
+	DeleteUserKeepingAnAdmin(userID string) error
+	DeleteSessionsForUser(userID string) error
 }
 
 // Common service errors, mapped to HTTP envelopes by the api layer. They are
@@ -119,6 +126,11 @@ var (
 	// User is created remote and dies remote (→ 422 ROLE_CHANGE).
 	ErrRoleChange = errors.New("auth: cannot change a role to or from remote")
 )
+
+// ErrLastLocalPasswordAdmin: the change would leave no Admin holding a Local
+// password (ADR-0063 decision 5). It is an ErrLastAdmin, so every caller that
+// already refuses that one refuses this one the same way.
+var ErrLastLocalPasswordAdmin = fmt.Errorf("%w holding a local password", ErrLastAdmin)
 
 // Service implements the authentication operations. It holds the one-time claim
 // token in memory (see NewService) — there is no on-disk claim-token state.
@@ -517,16 +529,17 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 
 // passwordRuleAdmits is CreateUser's per-role password rule, and the only place
 // it is written. An Admin or a Member must have a password and a Remote User must
-// NOT (ADR-0054) — with ONE relaxation: a Member minted from a first-time
+// NOT (ADR-0054) — with ONE relaxation: a person minted from a first-time
 // External identity has no Local password, because its Sign-in provider is how
-// it signs in (ADR-0063). fromExternalIdentity is true only on that path
-// (sign_in.go); the Admin /users surface always asks with false, so an Admin
-// still cannot create a password-less Member by hand. An unknown role is never
-// admitted.
+// it signs in (ADR-0063), and is a Member until a Group mapping makes it an
+// Admin. fromExternalIdentity is true only on those paths (sign_in.go,
+// group_mapping.go); the Admin /users surface always asks with false, so an
+// Admin still cannot create a password-less Member or Admin by hand. An unknown
+// role is never admitted.
 func passwordRuleAdmits(role, password string, fromExternalIdentity bool) bool {
 	switch role {
 	case RoleAdmin:
-		return password != ""
+		return password != "" || fromExternalIdentity
 	case RoleMember:
 		return password != "" || fromExternalIdentity
 	case RoleRemote:
@@ -606,7 +619,13 @@ func CheckRoleChange(from, to string) error {
 
 // DeleteUser removes a User, cascading their Devices, tokens, and watch state.
 // It refuses to delete the final Admin (ErrLastAdmin) so the server can never be
-// orphaned. ErrUserNotFound for an unknown User.
+// orphaned, and the final Admin holding a Local password
+// (ErrLastLocalPasswordAdmin) so it can never be locked out by a directory that
+// is down (ADR-0063 decision 5). Counting Admins of any kind is not that guard: a
+// password-less Admin a Group mapping made counts as one, and could delete the
+// last Admin who can sign in with the network down. Deleting a password-less
+// Admin never lowers the count that matters, so only the first rule applies to
+// one. ErrUserNotFound for an unknown User.
 func (s *Service) DeleteUser(id string) error {
 	u, err := s.store.UserByID(id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -614,6 +633,15 @@ func (s *Service) DeleteUser(id string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if u.Role == RoleAdmin && u.PasswordHash != "" {
+		n, err := s.store.CountLocalPasswordAdmins()
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return ErrLastLocalPasswordAdmin
+		}
 	}
 	if u.Role == RoleAdmin {
 		n, err := s.store.CountAdmins()
@@ -624,9 +652,17 @@ func (s *Service) DeleteUser(id string) error {
 			return ErrLastAdmin
 		}
 	}
-	if err := s.store.DeleteUser(id); err != nil {
+	// The counts above answer for this delete alone; the one that deletes takes
+	// them again, so two deletes at once cannot both pass.
+	if err := s.store.DeleteUserKeepingAnAdmin(id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return ErrUserNotFound
+		}
+		if errors.Is(err, store.ErrWouldLeaveNoAdmin) {
+			if u.PasswordHash != "" {
+				return ErrLastLocalPasswordAdmin
+			}
+			return ErrLastAdmin
 		}
 		return err
 	}

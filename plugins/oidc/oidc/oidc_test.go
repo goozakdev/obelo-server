@@ -128,3 +128,78 @@ func TestAnUnconfiguredPluginRefuses(t *testing.T) {
 		t.Fatal("AuthorizeURL with no issuer answered no error")
 	}
 }
+
+// refreshing answers the discovery document and a token endpoint that hands
+// out the refresh token "rt-1" for a code, redeems only "rt-1", rotating it to
+// "rt-2", and refuses any other as invalid_grant.
+func refreshing(t *testing.T, idToken string, posted *url.Values) *sdktest.Host {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/application/o/obelo/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"issuer":                 issuer,
+			"authorization_endpoint": "https://auth.example.test/authorize/",
+			"token_endpoint":         "https://auth.example.test/token/",
+		})
+	})
+	mux.HandleFunc("/token/", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil || r.Method != http.MethodPost {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		*posted = r.PostForm
+		if r.PostForm.Get("grant_type") == "authorization_code" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at-1", "id_token": idToken, "refresh_token": "rt-1"})
+			return
+		}
+		if r.PostForm.Get("refresh_token") != "rt-1" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at-2", "id_token": idToken, "refresh_token": "rt-2"})
+	})
+	return sdktest.New(sdktest.WithHandler(mux), sdktest.WithSettings(pluginapi.Settings{Values: map[string]any{
+		"issuer": issuer, "client_id": "obelo", "client_secret": "shh",
+	}}))
+}
+
+func TestARefreshAnswersTheNewTokenAndTheRotatedRefreshToken(t *testing.T) {
+	var posted url.Values
+	token := unsignedToken(t, map[string]any{"sub": "token-sub"})
+	p := New(refreshing(t, token, &posted))
+	resp, err := p.Refresh(context.Background(), pluginapi.SignInRefreshRequest{RefreshToken: "rt-1"})
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if posted.Get("grant_type") != "refresh_token" || posted.Get("refresh_token") != "rt-1" ||
+		posted.Get("client_id") != "obelo" || posted.Get("client_secret") != "shh" {
+		t.Fatalf("token request = %v, want a refresh_token grant with the client's credentials", posted)
+	}
+	if resp.Status != pluginapi.SignInActive || resp.IDToken != token || resp.RefreshToken != "rt-2" {
+		t.Fatalf("refresh = %+v, want active with the raw token and rt-2", resp)
+	}
+}
+
+// TestARefusedRefreshGrantIsNoAnswerAboutTheIdentity: an issuer refuses an
+// expired or revoked refresh token as invalid_grant. That says the token is
+// dead, not that the person is: the refresh fails, which the host treats as
+// unreachable, and never answers gone, which would revoke every session.
+func TestARefusedRefreshGrantIsNoAnswerAboutTheIdentity(t *testing.T) {
+	var posted url.Values
+	p := New(refreshing(t, "", &posted))
+	resp, err := p.Refresh(context.Background(), pluginapi.SignInRefreshRequest{RefreshToken: "revoked"})
+	if err == nil || resp.Status == pluginapi.SignInGone || resp.Status == pluginapi.SignInDisabled {
+		t.Fatalf("refresh of a revoked token = %+v, %v; want an error and no status", resp, err)
+	}
+}
+
+func TestTheExchangeAnswersTheRefreshToken(t *testing.T) {
+	var posted url.Values
+	token := unsignedToken(t, map[string]any{"sub": "token-sub"})
+	p := New(refreshing(t, token, &posted))
+	resp, err := p.Exchange(context.Background(), pluginapi.SignInExchangeRequest{Code: "c", CodeVerifier: "v"})
+	if err != nil || !resp.Accepted || resp.RefreshToken != "rt-1" {
+		t.Fatalf("exchange = %+v, %v; want accepted with the refresh token rt-1", resp, err)
+	}
+}

@@ -128,6 +128,11 @@ type SignInExchangeResponse struct {
 	Accepted bool            `json:"accepted"`
 	Identity *SignInIdentity `json:"identity,omitempty"`
 	IDToken  string          `json:"idToken,omitempty"`
+	// RefreshToken is the refresh token the provider issued, when it issued one.
+	// The host stores it on the identity and hands it back to a provider that
+	// declares CapabilitySignInRefresh, to re-check the identity between
+	// sign-ins; it is never shown to anyone.
+	RefreshToken string `json:"refreshToken,omitempty"`
 }
 
 // SignInRedirectProvider is the Go call surface of the redirect flow. An error
@@ -150,4 +155,90 @@ type SignInAuthorizeCall struct {
 type SignInExchangeCall struct {
 	Request  SignInExchangeRequest `json:"request"`
 	Settings Settings              `json:"settings"`
+}
+
+// The RE-CHECK (ADR-0063 decision 4). Between sign-ins the host asks a provider
+// again about an identity it vouched for, so an Admin's Group mapping follows the
+// directory, and a person removed there loses their sessions here. A provider
+// answers through lookup(subject) (CapabilitySignInLookup) or by redeeming a
+// refresh token (CapabilitySignInRefresh); the host never stores a password to
+// do it.
+//
+// What the answer is worth is the host's: "gone" or "disabled" revokes every
+// session the User holds; an error, or a status the host does not know, is the
+// provider being unreachable, and changes nothing but when it is asked again.
+
+// SignInStatus is what a re-check says about an identity.
+type SignInStatus string
+
+const (
+	// SignInActive: the identity exists and may sign in. The answer's identity
+	// carries its groups now.
+	SignInActive SignInStatus = "active"
+	// SignInGone: the source no longer knows the identity.
+	SignInGone SignInStatus = "gone"
+	// SignInDisabled: the source knows the identity and refuses it.
+	SignInDisabled SignInStatus = "disabled"
+)
+
+// AllSignInStatuses is every SignInStatus, in declaration order.
+func AllSignInStatuses() []SignInStatus {
+	return []SignInStatus{SignInActive, SignInGone, SignInDisabled}
+}
+
+// SignInLookupRequest asks about one identity by the subject the provider
+// vouched for.
+type SignInLookupRequest struct {
+	Subject string `json:"subject"`
+}
+
+// SignInLookupResponse is what a lookup answers. Identity, with the identity's
+// groups now, is read only when Status is active, and its subject must be the
+// one asked about.
+type SignInLookupResponse struct {
+	Status   SignInStatus    `json:"status"`
+	Identity *SignInIdentity `json:"identity,omitempty"`
+}
+
+// SignInLookupProvider is the Go call surface of lookup(subject). An error is
+// the Plugin or its source failing, which the host treats as unreachable.
+type SignInLookupProvider interface {
+	Lookup(ctx context.Context, req SignInLookupRequest) (SignInLookupResponse, error)
+}
+
+// SignInLookupCall is what the host hands an INSTALLED Sign-in provider for one
+// lookup. The response is un-enveloped — a plain SignInLookupResponse.
+type SignInLookupCall struct {
+	Request  SignInLookupRequest `json:"request"`
+	Settings Settings            `json:"settings"`
+}
+
+// SignInRefreshRequest is the refresh token the provider handed back last.
+type SignInRefreshRequest struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
+// SignInRefreshResponse is what a refresh answers. When Status is active, a
+// provider that declares ID tokens must answer a fresh IDToken, which the host
+// verifies — signature, iss, aud, exp — and takes the subject and groups from;
+// a plain OAuth2 provider answers Identity instead. RefreshToken is the rotated
+// token, when the source rotated it.
+type SignInRefreshResponse struct {
+	Status       SignInStatus    `json:"status"`
+	Identity     *SignInIdentity `json:"identity,omitempty"`
+	IDToken      string          `json:"idToken,omitempty"`
+	RefreshToken string          `json:"refreshToken,omitempty"`
+}
+
+// SignInRefreshProvider is the Go call surface of a refresh. An error is the
+// Plugin or its source failing, which the host treats as unreachable.
+type SignInRefreshProvider interface {
+	Refresh(ctx context.Context, req SignInRefreshRequest) (SignInRefreshResponse, error)
+}
+
+// SignInRefreshCall is what the host hands an INSTALLED redirect provider for one
+// refresh. The response is un-enveloped — a plain SignInRefreshResponse.
+type SignInRefreshCall struct {
+	Request  SignInRefreshRequest `json:"request"`
+	Settings Settings             `json:"settings"`
 }

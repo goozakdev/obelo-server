@@ -500,6 +500,46 @@ func RedirectSignInManifest(id, authorize string) pluginapi.Manifest {
 // call with the same in its error.
 const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"
 
+// The re-check directories a `lookup` setting names (see LookupSignInManifest):
+// SignInLookupFails fails every re-check, and SignInLookupFetchesABlockedHost
+// fetches a host no manifest lists on every re-check, and fails.
+const (
+	SignInLookupFails               = "fail"
+	SignInLookupFetchesABlockedHost = "fetch-a-blocked-host"
+)
+
+// lookupField is the declared `lookup` setting a re-check is answered from:
+// `;`-separated `subject:status:groups` entries (groups `,`-separated), a
+// subject it does not list being gone.
+func lookupField(lookup string) pluginapi.SettingsField {
+	return pluginapi.SettingsField{
+		Key:     "lookup",
+		Type:    pluginapi.FieldString,
+		Label:   "Lookup",
+		Default: json.RawMessage(strconv.Quote(lookup)),
+	}
+}
+
+// LookupSignInManifest is SignInManifest also declaring sign-in-lookup, whose
+// re-checks are answered from the `lookup` setting (see lookupField).
+func LookupSignInManifest(id, accounts, lookup string) pluginapi.Manifest {
+	m := SignInManifest(id, accounts)
+	m.Provides[0].Capabilities = append(m.Provides[0].Capabilities, pluginapi.CapabilitySignInLookup)
+	m.Settings.Fields = append(m.Settings.Fields, lookupField(lookup))
+	return m
+}
+
+// RefreshingRedirectSignInManifest is RedirectSignInManifest also declaring
+// sign-in-refresh. A code prefixed `refresh|` hands back the refresh token
+// `rt|<subject>`, and a refresh is answered from the `lookup` setting (see
+// lookupField).
+func RefreshingRedirectSignInManifest(id, authorize, lookup string) pluginapi.Manifest {
+	m := RedirectSignInManifest(id, authorize)
+	m.Provides[0].Capabilities = append(m.Provides[0].Capabilities, pluginapi.CapabilitySignInRefresh)
+	m.Settings.Fields = append(m.Settings.Fields, lookupField(lookup))
+	return m
+}
+
 // SignInSocketScript, as the prefix of a Sign-in provider's `accounts` value, is
 // a directory that runs the `|`-separated socket steps after it and answers
 // accepted, subject "socket", with one group per step saying what the host

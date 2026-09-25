@@ -84,6 +84,16 @@ const (
 	// the round trip — the callback, state, PKCE and the nonce — and it is
 	// web-only (decision 8).
 	CapabilityRedirectSignIn Capability = "redirect-sign-in"
+	// CapabilitySignInLookup is a Sign-in provider answering lookup(subject):
+	// whether an identity it vouched for still exists, and its groups now, asked
+	// between sign-ins with nobody present (ADR-0063 decision 4). A provider that
+	// declares neither this nor CapabilitySignInRefresh is synced at sign-in only.
+	CapabilitySignInLookup Capability = "sign-in-lookup"
+	// CapabilitySignInRefresh is a redirect-flow Sign-in provider redeeming the
+	// refresh token its exchange handed back, for the same re-check. The host
+	// verifies the ID token a refresh answers exactly as it verifies one at
+	// sign-in.
+	CapabilitySignInRefresh Capability = "sign-in-refresh"
 )
 
 // Outcome is what happened, as a VALUE at the contract edge (ADR-0057 decision 2).

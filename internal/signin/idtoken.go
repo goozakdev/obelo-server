@@ -80,6 +80,18 @@ func newIDTokenVerifier() *idTokenVerifier {
 
 // verify checks raw against issuer, clientID and nonce and answers its claims.
 func (v *idTokenVerifier) verify(ctx context.Context, raw, issuer, clientID, nonce string) (idTokenClaims, error) {
+	return v.check(ctx, raw, issuer, clientID, nonce, false)
+}
+
+// verifyRefreshed checks an ID token a refresh answered, exactly as verify does
+// — signature, iss, aud, exp, nbf, iat — except the nonce: a refresh is no round
+// trip this server started, so there is none to compare, and OpenID Connect
+// has a refreshed token carry none of its own.
+func (v *idTokenVerifier) verifyRefreshed(ctx context.Context, raw, issuer, clientID string) (idTokenClaims, error) {
+	return v.check(ctx, raw, issuer, clientID, "", true)
+}
+
+func (v *idTokenVerifier) check(ctx context.Context, raw, issuer, clientID, nonce string, refreshed bool) (idTokenClaims, error) {
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
 		return idTokenClaims{}, errors.New("the ID token is not a compact JWS")
@@ -126,7 +138,7 @@ func (v *idTokenVerifier) verify(ctx context.Context, raw, issuer, clientID, non
 	if !contains(aud, clientID) || (len(aud) > 1 && c.AuthorizedParty != clientID) {
 		return idTokenClaims{}, errors.New("the ID token's aud does not name the configured client id")
 	}
-	if nonce == "" || c.Nonce != nonce {
+	if !refreshed && (nonce == "" || c.Nonce != nonce) {
 		return idTokenClaims{}, errors.New("the ID token's nonce is not the one this sign-in minted")
 	}
 	if c.Expiry == nil {
@@ -226,7 +238,20 @@ func (v *idTokenVerifier) issuerKeys(ctx context.Context, issuer string, refetch
 	return keys, true, nil
 }
 
-// fetchKeys reads the issuer's discovery document and the JWKS it names.
+// keysUnreachableError is a token that could not be checked at all, because the
+// issuer's discovery document or keys could not be fetched — the request failed,
+// or was answered with no 2xx: the issuer being unreachable, which says nothing
+// about the token. A document that was fetched and is no key set — not JSON,
+// the wrong shape, another issuer's, naming no JWKS — is not this: the issuer
+// answered, and a token its answer cannot verify is unverified.
+type keysUnreachableError struct{ err error }
+
+func (e keysUnreachableError) Error() string { return e.err.Error() }
+func (e keysUnreachableError) Unwrap() error { return e.err }
+
+// fetchKeys reads the issuer's discovery document and the JWKS it names. An
+// error it answers is a keysUnreachableError only when a document could not be
+// fetched.
 func (v *idTokenVerifier) fetchKeys(ctx context.Context, issuer string) ([]jwk, error) {
 	var doc struct {
 		Issuer  string `json:"issuer"`
@@ -250,6 +275,9 @@ func (v *idTokenVerifier) fetchKeys(ctx context.Context, issuer string) ([]jwk, 
 	return set.Keys, nil
 }
 
+// getJSON fetches target into out. A request that fails, or is answered with
+// no 2xx, is a keysUnreachableError; a document that arrived and does not decode
+// into out is not.
 func (v *idTokenVerifier) getJSON(ctx context.Context, target string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -258,15 +286,18 @@ func (v *idTokenVerifier) getJSON(ctx context.Context, target string, out any) e
 	req.Header.Set("Accept", "application/json")
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return err
+		return keysUnreachableError{err}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return keysUnreachableError{fmt.Errorf("answered %d", resp.StatusCode)}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("answered %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDocumentBytes+1))
 	if err != nil {
-		return err
+		return keysUnreachableError{err}
 	}
 	if len(body) > maxDocumentBytes {
 		return errors.New("the document is too large")

@@ -1609,9 +1609,10 @@ type signInExchangeCall struct {
 }
 
 type signInExchangeResponse struct {
-	Accepted bool            `json:"accepted"`
-	Identity *signInIdentity `json:"identity,omitempty"`
-	IDToken  string          `json:"idToken,omitempty"`
+	Accepted     bool            `json:"accepted"`
+	Identity     *signInIdentity `json:"identity,omitempty"`
+	IDToken      string          `json:"idToken,omitempty"`
+	RefreshToken string          `json:"refreshToken,omitempty"`
 }
 
 //go:wasmexport sign_in_authorize_url
@@ -1661,6 +1662,10 @@ func signInExchange(ptr, n uint32) uint64 {
 		return reply(signInExchangeResponse{})
 	}
 	var resp signInExchangeResponse
+	refresh := false
+	if rest, ok := strings.CutPrefix(code, "refresh|"); ok {
+		code, refresh = rest, true
+	}
 	if rest, ok := strings.CutPrefix(code, "token|"); ok {
 		code = rest
 		resp.IDToken = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."
@@ -1675,6 +1680,9 @@ func signInExchange(ptr, n uint32) uint64 {
 	}
 	resp.Accepted = true
 	resp.Identity = id
+	if refresh {
+		resp.RefreshToken = "rt|" + f[0]
+	}
 	return reply(resp)
 }
 
@@ -1812,4 +1820,119 @@ func socketOutcome(op string, resp socketResponse) string {
 		out += ":upgrade"
 	}
 	return out
+}
+
+// =============================================================================
+// The Sign-in provider seam, re-check.
+// =============================================================================
+//
+// Appended like the halves above it. Two exports, both answered from a declared
+// `lookup` setting of `;`-separated `subject:status:groups` entries (groups
+// `,`-separated); a subject the setting does not list is gone.
+//
+//	sign_in_lookup(ptr u32, len u32) -> i64    a SignInLookupCall in,
+//	                                           a SignInLookupResponse out
+//	sign_in_refresh(ptr u32, len u32) -> i64   a SignInRefreshCall in,
+//	                                           a SignInRefreshResponse out
+//
+// A refresh token is `rt|subject`, as the exchange above hands out for a code
+// prefixed `refresh|`, and is handed back unchanged.
+
+// SignInLookupFails, as the whole `lookup` value, is a directory that fails
+// every re-check: the provider unreachable.
+const SignInLookupFails = "fail"
+
+// SignInLookupFetchesABlockedHost, as the whole `lookup` value, is a directory
+// that fetches a host no manifest lists on every re-check, and fails.
+const SignInLookupFetchesABlockedHost = "fetch-a-blocked-host"
+
+type signInLookupCall struct {
+	Request struct {
+		Subject string `json:"subject"`
+	} `json:"request"`
+	Settings struct {
+		Values map[string]any `json:"values"`
+	} `json:"settings"`
+}
+
+type signInRefreshCall struct {
+	Request struct {
+		RefreshToken string `json:"refreshToken"`
+	} `json:"request"`
+	Settings struct {
+		Values map[string]any `json:"values"`
+	} `json:"settings"`
+}
+
+type signInRecheckResponse struct {
+	Status       string          `json:"status"`
+	Identity     *signInIdentity `json:"identity,omitempty"`
+	RefreshToken string          `json:"refreshToken,omitempty"`
+}
+
+// recheckAnswer is what the `lookup` directory says about subject, or false
+// when the call must fail.
+func recheckAnswer(values map[string]any, subject string) (signInRecheckResponse, bool) {
+	lookup, _ := values["lookup"].(string)
+	switch lookup {
+	case SignInLookupFails:
+		return signInRecheckResponse{}, false
+	case SignInLookupFetchesABlockedHost:
+		fetch(fetchRequest{URL: "http://blocked.example.test/"})
+		return signInRecheckResponse{}, false
+	}
+	for _, entry := range strings.Split(lookup, ";") {
+		f := strings.Split(entry, ":")
+		if len(f) != 3 || f[0] != subject {
+			continue
+		}
+		resp := signInRecheckResponse{Status: f[1]}
+		if f[1] == "active" {
+			resp.Identity = &signInIdentity{Subject: subject}
+			if f[2] != "" {
+				resp.Identity.Groups = strings.Split(f[2], ",")
+			}
+		}
+		return resp, true
+	}
+	return signInRecheckResponse{Status: "gone"}, true
+}
+
+//go:wasmexport sign_in_lookup
+func signInLookup(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call signInLookupCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SignInLookupCall: " + err.Error())
+	}
+	resp, ok := recheckAnswer(call.Settings.Values, call.Request.Subject)
+	if !ok {
+		return fail("the directory did not answer")
+	}
+	return reply(resp)
+}
+
+//go:wasmexport sign_in_refresh
+func signInRefresh(ptr, n uint32) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call signInRefreshCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not a SignInRefreshCall: " + err.Error())
+	}
+	subject, ok := strings.CutPrefix(call.Request.RefreshToken, "rt|")
+	if !ok {
+		return reply(signInRecheckResponse{Status: "gone"})
+	}
+	resp, ok := recheckAnswer(call.Settings.Values, subject)
+	if !ok {
+		return fail("the directory did not answer")
+	}
+	resp.RefreshToken = call.Request.RefreshToken
+	return reply(resp)
 }

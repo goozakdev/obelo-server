@@ -34,6 +34,10 @@ type ExternalAnswer struct {
 	Subject  string
 	Username string
 	Groups   []string
+	// RefreshToken is what a redirect provider handed back to re-check the
+	// identity later without the person present; "" when it handed none. It is
+	// stored on the identity and never a password.
+	RefreshToken string
 }
 
 // PasswordProvider is one enabled password-flow Sign-in provider, already judged
@@ -66,6 +70,16 @@ var ErrUsernameCollision = errors.New("auth: a new external identity's username 
 type signIn struct {
 	mu        sync.RWMutex
 	providers SignInProviders
+	answered  func(pluginID, subject string)
+}
+
+// OnExternalSignIn tells the Service whom to tell when a provider signs in an
+// identity it already holds: that provider has just answered for it, so a
+// failure a re-check remembers of that identity no longer stands.
+func (s *Service) OnExternalSignIn(fn func(pluginID, subject string)) {
+	s.signIn.mu.Lock()
+	defer s.signIn.mu.Unlock()
+	s.signIn.answered = fn
 }
 
 // UseSignInProviders tells the Service which password-flow Sign-in providers to
@@ -128,13 +142,37 @@ func (s *Service) SignInExternal(providerID string, answer ExternalAnswer, dev D
 	return s.issueSession(user, dev)
 }
 
-// resolveExternalIdentity turns an accepted answer into the User it signs in as:
-// the holder of (providerID, subject) if there is one, otherwise a new Member.
+// resolveExternalIdentity turns an accepted answer into the User it signs in as —
+// the holder of (providerID, subject) if there is one, otherwise a new Member —
+// and syncs that User's Group mapping from the groups just answered, so the
+// session it signs in with already carries the role the mapping gives.
 func (s *Service) resolveExternalIdentity(providerID string, answer ExternalAnswer) (store.User, error) {
+	user, err := s.holderOf(providerID, answer)
+	if err != nil {
+		return store.User{}, err
+	}
+	if err := s.store.SetExternalRefreshToken(providerID, answer.Subject, answer.RefreshToken); err != nil {
+		return store.User{}, err
+	}
+	if err := s.SyncGroupMapping(user.ID); err != nil {
+		return store.User{}, err
+	}
+	return s.store.UserByID(user.ID)
+}
+
+// holderOf is the holder of (providerID, subject), recording what the provider
+// just said about it, or a new Member holding it.
+func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User, error) {
 	user, err := s.store.ExternalIdentityUser(providerID, answer.Subject)
 	if err == nil {
 		if err := s.store.RecordExternalSignIn(providerID, answer.Subject, answer.Username, answer.Groups); err != nil {
 			return store.User{}, err
+		}
+		s.signIn.mu.RLock()
+		answered := s.signIn.answered
+		s.signIn.mu.RUnlock()
+		if answered != nil {
+			answered(providerID, answer.Subject)
 		}
 		return user, nil
 	}
@@ -204,7 +242,15 @@ func (s *Service) AttachExternal(userID, providerID string, answer ExternalAnswe
 	if errors.Is(err, store.ErrExternalIdentityTaken) {
 		return ErrExternalIdentityHeld
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err := s.store.SetExternalRefreshToken(providerID, answer.Subject, answer.RefreshToken); err != nil {
+		return err
+	}
+	// An attach is a provider vouching like any sign-in, so the mapping syncs —
+	// which, for the User with a Local password, is nothing at all.
+	return s.SyncGroupMapping(user.ID)
 }
 
 // ExternalIdentities lists the External identities userID holds, oldest first.

@@ -116,6 +116,8 @@ Then, per seam:
 | | `metadata_external_ref` | behind capability `external-ref` |
 | Sign-in provider | `sign_in_password(ptr, len) -> i64` | behind capability `password-sign-in` |
 | | `sign_in_authorize_url(ptr, len) -> i64` / `sign_in_exchange(ptr, len) -> i64` | behind capability `redirect-sign-in` |
+| | `sign_in_lookup(ptr, len) -> i64` | behind capability `sign-in-lookup` |
+| | `sign_in_refresh(ptr, len) -> i64` | behind capability `sign-in-refresh` |
 
 > **The Event sink's call is `deliver`, not `obelo_deliver`.** The three seams
 > landed in three slices and their export names are not harmonised: the sink's is
@@ -158,6 +160,28 @@ unchanged, and tell operators to register that exact URI,
 wildcards, so the provider itself refuses to send a code anywhere else. Say so
 where the operator will read it — in a setting's `help` — as the Bundled
 `plugins/oidc` does on its Client ID field.
+
+Between sign-ins the host re-checks every identity a Sign-in provider vouched
+for — every 24 hours unless the Admin sets another interval — so the Admin's
+Group mapping follows your directory (ADR-0063 decision 4). Declare
+`sign-in-lookup` and export `sign_in_lookup` to answer a `SignInLookupCall`
+(`{ "subject" }`) with `{ "status": "active"|"gone"|"disabled", "identity"? }`,
+the identity carrying the person's groups now; or, for a redirect provider,
+return the refresh token your exchange got in `refreshToken`, declare
+`sign-in-refresh` and export `sign_in_refresh` to redeem it
+(`{ "refreshToken" }` → `{ "status", "idToken"?, "identity"?, "refreshToken"? }`,
+the last only when your source rotated it). The host verifies a refreshed ID
+token exactly as it verifies one at sign-in — signature, `iss`, `aud`, `exp` —
+and takes the groups from it. `gone` or `disabled` revokes every session the
+User holds; an error, or a status the host does not know, is your source being
+unreachable, and changes nothing but when it is asked again, so never answer
+`gone` for a timeout, nor for a refresh token your source refused as expired or
+revoked (`invalid_grant`) — that is the token dead, not the person: answer an
+error. A provider declaring neither is synced at sign-in only,
+and when an Admin presses "re-sync now". In Go, `pluginsdk/signin` exports both
+when the provider you `ServeRedirect` also implements
+`pluginapi.SignInRefreshProvider` or `pluginapi.SignInLookupProvider`; the
+Bundled `plugins/oidc` implements the refresh.
 
 A Sign-in provider that must speak something other than HTTP — an LDAP directory
 for the password flow — declares `"socket": true` on its provides entry and gets
@@ -366,7 +390,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -1586,7 +1610,7 @@ comes with either. Four packages:
 | `pluginsdk` | `Host` — the six host functions, typed, and `Socket` for a Sign-in provider declaring `socket`. `Sandbox()` returns the one that calls them. `obelo_alloc`, `obelo_free` and `last_error` are exported from here, once. Also `Pacer`/`PacedHost`, and `Do`/`DoJSON`/`GetJSON` with a `FetchError` that tells a refusal from an outage from a 404. |
 | `pluginsdk/metadata` | `Serve(p)` — the eight `//go:wasmexport` Metadata provider calls, in front of the contract's own `pluginapi.MetadataProvider`. |
 | `pluginsdk/sink`, `pluginsdk/subtitle` | The same for the other two seams: `deliver`, and the two subtitle exports. |
-| `pluginsdk/signin` | `ServeRedirect(p)` — a Sign-in provider's redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`. |
+| `pluginsdk/signin` | `ServeRedirect(p)` — a Sign-in provider's redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`, and the re-check's `sign_in_refresh` and `sign_in_lookup` when `p` also implements `pluginapi.SignInRefreshProvider` or `pluginapi.SignInLookupProvider`. |
 | `pluginsdk/sdktest` | An in-memory `Host` for NATIVE tests: a routing table of `http.Handler`s, a captured log, an in-memory kv and fixed settings. |
 
 ### Your `main.go`
