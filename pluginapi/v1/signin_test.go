@@ -71,6 +71,43 @@ func signInWireCases() []wireCase {
 			golden: `{"accepted":true,"identity":{"subject":"u-1001"}}`,
 		},
 		{
+			name:  "SignInExchangeResponse with a refresh token",
+			value: SignInExchangeResponse{Accepted: true, Identity: &SignInIdentity{Subject: "u-1001"}, IDToken: "h.p.s", RefreshToken: "r-1"},
+			golden: `{"accepted":true,"identity":{"subject":"u-1001"},"idToken":"h.p.s",` +
+				`"refreshToken":"r-1"}`,
+		},
+		{
+			name:   "SignInLookupCall",
+			value:  SignInLookupCall{Request: SignInLookupRequest{Subject: "u-1001"}, Settings: Settings{Enabled: true}},
+			golden: `{"request":{"subject":"u-1001"},"settings":{"enabled":true}}`,
+		},
+		{
+			name:  "SignInLookupResponse active",
+			value: SignInLookupResponse{Status: SignInActive, Identity: &id},
+			golden: `{"status":"active","identity":{"subject":"u-1001","username":"alice",` +
+				`"groups":["family","media"]}}`,
+		},
+		{
+			name:   "SignInLookupResponse gone",
+			value:  SignInLookupResponse{Status: SignInGone},
+			golden: `{"status":"gone"}`,
+		},
+		{
+			name:   "SignInRefreshCall",
+			value:  SignInRefreshCall{Request: SignInRefreshRequest{RefreshToken: "r-1"}, Settings: Settings{Enabled: true}},
+			golden: `{"request":{"refreshToken":"r-1"},"settings":{"enabled":true}}`,
+		},
+		{
+			name:   "SignInRefreshResponse",
+			value:  SignInRefreshResponse{Status: SignInActive, IDToken: "h.p.s", RefreshToken: "r-2"},
+			golden: `{"status":"active","idToken":"h.p.s","refreshToken":"r-2"}`,
+		},
+		{
+			name:   "SignInRefreshResponse disabled",
+			value:  SignInRefreshResponse{Status: SignInDisabled},
+			golden: `{"status":"disabled"}`,
+		},
+		{
 			name:   "SocketRequest open",
 			value:  SocketRequest{Op: SocketOpOpen, Address: "ldap.example:636"},
 			golden: `{"op":"open","address":"ldap.example:636"}`,

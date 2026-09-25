@@ -368,6 +368,12 @@ func (r *Redirects) complete(ctx context.Context, state, code, binding string, p
 		log.Printf("obelo: sign-in provider %s: the redirect sign-in was refused: %v", pending.providerID, err)
 		return "", auth.ExternalAnswer{}, ErrRedirectRefused
 	}
+	// A refresh token is kept only for a provider that will be asked to redeem
+	// it: one nobody will use is a credential stored for nothing.
+	if reg, ok := r.reg.SignInProvider(pending.providerID); ok &&
+		reg.Descriptor.HasCapability(pluginapi.CapabilitySignInRefresh) {
+		answer.RefreshToken = resp.RefreshToken
+	}
 	return pending.providerID, answer, nil
 }
 

@@ -51,6 +51,50 @@ func signInExchange(ptr, n uint32) uint64 {
 	return pluginsdk.Reply(resp)
 }
 
+//go:wasmexport sign_in_refresh
+func signInRefresh(ptr, n uint32) uint64 {
+	p, ok := served.(pluginapi.SignInRefreshProvider)
+	if !ok {
+		return pluginsdk.Fail("this module's redirect Sign-in provider does not implement Refresh")
+	}
+	var call pluginapi.SignInRefreshCall
+	if !pluginsdk.TakeRequest(ptr, n, &call) {
+		return pluginsdk.Fail("the request is not a SignInRefreshCall")
+	}
+	withdraw := pluginsdk.PublishCallSettings(call.Settings)
+	defer withdraw()
+
+	ctx, cancel := pluginsdk.CallContext(call.Settings.CallRemainingMillis)
+	defer cancel()
+	resp, err := p.Refresh(ctx, call.Request)
+	if err != nil {
+		return pluginsdk.Fail("refresh: " + err.Error())
+	}
+	return pluginsdk.Reply(resp)
+}
+
+//go:wasmexport sign_in_lookup
+func signInLookup(ptr, n uint32) uint64 {
+	p, ok := served.(pluginapi.SignInLookupProvider)
+	if !ok {
+		return pluginsdk.Fail("this module's redirect Sign-in provider does not implement Lookup")
+	}
+	var call pluginapi.SignInLookupCall
+	if !pluginsdk.TakeRequest(ptr, n, &call) {
+		return pluginsdk.Fail("the request is not a SignInLookupCall")
+	}
+	withdraw := pluginsdk.PublishCallSettings(call.Settings)
+	defer withdraw()
+
+	ctx, cancel := pluginsdk.CallContext(call.Settings.CallRemainingMillis)
+	defer cancel()
+	resp, err := p.Lookup(ctx, call.Request)
+	if err != nil {
+		return pluginsdk.Fail("lookup: " + err.Error())
+	}
+	return pluginsdk.Reply(resp)
+}
+
 func noProvider() uint64 {
 	return pluginsdk.Fail("this module serves no redirect Sign-in provider: call signin.ServeRedirect from init() — " +
 		"a -buildmode=c-shared module never runs main")

@@ -25,14 +25,20 @@ CREATE TABLE users (
     -- time it vouched for an External identity (ADR-0063 decision 3). It is set
     -- once, at creation, and is the only reason a person may lack a password.
     external_origin INTEGER NOT NULL DEFAULT 0 CHECK (external_origin IN (0, 1)),
-    -- Only two kinds of User may lack a password: a 'remote' User, which
+    -- role_mapped is 1 while the role was set by a Group mapping (ADR-0063
+    -- decision 4) rather than by hand. It is the only reason a person without a
+    -- password may be an Admin.
+    role_mapped    INTEGER NOT NULL DEFAULT 0 CHECK (role_mapped IN (0, 1)),
+    -- Only these kinds of User may lack a password: a 'remote' User, which
     -- authenticates over the Link protocol and never by logging in locally
-    -- (ADR-0054), and a Member minted from a first-time External identity, which
-    -- signs in through its Sign-in provider (ADR-0063). Every other person has a
-    -- Local password, whoever inserted the row.
+    -- (ADR-0054); a Member minted from a first-time External identity, which
+    -- signs in through its Sign-in provider (ADR-0063); and such a User a Group
+    -- mapping made an Admin. Every other person has a Local password, whoever
+    -- inserted the row.
     CHECK (COALESCE(password_hash, '') <> ''
            OR role = 'remote'
-           OR (role = 'member' AND external_origin = 1))
+           OR (role = 'member' AND external_origin = 1)
+           OR (role = 'admin' AND external_origin = 1 AND role_mapped = 1))
 );
 
 CREATE TABLE devices (
@@ -1308,10 +1314,50 @@ CREATE TABLE external_identities (
     username     TEXT NOT NULL DEFAULT '',
     groups       TEXT NOT NULL DEFAULT '[]',
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    -- last_seen_at is when the provider last vouched for the identity: a
+    -- sign-in, or a re-check that answered. The periodic re-check counts its
+    -- interval from here.
     last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- refresh_token is what a redirect provider handed back to re-check the
+    -- identity without the person present (ADR-0063 decision 4). Never a
+    -- password; '' when there is none.
+    refresh_token TEXT NOT NULL DEFAULT '',
+    -- retry_at is when a re-check that could not reach the provider is tried
+    -- again ('' when none is pending), and check_failures counts the
+    -- consecutive re-checks whose ID token failed verification.
+    retry_at       TEXT NOT NULL DEFAULT '',
+    check_failures INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (plugin_id, subject)
 );
 CREATE INDEX idx_external_identities_user ON external_identities(user_id);
+
+-- An Admin's Group mapping (ADR-0063 decision 4): per Sign-in provider, each of
+-- its groups mapped to a role and the Libraries it grants. A User in several
+-- mapped groups is an Admin if any of them says so, and holds every Library any
+-- of them grants. A provider with no rows maps nothing, and its Users are left
+-- as they are.
+CREATE TABLE group_mappings (
+    plugin_id  TEXT NOT NULL,
+    group_name TEXT NOT NULL CHECK (group_name <> ''),
+    role       TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+    PRIMARY KEY (plugin_id, group_name)
+);
+
+CREATE TABLE group_mapping_libraries (
+    plugin_id  TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    PRIMARY KEY (plugin_id, group_name, library_id),
+    FOREIGN KEY (plugin_id, group_name)
+        REFERENCES group_mappings(plugin_id, group_name) ON DELETE CASCADE
+);
+
+-- The Admin's per-provider override of how often its identities are re-checked
+-- between sign-ins. A provider with no row is re-checked every 24 hours.
+CREATE TABLE sign_in_recheck_intervals (
+    plugin_id TEXT PRIMARY KEY,
+    seconds   INTEGER NOT NULL CHECK (seconds > 0)
+);
 
 -- The Admin's order for password-flow Sign-in providers: lower position is asked
 -- first. A provider with no row is asked after every one that has one, in the

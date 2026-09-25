@@ -314,6 +314,13 @@ type Deps struct {
 	// decision 2): the public /auth/redirect routes and the Admin screen's
 	// verified flag. Nil in a narrow test, and the routes then answer 503.
 	SignInRedirect *signin.Redirects
+
+	// SignInRecheck is the periodic re-check of External identities and the
+	// Admin's "re-sync now" (ADR-0063 decision 4), and GroupMappings the Admin's
+	// Group mappings it applies. Nil in a narrow test, and the routes then answer
+	// 503; the Users list then flags nobody.
+	SignInRecheck *signin.Rechecker
+	GroupMappings GroupMappingStore
 }
 
 // Handler builds the root http.Handler for the whole API, mounted at /api/v1.
@@ -381,7 +388,7 @@ func Handler(deps Deps) http.Handler {
 	// handlers because both subtrees serve more than one method (POST/GET on the
 	// collection; GET/DELETE on a single User, PUT on its /password sub-resource).
 	mux.HandleFunc("/users",
-		requireAuth(deps.Auth, requireAdmin(handleUsersCollection(deps.Auth))))
+		requireAuth(deps.Auth, requireAdmin(handleUsersCollection(deps))))
 	mux.HandleFunc("/users/",
 		requireAuth(deps.Auth, requireAdmin(handleUserSubtree(deps))))
 
@@ -585,6 +592,10 @@ func Handler(deps Deps) http.Handler {
 	// without that dispatcher knowing it exists.
 	mux.HandleFunc("/settings/sign-in-providers",
 		requireAuth(deps.Auth, requireAdmin(handleSignInProviders(deps))))
+	// Each provider's Group mapping, re-check interval and "re-sync now". See
+	// group_mapping_handlers.go.
+	mux.HandleFunc("/settings/sign-in-providers/",
+		requireAuth(deps.Auth, requireAdmin(handleSignInProviderSubtree(deps))))
 
 	// The redirect flow (ADR-0063 decisions 2 and 8), web-only. Public for the
 	// reason /auth/login is: the caller has no session yet. See

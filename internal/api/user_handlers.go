@@ -7,6 +7,7 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/auth"
+	"github.com/goozakdev/obelo-server/internal/signin"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -35,11 +36,17 @@ type createUserRequest struct {
 //
 // LastSeenAt is omitted — never "" — when the User has no Device at all, so
 // "never linked" is the absence of the field rather than a sentinel.
+//
+// NoWorkingSignInPath is true for a User with no Local password whose every
+// Sign-in provider is disabled, gone or failing its re-checks (ADR-0063
+// decision 9): their sessions are kept, and the Admin is told. Omitted when
+// false.
 type adminUserJSON struct {
-	ID         string `json:"id"`
-	Username   string `json:"username"`
-	Role       string `json:"role"`
-	LastSeenAt string `json:"lastSeenAt,omitempty"`
+	ID                  string `json:"id"`
+	Username            string `json:"username"`
+	Role                string `json:"role"`
+	LastSeenAt          string `json:"lastSeenAt,omitempty"`
+	NoWorkingSignInPath bool   `json:"noWorkingSignInPath,omitempty"`
 }
 
 type usersResponse struct {
@@ -48,13 +55,14 @@ type usersResponse struct {
 
 // handleUsersCollection dispatches the collection-level methods on "/users":
 // POST creates a User, GET lists them.
-func handleUsersCollection(svc *auth.Service) http.HandlerFunc {
+func handleUsersCollection(deps Deps) http.HandlerFunc {
+	svc := deps.Auth
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			handleCreateUser(svc)(w, r)
 		case http.MethodGet:
-			handleListUsers(svc)(w, r)
+			handleListUsers(svc, deps.SignInRecheck)(w, r)
 		default:
 			w.Header().Set("Allow", "GET, POST")
 			writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
@@ -88,7 +96,7 @@ func handleCreateUser(svc *auth.Service) http.HandlerFunc {
 	}
 }
 
-func handleListUsers(svc *auth.Service) http.HandlerFunc {
+func handleListUsers(svc *auth.Service, recheck *signin.Rechecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		users, err := svc.Users()
 		if err != nil {
@@ -103,13 +111,24 @@ func handleListUsers(svc *auth.Service) http.HandlerFunc {
 		if err != nil {
 			seen = nil
 		}
+		// Best-effort for the same reason: a flag that cannot be worked out is
+		// left off rather than failing the roster.
+		stranded := map[string]bool{}
+		if recheck != nil {
+			if ids, err := recheck.NoWorkingSignInPath(users); err == nil {
+				for _, id := range ids {
+					stranded[id] = true
+				}
+			}
+		}
 		out := make([]adminUserJSON, 0, len(users))
 		for _, u := range users {
 			out = append(out, adminUserJSON{
-				ID:         u.ID,
-				Username:   u.Username,
-				Role:       u.Role,
-				LastSeenAt: formatTimestamp(seen[u.ID]),
+				ID:                  u.ID,
+				Username:            u.Username,
+				Role:                u.Role,
+				LastSeenAt:          formatTimestamp(seen[u.ID]),
+				NoWorkingSignInPath: stranded[u.ID],
 			})
 		}
 		writeJSON(w, http.StatusOK, usersResponse{Users: out})
@@ -400,6 +419,10 @@ func handleDeleteUser(svc *auth.Service, id string) http.HandlerFunc {
 		switch {
 		case errors.Is(err, auth.ErrUserNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "user not found", nil)
+			return
+		case errors.Is(err, auth.ErrLastLocalPasswordAdmin):
+			writeError(w, http.StatusConflict, codeLastAdmin,
+				"cannot delete the last admin with a local password", nil)
 			return
 		case errors.Is(err, auth.ErrLastAdmin):
 			writeError(w, http.StatusConflict, codeLastAdmin,

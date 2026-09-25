@@ -23,6 +23,10 @@ import { EditIcon, TrashIcon } from "../browse/ActionIcons";
 // §4), so an absent last-seen is "never linked" and a present one is when that
 // Server last spoke. It is on the ROW rather than in the dialog because it is
 // the thing you scan the list for.
+//
+// So is the NO-WORKING-SIGN-IN-PATH flag (ADR-0063 decision 9): a User with no
+// Local password whose every Sign-in provider is disabled or failing keeps their
+// sessions, and this is how the Admin finds out they could not sign in again.
 
 export default function UserAdminRow({
   user,
@@ -56,6 +60,11 @@ export default function UserAdminRow({
             data-testid="admin-user-link-state"
           >
             {seen ? `Linked, seen ${seen}` : "Never linked"}
+          </span>
+        )}
+        {user.noWorkingSignInPath && (
+          <span className="user-link-state is-unlinked" data-testid="admin-user-no-sign-in-path">
+            No working sign-in path
           </span>
         )}
       </div>

@@ -145,6 +145,9 @@ import type {
   WebReference,
   Marker,
   SignInProvidersView,
+  GroupMappingRule,
+  GroupMappingView,
+  ResyncResult,
   MarkerDetection,
   RedirectSignInProvidersView,
   RedirectSignInCallbackRequest,
@@ -2504,6 +2507,38 @@ export class ApiClient {
       body: { order },
       signal,
     });
+  }
+
+  /** `GET /api/v1/settings/sign-in-providers/{id}/group-mapping` (Admin) — the
+   * provider's Group mapping and re-check interval. */
+  getGroupMapping(id: string, signal?: AbortSignal): Promise<GroupMappingView> {
+    return this.request<GroupMappingView>(
+      `/settings/sign-in-providers/${encodeURIComponent(id)}/group-mapping`,
+      { signal },
+    );
+  }
+
+  /** `PUT /api/v1/settings/sign-in-providers/{id}/group-mapping` (Admin) — save
+   * the whole mapping and the interval in hours (0: the 24-hour default). */
+  setGroupMapping(
+    id: string,
+    rules: GroupMappingRule[],
+    intervalHours: number,
+    signal?: AbortSignal,
+  ): Promise<GroupMappingView> {
+    return this.request<GroupMappingView>(
+      `/settings/sign-in-providers/${encodeURIComponent(id)}/group-mapping`,
+      { method: "PUT", body: { rules, intervalHours }, signal },
+    );
+  }
+
+  /** `POST /api/v1/settings/sign-in-providers/{id}/resync` (Admin) — re-check
+   * every identity the provider vouched for now. */
+  resyncSignInProvider(id: string, signal?: AbortSignal): Promise<ResyncResult> {
+    return this.request<ResyncResult>(
+      `/settings/sign-in-providers/${encodeURIComponent(id)}/resync`,
+      { method: "POST", signal },
+    );
   }
 
   /** `GET /api/v1/auth/sign-in-providers` (public) — the redirect-flow Sign-in

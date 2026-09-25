@@ -23,6 +23,15 @@
 // which takes the subject and groups from the token rather than from the
 // identity the plugin reported beside it.
 //
+// # The re-check
+//
+// A provider that also implements [pluginapi.SignInRefreshProvider] (declaring
+// sign-in-refresh) or [pluginapi.SignInLookupProvider] (declaring
+// sign-in-lookup) is asked again between sign-ins, so the host's Group mapping
+// follows the directory. The dispatcher finds either by type assertion on the
+// provider ServeRedirect installed. A refreshed ID token is verified by the host
+// exactly as one from an exchange is.
+//
 // Like a Subtitle provider's, a Sign-in provider's settings ride WITH the call,
 // so the dispatcher publishes them and Host.Settings answers them for the call's
 // duration.

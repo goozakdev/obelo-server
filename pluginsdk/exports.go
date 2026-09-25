@@ -43,6 +43,12 @@ const (
 	// The Sign-in provider Extension point's redirect-flow calls.
 	ExportSignInAuthorizeURL = "sign_in_authorize_url"
 	ExportSignInExchange     = "sign_in_exchange"
+
+	// The Sign-in provider Extension point's re-check calls: lookup(subject),
+	// for a provider declaring sign-in-lookup, and a refresh, for one declaring
+	// sign-in-refresh.
+	ExportSignInLookup  = "sign_in_lookup"
+	ExportSignInRefresh = "sign_in_refresh"
 )
 
 // HostModule is the namespace the six host functions are imported from. A module
@@ -89,6 +95,12 @@ func SubtitleExports() []string {
 // contract order.
 func SignInRedirectExports() []string {
 	return []string{ExportSignInAuthorizeURL, ExportSignInExchange}
+}
+
+// SignInRecheckExports is both Sign-in provider re-check exports, in contract
+// order.
+func SignInRecheckExports() []string {
+	return []string{ExportSignInLookup, ExportSignInRefresh}
 }
 
 // ABIExports is the plumbing every module provides, in the order the host looks

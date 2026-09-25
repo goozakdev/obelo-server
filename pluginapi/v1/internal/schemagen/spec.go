@@ -56,7 +56,24 @@ func contractEnums() []enumSpec {
 				string(pluginapi.CapabilityEpisodeList),
 				string(pluginapi.CapabilityPasswordSignIn),
 				string(pluginapi.CapabilityRedirectSignIn),
+				string(pluginapi.CapabilitySignInLookup),
+				string(pluginapi.CapabilitySignInRefresh),
 			},
+		},
+		{
+			name: "SignInStatus",
+			doc: "What a Sign-in provider's re-check says about an identity: active (it exists; its groups " +
+				"are in the answer), gone (the source no longer knows it) or disabled (the source refuses it). " +
+				"The host revokes every session of a gone or disabled identity's User.",
+			goType: reflect.TypeOf(pluginapi.SignInStatus("")),
+			values: func() []string {
+				vs := pluginapi.AllSignInStatuses()
+				out := make([]string, len(vs))
+				for i, v := range vs {
+					out[i] = string(v)
+				}
+				return out
+			}(),
 		},
 		{
 			name:   "Outcome",
@@ -562,6 +579,37 @@ func contractTypes() []typeSpec {
 			value: pluginapi.SignInExchangeCall{},
 			doc: "What the host hands an INSTALLED redirect-flow Sign-in provider for one exchange: the request " +
 				"and the resolved Settings. The response is un-enveloped — a plain SignInExchangeResponse.",
+		},
+		{
+			value: pluginapi.SignInLookupRequest{},
+			doc:   "Asks a Sign-in provider about one identity it vouched for, by its subject, between sign-ins.",
+		},
+		{
+			value: pluginapi.SignInLookupResponse{},
+			doc: "What a lookup answers: the identity's status, and, when active, the identity with its groups " +
+				"now. Its subject must be the one asked about.",
+		},
+		{
+			value: pluginapi.SignInLookupCall{},
+			doc: "What the host hands an INSTALLED Sign-in provider that declares sign-in-lookup for one " +
+				"lookup: the request and the resolved Settings. The response is un-enveloped — a plain " +
+				"SignInLookupResponse.",
+		},
+		{
+			value: pluginapi.SignInRefreshRequest{},
+			doc:   "The refresh token a redirect-flow Sign-in provider's exchange (or last refresh) handed back.",
+		},
+		{
+			value: pluginapi.SignInRefreshResponse{},
+			doc: "What a refresh answers: the identity's status and, when active, a fresh idToken the host " +
+				"verifies exactly as at sign-in (a plain OAuth2 provider answers identity instead), and the " +
+				"rotated refreshToken when the source rotated it.",
+		},
+		{
+			value: pluginapi.SignInRefreshCall{},
+			doc: "What the host hands an INSTALLED redirect-flow Sign-in provider that declares sign-in-refresh " +
+				"for one refresh: the request and the resolved Settings. The response is un-enveloped — a plain " +
+				"SignInRefreshResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},

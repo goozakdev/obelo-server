@@ -34,6 +34,14 @@ const (
 	exportSignInExchange     = "sign_in_exchange"
 )
 
+// The re-check's two contract calls, as guest exports: lookup(subject) for a
+// provider that declares sign-in-lookup, and a refresh for one that declares
+// sign-in-refresh.
+const (
+	exportSignInLookup  = "sign_in_lookup"
+	exportSignInRefresh = "sign_in_refresh"
+)
+
 // registerSignInProvider adds one Plugin's sign-in-provider registration to reg.
 // A slug already claimed is NOT registered and says so, for the reason every
 // other seam refuses one.
@@ -96,6 +104,8 @@ type guestSignInProvider struct {
 var (
 	_ pluginapi.SignInProvider         = (*guestSignInProvider)(nil)
 	_ pluginapi.SignInRedirectProvider = (*guestSignInProvider)(nil)
+	_ pluginapi.SignInLookupProvider   = (*guestSignInProvider)(nil)
+	_ pluginapi.SignInRefreshProvider  = (*guestSignInProvider)(nil)
 )
 
 // CheckPassword asks the guest about one credential.
@@ -202,6 +212,44 @@ func (g *guestSignInProvider) Exchange(ctx context.Context, req pluginapi.SignIn
 			return pluginapi.SignInExchangeResponse{}, err
 		}
 		return pluginapi.SignInExchangeResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
+	}
+	return resp, nil
+}
+
+// Lookup asks the guest whether an identity it vouched for still exists, and
+// its groups now. The host asks only a provider that declared sign-in-lookup.
+// Nobody is present and nobody can make one happen but the host's schedule or
+// an Admin, and a failure is still no strike: a directory that is down for a
+// night must not disable the provider every person signs in with.
+func (g *guestSignInProvider) Lookup(ctx context.Context, req pluginapi.SignInLookupRequest) (pluginapi.SignInLookupResponse, error) {
+	var resp pluginapi.SignInLookupResponse
+	buildReq := func(callCtx context.Context) any {
+		return pluginapi.SignInLookupCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+	}
+	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("sign-in re-check"), exportSignInLookup,
+		g.redirectTarget(), buildReq, &resp); err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return pluginapi.SignInLookupResponse{}, err
+		}
+		return pluginapi.SignInLookupResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
+	}
+	return resp, nil
+}
+
+// Refresh asks the guest to redeem a refresh token. The call carries the token,
+// so nothing the guest says is recorded. What it answers — the ID token above
+// all — is judged by the host, never here.
+func (g *guestSignInProvider) Refresh(ctx context.Context, req pluginapi.SignInRefreshRequest) (pluginapi.SignInRefreshResponse, error) {
+	var resp pluginapi.SignInRefreshResponse
+	buildReq := func(callCtx context.Context) any {
+		return pluginapi.SignInRefreshCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+	}
+	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("sign-in refresh"), exportSignInRefresh,
+		g.redirectTarget(), buildReq, &resp); err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return pluginapi.SignInRefreshResponse{}, err
+		}
+		return pluginapi.SignInRefreshResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
 	}
 	return resp, nil
 }

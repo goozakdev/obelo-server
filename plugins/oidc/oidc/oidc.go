@@ -7,6 +7,12 @@
 // browser comes back with at the token endpoint, answering with the raw ID token
 // and the identity the userinfo endpoint reports.
 //
+// Between sign-ins it redeems the refresh token its exchange handed back, so
+// the host can re-check the identity with nobody present (ADR-0063 decision 4).
+// A token endpoint that refuses the grant as invalid_grant is answered with an
+// error, which the host treats as the provider being unreachable: an expired
+// refresh token says nothing about whether the person may still sign in.
+//
 // What it deliberately does NOT do is verify the ID token. The host does that —
 // signature against the issuer's JWKS, iss, aud, nonce and exp, against the
 // issuer and client id the operator typed into this plugin's settings — and takes
@@ -44,7 +50,10 @@ type Provider struct {
 // through h.
 func New(h pluginsdk.Host) *Provider { return &Provider{host: h} }
 
-var _ pluginapi.SignInRedirectProvider = (*Provider)(nil)
+var (
+	_ pluginapi.SignInRedirectProvider = (*Provider)(nil)
+	_ pluginapi.SignInRefreshProvider  = (*Provider)(nil)
+)
 
 type config struct {
 	issuer, clientID, clientSecret, scopes string
@@ -123,8 +132,9 @@ func (p *Provider) AuthorizeURL(ctx context.Context, req pluginapi.SignInAuthori
 }
 
 type tokenResponse struct {
-	IDToken     string `json:"id_token"`
-	AccessToken string `json:"access_token"`
+	IDToken      string `json:"id_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 // claims is what this plugin reads of a person, from userinfo or, failing that,
@@ -184,9 +194,67 @@ func (p *Provider) Exchange(ctx context.Context, req pluginapi.SignInExchangeReq
 		username = who.Email
 	}
 	return pluginapi.SignInExchangeResponse{
-		Accepted: true,
-		Identity: &pluginapi.SignInIdentity{Subject: who.Subject, Username: username, Groups: who.Groups},
-		IDToken:  tok.IDToken,
+		Accepted:     true,
+		Identity:     &pluginapi.SignInIdentity{Subject: who.Subject, Username: username, Groups: who.Groups},
+		IDToken:      tok.IDToken,
+		RefreshToken: tok.RefreshToken,
+	}, nil
+}
+
+// Refresh redeems a refresh token at the token endpoint and answers the fresh
+// ID token, and the rotated refresh token when the issuer rotated it. Every
+// failure is an error, which the host treats as unreachable — a grant the
+// issuer refuses as invalid_grant included: an expired or revoked refresh token
+// says nothing about whether the person is still there, and answering gone
+// would revoke every session they hold.
+func (p *Provider) Refresh(ctx context.Context, req pluginapi.SignInRefreshRequest) (pluginapi.SignInRefreshResponse, error) {
+	c, err := p.config()
+	if err != nil {
+		return pluginapi.SignInRefreshResponse{}, err
+	}
+	d, err := p.discover(ctx, c.issuer)
+	if err != nil {
+		return pluginapi.SignInRefreshResponse{}, err
+	}
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", req.RefreshToken)
+	form.Set("client_id", c.clientID)
+	if c.clientSecret != "" {
+		form.Set("client_secret", c.clientSecret)
+	}
+	resp, err := pluginsdk.Do(ctx, p.host, pluginapi.FetchRequest{
+		Method: "POST",
+		URL:    d.TokenEndpoint,
+		Headers: []pluginapi.FetchHeader{
+			pluginsdk.Header("Content-Type", "application/x-www-form-urlencoded"),
+			pluginsdk.Header("Accept", "application/json"),
+		},
+		Body: []byte(form.Encode()),
+	})
+	if err != nil {
+		var fe *pluginsdk.FetchError
+		if errors.As(err, &fe) && (fe.Status == 400 || fe.Status == 401) {
+			var refusal struct {
+				Error string `json:"error"`
+			}
+			if json.Unmarshal(resp.Body, &refusal) == nil && refusal.Error == "invalid_grant" {
+				return pluginapi.SignInRefreshResponse{}, errors.New("the issuer refused the refresh token (invalid_grant)")
+			}
+		}
+		return pluginapi.SignInRefreshResponse{}, err
+	}
+	var tok tokenResponse
+	if err := json.Unmarshal(resp.Body, &tok); err != nil {
+		return pluginapi.SignInRefreshResponse{}, fmt.Errorf("the token endpoint's answer is not JSON: %w", err)
+	}
+	if tok.IDToken == "" {
+		return pluginapi.SignInRefreshResponse{}, errors.New("the token endpoint issued no ID token on refresh")
+	}
+	return pluginapi.SignInRefreshResponse{
+		Status:       pluginapi.SignInActive,
+		IDToken:      tok.IDToken,
+		RefreshToken: tok.RefreshToken,
 	}, nil
 }
 

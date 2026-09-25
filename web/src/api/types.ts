@@ -71,6 +71,10 @@ export interface User {
  * a timestamp is "linked, and last heard from then". */
 export interface AdminUser extends User {
   lastSeenAt?: string;
+  /** True for a User with no Local password whose every Sign-in provider is
+   * disabled, gone or failing its re-checks (ADR-0063 decision 9). Their
+   * sessions are kept; the Admin is told. Absent when false. */
+  noWorkingSignInPath?: boolean;
 }
 
 /** Response shape of `GET /api/v1/users` (Admin) — the list is wrapped. */
@@ -3188,6 +3192,35 @@ export interface RedirectSignInProvider {
   name: string;
   verified: boolean;
   configured: boolean;
+}
+
+/** One rule of a Sign-in provider's Group mapping (ADR-0063 decision 4): a
+ * provider group, the role it gives and the Libraries it grants. */
+export interface GroupMappingRule {
+  group: string;
+  role: "admin" | "member";
+  libraryIds: string[];
+}
+
+/** `GET/PUT /api/v1/settings/sign-in-providers/{id}/group-mapping` (Admin).
+ * `recheck` is whether the provider can be asked between sign-ins (it declared
+ * lookup or refresh); `failing` is present from its first failed re-check until
+ * it next answers. */
+export interface GroupMappingView {
+  rules: GroupMappingRule[];
+  recheck: boolean;
+  intervalHours: number;
+  defaultInterval: boolean;
+  failing?: { since: string; reason: string };
+}
+
+/** `POST /api/v1/settings/sign-in-providers/{id}/resync` (Admin) — what "re-sync
+ * now" did. */
+export interface ResyncResult {
+  checked: number;
+  remapped: number;
+  failed: number;
+  revoked: number;
 }
 
 /** `GET /api/v1/auth/sign-in-providers` — the redirect-flow Sign-in providers a

@@ -27,7 +27,18 @@
         "external-ref",
         "episode-list",
         "password-sign-in",
-        "redirect-sign-in"
+        "redirect-sign-in",
+        "sign-in-lookup",
+        "sign-in-refresh"
+      ]
+    },
+    "SignInStatus": {
+      "type": "string",
+      "description": "What a Sign-in provider's re-check says about an identity: active (it exists; its groups are in the answer), gone (the source no longer knows it) or disabled (the source refuses it). The host revokes every session of a gone or disabled identity's User.",
+      "enum": [
+        "active",
+        "gone",
+        "disabled"
       ]
     },
     "Outcome": {
@@ -1840,6 +1851,9 @@
         },
         "idToken": {
           "type": "string"
+        },
+        "refreshToken": {
+          "type": "string"
         }
       },
       "required": [
@@ -1868,6 +1882,98 @@
       "properties": {
         "request": {
           "$ref": "#/$defs/SignInExchangeRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "SignInLookupRequest": {
+      "type": "object",
+      "description": "Asks a Sign-in provider about one identity it vouched for, by its subject, between sign-ins.",
+      "properties": {
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject"
+      ]
+    },
+    "SignInLookupResponse": {
+      "type": "object",
+      "description": "What a lookup answers: the identity's status, and, when active, the identity with its groups now. Its subject must be the one asked about.",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/SignInStatus"
+        },
+        "identity": {
+          "$ref": "#/$defs/SignInIdentity"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "SignInLookupCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Sign-in provider that declares sign-in-lookup for one lookup: the request and the resolved Settings. The response is un-enveloped — a plain SignInLookupResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SignInLookupRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "SignInRefreshRequest": {
+      "type": "object",
+      "description": "The refresh token a redirect-flow Sign-in provider's exchange (or last refresh) handed back.",
+      "properties": {
+        "refreshToken": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "refreshToken"
+      ]
+    },
+    "SignInRefreshResponse": {
+      "type": "object",
+      "description": "What a refresh answers: the identity's status and, when active, a fresh idToken the host verifies exactly as at sign-in (a plain OAuth2 provider answers identity instead), and the rotated refreshToken when the source rotated it.",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/SignInStatus"
+        },
+        "identity": {
+          "$ref": "#/$defs/SignInIdentity"
+        },
+        "idToken": {
+          "type": "string"
+        },
+        "refreshToken": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "SignInRefreshCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED redirect-flow Sign-in provider that declares sign-in-refresh for one refresh: the request and the resolved Settings. The response is un-enveloped — a plain SignInRefreshResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/SignInRefreshRequest"
         },
         "settings": {
           "$ref": "#/$defs/Settings"
