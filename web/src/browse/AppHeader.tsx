@@ -6,6 +6,7 @@ import { useEnrichmentActivity } from "../events/enrichEvents";
 import { useLibraries } from "./librariesContext";
 import { MusicIcon, FilmIcon, TvIcon } from "./kindIcons";
 import LinkedMark from "./LinkedMark";
+import MarkerAutoSkipMenu from "../player/MarkerAutoSkipMenu";
 import type { Library } from "../api/types";
 
 // The shared authed header: app title (links to the landing) on the left, the
@@ -18,8 +19,8 @@ import type { Library } from "../api/types";
 // derived from the caller's Libraries, each fronted by its icon. A kind with a
 // single Library is a direct link; a kind with several becomes a dropdown so the
 // user picks which one. A kind with no Libraries shows nothing. The user's
-// utility links (Playlists, Collections, Admin, Sign out) live in a dropdown
-// under the username on the right.
+// utility links (Playlists, Collections, Admin, Sign out) and the Auto-skip
+// switches live in a dropdown under the username on the right.
 
 // Inline Lucide icons (kept local so the header has no icon-lib dependency).
 // All share currentColor so they inherit the surrounding link color.
@@ -280,6 +281,7 @@ function UserMenu({
               </Link>
             </li>
           )}
+          <MarkerAutoSkipMenu />
           {roster.length > 0 && (
             <>
               <li role="none" className="nav-dropdown-section" aria-hidden="true">

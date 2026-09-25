@@ -1165,8 +1165,12 @@ function CurrentPlayer({
 
   // End the session (final report + DELETE) when this core unmounts (a queue
   // advance re-keying it, or the Queue emptying so the bar unmounts). Runs once.
+  const unmountedRef = useRef(false);
   useEffect(() => {
-    return () => session.end(positionMs());
+    return () => {
+      unmountedRef.current = true;
+      session.end(positionMs());
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1579,6 +1583,24 @@ function CurrentPlayer({
   function onSeeked() {
     session.report(positionMs(), videoRef.current?.paused ? "paused" : "playing");
   }
+  // Play the Queue's next Episode from the Watched-point Credits (ADR-0065 §6).
+  // The report at `fromMs` must land before the advance: the advance unmounts this
+  // core, whose final report + DELETE would otherwise overtake it. A failed report
+  // is logged and still advances. Once per mount.
+  const nextEpisodeRef = useRef(false);
+  function playNextEpisode(fromMs: number) {
+    if (nextEpisodeRef.current || status.kind !== "ready") return;
+    nextEpisodeRef.current = true;
+    const state = videoRef.current?.paused ? "paused" : "playing";
+    void Promise.resolve(apiClient.reportProgress(status.decision.sessionId, { positionMs: fromMs, state }))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("[player] the Credits progress report failed (advancing anyway):", err);
+      })
+      .then(() => {
+        if (!unmountedRef.current) queue.next();
+      });
+  }
   function onEnded() {
     // Report the final position (≈ duration) so the server can cross the Watched
     // threshold; the server owns that decision.
@@ -1807,12 +1829,17 @@ function CurrentPlayer({
           )}
 
           {/* Skip (ADR-0065): on the stage, while the position is inside a
-              Marker the player recognizes. Seeking reports progress like any seek. */}
-          {video && surface === "stage" && (
+              Marker the player recognizes. Seeking reports progress like any seek.
+              A Marker the viewer auto-skips is skipped on every surface; the
+              Watched-point Credits plays the Queue's next Episode, reporting a
+              position inside the Credits first so the Title counts as watched. */}
+          {video && (
             <SkipMarkerButton
               sessionId={status.decision.sessionId}
-              positionMs={currentTime * 1000}
+              positionMs={Math.floor(currentTime * 1000)}
               onSkip={(ms) => seekTo(ms / 1000)}
+              onNextEpisode={nextEntry?.title.kind === "episode" ? playNextEpisode : undefined}
+              showButton={surface === "stage"}
             />
           )}
 

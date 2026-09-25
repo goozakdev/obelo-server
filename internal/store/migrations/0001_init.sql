@@ -1390,3 +1390,16 @@ CREATE TABLE marker_fetches (
     file_path TEXT PRIMARY KEY CHECK (file_path <> ''),
     question  TEXT NOT NULL
 );
+
+-- ===========================================================================
+-- marker auto-skip (ADR-0065 §6)
+-- ===========================================================================
+
+-- The Marker kinds a User has chosen to skip automatically instead of being
+-- offered a Skip button. Per User, so it follows them from client to client; a
+-- User with no rows skips nothing automatically.
+CREATE TABLE user_marker_auto_skip (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind    TEXT NOT NULL CHECK (kind IN ('intro', 'recap', 'credits', 'preview')),
+    PRIMARY KEY (user_id, kind)
+);

@@ -3120,6 +3120,23 @@ export interface Marker {
   source: string;
   startMs: number;
   endMs: number;
+  /** The viewer's own auto-skip setting for this kind (ADR-0065 §6): the player
+   * skips the Marker by itself instead of offering Skip. Absent from an older
+   * server, where every Marker is offered. */
+  autoSkip?: boolean;
+  /** Set on the Credits Marker whose crossing marks the Title watched (the
+   * server's half-the-File rule); only it offers "Next episode". */
+  watchedPoint?: boolean;
+}
+
+/** A User's auto-skip setting (ADR-0065 §6), one switch per Marker kind: an on
+ * kind is skipped by the player without a click. Kept on the server, so it
+ * follows the User from client to client. */
+export interface MarkerAutoSkip {
+  intro: boolean;
+  recap: boolean;
+  credits: boolean;
+  preview: boolean;
 }
 
 /** One timed line of Synced lyrics: `text` is shown from `startMs` until the next

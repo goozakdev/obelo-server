@@ -292,6 +292,11 @@ type Deps struct {
 	MarkerDetection       MarkerDetector
 	MarkerDetectionToggle MarkerDetectionToggleStore
 
+	// MarkerAutoSkip persists each User's auto-skip kinds (ADR-0065 §6), read by
+	// /me/marker-auto-skip and by a session's Markers. Nil in a narrow unit test:
+	// the route then answers 503 and every Marker is offered, never auto-skipped.
+	MarkerAutoSkip MarkerAutoSkipStore
+
 	// providerImages signs + serves the metadata-provider thumbnail proxy
 	// (provider_image.go). Unexported on purpose: it is not a wiring choice a caller
 	// gets to make. Handler builds it with a fresh per-boot key and threads THAT
@@ -590,6 +595,11 @@ func Handler(deps Deps) http.Handler {
 		requireMethod(http.MethodPost, handleRedirectSignInStart(deps)))
 	mux.HandleFunc("/auth/redirect/callback",
 		requireMethod(http.MethodPost, handleRedirectSignInCallback(deps)))
+
+	// GET/PUT /me/marker-auto-skip: the caller's own auto-skip kinds (ADR-0065 §6).
+	// Any authenticated User, and only ever their own.
+	mux.HandleFunc("/me/marker-auto-skip",
+		requireAuth(deps.Auth, handleMarkerAutoSkip(deps)))
 
 	// Catch-all: anything not matched returns the standard NOT_FOUND envelope.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
