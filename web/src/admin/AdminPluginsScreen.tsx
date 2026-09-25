@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
+import { ApiError } from "../api/errors";
 import { errorMessage } from "../screens/errorMessage";
 import PluginSettingsForm from "./PluginSettingsForm";
 import SignInProviderOrder from "./SignInProviderOrder";
@@ -11,6 +12,8 @@ import type {
   PluginCatalogEntry,
   PluginCatalogView,
   PluginPublishersView,
+  PluginUninstallPreview,
+  PluginUninstallUser,
 } from "../api/types";
 
 // The Plugins admin screen (ADR-0058, plugin-system/10): where an Admin puts code
@@ -79,6 +82,81 @@ function sourceLabel(source?: string): string {
   return source;
 }
 
+// isSignInProvider is whether uninstalling the plugin can delete Users, and so
+// has to be confirmed against the server's list first (ADR-0063 decision 10).
+function isSignInProvider(plugin: InstalledPlugin): boolean {
+  return plugin.provides.includes("sign-in-provider");
+}
+
+// UninstallConfirmation is the step between the Uninstall button and a Sign-in
+// provider's uninstall. It says in words that the listed Users are deleted — not
+// signed out, deleted, with their watch history — and names each one, because
+// the Admin is the last person who can stop it.
+function UninstallConfirmation({
+  plugin,
+  preview,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  plugin: InstalledPlugin;
+  preview: PluginUninstallPreview;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { id } = plugin;
+  const users = preview.usersToDelete;
+  return (
+    <div className="form-error" data-testid={`plugin-uninstall-confirmation-${id}`}>
+      {users.length > 0 ? (
+        <>
+          <p>
+            Uninstalling {plugin.name} deletes every sign-in it provides. These users
+            have no other way to sign in, so they will be deleted, with their watch
+            history. This cannot be undone:
+          </p>
+          <ul>
+            {users.map((u) => (
+              <li key={u.id} data-testid="plugin-uninstall-user">
+                {u.username}
+              </li>
+            ))}
+          </ul>
+          <p>Everyone else who signs in through it keeps their account and loses only that sign-in.</p>
+        </>
+      ) : (
+        <p>
+          Uninstalling {plugin.name} deletes every sign-in it provides. No user will be
+          deleted: everyone who signs in through it has another way to sign in.
+        </p>
+      )}
+      <div className="admin-actions">
+        <button
+          className="btn btn-danger"
+          type="button"
+          data-testid={`plugin-uninstall-confirm-${id}`}
+          onClick={onConfirm}
+          disabled={busy}
+        >
+          {users.length > 0
+            ? `Delete ${users.length} ${users.length === 1 ? "user" : "users"} and uninstall`
+            : "Uninstall"}
+        </button>
+        <button
+          className="btn"
+          type="button"
+          data-testid={`plugin-uninstall-cancel-${id}`}
+          onClick={onCancel}
+          disabled={busy}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PluginCard({
   plugin,
   busy,
@@ -88,6 +166,9 @@ function PluginCard({
   onReinstallShipped,
   onUninstall,
   onSettingsSaved,
+  confirmation,
+  onConfirmUninstall,
+  onCancelUninstall,
 }: {
   plugin: InstalledPlugin;
   busy: boolean;
@@ -97,6 +178,9 @@ function PluginCard({
   onReinstallShipped: () => void;
   onUninstall: () => void;
   onSettingsSaved: (view: InstalledPluginsView) => void;
+  confirmation?: PluginUninstallPreview | null;
+  onConfirmUninstall?: () => void;
+  onCancelUninstall?: () => void;
 }) {
   const { id } = plugin;
   // A DECLINED row is a plugin this server ships and the Admin removed. It has no
@@ -242,6 +326,15 @@ function PluginCard({
           Uninstall
         </button>
       </div>
+      {confirmation && (
+        <UninstallConfirmation
+          plugin={plugin}
+          preview={confirmation}
+          busy={busy}
+          onConfirm={() => onConfirmUninstall?.()}
+          onCancel={() => onCancelUninstall?.()}
+        />
+      )}
     </div>
   );
 }
@@ -362,6 +455,12 @@ export default function AdminPluginsScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The Sign-in provider whose uninstall is waiting on the Admin, and who the
+  // server said it would delete.
+  const [confirming, setConfirming] = useState<{
+    id: string;
+    preview: PluginUninstallPreview;
+  } | null>(null);
   const [url, setUrl] = useState("");
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [catalogUrl, setCatalogUrl] = useState("");
@@ -413,6 +512,59 @@ export default function AdminPluginsScreen() {
       setNotice(message);
     } catch (e) {
       setActionError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A Sign-in provider is never uninstalled on one click: the server is asked
+  // who it would delete, and the card shows them until the Admin decides. Every
+  // other plugin uninstalls at once, as it always has.
+  async function onUninstall(p: InstalledPlugin) {
+    if (!isSignInProvider(p)) {
+      await run(() => apiClient.uninstallPlugin(p.id), "Uninstalled.");
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      setConfirming({ id: p.id, preview: await apiClient.getPluginUninstallPreview(p.id) });
+    } catch (e) {
+      setActionError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The confirm carries back exactly the Users the card listed. When the list
+  // changed in the meantime the server refuses, changing nothing, and the card
+  // shows the new list for the Admin to decide on again.
+  async function onConfirmUninstall(id: string, preview: PluginUninstallPreview) {
+    setBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      setView(
+        await apiClient.uninstallSignInProvider(
+          id,
+          preview.usersToDelete.map((u) => u.id),
+        ),
+      );
+      setConfirming(null);
+      setNotice("Uninstalled.");
+    } catch (e) {
+      const now = e instanceof ApiError ? e.details?.usersToDelete : undefined;
+      if (e instanceof ApiError && e.code === "UNINSTALL_NOT_CONFIRMED" && Array.isArray(now)) {
+        setConfirming({
+          id,
+          preview: { signInProvider: true, usersToDelete: now as PluginUninstallUser[] },
+        });
+        setActionError("Who this would delete has changed. Check the list again before confirming.");
+      } else {
+        setConfirming(null);
+        setActionError(errorMessage(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -611,8 +763,13 @@ export default function AdminPluginsScreen() {
                   "The shipped version is back.",
                 )
               }
-              onUninstall={() => void run(() => apiClient.uninstallPlugin(p.id), "Uninstalled.")}
+              onUninstall={() => void onUninstall(p)}
               onSettingsSaved={setView}
+              confirmation={confirming?.id === p.id ? confirming.preview : null}
+              onConfirmUninstall={() =>
+                confirming && void onConfirmUninstall(confirming.id, confirming.preview)
+              }
+              onCancelUninstall={() => setConfirming(null)}
             />
           ))
         )}

@@ -1367,6 +1367,15 @@ CREATE TABLE sign_in_provider_order (
     position  INTEGER NOT NULL
 );
 
+-- The Sign-in providers uninstalled since they were last installed (ADR-0063
+-- decision 10). A sign-in whose provider answered before the uninstall and
+-- whose writes land after it finds its plugin here, and creates nothing.
+-- Installing a plugin under the id clears its row.
+CREATE TABLE uninstalled_sign_in_providers (
+    plugin_id      TEXT PRIMARY KEY,
+    uninstalled_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ===========================================================================
 -- lyric providers
 -- ===========================================================================

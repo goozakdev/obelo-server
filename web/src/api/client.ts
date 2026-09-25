@@ -87,6 +87,7 @@ import type {
   EventSinksView,
   UpdateEventSinksInput,
   InstalledPluginsView,
+  PluginUninstallPreview,
   InstallPluginFromURLInput,
   PluginCatalogView,
   SetPluginCatalogInput,
@@ -2020,6 +2021,30 @@ export class ApiClient {
     return this.request<InstalledPluginsView>(
       `/settings/plugins/${encodeURIComponent(id)}`,
       { method: "DELETE", signal },
+    );
+  }
+
+  /** `GET /api/v1/settings/plugins/{id}/uninstall` (Admin) — who uninstalling
+   * the plugin would delete. A Sign-in provider's uninstall deletes every User it
+   * leaves with no other way to sign in; nothing is changed by asking. */
+  getPluginUninstallPreview(id: string, signal?: AbortSignal): Promise<PluginUninstallPreview> {
+    return this.request<PluginUninstallPreview>(
+      `/settings/plugins/${encodeURIComponent(id)}/uninstall`,
+      { signal },
+    );
+  }
+
+  /** `DELETE /api/v1/settings/plugins/{id}` (Admin) with the ids of the Users the
+   * preview listed. A 409 `UNINSTALL_NOT_CONFIRMED` means the list changed and
+   * nothing was done; its details carry the list as it is now. */
+  uninstallSignInProvider(
+    id: string,
+    deleteUsers: string[],
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}`,
+      { method: "DELETE", body: { deleteUsers }, signal },
     );
   }
 

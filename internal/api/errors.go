@@ -78,6 +78,10 @@ const (
 	// from this session — or a re-auth came back as an identity they do not
 	// hold. The session itself is still good.
 	codeReauthRequired = "REAUTH_REQUIRED"
+	// codeUninstallNotConfirmed (409): uninstalling a Sign-in provider would
+	// delete Users, and the request did not name exactly those Users (ADR-0063
+	// decision 10). Nothing was changed.
+	codeUninstallNotConfirmed = "UNINSTALL_NOT_CONFIRMED"
 	// Device authorization grant (ADR-0036). The first four are the RFC 8628 poll
 	// states, respelled into this envelope's SCREAMING_SNAKE vocabulary — the
 	// state machine is the RFC's, the wire spelling is ours, because a client

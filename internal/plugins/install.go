@@ -543,13 +543,16 @@ func (m *Manager) Reenable(ctx context.Context, id string) (Installed, error) {
 // produced. Those are identity-keyed and live in the ordinary caches, indis-
 // tinguishable from anything else the server fetched, and they are the Library's
 // now (ADR-0007).
+//
+// A Sign-in provider is the exception, and it confirms nobody: it is refused
+// whenever uninstalling it would delete a User. See UninstallConfirming.
 func (m *Manager) Uninstall(ctx context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return m.UninstallConfirming(ctx, id, nil)
+}
 
-	if err := m.mustBeInstalled(id); err != nil {
-		return err
-	}
+// uninstall is Uninstall for a Plugin that is not a Sign-in provider. Caller
+// holds mu and has checked the Plugin is installed.
+func (m *Manager) uninstall(ctx context.Context, id string) error {
 	dir := m.pluginDir(id)
 	trash := ""
 	if _, err := os.Stat(dir); err == nil {

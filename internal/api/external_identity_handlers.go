@@ -153,6 +153,9 @@ func writeAttachError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, codeExternalIdentityHeld, externalIdentityHeldMessage, nil)
 	case errors.Is(err, auth.ErrForbidden):
 		writeError(w, http.StatusForbidden, codeForbidden, "this account cannot attach a sign-in", nil)
+	case errors.Is(err, auth.ErrSignInProviderGone):
+		// The provider was uninstalled after it answered: refused, as a sign-in is.
+		writeError(w, http.StatusUnauthorized, codeSignInRefused, signInRefusedMessage, nil)
 	default:
 		writeError(w, http.StatusInternalServerError, codeInternal, "the sign-in could not be attached", nil)
 	}

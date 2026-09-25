@@ -1203,3 +1203,31 @@ func (s *Server) ExternalIdentities(userID string) []store.ExternalIdentity {
 	}
 	return ids
 }
+
+// CountWatchStateForUser returns the raw number of watch_state rows a User
+// owns. It is a direct-DB seam (like CountPlaylistRowsForOwner) because once a
+// User is deleted nobody can ask the API about their watch state, and a test
+// that says it went with them has to be able to look.
+func (s *Server) CountWatchStateForUser(userID string) int {
+	s.t.Helper()
+	var n int
+	if err := s.app.DB.QueryRow(
+		`SELECT COUNT(*) FROM watch_state WHERE user_id = ?`, userID,
+	).Scan(&n); err != nil {
+		s.t.Fatalf("testharness: counting watch state for %q: %v", userID, err)
+	}
+	return n
+}
+
+// MarkSignInProviderUninstalled records pluginID as an uninstalled Sign-in
+// provider without touching the running registry. It is a direct-DB seam: it is
+// the state a request is in when the uninstall commits after the provider
+// answered it, which the API alone cannot hold still long enough to reach.
+func (s *Server) MarkSignInProviderUninstalled(pluginID string) {
+	s.t.Helper()
+	if _, err := s.app.DB.Exec(
+		`INSERT OR IGNORE INTO uninstalled_sign_in_providers (plugin_id) VALUES (?)`, pluginID,
+	); err != nil {
+		s.t.Fatalf("testharness: marking %q uninstalled: %v", pluginID, err)
+	}
+}

@@ -218,6 +218,15 @@ func (db *DB) CountLocalPasswordAdmins() (int, error) {
 	return n, nil
 }
 
+// deleteUserKeepingAnAdminSQL is DeleteUserKeepingAnAdmin's one statement,
+// shared with an uninstall's transaction so there is one guard to get right.
+const deleteUserKeepingAnAdminSQL = `DELETE FROM users WHERE id = ?
+		   AND NOT (role = 'admin'
+		            AND (SELECT COUNT(*) FROM users WHERE role = 'admin') <= 1)
+		   AND NOT (role = 'admin' AND COALESCE(password_hash, '') <> ''
+		            AND (SELECT COUNT(*) FROM users
+		                  WHERE role = 'admin' AND COALESCE(password_hash, '') <> '') <= 1)`
+
 // ErrWouldLeaveNoAdmin is a delete DeleteUserKeepingAnAdmin refused.
 var ErrWouldLeaveNoAdmin = errors.New("store: the delete would leave no admin")
 
@@ -227,13 +236,7 @@ var ErrWouldLeaveNoAdmin = errors.New("store: the delete would leave no admin")
 // pass a count the other is about to make untrue. ErrWouldLeaveNoAdmin when it
 // refuses, ErrNotFound for an unknown User.
 func (db *DB) DeleteUserKeepingAnAdmin(userID string) error {
-	res, err := db.Exec(
-		`DELETE FROM users WHERE id = ?
-		   AND NOT (role = 'admin'
-		            AND (SELECT COUNT(*) FROM users WHERE role = 'admin') <= 1)
-		   AND NOT (role = 'admin' AND COALESCE(password_hash, '') <> ''
-		            AND (SELECT COUNT(*) FROM users
-		                  WHERE role = 'admin' AND COALESCE(password_hash, '') <> '') <= 1)`, userID)
+	res, err := db.Exec(deleteUserKeepingAnAdminSQL, userID)
 	if err != nil {
 		return fmt.Errorf("store: deleting user: %w", err)
 	}
@@ -251,6 +254,11 @@ func (db *DB) DeleteUserKeepingAnAdmin(userID string) error {
 // the Device has not yet collected — a session in waiting, which would otherwise
 // be minted after the revocation. The Devices themselves stay.
 func (db *DB) DeleteSessionsForUser(userID string) error {
+	return deleteSessionsForUser(db, userID)
+}
+
+// deleteSessionsForUser is DeleteSessionsForUser on db or inside a transaction.
+func deleteSessionsForUser(db execer, userID string) error {
 	if _, err := db.Exec(`DELETE FROM auth_tokens WHERE user_id = ?`, userID); err != nil {
 		return fmt.Errorf("store: revoking sessions: %w", err)
 	}

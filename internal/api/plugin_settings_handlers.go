@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Admin-scope Installed-plugin management (ADR-0058, .scratch/plugin-system issue
@@ -37,6 +38,7 @@ import (
 //	POST   /settings/plugins/{id}/reenable
 //	POST   /settings/plugins/{id}/reinstall-shipped → put a declined Bundled plugin back
 //	PUT    /settings/plugins/{id}/settings → the plugin's OWN declared settings
+//	GET    /settings/plugins/{id}/uninstall → who uninstalling it would delete
 //	DELETE /settings/plugins/{id}       → uninstall
 //
 // The one apparent exception is the settings route, and it is not one. What it
@@ -62,6 +64,11 @@ type PluginManager interface {
 	Reenable(ctx context.Context, id string) (plugins.Installed, error)
 	SaveSettings(ctx context.Context, id string, values map[string]json.RawMessage) (plugins.Installed, error)
 	Uninstall(ctx context.Context, id string) error
+	// UninstallPreview and UninstallConfirming are the confirmation step an
+	// uninstall of a Sign-in provider takes (ADR-0063 decision 10): who it would
+	// delete, and the uninstall carrying the ids the Admin was shown.
+	UninstallPreview(ctx context.Context, id string) (plugins.UninstallPreview, error)
+	UninstallConfirming(ctx context.Context, id string, confirmed []string) error
 	// ReinstallShipped puts back a Bundled plugin the Admin uninstalled (ADR-0059
 	// decision 2). It is its own verb rather than a flavour of install because the
 	// Admin supplies nothing: there is no file to choose, no URL to trust and no
@@ -114,6 +121,13 @@ type installFromURLRequest struct {
 // the API never returned can survive a save. An explicit null clears it.
 type pluginSettingsRequest struct {
 	Values map[string]json.RawMessage `json:"values"`
+}
+
+// uninstallPluginRequest is the optional DELETE /settings/plugins/{id} body:
+// the ids of the Users the Admin was shown the uninstall would delete. A plain
+// DELETE with no body confirms nobody.
+type uninstallPluginRequest struct {
+	DeleteUsers []string `json:"deleteUsers"`
 }
 
 // maxUploadBytes bounds the whole multipart body. It is the module cap plus room
@@ -204,6 +218,8 @@ func handlePluginSettingsSubtree(deps Deps, rest string) http.HandlerFunc {
 				requireMethod(http.MethodPost, handleReinstallShippedPlugin(deps, id))(w, r)
 			case "settings":
 				requireMethod(http.MethodPut, handleSavePluginSettings(deps, id))(w, r)
+			case "uninstall":
+				requireMethod(http.MethodGet, handleUninstallPreview(deps, id))(w, r)
 			default:
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			}
@@ -351,13 +367,56 @@ func handleSavePluginSettings(deps Deps, id string) http.HandlerFunc {
 	}
 }
 
+// handleUninstallPlugin uninstalls a Plugin. For a Sign-in provider whose
+// uninstall would delete Users, the body must name exactly those Users, as the
+// preview listed them; anything else is 409 UNINSTALL_NOT_CONFIRMED carrying
+// who it would delete now, and nothing changes.
 func handleUninstallPlugin(deps Deps, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.PluginManager.Uninstall(r.Context(), id); err != nil {
+		var req uninstallPluginRequest
+		if r.ContentLength != 0 && r.Body != nil && r.Body != http.NoBody {
+			// Only a Sign-in provider's uninstall reads a body; any other Plugin's
+			// ignores it, as it always has, malformed or not.
+			preview, err := deps.PluginManager.UninstallPreview(r.Context(), id)
+			if err != nil {
+				writePluginError(w, err, "failed to uninstall the plugin")
+				return
+			}
+			if preview.SignInProvider && !decodeJSON(w, r, &req) {
+				return
+			}
+		}
+		err := deps.PluginManager.UninstallConfirming(r.Context(), id, req.DeleteUsers)
+		var unconfirmed *store.UnconfirmedUninstallError
+		if errors.As(err, &unconfirmed) {
+			writeError(w, http.StatusConflict, codeUninstallNotConfirmed,
+				"uninstalling this sign-in provider deletes users who have no other way to sign in; "+
+					"confirm exactly the users listed", map[string]any{"usersToDelete": unconfirmed.Users})
+			return
+		}
+		if errors.Is(err, store.ErrUninstallWouldLeaveNoAdmin) {
+			writeError(w, http.StatusConflict, codeLastAdmin,
+				"uninstalling this sign-in provider would delete the last admin", nil)
+			return
+		}
+		if err != nil {
 			writePluginError(w, err, "failed to uninstall the plugin")
 			return
 		}
 		writePluginList(w, r, deps)
+	}
+}
+
+// handleUninstallPreview is the confirmation step's question: whether the
+// Plugin is a Sign-in provider, and who uninstalling it would delete, by name.
+func handleUninstallPreview(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		preview, err := deps.PluginManager.UninstallPreview(r.Context(), id)
+		if err != nil {
+			writePluginError(w, err, "failed to read what uninstalling the plugin would delete")
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
 	}
 }
 

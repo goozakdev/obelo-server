@@ -64,6 +64,11 @@ type SignInProviders interface {
 // link, no queue.
 var ErrUsernameCollision = errors.New("auth: a new external identity's username is already taken")
 
+// ErrSignInProviderGone: the provider answered, but its Plugin was uninstalled
+// before the sign-in could write anything (ADR-0063 decision 10). A refusal, like
+// any other: nothing was created and no session was issued.
+var ErrSignInProviderGone = errors.New("auth: the sign-in provider was uninstalled")
+
 // signIn holds the Sign-in providers a Service consults. Set once at composition,
 // read on every login; the mutex is for the tests that build a Service and then
 // hand it providers.
@@ -118,6 +123,11 @@ func (s *Service) signInExternally(ctx context.Context, username, password strin
 			continue
 		}
 		user, err := s.resolveExternalIdentity(p.ID(), answer)
+		if errors.Is(err, ErrSignInProviderGone) {
+			// Uninstalled since it answered: an answer from a Plugin that is no
+			// longer installed signs nobody in, exactly as a rejection does.
+			continue
+		}
 		if err != nil {
 			return LoginResult{}, err
 		}
@@ -165,7 +175,11 @@ func (s *Service) resolveExternalIdentity(providerID string, answer ExternalAnsw
 func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User, error) {
 	user, err := s.store.ExternalIdentityUser(providerID, answer.Subject)
 	if err == nil {
-		if err := s.store.RecordExternalSignIn(providerID, answer.Subject, answer.Username, answer.Groups); err != nil {
+		err := s.store.RecordExternalSignIn(providerID, answer.Subject, answer.Username, answer.Groups)
+		if errors.Is(err, store.ErrSignInProviderUninstalled) {
+			return store.User{}, ErrSignInProviderGone
+		}
+		if err != nil {
 			return store.User{}, err
 		}
 		s.signIn.mu.RLock()
@@ -200,6 +214,8 @@ func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User
 	switch {
 	case errors.Is(err, store.ErrExternalIdentityTaken):
 		return s.store.ExternalIdentityUser(providerID, answer.Subject)
+	case errors.Is(err, store.ErrSignInProviderUninstalled):
+		return store.User{}, ErrSignInProviderGone
 	case isUniqueViolation(err):
 		return store.User{}, ErrUsernameCollision
 	case err != nil:
@@ -213,7 +229,9 @@ func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User
 // is whatever a Sign-in provider just vouched for, by either flow. It never mints
 // a Member and is never the username collision, because nothing resolves by
 // username here — and it never moves an identity: one another User holds is
-// ErrExternalIdentityHeld, and neither User's identities change.
+// ErrExternalIdentityHeld, and neither User's identities change. One whose
+// provider was uninstalled since it answered is ErrSignInProviderGone, and
+// nothing is attached.
 
 // ErrExternalIdentityHeld: the identity being attached already belongs to a
 // different User. An External identity is held by exactly one User, and an
@@ -241,6 +259,9 @@ func (s *Service) AttachExternal(userID, providerID string, answer ExternalAnswe
 	err = s.store.AttachExternalIdentity(user.ID, providerID, answer.Subject, answer.Username, answer.Groups)
 	if errors.Is(err, store.ErrExternalIdentityTaken) {
 		return ErrExternalIdentityHeld
+	}
+	if errors.Is(err, store.ErrSignInProviderUninstalled) {
+		return ErrSignInProviderGone
 	}
 	if err != nil {
 		return err
