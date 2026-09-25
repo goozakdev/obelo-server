@@ -107,6 +107,20 @@ func contractEnums() []enumSpec {
 			}(),
 		},
 		{
+			name: "SocketOp",
+			doc: "What one request to the socket host function asks for: open a connection to the operator's " +
+				"address, write to it, read from it, upgrade it to TLS in place, or close it.",
+			goType: reflect.TypeOf(pluginapi.SocketOp("")),
+			values: func() []string {
+				vs := pluginapi.AllSocketOps()
+				out := make([]string, len(vs))
+				for i, v := range vs {
+					out[i] = string(v)
+				}
+				return out
+			}(),
+		},
+		{
 			name:   "EventType",
 			doc:    "One of the curated terminal events an Event sink may be told about. The set is closed and grows by decision: a translator that cannot derive an event honestly is a reason not to have it.",
 			values: pluginapi.AllEventTypes(),
@@ -613,6 +627,21 @@ func contractTypes() []typeSpec {
 			value: pluginapi.KVWriteResponse{},
 			doc: "What a write or a delete answers. There is no outcome here because storing a byte string has " +
 				"no domain judgment to report: ok is true, or error says why the host refused or failed.",
+		},
+		{
+			value: pluginapi.SocketRequest{},
+			doc: "One request to the socket host function, which only a Sign-in provider declaring socket may " +
+				"use, and only during a sign-in call (ADR-0064). open connects to the host:port the OPERATOR typed " +
+				"into the Plugin's settings: address may repeat it and any other address is refused. The host " +
+				"dials, encrypts and verifies TLS itself; the guest reads and writes its protocol's plaintext. " +
+				"A handle is valid only inside the call that opened it.",
+		},
+		{
+			value: pluginapi.SocketResponse{},
+			doc: "What one socket request answers. refused is the host declining, error is the network or the " +
+				"far end failing — both in the host's own words, never to be branched on — and otherwise the op " +
+				"did what it asked. data is the protocol's plaintext, never a TLS record. upgradePending on open " +
+				"says the operator chose StartTLS: send your protocol's upgrade request, then starttls.",
 		},
 	}
 }

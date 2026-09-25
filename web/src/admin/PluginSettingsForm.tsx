@@ -368,6 +368,11 @@ function PluginSettingsControl({
       )}
 
       {field.help && <p className="field-help">{field.help}</p>}
+      {field.type === "bool" && field.warning && value === true && (
+        <p className="form-error" role="alert" data-testid={`${testid}-warning`}>
+          {field.warning}
+        </p>
+      )}
       {error && (
         <p className="form-error" data-testid={`${testid}-error`}>
           {error}

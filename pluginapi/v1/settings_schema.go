@@ -115,6 +115,9 @@ type SettingsField struct {
 	Label string `json:"label,omitempty"`
 	// Help is one sentence under the control, in the author's own words.
 	Help string `json:"help,omitempty"`
+	// Warning is a sentence the form shows beside a bool control while it is
+	// on: for a switch that weakens something. Refused on every other type.
+	Warning string `json:"warning,omitempty"`
 	// Required refuses a save that leaves this field empty. For a string, secret,
 	// url or enum that means a non-empty value; for a multi-select, at least one
 	// selection; for an integer, a number. It is NOT applied to a bool, because

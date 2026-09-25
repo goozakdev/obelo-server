@@ -77,6 +77,12 @@ func validateSettingsFields(fields []pluginapi.SettingsField) error {
 		if _, fixed := fixedSettingKeys[strings.ToLower(f.Key)]; fixed {
 			return fmt.Errorf("%s restates a fixed setting; the fixed shape already has a control for it", where)
 		}
+		if isSocketSettingKey(f.Key) {
+			return fmt.Errorf("%s is one of the host's socket settings; a manifest asks for those with socket, never declares them", where)
+		}
+		if f.Warning != "" && f.Type != pluginapi.FieldBool {
+			return fmt.Errorf("%s is a %s and declares a warning, which only a bool has", where, f.Type)
+		}
 		if _, dup := seen[f.Key]; dup {
 			return fmt.Errorf("%s is declared twice", where)
 		}
@@ -222,6 +228,7 @@ func PrepareSettings(fields []pluginapi.SettingsField, submitted map[string]json
 		}
 		out = append(out, store.PluginSetting{Key: f.Key, Value: encodeFieldValue(value), Secret: f.Type == pluginapi.FieldSecret})
 	}
+	errs = append(errs, checkSocketSettings(out, fields)...)
 	if len(errs) > 0 {
 		return nil, errs
 	}
@@ -455,7 +462,7 @@ func (m *Manager) applySettings(set *Set) {
 		return
 	}
 	for _, p := range set.Plugins() {
-		fields := p.Manifest().Settings.Fields
+		fields := settingsFields(p.Manifest())
 		if len(fields) == 0 {
 			p.SetSettingValues(nil)
 			continue
@@ -500,7 +507,7 @@ func (m *Manager) SaveSettings(ctx context.Context, id string, submitted map[str
 		return Installed{}, refuse(ReasonUnknown,
 			"the plugin %q is installed but did not load, so there is nothing to configure yet", id)
 	}
-	fields := p.Manifest().Settings.Fields
+	fields := settingsFields(p.Manifest())
 	if len(fields) == 0 {
 		return Installed{}, refuse(ReasonSettings,
 			"the plugin %q declares no settings of its own; what it does is configured on the screen for its extension point", id)
@@ -542,7 +549,7 @@ func (m *Manager) declaredFields(id string) []pluginapi.SettingsField {
 	if p == nil {
 		return nil
 	}
-	return p.Manifest().Settings.Fields
+	return settingsFields(p.Manifest())
 }
 
 // settingRows is one Plugin's stored settings, or none when they cannot be read. A

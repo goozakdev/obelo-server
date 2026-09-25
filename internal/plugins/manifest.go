@@ -100,6 +100,12 @@ func validateManifest(m pluginapi.Manifest) error {
 	if err := validateIDToken(m); err != nil {
 		return err
 	}
+	for _, p := range m.Provides {
+		if p.Socket && p.Kind != pluginapi.ExtensionSignInProvider {
+			return fmt.Errorf("a socket declaration belongs on a %s entry; no other extension point may open one",
+				pluginapi.ExtensionSignInProvider)
+		}
+	}
 	for _, h := range m.Network.Hosts {
 		if h != normalizeHost(h) || h == "" {
 			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port or path", h)

@@ -60,6 +60,9 @@ const (
 	HostFuncKVSet       = "kv_set"
 	HostFuncKVDelete    = "kv_delete"
 	HostFuncSettingsGet = "settings_get"
+	// HostFuncSocket is the socket grant (ADR-0064): a Sign-in provider's
+	// connection to the address its operator configured. See [Socket].
+	HostFuncSocket = "socket"
 )
 
 // MetadataExports is every Metadata provider export in contract order, which is
@@ -104,5 +107,6 @@ func HostFuncs() []string {
 		HostFuncKVSet,
 		HostFuncKVDelete,
 		HostFuncSettingsGet,
+		HostFuncSocket,
 	}
 }

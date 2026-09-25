@@ -84,6 +84,10 @@ func (h *hostFuncs) instantiate(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(h.kvDelete).Export("kv_delete").
 		NewFunctionBuilder().WithFunc(h.settingsGet).Export("settings_get").
 		// ------------------------------------------------------------------------
+		// The socket grant (ADR-0064): exported to every guest, so a module links
+		// the same everywhere, and refused to every call but a sign-in call into a
+		// Plugin that declares it (socket.go).
+		NewFunctionBuilder().WithFunc(h.socket).Export("socket").
 		Instantiate(ctx)
 	if err != nil {
 		return fmt.Errorf("instantiating the %s host module: %w", hostModule, err)

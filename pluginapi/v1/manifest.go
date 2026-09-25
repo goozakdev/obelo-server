@@ -165,6 +165,13 @@ type ManifestProvides struct {
 	// state and PKCE alone, and the Admin screen says the identity is not
 	// independently verified. Ignored for every other Extension point.
 	IDToken *ManifestIDToken `json:"idToken,omitempty"`
+	// Socket is a Sign-in provider asking for the socket grant (ADR-0064): a raw
+	// TCP connection, during its sign-in calls, to the one host:port the operator
+	// types. The host adds the address, the encryption choice, the plaintext
+	// opt-out and the trusted CA to the Plugin's settings form itself, and dials,
+	// encrypts and verifies every connection itself. Refused on any other
+	// Extension point.
+	Socket bool `json:"socket,omitempty"`
 }
 
 // ManifestIDToken names the two declared settings a redirect-flow Sign-in

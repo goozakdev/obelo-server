@@ -384,6 +384,11 @@ type Plugin struct {
 	// meta is the Metadata provider Extension point's per-call state (issue 11).
 	// It lives in metadata.go; the field is here only because Plugin is.
 	meta metaState
+
+	// sockets is the CURRENT call's connections, for a call whose policy grants
+	// them (callPolicy.socket), and nil otherwise — which is what refuses every
+	// socket request outside one. Guarded by mu; see socket.go.
+	sockets *socketTable
 }
 
 // SetSettingValues publishes the manifest-declared setting values this Plugin's
@@ -771,6 +776,10 @@ type callPolicy struct {
 	// and logins behind a guest that hangs must not each wait out every call
 	// ahead of them in turn.
 	queueInBudget bool
+	// socket grants the socket host function for this call, to a Plugin whose
+	// manifest declares it (ADR-0064). For a Sign-in provider and nothing else;
+	// every connection is closed when the call ends or at its deadline.
+	socket bool
 }
 
 // errCallFailed is outcomeOnly's kind for a failure that is not a refusal, a
@@ -860,6 +869,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 	} else {
 		p.callDeadline = time.Time{}
 	}
+	defer p.beginSockets(callCtx, policy)()
 
 	if err := callCtx.Err(); err != nil {
 		// The caller's own deadline was already gone before this call ever reached
