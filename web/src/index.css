@@ -554,6 +554,14 @@ body {
   color: var(--text-dim);
 }
 
+/* An Auto-skip switch's state, set right like a roster entry's status. */
+.auto-skip-state {
+  float: right;
+  margin-left: 1rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
 /* The username toggle reads as muted text with its caret; hovering hints it's
    interactive without the underline the link toggles use. */
 .user-menu-toggle {

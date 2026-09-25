@@ -8,16 +8,21 @@ import (
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/markerfetch"
+	"github.com/goozakdev/obelo-server/internal/markers"
 	"github.com/goozakdev/obelo-server/internal/playback"
 )
 
 // Markers (ADR-0065). One GET leaf on the session subtree, owner-only like
 // progress, so a player can offer Skip for the File it is actually playing:
 //
-//	GET /sessions/{id}/markers → { "markers": [ { "kind", "source", "startMs", "endMs" } ] }
+//	GET /sessions/{id}/markers → { "markers": [ { "kind", "source", "startMs", "endMs", "autoSkip", "watchedPoint" } ] }
 //
-// Times are on the session File's own timeline. A File with no Markers answers an
-// empty list; a reaped, ended or foreign session is 404.
+// Times are on the session File's own timeline. autoSkip is the viewer's own
+// auto-skip setting for the Marker's kind (/me/marker-auto-skip): a player skips
+// such a Marker by itself instead of offering the Skip button. watchedPoint marks
+// the Credits Marker whose crossing marks the Title watched (the server's
+// CreditsFloor rule); only that one may advance to a next episode. A File with no
+// Markers answers an empty list; a reaped, ended or foreign session is 404.
 //
 // This GET is what a player does when playback starts, so it is also where a
 // File's Marker providers are first asked (internal/markerfetch). The asking is
@@ -37,17 +42,19 @@ const markersReadWait = 3 * time.Second
 const markersFetchTimeout = 30 * time.Second
 
 type markerJSON struct {
-	Kind    string `json:"kind"`
-	Source  string `json:"source"`
-	StartMs int64  `json:"startMs"`
-	EndMs   int64  `json:"endMs"`
+	Kind         string `json:"kind"`
+	Source       string `json:"source"`
+	StartMs      int64  `json:"startMs"`
+	EndMs        int64  `json:"endMs"`
+	AutoSkip     bool   `json:"autoSkip"`
+	WatchedPoint bool   `json:"watchedPoint"`
 }
 
 type sessionMarkersResponse struct {
 	Markers []markerJSON `json:"markers"`
 }
 
-func handleSessionMarkers(svc *playback.Service, fetch *markerfetch.Service, sessionID string) http.HandlerFunc {
+func handleSessionMarkers(svc *playback.Service, fetch *markerfetch.Service, autoSkip MarkerAutoSkipStore, sessionID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := identityFrom(r.Context())
 		if !ok {
@@ -81,9 +88,24 @@ func handleSessionMarkers(svc *playback.Service, fetch *markerfetch.Service, ses
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to load markers", nil)
 			return
 		}
+		// Best-effort: a failure to read the setting offers every Marker's Skip
+		// button rather than failing the read over a preference.
+		skip := map[string]bool{}
+		if autoSkip != nil {
+			if kinds, err := autoSkip.MarkerAutoSkipKinds(id.User.ID); err == nil {
+				for _, kind := range kinds {
+					skip[kind] = true
+				}
+			}
+		}
+		watchedPoint := svc.SessionWatchedPointMs(sessionID)
 		out := sessionMarkersResponse{Markers: make([]markerJSON, 0, len(ms))}
 		for _, m := range ms {
-			out.Markers = append(out.Markers, markerJSON{Kind: m.Kind, Source: m.Source, StartMs: m.StartMs, EndMs: m.EndMs})
+			out.Markers = append(out.Markers, markerJSON{
+				Kind: m.Kind, Source: m.Source, StartMs: m.StartMs, EndMs: m.EndMs,
+				AutoSkip:     skip[m.Kind],
+				WatchedPoint: m.Kind == markers.KindCredits && m.StartMs == watchedPoint,
+			})
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

@@ -1163,6 +1163,8 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 		// The redirect flow of the same Sign-in providers, over the same registry.
 		SignInRedirect: signin.NewRedirects(registry),
+		// Each User's auto-skip kinds (ADR-0065 §6).
+		MarkerAutoSkip: db,
 	})
 
 	// Top-level composition (ADR-0012): /api/v1 stays the API's; every other

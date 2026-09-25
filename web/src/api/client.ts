@@ -148,6 +148,7 @@ import type {
   MarkerDetection,
   RedirectSignInProvidersView,
   RedirectSignInCallbackRequest,
+  MarkerAutoSkip,
 } from "./types";
 import type { Lyrics } from "./types";
 
@@ -2379,6 +2380,22 @@ export class ApiClient {
       `/libraries/${encodeURIComponent(libraryId)}/marker-detection`,
       { method: "PUT", body: { enabled }, signal },
     );
+  }
+
+  /** `GET /api/v1/me/marker-auto-skip` — the caller's own auto-skip setting per
+   * Marker kind (ADR-0065 §6). Every kind is off until the User turns it on. */
+  getMarkerAutoSkip(signal?: AbortSignal): Promise<MarkerAutoSkip> {
+    return this.request<MarkerAutoSkip>("/me/marker-auto-skip", { signal });
+  }
+
+  /** `PUT /api/v1/me/marker-auto-skip` — replace the caller's whole auto-skip
+   * setting (an omitted kind is off); answers the saved setting. */
+  setMarkerAutoSkip(setting: MarkerAutoSkip, signal?: AbortSignal): Promise<MarkerAutoSkip> {
+    return this.request<MarkerAutoSkip>("/me/marker-auto-skip", {
+      method: "PUT",
+      body: setting,
+      signal,
+    });
   }
 
   /** `POST /api/v1/shows/{id}/detect-markers` (Admin) — "detect markers now"
