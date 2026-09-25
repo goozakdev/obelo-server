@@ -2651,6 +2651,21 @@ export interface InstalledPluginsView {
   plugins: InstalledPlugin[];
 }
 
+/** One User an uninstall of a Sign-in provider would delete. */
+export interface PluginUninstallUser {
+  id: string;
+  username: string;
+}
+
+/** The `GET /settings/plugins/{id}/uninstall` view: what uninstalling a plugin
+ * would do to Users. Uninstalling a Sign-in provider deletes every User it leaves
+ * with no other way to sign in (ADR-0063 decision 10); `usersToDelete` is them, by
+ * name. Any other plugin deletes nobody. */
+export interface PluginUninstallPreview {
+  signInProvider: boolean;
+  usersToDelete: PluginUninstallUser[];
+}
+
 /** The `POST /settings/plugins/from-url` body: the URL of a plugin's
  * `manifest.json`, with its `plugin.wasm` published beside it in the same
  * directory.

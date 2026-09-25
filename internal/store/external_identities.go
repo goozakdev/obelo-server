@@ -28,13 +28,24 @@ func (db *DB) ExternalIdentityUser(pluginID, subject string) (User, error) {
 // RecordExternalSignIn remembers what a provider said about a returning identity:
 // its current username at the source and its groups. Neither is resolved by. A
 // sign-in is the provider answering, so a pending re-check retry and the count
-// of failed verifications are cleared.
+// of failed verifications are cleared. A provider uninstalled since the
+// identity was found is ErrSignInProviderUninstalled, and nothing is recorded.
 func (db *DB) RecordExternalSignIn(pluginID, subject, username string, groups []string) error {
 	g, err := encodeGroups(groups)
 	if err != nil {
 		return err
 	}
-	res, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: recording external sign-in: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if gone, err := signInProviderUninstalled(tx, pluginID); err != nil {
+		return err
+	} else if gone {
+		return ErrSignInProviderUninstalled
+	}
+	res, err := tx.Exec(
 		`UPDATE external_identities
 		    SET username = ?, groups = ?, last_seen_at = datetime('now'), retry_at = '', check_failures = 0
 		  WHERE plugin_id = ? AND subject = ?`, username, g, pluginID, subject)
@@ -43,6 +54,9 @@ func (db *DB) RecordExternalSignIn(pluginID, subject, username string, groups []
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: recording external sign-in: %w", err)
 	}
 	return nil
 }
@@ -90,6 +104,8 @@ func (db *DB) ExternalIdentitiesByUser(userID string) ([]ExternalIdentity, error
 // A username already held here surfaces as the UNIQUE-constraint error for the
 // caller to map — the collision ADR-0063 decision 7 refuses rather than merges.
 // An identity claimed by a concurrent first sign-in is ErrExternalIdentityTaken.
+// A provider uninstalled since it answered is ErrSignInProviderUninstalled, and
+// nothing is created.
 func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUsername string, groups []string) (User, error) {
 	g, err := encodeGroups(groups)
 	if err != nil {
@@ -100,6 +116,11 @@ func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUser
 		return User{}, fmt.Errorf("store: creating external member: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if gone, err := signInProviderUninstalled(tx, pluginID); err != nil {
+		return User{}, err
+	} else if gone {
+		return User{}, ErrSignInProviderUninstalled
+	}
 	if _, err := tx.Exec(
 		`INSERT INTO users (id, username, role, password_hash, external_origin)
 		 VALUES (?, ?, 'member', NULL, 1)`, id, username); err != nil {
@@ -124,13 +145,25 @@ func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUser
 // Attaching one the User already holds records what the provider said, like a
 // returning sign-in. One held by a different User is ErrExternalIdentityTaken,
 // and nothing changes: the insert and the check are one statement, so no
-// concurrent attach or sign-in can move an identity between Users.
+// concurrent attach or sign-in can move an identity between Users. A provider
+// uninstalled since it answered is ErrSignInProviderUninstalled, and nothing
+// changes.
 func (db *DB) AttachExternalIdentity(userID, pluginID, subject, providerUsername string, groups []string) error {
 	g, err := encodeGroups(groups)
 	if err != nil {
 		return err
 	}
-	res, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: attaching external identity: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if gone, err := signInProviderUninstalled(tx, pluginID); err != nil {
+		return err
+	} else if gone {
+		return ErrSignInProviderUninstalled
+	}
+	res, err := tx.Exec(
 		`INSERT INTO external_identities (plugin_id, subject, user_id, username, groups)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT (plugin_id, subject) DO UPDATE
@@ -142,6 +175,9 @@ func (db *DB) AttachExternalIdentity(userID, pluginID, subject, providerUsername
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrExternalIdentityTaken
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: attaching external identity: %w", err)
 	}
 	return nil
 }

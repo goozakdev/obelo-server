@@ -143,6 +143,11 @@ func (db *DB) InsertPlugin(p PluginInsert) error {
 	if _, err := tx.Exec(`DELETE FROM declined_plugins WHERE id = ?`, p.ID); err != nil {
 		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
 	}
+	// A Sign-in provider uninstalled under this id signs nobody in; the plugin
+	// arriving now is installed, so its sign-ins are no longer refused.
+	if _, err := tx.Exec(`DELETE FROM uninstalled_sign_in_providers WHERE plugin_id = ?`, p.ID); err != nil {
+		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: recording plugin %q: %w", p.ID, err)
 	}
@@ -314,6 +319,18 @@ func (db *DB) DeletePlugin(id string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := deletePluginRows(tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: removing plugin %q: %w", id, err)
+	}
+	return nil
+}
+
+// deletePluginRows is DeletePlugin's statements, run inside the caller's
+// transaction.
+func deletePluginRows(tx execer, id string) error {
 	for _, stmt := range []string{
 		`DELETE FROM plugin_settings WHERE plugin_id = ?`,
 		// The same one statement DeletePluginNamespace runs, shared rather than
@@ -339,9 +356,6 @@ func (db *DB) DeletePlugin(id string) error {
 		if _, err := tx.Exec(stmt, id); err != nil {
 			return fmt.Errorf("store: removing plugin %q: %w", id, err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: removing plugin %q: %w", id, err)
 	}
 	return nil
 }
