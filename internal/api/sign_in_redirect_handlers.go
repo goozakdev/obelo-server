@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/auth"
@@ -103,6 +104,17 @@ func handleRedirectSignInStart(deps Deps) http.HandlerFunc {
 		}
 		var req redirectStartRequest
 		if !decodeJSON(w, r, &req) {
+			return
+		}
+		// Limited per address like login, before the provider is asked anything:
+		// every start runs its AuthorizeURL. See auth.ChargeRedirectStart.
+		if err := deps.Auth.ChargeRedirectStart(clientIP(r)); err != nil {
+			var throttled *auth.RedirectStartThrottledError
+			if errors.As(err, &throttled) {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(throttled.RetryAfter)))
+			}
+			writeError(w, http.StatusTooManyRequests, codeTooManyAttempts,
+				"too many sign-ins started from this address; wait and try again", nil)
 			return
 		}
 		started, err := deps.SignInRedirect.Start(r.Context(), req.Provider, externalBaseURL(r)+signInCallbackPath, clientIP(r))

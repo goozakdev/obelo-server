@@ -107,3 +107,47 @@ func TestAWebReferenceProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *test
 		t.Fatalf("logged a provider that declares video:\n%s", log.all())
 	}
 }
+
+// TestAnOfflineFetchDisablesUnderItsOwnName: a Web reference provider that
+// reaches for the network on every call is disabled at the threshold, and the
+// line saying so names what it did — reached for the network during a call that
+// has none — rather than calling a no-network refusal an allowlist violation.
+func TestAnOfflineFetchDisablesUnderItsOwnName(t *testing.T) {
+	dataDir := t.TempDir()
+	plugintest.Install(t, dataDir, plugintest.WebReferenceManifest("example-refs", "fetch"))
+	log := &logSink{}
+	set := loadWith(t, dataDir, log, plugins.Options{})
+	for _, p := range set.Plugins() {
+		p.SetSettingValues(map[string]any{"mode": "fetch"})
+	}
+	reg := pluginapi.NewRegistry()
+	set.Register(reg)
+	registration, ok := reg.WebReferenceProvider("example-refs")
+	if !ok {
+		t.Fatal("the Set registered no Web reference provider for example-refs")
+	}
+	provider, err := registration.New(pluginapi.Settings{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < plugins.DefaultFailureThreshold; i++ {
+		_, _ = provider.Links(context.Background(), pluginapi.WebReferencesRequest{
+			Kind: "movie", IDs: map[string]string{"imdb": "tt1160419"},
+		})
+	}
+	if st, _ := set.Status("example-refs"); !st.Disabled {
+		t.Fatalf("status = %+v, want the provider disabled after %d refused fetches", st, plugins.DefaultFailureThreshold)
+	}
+	var line string
+	for _, l := range strings.Split(log.all(), "\n") {
+		if strings.Contains(l, "is disabled after") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no line says the provider was disabled:\n%s", log.all())
+	}
+	if strings.Contains(line, "allowlist") || !strings.Contains(line, "tried to fetch during a call that has no network") {
+		t.Fatalf("the disable line is %q; want it to name the no-network refusal and not an allowlist", line)
+	}
+}

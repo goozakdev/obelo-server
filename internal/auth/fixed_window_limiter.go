@@ -44,9 +44,16 @@ type fixedWindowLimiter struct {
 	limit  int
 	window time.Duration
 
-	mu      sync.Mutex
-	counts  map[string]*keyWindow
-	sweepAt int
+	// maxKeys, when not zero, is how many keys the limiter holds at once. With
+	// the table full, a key it does not hold is refused until a window runs out
+	// (fullUntil): a caller with nothing else bounding how many keys can be
+	// charged fails closed for new sources rather than growing without limit.
+	maxKeys int
+
+	mu        sync.Mutex
+	counts    map[string]*keyWindow
+	sweepAt   int
+	fullUntil time.Time
 }
 
 // keyWindow is one key's event count and the instant its window opened.
@@ -79,17 +86,47 @@ func (l *fixedWindowLimiter) allow(key string, now time.Time) (ok bool, retryAft
 
 	w, tracked := l.counts[key]
 	if !tracked {
-		return true, 0
+		return l.room(now)
 	}
 	elapsed := now.Sub(w.windowStart)
 	if elapsed >= l.window {
 		delete(l.counts, key)
-		return true, 0
+		return l.room(now)
 	}
 	if w.count < l.limit {
 		return true, 0
 	}
 	return false, l.window - elapsed
+}
+
+// room reports whether a key the limiter does not hold may be charged, and when
+// it may not, how long until one may. Only a limiter with maxKeys ever says no.
+//
+// A full table is swept at most once per window that runs out: after a sweep
+// that frees nothing, fullUntil is when the oldest window left does, and nothing
+// can be freed before it, so new keys are refused until then without scanning.
+//
+// The caller must hold l.mu.
+func (l *fixedWindowLimiter) room(now time.Time) (ok bool, retryAfter time.Duration) {
+	if l.maxKeys == 0 || len(l.counts) < l.maxKeys {
+		return true, 0
+	}
+	if now.Before(l.fullUntil) {
+		return false, l.fullUntil.Sub(now)
+	}
+	oldest := now
+	for k, w := range l.counts {
+		if now.Sub(w.windowStart) >= l.window {
+			delete(l.counts, k)
+		} else if w.windowStart.Before(oldest) {
+			oldest = w.windowStart
+		}
+	}
+	if len(l.counts) < l.maxKeys {
+		return true, 0
+	}
+	l.fullUntil = oldest.Add(l.window)
+	return false, l.fullUntil.Sub(now)
 }
 
 // charge records one event against key, opening a fresh window if the key is new
@@ -115,14 +152,16 @@ func (l *fixedWindowLimiter) charge(key string, now time.Time) {
 // precisely the login limiter's per-IP map under a flood from rotating source
 // addresses, where every failure can mint a key that is never looked up twice.
 //
-// Growth is bounded even without this: a new key costs a failure, a failure costs
-// an argon2 derivation, and derivations are capped at kdfConcurrency (password.go),
-// so a window can accumulate on the order of tens of thousands of entries — a few
-// MB, not a leak. The device-code start counter has no KDF behind it, but it does
-// have the global live cap (maxLiveDeviceAuthRequests), which bounds how many
-// starts can ever succeed in a window and therefore how many keys can ever be
-// charged. The sweep exists so that steady state after an attack returns to
-// nothing rather than staying at the high-water mark.
+// The sweep is not what bounds growth; each caller has its own bound. The login
+// counters' new key costs a failure, a failure costs an argon2 derivation, and
+// derivations are capped at kdfConcurrency (password.go), so a window can
+// accumulate on the order of tens of thousands of entries — a few MB, not a leak.
+// The device-code start counter has no KDF behind it, but it does have the global
+// live cap (maxLiveDeviceAuthRequests), which bounds how many starts can ever
+// succeed in a window and therefore how many keys can ever be charged. The
+// redirect start counter has neither, so it sets maxKeys (see room). The sweep
+// exists so that steady state after an attack returns to nothing rather than
+// staying at the high-water mark.
 //
 // It runs only once the map has doubled since the last sweep. Sweeping is O(n), so
 // tying it to growth keeps it amortized O(1) per charge; a flat threshold would

@@ -20,4 +20,17 @@ describe("safeReturnPath", () => {
       expect(safeReturnPath(path)).toBe("/");
     }
   });
+
+  // Each guard on its own: an input only that guard stands in the way of.
+
+  it("sends Home a protocol-relative path even when it names this server", () => {
+    // Resolves to this origin, so only the "//" and "/\\" check refuses it.
+    for (const path of [`//${window.location.host}/x`, `/\\${window.location.host}/x`]) {
+      expect(safeReturnPath(path)).toBe("/");
+    }
+  });
+
+  it("returns the path with tab, CR and LF dropped, as the URL parser reads it", () => {
+    expect(safeReturnPath("/li\tnk/AB\r\nCD")).toBe("/link/ABCD");
+  });
 });

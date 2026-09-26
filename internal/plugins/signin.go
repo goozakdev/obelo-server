@@ -125,15 +125,16 @@ func (g *guestSignInProvider) CheckPassword(ctx context.Context, req pluginapi.S
 		return pluginapi.SignInPasswordCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 	policy := callPolicy{
-		budget:        g.p.opts.CallTimeout,
-		secret:        true,
-		describe:      "password sign-in",
-		noStrike:      true,
-		queueInBudget: true,
-		socket:        true,
+		budget:            g.p.opts.CallTimeout,
+		secret:            true,
+		describe:          "password sign-in",
+		noStrike:          true,
+		violationNoStrike: true,
+		queueInBudget:     true,
+		socket:            true,
 	}
 	if err := g.p.callGuestUnder(ctx, policy, exportSignInPassword, "", buildReq, &resp); err != nil {
-		if errors.Is(err, ErrDisabled) {
+		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInPasswordResponse{}, err
 		}
 		return pluginapi.SignInPasswordResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
@@ -283,9 +284,11 @@ func (g *guestSignInProvider) AuthorizeURL(ctx context.Context, req pluginapi.Si
 	buildReq := func(callCtx context.Context) any {
 		return pluginapi.SignInAuthorizeCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
-	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("redirect sign-in"), exportSignInAuthorizeURL,
+	policy := g.redirectPolicy("redirect sign-in")
+	policy.violationNoStrike = true
+	if err := g.p.callGuestUnder(ctx, policy, exportSignInAuthorizeURL,
 		g.redirectTarget(), buildReq, &resp); err != nil {
-		if errors.Is(err, ErrDisabled) {
+		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInAuthorizeResponse{}, err
 		}
 		return pluginapi.SignInAuthorizeResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
@@ -300,9 +303,11 @@ func (g *guestSignInProvider) Exchange(ctx context.Context, req pluginapi.SignIn
 	buildReq := func(callCtx context.Context) any {
 		return pluginapi.SignInExchangeCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
-	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("redirect sign-in exchange"), exportSignInExchange,
+	policy := g.redirectPolicy("redirect sign-in exchange")
+	policy.violationNoStrike = true
+	if err := g.p.callGuestUnder(ctx, policy, exportSignInExchange,
 		g.redirectTarget(), buildReq, &resp); err != nil {
-		if errors.Is(err, ErrDisabled) {
+		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInExchangeResponse{}, err
 		}
 		return pluginapi.SignInExchangeResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
@@ -322,7 +327,7 @@ func (g *guestSignInProvider) Lookup(ctx context.Context, req pluginapi.SignInLo
 	}
 	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("sign-in re-check"), exportSignInLookup,
 		g.redirectTarget(), buildReq, &resp); err != nil {
-		if errors.Is(err, ErrDisabled) {
+		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInLookupResponse{}, err
 		}
 		return pluginapi.SignInLookupResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)
@@ -340,7 +345,7 @@ func (g *guestSignInProvider) Refresh(ctx context.Context, req pluginapi.SignInR
 	}
 	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("sign-in refresh"), exportSignInRefresh,
 		g.redirectTarget(), buildReq, &resp); err != nil {
-		if errors.Is(err, ErrDisabled) {
+		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInRefreshResponse{}, err
 		}
 		return pluginapi.SignInRefreshResponse{}, fmt.Errorf("plugin %s: %w", g.p.id, err)

@@ -145,6 +145,14 @@ func (t *socketTable) add(c *socketConn) (int, bool) {
 	return t.opened, true
 }
 
+// full reports whether this call has opened as many connections as it may, so
+// an open past the cap is refused before anything is dialled.
+func (t *socketTable) full() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.closed || t.opened >= maxSocketsPerCall
+}
+
 func (t *socketTable) get(handle int) *socketConn {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -211,8 +219,12 @@ func (p *Plugin) auditSocket(reason string) {
 }
 
 // socket is the host function: a SocketRequest in guest memory, a SocketResponse
-// out through the guest's allocator.
+// out through the guest's allocator. A call without the grant is refused before
+// its request is read out of guest memory, let alone parsed.
 func (h *hostFuncs) socket(ctx context.Context, mod api.Module, ptr, n uint32) uint64 {
+	if _, refused := h.socketGrant(); refused != nil {
+		return h.emit(ctx, mod, *refused)
+	}
 	var req pluginapi.SocketRequest
 	if err := h.readRequest(mod, ptr, n, &req); err != nil {
 		return h.emit(ctx, mod, pluginapi.SocketResponse{Refused: socketRefusedBadOp})
@@ -220,18 +232,27 @@ func (h *hostFuncs) socket(ctx context.Context, mod api.Module, ptr, n uint32) u
 	return h.emit(ctx, mod, h.socketOp(ctx, req))
 }
 
-// socketOp is socket without the memory, so it can be read as the policy it is.
-func (h *hostFuncs) socketOp(ctx context.Context, req pluginapi.SocketRequest) pluginapi.SocketResponse {
-	// THE GRANT, first. A call with no network, and a call with no table — every
-	// call that is not a sign-in call into a socket-declaring Plugin — is refused
-	// before the request is so much as looked at, and counted: a Plugin reaching
-	// for a socket it was not given is a Plugin doing what its Extension point
-	// says it does not.
+// socketGrant is the call's socket table, or the refusal for a call without the
+// grant. A call with no network, and a call with no table — every call that is
+// not a sign-in call into a socket-declaring Plugin — is refused and counted: a
+// Plugin reaching for a socket it was not given is a Plugin doing what its
+// Extension point says it does not.
+func (h *hostFuncs) socketGrant() (*socketTable, *pluginapi.SocketResponse) {
 	t := h.p.socketTable()
 	if h.p.offlineCall() || t == nil {
 		h.p.auditSocket(auditSocketNoGrant)
 		h.p.recordViolation("tried to open a socket, which only a sign-in call of a plugin declaring one may")
-		return pluginapi.SocketResponse{Refused: socketRefusedNoGrant}
+		return nil, &pluginapi.SocketResponse{Refused: socketRefusedNoGrant}
+	}
+	return t, nil
+}
+
+// socketOp is socket without the memory, so it can be read as the policy it is.
+func (h *hostFuncs) socketOp(ctx context.Context, req pluginapi.SocketRequest) pluginapi.SocketResponse {
+	// THE GRANT, first, before the request is so much as looked at.
+	t, refused := h.socketGrant()
+	if refused != nil {
+		return *refused
 	}
 	switch req.Op {
 	case pluginapi.SocketOpOpen:
@@ -328,6 +349,10 @@ func (h *hostFuncs) socketOpen(ctx context.Context, t *socketTable, req pluginap
 			return pluginapi.SocketResponse{Refused: socketRefusedBadCA}
 		}
 		c.tlsConfig = cfg
+	}
+
+	if t.full() {
+		return pluginapi.SocketResponse{Refused: socketRefusedTooMany}
 	}
 
 	dctx, cancel, ok := h.deadline(ctx)

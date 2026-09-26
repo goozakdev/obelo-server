@@ -321,3 +321,111 @@ func TestASignInCallRecordsNoTextOfItsOwn(t *testing.T) {
 		})
 	}
 }
+
+// TestASignInCallsSecrecyEndsWithTheCall: one module that is both a Sign-in
+// provider and a Web reference provider makes a sign-in call and then a Web
+// reference call that reaches for the network. The second call carries no
+// credential, so its refused fetch is audited with the host it named — the
+// sign-in call's "record nothing of the guest's" must not outlive it.
+func TestASignInCallsSecrecyEndsWithTheCall(t *testing.T) {
+	dataDir := t.TempDir()
+	const accounts = "ada:pw:subject-ada:ada:"
+	m := plugintest.SignInManifest("both", accounts)
+	refs := plugintest.WebReferenceManifest("both", "fetch")
+	m.Provides = append(m.Provides, refs.Provides...)
+	m.Settings.Fields = append(m.Settings.Fields, refs.Settings.Fields...)
+	plugintest.Install(t, dataDir, m)
+	log := &logSink{}
+	set := loadWith(t, dataDir, log, plugins.Options{})
+	for _, p := range set.Plugins() {
+		p.SetSettingValues(map[string]any{"accounts": accounts, "mode": "fetch"})
+	}
+	reg := pluginapi.NewRegistry()
+	set.Register(reg)
+
+	signIn, ok := reg.SignInProvider("both")
+	if !ok {
+		t.Fatal("the Set registered no Sign-in provider for both")
+	}
+	provider, err := signIn.New(pluginapi.Settings{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := provider.CheckPassword(context.Background(), pluginapi.SignInPasswordRequest{Username: "ada", Password: "pw"}); err != nil || !resp.Accepted {
+		t.Fatalf("CheckPassword = %+v, %v; want ada accepted", resp, err)
+	}
+
+	webRefs, ok := reg.WebReferenceProvider("both")
+	if !ok {
+		t.Fatal("the Set registered no Web reference provider for both")
+	}
+	links, err := webRefs.New(pluginapi.Settings{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := links.Links(context.Background(), pluginapi.WebReferencesRequest{
+		Kind: "movie", IDs: map[string]string{"imdb": "tt1160419"},
+	}); err != nil {
+		t.Fatalf("Links: %v", err)
+	}
+	if !log.contains(t, "refused a fetch: plugin=both", "reason=no-network-call") {
+		t.Fatalf("the Web reference call's refused fetch was not audited as a call without a credential:\n%s", log.all())
+	}
+}
+
+// TestFetchViolationsDuringSignInCallsNeverDisableTheProvider: a guest that
+// reaches for a host its manifest does not list on every sign-in call. Anyone
+// can make a login, so those refusals must not be a way to take the provider
+// off the server — exactly as a failing sign-in call is not — while what
+// happened is still recorded.
+func TestFetchViolationsDuringSignInCallsNeverDisableTheProvider(t *testing.T) {
+	provider, set, _ := signInProviderWith(t, plugintest.SignInFetchesThePasswordHost, plugins.Options{})
+
+	for i := 0; i < 2*plugins.DefaultFailureThreshold; i++ {
+		if _, err := provider.CheckPassword(context.Background(), pluginapi.SignInPasswordRequest{Username: "ada", Password: "pw"}); err != nil {
+			t.Fatalf("call %d: CheckPassword: %v", i, err)
+		}
+	}
+	st, _ := set.Status("directory")
+	if st.Disabled {
+		t.Fatalf("the provider was disabled after %d refused fetches during sign-in calls (%q); a login must not be able to disable it",
+			2*plugins.DefaultFailureThreshold, st.LastError)
+	}
+	if st.LastError == "" {
+		t.Error("the refused fetches left no last error; they must still be recorded")
+	}
+}
+
+// TestAQueuedSignInCallNamesThePluginOnce: logins queued behind a guest that
+// never answers give up by their own deadline, and the error each one answers
+// names the plugin once — not "plugin directory: plugin directory: …".
+func TestAQueuedSignInCallNamesThePluginOnce(t *testing.T) {
+	provider, _, _ := signInProviderWith(t, plugintest.SignInHangs, plugins.Options{CallTimeout: 500 * time.Millisecond})
+
+	const logins = 3
+	errs := make([]error, logins)
+	var wg sync.WaitGroup
+	for i := 0; i < logins; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = provider.CheckPassword(context.Background(), pluginapi.SignInPasswordRequest{Username: "ada", Password: "pw"})
+		}(i)
+	}
+	wg.Wait()
+	var queued int
+	for i, err := range errs {
+		if err == nil {
+			t.Fatalf("login %d answered no error from a guest that never answers", i)
+		}
+		if strings.Contains(err.Error(), "queued") {
+			queued++
+		}
+		if n := strings.Count(err.Error(), "plugin directory"); n != 1 {
+			t.Errorf("login %d's error names the plugin %d times, want once: %q", i, n, err)
+		}
+	}
+	if queued == 0 {
+		t.Fatal("no login gave up while queued; the test did not reach the queued-call error")
+	}
+}

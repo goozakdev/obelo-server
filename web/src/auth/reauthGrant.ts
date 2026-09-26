@@ -17,12 +17,22 @@ export function keepReauthGrant(grant: string, expiresIn: number): void {
 
 /** The kept re-auth grant, if it is still live. */
 export function readReauthGrant(): string | null {
+  return readLiveGrant()?.grant ?? null;
+}
+
+/** When the kept re-auth grant expires, in Date.now() milliseconds, if it is
+ * still live. */
+export function reauthGrantExpiresAt(): number | null {
+  return readLiveGrant()?.expiresAt ?? null;
+}
+
+function readLiveGrant(): { grant: string; expiresAt: number } | null {
   try {
     const raw = window.sessionStorage.getItem(REAUTH_GRANT_KEY);
     if (raw) {
       const g = JSON.parse(raw) as { grant?: unknown; expiresAt?: unknown };
       if (typeof g.grant === "string" && typeof g.expiresAt === "number" && g.expiresAt > Date.now()) {
-        return g.grant;
+        return { grant: g.grant, expiresAt: g.expiresAt };
       }
     }
   } catch {
