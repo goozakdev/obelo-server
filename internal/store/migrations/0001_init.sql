@@ -1429,9 +1429,11 @@ CREATE TABLE marker_detection_failures (
 -- wrong lyrics
 -- ===========================================================================
 
--- The Lyric provider answers someone marked wrong for a Track. answer names the
--- answer as the host kept it (internal/lyricfetch), whichever provider gave it,
--- so none is kept for that Track again. Shared: one row is every User's view.
+-- The Lyric provider answers someone marked wrong for a Track. answer is the
+-- answer as the host kept it, normalised and encoded (internal/lyricfetch),
+-- whichever provider gave it, so none is kept for that Track again — nor a
+-- Synced copy retimed by a few milliseconds. Shared: one row is every User's
+-- view. A Track keeps its 20 most recent (by rowid); an older one is forgotten.
 CREATE TABLE lyric_rejections (
     title_id    TEXT NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
     answer      TEXT NOT NULL,

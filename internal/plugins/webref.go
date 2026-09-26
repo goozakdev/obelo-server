@@ -43,6 +43,12 @@ func (s *Set) registerWebReferenceProvider(reg *pluginapi.Registry, p *Plugin, e
 	if d.Name == "" {
 		d.Name = p.id
 	}
+	if len(d.Kinds) == 0 {
+		// A provider serves the kinds it declared (Descriptor.Serves), so one that
+		// declared none is never asked. Said once, at registration, so an Admin
+		// wondering why it never answers has a line to find.
+		p.logf("obelo: plugin %s declares no kinds, so this Web reference provider serves no item", p.id)
+	}
 	reg.RegisterWebReferenceProvider(pluginapi.WebReferenceProviderRegistration{Descriptor: d, New: p.newWebReferenceProvider})
 }
 

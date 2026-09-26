@@ -2,6 +2,7 @@ package plugins_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
@@ -82,5 +83,27 @@ func TestAWebReferenceProviderGuestCannotFetch(t *testing.T) {
 	st, _ := set.Status("example-refs")
 	if st.LastError == "" {
 		t.Fatalf("status = %+v, want the refused fetch recorded as the last error", st)
+	}
+}
+
+// TestAWebReferenceProviderDeclaringNoKindsIsLoggedOnceAtRegistration: a
+// provider that declares no kinds serves no item, so it is never asked. That is
+// said once, naming the Plugin, when it is registered — and not for one that
+// declares video.
+func TestAWebReferenceProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *testing.T) {
+	dataDir := t.TempDir()
+	none := plugintest.WebReferenceManifest("kindless-refs", "https")
+	none.Provides[0].Kinds = nil
+	plugintest.Install(t, dataDir, none)
+	plugintest.Install(t, dataDir, plugintest.WebReferenceManifest("video-refs", "https"))
+	log := &logSink{}
+	set := loadWith(t, dataDir, log, plugins.Options{})
+	set.Register(pluginapi.NewRegistry())
+
+	if n := strings.Count(log.all(), "kindless-refs declares no kinds"); n != 1 {
+		t.Fatalf("logged the kindless provider %d times, want once:\n%s", n, log.all())
+	}
+	if strings.Contains(log.all(), "video-refs declares no kinds") {
+		t.Fatalf("logged a provider that declares video:\n%s", log.all())
 	}
 }

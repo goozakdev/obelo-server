@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
@@ -58,5 +59,26 @@ func TestAnInstalledLyricProviderRegistersAndAnswers(t *testing.T) {
 	if resp.Kind != pluginapi.LyricsSynced || len(resp.Lines) != 1 || resp.Lines[0].Text != "First" ||
 		resp.DurationMs != 999999 || resp.RecordingID != "someone-else" {
 		t.Fatalf("response = %+v, want the source's answer unchanged", resp)
+	}
+}
+
+// TestALyricProviderDeclaringNoKindsIsLoggedOnceAtRegistration: a provider that
+// declares no kinds serves no track, so it is never asked. That is said once,
+// naming the Plugin, when it is registered — and not for one that declares music.
+func TestALyricProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *testing.T) {
+	dataDir := t.TempDir()
+	none := plugintest.LyricManifest("kindless-lyrics", "https://lyrics.example.test")
+	none.Provides[0].Kinds = nil
+	plugintest.Install(t, dataDir, none)
+	plugintest.Install(t, dataDir, plugintest.LyricManifest("music-lyrics", "https://lyrics.example.test"))
+	log := &logSink{}
+	set := loadWith(t, dataDir, log, plugins.Options{})
+	set.Register(pluginapi.NewRegistry())
+
+	if n := strings.Count(log.all(), "kindless-lyrics declares no kinds"); n != 1 {
+		t.Fatalf("logged the kindless provider %d times, want once:\n%s", n, log.all())
+	}
+	if strings.Contains(log.all(), "music-lyrics declares no kinds") {
+		t.Fatalf("logged a provider that declares music:\n%s", log.all())
 	}
 }

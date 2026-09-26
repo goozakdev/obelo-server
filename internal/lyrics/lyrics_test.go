@@ -3,6 +3,7 @@ package lyrics
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -61,13 +62,25 @@ func TestParseLRC(t *testing.T) {
 		},
 		{name: "blank is not lyrics", in: "  \n\t\n", ok: false},
 		{
-			name: "lines stamped past a day are dropped, never overflowing",
-			in:   "[99999999999999999999:00.00]overflow\n[153722867280912:55.81]wraps\n[1441:00.00]late\n[00:01.00]kept",
+			name: "lines stamped past what a client holds exactly are dropped, never overflowing",
+			in:   "[99999999999999999999:00.00]overflow\n[153722867280912:55.81]wraps\n[00:01.00]kept",
 			want: Lyrics{Kind: Synced, Lines: []Line{{1000, "kept"}}},
 			ok:   true,
 		},
 		{
-			name: "an offset past a day is ignored",
+			name: "a line stamped past a day is kept, as in an audiobook",
+			in:   "[1441:00.00]late\n[3000:00.50]later\n[00:01.00]early",
+			want: Lyrics{Kind: Synced, Lines: []Line{{1000, "early"}, {86_460_000, "late"}, {180_000_500, "later"}}},
+			ok:   true,
+		},
+		{
+			name: "bare CR line endings end lines",
+			in:   "[00:01.00]One\r[00:02.00]Two\rThree",
+			want: Lyrics{Kind: Synced, Lines: []Line{{1000, "One"}, {2000, "Two"}}},
+			ok:   true,
+		},
+		{
+			name: "an offset past what a client holds exactly is ignored",
 			in:   "[offset:-9000000000000000000]\n[00:01.00]a",
 			want: Lyrics{Kind: Synced, Lines: []Line{{1000, "a"}}},
 			ok:   true,
@@ -156,6 +169,22 @@ func TestReadID3(t *testing.T) {
 		syllables = append(syllables, be32(e.ms)...)
 	}
 
+	// UTF-16 SYLT whose descriptor is little-endian and whose first entry opens
+	// with a big-endian mark: the entry after it is big-endian too, though it
+	// does not say so — the last mark seen is the one in force.
+	beSYLT := []byte{1, 'e', 'n', 'g', 2, 1}
+	beSYLT = append(beSYLT, utf16LE("desc", true)...)
+	beSYLT = append(beSYLT, 0, 0)
+	for _, e := range []struct {
+		s   string
+		ms  int
+		bom bool
+	}{{"Café", 500, true}, {"noir", 1500, false}} {
+		beSYLT = append(beSYLT, utf16BE(e.s, e.bom)...)
+		beSYLT = append(beSYLT, 0, 0)
+		beSYLT = append(beSYLT, be32(e.ms)...)
+	}
+
 	cases := []struct {
 		name     string
 		data     []byte
@@ -183,9 +212,24 @@ func TestReadID3(t *testing.T) {
 			wantSylt: []Line{{1000, "One"}, {2000, "Two"}, {3000, "Three"}},
 		},
 		{
-			name:     "a SYLT entry stamped past a day is dropped",
-			data:     tag(3, 0, frame(3, "SYLT", 0, latin1SYLT(2, 1, "Kept", 1000, "Late", 0xffffffff))),
-			wantSylt: []Line{{1000, "Kept"}},
+			name:     "a SYLT entry stamped past a day is kept",
+			data:     tag(3, 0, frame(3, "SYLT", 0, latin1SYLT(2, 1, "Late", 0xffffffff, "Kept", 1000))),
+			wantSylt: []Line{{1000, "Kept"}, {0xffffffff, "Late"}},
+		},
+		{
+			name:     "a v2.3 grouping identity byte is stripped",
+			data:     tag(3, 0, frame(3, "USLT", 0x20, append([]byte{0x02}, usltBody...))),
+			wantUslt: "Plain\nwords",
+		},
+		{
+			name:     "SYLT syllables opening their lines with a bare CR",
+			data:     tag(3, 0, frame(3, "SYLT", 0, latin1SYLT(2, 1, "One", 100, " more", 200, "\rTwo", 900))),
+			wantSylt: []Line{{100, "One more"}, {900, "Two"}},
+		},
+		{
+			name:     "UTF-16 SYLT whose big-endian mark on one entry carries to the next",
+			data:     tag(3, 0, frame(3, "SYLT", 0, beSYLT)),
+			wantSylt: []Line{{500, "Café"}, {1500, "noir"}},
 		},
 		{
 			// Sizes of 128 and over differ between syncsafe and plain big-endian
@@ -327,6 +371,26 @@ func TestLocalPrecedence(t *testing.T) {
 			want:    Lyrics{Kind: Plain, Text: "USLT words"},
 			ok:      true,
 		},
+		{
+			name:    "a Windows-1252 sidecar is decoded",
+			audio:   plainID3,
+			sidecar: "[00:02.00]Caf\xe9 \x93au lait\x94 \x80",
+			want:    Lyrics{Kind: Synced, Lines: []Line{{2000, "Café “au lait” €"}}},
+			ok:      true,
+		},
+		{
+			name:    "a UTF-16 sidecar holding a lone surrogate is skipped for the USLT",
+			audio:   plainID3,
+			sidecar: "\xff\xfeW\x00\x00\xd8x\x00",
+			want:    Lyrics{Kind: Plain, Text: "USLT words"},
+			ok:      true,
+		},
+		{
+			name:  "USLT text with bare CR line endings",
+			audio: tag(3, 0, frame(3, "USLT", 0, append([]byte{0, 'e', 'n', 'g', 0}, "Line one\rLine two"...))),
+			want:  Lyrics{Kind: Plain, Text: "Line one\nLine two"},
+			ok:    true,
+		},
 		{name: "nothing anywhere", tags: map[string]string{"title": "Song"}},
 	}
 	for _, tc := range cases {
@@ -346,5 +410,86 @@ func TestLocalPrecedence(t *testing.T) {
 				t.Fatalf("Local = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+// TestAnUnreadableSidecarFallsBackToTheNextCandidate: the .lrc beside a track is
+// not text, and the next name tried — the .LRC, a different file on a
+// case-sensitive filesystem — is read instead of giving up on sidecars.
+func TestAnUnreadableSidecarFallsBackToTheNextCandidate(t *testing.T) {
+	dir := t.TempDir()
+	unreadable, readable := filepath.Join(dir, "first.lrc"), filepath.Join(dir, "second.lrc")
+	if err := os.WriteFile(unreadable, []byte("W\x00o\x00r\x00d\x00s\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(readable, []byte("[00:02.00]Upper-case sidecar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := firstSidecar(filepath.Join(dir, "missing.lrc"), unreadable, readable)
+	want := Lyrics{Kind: Synced, Lines: []Line{{2000, "Upper-case sidecar"}}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("firstSidecar = %+v, %v; want %+v", got, ok, want)
+	}
+}
+
+// TestLocalReadsTheLRCBesideAnUnreadableLrc is the same fallback through Local,
+// on a filesystem where the two names are two files.
+func TestLocalReadsTheLRCBesideAnUnreadableLrc(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "01 - Song.mp3")
+	if err := os.WriteFile(path, []byte("\xff\xfbaudio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "01 - Song.lrc"), []byte("W\x00o\x00r\x00d\x00s\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "01 - Song.LRC"), []byte("[00:02.00]Upper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 3 {
+		t.Skip("this filesystem is case-insensitive: .lrc and .LRC are one file")
+	}
+	got, ok := Local(path, nil)
+	if want := (Lyrics{Kind: Synced, Lines: []Line{{2000, "Upper"}}}); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("Local = %+v, %v; want %+v", got, ok, want)
+	}
+}
+
+// TestAnUndefinedWindows1252ByteIsNotText: the five bytes Windows-1252 leaves
+// undefined are not decoded to anything — not to the C1 control Latin-1 puts
+// there — so a sidecar holding one is not a lyrics file.
+func TestAnUndefinedWindows1252ByteIsNotText(t *testing.T) {
+	for _, b := range []byte{0x81, 0x8d, 0x8f, 0x90, 0x9d} {
+		data := []byte("[00:02.00]Caf\xe9 ")
+		data = append(data, b)
+		if text, ok := decodeWindows1252(data); ok {
+			t.Fatalf("decodeWindows1252 with 0x%02x = %q, want not text", b, text)
+		}
+		if text, ok := sidecarText(data); ok {
+			t.Fatalf("sidecarText with 0x%02x = %q, want not text", b, text)
+		}
+	}
+}
+
+// TestTheLRCIsTriedAfterAnUnreadableLrc is TestLocalReadsTheLRCBesideAnUnreadableLrc
+// on any filesystem: the files are the test's own, so .lrc and .LRC are two
+// files whatever the disk underneath does with case.
+func TestTheLRCIsTriedAfterAnUnreadableLrc(t *testing.T) {
+	files := map[string]string{
+		"/music/01 - Song.lrc": "W\x00o\x00r\x00d\x00s\x00",
+		"/music/01 - Song.LRC": "[00:02.00]Upper",
+	}
+	orig := openSidecar
+	t.Cleanup(func() { openSidecar = orig })
+	openSidecar = func(name string) (io.ReadCloser, error) {
+		body, ok := files[name]
+		if !ok {
+			return nil, os.ErrNotExist
+		}
+		return io.NopCloser(strings.NewReader(body)), nil
+	}
+	got, ok := readSidecar("/music/01 - Song.mp3")
+	if want := (Lyrics{Kind: Synced, Lines: []Line{{2000, "Upper"}}}); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("readSidecar = %+v, %v; want %+v", got, ok, want)
 	}
 }

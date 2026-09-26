@@ -1,8 +1,13 @@
 package webref
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log"
+	"os"
+	"strings"
 	"testing"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
@@ -56,7 +61,7 @@ func TestCollectKeepsOnlyHTTPSReferencesToHeldIDs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := pluginapi.NewRegistry()
-			register(reg, "refs", nil, &fakeProvider{refs: []pluginapi.WebReference{good, tc.ref}})
+			register(reg, "refs", []string{pluginapi.KindVideo}, &fakeProvider{refs: []pluginapi.WebReference{good, tc.ref}})
 			got := Collect(context.Background(), reg, "movie", held)
 			if len(got) != 1 || got[0] != (Reference{Label: "IMDb", URL: good.URL}) {
 				t.Fatalf("Collect = %+v, want only %s", got, good.URL)
@@ -82,8 +87,8 @@ func TestCollectAsksOnlyProvidersServingTheKind(t *testing.T) {
 	reg := pluginapi.NewRegistry()
 	register(reg, "video", []string{pluginapi.KindVideo}, video)
 	register(reg, "music", []string{pluginapi.KindMusic}, music)
-	register(reg, "broken", nil, broken)
-	register(reg, "every", nil, every)
+	register(reg, "broken", []string{pluginapi.KindVideo}, broken)
+	register(reg, "every", []string{pluginapi.KindVideo}, every)
 
 	got := Collect(context.Background(), reg, "movie", held)
 	want := []Reference{
@@ -112,5 +117,76 @@ func TestCollectAsksNobodyForAnItemWithNoIDs(t *testing.T) {
 	register(reg, "refs", nil, p)
 	if got := Collect(context.Background(), reg, "movie", nil); got != nil || p.got.Kind != "" {
 		t.Fatalf("Collect = %+v (asked %+v), want nil and no call", got, p.got)
+	}
+}
+
+// TestCollectAsksNoProviderThatDeclaresNoKinds: a provider serves the kinds it
+// declared, so one that declared none serves nothing — the contract's
+// Descriptor.Serves, the rule every seam reads — and is never built or asked.
+func TestCollectAsksNoProviderThatDeclaresNoKinds(t *testing.T) {
+	p := &fakeProvider{refs: []pluginapi.WebReference{
+		ref("imdb", "tt1160419", "IMDb", "https://www.imdb.com/title/tt1160419/"),
+	}}
+	built := false
+	reg := pluginapi.NewRegistry()
+	reg.RegisterWebReferenceProvider(pluginapi.WebReferenceProviderRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "none"},
+		New: func(pluginapi.Settings) (pluginapi.WebReferenceProvider, error) {
+			built = true
+			return p, nil
+		},
+	})
+	for _, kind := range []string{"movie", "track"} {
+		if got := Collect(context.Background(), reg, kind, held); got != nil || built || p.got.Kind != "" {
+			t.Fatalf("%s: Collect = %+v (built %v, asked %+v), want nothing built or asked", kind, got, built, p.got)
+		}
+	}
+}
+
+// TestCollectKeepsAtMostFiftyReferences: past the cap nothing more is kept, and
+// what is kept is the first fifty in provider order — all of the first
+// provider's forty, then the second's first ten.
+func TestCollectKeepsAtMostFiftyReferences(t *testing.T) {
+	many := func(host string, n int) *fakeProvider {
+		p := &fakeProvider{}
+		for i := 0; i < n; i++ {
+			p.refs = append(p.refs, ref("imdb", "tt1160419", "IMDb", fmt.Sprintf("https://%s/title/tt1160419/?n=%d", host, i)))
+		}
+		return p
+	}
+	reg := pluginapi.NewRegistry()
+	register(reg, "first", []string{pluginapi.KindVideo}, many("first.example", 40))
+	register(reg, "second", []string{pluginapi.KindVideo}, many("second.example", 60000))
+
+	got := Collect(context.Background(), reg, "movie", held)
+	if len(got) != 50 {
+		t.Fatalf("Collect kept %d references, want 50", len(got))
+	}
+	if got[39].URL != "https://first.example/title/tt1160419/?n=39" || got[40].URL != "https://second.example/title/tt1160419/?n=0" ||
+		got[49].URL != "https://second.example/title/tt1160419/?n=9" {
+		t.Fatalf("kept %s, %s … %s; want the first provider's forty, then the second's first ten",
+			got[39].URL, got[40].URL, got[49].URL)
+	}
+}
+
+// TestCollectLogsAProviderWhoseFactoryFails: a provider that cannot be built
+// costs the item nothing, but the operator is told which one was skipped.
+func TestCollectLogsAProviderWhoseFactoryFails(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	reg := pluginapi.NewRegistry()
+	reg.RegisterWebReferenceProvider(pluginapi.WebReferenceProviderRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "unbuildable", Kinds: []string{pluginapi.KindVideo}},
+		New: func(pluginapi.Settings) (pluginapi.WebReferenceProvider, error) {
+			return nil, errors.New("no module is loaded")
+		},
+	})
+	if got := Collect(context.Background(), reg, "movie", held); got != nil {
+		t.Fatalf("Collect = %+v, want nothing", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "unbuildable") || !strings.Contains(out, "no module is loaded") {
+		t.Fatalf("log = %q, want the skipped provider and why", out)
 	}
 }

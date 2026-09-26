@@ -141,9 +141,14 @@ func (db *DB) RejectedLyrics(titleID string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// maxLyricRejections is how many rejected answers a Track keeps: the most
+// recent ones. Every asking reads them all, so they are bounded.
+const maxLyricRejections = 20
+
 // RejectFetchedLyrics records answer as wrong for a Track and forgets the
 // Track's remembered Lyric provider answer, together, so the next open asks
-// again knowing what to pass over.
+// again knowing what to pass over. Past maxLyricRejections the oldest rejection
+// is forgotten.
 func (db *DB) RejectFetchedLyrics(titleID, answer string) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -154,6 +159,13 @@ func (db *DB) RejectFetchedLyrics(titleID, answer string) error {
 		`INSERT INTO lyric_rejections (title_id, answer) VALUES (?, ?) ON CONFLICT DO NOTHING`, titleID, answer,
 	); err != nil {
 		return fmt.Errorf("store: recording rejected lyrics: %w", err)
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM lyric_rejections WHERE title_id = ? AND rowid NOT IN (
+		     SELECT rowid FROM lyric_rejections WHERE title_id = ? ORDER BY rowid DESC LIMIT ?)`,
+		titleID, titleID, maxLyricRejections,
+	); err != nil {
+		return fmt.Errorf("store: capping rejected lyrics: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM lyrics WHERE title_id = ? AND source = 'fetched'`, titleID); err != nil {
 		return fmt.Errorf("store: forgetting rejected lyrics: %w", err)
