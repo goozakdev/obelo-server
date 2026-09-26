@@ -151,6 +151,11 @@ type App struct {
 	// Closed with the App before the DB, killing any decoder in flight.
 	markerDetector *markerdetect.Detector
 
+	// markerFetch asks the Marker providers about a played File in the
+	// background. Closed with the App before the DB and the Plugins, ending any
+	// asking in flight.
+	markerFetch *markerfetch.Service
+
 	// Background-goroutine lifecycle: cancel stops every long-running goroutine
 	// (the periodic scan, the session reaper, the enrich worker + scheduled
 	// enrich); each closes its done channel once it has fully exited, so Close
@@ -999,6 +1004,11 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// negotiated by the Server that holds the file.
 	playbackSvc.SetRelay(linkSvc)
 
+	// Marker providers (ADR-0065): asked when a session first reads its File's
+	// Markers, and what they answered served only while one is enabled.
+	markerFetch := markerfetch.New(db, registry)
+	playbackSvc.SetFetchedMarkersServed(markerFetch.Serving)
+
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
 	// scheduled enrich both feed one worker via enrichQueue; the worker AND the
@@ -1034,6 +1044,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		installedPlugins: installed,
 		pluginManager:    pluginManager,
 		markerDetector:   markerDetector,
+		markerFetch:      markerFetch,
 	}
 	if markerDetector != nil {
 		markerDetector.Start()
@@ -1155,7 +1166,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		LyricProviderOrder: db,
 
 		// Marker providers: asked when a session first reads its File's Markers.
-		MarkerFetch: markerfetch.New(db, registry),
+		MarkerFetch: markerFetch,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
@@ -1743,6 +1754,11 @@ func (a *App) Close() error {
 	// decoder is killed and waited for.
 	if a.markerDetector != nil {
 		a.markerDetector.Close()
+	}
+	// The same for the Marker providers' asking: cancelled and waited for, so none
+	// saves into a closed database or calls a closed Plugin.
+	if a.markerFetch != nil {
+		a.markerFetch.Close()
 	}
 	// End every Playback session once the reaper has stopped, so no remux or
 	// transcode ffmpeg outlives the server: each is killed and WAITED for before its

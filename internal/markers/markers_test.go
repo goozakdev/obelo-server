@@ -66,3 +66,50 @@ func TestParseEDL(t *testing.T) {
 		t.Errorf("ParseEDL = %+v, want %+v", got, want)
 	}
 }
+
+// TestClassifyEndingOnlyAsTheEndingItself: "Ending" names the Credits only as the
+// chapter that IS the ending (the anime "Ending", "Ending Theme"). A story chapter
+// that merely has an ending in its name — "Alternate Ending" past halfway — would
+// otherwise become the Watched ceiling and clear resume before the story is over.
+// "End Titles" is the film name for the Credits.
+func TestClassifyEndingOnlyAsTheEndingItself(t *testing.T) {
+	cases := map[string]string{
+		"Ending":           KindCredits,
+		"Ending Theme":     KindCredits,
+		"Alternate Ending": "",
+		"The Happy Ending": "",
+		"End Titles":       KindCredits,
+		"End Title":        KindCredits,
+		"Main Titles":      "",
+		"The End":          "",
+	}
+	for label, want := range cases {
+		if got := Classify(label); got != want {
+			t.Errorf("Classify(%q) = %q, want %q", label, got, want)
+		}
+	}
+}
+
+// TestClassifyReadsTheNameAfterAChapterNumber: a leading chapter number —
+// "05 - ", "Chapter 5 - ", "Part C: " — is not part of the chapter's name, so
+// "05 - Ending" is the Credits as "Ending" is. "End Title(s)" is the Credits only
+// as the whole name after it: "Dead End Title" is a story chapter.
+func TestClassifyReadsTheNameAfterAChapterNumber(t *testing.T) {
+	cases := map[string]string{
+		"05 - Ending":           KindCredits,
+		"Chapter 5 - Ending":    KindCredits,
+		"Part C: Ending":        KindCredits,
+		"01 Opening":            KindIntro,
+		"Dead End Title":        "",
+		"Alternate Ending":      "",
+		"End Titles":            KindCredits,
+		"12 - End Titles":       KindCredits,
+		"Chapter 12":            "",
+		"05 - Alternate Ending": "",
+	}
+	for label, want := range cases {
+		if got := Classify(label); got != want {
+			t.Errorf("Classify(%q) = %q, want %q", label, got, want)
+		}
+	}
+}

@@ -41,7 +41,7 @@ import { resolvePlayback } from "./playbackResolver";
 import { useOptionalFeature } from "../serverInfoContext";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
-import SkipMarkerButton from "./SkipMarkerButton";
+import SkipMarkerButton, { CREDITS_REPORT_TIMEOUT_MS } from "./SkipMarkerButton";
 import { useQueue } from "./queue/useQueue";
 import type { QueueEntry } from "./queue/model";
 import { formatTimecode } from "../time";
@@ -1158,13 +1158,18 @@ function CurrentPlayer({
       ? albumArtworkUrl(detail.track.albumId)
       : undefined;
 
+  // The last position read off the element, for when it is gone: React detaches
+  // the video ref before the unmount cleanup below runs.
+  const lastPositionMsRef = useRef(0);
   const positionMs = () => {
     const v = videoRef.current;
-    return v ? Math.floor(v.currentTime * 1000) : 0;
+    if (v) lastPositionMsRef.current = Math.floor(v.currentTime * 1000);
+    return lastPositionMsRef.current;
   };
 
   // End the session (final report + DELETE) when this core unmounts (a queue
   // advance re-keying it, or the Queue emptying so the bar unmounts). Runs once.
+  // The element is already gone, so the report is the last position read.
   const unmountedRef = useRef(false);
   useEffect(() => {
     return () => {
@@ -1568,7 +1573,9 @@ function CurrentPlayer({
   }
   function onTimeUpdate() {
     const v = videoRef.current;
-    if (v) setCurrentTime(v.currentTime);
+    if (!v) return;
+    setCurrentTime(v.currentTime);
+    lastPositionMsRef.current = Math.floor(v.currentTime * 1000);
   }
   function onPlay() {
     setPlaying(true);
@@ -1586,13 +1593,26 @@ function CurrentPlayer({
   // Play the Queue's next Episode from the Watched-point Credits (ADR-0065 §6).
   // The report at `fromMs` must land before the advance: the advance unmounts this
   // core, whose final report + DELETE would otherwise overtake it. A failed report
-  // is logged and still advances. Once per mount.
+  // is logged and still advances, and so is one still out after
+  // CREDITS_REPORT_TIMEOUT_MS, which is then aborted. Once per mount.
   const nextEpisodeRef = useRef(false);
   function playNextEpisode(fromMs: number) {
     if (nextEpisodeRef.current || status.kind !== "ready") return;
     nextEpisodeRef.current = true;
     const state = videoRef.current?.paused ? "paused" : "playing";
-    void Promise.resolve(apiClient.reportProgress(status.decision.sessionId, { positionMs: fromMs, state }))
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        reject(new Error(`no answer within ${CREDITS_REPORT_TIMEOUT_MS} ms`));
+      }, CREDITS_REPORT_TIMEOUT_MS);
+    });
+    void Promise.race([
+      Promise.resolve(apiClient.reportProgress(status.decision.sessionId, { positionMs: fromMs, state }, abort.signal)),
+      timedOut,
+    ])
+      .finally(() => clearTimeout(timer))
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.error("[player] the Credits progress report failed (advancing anyway):", err);

@@ -1,9 +1,7 @@
 package api
 
 import (
-	"context"
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
@@ -27,19 +25,15 @@ import (
 // This GET is what a player does when playback starts, so it is also where a
 // File's Marker providers are first asked (internal/markerfetch). The asking is
 // not the viewer's: it runs apart from the request, so a viewer giving up on the
-// read ends nothing but the read. The read waits for it only markersReadWait and
-// then serves what is already known — the File's own and Detected Markers never
-// wait on a provider — and what a slow provider finds is served from the next
+// read ends nothing but the read, and it ends with the Server. The read waits for
+// it at most markersReadWait — even when the File's own or Detected Markers are
+// already known, a first read can wait that long on a slow provider — and then
+// serves what is known; what a slower provider finds is served from the next
 // read on.
 
 // markersReadWait is how long a read waits for a File's Marker providers before
 // it answers without them.
 const markersReadWait = 3 * time.Second
-
-// markersFetchTimeout bounds one asking of every Marker provider, the wait for
-// each Plugin's call slot included. Each call has its own budget inside it; this
-// is the ceiling on the whole asking.
-const markersFetchTimeout = 30 * time.Second
 
 type markerJSON struct {
 	Kind         string `json:"kind"`
@@ -62,15 +56,7 @@ func handleSessionMarkers(svc *playback.Service, fetch *markerfetch.Service, aut
 			return
 		}
 		if sess, ok := svc.Sessions().Get(sessionID); ok && fetch != nil && sess.UserID == id.User.ID && sess.FileID != "" {
-			fetched := make(chan struct{})
-			go func() {
-				defer close(fetched)
-				ctx, cancel := context.WithTimeout(context.Background(), markersFetchTimeout)
-				defer cancel()
-				if err := fetch.FetchFile(ctx, sess.TitleID, sess.FileID); err != nil {
-					log.Printf("obelo: fetching markers of session %s: %v", sessionID, err)
-				}
-			}()
+			fetched := fetch.Start(sess.TitleID, sess.FileID)
 			wait := time.NewTimer(markersReadWait)
 			select {
 			case <-fetched:

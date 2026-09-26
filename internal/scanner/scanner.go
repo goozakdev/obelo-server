@@ -265,6 +265,8 @@ type scanCtx struct {
 	// deletion, so its Files must stay present (ADR-0008, the subtree analogue of
 	// the unreachable-root guard).
 	unresolved []string
+	// dirNames is each folder's listing, read once a scan to find `.edl` files.
+	dirNames map[string][]string
 }
 
 // Scan performs an incremental synchronous scan of the Library's roots
@@ -561,6 +563,10 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 		if err := s.store.RecomputeHiddenArtists(lib.ID); err != nil {
 			return Result{}, err
 		}
+	}
+	// Markers are kept by path; a File renamed or deleted since has no row now.
+	if err := s.pruneOrphanedMarkers(); err != nil {
+		return Result{}, err
 	}
 
 	// Orphan surfacing: an override whose anchor folder no longer exists on disk
@@ -920,17 +926,21 @@ func (s *Service) assembleTitle(
 		// NOT re-ffprobed (the expensive step — skipping it is the whole point).
 		if sc.unchanged(cf.path, size, mtime) {
 			if stored, err := s.store.LoadStoredFile(cf.path); err == nil {
-				if err := s.refreshEDLMarkers(cf.path, stored.DurationMs); err != nil {
+				reprobe, err := s.refreshEDLMarkers(sc, cf.path, stored.DurationMs)
+				if err != nil {
 					return store.TitleTree{}, err
 				}
-				sc.seen[cf.path] = true
-				ps = append(ps, probedFile{
-					cf: cf, mtime: mtime, size: size, reused: true, stored: stored,
-					ed: editionNameFor(cf, stored.Height),
-				})
-				continue
+				if !reprobe {
+					sc.seen[cf.path] = true
+					ps = append(ps, probedFile{
+						cf: cf, mtime: mtime, size: size, reused: true, stored: stored,
+						ed: editionNameFor(cf, stored.Height),
+					})
+					continue
+				}
 			}
-			// Fall through to a fresh probe if the stored row vanished.
+			// Fall through to a fresh probe if the stored row vanished, or the `.edl`
+			// its Markers came from did.
 		}
 
 		sc.probes++
@@ -945,7 +955,7 @@ func (s *Service) assembleTitle(
 			}
 			continue
 		}
-		if err := s.recordLocalMarkers(cf.path, media); err != nil {
+		if err := s.recordLocalMarkers(sc, cf.path, media); err != nil {
 			return store.TitleTree{}, err
 		}
 		sc.seen[cf.path] = true

@@ -40,6 +40,7 @@ vi.mock("../api/client", async () => {
 });
 
 import NowPlayingBar from "./NowPlayingBar";
+import { CREDITS_REPORT_TIMEOUT_MS } from "./SkipMarkerButton";
 
 function episode(id: string, title: string, kind = "episode"): TitleSummary {
   return {
@@ -300,5 +301,101 @@ describe("NowPlayingBar — the Credits button", () => {
     const video = await playToStage([episode("t1", "The Fire"), episode("t2", "The Rescue")]);
     setPosition(video, 30);
     expect(await screen.findByTestId("skip-marker")).toHaveTextContent("Skip Intro");
+  });
+});
+
+describe("NowPlayingBar — the Credits report", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // A Credits report that holds until finished, for the Credits start only.
+  function holdCreditsReport() {
+    const held = { finish: undefined as undefined | (() => void), signal: undefined as AbortSignal | undefined };
+    reportProgress.mockImplementation((_sid: string, r: { positionMs: number }, signal?: AbortSignal) =>
+      r.positionMs >= 1_300_000 && r.positionMs < 1_380_000 && !held.finish
+        ? new Promise((resolve) => {
+            held.signal = signal;
+            held.finish = () => resolve({ titleId: "t1", resumePositionMs: r.positionMs, watched: true });
+          })
+        : Promise.resolve({ titleId: "t1", resumePositionMs: 0, watched: false }),
+    );
+    return held;
+  }
+
+  // The Credits reports "Next episode" sent: the ones it can abort. The final
+  // report of the session's end is not one of them.
+  function creditsReports(): number {
+    return reportProgress.mock.calls.filter((c) => {
+      const p = (c[1] as { positionMs: number }).positionMs;
+      return p >= 1_300_000 && p < 1_380_000 && c[2] instanceof AbortSignal;
+    }).length;
+  }
+
+  it("gives up on a hung Credits report and plays the next Episode", async () => {
+    const held = holdCreditsReport();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const video = await playToStage([episode("t1", "The Fire"), episode("t2", "The Rescue")]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    setPosition(video, 1_310);
+    fireEvent.click(await screen.findByTestId("skip-marker"));
+    await act(async () => {});
+    expect(held.finish).toBeDefined();
+    expect(startedTitles()).toEqual(["t1"]);
+    await act(async () => {
+      vi.advanceTimersByTime(CREDITS_REPORT_TIMEOUT_MS);
+    });
+    await waitFor(() => expect(startedTitles()).toContain("t2"));
+    expect(held.signal?.aborted).toBe(true);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("[player]"), expect.anything());
+  });
+
+  it("sends one Credits report however often Next episode is pressed", async () => {
+    const held = holdCreditsReport();
+    const video = await playToStage([
+      episode("t1", "The Fire"),
+      episode("t2", "The Rescue"),
+      episode("t3", "The Return"),
+    ]);
+    setPosition(video, 1_310);
+    const button = await screen.findByTestId("skip-marker");
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await act(async () => {});
+    expect(creditsReports()).toBe(1);
+    await act(async () => held.finish?.());
+    await waitFor(() => expect(startedTitles()).toContain("t2"));
+    await act(async () => {});
+    expect(creditsReports()).toBe(1);
+    expect(startedTitles()).toEqual(["t1", "t2"]);
+  });
+
+  it("does not advance again once the entry has changed while the report was out", async () => {
+    const held = holdCreditsReport();
+    const video = await playToStage([
+      episode("t1", "The Fire"),
+      episode("t2", "The Rescue"),
+      episode("t3", "The Return"),
+    ]);
+    setPosition(video, 1_310);
+    fireEvent.click(await screen.findByTestId("skip-marker"));
+    await act(async () => {});
+    act(() => {
+      fireEvent.keyDown(window, { key: "n" }); // the viewer moves on by hand
+    });
+    await waitFor(() => expect(startedTitles()).toContain("t2"));
+    await act(async () => held.finish?.());
+    await act(async () => {});
+    expect(startedTitles()).toEqual(["t1", "t2"]);
+  });
+
+  it("reports where playback was when the player goes away", async () => {
+    const video = await playToStage([episode("t1", "The Fire"), episode("t2", "The Rescue")]);
+    setPosition(video, 500.25);
+    act(() => {
+      fireEvent.keyDown(window, { key: "n" });
+    });
+    await waitFor(() => expect(endSession).toHaveBeenCalledWith("sess-1"));
+    expect(reportProgress).toHaveBeenCalledWith("sess-1", { positionMs: 500_250, state: "paused" });
   });
 });

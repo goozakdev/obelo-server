@@ -22,6 +22,28 @@ type Marker struct {
 // the File's chapters or `.edl` stopped naming anything. Markers from any other
 // source are left alone: the Scanner owns only what it read from the File.
 func (db *DB) ReplaceLocalMarkers(path string, ms []Marker) error {
+	return db.replaceLocalMarkers(path, ms, false)
+}
+
+// ReplaceEDLMarkers is ReplaceLocalMarkers for Markers read from the File's
+// `.edl`, remembered as such so LocalMarkersFromEDL can tell.
+func (db *DB) ReplaceEDLMarkers(path string, ms []Marker) error {
+	return db.replaceLocalMarkers(path, ms, true)
+}
+
+// LocalMarkersFromEDL reports whether the Local Markers stored for the File at
+// path were read from its `.edl`.
+func (db *DB) LocalMarkersFromEDL(path string) (bool, error) {
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM markers WHERE file_path = ? AND source = 'local' AND from_edl = 1`, path,
+	).Scan(&n); err != nil {
+		return false, fmt.Errorf("store: reading local markers of %q: %w", path, err)
+	}
+	return n > 0, nil
+}
+
+func (db *DB) replaceLocalMarkers(path string, ms []Marker, fromEDL bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("store: begin replacing markers: %w", err)
@@ -32,9 +54,9 @@ func (db *DB) ReplaceLocalMarkers(path string, ms []Marker) error {
 	}
 	for _, m := range ms {
 		if _, err := tx.Exec(
-			`INSERT INTO markers (id, file_path, kind, source, start_ms, end_ms)
-			 VALUES (?, ?, ?, 'local', ?, ?)`,
-			uuid.NewString(), path, m.Kind, m.StartMs, m.EndMs,
+			`INSERT INTO markers (id, file_path, kind, source, start_ms, end_ms, from_edl)
+			 VALUES (?, ?, ?, 'local', ?, ?, ?)`,
+			uuid.NewString(), path, m.Kind, m.StartMs, m.EndMs, fromEDL,
 		); err != nil {
 			return fmt.Errorf("store: inserting %s marker of %q: %w", m.Kind, path, err)
 		}
@@ -106,4 +128,58 @@ func withPrecedence(ms []Marker) []Marker {
 		}
 	}
 	return out
+}
+
+// PruneOrphanedMarkers removes everything kept by path about Files that are
+// gone: the Markers of every source, the question the Marker providers last
+// answered, and what detection heard, of each path no files row holds and gone
+// reports gone from disk. A Missing File that is its Title's only File keeps its
+// row, so it keeps all of it for when it returns (ADR-0008). A missing part or
+// Edition of a multi-file Title does not: the scan rebuilds the Title without
+// its row, so its data is removed here — and recomputed if it returns, since it
+// is then a new File: probed for its chapters, heard by detection, and asked of
+// the Marker providers again. The disk check spares a File another scan has
+// just read and not yet written. It returns how many paths it removed.
+func (db *DB) PruneOrphanedMarkers(gone func(path string) bool) (int, error) {
+	rows, err := db.Query(
+		`SELECT p FROM (
+		   SELECT file_path AS p FROM markers
+		   UNION SELECT file_path FROM marker_fetches
+		   UNION SELECT file_path FROM marker_detection_files
+		   UNION SELECT file_path FROM marker_detection_failures)
+		  WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.path = p)`)
+	if err != nil {
+		return 0, fmt.Errorf("store: listing orphaned markers: %w", err)
+	}
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("store: scanning orphaned marker path: %w", err)
+		}
+		if gone(p) {
+			paths = append(paths, p)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, p := range paths {
+		tx, err := db.Begin()
+		if err != nil {
+			return 0, fmt.Errorf("store: begin removing markers of %q: %w", p, err)
+		}
+		for _, table := range []string{"markers", "marker_fetches", "marker_detection_files", "marker_detection_failures"} {
+			if _, err := tx.Exec(`DELETE FROM `+table+` WHERE file_path = ?`, p); err != nil {
+				_ = tx.Rollback()
+				return 0, fmt.Errorf("store: removing %s of %q: %w", table, p, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("store: committing removal of markers of %q: %w", p, err)
+		}
+	}
+	return len(paths), nil
 }

@@ -1606,3 +1606,35 @@ func TestVideoMapByteForByteSingleVideo(t *testing.T) {
 		t.Errorf("nil-index burn must overlay onto the bare [0:v]; graph: %q", fc)
 	}
 }
+
+// TestReencodesReadsEveryWayToAskForAnEncode: a codec named for a stream by
+// index (`-c:0 aac`) re-encodes it, and so does a filter with no codec named —
+// ffmpeg cannot filter a copied stream, so it encodes with its default. Copies,
+// subtitle and data conversions, bitstream filters and filter-thread counts do
+// not.
+func TestReencodesReadsEveryWayToAskForAnEncode(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-i", "in", "-c", "copy", "out"}, false},
+		{[]string{"-i", "in", "-c:v", "copy", "-c:a", "aac", "out"}, true},
+		{[]string{"-i", "in", "-c:0", "aac", "out"}, true},
+		{[]string{"-i", "in", "-codec:1", "libx264", "out"}, true},
+		{[]string{"-i", "in", "-c:0", "copy", "-c:1", "copy", "out"}, false},
+		{[]string{"-i", "in", "-c:v:0", "libx264", "out"}, true},
+		{[]string{"-i", "in", "-vf", "scale=-2:720", "out"}, true},
+		{[]string{"-i", "in", "-af", "volume=2", "out"}, true},
+		{[]string{"-i", "in", "-filter:a", "loudnorm", "out"}, true},
+		{[]string{"-i", "in", "-filter_complex", "[0:v]scale=640:-2[v]", "-map", "[v]", "out"}, true},
+		{[]string{"-i", "in", "-lavfi", "anull", "out"}, true},
+		{[]string{"-i", "in", "-c", "copy", "-c:s", "webvtt", "out"}, false},
+		{[]string{"-i", "in", "-c", "copy", "-bsf:v", "h264_mp4toannexb", "out"}, false},
+		{[]string{"-filter_threads", "2", "-i", "in", "-c", "copy", "out"}, false},
+	}
+	for _, c := range cases {
+		if got := Reencodes(c.args); got != c.want {
+			t.Errorf("Reencodes(%q) = %v, want %v", strings.Join(c.args, " "), got, c.want)
+		}
+	}
+}

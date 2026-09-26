@@ -16,6 +16,10 @@
 //     the File, is dropped;
 //   - providers are asked in registration order, and the first to answer a kind
 //     acceptably supplies that kind.
+//
+// Fetched Markers are served only while at least one Marker provider is
+// installed and enabled (Serving); the rows are kept, so a provider enabled again
+// serves them without being asked again.
 package markerfetch
 
 import (
@@ -26,6 +30,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/markers"
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -37,6 +42,11 @@ import (
 // different encoder's padding, not a different cut. It is the tolerance a Lyric
 // provider's Synced answer is held to.
 const LengthToleranceMs = 3000
+
+// ProviderTimeout bounds one provider's answer about one File, the wait for the
+// Plugin's call slot included. Each provider has its own: providers are asked one
+// after another, and one that hangs must not spend the time of those after it.
+const ProviderTimeout = 30 * time.Second
 
 // Store is the persistence the Service reads and writes. *store.DB satisfies it.
 type Store interface {
@@ -78,13 +88,67 @@ type Service struct {
 	// at once ask each provider once between them.
 	mu       sync.Mutex
 	inflight map[string]chan struct{}
+
+	providerTimeout time.Duration
+
+	// ctx is cancelled by Close, which then waits on running for every asking
+	// Start began. closed refuses a Start after Close; it is guarded by mu.
+	ctx     context.Context
+	cancel  context.CancelFunc
+	running sync.WaitGroup
+	closed  bool
 }
 
 // New returns a Service over st, asking the Marker providers registered in reg.
 // A st that is also a Catalog (as *store.DB is) serves FetchFile.
 func New(st Store, reg *pluginapi.Registry) *Service {
 	cat, _ := st.(Catalog)
-	return &Service{store: st, catalog: cat, reg: reg, inflight: map[string]chan struct{}{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Service{
+		store: st, catalog: cat, reg: reg, inflight: map[string]chan struct{}{},
+		providerTimeout: ProviderTimeout, ctx: ctx, cancel: cancel,
+	}
+}
+
+// Start asks the providers about the File fileID of the Title titleID, as
+// FetchFile does, in the background: the asking is not the viewer's, so a viewer
+// giving up on the read that started it ends nothing. It returns a channel closed
+// when the asking is done. Close ends it; after Close nothing is asked.
+func (s *Service) Start(titleID, fileID string) <-chan struct{} {
+	done := make(chan struct{})
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		close(done)
+		return done
+	}
+	s.running.Add(1)
+	s.mu.Unlock()
+	go func() {
+		defer s.running.Done()
+		defer close(done)
+		if err := s.FetchFile(s.ctx, titleID, fileID); err != nil && s.ctx.Err() == nil {
+			log.Printf("obelo: fetching markers of file %s: %v", fileID, err)
+		}
+	}()
+	return done
+}
+
+// Close cancels every asking Start began and waits for it to end. An asking cut
+// short saves nothing and logs nothing: the Server is shutting down, and the
+// question is asked again on the next play.
+func (s *Service) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	s.cancel()
+	s.running.Wait()
+}
+
+// Serving reports whether any Marker provider would be asked now: one installed,
+// enabled, and serving video. Fetched Markers are served only while one is.
+func (s *Service) Serving() bool {
+	return len(s.build()) > 0
 }
 
 // FetchFile is Fetch for the File fileID of the Title titleID — a Movie or an
@@ -187,6 +251,11 @@ func (s *Service) Fetch(ctx context.Context, it Item) error {
 			}
 		}
 		ms, settled := s.ask(ctx, it, req, providers)
+		if ctx.Err() != nil {
+			// Abandoned (the Server is shutting down): nothing was answered.
+			s.release(it.Path, done)
+			return nil
+		}
 		if !settled {
 			question = ""
 		}
@@ -229,7 +298,8 @@ func request(it Item) pluginapi.MarkersRequest {
 // ask puts the question to each provider in order and returns the Markers the
 // File keeps: per kind, the first acceptable candidate. settled is false when a
 // provider failed — a failure is not an answer, so the question must be asked
-// again.
+// again. Each provider has providerTimeout to answer. Once ctx ends the asking
+// is abandoned, and a provider cut short by it is not logged as failing.
 func (s *Service) ask(ctx context.Context, it Item, req pluginapi.MarkersRequest, providers []provider) ([]store.Marker, bool) {
 	var out []store.Marker
 	have := map[string]bool{}
@@ -237,7 +307,12 @@ func (s *Service) ask(ctx context.Context, it Item, req pluginapi.MarkersRequest
 	for _, p := range providers {
 		r := req
 		r.IDs, r.ShowIDs = copyIDs(req.IDs), copyIDs(req.ShowIDs)
-		resp, err := p.p.Markers(ctx, r)
+		pctx, cancel := context.WithTimeout(ctx, s.providerTimeout)
+		resp, err := p.p.Markers(pctx, r)
+		cancel()
+		if ctx.Err() != nil {
+			return nil, false
+		}
 		if err != nil {
 			log.Printf("obelo: markers from %s: %v", p.slug, err)
 			settled = false

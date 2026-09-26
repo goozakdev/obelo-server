@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -127,5 +128,38 @@ func TestCreditsMarkerBeforeHalfwayIsIgnored(t *testing.T) {
 	}
 	if out := postProgress(t, srv, token, dec.SessionID, dur*95/100, http.StatusOK); !out.Watched {
 		t.Errorf("at 95%%: %+v, want watched by the flat ceiling", out)
+	}
+}
+
+// TestMarkersOfAnEndedSessionAre404: once the owner ends a session, its Markers
+// are gone with it — the same answer as a session that never was.
+func TestMarkersOfAnEndedSessionAre404(t *testing.T) {
+	requireFixtures(t)
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	duneID, _ := markerLibrary(t, srv, token, 0.55)
+	dec := negotiateDune(t, srv, token, duneID)
+	getMarkers(t, srv, token, dec.SessionID, http.StatusOK)
+
+	endSession(t, srv, token, dec.SessionID)
+	getMarkers(t, srv, token, dec.SessionID, http.StatusNotFound)
+}
+
+// TestMarkersOfARelayedSessionAreEmpty: a relayed session plays a mirrored File,
+// which has no path on this disk and so no Markers here — 200 with an empty
+// list, not an error, so a player simply offers no Skip.
+func TestMarkersOfARelayedSessionAreEmpty(t *testing.T) {
+	f := linkForRelay(t)
+	titleID := f.mirroredTitle(t, "Dune")
+	status, dec, body := f.play(t, f.homeAdmin, titleID, mp4Profile())
+	if status != http.StatusOK {
+		t.Fatalf("relayed playback = %d, want 200; body: %s", status, body)
+	}
+	var raw map[string]json.RawMessage
+	if st, b := f.home.AuthGET("/api/v1/sessions/"+dec.SessionID+"/markers", f.homeAdmin, &raw); st != http.StatusOK {
+		t.Fatalf("markers of a relayed session = %d, want 200; body: %s", st, b)
+	}
+	if got := string(raw["markers"]); got != "[]" {
+		t.Errorf("markers of a relayed session = %s, want []", got)
 	}
 }

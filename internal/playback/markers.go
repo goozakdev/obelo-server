@@ -19,6 +19,37 @@ type MarkerStore interface {
 	MarkersForFile(fileID string) ([]store.Marker, error)
 }
 
+// SetFetchedMarkersServed installs whether Fetched Markers are served now: only
+// while at least one Marker provider is installed and enabled (markerfetch
+// Service.Serving). Their rows are kept either way, so a provider enabled again
+// serves them without being asked again. Post-construction, like SetRelay: the
+// providers are known only once the Plugins are. Nil serves them.
+func (s *Service) SetFetchedMarkersServed(served func() bool) { s.fetchedServed = served }
+
+// fileMarkers lists the Markers of a File as they are served: the store's, less
+// the Fetched ones while no Marker provider is enabled.
+func (s *Service) fileMarkers(fileID string) ([]store.Marker, error) {
+	ms, err := s.markers.MarkersForFile(fileID)
+	if err != nil || s.fetchedServed == nil {
+		return ms, err
+	}
+	for _, m := range ms {
+		if m.Source == markers.SourceFetched {
+			if s.fetchedServed() {
+				return ms, nil
+			}
+			out := ms[:0:0]
+			for _, m := range ms {
+				if m.Source != markers.SourceFetched {
+					out = append(out, m)
+				}
+			}
+			return out, nil
+		}
+	}
+	return ms, nil
+}
+
 // watchedCeiling is the fraction of the session's duration at or past which a
 // progress report marks the Title watched: the start of the File's earliest
 // Credits Marker at or past CreditsFloor, else the flat WatchedCeiling.
@@ -43,7 +74,7 @@ func (s *Service) creditsWatchedPointMs(sess Session) int64 {
 	if s.markers == nil || sess.FileID == "" || sess.DurationMs <= 0 {
 		return -1
 	}
-	ms, err := s.markers.MarkersForFile(sess.FileID)
+	ms, err := s.fileMarkers(sess.FileID)
 	if err != nil {
 		return -1
 	}
@@ -92,5 +123,5 @@ func (s *Service) SessionMarkers(userID, sessionID string) ([]store.Marker, erro
 	if s.markers == nil || sess.FileID == "" {
 		return nil, nil
 	}
-	return s.markers.MarkersForFile(sess.FileID)
+	return s.fileMarkers(sess.FileID)
 }
