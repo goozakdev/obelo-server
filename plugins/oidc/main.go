@@ -17,9 +17,12 @@ import (
 	"github.com/goozakdev/obelo-server/pluginsdk/signin"
 )
 
+// bundled-sample:begin serve
 // main is never called. It exists because a Go program needs one.
 func main() {}
 
 func init() {
 	signin.ServeRedirect(oidc.New(pluginsdk.Sandbox()))
 }
+
+// bundled-sample:end serve

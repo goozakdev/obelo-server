@@ -24,7 +24,7 @@ with its own marker syntax so none can see another's blocks:
 **Contents**
 
 1. [What a Plugin is](#1-what-a-plugin-is)
-2. [The three Extension points, and what each is asked](#2-the-three-extension-points-and-what-each-is-asked)
+2. [The Extension points, and what each is asked](#2-the-extension-points-and-what-each-is-asked)
 3. [The manifest, by example](#3-the-manifest-by-example)
 4. [The ABI: four exports and seven imports](#4-the-abi-four-exports-and-seven-imports)
 5. [The host functions, and what they refuse](#5-the-host-functions-and-what-they-refuse)
@@ -76,17 +76,21 @@ unchanged here.
 
 ---
 
-## 2. The three Extension points, and what each is asked
+## 2. The Extension points, and what each is asked
 
 The set of seams a Plugin may fill is **closed**. It grows by decision, not by
-declaration — a manifest naming a fourth kind is refused at load. Today there are
-three.
+declaration — a manifest naming any other kind is refused at load. Today there
+are seven.
 
 | Extension point | `kind` | What it is asked |
 | --- | --- | --- |
 | **Metadata provider** | `metadata-provider` | "What is this Title? What artwork does it have?" |
 | **Subtitle provider** | `subtitle-provider` | "Which subtitles exist for this release, and give me one." |
 | **Event sink** | `event-sink` | "This just finished." (Outbound HTTP only; it is never asked anything.) |
+| **Web reference provider** | `web-reference-provider` | "Where can a person read about the item these ids name?" (No network at all.) |
+| **Lyric provider** | `lyric-provider` | "What are this track's words?" |
+| **Marker provider** | `marker-provider` | "Where are this File's Intro, Recap, Credits and Preview?" |
+| **Sign-in provider** | `sign-in-provider` | "Is this who they say they are?" — by password, or by a redirect to an identity provider. |
 
 Your manifest's `provides` list says which you fill, and **one module may fill more
 than one** — the host looks up only the exports the declared seams need.
@@ -114,6 +118,9 @@ Then, per seam:
 | | `metadata_series_seasons` / `metadata_season_episodes` | behind capability `episode-list` |
 | | `metadata_album_tracklist` / `metadata_release_editions` | behind capability `album-tracklist` |
 | | `metadata_external_ref` | behind capability `external-ref` |
+| Web reference provider | `web_reference_links(ptr, len) -> i64` | yes |
+| Lyric provider | `lyric_provider_lyrics(ptr, len) -> i64` | yes |
+| Marker provider | `marker_provider_markers(ptr, len) -> i64` | yes |
 | Sign-in provider | `sign_in_password(ptr, len) -> i64` | behind capability `password-sign-in` |
 | | `sign_in_authorize_url(ptr, len) -> i64` / `sign_in_exchange(ptr, len) -> i64` | behind capability `redirect-sign-in` |
 | | `sign_in_lookup(ptr, len) -> i64` | behind capability `sign-in-lookup` |
@@ -200,7 +207,9 @@ certificate itself: you write and read your protocol's plaintext and never see T
 When `open` answers `upgradePending`, the operator chose StartTLS: write your
 protocol's upgrade request (LDAP's StartTLS extended operation), read the answer,
 then send `starttls`; until then the connection carries that one write and nothing
-more. A handle is good for the call that opened it: every connection is closed
+more, and the write is at most 512 bytes — room for the upgrade request and none
+for a bind sent after it. A second write, or a longer one, is refused unless the
+operator allowed plaintext. A handle is good for the call that opened it: every connection is closed
 when the call returns or at its deadline, and a handle kept for the next call
 names nothing. As with a fetch, `refused` and `error` are the host's sentences,
 never to be branched on.
@@ -390,7 +399,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -1603,14 +1612,15 @@ module, `pluginsdk`, and you are welcome to it.
 `github.com/goozakdev/obelo-server/pluginsdk` is a Go module inside the server's
 repository whose only dependency is `.../pluginapi` — the contract's wire types,
 which are themselves a module with no dependencies at all. Nothing of the server
-comes with either. Four packages:
+comes with either. The packages:
 
 | Package | What it gives you |
 | --- | --- |
 | `pluginsdk` | `Host` — the six host functions, typed, and `Socket` for a Sign-in provider declaring `socket`. `Sandbox()` returns the one that calls them. `obelo_alloc`, `obelo_free` and `last_error` are exported from here, once. Also `Pacer`/`PacedHost`, and `Do`/`DoJSON`/`GetJSON` with a `FetchError` that tells a refusal from an outage from a 404. |
 | `pluginsdk/metadata` | `Serve(p)` — the eight `//go:wasmexport` Metadata provider calls, in front of the contract's own `pluginapi.MetadataProvider`. |
 | `pluginsdk/sink`, `pluginsdk/subtitle` | The same for the other two seams: `deliver`, and the two subtitle exports. |
-| `pluginsdk/signin` | `ServeRedirect(p)` — a Sign-in provider's redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`, and the re-check's `sign_in_refresh` and `sign_in_lookup` when `p` also implements `pluginapi.SignInRefreshProvider` or `pluginapi.SignInLookupProvider`. |
+| `pluginsdk/signin` | `ServePassword(p)` — a Sign-in provider's password flow: `sign_in_password`, in front of `pluginapi.SignInProvider`. `ServeRedirect(p)` — its redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`. And the re-check's `sign_in_refresh` and `sign_in_lookup` when the provider you served also implements `pluginapi.SignInRefreshProvider` or `pluginapi.SignInLookupProvider`. |
+| `pluginsdk/webref`, `pluginsdk/lyric`, `pluginsdk/marker` | `Serve(p)` — the one export of the Web reference, Lyric and Marker provider seams, in front of the contract's own interface. See [below](#filling-the-other-extension-points). |
 | `pluginsdk/sdktest` | An in-memory `Host` for NATIVE tests: a routing table of `http.Handler`s, a captured log, an in-memory kv and fixed settings. |
 
 ### Your `main.go`
@@ -1751,6 +1761,371 @@ That is the seam the bundled providers are tested through. The end-to-end proof 
 that the module loads, that the exports are spelled right, that the JSON survives
 the boundary — is a separate suite that runs the real `.wasm` under wazero. Both
 exist because they prove different things.
+
+### Filling the other Extension points
+
+The Metadata provider is the seam this section has shown so far, and every other
+seam is filled the same way: a value implementing the contract's own interface,
+handed to that seam's dispatcher from `init()`. One module may fill several; the
+host looks up only the exports the seams in your manifest's `provides` need.
+
+| Seam | Dispatcher | Your value implements |
+| --- | --- | --- |
+| Web reference provider | `webref.Serve(p)` | `pluginapi.WebReferenceProvider` |
+| Lyric provider | `lyric.Serve(p)` | `pluginapi.LyricProvider` |
+| Marker provider | `marker.Serve(p)` | `pluginapi.MarkerProvider` |
+| Sign-in provider, password flow | `signin.ServePassword(p)` | `pluginapi.SignInProvider`, and `pluginapi.SignInLookupProvider` for `sign-in-lookup` |
+| Sign-in provider, redirect flow | `signin.ServeRedirect(p)` | `pluginapi.SignInRedirectProvider`, and `pluginapi.SignInRefreshProvider` / `pluginapi.SignInLookupProvider` for the re-check |
+
+The SDK's own test guest fills four of them beside its Metadata provider:
+
+<!-- sdk-sample: guest/main.go serve-seams -->
+```go
+func init() {
+	webref.Serve(testprovider.References{})
+	lyric.Serve(testprovider.NewLyrics(pluginsdk.Sandbox()))
+	marker.Serve(testprovider.NewMarkers(pluginsdk.Sandbox()))
+	signin.ServePassword(testprovider.NewDirectory(pluginsdk.Sandbox()))
+}
+```
+
+Every one of these seams hands your settings WITH the call, so `Host.Settings()`
+answers them for that call exactly as it does for a Metadata provider.
+
+#### Web reference provider
+
+A Web reference provider turns the ids an item already holds into links —
+"IMDb", "Trakt" — and nothing else. **The call has no network**: every
+`http_fetch` made while it runs is refused and counted against you, so build the
+URL from the request alone. The host keeps a reference only when it is `https`
+and keyed to an id it sent you (`namespace` and `id` name it), so there is no
+point answering anything else. Nothing to link to is an empty list.
+
+<!-- sdk-sample: seams.go webref -->
+```go
+// References links an item's IMDb id. It needs no Host: the call is a pure
+// computation over the ids in the request, and a fetch made while it runs is
+// refused.
+type References struct{}
+
+// Links answers one reference when the host holds an IMDb id for the item, keyed
+// to that id, and nothing otherwise.
+func (References) Links(_ context.Context, req pluginapi.WebReferencesRequest) (pluginapi.WebReferencesResponse, error) {
+	id, ok := req.IDs["imdb"]
+	if !ok || id == "" {
+		return pluginapi.WebReferencesResponse{}, nil
+	}
+	return pluginapi.WebReferencesResponse{References: []pluginapi.WebReference{{
+		Namespace: "imdb",
+		ID:        id,
+		Label:     "IMDb",
+		URL:       "https://www.imdb.com/title/" + url.PathEscape(id) + "/",
+	}}}, nil
+}
+```
+
+#### Lyric provider
+
+A Lyric provider is asked for one track's words the first time somebody opens
+the lyrics view for it, by artist, title, album, duration and — when the host
+holds one — its MusicBrainz recording id. `Settings.URL` is the operator's
+source, reachable beside your manifest's hosts. Answer `synced` lines with the
+`durationMs` they were timed for, or `plain` text: a Synced answer timed for a
+recording more than a few seconds off the track's own length is kept only as
+Plain, and an answer naming another `recordingId` than the request's is dropped
+whole. **Nothing found is an empty answer**, which the host remembers; an error
+is a failure, which it does not.
+
+<!-- sdk-sample: seams.go lyrics -->
+```go
+// Lyrics asks a lyrics source at the operator's URL for one track's words.
+type Lyrics struct {
+	host pluginsdk.Host
+}
+
+// NewLyrics builds the provider on a Host.
+func NewLyrics(h pluginsdk.Host) *Lyrics { return &Lyrics{host: h} }
+
+// Lyrics answers the source's timed lines as Synced, stating the length they
+// were timed for, else its text as Plain. A source with nothing is an empty
+// answer — a miss the host remembers — and an error is a failure it does not.
+func (l *Lyrics) Lyrics(ctx context.Context, req pluginapi.LyricsRequest) (pluginapi.LyricsResponse, error) {
+	q := url.Values{"artist": {req.Artist}, "title": {req.Title}}
+	if req.Album != "" {
+		q.Set("album", req.Album)
+	}
+	if req.DurationMs > 0 {
+		q.Set("duration_ms", strconv.FormatInt(req.DurationMs, 10))
+	}
+	var out struct {
+		Synced     []pluginapi.LyricLine `json:"synced"`
+		Plain      string                `json:"plain"`
+		DurationMs int64                 `json:"durationMs"`
+	}
+	err := pluginsdk.GetJSON(ctx, l.host, baseOf(l.host.Settings().URL)+LyricsPath, q, &out)
+	var fe *pluginsdk.FetchError
+	if errors.As(err, &fe) && fe.IsNotFound() {
+		return pluginapi.LyricsResponse{}, nil
+	}
+	if err != nil {
+		return pluginapi.LyricsResponse{}, err
+	}
+	switch {
+	case len(out.Synced) > 0:
+		return pluginapi.LyricsResponse{Kind: pluginapi.LyricsSynced, Lines: out.Synced, DurationMs: out.DurationMs}, nil
+	case out.Plain != "":
+		return pluginapi.LyricsResponse{Kind: pluginapi.LyricsPlain, Text: out.Plain}, nil
+	}
+	return pluginapi.LyricsResponse{}, nil
+}
+```
+
+#### Marker provider
+
+A Marker provider is asked where a Movie's or an Episode's Intro, Recap, Credits
+and Preview are, the first time a File is played. Every candidate states the
+`durationMs` of the recording it was measured on, and the host drops one more
+than a few seconds off the File's own length — a Marker is either right where it
+is timed or not worth having. What survives is used only where the File's own
+chapters and the host's own detection say nothing. As for lyrics, nothing found
+is an empty answer and an error is a failure.
+
+<!-- sdk-sample: seams.go markers -->
+```go
+// Markers asks a marker database at the operator's URL where a Movie's or an
+// Episode's Intro, Recap, Credits and Preview are, by the item's IMDb id.
+type Markers struct {
+	host pluginsdk.Host
+}
+
+// NewMarkers builds the provider on a Host.
+func NewMarkers(h pluginsdk.Host) *Markers { return &Markers{host: h} }
+
+// Markers answers every span the source measured, each stating the length of
+// the recording it was measured on, which the host checks against the File.
+func (m *Markers) Markers(ctx context.Context, req pluginapi.MarkersRequest) (pluginapi.MarkersResponse, error) {
+	id, ok := req.IDs["imdb"]
+	if !ok || id == "" {
+		return pluginapi.MarkersResponse{}, nil
+	}
+	var out struct {
+		DurationMs int64 `json:"durationMs"`
+		Markers    []struct {
+			Kind    string `json:"kind"`
+			StartMs int64  `json:"startMs"`
+			EndMs   int64  `json:"endMs"`
+		} `json:"markers"`
+	}
+	err := pluginsdk.GetJSON(ctx, m.host, baseOf(m.host.Settings().URL)+MarkersPath, url.Values{"imdb": {id}}, &out)
+	var fe *pluginsdk.FetchError
+	if errors.As(err, &fe) && fe.IsNotFound() {
+		return pluginapi.MarkersResponse{}, nil
+	}
+	if err != nil {
+		return pluginapi.MarkersResponse{}, err
+	}
+	var resp pluginapi.MarkersResponse
+	for _, found := range out.Markers {
+		resp.Markers = append(resp.Markers, pluginapi.MarkerCandidate{
+			Kind:       found.Kind,
+			StartMs:    found.StartMs,
+			EndMs:      found.EndMs,
+			DurationMs: out.DurationMs,
+		})
+	}
+	return resp, nil
+}
+```
+
+#### Sign-in provider: the password flow, and lookup
+
+A password-flow Sign-in provider (capability `password-sign-in`) is handed what
+was typed into the login form and answers accepted with an identity — a
+`subject` that never changes, a `username` label and the person's `groups` — or
+not. **A wrong password is a rejection, not an error**: answer `accepted: false`.
+An error is your directory failing, which the host also treats as a rejection
+and records for the Admin, never as a reason to sign anybody in. The call
+carries a password, so the host records nothing it says: no log line, no fetched
+URL, no error text. It reaches only your manifest's hosts, or — for a directory
+that is not HTTP — the operator's socket (above).
+
+Declare `sign-in-lookup` too, and implement `pluginapi.SignInLookupProvider` on
+the same value, and the host asks `lookup(subject)` between sign-ins. Answer
+`gone` only when your directory says it no longer knows the person — that
+revokes every session they hold — and an error for anything that is your source
+being unreachable.
+
+<!-- sdk-sample: seams.go password -->
+```go
+// Directory checks a username and password against an HTTP directory at the
+// URL its operator typed into the `directory` setting — a host its manifest
+// allows — and answers lookup(subject) between sign-ins.
+type Directory struct {
+	host pluginsdk.Host
+}
+
+// NewDirectory builds the provider on a Host.
+func NewDirectory(h pluginsdk.Host) *Directory { return &Directory{host: h} }
+
+// person is who the directory says someone is.
+type person struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Groups   []string `json:"groups"`
+	Disabled bool     `json:"disabled"`
+}
+
+func (d *Directory) base() string {
+	s, _ := d.host.Settings().Values["directory"].(string)
+	return baseOf(s)
+}
+
+// CheckPassword answers the person the directory names for a right password. A
+// wrong one is a rejection — Accepted false, no error — and an error is the
+// directory failing.
+func (d *Directory) CheckPassword(ctx context.Context, req pluginapi.SignInPasswordRequest) (pluginapi.SignInPasswordResponse, error) {
+	body, err := json.Marshal(map[string]string{"username": req.Username, "password": req.Password})
+	if err != nil {
+		return pluginapi.SignInPasswordResponse{}, err
+	}
+	var who person
+	err = pluginsdk.DoJSON(ctx, d.host, pluginapi.FetchRequest{
+		Method:  "POST",
+		URL:     d.base() + "/login",
+		Headers: []pluginapi.FetchHeader{pluginsdk.Header("Content-Type", "application/json")},
+		Body:    body,
+	}, &who)
+	var fe *pluginsdk.FetchError
+	if errors.As(err, &fe) && (fe.Status == 401 || fe.Status == 403) {
+		return pluginapi.SignInPasswordResponse{}, nil
+	}
+	if err != nil {
+		return pluginapi.SignInPasswordResponse{}, err
+	}
+	if who.ID == "" || who.Disabled {
+		return pluginapi.SignInPasswordResponse{}, nil
+	}
+	return pluginapi.SignInPasswordResponse{
+		Accepted: true,
+		Identity: &pluginapi.SignInIdentity{Subject: who.ID, Username: who.Name, Groups: who.Groups},
+	}, nil
+}
+
+// Lookup answers whether the person the directory once named is still there, and
+// their groups now. Only a directory that says it no longer knows them is gone:
+// every other failure is an error, which changes nothing but when the host asks
+// again.
+func (d *Directory) Lookup(ctx context.Context, req pluginapi.SignInLookupRequest) (pluginapi.SignInLookupResponse, error) {
+	var who person
+	err := pluginsdk.GetJSON(ctx, d.host, d.base()+"/users/"+url.PathEscape(req.Subject), nil, &who)
+	var fe *pluginsdk.FetchError
+	if errors.As(err, &fe) && fe.IsNotFound() {
+		return pluginapi.SignInLookupResponse{Status: pluginapi.SignInGone}, nil
+	}
+	if err != nil {
+		return pluginapi.SignInLookupResponse{}, err
+	}
+	if who.Disabled {
+		return pluginapi.SignInLookupResponse{Status: pluginapi.SignInDisabled}, nil
+	}
+	return pluginapi.SignInLookupResponse{
+		Status:   pluginapi.SignInActive,
+		Identity: &pluginapi.SignInIdentity{Subject: req.Subject, Username: who.Name, Groups: who.Groups},
+	}, nil
+}
+```
+
+#### Sign-in provider: the redirect flow, and refresh
+
+A redirect-flow provider supplies the authorize URL and the code exchange; the
+host owns state, PKCE, the nonce and the callback (see [§2](#2-the-extension-points-and-what-each-is-asked)).
+The Bundled OpenID Connect plugin is the worked example, served like this:
+
+<!-- bundled-sample: oidc/main.go serve -->
+```go
+// main is never called. It exists because a Go program needs one.
+func main() {}
+
+func init() {
+	signin.ServeRedirect(oidc.New(pluginsdk.Sandbox()))
+}
+```
+
+and it redeems the refresh token its exchange handed back, so the host can
+re-check the person with nobody present. A token endpoint refusing the grant is
+an error, never `gone`:
+
+<!-- bundled-sample: oidc/oidc/oidc.go refresh -->
+```go
+// Refresh redeems a refresh token at the token endpoint and answers the fresh
+// ID token, and the rotated refresh token when the issuer rotated it. Every
+// failure is an error, which the host treats as unreachable — a grant the
+// issuer refuses as invalid_grant included: an expired or revoked refresh token
+// says nothing about whether the person is still there, and answering gone
+// would revoke every session they hold.
+func (p *Provider) Refresh(ctx context.Context, req pluginapi.SignInRefreshRequest) (pluginapi.SignInRefreshResponse, error) {
+	c, err := p.config()
+	if err != nil {
+		return pluginapi.SignInRefreshResponse{}, err
+	}
+	d, err := p.discover(ctx, c.issuer)
+	if err != nil {
+		return pluginapi.SignInRefreshResponse{}, err
+	}
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", req.RefreshToken)
+	form.Set("client_id", c.clientID)
+	if c.clientSecret != "" {
+		form.Set("client_secret", c.clientSecret)
+	}
+	resp, err := pluginsdk.Do(ctx, p.host, pluginapi.FetchRequest{
+		Method: "POST",
+		URL:    d.TokenEndpoint,
+		Headers: []pluginapi.FetchHeader{
+			pluginsdk.Header("Content-Type", "application/x-www-form-urlencoded"),
+			pluginsdk.Header("Accept", "application/json"),
+		},
+		Body: []byte(form.Encode()),
+	})
+	if err != nil {
+		var fe *pluginsdk.FetchError
+		if errors.As(err, &fe) && (fe.Status == 400 || fe.Status == 401) {
+			var refusal struct {
+				Error string `json:"error"`
+			}
+			if json.Unmarshal(resp.Body, &refusal) == nil && refusal.Error == "invalid_grant" {
+				return pluginapi.SignInRefreshResponse{}, errors.New("the issuer refused the refresh token (invalid_grant)")
+			}
+		}
+		return pluginapi.SignInRefreshResponse{}, err
+	}
+	var tok tokenResponse
+	if err := json.Unmarshal(resp.Body, &tok); err != nil {
+		return pluginapi.SignInRefreshResponse{}, fmt.Errorf("the token endpoint's answer is not JSON: %w", err)
+	}
+	if tok.IDToken == "" {
+		return pluginapi.SignInRefreshResponse{}, errors.New("the token endpoint issued no ID token on refresh")
+	}
+	return pluginapi.SignInRefreshResponse{
+		Status:       pluginapi.SignInActive,
+		IDToken:      tok.IDToken,
+		RefreshToken: tok.RefreshToken,
+	}, nil
+}
+```
+
+The plugin reaches the issuer the operator typed, and — once it has read the
+issuer's discovery document during a call — the token and userinfo endpoints that
+document names, for the rest of that call and no others. The document counts only
+when `<issuer>/.well-known/openid-configuration` itself answered 200, with no
+redirect on the way, and names the same issuer. Each endpoint is reachable at
+exactly the https scheme, host and port it names, nothing else on that host; and
+one on another host than the issuer's gets the private-address check a manifest
+host gets, so a document cannot point the plugin at loopback, private or
+link-local space (the issuer's own host keeps the operator's exemption). So an
+issuer whose endpoints live on other public hosts than its own (Google's do)
+works without any `network.hosts`, and no other host does.
 
 ### Building it
 

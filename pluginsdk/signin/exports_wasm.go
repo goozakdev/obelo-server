@@ -7,6 +7,29 @@ import (
 	"github.com/goozakdev/obelo-server/pluginsdk"
 )
 
+//go:wasmexport sign_in_password
+func signInPassword(ptr, n uint32) uint64 {
+	p := servedPassword
+	if p == nil {
+		return pluginsdk.Fail("this module serves no password Sign-in provider: call signin.ServePassword from init() — " +
+			"a -buildmode=c-shared module never runs main")
+	}
+	var call pluginapi.SignInPasswordCall
+	if !pluginsdk.TakeRequest(ptr, n, &call) {
+		return pluginsdk.Fail("the request is not a SignInPasswordCall")
+	}
+	withdraw := pluginsdk.PublishCallSettings(call.Settings)
+	defer withdraw()
+
+	ctx, cancel := pluginsdk.CallContext(call.Settings.CallRemainingMillis)
+	defer cancel()
+	resp, err := p.CheckPassword(ctx, call.Request)
+	if err != nil {
+		return pluginsdk.Fail("password sign-in: " + err.Error())
+	}
+	return pluginsdk.Reply(resp)
+}
+
 //go:wasmexport sign_in_authorize_url
 func signInAuthorizeURL(ptr, n uint32) uint64 {
 	p := served
@@ -75,9 +98,9 @@ func signInRefresh(ptr, n uint32) uint64 {
 
 //go:wasmexport sign_in_lookup
 func signInLookup(ptr, n uint32) uint64 {
-	p, ok := served.(pluginapi.SignInLookupProvider)
+	p, ok := lookupProvider()
 	if !ok {
-		return pluginsdk.Fail("this module's redirect Sign-in provider does not implement Lookup")
+		return pluginsdk.Fail("this module's Sign-in provider does not implement Lookup")
 	}
 	var call pluginapi.SignInLookupCall
 	if !pluginsdk.TakeRequest(ptr, n, &call) {

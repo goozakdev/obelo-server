@@ -196,8 +196,15 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 	// own receiver, so a sink that could reach only manifest hosts could never
 	// post anywhere. It is the OPERATOR's URL, which is the same asymmetry
 	// safefetch documents for every other fetch in this server.
+	//
+	// So are the token and userinfo endpoints the issuer's discovery document
+	// names, once a redirect Sign-in provider has read it during this call (Google's
+	// live on other hosts) — each at exactly the https origin named. The issuer is
+	// the operator's, but its SERVER chose those, so off the issuer's own host they
+	// still get the address check below.
 	operatorChose := host != "" && host == h.p.operatorHost()
-	if !operatorChose && !h.p.allows(host) {
+	issuerNamed := !operatorChose && h.p.discoveryNamed(target)
+	if !operatorChose && !issuerNamed && !h.p.allows(host) {
 		h.p.audit(host, auditAllowlist)
 		h.violation("allowlist", fmt.Sprintf("fetched %s, which its manifest does not allow", host))
 		return pluginapi.FetchResponse{Refused: refusedAllowlist}
@@ -303,6 +310,7 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 		return pluginapi.FetchResponse{Status: resp.StatusCode, Refused: refusedOversize}
 	}
 
+	h.p.noteDiscovery(resp.Request, resp.StatusCode, payload)
 	out := pluginapi.FetchResponse{Status: resp.StatusCode, Body: payload}
 	for name, values := range resp.Header {
 		for _, v := range values {
@@ -379,11 +387,15 @@ func isTimeout(err error) bool {
 	return errors.As(err, &ne) && ne.Timeout()
 }
 
+// lookupIPAddr is the resolver refuseInternal asks, a variable so a test can
+// answer for a name that has no address outside it.
+var lookupIPAddr = net.DefaultResolver.LookupIPAddr
+
 // refuseInternal fails CLOSED: a name that will not resolve is refused rather than
 // handed to the transport, exactly as safefetch's redirect check does, because the
 // alternative leaves the decision to a resolver whose answer we never saw.
 func (h *hostFuncs) refuseInternal(ctx context.Context, hostname string) string {
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+	addrs, err := lookupIPAddr(ctx, hostname)
 	if err != nil || len(addrs) == 0 {
 		return refusedPrivate
 	}

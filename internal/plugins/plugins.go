@@ -363,7 +363,13 @@ type Plugin struct {
 	target string
 	// offline is true for the duration of a call made under a no-network policy
 	// (callPolicy.offline), and http_fetch refuses everything while it is.
-	offline    bool
+	offline bool
+	// discovery is the issuer's discovery document URL for the duration of a
+	// redirect Sign-in call (callPolicy.discovery), and discovered the https
+	// origins of the token and userinfo endpoints that document named when the
+	// guest read it during the call. Both are cleared when the call ends.
+	discovery  string
+	discovered map[string]bool
 	disabled   bool
 	lastError  string
 	failures   int
@@ -780,6 +786,10 @@ type callPolicy struct {
 	// manifest declares it (ADR-0064). For a Sign-in provider and nothing else;
 	// every connection is closed when the call ends or at its deadline.
 	socket bool
+	// discovery is the issuer's discovery document URL, for a redirect Sign-in
+	// provider with an issuer: the token and userinfo endpoint origins it names
+	// are reachable for the rest of a call that reads it.
+	discovery string
 }
 
 // errCallFailed is outcomeOnly's kind for a failure that is not a refusal, a
@@ -854,6 +864,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 		return err
 	}
 	defer p.endCall()
+	defer p.beginDiscovery(policy.discovery)()
 	if policy.secret {
 		p.secret.Store(true)
 		p.withheldLog = false

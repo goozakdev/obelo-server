@@ -29,7 +29,9 @@ package v1
 // For StartTLS the guest sends its protocol's own upgrade request — LDAP's
 // StartTLS extended operation — reads the answer, and then asks the host for
 // SocketOpStartTLS. Until the upgrade, the connection carries that one write and
-// nothing else.
+// nothing else, and the write is at most 512 bytes: room for the upgrade request
+// (LDAP's is about 31) and none for a bind sent after it. A second write, or a
+// longer one, is refused unless the operator allowed plaintext.
 //
 // # A handle lives for one call
 //

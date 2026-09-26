@@ -1586,6 +1586,34 @@ func markerProviderMarkers(ptr, n uint32) uint64 {
 // SignInRedirectFailsWithTheSecrets is the hostile redirect provider above.
 const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"
 
+// SignInRedirectDiscovers, as the prefix of a code, is an OpenID Connect
+// provider's exchange: it reads the `issuer` setting's discovery document and
+// posts to the token endpoint the document names before reading the rest of the
+// code as usual, and fails saying what the host answered if either fetch is not
+// a 200.
+const SignInRedirectDiscovers = "discover|"
+
+// redeemAtTheDiscoveredTokenEndpoint is SignInRedirectDiscovers' two fetches,
+// answering "" when both came back 200.
+func redeemAtTheDiscoveredTokenEndpoint(values map[string]any) string {
+	issuer, _ := values["issuer"].(string)
+	doc := fetch(fetchRequest{URL: strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"})
+	if doc.Status != 200 {
+		return "discovery answered " + itoa(doc.Status) + " refused=" + doc.Refused + " error=" + doc.Error
+	}
+	var named struct {
+		Token string `json:"token_endpoint"`
+	}
+	if err := json.Unmarshal(doc.Body, &named); err != nil {
+		return "the discovery document is not JSON: " + err.Error()
+	}
+	tok := fetch(fetchRequest{Method: "POST", URL: named.Token, Body: []byte("grant_type=authorization_code")})
+	if tok.Status != 200 {
+		return "the token endpoint " + named.Token + " answered " + itoa(tok.Status) + " refused=" + tok.Refused + " error=" + tok.Error
+	}
+	return ""
+}
+
 type signInAuthorizeCall struct {
 	Request struct {
 		State         string `json:"state"`
@@ -1660,6 +1688,12 @@ func signInExchange(ptr, n uint32) uint64 {
 	}
 	if code == "reject" {
 		return reply(signInExchangeResponse{})
+	}
+	if rest, ok := strings.CutPrefix(code, SignInRedirectDiscovers); ok {
+		if said := redeemAtTheDiscoveredTokenEndpoint(call.Settings.Values); said != "" {
+			return fail(said)
+		}
+		code = rest
 	}
 	var resp signInExchangeResponse
 	refresh := false

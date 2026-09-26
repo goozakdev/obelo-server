@@ -21,9 +21,11 @@
 //   - The wasm implementation of that interface: obelo_alloc, obelo_free,
 //     last_error, the six //go:wasmimport declarations, the packed-i64 return
 //     convention and the JSON marshalling, once instead of once per plugin.
-//   - The dispatchers — metadata.Serve, sink.Serve, subtitle.Serve — which own
-//     the //go:wasmexport functions, decode the request, call a value that
-//     implements the contract's Go interface, and encode the answer.
+//   - The dispatchers — metadata.Serve, sink.Serve, subtitle.Serve,
+//     webref.Serve, lyric.Serve, marker.Serve, signin.ServePassword and
+//     signin.ServeRedirect — which own the //go:wasmexport functions, decode the
+//     request, call a value that implements the contract's Go interface, and
+//     encode the answer.
 //   - [Pacer] and [PacedHost], because ADR-0059 decision 5 makes every plugin
 //     pace ITSELF, and seven copies of a mutex and a timestamp is exactly the
 //     thing an SDK exists to prevent.

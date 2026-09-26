@@ -201,6 +201,8 @@ func (p *Provider) Exchange(ctx context.Context, req pluginapi.SignInExchangeReq
 	}, nil
 }
 
+// bundled-sample:begin refresh
+
 // Refresh redeems a refresh token at the token endpoint and answers the fresh
 // ID token, and the rotated refresh token when the issuer rotated it. Every
 // failure is an error, which the host treats as unreachable — a grant the
@@ -257,6 +259,8 @@ func (p *Provider) Refresh(ctx context.Context, req pluginapi.SignInRefreshReque
 		RefreshToken: tok.RefreshToken,
 	}, nil
 }
+
+// bundled-sample:end refresh
 
 // identify reads the person from the userinfo endpoint when the issuer has one,
 // and from the ID token's payload when it does not. Neither is verified here.
