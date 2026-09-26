@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -317,4 +320,90 @@ func TestAbortedReadsDoNotDisableTheProvider(t *testing.T) {
 	if n := len(src.questions()); n != 1 {
 		t.Fatalf("the source was asked %d times, want once: an aborted read does not end the call", n)
 	}
+}
+
+// TestFetchedMarkersAreServedOnlyWhileAProviderIsEnabled: with the only Marker
+// provider disabled, its Fetched Markers are not served and its Credits no
+// longer set the Watched ceiling; enabled again, they are served as they were,
+// without asking it again — the rows were kept.
+func TestFetchedMarkersAreServedOnlyWhileAProviderIsEnabled(t *testing.T) {
+	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
+		return []map[string]any{span(q, "intro", 0.1, 0.2, 0), span(q, "credits", 0.6, 0.95, 0)}
+	})
+	srv, token, duneID, _ := markerProviderServer(t, src, nil)
+	dec := negotiateDune(t, srv, token, duneID)
+	got := getMarkers(t, srv, token, dec.SessionID, http.StatusOK)
+	if kinds := fmt.Sprint(servedKinds(got)); kinds != "[intro/fetched credits/fetched]" {
+		t.Fatalf("markers = %s, want the fetched intro and credits", kinds)
+	}
+	credits := got.Markers[1]
+
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/settings/plugins/example-markers/disable", token, nil, nil); status != http.StatusOK {
+		t.Fatalf("disable = %d; body: %s", status, body)
+	}
+	if got := getMarkers(t, srv, token, dec.SessionID, http.StatusOK); len(got.Markers) != 0 {
+		t.Fatalf("markers with the provider disabled = %v, want none", servedKinds(got))
+	}
+	if out := postProgress(t, srv, token, dec.SessionID, credits.StartMs, http.StatusOK); out.Watched {
+		t.Fatalf("at the Fetched Credits start with the provider disabled: %+v, want unwatched", out)
+	}
+
+	if status, body := srv.JSON(http.MethodPost, "/api/v1/settings/plugins/example-markers/enable", token, nil, nil); status != http.StatusOK {
+		t.Fatalf("enable = %d; body: %s", status, body)
+	}
+	if kinds := fmt.Sprint(servedKinds(getMarkers(t, srv, token, dec.SessionID, http.StatusOK))); kinds != "[intro/fetched credits/fetched]" {
+		t.Fatalf("markers with the provider enabled again = %s, want both back", kinds)
+	}
+	if out := postProgress(t, srv, token, dec.SessionID, credits.StartMs, http.StatusOK); !out.Watched {
+		t.Errorf("at the Fetched Credits start with the provider enabled: %+v, want watched", out)
+	}
+	if n := len(src.questions()); n != 1 {
+		t.Errorf("the source was asked %d times, want once: the kept rows are served again", n)
+	}
+}
+
+// TestAppCloseEndsAMarkerFetchInFlight: a provider that never answers leaves
+// the asking running when the Server shuts down. Close ends it: once Close
+// returns no asking is running, and nothing is logged about it afterwards (it
+// used to fail into the closed database, "sql: database is closed").
+func TestAppCloseEndsAMarkerFetchInFlight(t *testing.T) {
+	release := make(chan struct{})
+	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
+		<-release
+		return nil
+	})
+	t.Cleanup(func() { close(release) })
+	srv, token, duneID, _ := markerProviderServer(t, src, nil)
+	dec := negotiateDune(t, srv, token, duneID)
+	getMarkers(t, srv, token, dec.SessionID, http.StatusOK) // answers after its wait; the asking goes on
+	if len(src.questions()) != 1 {
+		t.Fatalf("the source was asked %d times, want once before Close", len(src.questions()))
+	}
+
+	var logged lockedBuffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	srv.Close()
+	if n := goroutinesIn("internal/markerfetch."); n != 0 {
+		t.Errorf("%d marker fetch goroutines outlived Close", n)
+	}
+	time.Sleep(500 * time.Millisecond)
+	for _, line := range strings.Split(logged.String(), "\n") {
+		if strings.Contains(line, "marker") {
+			t.Errorf("logged after Close: %s", line)
+		}
+	}
+}
+
+// goroutinesIn counts the goroutines with a frame in pkg.
+func goroutinesIn(pkg string) int {
+	buf := make([]byte, 1<<22)
+	buf = buf[:runtime.Stack(buf, true)]
+	n := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, pkg) {
+			n++
+		}
+	}
+	return n
 }

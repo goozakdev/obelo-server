@@ -1420,14 +1420,17 @@ func normCodec(c string) string {
 }
 
 // Reencodes reports whether an ffmpeg argument vector re-encodes any video or
-// audio stream — a codec option (`-c`, `-c:v`, `-c:a`, with or without a stream
-// index) naming anything but `copy`. A pure remux (`-c copy`) does not; a remux
-// realigned past its start (`-c:v copy -c:a aac`) and an audio rendition encoding
-// to AAC do. It is what "is ffmpeg transcoding here?" means for a running job
-// (CONTEXT.md "Transcode"), whatever tier the session was negotiated at.
+// audio stream — a codec option (`-c`, `-c:v`, `-c:a`, or `-c:0` naming a stream
+// by index, each with or without a further index) naming anything but `copy`,
+// or a filter (`-vf`, `-af`, `-filter…`, `-lavfi`), which ffmpeg cannot apply to
+// a copied stream and so encodes with its default. A pure remux (`-c copy`) does
+// not; a remux realigned past its start (`-c:v copy -c:a aac`) and an audio
+// rendition encoding to AAC do. It is what "is ffmpeg transcoding here?" means
+// for a running job (CONTEXT.md "Transcode"), whatever tier the session was
+// negotiated at.
 func Reencodes(args []string) bool {
 	for i := 0; i+1 < len(args); i++ {
-		if isCodecOption(args[i]) && args[i+1] != "copy" {
+		if isCodecOption(args[i]) && args[i+1] != "copy" || isFilterOption(args[i]) {
 			return true
 		}
 	}
@@ -1444,7 +1447,23 @@ func isCodecOption(a string) bool {
 			return true
 		}
 	}
+	// A stream index alone (`-c:0`, `-codec:1:…`) may name a video or audio stream.
+	for _, p := range []string{"-c:", "-codec:"} {
+		if rest, ok := strings.CutPrefix(a, p); ok && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+			return true
+		}
+	}
 	return false
+}
+
+// isFilterOption reports whether a names a filtergraph for an output stream.
+// `-filter_threads` and `-filter_complex_threads` only size one.
+func isFilterOption(a string) bool {
+	switch a {
+	case "-vf", "-af", "-filter", "-lavfi", "-filter_complex", "-filter_complex_script", "-filter_script":
+		return true
+	}
+	return strings.HasPrefix(a, "-filter:") || strings.HasPrefix(a, "-filter_script:")
 }
 
 // Runner runs an ffmpeg job to completion (or until its context is cancelled).

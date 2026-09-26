@@ -354,3 +354,112 @@ func TestLocalTranscodesCountsRemuxEncodingAnAudioRendition(t *testing.T) {
 		t.Fatalf("local transcodes = %d after the session ended, want 0", n)
 	}
 }
+
+// scriptedRunner starts jobs a test finishes by hand, and refuses to start once
+// refuse is set. A job ignores Kill when stubborn is set, like a process that
+// takes its time to die, so only the kill's own bookkeeping can clear the flag.
+type scriptedRunner struct {
+	mu       sync.Mutex
+	jobs     []*heldJob
+	refuse   bool
+	stubborn bool
+}
+
+func (r *scriptedRunner) Start(_ context.Context, _ []string) (transcode.Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.refuse {
+		return nil, errors.New("ffmpeg would not start")
+	}
+	j := &heldJob{done: make(chan struct{})}
+	r.jobs = append(r.jobs, j)
+	if r.stubborn {
+		return stubbornJob{j}, nil
+	}
+	return j, nil
+}
+
+func (r *scriptedRunner) last() *heldJob {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.jobs[len(r.jobs)-1]
+}
+
+func (r *scriptedRunner) set(refuse, stubborn bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refuse, r.stubborn = refuse, stubborn
+}
+
+// stubbornJob is a heldJob whose Kill does not end it.
+type stubbornJob struct{ *heldJob }
+
+func (stubbornJob) Kill() error { return nil }
+
+// realignedRemux is a remux session whose job re-encodes its audio after a seek
+// realigned it (so LocalTranscodes counts it), on runner r.
+func realignedRemux(t *testing.T, r transcode.Runner) (*Manager, *hlsRuntime) {
+	t.Helper()
+	m := NewRemuxManager(r, t.TempDir())
+	dec := Decision{Tier: TierDirectStream, Edition: store.Edition{ID: "e1"}, File: store.File{ID: "f1", Path: "/m/x.mkv", DurationMs: 60_000}}
+	s := m.Create(CreateInput{
+		UserID: "u",
+		BuildHLSArgs: func(dir string, seek transcode.SeekOffset) []string {
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: dec.File.Path, OutputDir: dir, Seek: seek})
+		},
+	}, dec)
+	t.Cleanup(func() { m.End(s.ID) })
+	rt, _ := m.remuxRuntimeFor(s.ID)
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.realign(5); err != nil {
+		t.Fatal(err)
+	}
+	if n := m.LocalTranscodes(); n != 1 {
+		t.Fatalf("local transcodes = %d with a remux re-encoding its audio after a seek, want 1", n)
+	}
+	return m, rt
+}
+
+// TestAReencodeThatFinishesStopsCounting: a re-encoding job that runs to its end
+// on its own is no longer re-encoding, though the session lives on. Were it
+// still counted, Marker detection would wait on it for the rest of the session.
+func TestAReencodeThatFinishesStopsCounting(t *testing.T) {
+	r := &scriptedRunner{}
+	m, rt := realignedRemux(t, r)
+	r.last().Kill() // ffmpeg reaches the end of the File
+	deadline := time.Now().Add(5 * time.Second)
+	for !rt.hasExited() {
+		if time.Now().After(deadline) {
+			t.Fatal("the job's exit was never observed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Errorf("local transcodes = %d once the re-encoding job finished, want 0", n)
+	}
+}
+
+// TestAKilledReencodeStopsCountingAtOnce: a seek kills the re-encoding job and
+// the restart fails. The killed job is not re-encoding any more from the moment
+// it is killed, whenever its process gets round to exiting.
+func TestAKilledReencodeStopsCountingAtOnce(t *testing.T) {
+	r := &scriptedRunner{}
+	r.set(false, true)
+	m, rt := realignedRemux(t, r)
+	t.Cleanup(func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for _, j := range r.jobs {
+			j.Kill() // let the stubborn processes exit before the session ends
+		}
+	})
+	r.set(true, true)
+	if err := rt.realign(9); err == nil {
+		t.Fatal("realign succeeded with a runner that refuses to start")
+	}
+	if n := m.LocalTranscodes(); n != 0 {
+		t.Errorf("local transcodes = %d once the re-encoding job was killed, want 0", n)
+	}
+}

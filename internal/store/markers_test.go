@@ -82,3 +82,48 @@ func TestMarkerKindIsClosed(t *testing.T) {
 		t.Fatal("a commercial marker was stored, want the kind CHECK to refuse it")
 	}
 }
+
+// TestPruneOrphanedMarkersSparesWhatIsStillThere: a path with a files row is
+// never pruned, and a path with none is pruned only when gone says it is gone
+// from disk — a File another scan has read but not yet written keeps its Markers.
+func TestPruneOrphanedMarkersSparesWhatIsStillThere(t *testing.T) {
+	db, path := markerFixture(t)
+	const unwritten, deleted = "/media/New (2024)/New (2024).mkv", "/media/Old (1990)/Old (1990).mkv"
+	for _, p := range []string{path, unwritten, deleted} {
+		if err := db.ReplaceLocalMarkers(p, []store.Marker{{Kind: "intro", StartMs: 1, EndMs: 2}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := db.PruneOrphanedMarkers(func(p string) bool { return p == deleted })
+	if err != nil || n != 1 {
+		t.Fatalf("PruneOrphanedMarkers = %d, %v, want 1 path", n, err)
+	}
+	for p, want := range map[string]int{path: 1, unwritten: 1, deleted: 0} {
+		var got int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM markers WHERE file_path = ?`, p).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("markers of %s = %d, want %d", p, got, want)
+		}
+	}
+}
+
+// TestLocalMarkersFromEDL: Markers read from an `.edl` are remembered as such;
+// replacing them with chapter Markers forgets it.
+func TestLocalMarkersFromEDL(t *testing.T) {
+	db, path := markerFixture(t)
+	ms := []store.Marker{{Kind: "intro", StartMs: 1, EndMs: 2}}
+	if err := db.ReplaceEDLMarkers(path, ms); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := db.LocalMarkersFromEDL(path); err != nil || !got {
+		t.Fatalf("after ReplaceEDLMarkers: LocalMarkersFromEDL = %v, %v, want true", got, err)
+	}
+	if err := db.ReplaceLocalMarkers(path, ms); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := db.LocalMarkersFromEDL(path); err != nil || got {
+		t.Errorf("after ReplaceLocalMarkers: LocalMarkersFromEDL = %v, %v, want false", got, err)
+	}
+}

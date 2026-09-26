@@ -3,6 +3,7 @@ package markerdetect_test
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -558,5 +559,142 @@ func TestDetectionGivesUpOnAFileThatKeepsFailing(t *testing.T) {
 	settle()
 	if !listened("/e2") {
 		t.Fatal("a post-scan run did not listen to the File once it changed")
+	}
+}
+
+// TestADecodeClearsAFileFailures: a File that failed to decode, then decodes,
+// starts again from no failures — a File that fails now and then is never left
+// out by failures that did not happen in a row.
+func TestADecodeClearsAFileFailures(t *testing.T) {
+	st := &fakeStore{
+		libraries: map[string][]store.DetectionSeason{"lib": {season("s1", "/e1", "/e2")}},
+		enabled:   map[string]bool{"lib": true},
+		failures:  map[string]int{"/e1": 2},
+	}
+	an := &failingAnalyzer{calls: make(chan string, 100), fail: func(string) error { return nil }}
+	d := startDetector(t, st, an, nil)
+	d.AfterScan("lib")
+	waitSaved(t, st, "/e1", "/e2")
+	if n := st.failuresOf("/e1"); n != 0 {
+		t.Errorf("/e1 failures after it decoded = %d, want 0", n)
+	}
+}
+
+// TestACancelledRunIsNotADecodeFailure: shutting down while a File's closing
+// stretch is being decoded kills the decoder, and the listen fails — but the
+// File did not fail to decode, so no failure is counted against it.
+func TestACancelledRunIsNotADecodeFailure(t *testing.T) {
+	st := &fakeStore{
+		libraries: map[string][]store.DetectionSeason{"lib": {season("s1", "/e1", "/e2")}},
+		enabled:   map[string]bool{"lib": true},
+	}
+	an := newGatedAnalyzer()
+	d := startDetector(t, st, an, nil)
+	d.AfterScan("lib")
+	if p := an.expectCall(t); p != "/e1" {
+		t.Fatalf("first listen = %s, want /e1", p)
+	}
+	an.release <- struct{}{} // the opening stretch decodes
+	if p := an.expectCall(t); p != "/e1" {
+		t.Fatalf("second listen = %s, want /e1's closing stretch", p)
+	}
+	d.Close() // mid-decode of the closing stretch
+	if n := st.failuresOf("/e1"); n != 0 {
+		t.Errorf("/e1 failures after a cancelled run = %d, want 0", n)
+	}
+}
+
+// TestTheWorkerLowersItsOwnPriorityFirst: the Go half of detection — the
+// fingerprinting and every comparison — runs on the worker, so the worker lowers
+// its own priority before it listens to anything, as it does each decoder's.
+func TestTheWorkerLowersItsOwnPriorityFirst(t *testing.T) {
+	var lowered atomic.Bool
+	t.Cleanup(markerdetect.SetLowerWorkerPriority(func() { lowered.Store(true) }))
+	st := &fakeStore{
+		libraries: map[string][]store.DetectionSeason{"lib": {season("s1", "/e1", "/e2")}},
+		enabled:   map[string]bool{"lib": true},
+	}
+	var loweredFirst atomic.Bool
+	an := &failingAnalyzer{calls: make(chan string, 100), fail: func(string) error {
+		loweredFirst.Store(lowered.Load())
+		return nil
+	}}
+	d := startDetector(t, st, an, nil)
+	d.AfterScan("lib")
+	waitSaved(t, st, "/e1", "/e2")
+	if !loweredFirst.Load() {
+		t.Error("the worker listened before lowering its priority")
+	}
+}
+
+// goroutineID is the calling goroutine's number, from its stack header.
+func goroutineID() string {
+	buf := make([]byte, 64)
+	buf = buf[:runtime.Stack(buf, false)]
+	return strings.Fields(string(buf))[1]
+}
+
+// writeWatchingStore is a fakeStore that notes which goroutine made each write.
+type writeWatchingStore struct {
+	*fakeStore
+	mu      sync.Mutex
+	writers []string
+}
+
+func (w *writeWatchingStore) note() {
+	w.mu.Lock()
+	w.writers = append(w.writers, goroutineID())
+	w.mu.Unlock()
+}
+
+func (w *writeWatchingStore) SaveDetectedMarkers(path string, ms []store.Marker) error {
+	w.note()
+	return w.fakeStore.SaveDetectedMarkers(path, ms)
+}
+
+func (w *writeWatchingStore) RecordDecode(path string, decoded bool) error {
+	w.note()
+	return w.fakeStore.RecordDecode(path, decoded)
+}
+
+// TestStoreWritesAreNotMadeAtTheLowestPriority: only the listening and the
+// comparing run on the thread detection lowered to the lowest priority. The
+// store's writes take its locks, and a thread every other thread outranks must
+// not sit holding them while a viewer's request waits.
+func TestStoreWritesAreNotMadeAtTheLowestPriority(t *testing.T) {
+	var niced atomic.Value
+	t.Cleanup(markerdetect.SetLowerWorkerPriority(func() { niced.Store(goroutineID()) }))
+	st := &writeWatchingStore{fakeStore: &fakeStore{
+		libraries: map[string][]store.DetectionSeason{"lib": {season("s1", "/e1", "/e2")}},
+		enabled:   map[string]bool{"lib": true},
+	}}
+	var listeners sync.Map
+	an := &failingAnalyzer{calls: make(chan string, 100), fail: func(string) error {
+		listeners.Store(goroutineID(), true)
+		return nil
+	}}
+	d := startDetector(t, st, an, nil)
+	d.AfterScan("lib")
+	waitSaved(t, st.fakeStore, "/e1", "/e2")
+	lowered, _ := niced.Load().(string)
+	if lowered == "" {
+		t.Fatal("nothing lowered its priority")
+	}
+	listeners.Range(func(g, _ any) bool {
+		if g.(string) != lowered {
+			t.Errorf("listened on goroutine %s, want the lowered one %s", g, lowered)
+		}
+		return true
+	})
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.writers) == 0 {
+		t.Fatal("no store writes were seen")
+	}
+	for _, g := range st.writers {
+		if g == lowered {
+			t.Errorf("a store write was made on the lowered goroutine %s", g)
+			break
+		}
 	}
 }

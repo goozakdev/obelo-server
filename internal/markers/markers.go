@@ -52,11 +52,17 @@ type Chapter struct {
 // Classify names the Marker kind a chapter title or `.edl` label describes, or
 // "" when it describes none of the four. The rules are ordered: "Opening
 // Credits" is an Intro, not Credits, and "Previously on…" is a Recap even though
-// it mentions nothing about recaps.
+// it mentions nothing about recaps. A leading chapter number — "05 - ",
+// "Chapter 5 - ", "Part C: " — is not part of the name and is read past.
+// "Ending" names the Credits only as the first word of the name — the anime
+// "Ending", "Ending Theme" — and "End Title(s)" only as the whole name, because
+// "Alternate Ending" and "Dead End Title" are part of the story, and a Credits
+// Marker there would mark the Title watched early.
 func Classify(label string) string {
 	words := strings.FieldsFunc(strings.ToLower(label), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
 	})
+	words = withoutChapterNumber(words)
 	has := func(ws ...string) bool {
 		for _, w := range words {
 			for _, want := range ws {
@@ -71,6 +77,7 @@ func Classify(label string) string {
 	// word inside a longer title they are as likely to be somebody called Ed, so
 	// they count only as the whole label.
 	whole := strings.Join(words, " ")
+	endTitles := whole == "end titles" || whole == "end title"
 	switch {
 	case has("recap", "previously"):
 		return KindRecap
@@ -78,10 +85,26 @@ func Classify(label string) string {
 		return KindPreview
 	case has("intro", "introduction", "opening") || whole == "op":
 		return KindIntro
-	case has("credits", "ending", "outro", "endcredits") || whole == "ed":
+	case has("credits", "outro", "endcredits") || len(words) > 0 && words[0] == "ending" || endTitles || whole == "ed":
 		return KindCredits
 	}
 	return ""
+}
+
+// withoutChapterNumber drops a leading chapter number from a label's words: a
+// number ("05"), or "chapter"/"part" and the number or letter after it
+// ("Chapter 5", "Part C").
+func withoutChapterNumber(words []string) []string {
+	isNumber := func(w string) bool {
+		return strings.Trim(w, "0123456789") == ""
+	}
+	switch {
+	case len(words) >= 2 && (words[0] == "chapter" || words[0] == "part") && (isNumber(words[1]) || len(words[1]) == 1):
+		return words[2:]
+	case len(words) >= 1 && isNumber(words[0]):
+		return words[1:]
+	}
+	return words
 }
 
 // FromChapters returns the Local markers a File's chapters identify: every

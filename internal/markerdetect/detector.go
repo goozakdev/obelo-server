@@ -172,8 +172,38 @@ func (d *Detector) next(ctx context.Context) (job, bool) {
 	}
 }
 
+// lowerWorkerPriority is what the lowered goroutine calls first; a test
+// observes it.
+var lowerWorkerPriority = lowerThreadPriority
+
+// run is the worker. It reads the queue and writes the store at normal
+// priority: a write takes the store's locks, and a thread at the lowest
+// priority must not sit holding them. Only the Go half of detection — the
+// listening, which fingerprints, and the comparisons — is handed to a goroutine
+// that lowers its own priority first; it ends with run, and its thread with it.
 func (d *Detector) run(ctx context.Context) {
 	defer close(d.done)
+	work := make(chan func())
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		lowerWorkerPriority()
+		for f := range work {
+			f()
+		}
+	}()
+	defer func() {
+		close(work)
+		<-ended
+	}()
+	lowered := func(f func()) {
+		done := make(chan struct{})
+		work <- func() {
+			defer close(done)
+			f()
+		}
+		<-done
+	}
 	for {
 		j, ok := d.next(ctx)
 		if !ok {
@@ -185,7 +215,7 @@ func (d *Detector) run(ctx context.Context) {
 			continue
 		}
 		for _, s := range seasons {
-			if err := d.detectSeason(ctx, s, j.showID != ""); err != nil {
+			if err := d.detectSeason(ctx, s, j.showID != "", lowered); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -246,8 +276,9 @@ type heard struct {
 // Unless forced it leaves out Files that failed to decode maxDecodeFailures runs
 // in a row, and skips a Season every other File of which was already heard at
 // its current mtime. Between every decode and every comparison it passes a safe
-// point.
-func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, force bool) error {
+// point. Every listen and comparison runs through lowered, at the lowest
+// priority; everything else, the store's writes included, runs on the caller.
+func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, force bool, lowered func(func())) error {
 	var files []*heard
 	fresh := force
 	titles := map[string]bool{}
@@ -282,11 +313,11 @@ func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, fo
 		if err := d.yield(ctx); err != nil {
 			return err
 		}
-		h.head = listen(h, 0, w)
+		lowered(func() { h.head = listen(h, 0, w) })
 		if err := d.yield(ctx); err != nil {
 			return err
 		}
-		h.tail = listen(h, h.file.DurationMs-w, w)
+		lowered(func() { h.tail = listen(h, h.file.DurationMs-w, w) })
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -312,14 +343,18 @@ func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, fo
 			}
 			a.compared++
 			b.compared++
-			if m, ok := longestShared(a.head, b.head, p); ok {
+			var m shared
+			var ok bool
+			lowered(func() { m, ok = longestShared(a.head, b.head, p) })
+			if ok {
 				a.intro = append(a.intro, m)
 				b.intro = append(b.intro, m.swap())
 			}
 			if err := d.yield(ctx); err != nil {
 				return err
 			}
-			if m, ok := longestShared(a.tail, b.tail, p); ok {
+			lowered(func() { m, ok = longestShared(a.tail, b.tail, p) })
+			if ok {
 				a.credits = append(a.credits, m)
 				b.credits = append(b.credits, m.swap())
 			}

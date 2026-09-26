@@ -1264,6 +1264,13 @@ CREATE TABLE tailnet_settings (
 -- under a rebuilt Edition, so a file_id foreign key would cascade the Markers
 -- away on every scan, and an unchanged File is not re-probed to put them back.
 -- The path is what a Marker is measured against anyway — these exact bytes.
+-- A path no files row holds any more (the File was renamed or deleted) has its
+-- Markers removed at the end of every completed scan of a Library, incremental
+-- or full.
+--
+-- from_edl is 1 on a Local Marker read from the File's `.edl` rather than its
+-- chapters: an unchanged File is not re-probed, so once its `.edl` is gone the
+-- Scanner must know to probe it again for the chapters that now apply.
 CREATE TABLE markers (
     id        TEXT PRIMARY KEY,
     file_path TEXT NOT NULL CHECK (file_path <> ''),
@@ -1271,6 +1278,7 @@ CREATE TABLE markers (
     source    TEXT NOT NULL CHECK (source IN ('local', 'detected', 'fetched')),
     start_ms  INTEGER NOT NULL CHECK (start_ms >= 0),
     end_ms    INTEGER NOT NULL,
+    from_edl  INTEGER NOT NULL DEFAULT 0 CHECK (from_edl IN (0, 1) AND (from_edl = 0 OR source = 'local')),
     CHECK (end_ms > start_ms)
 );
 CREATE INDEX idx_markers_file_path ON markers(file_path, source);

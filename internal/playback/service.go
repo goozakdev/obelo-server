@@ -166,6 +166,9 @@ type Service struct {
 	// MarkerStore (a fake in some unit tests) — every File then uses the flat
 	// WatchedCeiling, the pre-Marker behavior.
 	markers MarkerStore
+	// fetchedServed reports whether Fetched Markers are served now, installed by
+	// SetFetchedMarkersServed (markers.go). Nil serves them.
+	fetchedServed func() bool
 	// relay is the one-hop playback relay for a mirrored Title (ADR-0056 §5,
 	// relay.go), installed by SetRelay after the link Service exists. Nil on every
 	// Server that holds no Links, and on every unit test — a mirrored Title is then

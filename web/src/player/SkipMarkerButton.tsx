@@ -23,6 +23,11 @@ export const MARKER_LABELS: Record<string, string> = {
   preview: "Skip Preview",
 };
 
+/** How long "Next episode" waits for its Credits report before playing the next
+ * Episode anyway. A hung report must not leave the button doing nothing until
+ * the video ends; the Title may then not count as watched, as with a failed one. */
+export const CREDITS_REPORT_TIMEOUT_MS = 5_000;
+
 /** The recognized Marker containing positionMs (start inclusive, end exclusive),
  * or null. When Markers overlap, the one that started last wins — it is the
  * narrower thing the viewer is inside. */

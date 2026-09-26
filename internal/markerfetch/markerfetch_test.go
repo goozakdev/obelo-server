@@ -1,11 +1,15 @@
 package markerfetch_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
+	"os"
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/markerfetch"
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -283,5 +287,136 @@ func TestANewProviderIsANewQuestion(t *testing.T) {
 	fetch(t, st, reg, it)
 	if first.calls != 2 || later.calls != 1 {
 		t.Fatalf("calls first/later = %d/%d, want 2/1: a new provider changes the question", first.calls, later.calls)
+	}
+}
+
+// --- ceilings and shutdown ------------------------------------------------------
+
+// ctxProvider answers resp unless its context ends first, recording whether the
+// context was already over when it was asked. hang makes it wait for the end.
+type ctxProvider struct {
+	slug    string
+	resp    pluginapi.MarkersResponse
+	hang    bool
+	mu      sync.Mutex
+	asked   int
+	expired bool
+	started chan struct{}
+}
+
+func (c *ctxProvider) Markers(ctx context.Context, _ pluginapi.MarkersRequest) (pluginapi.MarkersResponse, error) {
+	c.mu.Lock()
+	c.asked++
+	c.expired = c.expired || ctx.Err() != nil
+	c.mu.Unlock()
+	if c.started != nil {
+		close(c.started)
+		c.started = nil
+	}
+	if c.hang {
+		<-ctx.Done()
+	}
+	if err := ctx.Err(); err != nil {
+		return pluginapi.MarkersResponse{}, err
+	}
+	return c.resp, nil
+}
+
+func registerCtx(reg *pluginapi.Registry, providers ...*ctxProvider) {
+	for _, p := range providers {
+		p := p
+		reg.RegisterMarkerProvider(pluginapi.MarkerProviderRegistration{
+			Descriptor: pluginapi.Descriptor{Slug: p.slug},
+			New:        func(pluginapi.Settings) (pluginapi.MarkerProvider, error) { return p, nil },
+		})
+	}
+}
+
+// TestEachProviderHasItsOwnCeiling: providers are asked one after another, and a
+// hung one used to spend the ceiling of every provider after it too, so a
+// healthy later provider was asked with its time already up — no answer, and a
+// strike against a Plugin that did nothing wrong. Each is timed on its own.
+func TestEachProviderHasItsOwnCeiling(t *testing.T) {
+	it := episode()
+	reg := pluginapi.NewRegistry()
+	hung := &ctxProvider{slug: "hung", hang: true}
+	healthy := &ctxProvider{slug: "healthy", resp: pluginapi.MarkersResponse{Markers: []pluginapi.MarkerCandidate{
+		candidate("intro", 1_000, 61_000, it.DurationMs),
+	}}}
+	registerCtx(reg, hung, healthy)
+	st := newMemStore()
+	svc := markerfetch.New(st, reg)
+	svc.SetProviderTimeout(100 * time.Millisecond)
+
+	if err := svc.Fetch(context.Background(), it); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if healthy.asked != 1 || healthy.expired {
+		t.Fatalf("the healthy provider was asked %d times, expired=%v; want once, in time", healthy.asked, healthy.expired)
+	}
+	want := []store.Marker{{Kind: "intro", Source: "fetched", StartMs: 1_000, EndMs: 61_000}}
+	if got := st.fetched[path]; !reflect.DeepEqual(got, want) {
+		t.Errorf("stored = %+v, want the healthy provider's %+v", got, want)
+	}
+}
+
+// catalogStore is a memStore that is also the Catalog FetchFile resolves a
+// session's File from: one Movie with the one File.
+type catalogStore struct{ *memStore }
+
+func (catalogStore) TitleByID(id string) (store.TitleDetail, error) {
+	return store.TitleDetail{
+		Title:    store.Title{ID: id, Kind: "movie", Title: "Dune", Year: 2021},
+		Editions: []store.Edition{{ID: "e1", Files: []store.File{{ID: "f1", Path: path, DurationMs: 1_320_000}}}},
+	}, nil
+}
+
+func (catalogStore) EpisodeContextForTitle(string) (store.EpisodeContext, error) {
+	return store.EpisodeContext{}, store.ErrNotFound
+}
+
+func (catalogStore) ShowByID(string) (store.Show, error) { return store.Show{}, store.ErrNotFound }
+
+// TestCloseEndsAnAskingInFlight: an asking started for a session outlived the
+// Server — after shutdown it saved into a closed database and logged the
+// failure. Close cancels it and waits: once Close returns nothing is running,
+// nothing was saved, and nothing was logged.
+func TestCloseEndsAnAskingInFlight(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	reg := pluginapi.NewRegistry()
+	started := make(chan struct{})
+	hung := &ctxProvider{slug: "hung", hang: true, started: started}
+	registerCtx(reg, hung)
+	st := newMemStore()
+	svc := markerfetch.New(catalogStore{st}, reg)
+
+	done := svc.Start("t1", "f1")
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the provider was never asked")
+	}
+	svc.Close()
+	select {
+	case <-done:
+	default:
+		t.Fatal("the asking is still running after Close returned")
+	}
+	if st.writes != 0 {
+		t.Errorf("an asking Close cut short saved %d times, want none", st.writes)
+	}
+	if logged.Len() != 0 {
+		t.Errorf("logged after Close: %q", logged.String())
+	}
+	select {
+	case <-svc.Start("t1", "f1"):
+	case <-time.After(time.Second):
+		t.Fatal("an asking started after Close did not end at once")
+	}
+	if hung.asked != 1 {
+		t.Errorf("the provider was asked %d times, want once: nothing is asked after Close", hung.asked)
 	}
 }
