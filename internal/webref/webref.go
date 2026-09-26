@@ -23,9 +23,14 @@ type Reference struct {
 	URL   string `json:"url"`
 }
 
+// maxReferences is how many Web references one item keeps. An item's page links
+// out to a handful of sites; past this a provider is not linking, it is flooding.
+const maxReferences = 50
+
 // Collect asks every Web reference provider in reg that serves kind for the
 // references held points at, and returns the ones that pass, in registration
-// order, each address once.
+// order, each address once — at most maxReferences of them, the first in that
+// order.
 //
 // held is every external id the host holds for the item, keyed by namespace. A
 // provider that cannot be built or fails its call contributes nothing and costs
@@ -42,6 +47,7 @@ func Collect(ctx context.Context, reg *pluginapi.Registry, kind string, held map
 		}
 		p, err := r.New(pluginapi.Settings{Enabled: true})
 		if err != nil {
+			log.Printf("obelo: web references from %s skipped: %v", r.Descriptor.Slug, err)
 			continue
 		}
 		resp, err := p.Links(ctx, pluginapi.WebReferencesRequest{Kind: kind, IDs: copyIDs(held)})
@@ -55,6 +61,9 @@ func Collect(ctx context.Context, reg *pluginapi.Registry, kind string, held map
 			}
 			seen[ref.URL] = true
 			out = append(out, Reference{Label: ref.Label, URL: ref.URL})
+			if len(out) == maxReferences {
+				return out
+			}
 		}
 	}
 	return out
@@ -74,11 +83,9 @@ func keep(ref pluginapi.WebReference, held map[string]string) bool {
 }
 
 // serves reports whether a provider declared the coarse kind an item's fine kind
-// belongs to. A provider that declares no kinds serves every kind.
+// belongs to. A provider that declares no kinds serves none, as
+// Descriptor.Serves says for every seam.
 func serves(d pluginapi.Descriptor, kind string) bool {
-	if len(d.Kinds) == 0 {
-		return true
-	}
 	return d.Serves(coarseKind(kind))
 }
 

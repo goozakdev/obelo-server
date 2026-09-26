@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import { ApiError } from "../api/errors";
 import { errorMessage } from "../screens/errorMessage";
 import PluginSettingsForm from "./PluginSettingsForm";
+import LyricProviderOrder from "./LyricProviderOrder";
 import SignInProviderOrder from "./SignInProviderOrder";
 import RedirectSignInProviders from "./RedirectSignInProviders";
 import SignInGroupMappings from "./SignInGroupMappings";
@@ -788,6 +789,7 @@ export default function AdminPluginsScreen() {
         <SignInProviderOrder />
         <RedirectSignInProviders />
         <SignInGroupMappings />
+        <LyricProviderOrder />
 
         <div className="provider-card" data-testid="plugin-install-upload">
           <div className="provider-head">

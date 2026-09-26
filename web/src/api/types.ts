@@ -3182,6 +3182,20 @@ export interface Lyrics {
   text: string;
 }
 
+/** One Lyric provider as `GET /settings/lyric-providers` lists it. */
+export interface LyricProvider {
+  slug: string;
+  name: string;
+  description: string;
+  docsURL: string;
+}
+
+/** The Lyric providers this server will ask, in the order it asks them — the
+ * Admin's order first, then any the Admin has not placed. */
+export interface LyricProvidersView {
+  providers: LyricProvider[];
+}
+
 /** One password-flow Sign-in provider (`GET /settings/sign-in-providers`). */
 export interface SignInProvider {
   id: string;

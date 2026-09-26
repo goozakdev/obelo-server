@@ -146,6 +146,7 @@ import type {
   WebReference,
   Marker,
   SignInProvidersView,
+  LyricProvidersView,
   GroupMappingRule,
   GroupMappingView,
   ResyncResult,
@@ -2516,6 +2517,22 @@ export class ApiClient {
       es.addEventListener(type, handle(type));
     }
     return () => es.close();
+  }
+
+  /** `GET /api/v1/settings/lyric-providers` (Admin) — the Lyric providers in the
+   * order the lyrics view asks them. */
+  getLyricProviders(signal?: AbortSignal): Promise<LyricProvidersView> {
+    return this.request<LyricProvidersView>("/settings/lyric-providers", { signal });
+  }
+
+  /** `PUT /api/v1/settings/lyric-providers` (Admin) — save the order, first-asked
+   * first. Returns the list in its new order. */
+  setLyricProviderOrder(order: string[], signal?: AbortSignal): Promise<LyricProvidersView> {
+    return this.request<LyricProvidersView>("/settings/lyric-providers", {
+      method: "PUT",
+      body: { order },
+      signal,
+    });
   }
 
   /** `GET /api/v1/settings/sign-in-providers` (Admin) — the password-flow Sign-in
