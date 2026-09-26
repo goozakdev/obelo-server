@@ -65,6 +65,16 @@ func TestTheSDKsSignInRecheckExportNamesAreTheHosts(t *testing.T) {
 	assertSameList(t, "the Sign-in provider re-check exports", host, pluginsdk.SignInRecheckExports())
 }
 
+// TestTheSDKsOneCallExportNamesAreTheHosts is the same for every Extension
+// point whose contract is one call — the password flow's, a Web reference
+// provider's, a Lyric provider's and a Marker provider's.
+func TestTheSDKsOneCallExportNamesAreTheHosts(t *testing.T) {
+	assertSameList(t, "the one-call Extension point exports",
+		[]string{exportSignInPassword, exportWebReferenceLinks, exportLyricProviderLyrics, exportMarkerProviderMarkers},
+		[]string{pluginsdk.ExportSignInPassword, pluginsdk.ExportWebReferenceLinks, pluginsdk.ExportLyricProviderLyrics,
+			pluginsdk.ExportMarkerProviderMarkers})
+}
+
 // TestTheSDKsABIExportNamesAreTheHosts covers the plumbing every module provides
 // whatever seam it fills, plus the Event sink's one call and the host module's
 // namespace.

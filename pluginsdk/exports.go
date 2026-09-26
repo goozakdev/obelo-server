@@ -1,7 +1,8 @@
 package pluginsdk
 
 // The guest export names, one per contract call, COPIED from the host
-// (internal/plugins/guest.go, metadata.go, subtitle.go, signin.go).
+// (internal/plugins/guest.go, metadata.go, subtitle.go, signin.go, webref.go,
+// lyrics.go, markers.go).
 //
 // They are copied and not imported, because this module may not import the
 // server — that is the point of the module split. A copy is a thing that drifts,
@@ -40,6 +41,9 @@ const (
 	ExportSubtitleSearch   = "obelo_subtitle_search"
 	ExportSubtitleDownload = "obelo_subtitle_download"
 
+	// The Sign-in provider Extension point's password-flow call.
+	ExportSignInPassword = "sign_in_password"
+
 	// The Sign-in provider Extension point's redirect-flow calls.
 	ExportSignInAuthorizeURL = "sign_in_authorize_url"
 	ExportSignInExchange     = "sign_in_exchange"
@@ -49,6 +53,12 @@ const (
 	// sign-in-refresh.
 	ExportSignInLookup  = "sign_in_lookup"
 	ExportSignInRefresh = "sign_in_refresh"
+
+	// The Web reference provider, Lyric provider and Marker provider Extension
+	// points' one call each, with the seam in the name.
+	ExportWebReferenceLinks     = "web_reference_links"
+	ExportLyricProviderLyrics   = "lyric_provider_lyrics"
+	ExportMarkerProviderMarkers = "marker_provider_markers"
 )
 
 // HostModule is the namespace the six host functions are imported from. A module

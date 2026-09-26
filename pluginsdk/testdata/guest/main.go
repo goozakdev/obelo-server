@@ -28,9 +28,13 @@ import (
 
 	"github.com/goozakdev/obelo-server/pluginsdk"
 	"github.com/goozakdev/obelo-server/pluginsdk/internal/testprovider"
+	"github.com/goozakdev/obelo-server/pluginsdk/lyric"
+	"github.com/goozakdev/obelo-server/pluginsdk/marker"
 	"github.com/goozakdev/obelo-server/pluginsdk/metadata"
+	"github.com/goozakdev/obelo-server/pluginsdk/signin"
 	"github.com/goozakdev/obelo-server/pluginsdk/sink"
 	"github.com/goozakdev/obelo-server/pluginsdk/subtitle"
+	"github.com/goozakdev/obelo-server/pluginsdk/webref"
 )
 
 // sdk-sample:begin serve
@@ -67,3 +71,19 @@ func init() {
 func init() {
 	sink.Serve(testprovider.NewSink(pluginsdk.PacedHost(pluginsdk.Sandbox(), 5*time.Millisecond)))
 }
+
+// A fourth init() fills the four one-call seams, each with its own provider from
+// testprovider/seams.go — the examples the authoring guide shows for them. A
+// module serves only the seams its manifest declares, so which of these a test
+// reaches is its manifest's choice.
+
+// sdk-sample:begin serve-seams
+
+func init() {
+	webref.Serve(testprovider.References{})
+	lyric.Serve(testprovider.NewLyrics(pluginsdk.Sandbox()))
+	marker.Serve(testprovider.NewMarkers(pluginsdk.Sandbox()))
+	signin.ServePassword(testprovider.NewDirectory(pluginsdk.Sandbox()))
+}
+
+// sdk-sample:end serve-seams

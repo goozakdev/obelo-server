@@ -500,6 +500,14 @@ func RedirectSignInManifest(id, authorize string) pluginapi.Manifest {
 // call with the same in its error.
 const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"
 
+// SignInRedirectDiscovers, as the prefix of the code a redirect provider built
+// from RedirectSignInManifest exchanges, is an OpenID Connect provider's
+// exchange: it reads the discovery document of its `issuer` setting (which the
+// test declares) and posts to the token endpoint that document names, failing
+// with what the host answered unless both are 200, and then reads the rest of
+// the code as usual.
+const SignInRedirectDiscovers = "discover|"
+
 // The re-check directories a `lookup` setting names (see LookupSignInManifest):
 // SignInLookupFails fails every re-check, and SignInLookupFetchesABlockedHost
 // fetches a host no manifest lists on every re-check, and fails.

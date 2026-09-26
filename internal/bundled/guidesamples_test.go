@@ -38,6 +38,8 @@ const guidePath = "docs/plugins/authoring.md"
 var bundledSampleSources = map[string]string{
 	"musicbrainz/main.go":       "musicbrainz/main.go",
 	"musicbrainz/manifest.json": "musicbrainz/manifest.json",
+	"oidc/main.go":              "oidc/main.go",
+	"oidc/oidc/oidc.go":         "oidc/oidc/oidc.go",
 }
 
 // A marker, immediately above the fenced block it governs:

@@ -2,8 +2,11 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -180,7 +183,98 @@ func (g *guestSignInProvider) redirectPolicy(describe string) callPolicy {
 		noStrike:      true,
 		queueInBudget: true,
 		socket:        true,
+		discovery:     g.discoveryURL(),
 	}
+}
+
+// discoveryURL is the issuer's discovery document, where an issuer whose token
+// and userinfo endpoints live on other hosts (Google's do) names them. Empty for
+// a provider with no issuer.
+func (g *guestSignInProvider) discoveryURL() string {
+	issuer, _, _ := g.IDTokenAudience()
+	if issuer == "" {
+		return ""
+	}
+	return strings.TrimSuffix(issuer, "/") + "/.well-known/openid-configuration"
+}
+
+// beginDiscovery records the issuer's discovery document for the call in flight,
+// and answers the function that forgets it and every host it named. An empty
+// discoveryURL admits nothing.
+func (p *Plugin) beginDiscovery(discoveryURL string) func() {
+	p.mu.Lock()
+	p.discovery, p.discovered = discoveryURL, nil
+	p.mu.Unlock()
+	return func() {
+		p.mu.Lock()
+		p.discovery, p.discovered = "", nil
+		p.mu.Unlock()
+	}
+}
+
+// noteDiscovery reads a fetched document as the issuer's discovery document when
+// it is exactly that — the URL the call's policy named answered 200 itself, with
+// no redirect on the way, naming the same issuer — and admits the https origins
+// of its token and userinfo endpoints for the rest of the call. Only those two:
+// the authorization endpoint is the browser's to reach and the key set the
+// host's own.
+func (p *Plugin) noteDiscovery(answered *http.Request, status int, body []byte) {
+	p.mu.Lock()
+	discovery := p.discovery
+	p.mu.Unlock()
+	if discovery == "" || status != 200 || answered == nil || answered.Response != nil ||
+		answered.URL.String() != discovery {
+		return
+	}
+	var doc struct {
+		Issuer   string `json:"issuer"`
+		Token    string `json:"token_endpoint"`
+		Userinfo string `json:"userinfo_endpoint"`
+	}
+	if json.Unmarshal(body, &doc) != nil ||
+		strings.TrimSuffix(doc.Issuer, "/")+"/.well-known/openid-configuration" != discovery {
+		return
+	}
+	named := map[string]bool{}
+	for _, endpoint := range []string{doc.Token, doc.Userinfo} {
+		if u, err := url.Parse(endpoint); err == nil {
+			if origin := httpsOrigin(u); origin != "" {
+				named[origin] = true
+			}
+		}
+	}
+	p.mu.Lock()
+	if p.discovery == discovery {
+		p.discovered = named
+	}
+	p.mu.Unlock()
+}
+
+// discoveryNamed reports whether the issuer's discovery document, read during
+// the call in flight, named target's https origin as its token or userinfo
+// endpoint's.
+func (p *Plugin) discoveryNamed(target *url.URL) bool {
+	origin := httpsOrigin(target)
+	if origin == "" {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.discovered[origin]
+}
+
+// httpsOrigin is u's scheme, host and port with the default port spelled out,
+// or empty for anything that is not an https URL with a host.
+func httpsOrigin(u *url.URL) string {
+	host := normalizeHost(u.Hostname())
+	if u.Scheme != "https" || host == "" {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return "https://" + net.JoinHostPort(host, port)
 }
 
 // AuthorizeURL asks the guest where to send the browser.

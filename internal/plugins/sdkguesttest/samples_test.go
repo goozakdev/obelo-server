@@ -41,6 +41,7 @@ var sdkSampleSources = map[string]string{
 	"guest/main.go":           "testdata/guest/main.go",
 	"testprovider.go":         "internal/testprovider/testprovider.go",
 	"provider_native_test.go": "provider_native_test.go",
+	"seams.go":                "internal/testprovider/seams.go",
 }
 
 // A marker, immediately above the fenced block it governs:

@@ -27,11 +27,14 @@
 package sdkguesttest
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -155,6 +158,64 @@ func SinkManifest(id string, allowedHosts ...string) pluginapi.Manifest {
 	m.Name = "SDK Source (" + id + ")"
 	m.Description = "An Event sink built with the Obelo Go SDK, compiled from source by the test suite."
 	return m
+}
+
+// WebReferenceManifest is the manifest of the SDK guest as a Web reference
+// provider: plugintest's document, naming this compiled module. The guest's
+// provider ignores plugintest's `mode` setting; it links an item's IMDb id and
+// nothing else.
+func WebReferenceManifest(id string) pluginapi.Manifest {
+	m := plugintest.WebReferenceManifest(id, "https")
+	m.Name = "SDK Source (" + id + ")"
+	m.Description = "A Web reference provider built with the Obelo Go SDK, compiled from source by the test suite."
+	return m
+}
+
+// LyricManifest is the manifest of the SDK guest as a Lyric provider whose
+// source is sourceURL: plugintest's document, naming this compiled module.
+func LyricManifest(id, sourceURL string) pluginapi.Manifest {
+	m := plugintest.LyricManifest(id, sourceURL)
+	m.Name = "SDK Source (" + id + ")"
+	m.Description = "A Lyric provider built with the Obelo Go SDK, compiled from source by the test suite."
+	return m
+}
+
+// MarkerManifest is the manifest of the SDK guest as a Marker provider whose
+// source is sourceURL: plugintest's document, naming this compiled module.
+func MarkerManifest(id, sourceURL string) pluginapi.Manifest {
+	m := plugintest.MarkerManifest(id, sourceURL)
+	m.Name = "SDK Source (" + id + ")"
+	m.Description = "A Marker provider built with the Obelo Go SDK, compiled from source by the test suite."
+	return m
+}
+
+// SignInManifest is the manifest of the SDK guest as a password-flow Sign-in
+// provider that also answers lookup(subject): a directory reached over HTTP at
+// directoryURL, which is the one declared setting, `directory`, and the one host
+// the manifest allows.
+func SignInManifest(id, directoryURL string) pluginapi.Manifest {
+	host := directoryURL
+	if u, err := url.Parse(directoryURL); err == nil {
+		host = u.Hostname()
+	}
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       "SDK Source (" + id + ")",
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind:         pluginapi.ExtensionSignInProvider,
+			Capabilities: []pluginapi.Capability{pluginapi.CapabilityPasswordSignIn, pluginapi.CapabilitySignInLookup},
+		}},
+		Network: pluginapi.ManifestNetwork{Hosts: []string{host}},
+		Settings: pluginapi.ManifestSettings{Fields: []pluginapi.SettingsField{{
+			Key:     "directory",
+			Type:    pluginapi.FieldURL,
+			Label:   "Directory",
+			Default: json.RawMessage(strconv.Quote(directoryURL)),
+		}}},
+		Description: "A Sign-in provider built with the Obelo Go SDK, compiled from source by the test suite.",
+	}
 }
 
 // Install places the manifest and the compiled SDK guest under

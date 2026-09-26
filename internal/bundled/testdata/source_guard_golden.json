@@ -1,38 +1,38 @@
 {
   "anidb": {
-    "version": "1.0.9",
-    "hash": "985040a3ddba53218dd95ea9f71ce85f9e1dcd635ae62797ebe37f2e4133cee8"
+    "version": "1.0.10",
+    "hash": "a539b9d670f44adb00eb8526ed49718f95a1795283efa8f74ba0d7abd5b2b32a"
   },
   "fanarttv": {
-    "version": "1.0.9",
-    "hash": "c0e2cc7e458abf89cb45a46f409a56008686b98187fe148120865fb5650fbea7"
+    "version": "1.0.10",
+    "hash": "3afa9650dc204fed9e396c385e8e939a413d6082cb7da190683f64e6ff4c05e6"
   },
   "musicbrainz": {
-    "version": "1.1.8",
-    "hash": "afcb6270d8c09ad27241cc189ec83fb34895618cbf08588dec9592fd15440c1b"
+    "version": "1.1.9",
+    "hash": "4088c0e5f5dd9a1fdcc3776e7c0c6921c32bf290df1743739947073c35d64945"
   },
   "oidc": {
-    "version": "1.0.5",
-    "hash": "48c9f4198664e715a98915ee528da300082aaa7b965eed5ac0af04b90af405ec"
+    "version": "1.0.6",
+    "hash": "76b20c5f1f7a8b03c6c12c24236be4a461ade5959dde76042663d52a7b94c3e2"
   },
   "omdb": {
-    "version": "1.0.8",
-    "hash": "a76ed7b61257047a11bb62ee84e7aa773cc38dc625d3a6078af8d9e80584379b"
+    "version": "1.0.9",
+    "hash": "9d5e77c550ad420fb93fb6887fc636b0e61c4f8f82555f431524d11b3b0f7aba"
   },
   "opensubtitles": {
-    "version": "1.0.8",
-    "hash": "e9ac919e4e923a76f114b4dbc7cceeb0135525fd1e75f46dc2fbec44a8aead28"
+    "version": "1.0.9",
+    "hash": "056e26f8c7c53a35282a040434ef3ad3df200b33337bf7a495d5848d56a9f607"
   },
   "theaudiodb": {
-    "version": "1.0.8",
-    "hash": "77bb1520d46d7b7848d853ed6b1f631c8f9959d79669d0d0264f81b7387902d9"
+    "version": "1.0.9",
+    "hash": "2e5709b02a91d019fb587ebe90031fd40b0c950755c73fcd017c1c451a155545"
   },
   "thetvdb": {
-    "version": "1.0.8",
-    "hash": "bee46e035fdc333c2602ca0c728d2a91f7f79097405d2bf173cf05d6fd5e3da0"
+    "version": "1.0.9",
+    "hash": "97065f55c804493d1b45acdbd97aadf40423c3382eb1d23e6bba6fa670805882"
   },
   "tmdb": {
-    "version": "1.0.8",
-    "hash": "c51c526097bec1e125ed7231e8d0ccfcc16d5ee359082b4327eca3edbe729f79"
+    "version": "1.0.9",
+    "hash": "0028f74d98998577c6c6c063f8a9d16d1eb046d276bedd80703935eba3c4ba66"
   }
 }
