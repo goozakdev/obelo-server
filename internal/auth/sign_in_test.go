@@ -256,3 +256,66 @@ func TestSchemaAdmitsAPasswordlessPersonOnlyAsAnExternalMember(t *testing.T) {
 		t.Error("an external-origin admin with no password was accepted; only a Member may be minted password-less")
 	}
 }
+
+// TestAUsernameCollisionIgnoresCase: a provider-supplied username is compared
+// with the ones already here without regard to case, so "Admin" or "ADMIN"
+// from a provider collides with the local "admin" and
+// gets the same refusal, rather than sitting beside it as a second account a
+// person could not tell apart. Nothing is created and nothing is linked.
+func TestAUsernameCollisionIgnoresCase(t *testing.T) {
+	for _, username := range []string{"Admin", "ADMIN"} {
+		t.Run(username, func(t *testing.T) {
+			svc, db := newRemoteFixture(t)
+			svc.UseSignInProviders(providerList{directory("dir", "someone", "dir-pw",
+				auth.ExternalAnswer{Subject: "s-" + username, Username: username})})
+
+			if _, err := svc.Login(context.Background(), "someone", "dir-pw", laptop, ""); !errors.Is(err, auth.ErrUsernameCollision) {
+				t.Fatalf("login err = %v, want ErrUsernameCollision", err)
+			}
+			users, err := db.ListUsers()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(users) != 1 {
+				t.Fatalf("users = %+v, want only the admin", users)
+			}
+			if _, err := db.ExternalIdentityUser("dir", "s-"+username); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("the colliding identity resolves (err %v); it must be linked to nobody", err)
+			}
+		})
+	}
+}
+
+// TestAProviderUsernameCollidesWithAnotherProvidersIgnoringCase: two providers
+// vouch for two different people named "ada" and "Ada". The first becomes a
+// Member; the second collides with it rather than becoming a second "ada".
+func TestAProviderUsernameCollidesWithAnotherProvidersIgnoringCase(t *testing.T) {
+	svc, _ := newRemoteFixture(t)
+	svc.UseSignInProviders(providerList{
+		directory("one", "ada", "pw", auth.ExternalAnswer{Subject: "s-1", Username: "ada"}),
+		directory("two", "ada2", "pw2", auth.ExternalAnswer{Subject: "s-2", Username: "Ada"}),
+	})
+	if _, err := svc.Login(context.Background(), "ada", "pw", laptop, ""); err != nil {
+		t.Fatalf("first sign-in: %v", err)
+	}
+	if _, err := svc.Login(context.Background(), "ada2", "pw2", laptop, ""); !errors.Is(err, auth.ErrUsernameCollision) {
+		t.Fatalf("second sign-in err = %v, want ErrUsernameCollision", err)
+	}
+}
+
+// TestARemoteUserFailsTheReauthCheckAsForbidden: a `remote` User may not attach
+// at all, so the re-auth check answers ErrForbidden for one — not the
+// ErrReauthRequired a person with no proof gets, which would tell the caller to
+// go and confirm it is them.
+func TestARemoteUserFailsTheReauthCheckAsForbidden(t *testing.T) {
+	svc, _ := newRemoteFixture(t)
+	remote, err := svc.CreateUser(context.Background(), "Brandon's server", "", auth.RoleRemote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, proof := range []auth.Reauth{{}, {Grant: "anything"}, {LocalPassword: "anything"}} {
+		if err := svc.CheckReauth(context.Background(), remote.ID, "session", proof, ""); !errors.Is(err, auth.ErrForbidden) {
+			t.Fatalf("CheckReauth(%+v) = %v, want ErrForbidden", proof, err)
+		}
+	}
+}

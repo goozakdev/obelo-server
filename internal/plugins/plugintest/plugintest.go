@@ -508,6 +508,12 @@ const SignInRedirectFailsWithTheSecrets = "fail-with-the-secrets"
 // the code as usual.
 const SignInRedirectDiscovers = "discover|"
 
+// SignInRedirectFetchesABlockedHost, as the code a redirect provider built from
+// RedirectSignInManifest exchanges or as the last path segment of its
+// `authorize` setting, is a provider that fetches a host no manifest lists and
+// then answers as usual: the authorize URL, or a refused exchange.
+const SignInRedirectFetchesABlockedHost = "fetch-a-blocked-host"
+
 // The re-check directories a `lookup` setting names (see LookupSignInManifest):
 // SignInLookupFails fails every re-check, and SignInLookupFetchesABlockedHost
 // fetches a host no manifest lists on every re-check, and fails.

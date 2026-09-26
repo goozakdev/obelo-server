@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -64,6 +65,22 @@ const maxPendingRedirects = 1024
 // not told to trust, every browser shares one address, and a refusal there
 // would be a refusal for all of them.
 const maxPendingRedirectsPerClient = 16
+
+// clientKey is the client a start is counted against: its address, or for an
+// IPv6 address its /64. One IPv6 client may hold a whole /64 and pick a fresh
+// address for every request, and counted by address it could fill the table
+// alone.
+func clientKey(client string) string {
+	addr, err := netip.ParseAddr(client)
+	if err != nil || !addr.Is6() || addr.Is4In6() {
+		return client
+	}
+	prefix, err := addr.WithZone("").Prefix(64)
+	if err != nil {
+		return client
+	}
+	return prefix.String()
+}
 
 // IDTokenAudience is implemented by a redirect provider the host can verify:
 // the issuer and client id the operator typed, and whether the provider declared
@@ -250,6 +267,7 @@ func (r *Redirects) start(ctx context.Context, providerID, redirectURI, client s
 		return Started{}, fmt.Errorf("signin: %s answered an authorize URL that is not an absolute http(s) URL", providerID)
 	}
 
+	client = clientKey(client)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()

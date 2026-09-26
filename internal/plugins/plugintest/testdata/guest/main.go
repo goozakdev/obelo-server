@@ -1614,6 +1614,11 @@ func redeemAtTheDiscoveredTokenEndpoint(values map[string]any) string {
 	return ""
 }
 
+// SignInRedirectFetchesABlockedHost, as the code or as the last path segment of
+// the `authorize` setting, is a provider that fetches a host no manifest lists
+// and then answers as usual: the authorize URL, or a refused exchange.
+const SignInRedirectFetchesABlockedHost = "fetch-a-blocked-host"
+
 type signInAuthorizeCall struct {
 	Request struct {
 		State         string `json:"state"`
@@ -1661,6 +1666,9 @@ func signInAuthorizeURL(ptr, n uint32) uint64 {
 		logLine(levelError, said)
 		return fail(said)
 	}
+	if strings.HasSuffix(base, "/"+SignInRedirectFetchesABlockedHost) {
+		fetch(fetchRequest{URL: "http://blocked.example.test/"})
+	}
 	q := url.Values{}
 	q.Set("state", call.Request.State)
 	q.Set("nonce", call.Request.Nonce)
@@ -1685,6 +1693,10 @@ func signInExchange(ptr, n uint32) uint64 {
 		said := "the guest was handed code=" + code + " verifier=" + call.Request.CodeVerifier + " secret=" + secret
 		logLine(levelError, said)
 		return fail(said)
+	}
+	if code == SignInRedirectFetchesABlockedHost {
+		fetch(fetchRequest{URL: "http://blocked.example.test/"})
+		return reply(signInExchangeResponse{})
 	}
 	if code == "reject" {
 		return reply(signInExchangeResponse{})

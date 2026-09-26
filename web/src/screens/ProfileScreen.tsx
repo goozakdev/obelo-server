@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { AttachProof, ExternalIdentitiesView, SignInProvider } from "../api/types";
 import AppHeader from "../browse/AppHeader";
-import { forgetReauthGrant, keepReauthGrant, readReauthGrant } from "../auth/reauthGrant";
+import { forgetReauthGrant, keepReauthGrant, readReauthGrant, reauthGrantExpiresAt } from "../auth/reauthGrant";
 import { useAuth } from "../auth/session";
 import { errorMessage } from "./errorMessage";
 import { rememberRedirectSignIn } from "./SignInCallbackScreen";
@@ -45,6 +45,23 @@ export default function ProfileScreen() {
     setGrantUser(userId);
     setGrant(readReauthGrant());
   }
+
+  // A grant shown as confirmed stops being shown the moment it expires, so the
+  // User is asked to confirm again before they press anything.
+  useEffect(() => {
+    if (grant === null) return;
+    let timer: number | undefined;
+    const check = () => {
+      const expiresAt = reauthGrantExpiresAt();
+      if (expiresAt === null) {
+        setGrant(null);
+        return;
+      }
+      timer = window.setTimeout(check, Math.max(0, expiresAt - Date.now()));
+    };
+    check();
+    return () => window.clearTimeout(timer);
+  }, [grant]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {

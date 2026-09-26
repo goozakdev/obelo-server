@@ -276,3 +276,34 @@ func TestTheVerifierTrustsOnlyTheIssuersOwnKeys(t *testing.T) {
 		})
 	}
 }
+
+// TestAnAzpMustNameTheClientWhenPresent: with a single audience naming the
+// client, a token that also carries azp is accepted only when azp names the
+// client too — a token issued to another party is not this client's, whatever
+// its aud says.
+func TestAnAzpMustNameTheClientWhenPresent(t *testing.T) {
+	srv, key := ecIssuer(t)
+	for _, tc := range []struct {
+		name string
+		azp  any
+		ok   bool
+	}{
+		{"no azp", nil, true},
+		{"azp naming the client", "client", true},
+		{"azp naming another party", "other", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := map[string]any{
+				"iss": srv.URL, "aud": "client", "sub": "s-1", "nonce": "n-1",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			}
+			if tc.azp != nil {
+				c["azp"] = tc.azp
+			}
+			_, err := newIDTokenVerifier().verify(context.Background(), signES256(t, key, c), srv.URL+"/", "client", "n-1")
+			if (err == nil) != tc.ok {
+				t.Fatalf("verify = %v; want ok=%v", err, tc.ok)
+			}
+		})
+	}
+}

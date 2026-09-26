@@ -32,9 +32,9 @@ import (
 //
 // A token is good when its signature verifies under one of the issuer's keys
 // with an asymmetric algorithm, and its iss is the issuer, its aud names the
-// client id (with azp naming it too when there are several audiences), its nonce
-// is the one this server minted for the round trip, its exp has not passed, and
-// neither its nbf nor its iat is still to come.
+// client id (with azp naming it too when there are several audiences, or when
+// there is an azp at all), its nonce is the one this server minted for the round
+// trip, its exp has not passed, and neither its nbf nor its iat is still to come.
 
 // idTokenClaims is what the host takes from a verified token.
 type idTokenClaims struct {
@@ -135,7 +135,7 @@ func (v *idTokenVerifier) check(ctx context.Context, raw, issuer, clientID, nonc
 	if err != nil {
 		return idTokenClaims{}, err
 	}
-	if !contains(aud, clientID) || (len(aud) > 1 && c.AuthorizedParty != clientID) {
+	if !contains(aud, clientID) || ((len(aud) > 1 || c.AuthorizedParty != "") && c.AuthorizedParty != clientID) {
 		return idTokenClaims{}, errors.New("the ID token's aud does not name the configured client id")
 	}
 	if !refreshed && (nonce == "" || c.Nonce != nonce) {

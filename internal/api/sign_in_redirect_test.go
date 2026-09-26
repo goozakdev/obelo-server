@@ -795,3 +795,36 @@ func TestStartsPastTheCapEvictTheOldestRatherThanLockingOut(t *testing.T) {
 		})
 	}
 }
+
+// TestRedirectStartsAreRateLimitedPerAddress: POST /auth/redirect/start runs the
+// plugin on every call, so one address is refused past its limit — 429
+// TOO_MANY_ATTEMPTS with a Retry-After, as a login is — while another address
+// still starts.
+func TestRedirectStartsAreRateLimitedPerAddress(t *testing.T) {
+	dataDir := t.TempDir()
+	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
+	srv := testharness.New(t, testharness.WithDataDir(dataDir))
+
+	var status int
+	var header http.Header
+	var body []byte
+	var allowed int
+	for i := 0; i < 200; i++ {
+		status, header, body = srv.JSONFrom(http.MethodPost, "/api/v1/auth/redirect/start", "", "203.0.113.7:40000", nil,
+			map[string]any{"provider": "oauth"}, nil)
+		if status != http.StatusOK {
+			break
+		}
+		allowed++
+	}
+	if status != http.StatusTooManyRequests || !strings.Contains(string(body), "TOO_MANY_ATTEMPTS") {
+		t.Fatalf("start %d from one address = %d %s, want 429 TOO_MANY_ATTEMPTS", allowed+1, status, body)
+	}
+	if header.Get("Retry-After") == "" {
+		t.Error("the 429 carries no Retry-After")
+	}
+	if allowed <= 16 {
+		t.Errorf("one address was allowed %d starts, want more than the 16 sign-ins one client may have in flight", allowed)
+	}
+	startRedirectFrom(t, srv, "oauth", "198.51.100.4:40000", nil)
+}

@@ -154,3 +154,45 @@ func TestOneClientsStartsEvictItsOwnOldest(t *testing.T) {
 		t.Fatalf("another client's older start's callback = %v, want accepted: only greedy's own are evicted", err)
 	}
 }
+
+// TestAnIPv6ClientWithManyAddressesIsOneClient: one IPv6 client may hold a
+// whole /64, and a start from every address in it must not fill the table for
+// everybody else. Its starts count as one client's — they give up their own
+// oldest — so another client's sign-in in flight survives them all.
+func TestAnIPv6ClientWithManyAddressesIsOneClient(t *testing.T) {
+	now := time.Now()
+	r := testRedirects(t, &now)
+	ctx := context.Background()
+
+	other, err := r.Start(ctx, "plain", "https://obelo.example/sign-in/callback", "203.0.113.9")
+	if err != nil {
+		t.Fatalf("another client's start: %v", err)
+	}
+	var last Started
+	for i := 0; i < maxPendingRedirects; i++ {
+		last, err = r.Start(ctx, "plain", "https://obelo.example/sign-in/callback", fmt.Sprintf("2001:db8:0:1::%x", i+1))
+		if err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+	}
+	if _, _, err := r.Complete(ctx, stateOf(t, other), "code", other.Binding); err != nil {
+		t.Fatalf("another client's start's callback = %v, want accepted: one /64 must not fill the table", err)
+	}
+	if _, _, err := r.Complete(ctx, stateOf(t, last), "code", last.Binding); err != nil {
+		t.Fatalf("the /64's newest start's callback = %v, want accepted", err)
+	}
+
+	// A different /64 is a different client.
+	neighbour, err := r.Start(ctx, "plain", "https://obelo.example/sign-in/callback", "2001:db8:0:2::1")
+	if err != nil {
+		t.Fatalf("a neighbouring /64's start: %v", err)
+	}
+	for i := 0; i < maxPendingRedirectsPerClient; i++ {
+		if _, err := r.Start(ctx, "plain", "https://obelo.example/sign-in/callback", fmt.Sprintf("2001:db8:0:1::%x", i+1)); err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+	}
+	if _, _, err := r.Complete(ctx, stateOf(t, neighbour), "code", neighbour.Binding); err != nil {
+		t.Fatalf("a neighbouring /64's start's callback = %v, want accepted: it is another client", err)
+	}
+}

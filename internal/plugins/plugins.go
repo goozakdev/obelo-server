@@ -379,6 +379,10 @@ type Plugin struct {
 	// next successful call retire that sentence while leaving a real failure's
 	// sentence where an operator can still read it.
 	refusalOnly bool
+	// violationNoStrike is true for the duration of a call made under
+	// callPolicy.violationNoStrike, and a violation recorded while it is counts no
+	// strike.
+	violationNoStrike bool
 
 	// declared is this Plugin's manifest-declared setting VALUES (issue 13),
 	// already decoded into the JSON shapes its own schema names. It is guarded by
@@ -601,15 +605,21 @@ func (p *Plugin) operatorHost() string {
 // a forbidden host on every third call and answers fine in between is still a
 // Plugin doing something it said it would not, and letting a success clear the
 // count would make it invisible.
+//
+// During a call made under callPolicy.violationNoStrike the violation is
+// recorded and not counted, for the reason a failure of that call is not.
 func (p *Plugin) recordViolation(detail string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.violations++
 	p.lastError = detail
 	p.refusalOnly = false
+	if p.violationNoStrike {
+		return
+	}
+	p.violations++
 	if p.violations >= p.opts.FailureThreshold && !p.disabled {
 		p.disabled = true
-		p.logf("obelo: plugin %s is disabled after %d allowlist violations: %s", p.id, p.violations, detail)
+		p.logf("obelo: plugin %s is disabled after %d violations of its network policy: %s", p.id, p.violations, detail)
 	}
 }
 
@@ -688,13 +698,20 @@ func (p *Plugin) clearFailures() {
 // beginCall takes the Plugin's permission to run and records the operator's
 // target for the fetch policy, or reports why the call will not happen.
 func (p *Plugin) beginCall(target string, offline bool) error {
+	return p.beginCallUnder(target, callPolicy{offline: offline})
+}
+
+// beginCallUnder is beginCall, recording what of policy the host functions read
+// while the call runs.
+func (p *Plugin) beginCallUnder(target string, policy callPolicy) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.disabled {
 		return fmt.Errorf("%w: %s", ErrDisabled, p.lastError)
 	}
 	p.target = target
-	p.offline = offline
+	p.offline = policy.offline
+	p.violationNoStrike = policy.violationNoStrike
 	return nil
 }
 
@@ -705,6 +722,7 @@ func (p *Plugin) endCall() {
 	defer p.mu.Unlock()
 	p.target = ""
 	p.offline = false
+	p.violationNoStrike = false
 }
 
 // offlineCall reports whether the call in flight was made under a policy that
@@ -776,6 +794,14 @@ type callPolicy struct {
 	// threshold. For a Sign-in provider: anyone can make a login, so a failing
 	// login must not be a way to take the provider off the server.
 	noStrike bool
+	// violationNoStrike records a fetch or socket the policy refused during this
+	// call without counting it toward the auto-disable threshold either. For a
+	// sign-in call — a login, a redirect start or its callback — and not for a
+	// re-check: anyone can make a sign-in call, and what the guest reaches for can
+	// depend on what they typed, so a refusal must not be a way to take the
+	// provider off the server. A re-check is made by the host's schedule or an
+	// Admin, and a guest breaking its allowlist there is disabled as any other is.
+	violationNoStrike bool
 	// queueInBudget makes budget cover the wait for callMu as well as the call:
 	// a call still queued when it runs out gives up, invoking nothing and
 	// counting nothing. For a Sign-in provider: a login is waited on by a person,
@@ -791,6 +817,11 @@ type callPolicy struct {
 	// are reachable for the rest of a call that reads it.
 	discovery string
 }
+
+// errQueuedPastDeadline is a call that gave up, or found its caller's deadline
+// gone, before it reached the guest. Its error already names the Plugin, so an
+// adapter that names the Plugin too leaves it as it is.
+var errQueuedPastDeadline = errors.New("call queued past its caller's deadline")
 
 // errCallFailed is outcomeOnly's kind for a failure that is not a refusal, a
 // missing export or a deadline: a trap, or an answer not in the contract's shape.
@@ -848,7 +879,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 		select {
 		case p.callMu <- struct{}{}:
 		case <-callCtx.Done():
-			return fmt.Errorf("plugin %s: call queued past its caller's deadline: %w", p.id, callCtx.Err())
+			return fmt.Errorf("plugin %s: %w: %w", p.id, errQueuedPastDeadline, callCtx.Err())
 		}
 	} else {
 		p.callMu <- struct{}{}
@@ -860,7 +891,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 	}
 	// The operator's URL for this call, readable by the fetch policy and by
 	// nothing else.
-	if err := p.beginCall(target, policy.offline); err != nil {
+	if err := p.beginCallUnder(target, policy); err != nil {
 		return err
 	}
 	defer p.endCall()
@@ -888,7 +919,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 		// untouched and this is not a fact about the module, so it is kept and no
 		// failure is counted; the caller's timeout is not the plugin's fault. See
 		// ADR-0059 decision 6.
-		return fmt.Errorf("plugin %s: call queued past its caller's deadline: %w", p.id, err)
+		return fmt.Errorf("plugin %s: %w: %w", p.id, errQueuedPastDeadline, err)
 	}
 
 	if p.instance == nil {

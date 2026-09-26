@@ -237,6 +237,19 @@ describe("confirming it is you before an attach", () => {
     expect(await screen.findByTestId("profile-attach-error")).toHaveTextContent("Confirm it is you again");
   });
 
+  it("stops showing Confirmed when the grant expires, without a click", async () => {
+    window.sessionStorage.setItem("obelo.reauthGrant", JSON.stringify({ grant: "g-short", expiresAt: Date.now() + 300 }));
+    api.list.mockResolvedValue(outsideOnly);
+    renderWithAuth(<ProfileScreen />);
+    expect(await screen.findByTestId("profile-reauth-confirmed")).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.queryByTestId("profile-reauth-confirmed")).not.toBeInTheDocument(), {
+      timeout: 2000,
+    });
+    expect(screen.getByTestId("profile-attach-redirect-oidc")).toBeDisabled();
+    expect(api.startAttach).not.toHaveBeenCalled();
+  });
+
   it("ignores an expired grant", async () => {
     window.sessionStorage.setItem("obelo.reauthGrant", JSON.stringify({ grant: "old", expiresAt: Date.now() - 1 }));
     api.list.mockResolvedValue(outsideOnly);

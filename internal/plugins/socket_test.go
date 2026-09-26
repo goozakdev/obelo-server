@@ -863,3 +863,53 @@ func TestASocketGrantEndsWithItsCall(t *testing.T) {
 		t.Fatalf("the far end accepted %d connections, want only the sign-in call's one", n)
 	}
 }
+
+// TestAFifthOpenIsRefusedBeforeItConnects: the fifth open in one call is refused
+// before anything is dialled — the far end sees the four connections the call
+// was allowed and no fifth, not a fifth that was connected and then dropped.
+func TestAFifthOpenIsRefusedBeforeItConnects(t *testing.T) {
+	far := plainEcho(t)
+	provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|open|open|open|open", plaintextAllowed), plugins.Options{})
+	wantSteps(t, steps(t, provider), "ok:h=1", "ok:h=2", "ok:h=3", "ok:h=4", "refused")
+	waitClosed(t, far, 4, time.Second)
+	time.Sleep(100 * time.Millisecond)
+	if n := far.count(); n != 4 {
+		t.Fatalf("the far end accepted %d connections, want 4: the fifth open must not connect", n)
+	}
+}
+
+// TestTheSocketTLSFloorHoldsInAHandshake: a directory that speaks no TLS newer
+// than 1.1 is refused in the handshake itself, while the same directory offering
+// TLS 1.2 is reached — the floor as a connection meets it, not as a field in a
+// configuration.
+func TestTheSocketTLSFloorHoldsInAHandshake(t *testing.T) {
+	ca := newTestCA(t)
+	cert := ca.goodLeaf(t)
+	legacy := func(maxVersion uint16) *farEnd {
+		return newFarEnd(t, func(f *farEnd, c net.Conn) {
+			tc := tls.Server(c, &tls.Config{
+				Certificates: []tls.Certificate{cert},
+				MinVersion:   tls.VersionTLS10,
+				MaxVersion:   maxVersion,
+			})
+			if err := tc.Handshake(); err != nil {
+				f.closed()
+				return
+			}
+			pingPong(f, tc, &f.secured)
+		})
+	}
+	trusted := map[string]any{pluginapi.SocketTrustedCASetting: ca.pem}
+
+	control := legacy(tls.VersionTLS12)
+	provider, _, _ := socketDirectory(t, socketValues(control.addr, "open", trusted), plugins.Options{})
+	wantSteps(t, steps(t, provider), "ok:h=1:tls")
+
+	for name, version := range map[string]uint16{"TLS 1.1": tls.VersionTLS11, "TLS 1.0": tls.VersionTLS10} {
+		t.Run(name, func(t *testing.T) {
+			far := legacy(version)
+			provider, _, _ := socketDirectory(t, socketValues(far.addr, "open", trusted), plugins.Options{})
+			wantSteps(t, steps(t, provider), "error")
+		})
+	}
+}

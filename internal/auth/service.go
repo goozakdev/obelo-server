@@ -165,6 +165,9 @@ type Service struct {
 	//   linkRedeemFails   — link-invite redemption FAILURES, keyed by client IP
 	//                       (that endpoint is unauthenticated by necessity, so
 	//                       there is no User to key on — see link_invite.go).
+	//   redirectStarts    — redirect sign-in STARTS, keyed by client IP (an IPv6
+	//                       one by its /64), holding a bounded number of sources;
+	//                       see redirect_start_limit.go.
 	//
 	// The first three are free until somebody is wrong repeatedly. The fourth is a
 	// quota on a scarce resource rather than a penalty for being wrong, because a
@@ -179,6 +182,7 @@ type Service struct {
 	loginIPFails     *fixedWindowLimiter
 	deviceStartQuota *fixedWindowLimiter
 	linkRedeemFails  *fixedWindowLimiter
+	redirectStarts   *fixedWindowLimiter
 
 	// signIn is the ordered password-flow Sign-in providers a login asks after
 	// the Local password (ADR-0063). Empty unless UseSignInProviders was called.
@@ -210,6 +214,7 @@ func NewService(s Store, opts ...Option) (*Service, error) {
 		loginIPFails:     newFixedWindowLimiter(loginIPFailureLimit, loginFailureWindow),
 		deviceStartQuota: newFixedWindowLimiter(maxDeviceAuthStartsPerSource, deviceAuthStartWindow),
 		linkRedeemFails:  newFixedWindowLimiter(linkRedeemFailureLimit, linkRedeemFailureWindow),
+		redirectStarts:   newRedirectStartLimiter(),
 	}
 	for _, opt := range opts {
 		opt(svc)

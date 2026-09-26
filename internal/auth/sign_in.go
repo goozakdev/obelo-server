@@ -216,7 +216,7 @@ func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User
 		return s.store.ExternalIdentityUser(providerID, answer.Subject)
 	case errors.Is(err, store.ErrSignInProviderUninstalled):
 		return store.User{}, ErrSignInProviderGone
-	case isUniqueViolation(err):
+	case errors.Is(err, store.ErrUsernameHeld), isUniqueViolation(err):
 		return store.User{}, ErrUsernameCollision
 	case err != nil:
 		return store.User{}, err

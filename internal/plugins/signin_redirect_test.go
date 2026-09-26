@@ -128,3 +128,95 @@ func TestAnIDTokenDeclarationMustNameOperatorTypedSettings(t *testing.T) {
 		})
 	}
 }
+
+// TestFetchViolationsDuringRedirectCallsNeverDisableTheProvider: a redirect
+// provider that reaches for a host its manifest does not list on every authorize
+// or exchange. Anyone can start a sign-in or come back with a code, so those
+// refusals must not be a way to take the provider off the server, while what
+// happened is still recorded.
+func TestFetchViolationsDuringRedirectCallsNeverDisableTheProvider(t *testing.T) {
+	const authorize = "https://oauth.example.test/" + plugintest.SignInRedirectFetchesABlockedHost
+	calls := map[string]func(pluginapi.SignInRedirectProvider) error{
+		"authorize": func(p pluginapi.SignInRedirectProvider) error {
+			_, err := p.AuthorizeURL(context.Background(), pluginapi.SignInAuthorizeRequest{
+				State: "st-1", CodeChallenge: "ch-1", CodeChallengeMethod: "S256", Nonce: "n-1",
+				RedirectURI: "https://obelo.example/sign-in/callback",
+			})
+			return err
+		},
+		"exchange": func(p pluginapi.SignInRedirectProvider) error {
+			_, err := p.Exchange(context.Background(), pluginapi.SignInExchangeRequest{Code: plugintest.SignInRedirectFetchesABlockedHost})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", authorize))
+			set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
+			for _, p := range set.Plugins() {
+				p.SetSettingValues(map[string]any{"authorize": authorize})
+			}
+			reg := pluginapi.NewRegistry()
+			set.Register(reg)
+			registration, ok := reg.SignInProvider("oauth")
+			if !ok {
+				t.Fatal("the Set registered no Sign-in provider for oauth")
+			}
+			built, err := registration.New(pluginapi.Settings{Enabled: true})
+			if err != nil {
+				t.Fatalf("building the provider: %v", err)
+			}
+			provider := built.(pluginapi.SignInRedirectProvider)
+
+			for i := 0; i < 2*plugins.DefaultFailureThreshold; i++ {
+				if err := call(provider); err != nil {
+					t.Fatalf("call %d: %v", i, err)
+				}
+			}
+			st, _ := set.Status("oauth")
+			if st.Disabled {
+				t.Fatalf("the provider was disabled after %d refused fetches during %s calls (%q); a sign-in must not be able to disable it",
+					2*plugins.DefaultFailureThreshold, name, st.LastError)
+			}
+			if st.LastError == "" {
+				t.Error("the refused fetches left no last error; they must still be recorded")
+			}
+		})
+	}
+}
+
+// TestFetchViolationsDuringReChecksStillDisableTheProvider: a re-check is made
+// by the host's schedule or an Admin, never by whoever reaches the login screen,
+// so a provider that reaches for a host its manifest does not list on every
+// re-check is disabled like any other Plugin that breaks its network policy.
+func TestFetchViolationsDuringReChecksStillDisableTheProvider(t *testing.T) {
+	dataDir := t.TempDir()
+	plugintest.Install(t, dataDir, plugintest.LookupSignInManifest("directory", "", plugintest.SignInLookupFetchesABlockedHost))
+	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
+	for _, p := range set.Plugins() {
+		p.SetSettingValues(map[string]any{"lookup": plugintest.SignInLookupFetchesABlockedHost})
+	}
+	reg := pluginapi.NewRegistry()
+	set.Register(reg)
+	registration, ok := reg.SignInProvider("directory")
+	if !ok {
+		t.Fatal("the Set registered no Sign-in provider for directory")
+	}
+	built, err := registration.New(pluginapi.Settings{Enabled: true})
+	if err != nil {
+		t.Fatalf("building the provider: %v", err)
+	}
+	provider, ok := built.(pluginapi.SignInLookupProvider)
+	if !ok {
+		t.Fatalf("the provider %T does not answer re-checks", built)
+	}
+
+	for i := 0; i < plugins.DefaultFailureThreshold; i++ {
+		_, _ = provider.Lookup(context.Background(), pluginapi.SignInLookupRequest{Subject: "subject-ada"})
+	}
+	if st, _ := set.Status("directory"); !st.Disabled {
+		t.Fatalf("the provider is still enabled after %d refused fetches during re-checks (%q); re-checks must still strike",
+			plugins.DefaultFailureThreshold, st.LastError)
+	}
+}

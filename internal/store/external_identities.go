@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,11 @@ import (
 // identity was claimed by a concurrent first sign-in between the caller's lookup
 // and its insert. The caller resolves the identity again rather than guessing.
 var ErrExternalIdentityTaken = errors.New("store: external identity already held")
+
+// ErrUsernameHeld is what CreateExternalMember answers when the username it
+// would mint is already held here in any case: "Brandon" from a provider is the
+// local "brandon".
+var ErrUsernameHeld = errors.New("store: username already held")
 
 // ExternalIdentityUser returns the User holding the External identity
 // (pluginID, subject), or ErrNotFound for an identity this server has never seen.
@@ -101,8 +107,10 @@ func (db *DB) ExternalIdentitiesByUser(userID string) ([]ExternalIdentity, error
 // instant. The row is marked external_origin, which is the one thing the users
 // CHECK accepts in place of a password for a person.
 //
-// A username already held here surfaces as the UNIQUE-constraint error for the
-// caller to map — the collision ADR-0063 decision 7 refuses rather than merges.
+// A username already held here, compared without regard to case, is
+// ErrUsernameHeld — the collision ADR-0063 decision 7 refuses rather than
+// merges — and one that wins a race to the same spelling surfaces as the
+// UNIQUE-constraint error; the caller maps both.
 // An identity claimed by a concurrent first sign-in is ErrExternalIdentityTaken.
 // A provider uninstalled since it answered is ErrSignInProviderUninstalled, and
 // nothing is created.
@@ -121,6 +129,11 @@ func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUser
 	} else if gone {
 		return User{}, ErrSignInProviderUninstalled
 	}
+	if held, err := usernameHeldFolded(tx, username); err != nil {
+		return User{}, err
+	} else if held {
+		return User{}, ErrUsernameHeld
+	}
 	if _, err := tx.Exec(
 		`INSERT INTO users (id, username, role, password_hash, external_origin)
 		 VALUES (?, ?, 'member', NULL, 1)`, id, username); err != nil {
@@ -138,6 +151,26 @@ func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUser
 		return User{}, fmt.Errorf("store: creating external member: %w", err)
 	}
 	return db.UserByID(id)
+}
+
+// usernameHeldFolded reports whether a User here holds username in any case.
+// The fold is Go's Unicode one, which SQLite's NOCASE (ASCII only) is not.
+func usernameHeldFolded(tx *sql.Tx, username string) (bool, error) {
+	rows, err := tx.Query(`SELECT username FROM users`)
+	if err != nil {
+		return false, fmt.Errorf("store: reading usernames: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var held string
+		if err := rows.Scan(&held); err != nil {
+			return false, fmt.Errorf("store: reading usernames: %w", err)
+		}
+		if strings.EqualFold(held, username) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // AttachExternalIdentity gives the existing User userID the External identity

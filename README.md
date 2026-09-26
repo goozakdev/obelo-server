@@ -347,10 +347,13 @@ true and sometimes less useful.
 
 Setting it turns two things back on:
 
-- **Per-client rate limits.** The failed-login limiter and the TV sign-in code
-  quota are counted per client address. Behind an undeclared proxy every request
-  looks like it came from the proxy, so the whole household shares one budget —
-  safe, but blunt. Declared, each device gets its own again.
+- **Per-client rate limits.** The failed-login limiter, the TV sign-in code
+  quota and the limits on redirect sign-in (a Sign-in provider's "Sign in with…"
+  button: starts per address, and sign-ins in flight per address) are counted
+  per client address. Behind an undeclared proxy every request looks like it
+  came from the proxy, so the whole household shares one budget — safe, but
+  blunt, and for redirect sign-in about one start a second from anyone gives up
+  everyone else's sign-in in flight. Declared, each device gets its own again.
 - **The session cookie's `Secure` flag on the proxy's HTTPS.** Undeclared, Obelo
   sees a plain-HTTP request and marks the cookie accordingly. Nothing breaks — the
   cookie still travels inside your proxy's TLS — but it is not flagged.
