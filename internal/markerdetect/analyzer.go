@@ -24,6 +24,16 @@ type FFmpeg struct {
 	Binary string
 }
 
+// frontToMono downmixes any layout to mono from its front left, front right and
+// centre alone: surrounds and LFE are left out, and the rematrix is normalised
+// the same way for every source. A 5.1 rendition of a soundtrack and its stereo
+// one then print alike, though the 5.1's surrounds carry sound the stereo's
+// front does not. AC-3 and E-AC-3 decoders attach the stream's own downmix
+// levels to every frame, which newer ffmpeg's aresample prefers to the ones
+// given here, mixing the surrounds back in; those levels are dropped first.
+const frontToMono = "asidedata=mode=delete:type=DOWNMIX_INFO," +
+	"aresample=ochl=mono:clev=0.707:slev=0:lfe_mix_level=0"
+
 // Analyze runs one ffmpeg over the stretch, on a single thread and at the lowest
 // CPU priority the host allows: detection has no viewer waiting on it.
 func (f FFmpeg) Analyze(ctx context.Context, path string, startMs, lengthMs int64) (Print, error) {
@@ -35,7 +45,7 @@ func (f FFmpeg) Analyze(ctx context.Context, path string, startMs, lengthMs int6
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1",
 		"-ss", seconds(startMs), "-t", seconds(lengthMs), "-i", path,
 		"-map", "0:a:0", "-vn", "-sn", "-dn",
-		"-ac", "1", "-ar", strconv.Itoa(SampleRate), "-f", "s16le", "pipe:1")
+		"-af", frontToMono, "-ar", strconv.Itoa(SampleRate), "-f", "s16le", "pipe:1")
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr

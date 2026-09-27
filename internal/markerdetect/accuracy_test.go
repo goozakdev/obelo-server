@@ -1,7 +1,9 @@
 package markerdetect_test
 
 import (
+	"context"
 	"fmt"
+	"math/bits"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -54,6 +56,30 @@ func writeEpisode(t *testing.T, path string, pieces ...piece) int64 {
 	}
 	fmt.Fprintf(&concat, "concat=n=%d:v=0:a=1[out]", len(pieces))
 	args = append(args, "-filter_complex", concat.String(), "-map", "[out]", "-ac", "1", "-c:a", "flac", path)
+	if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, out)
+	}
+	return int64(total * 1000)
+}
+
+// writeSurroundEpisode renders pieces back to back as the front of a 5.1 file in
+// codec — the same in front left, front right and centre — with surround, as
+// long as the whole, in the side and LFE channels. It is what a 5.1 rendition of
+// a stereo soundtrack sounds like when its surrounds carry ambience of their own.
+func writeSurroundEpisode(t *testing.T, path, codec, surround string, pieces ...piece) int64 {
+	t.Helper()
+	args := []string{"-y", "-nostdin", "-loglevel", "error"}
+	inputs := ""
+	var total float64
+	for i, p := range pieces {
+		args = append(args, "-f", "lavfi", "-t", fmt.Sprintf("%.3f", p.secs), "-i", p.src)
+		inputs += fmt.Sprintf("[%d:a]", i)
+		total += p.secs
+	}
+	args = append(args, "-f", "lavfi", "-t", fmt.Sprintf("%.3f", total), "-i", surround)
+	graph := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[front];[front][%d:a]amerge=inputs=2,"+
+		"pan=5.1(side)|FL=c0|FR=c0|FC=c0|LFE=c1|SL=c1|SR=c1[out]", inputs, len(pieces), len(pieces))
+	args = append(args, "-filter_complex", graph, "-map", "[out]", "-c:a", codec, path)
 	if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
 		t.Fatalf("ffmpeg: %v\n%s", err, out)
 	}
@@ -237,6 +263,95 @@ func TestDetectionPrefersTheIntroEveryEpisodeShares(t *testing.T) {
 		got := saved[f.Path]
 		if len(got) == 0 || got[0].Kind != want.Kind || abs(got[0].StartMs-want.StartMs) > toleranceMs || abs(got[0].EndMs-want.EndMs) > toleranceMs {
 			t.Errorf("%s: markers = %+v, want intro [%d, %d) ±%d ms", filepath.Base(f.Path), got, want.StartMs, want.EndMs, toleranceMs)
+		}
+	}
+}
+
+// TestDetectionMatchesA51AndAStereoRenditionOfTheSameTheme: one episode is 5.1
+// whose surrounds carry loud ambience the front does not, the other stereo; both
+// carry the same theme and ending in front. Their Intro and Credits are the
+// front's, so each File must come back with both, where the shared audio is.
+func TestDetectionMatchesA51AndAStereoRenditionOfTheSameTheme(t *testing.T) {
+	requireFFmpeg(t)
+	dir := t.TempDir()
+	const introSecs, creditsSecs = 20.0, 20.0
+	type truth struct{ introStart, creditsStart float64 }
+	var files []store.DetectionFile
+	truths := map[string]truth{}
+	for i, ep := range []struct {
+		offset, middle float64
+		surround       bool
+	}{
+		{2.0, 40.0, true},
+		{6.4, 44.0, false},
+	} {
+		path := filepath.Join(dir, fmt.Sprintf("S01E%02d.mka", i+1))
+		pieces := []piece{unique(1000+i, ep.offset), theme(introSecs), unique(1100+i, ep.middle), ending(creditsSecs)}
+		var dur int64
+		if ep.surround {
+			dur = writeSurroundEpisode(t, path, "flac", "anoisesrc=c=white:a=0.6:r=44100:s=1200", pieces...)
+		} else {
+			dur = writeEpisode(t, path, pieces...)
+		}
+		files = append(files, store.DetectionFile{TitleID: fmt.Sprintf("e%d", i+1), Path: path, DurationMs: dur})
+		truths[path] = truth{ep.offset, ep.offset + introSecs + ep.middle}
+	}
+
+	saved := detectAll(t, files)
+	for _, f := range files {
+		tr := truths[f.Path]
+		want := []store.Marker{
+			{Kind: "intro", Source: "detected", StartMs: ms(tr.introStart), EndMs: ms(tr.introStart + introSecs)},
+			{Kind: "credits", Source: "detected", StartMs: ms(tr.creditsStart), EndMs: ms(tr.creditsStart + creditsSecs)},
+		}
+		got := saved[f.Path]
+		if len(got) != len(want) {
+			t.Errorf("%s: markers = %+v, want %+v", filepath.Base(f.Path), got, want)
+			continue
+		}
+		for i := range want {
+			g, w := got[i], want[i]
+			if g.Kind != w.Kind || abs(g.StartMs-w.StartMs) > toleranceMs || abs(g.EndMs-w.EndMs) > toleranceMs {
+				t.Errorf("%s: %s = [%d, %d), want [%d, %d) ±%d ms",
+					filepath.Base(f.Path), w.Kind, g.StartMs, g.EndMs, w.StartMs, w.EndMs, toleranceMs)
+			}
+		}
+	}
+}
+
+// TestFFmpegLeavesTheSurroundsOfAC3AndEAC3Out: a 5.1 file whose surrounds and
+// LFE carry loud noise the front does not must print like its front alone. AC-3
+// and E-AC-3 decoders hand every frame the stream's own downmix levels, which
+// some ffmpeg versions apply over the ones asked for, mixing the surrounds back
+// in. Lossy coding alone costs some frames, so most, not all, must match: with
+// the surrounds mixed in, few do.
+func TestFFmpegLeavesTheSurroundsOfAC3AndEAC3Out(t *testing.T) {
+	requireFFmpeg(t)
+	dir := t.TempDir()
+	pieces := []piece{theme(20), ending(10)}
+	front := filepath.Join(dir, "front.mka")
+	dur := writeEpisode(t, front, pieces...)
+	ff := markerdetect.FFmpeg{}
+	want, err := ff.Analyze(context.Background(), front, 0, dur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, codec := range []string{"ac3", "eac3"} {
+		path := filepath.Join(dir, codec+".mka")
+		writeSurroundEpisode(t, path, codec, "anoisesrc=c=white:a=0.6:r=44100:s=1500", pieces...)
+		got, err := ff.Analyze(context.Background(), path, 0, dur)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := min(len(got.Words), len(want.Words))
+		alike := 0
+		for i := range n {
+			if bits.OnesCount32(got.Words[i]^want.Words[i]) <= markerdetect.DefaultParams.MaxBitErrors {
+				alike++
+			}
+		}
+		if n == 0 || alike*2 < n {
+			t.Errorf("%s 5.1: %d of %d frames print like the front alone, want at least half", codec, alike, n)
 		}
 	}
 }
