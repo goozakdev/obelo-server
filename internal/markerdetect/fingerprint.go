@@ -31,6 +31,26 @@ const (
 	// which a frame is treated as silence. Silence carries no fingerprint worth
 	// matching, and every episode has some, so it must never count as shared.
 	silenceRMS = 0.002
+	// minChange is how far a frame's band energies must move from the previous
+	// frame's for its word to describe a change at all: the mean, over the bands,
+	// of how far each moved on a log scale. A steady sound still wobbles a little
+	// from frame to frame — with the phase each frame catches it at, or rounding
+	// on the way — and that wobble is the same in every episode carrying the
+	// sound: read as bits, it would print a steady tone as matching sound that
+	// keeps changing, and whether it does would depend on the ffmpeg that decoded
+	// it. A frame that moves less than this prints the word for no change.
+	//
+	// Each band is weighed on its own scale, not by its energy, so a quiet melody
+	// under a loud steady tone still counts as change: weighed by energy, the
+	// tone's stillness outweighed it. Steady tones move under 0.0005, even near
+	// the silence floor; most frames of a melody stepping under a tone ten times
+	// louder move several times this. At 0.0003 a quiet steady tone prints as
+	// change; at 0.1 steps of that melody print as none.
+	minChange = 0.003
+	// bandFloor is the share of a frame's mean band energy a band is lifted by
+	// before its move is measured, so a band holding next to nothing (the
+	// rounding noise around a steady tone) cannot move by much.
+	bandFloor = 0.01
 )
 
 // Print is the fingerprint of one stretch of a File: one 32-bit word per frame,
@@ -70,7 +90,7 @@ func Fingerprint(pcm []int16, startMs int64) Print {
 			cur[b] = e
 		}
 		var w uint32
-		if !first {
+		if !first && bandChange(prev, cur) >= minChange {
 			for b := 0; b < bandCount-1; b++ {
 				if (cur[b]-cur[b+1])-(prev[b]-prev[b+1]) > 0 {
 					w |= 1 << b
@@ -83,6 +103,22 @@ func Fingerprint(pcm []int16, startMs int64) Print {
 		first = false
 	}
 	return p
+}
+
+// bandChange is how far a frame's band energies moved from the previous
+// frame's: the mean over the bands of the log of the ratio of each, lifted by
+// bandFloor.
+func bandChange(prev, cur []float64) float64 {
+	var total float64
+	for b := range cur {
+		total += cur[b] + prev[b]
+	}
+	floor := bandFloor * total / (2 * bandCount)
+	var moved float64
+	for b := range cur {
+		moved += math.Abs(math.Log((cur[b] + floor) / (prev[b] + floor)))
+	}
+	return moved / bandCount
 }
 
 // hamming is how many of the 32 bits two frames disagree on.
