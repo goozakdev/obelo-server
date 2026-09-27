@@ -284,10 +284,11 @@ func (g *guestProvider) call(ctx context.Context, export string, req, out any) e
 	g.p.setCallSettings(&g.settings)
 	defer g.p.setCallSettings(nil)
 
-	// hostOf is the Event sink's: the operator's own configured host is reachable
+	// addrsOf is the Event sink's: the operator's own configured host is reachable
 	// beside the manifest allowlist, because an author cannot know which mirror an
 	// operator points their base-URL override at (ADR-0058 decision 5, as amended
-	// by issue 09). For a provider that URL is the source's base URL.
+	// by issue 09). For a provider those URLs are the source's base URL and its
+	// second URL, the image host an operator types beside it.
 	//
 	// The budget is the METADATA one — thirty seconds by default, or what this
 	// manifest asked for up to the host's cap — and not the ten-second default a
@@ -302,7 +303,7 @@ func (g *guestProvider) call(ctx context.Context, export string, req, out any) e
 	return g.p.callGuestUnder(ctx, callPolicy{
 		budget:            g.p.metaCallBudget,
 		refusalIsAnAnswer: true,
-	}, export, hostOf(g.settings.URL), func(context.Context) any { return req }, out)
+	}, export, addrsOf(g.settings), func(context.Context) any { return req }, out)
 }
 
 // setCallSettings publishes (or withdraws) the Settings settings_get answers with.

@@ -197,6 +197,7 @@ func TestAnInstalledSubtitleProviderRegistersAndAnswersBothCalls(t *testing.T) {
 
 	provider := subtitleProviderFor(t, set, "example-subs", pluginapi.Settings{
 		Enabled: true, Secret: "sk-test", URL: source.srv.URL,
+		URLEntered: true,
 	})
 
 	resp, err := provider.SearchSubtitles(context.Background(), germanSearch("8e245d9679d31e12"))
@@ -255,6 +256,7 @@ func TestAGuestSearchingWithNoHashSaysSoIsQuery(t *testing.T) {
 
 	provider := subtitleProviderFor(t, set, "example-subs", pluginapi.Settings{
 		Enabled: true, Secret: "sk-test", URL: source.srv.URL,
+		URLEntered: true,
 	})
 	req := pluginapi.SubtitleSearchRequest{
 		Ref:      pluginapi.SubtitleRef{Title: "Some Film", Year: 1999},
@@ -288,6 +290,7 @@ func TestAnOversizeDownloadIsRefusedWholeAndRecorded(t *testing.T) {
 	// reaches a provider guest.
 	provider := subtitleProviderFor(t, set, "greedy-subs", pluginapi.Settings{
 		Enabled: true, Secret: "sk-test;obelo-mode=oversize", URL: source.srv.URL,
+		URLEntered: true,
 	})
 
 	resp, err := provider.DownloadSubtitle(context.Background(), pluginapi.SubtitleDownloadRequest{
@@ -329,6 +332,7 @@ func TestAPluginThatOnlyEverAnswersOversizeIsDisabled(t *testing.T) {
 
 	provider := subtitleProviderFor(t, set, "greedy-subs", pluginapi.Settings{
 		Enabled: true, Secret: "obelo-mode=oversize", URL: source.srv.URL,
+		URLEntered: true,
 	})
 	req := pluginapi.SubtitleDownloadRequest{Candidate: pluginapi.SubtitleCandidate{ID: "9001"}}
 	for i := 0; i < plugins.DefaultFailureThreshold; i++ {

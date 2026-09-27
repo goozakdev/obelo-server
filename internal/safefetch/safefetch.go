@@ -79,6 +79,12 @@ var ErrRedirectBlocked = errors.New("safefetch: redirect blocked")
 // literal and hand-setting TLS ServerName — are fragile in a way this control must
 // not be. The residual risk is smaller than the one closed here: it needs the
 // attacker to control the resolver's answers, not merely a Location header.
+//
+// A PLUGIN's fetches do not carry this limitation. There the first hop is checked
+// too, bar the operator's own host, so internal/plugins puts the check on the
+// dialer (checkDialedAddress) and every other dial is judged by the address it
+// connects to — except through an HTTP(S) proxy the operator configured, where
+// the dial is to the proxy and the limitation above holds (dialCheckedClients).
 func CheckRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= MaxRedirects {
 		return ErrRedirectBlocked

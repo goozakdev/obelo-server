@@ -246,6 +246,7 @@ func TestASinkGuestThatAnswersAnErrorIsStillStruck(t *testing.T) {
 	set := load(t, dataDir, log)
 	sink := sinkFor(t, set, "refusing-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=refuse",
+		URLEntered: true,
 	})
 
 	for i := 1; i <= plugins.DefaultFailureThreshold; i++ {

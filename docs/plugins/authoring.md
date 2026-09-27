@@ -399,7 +399,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -652,10 +652,10 @@ are:
 
 | Refusal | Why |
 | --- | --- |
-| `host not in allowlist` | the target's host is not in `network.hosts` (and is not the operator's own configured target) |
+| `host not in allowlist` | the target's host is not in `network.hosts` (and is not a target the operator typed — your own `defaultUrl` does not count) |
 | `not an absolute http or https URL` | the URL does not parse, or has no host, or is not http(s) |
 | `the target resolves to an address this server will not let a plugin reach` | the host you chose resolves into loopback / private / link-local space, **or does not resolve at all** — this check fails closed |
-| `the target could not be reached under this server's fetch policy` | the redirect chain was too long, changed scheme, or aimed inward |
+| `the target could not be reached under this server's fetch policy` | the redirect chain was too long, changed scheme, or aimed inward — or the address actually connected to, at the dial, was loopback / private / link-local space (a name that answered public to the check and resolved inward when dialed); such a dial-time refusal is audited as `fetch-policy` |
 | `the response is larger than a plugin may receive` | over the byte cap — see below |
 | `the request could not be built` | the method or URL could not make an HTTP request |
 
@@ -1365,7 +1365,14 @@ There is one asymmetry worth knowing: **the operator's own configured target URL
 permitted alongside your allowlist**, and it is not address-checked. An author
 cannot know the URL an operator will type for their own receiver, and a receiver on
 their own LAN is the point of this product. A host *you* chose is checked against
-the address rule; a host *they* typed is not.
+the address rule; the host and port *they* typed are not.
+
+That covers a `url` or `url2` the Admin actually **typed**, and nothing else. Your
+`settings.defaultUrl` and `defaultUrl2` are hosts *you* chose: when the Admin leaves
+the field empty and the host fills in your default, that default gets your
+allowlist and the address rule like any other target. So list your defaults in
+`network.hosts`, and do not ship a default on loopback, a private range or a
+link-local address — it will be refused.
 
 ### The deadline is real, and the runtime enforces it
 

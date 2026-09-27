@@ -56,11 +56,13 @@ func TestConnection(ctx context.Context, cat Catalog, slug, apiKey, baseURL, ima
 	}
 
 	settings := pluginapi.Settings{
-		Enabled:  true,
-		Secret:   apiKey,
-		URL:      base,
-		URL2:     imageBase,
-		Language: language,
+		Enabled:     true,
+		Secret:      apiKey,
+		URL:         base,
+		URL2:        imageBase,
+		URLEntered:  baseURL != "",
+		URL2Entered: imageBaseURL != "",
+		Language:    language,
 	}
 
 	// THERE ARE NO SPECIAL CASES LEFT (.scratch/bundled-plugins: issue 06). The last

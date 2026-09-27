@@ -76,7 +76,7 @@ func (g *guestSink) Deliver(ctx context.Context, ev pluginapi.SinkEvent) error {
 		return pluginapi.SinkDeliverRequest{Event: ev, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 
-	err := g.p.callGuest(ctx, exportDeliver, hostOf(g.settings.URL), buildReq, &resp)
+	err := g.p.callGuest(ctx, exportDeliver, addrsOf(g.settings), buildReq, &resp)
 	if err != nil {
 		if errors.Is(err, ErrDisabled) {
 			// A disabled Plugin is not called at all. The event is counted as a
@@ -96,14 +96,40 @@ func (g *guestSink) Deliver(ctx context.Context, ev pluginapi.SinkEvent) error {
 	return nil
 }
 
-// hostOf is the host of the URL the Admin typed, normalized the same way the
-// allowlist is. An unparseable URL yields "", which matches nothing — the settings
-// endpoint refuses to save one, so reaching this means something built a sink the
-// API would not have.
-func hostOf(raw string) string {
+// addrOf is the host and port of the URL the Admin typed — the port the URL
+// names, or its scheme's — spelled as the fetch policy compares them (dialKey).
+// An unparseable URL yields "", which matches nothing — the settings endpoint
+// refuses to save one, so reaching this means something built a sink the API
+// would not have.
+func addrOf(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil {
+	if err != nil || u.Hostname() == "" {
 		return ""
 	}
-	return normalizeHost(u.Hostname())
+	return dialKey(u.Hostname(), targetPort(u))
+}
+
+// addrsOf is addrOf of each URL the Admin typed in s: the base URL and, for a
+// source that has one, the second (an image host, a CDN), which the operator
+// chose as surely as the first. Neither is more than its own host and port.
+//
+// Only a URL the Admin ENTERED counts (Settings.URLEntered, URL2Entered). A URL
+// the host filled in from the manifest's default because the field was left
+// empty is the plugin author's choice, not the operator's, so it is left out
+// here and gets the allowlist and private-address checks at the lookup and the
+// dial like any other target.
+func addrsOf(s pluginapi.Settings) []string {
+	var out []string
+	for _, u := range []struct {
+		raw     string
+		entered bool
+	}{{s.URL, s.URLEntered}, {s.URL2, s.URL2Entered}} {
+		if !u.entered {
+			continue
+		}
+		if a := addrOf(u.raw); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
 }

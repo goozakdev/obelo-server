@@ -340,22 +340,24 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 	for _, e := range entries {
 		descs[e.Slug] = e
 	}
-	// baseURL returns the row's override or the Descriptor default for a slug.
-	baseURL := func(slug string) string {
+	// baseURL returns the row's override or the Descriptor default for a slug, and
+	// whether it was the override — a URL an Admin entered rather than the default.
+	baseURL := func(slug string) (string, bool) {
 		e := descs[slug]
 		if r, ok := byslug[slug]; ok && r.BaseURL != "" {
-			return r.BaseURL
+			return r.BaseURL, true
 		}
-		return e.DefaultURL
+		return e.DefaultURL, false
 	}
 	// imageBaseURL returns the row's image-host override or the Descriptor default,
-	// for the sources that serve artwork from a distinct host.
-	imageBaseURL := func(slug string) string {
+	// for the sources that serve artwork from a distinct host, and whether it was the
+	// override.
+	imageBaseURL := func(slug string) (string, bool) {
 		e := descs[slug]
 		if r, ok := byslug[slug]; ok && r.ImageBaseURL != "" {
-			return r.ImageBaseURL
+			return r.ImageBaseURL, true
 		}
-		return e.DefaultURL2
+		return e.DefaultURL2, false
 	}
 	// active reports whether a source contributes: its row is enabled and, when the
 	// source requires a key, a key is on file. This is the rule an Admin would state
@@ -390,9 +392,13 @@ func (c Catalog) SettingsToProviderConfig(rows []store.MetadataProviderRow, lang
 		// Plugin the per-Library resolver activates (by injecting its key) must already
 		// know where its source lives. The row's override, else the Descriptor's
 		// default, which for an Installed plugin is what its manifest declared.
+		url, urlEntered := baseURL(e.Slug)
+		url2, url2Entered := imageBaseURL(e.Slug)
 		cfg.ProviderEndpoints[e.Slug] = ProviderEndpoint{
-			URL:  baseURL(e.Slug),
-			URL2: imageBaseURL(e.Slug),
+			URL:         url,
+			URL2:        url2,
+			URLEntered:  urlEntered,
+			URL2Entered: url2Entered,
 		}
 		// The EXPLICIT ACTIVE FACT, stated for every Plugin, true and false alike: the
 		// absence of an entry means "infer it from the key", and a switched-off keyless

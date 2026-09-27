@@ -120,10 +120,11 @@ func (m *Manager) build(row store.EventSinkRow) (sinkSpec, bool) {
 	}
 
 	plugin, err := registration.New(pluginapi.Settings{
-		Enabled: true,
-		Secret:  row.Secret,
-		URL:     row.URL,
-		Events:  row.Events,
+		Enabled:    true,
+		Secret:     row.Secret,
+		URL:        row.URL,
+		URLEntered: row.URL != "",
+		Events:     row.Events,
 	})
 	if err != nil {
 		// A sink that cannot be built from these settings makes no calls at all

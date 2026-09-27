@@ -43,7 +43,7 @@ func TestAnInstalledLyricProviderRegistersAndAnswers(t *testing.T) {
 	if d.ExtensionPoint != pluginapi.ExtensionLyricProvider || !d.Serves(pluginapi.KindMusic) || d.DefaultURL != source.URL {
 		t.Fatalf("descriptor = %+v, want a lyric-provider serving music from %s", d, source.URL)
 	}
-	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: d.DefaultURL})
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: d.DefaultURL, URLEntered: true})
 	if err != nil {
 		t.Fatalf("building the provider: %v", err)
 	}

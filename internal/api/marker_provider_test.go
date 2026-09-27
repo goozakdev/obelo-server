@@ -87,7 +87,9 @@ func markerProviderServer(t *testing.T, src *markerSource, edl func(secs float64
 	requireFixtures(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MarkerManifest("example-markers", src.srv.URL))
-	srv := testharness.New(t, testharness.WithDataDir(dataDir))
+	// The source is the plugin's manifest default on 127.0.0.1, which the fetch
+	// policy refuses unless the address is named as exempt.
+	srv := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithPluginFetchesExemptAt(src.srv.Listener.Addr().String()))
 	token := adminToken(t, srv)
 
 	root := t.TempDir()

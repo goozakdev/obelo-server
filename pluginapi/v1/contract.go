@@ -201,6 +201,17 @@ type Settings struct {
 	// URL2 is the optional second endpoint for a source whose images come from a
 	// host distinct from its API (today only TMDB). Empty for everything else.
 	URL2 string `json:"url2,omitempty"`
+	// URLEntered and URL2Entered say an Admin actually TYPED URL and URL2, rather
+	// than the host filling in the Descriptor's DefaultURL/DefaultURL2 because the
+	// field was left empty. They are HOST-ONLY and never cross the contract (no
+	// JSON, so no guest and no schema ever sees them): the host's fetch policy reads
+	// them to decide which addresses the OPERATOR chose. An address an Admin typed
+	// is reachable even when it is private — a self-hosted mirror on the LAN — while
+	// a default is the plugin author's choice and gets the manifest's allowlist and
+	// the private-address checks like any other target. False, the zero value, is
+	// the conservative reading for a caller that does not say.
+	URLEntered  bool `json:"-"`
+	URL2Entered bool `json:"-"`
 	// Events is an Event sink's subscribed event types. Defined here so the shape
 	// is fixed from the first slice; empty for every provider, and for a sink until
 	// the sink translator lands.

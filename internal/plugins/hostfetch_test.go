@@ -143,6 +143,8 @@ func settingsFor(mode, base, url2 string) pluginapi.Settings {
 		Secret:  "a-key",
 		URL:     base + "/?obelo-mode=" + mode,
 		URL2:    url2,
+		// The operator typed the stand-in's address; that is what makes it reachable.
+		URLEntered: true,
 	}
 }
 

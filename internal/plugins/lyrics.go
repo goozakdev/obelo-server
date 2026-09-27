@@ -90,7 +90,7 @@ func (g *guestLyricProvider) Lyrics(ctx context.Context, req pluginapi.LyricsReq
 		return pluginapi.LyricsCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout}
-	if err := g.p.callGuestUnder(ctx, policy, exportLyricProviderLyrics, hostOf(g.settings.URL), buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportLyricProviderLyrics, addrsOf(g.settings), buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.LyricsResponse{}, err
 		}

@@ -133,7 +133,7 @@ func (g *guestSignInProvider) CheckPassword(ctx context.Context, req pluginapi.S
 		queueInBudget:     true,
 		socket:            true,
 	}
-	if err := g.p.callGuestUnder(ctx, policy, exportSignInPassword, "", buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportSignInPassword, nil, buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInPasswordResponse{}, err
 		}
@@ -156,20 +156,16 @@ func (g *guestSignInProvider) IDTokenAudience() (issuer, clientID string, declar
 	return strings.TrimSpace(issuer), strings.TrimSpace(clientID), true
 }
 
-// redirectTarget is the host a redirect call may reach beyond the manifest's
-// list: the issuer the operator typed, for the reason an Event sink may reach
-// the receiver they typed. A provider with no issuer reaches its manifest hosts
-// and nothing else.
+// redirectTarget is the host and port (addrOf) a redirect call may reach beyond
+// the manifest's list: the issuer the operator typed, for the reason an Event
+// sink may reach the receiver they typed. A provider with no issuer reaches its
+// manifest hosts and nothing else.
 func (g *guestSignInProvider) redirectTarget() string {
 	issuer, _, _ := g.IDTokenAudience()
 	if issuer == "" {
 		return ""
 	}
-	u, err := url.Parse(issuer)
-	if err != nil {
-		return ""
-	}
-	return normalizeHost(u.Hostname())
+	return addrOf(issuer)
 }
 
 // redirectPolicy is the redirect flow's call policy: the password flow's, with
@@ -287,7 +283,7 @@ func (g *guestSignInProvider) AuthorizeURL(ctx context.Context, req pluginapi.Si
 	policy := g.redirectPolicy("redirect sign-in")
 	policy.violationNoStrike = true
 	if err := g.p.callGuestUnder(ctx, policy, exportSignInAuthorizeURL,
-		g.redirectTarget(), buildReq, &resp); err != nil {
+		[]string{g.redirectTarget()}, buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInAuthorizeResponse{}, err
 		}
@@ -306,7 +302,7 @@ func (g *guestSignInProvider) Exchange(ctx context.Context, req pluginapi.SignIn
 	policy := g.redirectPolicy("redirect sign-in exchange")
 	policy.violationNoStrike = true
 	if err := g.p.callGuestUnder(ctx, policy, exportSignInExchange,
-		g.redirectTarget(), buildReq, &resp); err != nil {
+		[]string{g.redirectTarget()}, buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInExchangeResponse{}, err
 		}
@@ -326,7 +322,7 @@ func (g *guestSignInProvider) Lookup(ctx context.Context, req pluginapi.SignInLo
 		return pluginapi.SignInLookupCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("sign-in re-check"), exportSignInLookup,
-		g.redirectTarget(), buildReq, &resp); err != nil {
+		[]string{g.redirectTarget()}, buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInLookupResponse{}, err
 		}
@@ -344,7 +340,7 @@ func (g *guestSignInProvider) Refresh(ctx context.Context, req pluginapi.SignInR
 		return pluginapi.SignInRefreshCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 	if err := g.p.callGuestUnder(ctx, g.redirectPolicy("sign-in refresh"), exportSignInRefresh,
-		g.redirectTarget(), buildReq, &resp); err != nil {
+		[]string{g.redirectTarget()}, buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) || errors.Is(err, errQueuedPastDeadline) {
 			return pluginapi.SignInRefreshResponse{}, err
 		}

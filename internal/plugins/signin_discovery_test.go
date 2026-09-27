@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestADiscoveryDocumentAdmitsExactlyItsTokenAndUserinfoHosts(t *testing.T) {
 	}
 	call := func(discovery string, body func()) {
 		t.Helper()
-		if err := p.beginCall("idp.example.test", false); err != nil {
+		if err := p.beginCall(addrOf(issuer), false); err != nil {
 			t.Fatal(err)
 		}
 		end := p.beginDiscovery(discovery)
@@ -176,7 +177,7 @@ func discoveryCall(t *testing.T, rt http.RoundTripper, operatorHost, issuer stri
 	p.resolveLimits()
 	defer p.close(context.Background())
 	h := &hostFuncs{p: p}
-	if err := p.beginCall(operatorHost, false); err != nil {
+	if err := p.beginCall(addrOf("https://"+operatorHost), false); err != nil {
 		t.Fatal(err)
 	}
 	defer p.endCall()
@@ -340,5 +341,44 @@ func TestADiscoveryNamedEndpointOffTheIssuersHostIsAddressChecked(t *testing.T) 
 		if then[i].Refused != "" || then[i].Status != http.StatusOK {
 			t.Errorf("fetch %s = %+v, want 200", u, then[i])
 		}
+	}
+}
+
+// TestADiscoveryNamedEndpointOnTheIssuersHostKeepsItsExemption: the issuer is
+// the operator's, on a private address and a port of its own. Its discovery
+// document names a token endpoint on the same host on ANOTHER port, and that
+// exact origin keeps the issuer's exemption — at the lookup and at the dial —
+// while the same host on a port nobody named is the manifest's to allow, and it
+// allows nothing.
+func TestADiscoveryNamedEndpointOnTheIssuersHostKeepsItsExemption(t *testing.T) {
+	var tokenHits, otherHits int
+	tokens := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenHits++
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(tokens.Close)
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		otherHits++
+		_, _ = w.Write([]byte("{}"))
+	}))
+	t.Cleanup(other.Close)
+	var issuer string
+	idp := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(discoveryDoc(issuer, tokens.URL+"/token", tokens.URL+"/userinfo")))
+	}))
+	t.Cleanup(idp.Close)
+	issuer = idp.URL
+
+	read, then := discoveryCall(t, idp.Client().Transport, strings.TrimPrefix(issuer, "https://"), issuer,
+		tokens.URL+"/token", other.URL+"/token")
+	if read.Status != http.StatusOK || read.Refused != "" {
+		t.Fatalf("the issuer's own discovery fetch = %+v, want 200", read)
+	}
+	if then[0].Refused != "" || then[0].Status != http.StatusOK || tokenHits != 1 {
+		t.Errorf("the named endpoint on the issuer's host = %+v with %d requests, want 200 and 1", then[0], tokenHits)
+	}
+	if then[1].Refused != refusedAllowlist || otherHits != 0 {
+		t.Errorf("the issuer's host on an unnamed port = %+v with %d requests, want refused %q and 0",
+			then[1], otherHits, refusedAllowlist)
 	}
 }

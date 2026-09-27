@@ -177,7 +177,7 @@ func TestAGuestDeliversASignedDocument(t *testing.T) {
 	log := &logSink{}
 	set := load(t, dataDir, log)
 	sink := sinkFor(t, set, "example-sink", pluginapi.Settings{
-		Enabled: true, Secret: "topsecret", URL: target.srv.URL,
+		Enabled: true, Secret: "topsecret", URL: target.srv.URL, URLEntered: true,
 		Events: []string{pluginapi.EventScanCompleted},
 	})
 
@@ -232,7 +232,7 @@ func TestManyDeliveriesReuseOneInstance(t *testing.T) {
 
 	set := load(t, dataDir, &logSink{})
 	sink := sinkFor(t, set, "example-sink", pluginapi.Settings{
-		Enabled: true, Secret: "s", URL: target.srv.URL,
+		Enabled: true, Secret: "s", URL: target.srv.URL, URLEntered: true,
 	})
 	for i := 0; i < 25; i++ {
 		if err := sink.Deliver(context.Background(), scanEvent()); err != nil {
@@ -258,6 +258,7 @@ func TestAGuestCannotReachAHostItsManifestDoesNotAllow(t *testing.T) {
 	set := load(t, dataDir, log)
 	sink := sinkFor(t, set, "example-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=forbidden",
+		URLEntered: true,
 	})
 
 	err := sink.Deliver(context.Background(), scanEvent())
@@ -291,6 +292,7 @@ func TestAPrivateAddressIsRefusedEvenInsideTheAllowlist(t *testing.T) {
 	set := load(t, dataDir, log)
 	sink := sinkFor(t, set, "example-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=metadata",
+		URLEntered: true,
 	})
 
 	err := sink.Deliver(context.Background(), scanEvent())
@@ -317,7 +319,7 @@ func TestTheOperatorsOwnTargetNeedsNoAllowlistEntry(t *testing.T) {
 
 	set := load(t, dataDir, &logSink{})
 	sink := sinkFor(t, set, "example-sink", pluginapi.Settings{
-		Enabled: true, Secret: "s", URL: target.srv.URL,
+		Enabled: true, Secret: "s", URL: target.srv.URL, URLEntered: true,
 	})
 	if err := sink.Deliver(context.Background(), scanEvent()); err != nil {
 		t.Fatalf("Deliver to the operator's own target: %v", err)
@@ -343,7 +345,7 @@ func TestARedirectIntoPrivateSpaceIsRefused(t *testing.T) {
 	log := &logSink{}
 	set := load(t, dataDir, log)
 	sink := sinkFor(t, set, "example-sink", pluginapi.Settings{
-		Enabled: true, Secret: "s", URL: srv.URL,
+		Enabled: true, Secret: "s", URL: srv.URL, URLEntered: true,
 	})
 
 	err := sink.Deliver(context.Background(), scanEvent())
@@ -368,6 +370,7 @@ func TestAPanickingGuestIsDisabledAfterARunOfFailures(t *testing.T) {
 	set := load(t, dataDir, &logSink{})
 	sink := sinkFor(t, set, "bad-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=panic",
+		URLEntered: true,
 	})
 
 	for i := 0; i < plugins.DefaultFailureThreshold; i++ {
@@ -402,6 +405,7 @@ func TestAHangingGuestIsStoppedByItsDeadline(t *testing.T) {
 	set := load(t, dataDir, &logSink{}) // CallTimeout is 2s
 	sink := sinkFor(t, set, "slow-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=hang",
+		URLEntered: true,
 	})
 
 	start := time.Now()
@@ -433,6 +437,7 @@ func TestACallerDeadlineBoundsAGuestBelowItsOwnBudget(t *testing.T) {
 	set := load(t, dataDir, &logSink{})
 	sink := sinkFor(t, set, "slow-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=hang",
+		URLEntered: true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -466,7 +471,7 @@ func TestASinkGuestReceivesTheRemainingBudgetNotTheNominalOne(t *testing.T) {
 
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{CallTimeout: callTimeout})
 	sink := sinkFor(t, set, "budget-sink", pluginapi.Settings{
-		Enabled: true, Secret: "s", URL: target.srv.URL,
+		Enabled: true, Secret: "s", URL: target.srv.URL, URLEntered: true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), callerDeadline)
@@ -508,6 +513,7 @@ func TestRepeatedAllowlistViolationsDisableAPlugin(t *testing.T) {
 	set := load(t, dataDir, &logSink{})
 	sink := sinkFor(t, set, "nosy-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=forbidden",
+		URLEntered: true,
 	})
 	for i := 0; i < plugins.DefaultFailureThreshold; i++ {
 		_ = sink.Deliver(context.Background(), scanEvent())

@@ -194,10 +194,11 @@ func BuildProvider(reg *pluginapi.Registry, rows []store.SubtitleProviderRow) Su
 			base = d.DefaultURL
 		}
 		plugin, err := registration.New(pluginapi.Settings{
-			Enabled: true,
-			Secret:  row.APIKey,
-			URL:     base,
-			URL2:    d.DefaultURL2,
+			Enabled:    true,
+			Secret:     row.APIKey,
+			URL:        base,
+			URL2:       d.DefaultURL2,
+			URLEntered: row.BaseURL != "",
 		})
 		if err != nil || plugin == nil {
 			// A Plugin that cannot be built from these settings makes no calls at

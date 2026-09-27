@@ -10,7 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -195,15 +198,32 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 	// not a hole: an author cannot know the URL an operator will type for their
 	// own receiver, so a sink that could reach only manifest hosts could never
 	// post anywhere. It is the OPERATOR's URL, which is the same asymmetry
-	// safefetch documents for every other fetch in this server.
+	// safefetch documents for every other fetch in this server — and it is
+	// exactly the host AND port they typed: their host on another port is a
+	// manifest fetch like any other. A second URL they typed (an image host, a
+	// CDN) is theirs the same way, at its own host and port.
 	//
 	// So are the token and userinfo endpoints the issuer's discovery document
 	// names, once a redirect Sign-in provider has read it during this call (Google's
 	// live on other hosts) — each at exactly the https origin named. The issuer is
 	// the operator's, but its SERVER chose those, so off the issuer's own host they
-	// still get the address check below.
-	operatorChose := host != "" && host == h.p.operatorHost()
-	issuerNamed := !operatorChose && h.p.discoveryNamed(target)
+	// still get the address check below; on it, the named origin is the
+	// operator's as the issuer is.
+	addr := dialKey(host, targetPort(target))
+	named := h.p.discoveryNamed(target)
+	operatorChose := false
+	for _, operator := range h.p.operatorAddrs() {
+		operatorHost, _, _ := net.SplitHostPort(operator)
+		if host != "" && (addr == operator || (named && host == operatorHost)) {
+			operatorChose = true
+		}
+	}
+	// An address a test named (Options.ExemptFetchAddrs) is treated as the
+	// operator's, exactly that host and port. Production names none.
+	if !operatorChose && slices.Contains(h.p.opts.ExemptFetchAddrs, addr) {
+		operatorChose = true
+	}
+	issuerNamed := !operatorChose && named
 	if !operatorChose && !issuerNamed && !h.p.allows(host) {
 		h.p.audit(host, auditAllowlist)
 		h.violation("allowlist", fmt.Sprintf("fetched %s, which its manifest does not allow", host))
@@ -243,6 +263,14 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 	if len(req.Body) > 0 {
 		body = bytes.NewReader(req.Body)
 	}
+	// The operator's address is exempt at the dial as it is above, and ONLY
+	// that host on this port: every other dial this request makes, a redirect's
+	// included, is checked against the address actually connected to.
+	client := h.p.httpClient()
+	if operatorChose {
+		client = h.p.opts.operatorClient
+		fctx = context.WithValue(fctx, exemptAddrKey{}, addr)
+	}
 	httpReq, err := http.NewRequestWithContext(fctx, method, target.String(), body)
 	if err != nil {
 		h.p.audit(host, auditBadURL)
@@ -281,7 +309,7 @@ func (h *hostFuncs) fetch(ctx context.Context, req pluginapi.FetchRequest) plugi
 		h.p.noteDroppedUserAgent()
 	}
 
-	resp, err := h.p.httpClient().Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		// A refusal by the server's own fetch policy — a redirect into private
 		// space, too many hops, a scheme change — is an AUDIT, not a network blip,
@@ -408,10 +436,147 @@ func (h *hostFuncs) refuseInternal(ctx context.Context, hostname string) string 
 }
 
 // isPolicyRefusal reports whether an error is this server saying no rather than
-// the network failing. Only safefetch's own refusal counts: everything else is a
-// blip the Plugin may legitimately retry.
+// the network failing. Only safefetch's own refusal and the dial check's count:
+// everything else is a blip the Plugin may legitimately retry.
 func isPolicyRefusal(err error) bool {
-	return err != nil && strings.Contains(err.Error(), safefetch.ErrRedirectBlocked.Error())
+	return err != nil && (errors.Is(err, errDialRefused) ||
+		strings.Contains(err.Error(), safefetch.ErrRedirectBlocked.Error()))
+}
+
+// errDialRefused is the dial check's refusal, answered to the guest the way a
+// refused redirect is.
+var errDialRefused = errors.New("plugins: dial refused: the address is one a plugin may not reach")
+
+// checkDialedAddress is the net.Dialer Control every plugin fetch dials under: the
+// private-address rule applied to the address the socket is about to connect to.
+//
+// refuseInternal and safefetch.CheckRedirect each judge a lookup of their own,
+// and the transport then resolves the name AGAIN to dial it, so a resolver that
+// answers public for the check and private for the dial gets through — DNS
+// rebinding. Here there is no second lookup to disagree with: the address is the
+// one being connected to. An address that does not parse as an IP (a zoned
+// link-local one, say) is refused, for the reason refuseInternal fails closed.
+//
+// The rule is safefetch.IsInternalIP's, so 100.64.0.0/10 — a tailnet's addresses —
+// stays reachable, as it is everywhere else.
+func checkDialedAddress(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errDialRefused
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || safefetch.IsInternalIP(ip) {
+		return errDialRefused
+	}
+	return nil
+}
+
+// exemptAddrKey carries, on the context of a fetch to the operator's own host,
+// the one address (dialKey) its dials are not checked for: that host on the port
+// the fetch named, so a redirect to the same host on another port is checked.
+type exemptAddrKey struct{}
+
+// dialKey is how an address is compared at the dial: the host spelled as
+// normalizeHost spells it, and the port.
+func dialKey(host, port string) string { return net.JoinHostPort(normalizeHost(host), port) }
+
+// targetPort is the port a request to u dials, the scheme's own when u names none.
+func targetPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch u.Scheme {
+	case "https":
+		return "443"
+	case "socks5", "socks5h":
+		return "1080"
+	}
+	return "80"
+}
+
+// proxyAddrs is the set of proxy addresses the transport's Proxy function has
+// named, which are the only dials a proxy makes from this server.
+type proxyAddrs struct{ seen sync.Map }
+
+// wrap returns proxy, noting every address it names.
+func (a *proxyAddrs) wrap(proxy func(*http.Request) (*url.URL, error)) func(*http.Request) (*url.URL, error) {
+	if proxy == nil {
+		return nil
+	}
+	return func(req *http.Request) (*url.URL, error) {
+		u, err := proxy(req)
+		if u != nil {
+			a.seen.Store(dialKey(u.Hostname(), targetPort(u)), struct{}{})
+		}
+		return u, err
+	}
+}
+
+func (a *proxyAddrs) has(addr string) bool {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	_, ok := a.seen.Load(dialKey(host, port))
+	return ok
+}
+
+// dialCheckedClients returns c in the two forms a plugin fetch uses, both dialing
+// under checkDialedAddress:
+//
+//   - checked, for every fetch the MANIFEST or the issuer licensed, where every
+//     dial is checked;
+//   - operator, for a fetch to the host the OPERATOR typed, where a dial to that
+//     host and port (exemptAddrKey) is not, and every other dial — a redirect off
+//     it — is. It keeps no idle connections, so an unchecked connection is never
+//     handed to a later request its exemption did not cover.
+//
+// In both, a dial to the HTTP(S) proxy the operator configured (HTTP_PROXY and
+// HTTPS_PROXY, read by http.DefaultTransport's Proxy) is not checked either: the
+// proxy is the operator's choice, on their LAN as often as not. The dial is then
+// to the proxy and never to the target, so the target is judged only by the
+// lookups refuseInternal and safefetch.CheckRedirect make — through a proxy, DNS
+// rebinding is NOT closed. Nor is a dial to the proxy's own address that a
+// request makes directly (one NO_PROXY exempts), which the same lookups judge.
+//
+// A client whose Transport is not an *http.Transport is returned as it is, for
+// both: there is no dialer to put the check on. The production wiring passes a
+// nil client, which is http.DefaultTransport's.
+func dialCheckedClients(c *http.Client) (checked, operator *http.Client) {
+	base, ok := c.Transport.(*http.Transport)
+	if c.Transport == nil {
+		base, ok = http.DefaultTransport.(*http.Transport)
+	}
+	if !ok {
+		return c, c
+	}
+	plain := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	guarded := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: checkDialedAddress}
+	proxies := &proxyAddrs{}
+
+	ct := base.Clone()
+	ct.Proxy = proxies.wrap(base.Proxy)
+	ct.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if proxies.has(addr) {
+			return plain.DialContext(ctx, network, addr)
+		}
+		return guarded.DialContext(ctx, network, addr)
+	}
+	ot := base.Clone()
+	ot.Proxy = proxies.wrap(base.Proxy)
+	ot.DisableKeepAlives = true
+	ot.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		exempt, _ := ctx.Value(exemptAddrKey{}).(string)
+		if host, port, err := net.SplitHostPort(addr); err == nil && exempt != "" && dialKey(host, port) == exempt {
+			return plain.DialContext(ctx, network, addr)
+		}
+		return ct.DialContext(ctx, network, addr)
+	}
+
+	checked, operator = new(http.Client), new(http.Client)
+	*checked, *operator = *c, *c
+	checked.Transport, operator.Transport = ct, ot
+	return checked, operator
 }
 
 // emit writes a response into a buffer the GUEST allocates and answers with the

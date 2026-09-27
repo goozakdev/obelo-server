@@ -372,3 +372,29 @@ func TestManagerSkipsSinksThatCannotRun(t *testing.T) {
 		})
 	}
 }
+
+// TestASinkIsBuiltWithTheURLTheAdminEntered: a sink has no default target, so
+// the URL on its row is one an Admin typed, and the Settings say so — which is
+// what lets the plugin host reach an operator's own LAN receiver.
+func TestASinkIsBuiltWithTheURLTheAdminEntered(t *testing.T) {
+	var got pluginapi.Settings
+	reg := pluginapi.NewRegistry()
+	reg.RegisterEventSink(pluginapi.EventSinkRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "test", Name: "Test sink"},
+		New: func(s pluginapi.Settings) (pluginapi.EventSink, error) {
+			got = s
+			return &recordingSink{}, nil
+		},
+	})
+	m := NewManager(fakeStore{rows: []store.EventSinkRow{{
+		Slug: "test", Enabled: true, Secret: "s", URL: "http://192.168.1.20/hook",
+		Events: []string{pluginapi.EventScanCompleted},
+	}}}, reg, NewDispatcher())
+	t.Cleanup(m.Dispatcher().Close)
+	if err := m.Reload(context.Background()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.URL != "http://192.168.1.20/hook" || !got.URLEntered {
+		t.Fatalf("settings url = %q entered=%v, want the row's URL, entered", got.URL, got.URLEntered)
+	}
+}
