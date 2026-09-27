@@ -51,8 +51,8 @@ type Options struct {
 	// YieldPoll is how often detection that has given way looks again; default
 	// two seconds.
 	YieldPoll time.Duration
-	// Partners is how many following episodes each episode is compared with;
-	// default 3. Every pair is compared once, so a Season of n costs about
+	// Partners is how many following episodes each episode is compared with,
+	// those whose audio matches its own first (partnersOf); default 3. Every pair is compared once, so a Season of n costs about
 	// n*Partners comparisons instead of n².
 	Partners int
 }
@@ -333,10 +333,7 @@ func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, fo
 		log.Printf("obelo: marker detection of season %s: %v", s.ID, failed)
 	}
 	for i, a := range files {
-		for _, b := range files[i+1 : min(len(files), i+1+d.opts.Partners)] {
-			if a.file.TitleID == b.file.TitleID {
-				continue
-			}
+		for _, b := range partnersOf(files, i, d.opts.Partners) {
 			a.partners++
 			b.partners++
 			if a.failed || b.failed {
@@ -380,6 +377,38 @@ func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, fo
 		}
 	}
 	return nil
+}
+
+// partnersOf chooses up to n of the episodes after files[i] to compare it with:
+// the nearest ones whose audio has as many channels as its own first, then the
+// nearest of the rest to make up the number. A Season can mix sources — a 5.1
+// release beside a stereo broadcast — and the same theme from two sources need
+// not play at quite the same speed, so it matches best within one source. Two
+// Files of the same Episode are never partners.
+func partnersOf(files []*heard, i, n int) []*heard {
+	a := files[i]
+	var same, other []*heard
+	for _, b := range files[i+1:] {
+		if len(same) == n {
+			break
+		}
+		switch {
+		case b.file.TitleID == a.file.TitleID:
+		case b.file.AudioChannels == a.file.AudioChannels:
+			same = append(same, b)
+		case len(other) < n:
+			other = append(other, b)
+		}
+	}
+	chosen := make([]*heard, 0, n)
+	chosen = append(chosen, same...)
+	for _, b := range other {
+		if len(chosen) == n {
+			break
+		}
+		chosen = append(chosen, b)
+	}
+	return chosen
 }
 
 // windowMs is how much of each end of a File is listened to.

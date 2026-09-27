@@ -3,6 +3,9 @@ package markerdetect_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -707,6 +710,146 @@ func TestStoreWritesAreNotMadeAtTheLowestPriority(t *testing.T) {
 		if g == lowered {
 			t.Errorf("a store write was made on the lowered goroutine %s", g)
 			break
+		}
+	}
+}
+
+// TestFFmpegDownmixesTheFrontOfEveryLayoutAlike pins what ffmpeg is asked for:
+// the first audio track, downmixed to mono from its front left, front right and
+// centre only — surrounds and LFE left out whatever the layout, the same
+// rematrix for stereo and 5.1, whatever downmix levels the stream carries — so
+// two renditions of one soundtrack print alike.
+func TestFFmpegDownmixesTheFrontOfEveryLayoutAlike(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	bin := filepath.Join(dir, "ffmpeg")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > " + argsFile + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (markerdetect.FFmpeg{Binary: bin}).Analyze(context.Background(), "/tv/S01E01.mkv", 1500, 2000); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	want := []string{
+		"-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1",
+		"-ss", "1.500", "-t", "2.000", "-i", "/tv/S01E01.mkv",
+		"-map", "0:a:0", "-vn", "-sn", "-dn",
+		"-af", "asidedata=mode=delete:type=DOWNMIX_INFO,aresample=ochl=mono:clev=0.707:slev=0:lfe_mix_level=0",
+		"-ar", "8000", "-f", "s16le", "pipe:1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ffmpeg args =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// printsByIndex hears every File as a one-word Print naming its place in paths,
+// so a comparison can be traced back to the two Files compared.
+type printsByIndex struct{ paths []string }
+
+func (a printsByIndex) Analyze(_ context.Context, path string, _, _ int64) (markerdetect.Print, error) {
+	for i, p := range a.paths {
+		if p == path {
+			return markerdetect.Print{Words: []uint32{uint32(i)}, Voiced: []bool{true}}, nil
+		}
+	}
+	return markerdetect.Print{}, errors.New("unknown path " + path)
+}
+
+// TestDetectionPrefersPartnersWithTheSameAudioLayout: a Season mixing 5.1 and
+// stereo sources compares each episode with the nearest following ones of its
+// own layout first, and with others only to make up the number. A 5.1 episode
+// followed by three stereo ones is still compared with the 5.1 ones after them;
+// every episode is compared with something, and no more pairs are compared than
+// every episode taking its full share of partners.
+func TestDetectionPrefersPartnersWithTheSameAudioLayout(t *testing.T) {
+	channels := []int{6, 2, 2, 2, 6, 6, 2, 1}
+	s := store.DetectionSeason{ID: "s1", ShowID: "show"}
+	var paths []string
+	for i, ch := range channels {
+		p := "/e" + string(rune('1'+i))
+		paths = append(paths, p)
+		s.Files = append(s.Files, store.DetectionFile{TitleID: p, Path: p, DurationMs: 60_000, AudioChannels: ch})
+	}
+	var mu sync.Mutex
+	pairs := map[[2]int]bool{}
+	defer markerdetect.ObserveComparisons(func(a, b markerdetect.Print) {
+		mu.Lock()
+		defer mu.Unlock()
+		i, j := int(a.Words[0]), int(b.Words[0])
+		pairs[[2]int{min(i, j), max(i, j)}] = true
+	})()
+	st := &fakeStore{seasons: map[string][]store.DetectionSeason{"show": {s}}}
+	d := startDetector(t, st, printsByIndex{paths}, nil)
+	if err := d.DetectShow("show"); err != nil {
+		t.Fatal(err)
+	}
+	waitSaved(t, st, paths...)
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, want := range [][2]int{{0, 4}, {0, 5}, {4, 5}, {1, 2}, {3, 6}} {
+		if !pairs[want] {
+			t.Errorf("%s was not compared with %s, which has the same audio layout; compared %v",
+				paths[want[0]], paths[want[1]], pairs)
+		}
+	}
+	for i, p := range paths {
+		n := 0
+		for pr := range pairs {
+			if pr[0] == i || pr[1] == i {
+				n++
+			}
+		}
+		if n == 0 {
+			t.Errorf("%s was compared with nothing", p)
+		}
+	}
+	if len(pairs) > len(paths)*3 {
+		t.Errorf("%d pairs compared, want at most %d", len(pairs), len(paths)*3)
+	}
+}
+
+// TestDetectionNeverPairsTwoFilesOfOneEpisode: two Files of one multi-part
+// Episode each hold their own part of it, so they are never compared with each
+// other, and the second part does not use up one of the first's partners: the
+// first is still compared with the next three Episodes.
+func TestDetectionNeverPairsTwoFilesOfOneEpisode(t *testing.T) {
+	titles := []string{"e1", "e1", "e2", "e3", "e4", "e5"}
+	s := store.DetectionSeason{ID: "s1", ShowID: "show"}
+	var paths []string
+	for i, title := range titles {
+		p := "/f" + string(rune('1'+i))
+		paths = append(paths, p)
+		s.Files = append(s.Files, store.DetectionFile{TitleID: title, Path: p, DurationMs: 60_000, AudioChannels: 2})
+	}
+	var mu sync.Mutex
+	pairs := map[[2]int]bool{}
+	defer markerdetect.ObserveComparisons(func(a, b markerdetect.Print) {
+		mu.Lock()
+		defer mu.Unlock()
+		i, j := int(a.Words[0]), int(b.Words[0])
+		pairs[[2]int{min(i, j), max(i, j)}] = true
+	})()
+	st := &fakeStore{seasons: map[string][]store.DetectionSeason{"show": {s}}}
+	d := startDetector(t, st, printsByIndex{paths}, nil)
+	if err := d.DetectShow("show"); err != nil {
+		t.Fatal(err)
+	}
+	waitSaved(t, st, paths...)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if pairs[[2]int{0, 1}] {
+		t.Errorf("%s and %s, both of Episode e1, were compared", paths[0], paths[1])
+	}
+	for _, want := range [][2]int{{0, 2}, {0, 3}, {0, 4}, {1, 2}, {1, 3}, {1, 4}} {
+		if !pairs[want] {
+			t.Errorf("%s was not compared with %s; compared %v", paths[want[0]], paths[want[1]], pairs)
 		}
 	}
 }

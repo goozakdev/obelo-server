@@ -23,6 +23,10 @@ type DetectionFile struct {
 	// DecodeFailures is how many detection runs in a row failed to decode the
 	// File at its current mtime (RecordDecode).
 	DecodeFailures int
+	// AudioChannels is the channel count of the File's first audio stream, the
+	// one detection listens to; 0 when unknown. Two Files with different counts
+	// are most likely different sources of the Season.
+	AudioChannels int
 }
 
 // DetectionSeason is one Season's worth of Files, in Episode order.
@@ -98,7 +102,10 @@ func (db *DB) detectionSeasons(where string, arg string) ([]DetectionSeason, err
 		        EXISTS (SELECT 1 FROM marker_detection_files d
 		                 WHERE d.file_path = f.path AND d.mtime = f.mtime),
 		        COALESCE((SELECT x.failures FROM marker_detection_failures x
-		                   WHERE x.file_path = f.path AND x.mtime = f.mtime), 0)
+		                   WHERE x.file_path = f.path AND x.mtime = f.mtime), 0),
+		        COALESCE((SELECT st.channels FROM streams st
+		                   WHERE st.file_id = f.id AND st.kind = 'audio'
+		                   ORDER BY st.stream_index LIMIT 1), 0)
 		   FROM seasons s
 		   JOIN shows sh   ON sh.id = s.show_id
 		   JOIN titles t   ON t.season_id = s.id AND t.kind = 'episode'
@@ -114,7 +121,7 @@ func (db *DB) detectionSeasons(where string, arg string) ([]DetectionSeason, err
 	for rows.Next() {
 		var seasonID, showID string
 		var f DetectionFile
-		if err := rows.Scan(&seasonID, &showID, &f.TitleID, &f.Path, &f.DurationMs, &f.Analyzed, &f.DecodeFailures); err != nil {
+		if err := rows.Scan(&seasonID, &showID, &f.TitleID, &f.Path, &f.DurationMs, &f.Analyzed, &f.DecodeFailures, &f.AudioChannels); err != nil {
 			return nil, fmt.Errorf("store: scanning season file: %w", err)
 		}
 		if len(out) == 0 || out[len(out)-1].ID != seasonID {

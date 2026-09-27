@@ -110,6 +110,8 @@ func TestDetectionSeasonsListsEpisodeFilesAndRemembersAnalysis(t *testing.T) {
 		mustExec(t, db, `INSERT INTO files (id, edition_id, path, duration_ms, mtime) VALUES (?, ?, ?, 60000, 'm1')`,
 			"f-"+ep.id, "ed-"+ep.id, ep.path)
 	}
+	mustExec(t, db, `INSERT INTO streams (id, file_id, stream_index, kind, channels) VALUES
+		('st-v', 'f-e1', 0, 'video', 0), ('st-a2', 'f-e1', 2, 'audio', 6), ('st-a1', 'f-e1', 1, 'audio', 2)`)
 	if err := db.SaveDetectedMarkers("/tv/S01E01.mkv", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +121,7 @@ func TestDetectionSeasonsListsEpisodeFilesAndRemembersAnalysis(t *testing.T) {
 	}
 	want := []store.DetectionSeason{
 		{ID: "s1", ShowID: "sh", Files: []store.DetectionFile{
-			{TitleID: "e1", Path: "/tv/S01E01.mkv", DurationMs: 60_000, Analyzed: true},
+			{TitleID: "e1", Path: "/tv/S01E01.mkv", DurationMs: 60_000, Analyzed: true, AudioChannels: 2},
 			{TitleID: "e2", Path: "/tv/S01E02.mkv", DurationMs: 60_000},
 		}},
 		{ID: "s2", ShowID: "sh", Files: []store.DetectionFile{{TitleID: "e3", Path: "/tv/S02E01.mkv", DurationMs: 60_000}}},
