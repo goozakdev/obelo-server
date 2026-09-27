@@ -75,7 +75,11 @@ AMD64_IMAGE ?= golang:1.26
 # the runtime image installs (ADR-0042), so the gate encodes with the ffmpeg an
 # operator actually gets. It costs ~40 s and one apt fetch per run, which is why this
 # is a step inside the single `docker run` rather than a second image to maintain.
-AMD64_SETUP ?= apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1 && ffmpeg -version | head -1
+#
+# The chain is grouped and ends in an explicit exit because `set -e` does NOT stop
+# the shell when a command before the last `&&` fails: without it a failed apt
+# fetch fell through to the tests, and the markerdetect ones skipped and passed.
+AMD64_SETUP ?= { apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1 && ffmpeg -version | head -1; } || { echo "ERROR: ffmpeg did not install."; exit 1; }
 
 # Go's default is 10 minutes PER PACKAGE, and internal/api does not fit in it under
 # emulation — it panicked at 10m00s mid-test with nothing wrong, which reads like a
@@ -153,7 +157,7 @@ PLUGIN_BUILD_DIR := bin/plugins
 
 GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
 
-.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
+.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-markerdetect-docker test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
 
 all: build
 
@@ -333,6 +337,35 @@ test-go-amd64-tailscale:
 ## rather than copied, so the workflow cannot drift from the target.
 amd64-pkgs:
 	@echo '$(AMD64_PKGS)'
+
+## test-markerdetect-docker: the marker detection tests against the ffmpeg the Docker
+## image ships, not the host's. Detection prints what ffmpeg decodes, and two ffmpeg
+## versions can decode the same file a few rounding steps apart, so a detection test
+## that passes on the host's ffmpeg says nothing about the runtime image's. The
+## container is linux/amd64 on the same Debian release as the image's runtime stage
+## (docker/Dockerfile), with ffmpeg from that release's apt, and the tree mounted
+## READ-ONLY. -count=1 because Go's test cache does not know which ffmpeg ran.
+##
+## The run is for that ffmpeg, so it fails closed: a failed install stops it (see
+## AMD64_SETUP), and OBELO_TEST_REQUIRE_FFMPEG=1 turns the tests' skip on a missing
+## ffmpeg into a failure, so nothing passes by not having run against it.
+##
+## Needs a running Docker daemon, so it is not part of test-go or check.
+MARKERDETECT_IMAGE ?= golang:1.26-trixie
+
+test-markerdetect-docker:
+	@docker info >/dev/null 2>&1 || { \
+	  echo "ERROR: test-markerdetect-docker needs a RUNNING DOCKER DAEMON."; \
+	  exit 1; }
+	docker run --rm --platform linux/amd64 \
+	  -v "$(CURDIR)":/src:ro -w /src \
+	  -v $(AMD64_MOD_CACHE):/go/pkg/mod \
+	  -v $(AMD64_BUILD_CACHE):/root/.cache/go-build \
+	  -e GOFLAGS=-buildvcs=false -e CGO_ENABLED=0 -e OBELO_TEST_REQUIRE_FFMPEG=1 \
+	  $(MARKERDETECT_IMAGE) sh -c 'set -e; \
+	    $(AMD64_SETUP); \
+	    command -v ffmpeg >/dev/null || { echo "ERROR: no ffmpeg on PATH."; exit 1; }; \
+	    go test $(GOTAGS) -count=1 ./internal/markerdetect/...'
 
 ## test-web: the vitest component suite. An alias for check-web (below), which is
 ## the single implementation, so the gate and the developer-facing name cannot drift.

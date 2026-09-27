@@ -3,7 +3,9 @@ package markerdetect_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/bits"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -86,10 +88,50 @@ func writeSurroundEpisode(t *testing.T, path, codec, surround string, pieces ...
 	return int64(total * 1000)
 }
 
+// underATone is p at a tenth of its level, -20 dB, under a steady 1234.5 Hz
+// tone at the level theme and ending play at.
+func underATone(p piece) piece {
+	return piece{"aevalsrc='0.3*sin(2*PI*t*1234.5)':s=44100[tone];" + p.src +
+		",volume=0.1[p];[tone][p]amerge=inputs=2,pan=mono|c0=c0+c1[out0]", p.secs}
+}
+
 func requireFFmpeg(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		if os.Getenv(requireFFmpegEnv) == "1" {
+			t.Fatalf("ffmpeg not on PATH, and %s=1 says this run is for ffmpeg", requireFFmpegEnv)
+		}
 		t.Skip("ffmpeg not on PATH")
+	}
+}
+
+// requireFFmpegEnv, set to 1, says ffmpeg is what the run is for — the Docker
+// image's ffmpeg under `make test-markerdetect-docker` — so a missing ffmpeg
+// fails the tests that need it instead of skipping them.
+const requireFFmpegEnv = "OBELO_TEST_REQUIRE_FFMPEG"
+
+// TestAMissingFFmpegFailsARunThatRequiresIt: with no ffmpeg on PATH, a test that
+// needs it skips, unless the run says ffmpeg is required, when it fails. A run
+// against a named ffmpeg whose install failed must not pass by skipping.
+func TestAMissingFFmpegFailsARunThatRequiresIt(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestDetectionFindsNothingWhenEpisodesShareNothing$", "-test.v", "-test.count=1")
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "PATH=") && !strings.HasPrefix(kv, requireFFmpegEnv+"=") {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+		cmd.Env = append(cmd.Env, "PATH="+t.TempDir())
+		if required {
+			cmd.Env = append(cmd.Env, requireFFmpegEnv+"=1")
+		}
+		out, err := cmd.CombinedOutput()
+		switch {
+		case required && err == nil:
+			t.Errorf("ffmpeg required and missing: the run passed, want it failed\n%s", out)
+		case !required && (err != nil || !strings.Contains(string(out), "--- SKIP")):
+			t.Errorf("ffmpeg missing and not required: err = %v, want the test skipped\n%s", err, out)
+		}
 	}
 }
 
@@ -220,6 +262,123 @@ func TestDetectionIgnoresASharedSteadyTone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestASteadyToneDoesNotPrintAsChangingSound: a steady sine whose period does
+// not divide the hop reaches each frame at a different phase, so its band
+// energies wobble a little from frame to frame. That wobble is the same
+// in every episode carrying the tone, and must not print as sound that keeps
+// changing, whatever the level down to the silence floor.
+func TestASteadyToneDoesNotPrintAsChangingSound(t *testing.T) {
+	for _, level := range []float64{0.3, 0.02, 0.003} {
+		pcm := make([]int16, 20*markerdetect.SampleRate)
+		for i := range pcm {
+			pcm[i] = int16(math.Round(32767 * level * math.Sin(2*math.Pi*437.3*float64(i)/markerdetect.SampleRate)))
+		}
+		p := markerdetect.Fingerprint(pcm, 0)
+		changing := 0
+		for i := 2; i < len(p.Words); i++ {
+			if bits.OnesCount32(p.Words[i]^p.Words[i-1]) > markerdetect.DefaultParams.MaxBitErrors {
+				changing++
+			}
+		}
+		if changing > 0 {
+			t.Errorf("tone at %.3f: %d of %d frames print as changing, want none", level, changing, len(p.Words)-2)
+		}
+	}
+}
+
+// TestDetectionFindsAQuietThemeUnderASharedSteadyTone: the theme and ending
+// every episode shares are a steady in-band tone with a melody ten times
+// quieter under it. The tone says nothing, being steady; the melody still
+// changes, so each is the Intro and Credits of every episode, where the shared
+// audio is.
+func TestDetectionFindsAQuietThemeUnderASharedSteadyTone(t *testing.T) {
+	requireFFmpeg(t)
+	dir := t.TempDir()
+	const introSecs, creditsSecs = 20.0, 20.0
+	type truth struct{ introStart, creditsStart float64 }
+	var files []store.DetectionFile
+	truths := map[string]truth{}
+	for i, ep := range []struct{ offset, middle float64 }{
+		{2.0, 40.0},
+		{7.35, 45.0},
+		{12.8, 38.5},
+		{4.6, 42.0},
+	} {
+		path := filepath.Join(dir, fmt.Sprintf("S01E%02d.mka", i+1))
+		dur := writeEpisode(t, path,
+			unique(1300+i, ep.offset),
+			underATone(theme(introSecs)),
+			unique(1400+i, ep.middle),
+			underATone(ending(creditsSecs)),
+		)
+		files = append(files, store.DetectionFile{TitleID: fmt.Sprintf("e%d", i+1), Path: path, DurationMs: dur})
+		truths[path] = truth{ep.offset, ep.offset + introSecs + ep.middle}
+	}
+
+	saved := detectAll(t, files)
+	for _, f := range files {
+		tr := truths[f.Path]
+		want := []store.Marker{
+			{Kind: "intro", Source: "detected", StartMs: ms(tr.introStart), EndMs: ms(tr.introStart + introSecs)},
+			{Kind: "credits", Source: "detected", StartMs: ms(tr.creditsStart), EndMs: ms(tr.creditsStart + creditsSecs)},
+		}
+		got := saved[f.Path]
+		if len(got) != len(want) {
+			t.Errorf("%s: markers = %+v, want %+v", filepath.Base(f.Path), got, want)
+			continue
+		}
+		for i := range want {
+			g, w := got[i], want[i]
+			if g.Kind != w.Kind || abs(g.StartMs-w.StartMs) > toleranceMs || abs(g.EndMs-w.EndMs) > toleranceMs {
+				t.Errorf("%s: %s = [%d, %d), want [%d, %d) ±%d ms",
+					filepath.Base(f.Path), w.Kind, g.StartMs, g.EndMs, w.StartMs, w.EndMs, toleranceMs)
+			}
+		}
+	}
+}
+
+// TestEveryStepOfAQuietMelodyUnderASteadyTonePrints: a melody that steps to a
+// new pitch every third of a second, alone and ten times quieter than a steady
+// tone over it, must print each step as changing sound: some word spanning it
+// differs from the one before by more than MaxBitErrors. What keeps a steady
+// sound from printing as change must not also erase changes that are there.
+func TestEveryStepOfAQuietMelodyUnderASteadyTonePrints(t *testing.T) {
+	// windowMs is how much audio one frame covers: frameSize at SampleRate.
+	const secs, stepsPerSec, windowMs = 20, 3, 256
+	for _, c := range []struct {
+		name         string
+		melody, tone float64
+	}{
+		{"alone", 0.3, 0},
+		{"under a tone", 0.03, 0.3},
+	} {
+		pcm := make([]int16, secs*markerdetect.SampleRate)
+		for i := range pcm {
+			s := float64(i) / markerdetect.SampleRate
+			hz := 330 + 110*math.Floor(math.Mod(s*stepsPerSec, 7))
+			pcm[i] = int16(math.Round(32767 * (c.melody*math.Sin(2*math.Pi*hz*s) + c.tone*math.Sin(2*math.Pi*1234.5*s))))
+		}
+		p := markerdetect.Fingerprint(pcm, 0)
+		missed := 0
+		for step := 1; step < secs*stepsPerSec; step++ {
+			at := int64(step) * 1000 / stepsPerSec
+			printed := false
+			for i := 1; i < len(p.Words); i++ {
+				from, to := int64(i-1)*markerdetect.FrameMs, int64(i)*markerdetect.FrameMs+windowMs
+				if from < at && at < to && bits.OnesCount32(p.Words[i]^p.Words[i-1]) > markerdetect.DefaultParams.MaxBitErrors {
+					printed = true
+				}
+			}
+			if !printed {
+				missed++
+			}
+		}
+		if missed > 0 {
+			t.Errorf("melody %s: %d of %d steps print no change", c.name, missed, secs*stepsPerSec-1)
+		}
 	}
 }
 
