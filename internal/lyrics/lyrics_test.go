@@ -403,6 +403,39 @@ func TestReadID3(t *testing.T) {
 			wantUslt: "Plain\nwords",
 		},
 		{
+			name: "a USLT with undefined text encoding 4 is not read",
+			data: tag(4, 0, frame(4, "USLT", 0, append([]byte{4, 'e', 'n', 'g', 0}, "Words"...))),
+		},
+		{
+			name: "a USLT with undefined text encoding 255 is not read",
+			data: tag(3, 0, frame(3, "USLT", 0, append([]byte{255, 'e', 'n', 'g', 0}, "Words"...))),
+		},
+		{
+			name: "a SYLT with undefined text encoding 4 is not read",
+			data: tag(4, 0, frame(4, "SYLT", 0, bytes.Join([][]byte{
+				{4, 'e', 'n', 'g', 2, 1, 0},
+				[]byte("One"), {0}, be32(500),
+			}, nil))),
+		},
+		{
+			name: "a SYLT with undefined text encoding 255 is not read",
+			data: tag(3, 0, frame(3, "SYLT", 0, bytes.Join([][]byte{
+				{255, 'e', 'n', 'g', 2, 1, 0},
+				[]byte("One"), {0}, be32(500),
+			}, nil))),
+		},
+		{
+			name: "a USLT and SYLT with undefined text encodings leave later ones to be read",
+			data: tag(3, 0, bytes.Join([][]byte{
+				frame(3, "USLT", 0, append([]byte{4, 'e', 'n', 'g', 0}, "Bad"...)),
+				frame(3, "SYLT", 0, append([]byte{255, 'e', 'n', 'g', 2, 1, 0}, "Bad\x00\x00\x00\x01\xf4"...)),
+				frame(3, "USLT", 0, usltBody),
+				frame(3, "SYLT", 0, latin1SYLT(2, 1, "One", 500)),
+			}, nil)),
+			wantSylt: []Line{{500, "One"}},
+			wantUslt: "Plain\nwords",
+		},
+		{
 			name:     "a rejected USLT leaves a later one to be read",
 			data:     tag(3, 0, append(frame(3, "USLT", 0, append([]byte{1, 'e', 'n', 'g', 0, 0}, 0xff, 0xfe, 0x00, 0xd8)), frame(3, "USLT", 0, usltBody)...)),
 			wantUslt: "Plain\nwords",
