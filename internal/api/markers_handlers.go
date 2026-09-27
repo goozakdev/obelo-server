@@ -15,7 +15,8 @@ import (
 //
 //	GET /sessions/{id}/markers → { "markers": [ { "kind", "source", "startMs", "endMs", "autoSkip", "watchedPoint" } ] }
 //
-// Times are on the session File's own timeline. autoSkip is the viewer's own
+// Times are on the session's own timeline: a multi-part session serves every
+// part's Markers, each shifted by its part's start. autoSkip is the viewer's own
 // auto-skip setting for the Marker's kind (/me/marker-auto-skip): a player skips
 // such a Marker by itself instead of offering the Skip button. watchedPoint marks
 // the Credits Marker whose crossing marks the Title watched (the server's
@@ -30,6 +31,11 @@ import (
 // already known, a first read can wait that long on a slow provider — and then
 // serves what is known; what a slower provider finds is served from the next
 // read on.
+//
+// A relayed session's Markers are the sharer's, asked for once when it started
+// (internal/playback relay.go); a read waits for that ask, which is itself
+// bounded, and never asks this Server's providers about a File it holds no copy
+// of. autoSkip and watchedPoint are still this Server's.
 
 // markersReadWait is how long a read waits for a File's Marker providers before
 // it answers without them.
@@ -55,15 +61,22 @@ func handleSessionMarkers(svc *playback.Service, fetch *markerfetch.Service, aut
 			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
 			return
 		}
-		if sess, ok := svc.Sessions().Get(sessionID); ok && fetch != nil && sess.UserID == id.User.ID && sess.FileID != "" {
-			fetched := fetch.Start(sess.TitleID, sess.FileID)
-			wait := time.NewTimer(markersReadWait)
-			select {
-			case <-fetched:
-			case <-wait.C:
-			case <-r.Context().Done():
+		if sess, ok := svc.Sessions().Get(sessionID); ok && sess.UserID == id.User.ID {
+			if relayed := sess.RelayMarkersFetched(); relayed != nil {
+				select {
+				case <-relayed:
+				case <-r.Context().Done():
+				}
+			} else if fetch != nil && sess.FileID != "" {
+				fetched := fetch.Start(sess.TitleID, sess.FileID)
+				wait := time.NewTimer(markersReadWait)
+				select {
+				case <-fetched:
+				case <-wait.C:
+				case <-r.Context().Done():
+				}
+				wait.Stop()
 			}
-			wait.Stop()
 		}
 		ms, err := svc.SessionMarkers(id.User.ID, sessionID)
 		switch {

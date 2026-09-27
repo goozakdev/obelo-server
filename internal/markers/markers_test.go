@@ -92,9 +92,11 @@ func TestClassifyEndingOnlyAsTheEndingItself(t *testing.T) {
 
 // TestClassifyReadsTheNameAfterAChapterNumber: a leading chapter number —
 // "05 - ", "Chapter 5 - ", "Part C: ", "Ep 5 - ", "Part One - ", "Chapter XII - "
-// — and a leading article are not part of the chapter's name, so
-// "05 - Ending" is the Credits as "Ending" is. "End Title(s)" is the Credits only
-// as the whole name after it: "Dead End Title" is a story chapter.
+// — is not part of the chapter's name, so "05 - Ending" is the Credits as
+// "Ending" is. "End Title(s)" is the Credits only as the whole name after it,
+// read past one leading article: "Dead End Title" is a story chapter. No other
+// name loses its article — "The Ending" is as much the story as "Alternate
+// Ending" — and "Episode 6 - Next" still names the next episode.
 func TestClassifyReadsTheNameAfterAChapterNumber(t *testing.T) {
 	cases := map[string]string{
 		"05 - Ending":                  KindCredits,
@@ -118,6 +120,13 @@ func TestClassifyReadsTheNameAfterAChapterNumber(t *testing.T) {
 		"Episode 5":                    "",
 		"The End":                      "",
 		"The Dead End Title":           "",
+		"The Ending":                   "",
+		"An Ending":                    "",
+		"05 - The Ending":              "",
+		"The Ed":                       "",
+		"The OP":                       "",
+		"A End Title":                  KindCredits,
+		"Episode 6 - Next":             KindPreview,
 	}
 	for label, want := range cases {
 		if got := Classify(label); got != want {

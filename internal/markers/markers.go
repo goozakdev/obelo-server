@@ -53,36 +53,33 @@ type Chapter struct {
 // "" when it describes none of the four. The rules are ordered: "Opening
 // Credits" is an Intro, not Credits, and "Previously on…" is a Recap even though
 // it mentions nothing about recaps. A leading chapter number — "05 - ",
-// "Chapter 5 - ", "Part C: ", "Ep 5 - ", "Part One - ", "Chapter XII - " — and
-// a leading article are not part of the name and are read past.
+// "Chapter 5 - ", "Part C: ", "Ep 5 - ", "Part One - ", "Chapter XII - " — is
+// not part of the name and is read past.
 // "Ending" names the Credits only as the first word of the name — the anime
-// "Ending", "Ending Theme" — and "End Title(s)" only as the whole name, because
-// "Alternate Ending" and "Dead End Title" are part of the story, and a Credits
-// Marker there would mark the Title watched early.
+// "Ending", "Ending Theme" — and "End Title(s)" only as the whole name, read past
+// one leading article ("The End Titles"), because "Alternate Ending", "The
+// Ending" and "Dead End Title" are part of the story, and a Credits Marker there
+// would mark the Title watched early. No other name loses its article: "The OP"
+// and "The Ed" name nothing. "Next episode" is read over the whole label, so
+// "Episode 6 - Next" is still a Preview.
 func Classify(label string) string {
 	words := strings.FieldsFunc(strings.ToLower(label), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
 	})
+	all := words
 	words = withoutChapterNumber(words)
 	has := func(ws ...string) bool {
-		for _, w := range words {
-			for _, want := range ws {
-				if w == want {
-					return true
-				}
-			}
-		}
-		return false
+		return hasAny(words, ws...)
 	}
 	// "OP"/"ED" are the anime chapter names for the opening and ending, but as a
 	// word inside a longer title they are as likely to be somebody called Ed, so
 	// they count only as the whole label.
 	whole := strings.Join(words, " ")
-	endTitles := whole == "end titles" || whole == "end title"
+	endTitles := isEndTitles(words) || len(words) > 1 && articles[words[0]] && isEndTitles(words[1:])
 	switch {
 	case has("recap", "previously"):
 		return KindRecap
-	case has("preview", "previews") || has("next") && has("episode", "time", "week"):
+	case has("preview", "previews") || hasAny(all, "next") && hasAny(all, "episode", "time", "week"):
 		return KindPreview
 	case has("intro", "introduction", "opening") || whole == "op":
 		return KindIntro
@@ -92,11 +89,28 @@ func Classify(label string) string {
 	return ""
 }
 
+// hasAny reports whether any of words is one of ws.
+func hasAny(words []string, ws ...string) bool {
+	for _, w := range words {
+		for _, want := range ws {
+			if w == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isEndTitles reports whether words are the whole name "End Title(s)".
+func isEndTitles(words []string) bool {
+	whole := strings.Join(words, " ")
+	return whole == "end titles" || whole == "end title"
+}
+
 // withoutChapterNumber drops a leading chapter number from a label's words: a
 // number ("05"), or "chapter"/"part"/"episode"/"ep" and the number, letter,
 // spelled-out number or Roman numeral after it ("Chapter 5", "Part C",
-// "Part One", "Chapter XII", "Ep 5"). A leading article after it goes too, so
-// "The End Titles" is read as "End Titles".
+// "Part One", "Chapter XII", "Ep 5").
 func withoutChapterNumber(words []string) []string {
 	isNumber := func(w string) bool {
 		return strings.Trim(w, "0123456789") == ""
@@ -109,9 +123,6 @@ func withoutChapterNumber(words []string) []string {
 		(isNumber(words[1]) || len(words[1]) == 1 || spelledNumbers[words[1]] || isRoman(words[1])):
 		words = words[2:]
 	case len(words) >= 1 && isNumber(words[0]):
-		words = words[1:]
-	}
-	if len(words) >= 2 && articles[words[0]] {
 		words = words[1:]
 	}
 	return words
@@ -128,7 +139,7 @@ var spelledNumbers = map[string]bool{
 	"sixteen": true, "seventeen": true, "eighteen": true, "nineteen": true, "twenty": true,
 }
 
-// articles are the leading words that are not part of a chapter's name.
+// articles are the leading words read past before "End Title(s)".
 var articles = map[string]bool{"the": true, "a": true, "an": true}
 
 // FromChapters returns the Local markers a File's chapters identify: every

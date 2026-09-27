@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1064,5 +1065,86 @@ func TestSurrenderDeletesTheDeviceAndNeverCallsLogout(t *testing.T) {
 	}
 	if loggedOut {
 		t.Error("surrender called /auth/logout; the only path left is deleting the device")
+	}
+}
+
+// markerSharer is a sharing Server that serves body as the Markers of session
+// rs1, or, with hang set, answers only once the request is abandoned.
+func markerSharer(t *testing.T, body string, hang bool) (*Service, *memStore) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != apiPrefix+"/sessions/rs1/markers" {
+			http.NotFound(w, r)
+			return
+		}
+		if hang {
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	st := &memStore{links: []store.Link{{
+		ID: "l1", ServerID: "sharer", ServerName: "Sharer", Origins: []string{srv.URL},
+		ActiveOrigin: srv.URL, Token: "tok", State: store.LinkStateConnected,
+	}}}
+	return newService(t, st, Options{}), st
+}
+
+// TestRelayedMarkersKeepOnlyWhatThisServerCanName: a sharer's Marker whose kind
+// or source this Server does not know, or whose span is negative, reversed or
+// empty, is dropped; the rest pass through as they came.
+func TestRelayedMarkersKeepOnlyWhatThisServerCanName(t *testing.T) {
+	svc, _ := markerSharer(t, `{"markers":[
+		{"kind":"intro","source":"local","startMs":0,"endMs":60000},
+		{"kind":"commercial","source":"local","startMs":100000,"endMs":200000},
+		{"kind":"recap","source":"guessed","startMs":100000,"endMs":200000},
+		{"kind":"recap","source":"","startMs":100000,"endMs":200000},
+		{"kind":"recap","source":"local","startMs":-5000,"endMs":200000},
+		{"kind":"preview","source":"fetched","startMs":300000,"endMs":250000},
+		{"kind":"preview","source":"fetched","startMs":300000,"endMs":300000},
+		{"kind":"credits","source":"detected","startMs":550000,"endMs":1000000}
+	]}`, false)
+	got, err := svc.RelayMarkers(context.Background(), "l1", "rs1")
+	if err != nil {
+		t.Fatalf("RelayMarkers: %v", err)
+	}
+	want := []store.Marker{
+		{Kind: "intro", Source: "local", StartMs: 0, EndMs: 60_000},
+		{Kind: "credits", Source: "detected", StartMs: 550_000, EndMs: 1_000_000},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("RelayMarkers = %+v, want %+v", got, want)
+	}
+}
+
+// TestAMarkersAskThatTimesOutLeavesTheLinkConnected: the ask for a relay
+// session's Markers runs apart from the play, so one that times out, or is
+// abandoned with its session, says nothing about whether the sharer is reachable.
+func TestAMarkersAskThatTimesOutLeavesTheLinkConnected(t *testing.T) {
+	for _, end := range []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+	}{
+		{"timed out", func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 100*time.Millisecond)
+		}},
+		{"abandoned", func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			time.AfterFunc(100*time.Millisecond, cancel)
+			return ctx, cancel
+		}},
+	} {
+		svc, st := markerSharer(t, "", true)
+		ctx, cancel := end.ctx()
+		_, err := svc.RelayMarkers(ctx, "l1", "rs1")
+		cancel()
+		if err == nil {
+			t.Fatalf("%s: RelayMarkers succeeded, want an error", end.name)
+		}
+		if l, _ := st.LinkByID("l1"); l.State != store.LinkStateConnected {
+			t.Errorf("%s: the Link is %q (%s), want still connected", end.name, l.State, l.LastError)
+		}
 	}
 }

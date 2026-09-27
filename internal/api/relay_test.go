@@ -116,7 +116,7 @@ type relayFixture struct {
 
 // linkForRelay scans the movie fixtures on a sharer, grants them to a `remote`
 // User, and links a home Server to it at an origin that records everything.
-func linkForRelay(t *testing.T) *relayFixture {
+func linkForRelay(t *testing.T, homeOpts ...testharness.Option) *relayFixture {
 	t.Helper()
 	requireFixtures(t)
 
@@ -133,7 +133,7 @@ func linkForRelay(t *testing.T) *relayFixture {
 	f.proxy = httptest.NewServer(f.rec.wrap(f.sharer.Handler()))
 	t.Cleanup(f.proxy.Close)
 
-	f.home = testharness.New(t)
+	f.home = testharness.New(t, homeOpts...)
 	f.homeAdmin = adminToken(t, f.home)
 	invite := mintInvite(t, f.sharer, f.sharerAdmin, f.remoteUser, f.proxy.URL).Invite
 	var l linkResp

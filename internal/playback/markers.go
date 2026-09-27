@@ -54,44 +54,63 @@ func (s *Service) fileMarkers(fileID string) ([]store.Marker, error) {
 // progress report marks the Title watched: the start of the Credits Marker that
 // is its Watched point (creditsWatchedPoint), else the flat WatchedCeiling.
 func (s *Service) watchedCeiling(sess Session) float64 {
-	_, _, sessionMs := s.creditsWatchedPoint(sess)
+	sessionMs := s.creditsWatchedPoint(sess)
 	if sessionMs < 0 {
 		return WatchedCeiling
 	}
 	return float64(sessionMs) / float64(sess.DurationMs)
 }
 
-// creditsWatchedPoint finds the Credits Marker that is the session's Watched
-// point: the File it belongs to, its start on that File's own timeline, and that
-// start on the session's timeline. sessionMs is -1 when there is none and the
+// creditsWatchedPoint is the start, on the session's timeline, of the Credits
+// Marker that is the session's Watched point, or -1 when there is none and the
 // flat WatchedCeiling applies.
 //
-// The Credits that end the work are the ones that count. For a session whose File
-// IS the whole work, that is the File's earliest Credits at or past CreditsFloor of
-// its duration. On a multi-part Edition the session measures the sum of the parts,
-// and only the LAST part's Credits end the work: the floor is measured on that
-// part's own duration and its start is offset by every earlier part. Any earlier
-// part's Credits are not the work's — finishing part 1 must not mark the work
-// watched (the defect sessionDurationMs exists to prevent). Any lookup failure
+// The Credits that end the work are the ones that count: those of the LAST part
+// of the timeline the session started with (Session.Parts), which for a session
+// whose File IS the whole work is that File. It is the part's earliest Credits
+// at or past CreditsFloor of the part's own duration, offset by every earlier
+// part. Any earlier part's Credits are not the work's — finishing part 1 must not
+// mark the work watched (the defect sessionDurationMs exists to prevent). A part
+// the session started with that has since left the Title, or changed length,
+// means the timeline it was measured on is gone. That, and any lookup failure,
 // falls back to the flat ceiling: a Marker is an improvement to the threshold,
 // never a reason a progress report fails.
-func (s *Service) creditsWatchedPoint(sess Session) (fileID string, fileMs, sessionMs int64) {
-	if s.markers == nil || sess.FileID == "" || sess.DurationMs <= 0 {
-		return "", -1, -1
+//
+// A relay session reads the sharer's Markers as they were asked for when it
+// started (relay.go), already on the session's timeline; only Credits that start
+// inside the last part count, and the floor is still this Server's.
+func (s *Service) creditsWatchedPoint(sess Session) int64 {
+	n := len(sess.Parts)
+	if n == 0 || sess.DurationMs <= 0 {
+		return -1
 	}
-	detail, err := s.store.TitleByID(sess.TitleID)
-	if err != nil {
-		return "", -1, -1
+	last := sess.Parts[n-1]
+	lastStartMs := partStartMs(sess.Parts, n-1)
+	if last.DurationMs <= 0 || lastStartMs+last.DurationMs != sess.DurationMs {
+		return -1
 	}
-	last, offsetMs, ok := lastPartOf(detail, sess)
-	if !ok || last.DurationMs <= 0 || offsetMs+last.DurationMs != sess.DurationMs {
-		return "", -1, -1
+	var ms []store.Marker // on the last part's own timeline
+	if sess.IsRelay() {
+		served, ok := sess.relayMarkers.get()
+		if !ok {
+			return -1
+		}
+		for _, m := range served {
+			if m.StartMs >= lastStartMs && m.StartMs < sess.DurationMs {
+				m.StartMs -= lastStartMs
+				ms = append(ms, m)
+			}
+		}
+	} else {
+		if s.markers == nil || !s.partsUnchanged(sess) {
+			return -1
+		}
+		var err error
+		if ms, err = s.fileMarkers(last.FileID); err != nil {
+			return -1
+		}
 	}
-	ms, err := s.fileMarkers(last.ID)
-	if err != nil {
-		return "", -1, -1
-	}
-	fileMs = -1
+	fileMs := int64(-1)
 	for _, m := range ms {
 		if m.Kind != markers.KindCredits || float64(m.StartMs) < CreditsFloor*float64(last.DurationMs) {
 			continue
@@ -101,53 +120,86 @@ func (s *Service) creditsWatchedPoint(sess Session) (fileID string, fileMs, sess
 		}
 	}
 	if fileMs < 0 {
-		return "", -1, -1
+		return -1
 	}
-	return last.ID, fileMs, offsetMs + fileMs
+	return lastStartMs + fileMs
 }
 
-// lastPartOf is the File that ends the session's timeline and the session offset
-// it starts at: the last part of the session's multi-part Edition, else the
-// session's own File at 0.
-func lastPartOf(detail store.TitleDetail, sess Session) (store.File, int64, bool) {
-	for _, ed := range detail.Editions {
-		parts := ed.Parts()
-		if len(parts) < 2 || parts[0].ID != sess.FileID {
-			continue
-		}
-		return parts[len(parts)-1], ed.PartStartMs(len(parts) - 1), true
+// partStartMs is where part index starts on a session's timeline: the sum of
+// every earlier part's duration.
+func partStartMs(parts []SessionPart, index int) int64 {
+	var start int64
+	for _, p := range parts[:index] {
+		start += p.DurationMs
 	}
-	f, ok := fileByID(detail, sess.FileID)
-	return f, 0, ok
+	return start
+}
+
+// partsUnchanged reports whether every part the session started with is still a
+// File of its Title with the same duration — and, on a multi-part timeline,
+// still present, since a Missing part is no longer played.
+func (s *Service) partsUnchanged(sess Session) bool {
+	detail, err := s.store.TitleByID(sess.TitleID)
+	if err != nil {
+		return false
+	}
+	for _, p := range sess.Parts {
+		f, ok := fileByID(detail, p.FileID)
+		if !ok || f.DurationMs != p.DurationMs || len(sess.Parts) > 1 && !f.Present {
+			return false
+		}
+	}
+	return true
 }
 
 // SessionWatchedPointMs is the start of the Credits Marker whose crossing marks
-// the session's Title watched (see watchedCeiling), on the session File's own
-// timeline, or -1 when none of that File's Markers does, for the player to offer
+// the session's Title watched (see watchedCeiling), on the session's timeline as
+// SessionMarkers serves it, or -1 when there is none, for the player to offer
 // "Next episode" only there. An unknown session is -1.
 func (s *Service) SessionWatchedPointMs(sessionID string) int64 {
 	sess, ok := s.sessions.Get(sessionID)
 	if !ok {
 		return -1
 	}
-	fileID, fileMs, _ := s.creditsWatchedPoint(sess)
-	if fileID != sess.FileID {
-		return -1
-	}
-	return fileMs
+	return s.creditsWatchedPoint(sess)
 }
 
-// SessionMarkers lists the Markers of the File a session is playing, for the
-// player's Skip button. Ownership is the progress route's: a reaped, ended or
-// foreign session is ErrSessionNotFound. A Server with no Marker store, and a
-// File with none, both answer an empty list.
+// SessionMarkers lists the Markers of the session's timeline, for the player's
+// Skip button: every part's, each shifted by its part's start on the timeline the
+// session started with, so a multi-part session offers Skip in every part. A
+// relay session serves the sharer's that lie inside the session's timeline, asked
+// for once when it started (empty until that ask has ended, and after one that
+// failed). Ownership is the progress
+// route's: a reaped, ended or foreign session is ErrSessionNotFound. A Server with
+// no Marker store, and a File with none, both answer an empty list.
 func (s *Service) SessionMarkers(userID, sessionID string) ([]store.Marker, error) {
 	sess, ok := s.sessions.Get(sessionID)
 	if !ok || sess.UserID != userID {
 		return nil, ErrSessionNotFound
 	}
-	if s.markers == nil || sess.FileID == "" {
+	if sess.IsRelay() {
+		ms, _ := sess.relayMarkers.get()
+		return ms, nil
+	}
+	if s.markers == nil {
 		return nil, nil
 	}
-	return s.fileMarkers(sess.FileID)
+	var out []store.Marker
+	for i, p := range sess.Parts {
+		ms, err := s.fileMarkers(p.FileID)
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			out = append(out, ms...)
+			continue
+		}
+		start := partStartMs(sess.Parts, i)
+		for _, m := range ms {
+			m.StartMs += start
+			m.EndMs += start
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }

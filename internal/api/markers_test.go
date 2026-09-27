@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
 	"github.com/goozakdev/obelo-server/internal/testharness"
 )
 
@@ -145,10 +147,10 @@ func TestMarkersOfAnEndedSessionAre404(t *testing.T) {
 	getMarkers(t, srv, token, dec.SessionID, http.StatusNotFound)
 }
 
-// TestMarkersOfARelayedSessionAreEmpty: a relayed session plays a mirrored File,
-// which has no path on this disk and so no Markers here — 200 with an empty
-// list, not an error, so a player simply offers no Skip.
-func TestMarkersOfARelayedSessionAreEmpty(t *testing.T) {
+// TestMarkersOfARelayedSessionWhoseSharerHasNoneAreEmpty: a relayed session
+// serves the sharer's Markers, and a sharer with none for the File answers 200
+// with an empty list, not an error, so a player simply offers no Skip.
+func TestMarkersOfARelayedSessionWhoseSharerHasNoneAreEmpty(t *testing.T) {
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 	status, dec, body := f.play(t, f.homeAdmin, titleID, mp4Profile())
@@ -161,5 +163,70 @@ func TestMarkersOfARelayedSessionAreEmpty(t *testing.T) {
 	}
 	if got := string(raw["markers"]); got != "[]" {
 		t.Errorf("markers of a relayed session = %s, want []", got)
+	}
+}
+
+// TestMarkersOfARelayedSessionAreTheSharers: a relayed session asks the sharer,
+// once, for the Markers of the session it opened, serves them, and measures its
+// own Watched point against them.
+func TestMarkersOfARelayedSessionAreTheSharers(t *testing.T) {
+	f := linkForRelay(t)
+	f.sharer.Exec(`INSERT INTO markers (id, file_path, kind, source, start_ms, end_ms)
+		SELECT 'relay-intro', path, 'intro', 'local', 0, duration_ms / 5 FROM files WHERE path LIKE '%Dune (2021).mp4'`)
+	f.sharer.Exec(`INSERT INTO markers (id, file_path, kind, source, start_ms, end_ms)
+		SELECT 'relay-credits', path, 'credits', 'local', duration_ms * 55 / 100, duration_ms FROM files WHERE path LIKE '%Dune (2021).mp4'`)
+	titleID := f.mirroredTitle(t, "Dune")
+	status, dec, body := f.play(t, f.homeAdmin, titleID, mp4Profile())
+	if status != http.StatusOK {
+		t.Fatalf("relayed playback = %d, want 200; body: %s", status, body)
+	}
+
+	got := getMarkers(t, f.home, f.homeAdmin, dec.SessionID, http.StatusOK)
+	if len(got.Markers) != 2 || got.Markers[0].Kind != "intro" || got.Markers[1].Kind != "credits" {
+		t.Fatalf("markers of a relayed session = %+v, want the sharer's intro then credits", got.Markers)
+	}
+	credits := got.Markers[1]
+	if out := postProgress(t, f.home, f.homeAdmin, dec.SessionID, credits.StartMs-50, http.StatusOK); out.Watched {
+		t.Fatalf("just before the sharer's Credits: %+v, want unwatched", out)
+	}
+	if out := postProgress(t, f.home, f.homeAdmin, dec.SessionID, credits.StartMs, http.StatusOK); !out.Watched {
+		t.Errorf("at the sharer's Credits (55%%): %+v, want watched", out)
+	}
+	getMarkers(t, f.home, f.homeAdmin, dec.SessionID, http.StatusOK)
+	asked := 0
+	for _, c := range f.rec.snapshot() {
+		if strings.HasSuffix(c.Path, "/markers") {
+			asked++
+		}
+	}
+	if asked != 1 {
+		t.Errorf("the sharer was asked for markers %d times, want once", asked)
+	}
+}
+
+// TestMarkersOfARelayedSessionNeverAskThisServersProviders: the mirrored File is
+// the sharer's, so a read of its Markers is the sharer's answer alone, even
+// with a Marker provider installed here.
+func TestMarkersOfARelayedSessionNeverAskThisServersProviders(t *testing.T) {
+	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
+		return []map[string]any{span(q, "intro", 0.1, 0.2, 0)}
+	})
+	dataDir := t.TempDir()
+	plugintest.Install(t, dataDir, plugintest.MarkerManifest("example-markers", src.srv.URL))
+	f := linkForRelay(t, testharness.WithDataDir(dataDir))
+	f.sharer.Exec(`INSERT INTO markers (id, file_path, kind, source, start_ms, end_ms)
+		SELECT 'relay-credits', path, 'credits', 'local', duration_ms * 55 / 100, duration_ms FROM files WHERE path LIKE '%Dune (2021).mp4'`)
+	titleID := f.mirroredTitle(t, "Dune")
+	status, dec, body := f.play(t, f.homeAdmin, titleID, mp4Profile())
+	if status != http.StatusOK {
+		t.Fatalf("relayed playback = %d, want 200; body: %s", status, body)
+	}
+
+	got := getMarkers(t, f.home, f.homeAdmin, dec.SessionID, http.StatusOK)
+	if len(got.Markers) != 1 || got.Markers[0].Kind != "credits" {
+		t.Errorf("markers of a relayed session = %+v, want the sharer's credits alone", got.Markers)
+	}
+	if asked := src.questions(); len(asked) != 0 {
+		t.Errorf("this Server's provider was asked %d times about a relayed File, want never: %+v", len(asked), asked)
 	}
 }

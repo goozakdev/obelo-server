@@ -5,7 +5,7 @@ import { useAsync } from "../browse/useAsync";
 
 // The player's Skip button (ADR-0065): while the playback position is inside a
 // stored Marker of a kind this player recognizes, offer to skip to its end. The
-// Markers come from the server for the session's own File; a failed or empty
+// Markers come from the server on the session's own timeline; a failed or empty
 // fetch simply offers nothing — a missing Skip button never interrupts playback.
 //
 // A Marker the server marks `autoSkip` (the viewer's own setting for its kind,
@@ -34,9 +34,10 @@ export const SKIP_END_MARGIN_MS = 500;
 /** Where a Skip to endMs seeks: endMs, but at least SKIP_END_MARGIN_MS short of
  * the File's end when its duration is known. Credits often run to the end of the
  * File, and a seek landing exactly on the end leaves some players unable to play
- * on; the Apple client stops short of it the same way. */
+ * on; the Apple client stops short of it the same way. A File no longer than the
+ * margin has no room to stop short in, so it seeks to endMs. */
 export function skipTargetMs(endMs: number, durationMs: number): number {
-  if (!(durationMs > 0)) return endMs;
+  if (!(durationMs > SKIP_END_MARGIN_MS)) return endMs;
   return Math.min(endMs, durationMs - SKIP_END_MARGIN_MS);
 }
 

@@ -42,7 +42,12 @@ type Session struct {
 	// finishing the first half would mark the whole episode watched and clear the
 	// resume — losing the viewer's place and moving the Up Next anchor (ADR-0028).
 	DurationMs int64
-	Tier       Tier
+	// Parts is the timeline DurationMs measures, as negotiated: the chosen
+	// Edition's parts in play order (one for an ordinary Edition). The Markers
+	// served for the session and its Watched point are laid out on it, so a part
+	// reordered in the store mid-session cannot move them.
+	Parts []SessionPart
+	Tier  Tier
 	// VideoCopy marks a TierTranscode session that copies the video and transcodes
 	// only the audio (ADR-0024). It was NOT counted against the transcode cap (no
 	// video encode), so End/Reap must not decrement the counter for it — the release
@@ -88,6 +93,33 @@ type Session struct {
 	RelayLinkID     string
 	RemoteSessionID string
 	RemoteTitleID   string
+	// relayMarkers are the sharer's Markers for a relay session, asked for once
+	// when it starts (relay.go), the ask ending with the session; nil for every
+	// local session.
+	relayMarkers *relayMarkers
+}
+
+// SessionPart is one part of a Session's timeline: its File and that File's
+// duration when the session started.
+type SessionPart struct {
+	FileID     string
+	DurationMs int64
+}
+
+// sessionParts is the timeline a Decision plays: its Edition's parts, falling
+// back to the chosen File alone for the same reason sessionDurationMs does.
+func sessionParts(d Decision) []SessionPart {
+	var out []SessionPart
+	if d.Edition.TotalDurationMs() > 0 {
+		for _, f := range d.Edition.Parts() {
+			out = append(out, SessionPart{FileID: f.ID, DurationMs: f.DurationMs})
+		}
+		return out
+	}
+	if d.File.ID != "" {
+		out = append(out, SessionPart{FileID: d.File.ID, DurationMs: d.File.DurationMs})
+	}
+	return out
 }
 
 // IsRelay reports whether this Session is a one-hop relay of another Server's
@@ -382,6 +414,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		FileID:        d.File.ID,
 		FilePath:      d.File.Path,
 		DurationMs:    sessionDurationMs(d),
+		Parts:         sessionParts(d),
 		Tier:          d.Tier,
 		VideoCopy:     d.VideoCopy,
 		FMP4:          d.UsesFMP4(),
@@ -399,6 +432,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		s.RelayLinkID = r.LinkID
 		s.RemoteSessionID = r.RemoteSessionID
 		s.RemoteTitleID = r.RemoteTitleID
+		s.relayMarkers = r.markers
 	}
 	var rt *hlsRuntime
 	if d.Tier != TierDirectPlay && d.Relay == nil && m.runner != nil && m.scratchRoot != "" {
@@ -726,6 +760,7 @@ func (m *Manager) End(id string) bool {
 		m.releaseTranscodeSlot()
 	}
 	m.mu.Unlock()
+	s.relayMarkers.stop()
 	// Tear down outside the lock: killing ffmpeg and removing scratch must not
 	// block other session operations. Kill the rendition jobs BEFORE the video
 	// runtime removes the shared scratch dir.
@@ -909,6 +944,7 @@ func (m *Manager) endWhere(end func(Session) bool) int {
 			// acceptance criterion): announce it so the Admin's live view drops
 			// abandoned streams, not only cleanly-stopped ones.
 			ended = append(ended, endedEvent(s))
+			s.relayMarkers.stop()
 			n++
 		}
 	}
