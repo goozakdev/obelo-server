@@ -37,13 +37,13 @@ type Device struct {
 
 // CreateAdmin inserts the first Admin User with the given pre-hashed password.
 // It is the only User-creating path this slice exposes; role is fixed to
-// "admin". A duplicate username surfaces as a plain error for the caller to map.
+// "admin". A username already held in any case is ErrUsernameHeld (see
+// CreateUser).
 func (db *DB) CreateAdmin(id, username, passwordHash string) (User, error) {
-	_, err := db.Exec(
+	if err := db.insertUserUnderUniqueName(username,
 		`INSERT INTO users (id, username, role, password_hash) VALUES (?, ?, 'admin', ?)`,
 		id, username, passwordHash,
-	)
-	if err != nil {
+	); err != nil {
 		return User{}, fmt.Errorf("store: creating admin: %w", err)
 	}
 	return db.UserByID(id)
@@ -52,17 +52,36 @@ func (db *DB) CreateAdmin(id, username, passwordHash string) (User, error) {
 // CreateUser inserts a User with the given role and pre-hashed password — the
 // management path an Admin uses to add Members (and further Admins) after the
 // first-Admin bootstrap. role must be a known value ('admin' or 'member'); the
-// caller validates it. A duplicate username surfaces as a UNIQUE-constraint
-// error for the caller to map (the api layer answers 409).
+// caller validates it. A username already held here, compared without regard
+// to case (UsernameKey), is ErrUsernameHeld, for the caller to map (the api
+// layer answers 409).
 func (db *DB) CreateUser(id, username, role, passwordHash string) (User, error) {
-	_, err := db.Exec(
+	if err := db.insertUserUnderUniqueName(username,
 		`INSERT INTO users (id, username, role, password_hash) VALUES (?, ?, ?, ?)`,
 		id, username, role, passwordHash,
-	)
-	if err != nil {
+	); err != nil {
 		return User{}, fmt.Errorf("store: creating user: %w", err)
 	}
 	return db.UserByID(id)
+}
+
+// insertUserUnderUniqueName runs the users insert only when no User holds
+// username in any case, in one transaction with the check.
+func (db *DB) insertUserUnderUniqueName(username, insert string, args ...any) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if held, err := usernameHeldFolded(tx, username); err != nil {
+		return err
+	} else if held {
+		return ErrUsernameHeld
+	}
+	if _, err := tx.Exec(insert, args...); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListUsers returns every User, oldest first then by username for a stable
@@ -138,6 +157,23 @@ func (db *DB) UserByUsername(username string) (User, error) {
 	return db.scanUser(db.QueryRow(
 		`SELECT id, username, role, COALESCE(password_hash, ''), created_at
 		   FROM users WHERE username = ?`, username))
+}
+
+// UsersByUsernameKey returns every User whose username has the given
+// UsernameKey — one, normally; more only for Users stored before usernames were
+// unique regardless of case.
+func (db *DB) UsersByUsernameKey(key string) ([]User, error) {
+	users, err := db.ListUsers()
+	if err != nil {
+		return nil, err
+	}
+	var out []User
+	for _, u := range users {
+		if UsernameKey(u.Username) == key {
+			out = append(out, u)
+		}
+	}
+	return out, nil
 }
 
 // UserByID looks up a User by id, returning ErrNotFound if absent.

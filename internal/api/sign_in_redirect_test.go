@@ -828,3 +828,53 @@ func TestRedirectStartsAreRateLimitedPerAddress(t *testing.T) {
 	}
 	startRedirectFrom(t, srv, "oauth", "198.51.100.4:40000", nil)
 }
+
+// TestARedirectFirstSignInNamingAnUnusableUsernameIsRefused: a new identity
+// whose provider names a username breaking the rule is a failed sign-in, like
+// any answer the Server cannot act on, and nothing is created.
+func TestARedirectFirstSignInNamingAnUnusableUsernameIsRefused(t *testing.T) {
+	srv, admin, idp := oidcServer(t)
+	long := strings.Repeat("a", 65)
+
+	before := listUsernames(t, srv, admin)
+	run := startRedirect(t, srv, "oidc")
+	idp.grant(run, "code-1", idp.sign(idp.claims(run, "subject-long", long), idp.key), userinfo("subject-long", long))
+	status, body, _ := finishRedirect(t, srv, run, "code-1")
+	if status != http.StatusUnauthorized || !strings.Contains(string(body), "SIGN_IN_REFUSED") {
+		t.Fatalf("a new identity named with 65 characters = %d %s, want 401 SIGN_IN_REFUSED", status, body)
+	}
+	if after := listUsernames(t, srv, admin); len(after) != len(before) {
+		t.Fatalf("users after the refusal = %v, want still %v", after, before)
+	}
+}
+
+// TestRedirectStartsAreLimitedPerClientBehindATrustedProxy: behind a proxy
+// named in OBELO_TRUSTED_PROXIES, the limit counts the client the proxy
+// forwarded for, not the proxy — so many browsers behind it each keep their own
+// budget, and one browser is still refused past its own.
+func TestRedirectStartsAreLimitedPerClientBehindATrustedProxy(t *testing.T) {
+	dataDir := t.TempDir()
+	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
+	srv := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithTrustedProxies("127.0.0.1/32"))
+
+	for i := 1; i <= 40; i++ {
+		startRedirectFrom(t, srv, "oauth", "127.0.0.1:40000",
+			http.Header{"X-Forwarded-For": []string{fmt.Sprintf("198.51.100.%d", i)}})
+	}
+
+	one := http.Header{"X-Forwarded-For": []string{"203.0.113.7"}}
+	var status int
+	var body []byte
+	var allowed int
+	for i := 0; i < 200; i++ {
+		status, _, body = srv.JSONFrom(http.MethodPost, "/api/v1/auth/redirect/start", "", "127.0.0.1:40000", one,
+			map[string]any{"provider": "oauth"}, nil)
+		if status != http.StatusOK {
+			break
+		}
+		allowed++
+	}
+	if status != http.StatusTooManyRequests || !strings.Contains(string(body), "TOO_MANY_ATTEMPTS") {
+		t.Fatalf("start %d from one forwarded client = %d %s, want 429 TOO_MANY_ATTEMPTS", allowed+1, status, body)
+	}
+}

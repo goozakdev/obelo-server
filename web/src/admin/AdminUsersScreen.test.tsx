@@ -648,3 +648,21 @@ describe("Users tab in the Admin hub", () => {
     expect(listUsers).not.toHaveBeenCalled();
   });
 });
+
+describe("AdminUsersScreen — the username rule", () => {
+  it("states the username rule in the create dialog", async () => {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([]);
+
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("add-user-button"));
+
+    const rule = screen.getByTestId("user-username-rule");
+    expect(rule).toHaveTextContent("1 to 64 characters");
+    expect(rule).toHaveTextContent("invisible characters");
+    expect(rule).toHaveTextContent(/case/i);
+  });
+});

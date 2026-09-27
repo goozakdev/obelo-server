@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { useAuth } from "../auth/session";
+import { USERNAME_RULE } from "../auth/usernameRule";
 import type { MetadataCredentialSource } from "../api/types";
 import {
   CONSENT_DECLINE_LABEL,
@@ -199,6 +200,9 @@ export default function SetupScreen() {
             onChange={(e) => setUsername(e.target.value)}
             required
           />
+          <span className="field-hint" data-testid="setup-username-rule">
+            {USERNAME_RULE}
+          </span>
         </label>
 
         <label className="field">

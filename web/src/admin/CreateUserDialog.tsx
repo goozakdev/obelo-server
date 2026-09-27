@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Role, User } from "../api/types";
+import { USERNAME_RULE } from "../auth/usernameRule";
 
 // The Add-User dialog: a native modal <dialog> (same chrome as the Library
 // dialogs) asking for a username, a password, and a role, with Create / Cancel in
@@ -199,6 +200,9 @@ export default function CreateUserDialog({
               onChange={(e) => setUsername(e.target.value)}
               disabled={submitting || created !== null}
             />
+            <p className="field-hint" data-testid="user-username-rule">
+              {USERNAME_RULE}
+            </p>
           </div>
 
           {!isLinkedServer(role) && (

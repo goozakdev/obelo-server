@@ -196,3 +196,26 @@ func TestAnIPv6ClientWithManyAddressesIsOneClient(t *testing.T) {
 		t.Fatalf("a neighbouring /64's start's callback = %v, want accepted: it is another client", err)
 	}
 }
+
+// TestAnIPv4MappedAddressIsItsIPv4Client: "::ffff:a.b.c.d" is the IPv4 address
+// a.b.c.d as a dual-stack listener reports it, so starts in either form are one
+// client's — sixteen in the mapped form give up the oldest start made in the
+// plain one.
+func TestAnIPv4MappedAddressIsItsIPv4Client(t *testing.T) {
+	now := time.Now()
+	r := testRedirects(t, &now)
+	ctx := context.Background()
+
+	first, err := r.Start(ctx, "plain", "https://obelo.example/sign-in/callback", "203.0.113.9")
+	if err != nil {
+		t.Fatalf("the plain-form start: %v", err)
+	}
+	for i := 0; i < maxPendingRedirectsPerClient; i++ {
+		if _, err := r.Start(ctx, "plain", "https://obelo.example/sign-in/callback", "::ffff:203.0.113.9"); err != nil {
+			t.Fatalf("mapped start %d: %v", i, err)
+		}
+	}
+	if _, _, err := r.Complete(ctx, stateOf(t, first), "code", first.Binding); err == nil {
+		t.Fatal("the plain-form start survived sixteen more from the same address in its mapped form; want it given up as the client's oldest")
+	}
+}

@@ -75,9 +75,16 @@ func (s *Service) ChargeRedirectStart(clientIP string) error {
 // redirectStartKey is the source a start is counted against: an IPv4 address
 // as it is, and an IPv6 address by its /64, which one client is handed whole and
 // may start from any address in — as internal/signin counts sign-ins in flight.
+// An IPv4-mapped IPv6 address is the IPv4 address it maps.
 func redirectStartKey(clientIP string) string {
 	addr, err := netip.ParseAddr(clientIP)
-	if err != nil || !addr.Is6() || addr.Is4In6() {
+	if err != nil {
+		return clientIP
+	}
+	if addr.Is4In6() {
+		return addr.Unmap().String()
+	}
+	if !addr.Is6() {
 		return clientIP
 	}
 	prefix, err := addr.WithZone("").Prefix(64)

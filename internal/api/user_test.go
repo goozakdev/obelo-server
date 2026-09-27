@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/testharness"
@@ -249,5 +250,47 @@ func TestLastAdminGuard(t *testing.T) {
 	}
 	if status, _ := srv.JSON(http.MethodDelete, "/api/v1/users/"+self.ID, admin, nil, nil); status != http.StatusNoContent {
 		t.Errorf("delete first admin (with a second present) status = %d, want 204", status)
+	}
+}
+
+// TestAUsernameDifferingOnlyInCaseIsTaken: usernames are unique regardless of
+// case, so one differing from a held one only in case is the same 409; one
+// breaking the username rule is a 400 whose message states the rule.
+func TestAUsernameDifferingOnlyInCaseIsTaken(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	srv.CreateUser(token, "kid", "memberpass123", "")
+
+	var env errorEnvelope
+	status, body := srv.JSON(http.MethodPost, "/api/v1/users", token, map[string]any{
+		"username": "KID", "password": "anotherpass123",
+	}, &env)
+	if status != http.StatusConflict || env.Error.Code != "USERNAME_TAKEN" {
+		t.Fatalf("KID with kid held = %d %s, want 409 USERNAME_TAKEN; body: %s", status, env.Error.Code, body)
+	}
+
+	env = errorEnvelope{}
+	status, body = srv.JSON(http.MethodPost, "/api/v1/users", token, map[string]any{
+		"username": strings.Repeat("a", 65), "password": "anotherpass123",
+	}, &env)
+	if status != http.StatusBadRequest || !strings.Contains(env.Error.Message, "1 to 64 characters") {
+		t.Fatalf("a 65-character username = %d %q, want 400 stating the rule; body: %s", status, env.Error.Message, body)
+	}
+}
+
+// TestAUsernameHoldingAnInvisibleCharacterIsRefused: "admin" with a
+// left-to-right mark after it looks exactly like "admin" in the Users list, so
+// it breaks the rule — a 400 that states it, and nobody is created.
+func TestAUsernameHoldingAnInvisibleCharacterIsRefused(t *testing.T) {
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	var env errorEnvelope
+	status, body := srv.JSON(http.MethodPost, "/api/v1/users", token, map[string]any{
+		"username": "admin‎", "password": "anotherpass123",
+	}, &env)
+	if status != http.StatusBadRequest || env.Error.Code != "BAD_REQUEST" || !strings.Contains(env.Error.Message, "1 to 64 characters") {
+		t.Fatalf("admin plus a left-to-right mark = %d %s %q, want 400 BAD_REQUEST stating the rule; body: %s",
+			status, env.Error.Code, env.Error.Message, body)
 	}
 }
