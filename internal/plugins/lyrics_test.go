@@ -63,13 +63,17 @@ func TestAnInstalledLyricProviderRegistersAndAnswers(t *testing.T) {
 }
 
 // TestALyricProviderDeclaringNoKindsIsLoggedOnceAtRegistration: a provider that
-// declares no kinds serves no track, so it is never asked. That is said once,
-// naming the Plugin, when it is registered — and not for one that declares music.
+// declares no kinds serves no track, so it is never asked, and nor is one that
+// declares only kinds without lyrics. That is said once, naming the Plugin, when
+// it is registered — and not for one that declares music.
 func TestALyricProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *testing.T) {
 	dataDir := t.TempDir()
 	none := plugintest.LyricManifest("kindless-lyrics", "https://lyrics.example.test")
 	none.Provides[0].Kinds = nil
 	plugintest.Install(t, dataDir, none)
+	videoOnly := plugintest.LyricManifest("video-lyrics", "https://lyrics.example.test")
+	videoOnly.Provides[0].Kinds = []string{pluginapi.KindVideo}
+	plugintest.Install(t, dataDir, videoOnly)
 	plugintest.Install(t, dataDir, plugintest.LyricManifest("music-lyrics", "https://lyrics.example.test"))
 	log := &logSink{}
 	set := loadWith(t, dataDir, log, plugins.Options{})
@@ -77,6 +81,9 @@ func TestALyricProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *testing.T) 
 
 	if n := strings.Count(log.all(), "kindless-lyrics declares no kinds"); n != 1 {
 		t.Fatalf("logged the kindless provider %d times, want once:\n%s", n, log.all())
+	}
+	if n := strings.Count(log.all(), "video-lyrics declares no kinds"); n != 1 {
+		t.Fatalf("logged the video-only provider %d times, want once:\n%s", n, log.all())
 	}
 	if strings.Contains(log.all(), "music-lyrics declares no kinds") {
 		t.Fatalf("logged a provider that declares music:\n%s", log.all())

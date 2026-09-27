@@ -140,7 +140,7 @@ func sidecarText(data []byte) (string, bool) {
 		if !wellFormedUTF16(data[2:], data[0] == 0xfe) {
 			return "", false
 		}
-		text, _ = decodeText(1, data, nil)
+		text, _, _ = decodeText(1, data, nil)
 	case utf8.Valid(data):
 		text = string(data)
 	default:

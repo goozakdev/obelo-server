@@ -109,7 +109,7 @@ const syncedToleranceMs = 100
 // askTimeout bounds one call to one Lyric provider on the server's behalf. It
 // is the ceiling a viewer's own wait has too, but it runs on whether or not the
 // viewer that started it is still waiting. Each provider has its own, so one
-// that hangs does not cut the next one short.
+// that hangs does not cut the next one short, nor hold its own turn past it.
 const askTimeout = 30 * time.Second
 
 // Bounds on what one answer may carry. A whole song is a few kilobytes; past
@@ -478,6 +478,10 @@ func (s *Service) ask(ctx context.Context, t Track, providers []provider, left <
 
 // callInTurn asks one provider once it is free, within askTimeout of its call
 // starting. asked is false when left closed first: the call never started.
+//
+// The turn is held for askTimeout at most. A provider still running then — one
+// that does not heed its context — has failed, and is left to finish on its own
+// while the next asking takes the turn, so it cannot hold the turn forever.
 func (s *Service) callInTurn(ctx context.Context, p provider, req pluginapi.LyricsRequest, left <-chan struct{}) (pluginapi.LyricsResponse, bool, error) {
 	turn := s.turn(p.slug)
 	select {
@@ -493,8 +497,21 @@ func (s *Service) callInTurn(ctx context.Context, p provider, req pluginapi.Lyri
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.askTimeout)
 	defer cancel()
-	resp, err := call(ctx, p, req)
-	return resp, true, err
+	type answer struct {
+		resp pluginapi.LyricsResponse
+		err  error
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		resp, err := call(ctx, p, req)
+		answered <- answer{resp, err}
+	}()
+	select {
+	case a := <-answered:
+		return a.resp, true, a.err
+	case <-ctx.Done():
+		return pluginapi.LyricsResponse{}, true, ctx.Err()
+	}
 }
 
 // turn is slug's slot, made on first use.

@@ -42,11 +42,12 @@ func (s *Set) registerLyricProvider(reg *pluginapi.Registry, p *Plugin, entry pl
 	if d.Name == "" {
 		d.Name = p.id
 	}
-	if len(d.Kinds) == 0 {
-		// A provider serves the kinds it declared (Descriptor.Serves), so one that
-		// declared none is never asked. Said once, at registration, so an Admin
-		// wondering why it never answers has a line to find.
-		p.logf("obelo: plugin %s declares no kinds, so this Lyric provider serves no track", p.id)
+	if !d.Serves(pluginapi.KindMusic) {
+		// A provider serves the kinds it declared (Descriptor.Serves), and only
+		// music has lyrics, so one that declared no music is never asked. Said
+		// once, at registration, so an Admin wondering why it never answers has a
+		// line to find.
+		p.logf("obelo: plugin %s declares no kinds with lyrics (music), so this Lyric provider serves no track", p.id)
 	}
 	reg.RegisterLyricProvider(pluginapi.LyricProviderRegistration{Descriptor: d, New: p.newLyricProvider})
 }

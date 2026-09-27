@@ -120,6 +120,11 @@ func frame(major byte, id string, format byte, body []byte) []byte {
 	return append(f, body...)
 }
 
+// frame22 builds one v2.2 frame: a three-character id and a three-byte size.
+func frame22(id string, body []byte) []byte {
+	return append(append([]byte(id), be32(len(body))[1:]...), body...)
+}
+
 func latin1SYLT(format, content byte, entries ...any) []byte {
 	b := []byte{0, 'e', 'n', 'g', format, content, 0}
 	for i := 0; i < len(entries); i += 2 {
@@ -276,7 +281,46 @@ func TestReadID3(t *testing.T) {
 			data: tag(3, 0, append(frame(3, "TIT2", 0, []byte("\x00x")), []byte("USLT\x7f\xff\xff\xff\x00\x00")...)),
 		},
 		{name: "no tag", data: []byte("\xff\xfb\x90\x00 audio")},
-		{name: "v2.2 is not read", data: tag(2, 0, []byte("SLT\x00\x00\x01x"))},
+		{
+			name: "v2.2 SLT and ULT beside other frames",
+			data: tag(2, 0, bytes.Join([][]byte{
+				frame22("TT2", []byte("\x00Song")),
+				frame22("SLT", latin1SYLT(2, 1, "One", 500, "Two", 2750)),
+				frame22("ULT", usltBody),
+			}, nil)),
+			wantSylt: []Line{{500, "One"}, {2750, "Two"}},
+			wantUslt: "Plain\nwords",
+		},
+		{
+			name:     "v2.2 whole-tag unsynchronisation",
+			data:     tag(2, 0x80, bytes.ReplaceAll(frame22("SLT", latin1SYLT(2, 1, "\xffx", 255)), []byte{0xff}, []byte{0xff, 0x00})),
+			wantSylt: []Line{{255, "ÿx"}},
+		},
+		{
+			name: "a v2.2 tag marked compressed is not read",
+			data: tag(2, 0x40, frame22("ULT", usltBody)),
+		},
+		{
+			name: "a UTF-16 USLT holding a lone surrogate is not read",
+			data: tag(3, 0, frame(3, "USLT", 0, append([]byte{1, 'e', 'n', 'g', 0xff, 0xfe, 0, 0}, "\xff\xfeW\x00\x00\xd8x\x00"...))),
+		},
+		{
+			name: "a UTF-16 USLT whose descriptor holds a lone surrogate is not read",
+			data: tag(3, 0, frame(3, "USLT", 0, append([]byte{1, 'e', 'n', 'g', 0xff, 0xfe, 0x00, 0xdc, 0, 0}, utf16LE("Words", true)...))),
+		},
+		{
+			name: "a UTF-16BE SYLT with one entry holding a lone surrogate is not read",
+			data: tag(4, 0, frame(4, "SYLT", 0, bytes.Join([][]byte{
+				{2, 'e', 'n', 'g', 2, 1, 0, 0},
+				utf16BE("One", false), {0, 0}, be32(500),
+				{0xd8, 0x00, 0x00, 'x'}, {0, 0}, be32(900),
+			}, nil))),
+		},
+		{
+			name:     "a rejected USLT leaves a later one to be read",
+			data:     tag(3, 0, append(frame(3, "USLT", 0, append([]byte{1, 'e', 'n', 'g', 0, 0}, 0xff, 0xfe, 0x00, 0xd8)), frame(3, "USLT", 0, usltBody)...)),
+			wantUslt: "Plain\nwords",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
