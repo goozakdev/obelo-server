@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/testharness"
@@ -591,5 +592,27 @@ func TestDeleteUnknownDevice(t *testing.T) {
 	}
 	if env.Error.Code != "NOT_FOUND" {
 		t.Errorf("code = %q, want NOT_FOUND", env.Error.Code)
+	}
+}
+
+// TestSetupRefusesAUsernameBreakingTheRule: the first Admin's username is held
+// to the rule every username is, as a 400 that states it, and setup stays open.
+func TestSetupRefusesAUsernameBreakingTheRule(t *testing.T) {
+	srv := testharness.New(t)
+
+	var env errorEnvelope
+	status, body := srv.JSON(http.MethodPost, "/api/v1/setup", "", map[string]any{
+		"claimToken": srv.ClaimToken(),
+		"username":   "bran​don",
+		"password":   "hunter2hunter2",
+	}, &env)
+	if status != http.StatusBadRequest || env.Error.Code != "BAD_REQUEST" || !strings.Contains(env.Error.Message, "1 to 64 characters") {
+		t.Fatalf("setup with a zero-width space = %d %s %q, want 400 BAD_REQUEST stating the rule; body: %s",
+			status, env.Error.Code, env.Error.Message, body)
+	}
+	var info serverInfo
+	srv.GET("/api/v1/server", &info)
+	if !info.SetupRequired {
+		t.Errorf("setupRequired = false after a refused setup, want true")
 	}
 }

@@ -74,6 +74,13 @@ func handleSetup(svc *auth.Service) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, codeInvalidClaim,
 				"invalid claim token", nil)
 			return
+		case errors.Is(err, auth.ErrInvalidUser):
+			writeError(w, http.StatusBadRequest, codeBadRequest, auth.UsernameRule, nil)
+			return
+		case errors.Is(err, auth.ErrUsernameTaken):
+			// Setup counts no Users, so only a racing insert holds the name.
+			writeError(w, http.StatusBadRequest, codeBadRequest, "username is already taken", nil)
+			return
 		case err != nil && (strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "UNIQUE")):
 			writeError(w, http.StatusBadRequest, codeBadRequest, err.Error(), nil)
 			return

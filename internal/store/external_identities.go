@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // External identities and the Sign-in provider order (ADR-0063). An External
@@ -17,9 +20,9 @@ import (
 // and its insert. The caller resolves the identity again rather than guessing.
 var ErrExternalIdentityTaken = errors.New("store: external identity already held")
 
-// ErrUsernameHeld is what CreateExternalMember answers when the username it
-// would mint is already held here in any case: "Brandon" from a provider is the
-// local "brandon".
+// ErrUsernameHeld is what CreateExternalMember, CreateUser and CreateAdmin
+// answer when the username they would mint is already held here in any case:
+// "Brandon" from a provider is the local "brandon".
 var ErrUsernameHeld = errors.New("store: username already held")
 
 // ExternalIdentityUser returns the User holding the External identity
@@ -154,23 +157,34 @@ func (db *DB) CreateExternalMember(id, username, pluginID, subject, providerUser
 }
 
 // usernameHeldFolded reports whether a User here holds username in any case.
-// The fold is Go's Unicode one, which SQLite's NOCASE (ASCII only) is not.
+// The comparison is UsernameKey's, which SQLite's NOCASE (ASCII only) is not.
 func usernameHeldFolded(tx *sql.Tx, username string) (bool, error) {
 	rows, err := tx.Query(`SELECT username FROM users`)
 	if err != nil {
 		return false, fmt.Errorf("store: reading usernames: %w", err)
 	}
 	defer rows.Close()
+	key := UsernameKey(username)
 	for rows.Next() {
 		var held string
 		if err := rows.Scan(&held); err != nil {
 			return false, fmt.Errorf("store: reading usernames: %w", err)
 		}
-		if strings.EqualFold(held, username) {
+		if UsernameKey(held) == key {
 			return true, nil
 		}
 	}
 	return false, rows.Err()
+}
+
+// UsernameKey is what two usernames are compared by: Unicode's compatibility
+// caseless match (NFD, full case folding, NFKD, full case folding, NFKD), so
+// "straße" is "STRASSE", an accent typed as its own character is the
+// precomposed one, and the fullwidth "ｖｉｃｔｏｒ" is "victor" — none of which
+// strings.EqualFold, folding one character to one, sees.
+func UsernameKey(username string) string {
+	fold := cases.Fold()
+	return norm.NFKD.String(fold.String(norm.NFKD.String(fold.String(norm.NFD.String(username)))))
 }
 
 // AttachExternalIdentity gives the existing User userID the External identity

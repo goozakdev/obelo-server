@@ -9,6 +9,7 @@ require (
 	github.com/hashicorp/mdns v1.0.7
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	golang.org/x/crypto v0.54.0
+	golang.org/x/text v0.40.0
 	modernc.org/sqlite v1.34.4
 	tailscale.com v1.102.2
 )
@@ -77,7 +78,6 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect

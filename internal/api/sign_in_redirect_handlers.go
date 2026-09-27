@@ -185,8 +185,9 @@ func handleRedirectSignInCallback(deps Deps) http.HandlerFunc {
 			ClientID: req.Device.ClientID,
 		})
 		switch {
-		case errors.Is(err, auth.ErrSignInProviderGone):
-			// The provider was uninstalled after it answered: a failed sign-in.
+		case errors.Is(err, auth.ErrSignInProviderGone), errors.Is(err, auth.ErrExternalUsernameInvalid):
+			// The provider was uninstalled after it answered, or named a new
+			// identity by a username nobody may hold: a failed sign-in.
 			writeError(w, http.StatusUnauthorized, codeSignInRefused, signInRefusedMessage, nil)
 			return
 		case errors.Is(err, auth.ErrUsernameCollision):

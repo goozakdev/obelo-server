@@ -81,7 +81,7 @@ func handleCreateUser(svc *auth.Service) http.HandlerFunc {
 		switch {
 		case errors.Is(err, auth.ErrInvalidUser):
 			writeError(w, http.StatusBadRequest, codeBadRequest,
-				"username is required; role must be admin, member or remote; "+
+				auth.UsernameRule+"; role must be admin, member or remote; "+
 					"a password is required for admin and member and must be omitted for remote", nil)
 			return
 		case errors.Is(err, auth.ErrUsernameTaken):

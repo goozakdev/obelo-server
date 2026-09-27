@@ -208,3 +208,13 @@ describe("SetupScreen first-run metadata decision", () => {
     expect(getEnrichmentConsent).not.toHaveBeenCalled();
   });
 });
+
+describe("SetupScreen username rule", () => {
+  it("states the username rule beside the username field", () => {
+    renderSetup();
+    const rule = screen.getByTestId("setup-username-rule");
+    expect(rule).toHaveTextContent("1 to 64 characters");
+    expect(rule).toHaveTextContent("invisible characters");
+    expect(rule).toHaveTextContent(/case/i);
+  });
+});

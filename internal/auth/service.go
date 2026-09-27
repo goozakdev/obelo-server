@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/goozakdev/obelo-server/internal/store"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Role values a User may hold (CONTEXT.md: Admin manages; Member browses/plays;
@@ -52,6 +53,7 @@ type Store interface {
 	ListUsers() ([]store.User, error)
 	UserByID(id string) (store.User, error)
 	UserByUsername(username string) (store.User, error)
+	UsersByUsernameKey(key string) ([]store.User, error)
 	CountAdmins() (int, error)
 	SetUserPassword(id, passwordHash string) error
 	DeleteUser(id string) error
@@ -283,8 +285,13 @@ func (s *Service) Setup(ctx context.Context, claimToken, username, password stri
 	if claimToken == "" || subtle.ConstantTimeCompare([]byte(claimToken), []byte(s.claimToken)) != 1 {
 		return store.User{}, ErrInvalidClaimToken
 	}
+	username = localUsername(username)
 	if username == "" || password == "" {
 		return store.User{}, fmt.Errorf("auth: username and password are required")
+	}
+	username, ok := normalizeUsername(username)
+	if !ok {
+		return store.User{}, ErrInvalidUser
 	}
 
 	hash, err := HashPasswordContext(ctx, password)
@@ -292,6 +299,10 @@ func (s *Service) Setup(ctx context.Context, claimToken, username, password stri
 		return store.User{}, err
 	}
 	user, err := s.store.CreateAdmin(uuid.NewString(), username, hash)
+	if errors.Is(err, store.ErrUsernameHeld) {
+		// Only a racing insert, since there were no Users a moment ago.
+		return store.User{}, ErrUsernameTaken
+	}
 	if err != nil {
 		return store.User{}, err
 	}
@@ -340,11 +351,16 @@ func (s *Service) Login(ctx context.Context, username, password string, dev Devi
 	// Before the user lookup, before the KDF, before anything that could differ
 	// between a real username and a made-up one. This ordering is the whole reason
 	// the refusal leaks nothing.
+	//
+	// The username is found, and counted, as uniqueness compares it (username.go):
+	// "ADA" typed is the User "Ada", and one name to the limiter.
+	typed := username
+	username = localUsername(username)
 	if err := s.refuseLogin(username, clientIP); err != nil {
 		return LoginResult{}, err
 	}
 
-	user, err := s.store.UserByUsername(username)
+	user, err := s.userSigningInAs(username)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		// A store failure is our fault, not the caller's; charging it would let a
 		// sick database lock out the people trying to use it.
@@ -389,12 +405,34 @@ func (s *Service) Login(ctx context.Context, username, password string, dev Devi
 	// password — so a refusal costs the same work whichever refusal it is, and an
 	// accepted answer resolves by External identity, never by the username typed
 	// here. See sign_in.go.
-	res, err := s.signInExternally(ctx, username, password, dev)
+	res, err := s.signInExternally(ctx, typed, password, dev)
 	if errors.Is(err, errNoProviderAccepted) {
 		s.chargeLoginFailure(username, clientIP)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	return res, err
+}
+
+// userSigningInAs is the User a sign-in typed as username means: the one whose
+// username has its UsernameKey. Users stored before usernames were unique
+// regardless of case can share a key; then only the one stored exactly as typed
+// (in NFC, or as it was typed) is meant, and with none of them it is nobody.
+func (s *Service) userSigningInAs(username string) (store.User, error) {
+	users, err := s.store.UsersByUsernameKey(store.UsernameKey(username))
+	if err != nil {
+		return store.User{}, err
+	}
+	if len(users) == 1 {
+		return users[0], nil
+	}
+	for _, exact := range []string{norm.NFC.String(username), username} {
+		for _, u := range users {
+			if u.Username == exact {
+				return u, nil
+			}
+		}
+	}
+	return store.User{}, store.ErrNotFound
 }
 
 // dummyHashFallback is the hash of a discarded random value — 32 bytes from
@@ -491,8 +529,9 @@ func (s *Service) DeleteDevice(caller store.User, deviceID string) error {
 
 // CreateUser mints a User with the given role (defaulting to Member when role
 // is empty), hashing the password here so no plaintext leaves the caller. A
-// duplicate username yields ErrUsernameTaken; an empty username, an unknown
-// role, or a password that does not match the role yields ErrInvalidUser. ctx is
+// username already held in any case yields ErrUsernameTaken; a username that
+// breaks the rule (username.go), an unknown role, or a password that does not
+// match the role yields ErrInvalidUser. The username is stored in NFC. ctx is
 // threaded in for the KDF meter (password.go): this is an Admin-only endpoint,
 // but it hashes, and every path into argon2 queues in the same line.
 //
@@ -502,7 +541,8 @@ func (s *Service) DeleteDevice(caller store.User, deviceID string) error {
 // will ever verify. The username of a Remote User is the label the sharing Admin
 // chose ("Brandon's server").
 func (s *Service) CreateUser(ctx context.Context, username, password, role string) (store.User, error) {
-	if username == "" {
+	username, ok := normalizeUsername(localUsername(username))
+	if !ok {
 		return store.User{}, ErrInvalidUser
 	}
 	if role == "" {
@@ -524,7 +564,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	}
 	user, err := s.store.CreateUser(uuid.NewString(), username, role, hash)
 	if err != nil {
-		if isUniqueViolation(err) {
+		if errors.Is(err, store.ErrUsernameHeld) || isUniqueViolation(err) {
 			return store.User{}, ErrUsernameTaken
 		}
 		return store.User{}, err

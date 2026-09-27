@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // The brute-force limit on password login.
@@ -109,7 +111,7 @@ func (e *LoginThrottledError) Unwrap() error { return ErrTooManyLoginAttempts }
 // refusal is otherwise careful not to have.
 func (s *Service) refuseLogin(username, clientIP string) error {
 	now := s.now()
-	userOK, userRetry := s.loginUserFails.allow(username, now)
+	userOK, userRetry := s.loginUserFails.allow(loginUserKey(username), now)
 	ipOK, ipRetry := s.loginIPFails.allow(clientIP, now)
 	if userOK && ipOK {
 		return nil
@@ -132,17 +134,21 @@ func kdfAbandoned(err error) bool {
 
 // chargeLoginFailure records one failed attempt against both counters.
 //
-// The username key is the string the caller submitted, verbatim, because that is
-// what the user lookup matches on (the users.username column is compared with a
-// case-sensitive =). Varying the case to get a fresh bucket therefore also means
-// guessing at an account that does not exist, which is not a bypass — it is the
-// attacker paying the per-IP counter for nothing.
+// The username is counted by loginUserKey, the key the user lookup matches on,
+// so varying the case, width or surrounding whitespace of a name buys no fresh
+// bucket: every way of typing one User is that User's one counter.
 //
 // An empty clientIP means the api layer could not parse a host out of
 // RemoteAddr; every such request shares one bucket, which is stricter than
 // keying them apart and never looser.
 func (s *Service) chargeLoginFailure(username, clientIP string) {
 	now := s.now()
-	s.loginUserFails.charge(username, now)
+	s.loginUserFails.charge(loginUserKey(username), now)
 	s.loginIPFails.charge(clientIP, now)
+}
+
+// loginUserKey is what the per-username counter keys on: the typed username as
+// a sign-in finds it (localUsername, then store.UsernameKey).
+func loginUserKey(username string) string {
+	return store.UsernameKey(localUsername(username))
 }

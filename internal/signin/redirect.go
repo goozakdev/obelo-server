@@ -69,10 +69,17 @@ const maxPendingRedirectsPerClient = 16
 // clientKey is the client a start is counted against: its address, or for an
 // IPv6 address its /64. One IPv6 client may hold a whole /64 and pick a fresh
 // address for every request, and counted by address it could fill the table
-// alone.
+// alone. An IPv4-mapped IPv6 address is the IPv4 address it maps, as a
+// dual-stack listener reports it, and is counted as that address.
 func clientKey(client string) string {
 	addr, err := netip.ParseAddr(client)
-	if err != nil || !addr.Is6() || addr.Is4In6() {
+	if err != nil {
+		return client
+	}
+	if addr.Is4In6() {
+		return addr.Unmap().String()
+	}
+	if !addr.Is6() {
 		return client
 	}
 	prefix, err := addr.WithZone("").Prefix(64)

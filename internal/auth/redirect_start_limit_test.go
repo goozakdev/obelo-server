@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/auth"
 )
@@ -114,5 +115,81 @@ func TestRedirectStartsFromTooManySourcesAreRefusedForNewOnes(t *testing.T) {
 	clock.advance(throttled.RetryAfter)
 	if err := svc.ChargeRedirectStart("198.51.100.4"); err != nil {
 		t.Fatalf("a new source once the window ran out = %v, want it allowed", err)
+	}
+}
+
+// TestAnIPv4MappedAddressSharesItsIPv4AddressesBudget: "::ffff:a.b.c.d" is the
+// IPv4 address a.b.c.d as a dual-stack listener reports it, so it is counted as
+// that address — one client does not get a second budget by the form its
+// address arrives in.
+func TestAnIPv4MappedAddressSharesItsIPv4AddressesBudget(t *testing.T) {
+	svc, _, _ := newFixture(t)
+
+	for i := 0; i < 15; i++ {
+		if err := svc.ChargeRedirectStart("203.0.113.7"); err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+		if err := svc.ChargeRedirectStart("::ffff:203.0.113.7"); err != nil {
+			t.Fatalf("mapped start %d: %v", i, err)
+		}
+	}
+	for _, addr := range []string{"203.0.113.7", "::ffff:203.0.113.7"} {
+		if err := svc.ChargeRedirectStart(addr); !errors.Is(err, auth.ErrTooManyRedirectStarts) {
+			t.Fatalf("a start from %s after 30 from the address in both forms = %v, want ErrTooManyRedirectStarts", addr, err)
+		}
+	}
+	if err := svc.ChargeRedirectStart("::ffff:203.0.113.8"); err != nil {
+		t.Fatalf("a start from another mapped address = %v, want it allowed", err)
+	}
+}
+
+// TestTheRedirectStartLimitHoldsExactly4096Sources: the bound on how many
+// sources the limit remembers is 4096 — the 4096th new source is admitted and
+// the 4097th is not.
+func TestTheRedirectStartLimitHoldsExactly4096Sources(t *testing.T) {
+	svc, _, _ := newFixture(t)
+
+	var sources int
+	for i := 0; i < 1<<16; i++ {
+		if err := svc.ChargeRedirectStart(fmt.Sprintf("2001:db8:%x::1", i)); err != nil {
+			break
+		}
+		sources++
+	}
+	if sources != 4096 {
+		t.Fatalf("the limit admitted %d sources, want exactly 4096", sources)
+	}
+}
+
+// TestAFullRedirectStartLimitRetriesAfterTheOldestWindowEnds: with the table
+// full, a new source is told to come back when the OLDEST window it holds runs
+// out — the first moment a source can be let go — not a whole window from now.
+func TestAFullRedirectStartLimitRetriesAfterTheOldestWindowEnds(t *testing.T) {
+	svc, clock, _ := newFixture(t)
+
+	if err := svc.ChargeRedirectStart("198.51.100.1"); err != nil {
+		t.Fatalf("the oldest source's start = %v", err)
+	}
+	clock.advance(5 * time.Minute)
+	for i := 1; i < 4096; i++ {
+		if err := svc.ChargeRedirectStart(fmt.Sprintf("2001:db8:%x::1", i)); err != nil {
+			t.Fatalf("source %d = %v, want the table to fill to 4096", i, err)
+		}
+	}
+	err := svc.ChargeRedirectStart("198.51.100.2")
+	var throttled *auth.RedirectStartThrottledError
+	if !errors.As(err, &throttled) {
+		t.Fatalf("a new source with the table full = %v, want it refused", err)
+	}
+	if throttled.RetryAfter != 10*time.Minute {
+		t.Fatalf("Retry-After = %v, want 10m0s: the oldest window, opened 5m before the rest, ends then", throttled.RetryAfter)
+	}
+
+	clock.advance(throttled.RetryAfter)
+	if err := svc.ChargeRedirectStart("198.51.100.2"); err != nil {
+		t.Fatalf("a new source when the oldest window ran out = %v, want it allowed", err)
+	}
+	if err := svc.ChargeRedirectStart("198.51.100.3"); !errors.Is(err, auth.ErrTooManyRedirectStarts) {
+		t.Fatalf("a second new source with only the oldest window run out = %v, want it refused", err)
 	}
 }

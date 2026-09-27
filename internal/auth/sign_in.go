@@ -64,6 +64,12 @@ type SignInProviders interface {
 // link, no queue.
 var ErrUsernameCollision = errors.New("auth: a new external identity's username is already taken")
 
+// ErrExternalUsernameInvalid: a Sign-in provider accepted the credential, the
+// identity is new here, and the username it names breaks the rule every
+// username is held to (username.go). Nobody can be created under it, so it is a
+// refusal: nothing was created and no session was issued.
+var ErrExternalUsernameInvalid = errors.New("auth: a new external identity's username breaks the username rule")
+
 // ErrSignInProviderGone: the provider answered, but its Plugin was uninstalled
 // before the sign-in could write anything (ADR-0063 decision 10). A refusal, like
 // any other: nothing was created and no session was issued.
@@ -123,9 +129,10 @@ func (s *Service) signInExternally(ctx context.Context, username, password strin
 			continue
 		}
 		user, err := s.resolveExternalIdentity(p.ID(), answer)
-		if errors.Is(err, ErrSignInProviderGone) {
-			// Uninstalled since it answered: an answer from a Plugin that is no
-			// longer installed signs nobody in, exactly as a rejection does.
+		if errors.Is(err, ErrSignInProviderGone) || errors.Is(err, ErrExternalUsernameInvalid) {
+			// Uninstalled since it answered, or naming a new identity by a
+			// username nobody may hold: an answer the Server cannot act on signs
+			// nobody in, exactly as a rejection does.
 			continue
 		}
 		if err != nil {
@@ -200,7 +207,13 @@ func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User
 	if !passwordRuleAdmits(RoleMember, "", true) {
 		return store.User{}, ErrInvalidUser
 	}
-	user, err = s.store.CreateExternalMember(uuid.NewString(), answer.Username,
+	// The provider's username is held to the rule a local one is, and stored the
+	// same way; what the provider said is kept on the identity as it said it.
+	username, ok := normalizeUsername(answer.Username)
+	if !ok {
+		return store.User{}, ErrExternalUsernameInvalid
+	}
+	user, err = s.store.CreateExternalMember(uuid.NewString(), username,
 		providerID, answer.Subject, answer.Username, answer.Groups)
 	if err != nil {
 		// A concurrent first sign-in of the same identity may have won the insert —
