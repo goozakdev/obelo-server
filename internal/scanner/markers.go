@@ -100,22 +100,24 @@ func (sc *scanCtx) edlMarkers(path string, durationMs int64) []markers.Span {
 	return markers.ParseEDL(data, durationMs)
 }
 
-// namesIn lists dir, once a scan: every File of a folder looks in it for its
-// `.edl`, and a flat folder of N Files listed once per File would cost N
-// listings of N names. An unreadable folder has no names.
+// namesIn lists the `.edl` names in dir. It keeps the last folder's, and only
+// that one: the Files of a folder are looked up one after another, so a flat
+// folder of N Files costs one listing rather than N listings of N names, while
+// what the scan holds is bounded by one folder's `.edl` names rather than every
+// name of every folder it has listed. A folder looked up again after another is
+// listed again. An unreadable folder has no names.
 func (sc *scanCtx) namesIn(dir string) []string {
-	if names, ok := sc.dirNames[dir]; ok {
-		return names
+	if sc.edlNames != nil && sc.edlDir == dir {
+		return sc.edlNames
 	}
 	entries, _ := listDir(dir)
-	names := make([]string, len(entries))
-	for i, e := range entries {
-		names[i] = e.Name()
+	names := []string{}
+	for _, e := range entries {
+		if strings.EqualFold(filepath.Ext(e.Name()), ".edl") {
+			names = append(names, e.Name())
+		}
 	}
-	if sc.dirNames == nil {
-		sc.dirNames = map[string][]string{}
-	}
-	sc.dirNames[dir] = names
+	sc.edlDir, sc.edlNames = dir, names
 	return names
 }
 

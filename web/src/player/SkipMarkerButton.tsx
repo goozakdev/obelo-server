@@ -28,6 +28,18 @@ export const MARKER_LABELS: Record<string, string> = {
  * the video ends; the Title may then not count as watched, as with a failed one. */
 export const CREDITS_REPORT_TIMEOUT_MS = 5_000;
 
+/** How far short of the File's own end a Skip lands when the Marker runs to it. */
+export const SKIP_END_MARGIN_MS = 500;
+
+/** Where a Skip to endMs seeks: endMs, but at least SKIP_END_MARGIN_MS short of
+ * the File's end when its duration is known. Credits often run to the end of the
+ * File, and a seek landing exactly on the end leaves some players unable to play
+ * on; the Apple client stops short of it the same way. */
+export function skipTargetMs(endMs: number, durationMs: number): number {
+  if (!(durationMs > 0)) return endMs;
+  return Math.min(endMs, durationMs - SKIP_END_MARGIN_MS);
+}
+
 /** The recognized Marker containing positionMs (start inclusive, end exclusive),
  * or null. When Markers overlap, the one that started last wins — it is the
  * narrower thing the viewer is inside. */

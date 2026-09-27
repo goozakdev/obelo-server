@@ -461,3 +461,36 @@ func TestScannerListsAFolderOnceAScan(t *testing.T) {
 		t.Errorf("markers of the File with an .edl = %+v, want the .edl's", got)
 	}
 }
+
+// TestScannerKeepsOneFolderListingAtATime: a scan's `.edl` lookup holds the `.edl`
+// names of the folder it is in and nothing more — not every name of every folder
+// the scan has listed, which grows with the whole library. Its Files are looked
+// up together, so the one folder is still listed once for all of them.
+func TestScannerKeepsOneFolderListingAtATime(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	for _, name := range []string{"Heat (1995).mkv", "Heat (1995).EDL", "poster.jpg", "Heat (1995).en.srt"} {
+		writeFile(t, filepath.Join(a, name))
+	}
+	writeFile(t, filepath.Join(b, "Big (1988).mkv"))
+	listings := map[string]int{}
+	old := listDir
+	listDir = func(dir string) ([]os.DirEntry, error) {
+		listings[dir]++
+		return old(dir)
+	}
+	t.Cleanup(func() { listDir = old })
+
+	sc := &scanCtx{}
+	if got := sc.namesIn(a); !reflect.DeepEqual(got, []string{"Heat (1995).EDL"}) {
+		t.Errorf("names kept for %s = %q, want only its .edl", a, got)
+	}
+	sc.namesIn(a)
+	if listings[a] != 1 {
+		t.Errorf("one folder looked up twice in a row listed %d times, want once", listings[a])
+	}
+	sc.namesIn(b)
+	sc.namesIn(a)
+	if listings[a] != 2 {
+		t.Errorf("a folder looked up again after another was listed %d times, want twice: only the folder in hand is kept", listings[a])
+	}
+}

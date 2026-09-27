@@ -176,6 +176,10 @@ func (d *Detector) next(ctx context.Context) (job, bool) {
 // observes it.
 var lowerWorkerPriority = lowerThreadPriority
 
+// compareEnds is what each comparison of two episodes' ends calls; a test
+// observes it.
+var compareEnds = longestShared
+
 // run is the worker. It reads the queue and writes the store at normal
 // priority: a write takes the store's locks, and a thread at the lowest
 // priority must not sit holding them. Only the Go half of detection — the
@@ -345,7 +349,7 @@ func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, fo
 			b.compared++
 			var m shared
 			var ok bool
-			lowered(func() { m, ok = longestShared(a.head, b.head, p) })
+			lowered(func() { m, ok = compareEnds(a.head, b.head, p) })
 			if ok {
 				a.intro = append(a.intro, m)
 				b.intro = append(b.intro, m.swap())
@@ -353,7 +357,7 @@ func (d *Detector) detectSeason(ctx context.Context, s store.DetectionSeason, fo
 			if err := d.yield(ctx); err != nil {
 				return err
 			}
-			lowered(func() { m, ok = longestShared(a.tail, b.tail, p) })
+			lowered(func() { m, ok = compareEnds(a.tail, b.tail, p) })
 			if ok {
 				a.credits = append(a.credits, m)
 				b.credits = append(b.credits, m.swap())
