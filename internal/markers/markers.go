@@ -53,7 +53,8 @@ type Chapter struct {
 // "" when it describes none of the four. The rules are ordered: "Opening
 // Credits" is an Intro, not Credits, and "Previously on…" is a Recap even though
 // it mentions nothing about recaps. A leading chapter number — "05 - ",
-// "Chapter 5 - ", "Part C: " — is not part of the name and is read past.
+// "Chapter 5 - ", "Part C: ", "Ep 5 - ", "Part One - ", "Chapter XII - " — and
+// a leading article are not part of the name and are read past.
 // "Ending" names the Credits only as the first word of the name — the anime
 // "Ending", "Ending Theme" — and "End Title(s)" only as the whole name, because
 // "Alternate Ending" and "Dead End Title" are part of the story, and a Credits
@@ -92,20 +93,43 @@ func Classify(label string) string {
 }
 
 // withoutChapterNumber drops a leading chapter number from a label's words: a
-// number ("05"), or "chapter"/"part" and the number or letter after it
-// ("Chapter 5", "Part C").
+// number ("05"), or "chapter"/"part"/"episode"/"ep" and the number, letter,
+// spelled-out number or Roman numeral after it ("Chapter 5", "Part C",
+// "Part One", "Chapter XII", "Ep 5"). A leading article after it goes too, so
+// "The End Titles" is read as "End Titles".
 func withoutChapterNumber(words []string) []string {
 	isNumber := func(w string) bool {
 		return strings.Trim(w, "0123456789") == ""
 	}
+	isRoman := func(w string) bool {
+		return strings.Trim(w, "ivxlcdm") == ""
+	}
 	switch {
-	case len(words) >= 2 && (words[0] == "chapter" || words[0] == "part") && (isNumber(words[1]) || len(words[1]) == 1):
-		return words[2:]
+	case len(words) >= 2 && chapterWords[words[0]] &&
+		(isNumber(words[1]) || len(words[1]) == 1 || spelledNumbers[words[1]] || isRoman(words[1])):
+		words = words[2:]
 	case len(words) >= 1 && isNumber(words[0]):
-		return words[1:]
+		words = words[1:]
+	}
+	if len(words) >= 2 && articles[words[0]] {
+		words = words[1:]
 	}
 	return words
 }
+
+// chapterWords are the words a chapter number follows.
+var chapterWords = map[string]bool{"chapter": true, "part": true, "episode": true, "ep": true}
+
+// spelledNumbers are the spelled-out chapter numbers ("Part One").
+var spelledNumbers = map[string]bool{
+	"one": true, "two": true, "three": true, "four": true, "five": true,
+	"six": true, "seven": true, "eight": true, "nine": true, "ten": true,
+	"eleven": true, "twelve": true, "thirteen": true, "fourteen": true, "fifteen": true,
+	"sixteen": true, "seventeen": true, "eighteen": true, "nineteen": true, "twenty": true,
+}
+
+// articles are the leading words that are not part of a chapter's name.
+var articles = map[string]bool{"the": true, "a": true, "an": true}
 
 // FromChapters returns the Local markers a File's chapters identify: every
 // chapter whose title Classify recognizes. A chapter named "Chapter 3" names

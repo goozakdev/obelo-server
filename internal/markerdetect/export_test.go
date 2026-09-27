@@ -7,3 +7,14 @@ func SetLowerWorkerPriority(f func()) (restore func()) {
 	lowerWorkerPriority = f
 	return func() { lowerWorkerPriority = old }
 }
+
+// SetCompareEnds wraps what each comparison of two episodes' ends calls, for a
+// test to observe; the returned func puts it back.
+func SetCompareEnds(observe func()) (restore func()) {
+	old := compareEnds
+	compareEnds = func(a, b Print, p Params) (shared, bool) {
+		observe()
+		return old(a, b, p)
+	}
+	return func() { compareEnds = old }
+}

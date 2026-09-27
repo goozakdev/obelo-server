@@ -41,7 +41,7 @@ import { resolvePlayback } from "./playbackResolver";
 import { useOptionalFeature } from "../serverInfoContext";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
-import SkipMarkerButton, { CREDITS_REPORT_TIMEOUT_MS } from "./SkipMarkerButton";
+import SkipMarkerButton, { CREDITS_REPORT_TIMEOUT_MS, skipTargetMs } from "./SkipMarkerButton";
 import { useQueue } from "./queue/useQueue";
 import type { QueueEntry } from "./queue/model";
 import { formatTimecode } from "../time";
@@ -1695,6 +1695,13 @@ function CurrentPlayer({
     setCurrentTime(clamped);
     session.report(Math.floor(clamped * 1000), v.paused ? "paused" : "playing");
   }
+  // Seek to a Marker's end (ms) for its Skip, short of the File's own end
+  // (skipTargetMs). Uses the live element duration, falling back to state.
+  function skipTo(endMs: number) {
+    const v = videoRef.current;
+    const d = v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : duration;
+    seekTo(skipTargetMs(endMs, d * 1000) / 1000);
+  }
   function skip(deltaSeconds: number) {
     const v = videoRef.current;
     if (!v) return;
@@ -1857,7 +1864,7 @@ function CurrentPlayer({
             <SkipMarkerButton
               sessionId={status.decision.sessionId}
               positionMs={Math.floor(currentTime * 1000)}
-              onSkip={(ms) => seekTo(ms / 1000)}
+              onSkip={skipTo}
               onNextEpisode={nextEntry?.title.kind === "episode" ? playNextEpisode : undefined}
               showButton={surface === "stage"}
             />

@@ -265,8 +265,10 @@ type scanCtx struct {
 	// deletion, so its Files must stay present (ADR-0008, the subtree analogue of
 	// the unreachable-root guard).
 	unresolved []string
-	// dirNames is each folder's listing, read once a scan to find `.edl` files.
-	dirNames map[string][]string
+	// edlDir and edlNames are the folder the `.edl` lookup last listed and the
+	// `.edl` names in it (see namesIn).
+	edlDir   string
+	edlNames []string
 }
 
 // Scan performs an incremental synchronous scan of the Library's roots

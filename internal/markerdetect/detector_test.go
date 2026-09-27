@@ -657,8 +657,8 @@ func (w *writeWatchingStore) RecordDecode(path string, decoded bool) error {
 	return w.fakeStore.RecordDecode(path, decoded)
 }
 
-// TestStoreWritesAreNotMadeAtTheLowestPriority: only the listening and the
-// comparing run on the thread detection lowered to the lowest priority. The
+// TestStoreWritesAreNotMadeAtTheLowestPriority: the listening and the comparing,
+// and only they, run on the thread detection lowered to the lowest priority. The
 // store's writes take its locks, and a thread every other thread outranks must
 // not sit holding them while a viewer's request waits.
 func TestStoreWritesAreNotMadeAtTheLowestPriority(t *testing.T) {
@@ -668,7 +668,8 @@ func TestStoreWritesAreNotMadeAtTheLowestPriority(t *testing.T) {
 		libraries: map[string][]store.DetectionSeason{"lib": {season("s1", "/e1", "/e2")}},
 		enabled:   map[string]bool{"lib": true},
 	}}
-	var listeners sync.Map
+	var listeners, comparers sync.Map
+	t.Cleanup(markerdetect.SetCompareEnds(func() { comparers.Store(goroutineID(), true) }))
 	an := &failingAnalyzer{calls: make(chan string, 100), fail: func(string) error {
 		listeners.Store(goroutineID(), true)
 		return nil
@@ -686,6 +687,17 @@ func TestStoreWritesAreNotMadeAtTheLowestPriority(t *testing.T) {
 		}
 		return true
 	})
+	compared := 0
+	comparers.Range(func(g, _ any) bool {
+		compared++
+		if g.(string) != lowered {
+			t.Errorf("compared on goroutine %s, want the lowered one %s", g, lowered)
+		}
+		return true
+	})
+	if compared == 0 {
+		t.Error("no comparison was seen")
+	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if len(st.writers) == 0 {

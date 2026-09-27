@@ -166,3 +166,64 @@ func TestCreditsOnOnePartOfAMultiPartEditionIsIgnored(t *testing.T) {
 		t.Errorf("inside part 1's Credits: %+v, want the whole work still in progress", out)
 	}
 }
+
+// multiPartCreditsSession negotiates a session over twoPartEdition (1.5M + 1.2M)
+// whose Files carry the given Markers, and returns the Service and session id.
+func multiPartCreditsSession(t *testing.T, ms map[string][]store.Marker) (*Service, string) {
+	t.Helper()
+	ed := twoPartEdition()
+	for i := range ed.Files {
+		ed.Files[i].Streams = mp4File(1080, 6_000_000).Streams
+	}
+	st := &markerStore{ceilingStore: ceilingStore{detail: titleWith(ed)}, markers: ms}
+	svc := NewService(st, nil, "", Governance{})
+	sess := mustNegotiate(t, svc, Request{
+		UserID: "u1", TitleID: "t1", Profile: uhdProfile(),
+		Constraints: Constraints{MaxResolution: "2160p", MaxBitrate: 100_000_000},
+		Scope:       access.Scope{AllLibraries: true},
+	})
+	return svc, sess.ID
+}
+
+// TestCreditsOnTheLastPartOfAMultiPartEditionIsTheWatchedPoint: the last part's
+// Credits end the work, so crossing them — at their start on the whole-work
+// timeline, after every earlier part — marks the Title watched.
+func TestCreditsOnTheLastPartOfAMultiPartEditionIsTheWatchedPoint(t *testing.T) {
+	// Part 2's Credits at 700k sit at 58% of its 1.2M, so at 2.2M of the 2.7M work.
+	svc, sid := multiPartCreditsSession(t, map[string][]store.Marker{"f2": {
+		{Kind: "credits", Source: "local", StartMs: 700_000, EndMs: 1_200_000},
+	}})
+	out, err := svc.ReportProgress("u1", sid, 2_199_000, "", "")
+	if err != nil {
+		t.Fatalf("progress before credits: %v", err)
+	}
+	if out.Watched || out.ResumePositionMs != 2_199_000 {
+		t.Fatalf("just before the last part's Credits: %+v, want unwatched with resume 2199000", out)
+	}
+	out, err = svc.ReportProgress("u1", sid, 2_200_000, "", "")
+	if err != nil {
+		t.Fatalf("progress at credits: %v", err)
+	}
+	if !out.Watched || out.ResumePositionMs != 0 {
+		t.Errorf("at the last part's Credits (81%% of the work): %+v, want watched with resume cleared", out)
+	}
+	if got := svc.SessionWatchedPointMs(sid); got != -1 {
+		t.Errorf("SessionWatchedPointMs = %d, want -1: the session serves part 1's Markers, and none of them is the Watched point", got)
+	}
+}
+
+// TestCreditsBeforeHalfwayOfTheLastPartIsIgnored: the floor is measured on the
+// last part's own duration, as a single File's is on its own.
+func TestCreditsBeforeHalfwayOfTheLastPartIsIgnored(t *testing.T) {
+	// Part 2's Credits at 500k sit at 42% of its 1.2M (74% of the whole work).
+	svc, sid := multiPartCreditsSession(t, map[string][]store.Marker{"f2": {
+		{Kind: "credits", Source: "local", StartMs: 500_000, EndMs: 1_200_000},
+	}})
+	out, err := svc.ReportProgress("u1", sid, 2_100_000, "", "")
+	if err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+	if out.Watched {
+		t.Errorf("past Credits at 42%% of the last part: %+v, want in progress under the flat ceiling", out)
+	}
+}

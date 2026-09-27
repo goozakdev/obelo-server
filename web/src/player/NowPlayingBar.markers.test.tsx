@@ -7,7 +7,8 @@ import { useQueue } from "./queue/useQueue";
 
 // The Skip button (ADR-0065): on the stage, while the playback position is inside
 // a stored Marker of a kind the player recognizes, a "Skip …" button is shown;
-// pressing it seeks to the Marker's end. Outside every Marker there is none.
+// pressing it seeks to the Marker's end, or half a second short of the File's own
+// end when the Marker runs to it. Outside every Marker there is none.
 
 const { getTitle, startPlayback, reportProgress, endSession, getSessionMarkers } = vi.hoisted(
   () => ({
@@ -152,6 +153,18 @@ describe("NowPlayingBar — Skip button", () => {
     expect(reportProgress).toHaveBeenLastCalledWith(
       "sess-1",
       expect.objectContaining({ positionMs: 70_000 }),
+    );
+  });
+
+  it("pressing Skip on Credits that run to the end stops 500 ms short of it", async () => {
+    const video = await playToStage();
+    await waitFor(() => expect(getSessionMarkers).toHaveBeenCalled());
+    setPosition(video, 1_350);
+    fireEvent.click(await screen.findByTestId("skip-marker"));
+    expect(video.currentTime).toBe(1_399.5);
+    expect(reportProgress).toHaveBeenLastCalledWith(
+      "sess-1",
+      expect.objectContaining({ positionMs: 1_399_500 }),
     );
   });
 
