@@ -249,8 +249,7 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 
 func handleTestSubtitleProvider(deps Deps, slug string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		registration, ok := deps.Plugins.SubtitleProvider(slug)
-		if !ok {
+		if _, ok := deps.Plugins.SubtitleProvider(slug); !ok {
 			writeError(w, http.StatusUnprocessableEntity, codeProviderUnknown, "unknown subtitle provider: "+slug, nil)
 			return
 		}
@@ -274,9 +273,9 @@ func handleTestSubtitleProvider(deps Deps, slug string) http.HandlerFunc {
 		if req.BaseURL != nil {
 			baseURL = strings.TrimSpace(*req.BaseURL)
 		}
-		if baseURL == "" {
-			baseURL = registration.Descriptor.DefaultURL
-		}
+		// An empty baseURL is left empty: BuildProvider fills in the
+		// Descriptor's default itself, and knowing the Admin typed none is what keeps
+		// that default from counting as an address the operator chose.
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()

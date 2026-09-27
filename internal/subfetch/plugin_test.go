@@ -255,3 +255,27 @@ func TestBuildProviderResolvesSettings(t *testing.T) {
 		t.Fatalf("settings URL = %q, want the operator's override", got.URL)
 	}
 }
+
+// TestBuildProviderSaysWhetherAnAdminEnteredTheURL: the operator's override is a
+// URL an Admin typed, the registration's default is not, and the second URL is
+// always the default here.
+func TestBuildProviderSaysWhetherAnAdminEnteredTheURL(t *testing.T) {
+	var got pluginapi.Settings
+	reg := pluginapi.NewRegistry()
+	reg.RegisterSubtitleProvider(pluginapi.SubtitleProviderRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "fake", DefaultURL: "https://fake.test/api", DefaultURL2: "https://dl.fake.test"},
+		New: func(s pluginapi.Settings) (pluginapi.SubtitleProvider, error) {
+			got = s
+			return &fakePlugin{}, nil
+		},
+	})
+
+	BuildProvider(reg, []store.SubtitleProviderRow{{Slug: "fake", Enabled: true}})
+	if got.URLEntered || got.URL2Entered {
+		t.Fatalf("entered = %v/%v with no override, want false/false", got.URLEntered, got.URL2Entered)
+	}
+	BuildProvider(reg, []store.SubtitleProviderRow{{Slug: "fake", Enabled: true, BaseURL: "https://mirror.test"}})
+	if !got.URLEntered || got.URL2Entered {
+		t.Fatalf("entered = %v/%v with an override, want true/false", got.URLEntered, got.URL2Entered)
+	}
+}

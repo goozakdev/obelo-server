@@ -560,3 +560,27 @@ func TestSeedIfEmpty(t *testing.T) {
 		}
 	})
 }
+
+// TestSettingsToProviderConfigSaysWhichURLsAnAdminEntered: a row's override is a
+// URL the operator typed and the Descriptor's default is not, and the Settings a
+// Plugin is built from carry that difference — it is what the plugin host's fetch
+// policy reads to decide which addresses are the operator's own.
+func TestSettingsToProviderConfigSaysWhichURLsAnAdminEntered(t *testing.T) {
+	rows := []store.MetadataProviderRow{
+		{Slug: SlugTMDB, Enabled: true, APIKey: "tk", ImageBaseURL: "http://img.stub"},
+		{Slug: SlugMusicBrainz, Enabled: true, BaseURL: "http://mb.stub"},
+	}
+	cfg := shippedCatalog().SettingsToProviderConfig(rows, "en-GB", FixedProviderInputs{})
+
+	tmdb := cfg.providerSettings(SlugTMDB)
+	if tmdb.URLEntered || !tmdb.URL2Entered {
+		t.Errorf("tmdb entered = %v/%v, want false (default) / true (override)", tmdb.URLEntered, tmdb.URL2Entered)
+	}
+	mb := cfg.providerSettings(SlugMusicBrainz)
+	if !mb.URLEntered || mb.URL2Entered {
+		t.Errorf("musicbrainz entered = %v/%v, want true (override) / false (default)", mb.URLEntered, mb.URL2Entered)
+	}
+	if mb.URL != "http://mb.stub" || mb.URL2 != shippedCoverArtBaseURL(t) {
+		t.Errorf("musicbrainz urls = %q/%q, want the override and the default", mb.URL, mb.URL2)
+	}
+}

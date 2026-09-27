@@ -100,6 +100,12 @@ type ProviderSettings struct {
 	URL     string
 	URL2    string
 	Enabled bool
+	// URLSet and URL2Set say the operator set URL or URL2 — from the environment or
+	// through SetProviderURL/SetProviderURL2 — rather than leaving the table's
+	// default. A URL the operator chose gets the plugin fetch policy's operator
+	// exemption; a default does not.
+	URLSet  bool
+	URL2Set bool
 }
 
 // defaultProviders is the Providers map Defaults() starts from: every URL field the
@@ -128,6 +134,17 @@ func setProviderField(p *ProviderSettings, field ProviderField, value string) {
 		p.URL = value
 	case ProviderFieldURL2:
 		p.URL2 = value
+	}
+}
+
+// markProviderFieldSet records that the operator, not the table's default, filled
+// a URL field (ProviderSettings.URLSet, URL2Set).
+func markProviderFieldSet(p *ProviderSettings, field ProviderField) {
+	switch field {
+	case ProviderFieldURL:
+		p.URLSet = true
+	case ProviderFieldURL2:
+		p.URL2Set = true
 	}
 }
 
@@ -169,6 +186,7 @@ func (c *Config) SetProviderEnabled(id string, on bool) {
 func (c *Config) SetProviderURL(id, url string) {
 	p := c.provider(id)
 	p.URL = url
+	p.URLSet = true
 	c.setProvider(id, p)
 }
 
@@ -176,6 +194,7 @@ func (c *Config) SetProviderURL(id, url string) {
 func (c *Config) SetProviderURL2(id, url string) {
 	p := c.provider(id)
 	p.URL2 = url
+	p.URL2Set = true
 	c.setProvider(id, p)
 }
 

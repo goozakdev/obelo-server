@@ -161,13 +161,17 @@ func lyricsFixtureRoot(t *testing.T) string {
 func lyricProviderServer(t *testing.T, providers map[string]*lyricSource) (*testharness.Server, string, string, string, map[string]string) {
 	t.Helper()
 	dataDir := t.TempDir()
+	// Each source is the plugin's manifest default on 127.0.0.1, which the fetch
+	// policy refuses unless the address is named as exempt.
+	var sources []string
 	for id, src := range providers {
 		plugintest.Install(t, dataDir, plugintest.LyricManifest(id, src.srv.URL))
+		sources = append(sources, src.srv.Listener.Addr().String())
 	}
 	album := fetchedLyricsFixture(t)
 	root := filepath.Dir(filepath.Dir(album))
 
-	srv := testharness.New(t, testharness.WithDataDir(dataDir))
+	srv := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithPluginFetchesExemptAt(sources...))
 	token := adminToken(t, srv)
 	libID := createMusicLibrary(t, srv, token, root)
 	scanLib(t, srv, token, libID, "")

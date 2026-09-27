@@ -107,9 +107,15 @@ type ProviderConfig struct {
 // one for the rare source whose images come from elsewhere. It is the pair
 // pluginapi.Settings carries as URL and URL2, resolved from the row's overrides or
 // the Descriptor's defaults.
+//
+// URLEntered and URL2Entered say which of the two was the row's override — typed
+// by an Admin — rather than the default; they become the Settings fields of the
+// same names, which is what the plugin host's fetch policy reads.
 type ProviderEndpoint struct {
-	URL  string
-	URL2 string
+	URL         string
+	URL2        string
+	URLEntered  bool
+	URL2Entered bool
 }
 
 // videoAuthoritativeSlug is the slug of the Full provider that leads the video
@@ -153,11 +159,13 @@ func (c ProviderConfig) providerKey(slug string) string {
 func (c ProviderConfig) providerSettings(slug string) pluginapi.Settings {
 	e := c.ProviderEndpoints[slug]
 	s := pluginapi.Settings{
-		Enabled:  true,
-		Secret:   c.providerKey(slug),
-		URL:      e.URL,
-		URL2:     e.URL2,
-		Language: c.MetadataLanguage,
+		Enabled:     true,
+		Secret:      c.providerKey(slug),
+		URL:         e.URL,
+		URL2:        e.URL2,
+		URLEntered:  e.URLEntered,
+		URL2Entered: e.URL2Entered,
+		Language:    c.MetadataLanguage,
 	}
 	if c.RateLimitMillis != nil {
 		// Copied, not aliased: a Plugin holds its Settings for its lifetime and two

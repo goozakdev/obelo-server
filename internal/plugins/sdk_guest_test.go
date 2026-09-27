@@ -69,6 +69,9 @@ func sdkInstall(t *testing.T, dataDir, id, mode string, allowedHosts ...string) 
 		Secret:  "an-operator-key",
 		URL:     m.Settings.DefaultURL,
 		URL2:    m.Settings.DefaultURL2,
+		// As if the Admin typed the stand-in's address, which is what makes a
+		// loopback source reachable.
+		URLEntered: true,
 	}
 }
 
@@ -569,6 +572,7 @@ func TestASDKBuiltGuestSubtitleSeamAnswersUnavailableWhenTheCallersOwnDeadlineIs
 		Enabled:         true,
 		Secret:          "an-operator-key",
 		URL:             source.URL,
+		URLEntered:      true,
 		RateLimitMillis: &limit,
 	}
 
@@ -651,6 +655,7 @@ func TestASubtitleCallQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 		Enabled:         true,
 		Secret:          "an-operator-key",
 		URL:             source.URL,
+		URLEntered:      true,
 		RateLimitMillis: &limit,
 	}
 
@@ -822,6 +827,7 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 		Enabled:         true,
 		Secret:          "an-operator-key",
 		URL:             source.URL,
+		URLEntered:      true,
 		RateLimitMillis: &limit,
 	}
 

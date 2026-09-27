@@ -87,7 +87,7 @@ func (g *guestMarkerProvider) Markers(ctx context.Context, req pluginapi.Markers
 		return pluginapi.MarkersCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout, queueInBudget: true}
-	if err := g.p.callGuestUnder(ctx, policy, exportMarkerProviderMarkers, hostOf(g.settings.URL), buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportMarkerProviderMarkers, addrsOf(g.settings), buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.MarkersResponse{}, err
 		}

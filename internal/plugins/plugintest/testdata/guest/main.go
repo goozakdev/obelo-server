@@ -661,7 +661,7 @@ func metadataLookup(ptr, n uint32) uint64 {
 		// which the host drops in favour of its own identity, and an ordinary one,
 		// which travels. What came back is reported as a sentence the test reads:
 		// how many bytes arrived, or the refusal that stopped them.
-		resp := fetch(fetchRequest{URL: s.URL2, Headers: []header{
+		resp := fetch(fetchRequest{URL: fetchTarget(s), Headers: []header{
 			{Name: "User-Agent", Value: guestAgent},
 			{Name: "X-Guest-Header", Value: "yes"},
 		}})
@@ -889,6 +889,20 @@ func musicKind(kind string) bool {
 // because the suite only needs one image to travel, and because a role the host
 // does not file for that kind is refused at the store rather than silently kept.
 func artworkRole(string) string { return "poster" }
+
+// fetchTarget is what fetch-once asks for: the URL the operator's URL names in
+// `obelo-fetch=` (query-escaped) when it names one, otherwise URL2. URL2 is an
+// operator's own address too, so a test after a URL the operator did NOT type
+// puts it here.
+func fetchTarget(s providerSettings) string {
+	u, err := url.Parse(s.URL)
+	if err == nil {
+		if t := u.Query().Get("obelo-fetch"); t != "" {
+			return t
+		}
+	}
+	return s.URL2
+}
 
 func mode(target string) string {
 	const marker = "obelo-mode="

@@ -98,7 +98,7 @@ var _ pluginapi.SubtitleProvider = (*guestSubtitleProvider)(nil)
 // callers below do) tells the guest what is left once any lock wait is over,
 // not the seam's nominal budget.
 func (g *guestSubtitleProvider) call(ctx context.Context, export string, buildReq func(callCtx context.Context) any, out any) error {
-	return g.p.callGuestUnder(ctx, callPolicy{budget: g.p.subtitleCallBudget}, export, hostOf(g.settings.URL), buildReq, out)
+	return g.p.callGuestUnder(ctx, callPolicy{budget: g.p.subtitleCallBudget}, export, addrsOf(g.settings), buildReq, out)
 }
 
 // SearchSubtitles asks the guest for the candidates it offers for one Title in

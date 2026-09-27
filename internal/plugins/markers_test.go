@@ -45,7 +45,7 @@ func TestAnInstalledMarkerProviderRegistersAndAnswers(t *testing.T) {
 	if d.ExtensionPoint != pluginapi.ExtensionMarkerProvider || !d.Serves(pluginapi.KindVideo) || d.DefaultURL != source.URL {
 		t.Fatalf("descriptor = %+v, want a marker-provider serving video from %s", d, source.URL)
 	}
-	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: d.DefaultURL})
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: d.DefaultURL, URLEntered: true})
 	if err != nil {
 		t.Fatalf("building the provider: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestMarkerCallsBehindAHungGuestEndWithinTheCallTimeout(t *testing.T) {
 	if !ok {
 		t.Fatal("the Set registered no Marker provider for example-markers")
 	}
-	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: source.URL})
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: source.URL, URLEntered: true})
 	if err != nil {
 		t.Fatalf("building the provider: %v", err)
 	}

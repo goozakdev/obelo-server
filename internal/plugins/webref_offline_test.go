@@ -40,7 +40,7 @@ func TestAnOfflineCallRefusesEveryFetchBeforeItIsSent(t *testing.T) {
 	h := &hostFuncs{p: p}
 	req := pluginapi.FetchRequest{URL: source.URL + "/probe"}
 
-	if err := p.beginCall(normalizeHost(target.Hostname()), false); err != nil {
+	if err := p.beginCall(addrOf(target.String()), false); err != nil {
 		t.Fatal(err)
 	}
 	if resp := h.fetch(context.Background(), req); resp.Status != http.StatusOK || hits.Load() != 1 {
@@ -49,7 +49,7 @@ func TestAnOfflineCallRefusesEveryFetchBeforeItIsSent(t *testing.T) {
 	}
 	p.endCall()
 
-	if err := p.beginCall(normalizeHost(target.Hostname()), true); err != nil {
+	if err := p.beginCall(addrOf(target.String()), true); err != nil {
 		t.Fatal(err)
 	}
 	resp := h.fetch(context.Background(), req)

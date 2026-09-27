@@ -922,6 +922,7 @@ func FromEnv() Config {
 			p.Enabled = on
 		} else {
 			setProviderField(&p, b.Field, v)
+			markProviderFieldSet(&p, b.Field)
 		}
 		c.setProvider(b.Provider, p)
 	}

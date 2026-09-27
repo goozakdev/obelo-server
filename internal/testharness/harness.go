@@ -385,6 +385,21 @@ func WithPluginSourcesFromPrivateAddresses() Option {
 	}
 }
 
+// WithPluginFetchesExemptAt has a guest's fetch treat each host:port address named
+// as the operator's own, at the lookup and the dial.
+//
+// The suite serves a Lyric or Marker plugin's source from an httptest.Server on
+// 127.0.0.1, and that source is the plugin's manifest DEFAULT — which the fetch
+// policy refuses on a private address, because a default is the plugin author's
+// choice and not the operator's. There is no hermetic public address to serve it
+// from instead. Nothing else about the fetch changes, and the refusal itself is
+// asserted by tests that do NOT pass this option.
+func WithPluginFetchesExemptAt(addrs ...string) Option {
+	return func(b *builder) {
+		b.appOpts = append(b.appOpts, app.WithPluginFetchesExemptAt(addrs...))
+	}
+}
+
 // WithKeyRotation points the key-rotation channel (ADR-0032, layer 2) at a stub
 // endpoint with a known decryption key, and sets the re-poll interval (0 = fetch on
 // startup / on demand only, no periodic timer — the deterministic choice for a

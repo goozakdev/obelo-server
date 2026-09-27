@@ -210,6 +210,13 @@ type options struct {
 	// production a pasted URL that resolves into loopback/RFC1918/link-local space
 	// is refused, because a plugin is code this server will run.
 	pluginSourcesMayBePrivate bool
+	// pluginFetchesExemptAt are host:port addresses a guest's fetch treats as the
+	// operator's own (plugins.Options.ExemptFetchAddrs). TESTS ONLY: the suite
+	// serves a Lyric or Marker plugin's default source from an httptest.Server on
+	// 127.0.0.1, which a manifest default may not reach. Nothing but
+	// WithPluginFetchesExemptAt sets it; no config value or environment variable
+	// is read into it.
+	pluginFetchesExemptAt []string
 	// subtitleProviderBuilder overrides how the subtitle-fetch Manager composes a
 	// SubtitleProvider from settings (default: subfetch.BuildProvider). It is the
 	// test seam for the fetch flow: a black-box test maps settings → a fake
@@ -331,6 +338,20 @@ func WithMetadataPlugins(regs ...pluginapi.MetadataProviderRegistration) Option 
 // refusal itself is asserted by a test that does NOT pass this option.
 func WithPluginSourcesFromPrivateAddresses() Option {
 	return func(o *options) { o.pluginSourcesMayBePrivate = true }
+}
+
+// WithPluginFetchesExemptAt has a guest's fetch treat each host:port address
+// named as the operator's own, at the lookup and the dial — the exemption a URL an
+// Admin typed gets.
+//
+// It exists for one reason: the black-box suite serves a Lyric or Marker plugin's
+// source from an httptest.Server, which binds 127.0.0.1, and that source is the
+// plugin's manifest DEFAULT, which the fetch policy refuses on a private address.
+// There is no hermetic public address to serve it from instead. Nothing else about
+// the fetch changes, and the refusal itself is asserted by tests that do NOT pass
+// this option. It is kept apart from WithPluginOptions so the two compose.
+func WithPluginFetchesExemptAt(addrs ...string) Option {
+	return func(o *options) { o.pluginFetchesExemptAt = append(o.pluginFetchesExemptAt, addrs...) }
 }
 
 func WithPluginOptions(opts plugins.Options) Option {
@@ -647,6 +668,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// no database at all — a Plugin that cannot cache a cursor is a slower Plugin,
 	// not a broken server.
 	pluginOpts := o.pluginOptions
+	if len(o.pluginFetchesExemptAt) > 0 {
+		pluginOpts.ExemptFetchAddrs = append(append([]string(nil), pluginOpts.ExemptFetchAddrs...), o.pluginFetchesExemptAt...)
+	}
 	if pluginOpts.KV == nil {
 		pluginOpts.KV = db
 	}
@@ -1896,7 +1920,9 @@ func providerConfigFromConfig(cfg config.Config) enrich.ProviderConfig {
 		ProviderActive:    map[string]bool{},
 	}
 	for id, p := range cfg.Providers {
-		out.ProviderEndpoints[id] = enrich.ProviderEndpoint{URL: p.URL, URL2: p.URL2}
+		// A URL the operator set in the environment or the config is theirs, as a
+		// URL an Admin typed is; one left at its shipped default is not.
+		out.ProviderEndpoints[id] = enrich.ProviderEndpoint{URL: p.URL, URL2: p.URL2, URLEntered: p.URLSet, URL2Entered: p.URL2Set}
 		// A source is on when it holds a key or was explicitly opted in — the same
 		// rule the settings derivation applies to a row, asked of the environment.
 		out.ProviderActive[id] = p.Key != "" || p.Enabled

@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -162,9 +163,19 @@ type Options struct {
 	// the only sanctioned way to build one; a client supplied here is GUARDED
 	// rather than trusted, so the redirect policy cannot be wired away.
 	HTTPClient *http.Client
+	// ExemptFetchAddrs are host:port addresses a guest's fetch treats as the
+	// operator's own, at the lookup and the dial, whatever URL led there. IT IS
+	// FOR TESTS AND FOR NOTHING ELSE: a suite serves a plugin's default source from
+	// an httptest.Server on 127.0.0.1, which a default URL may not reach, and
+	// there is no hermetic public address to serve it from instead. No config
+	// value, environment variable or API sets it; production leaves it empty.
+	ExemptFetchAddrs []string
 	// Logf is where the audit lines and the failure records go. Nil means the
 	// server log.
 	Logf func(format string, args ...any)
+	// operatorClient is HTTPClient for a fetch to the operator's own host, built
+	// beside it in withDefaults (dialCheckedClients).
+	operatorClient *http.Client
 
 	// --- issue 11: the plugin-scoped key-value store -------------------------
 
@@ -256,6 +267,16 @@ func (o Options) withDefaults() Options {
 	if o.HTTPClient.Timeout == 0 {
 		o.HTTPClient.Timeout = o.FetchTimeout
 	}
+	o.HTTPClient, o.operatorClient = dialCheckedClients(o.HTTPClient)
+	// Spelled as the fetch policy compares addresses (dialKey), into a slice of
+	// its own so the caller's is never written through.
+	exempt := make([]string, 0, len(o.ExemptFetchAddrs))
+	for _, a := range o.ExemptFetchAddrs {
+		if host, port, err := net.SplitHostPort(a); err == nil {
+			exempt = append(exempt, dialKey(host, port))
+		}
+	}
+	o.ExemptFetchAddrs = exempt
 	if o.Logf == nil {
 		o.Logf = log.Printf
 	}
@@ -357,10 +378,10 @@ type Plugin struct {
 	withheldLog bool
 
 	mu sync.Mutex
-	// target is the host of the URL the Admin configured, for the duration of one
-	// call. It is what makes "the operator chose this one" a fact the fetch policy
+	// targets are the host and port (addrsOf) of each URL the Admin configured, for
+	// the duration of one call. They are what makes "the operator chose this one" a fact the fetch policy
 	// can read without the guest being able to claim it.
-	target string
+	targets []string
 	// offline is true for the duration of a call made under a no-network policy
 	// (callPolicy.offline), and http_fetch refuses everything while it is.
 	offline bool
@@ -592,12 +613,12 @@ func (p *Plugin) allows(host string) bool {
 	return ok
 }
 
-// operatorHost is the host of the URL the Admin typed for this Plugin, valid only
-// while a call is in flight.
-func (p *Plugin) operatorHost() string {
+// operatorAddrs are the host and port (addrsOf) of each URL the Admin typed for
+// this Plugin, valid only while a call is in flight.
+func (p *Plugin) operatorAddrs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.target
+	return p.targets
 }
 
 // recordViolation counts a fetch the manifest did not license. Violations are
@@ -698,18 +719,18 @@ func (p *Plugin) clearFailures() {
 // beginCall takes the Plugin's permission to run and records the operator's
 // target for the fetch policy, or reports why the call will not happen.
 func (p *Plugin) beginCall(target string, offline bool) error {
-	return p.beginCallUnder(target, callPolicy{offline: offline})
+	return p.beginCallUnder([]string{target}, callPolicy{offline: offline})
 }
 
 // beginCallUnder is beginCall, recording what of policy the host functions read
 // while the call runs.
-func (p *Plugin) beginCallUnder(target string, policy callPolicy) error {
+func (p *Plugin) beginCallUnder(targets []string, policy callPolicy) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.disabled {
 		return fmt.Errorf("%w: %s", ErrDisabled, p.lastError)
 	}
-	p.target = target
+	p.targets = targets
 	p.offline = policy.offline
 	p.violationNoStrike = policy.violationNoStrike
 	return nil
@@ -720,7 +741,7 @@ func (p *Plugin) beginCallUnder(target string, policy callPolicy) error {
 func (p *Plugin) endCall() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.target = ""
+	p.targets = nil
 	p.offline = false
 	p.violationNoStrike = false
 }
@@ -849,8 +870,8 @@ func outcomeOnly(describe string, err error, timedOut bool) error {
 // callGuest makes one call into the guest under the DEFAULT policy: the Event
 // sink's. A Metadata provider and a Subtitle provider call callGuestUnder with
 // their own budgets (ADR-0059 decision 6).
-func (p *Plugin) callGuest(ctx context.Context, export string, target string, buildReq func(callCtx context.Context) any, out any) error {
-	return p.callGuestUnder(ctx, callPolicy{budget: p.opts.CallTimeout}, export, target, buildReq, out)
+func (p *Plugin) callGuest(ctx context.Context, export string, targets []string, buildReq func(callCtx context.Context) any, out any) error {
+	return p.callGuestUnder(ctx, callPolicy{budget: p.opts.CallTimeout}, export, targets, buildReq, out)
 }
 
 // callGuestUnder makes one call into the guest, serialized, under a deadline,
@@ -866,7 +887,7 @@ func (p *Plugin) callGuest(ctx context.Context, export string, target string, bu
 // seam whose request carries no Settings (metadata.go, which hands its
 // Settings to the guest through settings_get instead) just returns the same
 // req every time.
-func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export string, target string, buildReq func(callCtx context.Context) any, out any) error {
+func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export string, targets []string, buildReq func(callCtx context.Context) any, out any) error {
 	budget := policy.budget
 	if budget <= 0 {
 		budget = p.opts.CallTimeout
@@ -891,7 +912,7 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 	}
 	// The operator's URL for this call, readable by the fetch policy and by
 	// nothing else.
-	if err := p.beginCallUnder(target, policy); err != nil {
+	if err := p.beginCallUnder(targets, policy); err != nil {
 		return err
 	}
 	defer p.endCall()

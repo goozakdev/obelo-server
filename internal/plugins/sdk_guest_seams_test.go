@@ -79,7 +79,7 @@ func TestASDKBuiltGuestAnswersAsALyricProvider(t *testing.T) {
 	if !ok {
 		t.Fatal("the Set registered no Lyric provider for sdk-lyrics")
 	}
-	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL})
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL, URLEntered: true})
 	if err != nil {
 		t.Fatalf("building the provider: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestASDKBuiltGuestAnswersAsAMarkerProvider(t *testing.T) {
 	if !ok {
 		t.Fatal("the Set registered no Marker provider for sdk-markers")
 	}
-	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL})
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL, URLEntered: true})
 	if err != nil {
 		t.Fatalf("building the provider: %v", err)
 	}

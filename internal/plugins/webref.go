@@ -92,7 +92,7 @@ func (g *guestWebReferenceProvider) Links(ctx context.Context, req pluginapi.Web
 		return pluginapi.WebReferencesCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout, offline: true}
-	if err := g.p.callGuestUnder(ctx, policy, exportWebReferenceLinks, "", buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportWebReferenceLinks, nil, buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.WebReferencesResponse{}, err
 		}

@@ -470,3 +470,41 @@ func TestDisablingAnInstalledSubtitleProviderFallsBackToTheRest(t *testing.T) {
 		t.Fatalf("a provider an Admin switched off reads as %+v, want listed, off, with its key and no error", p)
 	}
 }
+
+// TestTestConnectionReachesAPrivateDefaultOnlyWhenAnAdminTypesIt: an Installed
+// subtitle provider whose manifest DEFAULT is a loopback source is the plugin
+// author's choice of address, not the operator's, so "Test connection" with no
+// URL typed is refused before it reaches it. The same address typed by the
+// Admin in the request is the operator's own, and is reached.
+func TestTestConnectionReachesAPrivateDefaultOnlyWhenAnAdminTypesIt(t *testing.T) {
+	dataDir := t.TempDir()
+	source := newSubtitleSourceServer(t, "9002", "Hallo")
+	manifest := plugintest.SubtitleManifest("default-subs")
+	manifest.Settings.DefaultURL = source.srv.URL
+	plugintest.Install(t, dataDir, manifest)
+
+	srv := testharness.New(t, testharness.WithDataDir(dataDir))
+	token := adminToken(t, srv)
+	configureProvider(t, srv, token, map[string]any{"slug": "default-subs", "enabled": true, "apiKey": "sk-test"})
+
+	var probe struct {
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	}
+	status, body := srv.JSON(http.MethodPost, "/api/v1/settings/subtitle-providers/default-subs/test", token, nil, &probe)
+	if status != http.StatusOK || probe.OK {
+		t.Fatalf("Test connection against the manifest's private default = %d %+v, want a refusal; body: %s", status, probe, body)
+	}
+	if searches, _, _, _, _ := source.seen(); searches != 0 {
+		t.Fatalf("the private default was reached %d times with no URL typed", searches)
+	}
+
+	status, body = srv.JSON(http.MethodPost, "/api/v1/settings/subtitle-providers/default-subs/test", token,
+		map[string]any{"baseURL": source.srv.URL}, &probe)
+	if status != http.StatusOK || !probe.OK {
+		t.Fatalf("Test connection against the Admin's typed URL = %d %+v, want ok; body: %s", status, probe, body)
+	}
+	if searches, _, _, _, _ := source.seen(); searches != 1 {
+		t.Fatalf("the Admin's own URL was reached %d times, want 1", searches)
+	}
+}

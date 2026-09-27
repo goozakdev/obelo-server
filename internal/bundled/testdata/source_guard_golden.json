@@ -1,38 +1,38 @@
 {
   "anidb": {
-    "version": "1.0.10",
-    "hash": "a539b9d670f44adb00eb8526ed49718f95a1795283efa8f74ba0d7abd5b2b32a"
+    "version": "1.0.11",
+    "hash": "55af2ce0952f1a3270718d4ed2983b2e2c1bcad72a497349f8fca193b421ad54"
   },
   "fanarttv": {
-    "version": "1.0.10",
-    "hash": "3afa9650dc204fed9e396c385e8e939a413d6082cb7da190683f64e6ff4c05e6"
+    "version": "1.0.11",
+    "hash": "f7eb3467e16bf801700b8bf68001494e417bf6b53642a84b6bb65bf0b73c013e"
   },
   "musicbrainz": {
-    "version": "1.1.9",
-    "hash": "4088c0e5f5dd9a1fdcc3776e7c0c6921c32bf290df1743739947073c35d64945"
+    "version": "1.1.10",
+    "hash": "781c830fce7dee54a08e831a0bf47394809dc075d2869ce4a6e1c0d740bb209b"
   },
   "oidc": {
-    "version": "1.0.6",
-    "hash": "76b20c5f1f7a8b03c6c12c24236be4a461ade5959dde76042663d52a7b94c3e2"
+    "version": "1.0.7",
+    "hash": "978ab4a1e8588ed6ac0d4305c207e65bac5665cdfe4f3add378580d194a1e9cc"
   },
   "omdb": {
-    "version": "1.0.9",
-    "hash": "9d5e77c550ad420fb93fb6887fc636b0e61c4f8f82555f431524d11b3b0f7aba"
+    "version": "1.0.10",
+    "hash": "94e3f915e8e10648608b7d56dd861b28cbf172a6a7c864bb0de61772ddd53bbd"
   },
   "opensubtitles": {
-    "version": "1.0.9",
-    "hash": "056e26f8c7c53a35282a040434ef3ad3df200b33337bf7a495d5848d56a9f607"
+    "version": "1.0.10",
+    "hash": "195c331476b45932baf2e7a4def9a111b06bf2480f7827525dbfbc442b2c9934"
   },
   "theaudiodb": {
-    "version": "1.0.9",
-    "hash": "2e5709b02a91d019fb587ebe90031fd40b0c950755c73fcd017c1c451a155545"
+    "version": "1.0.10",
+    "hash": "4e4e3bd73b1fecce74b1efd639eed73517994cd35c561ee653b8698f74d3c70f"
   },
   "thetvdb": {
-    "version": "1.0.9",
-    "hash": "97065f55c804493d1b45acdbd97aadf40423c3382eb1d23e6bba6fa670805882"
+    "version": "1.0.10",
+    "hash": "7f099af5b44dda82691028de196c44b77025616acc348f63d42700fd5f98469c"
   },
   "tmdb": {
-    "version": "1.0.9",
-    "hash": "0028f74d98998577c6c6c063f8a9d16d1eb046d276bedd80703935eba3c4ba66"
+    "version": "1.0.10",
+    "hash": "a305283b821b60b04a2a87c2da08570eca9c0f3506365a1e48244aa75491f4df"
   }
 }
