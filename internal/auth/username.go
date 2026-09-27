@@ -21,8 +21,9 @@ import (
 // Uniqueness ignores case and compatibility forms (store.UsernameKey), because
 // the store makes that comparison inside the insert's transaction.
 //
-// A username an Admin or setup chooses is local, and is trimmed of surrounding
-// whitespace first (localUsername); one a provider names is judged as named.
+// Whoever chooses it, a username is trimmed of surrounding whitespace first: a
+// local one (localUsername) and one a provider names (providerUsername). A
+// provider is still asked about the username as typed.
 const maxUsernameLength = 64
 
 // UsernameRule is the rule as a person reads it, for the api layer's refusals.
@@ -31,6 +32,12 @@ const UsernameRule = "a username is 1 to 64 characters, with no control, format 
 // localUsername is a username typed here — at setup, by an Admin, or at sign-in —
 // without the whitespace around it.
 func localUsername(username string) string {
+	return strings.TrimSpace(username)
+}
+
+// providerUsername is a username a Sign-in provider named without the whitespace
+// around it, so "ada " is the name "ada" it would otherwise pass for.
+func providerUsername(username string) string {
 	return strings.TrimSpace(username)
 }
 

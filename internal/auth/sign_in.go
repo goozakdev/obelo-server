@@ -207,9 +207,10 @@ func (s *Service) holderOf(providerID string, answer ExternalAnswer) (store.User
 	if !passwordRuleAdmits(RoleMember, "", true) {
 		return store.User{}, ErrInvalidUser
 	}
-	// The provider's username is held to the rule a local one is, and stored the
-	// same way; what the provider said is kept on the identity as it said it.
-	username, ok := normalizeUsername(answer.Username)
+	// The provider's username is trimmed and held to the rule a local one is, and
+	// stored the same way; what the provider said is kept on the identity as it
+	// said it.
+	username, ok := normalizeUsername(providerUsername(answer.Username))
 	if !ok {
 		return store.User{}, ErrExternalUsernameInvalid
 	}
