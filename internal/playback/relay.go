@@ -3,6 +3,8 @@ package playback
 import (
 	"context"
 	"errors"
+	"log"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -107,6 +109,8 @@ type Relayed struct {
 	RemoteSessionID string
 	RemoteTitleID   string
 	Decision        map[string]any
+	// markers is where the sharer's Markers for the session land once asked for.
+	markers *relayMarkers
 }
 
 // SetRelay installs the relay seam. It mirrors Manager.SetObserver's
@@ -151,6 +155,7 @@ func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decisio
 			RemoteSessionID: ans.RemoteSessionID,
 			RemoteTitleID:   ans.RemoteTitleID,
 			Decision:        ans.Decision,
+			markers:         newRelayMarkers(),
 		},
 	}
 	// The mirrored Edition the sharer chose, so the Session is measured against the
@@ -185,6 +190,7 @@ func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decisio
 	if err != nil {
 		return Decision{}, Session{}, nil, nil, err
 	}
+	s.askRelayMarkers(dec.Relay, sess.DurationMs)
 	return dec, sess, nil, nil, nil
 }
 
@@ -223,4 +229,95 @@ func localEditionFor(detail store.TitleDetail, editionID string) (store.Edition,
 		}
 	}
 	return store.Edition{}, false
+}
+
+// RelayMarkerFetcher is the sharer's Markers for a relay session, as playback
+// needs them. *link.Service satisfies it. It is type-asserted off the Relayer,
+// like the optional stores, so a Relayer without it relays no Markers.
+type RelayMarkerFetcher interface {
+	// RelayMarkers reads the Markers the sharer serves for the session it opened
+	// (its own GET /sessions/{id}/markers), on that session's timeline.
+	RelayMarkers(ctx context.Context, linkID, remoteSessionID string) ([]store.Marker, error)
+}
+
+// relayMarkersWait bounds the one ask for a relay session's Markers. The sharer
+// itself waits up to a few seconds on its Marker providers before it answers.
+const relayMarkersWait = 10 * time.Second
+
+// relayMarkers is a relay session's Markers: asked of the sharer ONCE, when the
+// session starts, and kept for its life. The mirrored File has no path here, so
+// there is nothing of its own to read, and asking the sharer on every progress
+// report would put a slow Link in front of each one. done closes when the ask
+// has ended; ms is set before that and never after, so a read after done needs
+// no lock. ctx is the ask's, and ends with the session (stop).
+type relayMarkers struct {
+	done   chan struct{}
+	ms     []store.Marker
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func newRelayMarkers() *relayMarkers {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &relayMarkers{done: make(chan struct{}), ctx: ctx, cancel: cancel}
+}
+
+// stop ends the ask, if it is still out, because its session has ended.
+func (r *relayMarkers) stop() {
+	if r != nil {
+		r.cancel()
+	}
+}
+
+// get is the sharer's Markers once the ask has ended; ok is false while it is
+// still out. A failed ask ended with none.
+func (r *relayMarkers) get() ([]store.Marker, bool) {
+	if r == nil {
+		return nil, false
+	}
+	select {
+	case <-r.done:
+		return r.ms, true
+	default:
+		return nil, false
+	}
+}
+
+// askRelayMarkers asks the sharer for the Markers of the session it just opened,
+// apart from the play: a failure or a slow sharer leaves the session with none,
+// never a failed or delayed start. The answer is not trusted: a span that is not
+// inside [0, durationMs], the session's timeline, is dropped.
+func (s *Service) askRelayMarkers(r *Relayed, durationMs int64) {
+	fetcher, ok := s.relay.(RelayMarkerFetcher)
+	if !ok {
+		close(r.markers.done)
+		return
+	}
+	go func() {
+		defer close(r.markers.done)
+		ctx, cancel := context.WithTimeout(r.markers.ctx, relayMarkersWait)
+		defer cancel()
+		ms, err := fetcher.RelayMarkers(ctx, r.LinkID, r.RemoteSessionID)
+		if err != nil {
+			log.Printf("obelo: playback: asking the sharing server for the markers of session %s: %v", r.RemoteSessionID, err)
+			return
+		}
+		var kept []store.Marker
+		for _, m := range ms {
+			if m.StartMs >= 0 && m.StartMs < m.EndMs && m.EndMs <= durationMs {
+				kept = append(kept, m)
+			}
+		}
+		r.markers.ms = kept
+	}()
+}
+
+// RelayMarkersFetched is closed once a relay session's ask for the sharer's
+// Markers has ended, for a read that wants to wait for them; nil for a local
+// session.
+func (s Session) RelayMarkersFetched() <-chan struct{} {
+	if s.relayMarkers == nil {
+		return nil
+	}
+	return s.relayMarkers.done
 }

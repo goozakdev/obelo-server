@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Marker } from "../api/types";
-import { activeMarker } from "./SkipMarkerButton";
+import { activeMarker, skipTargetMs } from "./SkipMarkerButton";
 
 const m = (kind: string, startMs: number, endMs: number): Marker => ({
   kind,
@@ -24,5 +24,17 @@ describe("activeMarker", () => {
 
   it("offers nothing for a kind the player does not recognize", () => {
     expect(activeMarker(markers, 250_000)).toBeNull();
+  });
+});
+
+describe("skipTargetMs", () => {
+  it("stops 500 ms short of the File's end", () => {
+    expect(skipTargetMs(1_400_000, 1_400_000)).toBe(1_399_500);
+    expect(skipTargetMs(60_000, 1_400_000)).toBe(60_000);
+  });
+
+  it("seeks to the Marker's end on a File too short to stop short of", () => {
+    expect(skipTargetMs(300, 300)).toBe(300);
+    expect(skipTargetMs(500, 500)).toBe(500);
   });
 });

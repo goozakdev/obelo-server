@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goozakdev/obelo-server/internal/markers"
 	"github.com/goozakdev/obelo-server/internal/playback"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -370,6 +372,13 @@ func (s *Service) recordRelay(l store.Link, err error) {
 // the client's conditional/range headers forward, because a seek on a relayed
 // direct play is a byte range like any other.
 func (s *Service) RelayFetch(ctx context.Context, linkID, method, path string, header http.Header) (*http.Response, error) {
+	return s.relayFetch(ctx, linkID, method, path, header, false)
+}
+
+// relayFetch is RelayFetch. With quietTimeout set, a request that times out or is
+// abandoned leaves the Link's state alone: it is for a fetch that runs apart from
+// the play, whose bound is its own and says nothing about the sharer.
+func (s *Service) relayFetch(ctx context.Context, linkID, method, path string, header http.Header, quietTimeout bool) (*http.Response, error) {
 	l, err := s.store.LinkByID(linkID)
 	if err != nil {
 		return nil, err
@@ -407,7 +416,9 @@ func (s *Service) RelayFetch(ctx context.Context, linkID, method, path string, h
 	// on a slow link. The connect/handshake/response-header bounds still apply.
 	resp, err := s.dialer.StreamClient().Do(req)
 	if err != nil {
-		s.recordRelay(l, fmt.Errorf("%w: %v", ErrUnreachable, err))
+		if !quietTimeout || !timedOut(err) {
+			s.recordRelay(l, fmt.Errorf("%w: %v", ErrUnreachable, err))
+		}
 		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -417,6 +428,14 @@ func (s *Service) RelayFetch(ctx context.Context, linkID, method, path string, h
 	}
 	s.recordRelay(l, nil)
 	return resp, nil
+}
+
+// timedOut reports whether a request failed because its time ran out or its
+// caller gave up on it.
+func timedOut(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.As(err, &ne) && ne.Timeout()
 }
 
 // relayRequestHeaders are the client request headers carried to the sharer. It is
@@ -443,6 +462,58 @@ func (s *Service) RelayEndSession(ctx context.Context, linkID, remoteSessionID s
 	defer cancel()
 	return s.call(ctx, s.client(), http.MethodDelete,
 		l.ActiveOrigin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
+}
+
+// --- markers ------------------------------------------------------------------
+
+// RelayMarkers reads the Markers the sharer serves for a relay session — its own
+// GET /sessions/{remoteSessionId}/markers, owner-only there, and the Link's
+// `remote` User owns that session — so a relayed Title offers Skip and a Credits
+// Watched point like a local one (playback relay.go asks once, when the session
+// starts). Only each Marker's kind, source and span cross back: autoSkip is the
+// sharer's `remote` User's setting and watchedPoint its own ceiling, and both
+// are this Server's to decide for its viewer. The answer is not trusted: a Marker
+// whose kind or source this build cannot name, or whose span is negative or
+// empty, is dropped (playback bounds the rest by the File's duration). The ask
+// runs apart from the play, so one that times out leaves the Link's state alone.
+func (s *Service) RelayMarkers(ctx context.Context, linkID, remoteSessionID string) ([]store.Marker, error) {
+	resp, err := s.relayFetch(ctx, linkID, http.MethodGet, "sessions/"+url.PathEscape(remoteSessionID)+"/markers", http.Header{}, true)
+	if err != nil {
+		return nil, err
+	}
+	defer closeBody(resp)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: the sharing server answered %d for markers", ErrUnreachable, resp.StatusCode)
+	}
+	var body struct {
+		Markers []struct {
+			Kind    string `json:"kind"`
+			Source  string `json:"source"`
+			StartMs int64  `json:"startMs"`
+			EndMs   int64  `json:"endMs"`
+		} `json:"markers"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPeerBody)).Decode(&body); err != nil {
+		return nil, fmt.Errorf("link: decoding the sharing server's markers: %w", err)
+	}
+	var out []store.Marker
+	for _, m := range body.Markers {
+		if !relayedMarkerKinds[m.Kind] || !relayedMarkerSources[m.Source] || m.StartMs < 0 || m.EndMs <= m.StartMs {
+			continue
+		}
+		out = append(out, store.Marker{Kind: m.Kind, Source: m.Source, StartMs: m.StartMs, EndMs: m.EndMs})
+	}
+	return out, nil
+}
+
+// relayedMarkerKinds are the Marker kinds a relayed Marker may carry.
+var relayedMarkerKinds = map[string]bool{
+	markers.KindIntro: true, markers.KindRecap: true, markers.KindCredits: true, markers.KindPreview: true,
+}
+
+// relayedMarkerSources are the sources a relayed Marker may name.
+var relayedMarkerSources = map[string]bool{
+	markers.SourceLocal: true, markers.SourceDetected: true, markers.SourceFetched: true,
 }
 
 // --- artwork ------------------------------------------------------------------
