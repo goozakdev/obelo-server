@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -1145,6 +1146,46 @@ func TestAMarkersAskThatTimesOutLeavesTheLinkConnected(t *testing.T) {
 		}
 		if l, _ := st.LinkByID("l1"); l.State != store.LinkStateConnected {
 			t.Errorf("%s: the Link is %q (%s), want still connected", end.name, l.State, l.LastError)
+		}
+	}
+}
+
+// TestAMarkersAskTheSharerRefusesMarksTheLinkUnreachable: only this Server's own
+// deadline is kept quiet. A sharer that refuses the connection, or resets it
+// mid-ask, is not reachable, and the Link says so.
+func TestAMarkersAskTheSharerRefusesMarksTheLinkUnreachable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := "http://" + ln.Addr().String()
+	_ = ln.Close()
+
+	resetter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.(*net.TCPConn).SetLinger(0)
+		_ = conn.Close()
+	}))
+	t.Cleanup(resetter.Close)
+
+	for _, sharer := range []struct{ name, origin string }{
+		{"refused", refused},
+		{"reset", resetter.URL},
+	} {
+		st := &memStore{links: []store.Link{{
+			ID: "l1", ServerID: "sharer", ServerName: "Sharer", Origins: []string{sharer.origin},
+			ActiveOrigin: sharer.origin, Token: "tok", State: store.LinkStateConnected,
+		}}}
+		svc := newService(t, st, Options{})
+		_, err := svc.RelayMarkers(context.Background(), "l1", "rs1")
+		if !errors.Is(err, ErrUnreachable) {
+			t.Fatalf("%s: RelayMarkers error = %v, want ErrUnreachable", sharer.name, err)
+		}
+		if l, _ := st.LinkByID("l1"); l.State != store.LinkStateUnreachable || l.LastError == "" {
+			t.Errorf("%s: the Link is %q (%q), want unreachable with the error recorded", sharer.name, l.State, l.LastError)
 		}
 	}
 }
