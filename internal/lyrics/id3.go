@@ -18,8 +18,9 @@ import (
 // frames under three-character ids), extended headers, tag- and frame-level
 // unsynchronisation and v2.4 data-length indicators. A compressed or encrypted
 // frame or tag, a SYLT timed in MPEG frames rather than milliseconds, or a UTF-16
-// frame holding a lone surrogate or a UTF-8 frame holding invalid bytes is
-// skipped — it reads as "no lyrics there", never as an error.
+// frame holding a lone surrogate, a UTF-8 frame holding invalid bytes, or a frame
+// whose text-encoding byte is not one ID3 defines is skipped — it reads as "no
+// lyrics there", never as an error.
 
 // maxID3Frame bounds one lyrics frame read. The words to a song are kilobytes;
 // the cap only stops a corrupt size field from allocating the file.
@@ -325,8 +326,9 @@ func trimTerminator(enc byte, b []byte) []byte {
 // decodeText decodes one string in an ID3 text encoding: 0 Latin-1, 1 UTF-16
 // with a byte-order mark, 2 UTF-16BE, 3 UTF-8. A UTF-16 string without its own
 // mark uses bom, the last one seen; the mark in force is returned. UTF-16
-// holding a lone surrogate, or UTF-8 holding invalid bytes, reports false: it
-// is damaged, and decoding it would put U+FFFD in the words.
+// holding a lone surrogate, UTF-8 holding invalid bytes, or an encoding byte
+// ID3 does not define reports false: it is damaged, and decoding it would put
+// U+FFFD or guessed text in the words.
 func decodeText(enc byte, b []byte, bom []byte) (string, []byte, bool) {
 	switch enc {
 	case 0:
@@ -362,7 +364,7 @@ func decodeText(enc byte, b []byte, bom []byte) (string, []byte, bool) {
 		}
 		return string(b), bom, true
 	default:
-		return string(b), bom, true
+		return "", bom, false
 	}
 }
 
