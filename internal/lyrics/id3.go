@@ -13,10 +13,12 @@ import (
 // ID3v2 lyrics frames. ffprobe does not surface SYLT at all, and hands a USLT
 // back only as a flattened "lyrics-<lang>" tag, so the two frames are read here
 // straight from the tag at the head of the file. Only what these two frames need
-// is parsed: ID3v2.3 and v2.4 headers, extended headers, tag- and frame-level
+// is parsed: ID3v2.2, v2.3 and v2.4 headers (v2.2's SLT and ULT are the same
+// frames under three-character ids), extended headers, tag- and frame-level
 // unsynchronisation and v2.4 data-length indicators. A compressed or encrypted
-// frame, a v2.2 tag, or a SYLT timed in MPEG frames rather than milliseconds is
-// skipped — it reads as "no lyrics there", never as an error.
+// frame or tag, a SYLT timed in MPEG frames rather than milliseconds, or a UTF-16
+// frame holding a lone surrogate is skipped — it reads as "no lyrics there",
+// never as an error.
 
 // maxID3Frame bounds one lyrics frame read. The words to a song are kilobytes;
 // the cap only stops a corrupt size field from allocating the file.
@@ -47,15 +49,20 @@ func readID3(r io.ReaderAt) (sylt []Line, uslt string) {
 		return nil, ""
 	}
 	major, flags := hdr[3], hdr[5]
-	if major != 3 && major != 4 {
+	if major < 2 || major > 4 {
+		return nil, ""
+	}
+	// v2.2's second flag marks the whole tag compressed, in a scheme it never
+	// defined.
+	if major == 2 && flags&0x40 != 0 {
 		return nil, ""
 	}
 	size := int64(syncsafe(hdr[6:10]))
 
-	// A v2.3 tag unsynchronised as a whole is decoded first; v2.4 marks it on
-	// each frame instead.
+	// A v2.2 or v2.3 tag unsynchronised as a whole is decoded first; v2.4 marks
+	// it on each frame instead.
 	var tag io.ReadSeeker = io.NewSectionReader(r, 10, size)
-	if major == 3 && flags&0x80 != 0 {
+	if major < 4 && flags&0x80 != 0 {
 		if size > maxID3UnsyncTag {
 			return nil, ""
 		}
@@ -67,7 +74,7 @@ func readID3(r io.ReaderAt) (sylt []Line, uslt string) {
 		size = int64(tag.(*bytes.Reader).Len())
 	}
 
-	if flags&0x40 != 0 {
+	if major > 2 && flags&0x40 != 0 {
 		var ext [4]byte
 		if _, err := io.ReadFull(tag, ext[:]); err != nil {
 			return nil, ""
@@ -82,21 +89,21 @@ func readID3(r io.ReaderAt) (sylt []Line, uslt string) {
 		}
 	}
 
+	headerLen := int64(10)
+	if major == 2 {
+		headerLen = 6
+	}
 	for {
 		pos, _ := tag.Seek(0, io.SeekCurrent)
-		if pos+10 > size {
+		if pos+headerLen > size {
 			break
 		}
-		var fh [10]byte
-		if _, err := io.ReadFull(tag, fh[:]); err != nil || fh[0] == 0 {
+		fh := make([]byte, headerLen)
+		if _, err := io.ReadFull(tag, fh); err != nil || fh[0] == 0 {
 			break // padding, or the end of what could be read
 		}
-		id := string(fh[:4])
-		n := int64(binary.BigEndian.Uint32(fh[4:8]))
-		if major == 4 {
-			n = int64(syncsafe(fh[4:8]))
-		}
-		if n < 0 || pos+10+n > size {
+		id, n, format := frameHeader(major, fh)
+		if n < 0 || pos+headerLen+n > size {
 			break
 		}
 		wanted := (id == "SYLT" && sylt == nil) || (id == "USLT" && uslt == "")
@@ -110,7 +117,7 @@ func readID3(r io.ReaderAt) (sylt []Line, uslt string) {
 		if _, err := io.ReadFull(tag, body); err != nil {
 			break
 		}
-		body, ok := frameBody(major, fh[9], body)
+		body, ok := frameBody(major, format, body)
 		if !ok {
 			continue
 		}
@@ -125,6 +132,22 @@ func readID3(r io.ReaderAt) (sylt []Line, uslt string) {
 		}
 	}
 	return sylt, uslt
+}
+
+// v22IDs names the v2.2 lyrics frames by their v2.3 ids.
+var v22IDs = map[string]string{"SLT": "SYLT", "ULT": "USLT"}
+
+// frameHeader reads a frame header: the frame's id as v2.3 and v2.4 name it, its
+// body's size and its format flags. A v2.2 header is a three-character id and a
+// three-byte size, with no flags.
+func frameHeader(major byte, fh []byte) (string, int64, byte) {
+	switch major {
+	case 2:
+		return v22IDs[string(fh[:3])], int64(fh[3])<<16 | int64(fh[4])<<8 | int64(fh[5]), 0
+	case 3:
+		return string(fh[:4]), int64(binary.BigEndian.Uint32(fh[4:8])), fh[9]
+	}
+	return string(fh[:4]), int64(syncsafe(fh[4:8])), fh[9]
 }
 
 // frameBody undoes what a frame's format flags did to its body, or reports false
@@ -164,18 +187,24 @@ func frameBody(major, format byte, body []byte) ([]byte, bool) {
 }
 
 // decodeUSLT reads a USLT body: encoding, language, a terminated descriptor,
-// then the text.
+// then the text. A frame holding text that does not decode is not read.
 func decodeUSLT(b []byte) string {
 	if len(b) < 4 {
 		return ""
 	}
 	enc := b[0]
 	rest := b[4:]
-	_, rest, ok := cutString(enc, rest, nil)
+	desc, rest, ok := cutString(enc, rest, nil)
 	if !ok {
 		return ""
 	}
-	text, _ := decodeText(enc, trimTerminator(enc, rest), nil)
+	if _, _, ok := decodeText(enc, desc, nil); !ok {
+		return ""
+	}
+	text, _, ok := decodeText(enc, trimTerminator(enc, rest), nil)
+	if !ok {
+		return ""
+	}
 	return strings.TrimSpace(text)
 }
 
@@ -186,7 +215,7 @@ func decodeUSLT(b []byte) string {
 // with each new line's first syllable starting with a newline. Either way the
 // result is one Line per line of the song, starting when its first entry does,
 // in time order whatever order the frame lists them in; a line starting past
-// maxLineMs is dropped.
+// maxLineMs is dropped. A frame holding text that does not decode is not read.
 func decodeSYLT(b []byte) []Line {
 	if len(b) < 6 {
 		return nil
@@ -198,8 +227,11 @@ func decodeSYLT(b []byte) []Line {
 		return nil
 	}
 	var bom []byte
-	_, rest, ok := cutString(enc, b[6:], &bom)
+	desc, rest, ok := cutString(enc, b[6:], &bom)
 	if !ok {
+		return nil
+	}
+	if _, _, ok := decodeText(enc, desc, nil); !ok {
 		return nil
 	}
 
@@ -215,7 +247,10 @@ func decodeSYLT(b []byte) []Line {
 		if !ok || len(rest) < 4 {
 			break
 		}
-		text, next := decodeText(enc, raw, bom)
+		text, next, good := decodeText(enc, raw, bom)
+		if !good {
+			return nil
+		}
 		bom = next
 		ms := int64(binary.BigEndian.Uint32(rest[:4]))
 		rest = rest[4:]
@@ -288,15 +323,17 @@ func trimTerminator(enc byte, b []byte) []byte {
 
 // decodeText decodes one string in an ID3 text encoding: 0 Latin-1, 1 UTF-16
 // with a byte-order mark, 2 UTF-16BE, 3 UTF-8. A UTF-16 string without its own
-// mark uses bom, the last one seen; the mark in force is returned.
-func decodeText(enc byte, b []byte, bom []byte) (string, []byte) {
+// mark uses bom, the last one seen; the mark in force is returned. UTF-16
+// holding a lone surrogate reports false: it is damaged, and decoding it would
+// put U+FFFD in the words.
+func decodeText(enc byte, b []byte, bom []byte) (string, []byte, bool) {
 	switch enc {
 	case 0:
 		r := make([]rune, len(b))
 		for i, c := range b {
 			r[i] = rune(c)
 		}
-		return string(r), bom
+		return string(r), bom, true
 	case 1, 2:
 		bigEndian := enc == 2
 		if enc == 1 {
@@ -306,6 +343,9 @@ func decodeText(enc byte, b []byte, bom []byte) (string, []byte) {
 			}
 			bigEndian = len(bom) == 2 && bom[0] == 0xfe
 		}
+		if !wellFormedUTF16(b, bigEndian) {
+			return "", bom, false
+		}
 		u := make([]uint16, len(b)/2)
 		for i := range u {
 			if bigEndian {
@@ -314,9 +354,9 @@ func decodeText(enc byte, b []byte, bom []byte) (string, []byte) {
 				u[i] = binary.LittleEndian.Uint16(b[2*i:])
 			}
 		}
-		return string(utf16.Decode(u)), bom
+		return string(utf16.Decode(u)), bom, true
 	default:
-		return string(b), bom
+		return string(b), bom, true
 	}
 }
 

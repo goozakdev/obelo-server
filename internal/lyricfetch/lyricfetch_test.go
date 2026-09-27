@@ -1286,3 +1286,101 @@ func TestFetchedLinesPastADayAreKept(t *testing.T) {
 		t.Fatalf("answer = %+v (found %v), want lines %+v", a.Lyrics, ok, want)
 	}
 }
+
+// TestAPanickingProviderFailsLikeAnErrorAndTheNextIsAsked: the first provider
+// panics. That is its failure alone — logged, not remembered as a miss — and
+// the asking goes on to the second, whose answer is the track's.
+func TestAPanickingProviderFailsLikeAnErrorAndTheNextIsAsked(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	logged := captureLog(t)
+	registerFunc(reg, "panics", &funcProvider{fn: func(context.Context, int) (pluginapi.LyricsResponse, error) {
+		panic("a provider bug")
+	}})
+	next := &funcProvider{fn: func(context.Context, int) (pluginapi.LyricsResponse, error) {
+		return synced(track().DurationMs, "Line"), nil
+	}}
+	registerFunc(reg, "next", next)
+	svc := lyricfetch.New(st, reg)
+
+	a, ok, err := svc.Lyrics(context.Background(), track())
+	if err != nil || !ok || a.Lyrics.Kind != lyrics.Synced || next.count() != 1 || st.fetched["t1"].Provider != "next" {
+		t.Fatalf("open = %+v (found %v, %v), next asked %d times; want the next provider's Synced answer",
+			a, ok, err, next.count())
+	}
+	if !strings.Contains(logged.String(), "lyrics from panics panicked") {
+		t.Fatalf("the panic was not logged as the provider's:\n%s", logged.String())
+	}
+}
+
+// TestAnAskLeftWhileAProviderAnswersAsksNoMoreProviders: the only viewer leaves
+// while the first provider is answering. The second provider's turn is free by
+// then, and the asking still goes no further: nobody is waiting for it. Freeing
+// of the turn and the leaving can both be ready at once, so this is tried many
+// times — an asking that took a free turn over a leaving would call the second
+// provider in about half of them.
+func TestAnAskLeftWhileAProviderAnswersAsksNoMoreProviders(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		st, reg := newMemStore(), pluginapi.NewRegistry()
+		viewer, leave := context.WithCancel(context.Background())
+		gone := make(chan struct{})
+		registerFunc(reg, "first", &funcProvider{fn: func(context.Context, int) (pluginapi.LyricsResponse, error) {
+			leave()
+			<-gone
+			return plain("Words"), nil
+		}})
+		second := &funcProvider{fn: func(context.Context, int) (pluginapi.LyricsResponse, error) {
+			return synced(track().DurationMs, "Line"), nil
+		}}
+		registerFunc(reg, "second", second)
+		svc := lyricfetch.New(syncStore{mu: &sync.Mutex{}, m: st}, reg)
+
+		if _, ok, err := svc.Lyrics(viewer, track()); ok || err != nil {
+			t.Fatalf("the open that left = (%v, %v), want nothing and no error", ok, err)
+		}
+		close(gone)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, _, err := svc.Reject(ctx, track(), "any")
+		cancel()
+		if !errors.Is(err, lyricfetch.ErrNothingToReject) {
+			t.Fatalf("after the abandoned asking, a press = %v, want ErrNothingToReject (nothing remembered)", err)
+		}
+		if n := second.count(); n != 0 {
+			t.Fatalf("try %d: the second provider was asked %d times after every viewer had left, want 0", i, n)
+		}
+	}
+}
+
+// TestAHungProviderDoesNotHoldItsTurn: an in-process provider that never
+// returns, whatever its context says. Its call is given up on when its time is
+// up — a failure, like any other — so the next provider answers the track, and
+// the next track's asking gets the hung provider's turn rather than waiting on
+// it forever.
+func TestAHungProviderDoesNotHoldItsTurn(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	never := make(chan struct{})
+	t.Cleanup(func() { close(never) })
+	hung := &funcProvider{fn: func(context.Context, int) (pluginapi.LyricsResponse, error) {
+		<-never
+		return pluginapi.LyricsResponse{}, errors.New("released at the end of the test")
+	}}
+	registerFunc(reg, "hung", hung)
+	registerFunc(reg, "healthy", &funcProvider{fn: func(context.Context, int) (pluginapi.LyricsResponse, error) {
+		return synced(track().DurationMs, "Line"), nil
+	}})
+	svc := lyricfetch.New(syncStore{mu: &sync.Mutex{}, m: st}, reg)
+	lyricfetch.SetAskTimeout(svc, 100*time.Millisecond)
+
+	other := track()
+	other.ID = "t2"
+	for _, tr := range []lyricfetch.Track{track(), other} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		a, ok, err := svc.Lyrics(ctx, tr)
+		cancel()
+		if err != nil || !ok || a.Lyrics.Kind != lyrics.Synced {
+			t.Fatalf("open of %s = %+v (found %v, %v), want the healthy provider's answer", tr.ID, a, ok, err)
+		}
+	}
+	if n := hung.count(); n != 2 {
+		t.Fatalf("the hung provider was asked %d times, want once per track", n)
+	}
+}
