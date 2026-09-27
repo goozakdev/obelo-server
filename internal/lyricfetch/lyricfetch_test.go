@@ -1384,3 +1384,33 @@ func TestAHungProviderDoesNotHoldItsTurn(t *testing.T) {
 		t.Fatalf("the hung provider was asked %d times, want once per track", n)
 	}
 }
+
+// TestATimedOutCallIsAFailureNotAMiss: the only provider does not answer before
+// its time is up. That is a failure, not an answer, so no miss is remembered:
+// the next open asks it again, and its answer then is the track's.
+func TestATimedOutCallIsAFailureNotAMiss(t *testing.T) {
+	st, reg := newMemStore(), pluginapi.NewRegistry()
+	never := make(chan struct{})
+	t.Cleanup(func() { close(never) })
+	p := &funcProvider{fn: func(_ context.Context, call int) (pluginapi.LyricsResponse, error) {
+		if call == 1 {
+			<-never
+			return pluginapi.LyricsResponse{}, errors.New("released at the end of the test")
+		}
+		return synced(track().DurationMs, "Line"), nil
+	}}
+	registerFunc(reg, "slow", p)
+	svc := lyricfetch.New(syncStore{mu: &sync.Mutex{}, m: st}, reg)
+	lyricfetch.SetAskTimeout(svc, 100*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, ok, err := svc.Lyrics(ctx, track())
+	cancel()
+	if ok || err != nil {
+		t.Fatalf("the open whose call timed out = (%v, %v), want nothing and no error", ok, err)
+	}
+	if a, ok := open(t, svc, track()); !ok || a.Lyrics.Kind != lyrics.Synced || p.count() != 2 {
+		t.Fatalf("next open = %+v (found %v), provider asked %d times; want it asked again and its answer kept",
+			a, ok, p.count())
+	}
+}

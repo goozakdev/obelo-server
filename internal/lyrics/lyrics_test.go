@@ -317,6 +317,45 @@ func TestReadID3(t *testing.T) {
 			}, nil))),
 		},
 		{
+			name: "a UTF-16 SYLT whose descriptor holds a lone surrogate is not read",
+			data: tag(3, 0, frame(3, "SYLT", 0, bytes.Join([][]byte{
+				{1, 'e', 'n', 'g', 2, 1, 0xff, 0xfe, 0x00, 0xdc, 0, 0},
+				utf16LE("One", false), {0, 0}, be32(500),
+			}, nil))),
+		},
+		{
+			name: "a UTF-16LE USLT holding a surrogate pair is read",
+			data: tag(3, 0, frame(3, "USLT", 0, bytes.Join([][]byte{
+				{1, 'e', 'n', 'g'}, utf16LE("🎵", true), {0, 0}, utf16LE("Sing 🎵 along", true),
+			}, nil))),
+			wantUslt: "Sing 🎵 along",
+		},
+		{
+			name: "a UTF-16BE USLT holding a surrogate pair is read",
+			data: tag(3, 0, frame(3, "USLT", 0, bytes.Join([][]byte{
+				{2, 'e', 'n', 'g'}, utf16BE("🎵", false), {0, 0}, utf16BE("Sing 🎵 along", false),
+			}, nil))),
+			wantUslt: "Sing 🎵 along",
+		},
+		{
+			name: "a UTF-16LE SYLT holding surrogate pairs is read",
+			data: tag(3, 0, frame(3, "SYLT", 0, bytes.Join([][]byte{
+				{1, 'e', 'n', 'g', 2, 1}, utf16LE("🎵", true), {0, 0},
+				utf16LE("Sing 🎵", false), {0, 0}, be32(500),
+				utf16LE("😀 along", false), {0, 0}, be32(900),
+			}, nil))),
+			wantSylt: []Line{{500, "Sing 🎵"}, {900, "😀 along"}},
+		},
+		{
+			name: "a UTF-16BE SYLT holding surrogate pairs is read",
+			data: tag(4, 0, frame(4, "SYLT", 0, bytes.Join([][]byte{
+				{2, 'e', 'n', 'g', 2, 1}, utf16BE("🎵", false), {0, 0},
+				utf16BE("Sing 🎵", false), {0, 0}, be32(500),
+				utf16BE("😀 along", false), {0, 0}, be32(900),
+			}, nil))),
+			wantSylt: []Line{{500, "Sing 🎵"}, {900, "😀 along"}},
+		},
+		{
 			name:     "a rejected USLT leaves a later one to be read",
 			data:     tag(3, 0, append(frame(3, "USLT", 0, append([]byte{1, 'e', 'n', 'g', 0, 0}, 0xff, 0xfe, 0x00, 0xd8)), frame(3, "USLT", 0, usltBody)...)),
 			wantUslt: "Plain\nwords",
@@ -427,6 +466,20 @@ func TestLocalPrecedence(t *testing.T) {
 			audio:   plainID3,
 			sidecar: "\xff\xfeW\x00\x00\xd8x\x00",
 			want:    Lyrics{Kind: Plain, Text: "USLT words"},
+			ok:      true,
+		},
+		{
+			name:    "a UTF-16LE sidecar holding a surrogate pair is decoded",
+			audio:   plainID3,
+			sidecar: string(utf16LE("[00:02.00]Sing 🎵 along", true)),
+			want:    Lyrics{Kind: Synced, Lines: []Line{{2000, "Sing 🎵 along"}}},
+			ok:      true,
+		},
+		{
+			name:    "a UTF-16BE sidecar holding a surrogate pair is decoded",
+			audio:   plainID3,
+			sidecar: string(utf16BE("[00:02.00]Sing 🎵 along", true)),
+			want:    Lyrics{Kind: Synced, Lines: []Line{{2000, "Sing 🎵 along"}}},
 			ok:      true,
 		},
 		{
