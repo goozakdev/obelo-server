@@ -205,6 +205,36 @@ func TestAProviderUsernameIsStoredInNFCAndCollidesUnderFullFolding(t *testing.T)
 	}
 }
 
+// TestAProviderUsernameIsTrimmedOfSurroundingWhitespace: a provider's username
+// loses the whitespace around it before the rule and the key, by either flow, so
+// "brandon " collides with a local "brandon" and "  bob  " is minted as "bob".
+func TestAProviderUsernameIsTrimmedOfSurroundingWhitespace(t *testing.T) {
+	svc, _ := newRemoteFixture(t)
+	if _, err := svc.CreateUser(context.Background(), "brandon", "pw", auth.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	svc.UseSignInProviders(providerList{directory("dir", "someone", "dir-pw",
+		auth.ExternalAnswer{Subject: "s-1", Username: "brandon "})})
+	if _, err := svc.Login(context.Background(), "someone", "dir-pw", laptop, ""); !errors.Is(err, auth.ErrUsernameCollision) {
+		t.Fatalf("provider \"brandon \" with local brandon = %v, want ErrUsernameCollision", err)
+	}
+	if _, err := svc.SignInExternal("dir", auth.ExternalAnswer{Subject: "s-2", Username: "\tbrandon"}, laptop); !errors.Is(err, auth.ErrUsernameCollision) {
+		t.Fatalf("redirect provider \"\\tbrandon\" with local brandon = %v, want ErrUsernameCollision", err)
+	}
+
+	svc, _ = newRemoteFixture(t)
+	svc.UseSignInProviders(providerList{directory("dir", "bob", "pw",
+		auth.ExternalAnswer{Subject: "s-bob", Username: "  bob  "})})
+	res, err := svc.Login(context.Background(), "bob", "pw", laptop, "")
+	if err != nil || res.User.Username != "bob" {
+		t.Fatalf("first sign-in as \"  bob  \" minted %q (err %v), want %q", res.User.Username, err, "bob")
+	}
+	res, err = svc.SignInExternal("sso", auth.ExternalAnswer{Subject: "s-carol", Username: " carol\u3000"}, laptop)
+	if err != nil || res.User.Username != "carol" {
+		t.Fatalf("redirect first sign-in as \" carol\\u3000\" minted %q (err %v), want %q", res.User.Username, err, "carol")
+	}
+}
+
 // newUnsetFixture is a real store and a Service with nobody set up yet.
 func newUnsetFixture(t *testing.T) (*auth.Service, *store.DB) {
 	t.Helper()
