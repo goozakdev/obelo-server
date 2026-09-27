@@ -356,6 +356,53 @@ func TestReadID3(t *testing.T) {
 			wantSylt: []Line{{500, "Sing 🎵"}, {900, "😀 along"}},
 		},
 		{
+			name: "a UTF-8 USLT holding invalid UTF-8 is not read",
+			data: tag(3, 0, frame(3, "USLT", 0, append([]byte{3, 'e', 'n', 'g', 0}, "Caf\xc3 noir"...))),
+		},
+		{
+			name: "a UTF-8 USLT whose descriptor holds invalid UTF-8 is not read",
+			data: tag(3, 0, frame(3, "USLT", 0, append([]byte{3, 'e', 'n', 'g', 0xff, 0}, "Words"...))),
+		},
+		{
+			name: "a UTF-8 SYLT with one entry holding invalid UTF-8 is not read",
+			data: tag(4, 0, frame(4, "SYLT", 0, bytes.Join([][]byte{
+				{3, 'e', 'n', 'g', 2, 1, 0},
+				[]byte("One"), {0}, be32(500),
+				[]byte("T\xe2\x82wo"), {0}, be32(900),
+			}, nil))),
+		},
+		{
+			name: "a UTF-8 SYLT whose descriptor holds invalid UTF-8 is not read",
+			data: tag(4, 0, frame(4, "SYLT", 0, bytes.Join([][]byte{
+				{3, 'e', 'n', 'g', 2, 1, 0xc0, 0xaf, 0},
+				[]byte("One"), {0}, be32(500),
+			}, nil))),
+		},
+		{
+			name: "UTF-8 USLT and SYLT holding 4-byte emoji are read",
+			data: tag(4, 0, bytes.Join([][]byte{
+				frame(4, "USLT", 0, append([]byte{3, 'e', 'n', 'g'}, "🎵\x00Sing 🎵 along"...)),
+				frame(4, "SYLT", 0, bytes.Join([][]byte{
+					{3, 'e', 'n', 'g', 2, 1}, []byte("🎵"), {0},
+					[]byte("Sing 🎵"), {0}, be32(500),
+					[]byte("😀 along"), {0}, be32(900),
+				}, nil)),
+			}, nil)),
+			wantSylt: []Line{{500, "Sing 🎵"}, {900, "😀 along"}},
+			wantUslt: "Sing 🎵 along",
+		},
+		{
+			name: "a UTF-8 USLT and SYLT rejected for invalid UTF-8 leave later ones to be read",
+			data: tag(3, 0, bytes.Join([][]byte{
+				frame(3, "USLT", 0, append([]byte{3, 'e', 'n', 'g', 0}, "Bad \xff"...)),
+				frame(3, "SYLT", 0, append([]byte{3, 'e', 'n', 'g', 2, 1, 0}, "Bad \xff\x00\x00\x00\x01\xf4"...)),
+				frame(3, "USLT", 0, usltBody),
+				frame(3, "SYLT", 0, latin1SYLT(2, 1, "One", 500)),
+			}, nil)),
+			wantSylt: []Line{{500, "One"}},
+			wantUslt: "Plain\nwords",
+		},
+		{
 			name:     "a rejected USLT leaves a later one to be read",
 			data:     tag(3, 0, append(frame(3, "USLT", 0, append([]byte{1, 'e', 'n', 'g', 0, 0}, 0xff, 0xfe, 0x00, 0xd8)), frame(3, "USLT", 0, usltBody)...)),
 			wantUslt: "Plain\nwords",
