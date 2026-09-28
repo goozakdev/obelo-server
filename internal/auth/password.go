@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"testing"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -35,6 +36,16 @@ const (
 	argon2Threads = 2
 	argon2KeyLen  = 32 // bytes
 	argon2SaltLen = 16 // bytes
+
+	// testArgon2Memory/Time/Threads are the stand-in cost parameters
+	// kdfHashParams substitutes inside a test binary (see below). They are
+	// the cheapest values argon2.IDKey accepts for a single thread, not a
+	// tuned "fast enough" number: a test hashing hundreds of passwords should
+	// pay microseconds, not the memory-hard cost that is the whole point of
+	// argon2Memory/argon2Time/argon2Threads in production.
+	testArgon2Memory  = 8 // KiB
+	testArgon2Time    = 1
+	testArgon2Threads = 1
 )
 
 // ErrPasswordMismatch is returned by VerifyPassword when the password does not
@@ -77,14 +88,54 @@ func HashPasswordContext(ctx context.Context, password string) (string, error) {
 	}
 	defer release()
 
-	key := argon2.IDKey([]byte(password), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	memory, time, threads := kdfHashParams()
+	key := argon2.IDKey([]byte(password), salt, time, memory, threads, argon2KeyLen)
 	return fmt.Sprintf("%s$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2idPrefix,
 		argon2Version,
-		argon2Memory, argon2Time, argon2Threads,
+		memory, time, threads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	), nil
+}
+
+// productionKDFParams returns the argon2id cost parameters a production binary
+// derives new hashes with: the OWASP constants above, unconditionally. It is
+// the non-test branch kdfParamsFor(false) returns.
+func productionKDFParams() (memory uint32, time uint32, threads uint8) {
+	return argon2Memory, argon2Time, argon2Threads
+}
+
+// kdfParamsFor is the pure selection: cheap stand-in params for isTest, the
+// OWASP production params otherwise. It exists separately from kdfHashParams
+// so a test can pin kdfParamsFor(false) to the production params directly,
+// instead of only ever observing the branch testing.Testing() itself selects.
+//
+// That pin catches an edit that makes this function ignore isTest and return
+// the cheap params unconditionally (e.g. an `if true || isTest`) — the test
+// calls kdfParamsFor(false) and gets the wrong answer. It does NOT catch the
+// same swap made at either call site: kdfHashParams below hard-coding true
+// instead of passing testing.Testing(), or HashPasswordContext calling
+// kdfParamsFor(true) or using the cheap constants directly. Every test binary
+// already has testing.Testing() == true, so no assertion made *by* a test
+// binary can tell those apart from the real wiring.
+func kdfParamsFor(isTest bool) (memory uint32, time uint32, threads uint8) {
+	if isTest {
+		return testArgon2Memory, testArgon2Time, testArgon2Threads
+	}
+	return productionKDFParams()
+}
+
+// kdfHashParams picks the cost parameters HashPasswordContext derives a new
+// hash with, keyed on testing.Testing() (Go's own test-or-not signal): inside
+// a test binary a suite hashing hundreds of throwaway passwords pays the cheap
+// stand-in instead of ~0.2s of memory-hard KDF per call; a production binary
+// is never a test binary, so this can never affect what gets stored for a
+// real account. VerifyPasswordContext never consults this at all — it reads
+// whatever parameters are embedded in the stored PHC string, so a hash
+// produced under either branch verifies the same way.
+func kdfHashParams() (memory uint32, time uint32, threads uint8) {
+	return kdfParamsFor(testing.Testing())
 }
 
 // VerifyPassword checks password against a stored hash string. It returns nil on
