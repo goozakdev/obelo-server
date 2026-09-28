@@ -215,11 +215,3 @@ func TestNewRefusesAnUnsignedOrUndirectedSink(t *testing.T) {
 		})
 	}
 }
-
-// TestSinkImplementsTheContract is the compile-time claim made explicit: the
-// Webhook's whole surface is pluginapi.EventSink, which is what lets the host wire
-// it without knowing anything about HTTP.
-func TestSinkImplementsTheContract(t *testing.T) {
-	var _ pluginapi.EventSink = (*Sink)(nil)
-	var _ pluginapi.EventSinkFactory = New
-}

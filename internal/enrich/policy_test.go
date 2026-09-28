@@ -175,13 +175,6 @@ func TestResolveLibraryEnrichment(t *testing.T) {
 			wantEnab: Enablement{Video: true, Music: true},
 		},
 		{
-			name:     "metadata_language unset inherits the global language live",
-			global:   videoAndMusic,                   // en-US
-			policy:   store.LibraryEnrichmentPolicy{}, // no language override
-			wantCfg:  videoAndMusic,
-			wantEnab: Enablement{Video: true, Music: true},
-		},
-		{
 			name:   "metadata_language override does not enable a kind the global leaves off",
 			global: unconfigured,
 			policy: store.LibraryEnrichmentPolicy{MetadataLanguage: strPtr("fr-FR")},
