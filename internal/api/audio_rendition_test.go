@@ -69,6 +69,7 @@ func fetchAudioRenditionSegment(t *testing.T, srv *testharness.Server, streamURL
 // the video segment carries NO audio (demuxed) and the default rendition's segment is
 // valid audio matching the reported default.
 func TestDemuxedMasterCarriesAudioGroup(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	requireFFmpeg(t)
 	srv, token, id := scanAudioMovieLib(t)
@@ -118,6 +119,7 @@ func TestDemuxedMasterCarriesAudioGroup(t *testing.T) {
 // stream-copied (ac3 stays ac3); the incompatible DTS commentary transcodes to AAC —
 // so every listed rendition is actually playable on the client.
 func TestAudioRenditionCopyVsTranscode(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	requireFFmpeg(t)
 	srv, token, id := scanAudioMovieLib(t)
@@ -142,6 +144,7 @@ func TestAudioRenditionCopyVsTranscode(t *testing.T) {
 // triggering the DTS rendition's AAC encode on a remux session, a concurrent genuine
 // video transcode still fits (ADR-0022's scoped ADR-0017 amendment).
 func TestAudioRenditionEncodeIsCapExempt(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t, testharness.WithTranscodeCap(1))
@@ -181,6 +184,7 @@ func TestAudioRenditionEncodeIsCapExempt(t *testing.T) {
 // TestSingleAudioStaysMuxed (acceptance 5): a single-audio File keeps the muxed
 // pipeline — no master playlist, and the video segment carries BOTH video and audio.
 func TestSingleAudioStaysMuxed(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)

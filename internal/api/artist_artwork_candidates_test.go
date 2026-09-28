@@ -19,6 +19,7 @@ import (
 // artist photo the (faked) provider offers — a grid, not one image — and each
 // candidate carries its source + dimensions. An Album's cover picker is unchanged.
 func TestArtistPhotoCandidatesList(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
@@ -99,6 +100,7 @@ func TestArtistPhotoCandidatesList(t *testing.T) {
 // TestArtistPhotoCandidatesAdminOnly: a Member cannot list artist photo candidates,
 // pick one, or release the role — every artwork action on an artist is Admin-only.
 func TestArtistPhotoCandidatesAdminOnly(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {

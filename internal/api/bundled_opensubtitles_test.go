@@ -152,6 +152,7 @@ func bigSRT(n int) string {
 // provider's entry. A 1.5 MiB subtitle downloading at all is the proof it now
 // reaches the subtitle seam.
 func TestBundledOpenSubtitlesSearchesAndFetchesThroughTheSandbox(t *testing.T) {
+	t.Parallel()
 	stand := newOpenSubtitlesStandIn(t, bigSRT(1536<<10))
 	srv, token, id := bundledOpenSubtitlesServer(t, stand)
 
@@ -207,6 +208,7 @@ func TestBundledOpenSubtitlesSearchesAndFetchesThroughTheSandbox(t *testing.T) {
 // Admin noticed. The plugin answers it as unavailable instead, which costs
 // nothing; the Built-in, which had no strikes, simply failed the request.
 func TestBundledOpenSubtitlesSpentQuotaDoesNotDisableThePlugin(t *testing.T) {
+	t.Parallel()
 	stand := newOpenSubtitlesStandIn(t, "1\n00:00:01,000 --> 00:00:02,000\nOlá\n")
 	stand.set(func(s *openSubtitlesStandIn) { s.dlStatus = 406 })
 	srv, token, id := bundledOpenSubtitlesServer(t, stand)
@@ -235,6 +237,7 @@ func TestBundledOpenSubtitlesSpentQuotaDoesNotDisableThePlugin(t *testing.T) {
 // a redirect off it into private address space is refused, and nothing it would
 // have served reaches the subtitle cache.
 func TestBundledOpenSubtitlesRefusesAnInwardRedirect(t *testing.T) {
+	t.Parallel()
 	stand := newOpenSubtitlesStandIn(t, "1\n00:00:01,000 --> 00:00:02,000\nOlá\n")
 	stand.set(func(s *openSubtitlesStandIn) { s.linkPath = "/files/inward.srt" })
 	srv, token, id := bundledOpenSubtitlesServer(t, stand)

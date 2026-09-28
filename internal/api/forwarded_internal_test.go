@@ -51,6 +51,7 @@ func requestFrom(peer string, header http.Header) *http.Request {
 // return 9.9.9.9 in that case and hand the caller a fresh rate-limit budget per
 // request.
 func TestResolveOriginClientIP(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		peer    string
@@ -192,6 +193,7 @@ func TestResolveOriginClientIP(t *testing.T) {
 // not hearsay — we terminated that handshake — so it wins outright and a header
 // can only ever add HTTPS, never take it away.
 func TestResolveOriginHTTPS(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		peer    string
@@ -272,6 +274,7 @@ func TestResolveOriginHTTPS(t *testing.T) {
 // identical on the wire, so there is no walk to perform and no way to tell the
 // forged one from the genuine one.
 func TestXRealIPIsNeverConsulted(t *testing.T) {
+	t.Parallel()
 	h := http.Header{"X-Real-IP": []string{"198.51.100.7"}}
 	got := resolveOrigin(requestFrom("10.0.0.1:41000", h), prefixes(t, "10.0.0.1/32")).ClientIP
 	if got != "10.0.0.1" {
@@ -284,6 +287,7 @@ func TestXRealIPIsNeverConsulted(t *testing.T) {
 // context attached. That path must resolve as if no proxy were trusted — missing
 // configuration can only ever mean "trust nothing", never "trust anything".
 func TestOriginFallsBackToZeroTrustWithoutTheMiddleware(t *testing.T) {
+	t.Parallel()
 	r := requestFrom("203.0.113.5:41000", http.Header{
 		"X-Forwarded-For":   []string{"9.9.9.9"},
 		"X-Forwarded-Proto": []string{"https"},

@@ -73,6 +73,7 @@ func fetchText(t *testing.T, srv *testharness.Server, url, token string) string 
 }
 
 func TestHLSInBandSubtitleMasterPlaylist(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

@@ -53,6 +53,7 @@ func duneSession(t *testing.T, srv *testharness.Server) (token, titleID string, 
 // TestDecisionCarriesStreamToken: the Decision mints the token with the session,
 // so a client that will hand the URL to a receiver needs one request, not two.
 func TestDecisionCarriesStreamToken(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	_, _, dec := duneSession(t, srv)
@@ -81,6 +82,7 @@ func TestDecisionCarriesStreamToken(t *testing.T) {
 // TestDecisionStreamTokensAreDistinctPerSession: two negotiations are two
 // sessions and two credentials — a token is never shared between streams.
 func TestDecisionStreamTokensAreDistinctPerSession(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -101,6 +103,7 @@ func TestDecisionStreamTokensAreDistinctPerSession(t *testing.T) {
 // live session, because a session outlives a short-TTL token and a client may
 // decide to AirPlay long after it negotiated.
 func TestMintStreamTokenEndpoint(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token, _, dec := duneSession(t, srv)
@@ -133,6 +136,7 @@ func TestMintStreamTokenEndpoint(t *testing.T) {
 // existence-hiding posture the stream handlers take. A caller must not learn that
 // somebody else's session id is real from the shape of the refusal.
 func TestMintStreamTokenForAnotherUsersSessionIs404(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	_, _, dec := duneSession(t, srv)
@@ -165,6 +169,7 @@ func TestMintStreamTokenForAnotherUsersSessionIs404(t *testing.T) {
 // act. A lone ms_media cookie must not do it, and neither must an absent
 // credential — otherwise a token handed to a television could extend its own life.
 func TestMintStreamTokenIsBearerOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	_, _, dec := duneSession(t, srv)
@@ -196,6 +201,7 @@ func TestMintStreamTokenIsBearerOnly(t *testing.T) {
 // TestMintStreamTokenRejectsOtherMethods: the route is POST. A GET must not
 // quietly become a way to obtain a credential from a URL alone.
 func TestMintStreamTokenRejectsOtherMethods(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token, _, dec := duneSession(t, srv)
@@ -213,6 +219,7 @@ func TestMintStreamTokenRejectsOtherMethods(t *testing.T) {
 // overlap": a stream token authorises media for one session and NOTHING else —
 // not a JSON route, not a progress report, not a session delete.
 func TestStreamTokenIsRefusedAsABearer(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -253,6 +260,7 @@ func TestStreamTokenIsRefusedAsABearer(t *testing.T) {
 // must not sneak in there either — it is not an account credential, and that
 // route is sessionless.
 func TestStreamTokenIsRefusedAsAQueryToken(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -272,6 +280,7 @@ func TestStreamTokenIsRefusedAsAQueryToken(t *testing.T) {
 // TestDeleteSessionRevokesStreamTokens: session end IS revocation, and it takes
 // EVERY token the session minted — a client that re-minted twice keeps nothing.
 func TestDeleteSessionRevokesStreamTokens(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token, _, dec := duneSession(t, srv)
@@ -297,6 +306,7 @@ func TestDeleteSessionRevokesStreamTokens(t *testing.T) {
 // left a live credential behind would be the quiet failure this cascade exists to
 // prevent — nobody is watching when the reaper runs.
 func TestReapedSessionRevokesStreamTokens(t *testing.T) {
+	// Not parallel: its 150ms idle window is wall-clock time, which parallel tests eat.
 	requireFixtures(t)
 	srv := testharness.New(t, testharness.WithSessionIdleTimeout(150*time.Millisecond))
 	_, _, dec := duneSession(t, srv)
@@ -320,6 +330,7 @@ func TestReapedSessionRevokesStreamTokens(t *testing.T) {
 // twice — by the Decision that minted it and by the re-mint endpoint — and by
 // nothing else. Anything that echoed it back is another place it can be logged.
 func TestStreamTokenIsNotEchoedByOtherEndpoints(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token, titleID, dec := duneSession(t, srv)

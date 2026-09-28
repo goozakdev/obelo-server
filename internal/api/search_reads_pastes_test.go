@@ -38,6 +38,7 @@ func getCandidateSearch(t *testing.T, srv *testharness.Server, token, path, q st
 // no regex in the web app could ever have known) is resolved in its namespace; a
 // term is searched.
 func TestASearchResolvesAPasteThroughTheLibrarysLead(t *testing.T) {
+	t.Parallel()
 	srv, token, libID := namespacedMusicServer(t)
 	trackID := firstTrackID(t, srv, token, libID)
 	if trackID == "" {
@@ -78,6 +79,7 @@ func TestASearchResolvesAPasteThroughTheLibrarysLead(t *testing.T) {
 // record", a wrong-kind one is the 400 that says which link to paste — never a
 // free-text search for a URL. A "show more" page is always a search.
 func TestASearchResolvesAMusicBrainzPasteAndKeepsThePastesErrors(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const goodID = "11111111-1111-1111-1111-111111111111"
 	prov := &fakeProvider{
@@ -128,6 +130,7 @@ func TestASearchResolvesAMusicBrainzPasteAndKeepsThePastesErrors(t *testing.T) {
 // have a MusicBrainz UUID read as a MusicBrainz id and looked up at a lead that
 // has never heard of MusicBrainz; now it is a search term.
 func TestALeadThatReadsNoPastesIsNotHandedTheHostsReading(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const slug = "nsnoparse"
 	reg := namespacedMusicRegistration(slug)
@@ -163,6 +166,7 @@ func TestALeadThatReadsNoPastesIsNotHandedTheHostsReading(t *testing.T) {
 // LINK, or the search finds nothing either, in both of which cases the paste's own
 // "no record for that id" is the better answer.
 func TestAnIdThatNamesNothingFallsBackToSearchingForIt(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const stale = "22222222-2222-2222-2222-222222222222"
 	const barren = "33333333-3333-3333-3333-333333333333"

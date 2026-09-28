@@ -70,6 +70,7 @@ func negotiateRemuxDecision(t *testing.T, srv *testharness.Server, token, bladeI
 // media playlist; a listed segment is fetchable and ffprobe-confirms the COPIED
 // codec (mpeg4 video / mp3 audio — proof it was remuxed, not re-encoded).
 func TestHLSRemuxPlaylistAndSegment(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)
@@ -127,6 +128,7 @@ func TestHLSRemuxPlaylistAndSegment(t *testing.T) {
 // session — the scratch dir (with its segments) is gone and subsequent HLS
 // fetches 404.
 func TestHLSDeleteEndsRemuxAndRemovesScratch(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)
@@ -171,6 +173,7 @@ func TestHLSDeleteEndsRemuxAndRemovesScratch(t *testing.T) {
 // header) authenticates the HLS playlist + segment GETs, exactly like /stream,
 // while a non-media endpoint still rejects the cookie.
 func TestHLSMediaCookieAuthenticatesEndpoints(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)
@@ -213,6 +216,7 @@ func TestHLSMediaCookieAuthenticatesEndpoints(t *testing.T) {
 // /hls/index.m3u8 is 404 (the client uses the progressive /stream URL). This
 // confirms direct play is unchanged and the HLS routes are remux-only.
 func TestHLSDirectPlayHasNoHLS(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -399,6 +403,7 @@ func negotiateTranscodeDecision(t *testing.T, srv *testharness.Server, token, ti
 // fetch playlist + segment → ffprobe confirms the segment is RE-ENCODED to the
 // target codecs (h264 video + aac audio), within the requested resolution.
 func TestHLSTranscodeReEncodesToTargetCodec(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)
@@ -428,6 +433,7 @@ func TestHLSTranscodeReEncodesToTargetCodec(t *testing.T) {
 // segment was SCALED DOWN to within 144px (the resolution constraint is enforced
 // by the encode). It stays h264/aac.
 func TestHLSTranscodeScalesDownResolution(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)
@@ -543,6 +549,7 @@ func ffmpegProcsForScratch(t *testing.T, scratch string) int {
 // this test proves the end-to-end external behavior (served, valid, same session,
 // coherent playlist, no leak) against real ffmpeg.
 func TestHLSTranscodeSeekRealignment(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -614,7 +621,7 @@ func TestHLSTranscodeSeekRealignment(t *testing.T) {
 		t.Errorf("scratch dir still present after delete (err=%v)", err)
 	}
 	// Give a killed ffmpeg a beat to exit, then assert none remain for this session.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for {
 		n := ffmpegProcsForScratch(t, scratch)
 		if n <= 0 {
@@ -660,6 +667,7 @@ func requireVideoToolbox(t *testing.T) {
 // This proves the WHOLE path (negotiation → HW encode → HLS → ffprobe) on the one
 // backend this host can run; it self-skips where VideoToolbox is absent.
 func TestHLSTranscodeVideoToolbox(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	requireVideoToolbox(t)
@@ -747,6 +755,7 @@ func generateHEVCClip(t *testing.T, enc string, seconds int) string {
 // has no HEVC encoder to make the fixture — in which case the -hwaccel videotoolbox
 // decode flag is covered by the args-builder unit tests instead.
 func TestHLSTranscodeVideoToolboxHEVCDecode(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	requireVideoToolbox(t)
 	enc := hevcEncoder()
@@ -845,14 +854,17 @@ func runHWTranscodeE2E(t *testing.T, accel config.HWAccel, encoder, label string
 // GPU backends. They self-skip on this macOS host (no such device) — confidence for
 // these three comes from the args-builder + detector unit tests, as documented above.
 func TestHLSTranscodeNVENC(t *testing.T) {
+	t.Parallel()
 	runHWTranscodeE2E(t, config.HWAccelNVENC, "h264_nvenc", "NVENC")
 }
 
 func TestHLSTranscodeVAAPI(t *testing.T) {
+	t.Parallel()
 	runHWTranscodeE2E(t, config.HWAccelVAAPI, "h264_vaapi", "VAAPI")
 }
 
 func TestHLSTranscodeQSV(t *testing.T) {
+	t.Parallel()
 	runHWTranscodeE2E(t, config.HWAccelQSV, "h264_qsv", "QSV")
 }
 
@@ -860,6 +872,7 @@ func TestHLSTranscodeQSV(t *testing.T) {
 // transcode session — the scratch dir is removed and subsequent HLS fetches 404
 // (the slice-1 lifecycle applies unchanged to the transcode tier).
 func TestHLSTranscodeDeleteEndsAndRemovesScratch(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t)

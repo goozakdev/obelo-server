@@ -46,6 +46,7 @@ func hasTitle(list []titleSummaryResp, title string) bool {
 // TestCrossKindSearch: one server with a Movie, a TV, and a Music Library; a
 // query against /search resolves into the right kind group across all three.
 func TestCrossKindSearch(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireTVFixtures(t)
 	requireMusicFixtures(t)
@@ -95,6 +96,7 @@ func TestCrossKindSearch(t *testing.T) {
 
 // TestSearchRequiresAuth: /search is authenticated (no token → 401).
 func TestSearchRequiresAuth(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	resp := srv.Do(http.MethodGet, "/api/v1/search?q=anything", nil)
 	defer resp.Body.Close()
@@ -107,6 +109,7 @@ func TestSearchRequiresAuth(t *testing.T) {
 // search results, the same existence-hiding the browse list enforces — so search
 // never reveals content the catalog hides.
 func TestSearchAccessFiltering(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	file := filepath.Join(root, "Searchable Gem (2099)", "Searchable Gem (2099).mp4")
 	makeMovie(t, file)

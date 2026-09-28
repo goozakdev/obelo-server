@@ -145,6 +145,7 @@ func mustGenerateKey(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 // have changed. A signed plugin and an unsigned one are both installed, and
 // neither is recorded as signed by anybody, because nobody checked.
 func TestWithNoPinnedKeysBothInstall(t *testing.T) {
+	t.Parallel()
 	_, priv := mustGenerateKey(t)
 
 	t.Run("unsigned", func(t *testing.T) {
@@ -200,6 +201,7 @@ func TestWithNoPinnedKeysBothInstall(t *testing.T) {
 // signature stripped is refused, and the same module signed by another key is
 // refused — both refusals naming the publisher claimed.
 func TestWithOnePinnedKeyOnlyThatPublishersPluginInstalls(t *testing.T) {
+	t.Parallel()
 	pub, priv := mustGenerateKey(t)
 	_, otherPriv := mustGenerateKey(t)
 	const publisher = "Example Publisher"
@@ -292,6 +294,7 @@ func TestWithOnePinnedKeyOnlyThatPublishersPluginInstalls(t *testing.T) {
 // is a different thing to tell an operator from "this was not signed by who it
 // says", and only one of them means somebody is lying.
 func TestASignatureOverOtherBytesIsItsOwnSentence(t *testing.T) {
+	t.Parallel()
 	pub, priv := mustGenerateKey(t)
 	const publisher = "Example Publisher"
 
@@ -326,6 +329,7 @@ func TestASignatureOverOtherBytesIsItsOwnSentence(t *testing.T) {
 // that were running — a change of policy turning into an outage. An operator who
 // wants a plugin gone uninstalls it.
 func TestAnAlreadyInstalledPluginIsNotReVerified(t *testing.T) {
+	t.Parallel()
 	pub, _ := mustGenerateKey(t)
 
 	srv := testharness.New(t)
@@ -355,6 +359,7 @@ func TestAnAlreadyInstalledPluginIsNotReVerified(t *testing.T) {
 // TestUnpinningTheLastKeyReturnsToInstallingAnything — the policy is the table,
 // and emptying the table is how an operator opts back out.
 func TestUnpinningTheLastKeyReturnsToInstallingAnything(t *testing.T) {
+	t.Parallel()
 	pub, _ := mustGenerateKey(t)
 	const publisher = "Example Publisher"
 
@@ -388,6 +393,7 @@ func TestUnpinningTheLastKeyReturnsToInstallingAnything(t *testing.T) {
 // TestPinningRefusesWhatIsNotAKey, and TestUnpinningANameNobodyPinnedIs404 —
 // both sentences an Admin reads on a form.
 func TestPinningRefusesWhatIsNotAKey(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -422,6 +428,7 @@ func TestPinningRefusesWhatIsNotAKey(t *testing.T) {
 // Publisher" and a document that says "example publisher" mean the same
 // publisher, and the alternative is a refusal with no visible cause.
 func TestAPublisherIsMatchedCaseInsensitively(t *testing.T) {
+	t.Parallel()
 	pub, priv := mustGenerateKey(t)
 
 	srv := testharness.New(t)
@@ -445,6 +452,7 @@ func TestAPublisherIsMatchedCaseInsensitively(t *testing.T) {
 // TestAURLInstallFetchesTheSignatureBesideTheManifest — the layout an author
 // publishes, and the layout a catalog serves.
 func TestAURLInstallFetchesTheSignatureBesideTheManifest(t *testing.T) {
+	t.Parallel()
 	pub, priv := mustGenerateKey(t)
 	const publisher = "Example Publisher"
 
@@ -468,6 +476,7 @@ func TestAURLInstallFetchesTheSignatureBesideTheManifest(t *testing.T) {
 // is not an error on its own, and the pinned-key policy is the one thing that
 // decides what it costs.
 func TestAURLInstallWithNoSignatureBesideItIsRefusedByName(t *testing.T) {
+	t.Parallel()
 	pub, _ := mustGenerateKey(t)
 	const publisher = "Example Publisher"
 
@@ -498,6 +507,7 @@ func TestAURLInstallWithNoSignatureBesideItIsRefusedByName(t *testing.T) {
 // package is already covered and what is in doubt here is the COMMAND: its flags,
 // its file writing, and whether what it puts on disk is what the server reads.
 func TestThePluginsignCommandsOutputInstalls(t *testing.T) {
+	t.Parallel()
 	const publisher = "Example Publisher"
 	dir := t.TempDir()
 	root := discordtest.RepoRoot(t)
@@ -572,6 +582,7 @@ func TestThePluginsignCommandsOutputInstalls(t *testing.T) {
 
 // TestThePublisherRoutesAreAdminOnly.
 func TestThePublisherRoutesAreAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	srv.CreateUser(admin, "kid", "memberpass123", "member")

@@ -54,6 +54,7 @@ func containsHomeTitle(rows []upNextHomeTitle, id string) bool {
 // what an Admin does within it (browse / detail / home / search) — the threaded
 // Scope opens up cleanly once a grant exists.
 func TestGrantedMemberSeesSameAsAdmin(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -92,6 +93,7 @@ func TestGrantedMemberSeesSameAsAdmin(t *testing.T) {
 // Admin sees both. Two Movie Libraries (a fixture copy) make the same Title
 // appear in each, so search/detail can be compared by count.
 func TestLibraryGrantsHideUngrantedLibrary(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -177,6 +179,7 @@ func TestLibraryGrantsHideUngrantedLibrary(t *testing.T) {
 // — the Show's seasons, a Season's episodes, an Episode's detail, and a Show's
 // artwork — is 404 for the Member, while the Admin drills it normally.
 func TestLibraryGrantsHideTVChildDrilldown(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -226,6 +229,7 @@ func TestLibraryGrantsHideTVChildDrilldown(t *testing.T) {
 // admin target, and unknown library are rejected (the prior set kept); a valid
 // set (with a duplicate) is deduped; an empty set clears; GET reflects each.
 func TestLibraryGrantManagement(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -284,6 +288,7 @@ func TestLibraryGrantManagement(t *testing.T) {
 // pointed at it (the ON DELETE CASCADE), observable as the id disappearing from
 // the Member's libraryIds — no stale grant survives.
 func TestGrantCascadesOnLibraryDelete(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -309,6 +314,7 @@ func TestGrantCascadesOnLibraryDelete(t *testing.T) {
 // of Continue Watching the moment the grant covering it is revoked (Home
 // recomputes against live Scope), and playback on the now-out-of-scope Title 404s.
 func TestContinueWatchingDropsOnGrantRevoke(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -343,6 +349,7 @@ func TestContinueWatchingDropsOnGrantRevoke(t *testing.T) {
 // TestNoGrantsEmptyCatalog: a Member with no grants sees an empty catalog
 // (libraries, home, search all empty) — not an error.
 func TestNoGrantsEmptyCatalog(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

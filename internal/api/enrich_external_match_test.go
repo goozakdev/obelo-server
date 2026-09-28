@@ -17,6 +17,7 @@ import (
 // persisting the id. The entity path (Shows) already persists it; this pins the
 // leaf path to the same rule.
 func TestSearchResolvedEnrichPersistsExternalIDForCandidates(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{
 		fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil },

@@ -214,6 +214,7 @@ func init() {
 
 // TestNamingTwoEditions: distinct quality tokens in one folder → two Editions.
 func TestNamingTwoEditions(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -240,6 +241,7 @@ func TestNamingTwoEditions(t *testing.T) {
 
 // TestNamingNamedEdition: an explicit {edition-…} tag → a named Edition.
 func TestNamingNamedEdition(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -256,6 +258,7 @@ func TestNamingNamedEdition(t *testing.T) {
 
 // TestNamingMultiPart: part1/part2 join into one Edition with two Files.
 func TestNamingMultiPart(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -276,6 +279,7 @@ func TestNamingMultiPart(t *testing.T) {
 // TestNamingExtrasAndArtworkAndJunk: extras attach + hidden from list; junk
 // ignored; poster/fanart associated and servable.
 func TestNamingExtrasAndArtworkAndJunk(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -328,6 +332,7 @@ func TestNamingExtrasAndArtworkAndJunk(t *testing.T) {
 
 // TestNamingEmbeddedID: a {tmdb-…} folder records the id on the Title.
 func TestNamingEmbeddedID(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -344,6 +349,7 @@ func TestNamingEmbeddedID(t *testing.T) {
 
 // TestNamingNeedsReview: a yearless movie is filed, browsable, and flagged.
 func TestNamingNeedsReview(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -368,6 +374,7 @@ func TestNamingNeedsReview(t *testing.T) {
 // TestNamingUnmatched: a recognized media file with no extractable identity
 // appears in the Unmatched list and is NOT a browsable Title.
 func TestNamingUnmatched(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)
@@ -397,6 +404,7 @@ func TestNamingUnmatched(t *testing.T) {
 
 // TestNamingUnmatchedRequiresAdmin: the Unmatched attention surface is Admin-only.
 func TestNamingUnmatchedRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, _, libID := scanNamingLibrary(t)
 
@@ -412,6 +420,7 @@ func TestNamingUnmatchedRequiresAdmin(t *testing.T) {
 // this test root: each clean single-file movie (Cut/Pinned/Yearless) yields
 // exactly one Edition.
 func TestNamingCleanMovieStaysOneEdition(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	list := listAllTitles(t, srv, token, libID)

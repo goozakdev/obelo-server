@@ -33,6 +33,7 @@ func findShowSummary(t *testing.T, shows showsListResp, title string) showSummar
 // the Shows list as posterUrl/backgroundUrl and serve real bytes — with no
 // provider, no key, and no network.
 func TestTVLocalShowArtworkServed(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -71,6 +72,7 @@ func TestTVLocalShowArtworkServed(t *testing.T) {
 // to every season, is pinned precisely by the resolver's TestSeasonPosterDiscovered,
 // which needs two seasons on one Show.)
 func TestTVLocalSeasonPosterServed(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	shows := listShows(t, srv, token, libID)
@@ -106,6 +108,7 @@ func TestTVLocalSeasonPosterServed(t *testing.T) {
 // would expose a clear-without-rewrite or a duplicate-row violation of
 // UNIQUE(entity_type, entity_id, role, source).
 func TestTVLocalArtworkSurvivesRescan(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -133,6 +136,7 @@ func TestTVLocalArtworkSurvivesRescan(t *testing.T) {
 // takes the fetched bytes, which is what proves the enrichment actually ran (and
 // is asserted in full by TestEnrichTVShowSeasonEpisode).
 func TestTVLocalArtworkBeatsEnrichment(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	fetch := &fakeFetcher{data: []byte("REMOTEPOSTER"), contentType: "image/jpeg"}

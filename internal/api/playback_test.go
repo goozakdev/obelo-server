@@ -107,6 +107,7 @@ func scanFixtureLibrary(t *testing.T, srv *testharness.Server, token string) tit
 // TestPlaybackDirectPlay: a profile that supports the File returns a directPlay
 // decision with a progressive streamUrl and the selected edition/streams.
 func TestPlaybackDirectPlay(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -174,6 +175,7 @@ func TestPlaybackDirectPlay(t *testing.T) {
 // behaviour exactly (directPlay), so the two assertions together prove the flag
 // is the only thing that moved the tier.
 func TestPlaybackRemuxSelectedOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -215,6 +217,7 @@ func TestPlaybackRemuxSelectedOnly(t *testing.T) {
 // directStream (remux) tier — the streamUrl is an HLS media playlist, not the
 // progressive stream and not a TRANSCODE_REQUIRED error (slice 1).
 func TestPlaybackDirectStreamContainerOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -277,6 +280,7 @@ func assertTranscodeDecision(t *testing.T, srv *testharness.Server, token, title
 // (mpeg4) — a remux cannot fix a codec mismatch — now negotiates the transcode
 // tier with an HLS streamUrl (no longer TRANSCODE_REQUIRED).
 func TestPlaybackTranscodeCodec(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -298,6 +302,7 @@ func TestPlaybackTranscodeCodec(t *testing.T) {
 // otherwise-playable File to the transcode tier (the bitrate must be re-encoded
 // down).
 func TestPlaybackTranscodeBitrate(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -320,6 +325,7 @@ func TestPlaybackTranscodeBitrate(t *testing.T) {
 // The Dune fixture is 320x240; a 144p cap is below its 240px height. A sufficient
 // cap (480p ≥ 240) still direct-plays — direct play is unchanged.
 func TestPlaybackTranscodeResolution(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -348,6 +354,7 @@ func TestPlaybackTranscodeResolution(t *testing.T) {
 // TestPlaybackStreamWithRange: the streamUrl serves the File bytes, and a Range
 // request returns 206 Partial Content with the correct slice.
 func TestPlaybackStreamWithRange(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -394,6 +401,7 @@ func TestPlaybackStreamWithRange(t *testing.T) {
 // TestPlaybackDeleteEndsSession: DELETE /sessions/{id} ends the session; a
 // subsequent stream of the same URL is 404.
 func TestPlaybackDeleteEndsSession(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -432,6 +440,7 @@ func TestPlaybackDeleteEndsSession(t *testing.T) {
 // TestPlaybackOtherUserSessionForbidden: a different User cannot stream or end
 // another User's session — it is hidden as 404 (existence-hiding posture).
 func TestPlaybackOtherUserSessionForbidden(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -459,6 +468,7 @@ func TestPlaybackOtherUserSessionForbidden(t *testing.T) {
 // TestPlaybackRequiresAuth: playback negotiation and streaming both require a
 // bearer token.
 func TestPlaybackRequiresAuth(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -481,6 +491,7 @@ func TestPlaybackRequiresAuth(t *testing.T) {
 
 // TestPlaybackMissingTitle: negotiating an unknown Title is 404 (hide existence).
 func TestPlaybackMissingTitle(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	var env errorEnvelope
@@ -496,6 +507,7 @@ func TestPlaybackMissingTitle(t *testing.T) {
 // TestPlaybackExplicitEdition: an explicit editionId is honored — the decision's
 // edition matches the requested one.
 func TestPlaybackExplicitEdition(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

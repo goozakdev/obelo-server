@@ -66,6 +66,7 @@ func wantReauthRequired(t *testing.T, what string, status int, body []byte) {
 // wrong, is refused and attaches nothing; his session survives it. With it, both
 // flows attach.
 func TestAnAttachWithASessionButNoLocalPasswordIsRefused(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SignInManifest("directory", "bj:dir-pw:subject-bj::"))
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
@@ -117,6 +118,7 @@ func TestAnAttachWithASessionButNoLocalPasswordIsRefused(t *testing.T) {
 // Local password she does not have. A re-auth through her directory identity
 // answers a grant, and the grant attaches — once.
 func TestAnOutsideOnlyUserAttachesOnlyAfterAFreshReauth(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SignInManifest("directory", "ada:ada-pw:subject-ada::"))
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
@@ -156,6 +158,7 @@ func TestAnOutsideOnlyUserAttachesOnlyAfterAFreshReauth(t *testing.T) {
 // no good from her phone, nor to bj; a re-auth through an identity she does not hold, or
 // with a password the directory rejects, answers no grant at all.
 func TestAReauthGrantFromAnotherSessionIsRefused(t *testing.T) {
+	t.Parallel()
 	srv, _ := signInServer(t, map[string]string{
 		"directory": "ada:ada-pw:subject-ada::;bj:bj-pw:subject-bj::"})
 	ada := login(t, srv, "ada", "ada-pw", "Laptop", "test", "ada-client")
@@ -194,6 +197,7 @@ func TestAReauthGrantFromAnotherSessionIsRefused(t *testing.T) {
 // counter fills, end in 429 TOO_MANY_ATTEMPTS with a Retry-After — and then even
 // ada's right one is refused.
 func TestRepeatedWrongReauthPasswordsAreThrottled(t *testing.T) {
+	t.Parallel()
 	srv, _ := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::"})
 	ada := login(t, srv, "ada", "ada-pw", "Laptop", "test", "ada-client")
 
@@ -228,6 +232,7 @@ func TestRepeatedWrongReauthPasswordsAreThrottled(t *testing.T) {
 // grant that attaches the directory; one that comes back as somebody else
 // answers none, and a re-auth's state is neither a sign-in nor an attach.
 func TestARedirectReauthAnswersAGrant(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SignInManifest("directory", "nc:nc-pw:subject-nc-dir::"))
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))

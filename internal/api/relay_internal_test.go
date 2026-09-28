@@ -21,6 +21,7 @@ func relayTestSession() playback.Session {
 }
 
 func TestRelayTailAllowed(t *testing.T) {
+	t.Parallel()
 	sess := relayTestSession()
 	cases := []struct {
 		tail string
@@ -59,6 +60,7 @@ func TestRelayTailAllowed(t *testing.T) {
 // resolves onto the relay path because the remote tail is preserved. Rewriting
 // one would BREAK it.
 func TestRewriteRelayPlaylistLeavesRelativeURIsAlone(t *testing.T) {
+	t.Parallel()
 	in := strings.Join([]string{
 		"#EXTM3U",
 		"#EXT-X-VERSION:7",
@@ -81,6 +83,7 @@ func TestRewriteRelayPlaylistLeavesRelativeURIsAlone(t *testing.T) {
 // point this household's player at its own server, where the session does not
 // exist. Every place a URI can hide is checked.
 func TestRewriteRelayPlaylistMapsAbsoluteURIs(t *testing.T) {
+	t.Parallel()
 	in := strings.Join([]string{
 		"#EXTM3U",
 		`#EXT-X-MAP:URI="/api/v1/sessions/remote-9/hls/init.mp4"`,
@@ -115,6 +118,7 @@ func TestRewriteRelayPlaylistMapsAbsoluteURIs(t *testing.T) {
 // bare filename — which resolves correctly against the token playlist — rather
 // than to a path this Server would have to write the secret into.
 func TestRelayTokenURIMapperKeepsTheTokenOutOfPlaylists(t *testing.T) {
+	t.Parallel()
 	mapURI := relayTokenURIMapper(relayTestSession())
 	if got := mapURI("/api/v1/sessions/remote-9/hls/000.ts"); got != "000.ts" {
 		t.Errorf("mapped to %q, want the bare filename", got)
@@ -134,6 +138,7 @@ func TestRelayTokenURIMapperKeepsTheTokenOutOfPlaylists(t *testing.T) {
 // TestRelayTailForArtifact maps the stream-token route's two artifact shapes onto
 // the sharer's paths, and refuses anything else.
 func TestRelayTailForArtifact(t *testing.T) {
+	t.Parallel()
 	sess := relayTestSession()
 	if tail, ok := relayTailForArtifact(sess, "stream"); !ok || tail != "sessions/remote-9/stream" {
 		t.Errorf("progressive artifact → %q, %v", tail, ok)
@@ -152,6 +157,7 @@ func TestRelayTailForArtifact(t *testing.T) {
 // passes through whole, with its ids and URLs made local and its own stream token
 // dropped (a credential this Server's routes cannot spend).
 func TestRelayDecisionResponseRewritesAndDropsTheSharersToken(t *testing.T) {
+	t.Parallel()
 	dec := playback.Decision{Relay: &playback.Relayed{
 		RemoteSessionID: "remote-9",
 		Decision: map[string]any{

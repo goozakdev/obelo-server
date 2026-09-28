@@ -21,6 +21,7 @@ import (
 // exists, which is the only thing the flag claims. Asserting on 200 would mean
 // building a fixture per feature and would test the handler, not the flag.
 func TestFeaturesMatchRoutes(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var got serverInfo
@@ -145,6 +146,7 @@ func TestFeaturesMatchRoutes(t *testing.T) {
 // snapshot (ADR-0029) that is served either way — so a future reader cannot
 // "fix" this flag by pattern-matching it onto TestFeaturesMatchRoutes.
 func TestTranscodeFlagFollowsFFmpegAvailability(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		available bool
@@ -202,6 +204,7 @@ func TestTranscodeFlagFollowsFFmpegAvailability(t *testing.T) {
 // and the decision reports the truth about the media rather than about the host.
 // Whether the host can serve it is exactly what features.transcode is for.
 func TestTranscodeUnavailableDegradesHonestly(t *testing.T) {
+	// Not parallel: it bounds a request at three seconds of wall-clock time.
 	requireFixtures(t)
 	srv := testharness.New(t, testharness.WithFFmpegAvailability(false))
 	token := adminToken(t, srv)

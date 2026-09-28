@@ -28,6 +28,7 @@ func titleDetail(t *testing.T, srv *testharness.Server, token, id string) titleD
 // a second Edition dropped into its folder, and does NOT catalogue a stray file
 // added to a sibling Movie's out-of-scope folder.
 func TestTargetedScanMovieAddsWithinScopeOnly(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	aDir := filepath.Join(root, "Alpha (2001)")
 	bDir := filepath.Join(root, "Bravo (2002)")
@@ -67,6 +68,7 @@ func TestTargetedScanMovieAddsWithinScopeOnly(t *testing.T) {
 // hidden (Missing); a Targeted scan of it has nothing on disk to walk, so it 409s
 // (hidden-entity resurrection is out of scope for v1 — ADR-0030).
 func TestTargetedScanRefusesMovieWithNoFiles(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	moviePath := filepath.Join(root, "Vanish (2003)", "Vanish (2003).mp4")
 	makeMovie(t, moviePath)
@@ -92,6 +94,7 @@ func TestTargetedScanRefusesMovieWithNoFiles(t *testing.T) {
 // TestTargetedScanMemberForbidden: a Member cannot trigger a Targeted scan
 // (Admin-only, mirroring the full-Library scan).
 func TestTargetedScanMemberForbidden(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "Charlie (2004)", "Charlie (2004).mp4"))
 

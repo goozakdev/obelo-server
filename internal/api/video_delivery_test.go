@@ -84,6 +84,7 @@ func videoStreamByLabel(t *testing.T, dec decisionResp, label string) videoStrea
 // resolved Stream as videoStream, and flags exactly one default — so a client can build
 // the Video menu and know which cut is playing.
 func TestDecisionListsVideoStreams(t *testing.T) {
+	t.Parallel()
 	requireVideoFixtures(t)
 	srv, token, id := scanVideoMovieLib(t)
 
@@ -116,6 +117,7 @@ func TestDecisionListsVideoStreams(t *testing.T) {
 // (direct play carries only the default video, ADR-0025). The reported videoStream
 // follows the pick.
 func TestVideoStreamIdTierEscalation(t *testing.T) {
+	t.Parallel()
 	requireVideoFixtures(t)
 	srv, token, id := scanVideoMovieLib(t)
 
@@ -152,6 +154,7 @@ func TestVideoStreamIdTierEscalation(t *testing.T) {
 // second such switch at cap=1 returns 503 SERVER_BUSY (NOT cap-exempt, contrast the
 // in-band audio switch). Covers acceptance: transcode for THAT Stream + the cap/503.
 func TestVideoStreamIdUndecodableIsGovernedTranscode(t *testing.T) {
+	t.Parallel()
 	requireVideoFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t, testharness.WithTranscodeCap(1))
@@ -206,6 +209,7 @@ func TestVideoStreamIdUndecodableIsGovernedTranscode(t *testing.T) {
 // TestVideoStreamIdInvalidIs404: a videoStreamId that names no selectable video Stream
 // of the Title fails structurally (404, hide existence), never a silent default.
 func TestVideoStreamIdInvalidIs404(t *testing.T) {
+	t.Parallel()
 	requireVideoFixtures(t)
 	srv, token, id := scanVideoMovieLib(t)
 

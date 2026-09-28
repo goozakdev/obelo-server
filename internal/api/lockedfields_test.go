@@ -58,6 +58,7 @@ func hasLock(d lockedDetailResp, field string) bool {
 // updates. The provider returns different metadata on the second pass so a locked
 // field is visibly preserved while an unlocked one moves.
 func TestHandEditLocksAndSurvivesReEnrich(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	// version flips the provider's payload between passes so a refresh is visible.
 	version := 1
@@ -150,6 +151,7 @@ func TestHandEditLocksAndSurvivesReEnrich(t *testing.T) {
 // TestLockArtworkPinsImage: locking the poster role pins the chosen image so a
 // re-enrich (with the fetcher now returning different bytes) leaves it unchanged.
 func TestLockArtworkPinsImage(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	fetch := &fakeFetcher{data: []byte("POSTER_V1"), contentType: "image/jpeg"}
@@ -192,6 +194,7 @@ func TestLockArtworkPinsImage(t *testing.T) {
 // TestMetadataEndpointsRequireAdmin: a Member is refused (403) on both the edit
 // and the lock-release endpoints.
 func TestMetadataEndpointsRequireAdmin(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,

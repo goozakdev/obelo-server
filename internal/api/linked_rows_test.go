@@ -108,6 +108,7 @@ func rowFor(t *testing.T, what string, rows []homeRowResp, id string) linkedMark
 // goes away the rows STAY, saying `available: false` (ADR-0056 §6 — badged
 // unavailable, never dropped).
 func TestHomeRowsCarryTheLinkedMark(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	localLib := createMovieLibrary(t, f.home, f.homeAdmin, fixtureRoot(t))
 	scanLib(t, f.home, f.homeAdmin, localLib, "")
@@ -137,6 +138,7 @@ func TestHomeRowsCarryTheLinkedMark(t *testing.T) {
 // the linked libraryJSON and on a linked Home row, and it equals the name the
 // home Server recorded on the Link. A local Library and a local Home row omit it.
 func TestLinkedRowsNameTheSharingServer(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	localLib := createMovieLibrary(t, f.home, f.homeAdmin, fixtureRoot(t))
 	scanLib(t, f.home, f.homeAdmin, localLib, "")
@@ -221,6 +223,7 @@ type tracksRowsResp struct {
 // beside the mirror is the control, and an unreachable sharer flips `available`
 // without taking one row away.
 func TestAlbumRowsCarryTheLinkedMark(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "music")
 	localLib := createMusicLibrary(t, f.home, f.homeAdmin, musicRoot(t))
 	scanLib(t, f.home, f.homeAdmin, localLib, "")
@@ -280,6 +283,7 @@ func TestAlbumRowsCarryTheLinkedMark(t *testing.T) {
 // places and the search group is the one with no Artist beside it to inherit the
 // mark from, which is why store.Album learned its Library.
 func TestAMirroredAlbumIsBadgedInSearch(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "music")
 
 	var albums albumsRowsResp
@@ -325,6 +329,7 @@ func TestAMirroredAlbumIsBadgedInSearch(t *testing.T) {
 // nothing else could carry the mark — a Season has no Library of its own and the
 // marked Show is a screen back — so the Episode rows carry it.
 func TestSeasonEpisodeRowsCarryTheLinkedMark(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "tv")
 
 	showID := firstMirroredID(t, f, "tv", "shows")
@@ -381,6 +386,7 @@ func TestSeasonEpisodeRowsCarryTheLinkedMark(t *testing.T) {
 // `"linked": false` on every row of every Home payload would itself be a wire
 // change.
 func TestNeverLinkedRowsCarryNoMark(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

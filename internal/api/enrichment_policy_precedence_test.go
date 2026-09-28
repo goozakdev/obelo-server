@@ -19,6 +19,7 @@ import (
 // it, and a hand-edited Locked field is never overwritten by that pass (only
 // unlocked fields refresh).
 func TestPolicyReEnrichPreservesLockedFields(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	// version flips the provider payload so a refresh is observable across the pass.
 	version := 1
@@ -69,6 +70,7 @@ func TestPolicyReEnrichPreservesLockedFields(t *testing.T) {
 // Title pinned to a specific TMDB record) keeps resolving that record across a
 // policy change that leaves its provider reachable — most-specific-wins.
 func TestPolicyReEnrichOverrideWinsWhileReachable(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	// The provider only matches the PINNED id (555); anything else no-matches. So a
 	// 'matched' Dune after the policy change proves it resolved via its pinned record.
@@ -122,6 +124,7 @@ func TestPolicyReEnrichOverrideWinsWhileReachable(t *testing.T) {
 // call, so a 'matched' status with the NEW overview proves the RE-ENRICH itself
 // resolved the pin — not a stale answer left over from applying the override.
 func TestPolicyReEnrichOverrideWinsWhenLeaderChanges(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	tmdbOverview := "TMDB pin v1"
 	tmdb := standIn(t, func(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +178,7 @@ func TestPolicyReEnrichOverrideWinsWhenLeaderChanges(t *testing.T) {
 // TMDB), the orphaned override is filed to the attention list — not silently
 // dropped, and never re-resolved against the wrong leader.
 func TestPolicyReEnrichOrphansOverrideToAttention(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
 		if ref.TMDBID == "555" {

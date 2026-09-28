@@ -18,6 +18,7 @@ import (
 // is admitted only at an https origin and only if it passes the private-address
 // check, so the exchange is refused and nobody is signed in.
 func TestAnIssuerNamingALoopbackTokenEndpointOnAnotherHostDoesNotSignIn(t *testing.T) {
+	t.Parallel()
 	idp := newFakeIdP(t)
 	front := httptest.NewUnstartedServer(nil)
 	_, port, err := net.SplitHostPort(front.Listener.Addr().String())

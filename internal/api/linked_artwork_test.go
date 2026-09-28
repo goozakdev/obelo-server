@@ -131,6 +131,7 @@ func linkArtworkFixture(t *testing.T) *artFixture {
 // each URL relays the exact bytes from the sharer and serves them from cache
 // afterwards, the sharer asked once.
 func TestRelayArtworkForMirroredShowArtistAlbum(t *testing.T) {
+	t.Parallel()
 	f := linkArtworkFixture(t)
 
 	// --- Show -------------------------------------------------------------------
@@ -185,6 +186,7 @@ func TestRelayArtworkForMirroredShowArtistAlbum(t *testing.T) {
 // updated_at, so this is the FULL pull the initial link and a RESYNC also do; the
 // incremental gap is issue 09 deviation 5's, unchanged.)
 func TestRelayArtworkVersionReflectsASharerChange(t *testing.T) {
+	t.Parallel()
 	f := linkArtworkFixture(t)
 
 	show := mirroredRow(t, f.home, f.homeAdmin, f.mirrorTV, "shows", "title", f.showTitle)
@@ -217,6 +219,7 @@ func TestRelayArtworkVersionReflectsASharerChange(t *testing.T) {
 // exercises both read paths (ArtworkVersionsForTitles for the grid, the detail
 // artwork[] for the hero).
 func TestRelayArtworkForMirroredMovie(t *testing.T) {
+	t.Parallel()
 	f := linkArtworkFixture(t)
 
 	// --- Grid: the version signal that makes the client ask for the poster ------
@@ -248,6 +251,7 @@ func TestRelayArtworkForMirroredMovie(t *testing.T) {
 // sharer's exact bytes. Seasons fold into issue 19's entity_artwork machinery, so
 // this proves the fold works end to end.
 func TestRelayArtworkForMirroredSeason(t *testing.T) {
+	t.Parallel()
 	f := linkArtworkFixture(t)
 
 	show := mirroredRow(t, f.home, f.homeAdmin, f.mirrorTV, "shows", "title", f.seasonShowTitle)

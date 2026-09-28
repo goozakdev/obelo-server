@@ -19,6 +19,7 @@ type usersListResp struct {
 // TestCreateUserMemberAndAdmin: POST /users defaults to a Member, and honors an
 // explicit admin role; the response carries id/username/role.
 func TestCreateUserMemberAndAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -47,6 +48,7 @@ func TestCreateUserMemberAndAdmin(t *testing.T) {
 
 // TestCreateUserInvalidRole: an unknown role is rejected as a 400, not persisted.
 func TestCreateUserInvalidRole(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -64,6 +66,7 @@ func TestCreateUserInvalidRole(t *testing.T) {
 
 // TestCreatedMemberCanLogin: a Member made via the API can log in and gets a token.
 func TestCreatedMemberCanLogin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
@@ -77,6 +80,7 @@ func TestCreatedMemberCanLogin(t *testing.T) {
 // TestListAndGetUsers: list includes the Admin + created Member; get-one returns
 // a User; an unknown id is 404.
 func TestListAndGetUsers(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	memberID := srv.CreateUser(token, "kid", "memberpass123", "")
@@ -108,6 +112,7 @@ func TestListAndGetUsers(t *testing.T) {
 // TestDeleteUserCascades: deleting a Member revokes their access — a token they
 // held no longer authenticates, and the credentials no longer log in.
 func TestDeleteUserCascades(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	memberID := srv.CreateUser(admin, "kid", "memberpass123", "")
@@ -137,6 +142,7 @@ func TestDeleteUserCascades(t *testing.T) {
 // TestSetPassword: an Admin password reset invalidates the old password and the
 // new one works.
 func TestSetPassword(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	memberID := srv.CreateUser(admin, "kid", "oldpassword123", "")
@@ -163,6 +169,7 @@ func TestSetPassword(t *testing.T) {
 // TestUsersRequireAdmin: every /users endpoint is 403 for a Member and 401 for
 // an unauthenticated caller.
 func TestUsersRequireAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	memberID := srv.CreateUser(admin, "kid", "memberpass123", "")
@@ -194,6 +201,7 @@ func TestUsersRequireAdmin(t *testing.T) {
 
 // TestDuplicateUsername: a username collision is a clean 409, not a 500.
 func TestDuplicateUsername(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	srv.CreateUser(token, "kid", "memberpass123", "")
@@ -213,6 +221,7 @@ func TestDuplicateUsername(t *testing.T) {
 // TestLastAdminGuard: the final Admin cannot be deleted; once a second Admin
 // exists the first can go, and Members are always deletable.
 func TestLastAdminGuard(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
@@ -257,6 +266,7 @@ func TestLastAdminGuard(t *testing.T) {
 // case, so one differing from a held one only in case is the same 409; one
 // breaking the username rule is a 400 whose message states the rule.
 func TestAUsernameDifferingOnlyInCaseIsTaken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	srv.CreateUser(token, "kid", "memberpass123", "")
@@ -282,6 +292,7 @@ func TestAUsernameDifferingOnlyInCaseIsTaken(t *testing.T) {
 // left-to-right mark after it looks exactly like "admin" in the Users list, so
 // it breaks the rule — a 400 that states it, and nobody is created.
 func TestAUsernameHoldingAnInvisibleCharacterIsRefused(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 

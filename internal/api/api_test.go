@@ -28,6 +28,7 @@ type errorEnvelope struct {
 // /api/v1/server returns version, supported API versions, a feature-flags map,
 // and setupRequired=true on the empty DB.
 func TestServerHandshake(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var got serverInfo
@@ -62,6 +63,7 @@ func TestServerHandshake(t *testing.T) {
 // TestErrorEnvelope verifies that error responses use the standard envelope
 // with correct status codes and machine-readable codes.
 func TestErrorEnvelope(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	cases := []struct {

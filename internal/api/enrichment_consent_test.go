@@ -42,6 +42,7 @@ func putConsent(t *testing.T, srv *testharness.Server, token string, granted boo
 // revoking it closes the gate again. It drives the real Manager Reload path
 // (WithProviderBuilder) so the gate under test is the production one.
 func TestEnrichmentConsentGate(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -120,6 +121,7 @@ func TestEnrichmentConsentGate(t *testing.T) {
 // reason, which is why the harness supplies a TMDB key throughout and the test
 // asserts configuredEnablement stays ON in every state.
 func TestEnrichmentConsentGatesTheDisplayPaths(t *testing.T) {
+	t.Parallel()
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
 		testharness.WithProviderBuilder(countingBuilder(prov)), // the real Manager path
@@ -191,6 +193,7 @@ func TestEnrichmentConsentGatesTheDisplayPaths(t *testing.T) {
 // TestEnrichmentConsentRequiresGrantedField rejects a PUT that omits the decision,
 // so a malformed client can never silently flip consent.
 func TestEnrichmentConsentRequiresGrantedField(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	var v enrichmentConsentView
@@ -203,6 +206,7 @@ func TestEnrichmentConsentRequiresGrantedField(t *testing.T) {
 // TestEnrichmentConsentAdminOnly confirms the consent endpoints are Admin-gated
 // like the rest of the /settings subtree.
 func TestEnrichmentConsentAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	adminToken(t, srv) // claim the first admin so /settings is auth-gated, not setup-gated
 	srv.CreateMember("bob", "pw12345678")
@@ -236,6 +240,7 @@ type enrichmentConsentSourceView struct {
 // is exactly what makes 'none' the honest answer for a build-from-source install).
 // The precedence chain itself is config's, and is tested there.
 func TestEnrichmentConsentReportsCredentialSource(t *testing.T) {
+	t.Parallel()
 	t.Run("no keys anywhere reports none", func(t *testing.T) {
 		srv := testharness.New(t, testharness.WithoutEnrichmentConsent())
 		token := adminToken(t, srv)

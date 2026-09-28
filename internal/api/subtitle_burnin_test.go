@@ -48,6 +48,7 @@ func burnRequest(subID string) map[string]any {
 // a transcode-tier decision with an HLS streamUrl, even though the File would
 // otherwise direct-play.
 func TestSubtitleBurnInEscalatesToTranscode(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -74,6 +75,7 @@ func TestSubtitleBurnInEscalatesToTranscode(t *testing.T) {
 // track — an unknown id or a TEXT track (text is delivered selectably, never
 // burned) — is 404, not a transcode.
 func TestSubtitleBurnInUnknownIs404(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -109,6 +111,7 @@ func TestSubtitleBurnInUnknownIs404(t *testing.T) {
 // with 503 SERVER_BUSY + suggestedMaxBitrate; a no-burn direct-play is unaffected;
 // and after ending the first, a new burn succeeds (the slot freed).
 func TestSubtitleBurnInIsGoverned(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	srv := testharness.New(t, testharness.WithTranscodeCap(1))
 	token := adminToken(t, srv)

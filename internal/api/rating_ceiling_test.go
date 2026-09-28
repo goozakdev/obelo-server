@@ -27,6 +27,7 @@ func setRatingCeiling(t *testing.T, srv *testharness.Server, adminTok, userID, r
 // home / playback; clearing the ceiling brings the R Title back; the Admin
 // always sees it.
 func TestRatingCeilingHidesAboveCeilingMovies(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -104,6 +105,7 @@ func TestRatingCeilingHidesAboveCeilingMovies(t *testing.T) {
 // TestRatingCeilingCrossSystemTV: a PG-13 ceiling hides a TV-MA Show and shows a
 // TV-14 Show — proving the single maturity ladder spans the movie and TV systems.
 func TestRatingCeilingCrossSystemTV(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -162,6 +164,7 @@ func TestRatingCeilingCrossSystemTV(t *testing.T) {
 // TestRatingCeilingManagement: the ceiling endpoint validates its input and GET
 // reflects the stored value.
 func TestRatingCeilingManagement(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

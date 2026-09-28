@@ -78,6 +78,7 @@ func userDetail(t *testing.T, srv *testharness.Server, admin, id string) signInU
 // read back as saved; a malformed one is refused whole; an unknown provider is
 // not found; a Member may not see any of it.
 func TestAGroupMappingIsSavedReadBackAndCheckedByTheServer(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::family"})
 	lib := createMovieLibrary(t, srv, admin, t.TempDir())
 
@@ -129,6 +130,7 @@ func TestAGroupMappingIsSavedReadBackAndCheckedByTheServer(t *testing.T) {
 // under two passwords — one answering her in "family", one in "admins". Each
 // sign-in answers with the role and grants its groups map to.
 func TestASignInSyncsTheGroupMapping(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{
 		"directory": "ada:ada-pw:subject-ada::family;ada:ada-admin-pw:subject-ada::admins",
 	})
@@ -156,6 +158,7 @@ func TestASignInSyncsTheGroupMapping(t *testing.T) {
 // Admin by mapping and has no Local password. Deleting brandon, the one Admin
 // who has one, is refused; brandon deleting ada goes through.
 func TestTheLastAdminWithALocalPasswordCannotBeDeletedByAMappedAdmin(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::admins"})
 	putGroupMapping(t, srv, admin, "directory", map[string]any{"rules": []map[string]any{
 		{"group": "admins", "role": "admin"},
@@ -186,6 +189,7 @@ func TestTheLastAdminWithALocalPasswordCannotBeDeletedByAMappedAdmin(t *testing.
 // so nothing asks it between sign-ins. The Admin maps ada's group after she
 // signed in; "re-sync now" applies it from the groups she last signed in with.
 func TestReSyncNowRemapsAProviderWithoutLookup(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::family"})
 	lib := createMovieLibrary(t, srv, admin, t.TempDir())
 	ada := login(t, srv, "ada", "ada-pw", "Laptop", "test", "ada-client")
@@ -208,6 +212,7 @@ func TestReSyncNowRemapsAProviderWithoutLookup(t *testing.T) {
 // declares lookup. "Re-sync now" asks it at once and applies the groups it
 // answers; once it says ada is gone, her session is revoked.
 func TestReSyncNowAsksALookupProviderAndRevokesAGoneIdentity(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.LookupSignInManifest("directory",
 		"ada:ada-pw:subject-ada::", "subject-ada:active:family"))
@@ -244,6 +249,7 @@ func TestReSyncNowAsksALookupProviderAndRevokesAGoneIdentity(t *testing.T) {
 // declaring refresh hands back a refresh token at sign-in; "re-sync now"
 // redeems it and applies the groups the refresh answers.
 func TestARefreshingProviderIsReCheckedWithItsRefreshToken(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RefreshingRedirectSignInManifest("oauth",
 		"https://oauth.example.test/authorize", "subject-octavia:active:crew"))
@@ -275,6 +281,7 @@ func TestARefreshingProviderIsReCheckedWithItsRefreshToken(t *testing.T) {
 // as having no working sign-in path; brandon, with a Local password, is not.
 // The provider is flagged on its mapping from the first failure.
 func TestAnAutoDisabledSignInProviderKeepsSessionsAndFlagsItsUsers(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.LookupSignInManifest("directory",
 		"ada:ada-pw:subject-ada::", plugintest.SignInLookupFetchesABlockedHost))

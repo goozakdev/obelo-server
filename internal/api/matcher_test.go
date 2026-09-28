@@ -278,6 +278,7 @@ func groupNumbered(m matcherResp, n int) (matcherGroupResp, bool) {
 // one is the whole reason this screen exists (PRD user story 7) and is exactly the
 // one a per-Title endpoint can never reach.
 func TestMatcherListsEveryFileUnderTheShow(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -302,6 +303,7 @@ func TestMatcherListsEveryFileUnderTheShow(t *testing.T) {
 // it could not be numbered, and it is NOT marked decided (nobody said anything
 // about it yet; the parse simply failed).
 func TestMatcherUnmatchedFileIsUnassigned(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -329,6 +331,7 @@ func TestMatcherUnmatchedFileIsUnassigned(t *testing.T) {
 // where it sits AND what its filename says, because the screen compares the two
 // and their disagreement is the correction being made (PRD user story 2).
 func TestMatcherPlacedFileCarriesItsSlotAndParse(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -373,6 +376,7 @@ func TestMatcherPlacedFileCarriesItsSlotAndParse(t *testing.T) {
 // bare numbered Slots and a REASON — never a 5xx. Pure renumbering still works
 // offline, which is most of what this screen is for (ADR-0044).
 func TestMatcherDegradesWhenTheProviderCannotListEpisodes(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) {
 		return enrich.TitleMetadata{}, enrich.ErrNoMatch
@@ -406,6 +410,7 @@ func TestMatcherDegradesWhenTheProviderCannotListEpisodes(t *testing.T) {
 // separate constant because the fixes differ — one is a switch, the other is a
 // different provider — and the screen has to be able to say which.
 func TestMatcherDegradesWithEnrichmentOff(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -420,6 +425,7 @@ func TestMatcherDegradesWithEnrichmentOff(t *testing.T) {
 // no series to list. That is not a provider failure and must not read as one —
 // the fix is to match the Show, not to reconfigure enrichment.
 func TestMatcherDegradesWhenTheShowNeverMatched(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	prov := &fakeEpisodeProvider{groups: 2}
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return enrich.TitleMetadata{}, enrich.ErrNoMatch }
@@ -445,6 +451,7 @@ func TestMatcherDegradesWhenTheShowNeverMatched(t *testing.T) {
 // "no-series-match" for a Show that is matched, enriched and decorated everywhere
 // else in the app (file-matcher/10).
 func TestMatcherListsSlotsForAShowMatchedByProviderSearch(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	prov := &fakeEpisodeProvider{groups: 2}
 	prov.fn = func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
@@ -488,6 +495,7 @@ func TestMatcherListsSlotsForAShowMatchedByProviderSearch(t *testing.T) {
 // one round-trip per season, so an eager response would spend ten of them against a
 // rate-limited API to fill nine sections nobody has opened.
 func TestMatcherLoadsSlotsPerGroup(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	prov := &fakeEpisodeProvider{groups: 10}
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return enrich.TitleMetadata{}, enrich.ErrNoMatch }
@@ -551,6 +559,7 @@ func TestMatcherLoadsSlotsPerGroup(t *testing.T) {
 // shows a title that does not come from the Show's own series with no way to tell.
 // This is the Batman → New Batman Adventures case the pin exists for (ADR-0044).
 func TestMatcherSlotReportsAForeignRecord(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	prov := &fakeEpisodeProvider{groups: 2}
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }
@@ -606,6 +615,7 @@ func TestMatcherSlotReportsAForeignRecord(t *testing.T) {
 // series' records — the Batman → New Batman Adventures case the Episode pin exists
 // for. The Slot's position stays local; only its record changes.
 func TestSeriesSeasonsListsAForeignSeries(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	prov := &fakeEpisodeProvider{groups: 2}
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return enrich.TitleMetadata{}, enrich.ErrNoMatch }
@@ -645,6 +655,7 @@ func TestSeriesSeasonsListsAForeignSeries(t *testing.T) {
 // has nothing but provider data to return, so a provider that cannot list is an
 // error here rather than a degraded state.
 func TestSeriesSeasonsReportsAProviderThatCannotList(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -661,6 +672,7 @@ func TestSeriesSeasonsReportsAProviderThatCannotList(t *testing.T) {
 // back the RE-READ working set, so the client never has to guess what the server
 // made of its payload.
 func TestApplyMatcherMovesAFileAndReturnsTheArrangement(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -725,6 +737,7 @@ func TestApplyMatcherMovesAFileAndReturnsTheArrangement(t *testing.T) {
 // TestApplyMatcherIgnoreAndUnassign: the two settled/undecided states round-trip,
 // and neither leaves the file listed as an Episode.
 func TestApplyMatcherIgnoreAndUnassign(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -767,6 +780,7 @@ func TestApplyMatcherIgnoreAndUnassign(t *testing.T) {
 // deliberately does not run. The response must SAY so, or the screen looks like it
 // silently dropped the Admin's most deliberate correction.
 func TestApplyMatcherSurfacesDeferred(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -798,6 +812,7 @@ func TestApplyMatcherSurfacesDeferred(t *testing.T) {
 // with no Show on it, so accepting a path from another Show would let an Apply
 // here quietly rearrange one the Admin was not even looking at.
 func TestApplyMatcherRejectsAForeignPath(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	sortedID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -838,6 +853,7 @@ func TestApplyMatcherRejectsAForeignPath(t *testing.T) {
 // ambiguous instead — the convention's answer for two files it cannot tell apart
 // — which is a flag on a row, not a deletion of one.
 func TestMatcherShowsBothFilesOfAParseCollision(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Clash Show")
@@ -879,6 +895,7 @@ func TestMatcherShowsBothFilesOfAParseCollision(t *testing.T) {
 // The refusal itself is kept for a set that still cannot be settled; nothing an
 // Admin can produce from filenames alone reaches it now.
 func TestApplyMatcherParseCollisionIsNotARefusal(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Clash Show")
@@ -907,6 +924,7 @@ func TestApplyMatcherParseCollisionIsNotARefusal(t *testing.T) {
 // exists to prevent, so it refuses idempotently — and the arrangement afterwards
 // must be untouched.
 func TestApplyMatcherDuringAScanConflictsAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -942,6 +960,7 @@ func TestApplyMatcherDuringAScanConflictsAndWritesNothing(t *testing.T) {
 // on cannot mean anything, and silently storing it would leave a decision the next
 // scan reads as an empty Placement.
 func TestApplyMatcherRejectsMalformedStates(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -973,6 +992,7 @@ func TestApplyMatcherRejectsMalformedStates(t *testing.T) {
 // TestMatcherRoutesRequireAdmin: all three reach an external provider and rewrite
 // the catalog on the Admin's behalf. A Member gets 403 on every one.
 func TestMatcherRoutesRequireAdmin(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -995,6 +1015,7 @@ func TestMatcherRoutesRequireAdmin(t *testing.T) {
 // TestMatcherUnknownShowIsNotFound: an unknown id is 404 on every verb — hide
 // existence, never 403 (api-contract.md).
 func TestMatcherUnknownShowIsNotFound(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, _ := scanMatcherLibrary(t)
 

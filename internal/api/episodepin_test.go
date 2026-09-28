@@ -17,6 +17,7 @@ import (
 // TestEpisodePinPersistsAndLeavesIdentityAlone drives PUT /enrichmentOverride with
 // a season+episode and asserts both halves.
 func TestEpisodePinPersistsAndLeavesIdentityAlone(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -70,6 +71,7 @@ func TestEpisodePinPersistsAndLeavesIdentityAlone(t *testing.T) {
 // TestEpisodeCandidatesRequiresASeries: without a series to list against there is
 // nothing to answer, and saying so beats an empty list that looks like "no episodes".
 func TestEpisodeCandidatesRequiresASeries(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -96,6 +98,7 @@ func TestEpisodeCandidatesRequiresASeries(t *testing.T) {
 // TestEpisodeCandidatesRequiresAdmin: it reaches an external provider on the
 // server's behalf, like every other picker read.
 func TestEpisodeCandidatesRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, _, _ := scanTVLibrary(t)
 	srv.CreateMember("epmember", "memberpass123")

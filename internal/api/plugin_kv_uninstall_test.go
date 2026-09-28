@@ -44,6 +44,7 @@ const (
 // the value back, or a namespace that was never written would pass this test
 // exactly as a namespace that was properly dropped does.
 func TestUninstallingAPluginDropsItsKeyValueNamespace(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -113,6 +114,7 @@ func TestUninstallingAPluginDropsItsKeyValueNamespace(t *testing.T) {
 // at a time (the first enabled, keyed row wins) — which is fine: what is under
 // test is whose rows the DELETE took, not who answers a viewer.
 func TestUninstallingOnePluginLeavesAnothersNamespaceAlone(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

@@ -140,6 +140,7 @@ func tvCastSetup(t *testing.T) (*testharness.Server, *castFetcher, string, strin
 // Show's identity nor an Episode's watch state, and leaves the season/episode
 // structure intact.
 func TestTVCastPhotosCaptureAndServe(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := tvCastSetup(t)
 	showID := showIDByName(t, srv, token, libID, "The Bear")
 
@@ -217,6 +218,7 @@ func TestTVCastPhotosCaptureAndServe(t *testing.T) {
 // TestTVShowNoCastOmitsStrip: a Show whose faked details carry no cast returns an
 // empty cast (the client omits the strip).
 func TestTVShowNoCastOmitsStrip(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := tvCastSetup(t)
 	enrichLib(t, srv, token, libID, "")
 
@@ -230,6 +232,7 @@ func TestTVShowNoCastOmitsStrip(t *testing.T) {
 // TestTVCastPhotosCrossKindDedupe: an actor in BOTH a movie (Dune) and a show (The
 // Bear) resolves to a single download / one cached headshot referenced by both.
 func TestTVCastPhotosCrossKindDedupe(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireTVFixtures(t)
 	prov := &fakeProvider{fn: tvCastMetaFor}
@@ -276,6 +279,7 @@ func TestTVCastPhotosCrossKindDedupe(t *testing.T) {
 // leaves the Show enriched with that cast member's name + character intact and no
 // photo; the pass does not fail.
 func TestTVCastPhotosDownloadFailureNonFatal(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := tvCastSetup(t)
 	res := enrichLib(t, srv, token, libID, "")
 	if res.Failed != 0 {

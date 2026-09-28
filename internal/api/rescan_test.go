@@ -51,11 +51,17 @@ func scanLib(t *testing.T, srv *testharness.Server, token, libID, mode string) s
 	return waitScanSettled(t, srv, token, libID)
 }
 
+// settleTimeout bounds every poll that waits for background work to land. It is
+// generous because the suite runs its tests in parallel: work that is only
+// waiting its turn for the CPU has not failed to happen. A poll returns the
+// moment its condition holds, so a passing test never waits it out.
+const settleTimeout = 60 * time.Second
+
 // waitScanSettled polls the pollable scan status until the Library leaves the
 // "running" state (or the test times out), returning the settled status.
 func waitScanSettled(t *testing.T, srv *testharness.Server, token, libID string) scanStatusResp {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for {
 		var st scanStatusResp
 		status, body := srv.AuthGET("/api/v1/libraries/"+libID+"/scan", token, &st)
@@ -75,6 +81,7 @@ func waitScanSettled(t *testing.T, srv *testharness.Server, token, libID string)
 // TestRescanAddOneFile: adding a movie folder between scans surfaces exactly one
 // new Title; the existing one is unaffected (incremental add).
 func TestRescanAddOneFile(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "First Movie (2001)", "First Movie (2001).mp4"))
 
@@ -98,6 +105,7 @@ func TestRescanAddOneFile(t *testing.T) {
 // browse (Missing) without deleting it; re-adding restores it. While hidden it
 // is still fetchable by id with its hidden/missing state visible.
 func TestRescanSoftDeleteAndRecover(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	moviePath := filepath.Join(root, "Gone Movie (2005)", "Gone Movie (2005).mp4")
 	makeMovie(t, moviePath)
@@ -160,6 +168,7 @@ func TestRescanSoftDeleteAndRecover(t *testing.T) {
 // re-resolves to the SAME Title without creating a duplicate. The old path goes
 // Missing; the new path is the live File under the unchanged Title id.
 func TestRescanRenameSameTitle(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	folder := filepath.Join(root, "Stable Movie (2006)")
 	makeMovie(t, filepath.Join(folder, "Stable Movie (2006).mp4"))
@@ -197,6 +206,7 @@ func TestRescanRenameSameTitle(t *testing.T) {
 // TestRescanFullModeRederives: a full-mode scan re-derives the catalog and the
 // library remains consistent (no duplicates, correct count).
 func TestRescanFullModeRederives(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "Full A (2007)", "Full A (2007).mp4"))
 	makeMovie(t, filepath.Join(root, "Full B (2008)", "Full B (2008).mp4"))
@@ -227,6 +237,7 @@ func TestRescanFullModeRederives(t *testing.T) {
 // the Library was left marked errored ("context canceled"); now the scan is
 // detached from the request, so it finishes and the Library settles to idle.
 func TestScanSurvivesClientDisconnect(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -276,6 +287,7 @@ func TestScanSurvivesClientDisconnect(t *testing.T) {
 // TestScheduledScanRunsOnInterval: with a short configured interval, the always-
 // on scheduled scan picks up a new movie without any manual scan trigger.
 func TestScheduledScanRunsOnInterval(t *testing.T) {
+	t.Parallel()
 	if !namingFixturesAvailable {
 		t.Skip("ffmpeg not on PATH")
 	}
@@ -290,7 +302,7 @@ func TestScheduledScanRunsOnInterval(t *testing.T) {
 	// must discover it on a later tick.
 	makeMovie(t, filepath.Join(root, "Scheduled Movie (2020)", "Scheduled Movie (2020).mp4"))
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for {
 		if len(listAllTitles(t, srv, token, libID).Titles) == 1 {
 			return // the scheduled scan found it

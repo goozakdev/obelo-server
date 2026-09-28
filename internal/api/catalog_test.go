@@ -117,6 +117,7 @@ func createMovieLibrary(t *testing.T, srv *testharness.Server, token, root strin
 // TestScanAndBrowse is the central tracer bullet: scan the fixture library, then
 // assert the catalog through the browse API.
 func TestScanAndBrowse(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -240,6 +241,7 @@ func TestScanAndBrowse(t *testing.T) {
 // TestScanIsIdempotent: a second scan re-resolves to the same Titles (identity
 // stability) rather than duplicating them.
 func TestScanIsIdempotent(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -260,6 +262,7 @@ func TestScanIsIdempotent(t *testing.T) {
 // TestTitlesPaginationAndSort: cursor pagination returns every Title exactly
 // once across pages, and sort=dateAdded is honored.
 func TestTitlesPaginationAndSort(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -315,6 +318,7 @@ func TestTitlesPaginationAndSort(t *testing.T) {
 
 // TestBrowseRequiresAuth: unauthenticated browse/detail are refused (401).
 func TestBrowseRequiresAuth(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -339,6 +343,7 @@ func TestBrowseRequiresAuth(t *testing.T) {
 
 // TestGetMissingTitle returns 404 (not 403) — hide existence (api-contract.md).
 func TestGetMissingTitle(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	var env errorEnvelope
@@ -353,6 +358,7 @@ func TestGetMissingTitle(t *testing.T) {
 
 // TestScanMissingLibrary: scanning an unknown Library is 404.
 func TestScanMissingLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	var env errorEnvelope

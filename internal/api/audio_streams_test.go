@@ -151,6 +151,7 @@ func firstFileAudio(t *testing.T, d audioDetailResp) []audioStreamResp {
 }
 
 func TestAudioStreamsListed(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	d := scanAudioMovie(t)
 	streams := firstFileAudio(t, d)
@@ -222,6 +223,7 @@ func TestAudioStreamsListed(t *testing.T) {
 // leaves the audio Stream list unchanged — a rescan refreshes rows without
 // disturbing them (or the watch state, which lives in another table).
 func TestAudioStreamsRescanStable(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

@@ -12,6 +12,7 @@ import (
 // resolved id for the playback decision). Fast and deterministic — no ffmpeg.
 
 func TestToVideoStreamsProjection(t *testing.T) {
+	t.Parallel()
 	streams := []store.Stream{
 		{ID: "v-4k", Index: 0, Kind: "video", Codec: "hevc", Width: 3840, Height: 2160, IsDefault: true, Title: "Colour"},
 		{ID: "v-1080", Index: 1, Kind: "video", Codec: "h264", Width: 1920, Height: 1080}, // untitled → resolution label
@@ -60,6 +61,7 @@ func TestToVideoStreamsProjection(t *testing.T) {
 }
 
 func TestVideoStreamLabel(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		s    store.Stream

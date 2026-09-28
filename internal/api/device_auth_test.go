@@ -70,6 +70,7 @@ func startFlow(t *testing.T, srv *testharness.Server) deviceCodeBody {
 
 // TestDeviceAuthFlowOverHTTP walks the grant end to end on the wire.
 func TestDeviceAuthFlowOverHTTP(t *testing.T) {
+	t.Parallel()
 	srv, admin := newAdminServer(t)
 
 	start := startFlow(t, srv)
@@ -155,6 +156,7 @@ func TestDeviceAuthFlowOverHTTP(t *testing.T) {
 // It must be an error rather than a 2xx, or a client treating success as
 // terminal would stop polling and never collect the session.
 func TestDeviceTokenPendingBeforeApproval(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	start := startFlow(t, srv)
 
@@ -171,6 +173,7 @@ func TestDeviceTokenPendingBeforeApproval(t *testing.T) {
 // keep ONE way to establish a session. If these two shapes ever diverge, a
 // client that switched on the payload would break on whichever it saw second.
 func TestDeviceAuthLoginResponsesAreIdentical(t *testing.T) {
+	t.Parallel()
 	srv, admin := newAdminServer(t)
 
 	start := startFlow(t, srv)
@@ -214,6 +217,7 @@ func keysOf(m map[string]any) []string {
 // whole grant rests on it. An anonymous caller who could approve could sign a TV
 // into an account without ever holding a credential.
 func TestDeviceApproveRequiresAuth(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	start := startFlow(t, srv)
 
@@ -237,6 +241,7 @@ func TestDeviceApproveRequiresAuth(t *testing.T) {
 // same 404. Telling them apart would let a caller map the live code space, which
 // is the one thing a 4-character code cannot afford.
 func TestDeviceApproveWrongCode(t *testing.T) {
+	t.Parallel()
 	srv, admin := newAdminServer(t)
 
 	var env errEnvelope
@@ -252,6 +257,7 @@ func TestDeviceApproveWrongCode(t *testing.T) {
 // refused as a device-code problem rather than as a pending one — a client told
 // "pending" would poll a nonexistent flow until its deadline.
 func TestDeviceTokenUnknownCode(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var env errEnvelope
@@ -266,6 +272,7 @@ func TestDeviceTokenUnknownCode(t *testing.T) {
 // TestDeviceCodeRequiresClientID mirrors POST /auth/login's rule: without a
 // stable clientId the redeem would mint a duplicate Device every sign-in.
 func TestDeviceCodeRequiresClientID(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var env errEnvelope
@@ -319,6 +326,7 @@ func startUntilRefusedFrom(t *testing.T, srv *testharness.Server, remoteAddr str
 // is over its own budget and retrying is the one thing that makes it worse. The
 // Retry-After is what lets a TV wait exactly long enough instead of guessing.
 func TestDeviceCodeQuotaAnswers429WithRetryAfter(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	status, header, env := startUntilRefusedFrom(t, srv, "192.0.2.10:51000", deviceStartProbe)
@@ -352,6 +360,7 @@ func TestDeviceCodeQuotaAnswers429WithRetryAfter(t *testing.T) {
 // proxy nobody declared, every request shares one budget. See clientIP in
 // middleware.go, and the declared-proxy half below.
 func TestDeviceCodeQuotaIgnoresForwardedHeaders(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	if status, _, env := startUntilRefusedFrom(t, srv, "192.0.2.10:51000", deviceStartProbe); status != http.StatusTooManyRequests {
@@ -379,6 +388,7 @@ func TestDeviceCodeQuotaIgnoresForwardedHeaders(t *testing.T) {
 // its chain with entries an attacker would actually send, including one
 // impersonating the proxy itself, and stays refused.
 func TestDeviceCodeQuotaPerClientBehindDeclaredProxy(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTrustedProxies("10.0.0.1/32"))
 
 	const proxy = "10.0.0.1:41000"
@@ -422,6 +432,7 @@ func TestDeviceCodeQuotaPerClientBehindDeclaredProxy(t *testing.T) {
 // the per-source quota doing its job; what must come back at the end is still a
 // 503 DEVICE_AUTH_BUSY, addressed to a caller that has done nothing wrong.
 func TestDeviceCodeBusyAnswers503(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var filled int
@@ -466,6 +477,7 @@ const (
 // or from the listen address would be right in development and wrong behind a
 // reverse proxy, or vice versa.
 func TestVerificationURIMatchesTheRequestHost(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	start := startFlow(t, srv)
 
@@ -499,6 +511,7 @@ func TestVerificationURIMatchesTheRequestHost(t *testing.T) {
 // string the forger already controlled — so an undeclared proxy still gets the
 // right host here, with an http:// scheme it fixes by declaring itself.
 func TestVerificationURIHonoursForwardedHeaders(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))
 
 	// Hand-built rather than via the harness helpers: this is the only test that

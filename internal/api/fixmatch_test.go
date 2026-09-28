@@ -35,6 +35,7 @@ func listOverrides(t *testing.T, srv *testharness.Server, token, libID string) o
 // TestFixMatchPersistsAcrossRescan: a fix-match override re-points a folder's
 // identity and survives a subsequent rescan (the scan does not undo it).
 func TestFixMatchPersistsAcrossRescan(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// A yearless folder the convention files as needs-review; the Admin corrects
 	// its identity to a precise title+year via fix-match.
@@ -93,6 +94,7 @@ func TestFixMatchPersistsAcrossRescan(t *testing.T) {
 // override's anchor; the next scan flags it orphaned and it appears in the Admin
 // attention list (not silently lost).
 func TestFixMatchOrphanedOnFolderRename(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	folder := filepath.Join(root, "Anchor Folder (2010)")
 	makeMovie(t, filepath.Join(folder, "Anchor Folder (2010).mp4"))
@@ -128,6 +130,7 @@ func TestFixMatchOrphanedOnFolderRename(t *testing.T) {
 
 // TestFixMatchUnknownLibrary: fix-match on an unknown Library is 404.
 func TestFixMatchUnknownLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	status, _ := srv.JSON(http.MethodPost, "/api/v1/libraries/no-such/fix-match", token, map[string]any{
@@ -140,6 +143,7 @@ func TestFixMatchUnknownLibrary(t *testing.T) {
 
 // TestFixMatchRequiresAdmin: a Member cannot fix-match or list overrides.
 func TestFixMatchRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())

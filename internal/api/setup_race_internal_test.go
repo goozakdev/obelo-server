@@ -20,6 +20,7 @@ func (setupRacedStore) CountUsers() (int, error) { return 0, nil }
 // TestASetupLosingARaceForTheUsernameIsABadRequest: a setup whose username a
 // racing insert took first is the caller's 400, not a server failure.
 func TestASetupLosingARaceForTheUsernameIsABadRequest(t *testing.T) {
+	t.Parallel()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)

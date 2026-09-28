@@ -129,6 +129,7 @@ func getEditions(t *testing.T, srv *testharness.Server, token, albumID string) a
 // The list itself: every edition of the album's release-group, with the four facts
 // that tell them apart, the LOCAL track count beside them, and the one in use marked.
 func TestAlbumEditionsListsTheReleaseGroupsEditions(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &editionListerProvider{fakeProvider: albumRecordProvider(), eds: threeEditions()}
 	srv, token, albumID := editionsFixture(t, prov)
@@ -167,6 +168,7 @@ func TestAlbumEditionsListsTheReleaseGroupsEditions(t *testing.T) {
 // there is no second apply path — it cascades, it reports the counts, and the list
 // then says the chosen edition is the one in use, on the human's authority.
 func TestChoosingAnEditionAppliesThroughTheAlbumOverrideAndIsThenInUse(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &editionListerProvider{fakeProvider: albumRecordProvider(), eds: threeEditions()}
 	srv, token, albumID := editionsFixture(t, prov)
@@ -209,6 +211,7 @@ func TestChoosingAnEditionAppliesThroughTheAlbumOverrideAndIsThenInUse(t *testin
 // Opening the section twice costs ONE provider request. The list is what an Admin
 // toggles while they decide, at the host ADR-0049 watched shed load.
 func TestOpeningTheEditionListTwiceCostsOneProviderRequest(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &editionListerProvider{fakeProvider: albumRecordProvider(), eds: threeEditions()}
 	srv, token, albumID := editionsFixture(t, prov)
@@ -223,6 +226,7 @@ func TestOpeningTheEditionListTwiceCostsOneProviderRequest(t *testing.T) {
 // A release-group with exactly ONE release still renders. It is the confirmation
 // that there was no choice to make, and an empty section reads as a broken one.
 func TestAReleaseGroupWithOneEditionStillRenders(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &editionListerProvider{fakeProvider: albumRecordProvider(),
 		eds: []enrich.ReleaseEdition{{ReleaseID: editionOrig, Date: "1997-05-21", Country: "GB",
@@ -242,6 +246,7 @@ func TestAReleaseGroupWithOneEditionStillRenders(t *testing.T) {
 // other provider-backed list gives — which is what lets the client keep showing the
 // paste-a-URL escape hatch instead of an error page.
 func TestAlbumEditionsAreUnavailableWhenTheProviderCannotList(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	// A plain fakeProvider has no AlbumEditionLister capability at all.
 	srv, token, albumID := editionsFixture(t, albumRecordProvider())
@@ -258,6 +263,7 @@ func TestAlbumEditionsAreUnavailableWhenTheProviderCannotList(t *testing.T) {
 // An unknown album is 404 (not an empty list), and the route is Admin-only like
 // every other read that reaches a provider on the server's behalf.
 func TestAlbumEditionsRequires404AndAdmin(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &editionListerProvider{fakeProvider: albumRecordProvider(), eds: threeEditions()}
 	srv, token, albumID := editionsFixture(t, prov)

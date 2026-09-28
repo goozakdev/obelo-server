@@ -103,6 +103,7 @@ func (rb *recordingBuilder) tmdbKey() string {
 // decrypts the payload, and adopts the default key into the running provider — and
 // a SUBSEQUENT poll picks up a ROTATED key without a restart (ADR-0032, layer 2).
 func TestKeyRotationPickedUpOnNextPoll(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	encKey := newRotationEncKey(t)
 	stub := &rotationStub{encKey: encKey, keys: rotation.Keys{TMDB: "rot-A", Fanart: "fan-A"}}
@@ -158,6 +159,7 @@ func TestKeyRotationPickedUpOnNextPoll(t *testing.T) {
 // endpoint (ADR-0032): an unconsented server makes ZERO calls to it; granting
 // consent then lets the fetch proceed and the default key is adopted.
 func TestKeyRotationNoFetchBeforeConsent(t *testing.T) {
+	t.Parallel()
 	encKey := newRotationEncKey(t)
 	stub := &rotationStub{encKey: encKey, keys: rotation.Keys{TMDB: "rot-A"}}
 	endpoint := stub.serve(t)
@@ -196,6 +198,7 @@ func TestKeyRotationNoFetchBeforeConsent(t *testing.T) {
 // an operator TMDB key set, the rotation payload never overrides it — the running
 // provider keeps the operator's key.
 func TestKeyRotationOperatorKeyWins(t *testing.T) {
+	t.Parallel()
 	encKey := newRotationEncKey(t)
 	stub := &rotationStub{encKey: encKey, keys: rotation.Keys{TMDB: "rot-A"}}
 	endpoint := stub.serve(t)

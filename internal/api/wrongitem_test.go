@@ -104,6 +104,7 @@ func getShowIdentity(t *testing.T, srv *testharness.Server, token, showID string
 // record, a folder-keyed Match override exists, and the correction survives a
 // rescan.
 func TestWrongItemMovieRekeysResetsAndClears(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	folder := filepath.Join(root, "Mistaken Movie (2001)")
 	makeMovie(t, filepath.Join(folder, "Mistaken Movie (2001).mp4"))
@@ -193,6 +194,7 @@ func TestWrongItemMovieRekeysResetsAndClears(t *testing.T) {
 // re-keys, every Episode's watch state resets, the Show's Locked fields clear, the
 // Show re-enriches to the picked record, and the correction survives a rescan.
 func TestWrongItemShowRekeysResetsAndClears(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := wrongItemFake()
 	srv := testharness.New(t,
@@ -284,6 +286,7 @@ func TestWrongItemShowRekeysResetsAndClears(t *testing.T) {
 // (WRONG_KIND) on an Episode and a Track — Wrong-item is Movie/Show only (Episodes
 // have no per-episode anchor; music identity is tag-anchored).
 func TestWrongItemRejectedForEpisodeAndTrack(t *testing.T) {
+	t.Parallel()
 	t.Run("episode → 422", func(t *testing.T) {
 		requireTVFixtures(t)
 		srv, token, libID := scanTVLibrary(t)
@@ -352,6 +355,7 @@ func TestWrongItemRejectedForEpisodeAndTrack(t *testing.T) {
 
 // TestWrongItemRequiresAdmin: a Member cannot run a Wrong-item correction.
 func TestWrongItemRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "Member Movie (2005)", "Member Movie (2005).mp4"))
 
@@ -378,6 +382,7 @@ func TestWrongItemRequiresAdmin(t *testing.T) {
 // TestWrongItemSSE: applying a Wrong-item correction emits a libraryUpdated event
 // so browse reflects the re-identification live (ADR-0016).
 func TestWrongItemSSE(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "Live Movie (2007)", "Live Movie (2007).mp4"))
 

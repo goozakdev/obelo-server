@@ -135,7 +135,7 @@ func sinkCounters(t *testing.T, srv *testharness.Server, token, slug string) eve
 func awaitCounters(t *testing.T, srv *testharness.Server, token, slug string,
 	want func(eventSinkCountersResp) bool) eventSinkCountersResp {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	var got eventSinkCountersResp
 	for {
 		got = sinkCounters(t, srv, token, slug)
@@ -170,6 +170,7 @@ type eventSinksWithCountersResp struct {
 // exactly one enrich.completed naming the Library and carrying that pass's terminal
 // counts — not one per Title, and not one per progress tick.
 func TestEnrichCompletedIsOneEventPerPass(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	receiver := newSinkReceiver(t)
 
@@ -221,6 +222,7 @@ func TestEnrichCompletedIsOneEventPerPass(t *testing.T) {
 // NOT told the scan that changed them completed, even though both fire from the
 // same scan. The subset a sink asked for is the subset it gets.
 func TestLibraryChangedIsDeliveredAndTheSubsetIsHonoured(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	receiver := newSinkReceiver(t)
 
@@ -255,6 +257,7 @@ func TestLibraryChangedIsDeliveredAndTheSubsetIsHonoured(t *testing.T) {
 // name the User who is watching, the Device they are watching on and the Title —
 // and neither carries a Link id, because nothing about this session came over one.
 func TestPlaybackEventsNameTheUserAndTheDevice(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	receiver := newSinkReceiver(t)
 
@@ -333,6 +336,7 @@ func TestPlaybackEventsNameTheUserAndTheDevice(t *testing.T) {
 // know. What it is NOT told is who: no user id, and no name that came from over
 // there. The linked Server is named by OUR label for it, the one our Admin typed.
 func TestRelayedPlaybackNamesTheLinkAndNotAPerson(t *testing.T) {
+	t.Parallel()
 	receiver := newSinkReceiver(t)
 	f := linkForRelay(t)
 
@@ -409,6 +413,7 @@ func TestRelayedPlaybackNamesTheLinkAndNotAPerson(t *testing.T) {
 // this server's own signing key, so there is nobody to ask — and these three
 // numbers are what stands in its place.
 func TestEventSinkCountersReportDeliveredAndFailed(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	receiver := newSinkReceiver(t)
 

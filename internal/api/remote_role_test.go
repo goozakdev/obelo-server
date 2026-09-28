@@ -35,6 +35,7 @@ func createRemoteUser(t *testing.T, srv *testharness.Server, adminTok, label str
 // four things the sharing Admin does to a linked Server, all through the same
 // /users surface a Member is managed on.
 func TestRemoteUserLifecycleOverTheAdminAPI(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -91,6 +92,7 @@ func TestRemoteUserLifecycleOverTheAdminAPI(t *testing.T) {
 // TestCreateRemoteUserRefusesAPassword: the role takes none, and a supplied one
 // is a 400 rather than a field quietly stored and never used.
 func TestCreateRemoteUserRefusesAPassword(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
@@ -105,6 +107,7 @@ func TestCreateRemoteUserRefusesAPassword(t *testing.T) {
 // the same generic 401 an unknown username gets — the role must not be readable
 // off the answer.
 func TestRemoteUserCannotLogInOverHTTP(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	createRemoteUser(t, srv, admin, "peer-server")
@@ -134,6 +137,7 @@ func TestRemoteUserCannotLogInOverHTTP(t *testing.T) {
 // hidden as 404 exactly as it is for a person, and the granted one opens up with
 // the same titles a Member with the same grant sees.
 func TestRemoteUserResolvesAScopeLikeAMember(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -177,6 +181,7 @@ func TestRemoteUserResolvesAScopeLikeAMember(t *testing.T) {
 // ended. That half is what the sharer's own transcode observability runs on, so
 // the guard has to be narrower than "the remote User does not play".
 func TestARelayPlayLeavesWatchStateUntouched(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

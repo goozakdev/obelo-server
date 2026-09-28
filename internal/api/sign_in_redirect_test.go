@@ -289,6 +289,7 @@ func wantRefused(t *testing.T, srv *testharness.Server, admin string, status int
 // of the same token subject reaches the same User whatever the plugin claims, and
 // the plugin's subject reaches nobody.
 func TestTheIDTokensSubjectWinsOverThePluginsIdentity(t *testing.T) {
+	t.Parallel()
 	srv, _, idp := oidcServer(t)
 
 	run := startRedirect(t, srv, "oidc")
@@ -333,6 +334,7 @@ func TestTheIDTokensSubjectWinsOverThePluginsIdentity(t *testing.T) {
 // the plugin's own identity beside it is perfectly plausible. Every one is
 // refused with the one refusal, and none creates a User or a session.
 func TestAnIDTokenThatDoesNotVerifyIsRefused(t *testing.T) {
+	t.Parallel()
 	srv, admin, idp := oidcServer(t)
 	stranger, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -383,6 +385,7 @@ func TestAnIDTokenThatDoesNotVerifyIsRefused(t *testing.T) {
 // media; the plugin's identity says admins. The sign-in is accepted and the
 // External identity records the token's groups.
 func TestTheIDTokensGroupsWinOverThePluginsGroups(t *testing.T) {
+	t.Parallel()
 	srv, _, idp := oidcServer(t)
 
 	run := startRedirect(t, srv, "oidc")
@@ -406,6 +409,7 @@ func TestTheIDTokensGroupsWinOverThePluginsGroups(t *testing.T) {
 // new subject whose name is already taken here is the password flow's 409, with
 // nothing created.
 func TestARedirectSignInResolvesLikeThePasswordFlow(t *testing.T) {
+	t.Parallel()
 	srv, admin, idp := oidcServer(t)
 
 	run := startRedirect(t, srv, "oidc")
@@ -462,6 +466,7 @@ func TestARedirectSignInResolvesLikeThePasswordFlow(t *testing.T) {
 // the binding cookie, one naming a state the server never minted, and a replay
 // of a state already spent are all refused.
 func TestARedirectCallbackIsBoundToItsStartAndUsedOnce(t *testing.T) {
+	t.Parallel()
 	srv, admin, idp := oidcServer(t)
 
 	run := startRedirect(t, srv, "oidc")
@@ -493,6 +498,7 @@ func TestARedirectCallbackIsBoundToItsStartAndUsedOnce(t *testing.T) {
 // verified, beside the Bundled OpenID Connect plugin, which is. One that answers
 // an ID token anyway — a token nobody can verify — is refused.
 func TestAPlainOAuth2ProviderIsAcceptedOnStateAndPKCEAndMarkedUnverified(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir))
@@ -543,6 +549,7 @@ func TestAPlainOAuth2ProviderIsAcceptedOnStateAndPKCEAndMarkedUnverified(t *test
 // types an issuer and a client id it offers nobody a button and refuses to
 // start; once they have, the login screen lists it.
 func TestTheBundledOpenIDConnectPluginIsInstalledAndConfigurable(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
@@ -588,6 +595,7 @@ func TestTheBundledOpenIDConnectPluginIsInstalledAndConfigurable(t *testing.T) {
 // the OpenID Connect plugin and approves its code; the TV collects a session for
 // ada — the identity the redirect resolved.
 func TestADeviceGrantApprovedFromARedirectSessionSignsTheDeviceInAsThatIdentity(t *testing.T) {
+	t.Parallel()
 	srv, _, idp := oidcServer(t)
 	tv := startFlow(t, srv)
 
@@ -622,6 +630,7 @@ func TestADeviceGrantApprovedFromARedirectSessionSignsTheDeviceInAsThatIdentity(
 // token. A provider that declares ID tokens is believed on its token or not at
 // all, so the callback is refused and nobody is signed in.
 func TestAnOpenIDConnectProviderThatAnswersNoIDTokenIsRefused(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	m := plugintest.RedirectSignInManifest("idp", "https://idp.example.test/authorize")
 	m.Settings.Fields = append(m.Settings.Fields,
@@ -649,6 +658,7 @@ func TestAnOpenIDConnectProviderThatAnswersNoIDTokenIsRefused(t *testing.T) {
 // the start and the callback reach it, neither the Admin plugins list nor any
 // log line carries any of it; the last error is the host's own sentence.
 func TestARedirectSignInCallShowsTheAdminNoTextOfItsOwn(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	const secret = "client-s3cret-horse"
 	for _, tc := range []struct {
 		name      string
@@ -739,6 +749,7 @@ func startCookie(t *testing.T, srv *testharness.Server, remoteAddr string, heade
 // is Secure, under the __Secure- name, when the request was HTTPS (here, by a
 // trusted proxy's say-so), and not over plain HTTP, where Secure would drop it.
 func TestTheSignInBindingCookieIsHttpOnlyAndLax(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithTrustedProxies("127.0.0.1/32"))
@@ -760,6 +771,7 @@ func TestTheSignInBindingCookieIsHttpOnlyAndLax(t *testing.T) {
 // browser shares it — where refusing instead would let anybody lock everybody
 // out of signing in.
 func TestStartsPastTheCapEvictTheOldestRatherThanLockingOut(t *testing.T) {
+	t.Parallel()
 	const perClient = 16
 	for _, tc := range []struct {
 		name    string
@@ -801,6 +813,7 @@ func TestStartsPastTheCapEvictTheOldestRatherThanLockingOut(t *testing.T) {
 // TOO_MANY_ATTEMPTS with a Retry-After, as a login is — while another address
 // still starts.
 func TestRedirectStartsAreRateLimitedPerAddress(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir))
@@ -833,6 +846,7 @@ func TestRedirectStartsAreRateLimitedPerAddress(t *testing.T) {
 // whose provider names a username breaking the rule is a failed sign-in, like
 // any answer the Server cannot act on, and nothing is created.
 func TestARedirectFirstSignInNamingAnUnusableUsernameIsRefused(t *testing.T) {
+	t.Parallel()
 	srv, admin, idp := oidcServer(t)
 	long := strings.Repeat("a", 65)
 
@@ -853,6 +867,7 @@ func TestARedirectFirstSignInNamingAnUnusableUsernameIsRefused(t *testing.T) {
 // forwarded for, not the proxy — so many browsers behind it each keep their own
 // budget, and one browser is still refused past its own.
 func TestRedirectStartsAreLimitedPerClientBehindATrustedProxy(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithTrustedProxies("127.0.0.1/32"))

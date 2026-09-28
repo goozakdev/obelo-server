@@ -79,6 +79,7 @@ func readWebReferences(t *testing.T, srv *testharness.Server, token, titleID str
 // Title holds, but over plain http. The host keeps only https, so the Title has
 // no visible Web references at all — not a flagged one, not a rewritten one.
 func TestAnHTTPWebReferenceForAHeldIDIsNeverShown(t *testing.T) {
+	t.Parallel()
 	srv, token, _, id := webReferenceServer(t, "http")
 
 	if got := readWebReferences(t, srv, token, id); len(got) != 0 {
@@ -90,6 +91,7 @@ func TestAnHTTPWebReferenceForAHeldIDIsNeverShown(t *testing.T) {
 // good reference for the held id, one keyed to a different id in the same
 // namespace, and one in a namespace the host never sent. Only the first survives.
 func TestAWebReferenceForAnIDTheTitleDoesNotHoldIsNeverShown(t *testing.T) {
+	t.Parallel()
 	srv, token, _, id := webReferenceServer(t, "foreign")
 
 	got := readWebReferences(t, srv, token, id)
@@ -102,6 +104,7 @@ func TestAWebReferenceForAnIDTheTitleDoesNotHoldIsNeverShown(t *testing.T) {
 // TestAnHTTPSWebReferenceForAHeldIDIsShownToEveryRole: the well-behaved guest's
 // reference reaches an Admin AND a Member granted the Library, identically.
 func TestAnHTTPSWebReferenceForAHeldIDIsShownToEveryRole(t *testing.T) {
+	t.Parallel()
 	srv, admin, libID, id := webReferenceServer(t, "https")
 
 	memberID := srv.CreateUser(admin, "kid", "memberpass123", "member")
@@ -121,6 +124,7 @@ func TestAnHTTPSWebReferenceForAHeldIDIsShownToEveryRole(t *testing.T) {
 // while answering is told no by the host, and says so in its label — the fetch
 // never left the sandbox.
 func TestAWebReferenceProviderIsGivenNoNetwork(t *testing.T) {
+	t.Parallel()
 	srv, token, _, id := webReferenceServer(t, "fetch")
 
 	got := readWebReferences(t, srv, token, id)

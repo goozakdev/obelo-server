@@ -45,6 +45,7 @@ func createLibrary(t *testing.T, srv *testharness.Server, token string, body map
 // TestCreateLibraryHappyPath: an Admin creates a Movie Library over multiple
 // roots and gets it back with its merged root folders.
 func TestCreateLibraryHappyPath(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -75,6 +76,7 @@ func TestCreateLibraryHappyPath(t *testing.T) {
 // TestCreateLibraryNormalizesPaths: trailing slashes / "." collapse so an
 // otherwise-equal root compares equal.
 func TestCreateLibraryNormalizesPaths(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -94,6 +96,7 @@ func TestCreateLibraryNormalizesPaths(t *testing.T) {
 // TestListAndGetLibrary: list returns created libraries with roots; get-by-id
 // returns the same one.
 func TestListAndGetLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -130,6 +133,7 @@ func TestListAndGetLibrary(t *testing.T) {
 
 // TestGetMissingLibrary returns 404 with the standard envelope.
 func TestGetMissingLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -145,6 +149,7 @@ func TestGetMissingLibrary(t *testing.T) {
 
 // TestDeleteLibrary removes a Library; a follow-up get is 404.
 func TestDeleteLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -167,6 +172,7 @@ func TestDeleteLibrary(t *testing.T) {
 
 // TestDeleteMissingLibrary returns 404 — consistent with the get-missing posture.
 func TestDeleteMissingLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -183,6 +189,7 @@ func TestDeleteMissingLibrary(t *testing.T) {
 // TestFolderOverlapRejected: exact, parent, and child overlap with a folder
 // already owned by another Library are all rejected.
 func TestFolderOverlapRejected(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -233,6 +240,7 @@ func TestFolderOverlapRejected(t *testing.T) {
 // TestAcceptTVAndMusicKinds: tv and music are now valid kinds (tv-music PRD);
 // only a genuinely-unknown kind is BAD_REQUEST. Movie is unchanged.
 func TestAcceptTVAndMusicKinds(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -268,6 +276,7 @@ func TestAcceptTVAndMusicKinds(t *testing.T) {
 
 // TestRejectEmptyNameAndNoRoots: missing name or empty rootFolders is BAD_REQUEST.
 func TestRejectEmptyNameAndNoRoots(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -298,6 +307,7 @@ func TestRejectEmptyNameAndNoRoots(t *testing.T) {
 // admin-gated — a Member GETs /libraries scoped to their grants (covered by the
 // access-control grant tests); with no grants that is an empty 200.
 func TestLibraryManagementAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	// Bootstrap the Admin (so setup is closed), then seed a Member directly.
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
@@ -339,6 +349,7 @@ func TestLibraryManagementAdminOnly(t *testing.T) {
 // TestUpdateLibraryRenames: PATCH with a new name renames the Library and leaves
 // its roots untouched.
 func TestUpdateLibraryRenames(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -365,6 +376,7 @@ func TestUpdateLibraryRenames(t *testing.T) {
 // TestUpdateLibraryAddsRoots: PATCH with addRootFolders appends folders, merged
 // into the returned Library alongside the originals.
 func TestUpdateLibraryAddsRoots(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -397,6 +409,7 @@ func TestUpdateLibraryAddsRoots(t *testing.T) {
 // the Library's own or another Library's — is a 409 FOLDER_OVERLAP; a bad name is
 // 400; a missing Library is 404.
 func TestUpdateLibraryRejectsOverlap(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -452,6 +465,7 @@ func TestUpdateLibraryRejectsOverlap(t *testing.T) {
 
 // TestUpdateLibraryAdminOnly: PATCH is Admin-only (a Member is 403).
 func TestUpdateLibraryAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	srv.CreateMember("member", "memberpass123")

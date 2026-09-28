@@ -87,6 +87,7 @@ func redeem(t *testing.T, srv *testharness.Server, code string, version int, ser
 // TestMintedInviteCarriesTheServerIdentityAndOrigins is ADR-0055 §2: one
 // self-contained string, not "a hostname and a code".
 func TestMintedInviteCarriesTheServerIdentityAndOrigins(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -143,6 +144,7 @@ func TestMintedInviteCarriesTheServerIdentityAndOrigins(t *testing.T) {
 // TestInviteRedeemsOnceOverHTTP: the happy path, and then the two refusals that
 // must be indistinguishable — a second attempt and an expired invite.
 func TestInviteRedeemsOnceOverHTTP(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -227,6 +229,7 @@ func TestInviteRedeemsOnceOverHTTP(t *testing.T) {
 // anything is redeemed, so a mismatch costs the Admin nothing, and the answer
 // carries both numbers so the redeeming side can say which server to upgrade.
 func TestRedeemRefusesAVersionMismatch(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -257,6 +260,7 @@ func TestRedeemRefusesAVersionMismatch(t *testing.T) {
 // TestInviteIsRemoteOnly is the acceptance criterion: `remote` is the only role
 // an invite can be minted for.
 func TestInviteIsRemoteOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
@@ -288,6 +292,7 @@ func TestInviteIsRemoteOnly(t *testing.T) {
 // so a Member must not be able to mint one for anybody — including for a linked
 // Server that already exists.
 func TestMintingIsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -309,6 +314,7 @@ func TestMintingIsAdminOnly(t *testing.T) {
 // else. Every one of these becomes an invite that can only fail on somebody
 // else's machine, so it is refused here, where the Admin is looking at it.
 func TestMintRefusesBadOrigins(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -341,6 +347,7 @@ func TestMintRefusesBadOrigins(t *testing.T) {
 // TestMintingReplacesTheOutstandingInvite: over HTTP, the string the Admin sent
 // first stops working the moment they mint again (ADR-0055 §1).
 func TestMintingReplacesTheOutstandingInvite(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -365,6 +372,7 @@ func TestMintingReplacesTheOutstandingInvite(t *testing.T) {
 // re-key from the same home updates the Device row rather than leaving a trail
 // of dead ones on the sharer's Users page.
 func TestRedeemingTwiceFromOneServerKeepsOneDevice(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -412,6 +420,7 @@ func TestRedeemingTwiceFromOneServerKeepsOneDevice(t *testing.T) {
 // VERSION before it posts a code (ADR-0055 §3), so the handshake has to carry
 // both.
 func TestHandshakeAdvertisesLinking(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var info struct {
@@ -441,6 +450,7 @@ func TestHandshakeAdvertisesLinking(t *testing.T) {
 // why that row exists — deleting it is surrender's job, not logout's — so a
 // live Device after a logout is the documented split, not a bug.
 func TestALoggedOutRedemptionBearerStopsAuthorizing(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)

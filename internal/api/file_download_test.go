@@ -36,6 +36,7 @@ func duneFile(t *testing.T, srv *testharness.Server) (token, fileID string, size
 // TestFileDownloadBearer: the bearer header streams the whole File; the body is
 // the complete on-disk bytes (length == sizeBytes).
 func TestFileDownloadBearer(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token, fileID, size := duneFile(t, srv)
 
@@ -51,6 +52,7 @@ func TestFileDownloadBearer(t *testing.T) {
 // TestFileDownloadQueryToken: with NO Authorization header, a valid ?token=
 // authenticates — this is the path an external player (VLC) actually takes.
 func TestFileDownloadQueryToken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token, fileID, size := duneFile(t, srv)
 
@@ -66,6 +68,7 @@ func TestFileDownloadQueryToken(t *testing.T) {
 // TestFileDownloadRange: a Range request gets 206 Partial Content (seek support
 // from http.ServeContent), so an external player can scrub.
 func TestFileDownloadRange(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token, fileID, _ := duneFile(t, srv)
 
@@ -89,6 +92,7 @@ func TestFileDownloadRange(t *testing.T) {
 
 // TestFileDownloadNoAuth: neither a bearer header nor a token query param → 401.
 func TestFileDownloadNoAuth(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	_, fileID, _ := duneFile(t, srv)
 
@@ -100,6 +104,7 @@ func TestFileDownloadNoAuth(t *testing.T) {
 // TestFileDownloadBadToken: a garbage ?token= is rejected (validated against the
 // DB like any credential), not silently served.
 func TestFileDownloadBadToken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	_, fileID, _ := duneFile(t, srv)
 
@@ -111,6 +116,7 @@ func TestFileDownloadBadToken(t *testing.T) {
 // TestFileDownloadUnknownFile: an authenticated request for a nonexistent File
 // id is hidden as a 404.
 func TestFileDownloadUnknownFile(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -151,6 +157,7 @@ func fileIDOfTitle(t *testing.T, srv *testharness.Server, token, titleID string)
 // Library — over the bearer header AND over ?token= (the external-player path,
 // which must not be the loose one). The Admin downloads both.
 func TestFileDownloadRespectsLibraryGrants(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -209,6 +216,7 @@ func TestFileDownloadRespectsLibraryGrants(t *testing.T) {
 // Rating ceiling. A PG-13-capped Member downloads the PG-13 File and is refused
 // the R one, inside the SAME granted Library; the Admin is never capped.
 func TestFileDownloadRespectsRatingCeiling(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -259,6 +267,7 @@ func TestFileDownloadRespectsRatingCeiling(t *testing.T) {
 // just the codes: a helpful "you don't have access to this library" message is a
 // 404 too, and would leak everything.
 func TestFileDownloadOutOfScope404MatchesUnknownID(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

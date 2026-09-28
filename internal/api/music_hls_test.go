@@ -65,6 +65,7 @@ func generateLongAudioTrack(t *testing.T, seconds string, codec string, ext stri
 // remux-style delivery (ffmpeg's real playlist), which a native-HLS client (Safari)
 // plays without the segment 404s the synthesized/realign path produced.
 func TestMusicTranscodeServesFfmpegPlaylistAndAllSegments(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

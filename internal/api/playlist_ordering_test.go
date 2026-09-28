@@ -69,6 +69,7 @@ func playlistMemberItemIDs(d playlistDetailResp) []string {
 // reorder to C,A,B and assert GET returns C,A,B (by item id AND title id). A repeat
 // of the same order is idempotent. Acceptance: reorder reflected in GET.
 func TestPlaylistReorder(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	a := findTitle(t, list, "Dune")
@@ -110,6 +111,7 @@ func TestPlaylistReorder(t *testing.T) {
 // UNCHANGED on a subsequent GET. Acceptance: non-matching itemIds rejected, order
 // intact.
 func TestPlaylistReorderRejection(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	a := findTitle(t, list, "Dune")
@@ -145,6 +147,7 @@ func TestPlaylistReorderRejection(t *testing.T) {
 // id → 404. Acceptance: remove-by-item-id, duplicate's other entry untouched, order
 // preserved.
 func TestPlaylistRemoveByItemID(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	a := findTitle(t, list, "Dune") // appears twice (duplicate)
@@ -186,6 +189,7 @@ func TestPlaylistRemoveByItemID(t *testing.T) {
 // clearing the ceiling makes the R Title REAPPEAR in its original position — the
 // item rows persist throughout. Acceptance: lost-access member omitted then reappears.
 func TestPlaylistAccessSurvival(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, list := scanMovies(t)
 	pg := findTitle(t, list, "Dune")        // → PG-13
@@ -227,6 +231,7 @@ func TestPlaylistAccessSurvival(t *testing.T) {
 // original position — no re-add. The playlist_items row persists throughout (ADR-0008).
 // Acceptance: Missing member omitted then reappears.
 func TestPlaylistMissingSurvival(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	a := findTitle(t, list, "Dune")
@@ -263,6 +268,7 @@ func TestPlaylistMissingSurvival(t *testing.T) {
 // with no client-side recourse. Acceptance: reorder reachable with a Missing member;
 // the Missing member neither moves nor leaks.
 func TestPlaylistReorderWithMissingMember(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	a := findTitle(t, list, "Dune")
@@ -306,6 +312,7 @@ func TestPlaylistReorderWithMissingMember(t *testing.T) {
 // rest by the ids they can see; the out-of-scope member holds its index and reappears
 // there when the ceiling lifts. Acceptance: reorder reachable under a narrowed Scope.
 func TestPlaylistReorderWithOutOfScopeMember(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, list := scanMovies(t)
 	pg := findTitle(t, list, "Dune")        // → PG-13
@@ -346,6 +353,7 @@ func TestPlaylistReorderWithOutOfScopeMember(t *testing.T) {
 // Playlist, and the owner's order is untouched. Acceptance: non-owner 404 on reorder
 // and remove.
 func TestPlaylistOrderingOwnership404(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, list := scanMovies(t)
 	a := findTitle(t, list, "Dune")

@@ -79,6 +79,7 @@ func getTranscoding(t *testing.T, srv *testharness.Server, token string) transco
 // hardware fallback) plus a validated hardware backend — the states the real
 // detector can't produce on a GPU-less CI box, hence WithBackendResolution.
 func TestTranscodingBackendProjection(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name          string
 		res           transcode.Resolution
@@ -146,6 +147,7 @@ func TestTranscodingBackendProjection(t *testing.T) {
 // TestTranscodingLoadIdle asserts the load block on an idle server: no transcodes
 // running, the configured cap reported, and not at capacity.
 func TestTranscodingLoadIdle(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTranscodeCap(4))
 	token := adminToken(t, srv)
 
@@ -164,6 +166,7 @@ func TestTranscodingLoadIdle(t *testing.T) {
 // TestTranscodingLoadUnlimited asserts a cap of 0 is reported as unlimited and is
 // never at capacity.
 func TestTranscodingLoadUnlimited(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTranscodeCap(0))
 	token := adminToken(t, srv)
 
@@ -182,6 +185,7 @@ func TestTranscodingLoadUnlimited(t *testing.T) {
 // the snapshot returns to active 0 / not-at-capacity. Only transcodes are metered,
 // which the cap-of-1 saturation already proves.
 func TestTranscodingLoadReflectsLiveTranscodes(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t, testharness.WithTranscodeCap(1))
@@ -221,6 +225,7 @@ func TestTranscodingLoadReflectsLiveTranscodes(t *testing.T) {
 // and an available probe, the gpu block carries the full telemetry readout and a
 // sampledAt reflecting the sample's capture time.
 func TestTranscodingGPUPopulatedForNVENC(t *testing.T) {
+	t.Parallel()
 	sampledAt := time.Date(2026, 7, 11, 18, 22, 4, 0, time.UTC)
 	probe := &fakeGPUProbe{
 		ok: true,
@@ -266,6 +271,7 @@ func TestTranscodingGPUPopulatedForNVENC(t *testing.T) {
 // probe answers "unavailable" (nvidia-smi absent / query error) yields a null gpu
 // block — the one all-or-nothing unavailable state.
 func TestTranscodingGPUNullWhenProbeUnavailable(t *testing.T) {
+	t.Parallel()
 	probe := &fakeGPUProbe{ok: false}
 	srv := testharness.New(t,
 		testharness.WithBackendResolution(nvenc()),
@@ -284,6 +290,7 @@ func TestTranscodingGPUNullWhenProbeUnavailable(t *testing.T) {
 // TestTranscodingGPUNullForNonNVENC asserts a non-NVENC active backend never
 // queries the probe and reports a null gpu block, even when telemetry is available.
 func TestTranscodingGPUNullForNonNVENC(t *testing.T) {
+	t.Parallel()
 	probe := &fakeGPUProbe{ok: true, tel: gpu.Telemetry{UtilizationPct: intp(37)}}
 	// Requested nvenc but fell back to CPU (degraded): the active backend is CPU, so
 	// the GPU block must stay null and the probe must never be spawned.
@@ -305,6 +312,7 @@ func TestTranscodingGPUNullForNonNVENC(t *testing.T) {
 // TestTranscodingRequiresAdmin asserts the endpoint is behind the admin scope: a
 // Member gets 403, not a filtered view (ADR-0029).
 func TestTranscodingRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	// An admin must exist first (setup) before a member can be created.
 	_ = adminToken(t, srv)

@@ -43,6 +43,7 @@ func makeAudio(t *testing.T, dst string, tags map[string]string) {
 // needs-review Show; a recognized media file with no episode token goes to the
 // Unmatched bucket (never auto-guessed), while a well-named Show files cleanly.
 func TestTVNeedsReviewAndUnmatched(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// Yearless Show → needs-review (browsable), with a valid episode so it files.
 	makeMovie(t, filepath.Join(root, "Mystery Show", "Season 01", "Mystery Show - S01E01 - Pilot.mkv"))
@@ -99,6 +100,7 @@ func TestTVNeedsReviewAndUnmatched(t *testing.T) {
 // file lands Unmatched is covered by music_test.go; this asserts the API
 // surfaces both buckets together.
 func TestMusicNeedsReviewBucket(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// Tagless track filed by path layout → needs-review (best-effort parse).
 	makeAudio(t, filepath.Join(root, "Nirvana", "Nevermind (1991)", "01 - Come As You Are.mp3"), nil)
@@ -137,6 +139,7 @@ func TestMusicNeedsReviewBucket(t *testing.T) {
 // the folder is renamed away — the Music interpretation of the folder-keyed
 // override the Movie/TV paths already use.
 func TestMusicAlbumOverridePersistsAcrossRescan(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	albumDir := filepath.Join(root, "The Beatles", "Abbey Road (1969)")
 	// Mis-tagged album: the file lives in the right folder but the album tag is wrong.
@@ -225,6 +228,7 @@ type showsWithCountResp struct {
 // unwatched-Episode count on each Show, and the count drops when an Episode is
 // marked watched — the Show analogue of a Movie's resume marker.
 func TestShowPosterUnwatchedCount(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 

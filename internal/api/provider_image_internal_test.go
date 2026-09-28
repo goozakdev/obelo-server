@@ -19,6 +19,7 @@ import (
 // rather than passing the string through to the browser, which is what would put
 // the browser back in touch with a third party (or hand it a javascript: URL).
 func TestProviderImageProxyURLOnlySignsAbsoluteHTTP(t *testing.T) {
+	t.Parallel()
 	p := newProviderImageProxy()
 
 	for _, tc := range []struct {
@@ -58,6 +59,7 @@ func TestProviderImageProxyURLOnlySignsAbsoluteHTTP(t *testing.T) {
 // candidate list (the lists are per-process and TTL'd anyway; see the file
 // header).
 func TestProviderImageRefIsKeyBound(t *testing.T) {
+	t.Parallel()
 	const target = "https://coverartarchive.org/release-group/abc/front-250"
 	minted := newProviderImageProxy()
 	other := newProviderImageProxy() // a "restarted" server: a fresh key
@@ -88,6 +90,7 @@ func TestProviderImageRefIsKeyBound(t *testing.T) {
 // never arrive — is TestProviderImageUpstreamFailuresAreAll404 in
 // provider_image_test.go.
 func TestProviderImageClientCarriesTheRedirectPolicy(t *testing.T) {
+	t.Parallel()
 	p := newProviderImageProxy()
 	if p.client.CheckRedirect == nil {
 		t.Fatal("the provider-image client follows redirects unchecked")

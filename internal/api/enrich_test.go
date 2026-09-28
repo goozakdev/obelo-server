@@ -332,6 +332,7 @@ func authBytes(t *testing.T, srv *testharness.Server, token, path string) (int, 
 // Movie's detail with overview/genres/cast/contentRating/releaseDate/runtime/
 // studio + a FETCHED poster whose URL serves the fake's image bytes.
 func TestEnrichMovieAppliesMetadataAndArtwork(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	fetch := &fakeFetcher{data: []byte("FAKEPOSTERBYTES"), contentType: "image/jpeg"}
@@ -404,6 +405,7 @@ func TestEnrichMovieAppliesMetadataAndArtwork(t *testing.T) {
 // TestEnrichByEmbeddedID: a Title with a {tmdb-…} token enriches BY id (no fuzzy
 // search), and its identity (year, tmdbId) + watch state survive the pass.
 func TestEnrichByEmbeddedID(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -452,6 +454,7 @@ func TestEnrichByEmbeddedID(t *testing.T) {
 // TestEnrichLocalArtworkWins: a Title with a local poster.jpg keeps serving the
 // LOCAL bytes after enrichment fetches a remote poster (local wins, CONTEXT.md).
 func TestEnrichLocalArtworkWins(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	fetch := &fakeFetcher{data: []byte("REMOTEPOSTER"), contentType: "image/jpeg"}
@@ -490,6 +493,7 @@ func TestEnrichLocalArtworkWins(t *testing.T) {
 // TestEnrichGracefulDegradation: a no-match Title → unmatched, a provider error →
 // failed, and neither aborts the pass (the rest still match). All stay browsable.
 func TestEnrichGracefulDegradation(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
 		switch ref.Title {
@@ -531,6 +535,7 @@ func TestEnrichGracefulDegradation(t *testing.T) {
 // TestEnrichDisabledByDefault: with no provider key, the pass is a no-op that
 // records candidates 'disabled' and makes NO outbound calls.
 func TestEnrichDisabledByDefault(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	// Provider injected but NO WithEnrichmentKey → enrichment disabled.
@@ -558,6 +563,7 @@ func TestEnrichDisabledByDefault(t *testing.T) {
 // TestEnrichIdempotent: a second full pass produces the same result — no churned
 // or duplicated genres/cast/artwork.
 func TestEnrichIdempotent(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -592,6 +598,7 @@ func TestEnrichIdempotent(t *testing.T) {
 
 // TestEnrichGenreFilter: filter[genre]= returns only Titles carrying that genre.
 func TestEnrichGenreFilter(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
 		switch ref.Title {
@@ -628,6 +635,7 @@ func TestEnrichGenreFilter(t *testing.T) {
 
 // TestEnrichRequiresAdmin: a Member cannot trigger an enrichment pass.
 func TestEnrichRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())

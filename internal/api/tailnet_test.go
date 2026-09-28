@@ -81,6 +81,7 @@ func postTailnet(t *testing.T, srv *testharness.Server, token, verb string) tail
 // the node is never started, no state directory exists, and the settings still
 // answer — a screen that can explain an off feature is the point of the GET.
 func TestTailnetOffByDefaultIsInert(t *testing.T) {
+	t.Parallel()
 	node := &tailnet.Fake{}
 	srv := testharness.New(t, testharness.WithTailnet(node))
 	token := adminToken(t, srv)
@@ -111,6 +112,7 @@ func TestTailnetOffByDefaultIsInert(t *testing.T) {
 // TestTailnetAdminOnly: remote access is the operator's configuration. A Member
 // gets the same refusal on all five routes as on any other admin route.
 func TestTailnetAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTailnet(&tailnet.Fake{}))
 	adminTok := adminToken(t, srv)
 	srv.CreateUser(adminTok, "bob", "correct horse battery staple", "member")
@@ -145,6 +147,7 @@ func TestTailnetAdminOnly(t *testing.T) {
 // winning looks like nothing at all until somebody notices their saved settings
 // revert on every restart, months later, with no error anywhere.
 func TestTailnetEnvSeedsFirstBootOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	first := testharness.New(t,
@@ -207,6 +210,7 @@ func TestTailnetEnvSeedsFirstBootOnly(t *testing.T) {
 // It puts a known key through a real join — so the join genuinely received it —
 // and then goes looking for it in every place it must not be.
 func TestTailnetAuthKeyNeverSurfaces(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	const key = "tskey-auth-obelo-test-do-not-persist"
 
 	// Capture everything the server logs across the join. Restored before the
@@ -283,6 +287,7 @@ func findInDataDir(t *testing.T, root, needle string) string {
 // second connect does NOT re-authenticate — which is the whole reason Disconnect
 // keeps the state directory.
 func TestTailnetConnectDisconnectReconnect(t *testing.T) {
+	t.Parallel()
 	node := &tailnet.Fake{
 		Fresh:     tailnet.Status{State: tailnet.StateNeedsLogin, LoginURL: "https://login.tailscale.com/a/deadbeef"},
 		Returning: tailnet.Status{State: tailnet.StateRunning, FQDN: "obelo.tail1a2b.ts.net"},
@@ -324,6 +329,7 @@ func TestTailnetConnectDisconnectReconnect(t *testing.T) {
 // TestTailnetForgetWipesStateAndRejoins: Forget is the other off switch, and it
 // means something different — the next connect is a fresh join.
 func TestTailnetForgetWipesStateAndRejoins(t *testing.T) {
+	t.Parallel()
 	node := &tailnet.Fake{Fresh: tailnet.Status{State: tailnet.StateNeedsLogin, LoginURL: "https://login.tailscale.com/a/1"}}
 	srv := testharness.New(t, testharness.WithTailnet(node))
 	token := adminToken(t, srv)
@@ -354,6 +360,7 @@ func TestTailnetForgetWipesStateAndRejoins(t *testing.T) {
 // tagged node — the good state — and it must not be renderable as a date, or the
 // ~14-day warning fires forever on exactly the nodes that never lapse.
 func TestTailnetKeyExpiryNullVsSet(t *testing.T) {
+	t.Parallel()
 	node := &tailnet.Fake{Returning: tailnet.Status{State: tailnet.StateRunning}}
 	srv := testharness.New(t, testharness.WithTailnet(node))
 	token := adminToken(t, srv)
@@ -397,6 +404,7 @@ func TestTailnetKeyExpiryNullVsSet(t *testing.T) {
 // supervisor calls in production and then asks the endpoint what an operator would
 // be shown.
 func TestTailnetHTTPSBoundIsSeparateFromHTTPSEnabled(t *testing.T) {
+	t.Parallel()
 	// The message the server actually composes, in its own words, with the
 	// punctuation and the arrows that make it a paragraph rather than a token.
 	const failure = `There is no HTTPS on the Tailnet for "obelo.tail1a2b.ts.net": ` +
@@ -465,6 +473,7 @@ func TestTailnetHTTPSBoundIsSeparateFromHTTPSEnabled(t *testing.T) {
 // for somebody else's user. It is rejected here instead — and a rejected save
 // leaves the settings exactly as they were.
 func TestTailnetHostnameValidation(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTailnet(&tailnet.Fake{}))
 	token := adminToken(t, srv)
 
@@ -507,6 +516,7 @@ func TestTailnetHostnameValidation(t *testing.T) {
 // this, a restart leaves the operator locked out of a house they cannot reach —
 // the failure the feature exists to prevent.
 func TestTailnetEnabledConnectsAtBoot(t *testing.T) {
+	t.Parallel()
 	node := &tailnet.Fake{Fresh: tailnet.Status{State: tailnet.StateRunning, FQDN: "obelo.tail1a2b.ts.net"}}
 	srv := testharness.New(t,
 		testharness.WithTailnet(node),
@@ -531,6 +541,7 @@ func TestTailnetEnabledConnectsAtBoot(t *testing.T) {
 // must boot and SERVE — so this asserts the LAN is being served, not merely that
 // nothing panicked — while the failure is reported where an operator will see it.
 func TestTailnetBootSurvivesANodeThatFailsToStart(t *testing.T) {
+	t.Parallel()
 	node := &tailnet.Fake{StartErr: errors.New("cannot reach the coordination server")}
 	srv := testharness.New(t,
 		testharness.WithTailnet(node),
@@ -561,6 +572,7 @@ func TestTailnetBootSurvivesANodeThatFailsToStart(t *testing.T) {
 // the login URL appears without a page reload — and reaches a Member's stream
 // NEVER, while that Member still receives the events it is entitled to.
 func TestTailnetStateEventAdminOnly(t *testing.T) {
+	t.Parallel()
 	const tailnetEventName = "tailscaleState"
 	node := &tailnet.Fake{Fresh: tailnet.Status{State: tailnet.StateNeedsLogin, LoginURL: "https://login.tailscale.com/a/1"}}
 	srv := testharness.New(t, testharness.WithTailnet(node))
@@ -608,6 +620,7 @@ func TestTailnetStateEventAdminOnly(t *testing.T) {
 // record); this test proves it SURVIVES to the endpoint the panel reads, which is
 // the half that would otherwise rot silently.
 func TestTailnetLapsedKeyIsDistinguishableFromAFirstJoin(t *testing.T) {
+	t.Parallel()
 	lapsed := time.Now().Add(-72 * time.Hour)
 
 	// A first join: waiting on a human, with no expiry to speak of yet.

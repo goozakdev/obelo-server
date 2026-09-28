@@ -48,6 +48,7 @@ func ffmpegAvailable() bool {
 }
 
 func TestSubtitleTextDeliveryDirectPlay(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

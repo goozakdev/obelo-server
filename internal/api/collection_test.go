@@ -142,6 +142,7 @@ func scanMovies(t *testing.T) (*testharness.Server, string, string, titlesListRe
 // Acceptance: POST/PUT/DELETE; idempotent add + DELETE item; GET list with count
 // + representative poster; delete-Collection cascade.
 func TestCollectionCRUDAndItems(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 
@@ -230,6 +231,7 @@ func TestCollectionCRUDAndItems(t *testing.T) {
 // reused catalog bulk readers). Acceptance: GET detail members decorated
 // identically to a browse list.
 func TestCollectionMemberDecorationParity(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, _ := scanMovies(t)
 
@@ -275,6 +277,7 @@ func TestCollectionMemberDecorationParity(t *testing.T) {
 // TestCollectionCrossKind asserts a Collection may span media kinds — a Movie and
 // a TV Episode in one Collection. Acceptance: cross-kind membership allowed.
 func TestCollectionCrossKind(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -325,6 +328,7 @@ func TestCollectionCrossKind(t *testing.T) {
 // persists — restoring the Files makes it reappear with no re-add. Acceptance:
 // Missing-omitted-but-persists.
 func TestCollectionMissingMemberOmittedButPersists(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")
@@ -361,6 +365,7 @@ func TestCollectionMissingMemberOmittedButPersists(t *testing.T) {
 // it from every Collection automatically (the title_id FK cascade, via the Library
 // → titles cascade). Acceptance: cascade on title/library delete.
 func TestCollectionLibraryDeleteCascade(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -396,6 +401,7 @@ func TestCollectionLibraryDeleteCascade(t *testing.T) {
 // 404 across the surface. Acceptance: Admin-only writes (403 for a Member);
 // unknown id → 404.
 func TestCollectionAdminOnlyWritesAndUnknownID(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")
@@ -460,6 +466,7 @@ func TestCollectionAdminOnlyWritesAndUnknownID(t *testing.T) {
 // (UNKNOWN_TITLE) that leaves the membership set unchanged (validate-all-then-
 // insert). Acceptance: unknown title in POST items handled (documented as 422).
 func TestCollectionUnknownTitleRejected(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")

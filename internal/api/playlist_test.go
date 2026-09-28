@@ -143,6 +143,7 @@ func scanMovieAndEpisode(t *testing.T) (srv *testharness.Server, admin, movieID,
 // DELETE removes. Acceptance: POST creates empty; GET lists only the caller's; PUT
 // renames; DELETE removes.
 func TestPlaylistCRUDOwnerScoped(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	srv.CreateUser(admin, "alice", "alicepass123", "member")
@@ -205,6 +206,7 @@ func TestPlaylistCRUDOwnerScoped(t *testing.T) {
 // kind on first item; mismatched kind → 422 KIND_MISMATCH (kind unchanged); matching
 // kind succeeds.
 func TestPlaylistAppendSingleKind(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, movieID, episodeID := scanMovieAndEpisode(t)
 
@@ -274,6 +276,7 @@ func findSecondMovie(t *testing.T, srv *testharness.Server, admin, exclude strin
 // each with its own item id. Acceptance: same Title twice → two member entries with
 // distinct itemIds.
 func TestPlaylistDuplicatesAllowed(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")
@@ -306,6 +309,7 @@ func TestPlaylistDuplicatesAllowed(t *testing.T) {
 // list (toTitleSummary parity via the reused catalog bulk readers). Acceptance: GET
 // detail members in position order, decorated identically to a browse list.
 func TestPlaylistDetailOrderAndDecorationParity(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, _ := scanMovies(t)
 
@@ -369,6 +373,7 @@ func TestPlaylistDetailOrderAndDecorationParity(t *testing.T) {
 // Acceptance: non-owner (Member or Admin) gets 404 on detail + every write, and the
 // Playlist is absent from their list.
 func TestPlaylistOwnership404(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, lib, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")
@@ -434,6 +439,7 @@ func playlistCardIDs(ls playlistsListResp) []string {
 // items away (the owner_user_id ON DELETE CASCADE, and the playlist_id cascade from
 // it). Acceptance: deleting a User cascades their Playlists + items.
 func TestPlaylistUserDeleteCascade(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, _, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")

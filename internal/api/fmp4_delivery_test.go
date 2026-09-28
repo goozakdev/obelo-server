@@ -147,6 +147,7 @@ func ffprobeFirstCodec(t *testing.T, init, seg []byte, codecType string) string 
 
 // TestHEVCCopyDeliversFMP4: the full delivery for the Back to the Future case.
 func TestHEVCCopyDeliversFMP4(t *testing.T) {
+	t.Parallel()
 	requireHEVCFixture(t)
 	requireFFmpeg(t)
 
@@ -224,6 +225,7 @@ func TestHEVCCopyDeliversFMP4(t *testing.T) {
 // MSE playback (the Chrome bufferStalledError bug). The video must still be COPIED
 // hevc (not re-encoded) and the audio transcoded to AAC.
 func TestHEVCCopyDeliversMpegTSForHlsJS(t *testing.T) {
+	t.Parallel()
 	requireHEVCFixture(t)
 	requireFFmpeg(t)
 

@@ -18,6 +18,7 @@ import (
 // end — it mirrors TestEnrichProgressSSE (same stream, same handshake + cancel
 // discipline), but drives the smallest real library-scoped event.
 func TestLibraryUpdatedSSE(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "First Movie (2001)", "First Movie (2001).mp4"))
 
@@ -106,6 +107,7 @@ func openEventStream(t *testing.T, ctx context.Context, srv *testharness.Server,
 // scanProgress events while a manual scan runs, terminating with a complete:true
 // event whose counts match the scan result. Mirrors TestEnrichProgressSSE.
 func TestScanProgressSSE(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "First Movie (2001)", "First Movie (2001).mp4"))
 
@@ -137,6 +139,7 @@ const scanProgressEventName = "scanProgress"
 // scanProgress (PRD story 4), verifiable via a short WithScanInterval — the same
 // way the enrich tests exercise the scheduled enrich path with a short interval.
 func TestScanProgressScheduledSSE(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	makeMovie(t, filepath.Join(root, "First Movie (2001)", "First Movie (2001).mp4"))
 

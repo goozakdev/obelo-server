@@ -6,6 +6,7 @@ import (
 )
 
 func TestFormatTimestamp(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, in, want string
 	}{
@@ -26,6 +27,7 @@ func TestFormatTimestamp(t *testing.T) {
 
 // guard: the canonical output parses back as RFC3339.
 func TestFormatTimestampOutputIsRFC3339(t *testing.T) {
+	t.Parallel()
 	got := formatTimestamp("2026-06-22 21:00:17")
 	if _, err := time.Parse(time.RFC3339, got); err != nil {
 		t.Errorf("output %q is not RFC3339-parseable: %v", got, err)

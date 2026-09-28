@@ -203,6 +203,7 @@ func resolvedCodec(t *testing.T, dec decisionResp) string {
 // the core memory promise. Default resolution is the English AAC stereo; after picking
 // Japanese, the replay resolves ac3 (Japanese 5.1) and escalates off direct play.
 func TestRememberedAudioReplayResolvesPick(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	srv, token, libID := scanDubbedShow(t)
 	ep1 := dubbedEpisodeID(t, srv, token, libID, 1)
@@ -233,6 +234,7 @@ func TestRememberedAudioReplayResolvesPick(t *testing.T) {
 // TestRememberedAudioBubblesUpToSiblingEpisode: a language pick on S01E01 becomes the
 // Show's default, so S01E02 — which has no pick of its own — opens in that language.
 func TestRememberedAudioBubblesUpToSiblingEpisode(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	srv, token, libID := scanDubbedShow(t)
 	ep1 := dubbedEpisodeID(t, srv, token, libID, 1)
@@ -253,6 +255,7 @@ func TestRememberedAudioBubblesUpToSiblingEpisode(t *testing.T) {
 // Episode (its replay resolves the commentary) while the rest of the Show keeps the
 // language pick (the sibling still resolves Japanese) — the quarantine rule.
 func TestRememberedCommentaryQuarantined(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	srv, token, libID := scanDubbedShow(t)
 	ep1 := dubbedEpisodeID(t, srv, token, libID, 1)
@@ -282,6 +285,7 @@ func TestRememberedCommentaryQuarantined(t *testing.T) {
 // preferredAudioLang (ADR-0023 resolution order, story 20). After remembering Japanese,
 // a request that prefers English still resolves Japanese.
 func TestRememberedAudioOutranksPreferredLang(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	srv, token, libID := scanDubbedShow(t)
 	ep1 := dubbedEpisodeID(t, srv, token, libID, 1)
@@ -302,6 +306,7 @@ func TestRememberedAudioOutranksPreferredLang(t *testing.T) {
 // switch path) is Remembered, so a later play resolves it. This pins the write-back
 // that has no re-negotiation of its own.
 func TestRememberedAudioViaInBandProgress(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	srv, token, libID := scanDubbedShow(t)
 	ep1 := dubbedEpisodeID(t, srv, token, libID, 1)
@@ -327,6 +332,7 @@ func TestRememberedAudioViaInBandProgress(t *testing.T) {
 // TestRememberedAudioIsPerUser: one User's pick never changes another User's
 // resolution of the same Title.
 func TestRememberedAudioIsPerUser(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	srv, admin, libID := scanDubbedShow(t)
 	ep1 := dubbedEpisodeID(t, srv, admin, libID, 1)
@@ -351,6 +357,7 @@ func TestRememberedAudioIsPerUser(t *testing.T) {
 // pick re-resolves by MEANING (Japanese 5.1) — memory keyed to traits, not to a stream
 // index, survives a re-rip. Uses a writable temp Library so the File can be swapped.
 func TestRememberedAudioReResolvesAfterFileSwap(t *testing.T) {
+	t.Parallel()
 	requireDubbedShowFixtures(t)
 	root := t.TempDir()
 	epPath := filepath.Join(root, "Dubbed Show (2023)", "Season 01", "Dubbed Show (2023) - S01E01 - Pilot.mkv")

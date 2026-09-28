@@ -87,6 +87,7 @@ func findFullSummary(titles []fullTitleSummary, id string) (fullTitleSummary, bo
 // toTitleSummary fields (watched/resume, genres, content rating, artwork + version)
 // as the same Title in a browse listing.
 func TestMemberDecorationParityAcrossSurfaces(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	// Single Admin viewer: an Admin sees the Title in browse, in a Collection's full
 	// membership, and in their own Playlist — sidestepping access-filter complications

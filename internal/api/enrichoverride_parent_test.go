@@ -179,6 +179,7 @@ func tvParentFake() *fakeProvider {
 // durable across a subsequent full pass (it does not revert to the wrong
 // auto-match), and the parent detail surfaces the active override.
 func TestEnrichOverrideShowSearchApplyDurable(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvParentFake()
 	srv := testharness.New(t,
@@ -248,6 +249,7 @@ func TestEnrichOverrideShowSearchApplyDurable(t *testing.T) {
 // overwritten by a subsequent full re-enrich, while the parent detail surfaces the
 // Locked field. Exercises the new entity_field_locks surface end-to-end.
 func TestEnrichParentLockHonored(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvParentFake()
 	srv := testharness.New(t,
@@ -304,6 +306,7 @@ func TestEnrichParentLockHonored(t *testing.T) {
 // full re-enrichment pass — the per-episode pinned id is honored, not overwritten
 // by the show-derived ref (collectTVLeaves threads ep.tmdb_id).
 func TestEnrichEpisodeOverrideDurable(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvParentFake()
 	srv := testharness.New(t,
@@ -361,6 +364,7 @@ func TestEnrichEpisodeOverrideDurable(t *testing.T) {
 // TestEnrichOverrideArtist: an Admin searches MusicBrainz for an Artist and applies
 // a candidate; the Artist detail reflects it and the pin is durable across a pass.
 func TestEnrichOverrideArtist(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -419,6 +423,7 @@ func TestEnrichOverrideArtist(t *testing.T) {
 // TestEnrichOverrideAlbumCarriesTracklist: an Album search candidate carries its
 // tracklist preview, and applying it re-points the Album's enrichment.
 func TestEnrichOverrideAlbumCarriesTracklist(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -483,6 +488,7 @@ func TestEnrichOverrideAlbumCarriesTracklist(t *testing.T) {
 // /seasons/{id}/enrichmentOverride is not served (405/404), so a Season is only
 // edited at the Show or Episode grain (ADR-0019).
 func TestEnrichSeasonNoEditAffordance(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvParentFake()
 	srv := testharness.New(t,
@@ -513,6 +519,7 @@ func TestEnrichSeasonNoEditAffordance(t *testing.T) {
 // TestEnrichParentAdminOnlyAndSSE: a Member cannot search or apply a parent
 // correction (403), and an Admin apply emits a libraryUpdated SSE event.
 func TestEnrichParentAdminOnlyAndSSE(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvParentFake()
 	srv := testharness.New(t,

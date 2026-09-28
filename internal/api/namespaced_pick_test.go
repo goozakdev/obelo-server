@@ -153,6 +153,7 @@ func titleRecordSource(t *testing.T, srv *testharness.Server, token, titleID str
 // pick naming none is refused (source is required), and a namespace nothing claims
 // is refused.
 func TestAPickIsPinnedInTheNamespaceItNames(t *testing.T) {
+	t.Parallel()
 	srv, token, libID := namespacedMusicServer(t)
 	trackID := firstTrackID(t, srv, token, libID)
 	if trackID == "" {
@@ -217,6 +218,7 @@ func TestAPickIsPinnedInTheNamespaceItNames(t *testing.T) {
 // TestAPastedRefRoundTripsItsNamespace: the paste preview returns the namespace the
 // paste was read in, and applying it with that source pins it there.
 func TestAPastedRefRoundTripsItsNamespace(t *testing.T) {
+	t.Parallel()
 	srv, token, libID := namespacedMusicServer(t)
 	trackID := firstTrackID(t, srv, token, libID)
 	if trackID == "" {
@@ -241,6 +243,7 @@ func TestAPastedRefRoundTripsItsNamespace(t *testing.T) {
 
 // TestAParentPickIsPinnedInTheNamespaceItNames: the same rule on a browse parent.
 func TestAParentPickIsPinnedInTheNamespaceItNames(t *testing.T) {
+	t.Parallel()
 	srv, token, libID := namespacedMusicServer(t)
 	var albumID string
 	for _, a := range listArtists(t, srv, token, libID).Artists {

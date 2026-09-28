@@ -103,6 +103,7 @@ func putPolicy(t *testing.T, srv *testharness.Server, token, libID string, body 
 // tracks the global config — the "no observable change for existing Libraries"
 // acceptance criterion.
 func TestEnrichmentPolicyDefaultInherits(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -126,6 +127,7 @@ func TestEnrichmentPolicyDefaultInherits(t *testing.T) {
 // enrich_enabled=false re-enriches the Library to 'disabled' with ZERO provider
 // calls, other Libraries keep enriching, and clearing back to inherit restores it.
 func TestEnrichmentPolicyDisableStopsEnrichment(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -190,6 +192,7 @@ func TestEnrichmentPolicyDisableStopsEnrichment(t *testing.T) {
 // override + inherited language, the override reaches the composed provider on the
 // immediate re-enrich, and clearing it tracks the global language again.
 func TestEnrichmentPolicyLanguageOverride(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	// A builder that records the metadata language it was asked to compose with, so
@@ -260,6 +263,7 @@ func TestEnrichmentPolicyLanguageOverride(t *testing.T) {
 // authoritative that later becomes unreachable falls back to the default and is
 // surfaced (never silently dropped) — ADR-0027.
 func TestEnrichmentPolicyAuthoritativePointer(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -337,6 +341,7 @@ func hasCandidate(cands []struct {
 // Library can force one off and another on without changing the global setting,
 // clearing returns it to inherit, and an invalid slug is rejected — ADR-0027.
 func TestEnrichmentPolicySupplementTriState(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -414,6 +419,7 @@ func TestEnrichmentPolicySupplementTriState(t *testing.T) {
 // TestEnrichmentPolicyAdminOnly: the whole surface is Admin-only (Member → 403 on
 // GET and PUT) and an unknown Library is 404 (hide-existence).
 func TestEnrichmentPolicyAdminOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,

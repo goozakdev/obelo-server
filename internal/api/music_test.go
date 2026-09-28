@@ -295,6 +295,7 @@ func getTrackDetail(t *testing.T, srv *testharness.Server, token, id string) tra
 // TestMusicScanBuildsHierarchy is the central tracer bullet: scan the tagged
 // music fixtures and assert the Artist → Album → Track hierarchy via the API.
 func TestMusicScanBuildsHierarchy(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 
@@ -359,6 +360,7 @@ func TestMusicScanBuildsHierarchy(t *testing.T) {
 // artist tags but a shared album_artist ("Various Artists") files as ONE Album
 // under one Artist (Album-Artist grouping — the headline behavior).
 func TestMusicCompilationGrouping(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 
@@ -387,6 +389,7 @@ func TestMusicCompilationGrouping(t *testing.T) {
 // Albums with disjoint track lists, each labeled with its releaseType so the
 // client can badge the single.
 func TestMusicSameTitleReleasesSplit(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 
@@ -426,6 +429,7 @@ func TestMusicSameTitleReleasesSplit(t *testing.T) {
 // TestMusicPathFallback: a tagless audio file files by its
 // Artist/Album (Year)/NN - Title path and is flagged needs-review.
 func TestMusicPathFallback(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 
@@ -458,6 +462,7 @@ func TestMusicPathFallback(t *testing.T) {
 // TestMusicTrackDetailContext: a Track's GET /titles/{id} carries its nested
 // Editions plus the Artist/Album/disc/track parent context.
 func TestMusicTrackDetailContext(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 	artists := listArtists(t, srv, token, libID)
@@ -487,6 +492,7 @@ func TestMusicTrackDetailContext(t *testing.T) {
 // TestMusicAccessControl404: an unknown Artist/Album returns 404, not 403
 // (hide-existence, api-contract.md).
 func TestMusicAccessControl404(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, _ := scanMusicLibrary(t)
 	for _, path := range []string{
@@ -524,6 +530,7 @@ func TestMusicAccessControl404(t *testing.T) {
 // artist tomorrow and this test keeps testing rescan stability instead of
 // demanding an edit. Do not "simplify" it back to a literal count.
 func TestMusicScanIdempotent(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 
@@ -568,6 +575,7 @@ func albumIDs(list albumsListResp) []string {
 // direct-plays (audio-only negotiation, no video stream) — reusing the existing
 // tier machinery additively.
 func TestMusicTrackDirectPlay(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 	artists := listArtists(t, srv, token, libID)
@@ -619,6 +627,7 @@ func TestMusicTrackDirectPlay(t *testing.T) {
 // does not). Paired with the Movie case, which must still carry it: the guard has to
 // omit for Tracks WITHOUT silently dropping the field for real video.
 func TestMusicTrackDecisionOmitsVideoStreamKey(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	srv, token, libID := scanMusicLibrary(t)
 	artists := listArtists(t, srv, token, libID)
@@ -659,6 +668,7 @@ func TestMusicTrackDecisionOmitsVideoStreamKey(t *testing.T) {
 // reusing the existing transcode tier additively. The fetched segment is a valid
 // HLS .ts that ffprobes as aac.
 func TestMusicTrackTranscodeFLACtoAAC(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	requireFFmpeg(t)
 	srv, token, libID := scanMusicLibrary(t)

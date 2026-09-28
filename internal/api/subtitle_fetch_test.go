@@ -104,6 +104,7 @@ type subtitleFetchResp struct {
 }
 
 func TestSubtitleFetchFlow(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	fake := &realFakeProvider{candidates: []subfetch.Candidate{{
 		ID: "9001", Language: "de", Format: "srt", Release: "Dune.2021.German", MatchedBy: "query",
@@ -187,6 +188,7 @@ func TestSubtitleFetchFlow(t *testing.T) {
 // TestSubtitleFetchByMember asserts a Member (browse+play role) can trigger a fetch
 // — the deliberate role widening ADR-0021 records.
 func TestSubtitleFetchByMember(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	fake := &realFakeProvider{candidates: []subfetch.Candidate{{
 		ID: "42", Language: "de", Format: "srt",
@@ -230,6 +232,7 @@ func TestSubtitleFetchByMember(t *testing.T) {
 // TestSubtitleProviderSettingsAdminOnly asserts a Member cannot touch the provider
 // settings (Admin-only), while an Admin can read them.
 func TestSubtitleProviderSettingsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	memberID := srv.CreateUser(admin, "kid", "memberpass123", "member")

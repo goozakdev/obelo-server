@@ -111,7 +111,7 @@ func (f *syncFixture) currentLink(t *testing.T) linkResp {
 // broken build fails instead of hanging.
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -126,6 +126,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 // dialect: the `since` the home Server sends back is the opaque cursor the
 // sharer's export issued, not something this side invented.
 func TestSyncNowPullsWhatChangedOnTheSharer(t *testing.T) {
+	t.Parallel()
 	f := newLinkSyncFixture(t)
 
 	before := f.mirroredTitles(t)
@@ -159,6 +160,7 @@ func TestSyncNowPullsWhatChangedOnTheSharer(t *testing.T) {
 // publishes libraryUpdated to the `remote` User, whose stream is audience-gated
 // to exactly the Libraries it was granted.
 func TestTheSharersNudgeRefreshesTheMirror(t *testing.T) {
+	t.Parallel()
 	f := newLinkSyncFixture(t, testharness.WithLinkSyncInterval(time.Hour))
 
 	f.addMovie(t, "Second Movie (2002)")
@@ -173,6 +175,7 @@ func TestTheSharersNudgeRefreshesTheMirror(t *testing.T) {
 // says so, the badge says so — and the shelf, the Titles and this household's
 // watch state are all exactly where they were.
 func TestAnUnreachableSharerLeavesTheMirrorInPlace(t *testing.T) {
+	t.Parallel()
 	f := newLinkSyncFixture(t)
 
 	f.sharer.Close()
@@ -233,6 +236,7 @@ func TestAnUnreachableSharerLeavesTheMirrorInPlace(t *testing.T) {
 // granted a Library so it is entitled to that Library's scanProgress, which is
 // what proves the gate filters by TYPE rather than muting the Member wholesale.
 func TestLinkStateEventIsAdminOnly(t *testing.T) {
+	t.Parallel()
 	const linkEventName = "linkState"
 	f := newLinkSyncFixture(t)
 
@@ -267,6 +271,7 @@ func TestLinkStateEventIsAdminOnly(t *testing.T) {
 // TestSyncRouteIsAdminOnly: linking is not a per-User act, so neither is asking
 // for a pull. A Member gets the same 403 every other /links route gives it.
 func TestSyncRouteIsAdminOnly(t *testing.T) {
+	t.Parallel()
 	f := newLinkSyncFixture(t)
 	f.home.CreateMember("member", "correct horse battery staple")
 	memberTok := f.home.LoginAs("member", "correct horse battery staple")

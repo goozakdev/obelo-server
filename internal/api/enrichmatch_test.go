@@ -63,6 +63,7 @@ func attentionHas(res attentionResp, title string) (attentionTitleResp, bool) {
 // identity + watch state, and leaves the attention list. A separate provider-error
 // Title ('failed') stays on the list, proving the list tracks both states.
 func TestEnrichmentMatchCorrectsAndLeavesAttention(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
 		// A by-id lookup (the Admin's correcting id) always resolves.
@@ -166,6 +167,7 @@ func TestEnrichmentMatchCorrectsAndLeavesAttention(t *testing.T) {
 // kept separate from the identity Unmatched FILES list, which is unaffected by an
 // enrichment no-match.
 func TestEnrichmentMatchDistinctFromIdentityUnmatched(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
 		if ref.Title == "Blade Runner" {
@@ -209,6 +211,7 @@ func TestEnrichmentMatchDistinctFromIdentityUnmatched(t *testing.T) {
 // TestEnrichOverrideAdminOnly (enrichoverride_test.go), the endpoint that now
 // carries the correction.
 func TestEnrichmentAttentionRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) {
 		return enrich.TitleMetadata{}, enrich.ErrNoMatch
@@ -237,6 +240,7 @@ func TestEnrichmentAttentionRequiresAdmin(t *testing.T) {
 // ordinary bare-{id} GET handler, which answers a non-GET method 405 (the same
 // answer any other unrecognized title sub-resource PUT gets) — even for an Admin.
 func TestEnrichmentMatchIsNotARoute(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,

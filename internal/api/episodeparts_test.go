@@ -34,6 +34,7 @@ func pinned(t store.Title, season, episode int) store.Title {
 // TestPartLabelsTheParksAndRecCase is the case the feature exists for: two files,
 // one provider record, currently indistinguishable in the episode list.
 func TestPartLabelsTheParksAndRecCase(t *testing.T) {
+	t.Parallel()
 	// S06E21 is the provider's 44-minute finale; the second file is filed as E22 and
 	// pinned back to that same record.
 	first := ep("a", 6, 21, "8592")
@@ -55,6 +56,7 @@ func TestPartLabelsTheParksAndRecCase(t *testing.T) {
 // TestPartLabelsFollowTheListOrder: part 1 must be the file that plays first, which
 // is the store's episode_number order — the caller's order, not a re-sort.
 func TestPartLabelsFollowTheListOrder(t *testing.T) {
+	t.Parallel()
 	// Three files sharing one record, handed over in play order.
 	titles := []store.Title{
 		pinned(ep("x", 1, 1, "s"), 1, 1),
@@ -72,6 +74,7 @@ func TestPartLabelsFollowTheListOrder(t *testing.T) {
 // TestOrdinaryEpisodesAreNeverLabelled: the overwhelmingly normal case must be
 // completely untouched — no "(1 of 1)", no fields set.
 func TestOrdinaryEpisodesAreNeverLabelled(t *testing.T) {
+	t.Parallel()
 	titles := []store.Title{
 		ep("a", 1, 1, "s"),
 		ep("b", 1, 2, "s"),
@@ -92,6 +95,7 @@ func TestOrdinaryEpisodesAreNeverLabelled(t *testing.T) {
 // DIFFERENT numbers, so they must land in different groups and stay unlabelled —
 // calling them "part 1 of 2" of each other would be plainly wrong.
 func TestMultiEpisodeFileIsNotLabelled(t *testing.T) {
+	t.Parallel()
 	titles := []store.Title{ep("e5", 1, 5, "s"), ep("e6", 1, 6, "s")}
 	if parts := episodePartLabels(titles); len(parts) != 0 {
 		t.Errorf("a multi-episode file was labelled: %+v", parts)
@@ -103,6 +107,7 @@ func TestMultiEpisodeFileIsNotLabelled(t *testing.T) {
 // of one another — they are simply unnumbered — so an episode number of 0 must never
 // form a group. Without this guard every such Season would sprout bogus part labels.
 func TestUnnumberedEpisodesDoNotGroup(t *testing.T) {
+	t.Parallel()
 	titles := []store.Title{
 		{ID: "a", Kind: "episode", TMDBID: "s", SeasonNumber: 1, EpisodeLabel: "2002-06-02",
 			EnrichmentSeason: store.NoEpisodePin, EnrichmentEpisode: store.NoEpisodePin},
@@ -117,6 +122,7 @@ func TestUnnumberedEpisodesDoNotGroup(t *testing.T) {
 // TestDifferentSeriesNeverGroup: the series id is part of the key, so two shows that
 // happen to share a season/episode number can never be called parts of one another.
 func TestDifferentSeriesNeverGroup(t *testing.T) {
+	t.Parallel()
 	titles := []store.Title{ep("a", 1, 1, "show-one"), ep("b", 1, 1, "show-two")}
 	if parts := episodePartLabels(titles); len(parts) != 0 {
 		t.Errorf("episodes of different series were grouped: %+v", parts)
@@ -127,6 +133,7 @@ func TestDifferentSeriesNeverGroup(t *testing.T) {
 // episode. Two files whose parsed numbers differ but whose pins agree are one
 // episode; two files whose parsed numbers agree but whose pins differ are not.
 func TestPinBeatsTheParsedNumberForGrouping(t *testing.T) {
+	t.Parallel()
 	// Parsed numbers differ, pins agree → one group.
 	same := episodePartLabels([]store.Title{
 		pinned(ep("a", 6, 21, "s"), 6, 21),
@@ -148,6 +155,7 @@ func TestPinBeatsTheParsedNumberForGrouping(t *testing.T) {
 // TestPartLabellingTouchesNothingElse: the label is display-only, so the Titles
 // handed in must come back unmodified.
 func TestPartLabellingTouchesNothingElse(t *testing.T) {
+	t.Parallel()
 	first := ep("a", 6, 21, "s")
 	second := pinned(ep("b", 6, 22, "s"), 6, 21)
 	before := []store.Title{first, second}
@@ -165,6 +173,7 @@ func TestPartLabellingTouchesNothingElse(t *testing.T) {
 // so every client benefits without a change, while the structured fields let a
 // client that would rather draw a badge do so.
 func TestPartSuffixIsAppendedToTheDisplayTitle(t *testing.T) {
+	t.Parallel()
 	title := pinned(ep("b", 6, 22, "s"), 6, 21)
 	title.Title = "Moving Up"
 	js := toEpisodeSummary(title, store.WatchState{}, "", episodePart{Number: 2, Count: 2}, nil)

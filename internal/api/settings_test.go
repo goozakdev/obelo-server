@@ -86,6 +86,7 @@ func fakeProviderBuilder() enrich.BuildFunc {
 // enabled provider reports hasKey WITHOUT ever exposing the key, and the whole
 // surface is Admin-only (a Member gets 403 on GET/PUT/test).
 func TestProvidersGetMasksAndAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithProviderBuilder(fakeProviderBuilder()))
 	token := adminToken(t, srv)
 
@@ -143,6 +144,7 @@ func TestProvidersGetMasksAndAdminOnly(t *testing.T) {
 // TestProvidersPutSecretSemantics: apiKey omitted = unchanged, "" = clear,
 // non-empty = set.
 func TestProvidersPutSecretSemantics(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithProviderBuilder(fakeProviderBuilder()))
 	token := adminToken(t, srv)
 
@@ -174,6 +176,7 @@ func TestProvidersPutSecretSemantics(t *testing.T) {
 // TestProvidersPutValidation: unknown slug, key-required, malformed base URL, and
 // empty language are each rejected with their 422 code, leaving settings unchanged.
 func TestProvidersPutValidation(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithProviderBuilder(fakeProviderBuilder()))
 	token := adminToken(t, srv)
 
@@ -223,6 +226,7 @@ func TestProvidersPutValidation(t *testing.T) {
 // malformed URL. This is the source-of-truth parity fix — every base URL,
 // including the image host, is DB-configurable rather than config-pinned.
 func TestProvidersImageHost(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithProviderBuilder(fakeProviderBuilder()))
 	token := adminToken(t, srv)
 
@@ -299,6 +303,7 @@ func TestProvidersImageHost(t *testing.T) {
 // manager's rebuild+swap took effect at runtime WITHOUT reconstructing the app —
 // all via the fake provider builder, zero network.
 func TestProvidersRuntimeHotSwap(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t,
 		testharness.WithProviderBuilder(fakeProviderBuilder()),
@@ -344,6 +349,7 @@ func TestProvidersRuntimeHotSwap(t *testing.T) {
 // TestProviderTestConnection: the probe returns a clear ok/error result. A
 // key-requiring provider with no key fails fast (ok:false) with NO outbound call.
 func TestProviderTestConnection(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithProviderBuilder(fakeProviderBuilder()))
 	token := adminToken(t, srv)
 
@@ -366,6 +372,7 @@ func TestProviderTestConnection(t *testing.T) {
 // surface stays Admin-only; and toggling autoEnrichAfterScan off is reflected in the
 // next GET view.
 func TestProvidersEnrichmentBehavior(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithProviderBuilder(fakeProviderBuilder()))
 	token := adminToken(t, srv)
 

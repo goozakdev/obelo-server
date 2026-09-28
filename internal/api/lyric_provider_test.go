@@ -220,6 +220,7 @@ func folderListing(t *testing.T, dir string) []string {
 // lines were timed for a recording ten seconds longer than the track. The words
 // reach the viewer as Plain lyrics — not Synced, and not nothing.
 func TestAFetchedSyncedAnswerTimedTenSecondsOffIsServedAsPlain(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(10000, "Mistimed"))
 	srv, token, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 
@@ -237,6 +238,7 @@ func TestAFetchedSyncedAnswerTimedTenSecondsOffIsServedAsPlain(t *testing.T) {
 // TestAWellTimedFetchedSyncedAnswerIsServedSynced is the other side of the same
 // check: timed for this track's length, the lines are followed.
 func TestAWellTimedFetchedSyncedAnswerIsServedSynced(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(0, "Timed"))
 	srv, token, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 
@@ -252,6 +254,7 @@ func TestAWellTimedFetchedSyncedAnswerIsServedSynced(t *testing.T) {
 // recording, the provider is asked with it, and answers — well timed — for a
 // different recording. Nothing from it is stored or shown, not even as Plain.
 func TestAnAnswerForAnotherRecordingIsNeverStored(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, func(q lyricQuestion) map[string]any {
 		a := syncedAnswer(0, "Wrong song")(q)
 		a["recordingId"] = "00000000-0000-0000-0000-000000000000"
@@ -274,6 +277,7 @@ func TestAnAnswerForAnotherRecordingIsNeverStored(t *testing.T) {
 // ("zeta-lyrics") before B ("alpha-lyrics"). A's Synced answer is mistimed and
 // B's is good, so the track shows B's Synced lyrics — and A was asked first.
 func TestTheAdminsOrderDecidesWhoseSyncedAnswerWins(t *testing.T) {
+	t.Parallel()
 	a := newLyricSource(t, syncedAnswer(10000, "A's"))
 	b := newLyricSource(t, syncedAnswer(0, "B's"))
 	srv, token, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"zeta-lyrics": a, "alpha-lyrics": b})
@@ -304,6 +308,7 @@ func TestTheAdminsOrderDecidesWhoseSyncedAnswerWins(t *testing.T) {
 // by the scan; the first open asks; a second open — by anyone — asks nobody. A
 // track with Synced Local lyrics is never asked about at all.
 func TestLyricsAreFetchedOnFirstOpenOnlyAndThenReadFromTheCache(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(0, "Cached"))
 	srv, admin, libID, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 	if n := src.askedAbout("Nothing Local"); n != 0 {
@@ -335,6 +340,7 @@ func TestLyricsAreFetchedOnFirstOpenOnlyAndThenReadFromTheCache(t *testing.T) {
 // answer, so both enabled providers are asked, and the fetched Synced answer is
 // what the track shows.
 func TestAPlainOnlyLocalLyricStillAsksEveryProvider(t *testing.T) {
+	t.Parallel()
 	a := newLyricSource(t, nil)
 	b := newLyricSource(t, syncedAnswer(0, "Fetched"))
 	srv, token, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"alpha-lyrics": a, "beta-lyrics": b})
@@ -356,6 +362,7 @@ func TestAPlainOnlyLocalLyricStillAsksEveryProvider(t *testing.T) {
 // enabled, A misses, and re-opening asks nobody. Enabling B changes the
 // question, so the next open asks again — once.
 func TestEveryProviderMissingIsCachedUntilTheQuestionChanges(t *testing.T) {
+	t.Parallel()
 	a := newLyricSource(t, nil)
 	b := newLyricSource(t, nil)
 	srv, token, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"alpha-lyrics": a, "beta-lyrics": b})
@@ -391,6 +398,7 @@ func TestEveryProviderMissingIsCachedUntilTheQuestionChanges(t *testing.T) {
 // answer into a Local lyric — it is still the fetched one, and nobody is asked
 // again.
 func TestAFetchedAnswerNeverLandsInTheLibraryFolder(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(0, "Fetched"))
 	srv, token, libID, album, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 	id := tracks["Nothing Local"]
@@ -412,6 +420,7 @@ func TestAFetchedAnswerNeverLandsInTheLibraryFolder(t *testing.T) {
 // TestLyricProviderSettingsRefuseAnUnknownSlug: the order names only registered
 // Lyric providers.
 func TestLyricProviderSettingsRefuseAnUnknownSlug(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, nil)
 	srv, token, _, _, _ := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 	status, body := srv.JSON(http.MethodPut, "/api/v1/settings/lyric-providers", token,
