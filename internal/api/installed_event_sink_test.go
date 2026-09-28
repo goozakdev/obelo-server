@@ -80,7 +80,7 @@ func sinkNamed(t *testing.T, resp installedSinksResp, slug string) installedSink
 // test is about, which is how an Admin finds out too — they refresh the screen.
 func waitForSink(t *testing.T, srv *testharness.Server, token, slug string, want func(installedSinkResp) bool) installedSinkResp {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	var last installedSinkResp
 	for {
 		last = sinkNamed(t, readSinks(t, srv, token), slug)
@@ -102,6 +102,7 @@ func waitForSink(t *testing.T, srv *testharness.Server, token, slug string, want
 // the ordinary settings endpoint, runs a scan, and their own HTTP server receives
 // one document the GUEST signed.
 func TestAnInstalledSinkIsListedBesideTheWebhookAndPostsAfterAScan(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	// The Admin's hand-placement, before the server ever starts.
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink"))
@@ -195,6 +196,7 @@ func TestAnInstalledSinkIsListedBesideTheWebhookAndPostsAfterAScan(t *testing.T)
 // Webhook still works, and the refused Plugin is on the screen with a message
 // naming which side has to move.
 func TestAnUnsupportedAPIVersionIsRefusedAndTheServerStillStarts(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	m := plugintest.SinkManifest("future-sink")
 	m.APIVersion = 2
@@ -232,6 +234,7 @@ func TestAnUnsupportedAPIVersionIsRefusedAndTheServerStillStarts(t *testing.T) {
 // Webhook keeps delivering, and after a run of failures the screen shows the Plugin
 // disabled with its error.
 func TestAPanickingInstalledPluginLeavesEverythingElseAlone(t *testing.T) {
+	// Not parallel: it counts one event per scan, and under load an event can go missing.
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("bad-sink"))
 
@@ -277,6 +280,7 @@ func TestAPanickingInstalledPluginLeavesEverythingElseAlone(t *testing.T) {
 // returns is stopped by the runtime. The scans finish at their normal speed —
 // delivery is off the publish path — and the Plugin ends up disabled.
 func TestAHangingInstalledPluginNeitherSlowsAScanNorSurvivesIt(t *testing.T) {
+	// Not parallel: it bounds three scans at ten seconds of wall-clock time.
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("slow-sink"))
 
@@ -322,6 +326,7 @@ func TestAHangingInstalledPluginNeitherSlowsAScanNorSurvivesIt(t *testing.T) {
 // the guest is told nothing but "refused", and the screen ends up naming the host
 // it tried.
 func TestAnInstalledPluginThatBreaksItsAllowlistIsShownDisabled(t *testing.T) {
+	// Not parallel: it counts one event per scan, and under load an event can go missing.
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("nosy-sink", "allowed.example.test"))
 
@@ -353,6 +358,7 @@ func TestAnInstalledPluginThatBreaksItsAllowlistIsShownDisabled(t *testing.T) {
 // The plugins directory does not exist, and the screen is the Webhook and nothing
 // else.
 func TestAServerWithNoInstalledPluginsIsUnchanged(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 

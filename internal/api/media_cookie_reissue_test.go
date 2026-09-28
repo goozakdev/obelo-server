@@ -46,6 +46,7 @@ func reissueMediaCookie(t *testing.T, srv *testharness.Server, bearer string, co
 // old ms_media cookie carrying T1 (the previous identity). The re-issued cookie
 // must carry T2, and its attributes must match the login cookie (same writer).
 func TestReissueMediaCookieCarriesBearerToken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -95,6 +96,7 @@ func TestReissueMediaCookieCarriesBearerToken(t *testing.T) {
 
 // TestReissueMediaCookieRejectsUnauthenticated: no credential → 401, no cookie.
 func TestReissueMediaCookieRejectsUnauthenticated(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -110,6 +112,7 @@ func TestReissueMediaCookieRejectsUnauthenticated(t *testing.T) {
 
 // TestReissueMediaCookieRejectsInvalidBearer: a garbage bearer → 401, no cookie.
 func TestReissueMediaCookieRejectsInvalidBearer(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -127,6 +130,7 @@ func TestReissueMediaCookieRejectsInvalidBearer(t *testing.T) {
 // does NOT authorize a re-issue — the endpoint is bearer-only (requireAuth, not
 // requireAuthAllowCookie), so a stale cookie can never perpetuate its own leak.
 func TestReissueMediaCookieIgnoresLoneCookie(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	_, cookie := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-lone")
@@ -145,6 +149,7 @@ func TestReissueMediaCookieIgnoresLoneCookie(t *testing.T) {
 
 // TestReissueMediaCookieSecureUnderHTTPS: the same re-issue over TLS sets Secure.
 func TestReissueMediaCookieSecureUnderHTTPS(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-tls")
@@ -187,6 +192,7 @@ func TestReissueMediaCookieSecureUnderHTTPS(t *testing.T) {
 // Trusting loopback makes the test client the proxy; without the allowlist the
 // header is ignored (see the cookie_test.go pair for that half).
 func TestReissueMediaCookieSecureViaForwardedProto(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-proxy")

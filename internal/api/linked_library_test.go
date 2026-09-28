@@ -236,6 +236,7 @@ func rawList(m map[string]any, key string) []map[string]any {
 // Server answers every browse question the sharer answers, identically — Watch
 // state, artwork and the ids aside.
 func TestLinkedLibraryMirrorsTheSharersBrowse(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"movie", "tv", "music"} {
 		t.Run(kind, func(t *testing.T) {
 			f := linkFixtures(t, kind)
@@ -265,6 +266,7 @@ func TestLinkedLibraryMirrorsTheSharersBrowse(t *testing.T) {
 // and NEVER on a local one — a household that has linked nothing sees the wire it
 // always saw.
 func TestLinkedLibraryIsBadgedAsOne(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	local := createMovieLibrary(t, f.home, f.homeAdmin, fixtureRoot(t))
 
@@ -324,6 +326,7 @@ func TestLinkedLibraryIsBadgedAsOne(t *testing.T) {
 // local ids — not a second copy of the household's shelf, and not new ids that
 // would orphan every Playlist entry and every resume position.
 func TestReapplyingTheSameExportIsIdempotent(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	before := walkBrowse(t, f.home, f.homeAdmin, "movie", f.mirror["movie"])
 	beforeIDs := mirrorTitleIDs(t, f)
@@ -355,6 +358,7 @@ func TestReapplyingTheSameExportIsIdempotent(t *testing.T) {
 // the whole reason rows are matched by remote_id rather than by title: the friend
 // corrects a film's name, and this household's resume position survives it.
 func TestRenameOnTheSharerUpsertsAndKeepsWatchState(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 
 	// The two sides' ids differ, so the Title to follow is found by NAME once, at
@@ -411,6 +415,7 @@ func mirroredTitleNamed(t *testing.T, f *linkedFixture, name string) string {
 // and the Title it hid arrive as tombstones, and the mirror hides them too — the
 // same soft delete, not a row that vanishes with the Watch state on it.
 func TestTombstonesHideAMirroredTitle(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 
 	before := mirrorTitleIDs(t, f)
@@ -435,6 +440,7 @@ func TestTombstonesHideAMirroredTitle(t *testing.T) {
 // TestUnlinkTakesTheMirrorWithIt: unlinking is the only thing that deletes what
 // came over a Link (ADR-0056 §6) — and it deletes all of it.
 func TestUnlinkTakesTheMirrorWithIt(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	mirrorLib := f.mirror["movie"]
 
@@ -472,6 +478,7 @@ func TestUnlinkTakesTheMirrorWithIt(t *testing.T) {
 // leaf and did not think about mirrors" — which only a list of every route can
 // see.
 func TestEveryWriterRefusesALinkedLibrary(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie", "tv", "music")
 
 	mirrored := writerRoutes(
@@ -639,6 +646,7 @@ func firstGridID(t *testing.T, srv *testharness.Server, token, libID, key string
 // this household calls somebody else's shelf is this household's business
 // (ADR-0056 §1), and the name must not be stomped by the next pull either.
 func TestRenamingALinkedLibraryIsStillAllowed(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 
 	var out struct {
@@ -670,6 +678,7 @@ func TestRenamingALinkedLibraryIsStillAllowed(t *testing.T) {
 // mirror — an offer to fix a file that is on another machine is an offer nobody
 // here can take.
 func TestAttentionQueueSkipsALinkedLibrary(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	lib := f.mirror["movie"]
 
@@ -703,6 +712,7 @@ func TestAttentionQueueSkipsALinkedLibrary(t *testing.T) {
 // Library is a Library, so the grant dialog that already exists is the whole
 // access story.
 func TestAMemberIsGrantedALinkedLibraryLikeAnyOther(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	memberID := f.home.CreateUser(f.homeAdmin, "kid", "hunter2hunter2", "member")
 	memberTok := f.home.LoginAs("kid", "hunter2hunter2")
@@ -732,6 +742,7 @@ func TestAMemberIsGrantedALinkedLibraryLikeAnyOther(t *testing.T) {
 // acceptance criterion — and the payoff of ADR-0056 §3's "a mirrored Title is a
 // local row": three surfaces that were never told linking exists.
 func TestMirroredTitlesReachHomeSearchAndPlaylists(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	titleID := firstMirroredTitleID(t, f)
 
@@ -809,6 +820,7 @@ func TestMirroredTitlesReachHomeSearchAndPlaylists(t *testing.T) {
 // exportable onward (ADR-0054 §4, ADR-0056 §7). The hook issue 05 left nil is
 // wired now, and this is what it buys.
 func TestTheMirrorIsNeverReShared(t *testing.T) {
+	t.Parallel()
 	f := linkFixtures(t, "movie")
 	// The peer is granted NOTHING: since issue 11 the grant itself is refused
 	// (422 LINKED_GRANT — linked_grant_test.go), which is the earlier of the two

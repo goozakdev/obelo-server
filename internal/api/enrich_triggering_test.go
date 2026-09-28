@@ -25,7 +25,7 @@ import (
 // observable state rather than sleeping a fixed duration.
 func waitFor(t *testing.T, what string, fn func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for time.Now().Before(deadline) {
 		if fn() {
 			return
@@ -40,6 +40,7 @@ func waitFor(t *testing.T, what string, fn func() bool) {
 // POST /enrich. The scan response itself returns immediately (it is synchronous;
 // enrichment is the async follow-on).
 func TestAutoEnrichAfterScan(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -67,6 +68,7 @@ func TestAutoEnrichAfterScan(t *testing.T) {
 // TestScheduledEnrichSweep: with auto-enrich OFF but a short scheduled interval,
 // the safety-net sweep enriches still-'pending' Titles on its cadence.
 func TestScheduledEnrichSweep(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -94,6 +96,7 @@ func TestScheduledEnrichSweep(t *testing.T) {
 // Driven via the synchronous manual pass (deterministic) which publishes the
 // same events the background worker does.
 func TestEnrichProgressSSE(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -150,7 +153,7 @@ const enrichProgressEventName = "enrichProgress"
 // waitForLine consumes SSE lines until one satisfies pred (or it times out).
 func waitForLine(t *testing.T, ch <-chan string, pred func(string) bool) {
 	t.Helper()
-	timeout := time.After(5 * time.Second)
+	timeout := time.After(settleTimeout)
 	for {
 		select {
 		case line := <-ch:
@@ -167,6 +170,7 @@ func waitForLine(t *testing.T, ch <-chan string, pred func(string) bool) {
 // it is unconfigured (no key) or explicitly disabled (auto off + 0 interval) —
 // Titles stay 'pending' and the provider is never called.
 func TestEnrichSweepDisabledByConfig(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	t.Run("no provider key", func(t *testing.T) {
@@ -210,6 +214,7 @@ func TestEnrichSweepDisabledByConfig(t *testing.T) {
 // intact (it survived, like watch state), and a fresh full pass re-enriches it
 // cleanly.
 func TestEnrichMissingThenReturn(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	root := testharness.MutableLibraryDir(t, fixtureRoot(t))
@@ -280,6 +285,7 @@ func TestEnrichMissingThenReturn(t *testing.T) {
 // t.Cleanup, waiting on the worker + scheduler done-channels) returns promptly —
 // a leaked or blocked goroutine would deadlock Close and time the test out.
 func TestEnrichBackgroundShutsDownCleanly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,

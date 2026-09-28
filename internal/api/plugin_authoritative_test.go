@@ -100,6 +100,7 @@ func fakeMusicRegistration(p *fakeMusicPlugin) pluginapi.MetadataProviderRegistr
 
 // TestAPluginCanLeadAMusicLibrary: register, key, point, pass.
 func TestAPluginCanLeadAMusicLibrary(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	plugin := &fakeMusicPlugin{}
 	srv := testharness.New(t,
@@ -186,6 +187,7 @@ type pasteErrorResp struct {
 // and it makes no outbound call at all: reading a paste happens before any lookup,
 // which is exactly why external-ref is a parse call and not a fetch.
 func TestAPastedRefIsRefusedByThePluginWithTheSameTwoMessages(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const id = "b1392450-e666-3926-a536-22c65f834433"
 	srv := testharness.New(t)

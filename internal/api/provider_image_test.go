@@ -181,6 +181,7 @@ func getRaw(t *testing.T, srv *testharness.Server, path, token string) (int, str
 // it returns the provider's image bytes with the sniffed content type — with the
 // server, not the browser, doing the talking to the provider.
 func TestProviderThumbnailIsProxiedAndServed(t *testing.T) {
+	t.Parallel()
 	host, srv, token, titleID := thumbnailFixture(t, "/poster.png")
 
 	proxyURL := candidateThumbnailURL(t, srv, token, titleID)
@@ -213,6 +214,7 @@ func TestProviderThumbnailIsProxiedAndServed(t *testing.T) {
 // identity the PUT /artwork body carries. Both halves matter: one keeps the
 // browser off the provider, the other keeps picking working.
 func TestArtworkCandidateThumbnailIsProxied(t *testing.T) {
+	t.Parallel()
 	host, srv, token, titleID := thumbnailFixture(t, "/poster.png")
 
 	var cands struct {
@@ -247,6 +249,7 @@ func TestArtworkCandidateThumbnailIsProxied(t *testing.T) {
 // 404 and, critically, the server opens NO socket on their behalf. If someone
 // ever "simplifies" the ?ref= into a plain ?url=, this is the test that fails.
 func TestProviderImageRefusesUnmintedReference(t *testing.T) {
+	t.Parallel()
 	host, srv, token, titleID := thumbnailFixture(t, "/poster.png")
 
 	// A genuine reference, so the tamper cases below start from something real.
@@ -294,6 +297,7 @@ func base64URL(s string) string {
 // forever all end the same way — a clean 404 and a broken thumbnail, never a 500
 // storm, a hang, or an oversized allocation.
 func TestProviderImageRefusesBadUpstreamResponses(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		path string
@@ -321,6 +325,7 @@ func TestProviderImageRefusesBadUpstreamResponses(t *testing.T) {
 // non-Admin User is refused 403 and an anonymous caller 401 — neither reaches the
 // fetch.
 func TestProviderImageRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	host, srv, token, titleID := thumbnailFixture(t, "/poster.png")
 	proxyURL := candidateThumbnailURL(t, srv, token, titleID)
 
@@ -344,6 +349,7 @@ func TestProviderImageRequiresAdmin(t *testing.T) {
 // CANNOT send an Authorization header. Wired bearer-only, every Go test would
 // still pass and every thumbnail in the picker would be broken.
 func TestProviderImageAcceptsMediaCookie(t *testing.T) {
+	t.Parallel()
 	_, srv, token, titleID := thumbnailFixture(t, "/poster.png")
 	proxyURL := candidateThumbnailURL(t, srv, token, titleID)
 

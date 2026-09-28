@@ -113,6 +113,7 @@ func leadVideoProvides() pluginapi.ManifestProvides {
 // because the way to break this is to widen a WHERE clause, and the Built-ins'
 // rows live in the same table under the same column.
 func TestUninstallingAnInstalledMetadataProviderForgetsItsKeyAndBaseURL(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -166,6 +167,7 @@ func TestUninstallingAnInstalledMetadataProviderForgetsItsKeyAndBaseURL(t *testi
 // left ran the other way here: an Installed Event sink already forgot its secret
 // and target on uninstall while an Installed Subtitle provider remembered its key.
 func TestUninstallingAnInstalledSubtitleProviderForgetsItsKeyAndBaseURL(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -214,6 +216,7 @@ func TestUninstallingAnInstalledSubtitleProviderForgetsItsKeyAndBaseURL(t *testi
 // response is what an Admin reads. The pass afterwards is the other half: the
 // Library falls back to the kind's default lead with no error surfaced.
 func TestUninstallingALibrarysLeadHandsItBackToTheKindDefault(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	// BOTH Plugins are UPLOADED AFTER BOOT, through the Plugins screen's own
 	// endpoint, so every verb in this test is one an Admin has (.scratch/plugin-system

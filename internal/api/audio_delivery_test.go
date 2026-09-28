@@ -187,6 +187,7 @@ func audioStreamByLabel(t *testing.T, dec decisionResp, label string) decisionAu
 // audio-Stream list with labels (parallel to the catalog), and reports the resolved
 // Stream as audioStream — so a native client can build the same Audio menu.
 func TestDecisionListsAudioStreams(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	srv, token, id := scanAudioMovieLib(t)
 
@@ -229,6 +230,7 @@ func TestDecisionListsAudioStreams(t *testing.T) {
 // is probed from the DEFAULT audio rendition's segment (the resolved Stream), not the
 // video segment — the demuxed evolution of the same delivered-vs-reported pin.
 func TestDeliveredAudioMatchesReportedStream(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	requireFFmpeg(t)
 	srv, token, id := scanAudioMovieLib(t)
@@ -270,6 +272,7 @@ func TestDeliveredAudioMatchesReportedStream(t *testing.T) {
 // DEFAULT audio by id keeps direct play, while a NON-DEFAULT selection escalates to
 // remux (direct play carries only the default audio, ADR-0022).
 func TestAudioStreamIdTierEscalation(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	srv, token, id := scanAudioMovieLib(t)
 
@@ -309,6 +312,7 @@ func TestAudioStreamIdTierEscalation(t *testing.T) {
 // covered by TestGovernanceTranscodeCapReturnsServerBusy, where the video IS
 // re-encoded.)
 func TestAudioStreamIdCodecTranscodeIsVideoCopyExempt(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	srv := testharness.New(t, testharness.WithTranscodeCap(1))
 	token := adminToken(t, srv)
@@ -348,6 +352,7 @@ func TestAudioStreamIdCodecTranscodeIsVideoCopyExempt(t *testing.T) {
 // TestAudioStreamIdInvalidIs404: an audioStreamId that names no audio Stream of the
 // Title fails structurally (404, hide existence), never a silent default.
 func TestAudioStreamIdInvalidIs404(t *testing.T) {
+	t.Parallel()
 	requireAudioFixtures(t)
 	srv, token, id := scanAudioMovieLib(t)
 

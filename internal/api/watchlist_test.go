@@ -26,6 +26,7 @@ type watchlistDetailResp struct {
 // in the ordinary /playlists list; a repeat GET is idempotent (same id); and the
 // Watchlist refuses rename and delete with 422 SYSTEM_PLAYLIST.
 func TestWatchlistExistsAndImmutable(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 
@@ -82,6 +83,7 @@ func TestWatchlistExistsAndImmutable(t *testing.T) {
 // fixed the kind) is a clean 422 KIND_MISMATCH; and DELETE /watchlist/items/{itemId}
 // removes an entry.
 func TestWatchlistAppendSingleKind(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin, movieID, episodeID := scanMovieAndEpisode(t)
 

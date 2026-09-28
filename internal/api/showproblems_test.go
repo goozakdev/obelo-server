@@ -126,6 +126,7 @@ func scanCopiedMatcherLibrary(t *testing.T) (*testharness.Server, string, string
 // Show row's count and a row of its own — the five-rows-one-problem shape returning
 // by the back door.
 func TestShowProblemsCountsUnmatchedFilesUnderTheShow(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -155,6 +156,7 @@ func TestShowProblemsCountsUnmatchedFilesUnderTheShow(t *testing.T) {
 // — the alternative silently forgets a file the Admin meant to come back to, which
 // is the whole reason the state exists.
 func TestShowProblemsUnassignedKeepsTheShowQueued(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -191,6 +193,7 @@ func TestShowProblemsUnassignedKeepsTheShowQueued(t *testing.T) {
 // ignoring every file empties it — a count the matcher cannot clear would make the
 // queue permanently non-zero and therefore meaningless.
 func TestShowProblemsClearedByAssigningOrIgnoring(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -229,6 +232,7 @@ func TestShowProblemsClearedByAssigningOrIgnoring(t *testing.T) {
 // (CONTEXT.md "Orphaned correction") — and never folded in with the undecided
 // files, which are a different problem with a different fix.
 func TestShowProblemsSurfacesOrphanedPlacement(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID, _ := scanCopiedMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -266,6 +270,7 @@ func TestShowProblemsSurfacesOrphanedPlacement(t *testing.T) {
 // count the matcher cannot empty, and the drift would only appear as an Admin
 // working a row that never reaches zero.
 func TestShowProblemsMatchesTheMatchersOwnCount(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, token, libID := scanMatcherLibrary(t)
 	showID := matcherShowID(t, srv, token, libID, "Sorted Show")
@@ -286,6 +291,7 @@ func TestShowProblemsMatchesTheMatchersOwnCount(t *testing.T) {
 // TestShowProblemsEmptyForANonTVLibrary: the queue asks every Library the same
 // question, so a Movie Library answers "no shows" rather than an error.
 func TestShowProblemsEmptyForANonTVLibrary(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 
@@ -298,6 +304,7 @@ func TestShowProblemsEmptyForANonTVLibrary(t *testing.T) {
 // TestShowProblemsRequiresAdmin / unknown library: the same posture as every other
 // attention surface — Admin-only, and an unknown Library hides its existence.
 func TestShowProblemsRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireMatcherFixtures(t)
 	srv, _, libID := scanMatcherLibrary(t)
 
@@ -309,6 +316,7 @@ func TestShowProblemsRequiresAdmin(t *testing.T) {
 }
 
 func TestShowProblemsUnknownLibraryIsNotFound(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	if status, _ := srv.AuthGET("/api/v1/libraries/nope/show-problems", token, nil); status != http.StatusNotFound {
@@ -321,6 +329,7 @@ func TestShowProblemsUnknownLibraryIsNotFound(t *testing.T) {
 // let it half-succeed, leaving a row that says "3 episodes" for reasons the Admin
 // cannot see.
 func TestReviewShowEpisodesDismissesEveryFlaggedEpisode(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -360,6 +369,7 @@ func TestReviewShowEpisodesDismissesEveryFlaggedEpisode(t *testing.T) {
 }
 
 func TestReviewShowEpisodesUnknownShowIsNotFound(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	if status, _ := srv.JSON(http.MethodPost, "/api/v1/shows/nope/reviewEpisodes", token, nil, nil); status != http.StatusNotFound {
@@ -368,6 +378,7 @@ func TestReviewShowEpisodesUnknownShowIsNotFound(t *testing.T) {
 }
 
 func TestReviewShowEpisodesRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID := findShow(t, listShows(t, srv, token, libID), "The Bear")

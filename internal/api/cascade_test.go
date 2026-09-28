@@ -92,6 +92,7 @@ func okComputerAlbum(t *testing.T, srv *testharness.Server, token, libID string)
 // left over for it, so the leftover rule does not fire either. The summary reports
 // updated=1, attention=1.
 func TestCascadeAlbumTracksPositional(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	// A tracklist with ONLY position 1: position 2 (Paranoid) has no counterpart.
 	prov := &fakeProvider{
@@ -172,6 +173,7 @@ func TestCascadeAlbumTracksPositional(t *testing.T) {
 // one free position the leftover rule would pair them, which is correct and
 // deliberate — so a two-position fixture could not show anything about rule 1.
 func TestCascadeDoesNotPinATrackByPositionAlone(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	base := musicCascadeLookup()
 	prov := &fakeProvider{
@@ -241,6 +243,7 @@ func TestCascadeDoesNotPinATrackByPositionAlone(t *testing.T) {
 // wrong one). Rule 2 — a normalized title matching exactly one unclaimed entry
 // anywhere — recovers both.
 func TestCascadeRescuesADriftedNumbering(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -289,6 +292,7 @@ func TestCascadeRescuesADriftedNumbering(t *testing.T) {
 // override, and a track with a Locked field, are BOTH preserved (skipped) by an
 // album cascade rather than clobbered.
 func TestCascadeSkipsChildOwnOverrideAndLock(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -349,6 +353,7 @@ func TestCascadeSkipsChildOwnOverrideAndLock(t *testing.T) {
 // tracks positionally. Radiohead's OK Computer (2 tracks) + Lossless Single (1 track)
 // are all corrected — updated = 2 albums + 3 tracks = 5, attention = 0.
 func TestCascadeArtistAlbumsRecurse(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, query string) ([]enrich.Candidate, error) {
@@ -420,6 +425,7 @@ func TestCascadeArtistAlbumsRecurse(t *testing.T) {
 // (season+episode) under the corrected show: Season 01 episodes are updated durably;
 // the Season 00 Special the corrected show has no record for lands in attention.
 func TestCascadeShowEpisodesViaWrongItem(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -533,6 +539,7 @@ func TestCascadeShowEpisodesViaWrongItem(t *testing.T) {
 // Album's correction. Against the old rule the summary is {Updated:0} and both
 // overviews stay the auto record's.
 func TestCascadeReachesATrackWithAnUnchosenRecord(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	base := musicCascadeLookup()
 	prov := &fakeProvider{
@@ -611,6 +618,7 @@ func TestCascadeReachesATrackWithAnUnchosenRecord(t *testing.T) {
 // episode from that record", and none of them may cost the Episode its Show's
 // correction.
 func TestCascadeReachesAnEpisodeWithAnUnchosenRecord(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -711,6 +719,7 @@ func TestCascadeReachesAnEpisodeWithAnUnchosenRecord(t *testing.T) {
 // untouched; a childless leaf (Track) silently ignores the cascade flag (no summary);
 // a Fix-label hand-edit on the album never touches its tracks.
 func TestCascadeOptInAndLeafIgnored(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -771,6 +780,7 @@ func TestCascadeOptInAndLeafIgnored(t *testing.T) {
 // TestCascadeAdminOnlyAndSSE: a Member cannot run a cascade apply (403); an Admin
 // cascade emits a libraryUpdated SSE nudge so browse reflects the corrections live.
 func TestCascadeAdminOnlyAndSSE(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -876,6 +886,7 @@ func musicCascadeLookup() func(enrich.TitleRef) (enrich.TitleMetadata, error) {
 // showing the FIRST correction — the failure is silent, which is what makes it
 // worth a test rather than a comment.
 func TestCascadeRerunsOnTheChildrenItAlreadyReached(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	// Two corrected series, applied one after the other to the same Show. Each
 	// answers Season 1 and has no record for the Season 00 Special, so the shape of
@@ -982,6 +993,7 @@ func TestCascadeRerunsOnTheChildrenItAlreadyReached(t *testing.T) {
 // into, so its Tracks were skipped too. Fixing only the leaves would have left this
 // whole branch broken.
 func TestCascadeRerunsFromTheSameArtist(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	// The provider's answers change between the two runs, so "the second run really
 	// re-applied" is observable rather than inferred from a count.

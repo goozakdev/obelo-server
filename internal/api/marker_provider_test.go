@@ -135,6 +135,7 @@ func servedKinds(got markersResp) []string {
 // File, so it is not served — not on the first read, and not on a later one,
 // which does not ask again.
 func TestAFetchedMarkerTimedForAnotherLengthIsNeverServed(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		return []map[string]any{span(q, "intro", 0.1, 0.3, 10_000)}
 	})
@@ -155,6 +156,7 @@ func TestAFetchedMarkerTimedForAnotherLengthIsNeverServed(t *testing.T) {
 // Marker, a Fetched Intro timed on a recording two seconds longer is served —
 // and the provider was asked about this film, at this File's length.
 func TestAFetchedMarkerWithinTheToleranceIsServed(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		return []map[string]any{span(q, "intro", 0.1, 0.3, 2_000)}
 	})
@@ -176,6 +178,7 @@ func TestAFetchedMarkerWithinTheToleranceIsServed(t *testing.T) {
 // Intro, so the provider's Intro is not served; its Preview, which nothing else
 // covers, is.
 func TestALocalIntroIsServedOverAFetchedIntro(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		return []map[string]any{span(q, "intro", 0.4, 0.5, 0), span(q, "preview", 0.8, 0.9, 0)}
 	})
@@ -194,6 +197,7 @@ func TestALocalIntroIsServedOverAFetchedIntro(t *testing.T) {
 // measured on this very File, so the provider's Recap — even apart from it — is
 // not served.
 func TestADetectedRecapIsServedOverAFetchedRecap(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		return []map[string]any{span(q, "recap", 0.5, 0.6, 0)}
 	})
@@ -236,11 +240,11 @@ func readMarkers(ctx context.Context, srv *testharness.Server, token, sessionID 
 }
 
 // awaitMarkers reads the session's Markers until they are want, failing the test
-// if they are not within ten seconds.
+// if they are not within settleTimeout.
 func awaitMarkers(t *testing.T, srv *testharness.Server, token, sessionID string, want string) {
 	t.Helper()
 	var got []string
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+	for deadline := time.Now().Add(settleTimeout); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		got, _ = readMarkers(context.Background(), srv, token, sessionID)
 		if fmt.Sprint(got) == want {
 			return
@@ -255,6 +259,7 @@ func awaitMarkers(t *testing.T, srv *testharness.Server, token, sessionID string
 // out a provider call, let alone every call queued ahead of it. The asking goes
 // on without them, and a later read serves what it found.
 func TestLocalMarkersNeverWaitOnAHungProvider(t *testing.T) {
+	// Not parallel: it bounds each read at five seconds of wall-clock time.
 	release := make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
@@ -302,6 +307,7 @@ func TestLocalMarkersNeverWaitOnAHungProvider(t *testing.T) {
 // the Plugin nor asked again; aborts past the failure threshold leave the Plugin
 // enabled and its Intro served.
 func TestAbortedReadsDoNotDisableTheProvider(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		time.Sleep(time.Second)
 		return []map[string]any{span(q, "intro", 0.1, 0.3, 0)}
@@ -329,6 +335,7 @@ func TestAbortedReadsDoNotDisableTheProvider(t *testing.T) {
 // longer set the Watched ceiling; enabled again, they are served as they were,
 // without asking it again — the rows were kept.
 func TestFetchedMarkersAreServedOnlyWhileAProviderIsEnabled(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		return []map[string]any{span(q, "intro", 0.1, 0.2, 0), span(q, "credits", 0.6, 0.95, 0)}
 	})
@@ -369,6 +376,7 @@ func TestFetchedMarkersAreServedOnlyWhileAProviderIsEnabled(t *testing.T) {
 // returns no asking is running, and nothing is logged about it afterwards (it
 // used to fail into the closed database, "sql: database is closed").
 func TestAppCloseEndsAMarkerFetchInFlight(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	release := make(chan struct{})
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		<-release

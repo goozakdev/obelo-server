@@ -108,6 +108,7 @@ func libraryIDFromEnrichPath(t *testing.T, path string) string {
 
 // ?mode=recheck re-asks the settled rows an only-new pass cannot see.
 func TestEnrichQueryModeRecheckReAsksTheSettledRows(t *testing.T) {
+	t.Parallel()
 	srv, prov, token, libID := recheckHarness(t)
 	settled := len(listEnrichmentAttention(t, srv, token, libID).Titles)
 
@@ -138,6 +139,7 @@ func TestEnrichQueryModeRecheckReAsksTheSettledRows(t *testing.T) {
 // The same value in the JSON body, which is the other spelling the endpoint has
 // always accepted for `full`.
 func TestEnrichBodyModeRecheckSelectsTheSameMode(t *testing.T) {
+	t.Parallel()
 	srv, prov, token, libID := recheckHarness(t)
 	settled := len(listEnrichmentAttention(t, srv, token, libID).Titles)
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }
@@ -153,6 +155,7 @@ func TestEnrichBodyModeRecheckSelectsTheSameMode(t *testing.T) {
 // fallback (D029) — the API requires the current request shape, in the query or a
 // well-formed body. "?mode=" (absent) still means the default pass.
 func TestEnrichUnknownModeIsRefused(t *testing.T) {
+	t.Parallel()
 	srv, prov, token, libID := recheckHarness(t)
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }
 	before := prov.calls()
@@ -176,6 +179,7 @@ func TestEnrichUnknownModeIsRefused(t *testing.T) {
 
 // Case is not significant, exactly as it is not for `full`.
 func TestEnrichModeRecheckIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	srv, prov, token, libID := recheckHarness(t)
 	settled := len(listEnrichmentAttention(t, srv, token, libID).Titles)
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }

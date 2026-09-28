@@ -139,6 +139,7 @@ func firstFileVideo(t *testing.T, d videoDetailResp) []videoStreamResp {
 }
 
 func TestVideoStreamsListed(t *testing.T) {
+	t.Parallel()
 	requireVideoFixtures(t)
 	d := scanVideoMovie(t)
 	streams := firstFileVideo(t, d)
@@ -190,6 +191,7 @@ func TestVideoStreamsListed(t *testing.T) {
 // TestVideoStreamsRescanStable: an incremental rescan (nothing changed) leaves the
 // video Stream list and labels unchanged.
 func TestVideoStreamsRescanStable(t *testing.T) {
+	t.Parallel()
 	requireVideoFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

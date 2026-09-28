@@ -34,6 +34,7 @@ import (
 // host they configured — through the settings row, the resolver, the ABI, the
 // guest and http_fetch — and never answers with the no-probe sentence.
 func TestEveryBundledPluginsTestConnectionReachesItsSource(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -128,6 +129,7 @@ var probeIDCarriedAt = map[string]func(r *http.Request) bool{
 // plugins/*/manifest.json, since a black-box test in this package has no relative
 // path back to the repo root that survives `go test ./...` from any directory.
 func TestProbeIDCarriedAtMatchesTheManifests(t *testing.T) {
+	t.Parallel()
 	manifests, err := bundled.Manifests()
 	if err != nil {
 		t.Fatalf("reading the embedded manifests: %v (run make plugins)", err)
@@ -157,6 +159,7 @@ func TestProbeIDCarriedAtMatchesTheManifests(t *testing.T) {
 // TestBundledProbeCarriesItsExternalID: for the providers whose manifest probe
 // declares an id, that id reaches the outgoing request — not just a request.
 func TestBundledProbeCarriesItsExternalID(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -201,6 +204,7 @@ var shippedMetadataIDs = []string{"tmdb", "omdb", "thetvdb", "anidb", "musicbrai
 // TestTheShippedSetIsNinePluginsInOrder: the list above is what a fresh server
 // really has, so nothing else in this file can be quietly testing a subset.
 func TestTheShippedSetIsNinePluginsInOrder(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 

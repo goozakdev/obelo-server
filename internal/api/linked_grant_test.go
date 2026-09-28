@@ -45,6 +45,7 @@ func grantedLibraryIDs(t *testing.T, srv *testharness.Server, adminTok, userID s
 // shape the unknown-id rejection has. A Member is granted the same Library in
 // the same breath, because it is the second hop that is refused, not the first.
 func TestGrantingALinkedLibraryToARemoteUserIsRefused(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	local := createLibraryNamed(t, srv, admin, "Films", t.TempDir())
@@ -99,6 +100,7 @@ func TestGrantingALinkedLibraryToARemoteUserIsRefused(t *testing.T) {
 // it was granted — still resolves to nothing for a `remote` User. The same row
 // for a Member resolves normally.
 func TestARemoteScopeNeverResolvesALinkedLibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	local := createLibraryNamed(t, srv, admin, "Films", t.TempDir())
@@ -155,6 +157,7 @@ func TestARemoteScopeNeverResolvesALinkedLibrary(t *testing.T) {
 // (linked_library_test.go's TestTheMirrorIsNeverReShared asserts the same thing
 // over a real Link; this one adds the local control and needs no second Server.)
 func TestTheExportRefusesAMirrorForEveryCaller(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	local := createLibraryNamed(t, srv, admin, "Films", t.TempDir())

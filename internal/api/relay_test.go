@@ -86,7 +86,7 @@ func (rec *relayRecorder) countPath(prefix string) int {
 // in the background.
 func (rec *relayRecorder) awaitCall(t *testing.T, method, path string) bool {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for time.Now().Before(deadline) {
 		for _, c := range rec.snapshot() {
 			if c.Method == method && c.Path == path {
@@ -184,6 +184,7 @@ func (f *relayFixture) linkState(t *testing.T) string {
 // sharer, the answer comes back rewritten onto this Server, and the bytes flow
 // through it — with Range, and with the session ending on both sides.
 func TestRelayDirectPlay(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 
@@ -306,6 +307,7 @@ func relayRemoteSessionOf(t *testing.T, streamURL string) string {
 // makes — header or body — may carry the viewer's User id, username or Device
 // name.
 func TestRelayCarriesNothingAboutTheViewer(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 
 	// A named member with a named device, so the strings are unmistakable if they
@@ -380,6 +382,7 @@ func TestRelayCarriesNothingAboutTheViewer(t *testing.T) {
 // the SHARER's lever (ADR-0054 §2), and its refusal reaches the home client whole
 // — the status, the code and the counts — because nothing here can improve on it.
 func TestRelayPassesTheSharersRefusalThrough(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	setPlaybackCeiling(t, f.sharer, f.sharerAdmin, f.remoteUser, map[string]any{"maxStreams": 1})
 
@@ -420,6 +423,7 @@ func TestRelayPassesTheSharersRefusalThrough(t *testing.T) {
 // SHARER: the tiering reads the catalog, so a 320x180 clip that says it is 4K
 // exercises the identical decision without a 4K file or a real transcode.
 func TestRelayHonoursTheSharersResolutionCeiling(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 
@@ -487,6 +491,7 @@ func TestRelayHonoursTheSharersResolutionCeiling(t *testing.T) {
 // TestRelayAnswersLinkRevoked: the sharer deleted the `remote` User, so the
 // credential is dead (ADR-0056 §6). The play says so, and the Link is marked.
 func TestRelayAnswersLinkRevoked(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 
@@ -518,6 +523,7 @@ func TestRelayAnswersLinkRevoked(t *testing.T) {
 // TestRelayAnswersLinkUnreachable: the friend's Server is off. The mirror stays,
 // the play says why, and the Link is marked unreachable (ADR-0056 §6).
 func TestRelayAnswersLinkUnreachable(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 
@@ -555,6 +561,7 @@ func TestRelayAnswersLinkUnreachable(t *testing.T) {
 // It needs ffmpeg on the SHARER's host, so it skips like every other real-ffmpeg
 // test in this package.
 func TestRelayHLSPlaylistAndSegments(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	f := linkForRelay(t)
 	// Blade Runner is mkv/mpeg4/mp3: an mp4+h264+aac client cannot direct-play it,
@@ -636,6 +643,7 @@ func firstPlaylistURI(t *testing.T, playlist string) string {
 // cache afterwards (ADR-0056 §5) — the feed carries no artwork, so without this a
 // friend's whole library is placeholders.
 func TestRelayArtworkIsFetchedOnceAndCached(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 
 	// A poster on the sharer's side, uploaded so the test owns the exact bytes.
@@ -691,6 +699,7 @@ func listTitles(t *testing.T, srv *testharness.Server, token, libID string) titl
 // TestRelayRouteRefusals: the relay routes are media routes, and they refuse
 // exactly as the media routes they mirror do.
 func TestRelayRouteRefusals(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 	status, dec, body := f.play(t, f.homeAdmin, titleID, mp4Profile())

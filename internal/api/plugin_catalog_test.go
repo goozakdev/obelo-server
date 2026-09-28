@@ -152,6 +152,7 @@ func setCatalog(t *testing.T, srv *testharness.Server, token, url string) catalo
 // offers, and installs the reference plugin from it — through the same endpoint a
 // pasted URL goes through, with the module fetched from beside the manifest.
 func TestACatalogListsThePluginAndInstallsIt(t *testing.T) {
+	t.Parallel()
 	source := discordSource(t, nil)
 	index := catalogServing(t, discordEntry(source.URL+"/"+plugins.ManifestFile))
 
@@ -213,6 +214,7 @@ func TestACatalogListsThePluginAndInstallsIt(t *testing.T) {
 // says so: same code, same message, with the ONLY difference being that a
 // catalog chose the address instead of a person.
 func TestAnEntryResolvingToAPrivateAddressIsRefused(t *testing.T) {
+	t.Parallel()
 	source := discordSource(t, nil)
 	index := catalogServing(t, discordEntry(source.URL+"/"+plugins.ManifestFile))
 
@@ -252,6 +254,7 @@ func TestAnEntryResolvingToAPrivateAddressIsRefused(t *testing.T) {
 // this feature is worth having: somebody else's outage must not cost an operator
 // the two install paths that have nothing to do with it.
 func TestAnUnreachableCatalogDegradesQuietly(t *testing.T) {
+	t.Parallel()
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
@@ -295,6 +298,7 @@ func TestAnUnreachableCatalogDegradesQuietly(t *testing.T) {
 // disappoint, all of them the operator's address being wrong rather than this
 // server failing.
 func TestACatalogThatIsNotACatalogIsANoteToo(t *testing.T) {
+	t.Parallel()
 	notJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("<html>not an index</html>"))
 	}))
@@ -336,6 +340,7 @@ func TestACatalogThatIsNotACatalogIsANoteToo(t *testing.T) {
 // TestClearingTheCatalogTurnsItOff, which is how an operator gets the screen they
 // had before they opted in.
 func TestClearingTheCatalogTurnsItOff(t *testing.T) {
+	t.Parallel()
 	source := discordSource(t, nil)
 	index := catalogServing(t, discordEntry(source.URL+"/"+plugins.ManifestFile))
 
@@ -360,6 +365,7 @@ func TestClearingTheCatalogTurnsItOff(t *testing.T) {
 // display and is left alone; a row with no address is the one a server could do
 // nothing with at all.
 func TestAnEntryWithNoManifestURLIsNotOffered(t *testing.T) {
+	t.Parallel()
 	index := catalogServing(t,
 		pluginapi.CatalogEntry{ID: "broken", Name: "Broken"},
 		discordEntry("https://plugins.example.test/discord/"+plugins.ManifestFile),
@@ -375,6 +381,7 @@ func TestAnEntryWithNoManifestURLIsNotOffered(t *testing.T) {
 
 // TestTheCatalogRoutesAreAdminOnly, like every other /settings route.
 func TestTheCatalogRoutesAreAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	srv.CreateUser(admin, "kid", "memberpass123", "member")

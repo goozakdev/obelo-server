@@ -43,6 +43,7 @@ import (
 // numbers are asserted literally in internal/plugins:TestTheHostFetchDefaults and
 // in plugins/musicbrainz/musicbrainz (callBudget beside the manifest's figure).
 func TestASlowMusicSourceRetriesTheItemsAndDoesNotStrikeThePlugin(t *testing.T) {
+	// Not parallel: its 600ms call window is wall-clock time, which parallel tests eat.
 	requireFixtures(t)
 
 	const answerAfter = 700 * time.Millisecond
@@ -149,6 +150,7 @@ func musicLead(v providersView) string {
 // record the probe just resolved, because that is the one contract call whose whole
 // subject is images.
 func TestTestConnectionReachesBothMusicHosts(t *testing.T) {
+	t.Parallel()
 	// The web service answers the probe's album lookup with a release-group, which
 	// is what gives the image call a record to ask about.
 	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

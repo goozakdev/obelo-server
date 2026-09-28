@@ -106,7 +106,7 @@ func (d *discordStandIn) received() []discordPost {
 // waitFor polls until at least n messages have arrived, or fails.
 func (d *discordStandIn) waitFor(t *testing.T, n int) []discordPost {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for {
 		got := d.received()
 		if len(got) >= n {
@@ -174,6 +174,7 @@ var scanMessage = regexp.MustCompile(`^📚 Scan of \*\*Movies\*\* finished: (\d
 // URL, subscribes it to scan.completed and playback.started, runs a scan and
 // presses play — and two correctly formatted messages arrive at Discord.
 func TestTheDiscordPluginPostsAScanAndAPlay(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	discord := newDiscordStandIn(t)
 
@@ -269,6 +270,7 @@ func TestTheDiscordPluginPostsAScanAndAPlay(t *testing.T) {
 // the text — because the text alone would be honoured for @everyone and ignored
 // for a role.
 func TestTheDiscordPluginMentionsARoleOnlyWhenTheAdminAsks(t *testing.T) {
+	t.Parallel()
 	discord := newDiscordStandIn(t)
 
 	srv := testharness.New(t)
@@ -318,6 +320,7 @@ func TestTheDiscordPluginMentionsARoleOnlyWhenTheAdminAsks(t *testing.T) {
 // typed for it. The person on the far sofa is not named, because their name never
 // crossed the wire and this plugin has nothing it could print.
 func TestTheDiscordPluginNamesALinkedServerAndNeverAPerson(t *testing.T) {
+	t.Parallel()
 	discord := newDiscordStandIn(t)
 	f := linkForRelay(t)
 
@@ -361,6 +364,7 @@ func TestTheDiscordPluginNamesALinkedServerAndNeverAPerson(t *testing.T) {
 // audited, and after enough of them this server stops calling the plugin and says
 // on the screen which host it reached for.
 func TestTheDiscordPluginMayNotPostAnywhereButDiscord(t *testing.T) {
+	t.Parallel()
 	discord := newDiscordStandIn(t)
 
 	srv := testharness.New(t)
@@ -403,6 +407,7 @@ func TestTheDiscordPluginMayNotPostAnywhereButDiscord(t *testing.T) {
 // wants it in a channel by default. A cleared template is an instruction, not a
 // failure — so nothing is posted AND nothing is counted as failed.
 func TestTheDiscordPluginSaysNothingForAnEventWithNoTemplate(t *testing.T) {
+	t.Parallel()
 	discord := newDiscordStandIn(t)
 
 	srv := testharness.New(t)
@@ -437,6 +442,7 @@ func TestTheDiscordPluginSaysNothingForAnEventWithNoTemplate(t *testing.T) {
 // bearer credential, so it is a `secret` field — stored, usable, and never
 // returned to anybody, including the Admin who typed it.
 func TestTheDiscordPluginsWebhookURLNeverComesBackOutOfTheAPI(t *testing.T) {
+	t.Parallel()
 	discord := newDiscordStandIn(t)
 
 	srv := testharness.New(t)

@@ -145,6 +145,7 @@ func assertBareRelativeURIs(t *testing.T, what, playlist string) {
 // its most literal form — a native-HLS player pointed at
 // /stream/{token}/hls/master.m3u8 and left alone.
 func TestStreamTokenHLSPlaythroughAnonymous(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	srv := testharness.New(t)
 	bearer := adminToken(t, srv)
@@ -221,6 +222,7 @@ func TestStreamTokenHLSPlaythroughAnonymous(t *testing.T) {
 // not acquire any extra latency; the token path adds one indexed lookup, the
 // same order of cost as the bearer path's token authentication.
 func TestStreamTokenFMP4AndAudioRenditionAnonymous(t *testing.T) {
+	t.Parallel()
 	requireHEVCFixture(t)
 	requireFFmpeg(t)
 
@@ -309,6 +311,7 @@ func assertAnonContentType(t *testing.T, srv *testharness.Server, apiPath, want 
 // are compared against the bearer path's so "it returned 200" cannot pass for
 // "it returned the film".
 func TestStreamTokenProgressiveDirectPlayWithRange(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	bearer, _, dec := duneSession(t, srv)
@@ -367,6 +370,7 @@ func TestStreamTokenProgressiveDirectPlayWithRange(t *testing.T) {
 // that proves the realignment did not renumber the playlist out from under the
 // player.
 func TestStreamTokenSeekOnServerOwnedPlaylist(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	srv := testharness.New(t)
 	bearer := adminToken(t, srv)
@@ -401,6 +405,7 @@ func TestStreamTokenSeekOnServerOwnedPlaylist(t *testing.T) {
 // token would have forced us to post-process, so it is the one that most needs
 // to work untouched here.
 func TestStreamTokenSeekOnFfmpegOwnedPlaylist(t *testing.T) {
+	t.Parallel()
 	requireFFmpeg(t)
 	srv := testharness.New(t)
 	bearer := adminToken(t, srv)
@@ -472,6 +477,7 @@ func TestStreamTokenSeekOnFfmpegOwnedPlaylist(t *testing.T) {
 // wrong-User session fetch produces on the bearer path, since a refusal that
 // looked different would be the disclosure the posture exists to prevent.
 func TestStreamTokenRefusalsAreIndistinguishable(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	bearer := adminToken(t, srv)
@@ -545,6 +551,7 @@ func TestStreamTokenRefusalsAreIndistinguishable(t *testing.T) {
 // difference between 405 and 404 would be a token-validity oracle that needs no
 // media at all.
 func TestStreamTokenRoutesAreGetOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	bearer, _, dec := duneSession(t, srv)
@@ -595,6 +602,7 @@ func TestStreamTokenRoutesAreGetOnly(t *testing.T) {
 // dies with them — the access decision follows the User the token names, not
 // whoever happens to be holding it.
 func TestStreamTokenServesItsOwnUsersBytes(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -641,6 +649,7 @@ func TestStreamTokenServesItsOwnUsersBytes(t *testing.T) {
 // ADDITIVE. The same session stays reachable over the bearer header and over the
 // ms_media cookie, and a stream token still buys nothing on the session-id route.
 func TestExistingSessionRoutesAreUnchangedByTheTokenPath(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	bearer, _, dec := duneSession(t, srv)
@@ -697,6 +706,7 @@ func (b *syncBuffer) String() string {
 // the request itself still does. It also checks the account credential on the
 // ?token= download route stays out, since that is the same failure one URL over.
 func TestStreamTokenNeverReachesTheAccessLog(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	requireFixtures(t)
 	srv := testharness.New(t)
 	bearer, _, dec := duneSession(t, srv)
@@ -764,6 +774,7 @@ func TestStreamTokenNeverReachesTheAccessLog(t *testing.T) {
 // to accept — an outer middleware sees /api/v1/stream/…, the api mux sees
 // /stream/… after StripPrefix — and the paths it must leave alone.
 func TestRedactPath(t *testing.T) {
+	t.Parallel()
 	const tok = "s3cret-token_value"
 	cases := []struct{ in, want string }{
 		{"/api/v1/stream/" + tok + "/stream", "/api/v1/stream/[redacted]/stream"},

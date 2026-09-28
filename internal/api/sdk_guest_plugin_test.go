@@ -80,6 +80,7 @@ func uploadSDKGuest(t *testing.T, srv *testharness.Server, token, id, mode strin
 //
 // No restart, no hand-placed directory, no shell on the box.
 func TestASDKBuiltPluginUploadedThroughTheAPILeadsALibrary(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	fetcher := &fakeFetcher{data: []byte("image-bytes")}
 	srv := testharness.New(t, testharness.WithArtworkFetcher(fetcher))
@@ -141,6 +142,7 @@ func TestASDKBuiltPluginUploadedThroughTheAPILeadsALibrary(t *testing.T) {
 // spells its own id and has no request field to put one in, so this also says what
 // two plugins sharing a key would see: their own values.
 func TestASDKBuiltPluginKeepsItsOwnKeyValueNamespace(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t, testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}))
 	token := adminToken(t, srv)

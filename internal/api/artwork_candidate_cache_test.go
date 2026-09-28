@@ -53,6 +53,7 @@ func getPosterCandidates(t *testing.T, srv *testharness.Server, token, titleID s
 // separately, uploading an image each invalidate that (entity, role) entry so the
 // next request re-queries — all with the production-default TTL.
 func TestArtworkCandidateCacheHitAndInvalidation(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := cacheProbeProvider()
 	srv := testharness.New(t,
@@ -106,6 +107,7 @@ func TestArtworkCandidateCacheHitAndInvalidation(t *testing.T) {
 // TestArtworkCandidateCacheExpiryReQueries: with a tiny TTL, a request after the
 // TTL elapses re-queries the provider (the cache is short-lived, not permanent).
 func TestArtworkCandidateCacheExpiryReQueries(t *testing.T) {
+	// Not parallel: its 40ms cache window is wall-clock time, which parallel tests eat.
 	requireNamingFixtures(t)
 	prov := cacheProbeProvider()
 	srv := testharness.New(t,
@@ -138,6 +140,7 @@ func TestArtworkCandidateCacheExpiryReQueries(t *testing.T) {
 // (TTL 0), every request re-queries — correctness/behavior is identical to having
 // no cache at all, proving the cache is a pure optimization.
 func TestArtworkCandidateCacheDisabledReQueriesEveryTime(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := cacheProbeProvider()
 	srv := testharness.New(t,

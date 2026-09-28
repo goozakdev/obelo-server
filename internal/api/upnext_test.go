@@ -99,6 +99,7 @@ func bearSeason1Episodes(t *testing.T, srv *testharness.Server, token, libID str
 // in-progress anchor belongs to Continue Watching, so the two Home rows stay
 // disjoint and never list the same Episode (ADR-0028).
 func TestUpNextExcludesInProgressAnchor(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -134,6 +135,7 @@ func TestUpNextExcludesInProgressAnchor(t *testing.T) {
 // E01 (the auto playback path) makes E01 the watched anchor, so the resume point
 // advances to the next unwatched after it = E02.
 func TestUpNextAdvancesOnThresholdCrossing(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -169,6 +171,7 @@ func TestUpNextAdvancesOnThresholdCrossing(t *testing.T) {
 // Up Next to E02 (same as the auto path); marking it unwatched moves Up Next back
 // to E01 — the manual path is consistent with the auto path.
 func TestUpNextManualToggleMovesConsistently(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -222,6 +225,7 @@ func TestUpNextManualToggleMovesConsistently(t *testing.T) {
 // TestUpNextDropsWhenShowFullyWatched: when every Episode of a started Show is
 // watched, the Show drops out of Up Next entirely (no next-to-watch episode).
 func TestUpNextDropsWhenShowFullyWatched(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -250,6 +254,7 @@ func TestUpNextDropsWhenShowFullyWatched(t *testing.T) {
 // Episode carries its Show / season / episode parent context (additive; the
 // Movie path is covered by TestHomeRows and is unchanged here).
 func TestHomeParentContextOnContinueWatching(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	_, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -294,6 +299,7 @@ func TestHomeParentContextOnContinueWatching(t *testing.T) {
 // Title's real playable duration, so the fraction is computable from /home alone
 // with no extra round-trip. Up Next / Recently Added draw no bar and omit it.
 func TestHomeContinueWatchingCarriesDuration(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -375,6 +381,7 @@ func markWatched(t *testing.T, srv *testharness.Server, token, titleID string, w
 // deferred Specials) rather than nagging the skipped E01 — which resurfaces
 // exactly once, at the wrap, after the Specials is played too.
 func TestUpNextResumesForwardWithWrap(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -410,6 +417,7 @@ func TestUpNextResumesForwardWithWrap(t *testing.T) {
 // point advances past the mid-progress E01 (which stays in Continue Watching),
 // keeping the two Home rows disjoint.
 func TestUpNextAnchorFollowsPlaybackJumpAhead(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -454,6 +462,7 @@ func TestUpNextAnchorFollowsPlaybackJumpAhead(t *testing.T) {
 // remove E02 from the unwatched set, so the resume point advances past it to the
 // Specials ("doesn't move the anchor" is not "changes nothing", ADR-0028).
 func TestUpNextManualMarkAdvancesWithoutMovingAnchor(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -481,6 +490,7 @@ func TestUpNextManualMarkAdvancesWithoutMovingAnchor(t *testing.T) {
 // no played_at, so it has no anchor and degenerates to first-unwatched — marking a
 // LATER Episode watched never moves the resume point forward.
 func TestUpNextMarksOnlyYieldsFirstUnwatched(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)

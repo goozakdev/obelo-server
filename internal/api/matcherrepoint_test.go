@@ -83,6 +83,7 @@ func slotNumbered(g matcherGroupResp, n int) (matcherSlotResp, bool) {
 // one call: the same request that CREATES the Title at S04E01 also repoints its
 // record. Split into two calls there would be nothing to pin.
 func TestApplyMatcherPinsTheRecordItPlacedTheFileOn(t *testing.T) {
+	t.Parallel()
 	srv, token, showID, before := repointFixture(t)
 	two, ok := fileNamed(before, "Sorted Show (2018) - S01E02 - Two.mkv")
 	if !ok {
@@ -146,6 +147,7 @@ func TestApplyMatcherPinsTheRecordItPlacedTheFileOn(t *testing.T) {
 // Admin saying "back to this series, this position", which for a Slot the Show's
 // series does not list means bare again.
 func TestApplyMatcherClearsARecord(t *testing.T) {
+	t.Parallel()
 	srv, token, showID, before := repointFixture(t)
 	one, ok := fileNamed(before, "Sorted Show (2018) - S01E01 - One.mkv")
 	if !ok {
@@ -188,6 +190,7 @@ func TestApplyMatcherClearsARecord(t *testing.T) {
 // empty Slot has no Title to carry the pin, so accepting one would report success
 // and store nothing.
 func TestApplyMatcherRefusesARecordOnAnEmptySlot(t *testing.T) {
+	t.Parallel()
 	srv, token, showID, _ := repointFixture(t)
 
 	var errBody struct {
@@ -212,6 +215,7 @@ func TestApplyMatcherRefusesARecordOnAnEmptySlot(t *testing.T) {
 // TestApplyMatcherRejectsARecordThatNamesNoSlot: "clear it" and "pin it to
 // nothing in particular" must not be the same request.
 func TestApplyMatcherRejectsARecordThatNamesNoSlot(t *testing.T) {
+	t.Parallel()
 	srv, token, showID, _ := repointFixture(t)
 
 	status, body := srv.JSON(http.MethodPut, "/api/v1/shows/"+showID+"/matcher", token, map[string]any{
@@ -229,6 +233,7 @@ func TestApplyMatcherRejectsARecordThatNamesNoSlot(t *testing.T) {
 // the whole set. An Apply that says nothing about records must not clear them —
 // otherwise every ordinary rearrangement would quietly undo the Admin's pins.
 func TestApplyMatcherWithoutSlotsLeavesRecordsAlone(t *testing.T) {
+	t.Parallel()
 	srv, token, showID, before := repointFixture(t)
 	one, ok := fileNamed(before, "Sorted Show (2018) - S01E01 - One.mkv")
 	if !ok {

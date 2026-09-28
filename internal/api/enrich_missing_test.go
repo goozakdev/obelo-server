@@ -14,6 +14,7 @@ import (
 
 // {"mode":"missing"} starts (202) and reports back a pass in mode "missing".
 func TestEnrichBodyModeMissingSelectsTheMissingMode(t *testing.T) {
+	t.Parallel()
 	srv, prov, token, libID := recheckHarness(t)
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }
 
@@ -35,6 +36,7 @@ func TestEnrichBodyModeMissingSelectsTheMissingMode(t *testing.T) {
 
 // The same value in the query string, the other spelling the endpoint accepts.
 func TestEnrichQueryModeMissingSelectsTheMissingMode(t *testing.T) {
+	t.Parallel()
 	srv, prov, token, libID := recheckHarness(t)
 	prov.fn = func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }
 
@@ -54,6 +56,7 @@ func TestEnrichQueryModeMissingSelectsTheMissingMode(t *testing.T) {
 // the message is the only place a caller not reading source code learns the
 // current vocabulary.
 func TestEnrichUnknownModeMessageNamesMissing(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := recheckHarness(t)
 
 	status, body := srv.JSON(http.MethodPost, "/api/v1/libraries/"+libID+"/enrich?mode=deep", token, nil, nil)

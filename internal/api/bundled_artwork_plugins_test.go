@@ -34,6 +34,7 @@ import (
 // first boot, as bundled, enabled, on disk, and on the providers screen — with
 // fanart.tv before TheAudioDB.
 func TestAFreshServerInstallsTheShippedArtworkPlugins(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -87,6 +88,7 @@ func TestAFreshServerInstallsTheShippedArtworkPlugins(t *testing.T) {
 // state an operator sees before they paste a key, and it is what `requiresSecret`
 // in the manifest buys.
 func TestAnUnkeyedArtworkPluginIsListedButNotKeyed(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -137,6 +139,7 @@ func (rb *fanartRecordingBuilder) key() string {
 // neither looks at the fanarttv ROW or at the fanart key reaching a composition,
 // which is the thing this port could have broken.
 func TestTheRotatorsDefaultFanartKeyLandsInTheFanartTVRow(t *testing.T) {
+	t.Parallel()
 	encKey := newRotationEncKey(t)
 	stub := &rotationStub{encKey: encKey, keys: rotation.Keys{TMDB: "rot-tmdb", Fanart: "fan-A"}}
 	endpoint := stub.serve(t)
@@ -187,6 +190,7 @@ func TestTheRotatorsDefaultFanartKeyLandsInTheFanartTVRow(t *testing.T) {
 // (ADR-0027). The class now comes from a manifest, so the refusal is worth
 // asserting against the real shipped ones.
 func TestAnArtworkOnlyPluginCannotLeadALibrary(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 	libID := createMusicLibrary(t, srv, token, t.TempDir())

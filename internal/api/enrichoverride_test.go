@@ -107,6 +107,7 @@ func movieOverrideFake() *fakeProvider {
 // is durable across a subsequent full enrichment pass (it does not revert to the
 // wrong auto-match).
 func TestEnrichOverrideMovieSearchApplyDurable(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := movieOverrideFake()
 	srv := testharness.New(t,
@@ -201,6 +202,7 @@ func TestEnrichOverrideMovieSearchApplyDurable(t *testing.T) {
 // TestEnrichOverrideHonorsLockedFields: a locked field is NOT overwritten by the
 // newly-picked record, while unlocked fields refresh from it.
 func TestEnrichOverrideHonorsLockedFields(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := movieOverrideFake()
 	srv := testharness.New(t,
@@ -235,6 +237,7 @@ func TestEnrichOverrideHonorsLockedFields(t *testing.T) {
 // TestEnrichOverrideSSE: applying an override emits a libraryUpdated event so
 // browse reflects the fix live (ADR-0016).
 func TestEnrichOverrideSSE(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := movieOverrideFake()
 	srv := testharness.New(t,
@@ -265,6 +268,7 @@ func TestEnrichOverrideSSE(t *testing.T) {
 // 503 (the box reports why, no hang); an unreachable provider likewise 503; and
 // results are capped to a sensible page size.
 func TestEnrichOverrideSearchGracefulAndLimited(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	t.Run("empty query returns empty list", func(t *testing.T) {
@@ -354,6 +358,7 @@ func TestEnrichOverrideSearchGracefulAndLimited(t *testing.T) {
 // TestEnrichOverrideAdminOnly: a Member cannot search or apply (both 403); an
 // unknown Title is 404; a missing externalId is 400.
 func TestEnrichOverrideAdminOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := movieOverrideFake()
 	srv := testharness.New(t,
@@ -394,6 +399,7 @@ func TestEnrichOverrideAdminOnly(t *testing.T) {
 // Applying re-points the episode at the picked record and re-enriches it; the
 // parsed identity (title, season/episode) is untouched.
 func TestEnrichOverrideEpisode(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -457,6 +463,7 @@ func TestEnrichOverrideEpisode(t *testing.T) {
 // pinned MusicBrainz id is durable — a re-enrich resolves BY it (the "wrong
 // Nirvana" fix), never re-searching by name.
 func TestEnrichOverrideTrack(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -548,6 +555,7 @@ func TestEnrichOverrideTrack(t *testing.T) {
 // display title must stay the tag title (the album full-pass already treats tracks
 // as sparse-titled, and MatchTitle now does the same).
 func TestEnrichOverrideTrackPreservesTagTitle(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const canonicalName = "PROVIDER Canonical Recording Name"
 	prov := &fakeProvider{

@@ -84,6 +84,7 @@ func setSignInOrder(t *testing.T, srv *testharness.Server, admin string, ids ...
 // ada exists here; the directory accepts her. She is signed in as a NEW Member,
 // and that Member holds no Library even though one exists.
 func TestAFirstTimeSignInProviderIdentityBecomesAMemberGrantedNothing(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::family,media"})
 	createMovieLibrary(t, srv, admin, t.TempDir())
 
@@ -116,6 +117,7 @@ func TestAFirstTimeSignInProviderIdentityBecomesAMemberGrantedNothing(t *testing
 // person, subject-ada, under two logins — before and after a rename at the
 // source. Both sign in as the SAME User, who keeps the name she was created with.
 func TestAReturningIdentityResolvesBySubjectAfterARename(t *testing.T) {
+	t.Parallel()
 	srv, _ := signInServer(t, map[string]string{
 		"directory": "ada:ada-pw:subject-ada::;ada-lovelace:ada-pw:subject-ada::",
 	})
@@ -137,6 +139,7 @@ func TestAReturningIdentityResolvesBySubjectAfterARename(t *testing.T) {
 // username nobody knows produce the SAME response, byte for byte. The one the
 // directory accepts for the first time is not a refusal at all.
 func TestSignInRefusalsAreIndistinguishable(t *testing.T) {
+	t.Parallel()
 	srv, _ := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::"})
 
 	type answer struct {
@@ -174,6 +177,7 @@ func TestSignInRefusalsAreIndistinguishable(t *testing.T) {
 // The answer is its own, points at attaching from the profile or asking an Admin,
 // and changes nothing: no new User, no link, and the same answer again next time.
 func TestAUsernameCollisionAfterAcceptGetsItsOwnMessage(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "brandon:directory-pw:subject-brandon::"})
 	_, _, refusal := signInAttempt(t, srv, "nobody-at-all", "whatever-password")
 
@@ -219,6 +223,7 @@ func body2code(body []byte) string {
 // ada with a different password; directory B knows her with this one. In Admin
 // order A then B, the sign-in succeeds on B's answer — the name B reports.
 func TestTheSecondProviderInAdminOrderAcceptsWhenTheFirstRejects(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{
 		"dir-a": "ada:a-password:subject-a::",
 		"dir-b": "ada:b-password:subject-b:ada-from-b:",
@@ -235,6 +240,7 @@ func TestTheSecondProviderInAdminOrderAcceptsWhenTheFirstRejects(t *testing.T) {
 // same credential, naming the person differently. The Admin's order — the
 // REVERSE of the order the plugins were loaded in — decides whose answer wins.
 func TestTheFirstAcceptingProviderInAdminOrderWins(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{
 		"dir-a": "ada:same-password:subject-a:ada-from-a:",
 		"dir-b": "ada:same-password:subject-b:ada-from-b:",
@@ -260,6 +266,7 @@ func TestTheFirstAcceptingProviderInAdminOrderWins(t *testing.T) {
 // TestSignInProviderOrderIsAdminOnly: a Member cannot read or set the order, and
 // an order naming a provider this server does not have is refused.
 func TestSignInProviderOrderIsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"dir-a": "", "dir-b": ""})
 	srv.CreateUser(admin, "kid", "memberpass123", "member")
 	member := srv.LoginAs("kid", "memberpass123")
@@ -298,6 +305,7 @@ func (b *lockedBuffer) String() string {
 // Admin plugins list, not in any log line. The login itself is an ordinary
 // refusal.
 func TestAFailingSignInProviderNeverExposesThePassword(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	logged := &lockedBuffer{}
 	prev := log.Writer()
 	log.SetOutput(logged)
@@ -331,6 +339,7 @@ func TestAFailingSignInProviderNeverExposesThePassword(t *testing.T) {
 // revealed by a "[redacted]" standing in for that word in the Admin plugins list
 // or in any log line.
 func TestAPasswordThatIsAHostWordLeavesTheAdminListAlone(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	for _, password := range []string{"password", "the", "directory"} {
 		t.Run(password, func(t *testing.T) {
 			logged := &lockedBuffer{}
@@ -366,6 +375,7 @@ func TestAPasswordThatIsAHostWordLeavesTheAdminListAlone(t *testing.T) {
 // login reaches it, neither the Admin plugins list nor any log line carries the
 // password or the host, line or error it was put in.
 func TestASignInCallShowsTheAdminNoTextOfItsOwn(t *testing.T) {
+	// Not parallel: it captures the process-wide log output.
 	const password = "s3cretcorrecthorse"
 	for _, tc := range []struct {
 		name      string

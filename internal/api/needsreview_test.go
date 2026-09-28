@@ -56,6 +56,7 @@ func needsReviewHas(res needsReviewResp, title string) (needsReviewItemResp, boo
 // with its folder (so a fix-match can be driven), an Admin dismisses it, and the
 // dismissal clears the browse flag AND survives a rescan.
 func TestNeedsReviewMovieResolve(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 
@@ -102,6 +103,7 @@ func TestNeedsReviewMovieResolve(t *testing.T) {
 // needs-review surface, even though a TV Library's browse listing is Shows, not
 // Titles. Dismissing each removes it.
 func TestNeedsReviewTVSurfacesShowAndEpisodes(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -149,6 +151,7 @@ func TestNeedsReviewTVSurfacesShowAndEpisodes(t *testing.T) {
 // anchors to its folder. The override, keyed to the file path, then re-files just
 // that bare movie on rescan.
 func TestNeedsReviewBareFileAnchor(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	root := namingRoot(t)
@@ -199,6 +202,7 @@ func TestNeedsReviewBareFileAnchor(t *testing.T) {
 // TMDB id resolves the canonical title + year from the id (no typing), so the
 // re-filed movie is fully identified and no longer needs review.
 func TestFixIdentityByIDResolvesTitleAndYear(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
 		if ref.TMDBID == "603" {
@@ -253,6 +257,7 @@ func TestFixIdentityByIDResolvesTitleAndYear(t *testing.T) {
 
 // TestNeedsReviewRequiresAdmin: a Member cannot read the list or dismiss an item.
 func TestNeedsReviewRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	ym, ok := needsReviewHas(listNeedsReview(t, srv, token, libID), "Yearless Movie")
@@ -276,6 +281,7 @@ func TestNeedsReviewRequiresAdmin(t *testing.T) {
 
 // TestNeedsReviewUnknownIs404: dismissing an unknown Title/Show is 404.
 func TestNeedsReviewUnknownIs404(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, _ := scanNamingLibrary(t)
 

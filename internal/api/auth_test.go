@@ -78,6 +78,7 @@ func login(t *testing.T, srv *testharness.Server, username, password, name, plat
 // TestSetupHappyPath: the correct claim token creates the first Admin, and
 // afterwards setupRequired flips to false.
 func TestSetupHappyPath(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	admin := setupAdmin(t, srv, "brandon", "correct horse battery staple")
@@ -104,6 +105,7 @@ func TestSetupHappyPath(t *testing.T) {
 // TestSetupWrongToken: a wrong claim token is rejected and no Admin is created
 // (setupRequired stays true, so a subsequent correct setup still works).
 func TestSetupWrongToken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var env errorEnvelope
@@ -131,6 +133,7 @@ func TestSetupWrongToken(t *testing.T) {
 // TestSetupClosedAfterAdmin: once an Admin exists, /setup is refused even with
 // (what was) the right token, and setupRequired is false.
 func TestSetupClosedAfterAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := srv.ClaimToken()
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
@@ -152,6 +155,7 @@ func TestSetupClosedAfterAdmin(t *testing.T) {
 // TestLoginHappyPath: valid credentials return an opaque token bound to a
 // Device, with matching user/device fields.
 func TestLoginHappyPath(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -173,6 +177,7 @@ func TestLoginHappyPath(t *testing.T) {
 // TestLoginBadPassword: wrong password is rejected with the generic invalid
 // credentials envelope and no token.
 func TestLoginBadPassword(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -193,6 +198,7 @@ func TestLoginBadPassword(t *testing.T) {
 // TestLoginUnknownUser: an unknown username also yields INVALID_CREDENTIALS
 // (indistinguishable from a wrong password).
 func TestLoginUnknownUser(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -219,6 +225,7 @@ func TestLoginUnknownUser(t *testing.T) {
 // 127.0.0.1 on a fresh port. Each attempt uses a different username so it is the
 // per-IP counter tripping and not the per-username one.
 func TestLoginRateLimitReturns429(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -299,6 +306,7 @@ func TestLoginRateLimitReturns429(t *testing.T) {
 // limit decorative. The harness sets no allowlist here on purpose: this is the
 // shipped default being asserted, not a test configuration.
 func TestLoginRateLimitIgnoresForwardedForHeader(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -392,6 +400,7 @@ func exhaustBudgetFor(t *testing.T, srv *testharness.Server, forwardedFor string
 // discriminating between clients: exhausting one household member's budget leaves
 // the next member's untouched, over the same connection.
 func TestLoginRateLimitPerClientBehindDeclaredProxy(t *testing.T) {
+	t.Parallel()
 	srv := trustedProxyServer(t)
 
 	exhaustBudgetFor(t, srv, realClient)
@@ -416,6 +425,7 @@ func TestLoginRateLimitPerClientBehindDeclaredProxy(t *testing.T) {
 // Walking right-to-left steps back over the hops we trust and stops at the first
 // we do not, so the padding is never reached.
 func TestLoginRateLimitCannotBeResetByPaddingForwardedFor(t *testing.T) {
+	t.Parallel()
 	srv := trustedProxyServer(t)
 
 	exhaustBudgetFor(t, srv, realClient)
@@ -460,6 +470,7 @@ func TestLoginRateLimitCannotBeResetByPaddingForwardedFor(t *testing.T) {
 // TestClientIDDedup: two logins with the same clientId reuse one Device; a
 // third with a different clientId adds a second.
 func TestClientIDDedup(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -488,6 +499,7 @@ func TestClientIDDedup(t *testing.T) {
 // TestAuthenticatedRequestAcceptedAndRejected: a valid token is accepted on a
 // protected route; a missing or garbage token is rejected with 401.
 func TestAuthenticatedRequestAcceptedAndRejected(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	res := login(t, srv, "brandon", "hunter2hunter2", "Laptop", "macos", "c1")
@@ -519,6 +531,7 @@ func TestAuthenticatedRequestAcceptedAndRejected(t *testing.T) {
 // TestLogoutRevokesToken: after logout the same token is rejected on a
 // protected route — immediate revocation (ADR-0015).
 func TestLogoutRevokesToken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	res := login(t, srv, "brandon", "hunter2hunter2", "Laptop", "macos", "c1")
@@ -544,6 +557,7 @@ func TestLogoutRevokesToken(t *testing.T) {
 // TestDeleteDeviceRevokesToken: deleting a Device immediately invalidates the
 // token issued to it (ADR-0015).
 func TestDeleteDeviceRevokesToken(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -581,6 +595,7 @@ func TestDeleteDeviceRevokesToken(t *testing.T) {
 
 // TestDeleteUnknownDevice returns 404 with the standard envelope.
 func TestDeleteUnknownDevice(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	res := login(t, srv, "brandon", "hunter2hunter2", "Laptop", "macos", "c1")
@@ -598,6 +613,7 @@ func TestDeleteUnknownDevice(t *testing.T) {
 // TestSetupRefusesAUsernameBreakingTheRule: the first Admin's username is held
 // to the rule every username is, as a 400 that states it, and setup stays open.
 func TestSetupRefusesAUsernameBreakingTheRule(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var env errorEnvelope

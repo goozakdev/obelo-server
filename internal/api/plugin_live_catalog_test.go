@@ -74,6 +74,7 @@ func firstMovieTitleID(t *testing.T, srv *testharness.Server, token, libID strin
 // repointing step, because the write-side guard asks the enrichment Manager for
 // its usable Full providers and the Manager's catalog was taken at boot.
 func TestAProviderInstalledAfterBootLeadsALibraryWithNoRestart(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t, testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}))
 	token := adminToken(t, srv)
@@ -181,6 +182,7 @@ func leadAndEnrich(t *testing.T, srv *testharness.Server, token, libID string, o
 // acceptance criterion's first half: a video Supplement uploaded after boot is
 // composed into the chain on the next pass, with no restart.
 func TestASupplementInstalledAfterBootFillsWhatTheLeadLeftBlank(t *testing.T) {
+	t.Parallel()
 	srv, token, libID := newSupplementChain(t)
 	if got := leadAndEnrich(t, srv, token, libID, nil); got != guestOverview {
 		t.Fatalf("overview = %q, want the Supplement's — it was installed today and the lead left it blank", got)
@@ -191,6 +193,7 @@ func TestASupplementInstalledAfterBootFillsWhatTheLeadLeftBlank(t *testing.T) {
 // per-Library force-on/force-off control reaches a Plugin the server did not have
 // at boot, in both directions.
 func TestTheTriStateReachesASupplementInstalledAfterBoot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		force bool
@@ -231,6 +234,7 @@ func TestTheTriStateReachesASupplementInstalledAfterBoot(t *testing.T) {
 // The "kept" case beside it is the control. Without it a blank overview would
 // prove only that some Plugin somewhere did not run.
 func TestUninstallingASupplementTakesItOutOfTheChain(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		uninstall bool
@@ -274,6 +278,7 @@ func TestUninstallingASupplementTakesItOutOfTheChain(t *testing.T) {
 // the other half of issue 17's policy — disable REMEMBERS, so the operator's key
 // and enable switch are still there afterwards and nothing has to be retyped.
 func TestDisablingAndEnablingAProviderReachesTheChain(t *testing.T) {
+	t.Parallel()
 	switchPlugin := func(t *testing.T, srv *testharness.Server, token, verb string) {
 		t.Helper()
 		status, body := srv.JSON(http.MethodPost, pluginsPath+"/"+liveSuppSource+"/"+verb, token, nil, nil)

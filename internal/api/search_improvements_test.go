@@ -32,6 +32,7 @@ func firstTrackID(t *testing.T, srv *testharness.Server, token, libID string) st
 // (by-id Lookup, no search); a stale/unknown id is 404 "not found" (not a hang/500);
 // and an artist URL pasted on a Track is a 400 kind mismatch.
 func TestExternalPreviewPasteMusicBrainzID(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const goodID = "11111111-1111-1111-1111-111111111111"
 	prov := &fakeProvider{
@@ -99,6 +100,7 @@ func TestExternalPreviewPasteMusicBrainzID(t *testing.T) {
 // isn't itself an album pin — the server resolves it to its parent release-group (the
 // album) and previews THAT, with the release-group id as the pin the apply will use.
 func TestExternalPreviewPasteReleaseURL(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const releaseID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	const rgID = "629a5133-b9e6-43c5-8cb6-594a7cbfbfed"
@@ -141,6 +143,7 @@ func TestExternalPreviewPasteReleaseURL(t *testing.T) {
 // TestSearchArtistScopingAndPagingThreaded: the picker's artist + page query params
 // reach the provider Search as SearchOptions (artist narrowing + a paged offset).
 func TestSearchArtistScopingAndPagingThreaded(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {

@@ -39,6 +39,7 @@ var bundledVideoIDs = []string{"tmdb", "omdb", "thetvdb", "anidb"}
 // about nothing else. Installed plugins otherwise load in alphabetical directory
 // order, which would have made anidb the default video lead.
 func TestTheShippedVideoPluginsInstallAndLeadInShippedOrder(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 
@@ -124,6 +125,7 @@ func testProviderConnection(t *testing.T, srv *testharness.Server, token, slug, 
 // record — which is the fact ADR-0059 decision 10 rests on, since encoding/xml was
 // the reason TinyGo was rejected.
 func TestTheBundledAniDBPluginReachesAPlainHTTPStandInOnAnExplicitPort(t *testing.T) {
+	t.Parallel()
 	var asked url.Values
 	src := standIn(t, func(w http.ResponseWriter, r *http.Request) {
 		asked = r.URL.Query()
@@ -170,6 +172,7 @@ func TestTheBundledAniDBPluginReachesAPlainHTTPStandInOnAnExplicitPort(t *testin
 // refuses any data request that does not present one, so a probe that answers ok
 // is a probe that logged in.
 func TestTheBundledOMDbAndTheTVDBPluginsProbeThroughTheSandbox(t *testing.T) {
+	t.Parallel()
 	t.Run("omdb", func(t *testing.T) {
 		var asked url.Values
 		src := standIn(t, func(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +253,7 @@ func TestTheBundledOMDbAndTheTVDBPluginsProbeThroughTheSandbox(t *testing.T) {
 // the Title ends up with is the whole assertion: OMDb's three fields, and TMDB's
 // name and runtime untouched.
 func TestTheVideoChainFillsAMovieFromTheBundledOMDbPlugin(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	tmdb := standIn(t, func(w http.ResponseWriter, r *http.Request) {

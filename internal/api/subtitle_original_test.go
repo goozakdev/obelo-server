@@ -142,6 +142,7 @@ func subtitleBySourceLang(t *testing.T, dec decisionResp, source, lang string) d
 // original-format URLs — the .ass sidecar raw with its override tags intact, the
 // .srt sidecar raw with SRT timings, and the embedded SubRip codec-copied to .srt.
 func TestSubtitleOriginalDeliveryToCapableClient(t *testing.T) {
+	t.Parallel()
 	requireSubtitleOriginalFixtures(t)
 	srv, token, id := scanStyledMovie(t)
 
@@ -199,6 +200,7 @@ func TestSubtitleOriginalDeliveryToCapableClient(t *testing.T) {
 // the WebVTT-only behavior byte-for-byte — every text URL is .vtt (the .ass
 // sidecar converted, styling stripped) and format says "vtt".
 func TestSubtitleVTTFallbackForBrowserProfile(t *testing.T) {
+	t.Parallel()
 	requireSubtitleOriginalFixtures(t)
 	srv, token, id := scanStyledMovie(t)
 
@@ -234,6 +236,7 @@ func TestSubtitleVTTFallbackForBrowserProfile(t *testing.T) {
 // (.ass of an SRT sidecar, .srt of an ASS sidecar) is a 404 — original delivery
 // never transcodes between subtitle formats.
 func TestSubtitleOriginalFormatMismatch404s(t *testing.T) {
+	t.Parallel()
 	requireSubtitleOriginalFixtures(t)
 	srv, token, id := scanStyledMovie(t)
 

@@ -161,6 +161,7 @@ func scanSubtitleMovie(t *testing.T) subtitleDetailResp {
 }
 
 func TestSubtitleTracksListed(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	d := scanSubtitleMovie(t)
 
@@ -235,6 +236,7 @@ func TestSubtitleTracksListed(t *testing.T) {
 // rows current without duplicating them (a fetched row, arriving in slice 05,
 // would likewise survive by construction).
 func TestSubtitleRescanNoDuplicates(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

@@ -27,6 +27,7 @@ type socketFieldResp struct {
 // choosing no encryption is refused under the Encryption control until the
 // opt-out is on.
 func TestASocketSignInProvidersSettingsCarryTheHostsWarning(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SocketSignInManifest("ldap-directory", ""))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir))

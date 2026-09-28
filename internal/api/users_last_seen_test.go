@@ -48,6 +48,7 @@ func entryFor(t *testing.T, users []adminUserEntry, id string) adminUserEntry {
 // is absent, not "", so "never linked" is the absence of a Device rather than a
 // sentinel the client has to know about.
 func TestUsersListOmitsLastSeenForAnUnredeemedRemoteUser(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)
@@ -64,6 +65,7 @@ func TestUsersListOmitsLastSeenForAnUnredeemedRemoteUser(t *testing.T) {
 // Once the other household's Server has redeemed, the Device it left behind
 // gives the row a real last-seen.
 func TestUsersListCarriesLastSeenOnceTheLinkIsRedeemed(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	peerID := createRemoteUser(t, srv, admin, testHomeServerName)

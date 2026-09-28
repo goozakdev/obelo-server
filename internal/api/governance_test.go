@@ -30,6 +30,7 @@ type busyResp struct {
 
 // TestGovernanceTranscodeCapReturnsServerBusy is the core governance assertion.
 func TestGovernanceTranscodeCapReturnsServerBusy(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	// Cap of 1: a single transcode saturates the server.
@@ -97,6 +98,7 @@ func TestGovernanceTranscodeCapReturnsServerBusy(t *testing.T) {
 // genuine step below the rejected transcode's estimate, so a client retry is
 // meaningful (it may land in a cheaper tier or a smaller transcode).
 func TestGovernanceSuggestedBitrateIsLower(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	requireFFmpeg(t)
 	srv := testharness.New(t, testharness.WithTranscodeCap(1))

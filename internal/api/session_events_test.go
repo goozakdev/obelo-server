@@ -31,7 +31,7 @@ const (
 // the buffer ahead of the sentinel.
 func waitForLineForbidding(t *testing.T, ch <-chan string, want func(string) bool, forbidden ...string) {
 	t.Helper()
-	timeout := time.After(5 * time.Second)
+	timeout := time.After(settleTimeout)
 	for {
 		select {
 		case line := <-ch:
@@ -65,6 +65,7 @@ func endSession(t *testing.T, srv *testharness.Server, token, sessionID string) 
 // stream observes NONE of them — while still receiving a non-session event
 // (scanProgress), proving the gate filters by type rather than muting the Member.
 func TestSessionEventsAdminOnlySSE(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	adminTok := adminToken(t, srv)
@@ -125,6 +126,7 @@ func TestSessionEventsAdminOnlySSE(t *testing.T) {
 // acceptance criterion. A short SessionIdleTimeout lets the reaper sweep the
 // session without a clean DELETE, the same way the reaper tests drive it.
 func TestSessionEndedOnReapSSE(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t, testharness.WithSessionIdleTimeout(150*time.Millisecond))
 	adminTok := adminToken(t, srv)

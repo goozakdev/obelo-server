@@ -133,6 +133,7 @@ func blankVideoRegistration(p *blankVideoPlugin) pluginapi.MetadataProviderRegis
 // points at is downloaded BY THE HOST — the guest returns a URL and never bytes,
 // so the identity-keyed cache and the guarded fetcher are unchanged.
 func TestAnInstalledVideoSupplementFillsWhatTheLeadLeftBlank(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	dataDir := t.TempDir()
 	// The Admin's hand-placement, before the server ever starts.
@@ -203,6 +204,7 @@ func TestAnInstalledVideoSupplementFillsWhatTheLeadLeftBlank(t *testing.T) {
 // issue 04 template, and it keeps the negative that matters — an unkeyed
 // key-requiring Plugin is never offered as a lead.
 func TestAnInstalledPluginCanLeadAMusicLibrary(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	dataDir := t.TempDir()
 	installGuestProvider(t, dataDir, "example-source", "", pluginapi.ManifestProvides{
@@ -269,6 +271,7 @@ func TestAnInstalledPluginCanLeadAMusicLibrary(t *testing.T) {
 // `search-rejected` reason. The guest is never asked to judge, and it could not:
 // there is nothing in the contract for it to say "I believe this" with.
 func TestAGuestsSearchHitWithADifferentTitleIsRejectedByTheHost(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	dataDir := t.TempDir()
 	installGuestProvider(t, dataDir, "example-source", "music-search-hit", pluginapi.ManifestProvides{
@@ -334,6 +337,7 @@ func TestAGuestsSearchHitWithADifferentTitleIsRejectedByTheHost(t *testing.T) {
 // unconfigured kind produces. That is the "unavailable" of ADR-0057 decision 3,
 // unchanged by a sandbox being under it.
 func TestAGuestWithoutSearchIsUnavailableInTheEditItemBox(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	dataDir := t.TempDir()
 	// No capabilities at all: it can look up, and that is all it claims.
@@ -378,6 +382,7 @@ func TestAGuestWithoutSearchIsUnavailableInTheEditItemBox(t *testing.T) {
 // It makes no outbound call at all: reading a paste happens before any lookup,
 // which is exactly why external-ref is a parse call and not a fetch.
 func TestAGuestWithExternalRefProducesTheSameTwoBadRequests(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	const id = "b1392450-e666-3926-a536-22c65f834433"
 	dataDir := t.TempDir()

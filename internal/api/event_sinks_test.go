@@ -93,7 +93,7 @@ func (r *sinkReceiver) received() []sinkPost {
 // waitForPosts polls until at least n documents have arrived, or fails.
 func (r *sinkReceiver) waitForPosts(t *testing.T, n int) []sinkPost {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(settleTimeout)
 	for {
 		got := r.received()
 		if len(got) >= n {
@@ -137,6 +137,7 @@ func configureSink(t *testing.T, srv *testharness.Server, token string, update m
 // subscribed-events list, masks the signing secret, and offers exactly the event
 // types this server can actually derive.
 func TestEventSinkSettingsRoundTrip(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -210,6 +211,7 @@ func TestEventSinkSettingsRoundTrip(t *testing.T) {
 // TestEventSinkSettingsRefusals: the four things an Admin cannot save, each
 // refused 422 with a code they can act on.
 func TestEventSinkSettingsRefusals(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -285,6 +287,7 @@ func TestEventSinkSettingsRefusals(t *testing.T) {
 // TestEventSinkSettingsAdminOnly: a sink is an operator concern like every other
 // Plugin setting, so a Member cannot see or change it.
 func TestEventSinkSettingsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	srv.CreateUser(admin, "kid", "memberpass123", "member")
@@ -306,6 +309,7 @@ func TestEventSinkSettingsAdminOnly(t *testing.T) {
 // and a secret, subscribes to scan.completed, runs a scan, and their own HTTP
 // server receives exactly one signed document naming the Library that finished.
 func TestWebhookSinkReceivesOneSignedPostPerScan(t *testing.T) {
+	t.Parallel()
 	receiver := newSinkReceiver(t)
 
 	srv := testharness.New(t)
@@ -380,6 +384,7 @@ func TestWebhookSinkReceivesOneSignedPostPerScan(t *testing.T) {
 // event this slice derives, so "not in its subscribed list" is an empty list —
 // which is also the state issue 06 will widen into a real choice.
 func TestUnsubscribedSinkReceivesNothing(t *testing.T) {
+	t.Parallel()
 	receiver := newSinkReceiver(t)
 
 	srv := testharness.New(t)
@@ -412,6 +417,7 @@ func TestUnsubscribedSinkReceivesNothing(t *testing.T) {
 // (eventsink.DeliveryTimeout). A scan that waited on the sink could not possibly
 // finish inside the four seconds asserted here.
 func TestDeadWebhookDoesNotSlowAScan(t *testing.T) {
+	// Not parallel: it bounds a scan at four seconds of wall-clock time.
 	hang := make(chan struct{})
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-hang
@@ -454,6 +460,7 @@ func TestDeadWebhookDoesNotSlowAScan(t *testing.T) {
 // nothing from before. Sink delivery is in memory on purpose — a sink author who
 // knows that builds something that tolerates a gap (PRD story 46).
 func TestQueuedEventsDoNotSurviveARestart(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	receiver := newSinkReceiver(t)
 

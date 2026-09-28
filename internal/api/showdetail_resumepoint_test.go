@@ -56,6 +56,7 @@ func showSeasonsRP(t *testing.T, srv *testharness.Server, token, showID string) 
 // point and a positive unwatched count — the detail page shows the Show
 // description + Play (from the first Episode), unchanged from today.
 func TestResumePointNotStarted(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, _ := bearSeason1Episodes(t, srv, token, libID)
@@ -76,6 +77,7 @@ func TestResumePointNotStarted(t *testing.T) {
 // page as an in-progress block (Continue + Restart), even though Home's Up Next
 // OMITS it (it belongs to Continue Watching). The two surfaces stay disjoint.
 func TestResumePointInProgressSurfacesOnDetailNotHome(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -120,6 +122,7 @@ func TestResumePointInProgressSurfacesOnDetailNotHome(t *testing.T) {
 // advances the resume point to the next unwatched after it (E02) in "next" mode —
 // the detail page shows the block + a single Play from 0.
 func TestResumePointNextAfterWatchedAnchor(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -146,6 +149,7 @@ func TestResumePointNextAfterWatchedAnchor(t *testing.T) {
 // played, the resume point walks across the Season boundary to the next unwatched
 // in Show order — the deferred Specials (Season 0), a different Season than E02.
 func TestResumePointCrossSeasonWalk(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)
@@ -176,6 +180,7 @@ func TestResumePointCrossSeasonWalk(t *testing.T) {
 // the resume point is null and the unwatched count is 0 — the detail page reverts
 // to the Show description with NO Play (restarting a finished series is not a flow).
 func TestResumePointFullyWatched(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -202,6 +207,7 @@ func TestResumePointFullyWatched(t *testing.T) {
 // first-unwatched — a marks-only Show still lands the viewer in the right place,
 // and the mark never moves an anchor it doesn't have.
 func TestResumePointMarksOnlyFirstUnwatched(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	showID, eps := bearSeason1Episodes(t, srv, token, libID)

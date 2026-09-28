@@ -94,6 +94,7 @@ func loginWithCookie(t *testing.T, srv *testharness.Server, username, password, 
 // value is the SAME opaque token returned in JSON, scoped to /api/v1, and (on a
 // plain-HTTP test server) without the Secure flag.
 func TestLoginSetsMediaCookie(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -130,6 +131,7 @@ func TestLoginSetsMediaCookie(t *testing.T) {
 // process negotiated the handshake — so it wins outright and no header can turn
 // it off. Without that the header would be a downgrade switch for anybody.
 func TestMediaCookieSecureUnderHTTPS(t *testing.T) {
+	t.Parallel()
 	// Boot the app and wrap its handler in a TLS httptest server so r.TLS is set.
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
@@ -189,6 +191,7 @@ func TestMediaCookieSecureUnderHTTPS(t *testing.T) {
 // nothing until an operator says who may send it. The untrusted half of the pair
 // is TestMediaCookieIgnoresForwardedProtoFromUntrustedPeer below.
 func TestMediaCookieSecureViaForwardedProto(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 
@@ -236,6 +239,7 @@ func TestMediaCookieSecureViaForwardedProto(t *testing.T) {
 // first has no allowlist at all, the second has one that does not contain the
 // caller.
 func TestMediaCookieIgnoresForwardedProtoFromUntrustedPeer(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		trusted []string
@@ -288,6 +292,7 @@ func findSetCookie(t *testing.T, header http.Header, name string) *http.Cookie {
 // cookie (no Authorization header). It also asserts that NO cookie / a garbage
 // cookie is rejected with 401.
 func TestMediaCookieAcceptedOnArtwork(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 
@@ -339,6 +344,7 @@ func TestMediaCookieAcceptedOnArtwork(t *testing.T) {
 // TestMediaCookieAcceptedOnStream: the stream GET succeeds with ONLY the media
 // cookie (no Authorization header), and a Range request still works.
 func TestMediaCookieAcceptedOnStream(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -378,6 +384,7 @@ func TestMediaCookieAcceptedOnStream(t *testing.T) {
 // TestMediaCookieRejectedOnNonMediaEndpoint: the cookie is honored ONLY on the
 // two media GETs. A non-media endpoint (GET /devices) ignores it → 401.
 func TestMediaCookieRejectedOnNonMediaEndpoint(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	_, cookie := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
@@ -395,6 +402,7 @@ func TestMediaCookieRejectedOnNonMediaEndpoint(t *testing.T) {
 // TestLogoutClearsMediaCookie: logout returns a Set-Cookie that expires the
 // media cookie (MaxAge<=0 / past Expires), and the token it carried is revoked.
 func TestLogoutClearsMediaCookie(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, cookie := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
@@ -473,6 +481,7 @@ func mediaAuthProbe(t *testing.T, srv *testharness.Server, cookies ...*http.Cook
 // 401ing at deploy time with no way for the user to recover but a logout — the
 // same silent breakage the split exists to fix, arriving from the other side.
 func TestLegacyMediaCookieStillAuthenticates(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
@@ -493,6 +502,7 @@ func TestLegacyMediaCookieStillAuthenticates(t *testing.T) {
 // identity leak POST /auth/media-cookie exists to close (a re-issue writes the
 // current name, so the reader must prefer it).
 func TestMediaCookiePreferenceOrder(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, current := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")
@@ -517,6 +527,7 @@ func TestMediaCookiePreferenceOrder(t *testing.T) {
 // session on a separate origin, and reaching across is the cross-scheme
 // interference the split removes.
 func TestLogoutClearsLegacyMediaCookieToo(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	setupAdmin(t, srv, "brandon", "hunter2hunter2")
 	token, _ := loginWithCookie(t, srv, "brandon", "hunter2hunter2", "web-client")

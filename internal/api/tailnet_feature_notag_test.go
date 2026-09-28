@@ -32,6 +32,7 @@ import (
 // looking gets told WHY — an error naming the build, not a 404 that reads exactly
 // like a mistyped path.
 func TestTailscaleFeatureFollowsTheBuild(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var got serverInfo
@@ -65,6 +66,7 @@ func TestTailscaleFeatureFollowsTheBuild(t *testing.T) {
 // which is ADR-0043's posture: the request succeeded, the node is simply not
 // something this build has. A 500 would claim a fault the server does not have.
 func TestTailnetVerbsNameTheBuildWhenItCannotJoin(t *testing.T) {
+	t.Parallel()
 	// tailnet.NewNode() is exactly what cmd/obelo wires in this build — the stub that
 	// answers everything with ErrNoNode — rather than the nil the harness defaults to,
 	// so this walks the same code the shipped tag-less binary walks.
@@ -95,6 +97,7 @@ func TestTailnetVerbsNameTheBuildWhenItCannotJoin(t *testing.T) {
 // after itself, because the alternative is a directory that looks like state and
 // holds none.
 func TestUnsupportedBuildLeavesNoStateDirectory(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithTailnet(tailnet.NewNode()))
 	token := adminToken(t, srv)
 

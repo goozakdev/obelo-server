@@ -110,6 +110,7 @@ func threeProviderServer(t *testing.T) (srv *testharness.Server, admin, libID st
 // passed over; the second provider's answer is shown to the Member, and to the
 // Admin opening the track afterwards.
 func TestAMemberMarksLyricsWrongAndEveryoneSeesTheNextAnswer(t *testing.T) {
+	t.Parallel()
 	a := newLyricSource(t, syncedAnswer(0, "Wrong song"))
 	b := newLyricSource(t, syncedAnswer(0, "Right song"))
 	srv, admin, libID, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"alpha-lyrics": a, "beta-lyrics": b})
@@ -146,6 +147,7 @@ func TestAMemberMarksLyricsWrongAndEveryoneSeesTheNextAnswer(t *testing.T) {
 // the User who marked it and for the next one to open it — and the provider's
 // identical answer was never stored again.
 func TestWrongLyricsWithNoOtherCandidateLeavesTheTrackWithout(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(0, "Wrong song"))
 	srv, admin, libID, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 	id := tracks["Nothing Local"]
@@ -172,6 +174,7 @@ func TestWrongLyricsWithNoOtherCandidateLeavesTheTrackWithout(t *testing.T) {
 // lyrics, or none, has no provider answer to reject — 409 carrying what it shows,
 // and nothing changes.
 func TestWrongLyricsOnlyRejectsAProvidersAnswer(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, nil)
 	srv, admin, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 
@@ -196,6 +199,7 @@ func TestWrongLyricsOnlyRejectsAProvidersAnswer(t *testing.T) {
 // "wrong lyrics" with its id — learnt from a track that does show it — is a 409
 // carrying the Local lyrics, and the Local lyrics stay.
 func TestWrongLyricsLeavesAPlainLocalTrackAlone(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, func(lyricQuestion) map[string]any {
 		return map[string]any{"kind": "plain", "text": "Fetched plain words"}
 	})
@@ -231,6 +235,7 @@ func TestWrongLyricsLeavesAPlainLocalTrackAlone(t *testing.T) {
 // nothing is rejected — beta's stays, gamma is never asked — and the 409 carries
 // beta's answer for the Admin's view to show.
 func TestWrongLyricsFromAStaleViewRejectsNothing(t *testing.T) {
+	t.Parallel()
 	srv, admin, libID, gamma, tracks := threeProviderServer(t)
 	id := tracks["Nothing Local"]
 	member := memberOf(t, srv, admin, libID)
@@ -261,6 +266,7 @@ func TestWrongLyricsFromAStaleViewRejectsNothing(t *testing.T) {
 // sent twice at once. Exactly one press rejects it; the other finds it gone and
 // is a 409. The track shows beta's answer, not gamma's.
 func TestASimultaneousDoublePressRejectsOnce(t *testing.T) {
+	t.Parallel()
 	srv, admin, _, gamma, tracks := threeProviderServer(t)
 	id := tracks["Nothing Local"]
 	shown := readShown(t, srv, admin, id)
@@ -301,6 +307,7 @@ func TestASimultaneousDoublePressRejectsOnce(t *testing.T) {
 // TestWrongLyricsNeedsTheShownAnswersID: a press that does not name the answer it
 // was made on is a 400, and rejects nothing.
 func TestWrongLyricsNeedsTheShownAnswersID(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(0, "Wrong song"))
 	srv, admin, _, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 	id := tracks["Nothing Local"]
@@ -320,6 +327,7 @@ func TestWrongLyricsNeedsTheShownAnswersID(t *testing.T) {
 // TestALinkedServerCannotMarkLyricsWrong: the remote role is a linked Server,
 // not a person reading along, so its press is a 403 and rejects nothing.
 func TestALinkedServerCannotMarkLyricsWrong(t *testing.T) {
+	t.Parallel()
 	src := newLyricSource(t, syncedAnswer(0, "Wrong song"))
 	srv, admin, libID, _, tracks := lyricProviderServer(t, map[string]*lyricSource{"example-lyrics": src})
 	id := tracks["Nothing Local"]

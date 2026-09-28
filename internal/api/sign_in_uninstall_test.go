@@ -118,6 +118,7 @@ func wantUnconfirmed(t *testing.T, what string, status int, body []byte) {
 // gone, her session no longer authenticates and she is no longer a User; the
 // directory is no longer installed, and her credential signs in as nobody.
 func TestUninstallingASignInProviderDeletesItsIdentitiesAndRevokesItsOnlyUsers(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::"})
 	ada := login(t, srv, "ada", "ada-pw", "Laptop", "test", "ada-client")
 
@@ -151,6 +152,7 @@ func TestUninstallingASignInProviderDeletesItsIdentitiesAndRevokesItsOnlyUsers(t
 // uninstall goes through with nothing to confirm; kid keeps his account, his
 // session and his Local sign-in, and loses only the directory identity.
 func TestALocalPasswordUserSurvivesUninstallWithLocalSignInIntact(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "kid-dir:kid-dir-pw:subject-kid::"})
 	kidID := srv.CreateUser(admin, "kid", "kidpassword123", "")
 	kidToken := srv.LoginAs("kid", "kidpassword123")
@@ -184,6 +186,7 @@ func TestALocalPasswordUserSurvivesUninstallWithLocalSignInIntact(t *testing.T) 
 // before anything happens. Looking at the list, a plain uninstall, and a confirm
 // that lists nobody all leave the directory installed and ada exactly as she was.
 func TestAUserWithNoOtherPathIsNotDeletedWithoutConfirmation(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::"})
 	ada := login(t, srv, "ada", "ada-pw", "Laptop", "test", "ada-client")
 
@@ -221,6 +224,7 @@ func TestAUserWithNoOtherPathIsNotDeletedWithoutConfirmation(t *testing.T) {
 // account and Local sign-in. After the confirm ada cannot be resolved by id and
 // her watch state is gone with her.
 func TestAConfirmedUninstallDeletesTheListedUsersAndTheirWatchState(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv, admin := signInServer(t, map[string]string{
 		"directory": "ada:ada-pw:subject-ada::family;kid-dir:kid-dir-pw:subject-kid::",
@@ -274,6 +278,7 @@ func TestAConfirmedUninstallDeletesTheListedUsersAndTheirWatchState(t *testing.T
 // refused, and so is one naming somebody who would not be deleted; nothing
 // changes until a confirm names exactly who would be.
 func TestAConfirmThatNoLongerMatchesIsRefusedAndChangesNothing(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{
 		"directory": "ada:ada-pw:subject-ada::;bob:bob-pw:subject-bob::",
 	})
@@ -315,6 +320,7 @@ func TestAConfirmThatNoLongerMatchesIsRefusedAndChangesNothing(t *testing.T) {
 // deleted, and their sessions are left alone; dora, who has only the directory,
 // is the one User the uninstall deletes.
 func TestAnIdentityAtAnotherInstalledProviderIsAPathEvenWhileItIsDisabled(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SignInManifest("directory",
 		"ada:ada-pw:subject-ada::;cy:cy-pw:subject-cy::;dora:dora-pw:subject-dora::"))
@@ -386,6 +392,7 @@ func TestAnIdentityAtAnotherInstalledProviderIsAPathEvenWhileItIsDisabled(t *tes
 // ada is listed and deleted; brandon is never listed, and keeps his session and
 // his Local sign-in.
 func TestUninstallNeverDeletesALocalPasswordAdmin(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{
 		"directory": "bj:bj-pw:subject-bj::;ada:ada-pw:subject-ada::admins",
 	})
@@ -423,6 +430,7 @@ func TestUninstallNeverDeletesALocalPasswordAdmin(t *testing.T) {
 // ada, her session and her identity are back, kid keeps his identity, and the
 // directory is still installed and still signs people in.
 func TestAFailedUninstallChangesNothing(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{
 		"directory": "ada:ada-pw:subject-ada::;kid-dir:kid-dir-pw:subject-kid::",
 	})
@@ -463,6 +471,7 @@ func TestAFailedUninstallChangesNothing(t *testing.T) {
 // disabled is not an uninstall. ada, whose only path it is, keeps her account,
 // her identity and her session, and is flagged.
 func TestAnAutoDisabledSignInProviderDeletesNothingItIssued(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.LookupSignInManifest("directory",
 		"ada:ada-pw:subject-ada::", plugintest.SignInLookupFetchesABlockedHost))
@@ -496,6 +505,7 @@ func TestAnAutoDisabledSignInProviderDeletesNothingItIssued(t *testing.T) {
 // TestUninstallingAPluginThatIsNotASignInProviderIsUnchanged: an event sink has
 // no preview to confirm, and a plain uninstall removes it as it always did.
 func TestUninstallingAPluginThatIsNotASignInProviderIsUnchanged(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink"))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir))
@@ -515,6 +525,7 @@ func TestUninstallingAPluginThatIsNotASignInProviderIsUnchanged(t *testing.T) {
 // TestTheUninstallPreviewIsAdminOnly: a Member can neither see who an uninstall
 // would delete nor confirm one.
 func TestTheUninstallPreviewIsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::"})
 	ada := login(t, srv, "ada", "ada-pw", "Laptop", "test", "ada-client")
 
@@ -537,6 +548,7 @@ func TestTheUninstallPreviewIsAdminOnly(t *testing.T) {
 // id, nobody has mapped anything for the new Plugin, so ada's first sign-in in
 // that group makes her a Member.
 func TestAReinstallUnderTheSameIDInheritsNoGroupMapping(t *testing.T) {
+	t.Parallel()
 	const accounts = "ada:ada-pw:subject-ada::admins"
 	srv, admin := signInServer(t, map[string]string{"directory": accounts})
 	putGroupMapping(t, srv, admin, "directory", map[string]any{"rules": []map[string]any{
@@ -564,6 +576,7 @@ func TestAReinstallUnderTheSameIDInheritsNoGroupMapping(t *testing.T) {
 // Sign-in providers had anything to confirm, a sink's uninstall reads no body —
 // neither one that is not JSON nor one with fields it has never heard of.
 func TestUninstallingAPluginThatIsNotASignInProviderIgnoresTheBody(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("malformed-sink"))
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("unknown-field-sink"))
@@ -600,6 +613,7 @@ func TestUninstallingAPluginThatIsNotASignInProviderIgnoresTheBody(t *testing.T)
 // delete her, so even her own confirm of exactly that list is 409 LAST_ADMIN,
 // and nothing changes.
 func TestAnUninstallThatWouldDeleteTheLastAdminIsRefused(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "ada:ada-pw:subject-ada::admins"})
 	putGroupMapping(t, srv, admin, "directory", map[string]any{"rules": []map[string]any{
 		{"group": "admins", "role": "admin"},
@@ -627,6 +641,7 @@ func TestAnUninstallThatWouldDeleteTheLastAdminIsRefused(t *testing.T) {
 // answers the callback, but its Plugin was uninstalled before the sign-in
 // could write anything. The callback is the one refusal, and nobody is created.
 func TestARedirectSignInWhoseProviderWasUninstalledIsRefused(t *testing.T) {
+	t.Parallel()
 	srv, admin, idp := oidcServer(t)
 	before := listUsernames(t, srv, admin)
 
@@ -642,6 +657,7 @@ func TestARedirectSignInWhoseProviderWasUninstalledIsRefused(t *testing.T) {
 // could write anything. Each is 401 SIGN_IN_REFUSED, as a refused sign-in is,
 // and brandon gains no identity.
 func TestAnAttachWhoseProviderWasUninstalledIsRefused(t *testing.T) {
+	t.Parallel()
 	t.Run("password", func(t *testing.T) {
 		srv, admin := signInServer(t, map[string]string{"directory": "brandon:dir-pw:subject-bj::"})
 		brandon := meID(t, srv, admin, "brandon")

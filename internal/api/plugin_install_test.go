@@ -155,6 +155,7 @@ func pluginSource(t *testing.T, m pluginapi.Manifest) *httptest.Server {
 // subscribing it and running a scan delivers a signed document to their own HTTP
 // server; and uninstalling it takes it off the screen and off the disk.
 func TestUploadingAPluginMakesItAnEventSinkOnTheRunningServer(t *testing.T) {
+	t.Parallel()
 	receiver := newSinkReceiver(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -233,6 +234,7 @@ func TestUploadingAPluginMakesItAnEventSinkOnTheRunningServer(t *testing.T) {
 // TestInstallingAPluginFromAPastedURL: one URL — the manifest's — and the module is
 // fetched from beside it. Same guest, same result, through the safe fetcher.
 func TestInstallingAPluginFromAPastedURL(t *testing.T) {
+	t.Parallel()
 	source := pluginSource(t, plugintest.SinkManifest("url-sink"))
 	receiver := newSinkReceiver(t)
 	// The fixture is served from 127.0.0.1, which the install path refuses by
@@ -272,6 +274,7 @@ func TestInstallingAPluginFromAPastedURL(t *testing.T) {
 // at a mirror on their own LAN is the point of the product, and safefetch says so
 // at length. This one does not, because what comes back is executed.
 func TestAURLResolvingToAPrivateAddressIsRefused(t *testing.T) {
+	t.Parallel()
 	source := pluginSource(t, plugintest.SinkManifest("url-sink"))
 	srv := testharness.New(t) // deliberately WITHOUT the private-source option
 	token := adminToken(t, srv)
@@ -292,6 +295,7 @@ func TestAURLResolvingToAPrivateAddressIsRefused(t *testing.T) {
 
 // TestAURLThatIsNotAURL and the two ways a source can answer with nothing usable.
 func TestARefusedSourceIsNotAnInstall(t *testing.T) {
+	t.Parallel()
 	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -329,6 +333,7 @@ func TestARefusedSourceIsNotAnInstall(t *testing.T) {
 // want five different things done about them, so an Admin is told which one
 // happened rather than "it did not work" in the same words every time.
 func TestEachInstallRefusalIsItsOwnCodeAndSentence(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	// One Plugin already installed, so the duplicate case has something to collide
@@ -425,6 +430,7 @@ func TestEachInstallRefusalIsItsOwnCodeAndSentence(t *testing.T) {
 
 // TestAnUploadMissingHalfOfAPluginSaysWhichHalf.
 func TestAnUploadMissingHalfOfAPluginSaysWhichHalf(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -450,6 +456,7 @@ func TestAnUploadMissingHalfOfAPluginSaysWhichHalf(t *testing.T) {
 // delivery path consults — the Plugin is simply not in the registry the sink
 // Manager rebuilds from, so there is no worker and nothing to deliver with.
 func TestDisableStopsDeliveryImmediatelyAndEnableResumesIt(t *testing.T) {
+	t.Parallel()
 	receiver := newSinkReceiver(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -506,6 +513,7 @@ func TestDisableStopsDeliveryImmediatelyAndEnableResumesIt(t *testing.T) {
 // a run of failures; the Admin fixes what it was pointed at, presses Re-enable, and
 // the error goes and delivery comes back.
 func TestReenableAfterARecordedFailureClearsTheErrorAndResumes(t *testing.T) {
+	// Not parallel: it counts one event per scan, and under load an event can go missing.
 	receiver := newSinkReceiver(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -549,6 +557,7 @@ func TestReenableAfterARecordedFailureClearsTheErrorAndResumes(t *testing.T) {
 // TestALifecycleVerbOnAPluginThatIsNotInstalled: a 404 with a sentence, not a 404
 // that reads like a typo'd path.
 func TestAPluginVerbOnSomethingNotInstalled(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -569,6 +578,7 @@ func TestAPluginVerbOnSomethingNotInstalled(t *testing.T) {
 // before this surface existed, and one still can. It is listed, and its buttons
 // work.
 func TestAHandPlacedPluginIsOnTheScreenToo(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("by-hand"))
 
@@ -590,6 +600,7 @@ func TestAHandPlacedPluginIsOnTheScreenToo(t *testing.T) {
 // TestADisabledPluginStaysDisabledAcrossARestart: the Admin's switch is durable,
 // which is the only reason it is in the database at all.
 func TestADisabledPluginStaysDisabledAcrossARestart(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	srv := testharness.New(t, testharness.WithDataDir(dataDir))
 	token := adminToken(t, srv)
@@ -620,6 +631,7 @@ func TestADisabledPluginStaysDisabledAcrossARestart(t *testing.T) {
 // settings endpoint gives them. This surface installs CODE, so it gets no special
 // treatment in either direction — it is behind the same middleware as the rest.
 func TestPluginManagementIsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	srv.CreateUser(admin, "kid", "memberpass123", "member")

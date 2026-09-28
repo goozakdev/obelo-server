@@ -52,6 +52,7 @@ type needsReviewContextResp struct {
 // season/episode numbers, and the file it came from — the four facts that make the
 // row actionable. Its own title alone never was.
 func TestNeedsReviewCarriesEpisodeContext(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -87,6 +88,7 @@ func TestNeedsReviewCarriesEpisodeContext(t *testing.T) {
 // TestNeedsReviewShowCarriesPathAndReason: a Show row names a file under it (so the
 // Admin can see the folder it was filed from) and reports the no-year rule.
 func TestNeedsReviewShowCarriesPathAndReason(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -112,6 +114,7 @@ func TestNeedsReviewShowCarriesPathAndReason(t *testing.T) {
 // TestNeedsReviewMovieCarriesPath: a Movie row names its file, not only its folder
 // anchor — the anchor is where a fix is written, the path is what the Admin reads.
 func TestNeedsReviewMovieCarriesPath(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 
@@ -141,6 +144,7 @@ func TestNeedsReviewMovieCarriesPath(t *testing.T) {
 // file has no Title by construction — which is why its only correction tool used to
 // be a raw-id form.
 func TestLibraryEnrichmentCandidatesSearches(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 
@@ -170,6 +174,7 @@ func TestLibraryEnrichmentCandidatesSearches(t *testing.T) {
 // TestLibraryEnrichmentCandidatesBlankQuery: a blank query is an empty answer, not
 // an error — the picker mounts before the Admin has typed anything.
 func TestLibraryEnrichmentCandidatesBlankQuery(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 
@@ -187,6 +192,7 @@ func TestLibraryEnrichmentCandidatesBlankQuery(t *testing.T) {
 
 // TestLibraryEnrichmentCandidatesUnknownLibraryIs404 keeps the hide-existence rule.
 func TestLibraryEnrichmentCandidatesUnknownLibraryIs404(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, _ := scanNamingLibrary(t)
 
@@ -199,6 +205,7 @@ func TestLibraryEnrichmentCandidatesUnknownLibraryIs404(t *testing.T) {
 // TestLibraryEnrichmentCandidatesRequiresAdmin: it reaches an external provider on
 // the server's behalf, so it is Admin-only like every other search route.
 func TestLibraryEnrichmentCandidatesRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, _, libID := scanNamingLibrary(t)
 	srv.CreateMember("nfmember", "memberpass123")
@@ -216,6 +223,7 @@ func TestLibraryEnrichmentCandidatesRequiresAdmin(t *testing.T) {
 // anchor folder is gone — can be discarded, so the queue row that surfaces it has a
 // real action rather than only a description of a broken thing.
 func TestDeleteOverrideDiscardsCorrection(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	root := namingRoot(t)
@@ -259,6 +267,7 @@ func TestDeleteOverrideDiscardsCorrection(t *testing.T) {
 // TestDeleteOverrideRequiresAdmin: it changes how a folder will be filed on the
 // next scan, so it is Admin-only.
 func TestDeleteOverrideRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	srv, token, libID := scanNamingLibrary(t)
 	root := namingRoot(t)
@@ -285,6 +294,7 @@ func TestDeleteOverrideRequiresAdmin(t *testing.T) {
 // the question. The row must therefore carry what Enrichment matched it to, and the
 // parent id whose artwork represents it.
 func TestNeedsReviewCarriesConfirmationEvidence(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 

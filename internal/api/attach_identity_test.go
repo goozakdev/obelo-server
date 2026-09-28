@@ -125,6 +125,7 @@ func identityKeys(srv *testharness.Server, userID string) []string {
 // works, and signing in later through the directory — even under the username
 // "brandon", which before the attach was the collision refusal — is brandon.
 func TestAttachingAPasswordFlowIdentityLinksItToTheCallersOwnUser(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "brandon:dir-pw:subject-bj::family"})
 	brandon := meID(t, srv, admin, "brandon")
 
@@ -160,6 +161,7 @@ func TestAttachingAPasswordFlowIdentityLinksItToTheCallersOwnUser(t *testing.T) 
 // the Bundled OpenID Connect plugin. The ID token is verified exactly as a
 // sign-in's is, and the verified subject is what brandon gains.
 func TestAttachingARedirectFlowIdentityLinksItToTheCallersOwnUser(t *testing.T) {
+	t.Parallel()
 	srv, admin, idp := oidcServer(t)
 	brandon := meID(t, srv, admin, "brandon")
 
@@ -202,6 +204,7 @@ func TestAttachingARedirectFlowIdentityLinksItToTheCallersOwnUser(t *testing.T) 
 // password, tries to attach it — by either flow. Refused, and neither User's
 // identities change.
 func TestAttachingAnIdentityAnotherUserHoldsIsRefused(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SignInManifest("directory", "ada:ada-pw:subject-ada::"))
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
@@ -245,6 +248,7 @@ func TestAttachingAnIdentityAnotherUserHoldsIsRefused(t *testing.T) {
 // the directory rejects links nothing; and re-attaching an identity the caller
 // already holds is not a refusal.
 func TestAnAttachIsOnlyForTheSignedInCaller(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "bj:bj-pw:subject-bj::"})
 	brandon := meID(t, srv, admin, "brandon")
 
@@ -284,6 +288,7 @@ func TestAnAttachIsOnlyForTheSignedInCaller(t *testing.T) {
 // only at the sign-in callback. Either crossing is the one refusal and links or
 // signs in nobody.
 func TestAnAttachRoundTripBelongsToWhoStartedIt(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
 	srv := testharness.New(t, testharness.WithDataDir(dataDir))
@@ -326,6 +331,7 @@ func TestAnAttachRoundTripBelongsToWhoStartedIt(t *testing.T) {
 // /auth/external-identities answers the caller's own identities and the
 // providers of each flow they can attach from.
 func TestTheProfileListsTheCallersIdentitiesAndWhatTheyCanAttach(t *testing.T) {
+	t.Parallel()
 	srv, admin := signInServer(t, map[string]string{"directory": "bj:bj-pw:subject-bj::"})
 	if status, body := attachPassword(t, srv, admin, asBrandon, "directory", "bj", "bj-pw"); status != http.StatusOK {
 		t.Fatalf("attach = %d %s", status, body)

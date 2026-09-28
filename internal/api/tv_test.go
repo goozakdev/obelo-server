@@ -247,6 +247,7 @@ func seasonEpisodes(t *testing.T, srv *testharness.Server, token, seasonID strin
 // TestTVScanBuildsHierarchy is the central tracer bullet: scan the TV fixture
 // tree and assert the Show → Season → Episode hierarchy via the browse API.
 func TestTVScanBuildsHierarchy(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 
@@ -309,6 +310,7 @@ func TestTVScanBuildsHierarchy(t *testing.T) {
 
 // TestTVMultiEpisodeFile: S01E05-E06 maps one File to TWO Episode Titles.
 func TestTVMultiEpisodeFile(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	shows := listShows(t, srv, token, libID)
@@ -350,6 +352,7 @@ func TestTVMultiEpisodeFile(t *testing.T) {
 // TestTVDateAndAbsolute: date-based and absolute-numbered episodes are filed by
 // their raw token, remain browsable/playable, and are labeled.
 func TestTVDateAndAbsolute(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	shows := listShows(t, srv, token, libID)
@@ -381,6 +384,7 @@ func TestTVDateAndAbsolute(t *testing.T) {
 // TestTVEpisodeDetailContext: an Episode's GET /titles/{id} carries its nested
 // Editions plus the Show/Season/episode parent context.
 func TestTVEpisodeDetailContext(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	shows := listShows(t, srv, token, libID)
@@ -411,6 +415,7 @@ func TestTVEpisodeDetailContext(t *testing.T) {
 // (hide-existence, api-contract.md). The Episode /titles/{id} is unchanged
 // (already 404 for unknown ids).
 func TestTVAccessControl404(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, _ := scanTVLibrary(t)
 	for _, path := range []string{
@@ -430,6 +435,7 @@ func TestTVAccessControl404(t *testing.T) {
 
 // TestTVScanIdempotent: a rescan re-resolves to the same Shows/Seasons/Episodes.
 func TestTVScanIdempotent(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	srv, token, libID := scanTVLibrary(t)
 	scanLib(t, srv, token, libID, "")
@@ -448,6 +454,7 @@ func TestTVScanIdempotent(t *testing.T) {
 // TestTVMovieLibraryUnaffected: a Movie library still returns Titles (not shows)
 // from /libraries/{id}/titles — the additive TV branch did not regress Movies.
 func TestTVMovieLibraryUnaffected(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

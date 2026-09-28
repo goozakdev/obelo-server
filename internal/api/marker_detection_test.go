@@ -66,6 +66,7 @@ func (r *recordingAnalyzer) drain() {
 // reading it and its toggle start nothing; the first File is listened to only
 // once the scan has completed.
 func TestMarkerDetectionStartsOnlyAfterAScanCompletes(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	an := newRecordingAnalyzer()
 	srv := testharness.New(t, testharness.WithMarkerAnalyzer(an))
@@ -96,6 +97,7 @@ func TestMarkerDetectionStartsOnlyAfterAScanCompletes(t *testing.T) {
 // second scan starts with the first one's Files already in the catalog and never
 // heard, so detection queued at a scan's start would find them.
 func TestMarkerDetectionNotTriggeredByAFailedScan(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	an := newRecordingAnalyzer()
 	srv := testharness.New(t, testharness.WithMarkerAnalyzer(an))
@@ -124,6 +126,7 @@ func TestMarkerDetectionNotTriggeredByAFailedScan(t *testing.T) {
 // is a Transcode running on this host, so detection queued after a scan does not
 // start until it ends.
 func TestMarkerDetectionWaitsForAVideoCopyTranscode(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	requireAudioFixtures(t)
 	an := newRecordingAnalyzer()
@@ -161,6 +164,7 @@ func TestMarkerDetectionWaitsForAVideoCopyTranscode(t *testing.T) {
 // toggle says detection is unavailable rather than on, and "detect markers now"
 // says it is unavailable rather than accepting work it would only fail.
 func TestMarkerDetectionOffWithoutFFmpeg(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	an := newRecordingAnalyzer()
 	srv := testharness.New(t, testharness.WithFFmpegAvailability(false), testharness.WithMarkerAnalyzer(an))
@@ -185,6 +189,7 @@ func TestMarkerDetectionOffWithoutFFmpeg(t *testing.T) {
 // TestDetectMarkersNowOnAShow: the Admin's action listens to that Show's Files
 // immediately, even ones already heard; a Member may not, an unknown Show is 404.
 func TestDetectMarkersNowOnAShow(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	an := newRecordingAnalyzer()
 	srv := testharness.New(t, testharness.WithMarkerAnalyzer(an))
@@ -216,6 +221,7 @@ func TestDetectMarkersNowOnAShow(t *testing.T) {
 // turning it off stops post-scan detection; a music or movie Library has no
 // toggle at all.
 func TestMarkerDetectionToggleIsTVOnly(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	requireMusicFixtures(t)
 	an := newRecordingAnalyzer()
@@ -261,6 +267,7 @@ func TestMarkerDetectionToggleIsTVOnly(t *testing.T) {
 // segment. Episode 2's session serves Detected Intro and Credits; episode 1 has
 // an `.edl` naming its Intro, and that Local one is what its session serves.
 func TestDetectedMarkersReachThePlayerAndLocalWins(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
 	}

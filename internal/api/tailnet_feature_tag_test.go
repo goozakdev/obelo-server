@@ -27,6 +27,7 @@ import (
 // that tracked the setting would tell every client to hide the panel on the
 // perfectly good server the operator has not configured yet.
 func TestTailscaleFeatureFollowsTheBuild(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 
 	var got serverInfo
@@ -61,6 +62,7 @@ func TestTailscaleFeatureFollowsTheBuild(t *testing.T) {
 // fails on command whereas the real thing fails by never finishing. Nothing here
 // touches the network: 127.0.0.1:1 refuses instantly.
 func TestBootSurvivesAnUnreachableCoordinationServer(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t,
 		testharness.WithTailnet(tailnet.NewNode()),
 		testharness.WithTailnetEnabled(true),

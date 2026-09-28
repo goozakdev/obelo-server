@@ -38,6 +38,7 @@ func setPlaybackCeiling(t *testing.T, srv *testharness.Server, adminTok, userID 
 // /users/{id} reflects it, every refusal has its own code, and an omitted
 // dimension clears it (the body is a replace, not a patch).
 func TestPlaybackCeilingManagement(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -107,6 +108,7 @@ func TestPlaybackCeilingManagement(t *testing.T) {
 // linked Server holds, which is the case it exists for (ADR-0054 §2) — and on any
 // other non-Admin role by the same code path.
 func TestPlaybackCeilingIsAppliedToRemoteRole(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -126,6 +128,7 @@ func TestPlaybackCeilingIsAppliedToRemoteRole(t *testing.T) {
 // whether it exists (ADR-0054 §2). A 720p-capped Member browses exactly what the
 // Admin does — no Title disappears — and playback still succeeds.
 func TestPlaybackCeilingNeverHidesATitle(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -164,6 +167,7 @@ func TestPlaybackCeilingNeverHidesATitle(t *testing.T) {
 // Every tier counts — these are all direct plays, which the transcode cap would
 // never have metered.
 func TestPlaybackStreamLimit(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

@@ -157,6 +157,7 @@ type enrichedTracksResp struct {
 // --- TV ---------------------------------------------------------------------
 
 func TestEnrichTVShowSeasonEpisode(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvMusicProvider()
 	fetch := &fakeFetcher{data: []byte("FAKEART"), contentType: "image/jpeg"}
@@ -240,6 +241,7 @@ func TestEnrichTVShowSeasonEpisode(t *testing.T) {
 // gains a canonical DISPLAY title from Enrichment, but its identity_key,
 // season/episode/label and watch state are byte-for-byte unchanged (ADR-0014).
 func TestEnrichTVDateBasedEpisodeIdentityStable(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvMusicProvider()
 	srv := testharness.New(t,
@@ -311,6 +313,7 @@ func firstEpisodeID(t *testing.T, srv *testharness.Server, token string, seasons
 // --- Music ------------------------------------------------------------------
 
 func TestEnrichMusicArtistAlbumTrack(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := tvMusicProvider()
 	fetch := &fakeFetcher{data: []byte("COVERBYTES"), contentType: "image/jpeg"}
@@ -408,6 +411,7 @@ func TestEnrichMusicArtistAlbumTrack(t *testing.T) {
 // no key. This is the per-kind enablement gate (ADR-0001 offline-first preserved:
 // Music is still off until explicitly opted in).
 func TestEnrichMusicWithoutTMDBKey(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	requireTVFixtures(t)
 	prov := tvMusicProvider()
@@ -456,6 +460,7 @@ func TestEnrichMusicWithoutTMDBKey(t *testing.T) {
 // (episodes 'disabled', no calls); a second full pass after enabling doesn't
 // duplicate parent genres/artwork.
 func TestEnrichTVDisabledAndIdempotent(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := tvMusicProvider()
 
@@ -523,6 +528,7 @@ type enrichedHomeResp struct {
 // grid AND the Artist list, and the enriched descriptive fields must surface in
 // the /search and /home summaries (not just the dedicated browse detail reads).
 func TestEnrichCrossKindGenreFilterAndSummaries(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	requireMusicFixtures(t)
 

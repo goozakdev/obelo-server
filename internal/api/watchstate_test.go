@@ -110,6 +110,7 @@ func getTitleDetail(t *testing.T, srv *testharness.Server, token, titleID string
 // TestProgressUpdatesResume: an in-band progress report stores the raw position
 // as the resume offset, visible on the Title detail.
 func TestProgressUpdatesResume(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -140,6 +141,7 @@ func TestProgressUpdatesResume(t *testing.T) {
 // TestProgressCrossing90MarksWatched: a position past ~90% marks the Title
 // watched, clears its resume, and removes it from Continue Watching.
 func TestProgressCrossing90MarksWatched(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -177,6 +179,7 @@ func TestProgressCrossing90MarksWatched(t *testing.T) {
 // TestProgressBelowFloorNoResume: a stop below the ~2% floor records no resume,
 // so the Title never enters Continue Watching.
 func TestProgressBelowFloorNoResume(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -208,6 +211,7 @@ func TestProgressBelowFloorNoResume(t *testing.T) {
 // TestWatchStateManualToggle: PUT /titles/{id}/watchState toggles watched
 // bypassing the threshold; unwatched resets.
 func TestWatchStateManualToggle(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -249,6 +253,7 @@ func TestWatchStateManualToggle(t *testing.T) {
 // TestHomeRows: /home returns Continue Watching (in-band, most-recent first) and
 // Recently Added.
 func TestHomeRows(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -313,6 +318,7 @@ func TestHomeRows(t *testing.T) {
 // TestWatchStateSurvivesRename: watch state is keyed to the Title identity, so a
 // file rename (same Title id) preserves the resume position.
 func TestWatchStateSurvivesRename(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	folder := filepath.Join(root, "Stable Movie (2006)")
 	makeMovie(t, filepath.Join(folder, "Stable Movie (2006).mp4"))
@@ -357,6 +363,7 @@ func TestWatchStateSurvivesRename(t *testing.T) {
 // TestConcurrentProgressLastWriteWins: two Devices reporting progress for the
 // same Title resolve last-write-wins without error.
 func TestConcurrentProgressLastWriteWins(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -391,6 +398,7 @@ func TestConcurrentProgressLastWriteWins(t *testing.T) {
 // TestProgressOwnerOnly: another User cannot report progress against a session —
 // it is 404 (hide existence), like stream/delete.
 func TestProgressOwnerOnly(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -418,6 +426,7 @@ func TestProgressOwnerOnly(t *testing.T) {
 // TestSessionReaped: a session idle past a short configured timeout is reaped;
 // its progress endpoint then answers 404.
 func TestSessionReaped(t *testing.T) {
+	// Not parallel: its 150ms idle window is wall-clock time, which parallel tests eat.
 	requireFixtures(t)
 	// Short idle timeout so the reaper sweeps the session quickly. The reaper
 	// sweep cadence tracks the timeout (app caps it at the timeout), so a 150ms

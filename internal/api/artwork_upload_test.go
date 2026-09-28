@@ -76,6 +76,7 @@ func servedArtwork(t *testing.T, srv *testharness.Server, token, path string) (i
 // the poster role is reported Locked and sourced 'uploaded', and a full re-enrich
 // (which would refetch an unlocked role) leaves the upload in place.
 func TestArtworkUploadLeafServeLockAndSurvivesEnrich(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -126,6 +127,7 @@ func TestArtworkUploadLeafServeLockAndSurvivesEnrich(t *testing.T) {
 // wins at serve time (uploaded > local, ADR-0026) — the sole source that beats a
 // folder image. A picked provider image (fetched) would still lose to local.
 func TestArtworkUploadBeatsLocal(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -164,6 +166,7 @@ func TestArtworkUploadBeatsLocal(t *testing.T) {
 // over-16-MiB file is 413; in every case the current image is UNCHANGED (a bad
 // file never blanks or corrupts the artwork).
 func TestArtworkUploadValidation(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -211,6 +214,7 @@ func TestArtworkUploadValidation(t *testing.T) {
 // file/row and serve reverts to the auto image (Fetched here); the poster is no
 // longer Locked, so a subsequent enrich refreshes it normally.
 func TestArtworkUploadReleaseUndo(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -253,6 +257,7 @@ func TestArtworkUploadReleaseUndo(t *testing.T) {
 // Admin uploads a Show poster and the exact bytes are served + Locked, exactly as
 // for a leaf.
 func TestArtworkUploadParent(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) {
 		return enrich.TitleMetadata{Matched: true, Source: "tmdb", ExternalID: "show-x"}, nil
@@ -291,6 +296,7 @@ func TestArtworkUploadParent(t *testing.T) {
 // TestArtworkUploadAdminOnlyAndSSE: a Member cannot upload (403); an Admin upload
 // emits a libraryUpdated SSE nudge so other signed-in clients see the new art.
 func TestArtworkUploadAdminOnlyAndSSE(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,

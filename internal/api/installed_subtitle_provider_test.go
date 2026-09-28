@@ -180,6 +180,7 @@ func searchOnline(t *testing.T, srv *testharness.Server, token, titleID, lang st
 // downloads, caches identity-keyed on the filesystem, records as `fetched` and
 // plays as WebVTT, exactly as an OpenSubtitles one does.
 func TestAnInstalledSubtitleProviderServesSearchOnlineAndCaches(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	dataDir := t.TempDir()
 	// The Admin's hand-placement, before the server ever starts. (Installing
@@ -323,6 +324,7 @@ func TestAnInstalledSubtitleProviderServesSearchOnlineAndCaches(t *testing.T) {
 // reaches the Admin's screen, and the Title's own sidecar and embedded subtitles
 // are exactly as they were.
 func TestAnInstalledSubtitleProviderOverTheByteCapIsRefused(t *testing.T) {
+	t.Parallel()
 	requireSubtitleFixtures(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SubtitleManifest("greedy-subs"))
@@ -418,6 +420,7 @@ func titleSubtitleSources(t *testing.T, srv *testharness.Server, token, id strin
 // is, it answers an empty list with a 200 rather than an error a viewer would be
 // shown (ADR-0001).
 func TestDisablingAnInstalledSubtitleProviderFallsBackToTheRest(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	dataDir := t.TempDir()
 	// Two Installed providers, from ONE module: the manifest is what says which
@@ -477,6 +480,7 @@ func TestDisablingAnInstalledSubtitleProviderFallsBackToTheRest(t *testing.T) {
 // URL typed is refused before it reaches it. The same address typed by the
 // Admin in the request is the operator's own, and is reached.
 func TestTestConnectionReachesAPrivateDefaultOnlyWhenAnAdminTypesIt(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	source := newSubtitleSourceServer(t, "9002", "Hallo")
 	manifest := plugintest.SubtitleManifest("default-subs")

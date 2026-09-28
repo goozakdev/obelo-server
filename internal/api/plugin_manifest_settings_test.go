@@ -152,6 +152,7 @@ func validSettings() map[string]any {
 // API, the secret never comes back, and the GUEST reads exactly those values —
 // in the JSON types it declared — from inside the sandbox.
 func TestADeclaredSettingsSchemaIsRenderedSavedAndReadBackByTheGuest(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	dataDir := t.TempDir()
 	installDeclaringGuest(t, dataDir, "example-source", "echo-settings")
@@ -266,6 +267,7 @@ func TestADeclaredSettingsSchemaIsRenderedSavedAndReadBackByTheGuest(t *testing.
 // refusal is structured, so a form can put each sentence under the control that
 // caused it rather than one line above the whole panel.
 func TestADeclaredSettingsSaveIsRefusedFieldByField(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	installDeclaringGuest(t, dataDir, "example-source", "echo-settings")
 
@@ -360,6 +362,7 @@ func TestADeclaredSettingsSaveIsRefusedFieldByField(t *testing.T) {
 // returning a secret: a form that re-submits everything it can SEE must not clear
 // the one field it cannot.
 func TestADeclaredSecretSurvivesASaveThatDidNotMentionIt(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	installDeclaringGuest(t, dataDir, "example-source", "echo-settings")
 
@@ -405,6 +408,7 @@ func TestADeclaredSecretSurvivesASaveThatDidNotMentionIt(t *testing.T) {
 // TestPluginSettingsAreAdminOnly: the same 403 the whole /settings/ subtree gives
 // a Member. This is not a special surface with a special rule.
 func TestPluginSettingsAreAdminOnly(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	installDeclaringGuest(t, dataDir, "example-source", "echo-settings")
 
@@ -434,6 +438,7 @@ func TestPluginSettingsAreAdminOnly(t *testing.T) {
 // server, because "a keyless provider is now active" must not have been bought by
 // letting an unkeyed key-requiring one through.
 func TestAKeylessInstalledFullProviderCanLeadALibrary(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	dataDir := t.TempDir()
 	installDeclaringGuest(t, dataDir, "keyless-source", "")

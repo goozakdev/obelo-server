@@ -36,6 +36,7 @@ func running(fqdn string, httpsBound bool) *tailnet.Fake {
 //
 // If this test ever fails, do not "fix" it by relaxing the assertion.
 func TestServerInfoNeverAnswers401(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t,
 		testharness.WithTailnet(running("obelo.tail1a2b.ts.net", true)),
 		testharness.WithTailnetEnabled(true))
@@ -78,6 +79,7 @@ func TestServerInfoNeverAnswers401(t *testing.T) {
 // client contract keys on the field being explicitly nullable (the same reasoning
 // keyExpiry carries on the settings payload).
 func TestTailnetURLPresentAndNullForEveryCaller(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t) // no Tailnet node at all
 	_, body := srv.GET("/api/v1/server", nil)
 
@@ -98,6 +100,7 @@ func TestTailnetURLPresentAndNullForEveryCaller(t *testing.T) {
 // TestTailnetURLIsTheOriginAchievedNotRequested is the pair of rules the client
 // team asked for: the name only, and the scheme that actually bound.
 func TestTailnetURLIsTheOriginAchievedNotRequested(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		fqdn       string
@@ -143,6 +146,7 @@ func TestTailnetURLIsTheOriginAchievedNotRequested(t *testing.T) {
 // while JSON kept working; and App Transport Security refuses cleartext to a
 // 100.64.0.0/10 literal anyway, so there is not even an escape hatch.
 func TestTailnetURLCarriesNoAddresses(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t,
 		testharness.WithTailnet(running("obelo.tail1a2b.ts.net", false)),
 		testharness.WithTailnetEnabled(true))
@@ -163,6 +167,7 @@ func TestTailnetURLCarriesNoAddresses(t *testing.T) {
 // Each must publish null, because each obliges a client to CLEAR a stored
 // address rather than keep probing one that no longer answers.
 func TestTailnetURLNullWhileTheNodeHasNoName(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		node    *tailnet.Fake

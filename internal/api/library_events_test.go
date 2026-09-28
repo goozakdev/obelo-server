@@ -15,6 +15,7 @@ import (
 // Broker's accessible-Library set is now seeded from the resolved access Scope
 // (issue 05) — with no change to the Broker itself.
 func TestLibraryScopedEventsGatedByGrant(t *testing.T) {
+	t.Parallel()
 	rootA := t.TempDir()
 	makeMovie(t, filepath.Join(rootA, "Alpha Movie (2001)", "Alpha Movie (2001).mp4"))
 	rootB := t.TempDir()

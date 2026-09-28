@@ -68,6 +68,7 @@ func notShippedDirs(entries []os.DirEntry) []string {
 // shipped metadata providers installed: the files on disk, the row recorded as
 // bundled, and the module compiled by the ordinary loader.
 func TestAFreshServerInstallsTheShippedPlugins(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 
@@ -111,6 +112,7 @@ func TestAFreshServerInstallsTheShippedPlugins(t *testing.T) {
 // restart, it is listed as declined so the screen can offer it back, and
 // reinstall-shipped brings it back as bundled.
 func TestUninstallingAShippedPluginIsRememberedAcrossARestart(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	first := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, first)
@@ -158,6 +160,7 @@ func TestUninstallingAShippedPluginIsRememberedAcrossARestart(t *testing.T) {
 // byte for byte alone. This is the promise that makes re-asserting on every boot
 // safe to do at all.
 func TestAnAdminsOwnPluginUnderAShippedIDSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	first := testharness.New(t, testharness.WithDataDir(dataDir))
 	token := adminToken(t, first)
@@ -204,6 +207,7 @@ func TestAnAdminsOwnPluginUnderAShippedIDSurvivesARestart(t *testing.T) {
 // and everything keyed to the id — the operator's API key above all — survives,
 // because the id did not change.
 func TestAnOlderBundledCopyIsReplacedOnBoot(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	first := testharness.New(t, testharness.WithDataDir(dataDir), testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, first)
@@ -253,6 +257,7 @@ func TestAnOlderBundledCopyIsReplacedOnBoot(t *testing.T) {
 // Reinstalling a shipped plugin that is not declined, and one this server does
 // not ship at all, are two different refusals.
 func TestReinstallShippedRefusals(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 
@@ -298,6 +303,7 @@ func readMetadataProviders(t *testing.T, srv *testharness.Server, token string) 
 // by the guest through settings_get inside a call. Every link in that chain is a
 // different package, and this is the only test that crosses all of them.
 func TestTheOperatorsRateLimitReachesAGuestThroughTheSandbox(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t, testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}))
 	token := adminToken(t, srv)
@@ -354,6 +360,7 @@ func TestTheOperatorsRateLimitReachesAGuestThroughTheSandbox(t *testing.T) {
 // and retry-at columns, which the pass summary reports as Retrying against Failed.
 // Those two counters are the honest observable here.
 func TestASourceOutageRetriesTheItemsAndDoesNotStrikeThePlugin(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	var calls int32
@@ -445,6 +452,7 @@ func TestASourceOutageRetriesTheItemsAndDoesNotStrikeThePlugin(t *testing.T) {
 // The pass count is deliberately past the threshold: TWO passes over the three
 // movie fixtures is six consecutive rejected lookups, twice what used to stop it.
 func TestARejectedKeyParksTheItemsAndLeavesThePluginRunning(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	var calls int32

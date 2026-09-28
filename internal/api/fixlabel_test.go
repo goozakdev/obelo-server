@@ -94,6 +94,7 @@ func posterSourceOf(d labelDetailResp) string {
 // field on a Movie; each edit is written and Locked; a full re-enrich refreshes
 // none of the locked fields; releasing one lets it re-enrich.
 func TestFixLabelLeafFullFieldEditAndLock(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
 	srv := testharness.New(t,
@@ -178,6 +179,7 @@ func TestFixLabelLeafFullFieldEditAndLock(t *testing.T) {
 // picking one sets + Locks the poster role, and a re-enrich keeps it. For a Title
 // WITH a local poster, local still wins over the picked image.
 func TestFixLabelLeafImagePickAndLock(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{
 		fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil },
@@ -260,6 +262,7 @@ func TestFixLabelLeafImagePickAndLock(t *testing.T) {
 // (the logo-hero would silently fall back to the text title), so the pick fails
 // loudly instead, and the role is neither set nor Locked.
 func TestFixLabelLeafImagePickRefusesSVG(t *testing.T) {
+	t.Parallel()
 	requireNamingFixtures(t)
 	prov := &fakeProvider{
 		fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil },
@@ -295,6 +298,7 @@ func TestFixLabelLeafImagePickRefusesSVG(t *testing.T) {
 // name (a Fix-label edit) changes only the shown title — the active Enrichment
 // override and the album's Tracks are untouched (a hand-edit never cascades).
 func TestFixLabelParentRenameNoCascade(t *testing.T) {
+	t.Parallel()
 	requireMusicFixtures(t)
 	prov := &fakeProvider{
 		searchFn: func(kind, _ string) ([]enrich.Candidate, error) {
@@ -387,6 +391,7 @@ func TestFixLabelParentRenameNoCascade(t *testing.T) {
 // those fields; a full re-enrich refreshes neither, and the picker lists provider
 // images for the Show poster.
 func TestFixLabelParentEditLockAndImagePicker(t *testing.T) {
+	t.Parallel()
 	requireTVFixtures(t)
 	prov := &fakeProvider{
 		fn: func(ref enrich.TitleRef) (enrich.TitleMetadata, error) {
@@ -463,6 +468,7 @@ func TestFixLabelParentEditLockAndImagePicker(t *testing.T) {
 // image, or hand-edit (all 403); an invalid role is 400; an Admin pick emits a
 // libraryUpdated SSE nudge.
 func TestFixLabelAdminOnlyAndSSE(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	prov := &fakeProvider{
 		fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil },

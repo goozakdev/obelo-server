@@ -50,6 +50,7 @@ func cardFor(ls collectionsListResp, colID string) (collectionCardResp, bool) {
 // and an ungranted-Library Title. The Member sees ONLY the first; the Admin sees
 // all three. Covers acceptance criteria 1, 2, 3, and 6.
 func TestCollectionAccessFiltering(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -171,6 +172,7 @@ func TestCollectionAccessFiltering(t *testing.T) {
 // detail (hide-existence), while the Admin sees it in full. Covers acceptance
 // criterion 4. Also exercises revoking a grant as the live-filter trigger.
 func TestCollectionZeroVisibleHiddenFromMember(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -237,6 +239,7 @@ func TestCollectionZeroVisibleHiddenFromMember(t *testing.T) {
 // Collection (200, zero members) — the zero-visible hiding rule must NOT break
 // Admin management of a fresh/empty Collection. Covers acceptance: Admin exemption.
 func TestCollectionAdminSeesEmptyCollection(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)

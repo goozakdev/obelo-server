@@ -394,6 +394,7 @@ func sameBrowse(t *testing.T, a *testharness.Server, tokA string, b *testharness
 // It runs over all three Library kinds, because the TV and music hierarchies are
 // where the parent entities (Show/Season, Artist/Album) actually appear.
 func TestExportReplayedReproducesBrowse(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 
 	for _, kind := range []string{"movie", "tv", "music"} {
@@ -493,6 +494,7 @@ func browsePathsUnder(t *testing.T, srv *testharness.Server, token, kind, libID 
 // This is the whole reason the feed exists — a mirror that had to re-read a
 // thousand-episode library on every edit would not be worth having.
 func TestIncrementalExportAfterOneRename(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	src := testharness.New(t)
 	admin := adminToken(t, src)
@@ -559,6 +561,7 @@ func firstTitleID(t *testing.T, srv *testharness.Server, token, libID string) st
 // rather than quietly keep serving a film that is gone. A Title whose Files are
 // all Missing is tombstoned too.
 func TestExportTombstonesAMissingFile(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	src := testharness.New(t)
 	admin := adminToken(t, src)
@@ -611,6 +614,7 @@ func TestExportTombstonesAMissingFile(t *testing.T) {
 // is a disk path. The Export is the one place the sharer decides what a peer
 // learns, and where their films live is not on the list.
 func TestExportNamesNoPath(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	src := testharness.New(t)
 	admin := adminToken(t, src)
@@ -677,6 +681,7 @@ func TestExportNamesNoPath(t *testing.T) {
 // (ADR-0056 §4). A well-formed request about a position that is gone, so 410 —
 // not the 400 a garbled cursor gets.
 func TestExportRefusesAnAncientCursor(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	src := testharness.New(t)
 	admin := adminToken(t, src)
@@ -717,6 +722,7 @@ func TestExportRefusesAnAncientCursor(t *testing.T) {
 // would tell them it exists), and so does a `remote` User asking about a Library
 // nobody granted it.
 func TestExportIsHiddenFromEveryoneElse(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	src := testharness.New(t)
 	admin := adminToken(t, src)
@@ -790,6 +796,7 @@ func userIDForName(t *testing.T, srv *testharness.Server, adminTok, name string)
 // id) rather than an offset, so every entity appears exactly once across the
 // walk and the limit is honoured and capped.
 func TestExportPaginationIsAStableKeysetWalk(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	src := testharness.New(t)
 	admin := adminToken(t, src)
@@ -835,6 +842,7 @@ func TestExportPaginationIsAStableKeysetWalk(t *testing.T) {
 // ADR-0056 §4 names, and a mirror that only ever saw `title` could not rebuild a
 // Show or an Album.
 func TestExportCarriesEveryEntityType(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	want := map[string][]string{
 		"movie": {"title", "edition", "file", "stream"},

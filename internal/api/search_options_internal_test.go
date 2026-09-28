@@ -15,6 +15,7 @@ import (
 // TestSearchOptionsFromReadsArtistAndRelease: both narrowing params reach the
 // provider, trimmed. `release` is the album box on a Track's Needs-Fixing row.
 func TestSearchOptionsFromReadsArtistAndRelease(t *testing.T) {
+	t.Parallel()
 	r := httptest.NewRequest("GET", "/x?q=Whisper+Your+Name&artist=+Harry+Connick%2C+Jr.+&release=+She+&page=2", nil)
 
 	opts := searchOptionsFrom(r)
@@ -38,6 +39,7 @@ func TestSearchOptionsFromReadsArtistAndRelease(t *testing.T) {
 // this slice. A present-but-blank param means the same thing: the Admin widened the
 // box, and widening must actually widen.
 func TestSearchOptionsFromAbsentScopeIsNoNarrowing(t *testing.T) {
+	t.Parallel()
 	for _, url := range []string{"/x?q=Arrival", "/x?q=Arrival&artist=&release=+"} {
 		opts := searchOptionsFrom(httptest.NewRequest("GET", url, nil))
 		if opts.Artist != "" || opts.Release != "" {

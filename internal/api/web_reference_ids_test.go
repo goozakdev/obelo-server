@@ -12,6 +12,7 @@ import (
 // where the record and the folder both name a namespace, the record's id is the
 // one held (ADR-0045, ADR-0060). An empty id is not held from either.
 func TestHeldTitleIDsIncludeTheRecordsAndLetThemOutrankTheFolder(t *testing.T) {
+	t.Parallel()
 	got := heldTitleIDs(store.Title{
 		IdentityIDs: map[string]string{"imdb": "tt0000001", "tvdb": "81189", "anidb": ""},
 		RecordIDs:   map[string]string{"imdb": "tt1160419", "tmdb": "438631", "trakt": ""},

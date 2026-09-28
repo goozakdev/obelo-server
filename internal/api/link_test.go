@@ -111,6 +111,7 @@ func remoteUserLastSeen(t *testing.T, sharer *testharness.Server, adminTok, user
 // string, a home Admin pastes it, and from then on this Server holds a
 // credential for that one.
 func TestTwoServersLink(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -204,6 +205,7 @@ func bodyHasToken(body []byte) bool {
 // TestPastingSomethingThatIsNotAnInvite: one answer for every shape failure,
 // because the operator's move is the same in all of them.
 func TestPastingSomethingThatIsNotAnInvite(t *testing.T) {
+	t.Parallel()
 	home := testharness.New(t)
 	admin := adminToken(t, home)
 
@@ -231,6 +233,7 @@ func TestPastingSomethingThatIsNotAnInvite(t *testing.T) {
 // (ADR-0055 §1) answers 410, because nothing about the request was wrong and the
 // operator's move is "ask for a fresh one" rather than "re-copy this one".
 func TestAnExpiredInviteIsGoneNotBad(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -259,6 +262,7 @@ func TestAnExpiredInviteIsGoneNotBad(t *testing.T) {
 // redeems once the disagreement is gone. That last step is the whole assertion —
 // a check that burned the code would leave the Admin re-minting for no reason.
 func TestAVersionMismatchNeverSpendsTheCode(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -310,6 +314,7 @@ func TestAVersionMismatchNeverSpendsTheCode(t *testing.T) {
 // TestOriginsAreTriedInOrderOverHTTP: the dead address is FIRST, so a walk that
 // reordered would pass by accident (ADR-0055 §2).
 func TestOriginsAreTriedInOrderOverHTTP(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -339,6 +344,7 @@ func TestOriginsAreTriedInOrderOverHTTP(t *testing.T) {
 // TestNoOriginAnswers is ADR-0056 §6's `unreachable` arriving at link time: a
 // 503 rather than a 4xx, because nothing about the request was wrong.
 func TestNoOriginAnswers(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -363,6 +369,7 @@ func TestNoOriginAnswers(t *testing.T) {
 // the operator's Tailnet from the Tailscale console — and the only thing that
 // makes it reachable is this Server's own Tailnet node.
 func TestLinkingOverATailnetOrigin(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 
 	// The home Server's node: up, with a MagicDNS name of its own, dialing into
@@ -424,6 +431,7 @@ func sharerListenerAddr(t *testing.T, srv *testharness.Server) string {
 // string (ADR-0055 §2): the friend at a new address with a fresh code is the
 // SAME Link, so whatever the mirror has built behind it survives.
 func TestASecondInviteFromTheSameServerRekeysInPlace(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -465,6 +473,7 @@ func TestASecondInviteFromTheSameServerRekeysInPlace(t *testing.T) {
 // Link and refuses an invite that names a different Server, so an operator with
 // two friends' invites in a clipboard cannot repoint one household at the other.
 func TestRekeyEndpointRequiresTheSameServer(t *testing.T) {
+	t.Parallel()
 	amy, amyAdmin, amyRemote := sharing(t)
 	bob, bobAdmin, bobRemote := sharing(t)
 	home := testharness.New(t)
@@ -501,6 +510,7 @@ func TestRekeyEndpointRequiresTheSameServer(t *testing.T) {
 // TestUnlinkLeavesNoDeviceOnTheSharer is ADR-0055's Consequences: the sharer's
 // Device row disappears instead of lingering as a ghost with a last-seen.
 func TestUnlinkLeavesNoDeviceOnTheSharer(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -531,6 +541,7 @@ func TestUnlinkLeavesNoDeviceOnTheSharer(t *testing.T) {
 // A friend whose server is off — often the very reason to unlink — must not be
 // able to keep this household linked to them.
 func TestUnlinkSucceedsWithAnUnreachableSharer(t *testing.T) {
+	t.Parallel()
 	sharer, sharerAdmin, remoteID := sharing(t)
 	home := testharness.New(t)
 	homeAdmin := adminToken(t, home)
@@ -558,6 +569,7 @@ func TestUnlinkSucceedsWithAnUnreachableSharer(t *testing.T) {
 // TestLinkRoutesAreAdminOnly. A Link is the household's relationship with
 // another household; a Member neither makes one nor sees the addresses in it.
 func TestLinkRoutesAreAdminOnly(t *testing.T) {
+	t.Parallel()
 	home := testharness.New(t)
 	adminToken(t, home)
 	home.CreateMember("kid", "correct horse battery staple")

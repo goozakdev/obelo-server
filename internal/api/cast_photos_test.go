@@ -161,6 +161,7 @@ func castEnrichSetup(t *testing.T) (*testharness.Server, *castFetcher, string, s
 // media cookie; a member with no headshot still appears (name + character) and its
 // photo route 404s. Identity + watch state are untouched by the capture.
 func TestCastPhotosCaptureAndServe(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := castEnrichSetup(t)
 
 	id := titleIDByName(t, srv, token, libID, "Dune")
@@ -220,6 +221,7 @@ func TestCastPhotosCaptureAndServe(t *testing.T) {
 // TestCastPhotosDedupeAcrossMovies: the same person ref in two movies yields ONE
 // download / one cached headshot, and both movies' cast reference it.
 func TestCastPhotosDedupeAcrossMovies(t *testing.T) {
+	t.Parallel()
 	srv, fetch, token, libID := castEnrichSetup(t)
 	enrichLib(t, srv, token, libID, "")
 
@@ -246,6 +248,7 @@ func TestCastPhotosDedupeAcrossMovies(t *testing.T) {
 // movie enriched with the cast member's name + character intact and no photo; the
 // pass does not fail.
 func TestCastPhotosDownloadFailureNonFatal(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := castEnrichSetup(t)
 	res := enrichLib(t, srv, token, libID, "")
 	if res.Failed != 0 || res.Matched != res.Total {
@@ -266,6 +269,7 @@ func TestCastPhotosDownloadFailureNonFatal(t *testing.T) {
 // TestCastPhotosLockedCastNotOverwritten: an Admin-locked cast is neither
 // overwritten NOR its headshots (re)fetched on enrichment.
 func TestCastPhotosLockedCastNotOverwritten(t *testing.T) {
+	t.Parallel()
 	srv, fetch, token, libID := castEnrichSetup(t)
 	id := titleIDByName(t, srv, token, libID, "Dune")
 
@@ -294,6 +298,7 @@ func TestCastPhotosLockedCastNotOverwritten(t *testing.T) {
 // TestCastPhotosAccessScoped: a person only reachable through a Library the viewer
 // can't access is not served that viewer's headshot (404), while an Admin gets it.
 func TestCastPhotosAccessScoped(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := castEnrichSetup(t)
 	enrichLib(t, srv, token, libID, "")
 
@@ -321,6 +326,7 @@ func TestCastPhotosAccessScoped(t *testing.T) {
 // TestCastPhotosUnknownPerson404: a photo request for a person no Title credits
 // (unknown ref) 404s cleanly.
 func TestCastPhotosUnknownPerson404(t *testing.T) {
+	t.Parallel()
 	srv, _, token, libID := castEnrichSetup(t)
 	enrichLib(t, srv, token, libID, "")
 	if st, _ := authBytes(t, srv, token, personPhotoPath("tmdb:999999", "profile")); st != http.StatusNotFound {

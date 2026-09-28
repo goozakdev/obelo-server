@@ -182,6 +182,7 @@ func resolvedVideoHeight(t *testing.T, dec decisionResp) int {
 // memory promise. Default resolution is the Colour cut (taller, direct play); after
 // picking Black & White, the replay resolves the 120px cut and escalates off direct play.
 func TestRememberedVideoReplayResolvesPick(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	srv, token, libID := scanVideoShow(t)
 	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
@@ -212,6 +213,7 @@ func TestRememberedVideoReplayResolvesPick(t *testing.T) {
 // TestRememberedVideoBubblesUpToSiblingEpisode: a cut pick on S01E01 becomes the Show's
 // default, so S01E02 — which has no pick of its own — opens in that cut.
 func TestRememberedVideoBubblesUpToSiblingEpisode(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	srv, token, libID := scanVideoShow(t)
 	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
@@ -235,6 +237,7 @@ func TestRememberedVideoBubblesUpToSiblingEpisode(t *testing.T) {
 // TestRememberedAudioViaInBandProgress; pins the write-back that has no
 // re-negotiation of its own.
 func TestRememberedVideoViaInBandProgress(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	srv, token, libID := scanVideoShow(t)
 	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
@@ -264,6 +267,7 @@ func TestRememberedVideoViaInBandProgress(t *testing.T) {
 // progress surface is silently ignored — the progress report still succeeds and the
 // next play stays on the default cut (best-effort memory never fails a keepalive).
 func TestRememberedVideoProgressUnknownIDIgnored(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	srv, token, libID := scanVideoShow(t)
 	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
@@ -285,6 +289,7 @@ func TestRememberedVideoProgressUnknownIDIgnored(t *testing.T) {
 // wins over the Show bubble-up. E2 is pinned to Colour, then E1 is set to Black & White
 // (which becomes the Show default); E2 still resolves its own Colour pick.
 func TestRememberedVideoSiblingOwnPickUnaffected(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	srv, token, libID := scanVideoShow(t)
 	ep1 := videoShowEpisodeID(t, srv, token, libID, 1)
@@ -311,6 +316,7 @@ func TestRememberedVideoSiblingOwnPickUnaffected(t *testing.T) {
 // TestRememberedVideoIsPerUser: one User's pick never changes another User's resolution of
 // the same Title.
 func TestRememberedVideoIsPerUser(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	srv, admin, libID := scanVideoShow(t)
 	ep1 := videoShowEpisodeID(t, srv, admin, libID, 1)
@@ -336,6 +342,7 @@ func TestRememberedVideoIsPerUser(t *testing.T) {
 // keyed to traits, not to a stream index, survives a re-rip. Uses a writable temp Library
 // so the File can be swapped.
 func TestRememberedVideoReResolvesAfterFileSwap(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	root := t.TempDir()
 	epPath := filepath.Join(root, "Video Show (2022)", "Season 01", "Video Show (2022) - S01E01 - Pilot.mkv")
@@ -380,6 +387,7 @@ func TestRememberedVideoReResolvesAfterFileSwap(t *testing.T) {
 // Colour), negotiation falls back to the default with no error — the graceful-degradation
 // promise (story 14, ADR-0014).
 func TestRememberedVideoAbsentStreamFallsBack(t *testing.T) {
+	t.Parallel()
 	requireMultiVideoShowFixtures(t)
 	root := t.TempDir()
 	epPath := filepath.Join(root, "Video Show (2022)", "Season 01", "Video Show (2022) - S01E01 - Pilot.mkv")

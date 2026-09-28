@@ -260,6 +260,7 @@ func assertPlain(t *testing.T, got lyricsResp, want string) {
 // TestASidecarLRCIsStoredAsSyncedLyrics: the .lrc beside a track is its Synced
 // lyrics, each line at its own time; the [ar:]/[ti:] header tags are not lines.
 func TestASidecarLRCIsStoredAsSyncedLyrics(t *testing.T) {
+	t.Parallel()
 	srv, token, _, tracks := lyricsServer(t)
 	assertSynced(t, readLyrics(t, srv, token, tracks["From The Sidecar"]), []lyricLineResp{
 		{StartMs: 1500, Text: "First sidecar line"},
@@ -270,6 +271,7 @@ func TestASidecarLRCIsStoredAsSyncedLyrics(t *testing.T) {
 // TestAnEmbeddedSYLTIsStoredAsSyncedLyrics: with no sidecar, an embedded SYLT
 // frame gives the track Synced lyrics exactly as a sidecar would.
 func TestAnEmbeddedSYLTIsStoredAsSyncedLyrics(t *testing.T) {
+	t.Parallel()
 	srv, token, _, tracks := lyricsServer(t)
 	assertSynced(t, readLyrics(t, srv, token, tracks["Embedded Synced"]), syltLines)
 }
@@ -277,12 +279,14 @@ func TestAnEmbeddedSYLTIsStoredAsSyncedLyrics(t *testing.T) {
 // TestAnEmbeddedUSLTIsStoredAsPlainLyrics: an embedded USLT frame is Plain
 // lyrics — the text as written, untimed.
 func TestAnEmbeddedUSLTIsStoredAsPlainLyrics(t *testing.T) {
+	t.Parallel()
 	srv, token, _, tracks := lyricsServer(t)
 	assertPlain(t, readLyrics(t, srv, token, tracks["Embedded Plain"]), usltText)
 }
 
 // TestAnEmbeddedLYRICSTagIsStoredAsPlainLyrics: a LYRICS comment is Plain lyrics.
 func TestAnEmbeddedLYRICSTagIsStoredAsPlainLyrics(t *testing.T) {
+	t.Parallel()
 	srv, token, _, tracks := lyricsServer(t)
 	assertPlain(t, readLyrics(t, srv, token, tracks["Vorbis Plain"]), vorbisLyricsText)
 }
@@ -290,6 +294,7 @@ func TestAnEmbeddedLYRICSTagIsStoredAsPlainLyrics(t *testing.T) {
 // TestATrackWithNoLocalLyricsAnswersNone: a track with no lyrics anywhere answers
 // 200 with "lyrics": null — an empty state, never an error.
 func TestATrackWithNoLocalLyricsAnswersNone(t *testing.T) {
+	t.Parallel()
 	srv, token, _, tracks := lyricsServer(t)
 	if got := readLyrics(t, srv, token, tracks["Instrumental"]); got.Lyrics != nil {
 		t.Fatalf("lyrics = %+v, want null", got.Lyrics)
@@ -300,6 +305,7 @@ func TestATrackWithNoLocalLyricsAnswersNone(t *testing.T) {
 // the Library reads the same lyrics an Admin does; one not granted it gets the
 // existence-hiding 404, as for every other read of the Title.
 func TestLyricsAreReadableByAMemberAndHiddenOutsideTheirLibraries(t *testing.T) {
+	t.Parallel()
 	srv, admin, libID, tracks := lyricsServer(t)
 	id := tracks["Embedded Plain"]
 
@@ -318,6 +324,7 @@ func TestLyricsAreReadableByAMemberAndHiddenOutsideTheirLibraries(t *testing.T) 
 // TestARescanKeepsOneCopyOfLocalLyrics: scanning again rewrites the Local lyrics
 // rather than adding a second copy or dropping them.
 func TestARescanKeepsOneCopyOfLocalLyrics(t *testing.T) {
+	t.Parallel()
 	srv, token, libID, tracks := lyricsServer(t)
 	scanLib(t, srv, token, libID, "full")
 	assertSynced(t, readLyrics(t, srv, token, tracks["Embedded Synced"]), syltLines)
@@ -328,6 +335,7 @@ func TestARescanKeepsOneCopyOfLocalLyrics(t *testing.T) {
 // came from is deleted, the next scan clears them rather than keeping the stale
 // copy.
 func TestLyricsRemovedFromDiskAreClearedOnRescan(t *testing.T) {
+	t.Parallel()
 	root := lyricsFixture(t)
 	srv, token, libID, tracks := lyricsServerAt(t, root)
 	id := tracks["From The Sidecar"]

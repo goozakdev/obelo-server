@@ -42,6 +42,7 @@ func putAutoSkip(t *testing.T, srv *testharness.Server, token string, in any, wa
 // User turns one on; a PUT is the whole choice; another User neither sees nor
 // changes it — there is no route that names somebody else.
 func TestAutoSkipRoundTripsThroughTheUsersOwnSettings(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
 	srv.CreateUser(admin, "member", "memberpass123", "member")
@@ -81,6 +82,7 @@ func TestAutoSkipRoundTripsThroughTheUsersOwnSettings(t *testing.T) {
 // two Users, carry each viewer's own choice — Intro auto-skipped for the User who
 // turned it on and not for the one who did not, and Credits for neither.
 func TestMarkersSayWhichKindsTheViewerAutoSkips(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	admin := adminToken(t, srv)
@@ -131,6 +133,7 @@ func TestMarkersSayWhichKindsTheViewerAutoSkips(t *testing.T) {
 // is flagged watchedPoint, so a player offers "Next episode" only for it; a
 // Credits starting earlier, and every other kind, is not.
 func TestMarkersFlagTheCreditsThatAreTheWatchedPoint(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	for _, tc := range []struct {
 		name        string

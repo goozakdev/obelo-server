@@ -74,6 +74,7 @@ func getMarkers(t *testing.T, srv *testharness.Server, token, sessionID string, 
 // TestMarkersFromEDLAreServedForTheSession: the Scanner's Local Intro and Credits
 // reach the player through the session, and only its owner sees them.
 func TestMarkersFromEDLAreServedForTheSession(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -99,6 +100,7 @@ func TestMarkersFromEDLAreServedForTheSession(t *testing.T) {
 // TestCreditsMarkerPastHalfwayMarksWatched: Credits at 55% — progress at the
 // Credits start marks the Title watched, well before the flat ~90%.
 func TestCreditsMarkerPastHalfwayMarksWatched(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -118,6 +120,7 @@ func TestCreditsMarkerPastHalfwayMarksWatched(t *testing.T) {
 // TestCreditsMarkerBeforeHalfwayIsIgnored: Credits at 40% do not mark the Title
 // watched; the flat ~90% ceiling still does.
 func TestCreditsMarkerBeforeHalfwayIsIgnored(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -136,6 +139,7 @@ func TestCreditsMarkerBeforeHalfwayIsIgnored(t *testing.T) {
 // TestMarkersOfAnEndedSessionAre404: once the owner ends a session, its Markers
 // are gone with it — the same answer as a session that never was.
 func TestMarkersOfAnEndedSessionAre404(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -151,6 +155,7 @@ func TestMarkersOfAnEndedSessionAre404(t *testing.T) {
 // serves the sharer's Markers, and a sharer with none for the File answers 200
 // with an empty list, not an error, so a player simply offers no Skip.
 func TestMarkersOfARelayedSessionWhoseSharerHasNoneAreEmpty(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	titleID := f.mirroredTitle(t, "Dune")
 	status, dec, body := f.play(t, f.homeAdmin, titleID, mp4Profile())
@@ -170,6 +175,7 @@ func TestMarkersOfARelayedSessionWhoseSharerHasNoneAreEmpty(t *testing.T) {
 // once, for the Markers of the session it opened, serves them, and measures its
 // own Watched point against them.
 func TestMarkersOfARelayedSessionAreTheSharers(t *testing.T) {
+	t.Parallel()
 	f := linkForRelay(t)
 	f.sharer.Exec(`INSERT INTO markers (id, file_path, kind, source, start_ms, end_ms)
 		SELECT 'relay-intro', path, 'intro', 'local', 0, duration_ms / 5 FROM files WHERE path LIKE '%Dune (2021).mp4'`)
@@ -208,6 +214,7 @@ func TestMarkersOfARelayedSessionAreTheSharers(t *testing.T) {
 // the sharer's, so a read of its Markers is the sharer's answer alone, even
 // with a Marker provider installed here.
 func TestMarkersOfARelayedSessionNeverAskThisServersProviders(t *testing.T) {
+	t.Parallel()
 	src := newMarkerSource(t, func(q markerQuestion) []map[string]any {
 		return []map[string]any{span(q, "intro", 0.1, 0.2, 0)}
 	})

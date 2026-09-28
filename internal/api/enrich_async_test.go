@@ -104,6 +104,7 @@ func startEnrich(t *testing.T, srv *testharness.Server, token, libID, query stri
 // both halves — the reply arrived, and the pass is still in flight — because
 // either one alone is satisfiable by a pass that did nothing.
 func TestEnrichPostReturnsWithoutWaitingForThePass(t *testing.T) {
+	t.Parallel()
 	srv, gate, token, libID := gatedEnrichHarness(t)
 
 	status, ack, raw := startEnrich(t, srv, token, libID, "?mode=recheck")
@@ -142,6 +143,7 @@ func TestEnrichPostReturnsWithoutWaitingForThePass(t *testing.T) {
 // first leaf is processed, the cancellation lands, and the remaining two are left
 // exactly as the operator found their 724 rows: untouched, with nothing written.
 func TestCancellingTheEnrichRequestDoesNotCancelThePass(t *testing.T) {
+	t.Parallel()
 	srv, gate, token, libID := gatedEnrichHarness(t)
 
 	// Issue the POST with a context WE control, so we can pull it out from under
@@ -201,6 +203,7 @@ func TestCancellingTheEnrichRequestDoesNotCancelThePass(t *testing.T) {
 // A second press while a pass is running reports the pass that IS running rather
 // than queueing a duplicate behind the same per-Library lock.
 func TestSecondEnrichWhileOneIsRunningReportsAlreadyRunning(t *testing.T) {
+	t.Parallel()
 	srv, gate, token, libID := gatedEnrichHarness(t)
 
 	if status, ack, raw := startEnrich(t, srv, token, libID, "?mode=recheck"); status != http.StatusAccepted || !ack.Started {
@@ -230,6 +233,7 @@ func TestSecondEnrichWhileOneIsRunningReportsAlreadyRunning(t *testing.T) {
 // GET reports idle before a pass, running (with its mode) during one, and the
 // finished summary after.
 func TestEnrichStatusReportsIdleRunningAndFinished(t *testing.T) {
+	t.Parallel()
 	srv, gate, token, libID := gatedEnrichHarness(t)
 
 	before := enrichStatus(t, srv, token, libID)
@@ -273,6 +277,7 @@ func TestEnrichStatusReportsIdleRunningAndFinished(t *testing.T) {
 // Unknown Library → 404 on both verbs (hide-existence), and validated BEFORE
 // anything is queued so a typo never starts a pass somewhere.
 func TestEnrichUnknownLibraryIsNotFound(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 
@@ -288,6 +293,7 @@ func TestEnrichUnknownLibraryIsNotFound(t *testing.T) {
 // string and the JSON body (D029: the API no longer guesses at a mode it does not
 // have — see enrichMode).
 func TestEnrichUnknownModeIsBadRequest(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())
@@ -306,6 +312,7 @@ func TestEnrichUnknownModeIsBadRequest(t *testing.T) {
 // malformed body, same as an absent one (D029 only closed the gap for a body that
 // DECODES but names a mode this build doesn't have).
 func TestEnrichMalformedBodyFallsBackToTheDefaultMode(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())
@@ -338,6 +345,7 @@ func TestEnrichMalformedBodyFallsBackToTheDefaultMode(t *testing.T) {
 
 // The status route is Admin-only, like the pass it reports on.
 func TestEnrichStatusRequiresAdmin(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t, testharness.WithEnrichmentKey("test-key"))
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())
@@ -354,6 +362,7 @@ func TestEnrichStatusRequiresAdmin(t *testing.T) {
 // says so. This used to be silence: `enqueue` returned early when no worker was
 // running, so the button would have done nothing, forever, with no message.
 func TestEnrichWithNoWorkerRunningReportsIt(t *testing.T) {
+	t.Parallel()
 	srv := testharness.New(t,
 		testharness.WithEnrichmentKey("test-key"),
 		testharness.WithoutEnrichWorker(),
@@ -381,6 +390,7 @@ func TestEnrichWithNoWorkerRunningReportsIt(t *testing.T) {
 // A FULL queue is refused out loud too. It used to log a line the operator never
 // saw and drop the request on the floor.
 func TestEnrichWithAFullQueueReportsIt(t *testing.T) {
+	t.Parallel()
 	requireFixtures(t)
 	gate := newEnrichGate()
 	t.Cleanup(gate.let)
