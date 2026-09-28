@@ -19,6 +19,7 @@ import (
 // registry with its capability, and the call crosses the sandbox both ways — an
 // acceptance carrying the identity, and a rejection carrying none.
 func TestAnInstalledSignInProviderRegistersAndAnswers(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	const accounts = "ada:pw:subject-ada:ada.l:family,media"
 	plugintest.Install(t, dataDir, plugintest.SignInManifest("directory", accounts))
@@ -64,6 +65,7 @@ func TestAnInstalledSignInProviderRegistersAndAnswers(t *testing.T) {
 // was handed and fails the call with it in its error. The password appears in
 // neither the Plugin's last error, the error the caller gets, nor any log line.
 func TestAFailingSignInCallNeverRecordsThePassword(t *testing.T) {
+	plugins.Parallel(t)
 	const password = "s3cret-Correct-Horse"
 	provider, set, log := failingSignInProvider(t)
 
@@ -90,6 +92,7 @@ func TestAFailingSignInCallNeverRecordsThePassword(t *testing.T) {
 // failing sign-in call must not be a strike — more failures than the threshold
 // leave the provider enabled, while the failure is still recorded.
 func TestFailingSignInCallsNeverDisableTheProvider(t *testing.T) {
+	plugins.Parallel(t)
 	provider, set, _ := failingSignInProvider(t)
 
 	for i := 0; i < 2*plugins.DefaultFailureThreshold; i++ {
@@ -114,6 +117,7 @@ func TestFailingSignInCallsNeverDisableTheProvider(t *testing.T) {
 // "[redacted]" standing where that word should be, in the last error or in any
 // log line; the guest's own log line is withheld whole, as one fixed line.
 func TestAPasswordThatIsAHostWordLeavesHostTextAlone(t *testing.T) {
+	plugins.Parallel(t)
 	for _, password := range []string{"password", "the", "directory"} {
 		t.Run(password, func(t *testing.T) {
 			provider, set, log := failingSignInProvider(t)
@@ -146,6 +150,7 @@ func TestAPasswordThatIsAHostWordLeavesHostTextAlone(t *testing.T) {
 // or one the 2000-byte cut would split, appears in no log line — the guest's line
 // is withheld whole rather than flattened, truncated and searched.
 func TestAGuestLogLineIsWithheldWhateverItsShape(t *testing.T) {
+	plugins.Parallel(t)
 	long := strings.Repeat("Correct-Horse-", 150)
 	for name, password := range map[string]string{
 		"newline":  "s3cret\nHorse",
@@ -172,6 +177,7 @@ func TestAGuestLogLineIsWithheldWhateverItsShape(t *testing.T) {
 // it must give up by their own call timeout, not wait out every call ahead of
 // them in turn.
 func TestLoginsBehindAHungSignInGuestEndWithinTheCallTimeout(t *testing.T) {
+	plugins.Parallel(t)
 	const timeout = time.Second
 	const logins = 5
 	provider, _, _ := signInProviderWith(t, plugintest.SignInHangs, plugins.Options{CallTimeout: timeout})
@@ -263,6 +269,7 @@ func (quotingKV) DeletePluginKV(_, key string) error { return errors.New("no row
 // host or key it was put in: while a sign-in call runs, what the host records is
 // its own fixed sentence and the kind of thing that happened.
 func TestASignInCallRecordsNoTextOfItsOwn(t *testing.T) {
+	plugins.Parallel(t)
 	const password = "s3cretcorrecthorse"
 	const allowed = "203.0.113.7"
 	for _, tc := range []struct {
@@ -328,6 +335,7 @@ func TestASignInCallRecordsNoTextOfItsOwn(t *testing.T) {
 // credential, so its refused fetch is audited with the host it named — the
 // sign-in call's "record nothing of the guest's" must not outlive it.
 func TestASignInCallsSecrecyEndsWithTheCall(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	const accounts = "ada:pw:subject-ada:ada:"
 	m := plugintest.SignInManifest("both", accounts)
@@ -379,6 +387,7 @@ func TestASignInCallsSecrecyEndsWithTheCall(t *testing.T) {
 // off the server — exactly as a failing sign-in call is not — while what
 // happened is still recorded.
 func TestFetchViolationsDuringSignInCallsNeverDisableTheProvider(t *testing.T) {
+	plugins.Parallel(t)
 	provider, set, _ := signInProviderWith(t, plugintest.SignInFetchesThePasswordHost, plugins.Options{})
 
 	for i := 0; i < 2*plugins.DefaultFailureThreshold; i++ {
@@ -400,6 +409,7 @@ func TestFetchViolationsDuringSignInCallsNeverDisableTheProvider(t *testing.T) {
 // never answers give up by their own deadline, and the error each one answers
 // names the plugin once — not "plugin directory: plugin directory: …".
 func TestAQueuedSignInCallNamesThePluginOnce(t *testing.T) {
+	plugins.Parallel(t)
 	provider, _, _ := signInProviderWith(t, plugintest.SignInHangs, plugins.Options{CallTimeout: 500 * time.Millisecond})
 
 	const logins = 3

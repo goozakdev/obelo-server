@@ -29,6 +29,7 @@ import (
 // The person who can fix it is the author, and the person who would otherwise meet
 // it is an operator at a button that never works.
 func TestAnUnsatisfiableSettingsSchemaIsRefusedAtLoad(t *testing.T) {
+	plugins.Parallel(t)
 	cases := []struct {
 		name  string
 		field pluginapi.SettingsField
@@ -107,6 +108,7 @@ func TestAnUnsatisfiableSettingsSchemaIsRefusedAtLoad(t *testing.T) {
 // stored value ambiguous, and the primary key on plugin_settings would silently
 // pick a winner.
 func TestADuplicateSettingsKeyIsRefused(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	m := plugintest.MetadataProviderManifest("example-source", fullMusicProvides())
 	m.Settings.Fields = []pluginapi.SettingsField{
@@ -128,6 +130,7 @@ func TestADuplicateSettingsKeyIsRefused(t *testing.T) {
 // the one thing three layers agree on and none of them states twice: the column
 // holds the field's value as JSON, canonically re-encoded, whatever its type.
 func TestADeclaredValueIsStoredAsItsOwnJSON(t *testing.T) {
+	plugins.Parallel(t)
 	fields := plugintest.EverySettingsFieldType()
 	rows, errs := plugins.PrepareSettings(fields, submitted(map[string]string{
 		"account":  `"ripley"`,
@@ -175,6 +178,7 @@ func TestADeclaredValueIsStoredAsItsOwnJSON(t *testing.T) {
 // wrong, each refused by name rather than coerced. A truncated 7.5 would be a
 // value the operator did not type.
 func TestAnIntegerIsNotAStringAndNotAFraction(t *testing.T) {
+	plugins.Parallel(t)
 	fields := []pluginapi.SettingsField{{Key: "retries", Type: pluginapi.FieldInteger, Label: "Retries"}}
 	for _, raw := range []string{`"4"`, `4.5`} {
 		_, errs := plugins.PrepareSettings(fields, submitted(map[string]string{"retries": raw}), nil)
@@ -189,6 +193,7 @@ func TestAnIntegerIsNotAStringAndNotAFraction(t *testing.T) {
 // guest — a value of the wrong shape is worse than no value — and the next save is
 // where the operator is told.
 func TestAStoredValueTheManifestNoLongerAcceptsIsDropped(t *testing.T) {
+	plugins.Parallel(t)
 	fields := []pluginapi.SettingsField{
 		{Key: "region", Type: pluginapi.FieldEnum, Options: []string{"eu"}},
 		{Key: "account", Type: pluginapi.FieldString},
@@ -213,6 +218,7 @@ func TestAStoredValueTheManifestNoLongerAcceptsIsDropped(t *testing.T) {
 // implemented: the public document carries every other field's value and, for a
 // secret, only whether there is one.
 func TestASecretIsNeverInThePublicView(t *testing.T) {
+	plugins.Parallel(t)
 	fields := plugintest.EverySettingsFieldType()
 	values, secrets := plugins.PublicSettingValues(fields, []store.PluginSetting{
 		{Key: "token", Value: `"sekrit"`, Secret: true},
@@ -236,6 +242,7 @@ func TestASecretIsNeverInThePublicView(t *testing.T) {
 // own vocabulary, with an integer still a number and a multi-select still an
 // array — and nothing at all when the Plugin declares no fields.
 func TestDeclaredSettingsReachTheGuestInTheTypesItDeclared(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	m := plugintest.MetadataProviderManifest("example-source", fullMusicProvides())
 	m.Settings.Fields = plugintest.EverySettingsFieldType()
@@ -290,6 +297,7 @@ func TestDeclaredSettingsReachTheGuestInTheTypesItDeclared(t *testing.T) {
 // schema existed sees exactly what it saw before — no `values` key at all, rather
 // than an empty object it would have to tell apart from one.
 func TestAGuestThatDeclaresNoFieldsIsHandedNoValues(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("example-source", fullMusicProvides()))
 

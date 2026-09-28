@@ -22,6 +22,7 @@ import (
 // TestASDKBuiltGuestAnswersAsAWebReferenceProvider: the guest links the IMDb id
 // it is handed, under the offline policy the seam's call runs under.
 func TestASDKBuiltGuestAnswersAsAWebReferenceProvider(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	sdkguesttest.Install(t, dataDir, sdkguesttest.WebReferenceManifest("sdk-refs"))
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
@@ -52,6 +53,7 @@ func TestASDKBuiltGuestAnswersAsAWebReferenceProvider(t *testing.T) {
 // Synced source answer as Synced; a source that has nothing (404) is an empty
 // answer, not a failure.
 func TestASDKBuiltGuestAnswersAsALyricProvider(t *testing.T) {
+	plugins.Parallel(t)
 	var asked map[string]string
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/lyrics" {
@@ -108,6 +110,7 @@ func TestASDKBuiltGuestAnswersAsALyricProvider(t *testing.T) {
 // URL the Settings carry by the item's IMDb id, and answers every span it
 // returns with the length of the recording they were measured on.
 func TestASDKBuiltGuestAnswersAsAMarkerProvider(t *testing.T) {
+	plugins.Parallel(t)
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/markers" || r.URL.Query().Get("imdb") != "tt0959621" {
 			http.NotFound(w, r)
@@ -165,6 +168,7 @@ func (rt directoryTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 // wrong one as a rejection rather than a failure, and answers lookup(subject)
 // as active with the groups now, or gone.
 func TestASDKBuiltGuestAnswersAsAPasswordSignInProvider(t *testing.T) {
+	plugins.Parallel(t)
 	const directory = "http://203.0.113.7"
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {

@@ -19,6 +19,7 @@ import (
 // that can stop the second request is the offline flag. The control proves the
 // same request reaches the source without it.
 func TestAnOfflineCallRefusesEveryFetchBeforeItIsSent(t *testing.T) {
+	parallel(t)
 	var hits atomic.Int32
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)

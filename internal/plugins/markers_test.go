@@ -23,6 +23,7 @@ import (
 // candidate timed for another length included, because the host's judgment is
 // not this layer's.
 func TestAnInstalledMarkerProviderRegistersAndAnswers(t *testing.T) {
+	plugins.Parallel(t)
 	var asked pluginapi.MarkersRequest
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -72,6 +73,7 @@ func TestAnInstalledMarkerProviderRegistersAndAnswers(t *testing.T) {
 // Calls queued behind it must give up by their own call timeout, not wait out
 // every call ahead of them in turn — a read waits on them.
 func TestMarkerCallsBehindAHungGuestEndWithinTheCallTimeout(t *testing.T) {
+	plugins.Parallel(t)
 	const timeout = time.Second
 	const calls = 5
 	release := make(chan struct{})

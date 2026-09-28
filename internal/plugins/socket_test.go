@@ -298,6 +298,7 @@ func wantSteps(t *testing.T, got []string, want ...string) {
 // is dialled, audited without the address, and counted; naming the operator's
 // own address is fine.
 func TestASocketToAnAddressTheOperatorDidNotConfigureIsRefused(t *testing.T) {
+	plugins.Parallel(t)
 	configured := plainEcho(t)
 	elsewhere := plainEcho(t)
 
@@ -329,6 +330,7 @@ func TestASocketToAnAddressTheOperatorDidNotConfigureIsRefused(t *testing.T) {
 
 // TestASocketNeedsAConfiguredAddress: no address typed, no connection.
 func TestASocketNeedsAConfiguredAddress(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	values := socketValues("", "open="+far.addr, plaintextAllowed)
 	provider, _, _ := socketDirectory(t, values, plugins.Options{})
@@ -345,6 +347,7 @@ func TestASocketNeedsAConfiguredAddress(t *testing.T) {
 // sink call into a Plugin that is ALSO a socket-declaring Sign-in provider, and a
 // sign-in call into a Sign-in provider that did not declare a socket.
 func TestAPluginThatProvidesNoSignInProviderHasNoSocket(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 
 	t.Run("an Event sink", func(t *testing.T) {
@@ -411,6 +414,7 @@ func TestAPluginThatProvidesNoSignInProviderHasNoSocket(t *testing.T) {
 // an operator who chose nothing gets TLS, so a directory that speaks only
 // plaintext is never handed anything but a TLS hello.
 func TestAPlaintextConnectionIsRefusedWithoutTheOptOut(t *testing.T) {
+	plugins.Parallel(t)
 	t.Run("encryption none", func(t *testing.T) {
 		far := plainEcho(t)
 		provider, _, log := socketDirectory(t, socketValues(far.addr, "open|write=ping|read",
@@ -438,6 +442,7 @@ func TestAPlaintextConnectionIsRefusedWithoutTheOptOut(t *testing.T) {
 // upgrade the one write asking for it crosses; a second — the bind, with the
 // password in it — does not, and never reaches the far end.
 func TestAStartTLSConnectionCarriesOnlyTheUpgradeRequestInTheClear(t *testing.T) {
+	plugins.Parallel(t)
 	ca := newTestCA(t)
 	far := startTLSEcho(t, ca.goodLeaf(t))
 	provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|write=NOTSTARTTLS|write=bind-pw", map[string]any{
@@ -454,6 +459,7 @@ func TestAStartTLSConnectionCarriesOnlyTheUpgradeRequestInTheClear(t *testing.T)
 // TestThePlaintextOptOutAllowsAPlaintextConnection: with the opt-out on, a
 // connection with no encryption is opened and carries the protocol as is.
 func TestThePlaintextOptOutAllowsAPlaintextConnection(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|write=ping|read|close", plaintextAllowed), plugins.Options{})
 	wantSteps(t, steps(t, provider), "ok:h=1", "ok:4", "ok:pong", "ok")
@@ -468,6 +474,7 @@ func TestThePlaintextOptOutAllowsAPlaintextConnection(t *testing.T) {
 // certificate and one naming another host each answer an error to open — never a
 // handle — and the rule broken is in the log, in the host's words.
 func TestACertificateThatFailsVerificationIsRefused(t *testing.T) {
+	plugins.Parallel(t)
 	ca := newTestCA(t)
 	other := newTestCA(t)
 	now := time.Now()
@@ -502,6 +509,7 @@ func TestACertificateThatFailsVerificationIsRefused(t *testing.T) {
 // StartTLS, the guest writes and reads the protocol's own bytes — "ping" arrives
 // at the far end decrypted, and "pong" is exactly what the guest reads back.
 func TestATLSConnectionHandsTheGuestOnlyPlaintext(t *testing.T) {
+	plugins.Parallel(t)
 	ca := newTestCA(t)
 
 	t.Run("implicit", func(t *testing.T) {
@@ -542,6 +550,7 @@ func TestATLSConnectionHandsTheGuestOnlyPlaintext(t *testing.T) {
 // issued is refused against the system's trusted certificates and reached with
 // that CA configured — and a DIFFERENT configured CA does not reach it.
 func TestTheTrustedCASettingIsHonoured(t *testing.T) {
+	plugins.Parallel(t)
 	ca := newTestCA(t)
 	far := tlsEcho(t, ca.goodLeaf(t))
 	for _, tc := range []struct {
@@ -569,6 +578,7 @@ func TestTheTrustedCASettingIsHonoured(t *testing.T) {
 // closes it has it closed for it when the call returns — and one whose call is
 // killed at its deadline has it closed no later than that deadline.
 func TestASocketIsClosedWhenItsCallEnds(t *testing.T) {
+	plugins.Parallel(t)
 	t.Run("the call returns", func(t *testing.T) {
 		far := plainEcho(t)
 		provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|write=ping|read", plaintextAllowed), plugins.Options{})
@@ -578,8 +588,8 @@ func TestASocketIsClosedWhenItsCallEnds(t *testing.T) {
 
 	t.Run("the deadline", func(t *testing.T) {
 		far := plainEcho(t)
-		// Long enough that the call has time left, after its FetchGrace, to open.
-		const budget = 3 * time.Second
+		// Long enough that the call has time left, after its FetchGrace (1s), to open.
+		const budget = 1300 * time.Millisecond
 		provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|write=ping|read|hang", plaintextAllowed),
 			plugins.Options{CallTimeout: budget})
 		start := time.Now()
@@ -593,23 +603,35 @@ func TestASocketIsClosedWhenItsCallEnds(t *testing.T) {
 		far.mu.Lock()
 		closedAt := far.closedAt[0]
 		far.mu.Unlock()
-		if late := closedAt.Sub(start); late > budget+250*time.Millisecond {
+		if late := closedAt.Sub(start); late > budget+100*time.Millisecond {
 			t.Fatalf("the connection was closed %s after the call began, past its %s deadline", late, budget)
 		}
 	})
 
 	t.Run("the caller gives up mid-read", func(t *testing.T) {
 		// The far end never answers, so the guest's read would wait out its own
-		// deadline, seconds away; the caller's cancel must close it now.
+		// deadline, seconds away; the caller's cancel must close it now. Cancel
+		// once the guest has actually opened its socket, rather than after a fixed
+		// delay, so a slow scheduler can't fire the cancel before the socket exists.
 		far := plainEcho(t)
 		provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|read", plaintextAllowed),
-			plugins.Options{CallTimeout: 10 * time.Second})
+			plugins.Options{CallTimeout: 2 * time.Second})
 		ctx, cancel := context.WithCancel(context.Background())
-		time.AfterFunc(300*time.Millisecond, cancel)
+		go func() {
+			deadline := time.Now().Add(800 * time.Millisecond)
+			for far.count() == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			cancel()
+		}()
 		start := time.Now()
 		_, _ = provider.CheckPassword(ctx, pluginapi.SignInPasswordRequest{Username: "ada", Password: "pw"})
-		if took := time.Since(start); took > 2*time.Second {
-			t.Fatalf("the call took %s after its caller gave up at 300ms", took)
+		// A correct cancel closes the socket in well under a second (observed:
+		// single-digit ms even loaded); a cancel that failed to close it falls
+		// through to the fetch grace instead, which alone takes ~1s here (the
+		// call's own CallTimeout minus DefaultFetchGrace).
+		if took := time.Since(start); took > 500*time.Millisecond {
+			t.Fatalf("the call took %s after its caller gave up", took)
 		}
 		waitClosed(t, far, 1, time.Second)
 	})
@@ -634,6 +656,7 @@ func waitClosed(t *testing.T, far *farEnd, n int, within time.Duration) {
 // call names nothing in the next one, even though the instance — and the number
 // in its memory — survived; the next call opens a connection of its own.
 func TestASecondCallOpensAFreshConnection(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	values := socketValues(far.addr, "open|keep|write=ping|read", plaintextAllowed)
 	provider, set, _ := socketDirectory(t, values, plugins.Options{})
@@ -655,6 +678,7 @@ func TestASecondCallOpensAFreshConnection(t *testing.T) {
 // warning — and a save is judged by the host: a host:port, a certificate, and no
 // "none" without the opt-out.
 func TestTheSocketSettingsAreTheHosts(t *testing.T) {
+	plugins.Parallel(t)
 	fields := plugins.SettingsFields(plugintest.SocketSignInManifest("directory", ""))
 	var keys []string
 	var optOut pluginapi.SettingsField
@@ -716,6 +740,7 @@ func mustQuote(s string) string {
 // Extension point, a manifest field wearing one of the host's keys, and a warning
 // on a control that is not a switch are each refused at load.
 func TestASocketDeclarationIsRefusedWhereItDoesNotBelong(t *testing.T) {
+	plugins.Parallel(t)
 	onASink := plugintest.SinkManifest("sink")
 	onASink.Provides[0].Socket = true
 
@@ -754,6 +779,7 @@ func TestASocketDeclarationIsRefusedWhereItDoesNotBelong(t *testing.T) {
 // bytes. A write large enough to carry a bind after it is refused whole, and not
 // a byte of it reaches the far end.
 func TestTheWriteBeforeAStartTLSUpgradeIsSmall(t *testing.T) {
+	plugins.Parallel(t)
 	ca := newTestCA(t)
 	settings := map[string]any{
 		pluginapi.SocketTLSSetting:       pluginapi.SocketTLSStartTLS,
@@ -779,6 +805,7 @@ func TestTheWriteBeforeAStartTLSUpgradeIsSmall(t *testing.T) {
 
 // TestACallMayOpenOnlySoManySockets: the fifth open in one call is refused.
 func TestACallMayOpenOnlySoManySockets(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|open|open|open|open", plaintextAllowed), plugins.Options{})
 	wantSteps(t, steps(t, provider), "ok:h=1", "ok:h=2", "ok:h=3", "ok:h=4", "refused")
@@ -788,6 +815,7 @@ func TestACallMayOpenOnlySoManySockets(t *testing.T) {
 // of exactly 64 KiB is carried, and a read asking for more than 64 KiB is
 // answered no more than that.
 func TestOneReadOrWriteCarriesAtMost64KiB(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|write="+strings.Repeat("a", 64<<10+1), plaintextAllowed), plugins.Options{})
 	wantSteps(t, steps(t, provider), "ok:h=1", "refused")
@@ -812,6 +840,7 @@ func TestOneReadOrWriteCarriesAtMost64KiB(t *testing.T) {
 // at all fails the handshake with a Go error of its own; the log carries the
 // host's sentence, never that error's text.
 func TestAFailedHandshakeIsLoggedInTheHostsWords(t *testing.T) {
+	plugins.Parallel(t)
 	far := newFarEnd(t, func(f *farEnd, c net.Conn) {
 		_, _ = c.Write([]byte("HTTP/1.0 400 this is not TLS\r\n\r\n"))
 		pingPong(f, c, &f.plain)
@@ -831,6 +860,7 @@ func TestAFailedHandshakeIsLoggedInTheHostsWords(t *testing.T) {
 // delivery has no grant — its open is refused before anything is dialled, so the
 // far end sees only the sign-in call's one connection.
 func TestASocketGrantEndsWithItsCall(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	dataDir := t.TempDir()
 	m := plugintest.SocketSignInManifest("both", "")
@@ -859,6 +889,11 @@ func TestASocketGrantEndsWithItsCall(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "refused: this call has no socket grant") {
 		t.Fatalf("Deliver = %v, want the guest to have been refused a socket", err)
 	}
+	// The sign-in call's connection closes on its own ("open|close"); the accept
+	// counter is bumped from the listener's goroutine (newFarEnd), so wait for the
+	// close before reading it rather than racing that goroutine.
+	waitClosed(t, far, 1, time.Second)
+	time.Sleep(100 * time.Millisecond)
 	if n := far.count(); n != 1 {
 		t.Fatalf("the far end accepted %d connections, want only the sign-in call's one", n)
 	}
@@ -868,6 +903,7 @@ func TestASocketGrantEndsWithItsCall(t *testing.T) {
 // before anything is dialled — the far end sees the four connections the call
 // was allowed and no fifth, not a fifth that was connected and then dropped.
 func TestAFifthOpenIsRefusedBeforeItConnects(t *testing.T) {
+	plugins.Parallel(t)
 	far := plainEcho(t)
 	provider, _, _ := socketDirectory(t, socketValues(far.addr, "open|open|open|open|open", plaintextAllowed), plugins.Options{})
 	wantSteps(t, steps(t, provider), "ok:h=1", "ok:h=2", "ok:h=3", "ok:h=4", "refused")
@@ -883,6 +919,7 @@ func TestAFifthOpenIsRefusedBeforeItConnects(t *testing.T) {
 // TLS 1.2 is reached — the floor as a connection meets it, not as a field in a
 // configuration.
 func TestTheSocketTLSFloorHoldsInAHandshake(t *testing.T) {
+	plugins.Parallel(t)
 	ca := newTestCA(t)
 	cert := ca.goodLeaf(t)
 	legacy := func(maxVersion uint16) *farEnd {

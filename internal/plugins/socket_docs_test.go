@@ -15,6 +15,7 @@ import (
 // reads — the authoring guide and the contract's socket comment — as this
 // package's own number, so changing one without the others fails here.
 func TestThePreStartTLSCapIsTheOneTheGuideAndContractState(t *testing.T) {
+	parallel(t)
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot locate this test's own source")

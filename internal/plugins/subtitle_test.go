@@ -158,6 +158,7 @@ func germanSearch(hash string) pluginapi.SubtitleSearchRequest {
 // tracer: a manifest declaring subtitle-provider reaches the registry as the same
 // kind of value OpenSubtitles does, and both contract calls cross the sandbox.
 func TestAnInstalledSubtitleProviderRegistersAndAnswersBothCalls(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SubtitleManifest("example-subs"))
 	source := newSubtitleSource(t)
@@ -249,6 +250,7 @@ func TestAnInstalledSubtitleProviderRegistersAndAnswersBothCalls(t *testing.T) {
 // what the request carried, so an un-enriched Title with an unreadable file is
 // still searched — by query — rather than not at all (ADR-0021's match order).
 func TestAGuestSearchingWithNoHashSaysSoIsQuery(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SubtitleManifest("example-subs"))
 	source := newSubtitleSource(t)
@@ -278,6 +280,7 @@ func TestAGuestSearchingWithNoHashSaysSoIsQuery(t *testing.T) {
 // that answers with more than it gets its answer discarded — not trimmed to fit —
 // and the refusal is recorded where an Admin reads it.
 func TestAnOversizeDownloadIsRefusedWholeAndRecorded(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SubtitleManifest("greedy-subs"))
 	source := newSubtitleSource(t)
@@ -325,6 +328,7 @@ func TestAnOversizeDownloadIsRefusedWholeAndRecorded(t *testing.T) {
 // failure it is, so a Plugin that does it every time stops being called — the
 // same accounting a trapping or hanging one gets.
 func TestAPluginThatOnlyEverAnswersOversizeIsDisabled(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SubtitleManifest("greedy-subs"))
 	source := newSubtitleSource(t)
@@ -358,6 +362,7 @@ func TestAPluginThatOnlyEverAnswersOversizeIsDisabled(t *testing.T) {
 // operator placed appears on the subtitle-providers screen even when this server
 // will not run it, and enabling it says why rather than searching silently.
 func TestARefusedSubtitlePluginIsStillListedAndItsFactoryRefuses(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.InstallModule(t, dataDir, plugintest.SubtitleManifest("broken-subs"),
 		[]byte("this is not a WebAssembly module"))
@@ -386,6 +391,7 @@ func TestARefusedSubtitlePluginIsStillListedAndItsFactoryRefuses(t *testing.T) {
 // settings key, so a Plugin claiming one a Built-in already holds would move an
 // Admin's API key onto code the maintainer did not write.
 func TestASubtitlePluginCannotShadowAnAlreadyRegisteredProvider(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SubtitleManifest("opensubtitles"))
 	log := &logSink{}
@@ -424,6 +430,7 @@ func TestASubtitlePluginCannotShadowAnAlreadyRegisteredProvider(t *testing.T) {
 // Built-in it replaced took an 8 MiB subtitle and waited out the request's own
 // 30 s, where the seam's defaults are 1 MiB and 10 s.
 func TestASubtitleManifestRaisesItsBudgetAndItsByteCap(t *testing.T) {
+	plugins.Parallel(t)
 	t.Run("the budget", func(t *testing.T) {
 		dataDir := t.TempDir()
 		m := plugintest.SubtitleManifest("patient-subs")

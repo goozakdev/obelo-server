@@ -163,6 +163,7 @@ func albumRef() pluginapi.LookupRequest {
 // are, so a future edit that quietly halves the metadata budget fails here
 // instead of passing everywhere.
 func TestTheHostFetchDefaults(t *testing.T) {
+	plugins.Parallel(t)
 	for _, c := range []struct {
 		name      string
 		got, want any
@@ -194,6 +195,7 @@ func TestTheHostFetchDefaults(t *testing.T) {
 // (Scaled: the criterion says three fetches of 4 s inside the 30 s budget. The
 // budget here IS the default; only the stand-in is faster.)
 func TestAMetadataLookupHasRoomForSeveralSlowFetches(t *testing.T) {
+	plugins.Parallel(t)
 	src := newStandIn(t, 600*time.Millisecond)
 	log := &logSink{}
 	provider := fetchingProvider(t, "slow-source", "fetch-slow", src.URL, src.URL,
@@ -226,6 +228,7 @@ func TestAMetadataLookupHasRoomForSeveralSlowFetches(t *testing.T) {
 // 1.8 s budget with a 300 ms grace, so the fetch deadline lands at 1.5 s — after
 // the second fetch and before the third, exactly as 9 s does in the criterion.)
 func TestASlowSourceIsAFetchErrorAndNotADeadlineKill(t *testing.T) {
+	plugins.Parallel(t)
 	src := newStandIn(t, 600*time.Millisecond)
 	log := &logSink{}
 
@@ -271,6 +274,7 @@ func TestASlowSourceIsAFetchErrorAndNotADeadlineKill(t *testing.T) {
 // a fetch may start. That is the degenerate end of the same rule and it is the
 // cheapest possible proof that a slow source costs the Plugin nothing.
 func TestASpentBudgetRefusesTheFetchUnsent(t *testing.T) {
+	plugins.Parallel(t)
 	src := newStandIn(t, time.Hour) // never answers; nothing should ever ask it
 	log := &logSink{}
 
@@ -307,6 +311,7 @@ func TestASpentBudgetRefusesTheFetchUnsent(t *testing.T) {
 // thing — the guest itself did not return — and that is still counted, still
 // disables the Plugin after three, and still says so on the settings screen.
 func TestASpinningGuestIsStillKilledAndCounted(t *testing.T) {
+	plugins.Parallel(t)
 	log := &logSink{}
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("spinner", fullMusicProvides()))
@@ -333,6 +338,7 @@ func TestASpinningGuestIsStillKilledAndCounted(t *testing.T) {
 // callBudgetMillis and maxFetchBytes are honoured up to the host's caps and
 // CLAMPED above them, with a line at load naming both numbers — never refused.
 func TestAManifestRaisesItsBudgetAndItsByteCapUpToTheHostCap(t *testing.T) {
+	plugins.Parallel(t)
 	t.Run("a modest budget is honoured as declared", func(t *testing.T) {
 		// 700 ms, well under the cap: the guest must be killed at 700 ms and not at
 		// the 30-second default, which is how we know the declaration was read.
@@ -429,6 +435,7 @@ func TestAManifestRaisesItsBudgetAndItsByteCapUpToTheHostCap(t *testing.T) {
 // produced TWO User-Agent headers and a version that stopped existing at 0.1.0.
 // MusicBrainz requires one specific shape and throttles anything else.
 func TestEveryFetchCarriesTheHostsUserAgentExactlyOnce(t *testing.T) {
+	plugins.Parallel(t)
 	src := newStandIn(t, 0)
 	log := &logSink{}
 	provider := fetchingProvider(t, "agent-source", "fetch-once", src.URL, src.URL, plugins.Options{}, log)
@@ -482,6 +489,7 @@ func TestEveryFetchCarriesTheHostsUserAgentExactlyOnce(t *testing.T) {
 // TestAGuestThatSendsNoAgentGetsTheHostsToo: the ordinary case, so the assertion
 // above cannot be satisfied by a host that only acts when a guest misbehaves.
 func TestAGuestThatSendsNoAgentGetsTheHostsToo(t *testing.T) {
+	plugins.Parallel(t)
 	src := newStandIn(t, 0)
 	log := &logSink{}
 	provider := fetchingProvider(t, "quiet-source", "fetch-slow", src.URL, src.URL, plugins.Options{}, log)

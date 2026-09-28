@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -47,6 +48,7 @@ func bothKindsProvides() pluginapi.ManifestProvides {
 // TestAMultiKindManifestIsOneRegistrationServingBothKinds: the Descriptor carries
 // both kinds, and the registry holds exactly one entry for the id.
 func TestAMultiKindManifestIsOneRegistrationServingBothKinds(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("both-kinds", bothKindsProvides()))
 
@@ -83,6 +85,7 @@ func TestAMultiKindManifestIsOneRegistrationServingBothKinds(t *testing.T) {
 // plugin-scoped key-value namespace, which is the instance's own state: what the
 // video view writes, the music view reads.
 func TestTwoChainsGetTwoViewsOverOneInstance(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("both-kinds", bothKindsProvides()))
 
@@ -153,6 +156,7 @@ func TestTwoChainsGetTwoViewsOverOneInstance(t *testing.T) {
 // tight loop, it would happen. metaState.mu is what makes it impossible, and this
 // fails loudly if it is ever removed.
 func TestAVideoCallAndAMusicCallCannotInterleaveInOneInstance(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("both-kinds", bothKindsProvides()))
 
@@ -212,6 +216,7 @@ func TestAVideoCallAndAMusicCallCannotInterleaveInOneInstance(t *testing.T) {
 // music ref, each on its own terms. A supplement that quietly stopped serving one
 // kind would still pass every registration test above.
 func TestAMultiKindGuestAnswersBothKinds(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("both-kinds", bothKindsProvides()))
 

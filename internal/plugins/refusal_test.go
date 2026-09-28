@@ -76,6 +76,7 @@ func refusingProvider(t *testing.T, log *logSink) (pluginapi.MetadataProvider, *
 // own counter runs 1, 2, 3, 4, 5, which is only possible if ONE instance answered
 // all five: a rebuilt instance would have answered "refusal 1" each time.
 func TestAMetadataGuestThatAnswersAnErrorIsNotStruck(t *testing.T) {
+	plugins.Parallel(t)
 	const lookups = 5
 	if lookups <= plugins.DefaultFailureThreshold {
 		t.Fatalf("this test needs more than %d lookups to say anything", plugins.DefaultFailureThreshold)
@@ -119,6 +120,7 @@ func TestAMetadataGuestThatAnswersAnErrorIsNotStruck(t *testing.T) {
 // is not: a failure is news about the Plugin and stays readable, a refusal is
 // news about one call and a source that answered properly has settled it.
 func TestACleanMetadataErrorSurfacesAsLastErrorAndIsRetiredByASuccess(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("moody-source", fullMusicProvides()))
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
@@ -160,6 +162,7 @@ func TestACleanMetadataErrorSurfacesAsLastErrorAndIsRetiredByASuccess(t *testing
 // The alternative — a refusal clearing the streak — is what would let a Plugin
 // that traps two calls out of three never reach the threshold at all.
 func TestACleanMetadataErrorLeavesTheFailureStreakAlone(t *testing.T) {
+	plugins.Parallel(t)
 	log := &logSink{}
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("half-broken", fullMusicProvides()))
@@ -207,6 +210,7 @@ func TestACleanMetadataErrorLeavesTheFailureStreakAlone(t *testing.T) {
 // repeated here because this file is where somebody widening the refusal rule
 // will be reading, and the cost of the duplicate is one wall-clock second.)
 func TestASpinningMetadataGuestIsStillKilledCountedAndDisabled(t *testing.T) {
+	plugins.Parallel(t)
 	log := &logSink{}
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("still-spinning", fullMusicProvides()))
@@ -238,6 +242,7 @@ func TestASpinningMetadataGuestIsStillKilledCountedAndDisabled(t *testing.T) {
 // three of them still stop the Plugin. UNCHANGED, and the per-instance counter
 // reading 1 every time is the proof that the instance really was rebuilt.
 func TestASinkGuestThatAnswersAnErrorIsStillStruck(t *testing.T) {
+	plugins.Parallel(t)
 	log := &logSink{}
 	dataDir := t.TempDir()
 	target := newReceiver(t)

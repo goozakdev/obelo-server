@@ -30,6 +30,7 @@ import (
 // element, in contract order. Adding a ninth Metadata provider call breaks this
 // until the SDK has one too.
 func TestTheSDKsMetadataExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	host := []string{
 		exportMetadataLookup,
 		exportMetadataSearch,
@@ -47,6 +48,7 @@ func TestTheSDKsMetadataExportNamesAreTheHosts(t *testing.T) {
 // seam, whose two exports carry the obelo_ prefix the metadata ones do not — a
 // spelling nobody would guess and exactly the kind a copy gets wrong.
 func TestTheSDKsSubtitleExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	host := []string{exportSubtitleSearch, exportSubtitleDownload}
 	assertSameList(t, "the Subtitle provider exports", host, pluginsdk.SubtitleExports())
 }
@@ -54,6 +56,7 @@ func TestTheSDKsSubtitleExportNamesAreTheHosts(t *testing.T) {
 // TestTheSDKsSignInRedirectExportNamesAreTheHosts is the same for the Sign-in
 // provider's redirect flow.
 func TestTheSDKsSignInRedirectExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	host := []string{exportSignInAuthorizeURL, exportSignInExchange}
 	assertSameList(t, "the redirect Sign-in provider exports", host, pluginsdk.SignInRedirectExports())
 }
@@ -61,6 +64,7 @@ func TestTheSDKsSignInRedirectExportNamesAreTheHosts(t *testing.T) {
 // TestTheSDKsSignInRecheckExportNamesAreTheHosts is the same for the Sign-in
 // provider's re-check calls.
 func TestTheSDKsSignInRecheckExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	host := []string{exportSignInLookup, exportSignInRefresh}
 	assertSameList(t, "the Sign-in provider re-check exports", host, pluginsdk.SignInRecheckExports())
 }
@@ -69,6 +73,7 @@ func TestTheSDKsSignInRecheckExportNamesAreTheHosts(t *testing.T) {
 // point whose contract is one call — the password flow's, a Web reference
 // provider's, a Lyric provider's and a Marker provider's.
 func TestTheSDKsOneCallExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	assertSameList(t, "the one-call Extension point exports",
 		[]string{exportSignInPassword, exportWebReferenceLinks, exportLyricProviderLyrics, exportMarkerProviderMarkers},
 		[]string{pluginsdk.ExportSignInPassword, pluginsdk.ExportWebReferenceLinks, pluginsdk.ExportLyricProviderLyrics,
@@ -79,6 +84,7 @@ func TestTheSDKsOneCallExportNamesAreTheHosts(t *testing.T) {
 // whatever seam it fills, plus the Event sink's one call and the host module's
 // namespace.
 func TestTheSDKsABIExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	assertSameList(t, "the ABI exports",
 		[]string{exportAlloc, exportFree, exportLastError}, pluginsdk.ABIExports())
 
@@ -101,6 +107,7 @@ func TestTheSDKsABIExportNamesAreTheHosts(t *testing.T) {
 // for every plugin built with the SDK, with a message about a missing import and
 // nothing about which side is wrong.
 func TestTheSDKsHostFunctionNamesAreTheHosts(t *testing.T) {
+	parallel(t)
 	ctx := context.Background()
 	rt := wazero.NewRuntime(ctx)
 	defer func() { _ = rt.Close(ctx) }()

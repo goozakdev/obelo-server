@@ -32,3 +32,26 @@ func ExemptDialTo(ctx context.Context, host, port string) context.Context {
 func LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
 	return lookupIPAddr(ctx, host)
 }
+
+// testSlots bounds how many of this package's parallel tests run at once. Nearly
+// every one calls a guest under a wall-clock budget, and under amd64 emulation
+// (make check-amd64) a hundred-odd guests started together overrun those budgets.
+// A few at a time keeps most of the speed-up and leaves every budget its margin.
+var testSlots = make(chan struct{}, 4)
+
+// parallel is t.Parallel holding one of testSlots until the test and its
+// subtests have finished. Tests here call it instead of t.Parallel.
+//
+// Call it only from a top-level test, never from a subtest of one that already
+// holds a slot: the subtest's t.Parallel() would pause it until its parent
+// returns, but the parent is waiting on t.Cleanup to release the very slot the
+// subtest is now blocked trying to acquire — a deadlock.
+func parallel(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	testSlots <- struct{}{}
+	t.Cleanup(func() { <-testSlots })
+}
+
+// Parallel is parallel for the external test package.
+func Parallel(t *testing.T) { t.Helper(); parallel(t) }

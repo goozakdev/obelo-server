@@ -20,6 +20,7 @@ import (
 // URL the Settings carry, and the source's answer comes back unchanged — the
 // host's judgment is not this layer's.
 func TestAnInstalledLyricProviderRegistersAndAnswers(t *testing.T) {
+	plugins.Parallel(t)
 	var asked pluginapi.LyricsRequest
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -67,6 +68,7 @@ func TestAnInstalledLyricProviderRegistersAndAnswers(t *testing.T) {
 // declares only kinds without lyrics. That is said once, naming the Plugin, when
 // it is registered — and not for one that declares music.
 func TestALyricProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	none := plugintest.LyricManifest("kindless-lyrics", "https://lyrics.example.test")
 	none.Provides[0].Kinds = nil

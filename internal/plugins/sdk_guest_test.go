@@ -80,6 +80,7 @@ func sdkInstall(t *testing.T, dataDir, id, mode string, allowedHosts ...string) 
 // ordinary command, answers lookup, search and artwork candidates across the
 // sandbox with the contract's own shapes.
 func TestASDKBuiltGuestAnswersTheThreeMandatoryCalls(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	s := sdkInstall(t, dataDir, "sdk-source", "")
 
@@ -152,6 +153,7 @@ func TestASDKBuiltGuestAnswersTheThreeMandatoryCalls(t *testing.T) {
 // SDK's Host.Settings, inside one call. The guest writes what it saw into the
 // record's overview, which is somewhere a test can read it.
 func TestASDKBuiltGuestReadsTheSettingsTheHostResolved(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	s := sdkInstall(t, dataDir, "sdk-source", "settings")
 	s.Language = "de-DE"
@@ -198,6 +200,7 @@ func TestASDKBuiltGuestReadsTheSettingsTheHostResolved(t *testing.T) {
 // TestASDKBuiltGuestRoundTripsItsOwnKeyValueNamespace: kv_set and kv_get through
 // the SDK's wrappers, landing in the store under the plugin's own id.
 func TestASDKBuiltGuestRoundTripsItsOwnKeyValueNamespace(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	s := sdkInstall(t, dataDir, "sdk-source", "kv")
 
@@ -232,6 +235,7 @@ func TestASDKBuiltGuestRoundTripsItsOwnKeyValueNamespace(t *testing.T) {
 // allowlist — an author cannot know which mirror an operator points at — so a
 // local httptest server stands in for the source without the manifest naming it.
 func TestASDKBuiltGuestFetchesThroughTheHost(t *testing.T) {
+	plugins.Parallel(t)
 	var seen []string
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.Path)
@@ -274,6 +278,7 @@ func TestASDKBuiltGuestFetchesThroughTheHost(t *testing.T) {
 // paces every Fetch; this only has to make several fetches through one instance
 // and watch the source's own clock, which the sandbox cannot fake.
 func TestASDKBuiltGuestPacesFetchesByTheOperatorsInterval(t *testing.T) {
+	plugins.Parallel(t)
 	const interval = 300 * time.Millisecond
 	var requestTimes struct {
 		times []time.Time
@@ -353,6 +358,7 @@ func TestASDKBuiltGuestPacesFetchesByTheOperatorsInterval(t *testing.T) {
 // observe it — because a guest that ignored ctx and had to be capped is not the
 // same fact as one that answered cleanly.
 func TestAGuestThatIgnoresCtxIsStillCappedAtItsCallDeadline(t *testing.T) {
+	plugins.Parallel(t)
 	const budget = 1 * time.Second
 	dataDir := t.TempDir()
 	s := sdkInstall(t, dataDir, "sdk-source", "blind-sleep")
@@ -403,18 +409,19 @@ func TestAGuestThatIgnoresCtxIsStillCappedAtItsCallDeadline(t *testing.T) {
 // backstop — a well-behaved plugin gets an ANSWER, not a strike, and the instance
 // is kept.
 func TestASDKBuiltGuestAnswersUnavailableInsteadOfBeingKilledByItsOwnPacing(t *testing.T) {
+	plugins.Parallel(t)
 	// Bigger than DefaultFetchGrace (1 s): a budget that left no fetch window at
 	// all would fail the FIRST Lookup for a reason that has nothing to do with
 	// pacing.
-	const budget = 3 * time.Second
+	const budget = 1300 * time.Millisecond
 	// A ctx-timed-out Wait never marks the pacer's last-fetch time (Pacer.Wait
 	// returns before that line), so each failed attempt below still leaves the
 	// NEXT one racing against the first call's timestamp — and real time keeps
 	// passing while this loop runs. The interval has to clear everything four
-	// attempts at roughly one call-window (~2.25 s here) apiece could burn
-	// through, or a later attempt's wait would already be satisfied by elapsed
-	// wall time alone and it would answer matched rather than unavailable.
-	const rateLimit = 60 * time.Second
+	// attempts at roughly one call-window apiece could burn through, or a later
+	// attempt's wait would already be satisfied by elapsed wall time alone and it
+	// would answer matched rather than unavailable.
+	const rateLimit = 8 * time.Second
 
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -450,7 +457,7 @@ func TestASDKBuiltGuestAnswersUnavailableInsteadOfBeingKilledByItsOwnPacing(t *t
 		t.Fatalf("first Lookup = %v/%q (%s), want a clean match to seed the pacer", err, first.Outcome, first.Detail)
 	}
 
-	const tolerance = 300 * time.Millisecond
+	const tolerance = 200 * time.Millisecond
 	for i := 0; i < 4; i++ {
 		start := time.Now()
 		resp, err := provider.Lookup(context.Background(), pluginapi.LookupRequest{
@@ -486,6 +493,7 @@ func TestASDKBuiltGuestAnswersUnavailableInsteadOfBeingKilledByItsOwnPacing(t *t
 // strike — instead of answering. Told the truth, it notices at ~1.5 s and
 // answers "unavailable" cleanly, well inside the caller's own deadline.
 func TestASDKBuiltGuestAnswersUnavailableWhenTheCallersOwnDeadlineIsShorterThanTheBudget(t *testing.T) {
+	plugins.Parallel(t)
 	const callerDeadline = 1500 * time.Millisecond
 	const metadataBudget = 30 * time.Second
 	const rateLimit = 5 * time.Second
@@ -553,6 +561,7 @@ func TestASDKBuiltGuestAnswersUnavailableWhenTheCallersOwnDeadlineIsShorterThanT
 // (OpenSubtitles' "Test connection" against a 10 s ctx and the host's own
 // larger nominal budget) is a Subtitle provider call, not a metadata one.
 func TestASDKBuiltGuestSubtitleSeamAnswersUnavailableWhenTheCallersOwnDeadlineIsShorterThanTheBudget(t *testing.T) {
+	plugins.Parallel(t)
 	const callerDeadline = 1500 * time.Millisecond
 	const subtitleBudget = 30 * time.Second
 	const rateLimit = 5 * time.Second
@@ -628,17 +637,19 @@ func TestASDKBuiltGuestSubtitleSeamAnswersUnavailableWhenTheCallersOwnDeadlineIs
 // nominal budget computed ahead of the queue is a number the wait has already
 // made false.
 //
-// The first call is unbounded and, seeded by pacing, sleeps ~5s inside callMu,
-// holding it the whole time. The second call's own ctx allows 8s from the
-// moment it is ISSUED, so by the time it clears the queue only ~3s of it is
-// left. Told that truth, its own pacer notices its wait cannot fit and answers
-// unavailable, cleanly, well inside its 8s. Told the stale ~8s the queue has
-// already spent, it does not notice in time and is deadline-killed instead — a
-// strike, with FailureThreshold 1 here so ONE kill is enough to observe it.
+// The first call is unbounded and, seeded by pacing, sleeps ~rateLimit inside
+// callMu, holding it the whole time. The second call's own ctx allows
+// callerDeadline from the moment it is ISSUED, so by the time it clears the
+// queue only a fraction of it is left. Told that truth, its own pacer notices
+// its wait cannot fit and answers unavailable, cleanly, well inside its own
+// deadline. Told the stale deadline the queue has already spent, it does not
+// notice in time and is deadline-killed instead — a strike, with
+// FailureThreshold 1 here so ONE kill is enough to observe it.
 func TestASubtitleCallQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *testing.T) {
-	const callerDeadline = 8 * time.Second
-	const subtitleBudget = 30 * time.Second
-	const rateLimit = 5 * time.Second
+	plugins.Parallel(t)
+	const callerDeadline = 1600 * time.Millisecond
+	const subtitleBudget = 6 * time.Second
+	const rateLimit = 1 * time.Second
 
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -679,7 +690,7 @@ func TestASubtitleCallQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 	}
 
 	// The FIRST call: unbounded, and the pace since the seed above makes it
-	// sleep ~5s inside callMu, holding it the whole time.
+	// sleep ~1s inside callMu, holding it the whole time.
 	holding := make(chan struct{})
 	go func() {
 		close(holding)
@@ -690,7 +701,7 @@ func TestASubtitleCallQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 	<-holding
 	// A short, deterministic head start: an idle lock is taken in microseconds,
 	// so this is enough for the goroutine above to be the one holding callMu
-	// (about to for ~5s), without meaningfully shortening the queue this test
+	// (about to for ~1s), without meaningfully shortening the queue this test
 	// measures.
 	time.Sleep(100 * time.Millisecond)
 
@@ -729,9 +740,10 @@ func TestASubtitleCallQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 // longer notices anything, and only the host's real deadline can still stop it,
 // which is a kill either way.
 func TestASinkDeliveryQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *testing.T) {
-	const callerDeadline = 8 * time.Second
-	const callTimeout = 30 * time.Second
-	const rateLimit = 5 * time.Second
+	plugins.Parallel(t)
+	const callerDeadline = 1600 * time.Millisecond
+	const callTimeout = 6 * time.Second
+	const rateLimit = 1 * time.Second
 
 	dataDir := t.TempDir()
 	m := sdkguesttest.SinkManifest("sdk-sink-queue")
@@ -758,7 +770,7 @@ func TestASinkDeliveryQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 	}
 
 	// The FIRST delivery: unbounded, and the pace since the seed above makes it
-	// sleep ~5s inside callMu, holding it the whole time.
+	// sleep ~1s inside callMu, holding it the whole time.
 	holding := make(chan struct{})
 	go func() {
 		close(holding)
@@ -791,7 +803,7 @@ func TestASinkDeliveryQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 // waiting for callMu must never reach the guest at all — not be invoked and
 // deadline-killed, and not be counted as a failure. The lock-contention shape
 // is TestASubtitleCallQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait's;
-// what is new is the caller's own deadline (3s) being SHORTER than the ~5s the
+// what is new is the caller's own deadline being SHORTER than the hold the
 // first call holds callMu for, so by the time this call finally gets the lock
 // its own ctx is already done, rather than merely short once it starts.
 //
@@ -801,9 +813,10 @@ func TestASinkDeliveryQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 // than closed and dropped is call C below: it must still be paced against A's
 // own last fetch, which only a surviving Pacer remembers.
 func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.T) {
-	const callerDeadline = 3 * time.Second
-	const subtitleBudget = 30 * time.Second
-	const rateLimit = 5 * time.Second
+	plugins.Parallel(t)
+	const callerDeadline = 600 * time.Millisecond
+	const subtitleBudget = 6 * time.Second
+	const rateLimit = 1 * time.Second
 
 	var hits int32
 	var fetchMu sync.Mutex
@@ -851,7 +864,7 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 	}
 
 	// The FIRST call: unbounded, and the pace since the seed above makes it sleep
-	// ~5s inside callMu, holding it the whole time. aDone closes once it has
+	// ~1s inside callMu, holding it the whole time. aDone closes once it has
 	// released the lock, so the assertion below can tell "queued behind it" from
 	// "raced it".
 	aDone := make(chan struct{})
@@ -885,8 +898,8 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 			"instead of queuing behind it, so this run proves nothing")
 	}
 	if err == nil {
-		t.Fatal("SearchSubtitles returned nil for a call whose own 3s deadline had already passed while it " +
-			"queued behind the ~5s holder")
+		t.Fatal("SearchSubtitles returned nil for a call whose own 600ms deadline had already passed while it " +
+			"queued behind the ~1s holder")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want it to wrap context.DeadlineExceeded — the caller's own timeout, not a trap "+
@@ -933,7 +946,7 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 			"from a nil/empty result", len(fetchTimes), countBeforeC+1)
 	}
 	cFetch := fetchTimes[len(fetchTimes)-1]
-	if gap := cFetch.Sub(aFetch); gap < rateLimit-time.Second {
+	if gap := cFetch.Sub(aFetch); gap < rateLimit-200*time.Millisecond {
 		t.Errorf("call C's fetch arrived only %v after A's last fetch, want at least the %v operator "+
 			"interval — the instance (and its Pacer) must have been kept across the call queued past its "+
 			"own deadline, not closed and dropped", gap, rateLimit)
@@ -950,6 +963,7 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 // same known state an undeclared capability produces and is NOT an error: nothing
 // is counted against the plugin and the host is free to read the paste itself.
 func TestASDKBuiltGuestAnswersUnavailableForACapabilityItDoesNotImplement(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	s := sdkInstall(t, dataDir, "sdk-source", "")
 
