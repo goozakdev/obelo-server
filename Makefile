@@ -157,7 +157,7 @@ PLUGIN_BUILD_DIR := bin/plugins
 
 GOPKGS := ./... ./pluginapi/... ./pluginsdk/... $(PLUGIN_PKGS)
 
-.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-markerdetect-docker test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
+.PHONY: all build build-release web go-build go-build-release plugins keytool pluginsign run test test-go test-go-tailscale test-go-amd64 test-go-amd64-tailscale amd64-pkgs test-markerdetect-docker test-quick test-web test-e2e check check-amd64 check-release check-fmt vet vet-tailscale check-placeholder check-bundle check-no-bundled-modules-tracked check-credentials-free check-web fmt clean
 
 all: build
 
@@ -366,6 +366,28 @@ test-markerdetect-docker:
 	    $(AMD64_SETUP); \
 	    command -v ffmpeg >/dev/null || { echo "ERROR: no ffmpeg on PATH."; exit 1; }; \
 	    go test $(GOTAGS) -count=1 ./internal/markerdetect/...'
+
+## test-quick: a fast developer loop, NOT a gate — `make check` and `test-go` are
+## unchanged and still run everything below at commit time.
+##
+## Runs the Go suite with `-short` (default tags only, no tailscale variant, no
+## amd64 container) and the web component suite without its typecheck pass. A
+## handful of named tests across the tree — a few outside internal/api that
+## boot a full server or App, plus every ffmpeg-synthesis test in
+## internal/markerdetect and internal/transcode — check testing.Short() and
+## skip themselves; everything else still runs. `make check`'s Go suite passes
+## no such flag, so those tests still run there.
+##
+## NEEDS `plugins` first, same reason test-go does: internal/bundled embeds
+## the built modules, and TestEveryBundledModuleIsPresent is not one of the
+## tests -short skips.
+##
+## Go's test cache is left ON here (no -count=1), unlike test-go-amd64's proof
+## step: the point of this target is a fast loop, and a developer re-running it
+## after touching one package wants the untouched ones answered from cache.
+test-quick: plugins
+	go test $(GOTAGS) -short $(GOPKGS)
+	cd $(WEB_DIR) && npm test
 
 ## test-web: the vitest component suite. An alias for check-web (below), which is
 ## the single implementation, so the gate and the developer-facing name cannot drift.

@@ -87,6 +87,9 @@ func TestSegmentBoundariesEdges(t *testing.T) {
 // the elst edit-list shift — the real-movie mp4 shape), moov-at-end (non-faststart),
 // plain m4v, and an ffmpeg-authored mkv (Cues).
 func TestKeyframeBoundariesMatchFfmpeg(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg; skipped under -short")
+	}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
 	}
@@ -167,6 +170,9 @@ func TestKeyframeBoundariesMatchFfmpeg(t *testing.T) {
 // TestContainerKeyframesMatchFfprobe pins the index parsers against ffprobe's
 // whole-file frame scan (the ground truth): the same keyframes, the same times.
 func TestContainerKeyframesMatchFfprobe(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg/ffprobe; skipped under -short")
+	}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
 	}

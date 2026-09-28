@@ -12,6 +12,9 @@ import (
 // of its own from New. Close ends it and waits for it, so no re-check can ask a
 // provider, or revoke a session, against a server that has shut down.
 func TestCloseStopsTheSignInRecheckLoop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: boots a full App; skipped under -short")
+	}
 	bundledtest.Ensure(t)
 	cfg := config.Defaults()
 	cfg.DataDir = t.TempDir()

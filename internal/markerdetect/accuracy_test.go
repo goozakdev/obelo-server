@@ -97,6 +97,9 @@ func underATone(p piece) piece {
 
 func requireFFmpeg(t *testing.T) {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg; skipped under -short")
+	}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		if os.Getenv(requireFFmpegEnv) == "1" {
 			t.Fatalf("ffmpeg not on PATH, and %s=1 says this run is for ffmpeg", requireFFmpegEnv)

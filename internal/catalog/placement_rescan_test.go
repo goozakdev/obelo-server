@@ -1396,6 +1396,9 @@ decision Season 01/The Bear (2022) - S01E08 - Braciole.mkv unassigned g=-1 s=-1 
 //   - the second scan changes nothing either (a writer that CONVERGES on pass two
 //     was still wrong on pass one, and pass one is the unattended one).
 func TestApplyThenRescanIsANoop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: rebuilds a full rescan fixture per case; skipped under -short")
+	}
 	for _, tc := range rescanCases {
 		for _, mode := range []struct {
 			name   string

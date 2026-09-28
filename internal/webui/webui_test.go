@@ -17,6 +17,9 @@ import (
 
 // The handshake still works through the wrapped handler — /api/v1 is untouched.
 func TestAPIHandshakeUnaffected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: boots a full server via testharness; skipped under -short")
+	}
 	srv := testharness.New(t)
 
 	var info struct {

@@ -1178,6 +1178,9 @@ func TestShutdownDrainsTheTailnetTLSListenerWithLiveSSESubscriber(t *testing.T) 
 // listener has TLS: HSTS is absent on both halves of the pair. It is sticky per
 // hostname, and the plain path still exists on that very hostname.
 func TestTailnetPairSharesSessionsAndSplitsCookies(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: boots a full tailnet listener pair; skipped under -short")
+	}
 	const (
 		secureName = "__Secure-ms_media"
 		plainName  = "ms_media_plain"
