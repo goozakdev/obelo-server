@@ -170,6 +170,7 @@ func (r *receiver) received() []post {
 // event — which comes out the other side as a signed POST at an address the
 // operator chose.
 func TestAGuestDeliversASignedDocument(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink"))
@@ -226,6 +227,7 @@ func TestAGuestDeliversASignedDocument(t *testing.T) {
 // kept no state between calls would pass this either way, so what it really pins is
 // that a long run of calls neither leaks nor trips the recycle budget.
 func TestManyDeliveriesReuseOneInstance(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink"))
@@ -249,6 +251,7 @@ func TestManyDeliveriesReuseOneInstance(t *testing.T) {
 // TestAGuestCannotReachAHostItsManifestDoesNotAllow: the refusal, the audit line,
 // and the fact that the guest learns nothing beyond "refused".
 func TestAGuestCannotReachAHostItsManifestDoesNotAllow(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	// The manifest allows one host, and it is not the one the guest will try.
@@ -284,6 +287,7 @@ func TestAGuestCannotReachAHostItsManifestDoesNotAllow(t *testing.T) {
 // network. 169.254.169.254 is on the allowlist here and is refused anyway, which is
 // the case the PRD names by number.
 func TestAPrivateAddressIsRefusedEvenInsideTheAllowlist(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink", "169.254.169.254"))
@@ -313,6 +317,7 @@ func TestAPrivateAddressIsRefusedEvenInsideTheAllowlist(t *testing.T) {
 // could never post anywhere. The URL here is on loopback — which is precisely the
 // deployment this product is for — and the manifest allows nothing at all.
 func TestTheOperatorsOwnTargetNeedsNoAllowlistEntry(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink"))
@@ -334,6 +339,7 @@ func TestTheOperatorsOwnTargetNeedsNoAllowlistEntry(t *testing.T) {
 // through a guest, and it is why a Plugin gets a guarded client rather than a bare
 // one.
 func TestARedirectIntoPrivateSpaceIsRefused(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -363,6 +369,7 @@ func TestARedirectIntoPrivateSpaceIsRefused(t *testing.T) {
 // instance is discarded and rebuilt, and three in a row stop the Plugin being
 // called at all — with the error an operator reads on the settings screen.
 func TestAPanickingGuestIsDisabledAfterARunOfFailures(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("bad-sink"))
@@ -398,11 +405,16 @@ func TestAPanickingGuestIsDisabledAfterARunOfFailures(t *testing.T) {
 // by the runtime, not asked to stop, and the call comes back in something like the
 // budget rather than never.
 func TestAHangingGuestIsStoppedByItsDeadline(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("slow-sink"))
 
-	set := load(t, dataDir, &logSink{}) // CallTimeout is 2s
+	// A short CallTimeout: what this test proves (the deadline stops a guest that
+	// never returns, and the instance is rebuilt afterward) does not depend on the
+	// budget's size.
+	const budget = 200 * time.Millisecond
+	set := loadWith(t, dataDir, &logSink{}, plugins.Options{CallTimeout: budget})
 	sink := sinkFor(t, set, "slow-sink", pluginapi.Settings{
 		Enabled: true, Secret: "s", URL: target.srv.URL + "/?obelo-mode=hang",
 		URLEntered: true,
@@ -414,7 +426,7 @@ func TestAHangingGuestIsStoppedByItsDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("Deliver returned nil for a guest that never returns")
 	}
-	if elapsed > 30*time.Second {
+	if elapsed > 10*budget {
 		t.Fatalf("the call took %v; the deadline did not stop the guest", elapsed)
 	}
 
@@ -430,6 +442,7 @@ func TestAHangingGuestIsStoppedByItsDeadline(t *testing.T) {
 // (ADR-0057 decision 2) and the Plugin's own budget is a ceiling, not a floor. A
 // sink worker whose delivery timeout is shorter must get its call back sooner.
 func TestACallerDeadlineBoundsAGuestBelowItsOwnBudget(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("slow-sink"))
@@ -462,6 +475,7 @@ func TestACallerDeadlineBoundsAGuestBelowItsOwnBudget(t *testing.T) {
 // host actually sent rather than a timing inference: it must be positive and
 // close to the caller's 3 s, not the nominal 10 s.
 func TestASinkGuestReceivesTheRemainingBudgetNotTheNominalOne(t *testing.T) {
+	plugins.Parallel(t)
 	const callerDeadline = 3 * time.Second
 	const callTimeout = 10 * time.Second
 
@@ -506,6 +520,7 @@ func TestASinkGuestReceivesTheRemainingBudgetNotTheNominalOne(t *testing.T) {
 // violations are counted apart from failures — a Plugin reaching for a host it said
 // it would not is doing something wrong even on the calls where it works.
 func TestRepeatedAllowlistViolationsDisableAPlugin(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	target := newReceiver(t)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("nosy-sink"))
@@ -532,6 +547,7 @@ func TestRepeatedAllowlistViolationsDisableAPlugin(t *testing.T) {
 // TestAnUnsupportedAPIVersionIsRefusedNamingWhichSideToUpgrade: the ADR-0055
 // posture applied to a Plugin. "Incompatible" is useless to the person reading it.
 func TestAnUnsupportedAPIVersionIsRefusedNamingWhichSideToUpgrade(t *testing.T) {
+	plugins.Parallel(t)
 	for _, tc := range []struct {
 		name       string
 		apiVersion int
@@ -579,6 +595,7 @@ func TestAnUnsupportedAPIVersionIsRefusedNamingWhichSideToUpgrade(t *testing.T) 
 // TestRefusalsThatAreNotAVersionMismatch walks the rest of the ways a hand-placed
 // Plugin does not load. Every one of them is listed, disabled, with a sentence.
 func TestRefusalsThatAreNotAVersionMismatch(t *testing.T) {
+	plugins.Parallel(t)
 	t.Run("a manifest that is not JSON", func(t *testing.T) {
 		dataDir := t.TempDir()
 		plugintest.WriteRawManifest(t, dataDir, "broken", []byte("{ this is not json"))
@@ -663,6 +680,7 @@ func mustStatus(t *testing.T, set *plugins.Set, id string) plugins.Status {
 // secret is stored under. A Plugin claiming it would move that secret onto code the
 // maintainer did not write, so the Plugin loses.
 func TestAPluginCannotShadowABuiltIn(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("webhook"))
 	set := load(t, dataDir, &logSink{})
@@ -688,6 +706,7 @@ func TestAPluginCannotShadowABuiltIn(t *testing.T) {
 // TestNoPluginsDirectoryIsANoOp: every server today. It must be silent and empty,
 // not an error and not a warning.
 func TestNoPluginsDirectoryIsANoOp(t *testing.T) {
+	plugins.Parallel(t)
 	log := &logSink{}
 	set, err := plugins.Load(context.Background(), filepath.Join(t.TempDir(), "plugins"), plugins.Options{Logf: log.logf})
 	if err != nil {
@@ -717,6 +736,7 @@ func TestNoPluginsDirectoryIsANoOp(t *testing.T) {
 // this server's own module, and nothing else. A module that asked for a third
 // namespace would be refused before it ran.
 func TestTheSandboxGrantsNothingButTheTwoHostFunctions(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("example-sink"))
 	set := load(t, dataDir, &logSink{})

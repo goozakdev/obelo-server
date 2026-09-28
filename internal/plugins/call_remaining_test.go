@@ -11,6 +11,7 @@ import (
 // passed by the time this runs. It is an internal test (package plugins, not
 // plugins_test) because callRemainingMillis is unexported.
 func TestCallRemainingMillis(t *testing.T) {
+	parallel(t)
 	t.Run("no deadline is nil", func(t *testing.T) {
 		got := callRemainingMillis(context.Background())
 		if got != nil {

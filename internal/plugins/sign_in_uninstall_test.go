@@ -116,6 +116,7 @@ func (f *signInUninstallFixture) wantDirectoryUntouched(t *testing.T) {
 // the files aside fails. The files go back, the registry is rebuilt with the
 // directory in it, the error comes back, and nothing is deleted.
 func TestAFailedRebuildAbortsTheSignInUninstall(t *testing.T) {
+	plugins.Parallel(t)
 	f := newSignInUninstallFixture(t)
 	f.failReloads.Store(1)
 
@@ -130,6 +131,7 @@ func TestAFailedRebuildAbortsTheSignInUninstall(t *testing.T) {
 // does not name ada is refused before anything moves, so the registry is never
 // rebuilt — not without the directory, and not with it again afterwards.
 func TestAStaleConfirmationNeverTakesTheProviderOutOfTheRegistry(t *testing.T) {
+	plugins.Parallel(t)
 	f := newSignInUninstallFixture(t)
 	before := f.reloads.Load()
 

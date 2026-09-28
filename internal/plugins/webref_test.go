@@ -38,6 +38,7 @@ func webReferenceProviderFor(t *testing.T, mode string) (*plugins.Set, pluginapi
 // tracer: a manifest declaring web-reference-provider reaches the registry with
 // its kinds, and the one call crosses the sandbox carrying the kind and the ids.
 func TestAnInstalledWebReferenceProviderRegistersAndAnswers(t *testing.T) {
+	plugins.Parallel(t)
 	_, registration, provider := webReferenceProviderFor(t, "https")
 
 	d := registration.Descriptor
@@ -69,6 +70,7 @@ func TestAnInstalledWebReferenceProviderRegistersAndAnswers(t *testing.T) {
 // the middle of its call and is refused by the host with the no-network
 // sentence; the attempt is recorded against the Plugin.
 func TestAWebReferenceProviderGuestCannotFetch(t *testing.T) {
+	plugins.Parallel(t)
 	set, _, provider := webReferenceProviderFor(t, "fetch")
 
 	resp, err := provider.Links(context.Background(), pluginapi.WebReferencesRequest{
@@ -91,6 +93,7 @@ func TestAWebReferenceProviderGuestCannotFetch(t *testing.T) {
 // said once, naming the Plugin, when it is registered — and not for one that
 // declares video.
 func TestAWebReferenceProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	none := plugintest.WebReferenceManifest("kindless-refs", "https")
 	none.Provides[0].Kinds = nil
@@ -113,6 +116,7 @@ func TestAWebReferenceProviderDeclaringNoKindsIsLoggedOnceAtRegistration(t *test
 // line saying so names what it did — reached for the network during a call that
 // has none — rather than calling a no-network refusal an allowlist violation.
 func TestAnOfflineFetchDisablesUnderItsOwnName(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.WebReferenceManifest("example-refs", "fetch"))
 	log := &logSink{}

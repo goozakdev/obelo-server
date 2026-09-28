@@ -351,6 +351,7 @@ func TestADiscoveryNamedEndpointOffTheIssuersHostIsAddressChecked(t *testing.T) 
 // while the same host on a port nobody named is the manifest's to allow, and it
 // allows nothing.
 func TestADiscoveryNamedEndpointOnTheIssuersHostKeepsItsExemption(t *testing.T) {
+	parallel(t)
 	var tokenHits, otherHits int
 	tokens := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		tokenHits++

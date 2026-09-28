@@ -50,6 +50,7 @@ func fetchingURL(base, target string) string {
 // because it is the URL the OPERATOR configured (the documented asymmetry in
 // hostfuncs.go).
 func TestAPlainHTTPTargetOnAnExplicitPortIsFetched(t *testing.T) {
+	plugins.Parallel(t)
 	var got struct {
 		scheme string
 		host   string
@@ -127,6 +128,7 @@ func TestAPlainHTTPTargetOnAnExplicitPortIsFetched(t *testing.T) {
 // provider's, on a port, because "the endpoint is on :9001" is the sentence a
 // plugin author would reach for if there were a hole here.
 func TestAPrivateAddressOnAnExplicitPortIsStillRefused(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	// A stand-in for the OPERATOR's URL, so the guest is reachable at all; the
 	// cloud-metadata address is what the manifest allowlists and what it fetches.
@@ -227,6 +229,7 @@ func TestANameThatRebindsIntoPrivateSpaceIsRefusedAtTheDial(t *testing.T) {
 // is not. The redirect policy refuses this by its own lookup too; the dial check
 // is what still refuses it when that lookup is answered differently.
 func TestARedirectIntoPrivateSpaceIsRefusedAtTheDial(t *testing.T) {
+	plugins.Parallel(t)
 	inner, hits := countingStandIn(t)
 	target := onLocalhost(t, inner)
 	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +269,7 @@ func TestARedirectIntoPrivateSpaceIsRefusedAtTheDial(t *testing.T) {
 // the address actually connected to. 100.64.0.0/10 is shared address space and a
 // Tailscale tailnet's, and it stays reachable.
 func TestTheDialCheckRefusesPrivateSpaceAndAllowsTheTailnet(t *testing.T) {
+	plugins.Parallel(t)
 	for _, addr := range []string{"203.0.113.7:443", "100.64.0.1:443", "100.127.255.254:80", "[2001:db8::1]:443"} {
 		if err := plugins.CheckDialedAddress(addr); err != nil {
 			t.Errorf("dial to %s refused: %v", addr, err)
@@ -376,6 +380,7 @@ func TestAProxyDoesNotLaunderAPrivateTarget(t *testing.T) {
 // address. Their host on another port — a redirect's Location can name any — is
 // judged like every other dial.
 func TestARedirectToTheOperatorsHostOnAnotherPortIsCheckedAtTheDial(t *testing.T) {
+	plugins.Parallel(t)
 	inner, hits := countingStandIn(t)
 	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/bounce" {
@@ -414,6 +419,7 @@ func TestARedirectToTheOperatorsHostOnAnotherPortIsCheckedAtTheDial(t *testing.T
 // for their host on another port directly — not by redirect — is a manifest
 // fetch like any other, and their host is loopback here, so it is refused.
 func TestAGuestFetchToTheOperatorsHostOnAnotherPortIsRefused(t *testing.T) {
+	plugins.Parallel(t)
 	inner, hits := countingStandIn(t)
 	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
@@ -449,6 +455,7 @@ func TestAGuestFetchToTheOperatorsHostOnAnotherPortIsRefused(t *testing.T) {
 // TestTheOperatorsConfiguredPortIsStillReached is the other half: the address
 // the operator typed, private as it is, is still the guest's to reach.
 func TestTheOperatorsConfiguredPortIsStillReached(t *testing.T) {
+	plugins.Parallel(t)
 	op, hits := countingStandIn(t)
 
 	dataDir := t.TempDir()
@@ -480,6 +487,7 @@ func TestTheOperatorsConfiguredPortIsStillReached(t *testing.T) {
 // port. A third port on that box is neither, and the guest asking for it is
 // refused.
 func TestTheOperatorsSecondURLIsReachedAtItsOwnPort(t *testing.T) {
+	plugins.Parallel(t)
 	op, _ := countingStandIn(t)
 	images, imageHits := countingStandIn(t)
 	third, thirdHits := countingStandIn(t)
@@ -541,6 +549,7 @@ const metadataAddressURL = "http://169.254.169.254/?obelo-mode=fetch-once&obelo-
 // like any other target. The fetch goes through a proxy stand-in so that a
 // fetch the rule let through is seen arriving rather than dialed for real.
 func TestADefaultURLOnTheMetadataAddressIsRefused(t *testing.T) {
+	plugins.Parallel(t)
 	client, hits, _ := proxyStandIn(t)
 	manifest := plugintest.MetadataProviderManifest("default-metadata-probe", fullMusicProvides())
 	manifest.Settings.DefaultURL = "http://169.254.169.254/"
@@ -573,6 +582,7 @@ func TestADefaultURLOnTheMetadataAddressIsRefused(t *testing.T) {
 // TestTheMetadataAddressEnteredByAnAdminIsStillReached is the other half: the same
 // address TYPED by an Admin is the operator's choice, and reached as before.
 func TestTheMetadataAddressEnteredByAnAdminIsStillReached(t *testing.T) {
+	plugins.Parallel(t)
 	client, hits, forwarded := proxyStandIn(t)
 	manifest := plugintest.MetadataProviderManifest("entered-metadata-probe", fullMusicProvides())
 	manifest.Settings.DefaultURL = "http://169.254.169.254/"
@@ -660,6 +670,7 @@ func TestADefaultURLThatRebindsIntoPrivateSpaceIsRefusedAtTheDial(t *testing.T) 
 // default. Without it the same default is refused, and with it the same host on
 // another port still is.
 func TestAnAddressATestNamesIsReachedFromADefaultURL(t *testing.T) {
+	plugins.Parallel(t)
 	src, hits := countingStandIn(t)
 	other, otherHits := countingStandIn(t)
 	self := fetchingURL(src.URL, src.URL+"/")
@@ -782,6 +793,7 @@ func TestARedirectThatRebindsOffTheOperatorsHostIsRefusedAtTheDial(t *testing.T)
 // every hop through leaves only the dial to judge their host on another port,
 // and it is judged like any other address.
 func TestAFollowedRedirectToTheOperatorsHostOnAnotherPortIsRefusedAtTheDial(t *testing.T) {
+	plugins.Parallel(t)
 	inner, hits := countingStandIn(t)
 	op, opHits := bouncer(t, inner.URL+"/")
 	operator, ctx := operatorDial(t, op)
@@ -804,6 +816,7 @@ func TestAFollowedRedirectToTheOperatorsHostOnAnotherPortIsRefusedAtTheDial(t *t
 // operator's address open two connections, and a request with no exemption to
 // the same private address is dialed afresh, under the check, and refused.
 func TestTheOperatorClientReusesNoConnection(t *testing.T) {
+	plugins.Parallel(t)
 	var conns, hits atomic.Int32
 	op := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -841,6 +854,7 @@ func TestTheOperatorClientReusesNoConnection(t *testing.T) {
 // the Admin's URL typed in capitals or with a DNS trailing dot is still their
 // address and is reached.
 func TestAnEnteredURLInAnotherCaseOrWithATrailingDotIsStillTheOperators(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("spelling-probe", fullMusicProvides()))
 	log := &logSink{}

@@ -329,6 +329,7 @@ func refusalReason(err error) string {
 // the Plugin comes out registered beside the Built-in, and the Managers that
 // compose from the registry were told to rebuild.
 func TestInstallingAPluginRegistersItWithoutARestart(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 
 	if got := f.sinkSlugs(); len(got) != 1 || got[0] != builtinSlug {
@@ -370,6 +371,7 @@ func TestInstallingAPluginRegistersItWithoutARestart(t *testing.T) {
 // directory holds nothing — no half-written module, no orphaned row, no staging
 // directory a later boot would trip over.
 func TestEveryInstallRefusalLeavesNothingBehind(t *testing.T) {
+	plugins.Parallel(t)
 	good := plugintest.SinkManifest("example-sink")
 
 	futureVersion := plugintest.SinkManifest("future-sink")
@@ -454,6 +456,7 @@ func TestEveryInstallRefusalLeavesNothingBehind(t *testing.T) {
 // it — and installing over a Built-in would be the worst of them, because it would
 // move an Admin's signing secret onto code the maintainer did not write.
 func TestADuplicateIdIsRefusedThreeWays(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	f.installGuest(t, "example-sink")
 
@@ -481,6 +484,7 @@ func TestADuplicateIdIsRefusedThreeWays(t *testing.T) {
 // touches, and when it says no the files go too. A directory with no row is a
 // Plugin nobody can switch off.
 func TestAFailedRowWriteRollsTheFilesBack(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	f.store.insertErr = errors.New("the disk is full")
 
@@ -498,6 +502,7 @@ func TestAFailedRowWriteRollsTheFilesBack(t *testing.T) {
 // delivery path checks — it is the Plugin not being in the registry at all, which
 // is why nothing downstream had to learn what a disabled Plugin is.
 func TestDisablingUnregistersAndEnablingBringsItBack(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	f.installGuest(t, "example-sink")
 
@@ -535,6 +540,7 @@ func TestDisablingUnregistersAndEnablingBringsItBack(t *testing.T) {
 // TestReenableClearsTheRecordedFailure: the button an Admin presses after they
 // have fixed whatever the Plugin was complaining about.
 func TestReenableClearsTheRecordedFailure(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	f.installGuest(t, "example-sink")
 
@@ -569,6 +575,7 @@ func TestReenableClearsTheRecordedFailure(t *testing.T) {
 
 // TestUninstallRemovesTheFilesAndTheRegistration.
 func TestUninstallRemovesTheFilesAndTheRegistration(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	f.installGuest(t, "example-sink")
 
@@ -594,6 +601,7 @@ func TestUninstallRemovesTheFilesAndTheRegistration(t *testing.T) {
 
 // TestALifecycleVerbOnAPluginThatIsNotInstalled.
 func TestALifecycleVerbOnAPluginThatIsNotInstalled(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	if _, err := f.manager.SetEnabled(context.Background(), "nobody", false); refusalReason(err) != plugins.ReasonUnknown {
 		t.Fatalf("Disable on an absent plugin gave %v, want an unknown-plugin refusal", err)
@@ -611,6 +619,7 @@ func TestALifecycleVerbOnAPluginThatIsNotInstalled(t *testing.T) {
 // lists them, and their buttons work — the row is created the moment one is
 // needed.
 func TestAHandPlacedPluginCanStillBeSwitchedOff(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 	dataDir := filepath.Dir(f.dir)
 	plugintest.Install(t, dataDir, plugintest.SinkManifest("by-hand"))
@@ -642,6 +651,7 @@ func TestAHandPlacedPluginCanStillBeSwitchedOff(t *testing.T) {
 // design that published a registry with the Built-ins registered and the Plugins
 // not yet.
 func TestAReaderNeverSeesAHalfBuiltRegistry(t *testing.T) {
+	plugins.Parallel(t)
 	f := newManagerFixture(t)
 
 	stop := make(chan struct{})

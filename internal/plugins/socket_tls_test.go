@@ -19,6 +19,7 @@ import (
 // cannot be reached end to end: this toolchain's client already refuses below
 // TLS 1.2 whatever the configuration says.
 func TestTheSocketTLSFloorIsTheHosts(t *testing.T) {
+	parallel(t)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)

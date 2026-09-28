@@ -35,6 +35,7 @@ func (m memoryOnlyModule) ExportedFunction(string) api.Function { return nil }
 // much as read out of guest memory — audited and counted, like any other reach
 // for a socket it was not given.
 func TestTheSocketHostFunctionDoesNoWorkWithoutAGrant(t *testing.T) {
+	parallel(t)
 	var mu sync.Mutex
 	var lines []string
 	p := newPlugin("sink", "", Options{

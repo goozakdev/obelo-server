@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/goozakdev/obelo-server/internal/plugins"
 )
 
 // The module split's load-bearing consequence (.scratch/bundled-plugins issue 03,
@@ -27,6 +29,7 @@ import (
 // plugin module that requires the server and imports internal/enrich, builds it,
 // and requires the standard refusal.
 func TestAPluginModuleCannotImportTheServersInternalPackages(t *testing.T) {
+	plugins.Parallel(t)
 	if testing.Short() {
 		t.Skip("this test shells out to `go build`")
 	}

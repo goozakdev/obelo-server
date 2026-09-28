@@ -117,6 +117,7 @@ func fullMusicProvides(caps ...pluginapi.Capability) pluginapi.ManifestProvides 
 // the settings screen, the Authoritative-provider candidate list, the builder —
 // reads only the Descriptor, so this is the whole of "it is indistinguishable".
 func TestAManifestBecomesAMetadataProviderRegistration(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	m := plugintest.MetadataProviderManifest("example-source",
 		fullMusicProvides(pluginapi.CapabilitySearch, pluginapi.CapabilityExternalRef))
@@ -155,6 +156,7 @@ func TestAManifestBecomesAMetadataProviderRegistration(t *testing.T) {
 // TestAGuestAnswersALookup is the tracer: a module on disk, loaded, registered,
 // built from Settings, and asked what a Track is.
 func TestAGuestAnswersALookup(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("example-source", fullMusicProvides()))
 
@@ -203,6 +205,7 @@ func TestAGuestAnswersALookup(t *testing.T) {
 // The guest proves it by echoing its own secret back through the kv namespace —
 // it could only have got that string from settings_get.
 func TestSettingsReachTheGuestOnlyInsideACall(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("example-source", fullMusicProvides()))
 
@@ -234,6 +237,7 @@ func TestSettingsReachTheGuestOnlyInsideACall(t *testing.T) {
 // sandboxes rather than through the store: both write the SAME key, each reads
 // back its OWN value, and neither can see the other's.
 func TestTwoGuestsDoNotShareAKey(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("source-alpha", fullMusicProvides()))
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("source-beta", fullMusicProvides()))
@@ -278,6 +282,7 @@ func TestTwoGuestsDoNotShareAKey(t *testing.T) {
 // reason an oversize fetch does — a guest handed back a shortened value would
 // parse it as its whole cursor.
 func TestAnOversizeValueIsRefusedNotTruncated(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("example-source", fullMusicProvides()))
 
@@ -317,6 +322,7 @@ func TestAnOversizeValueIsRefusedNotTruncated(t *testing.T) {
 // (ADR-0001). The guest is told so and says so; nothing panics and nothing is
 // disabled.
 func TestAServerWithNoKeyValueStoreStillCallsItsPlugins(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("example-source", fullMusicProvides()))
 
@@ -358,6 +364,7 @@ func TestAServerWithNoKeyValueStoreStillCallsItsPlugins(t *testing.T) {
 // ran: a Plugin whose optional call is missing must not be disabled out of a
 // working chain over it.
 func TestAMissingOptionalExportIsUnavailableAndNotAFailure(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.MetadataProviderManifest("example-source",
 		fullMusicProvides(pluginapi.CapabilityAlbumTracklist, pluginapi.CapabilityEpisodeList)))
@@ -424,6 +431,7 @@ func TestAMissingOptionalExportIsUnavailableAndNotAFailure(t *testing.T) {
 // that says why — and the builder composes a chain WITHOUT it rather than with a
 // source that fails every call (ADR-0001).
 func TestARefusedPluginIsRegisteredAndItsFactoryRefuses(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.InstallModule(t, dataDir,
 		plugintest.MetadataProviderManifest("broken-source", fullMusicProvides()),

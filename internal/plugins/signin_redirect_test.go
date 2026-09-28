@@ -18,6 +18,7 @@ import (
 // the host's values in and the guest's answer out. A provider that declares no
 // idToken tells the host so.
 func TestAnInstalledRedirectSignInProviderRegistersAndAnswers(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.RedirectSignInManifest("oauth", "https://oauth.example.test/authorize"))
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
@@ -77,6 +78,7 @@ func TestAnInstalledRedirectSignInProviderRegistersAndAnswers(t *testing.T) {
 // field with a default the author typed, or sits on an entry that is not the
 // redirect flow is refused at load, naming why.
 func TestAnIDTokenDeclarationMustNameOperatorTypedSettings(t *testing.T) {
+	plugins.Parallel(t)
 	fields := func(issuerDefault bool) []pluginapi.SettingsField {
 		issuer := pluginapi.SettingsField{Key: "issuer", Type: pluginapi.FieldURL}
 		if issuerDefault {
@@ -135,6 +137,7 @@ func TestAnIDTokenDeclarationMustNameOperatorTypedSettings(t *testing.T) {
 // refusals must not be a way to take the provider off the server, while what
 // happened is still recorded.
 func TestFetchViolationsDuringRedirectCallsNeverDisableTheProvider(t *testing.T) {
+	plugins.Parallel(t)
 	const authorize = "https://oauth.example.test/" + plugintest.SignInRedirectFetchesABlockedHost
 	calls := map[string]func(pluginapi.SignInRedirectProvider) error{
 		"authorize": func(p pluginapi.SignInRedirectProvider) error {
@@ -191,6 +194,7 @@ func TestFetchViolationsDuringRedirectCallsNeverDisableTheProvider(t *testing.T)
 // so a provider that reaches for a host its manifest does not list on every
 // re-check is disabled like any other Plugin that breaks its network policy.
 func TestFetchViolationsDuringReChecksStillDisableTheProvider(t *testing.T) {
+	plugins.Parallel(t)
 	dataDir := t.TempDir()
 	plugintest.Install(t, dataDir, plugintest.LookupSignInManifest("directory", "", plugintest.SignInLookupFetchesABlockedHost))
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
