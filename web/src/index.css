@@ -6104,6 +6104,100 @@ textarea.metadata-input {
   color: var(--text-muted);
 }
 
+/* The Installed tab's compact row (plugins-list-dialog D1): reuses the
+   admin-library-row identity/aside layout, with a status word in place of the
+   scan-status the Library row shows there. `data-error` marks the visual dot
+   only — the error's own sentence lives in the dialog behind the row's edit
+   button, not here. */
+.plugin-row-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.plugin-row-status[data-error="true"] {
+  color: var(--error);
+}
+
+/* The row's pencil (plugins-list-dialog D7): same 2.25rem icon-button sizing as
+   every other admin row, but borderless like the Library row's ⋮ toggle — a lone
+   action needs no outline of its own to read as a button. */
+.plugin-edit-button {
+  border-color: transparent;
+  background: none;
+}
+.plugin-edit-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: transparent;
+}
+
+/* The rest of the Plugins page (plugins-list-dialog D8): the sign-in, group
+   mapping, lyric-order, install and catalog cards below the Installed list, held
+   to the same measure as the list panel above them rather than the page's wider
+   default — the two are one visual column, not a narrow list over a full-width
+   stack. */
+.admin-plugins {
+  --admin-panel-max: 52rem;
+}
+.admin-plugins .provider-card {
+  max-width: var(--admin-panel-max);
+}
+/* A Group mapping rule's Group/Role fields sit inline in a row of controls, so
+   they take the field-input look without its usual full-width stretch. */
+.plugin-inline-input {
+  width: auto;
+}
+/* "Re-check every N hours" is a handful of digits, not a paragraph. */
+.plugin-hours-input {
+  width: 4rem;
+}
+/* A file input keeps its own OS-drawn "Choose file" control; field-input's
+   border and radius are still worth borrowing so it reads as part of the same
+   form as the text fields around it. Its own "Choose File" button, though,
+   stays browser-default unless styled directly — match it to button-secondary
+   so it doesn't read as an unstyled leftover next to the rest of the form. */
+.admin-plugins input[type="file"].field-input {
+  padding: 0.45rem 0.75rem;
+}
+.admin-plugins input[type="file"].field-input::file-selector-button {
+  margin-right: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.admin-plugins input[type="file"].field-input::file-selector-button:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-dim);
+}
+/* `.admin-actions` elsewhere (Event Sinks, Subtitle Providers) is a plain
+   button row with no gap of its own; scoped here rather than widened globally
+   since Plugins is the only screen whose rows mix `.auth-submit` (which
+   carries a form-submit top margin) with its neutral/danger companions, and
+   the only screen with a tab pair that needs to read as a segmented control. */
+.admin-plugins .admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.admin-plugins .admin-actions .auth-submit {
+  margin-top: 0;
+}
+.admin-plugins .admin-actions[data-testid="plugin-tabs"] {
+  gap: 0.25rem;
+  padding-bottom: 0.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
 .plugin-facts {
   display: flex;
   flex-wrap: wrap;

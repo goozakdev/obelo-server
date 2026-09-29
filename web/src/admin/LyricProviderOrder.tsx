@@ -65,7 +65,7 @@ export default function LyricProviderOrder() {
           <li key={p.slug} data-testid={`lyric-order-${p.slug}`}>
             <span>{p.name || p.slug}</span>{" "}
             <button
-              className="btn"
+              className="button-secondary"
               type="button"
               data-testid={`lyric-order-up-${p.slug}`}
               onClick={() => void move(i, -1)}
@@ -74,7 +74,7 @@ export default function LyricProviderOrder() {
               Move up
             </button>{" "}
             <button
-              className="btn"
+              className="button-secondary"
               type="button"
               data-testid={`lyric-order-down-${p.slug}`}
               onClick={() => void move(i, 1)}
@@ -86,7 +86,7 @@ export default function LyricProviderOrder() {
         ))}
       </ol>
       {error && (
-        <p className="form-error" data-testid="lyric-order-error">
+        <p className="auth-error" data-testid="lyric-order-error">
           {error}
         </p>
       )}

@@ -66,7 +66,7 @@ export default function SignInProviderOrder() {
           <li key={p.id} data-testid={`sign-in-order-${p.id}`}>
             <span>{p.name}</span>{" "}
             <button
-              className="btn"
+              className="button-secondary"
               type="button"
               data-testid={`sign-in-order-up-${p.id}`}
               onClick={() => void move(i, -1)}
@@ -75,7 +75,7 @@ export default function SignInProviderOrder() {
               Move up
             </button>{" "}
             <button
-              className="btn"
+              className="button-secondary"
               type="button"
               data-testid={`sign-in-order-down-${p.id}`}
               onClick={() => void move(i, 1)}
@@ -87,7 +87,7 @@ export default function SignInProviderOrder() {
         ))}
       </ol>
       {error && (
-        <p className="form-error" data-testid="sign-in-order-error">
+        <p className="auth-error" data-testid="sign-in-order-error">
           {error}
         </p>
       )}

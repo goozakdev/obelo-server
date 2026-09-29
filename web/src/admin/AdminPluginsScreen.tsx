@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { ApiError } from "../api/errors";
 import { errorMessage } from "../screens/errorMessage";
-import PluginSettingsForm from "./PluginSettingsForm";
+import { EditIcon } from "../browse/ActionIcons";
+import AdminListPanel from "./AdminListPanel";
+import PluginDialog, { providesLabel } from "./PluginDialog";
 import LyricProviderOrder from "./LyricProviderOrder";
 import SignInProviderOrder from "./SignInProviderOrder";
 import RedirectSignInProviders from "./RedirectSignInProviders";
@@ -55,288 +57,69 @@ import type {
 // and say one sentence about itself. The server sends that sentence in `error`
 // beside a 200 for the same reason.
 
-// PLUGIN_LABELS maps the contract's Extension-point tokens to what an operator
-// calls them. An unknown token is shown verbatim rather than hidden: a server one
-// version ahead of this bundle should not make a plugin look like it provides
-// nothing.
-const EXTENSION_POINT_LABELS: Record<string, string> = {
-  "event-sink": "Event sink",
-  "lyric-provider": "Lyric provider",
-  "marker-provider": "Marker provider",
-  "metadata-provider": "Metadata provider",
-  "sign-in-provider": "Sign-in provider",
-  "subtitle-provider": "Subtitle provider",
-  "web-reference-provider": "Web reference provider",
-};
-
-function providesLabel(provides: string[]): string {
-  if (!provides.length) return "nothing this server recognises";
-  return provides.map((p) => EXTENSION_POINT_LABELS[p] ?? p).join(", ");
-}
-
-// sourceLabel turns the recorded provenance into something readable. A URL is
-// shown as-is because it is the thing an Admin would paste again.
-function sourceLabel(source?: string): string {
-  if (!source) return "";
-  if (source === "upload") return "Uploaded";
-  if (source === "placed by hand") return "Placed in the data directory by hand";
-  return source;
-}
-
 // isSignInProvider is whether uninstalling the plugin can delete Users, and so
 // has to be confirmed against the server's list first (ADR-0063 decision 10).
 function isSignInProvider(plugin: InstalledPlugin): boolean {
   return plugin.provides.includes("sign-in-provider");
 }
 
-// UninstallConfirmation is the step between the Uninstall button and a Sign-in
-// provider's uninstall. It says in words that the listed Users are deleted — not
-// signed out, deleted, with their watch history — and names each one, because
-// the Admin is the last person who can stop it.
-function UninstallConfirmation({
+// PluginRow is one line of the Installed tab's list (plugins-list-dialog D1):
+// name, version, status and an edit button, with everything else — provides,
+// the facts, lastError, the plugin's own settings, and every action — moved into
+// PluginDialog. The row itself never opens or holds that detail; it only tells
+// the parent WHICH plugin the pencil was pressed for.
+function PluginRow({
   plugin,
-  preview,
-  busy,
-  onConfirm,
-  onCancel,
+  onEdit,
 }: {
   plugin: InstalledPlugin;
-  preview: PluginUninstallPreview;
-  busy: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  const { id } = plugin;
-  const users = preview.usersToDelete;
-  return (
-    <div className="form-error" data-testid={`plugin-uninstall-confirmation-${id}`}>
-      {users.length > 0 ? (
-        <>
-          <p>
-            Uninstalling {plugin.name} deletes every sign-in it provides. These users
-            have no other way to sign in, so they will be deleted, with their watch
-            history. This cannot be undone:
-          </p>
-          <ul>
-            {users.map((u) => (
-              <li key={u.id} data-testid="plugin-uninstall-user">
-                {u.username}
-              </li>
-            ))}
-          </ul>
-          <p>Everyone else who signs in through it keeps their account and loses only that sign-in.</p>
-        </>
-      ) : (
-        <p>
-          Uninstalling {plugin.name} deletes every sign-in it provides. No user will be
-          deleted: everyone who signs in through it has another way to sign in.
-        </p>
-      )}
-      <div className="admin-actions">
-        <button
-          className="btn btn-danger"
-          type="button"
-          data-testid={`plugin-uninstall-confirm-${id}`}
-          onClick={onConfirm}
-          disabled={busy}
-        >
-          {users.length > 0
-            ? `Delete ${users.length} ${users.length === 1 ? "user" : "users"} and uninstall`
-            : "Uninstall"}
-        </button>
-        <button
-          className="btn"
-          type="button"
-          data-testid={`plugin-uninstall-cancel-${id}`}
-          onClick={onCancel}
-          disabled={busy}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PluginCard({
-  plugin,
-  busy,
-  onEnable,
-  onDisable,
-  onReenable,
-  onReinstallShipped,
-  onUninstall,
-  onSettingsSaved,
-  confirmation,
-  onConfirmUninstall,
-  onCancelUninstall,
-}: {
-  plugin: InstalledPlugin;
-  busy: boolean;
-  onEnable: () => void;
-  onDisable: () => void;
-  onReenable: () => void;
-  onReinstallShipped: () => void;
-  onUninstall: () => void;
-  onSettingsSaved: (view: InstalledPluginsView) => void;
-  confirmation?: PluginUninstallPreview | null;
-  onConfirmUninstall?: () => void;
-  onCancelUninstall?: () => void;
+  onEdit: (id: string) => void;
 }) {
   const { id } = plugin;
   // A DECLINED row is a plugin this server ships and the Admin removed. It has no
-  // files, no version and no status, so it gets its own small card whose only
-  // control is the way back — rather than the full card with every button
-  // disabled, which would read as a broken plugin instead of an absent one.
-  if (plugin.state === "declined") {
-    return (
-      <div className="provider-card" data-testid={`plugin-${id}`}>
-        <div className="provider-head">
-          <span className="provider-name">{plugin.name}</span>
-        </div>
-        <p className="provider-desc" data-testid={`plugin-status-${id}`}>
-          Shipped with Obelo, and you removed it. It will not come back on its own.
-        </p>
-        <div className="admin-actions">
-          <button
-            className="btn"
-            type="button"
-            data-testid={`plugin-reinstall-shipped-${id}`}
-            onClick={onReinstallShipped}
-            disabled={busy}
-          >
-            Reinstall the shipped version
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // version and no running/stopped status, so the row says only that — its
+  // dialog carries the one control that matters, the way back.
+  const status =
+    plugin.state === "declined"
+      ? "Removed"
+      : !plugin.enabled
+        ? "Switched off"
+        : plugin.disabledByFailure
+          ? "Stopped by this server"
+          : "Running";
   return (
-    <div className="provider-card" data-testid={`plugin-${id}`}>
-      <div className="provider-head">
-        <span className="provider-name">{plugin.name}</span>
+    <li className="admin-library-row admin-panel-row" data-testid={`plugin-${id}`}>
+      <div className="admin-library-identity">
+        <span className="admin-library-name">{plugin.name}</span>
         {plugin.version && (
           <span className="plugin-version" data-testid={`plugin-version-${id}`}>
             v{plugin.version}
           </span>
         )}
       </div>
-
-      <p className="provider-desc" data-testid={`plugin-provides-${id}`}>
-        Provides: {providesLabel(plugin.provides)}
-      </p>
-
-      <dl className="plugin-facts">
-        <div>
-          <dt>Status</dt>
-          <dd data-testid={`plugin-status-${id}`}>
-            {!plugin.enabled
-              ? "Switched off"
-              : plugin.disabledByFailure
-                ? "Stopped by this server"
-                : "Running"}
-          </dd>
-        </div>
-        {/* Where it came from. A plugin the SERVER shipped says so, in place of the
-            upload name or URL an Admin's plugin shows (ADR-0059) — it is the one
-            visible difference between the two, and an Admin is entitled to know
-            which of their sources they chose and which arrived with the server. */}
-        {(plugin.origin === "bundled" || plugin.source) && (
-          <div>
-            <dt>Installed from</dt>
-            <dd data-testid={`plugin-source-${id}`}>
-              {plugin.origin === "bundled" ? "Shipped with Obelo" : sourceLabel(plugin.source)}
-            </dd>
-          </div>
-        )}
-        {plugin.installedAt && (
-          <div>
-            <dt>Installed</dt>
-            <dd data-testid={`plugin-installed-at-${id}`}>{plugin.installedAt}</dd>
-          </div>
-        )}
-        {/* Shown only when a signature actually VERIFIED against a pinned key.
-            There is deliberately no "Unsigned" row for the plugins without one:
-            an empty publisher means nobody checked, which is a different claim
-            and not one this server is in a position to make. */}
-        {plugin.publisher && (
-          <div>
-            <dt>Signed by</dt>
-            <dd data-testid={`plugin-publisher-${id}`}>
-              {plugin.publisher}
-              {plugin.keyId && ` (key ${plugin.keyId})`}
-            </dd>
-          </div>
-        )}
-      </dl>
-
-      {plugin.lastError && (
-        <p className="form-error" data-testid={`plugin-error-${id}`}>
-          {plugin.lastError}
-        </p>
-      )}
-
-      {/* The plugin's OWN settings, rendered from the schema its manifest
-          declared (plugin-system/13). A plugin that declares none has no panel at
-          all rather than an empty one, which is every plugin configured entirely
-          through the fixed shape. */}
-      <PluginSettingsForm plugin={plugin} disabled={busy} onSaved={onSettingsSaved} />
-
-      <div className="admin-actions">
-        {plugin.enabled ? (
-          <button
-            className="btn"
-            type="button"
-            data-testid={`plugin-disable-${id}`}
-            onClick={onDisable}
-            disabled={busy}
-          >
-            Disable
-          </button>
-        ) : (
-          <button
-            className="btn"
-            type="button"
-            data-testid={`plugin-enable-${id}`}
-            onClick={onEnable}
-            disabled={busy}
-          >
-            Enable
-          </button>
-        )}
-        {/* Re-enable is offered only when there is something to forgive. A button
-            that does nothing is a button an Admin presses and then wonders about. */}
-        {(plugin.disabledByFailure || plugin.lastError) && (
-          <button
-            className="btn"
-            type="button"
-            data-testid={`plugin-reenable-${id}`}
-            onClick={onReenable}
-            disabled={busy}
-          >
-            Re-enable
-          </button>
-        )}
-        <button
-          className="btn btn-danger"
-          type="button"
-          data-testid={`plugin-uninstall-${id}`}
-          onClick={onUninstall}
-          disabled={busy}
+      <div className="admin-library-aside">
+        <span
+          className="plugin-row-status"
+          data-testid={`plugin-status-${id}`}
+          data-error={plugin.lastError ? "true" : undefined}
+          role="status"
         >
-          Uninstall
-        </button>
+          {plugin.lastError && <span className="dot dot-error" aria-hidden="true" />}
+          {status}
+        </span>
+        <div className="admin-row-actions is-persistent">
+          <button
+            className="icon-button plugin-edit-button"
+            type="button"
+            data-testid={`plugin-edit-${id}`}
+            aria-label={`Edit ${plugin.name}`}
+            onClick={() => onEdit(id)}
+          >
+            <EditIcon />
+          </button>
+        </div>
       </div>
-      {confirmation && (
-        <UninstallConfirmation
-          plugin={plugin}
-          preview={confirmation}
-          busy={busy}
-          onConfirm={() => onConfirmUninstall?.()}
-          onCancel={() => onCancelUninstall?.()}
-        />
-      )}
-    </div>
+    </li>
   );
 }
 
@@ -369,7 +152,7 @@ function CatalogBrowser({
       </p>
 
       {catalog.error && (
-        <p className="form-note" data-testid="plugin-catalog-note">
+        <p className="admin-section-note" data-testid="plugin-catalog-note">
           {catalog.error}
         </p>
       )}
@@ -425,14 +208,14 @@ function CatalogBrowser({
               <div className="admin-actions">
                 {installed.has(entry.id) ? (
                   <span
-                    className="form-note"
+                    className="admin-section-note"
                     data-testid={`catalog-installed-${entry.id}`}
                   >
                     Already installed
                   </span>
                 ) : (
                   <button
-                    className="btn btn-primary"
+                    className="auth-submit"
                     type="button"
                     data-testid={`catalog-install-${entry.id}`}
                     onClick={() => onInstall(entry)}
@@ -462,6 +245,11 @@ export default function AdminPluginsScreen() {
     id: string;
     preview: PluginUninstallPreview;
   } | null>(null);
+  // The plugin whose dialog is open, by id — never a copy, so the dialog always
+  // shows the current `view`'s row for it. Closes itself, dialog included, the
+  // moment that id stops being in the list: a successful uninstall (D4) is the
+  // ordinary way that happens, and this covers it without a special case.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [catalogUrl, setCatalogUrl] = useState("");
@@ -500,6 +288,14 @@ export default function AdminPluginsScreen() {
     void load();
   }, [load]);
 
+  // Close the dialog the moment its plugin is no longer in the list — the
+  // uninstall it was open for succeeded (D4), or the list reloaded without it.
+  useEffect(() => {
+    if (editingId && !view?.plugins.some((p) => p.id === editingId)) {
+      setEditingId(null);
+    }
+  }, [view, editingId]);
+
   // run wraps every verb identically: clear the last outcome, call, and take the
   // WHOLE list back from the response. Every endpoint answers with the full list
   // for exactly this reason — the screen never has to reconcile, and it can never
@@ -519,7 +315,7 @@ export default function AdminPluginsScreen() {
   }
 
   // A Sign-in provider is never uninstalled on one click: the server is asked
-  // who it would delete, and the card shows them until the Admin decides. Every
+  // who it would delete, and the dialog shows them until the Admin decides. Every
   // other plugin uninstalls at once, as it always has.
   async function onUninstall(p: InstalledPlugin) {
     if (!isSignInProvider(p)) {
@@ -538,8 +334,8 @@ export default function AdminPluginsScreen() {
     }
   }
 
-  // The confirm carries back exactly the Users the card listed. When the list
-  // changed in the meantime the server refuses, changing nothing, and the card
+  // The confirm carries back exactly the Users the dialog listed. When the list
+  // changed in the meantime the server refuses, changing nothing, and the dialog
   // shows the new list for the Admin to decide on again.
   async function onConfirmUninstall(id: string, preview: PluginUninstallPreview) {
     setBusy(true);
@@ -669,8 +465,8 @@ export default function AdminPluginsScreen() {
 
   if (loadError && !view) {
     return (
-      <div className="admin-section" data-testid="plugins-error">
-        <p className="form-error">{loadError}</p>
+      <div className="admin-section admin-plugins" data-testid="plugins-error">
+        <p className="auth-error">{loadError}</p>
       </div>
     );
   }
@@ -689,9 +485,12 @@ export default function AdminPluginsScreen() {
   const hasCatalog = Boolean(catalog?.url);
   const browsing = hasCatalog && tab === "browse";
   const installedIds = new Set(view.plugins.map((p) => p.id));
+  // Looked up fresh from `view` on every render, never held as a copy, so the
+  // open dialog reflects the plugin an action just changed.
+  const editingPlugin = editingId ? (view.plugins.find((p) => p.id === editingId) ?? null) : null;
 
   return (
-    <div className="admin-section" data-testid="plugins-screen">
+    <div className="admin-section admin-plugins" data-testid="plugins-screen">
       <h2 className="admin-section-title">Plugins</h2>
       <p className="admin-section-note">
         Add a source or an integration this server did not ship with. A plugin runs
@@ -704,7 +503,7 @@ export default function AdminPluginsScreen() {
       {hasCatalog && (
         <div className="admin-actions" data-testid="plugin-tabs">
           <button
-            className={tab === "installed" ? "btn btn-primary" : "btn"}
+            className={tab === "installed" ? "auth-submit" : "button-secondary"}
             type="button"
             data-testid="plugin-tab-installed"
             onClick={() => setTab("installed")}
@@ -712,7 +511,7 @@ export default function AdminPluginsScreen() {
             Installed
           </button>
           <button
-            className={tab === "browse" ? "btn btn-primary" : "btn"}
+            className={tab === "browse" ? "auth-submit" : "button-secondary"}
             type="button"
             data-testid="plugin-tab-browse"
             onClick={() => setTab("browse")}
@@ -731,12 +530,12 @@ export default function AdminPluginsScreen() {
             onInstall={(entry) => void onInstallEntry(entry)}
           />
           {actionError && (
-            <p className="form-error" data-testid="plugins-action-error">
+            <p className="auth-error" data-testid="plugins-action-error">
               {actionError}
             </p>
           )}
           {notice && (
-            <p className="form-note" data-testid="plugins-notice">
+            <p className="admin-section-note" data-testid="plugins-notice">
               {notice}
             </p>
           )}
@@ -745,45 +544,78 @@ export default function AdminPluginsScreen() {
 
       {!browsing && (
         <>
-        {view.plugins.length === 0 ? (
-          <p className="admin-section-note" data-testid="plugins-empty">
-            Nothing is installed — not even the sources this server ships with.
-          </p>
-        ) : (
-          view.plugins.map((p) => (
-            <PluginCard
-              key={p.id}
-              plugin={p}
-              busy={busy}
-              onEnable={() => void run(() => apiClient.enablePlugin(p.id), "Enabled.")}
-              onDisable={() => void run(() => apiClient.disablePlugin(p.id), "Disabled.")}
-              onReenable={() => void run(() => apiClient.reenablePlugin(p.id), "Re-enabled.")}
-              onReinstallShipped={() =>
-                void run(
-                  () => apiClient.reinstallShippedPlugin(p.id),
-                  "The shipped version is back.",
-                )
-              }
-              onUninstall={() => void onUninstall(p)}
-              onSettingsSaved={setView}
-              confirmation={confirming?.id === p.id ? confirming.preview : null}
-              onConfirmUninstall={() =>
-                confirming && void onConfirmUninstall(confirming.id, confirming.preview)
-              }
-              onCancelUninstall={() => setConfirming(null)}
-            />
-          ))
+        <AdminListPanel
+          count={`${view.plugins.length} ${view.plugins.length === 1 ? "plugin" : "plugins"}`}
+          countTestId="plugins-count"
+        >
+          {view.plugins.length === 0 ? (
+            <p className="status status-empty" data-testid="plugins-empty">
+              Nothing is installed — not even the sources this server ships with.
+            </p>
+          ) : (
+            <ul className="admin-library-list" data-testid="plugins-list">
+              {view.plugins.map((p) => (
+                <PluginRow
+                  key={p.id}
+                  plugin={p}
+                  onEdit={(id) => {
+                    // A message from an earlier action belongs to the page, not to
+                    // the plugin whose dialog is opening.
+                    setActionError(null);
+                    setNotice(null);
+                    setEditingId(id);
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+        </AdminListPanel>
+
+        {editingPlugin && (
+          <PluginDialog
+            plugin={editingPlugin}
+            busy={busy}
+            onEnable={() =>
+              void run(() => apiClient.enablePlugin(editingPlugin.id), "Enabled.")
+            }
+            onDisable={() =>
+              void run(() => apiClient.disablePlugin(editingPlugin.id), "Disabled.")
+            }
+            onReenable={() =>
+              void run(() => apiClient.reenablePlugin(editingPlugin.id), "Re-enabled.")
+            }
+            onReinstallShipped={() =>
+              void run(
+                () => apiClient.reinstallShippedPlugin(editingPlugin.id),
+                "The shipped version is back.",
+              )
+            }
+            onUninstall={() => void onUninstall(editingPlugin)}
+            onSettingsSaved={setView}
+            confirmation={confirming?.id === editingPlugin.id ? confirming.preview : null}
+            onConfirmUninstall={() =>
+              confirming && void onConfirmUninstall(confirming.id, confirming.preview)
+            }
+            onCancelUninstall={() => setConfirming(null)}
+            onClose={() => setEditingId(null)}
+            actionError={actionError}
+            notice={notice}
+          />
         )}
 
-        {actionError && (
-          <p className="form-error" data-testid="plugins-action-error">
-            {actionError}
-          </p>
-        )}
-        {notice && (
-          <p className="form-note" data-testid="plugins-notice">
-            {notice}
-          </p>
+        {!editingPlugin && (
+          <>
+            {actionError && (
+              <p className="auth-error" data-testid="plugins-action-error">
+                {actionError}
+              </p>
+            )}
+            {notice && (
+              <p className="admin-section-note" data-testid="plugins-notice">
+                {notice}
+              </p>
+            )}
+          </>
         )}
 
         <SignInProviderOrder />
@@ -843,7 +675,7 @@ export default function AdminPluginsScreen() {
           </div>
           <div className="admin-actions">
             <button
-              className="btn btn-primary"
+              className="auth-submit"
               type="button"
               data-testid="plugin-upload"
               onClick={() => void onUpload()}
@@ -879,7 +711,7 @@ export default function AdminPluginsScreen() {
           </div>
           <div className="admin-actions">
             <button
-              className="btn btn-primary"
+              className="auth-submit"
               type="button"
               data-testid="plugin-install-from-url"
               onClick={() => void onInstallFromURL()}
@@ -921,7 +753,7 @@ export default function AdminPluginsScreen() {
         </div>
         <div className="admin-actions">
           <button
-            className="btn btn-primary"
+            className="auth-submit"
             type="button"
             data-testid="plugin-catalog-save"
             onClick={() => void onSaveCatalog()}
@@ -970,7 +802,7 @@ export default function AdminPluginsScreen() {
               <dt />
               <dd>
                 <button
-                  className="btn btn-danger"
+                  className="button-danger"
                   type="button"
                   data-testid={`publisher-unpin-${p.publisher}`}
                   onClick={() =>
@@ -1018,7 +850,7 @@ export default function AdminPluginsScreen() {
         </div>
         <div className="admin-actions">
           <button
-            className="btn btn-primary"
+            className="auth-submit"
             type="button"
             data-testid="plugin-publisher-pin"
             onClick={() => void onPinPublisher()}
