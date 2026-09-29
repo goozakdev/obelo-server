@@ -6132,15 +6132,18 @@ textarea.metadata-input {
   border-color: transparent;
 }
 
-/* The rest of the Plugins page (plugins-list-dialog D8): the sign-in, group
-   mapping, lyric-order, install and catalog cards below the Installed list, held
-   to the same measure as the list panel above them rather than the page's wider
-   default — the two are one visual column, not a narrow list over a full-width
-   stack. */
-.admin-plugins {
+/* The rest of the Plugins page (plugins-list-dialog D8), and Subtitle Providers
+   and Event Sinks (D9, same look): their cards held to the same measure as the
+   Plugins list panel rather than the page's wider default — one visual column,
+   not a narrow list over a full-width stack. */
+.admin-plugins,
+.admin-subtitle-providers,
+.admin-event-sinks {
   --admin-panel-max: 52rem;
 }
-.admin-plugins .provider-card {
+.admin-plugins .provider-card,
+.admin-subtitle-providers .provider-card,
+.admin-event-sinks .provider-card {
   max-width: var(--admin-panel-max);
 }
 /* A Group mapping rule's Group/Role fields sit inline in a row of controls, so
@@ -6178,18 +6181,23 @@ textarea.metadata-input {
   background: var(--surface-hover);
   border-color: var(--text-dim);
 }
-/* `.admin-actions` elsewhere (Event Sinks, Subtitle Providers) is a plain
-   button row with no gap of its own; scoped here rather than widened globally
-   since Plugins is the only screen whose rows mix `.auth-submit` (which
-   carries a form-submit top margin) with its neutral/danger companions, and
-   the only screen with a tab pair that needs to read as a segmented control. */
-.admin-plugins .admin-actions {
+/* `.admin-actions` elsewhere is a plain button row with no gap of its own;
+   scoped to Plugins, Subtitle Providers and Event Sinks (plugins-list-dialog
+   D9) rather than widened globally, since these are the only screens whose
+   rows mix `.auth-submit` (which carries a form-submit top margin) with its
+   neutral/danger companions, and Plugins is the only one of the three with a
+   tab pair that needs to read as a segmented control. */
+.admin-plugins .admin-actions,
+.admin-subtitle-providers .admin-actions,
+.admin-event-sinks .admin-actions {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
 }
-.admin-plugins .admin-actions .auth-submit {
+.admin-plugins .admin-actions .auth-submit,
+.admin-subtitle-providers .admin-actions .auth-submit,
+.admin-event-sinks .admin-actions .auth-submit {
   margin-top: 0;
 }
 .admin-plugins .admin-actions[data-testid="plugin-tabs"] {
