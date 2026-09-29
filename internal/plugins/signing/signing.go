@@ -58,7 +58,7 @@ import (
 
 // MaxSignatureBytes caps a signature document. It is a few hundred bytes of JSON
 // with two hex digests and one base64 signature in it; anything near this is not
-// one, and the cap is here so a fetch of a signature beside a manifest can be
+// one, and the cap is here so the signature member of a package can be
 // bounded like the other two.
 const MaxSignatureBytes = 8 << 10
 
@@ -189,7 +189,7 @@ func Sign(priv ed25519.PrivateKey, publisher string, manifest, module []byte) (p
 	}, nil
 }
 
-// Encode writes a signature document as the file published beside a manifest:
+// Encode writes a signature document as the file that travels in a package beside the manifest:
 // indented, with a trailing newline, because a human reads it and a text editor
 // should not be the first thing to touch it.
 func Encode(sig pluginapi.Signature) ([]byte, error) {

@@ -173,10 +173,7 @@ func TestAnAdminsOwnPluginUnderAShippedIDSurvivesARestart(t *testing.T) {
 	manifest := plugintest.SinkManifest("tmdb")
 	manifest.Version = "9.9.9"
 	manifest.Name = "My own TMDB"
-	status, body := first.MultipartFiles(http.MethodPost, pluginsPath, token, []testharness.MultipartFile{
-		{Field: "manifest", Name: plugins.ManifestFile, Content: plugintest.ManifestJSON(t, manifest)},
-		{Field: "module", Name: plugins.DefaultModuleFile, Content: plugintest.Guest(t)},
-	}, nil)
+	status, body := uploadPlugin(t, first, token, plugintest.ManifestJSON(t, manifest), plugintest.Guest(t))
 	if status != http.StatusCreated && status != http.StatusOK {
 		t.Fatalf("uploading an own tmdb status = %d; body: %s", status, body)
 	}

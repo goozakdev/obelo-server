@@ -14,23 +14,24 @@ package v1
 // this shape is readable by any server speaking v1, and writable by anything that
 // can serve a file.
 //
-// # A catalog entry is a manifest URL, and deliberately nothing more
+// # A catalog entry is a package URL, and deliberately nothing more
 //
-// Installing from an entry is the ordinary URL install: the entry's ManifestURL
-// goes to POST /settings/plugins/from-url, the module is fetched from beside the
-// manifest exactly as it is for an address an Admin pasted by hand, and the same
-// refusals apply — including the one that is unique to this path, where the FIRST
-// hop is address-checked because what comes back is code the server will execute.
-// A catalog therefore adds a way to CHOOSE a URL and adds nothing whatever to the
-// install path. An index that lists an address inside the server's own network is
-// refused with the same sentence a pasted one gets.
+// Installing from an entry is the ordinary URL install: the entry's PackageURL
+// goes to POST /settings/plugins/from-url, the Plugin package (a zip holding the
+// manifest, the module and an optional signature) is fetched exactly as it is for
+// an address an Admin pasted by hand, and the same refusals apply — including the
+// one that is unique to this path, where the FIRST hop is address-checked because
+// what comes back is code the server will execute. A catalog therefore adds a way
+// to CHOOSE a URL and adds nothing whatever to the install path. An index that
+// lists an address inside the server's own network is refused with the same
+// sentence a pasted one gets.
 //
 // Everything else in an entry — the name, the version, what it provides, who
 // publishes it — is DISPLAY. It is the index author's claim, shown to an operator
 // so they can decide, and no part of it is believed by the loader: the manifest
-// fetched from ManifestURL is the authority for every one of those facts, and a
-// signature (signature.go) is the only thing that makes the publisher more than a
-// string somebody typed.
+// inside the package at PackageURL is the authority for every one of those facts,
+// and a signature (signature.go) is the only thing that makes the publisher more
+// than a string somebody typed.
 
 // CatalogVersion is the index format this server reads. An index declaring a
 // HIGHER version is still read — the format is additive like the rest of v1, so a
@@ -55,9 +56,9 @@ type CatalogIndex struct {
 
 // CatalogEntry is one plugin a catalog offers.
 //
-// Every field but ManifestURL is a CLAIM the index author makes and the server
-// shows without believing: the manifest at ManifestURL is what decides the id,
-// the name, the version and the Extension points, and it is re-read and
+// Every field but PackageURL is a CLAIM the index author makes and the server
+// shows without believing: the manifest inside the package at PackageURL decides
+// the id, the name, the version and the Extension points, and it is re-read and
 // re-validated at install exactly as it is for a pasted URL. An entry that lies
 // about what it points at produces a plugin that is what the manifest said, under
 // the name the manifest gave it.
@@ -76,15 +77,10 @@ type CatalogEntry struct {
 	// Provides is the Extension points this plugin fills, in the contract's own
 	// tokens, for the one line of a listing that says what it is for.
 	Provides []ExtensionPoint `json:"provides,omitempty"`
-	// ManifestURL is the absolute http(s) URL of the plugin's manifest.json, with
-	// its module published in the same directory. IT IS THE ENTRY: everything the
-	// server does with an entry it does with this one field.
-	ManifestURL string `json:"manifestUrl"`
-	// SignatureURL is where the detached signature document lives, when it is not
-	// beside the manifest under its conventional name. Absent means "beside the
-	// manifest", which is where an author following the publishing layout puts it
-	// and where the server looks anyway.
-	SignatureURL string `json:"signatureUrl,omitempty"`
+	// PackageURL is the absolute http(s) URL of the plugin's package: a .zip holding
+	// manifest.json, the module and optionally plugin.sig.json. IT IS THE ENTRY:
+	// everything the server does with an entry it does with this one field.
+	PackageURL string `json:"packageUrl"`
 	// Description and DocsURL are the human-facing copy a listing shows, the same
 	// two fields a Manifest carries for the settings screen.
 	Description string `json:"description,omitempty"`

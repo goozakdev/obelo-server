@@ -36,15 +36,18 @@ builds this plugin with stock Go.
 
 ## Install
 
-Two files make a Plugin: `manifest.json` and `plugin.wasm`. There are two ways to
-get them onto a server, and they are the same two for every plugin:
+A Plugin is installed as one **Plugin package**: a zip holding `manifest.json`,
+`plugin.wasm` and, optionally, `plugin.sig.json`, all at its root.
 
-**Upload.** Admin → Plugins → *Install a plugin*, and pick both files.
+```sh
+make package     # → obelo-plugin-discord.zip
+```
 
-**From a URL.** Publish the two files in one directory and paste the URL of the
-`manifest.json`; the server fetches the module from beside it. The server refuses
-a URL that resolves into loopback / private / link-local space — what comes back
-is code it will execute — so serve it from a public address or upload instead.
+**Upload.** Admin → Plugins → *Install a plugin*, and pick the zip.
+
+**From a URL.** Publish the zip and paste its URL. The server refuses a URL that
+resolves into loopback / private / link-local space — what comes back is code it
+will execute — so serve it from a public address or upload instead.
 
 Both take effect immediately. There is no restart.
 

@@ -2,3 +2,5 @@
 # binary diff — so it is built from this source instead: by `make`, by the
 # server's acceptance suite, and by anyone who wants to install it.
 plugin.wasm
+# The plugin package `make package` produces.
+obelo-plugin-discord.zip

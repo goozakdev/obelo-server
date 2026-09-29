@@ -566,36 +566,34 @@ func installedWireCases() []wireCase {
 			value: CatalogIndex{
 				Version: CatalogVersion,
 				Entries: []CatalogEntry{{
-					ID:           "discord",
-					Name:         "Discord",
-					Version:      "0.1.0",
-					Publisher:    "Example Publisher",
-					Provides:     []ExtensionPoint{ExtensionEventSink},
-					ManifestURL:  "https://plugins.example.test/discord/manifest.json",
-					SignatureURL: "https://plugins.example.test/discord/plugin.sig.json",
-					Description:  "Posts a message to a Discord channel when something finishes.",
-					DocsURL:      "https://example.test/obelo-plugin-discord",
+					ID:          "discord",
+					Name:        "Discord",
+					Version:     "0.1.0",
+					Publisher:   "Example Publisher",
+					Provides:    []ExtensionPoint{ExtensionEventSink},
+					PackageURL:  "https://plugins.example.test/discord/discord-0.1.0.zip",
+					Description: "Posts a message to a Discord channel when something finishes.",
+					DocsURL:     "https://example.test/obelo-plugin-discord",
 				}},
 			},
 			golden: `{"version":1,"entries":[{"id":"discord","name":"Discord","version":"0.1.0",` +
 				`"publisher":"Example Publisher","provides":["event-sink"],` +
-				`"manifestUrl":"https://plugins.example.test/discord/manifest.json",` +
-				`"signatureUrl":"https://plugins.example.test/discord/plugin.sig.json",` +
+				`"packageUrl":"https://plugins.example.test/discord/discord-0.1.0.zip",` +
 				`"description":"Posts a message to a Discord channel when something finishes.",` +
 				`"docsUrl":"https://example.test/obelo-plugin-discord"}]}`,
 		},
 		{
-			// The smallest entry an index may carry: the manifest URL, and enough
+			// The smallest entry an index may carry: the package URL, and enough
 			// for a person to recognise what they are choosing. Everything else is
 			// optional because everything else is display.
 			name: "CatalogEntry/minimal",
 			value: CatalogEntry{
-				ID:          "anilist",
-				Name:        "AniList",
-				ManifestURL: "https://plugins.example.test/anilist/manifest.json",
+				ID:         "anilist",
+				Name:       "AniList",
+				PackageURL: "https://plugins.example.test/anilist/anilist-0.1.0.zip",
 			},
 			golden: `{"id":"anilist","name":"AniList",` +
-				`"manifestUrl":"https://plugins.example.test/anilist/manifest.json"}`,
+				`"packageUrl":"https://plugins.example.test/anilist/anilist-0.1.0.zip"}`,
 		},
 	}
 }

@@ -39,7 +39,7 @@ import (
 // posture is that the FIRST hop is not address-checked — an operator serving their
 // own index from a box on their own LAN is exactly the case this product exists
 // for. Installing an entry does NOT relax anything: it is Manager.InstallFromURL
-// with the entry's manifest URL, so the first hop IS checked there, and an entry
+// with the entry's package URL, so the first hop IS checked there, and an entry
 // resolving into this server's own network is refused with the same sentence a
 // pasted address gets. Choosing from a list and executing what you chose are
 // different acts and only the second is about code.
@@ -121,13 +121,13 @@ func (m *Manager) Catalog(ctx context.Context) (CatalogResult, error) {
 	}
 	out.Entries = usableEntries(index.Entries)
 	if len(out.Entries) == 0 && len(index.Entries) > 0 {
-		out.Note = "Every entry in this catalog is missing a manifest URL, so there is nothing to install from it."
+		out.Note = "Every entry in this catalog is missing a package URL, so there is nothing to install from it."
 	}
 	return out, nil
 }
 
 // usableEntries drops the entries a server could do nothing with — one with no
-// manifest URL is a row an operator could look at and not install — and leaves
+// package URL is a row an operator could look at and not install — and leaves
 // every other claim alone, because every other claim is display and the manifest
 // is the authority for all of them.
 //
@@ -139,7 +139,7 @@ func (m *Manager) Catalog(ctx context.Context) (CatalogResult, error) {
 func usableEntries(in []pluginapi.CatalogEntry) []pluginapi.CatalogEntry {
 	out := make([]pluginapi.CatalogEntry, 0, len(in))
 	for _, e := range in {
-		if strings.TrimSpace(e.ManifestURL) == "" {
+		if strings.TrimSpace(e.PackageURL) == "" {
 			continue
 		}
 		if strings.TrimSpace(e.Name) == "" {

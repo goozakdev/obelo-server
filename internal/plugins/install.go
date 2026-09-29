@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,10 +45,10 @@ import (
 //
 // # What an install refuses, and why each one is its own sentence
 //
-// A bad manifest, an unsupported API version, a duplicate id, a module that will
-// not instantiate, and a source this server will not fetch from. They are five
-// different things for the Admin to do next, so they are five different sentences
-// and five different Reasons, and NOTHING IS LEFT ON DISK OR IN THE DATABASE when
+// A malformed package, a bad manifest, an unsupported API version, a duplicate id,
+// a module that will not instantiate, and a source this server will not fetch
+// from. They are different things for the Admin to do next, so they are different
+// sentences and different Reasons, and NOTHING IS LEFT ON DISK OR IN THE DATABASE when
 // any of them fires: the files are written to a staging directory inside the
 // plugins folder, compiled there, and only renamed into place once the module has
 // proved it loads.
@@ -88,6 +87,11 @@ const (
 	// tells an operator which of those happened. A server with nothing pinned
 	// never produces this refusal.
 	ReasonSignature = "signature"
+	// ReasonPackage: what an Admin sent as a Plugin package is not one — it is not
+	// a zip, it holds something other than the manifest, the module and an optional
+	// signature, or a member is larger than this server will unpack. Its message
+	// always says what was found and what was expected.
+	ReasonPackage = "package"
 )
 
 // Refusal is an install this server would not perform. Message is written for the
@@ -120,7 +124,7 @@ const (
 	// MaxManifestBytes caps a manifest document. A manifest is a few hundred bytes
 	// of JSON; anything near this is not one.
 	MaxManifestBytes = 256 << 10
-	// SourceFetchTimeout bounds each of the fetches a URL install makes.
+	// SourceFetchTimeout bounds the fetch a URL install makes.
 	SourceFetchTimeout = 60 * time.Second
 	// MaxSignatureBytes caps the detached signature document (issue 15). It is the
 	// signing package's cap, restated here so the three limits an install applies
@@ -136,7 +140,7 @@ const (
 	CatalogFetchTimeout = 10 * time.Second
 )
 
-// SourceUpload is the recorded provenance of a Plugin an Admin sent through the
+// SourceUpload is the recorded provenance of a Plugin package an Admin sent through the
 // browser. A URL install records the URL itself.
 const SourceUpload = "upload"
 
@@ -375,6 +379,10 @@ func (m *Manager) Close(ctx context.Context) error {
 // Install writes a manifest and a module into <dir>/<id>/ and brings the Plugin
 // up on the running server.
 //
+// It is the in-process core every install shares: InstallPackage and
+// InstallFromURL unpack a Plugin package and end here, and no HTTP, UI or catalog
+// surface reaches it with loose files.
+//
 // The order is the whole design. Validate the manifest; refuse a duplicate id
 // BEFORE touching the disk; write both files into a staging directory and COMPILE
 // THE MODULE THERE, so "it does not instantiate" is discovered while nothing is
@@ -393,78 +401,54 @@ func (m *Manager) Install(ctx context.Context, manifestRaw, module, signatureRaw
 	return m.install(ctx, manifestRaw, module, signatureRaw, source)
 }
 
-// InstallFromURL fetches a manifest from an absolute URL and the module from
-// BESIDE IT — the manifest's own `module` file name (default plugin.wasm),
-// resolved against the manifest's directory — and then installs exactly as an
-// upload does.
+// InstallPackage installs a Plugin package (package.go): the zip is unpacked in
+// memory, its layout refused if it is anything but the manifest, the module and an
+// optional signature, and the three files go through the same install as every
+// other path. The archive itself is not kept.
+func (m *Manager) InstallPackage(ctx context.Context, archive []byte, source string) (Installed, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.installPackage(ctx, archive, source)
+}
+
+func (m *Manager) installPackage(ctx context.Context, archive []byte, source string) (Installed, error) {
+	pkg, err := UnpackPackage(archive)
+	if err != nil {
+		return Installed{}, err
+	}
+	return m.install(ctx, pkg.Manifest, pkg.Module, pkg.Signature, source)
+}
+
+// InstallFromURL fetches a Plugin package from an absolute URL — ONE request —
+// and installs it exactly as an upload does.
 //
-// One URL, two fetches, no archive format. An archive would need this server to
-// decide a container format, unpack untrusted paths and defend against a member
-// called "../../obelo.db"; two GETs against a layout that already exists — the
-// same two files, in the same directory, under the same names they take on disk —
-// need none of that. It is also the layout a catalog (issue 15) can list: a
-// catalog entry is a manifest URL and nothing more.
+// The fetch goes through safefetch, so the redirect policy and the bounded chain
+// apply, and the body is capped at MaxPackageBytes and refused rather than
+// truncated when it is larger. Unlike every other outbound fetch in this server,
+// the FIRST hop is checked too: see refuseInternalSource.
 //
-// Both fetches go through safefetch, so the redirect policy and the bounded chain
-// apply. Unlike every other outbound fetch in this server, the FIRST hop is
-// checked too: see refuseInternalSource.
-//
-// A THIRD fetch looks for the detached signature (issue 15), beside the manifest
-// under its conventional name unless signatureURL names somewhere else — which is
-// what a catalog entry's optional signatureUrl is for. A 404 is NOT an error:
-// most plugins are unsigned, and a server with no publisher keys pinned does not
-// care. What a missing signature COSTS is decided afterwards by the pinned-key
-// policy, which is the one place that decision belongs.
+// The detached signature, when there is one, is inside the package. What a missing
+// signature COSTS is decided afterwards by the pinned-key policy, which is the one
+// place that decision belongs.
 //
 // This is also the whole of a catalog install (issue 15): a catalog entry is a
-// manifest URL, so browsing one adds a way to choose an address and adds nothing
+// package URL, so browsing one adds a way to choose an address and adds nothing
 // whatever to this path — including the first-hop check, which is why an entry
 // pointing into this server's own network is refused with the sentence a pasted
 // one gets.
-func (m *Manager) InstallFromURL(ctx context.Context, rawURL, signatureURL string) (Installed, error) {
+func (m *Manager) InstallFromURL(ctx context.Context, packageURL string) (Installed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	manifestURL, err := m.checkSourceURL(ctx, rawURL)
+	target, err := m.checkSourceURL(ctx, packageURL)
 	if err != nil {
 		return Installed{}, err
 	}
-	manifestRaw, err := m.get(ctx, manifestURL.String(), MaxManifestBytes, "manifest")
+	archive, err := m.get(ctx, target.String(), MaxPackageBytes, "package")
 	if err != nil {
 		return Installed{}, err
 	}
-	// Decoded once here only to learn the module's file name; install decodes it
-	// again as the authority, from the same bytes.
-	man, err := decodeManifest(manifestRaw)
-	if err != nil {
-		return Installed{}, err
-	}
-	beside := func(name string) string {
-		u := *manifestURL
-		u.RawQuery = ""
-		u.Fragment = ""
-		u.Path = path.Join(path.Dir(manifestURL.Path), name)
-		return u.String()
-	}
-	module, err := m.get(ctx, beside(moduleFile(man)), MaxModuleBytes, "module")
-	if err != nil {
-		return Installed{}, err
-	}
-	sigTarget := strings.TrimSpace(signatureURL)
-	if sigTarget == "" {
-		sigTarget = beside(pluginapi.SignatureFile)
-	} else if _, err := m.checkSourceURL(ctx, sigTarget); err != nil {
-		// An explicit signature URL gets the same address check the manifest gets.
-		// It is not code, but it is the document that decides whether code is
-		// trusted, and a catalog entry able to point it inside this network would be
-		// a catalog entry choosing whose signature this server believes.
-		return Installed{}, err
-	}
-	signatureRaw, err := m.getOptional(ctx, sigTarget, MaxSignatureBytes, "signature")
-	if err != nil {
-		return Installed{}, err
-	}
-	return m.install(ctx, manifestRaw, module, signatureRaw, manifestURL.String())
+	return m.installPackage(ctx, archive, target.String())
 }
 
 // SetEnabled is the Admin's switch. Switching a Plugin OFF un-registers it, so
@@ -749,7 +733,7 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 	}
 	if len(module) == 0 {
 		return Installed{}, refuse(ReasonModule,
-			"there is no module: a plugin is a %s and a %s, and only the manifest arrived",
+			"there is no module: a plugin package holds a %s and a %s, and only the manifest arrived",
 			ManifestFile, moduleFile(man))
 	}
 	if int64(len(module)) > MaxModuleBytes {
@@ -856,7 +840,7 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 func decodeManifest(raw []byte) (pluginapi.Manifest, error) {
 	if len(raw) == 0 {
 		return pluginapi.Manifest{}, refuse(ReasonManifest,
-			"there is no %s: a plugin is a manifest and a module, and only the module arrived", ManifestFile)
+			"there is no %s: a plugin package holds a manifest and a module, and only the module arrived", ManifestFile)
 	}
 	if int64(len(raw)) > MaxManifestBytes {
 		return pluginapi.Manifest{}, refuse(ReasonManifest,
@@ -922,14 +906,14 @@ func (m *Manager) checkDuplicate(id string) error {
 // a deployment anybody meant to have.
 //
 // The cost is real and is accepted: an operator who wants to serve plugins from a
-// box on their own LAN uploads the file instead, which is two clicks and no new
+// box on their own LAN uploads the package instead, which is two clicks and no new
 // trust. The acceptance criterion for this issue names the refusal by hand, which
 // is the other half of why it is here.
 func (m *Manager) checkSourceURL(ctx context.Context, raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, refuse(ReasonSource,
-			"the source must be an absolute http:// or https:// URL pointing at a plugin's %s", ManifestFile)
+			"the source must be an absolute http:// or https:// URL pointing at a plugin package (a .zip file)")
 	}
 	if m.allowPrivateSources {
 		return u, nil
@@ -943,15 +927,15 @@ func (m *Manager) checkSourceURL(ctx context.Context, raw string) (*url.URL, err
 	for _, a := range addrs {
 		if safefetch.IsInternalIP(a.IP) {
 			return nil, refuse(ReasonSource,
-				"%s resolves to an address on this server's own network, and a plugin is code this server will run — upload the file instead",
+				"%s resolves to an address on this server's own network, and a plugin is code this server will run — upload the package instead",
 				u.Hostname())
 		}
 	}
 	return u, nil
 }
 
-// get fetches one of the two documents a URL install needs, under the safe
-// fetcher's redirect policy and a byte cap. Everything that can go wrong with it
+// get fetches the package a URL install needs, under the safe fetcher's redirect
+// policy and a byte cap. Everything that can go wrong with it
 // is the Admin's URL being wrong, so everything that goes wrong is ReasonSource.
 func (m *Manager) get(ctx context.Context, target string, limit int64, what string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -975,38 +959,6 @@ func (m *Manager) get(ctx context.Context, target string, limit int64, what stri
 		// A refusal, never a truncation: a truncated module is one this server
 		// would then try to compile, and a truncated manifest is one it would try
 		// to parse.
-		return nil, refuse(ReasonSource, "the plugin's %s at %s is larger than %d bytes", what, target, limit)
-	}
-	return body, nil
-}
-
-// getOptional is get for a document that is allowed not to exist — today, the
-// detached signature.
-//
-// A 404 (or any other non-200) answers nil and no error, because MOST PLUGINS ARE
-// UNSIGNED and an absent signature is not a failure of anything: whether it costs
-// the install is the pinned-key policy's decision, made later and once. A
-// transport failure is a refusal like any other, though, since "the source went
-// away halfway through" must not silently become "there is no signature".
-func (m *Manager) getOptional(ctx context.Context, target string, limit int64, what string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, refuse(ReasonSource, "%s is not a URL this server can request", target)
-	}
-	req.Header.Set("User-Agent", useragent.Default)
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return nil, refuse(ReasonSource, "the plugin's %s could not be fetched from %s: %v", what, target, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return nil, refuse(ReasonSource, "the plugin's %s could not be read from %s: %v", what, target, err)
-	}
-	if int64(len(body)) > limit {
 		return nil, refuse(ReasonSource, "the plugin's %s at %s is larger than %d bytes", what, target, limit)
 	}
 	return body, nil

@@ -51,7 +51,7 @@ const discordEntry: PluginCatalogEntry = {
   version: "0.1.0",
   publisher: "Example Publisher",
   provides: ["event-sink"],
-  manifestUrl: "https://plugins.example.test/discord/manifest.json",
+  packageUrl: "https://plugins.example.test/discord/discord-0.1.0.zip",
   description: "Posts a message when something finishes.",
 };
 
@@ -73,7 +73,7 @@ function installedDiscord(): InstalledPlugin {
     provides: ["event-sink"],
     enabled: true,
     disabledByFailure: false,
-    source: discordEntry.manifestUrl,
+    source: discordEntry.packageUrl,
     publisher: "Example Publisher",
     keyId: "9f86d081884c7d65",
   };
@@ -110,8 +110,8 @@ describe("the catalog", () => {
     expect(screen.getByTestId("catalog-provides-discord").textContent).toContain(
       "Event sink",
     );
-    expect(screen.getByTestId("catalog-manifest-discord").textContent).toBe(
-      discordEntry.manifestUrl,
+    expect(screen.getByTestId("catalog-package-discord").textContent).toBe(
+      discordEntry.packageUrl,
     );
     // The publisher is the index author's CLAIM and is labelled as one. Nothing
     // on this row has been verified by anything.
@@ -129,36 +129,12 @@ describe("the catalog", () => {
     await userEvent.click(screen.getByTestId("plugin-tab-browse"));
     await userEvent.click(screen.getByTestId("catalog-install-discord"));
 
-    // The entry's manifest URL, and nothing catalog-specific: there is one install
+    // The entry's package URL, and nothing catalog-specific: there is one install
     // path and the catalog only chooses an address for it.
     expect(client.installPluginFromURL).toHaveBeenCalledWith({
-      url: discordEntry.manifestUrl,
+      url: discordEntry.packageUrl,
     });
     expect(screen.getByTestId("plugins-notice").textContent).toContain("Discord");
-  });
-
-  it("passes an entry's own signature URL when it carries one", async () => {
-    client.getPluginCatalog.mockResolvedValue(
-      catalog({
-        entries: [
-          {
-            ...discordEntry,
-            signatureUrl: "https://plugins.example.test/discord/plugin.sig.json",
-          },
-        ],
-      }),
-    );
-    client.installPluginFromURL.mockResolvedValue({ plugins: [installedDiscord()] });
-
-    render(<AdminPluginsScreen />);
-    await screen.findByTestId("plugins-screen");
-    await userEvent.click(screen.getByTestId("plugin-tab-browse"));
-    await userEvent.click(screen.getByTestId("catalog-install-discord"));
-
-    expect(client.installPluginFromURL).toHaveBeenCalledWith({
-      url: discordEntry.manifestUrl,
-      signatureUrl: "https://plugins.example.test/discord/plugin.sig.json",
-    });
   });
 
   it("shows the server's own sentence when an entry is refused", async () => {

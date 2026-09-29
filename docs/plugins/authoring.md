@@ -47,7 +47,8 @@ indistinguishable downstream:
   in Go (today only the Webhook sink; TMDB, MusicBrainz and OpenSubtitles began
   as Built-ins and now ship as Bundled plugins, under `plugins/`);
 - an **Installed plugin** — a `.wasm` module and a `manifest.json` an Admin put on
-  their server, loaded into a sandbox at boot or on upload.
+  their server (as a *Plugin package*, one zip), loaded into a sandbox at boot or on
+  upload.
 
 The two reach the same registry, wear the same `Descriptor`, are configured
 through the same settings endpoints, and are called through the same interfaces.
@@ -224,7 +225,7 @@ And one a Subtitle provider author gets wrong:
 
 ## 3. The manifest, by example
 
-`manifest.json` sits beside your module. It is the Installed half of a
+`manifest.json` sits beside your module in the package. It is the Installed half of a
 `Descriptor`: the static facts a Built-in would have written in Go. **These fields
 ARE the settings screen** — the name, the description, the docs link and the
 controls an Admin sees all come from here.
@@ -399,7 +400,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -977,47 +978,73 @@ Three things about that command:
 > behind, and the first place to look when a module comes out bigger than its
 > neighbours.
 
-Then, two files — `manifest.json` and `plugin.wasm` — and two ways to install
-them. **The layout you publish is identical to the layout on disk**, by
-construction:
+Then, one file: the **Plugin package**, a zip holding `manifest.json`, the module
+the manifest names (`plugin.wasm` unless it says otherwise) and, optionally,
+`plugin.sig.json` (§7a) — **at the root of the zip and nothing else**. The pack
+step builds it, and refuses anything the server would refuse:
 
-**Upload.** *Admin → Plugins → Install a plugin*, and pick both files. Or, the same
+```sh
+go run ./cmd/pluginsign pack -manifest manifest.json -module plugin.wasm \
+  [-signature plugin.sig.json] -out obelo-discord-0.1.0.zip
+```
+
+Two ways to install it:
+
+**Upload.** *Admin → Plugins → Install a plugin*, and pick the zip. Or, the same
 request by hand:
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/settings/plugins \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -F manifest=@manifest.json \
-  -F module=@plugin.wasm
+  -F package=@obelo-discord-0.1.0.zip
 ```
 
-Two named parts, never an archive — the server never unpacks a path it did not
-choose.
+One part, named `package`. The server unpacks it in memory, writes the manifest and
+the module to fixed names in a directory it chose, and keeps neither the archive
+nor any path the archive carried.
 
-**From a URL.** Publish both files in one directory and paste the URL of the
-`manifest.json`; the module is fetched from beside it, under the name the manifest
-gives.
+**From a URL.** Publish the zip and paste its URL; it is fetched with one request.
 
 ```sh
 curl -X POST http://localhost:8080/api/v1/settings/plugins/from-url \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.test/obelo-discord/manifest.json"}'
+  -d '{"url":"https://example.test/obelo-discord/obelo-discord-0.1.0.zip"}'
 ```
 
 > Unlike every other outbound fetch in Obelo, **the first hop is address-checked
 > here**: a URL resolving into loopback / private / link-local space is refused,
 > because what comes back is code the server executes. Serving plugins off your own
-> LAN? Upload them instead.
+> LAN? Upload the package instead.
 
 Either way it **takes effect with no restart**: the module is compiled in a staging
 directory *before* anything is installed, so a refusal leaves nothing on disk and
 nothing in the database; then the registry is rebuilt and swapped and the Managers
 reload.
 
+### The package is strict
+
+Only these are accepted, all at the root of the zip:
+
+- `manifest.json`;
+- the module the manifest names (its `module` field, else `plugin.wasm`);
+- optionally `plugin.sig.json`.
+
+Anything else is refused with a sentence naming what was found and what was
+expected: a folder wrapping the files (zipping the *folder* instead of its
+*contents* does this), a `__MACOSX/` entry, any directory entry, an unknown file, a
+symbolic link, a duplicate name, a path with `..` in it, an encrypted member, or a
+compression method other than stored/deflate. There is no tolerance for a single
+wrapping folder — `pluginsign pack` produces the right shape, so use it.
+
+Each member is capped on what it **decompresses** to, whatever its header claims:
+64 MiB for the module, 256 KiB for the manifest, and the signature cap for the
+signature. The whole archive is capped at the sum of the three plus 1 MiB. Larger is
+refused, never truncated.
+
 You can also just **place the files by hand** at
 `<dataDir>/plugins/<id>/manifest.json` and `<dataDir>/plugins/<id>/plugin.wasm` and
-restart, which is what the layout is.
+restart, which is what the layout on disk is.
 
 ### What a refused install tells you
 
@@ -1026,10 +1053,11 @@ restart, which is what the layout is.
 | 422 | `PLUGIN_INVALID_MANIFEST` | the manifest is not valid JSON, or makes a claim the host refuses |
 | 422 | `PLUGIN_API_VERSION` | the message names which side to upgrade |
 | 409 | `PLUGIN_DUPLICATE` | the id is already claimed — by an Installed plugin or a Built-in |
+| 422 | `PLUGIN_INVALID_PACKAGE` | the file is not a zip, or holds anything but the manifest, the module and an optional signature at its root, or a member unpacks past its cap |
 | 422 | `PLUGIN_INVALID_MODULE` | no module, or one that will not compile or instantiate |
 | 422 | `PLUGIN_SOURCE_REFUSED` | the URL was not fetchable under the rules above |
 | 422 | `PLUGIN_SIGNATURE` | the server has publisher keys pinned and yours does not satisfy them (§7a) |
-| 413 | — | a part over the cap (64 MiB module, 256 KiB manifest) |
+| 413 | — | the `package` part over the archive cap, or an upload body over the request limit |
 
 ---
 
@@ -1064,7 +1092,8 @@ inside `manifest.json` would change the very bytes it covers.
 
 ### The document
 
-`plugin.sig.json`, published in the same directory as the manifest and the module:
+`plugin.sig.json`, which goes inside the Plugin package at its root, beside the
+manifest and the module:
 
 ```json
 {
@@ -1106,23 +1135,23 @@ go run ./cmd/pluginsign sign \
 go run ./cmd/pluginsign verify \
   -sig plugin.sig.json -pub "<base64>" \
   -manifest manifest.json -module plugin.wasm
+
+go run ./cmd/pluginsign pack \
+  -manifest manifest.json -module plugin.wasm -signature plugin.sig.json \
+  -out obelo-discord-0.1.0.zip
+
+go run ./cmd/pluginsign verify -package obelo-discord-0.1.0.zip -pub "<base64>"
 ```
 
 `verify` runs the **same package the server runs** (`internal/plugins/signing`),
 so a document it accepts is a document a server accepts. **Re-sign whenever either
 file changes.**
 
-Publish `plugin.sig.json` beside the other two and a URL install picks it up with
-no extra instruction — a 404 there simply means "unsigned". An upload sends it as
-an optional third part:
-
-```sh
-curl -X POST http://localhost:8080/api/v1/settings/plugins \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -F manifest=@manifest.json \
-  -F module=@plugin.wasm \
-  -F signature=@plugin.sig.json
-```
+Put `plugin.sig.json` in the package (`pack -signature`) and both an upload and a URL
+install pick it up with no extra instruction. A package without one is simply
+unsigned. The signature covers the manifest and module bytes, not the archive, so
+where it travels adds nothing to the trust decision: that is settled by the keys an
+operator pinned.
 
 ### What the operator's side does with it
 
@@ -1158,8 +1187,7 @@ and recommends none.
       "version": "0.1.0",
       "publisher": "Example Publisher",
       "provides": ["event-sink"],
-      "manifestUrl": "https://example.test/obelo-discord/manifest.json",
-      "signatureUrl": "https://example.test/obelo-discord/plugin.sig.json",
+      "packageUrl": "https://example.test/obelo-discord/obelo-discord-0.1.0.zip",
       "description": "Posts a message to a Discord channel when something finishes.",
       "docsUrl": "https://example.test/obelo-plugin-discord"
     }
@@ -1167,19 +1195,15 @@ and recommends none.
 }
 ```
 
-**`manifestUrl` is the entry.** Installing from a catalog is `POST
+**`packageUrl` is the entry.** Installing from a catalog is `POST
 /settings/plugins/from-url` with that URL — the same endpoint, the same safe-fetch
-policy, the same first-hop address check, the same refusals. The publish layout
-above (§7: manifest and module in one directory) is exactly what a catalog serves,
-so if your plugin installs from a pasted URL it installs from a catalog with no
-further work.
-
-`signatureUrl` is only for a signature that is *not* beside the manifest; leave it
-out and the server looks for `plugin.sig.json` in the manifest's own directory,
-which is where you should have put it.
+policy, the same first-hop address check, the same refusals. What a catalog serves
+is exactly the Plugin package you publish (§7), so if your plugin installs from a
+pasted URL it installs from a catalog with no further work. Its signature, if any,
+is inside the zip.
 
 Everything else in an entry — name, version, publisher, what it provides — is
-**display**. The manifest fetched at install time decides all of them, and only a
+**display**. The manifest inside the package decides all of them, and only a
 pinned key makes `publisher` more than a word in a file. The types are
 `CatalogIndex` and `CatalogEntry` in the JSON schema (§9).
 
@@ -1199,7 +1223,7 @@ Admin sees.
 | `enabled` | the **Admin's** switch, durable across a restart |
 | `disabledByFailure` | **the server refusing to call you** — refused at load, or stopped after repeated failures |
 | `lastError` | the sentence that says why |
-| `source` | `upload`, the manifest URL that was pasted, or `placed by hand` |
+| `source` | `upload`, the package URL that was pasted, or `placed by hand` |
 
 `enabled` and `disabledByFailure` are not the same thing and are never merged: a
 Plugin can be switched on and stopped at once, and that is exactly the state that
@@ -2316,7 +2340,7 @@ func placeholders(ev sinkEvent) map[string]string {
 ## Where to go next
 
 - **The plugin**: [`obelo-plugin-discord`](https://github.com/goozakdev/obelo-plugin-discord)
-  — clone it, change a template, rebuild, re-upload.
+  — clone it, change a template, rebuild, re-pack, re-upload.
 - **The contract**: [`pluginapi/v1/`](../../pluginapi/v1/) — the schema, and
   `doc.go` beside it.
 - **The decisions**:

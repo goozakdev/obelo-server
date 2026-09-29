@@ -11,6 +11,7 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/plugins/discordtest"
+	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
 	"github.com/goozakdev/obelo-server/internal/plugins/signing"
 	"github.com/goozakdev/obelo-server/internal/testharness"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
@@ -114,20 +115,11 @@ func signDiscord(t *testing.T, priv ed25519.PrivateKey, publisher string) []byte
 	return doc
 }
 
-// uploadSignedPlugin is uploadPlugin with the optional third part.
+// uploadSignedPlugin is uploadPlugin with the optional signature, which travels
+// inside the package.
 func uploadSignedPlugin(t *testing.T, srv *testharness.Server, token string, manifest, module, signature []byte) (int, []byte) {
 	t.Helper()
-	parts := []testharness.MultipartFile{
-		{Field: "manifest", Name: plugins.ManifestFile, ContentType: "application/json", Content: manifest},
-		{Field: "module", Name: plugins.DefaultModuleFile, ContentType: "application/wasm", Content: module},
-	}
-	if len(signature) > 0 {
-		parts = append(parts, testharness.MultipartFile{
-			Field: "signature", Name: pluginapi.SignatureFile,
-			ContentType: "application/json", Content: signature,
-		})
-	}
-	return srv.MultipartFiles(http.MethodPost, pluginsPath, token, parts, nil)
+	return uploadPackage(t, srv, token, plugintest.PackageZip(t, manifest, module, signature))
 }
 
 func mustGenerateKey(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
@@ -447,11 +439,11 @@ func TestAPublisherIsMatchedCaseInsensitively(t *testing.T) {
 	}
 }
 
-// --- the signature fetched beside a manifest ---------------------------------------
+// --- the signature inside a fetched package -----------------------------------------
 
-// TestAURLInstallFetchesTheSignatureBesideTheManifest — the layout an author
-// publishes, and the layout a catalog serves.
-func TestAURLInstallFetchesTheSignatureBesideTheManifest(t *testing.T) {
+// TestAURLInstallUsesTheSignatureInsideThePackage — the file an author
+// publishes, and the file a catalog serves.
+func TestAURLInstallUsesTheSignatureInsideThePackage(t *testing.T) {
 	t.Parallel()
 	pub, priv := mustGenerateKey(t)
 	const publisher = "Example Publisher"
@@ -461,32 +453,32 @@ func TestAURLInstallFetchesTheSignatureBesideTheManifest(t *testing.T) {
 	token := adminToken(t, srv)
 	pinPublisher(t, srv, token, publisher, pub)
 
-	manifestURL := source.URL + "/" + plugins.ManifestFile
+	packageURL := source.URL + "/" + discordPackageFile
 	status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
-		map[string]any{"url": manifestURL}, nil)
+		map[string]any{"url": packageURL}, nil)
 	if status != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body: %s", status, body)
 	}
 	if got := signerOf(t, srv, token, "discord"); got.Publisher != publisher {
-		t.Fatalf("publisher = %q, want %q — the signature beside the manifest was not used", got.Publisher, publisher)
+		t.Fatalf("publisher = %q, want %q — the signature inside the package was not used", got.Publisher, publisher)
 	}
 }
 
-// TestAURLInstallWithNoSignatureBesideItIsRefusedByName: a 404 on the signature
+// TestAURLInstallOfAnUnsignedPackageIsRefusedByName: a package with no signature
 // is not an error on its own, and the pinned-key policy is the one thing that
 // decides what it costs.
-func TestAURLInstallWithNoSignatureBesideItIsRefusedByName(t *testing.T) {
+func TestAURLInstallOfAnUnsignedPackageIsRefusedByName(t *testing.T) {
 	t.Parallel()
 	pub, _ := mustGenerateKey(t)
 	const publisher = "Example Publisher"
 
-	source := discordSource(t, nil) // answers 404 for the signature
+	source := discordSource(t, nil) // a package with no signature in it
 	srv := testharness.New(t, testharness.WithPluginSourcesFromPrivateAddresses())
 	token := adminToken(t, srv)
 	pinPublisher(t, srv, token, publisher, pub)
 
 	status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
-		map[string]any{"url": source.URL + "/" + plugins.ManifestFile}, nil)
+		map[string]any{"url": source.URL + "/" + discordPackageFile}, nil)
 	refusal := refusalOf(t, http.StatusUnprocessableEntity, status, body)
 	if refusal.Error.Code != "PLUGIN_SIGNATURE" {
 		t.Fatalf("code = %q, want PLUGIN_SIGNATURE; body: %s", refusal.Error.Code, body)
@@ -500,7 +492,7 @@ func TestAURLInstallWithNoSignatureBesideItIsRefusedByName(t *testing.T) {
 
 // TestThePluginsignCommandsOutputInstalls. The acceptance criterion that no unit
 // test can stand in for: the REAL command is run, in a temp directory, over the
-// reference plugin's real bytes, and the file it wrote is uploaded to the real
+// reference plugin's real bytes, and the package it packed is uploaded to the real
 // endpoint against the key the command printed.
 //
 // It runs `go run ./cmd/pluginsign` rather than calling the package, because the
@@ -561,17 +553,22 @@ func TestThePluginsignCommandsOutputInstalls(t *testing.T) {
 	run("verify", "-sig", sigPath, "-pub", publicKey,
 		"-manifest", manifestPath, "-module", modulePath)
 
-	doc, err := os.ReadFile(sigPath)
+	// `pack` builds the Plugin package, and `verify -package` checks the signature
+	// INSIDE it against the same key.
+	zipPath := filepath.Join(dir, "discord.zip")
+	run("pack", "-manifest", manifestPath, "-module", modulePath, "-signature", sigPath, "-out", zipPath)
+	run("verify", "-package", zipPath, "-pub", publicKey)
+
+	archive, err := os.ReadFile(zipPath)
 	if err != nil {
-		t.Fatalf("reading what the command wrote: %v", err)
+		t.Fatalf("reading what the command packed: %v", err)
 	}
 
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
 	pinPublisher(t, srv, token, publisher, pub)
 
-	status, body := uploadSignedPlugin(t, srv, token,
-		discordtest.ManifestJSON(t), discordtest.Module(t), doc)
+	status, body := uploadPackage(t, srv, token, archive)
 	if status != http.StatusCreated {
 		t.Fatalf("the command's own signature was refused by the server: status = %d; body: %s", status, body)
 	}

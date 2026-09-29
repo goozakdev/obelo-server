@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,14 +92,19 @@ func hasPlugin(resp pluginsResp, id string) bool {
 	return false
 }
 
-// uploadPlugin posts a manifest and a module as the browser's form does, and
-// returns the status and the decoded body — both, because half these tests are
-// about a refusal.
+// uploadPlugin packs a manifest and a module into a Plugin package and posts it as
+// the browser's form does, and returns the status and the decoded body — both,
+// because half these tests are about a refusal.
 func uploadPlugin(t *testing.T, srv *testharness.Server, token string, manifest, module []byte) (int, []byte) {
 	t.Helper()
+	return uploadPackage(t, srv, token, plugintest.PackageZip(t, manifest, module, nil))
+}
+
+// uploadPackage posts an archive, well-formed or not, as the `package` part.
+func uploadPackage(t *testing.T, srv *testharness.Server, token string, archive []byte) (int, []byte) {
+	t.Helper()
 	return srv.MultipartFiles(http.MethodPost, pluginsPath, token, []testharness.MultipartFile{
-		{Field: "manifest", Name: plugins.ManifestFile, ContentType: "application/json", Content: manifest},
-		{Field: "module", Name: plugins.DefaultModuleFile, ContentType: "application/wasm", Content: module},
+		{Field: "package", Name: "plugin.zip", ContentType: "application/zip", Content: archive},
 	}, nil)
 }
 
@@ -125,23 +132,21 @@ func refusalOf(t *testing.T, wantStatus, status int, body []byte) apiErrorResp {
 	return out
 }
 
-// pluginSource serves a manifest and the module beside it, the way a plugin author
-// publishes one: two files in one directory, under the names they take on disk.
+// packageFile is the name pluginSource publishes a package under.
+const packageFile = "plugin.zip"
+
+// pluginSource serves a Plugin package the way a plugin author publishes one: a
+// single zip.
 func pluginSource(t *testing.T, m pluginapi.Manifest) *httptest.Server {
 	t.Helper()
-	manifest := plugintest.ManifestJSON(t, m)
-	guest := plugintest.Guest(t)
+	archive := plugintest.PackageZip(t, plugintest.ManifestJSON(t, m), plugintest.Guest(t), nil)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch filepath.Base(r.URL.Path) {
-		case plugins.ManifestFile:
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(manifest)
-		case plugins.DefaultModuleFile:
-			w.Header().Set("Content-Type", "application/wasm")
-			_, _ = w.Write(guest)
-		default:
+		if filepath.Base(r.URL.Path) != packageFile {
 			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -231,8 +236,8 @@ func TestUploadingAPluginMakesItAnEventSinkOnTheRunningServer(t *testing.T) {
 
 // --- install from a URL ------------------------------------------------------------
 
-// TestInstallingAPluginFromAPastedURL: one URL — the manifest's — and the module is
-// fetched from beside it. Same guest, same result, through the safe fetcher.
+// TestInstallingAPluginFromAPastedURL: one URL, the package's. Same guest, same
+// result, through the safe fetcher.
 func TestInstallingAPluginFromAPastedURL(t *testing.T) {
 	t.Parallel()
 	source := pluginSource(t, plugintest.SinkManifest("url-sink"))
@@ -245,15 +250,15 @@ func TestInstallingAPluginFromAPastedURL(t *testing.T) {
 	token := adminToken(t, srv)
 	libID := createMovieLibrary(t, srv, token, t.TempDir())
 
-	manifestURL := source.URL + "/" + plugins.ManifestFile
+	packageURL := source.URL + "/" + packageFile
 	status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
-		map[string]any{"url": manifestURL}, nil)
+		map[string]any{"url": packageURL}, nil)
 	if status != http.StatusCreated {
 		t.Fatalf("POST from-url status = %d, want 201; body: %s", status, body)
 	}
 
 	view := pluginNamed(t, readPlugins(t, srv, token), "url-sink")
-	if view.Source != manifestURL {
+	if view.Source != packageURL {
 		t.Fatalf("source = %q, want the URL the Admin pasted", view.Source)
 	}
 	if view.DisabledByFailure || view.LastError != "" {
@@ -280,12 +285,12 @@ func TestAURLResolvingToAPrivateAddressIsRefused(t *testing.T) {
 	token := adminToken(t, srv)
 
 	status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
-		map[string]any{"url": source.URL + "/" + plugins.ManifestFile}, nil)
+		map[string]any{"url": source.URL + "/" + packageFile}, nil)
 	refusal := refusalOf(t, http.StatusUnprocessableEntity, status, body)
 	if refusal.Error.Code != "PLUGIN_SOURCE_REFUSED" {
 		t.Fatalf("code = %q, want PLUGIN_SOURCE_REFUSED; body: %s", refusal.Error.Code, body)
 	}
-	if !strings.Contains(refusal.Error.Message, "upload the file instead") {
+	if !strings.Contains(refusal.Error.Message, "upload the package instead") {
 		t.Fatalf("message = %q, want it to say what to do instead", refusal.Error.Message)
 	}
 	if got := notShipped(readPlugins(t, srv, token).Plugins); len(got) != 0 {
@@ -311,7 +316,7 @@ func TestARefusedSourceIsNotAnInstall(t *testing.T) {
 	}{
 		{"not a URL at all", "not-a-url", "absolute http:// or https:// URL"},
 		{"a file URL", "file:///etc/passwd", "absolute http:// or https:// URL"},
-		{"a source with no manifest", empty.URL + "/" + plugins.ManifestFile, "answered 404"},
+		{"a source with no package", empty.URL + "/" + packageFile, "answered 404"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
@@ -428,8 +433,109 @@ func TestEachInstallRefusalIsItsOwnCodeAndSentence(t *testing.T) {
 	}
 }
 
-// TestAnUploadMissingHalfOfAPluginSaysWhichHalf.
-func TestAnUploadMissingHalfOfAPluginSaysWhichHalf(t *testing.T) {
+// TestAMalformedPackageIsItsOwnCode. A zip that is not a Plugin package is a
+// sixth thing to do something different about, so it is not folded into the
+// manifest or module refusals.
+func TestAMalformedPackageIsItsOwnCode(t *testing.T) {
+	t.Parallel()
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	manifest := plugintest.ManifestJSON(t, plugintest.SinkManifest("wrapped-sink"))
+	guest := plugintest.Guest(t)
+
+	for _, tc := range []struct {
+		name    string
+		archive []byte
+		wantIn  string
+	}{
+		{"a wrapping folder", plugintest.Zip(t,
+			plugintest.ZipMember{Name: "wrapped-sink/manifest.json", Body: manifest},
+			plugintest.ZipMember{Name: "wrapped-sink/plugin.wasm", Body: guest}), "inside a folder"},
+		{"a file that is not a zip", []byte("just some text"), "not a readable .zip"},
+		{"no module", plugintest.Zip(t,
+			plugintest.ZipMember{Name: "manifest.json", Body: manifest}), "has no module"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := uploadPackage(t, srv, token, tc.archive)
+			refusal := refusalOf(t, http.StatusUnprocessableEntity, status, body)
+			if refusal.Error.Code != "PLUGIN_INVALID_PACKAGE" {
+				t.Fatalf("code = %q, want PLUGIN_INVALID_PACKAGE; body: %s", refusal.Error.Code, body)
+			}
+			if !strings.Contains(refusal.Error.Message, tc.wantIn) {
+				t.Fatalf("message = %q, want it to contain %q", refusal.Error.Message, tc.wantIn)
+			}
+		})
+	}
+	if got := notShipped(readPlugins(t, srv, token).Plugins); len(got) != 0 {
+		t.Fatalf("refused packages left %+v behind", got)
+	}
+}
+
+// TestAPackagePartOverTheCapIsTooLarge: refused, never truncated.
+func TestAPackagePartOverTheCapIsTooLarge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uploads a package-sized body")
+	}
+	t.Parallel()
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	status, body := uploadPackage(t, srv, token, make([]byte, plugins.MaxPackageBytes+1))
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body: %s", status, body)
+	}
+}
+
+// TestABodyFarOverTheCapIsTooLargeNotBadRequest: a body that overruns the whole
+// request limit is the package sentence with 413, the same answer as a part just
+// over the archive cap, not a 400 that reads as a malformed form. The body is
+// streamed, so nothing near its size is held in memory.
+func TestABodyFarOverTheCapIsTooLargeNotBadRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("streams a body larger than the package cap")
+	}
+	t.Parallel()
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	go func() {
+		part, err := mw.CreateFormFile("package", "plugin.zip")
+		if err == nil {
+			zeros := make([]byte, 1<<20)
+			for i := 0; i < 80 && err == nil; i++ { // 80 MiB, past the request limit
+				_, err = part.Write(zeros)
+			}
+		}
+		if err == nil {
+			err = mw.Close()
+		}
+		pw.CloseWithError(err)
+	}()
+	req, err := http.NewRequest(http.MethodPost, srv.URL(pluginsPath), pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	pr.Close()
+	if err != nil {
+		t.Fatalf("posting an oversized upload: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "larger than this server will accept") {
+		t.Fatalf("body = %s, want the package sentence", body)
+	}
+}
+
+// TestAnUploadWithoutAPackagePartSaysWhatToSend.
+func TestAnUploadWithoutAPackagePartSaysWhatToSend(t *testing.T) {
 	t.Parallel()
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -437,15 +543,7 @@ func TestAnUploadMissingHalfOfAPluginSaysWhichHalf(t *testing.T) {
 	status, body := srv.MultipartFiles(http.MethodPost, pluginsPath, token,
 		[]testharness.MultipartFile{{Field: "module", Name: "plugin.wasm", Content: plugintest.Guest(t)}}, nil)
 	refusal := refusalOf(t, http.StatusBadRequest, status, body)
-	if !strings.Contains(refusal.Error.Message, "manifest") {
-		t.Fatalf("message = %q, want it to name the missing part", refusal.Error.Message)
-	}
-
-	status, body = srv.MultipartFiles(http.MethodPost, pluginsPath, token,
-		[]testharness.MultipartFile{{Field: "manifest", Name: plugins.ManifestFile,
-			Content: plugintest.ManifestJSON(t, plugintest.SinkManifest("lonely"))}}, nil)
-	refusal = refusalOf(t, http.StatusBadRequest, status, body)
-	if !strings.Contains(refusal.Error.Message, "module") {
+	if !strings.Contains(refusal.Error.Message, "`package` part") {
 		t.Fatalf("message = %q, want it to name the missing part", refusal.Error.Message)
 	}
 }
@@ -640,11 +738,8 @@ func TestPluginManagementIsAdminOnly(t *testing.T) {
 	if status, _ := srv.AuthGET(pluginsPath, member, nil); status != http.StatusForbidden {
 		t.Fatalf("member GET status = %d, want 403", status)
 	}
-	status, body := srv.MultipartFiles(http.MethodPost, pluginsPath, member, []testharness.MultipartFile{
-		{Field: "manifest", Name: plugins.ManifestFile,
-			Content: plugintest.ManifestJSON(t, plugintest.SinkManifest("sneaky"))},
-		{Field: "module", Name: plugins.DefaultModuleFile, Content: plugintest.Guest(t)},
-	}, nil)
+	status, body := uploadPackage(t, srv, member,
+		plugintest.PackageZip(t, plugintest.ManifestJSON(t, plugintest.SinkManifest("sneaky")), plugintest.Guest(t), nil))
 	if status != http.StatusForbidden {
 		t.Fatalf("member upload status = %d, want 403; body: %s", status, body)
 	}

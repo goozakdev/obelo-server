@@ -66,7 +66,7 @@ func TestTheVendoredCopyMatchesTheSibling(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if known[name] || name == "plugin.wasm" {
+		if known[name] || name == discordtest.ModuleFile || name == discordtest.PackageFile {
 			continue
 		}
 		t.Errorf("the sibling repository has %q, which is not in discordtest.VendoredFiles; "+

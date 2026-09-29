@@ -304,9 +304,9 @@ const (
 	codeProviderInvalidLanguage = "PROVIDER_INVALID_LANGUAGE"
 	codeProviderInvalidSetting  = "PROVIDER_INVALID_SETTING"
 	// Installing an Installed plugin (ADR-0058, .scratch/plugin-system issue 10).
-	// FIVE codes rather than one, because they are five different things for the
+	// SIX codes rather than one, because they are six different things for the
 	// Admin to do next and a single PLUGIN_REFUSED would make the screen say "it
-	// did not work" five times in the same words:
+	// did not work" six times in the same words:
 	//
 	//   codePluginInvalidManifest (422) — no manifest, not JSON, or a manifest
 	//                               claiming something a manifest may not claim.
@@ -317,6 +317,10 @@ const (
 	//                               plugin or by a Built-in this binary ships.
 	//   codePluginInvalidModule (422) — no module, or one that will not compile or
 	//                               instantiate in this server's sandbox.
+	//   codePluginInvalidPackage (422) — what was sent as a plugin package is not one:
+	//                               not a zip, or a layout other than the manifest, the
+	//                               module and an optional signature at its root, or a
+	//                               member too large to unpack.
 	//   codePluginSourceRefused (422) — a pasted URL this server will not fetch a
 	//                               plugin from (not absolute http(s), unresolvable,
 	//                               resolving into this server's own network) or one
@@ -346,6 +350,7 @@ const (
 	codePluginAPIVersion      = "PLUGIN_API_VERSION"
 	codePluginDuplicate       = "PLUGIN_DUPLICATE"
 	codePluginInvalidModule   = "PLUGIN_INVALID_MODULE"
+	codePluginInvalidPackage  = "PLUGIN_INVALID_PACKAGE"
 	codePluginSourceRefused   = "PLUGIN_SOURCE_REFUSED"
 	codePluginUnknown         = "PLUGIN_UNKNOWN"
 	codePluginInvalidSettings = "PLUGIN_INVALID_SETTINGS"

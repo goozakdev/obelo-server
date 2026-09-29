@@ -181,33 +181,28 @@ describe("the Plugins screen", () => {
     expect(screen.getByTestId("plugin-other")).toBeTruthy();
   });
 
-  it("sends both files as one install", async () => {
+  it("sends the package as one install", async () => {
     client.getPlugins.mockResolvedValue(view());
     client.installPlugin.mockResolvedValue(view(plugin()));
 
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
-    const manifest = new File(['{"id":"example-sink"}'], "manifest.json", {
-      type: "application/json",
+    const pkg = new File([new Uint8Array([80, 75, 3, 4])], "example-sink-1.0.0.zip", {
+      type: "application/zip",
     });
-    const module = new File([new Uint8Array([0, 97, 115, 109])], "plugin.wasm", {
-      type: "application/wasm",
-    });
-    await userEvent.upload(screen.getByTestId("plugin-manifest-file"), manifest);
-    await userEvent.upload(screen.getByTestId("plugin-module-file"), module);
+    const input = screen.getByTestId("plugin-package-file") as HTMLInputElement;
+    expect(input.accept).toContain(".zip");
+    await userEvent.upload(input, pkg);
     await userEvent.click(screen.getByTestId("plugin-upload"));
 
-    // The third argument is the OPTIONAL signature part (plugin-system/15), and
-    // it is undefined here because this form does not insist on one: most plugins
-    // are unsigned, and whether this server needs one is the server's question.
-    expect(client.installPlugin).toHaveBeenCalledWith(manifest, module, undefined);
+    // One file, one argument: the signature, if any, is inside the package.
+    expect(client.installPlugin).toHaveBeenCalledTimes(1);
+    expect(client.installPlugin).toHaveBeenCalledWith(pkg);
     await screen.findByTestId("plugin-example-sink");
   });
 
-  // Half a plugin is not a plugin, and the screen says which half is missing
-  // before it wastes a round trip on it.
-  it("refuses to upload without both files", async () => {
+  it("refuses to upload without a package", async () => {
     client.getPlugins.mockResolvedValue(view());
 
     render(<AdminPluginsScreen />);
@@ -216,10 +211,10 @@ describe("the Plugins screen", () => {
     await userEvent.click(screen.getByTestId("plugin-upload"));
 
     expect(client.installPlugin).not.toHaveBeenCalled();
-    expect(screen.getByTestId("plugins-action-error").textContent).toContain("both");
+    expect(screen.getByTestId("plugins-action-error").textContent).toContain(".zip");
   });
 
-  it("installs from a pasted manifest URL", async () => {
+  it("installs from a pasted package URL", async () => {
     client.getPlugins.mockResolvedValue(view());
     client.installPluginFromURL.mockResolvedValue(view(plugin()));
 
@@ -228,12 +223,12 @@ describe("the Plugins screen", () => {
 
     await userEvent.type(
       screen.getByTestId("plugin-url"),
-      "https://example.com/p/manifest.json",
+      "https://example.com/p/example-sink-1.0.0.zip",
     );
     await userEvent.click(screen.getByTestId("plugin-install-from-url"));
 
     expect(client.installPluginFromURL).toHaveBeenCalledWith({
-      url: "https://example.com/p/manifest.json",
+      url: "https://example.com/p/example-sink-1.0.0.zip",
     });
     await screen.findByTestId("plugin-example-sink");
   });
@@ -256,7 +251,7 @@ describe("the Plugins screen", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
-    await userEvent.type(screen.getByTestId("plugin-url"), "https://example.com/manifest.json");
+    await userEvent.type(screen.getByTestId("plugin-url"), "https://example.com/example-sink-1.0.0.zip");
     await userEvent.click(screen.getByTestId("plugin-install-from-url"));
 
     const shown = await screen.findByTestId("plugins-action-error");
