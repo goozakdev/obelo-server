@@ -39,6 +39,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -79,9 +80,19 @@ const usage = `pluginsign — sign an Obelo plugin, and check one.
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "pluginsign:", err)
+		var ue usageError
+		if errors.As(err, &ue) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
+
+// usageError is a command line that cannot mean what it says, as opposed to a
+// check that ran and failed; main exits 2 for it.
+type usageError string
+
+func (e usageError) Error() string { return string(e) }
 
 // run is main split out so the round-trip test can drive the real command and
 // feed its output through the server's install path — which is the only way "the
@@ -245,6 +256,22 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	modulePath := fs.String("module", "plugin.wasm", "the plugin's WebAssembly module")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// -package checks the signature inside the archive, so a loose-file flag beside
+	// it would be silently ignored.
+	if *packagePath != "" {
+		var conflicts []string
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "sig", "manifest", "module":
+				conflicts = append(conflicts, "-"+f.Name)
+			}
+		})
+		if len(conflicts) > 0 {
+			return usageError("-package cannot be combined with " + strings.Join(conflicts, ", ") +
+				": it checks the signature inside the package")
+		}
 	}
 
 	var pub ed25519.PublicKey

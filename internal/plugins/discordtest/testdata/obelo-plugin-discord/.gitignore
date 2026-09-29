@@ -4,3 +4,7 @@
 plugin.wasm
 # The plugin package `make package` produces.
 obelo-plugin-discord.zip
+# The signature covers the built module, so it is an artifact too, and so is
+# any package zip (the name `make package` uses, or a versioned one).
+plugin.sig.json
+*.zip

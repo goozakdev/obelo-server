@@ -543,8 +543,8 @@ func installedWireCases() []wireCase {
 			golden: `{"ok":false,"error":"the value is larger than a plugin may store"}`,
 		},
 		{
-			// The detached signature document, published beside the manifest it
-			// covers. Pinned in full because it is a file a publisher's own tooling
+			// The detached signature document, a member of the Plugin package beside
+			// the manifest it covers. Pinned in full because it is a file a publisher's own tooling
 			// writes and a second implementation has to match key for key.
 			name: "Signature",
 			value: Signature{

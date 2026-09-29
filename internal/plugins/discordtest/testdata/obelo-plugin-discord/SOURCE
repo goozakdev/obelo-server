@@ -8,8 +8,8 @@ to cheat.
   repository   obelo-plugin-discord
   local path   ../obelo-plugin-discord  (relative to this repository's root)
   remote       none — it is a local repository on the maintainer's machine
-  commit       c6abb422ea20be09f9beb2283400b9b4b5fc863a
-               "feat: add make package to build the plugin package zip"
+  commit       9dfb4f599a03ea4badc05ab29ca5fff29e793ce9
+               "docs: note pluginsign prerequisite and ignore package artifacts"
   taken        2026-09-28
 
 Why the copy exists: a clean clone of the server does not have the sibling, and
