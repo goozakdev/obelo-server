@@ -125,17 +125,21 @@ export default function AdminSubtitleProvidersScreen() {
 
   if (error && !view) {
     return (
-      <div className="admin-section" data-testid="subtitle-providers-error">
-        <p className="form-error">{error}</p>
+      <div className="admin-section admin-subtitle-providers" data-testid="subtitle-providers-error">
+        <p className="auth-error">{error}</p>
       </div>
     );
   }
   if (!view || !draft) {
-    return <div className="admin-section" data-testid="subtitle-providers-loading">Loading…</div>;
+    return (
+      <div className="admin-section admin-subtitle-providers" data-testid="subtitle-providers-loading">
+        Loading…
+      </div>
+    );
   }
 
   return (
-    <div className="admin-section" data-testid="subtitle-providers-screen">
+    <div className="admin-section admin-subtitle-providers" data-testid="subtitle-providers-screen">
       <h2 className="admin-section-title">Subtitle Providers</h2>
       <p className="admin-section-note">
         Fetch subtitles from an external provider when a title lacks one in a language
@@ -209,7 +213,7 @@ export default function AdminSubtitleProvidersScreen() {
 
             <div className="provider-test">
               <button
-                className="btn"
+                className="button-secondary"
                 type="button"
                 data-testid={`subtitle-provider-test-${p.slug}`}
                 onClick={() => onTest(p)}
@@ -219,7 +223,7 @@ export default function AdminSubtitleProvidersScreen() {
               </button>
               {test && test !== "pending" && (
                 <span
-                  className={`provider-test-result ${test.ok ? "is-ok" : "is-error"}`}
+                  className={`status ${test.ok ? "status-ok" : "status-error"}`}
                   data-testid={`subtitle-provider-test-result-${p.slug}`}
                 >
                   {test.ok ? "✓ " : "✗ "}
@@ -250,12 +254,12 @@ export default function AdminSubtitleProvidersScreen() {
         </p>
       </div>
 
-      {error && <p className="form-error" data-testid="subtitle-providers-save-error">{error}</p>}
-      {saved && <p className="form-note" data-testid="subtitle-providers-saved">Saved.</p>}
+      {error && <p className="auth-error" data-testid="subtitle-providers-save-error">{error}</p>}
+      {saved && <p className="admin-section-note" data-testid="subtitle-providers-saved">Saved.</p>}
 
       <div className="admin-actions">
         <button
-          className="btn btn-primary"
+          className="auth-submit"
           type="button"
           data-testid="subtitle-providers-save"
           onClick={onSave}

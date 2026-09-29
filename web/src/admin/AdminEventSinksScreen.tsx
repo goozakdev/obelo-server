@@ -155,21 +155,21 @@ export default function AdminEventSinksScreen() {
 
   if (error && !view) {
     return (
-      <div className="admin-section" data-testid="event-sinks-error">
-        <p className="form-error">{error}</p>
+      <div className="admin-section admin-event-sinks" data-testid="event-sinks-error">
+        <p className="auth-error">{error}</p>
       </div>
     );
   }
   if (!view || !draft) {
     return (
-      <div className="admin-section" data-testid="event-sinks-loading">
+      <div className="admin-section admin-event-sinks" data-testid="event-sinks-loading">
         Loading…
       </div>
     );
   }
 
   return (
-    <div className="admin-section" data-testid="event-sinks-screen">
+    <div className="admin-section admin-event-sinks" data-testid="event-sinks-screen">
       <h2 className="admin-section-title">Event Sinks</h2>
       <p className="admin-section-note">
         Have this server tell something else when a scan or a metadata pass
@@ -267,19 +267,19 @@ export default function AdminEventSinksScreen() {
       ))}
 
       {error && (
-        <p className="form-error" data-testid="event-sinks-save-error">
+        <p className="auth-error" data-testid="event-sinks-save-error">
           {error}
         </p>
       )}
       {saved && (
-        <p className="form-note" data-testid="event-sinks-saved">
+        <p className="admin-section-note" data-testid="event-sinks-saved">
           Saved.
         </p>
       )}
 
       <div className="admin-actions">
         <button
-          className="btn btn-primary"
+          className="auth-submit"
           type="button"
           data-testid="event-sinks-save"
           onClick={onSave}
