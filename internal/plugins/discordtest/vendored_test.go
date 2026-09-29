@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/plugins/discordtest"
@@ -66,7 +67,10 @@ func TestTheVendoredCopyMatchesTheSibling(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if known[name] || name == discordtest.ModuleFile || name == discordtest.PackageFile {
+		// The built module, its signature and any packaged zip are artifacts of
+		// building the source, not source, and the sibling gitignores them.
+		if known[name] || name == discordtest.ModuleFile || name == discordtest.PackageFile ||
+			name == pluginapi.SignatureFile || strings.HasSuffix(name, ".zip") {
 			continue
 		}
 		t.Errorf("the sibling repository has %q, which is not in discordtest.VendoredFiles; "+

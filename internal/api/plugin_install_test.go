@@ -484,6 +484,9 @@ func TestAPackagePartOverTheCapIsTooLarge(t *testing.T) {
 	if status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413; body: %s", status, body)
 	}
+	if !strings.Contains(string(body), "larger than this server will accept") {
+		t.Fatalf("body = %s, want the package sentence", body)
+	}
 }
 
 // TestABodyFarOverTheCapIsTooLargeNotBadRequest: a body that overruns the whole

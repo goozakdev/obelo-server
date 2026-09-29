@@ -43,6 +43,14 @@ A Plugin is installed as one **Plugin package**: a zip holding `manifest.json`,
 make package     # → obelo-plugin-discord.zip
 ```
 
+`make package` needs `pluginsign`, which ships in the Obelo server repository and is
+built there by `make pluginsign` (`bin/pluginsign`). Put it on your `PATH` or pass it
+as `PLUGINSIGN=`:
+
+```sh
+make package PLUGINSIGN=/path/to/obelo-server/bin/pluginsign
+```
+
 **Upload.** Admin → Plugins → *Install a plugin*, and pick the zip.
 
 **From a URL.** Publish the zip and paste its URL. The server refuses a URL that

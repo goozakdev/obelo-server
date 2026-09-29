@@ -77,7 +77,7 @@ func TestADomainSeparatedMessageIsNotABareDigestPair(t *testing.T) {
 }
 
 // TestSignAndVerifyRoundTrip, through the encoded document — which is what a
-// server actually holds: bytes fetched from beside a manifest.
+// server actually holds: bytes read from the signature member of a Plugin package.
 func TestSignAndVerifyRoundTrip(t *testing.T) {
 	pub, priv := mustKey(t)
 

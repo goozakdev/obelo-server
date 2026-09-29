@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -574,6 +575,40 @@ func TestThePluginsignCommandsOutputInstalls(t *testing.T) {
 	}
 	if got := signerOf(t, srv, token, "discord"); got.Publisher != publisher {
 		t.Fatalf("publisher = %q, want %q", got.Publisher, publisher)
+	}
+}
+
+// TestVerifyRefusesAPackageCombinedWithLooseFileFlags: `-package` checks the
+// signature inside the archive, so a `-sig`, `-manifest` or `-module` beside it
+// would be silently ignored. That is a usage error (exit 2) naming the flags, not
+// a verdict about a signature.
+func TestVerifyRefusesAPackageCombinedWithLooseFileFlags(t *testing.T) {
+	t.Parallel()
+	root := discordtest.RepoRoot(t)
+	for _, flags := range [][]string{
+		{"-sig", "a.sig.json"},
+		{"-manifest", "manifest.json"},
+		{"-module", "plugin.wasm"},
+		{"-sig", "a.sig.json", "-module", "plugin.wasm"},
+	} {
+		args := append([]string{"run", "./cmd/pluginsign", "verify", "-package", "p.zip", "-pub", "AAAA"}, flags...)
+		cmd := exec.Command("go", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatalf("verify -package %v: err = %v, want an exit status; output:\n%s", flags, err, out)
+		}
+		// `go run` reports the program's status on its own stderr as "exit status N"
+		// and exits 1, so the program's own code is read from that line.
+		if !strings.Contains(string(out), "exit status 2") {
+			t.Errorf("verify -package %v: want exit 2, got:\n%s", flags, out)
+		}
+		for _, f := range flags {
+			if strings.HasPrefix(f, "-") && !strings.Contains(string(out), f) {
+				t.Errorf("verify -package %v: the message does not name %s:\n%s", flags, f, out)
+			}
+		}
 	}
 }
 
