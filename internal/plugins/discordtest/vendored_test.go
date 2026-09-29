@@ -69,12 +69,30 @@ func TestTheVendoredCopyMatchesTheSibling(t *testing.T) {
 		name := e.Name()
 		// The built module, its signature and any packaged zip are artifacts of
 		// building the source, not source, and the sibling gitignores them.
-		if known[name] || name == discordtest.ModuleFile || name == discordtest.PackageFile ||
-			name == pluginapi.SignatureFile || strings.HasSuffix(name, ".zip") {
+		if known[name] || isBuildArtifact(name) {
 			continue
 		}
 		t.Errorf("the sibling repository has %q, which is not in discordtest.VendoredFiles; "+
 			"vendor it or say why it is excluded", name)
+	}
+}
+
+// isBuildArtifact reports whether a name in the sibling repository is something
+// building the source leaves behind. A zip is matched by suffix, whatever its case.
+func isBuildArtifact(name string) bool {
+	return name == discordtest.ModuleFile || name == discordtest.PackageFile ||
+		name == pluginapi.SignatureFile || strings.HasSuffix(strings.ToLower(name), ".zip")
+}
+
+// TestBuildArtifactsAreRecognisedWhateverTheCaseOfTheZipSuffix.
+func TestBuildArtifactsAreRecognisedWhateverTheCaseOfTheZipSuffix(t *testing.T) {
+	for name, want := range map[string]bool{
+		"plugin.wasm": true, "plugin.sig.json": true, "x.zip": true, "notes.ZIP": true, "a.Zip": true,
+		"x.zip.bak": false, "extra.go": false, "main.go": false,
+	} {
+		if got := isBuildArtifact(name); got != want {
+			t.Errorf("isBuildArtifact(%q) = %v, want %v", name, got, want)
+		}
 	}
 }
 

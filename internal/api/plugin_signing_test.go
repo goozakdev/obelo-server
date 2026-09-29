@@ -583,6 +583,9 @@ func TestThePluginsignCommandsOutputInstalls(t *testing.T) {
 // would be silently ignored. That is a usage error (exit 2) naming the flags, not
 // a verdict about a signature.
 func TestVerifyRefusesAPackageCombinedWithLooseFileFlags(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the pluginsign command through go run")
+	}
 	t.Parallel()
 	root := discordtest.RepoRoot(t)
 	for _, flags := range [][]string{
@@ -608,6 +611,39 @@ func TestVerifyRefusesAPackageCombinedWithLooseFileFlags(t *testing.T) {
 			if strings.HasPrefix(f, "-") && !strings.Contains(string(out), f) {
 				t.Errorf("verify -package %v: the message does not name %s:\n%s", flags, f, out)
 			}
+		}
+	}
+}
+
+// TestVerifyTreatsAnEmptyPackageAsAUsageError: `-package=` was given, so it is
+// still the package mode; an empty path is a usage error, and a loose-file flag
+// beside it is the same conflict as beside a real path.
+func TestVerifyTreatsAnEmptyPackageAsAUsageError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the pluginsign command through go run")
+	}
+	t.Parallel()
+	root := discordtest.RepoRoot(t)
+	for _, tc := range []struct {
+		flags []string
+		want  string
+	}{
+		{[]string{"-package="}, "-package needs a path"},
+		{[]string{"-package=", "-sig", "x"}, "-package cannot be combined with -sig"},
+	} {
+		args := append([]string{"run", "./cmd/pluginsign", "verify", "-pub", "AAAA"}, tc.flags...)
+		cmd := exec.Command("go", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			t.Fatalf("verify %v: err = %v, want an exit status; output:\n%s", tc.flags, err, out)
+		}
+		if !strings.Contains(string(out), "exit status 2") {
+			t.Errorf("verify %v: want exit 2, got:\n%s", tc.flags, out)
+		}
+		if !strings.Contains(string(out), tc.want) {
+			t.Errorf("verify %v: want %q in:\n%s", tc.flags, tc.want, out)
 		}
 	}
 }
