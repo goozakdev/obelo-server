@@ -259,18 +259,25 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	}
 
 	// -package checks the signature inside the archive, so a loose-file flag beside
-	// it would be silently ignored.
-	if *packagePath != "" {
-		var conflicts []string
-		fs.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "sig", "manifest", "module":
-				conflicts = append(conflicts, "-"+f.Name)
-			}
-		})
+	// it would be silently ignored. Whether it was given, not what it was given, is
+	// what selects that mode: `-package=` must not fall back to the loose files.
+	var packageGiven bool
+	var conflicts []string
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "package":
+			packageGiven = true
+		case "sig", "manifest", "module":
+			conflicts = append(conflicts, "-"+f.Name)
+		}
+	})
+	if packageGiven {
 		if len(conflicts) > 0 {
 			return usageError("-package cannot be combined with " + strings.Join(conflicts, ", ") +
 				": it checks the signature inside the package")
+		}
+		if *packagePath == "" {
+			return usageError("-package needs a path")
 		}
 	}
 
@@ -294,7 +301,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 
 	var sigRaw, manifest, module []byte
 	var err error
-	if *packagePath != "" {
+	if packageGiven {
 		archive, err := os.ReadFile(*packagePath)
 		if err != nil {
 			return fmt.Errorf("reading the package: %w", err)
