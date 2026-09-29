@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/plugins/discordtest"
+	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
 	"github.com/goozakdev/obelo-server/internal/testharness"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -30,7 +30,7 @@ import (
 //   - AN UNREACHABLE CATALOG IS A 200 WITH A NOTE. The upload and paste-URL paths
 //     have nothing to do with the catalog and must survive its outage, which they
 //     cannot do if the screen's own GET is a 5xx.
-//   - AN ENTRY IS A MANIFEST URL, so installing one is the ordinary URL install
+//   - AN ENTRY IS A PACKAGE URL, so installing one is the ordinary URL install
 //     and an entry pointing into this server's own network is refused with the
 //     SAME SENTENCE a pasted address gets. There is no catalog-shaped hole in the
 //     policy, because there is no catalog-shaped install path.
@@ -42,15 +42,14 @@ const (
 // --- wire shapes ----------------------------------------------------------------
 
 type catalogEntryResp struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Publisher    string   `json:"publisher"`
-	Provides     []string `json:"provides"`
-	ManifestURL  string   `json:"manifestUrl"`
-	SignatureURL string   `json:"signatureUrl"`
-	Description  string   `json:"description"`
-	DocsURL      string   `json:"docsUrl"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Publisher   string   `json:"publisher"`
+	Provides    []string `json:"provides"`
+	PackageURL  string   `json:"packageUrl"`
+	Description string   `json:"description"`
+	DocsURL     string   `json:"docsUrl"`
 }
 
 type catalogResp struct {
@@ -61,36 +60,24 @@ type catalogResp struct {
 
 // --- the index and the files it points at ---------------------------------------
 
-// discordSource serves the reference plugin the way an author publishes it: a
-// manifest and a module in one directory, under the names they take on disk. It
-// is exactly the layout docs/plugins/authoring.md tells authors to publish, which
-// is what makes it also the layout a catalog can list.
-//
-// opts.signature, when set, is served beside them as plugin.sig.json.
+// discordPackageFile is the name discordSource publishes the reference plugin's
+// package under.
+const discordPackageFile = "discord.zip"
+
+// discordSource serves the reference plugin the way an author publishes it: one
+// Plugin package, a zip of the manifest, the module and — when signature is
+// non-empty — plugin.sig.json. It is exactly the file docs/plugins/authoring.md
+// tells authors to publish, which is what makes it also the file a catalog lists.
 func discordSource(t *testing.T, signature []byte) *httptest.Server {
 	t.Helper()
-	manifest := discordtest.ManifestJSON(t)
-	module := discordtest.Module(t)
+	archive := plugintest.PackageZip(t, discordtest.ManifestJSON(t), discordtest.Module(t), signature)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch path.Base(r.URL.Path) {
-		case plugins.ManifestFile:
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(manifest)
-		case plugins.DefaultModuleFile:
-			w.Header().Set("Content-Type", "application/wasm")
-			_, _ = w.Write(module)
-		case pluginapi.SignatureFile:
-			if len(signature) == 0 {
-				// The ordinary case: an unsigned plugin's source answers 404 here, and
-				// a 404 is not an error on the install path.
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(signature)
-		default:
+		if path.Base(r.URL.Path) != discordPackageFile {
 			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -114,14 +101,14 @@ func catalogServing(t *testing.T, entries ...pluginapi.CatalogEntry) *httptest.S
 	return srv
 }
 
-func discordEntry(manifestURL string) pluginapi.CatalogEntry {
+func discordEntry(packageURL string) pluginapi.CatalogEntry {
 	return pluginapi.CatalogEntry{
 		ID:          "discord",
 		Name:        "Discord",
 		Version:     "0.1.0",
 		Publisher:   "Example Publisher",
 		Provides:    []pluginapi.ExtensionPoint{pluginapi.ExtensionEventSink},
-		ManifestURL: manifestURL,
+		PackageURL:  packageURL,
 		Description: "Posts a message to a Discord channel when something finishes.",
 	}
 }
@@ -150,11 +137,11 @@ func setCatalog(t *testing.T, srv *testharness.Server, token, url string) catalo
 
 // TestACatalogListsThePluginAndInstallsIt. An Admin sets an address, sees what it
 // offers, and installs the reference plugin from it — through the same endpoint a
-// pasted URL goes through, with the module fetched from beside the manifest.
+// pasted URL goes through, with one package fetched.
 func TestACatalogListsThePluginAndInstallsIt(t *testing.T) {
 	t.Parallel()
 	source := discordSource(t, nil)
-	index := catalogServing(t, discordEntry(source.URL+"/"+plugins.ManifestFile))
+	index := catalogServing(t, discordEntry(source.URL+"/"+discordPackageFile))
 
 	// The fixture is served from 127.0.0.1, which the INSTALL path refuses by
 	// default because a plugin is code. The catalog INDEX is data and is fetched
@@ -185,10 +172,10 @@ func TestACatalogListsThePluginAndInstallsIt(t *testing.T) {
 		t.Fatalf("publisher = %q, want the index's claim", entry.Publisher)
 	}
 
-	// Installing an entry IS installing its manifest URL. No catalog-specific
+	// Installing an entry IS installing its package URL. No catalog-specific
 	// endpoint exists and none should.
 	status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
-		map[string]any{"url": entry.ManifestURL}, nil)
+		map[string]any{"url": entry.PackageURL}, nil)
 	if status != http.StatusCreated {
 		t.Fatalf("installing the catalog entry: status = %d, want 201; body: %s", status, body)
 	}
@@ -199,8 +186,8 @@ func TestACatalogListsThePluginAndInstallsIt(t *testing.T) {
 	}
 	// The provenance recorded is the ADDRESS, which is what the catalog chose and
 	// what an Admin would go back to.
-	if installed.Source != entry.ManifestURL {
-		t.Fatalf("source = %q, want the manifest URL the catalog gave", installed.Source)
+	if installed.Source != entry.PackageURL {
+		t.Fatalf("source = %q, want the package URL the catalog gave", installed.Source)
 	}
 	// And the facts on the row come from the MANIFEST, not from the index: the
 	// catalog's claims are display and the manifest is the authority.
@@ -216,7 +203,7 @@ func TestACatalogListsThePluginAndInstallsIt(t *testing.T) {
 func TestAnEntryResolvingToAPrivateAddressIsRefused(t *testing.T) {
 	t.Parallel()
 	source := discordSource(t, nil)
-	index := catalogServing(t, discordEntry(source.URL+"/"+plugins.ManifestFile))
+	index := catalogServing(t, discordEntry(source.URL+"/"+discordPackageFile))
 
 	// Deliberately WITHOUT the private-source option: this is the production
 	// policy. The catalog index itself is still read, because an index is data and
@@ -234,12 +221,12 @@ func TestAnEntryResolvingToAPrivateAddressIsRefused(t *testing.T) {
 	entry := view.Entries[0]
 
 	status, body := srv.JSON(http.MethodPost, pluginsPath+"/from-url", token,
-		map[string]any{"url": entry.ManifestURL}, nil)
+		map[string]any{"url": entry.PackageURL}, nil)
 	refusal := refusalOf(t, http.StatusUnprocessableEntity, status, body)
 	if refusal.Error.Code != "PLUGIN_SOURCE_REFUSED" {
 		t.Fatalf("code = %q, want PLUGIN_SOURCE_REFUSED; body: %s", refusal.Error.Code, body)
 	}
-	if !strings.Contains(refusal.Error.Message, "upload the file instead") {
+	if !strings.Contains(refusal.Error.Message, "upload the package instead") {
 		t.Fatalf("message = %q, want the same sentence a pasted URL gets", refusal.Error.Message)
 	}
 	// notShipped, because a fresh server is no longer empty: it installs the
@@ -342,7 +329,7 @@ func TestACatalogThatIsNotACatalogIsANoteToo(t *testing.T) {
 func TestClearingTheCatalogTurnsItOff(t *testing.T) {
 	t.Parallel()
 	source := discordSource(t, nil)
-	index := catalogServing(t, discordEntry(source.URL+"/"+plugins.ManifestFile))
+	index := catalogServing(t, discordEntry(source.URL+"/"+discordPackageFile))
 
 	srv := testharness.New(t)
 	token := adminToken(t, srv)
@@ -361,14 +348,14 @@ func TestClearingTheCatalogTurnsItOff(t *testing.T) {
 	}
 }
 
-// TestAnEntryWithNoManifestURLIsNotOffered. Every other claim in an entry is
+// TestAnEntryWithNoPackageURLIsNotOffered. Every other claim in an entry is
 // display and is left alone; a row with no address is the one a server could do
 // nothing with at all.
-func TestAnEntryWithNoManifestURLIsNotOffered(t *testing.T) {
+func TestAnEntryWithNoPackageURLIsNotOffered(t *testing.T) {
 	t.Parallel()
 	index := catalogServing(t,
 		pluginapi.CatalogEntry{ID: "broken", Name: "Broken"},
-		discordEntry("https://plugins.example.test/discord/"+plugins.ManifestFile),
+		discordEntry("https://plugins.example.test/discord/"+discordPackageFile),
 	)
 	srv := testharness.New(t)
 	token := adminToken(t, srv)

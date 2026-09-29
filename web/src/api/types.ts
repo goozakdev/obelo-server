@@ -2666,36 +2666,28 @@ export interface PluginUninstallPreview {
   usersToDelete: PluginUninstallUser[];
 }
 
-/** The `POST /settings/plugins/from-url` body: the URL of a plugin's
- * `manifest.json`, with its `plugin.wasm` published beside it in the same
- * directory.
- *
- * `signatureUrl` is optional and almost always omitted — a signature published
- * the ordinary way sits beside the manifest under its conventional name, which
- * is where the server looks anyway. It exists for a catalog entry that carries a
- * `signatureUrl` of its own. */
+/** The `POST /settings/plugins/from-url` body: the URL of a plugin package, a
+ * .zip holding `manifest.json`, the module, and optionally `plugin.sig.json`. */
 export interface InstallPluginFromURLInput {
   url: string;
-  signatureUrl?: string;
 }
 
 /** One plugin an operator's chosen catalog offers (plugin-system/15).
  *
- * `manifestUrl` IS the entry: installing it is the ordinary URL install, through
+ * `packageUrl` IS the entry: installing it is the ordinary URL install, through
  * the same endpoint and the same policy as an address pasted by hand — including
  * the refusal of one that resolves inside the server's own network. Everything
  * else here is the index author's CLAIM, shown so an operator can choose and
- * believed by nothing: the manifest fetched from `manifestUrl` decides the id,
- * the name, the version and what it provides, and only a signature makes
- * `publisher` more than a word in a file. */
+ * believed by nothing: the manifest inside the package fetched from `packageUrl`
+ * decides the id, the name, the version and what it provides, and only a
+ * signature makes `publisher` more than a word in a file. */
 export interface PluginCatalogEntry {
   id: string;
   name: string;
   version?: string;
   publisher?: string;
   provides?: string[];
-  manifestUrl: string;
-  signatureUrl?: string;
+  packageUrl: string;
   description?: string;
   docsUrl?: string;
 }

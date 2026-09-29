@@ -58,6 +58,14 @@ const VendoredDir = "testdata/" + SiblingDirName
 // because a hash of a tree nobody can fetch proves nothing.
 const SourceFile = "SOURCE"
 
+// The two files the sibling's Makefile produces. They are build output, ignored
+// by the sibling's .gitignore and never vendored, so the drift test must not count
+// one lying in the sibling's directory as a file somebody forgot to vendor.
+const (
+	ModuleFile  = "plugin.wasm"
+	PackageFile = SiblingDirName + ".zip"
+)
+
 // VendoredFiles is every file the vendored copy holds, and the list the drift
 // test walks. SOURCE is not here: it is this repository's note about the sibling
 // and has no counterpart over there.

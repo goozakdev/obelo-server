@@ -296,6 +296,17 @@ half-loaded and never discovers the mismatch mid-enrichment.
 > provider, subtitle and sink Managers Reload and only then is the old `Set` closed. Rebuild-and-swap
 > rather than a delta, so the state after an install is the state a reboot would have produced.
 >
+> **Amended (plugin packages, 2026-09-28):** the two-file install above is replaced by one file, a
+> **Plugin package** — a `.zip` holding `manifest.json`, the module and optionally `plugin.sig.json`
+> at its root and nothing else. `POST /settings/plugins` now takes a single multipart part,
+> `package`; `POST /settings/plugins/from-url` takes the URL of that zip and makes one request for
+> it; nothing fetches a module "from beside" a manifest any more. The refusals above are unchanged
+> and a sixth is added, `422 PLUGIN_INVALID_PACKAGE`, for an archive that is not a zip or whose layout
+> is anything but the three expected files. The archive is unpacked in memory, every member is read
+> through a cap on its **decompressed** size (the existing manifest, module and signature caps; the
+> archive itself is capped at their sum plus 1 MiB), nothing is written under a name the archive
+> carries, and the archive is not kept — the manifest is still stored byte for byte.
+>
 > **Amended (plugin-system issue 19, 2026-09-17):** "every reader picks the new value up on its next
 > read" was true of the subtitle builder, the sink Manager and the settings handlers, and NOT of the
 > enrichment catalog, which copied the Metadata provider Descriptors into a slice at construction
@@ -505,6 +516,11 @@ module is the same trade this project has made every previous time.
 > A signature says who shipped the bytes; it says nothing about what they do, and the sandbox
 > is the thing that constrains that. A signed Plugin gets no extra capability of any kind.
 >
+> **Amended (plugin packages, 2026-09-28):** the signature is no longer published "beside" the
+> manifest: it travels inside the Plugin package as `plugin.sig.json`. What it covers is unchanged —
+> the manifest and module bytes, not the zip — so where it is carried adds nothing to the trust
+> decision, which is still the pinned keys alone. A package without one is unsigned.
+>
 > **A catalog URL.** A server may be pointed at a JSON index (`CatalogIndex` / `CatalogEntry`,
 > new wire types in `pluginapi/v1`), empty by default, and **this project publishes none**
 > (ADR-0001). A catalog entry is a manifest URL, so installing one is
@@ -513,3 +529,8 @@ module is the same trade this project has made every previous time.
 > network is refused with the sentence a pasted address gets. The index itself is **data**,
 > so it is fetched under the ordinary `safefetch` policy; that asymmetry is the same one
 > decision 5 already draws between reading a poster and running a module.
+>
+> **Amended (plugin packages, 2026-09-28):** a catalog entry is now a **package URL**
+> (`packageUrl`), not a manifest URL: `manifestUrl` and `signatureUrl` are gone from
+> `CatalogEntry`. Installing an entry is still `Manager.InstallFromURL` unchanged, now fetching one
+> zip, with the same first-hop address check.

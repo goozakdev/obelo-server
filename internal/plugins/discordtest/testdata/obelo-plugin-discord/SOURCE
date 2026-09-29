@@ -8,9 +8,9 @@ to cheat.
   repository   obelo-plugin-discord
   local path   ../obelo-plugin-discord  (relative to this repository's root)
   remote       none — it is a local repository on the maintainer's machine
-  commit       d50722bc6249297e2218a67cf49bfc47978533eb
-               "The Discord Event sink: Obelo's reference Installed plugin"
-  taken        2026-09-17 (.scratch/plugin-system issue 14)
+  commit       c6abb422ea20be09f9beb2283400b9b4b5fc863a
+               "feat: add make package to build the plugin package zip"
+  taken        2026-09-28
 
 Why the copy exists: a clean clone of the server does not have the sibling, and
 every test in internal/plugins/discordtest and internal/api/discord_plugin_test.go

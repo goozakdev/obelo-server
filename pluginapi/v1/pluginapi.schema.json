@@ -1393,7 +1393,7 @@
     },
     "CatalogEntry": {
       "type": "object",
-      "description": "One plugin a catalog offers. manifestUrl IS the entry: installing from it is the ordinary URL install, so the module is fetched from beside the manifest and every refusal applies unchanged — including the one unique to that path, where the first hop is address-checked because what comes back is code the server executes. An entry pointing into the server's own network is refused with the same sentence a pasted address gets. Every other field is DISPLAY: the index author's claim, shown so an operator can choose, and believed by nothing. The manifest fetched from manifestUrl decides the id, the name, the version and the Extension points, and only a signature makes `publisher` more than a word in a file. signatureUrl is for a signature that is not beside the manifest; absent means the conventional name in the manifest's own directory, which is where the host looks anyway.",
+      "description": "One plugin a catalog offers. packageUrl IS the entry: installing from it is the ordinary URL install, so one Plugin package (a zip of manifest.json, the module and an optional plugin.sig.json) is fetched and every refusal applies unchanged — including the one unique to that path, where the first hop is address-checked because what comes back is code the server executes. An entry pointing into the server's own network is refused with the same sentence a pasted address gets. Every other field is DISPLAY: the index author's claim, shown so an operator can choose, and believed by nothing. The manifest inside the package decides the id, the name, the version and the Extension points, and only a signature makes `publisher` more than a word in a file.",
       "properties": {
         "id": {
           "type": "string"
@@ -1413,10 +1413,7 @@
             "$ref": "#/$defs/ExtensionPoint"
           }
         },
-        "manifestUrl": {
-          "type": "string"
-        },
-        "signatureUrl": {
+        "packageUrl": {
           "type": "string"
         },
         "description": {
@@ -1429,7 +1426,7 @@
       "required": [
         "id",
         "name",
-        "manifestUrl"
+        "packageUrl"
       ]
     },
     "SubtitleSearchCall": {

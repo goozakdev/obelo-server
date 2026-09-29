@@ -7,6 +7,9 @@
 //	                   -manifest manifest.json -module plugin.wasm -out plugin.sig.json
 //	pluginsign verify  -sig plugin.sig.json -pub <base64> \
 //	                   -manifest manifest.json -module plugin.wasm
+//	pluginsign pack    -manifest manifest.json -module plugin.wasm \
+//	                   [-signature plugin.sig.json] [-out <id>-<version>.zip]
+//	pluginsign verify  -package plugin.zip -pub <base64>
 //
 // # It is NOT cmd/keytool, and that is the point
 //
@@ -35,12 +38,14 @@ package main
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/goozakdev/obelo-server/internal/plugins"
 	"github.com/goozakdev/obelo-server/internal/plugins/signing"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -55,12 +60,19 @@ const usage = `pluginsign — sign an Obelo plugin, and check one.
 
   pluginsign sign -key FILE -publisher NAME -manifest FILE -module FILE [-out FILE]
       Write the detached signature document (` + pluginapi.SignatureFile + `) covering
-      those exact bytes. Publish it in the same directory as the manifest and
-      the module. Re-sign whenever EITHER file changes: the signature covers
+      those exact bytes. Put it in the package with pack -signature FILE.
+      Re-sign whenever EITHER file changes: the signature covers
       both, and a manifest edited by one byte is a different manifest.
 
+  pluginsign pack -manifest FILE -module FILE [-signature FILE] [-out FILE]
+      Build the Plugin package a server installs: a .zip holding the manifest,
+      the module and, when given, the signature, at its root. The default output
+      is <id>-<version>.zip. It refuses anything a server would refuse to unpack.
+
   pluginsign verify -sig FILE -pub BASE64|-key FILE -manifest FILE -module FILE
-      Check a signature the way a server checks it. Exit 0 if it verifies.
+  pluginsign verify -package FILE -pub BASE64|-key FILE
+      Check a signature the way a server checks it -- against loose files, or
+      against the signature inside a package. Exit 0 if it verifies.
 
 `
 
@@ -78,13 +90,15 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("say what to do: keygen, sign or verify")
+		return fmt.Errorf("say what to do: keygen, sign, pack or verify")
 	}
 	switch args[0] {
 	case "keygen":
 		return runKeygen(args[1:], stdout, stderr)
 	case "sign":
 		return runSign(args[1:], stdout, stderr)
+	case "pack":
+		return runPack(args[1:], stdout, stderr)
 	case "verify":
 		return runVerify(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
@@ -164,7 +178,57 @@ func runSign(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stderr, "signed %s and %s as %q (key id %s)\n",
 		*manifestPath, *modulePath, sig.Publisher, sig.KeyID)
-	fmt.Fprintf(stderr, "publish this file beside the manifest as %s\n", pluginapi.SignatureFile)
+	fmt.Fprintf(stderr, "put this file in the package with: pluginsign pack -signature <this file> (it travels as %s)\n", pluginapi.SignatureFile)
+	return nil
+}
+
+// --- pack ---------------------------------------------------------------------
+
+func runPack(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("pluginsign pack", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	manifestPath := fs.String("manifest", "manifest.json", "the plugin's manifest.json")
+	modulePath := fs.String("module", "plugin.wasm", "the plugin's WebAssembly module")
+	sigPath := fs.String("signature", "", "the detached signature to include (optional)")
+	out := fs.String("out", "", `file to write the package to (default <id>-<version>.zip, "-" = stdout)`)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	manifest, err := os.ReadFile(*manifestPath)
+	if err != nil {
+		return fmt.Errorf("reading the manifest: %w", err)
+	}
+	module, err := os.ReadFile(*modulePath)
+	if err != nil {
+		return fmt.Errorf("reading the module: %w", err)
+	}
+	var sig []byte
+	if *sigPath != "" {
+		if sig, err = os.ReadFile(*sigPath); err != nil {
+			return fmt.Errorf("reading the signature: %w", err)
+		}
+	}
+	// PackPackage checks its own output with the routine a server unpacks with, so
+	// a package this writes is one a server will take.
+	archive, err := plugins.PackPackage(manifest, module, sig)
+	if err != nil {
+		return err
+	}
+	target := *out
+	if target == "" {
+		var man pluginapi.Manifest
+		if err := json.Unmarshal(manifest, &man); err != nil {
+			return err
+		}
+		target = man.ID + ".zip"
+		if man.Version != "" {
+			target = man.ID + "-" + man.Version + ".zip"
+		}
+	}
+	if err := writeOut(target, archive, 0o644, stdout); err != nil {
+		return err
+	}
+	fmt.Fprintf(stderr, "packed %s and %s into %s (%d bytes)\n", *manifestPath, *modulePath, target, len(archive))
 	return nil
 }
 
@@ -174,6 +238,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("pluginsign verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	sigPath := fs.String("sig", pluginapi.SignatureFile, "the detached signature document")
+	packagePath := fs.String("package", "", "a plugin package (.zip) to check, instead of -sig/-manifest/-module")
 	pubB64 := fs.String("pub", "", "the base64 ed25519 PUBLIC key to check against")
 	keyPath := fs.String("key", "", "a private key file to derive the public key from, instead of -pub")
 	manifestPath := fs.String("manifest", "manifest.json", "the plugin's manifest.json")
@@ -200,21 +265,35 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("give -pub (the public key an operator would pin) or -key (a private key to derive it from)")
 	}
 
-	sigRaw, err := os.ReadFile(*sigPath)
-	if err != nil {
-		return fmt.Errorf("reading the signature: %w", err)
+	var sigRaw, manifest, module []byte
+	var err error
+	if *packagePath != "" {
+		archive, err := os.ReadFile(*packagePath)
+		if err != nil {
+			return fmt.Errorf("reading the package: %w", err)
+		}
+		pkg, err := plugins.UnpackPackage(archive)
+		if err != nil {
+			return err
+		}
+		if len(pkg.Signature) == 0 {
+			return fmt.Errorf("the package holds no %s, so there is nothing to verify", pluginapi.SignatureFile)
+		}
+		sigRaw, manifest, module = pkg.Signature, pkg.Manifest, pkg.Module
+	} else {
+		if sigRaw, err = os.ReadFile(*sigPath); err != nil {
+			return fmt.Errorf("reading the signature: %w", err)
+		}
+		if manifest, err = os.ReadFile(*manifestPath); err != nil {
+			return fmt.Errorf("reading the manifest: %w", err)
+		}
+		if module, err = os.ReadFile(*modulePath); err != nil {
+			return fmt.Errorf("reading the module: %w", err)
+		}
 	}
 	sig, err := signing.Parse(sigRaw)
 	if err != nil {
 		return err
-	}
-	manifest, err := os.ReadFile(*manifestPath)
-	if err != nil {
-		return fmt.Errorf("reading the manifest: %w", err)
-	}
-	module, err := os.ReadFile(*modulePath)
-	if err != nil {
-		return fmt.Errorf("reading the module: %w", err)
 	}
 	if err := signing.Verify(sig, pub, manifest, module); err != nil {
 		return err

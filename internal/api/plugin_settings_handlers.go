@@ -26,8 +26,8 @@ import (
 // failure, and taking it away again.
 //
 //	GET    /settings/plugins            → what is installed
-//	POST   /settings/plugins            → install from an upload (multipart)
-//	POST   /settings/plugins/from-url   → install from a pasted URL
+//	POST   /settings/plugins            → install a plugin package from an upload (multipart)
+//	POST   /settings/plugins/from-url   → install a plugin package from a pasted URL
 //	GET    /settings/plugins/catalog    → the operator's chosen index, if any
 //	PUT    /settings/plugins/catalog    → set or clear the catalog URL
 //	GET    /settings/plugins/publishers → the pinned publisher keys
@@ -58,8 +58,8 @@ import (
 // free of a wasm runtime.
 type PluginManager interface {
 	List(ctx context.Context) ([]plugins.Installed, error)
-	Install(ctx context.Context, manifest, module, signature []byte, source string) (plugins.Installed, error)
-	InstallFromURL(ctx context.Context, url, signatureURL string) (plugins.Installed, error)
+	InstallPackage(ctx context.Context, archive []byte, source string) (plugins.Installed, error)
+	InstallFromURL(ctx context.Context, url string) (plugins.Installed, error)
 	SetEnabled(ctx context.Context, id string, enabled bool) (plugins.Installed, error)
 	Reenable(ctx context.Context, id string) (plugins.Installed, error)
 	SaveSettings(ctx context.Context, id string, values map[string]json.RawMessage) (plugins.Installed, error)
@@ -96,16 +96,10 @@ type pluginsResponse struct {
 }
 
 // installFromURLRequest is the POST /settings/plugins/from-url body: the URL of a
-// manifest.json, with the module beside it.
-//
-// SignatureURL is optional and is almost always omitted — a signature published
-// the ordinary way sits beside the manifest under its conventional name, which is
-// where the server looks anyway. It exists for a catalog entry that carries a
-// signatureUrl of its own, and it is address-checked exactly as the manifest URL
-// is, because it is the document that decides whether the code is trusted.
+// plugin package, a .zip holding the manifest, the module and an optional
+// signature.
 type installFromURLRequest struct {
-	URL          string `json:"url"`
-	SignatureURL string `json:"signatureUrl,omitempty"`
+	URL string `json:"url"`
 }
 
 // pluginSettingsRequest is the PUT /settings/plugins/{id}/settings body: one value
@@ -130,11 +124,11 @@ type uninstallPluginRequest struct {
 	DeleteUsers []string `json:"deleteUsers"`
 }
 
-// maxUploadBytes bounds the whole multipart body. It is the module cap plus room
-// for the manifest and the MIME framing, so the refusal an Admin gets for an
-// oversized module is the module's own sentence rather than a bare 413 from the
-// parser.
-const maxUploadBytes = plugins.MaxModuleBytes + (1 << 20)
+// maxUploadBytes bounds the whole multipart body. It is the package cap plus room
+// for the MIME framing, so a package just over the cap is refused by readUploadPart
+// and a body that overruns even this is refused by the parse in handleInstallPlugin;
+// both answer 413 with the package's own sentence.
+const maxUploadBytes = plugins.MaxPackageBytes + (1 << 20)
 
 // --- Routing ----------------------------------------------------------------
 
@@ -237,23 +231,29 @@ func handleGetPlugins(deps Deps) http.HandlerFunc {
 
 // --- Install ----------------------------------------------------------------
 
-// handleInstallPlugin takes the two files a Plugin is, as multipart/form-data:
+// handleInstallPlugin takes a plugin package as multipart/form-data:
 //
-//	manifest — the manifest.json, byte for byte as the author wrote it
-//	module   — the .wasm
+//	package — the .zip: manifest.json, the module, and optionally plugin.sig.json
 //
-// Two parts rather than one archive. An archive would make this server pick a
-// container format, unpack paths it did not choose, and defend against a member
-// called "../../obelo.db"; two named parts need none of that, and they are the
-// same two files under the same two names they take on disk — so what an Admin
-// uploads, what a URL install fetches and what the loader reads are one layout
-// described once.
+// One part. The package is unpacked in memory and its layout checked strictly
+// (plugins.UnpackPackage); nothing in it is written under a name it carries, so a
+// member called "../../obelo.db" is refused rather than defended against. The
+// detached signature, when there is one, travels inside the package: it covers
+// the manifest and module bytes and not the archive, so where it is carried adds
+// nothing to the trust decision, and a missing one costs what the pinned-key
+// policy says it costs.
 func handleInstallPlugin(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, codeBadRequest,
+					"the `package` part is larger than this server will accept", nil)
+				return
+			}
 			writeError(w, http.StatusBadRequest, codeBadRequest,
-				"send the plugin as multipart/form-data with a `manifest` part and a `module` part", nil)
+				"send the plugin package as multipart/form-data with a `package` part", nil)
 			return
 		}
 		defer func() {
@@ -262,21 +262,11 @@ func handleInstallPlugin(deps Deps) http.HandlerFunc {
 			}
 		}()
 
-		manifest, ok := readUploadPart(w, r, "manifest", plugins.MaxManifestBytes)
+		archive, ok := readUploadPart(w, r, "package", plugins.MaxPackageBytes)
 		if !ok {
 			return
 		}
-		module, ok := readUploadPart(w, r, "module", plugins.MaxModuleBytes)
-		if !ok {
-			return
-		}
-		// An OPTIONAL third part: the detached signature (issue 15). Missing is not
-		// an error here — most plugins are unsigned and a server with no publisher
-		// keys pinned does not care — so it is read with no refusal of its own, and
-		// what a missing signature costs is decided by the pinned-key policy, in the
-		// one place that decision belongs.
-		signature := optionalUploadPart(r, "signature", plugins.MaxSignatureBytes)
-		installed, err := deps.PluginManager.Install(r.Context(), manifest, module, signature, plugins.SourceUpload)
+		installed, err := deps.PluginManager.InstallPackage(r.Context(), archive, plugins.SourceUpload)
 		if err != nil {
 			writePluginError(w, err, "failed to install the plugin")
 			return
@@ -285,18 +275,17 @@ func handleInstallPlugin(deps Deps) http.HandlerFunc {
 	}
 }
 
-// handleInstallPluginFromURL installs from a pasted URL: the manifest at that URL,
-// and the module beside it. The fetch goes through the safe fetcher, and — unlike
-// every other outbound fetch in this server — the first hop is address-checked
-// too, because what is being fetched is code this server will execute. See
-// plugins.Manager.checkSourceURL.
+// handleInstallPluginFromURL installs from a pasted URL: one plugin package. The
+// fetch goes through the safe fetcher, and — unlike every other outbound fetch in
+// this server — the first hop is address-checked too, because what is being
+// fetched is code this server will execute. See plugins.Manager.checkSourceURL.
 func handleInstallPluginFromURL(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req installFromURLRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		installed, err := deps.PluginManager.InstallFromURL(r.Context(), req.URL, req.SignatureURL)
+		installed, err := deps.PluginManager.InstallFromURL(r.Context(), req.URL)
 		if err != nil {
 			writePluginError(w, err, "failed to install the plugin")
 			return
@@ -423,12 +412,12 @@ func handleUninstallPreview(deps Deps, id string) http.HandlerFunc {
 // --- helpers ----------------------------------------------------------------
 
 // readUploadPart reads one named file part, refusing a missing one by name so an
-// Admin whose form sent only half of a Plugin is told which half.
+// Admin whose form sent something else is told which part was expected.
 func readUploadPart(w http.ResponseWriter, r *http.Request, name string, limit int64) ([]byte, bool) {
 	file, _, err := r.FormFile(name)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, codeBadRequest,
-			"the upload has no `"+name+"` part; a plugin is a manifest and a module", nil)
+			"the upload has no `"+name+"` part; send the plugin as one package (.zip)", nil)
 		return nil, false
 	}
 	defer file.Close()
@@ -443,29 +432,6 @@ func readUploadPart(w http.ResponseWriter, r *http.Request, name string, limit i
 		return nil, false
 	}
 	return body, true
-}
-
-// optionalUploadPart reads a part that is allowed not to be there, answering nil
-// when it is absent, empty, or larger than the cap.
-//
-// It writes no refusal and returns no error, which is the opposite of
-// readUploadPart and is right for exactly one part: an absent signature is the
-// normal case, and the question of whether this install NEEDS one is not this
-// function's to answer — it belongs to the pinned-key policy, which asks it once,
-// afterwards, and refuses with a sentence naming the publisher. An oversize
-// signature is treated as absent for the same reason: whatever it was, it was not
-// the few hundred bytes a signature document is.
-func optionalUploadPart(r *http.Request, name string, limit int64) []byte {
-	file, _, err := r.FormFile(name)
-	if err != nil {
-		return nil
-	}
-	defer file.Close()
-	body, err := io.ReadAll(io.LimitReader(file, limit+1))
-	if err != nil || len(body) == 0 || int64(len(body)) > limit {
-		return nil
-	}
-	return body
 }
 
 // writePluginInstalled answers a successful install with 201 and the whole list,
@@ -530,6 +496,8 @@ func writePluginError(w http.ResponseWriter, err error, fallback string) {
 		// 409, not 422: the request is well-formed and the server's state is what
 		// refuses it, which is exactly what a conflict is.
 		status, code = http.StatusConflict, codePluginDuplicate
+	case plugins.ReasonPackage:
+		code = codePluginInvalidPackage
 	case plugins.ReasonModule:
 		code = codePluginInvalidModule
 	case plugins.ReasonSource:

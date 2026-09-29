@@ -126,6 +126,47 @@ describe("ApiClient artwork upload (multipart)", () => {
   });
 });
 
+describe("ApiClient plugin package install", () => {
+  it("POSTs exactly one `package` multipart part", async () => {
+    let captured: { url: string; init: RequestInit } | null = null;
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      captured = { url, init };
+      return new Response(JSON.stringify({ plugins: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl });
+
+    const pkg = new File([new Uint8Array([80, 75, 3, 4])], "p-1.0.0.zip", { type: "application/zip" });
+    await client.installPlugin(pkg);
+
+    const { url, init } = captured!;
+    expect(url).toContain("/api/v1/settings/plugins");
+    expect(init.method).toBe("POST");
+    const form = init.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect([...form.keys()]).toEqual(["package"]);
+    expect(form.get("package")).toBe(pkg);
+  });
+
+  it("POSTs only the url for an install from a URL", async () => {
+    let body: unknown = null;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ plugins: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const client = new ApiClient({ tokenStore: memoryTokenStore("tok-1"), fetchImpl });
+
+    await client.installPluginFromURL({ url: "https://example.com/p-1.0.0.zip" });
+
+    expect(body).toEqual({ url: "https://example.com/p-1.0.0.zip" });
+  });
+});
+
 describe("ApiClient Tailnet remote access (ADR-0043)", () => {
   // One response shape for all five routes, so the only thing worth pinning here
   // is that each verb is the right method on the right path — a screen that

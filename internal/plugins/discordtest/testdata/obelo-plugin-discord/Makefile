@@ -1,9 +1,17 @@
 # The Obelo Discord Event sink.
 #
-# Two files make a Plugin: manifest.json and plugin.wasm. `make` produces the
-# second; the first is checked in beside it.
+# A Plugin is installed as one Plugin package: a zip of manifest.json, plugin.wasm
+# and, optionally, plugin.sig.json. `make` produces the module; the manifest is
+# checked in beside it; `make package` zips them.
 
 MODULE := plugin.wasm
+PACKAGE := obelo-plugin-discord.zip
+
+# The pack tool ships in the Obelo server repository. It is built there by
+# `make pluginsign` (bin/pluginsign); put it on your PATH or point this at it:
+#
+#	make package PLUGINSIGN=/path/to/obelo-server/bin/pluginsign
+PLUGINSIGN ?= pluginsign
 
 .PHONY: all
 all: $(MODULE)
@@ -22,6 +30,14 @@ all: $(MODULE)
 $(MODULE): main.go go.mod
 	GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= \
 		go build -buildmode=c-shared -o $(MODULE) .
+
+# The file an Admin uploads, or pastes the URL of. `pack` refuses a manifest or a
+# layout the server would refuse. A plugin.sig.json beside the manifest (made by
+# `pluginsign sign`) is included when there is one.
+.PHONY: package
+package: $(MODULE)
+	$(PLUGINSIGN) pack -manifest manifest.json -module $(MODULE) \
+		$(if $(wildcard plugin.sig.json),-signature plugin.sig.json) -out $(PACKAGE)
 
 # TinyGo produces a module about 13x smaller and compiles it about 14x faster
 # (Obelo ADR-0058 measured both). It is NOT required — Obelo's own acceptance
@@ -47,4 +63,4 @@ fmt:
 
 .PHONY: clean
 clean:
-	rm -f $(MODULE)
+	rm -f $(MODULE) $(PACKAGE)

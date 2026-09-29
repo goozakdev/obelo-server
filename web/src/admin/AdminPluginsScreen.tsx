@@ -147,7 +147,7 @@ function CatalogBrowser({
     <div data-testid="plugin-catalog">
       <p className="admin-section-note">
         Plugins offered by the catalog you pointed this server at. Installing one
-        fetches its manifest and module from the address the catalog gave, under
+        fetches its package from the address the catalog gave, under
         exactly the rules that apply to an address you paste yourself.
       </p>
 
@@ -166,7 +166,7 @@ function CatalogBrowser({
         : catalog.entries.map((entry) => (
             <div
               className="provider-card"
-              key={`${entry.id}-${entry.manifestUrl}`}
+              key={`${entry.id}-${entry.packageUrl}`}
               data-testid={`catalog-entry-${entry.id}`}
             >
               <div className="provider-head">
@@ -199,9 +199,9 @@ function CatalogBrowser({
                   </div>
                 )}
                 <div>
-                  <dt>Manifest</dt>
-                  <dd data-testid={`catalog-manifest-${entry.id}`}>
-                    {entry.manifestUrl}
+                  <dt>Package</dt>
+                  <dd data-testid={`catalog-package-${entry.id}`}>
+                    {entry.packageUrl}
                   </dd>
                 </div>
               </dl>
@@ -255,9 +255,7 @@ export default function AdminPluginsScreen() {
   const [catalogUrl, setCatalogUrl] = useState("");
   const [publisherName, setPublisherName] = useState("");
   const [publisherKey, setPublisherKey] = useState("");
-  const manifestRef = useRef<HTMLInputElement | null>(null);
-  const moduleRef = useRef<HTMLInputElement | null>(null);
-  const signatureRef = useRef<HTMLInputElement | null>(null);
+  const packageRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -368,27 +366,23 @@ export default function AdminPluginsScreen() {
   }
 
   async function onUpload() {
-    const manifest = manifestRef.current?.files?.[0];
-    const module = moduleRef.current?.files?.[0];
-    if (!manifest || !module) {
-      setActionError("Choose both the manifest.json and the .wasm module.");
+    const pkg = packageRef.current?.files?.[0];
+    if (!pkg) {
+      setActionError("Choose a plugin package (.zip).");
       setNotice(null);
       return;
     }
-    // The signature part is OPTIONAL and the form does not insist on it: most
-    // plugins have none, and whether THIS server needs one is a question only the
-    // server can answer, from the keys its Admin pinned.
-    const signature = signatureRef.current?.files?.[0];
-    await run(() => apiClient.installPlugin(manifest, module, signature), "Installed.");
-    if (manifestRef.current) manifestRef.current.value = "";
-    if (moduleRef.current) moduleRef.current.value = "";
-    if (signatureRef.current) signatureRef.current.value = "";
+    // The signature, if the plugin has one, is inside the package. Whether THIS
+    // server needs one is a question only the server can answer, from the keys
+    // its Admin pinned.
+    await run(() => apiClient.installPlugin(pkg), "Installed.");
+    if (packageRef.current) packageRef.current.value = "";
   }
 
   async function onInstallFromURL() {
     const target = url.trim();
     if (!target) {
-      setActionError("Paste the URL of a plugin's manifest.json.");
+      setActionError("Paste the URL of a plugin package (.zip).");
       setNotice(null);
       return;
     }
@@ -397,16 +391,13 @@ export default function AdminPluginsScreen() {
   }
 
   // Installing a catalog entry IS installing a URL. There is no catalog-specific
-  // call and there must not be one: the entry's manifestUrl goes through exactly
+  // call and there must not be one: the entry's packageUrl goes through exactly
   // the request an Admin's own pasted address goes through, so an entry pointing
   // into this network is refused by the same policy, in the same words.
   async function onInstallEntry(entry: PluginCatalogEntry) {
     await run(
       () =>
-        apiClient.installPluginFromURL({
-          url: entry.manifestUrl,
-          ...(entry.signatureUrl ? { signatureUrl: entry.signatureUrl } : {}),
-        }),
+        apiClient.installPluginFromURL({ url: entry.packageUrl }),
       `Installed ${entry.name}.`,
     );
   }
@@ -625,51 +616,23 @@ export default function AdminPluginsScreen() {
 
         <div className="provider-card" data-testid="plugin-install-upload">
           <div className="provider-head">
-            <span className="provider-name">Install from files</span>
+            <span className="provider-name">Install from a package</span>
           </div>
           <p className="provider-desc">
-            A plugin is two files: its <code>manifest.json</code> and its{" "}
-            <code>.wasm</code> module.
+            A plugin is a single <code>.zip</code> package: <code>manifest.json</code>,
+            the module, and optionally <code>plugin.sig.json</code>.
           </p>
           <div className="field">
-            <label className="field-label" htmlFor="plugin-manifest-file">
-              manifest.json
+            <label className="field-label" htmlFor="plugin-package-file">
+              Plugin package
             </label>
             <input
-              id="plugin-manifest-file"
+              id="plugin-package-file"
               className="field-input"
-              data-testid="plugin-manifest-file"
+              data-testid="plugin-package-file"
               type="file"
-              accept=".json,application/json"
-              ref={manifestRef}
-              disabled={busy}
-            />
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="plugin-module-file">
-              Module
-            </label>
-            <input
-              id="plugin-module-file"
-              className="field-input"
-              data-testid="plugin-module-file"
-              type="file"
-              accept=".wasm,application/wasm"
-              ref={moduleRef}
-              disabled={busy}
-            />
-          </div>
-          <div className="field">
-            <label className="field-label" htmlFor="plugin-signature-file">
-              Signature (optional)
-            </label>
-            <input
-              id="plugin-signature-file"
-              className="field-input"
-              data-testid="plugin-signature-file"
-              type="file"
-              accept=".json,application/json"
-              ref={signatureRef}
+              accept=".zip,application/zip"
+              ref={packageRef}
               disabled={busy}
             />
           </div>
@@ -691,19 +654,19 @@ export default function AdminPluginsScreen() {
             <span className="provider-name">Install from a URL</span>
           </div>
           <p className="provider-desc">
-            Paste the address of a plugin's <code>manifest.json</code>. Its module is
-            fetched from the same directory. A plugin is code this server will run, so
-            an address on your own network is refused here — upload the files instead.
+            Paste the address of a plugin's <code>.zip</code> package. A plugin is code
+            this server will run, so an address on your own network is refused here —
+            upload the package instead.
           </p>
           <div className="field">
             <label className="field-label" htmlFor="plugin-url">
-              Manifest URL
+              Package URL
             </label>
             <input
               id="plugin-url"
               className="field-input"
               data-testid="plugin-url"
-              placeholder="https://example.com/obelo-discord/manifest.json"
+              placeholder="https://example.com/my-plugin-1.0.0.zip"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               disabled={busy}

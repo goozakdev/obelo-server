@@ -1940,26 +1940,18 @@ export class ApiClient {
     return this.request<InstalledPluginsView>("/settings/plugins", { signal });
   }
 
-  /** `POST /api/v1/settings/plugins` (Admin, multipart) — install from two files:
-   * the `manifest` (manifest.json) and the `module` (the .wasm). Two named parts
-   * rather than an archive, so the server never unpacks paths it did not choose.
-   * Returns the full list.
+  /** `POST /api/v1/settings/plugins` (Admin, multipart) — install from one plugin
+   * package: a .zip holding `manifest.json`, the module, and optionally
+   * `plugin.sig.json`. It travels as the single part `package`; the server
+   * unpacks it in memory and keeps only the three files. Returns the full list.
    *
-   * `signature` is an OPTIONAL third part, the detached `plugin.sig.json`
-   * (plugin-system/15). Omitting it is not an error and is the usual case: most
-   * plugins are unsigned, and whether this server requires one is decided by the
+   * Omitting the signature is not an error and is the usual case: most plugins
+   * are unsigned, and whether this server requires one is decided by the
    * publisher keys its Admin pinned, server-side, with a refusal that names the
    * publisher the plugin claimed. */
-  installPlugin(
-    manifest: File | Blob,
-    module: File | Blob,
-    signature?: File | Blob | null,
-    signal?: AbortSignal,
-  ): Promise<InstalledPluginsView> {
+  installPlugin(pkg: File | Blob, signal?: AbortSignal): Promise<InstalledPluginsView> {
     const form = new FormData();
-    form.append("manifest", manifest);
-    form.append("module", module);
-    if (signature) form.append("signature", signature);
+    form.append("package", pkg);
     return this.request<InstalledPluginsView>("/settings/plugins", {
       method: "POST",
       body: form,
@@ -1968,7 +1960,7 @@ export class ApiClient {
   }
 
   /** `POST /api/v1/settings/plugins/from-url` (Admin) — install from the URL of a
-   * plugin's manifest.json; the module is fetched from beside it. Fetched under
+   * plugin package (.zip). Fetched under
    * the safe fetcher, and — unlike every other outbound fetch in this server — a
    * URL resolving into this server's own network is refused, because what comes
    * back is executed. Returns the full list. */
@@ -2072,7 +2064,7 @@ export class ApiClient {
   // as it did before these routes existed.
   //
   // There is deliberately NO "install this catalog entry" call. An entry is a
-  // manifest URL, so installing one is installPluginFromURL with that URL —
+  // package URL, so installing one is installPluginFromURL with that URL —
   // the same endpoint, the same safe-fetch policy, the same refusals. A second
   // path would have been a second place for that policy to be got wrong.
 

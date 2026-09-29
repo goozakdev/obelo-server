@@ -42,7 +42,7 @@ import (
 // # Installing from an entry adds nothing
 //
 // There is no "install this entry" route, deliberately. A catalog entry is a
-// manifest URL, so installing one is POST /settings/plugins/from-url with that
+// package URL, so installing one is POST /settings/plugins/from-url with that
 // URL — the same endpoint, the same safe-fetch policy, the same first-hop address
 // check, the same refusals. An entry pointing into this server's own network is
 // refused with the sentence a pasted address gets, because it IS a pasted address
