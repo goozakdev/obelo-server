@@ -67,6 +67,7 @@ beforeEach(() => {
 async function openConfirmation() {
   render(<AdminPluginsScreen />);
   await screen.findByTestId("plugins-screen");
+  await userEvent.click(screen.getByTestId("plugin-edit-directory"));
   await userEvent.click(screen.getByTestId("plugin-uninstall-directory"));
   return screen.findByTestId("plugin-uninstall-confirmation-directory");
 }
@@ -154,6 +155,7 @@ describe("uninstalling a Sign-in provider", () => {
 
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
     await userEvent.click(screen.getByTestId("plugin-uninstall-example-sink"));
 
     expect(client.uninstallPlugin).toHaveBeenCalledWith("example-sink");

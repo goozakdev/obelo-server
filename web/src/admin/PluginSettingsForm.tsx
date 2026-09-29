@@ -205,19 +205,19 @@ export default function PluginSettingsForm({
       ))}
 
       {formError && (
-        <p className="form-error" data-testid={`plugin-settings-error-${id}`}>
+        <p className="auth-error" data-testid={`plugin-settings-error-${id}`} role="alert">
           {formError}
         </p>
       )}
       {notice && (
-        <p className="form-note" data-testid={`plugin-settings-notice-${id}`}>
+        <p className="admin-section-note" data-testid={`plugin-settings-notice-${id}`}>
           {notice}
         </p>
       )}
 
-      <div className="admin-actions">
+      <div className="library-dialog-footer-actions">
         <button
-          className="btn btn-primary"
+          className="button-secondary"
           type="button"
           data-testid={`plugin-settings-save-${id}`}
           onClick={() => void onSave()}
@@ -361,7 +361,7 @@ function PluginSettingsControl({
         /* A field type this bundle does not know. The plugin is not broken and the
            server may well be a version ahead, so the form says what it cannot draw
            instead of rendering the wrong control over the value. */
-        <p className="form-note" data-testid={`${testid}-unknown`}>
+        <p className="admin-section-note" data-testid={`${testid}-unknown`}>
           This server describes “{label}” as a {field.type}, which this page cannot
           show yet.
         </p>
@@ -369,12 +369,12 @@ function PluginSettingsControl({
 
       {field.help && <p className="field-help">{field.help}</p>}
       {field.type === "bool" && field.warning && value === true && (
-        <p className="form-error" role="alert" data-testid={`${testid}-warning`}>
+        <p className="auth-error" role="alert" data-testid={`${testid}-warning`}>
           {field.warning}
         </p>
       )}
       {error && (
-        <p className="form-error" data-testid={`${testid}-error`}>
+        <p className="auth-error" data-testid={`${testid}-error`} role="alert">
           {error}
         </p>
       )}

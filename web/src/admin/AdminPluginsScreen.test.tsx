@@ -70,11 +70,14 @@ describe("the Plugins screen", () => {
 
     expect(screen.getByTestId("plugin-example-sink")).toBeTruthy();
     expect(screen.getByTestId("plugin-version-example-sink").textContent).toContain("1.2.0");
+    expect(screen.getByTestId("plugin-status-example-sink").textContent).toBe("Running");
+    // The rest — provides, source — lives in the dialog, behind the edit button.
+    expect(screen.queryByTestId("plugin-provides-example-sink")).toBeNull();
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
     // The contract's token becomes the operator's word for it.
     expect(screen.getByTestId("plugin-provides-example-sink").textContent).toContain(
       "Event sink",
     );
-    expect(screen.getByTestId("plugin-status-example-sink").textContent).toBe("Running");
     expect(screen.getByTestId("plugin-source-example-sink").textContent).toBe("Uploaded");
   });
 
@@ -109,12 +112,14 @@ describe("the Plugins screen", () => {
 
     expect(screen.getByTestId("plugin-status-off-by-admin").textContent).toBe("Switched off");
     // Switched off offers Enable, and nothing to forgive.
+    await userEvent.click(screen.getByTestId("plugin-edit-off-by-admin"));
     expect(screen.getByTestId("plugin-enable-off-by-admin")).toBeTruthy();
     expect(screen.queryByTestId("plugin-reenable-off-by-admin")).toBeNull();
 
     expect(screen.getByTestId("plugin-status-stopped").textContent).toBe(
       "Stopped by this server",
     );
+    await userEvent.click(screen.getByTestId("plugin-edit-stopped"));
     expect(screen.getByTestId("plugin-error-stopped").textContent).toContain(
       "the module trapped",
     );
@@ -124,6 +129,25 @@ describe("the Plugins screen", () => {
     expect(screen.getByTestId("plugin-reenable-stopped")).toBeTruthy();
   });
 
+  // The dialog sits in front of the row it belongs to, so an action's own outcome
+  // has to land in front of it too — not on the page behind, where the Admin who
+  // just clicked Disable would never see it.
+  it("shows a dialog action's error inside the dialog, not behind it", async () => {
+    client.getPlugins.mockResolvedValue(view(plugin()));
+    client.disablePlugin.mockRejectedValue(new Error("the server refused to disable it"));
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugins-screen");
+
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
+    await userEvent.click(screen.getByTestId("plugin-disable-example-sink"));
+
+    const dialog = screen.getByTestId("plugin-dialog-example-sink");
+    const shown = await screen.findByTestId("plugins-action-error");
+    expect(dialog.contains(shown)).toBe(true);
+    expect(shown.textContent).toContain("the server refused to disable it");
+  });
+
   it("re-renders from the response a verb returns, with no second fetch", async () => {
     client.getPlugins.mockResolvedValue(view(plugin()));
     client.disablePlugin.mockResolvedValue(view(plugin({ enabled: false })));
@@ -131,6 +155,7 @@ describe("the Plugins screen", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
     await userEvent.click(screen.getByTestId("plugin-disable-example-sink"));
 
     expect(client.disablePlugin).toHaveBeenCalledWith("example-sink");
@@ -146,10 +171,13 @@ describe("the Plugins screen", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
     await userEvent.click(screen.getByTestId("plugin-uninstall-example-sink"));
 
     expect(client.uninstallPlugin).toHaveBeenCalledWith("example-sink");
     expect(screen.queryByTestId("plugin-example-sink")).toBeNull();
+    // The dialog closes with the plugin it was open for (D4).
+    expect(screen.queryByTestId("plugin-dialog-example-sink")).toBeNull();
     expect(screen.getByTestId("plugin-other")).toBeTruthy();
   });
 
@@ -252,11 +280,71 @@ describe("the Plugins screen", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
-    const card = screen.getByTestId("plugin-example-sink");
-    expect(card.querySelector('[data-testid="plugin-settings-example-sink"]')).toBeTruthy();
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
+    const dialog = screen.getByTestId("plugin-dialog-example-sink");
+    expect(dialog.querySelector('[data-testid="plugin-settings-example-sink"]')).toBeTruthy();
     expect(
       (screen.getByTestId("plugin-field-example-sink-region") as HTMLSelectElement).value,
     ).toBe("eu");
+
+    await userEvent.click(screen.getByTestId("plugin-edit-plain-sink"));
     expect(screen.queryByTestId("plugin-settings-plain-sink")).toBeNull();
+  });
+});
+
+// plugins-list-dialog: the Installed tab is a compact list — name, version,
+// status, edit — with everything else (provides, source, the settings form,
+// every action) behind the pencil, in a dialog.
+describe("the Installed tab's list and dialog", () => {
+  it("shows only name, version, status and an edit button until the dialog is opened", async () => {
+    client.getPlugins.mockResolvedValue(view(plugin()));
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugins-screen");
+
+    expect(screen.getByTestId("plugin-version-example-sink")).toBeTruthy();
+    expect(screen.getByTestId("plugin-status-example-sink")).toBeTruthy();
+    expect(screen.getByTestId("plugin-edit-example-sink")).toBeTruthy();
+    expect(screen.queryByTestId("plugin-provides-example-sink")).toBeNull();
+    expect(screen.queryByTestId("plugin-uninstall-example-sink")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
+
+    expect(screen.getByTestId("plugin-provides-example-sink")).toBeTruthy();
+    expect(screen.getByTestId("plugin-uninstall-example-sink")).toBeTruthy();
+  });
+
+  it("shows a declined row as Removed, whose dialog offers only reinstall", async () => {
+    client.getPlugins.mockResolvedValue(
+      view(plugin({ state: "declined", version: undefined, source: undefined })),
+    );
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugins-screen");
+
+    expect(screen.getByTestId("plugin-status-example-sink").textContent).toBe("Removed");
+    expect(screen.queryByTestId("plugin-version-example-sink")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
+
+    expect(screen.getByTestId("plugin-reinstall-shipped-example-sink")).toBeTruthy();
+    expect(screen.queryByTestId("plugin-enable-example-sink")).toBeNull();
+    expect(screen.queryByTestId("plugin-disable-example-sink")).toBeNull();
+    expect(screen.queryByTestId("plugin-uninstall-example-sink")).toBeNull();
+  });
+
+  it("closes the dialog once its plugin's uninstall succeeds", async () => {
+    client.getPlugins.mockResolvedValue(view(plugin()));
+    client.uninstallPlugin.mockResolvedValue(view());
+
+    render(<AdminPluginsScreen />);
+    await screen.findByTestId("plugins-screen");
+
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
+    expect(screen.getByTestId("plugin-dialog-example-sink")).toBeTruthy();
+
+    await userEvent.click(screen.getByTestId("plugin-uninstall-example-sink"));
+
+    expect(screen.queryByTestId("plugin-dialog-example-sink")).toBeNull();
   });
 });

@@ -132,7 +132,7 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
         provider changes nobody&apos;s access.
       </p>
       {view.failing && (
-        <p className="form-error" data-testid={`group-mapping-failing-${id}`}>
+        <p className="auth-error" data-testid={`group-mapping-failing-${id}`}>
           Re-checks are failing ({view.failing.reason}; first failed{" "}
           {formatAgo(view.failing.since) || "just now"}). Everyone keeps their last known access
           until it answers.
@@ -148,11 +148,13 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
         {rules.map((r, i) => (
           <li key={i} data-testid={`group-mapping-rule-${id}-${i}`}>
             <input
+              className="field-input plugin-inline-input"
               aria-label="Group"
               value={r.group}
               onChange={(e) => edit(i, { group: e.target.value })}
             />{" "}
             <select
+              className="field-input plugin-inline-input"
               aria-label="Role"
               value={r.role}
               onChange={(e) => edit(i, { role: e.target.value as GroupMappingRule["role"] })}
@@ -178,7 +180,7 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
                 </label>
               ))}{" "}
             <button
-              className="btn"
+              className="button-danger"
               type="button"
               onClick={() => setRules((rs) => rs.filter((_, j) => j !== i))}
               disabled={busy}
@@ -188,20 +190,23 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
           </li>
         ))}
       </ul>
-      <button
-        className="btn"
-        type="button"
-        data-testid={`group-mapping-add-${id}`}
-        onClick={() => setRules((rs) => [...rs, { group: "", role: "member", libraryIds: [] }])}
-        disabled={busy}
-      >
-        Add group
-      </button>
+      <div className="admin-actions">
+        <button
+          className="button-secondary"
+          type="button"
+          data-testid={`group-mapping-add-${id}`}
+          onClick={() => setRules((rs) => [...rs, { group: "", role: "member", libraryIds: [] }])}
+          disabled={busy}
+        >
+          Add group
+        </button>
+      </div>
       {view.recheck && (
         <label>
           {" "}
           Re-check every{" "}
           <input
+            className="field-input plugin-hours-input"
             aria-label="Re-check interval in hours"
             data-testid={`group-mapping-interval-${id}`}
             inputMode="numeric"
@@ -212,9 +217,9 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
           hours
         </label>
       )}
-      <div>
+      <div className="admin-actions">
         <button
-          className="btn"
+          className="auth-submit"
           type="button"
           data-testid={`group-mapping-save-${id}`}
           onClick={() => void save()}
@@ -223,7 +228,7 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
           Save
         </button>{" "}
         <button
-          className="btn"
+          className="button-secondary"
           type="button"
           data-testid={`group-mapping-resync-${id}`}
           onClick={() => void resync()}
@@ -233,12 +238,12 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
         </button>
       </div>
       {error && (
-        <p className="form-error" data-testid={`group-mapping-error-${id}`}>
+        <p className="auth-error" data-testid={`group-mapping-error-${id}`}>
           {error}
         </p>
       )}
       {note && (
-        <p className="form-note" data-testid={`group-mapping-note-${id}`}>
+        <p className="admin-section-note" data-testid={`group-mapping-note-${id}`}>
           {note}
         </p>
       )}

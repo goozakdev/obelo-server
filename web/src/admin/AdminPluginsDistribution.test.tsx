@@ -337,11 +337,13 @@ describe("a signed installed plugin", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
+    await userEvent.click(screen.getByTestId("plugin-edit-discord"));
     expect(screen.getByTestId("plugin-publisher-discord").textContent).toContain(
       "Example Publisher",
     );
     // No "Unsigned" row: an empty publisher means nobody checked, which is not
     // the same claim and not one the server is in a position to make.
+    await userEvent.click(screen.getByTestId("plugin-edit-other"));
     expect(screen.queryByTestId("plugin-publisher-other")).toBeNull();
   });
 });

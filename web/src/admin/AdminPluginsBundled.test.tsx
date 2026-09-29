@@ -76,11 +76,14 @@ describe("the Plugins screen and the plugins the server ships", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
+    await userEvent.click(screen.getByTestId("plugin-edit-tmdb"));
     expect(screen.getByTestId("plugin-source-tmdb").textContent).toBe("Shipped with Obelo");
-    expect(screen.getByTestId("plugin-source-example-sink").textContent).toBe("Uploaded");
     // And in every other respect it is an ordinary plugin: the same controls.
     expect(screen.getByTestId("plugin-disable-tmdb")).toBeTruthy();
     expect(screen.getByTestId("plugin-uninstall-tmdb")).toBeTruthy();
+
+    await userEvent.click(screen.getByTestId("plugin-edit-example-sink"));
+    expect(screen.getByTestId("plugin-source-example-sink").textContent).toBe("Uploaded");
   });
 
   it("offers the shipped version back on a declined row, and nothing else", async () => {
@@ -92,8 +95,16 @@ describe("the Plugins screen and the plugins the server ships", () => {
     render(<AdminPluginsScreen />);
     await screen.findByTestId("plugins-screen");
 
-    expect(screen.getByTestId("plugin-status-tmdb").textContent).toContain("you removed it");
-    // A declined plugin has nothing to enable, disable or uninstall.
+    expect(screen.getByTestId("plugin-status-tmdb").textContent).toContain("Removed");
+    await userEvent.click(screen.getByTestId("plugin-edit-tmdb"));
+    expect(screen.getByTestId("plugin-dialog-tmdb")).toBeTruthy();
+    expect(screen.getByTestId("plugin-declined-note-tmdb").textContent).toContain(
+      "you removed it",
+    );
+    // The row's own status testid still resolves to exactly one element with the
+    // dialog open — the dialog's note has a testid of its own.
+    expect(screen.getByTestId("plugin-status-tmdb").textContent).toContain("Removed");
+    // A declined plugin's dialog has nothing to enable, disable or uninstall.
     expect(screen.queryByTestId("plugin-disable-tmdb")).toBeNull();
     expect(screen.queryByTestId("plugin-enable-tmdb")).toBeNull();
     expect(screen.queryByTestId("plugin-uninstall-tmdb")).toBeNull();
@@ -101,8 +112,9 @@ describe("the Plugins screen and the plugins the server ships", () => {
     await userEvent.click(screen.getByTestId("plugin-reinstall-shipped-tmdb"));
 
     expect(client.reinstallShippedPlugin).toHaveBeenCalledWith("tmdb");
-    // The verb answers with the whole new truth, so the row becomes an ordinary
-    // installed plugin without a second request.
+    // The verb answers with the whole new truth, so the still-open dialog becomes
+    // an ordinary installed plugin's, with the full set of controls, without a
+    // second request.
     expect(await screen.findByTestId("plugin-uninstall-tmdb")).toBeTruthy();
     expect(screen.getByTestId("plugin-source-tmdb").textContent).toBe("Shipped with Obelo");
   });
