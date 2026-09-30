@@ -8,7 +8,7 @@ import type { SignInProvider } from "../api/types";
 // top to bottom, and the first to accept wins.
 //
 // The card appears only when there is something to order: with no password-flow
-// Sign-in provider installed — every server that has not added one — the Plugins
+// Sign-in provider installed — every server that has not added one — the Users
 // screen is exactly what it was. A list that will not load is the same absence,
 // never an error on a screen that is about something else.
 

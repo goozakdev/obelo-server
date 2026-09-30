@@ -6,9 +6,6 @@ import { EditIcon } from "../browse/ActionIcons";
 import AdminListPanel from "./AdminListPanel";
 import PluginDialog, { providesLabel } from "./PluginDialog";
 import LyricProviderOrder from "./LyricProviderOrder";
-import SignInProviderOrder from "./SignInProviderOrder";
-import RedirectSignInProviders from "./RedirectSignInProviders";
-import SignInGroupMappings from "./SignInGroupMappings";
 import type {
   InstalledPlugin,
   InstalledPluginsView,
@@ -609,9 +606,6 @@ export default function AdminPluginsScreen() {
           </>
         )}
 
-        <SignInProviderOrder />
-        <RedirectSignInProviders />
-        <SignInGroupMappings />
         <LyricProviderOrder />
 
         <div className="provider-card" data-testid="plugin-install-upload">

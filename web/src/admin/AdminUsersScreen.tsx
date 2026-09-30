@@ -8,6 +8,9 @@ import UserAdminRow from "./UserAdminRow";
 import CreateUserDialog from "./CreateUserDialog";
 import EditUserDialog from "./EditUserDialog";
 import ConfirmDialog from "./ConfirmDialog";
+import SignInProviderOrder from "./SignInProviderOrder";
+import RedirectSignInProviders from "./RedirectSignInProviders";
+import SignInGroupMappings from "./SignInGroupMappings";
 
 // The Users management hub. Behind RequireAdmin (App.tsx) and still
 // server-enforced (a Member never sees the tab and is redirected if they
@@ -151,6 +154,10 @@ export default function AdminUsersScreen() {
           </ul>
         )}
       </AdminListPanel>
+
+      <SignInProviderOrder />
+      <RedirectSignInProviders />
+      <SignInGroupMappings />
 
       {addOpen && (
         <CreateUserDialog

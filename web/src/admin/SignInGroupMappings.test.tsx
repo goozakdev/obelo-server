@@ -81,4 +81,44 @@ describe("SignInGroupMappings", () => {
     expect(client.resyncSignInProvider).toHaveBeenCalledWith("oidc");
     expect(await screen.findByTestId("group-mapping-note-oidc")).toHaveTextContent("2 asked");
   });
+
+  it("shows a card for a configured redirect provider and none for an unconfigured one", async () => {
+    client.getSignInProviders.mockResolvedValue({
+      providers: [],
+      redirect: [
+        { id: "oidc", name: "OpenID Connect", verified: true, configured: true },
+        { id: "oauth", name: "Some OAuth", verified: false, configured: false },
+      ],
+    });
+    client.getGroupMapping.mockResolvedValue(empty);
+    render(<SignInGroupMappings />);
+
+    expect(await screen.findByTestId("group-mapping-oidc")).toBeInTheDocument();
+    expect(screen.queryByTestId("group-mapping-oauth")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when the only provider is an unconfigured redirect one", async () => {
+    client.getSignInProviders.mockResolvedValue({
+      providers: [],
+      redirect: [{ id: "oauth", name: "Some OAuth", verified: false, configured: false }],
+    });
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<SignInGroupMappings />));
+    });
+    expect(container).toBeEmptyDOMElement();
+    expect(client.getGroupMapping).not.toHaveBeenCalled();
+  });
+
+  it("still shows a card for a password-flow provider beside an unconfigured redirect one", async () => {
+    client.getSignInProviders.mockResolvedValue({
+      providers: [{ id: "dir", name: "Directory" }],
+      redirect: [{ id: "oauth", name: "Some OAuth", verified: false, configured: false }],
+    });
+    client.getGroupMapping.mockResolvedValue(empty);
+    render(<SignInGroupMappings />);
+
+    expect(await screen.findByTestId("group-mapping-dir")).toBeInTheDocument();
+    expect(screen.queryByTestId("group-mapping-oauth")).not.toBeInTheDocument();
+  });
 });

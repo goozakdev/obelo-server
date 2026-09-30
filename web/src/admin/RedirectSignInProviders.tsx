@@ -8,8 +8,9 @@ import type { RedirectSignInProvider } from "../api/types";
 // OAuth2 provider has nothing to verify, and the server takes its word — which
 // this card says in so many words, so the gap is visible rather than hidden.
 //
-// Like the sign-in order card it appears only when there is something to show,
-// and a list that will not load is the same absence.
+// Like the sign-in order card it appears only when there is something to show
+// (a provider not yet configured is not shown), and a list that will not load is
+// the same absence.
 
 export default function RedirectSignInProviders() {
   const [providers, setProviders] = useState<RedirectSignInProvider[] | null>(null);
@@ -19,7 +20,7 @@ export default function RedirectSignInProviders() {
     (async () => {
       try {
         const view = await apiClient.getSignInProviders();
-        if (live) setProviders(view.redirect ?? []);
+        if (live) setProviders((view.redirect ?? []).filter((p) => p.configured));
       } catch {
         // Left absent: see above.
       }
@@ -37,8 +38,8 @@ export default function RedirectSignInProviders() {
         <span className="provider-name">Sign-in with another service</span>
       </div>
       <p className="provider-desc">
-        These appear as buttons on the login screen once they are configured. Sign-in from a TV or
-        an iPad goes through a code approved from a signed-in browser.
+        These appear as buttons on the login screen. Sign-in from a TV or an iPad goes through a
+        code approved from a signed-in browser.
       </p>
       <ul className="provider-list">
         {providers.map((p) => (
@@ -51,12 +52,6 @@ export default function RedirectSignInProviders() {
             ) : (
               <span className="provider-desc" data-testid={`redirect-sign-in-unverified-${p.id}`}>
                 Identity not independently verified
-              </span>
-            )}
-            {!p.configured && (
-              <span className="provider-desc" data-testid={`redirect-sign-in-unconfigured-${p.id}`}>
-                {" "}
-                — not configured yet
               </span>
             )}
           </li>

@@ -33,7 +33,7 @@ describe("RedirectSignInProviders", () => {
     client.getSignInProviders.mockResolvedValue({
       providers: [],
       redirect: [
-        { id: "oidc", name: "OpenID Connect", verified: true, configured: false },
+        { id: "oidc", name: "OpenID Connect", verified: true, configured: true },
         { id: "oauth", name: "Some OAuth", verified: false, configured: true },
       ],
     });
@@ -44,7 +44,31 @@ describe("RedirectSignInProviders", () => {
     );
     expect(screen.queryByTestId("redirect-sign-in-unverified-oidc")).not.toBeInTheDocument();
     expect(screen.getByTestId("redirect-sign-in-verified-oidc")).toBeInTheDocument();
-    expect(screen.getByTestId("redirect-sign-in-unconfigured-oidc")).toBeInTheDocument();
-    expect(screen.queryByTestId("redirect-sign-in-unconfigured-oauth")).not.toBeInTheDocument();
+  });
+
+  it("lists a configured provider and leaves an unconfigured one out", async () => {
+    client.getSignInProviders.mockResolvedValue({
+      providers: [],
+      redirect: [
+        { id: "oidc", name: "OpenID Connect", verified: true, configured: false },
+        { id: "oauth", name: "Some OAuth", verified: false, configured: true },
+      ],
+    });
+    render(<RedirectSignInProviders />);
+
+    expect(await screen.findByTestId("redirect-sign-in-oauth")).toBeInTheDocument();
+    expect(screen.queryByTestId("redirect-sign-in-oidc")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when every redirect provider is unconfigured", async () => {
+    client.getSignInProviders.mockResolvedValue({
+      providers: [],
+      redirect: [{ id: "oidc", name: "OpenID Connect", verified: true, configured: false }],
+    });
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<RedirectSignInProviders />));
+    });
+    expect(container).toBeEmptyDOMElement();
   });
 });
