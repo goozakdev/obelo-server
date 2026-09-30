@@ -32,6 +32,8 @@ const {
   listLibraries,
   setLibraryAccess,
   getUser,
+  getSignInProviders,
+  getGroupMapping,
 } = vi.hoisted(() => ({
   listUsers: vi.fn(),
   createUser: vi.fn(),
@@ -39,6 +41,8 @@ const {
   listLibraries: vi.fn(),
   setLibraryAccess: vi.fn(),
   getUser: vi.fn(),
+  getSignInProviders: vi.fn(),
+  getGroupMapping: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -52,6 +56,8 @@ vi.mock("../api/client", async () => {
       listLibraries: (...a: unknown[]) => listLibraries(...a),
       setLibraryAccess: (...a: unknown[]) => setLibraryAccess(...a),
       getUser: (...a: unknown[]) => getUser(...a),
+      getSignInProviders: (...a: unknown[]) => getSignInProviders(...a),
+      getGroupMapping: (...a: unknown[]) => getGroupMapping(...a),
     },
   };
 });
@@ -87,6 +93,9 @@ beforeEach(() => {
   listLibraries.mockReset();
   setLibraryAccess.mockReset();
   getUser.mockReset();
+  getSignInProviders.mockReset();
+  getGroupMapping.mockReset();
+  getSignInProviders.mockResolvedValue({ providers: [], redirect: [] });
   listLibraries.mockResolvedValue(ALL_LIBS);
   setLibraryAccess.mockResolvedValue(undefined);
 });
@@ -154,6 +163,24 @@ describe("AdminUsersScreen — the roster list", () => {
     expect(within(rows[2]).getByTestId("admin-user-link-state")).toHaveTextContent(
       "Never linked",
     );
+  });
+
+  it("renders the sign-in cards below the list when providers exist", async () => {
+    listUsers.mockResolvedValue([usr({ id: "u1", username: "operator", role: "admin" })]);
+    getSignInProviders.mockResolvedValue({
+      providers: [],
+      redirect: [{ id: "oidc", name: "OpenID Connect", verified: true, configured: true }],
+    });
+    getGroupMapping.mockResolvedValue({
+      rules: [],
+      recheck: false,
+      intervalHours: 24,
+      defaultInterval: true,
+    });
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+
+    expect(await screen.findByTestId("redirect-sign-in")).toBeInTheDocument();
+    expect(await screen.findByTestId("group-mapping-oidc")).toBeInTheDocument();
   });
 
   it("shows a clean empty state with no users", async () => {

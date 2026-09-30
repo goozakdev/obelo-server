@@ -10,8 +10,8 @@ import type { GroupMappingRule, GroupMappingView, Library, SignInProvider } from
 // a Local password. A provider whose re-checks are failing is flagged here from
 // the first failure; "Re-sync now" asks it at once.
 //
-// Like the other sign-in cards it appears only when there is a provider, and a
-// list that will not load is the same absence.
+// Like the other sign-in cards it appears only when there is a configured provider,
+// and a list that will not load is the same absence.
 
 export default function SignInGroupMappings() {
   const [providers, setProviders] = useState<SignInProvider[] | null>(null);
@@ -22,7 +22,7 @@ export default function SignInGroupMappings() {
     (async () => {
       try {
         const view = await apiClient.getSignInProviders();
-        const all = [...(view.providers ?? []), ...(view.redirect ?? [])];
+        const all = [...(view.providers ?? []), ...(view.redirect ?? []).filter((p) => p.configured)];
         const seen = new Set<string>();
         const unique = all.filter((p) => !seen.has(p.id) && seen.add(p.id));
         if (live) setProviders(unique);
