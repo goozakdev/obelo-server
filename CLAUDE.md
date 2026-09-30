@@ -29,7 +29,7 @@ Verify both directions after touching this file: with the placeholder committed
 
 ### Issue tracker
 
-Issues and PRDs live as local markdown under `.scratch/<feature-slug>/` (no git remote; solo project). External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues and PRDs live as local markdown under `.scratch/<feature-slug>/` (solo project; the GitHub remote `goozakdev/obelo-server` hosts code only, not issues). External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

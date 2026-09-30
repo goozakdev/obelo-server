@@ -1,6 +1,6 @@
 # Issue tracker: Local Markdown
 
-Issues and PRDs for this repo live as markdown files in `.scratch/`. There is no git remote and external PRs are not a triage surface.
+Issues and PRDs for this repo live as markdown files in `.scratch/`. The GitHub remote (`goozakdev/obelo-server`) hosts code only, not issues, and external PRs are not a triage surface.
 
 ## Conventions
 
