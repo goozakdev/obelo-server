@@ -72,8 +72,12 @@ type hlsRuntime struct {
 	// are ~uniform); boundaries, when set, gives the EXACT per-segment durations of a
 	// video COPY (whose segments fall on the source's irregular keyframes — computed by
 	// transcode.SegmentBoundaries so the synthesized playlist matches ffmpeg's cuts).
-	ownsPlaylist   bool
-	segmentCount   int
+	ownsPlaylist bool
+	segmentCount int
+	// tailSeconds, when > 0, is the true length of the LAST uniform segment (the
+	// Stream's remainder past the grid), so its EXTINF matches what ffmpeg writes.
+	// 0 keeps every segment at segmentSeconds.
+	tailSeconds    float64
 	segmentSeconds int
 	// boundaries, segNameFmt, initSegment shape the synthesized playlist (ownsPlaylist).
 	// boundaries nil → uniform segmentCount×segmentSeconds; non-nil → its len-1 exact
@@ -528,6 +532,9 @@ func (rt *hlsRuntime) synthPlaylist() string {
 	} else {
 		for i := 0; i < rt.segmentCount; i++ {
 			durs = append(durs, float64(rt.segmentSeconds))
+		}
+		if n := len(durs); n > 0 && rt.tailSeconds > 0 && rt.tailSeconds < durs[n-1] {
+			durs[n-1] = rt.tailSeconds
 		}
 	}
 	// TARGETDURATION must be >= every EXTINF (rounded up); a copy's segments can exceed

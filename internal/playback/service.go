@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/access"
@@ -600,6 +601,7 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 		BuildHLSArgs:            hlsArgs,
 		BuildHLSArgsCPU:         cpuFallback,
 		BuildAudioRenditionArgs: audioRendition,
+		AudioDurationsSec:       s.probeAudioDurations(dec, audioRendition != nil),
 		SegmentBoundaries:       boundaries,
 		MaxStreams:              req.Scope.MaxStreams,
 	}, dec)
@@ -1257,6 +1259,44 @@ func joinPartBoundaries(perPart [][]float64, durations []float64) []float64 {
 			offset += durations[i]
 		}
 	}
+	return out
+}
+
+// probeAudioDurations returns each audio Stream's own length in seconds (Stream id →
+// seconds) for a DEMUXED single-File session, so each rendition's playlist lists only
+// the segments ffmpeg will write (see CreateInput.AudioDurationsSec). Best-effort: a
+// Stream that fails to probe is left out and keeps the container-sized playlist. A
+// multi-part Edition is skipped — its renditions are cut from a concatenated input
+// whose timeline the single File's packets do not describe.
+func (s *Service) probeAudioDurations(dec Decision, demuxed bool) map[string]float64 {
+	if !demuxed || dec.File.Path == "" || dec.File.DurationMs <= 0 || len(dec.Edition.Parts()) > 1 {
+		return nil
+	}
+	// Concurrent, under ONE shared deadline: a slow mount costs the negotiation one
+	// timeout, not one per audio Stream.
+	ctx, cancel := context.WithTimeout(context.Background(), keyframeProbeTimeout)
+	defer cancel()
+	out := make(map[string]float64)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, st := range dec.File.Streams {
+		if st.Kind != "audio" {
+			continue
+		}
+		wg.Add(1)
+		go func(st store.Stream) {
+			defer wg.Done()
+			sec, err := transcode.AudioStreamEnd(ctx, "", dec.File.Path, st.Index, float64(dec.File.DurationMs)/1000)
+			if err != nil {
+				log.Printf("obelo: playback: audio length probe failed for %s stream %d: %v — sizing its rendition from the container", dec.File.Path, st.Index, err)
+				return
+			}
+			mu.Lock()
+			out[st.ID] = sec
+			mu.Unlock()
+		}(st)
+	}
+	wg.Wait()
 	return out
 }
 

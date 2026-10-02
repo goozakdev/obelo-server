@@ -2,6 +2,7 @@ package playback
 
 import (
 	"errors"
+	"math"
 	"path/filepath"
 	"sync"
 	"time"
@@ -231,7 +232,10 @@ type Manager struct {
 	// demuxed multi-audio HLS session has no entry, so it exposes no audio renditions.
 	audioRuntimes map[string]map[string]*hlsRuntime
 	audioBuilders map[string]func(streamID, outputDir string, seek transcode.SeekOffset) []string
-	now           func() time.Time // injectable clock; defaults to time.Now
+	// audioDurations is each demuxed session's per-audio-Stream length in seconds
+	// (CreateInput.AudioDurationsSec), sizing the rendition playlists.
+	audioDurations map[string]map[string]float64
+	now            func() time.Time // injectable clock; defaults to time.Now
 	// observer, when set, is notified of session lifecycle transitions (started/
 	// nowPlaying/ended). It is the seam app.New wires to the realtime Broker so
 	// playback imports no events package; nil (the default, and every playback unit
@@ -262,11 +266,12 @@ type Manager struct {
 // only (issue 07). directStream/transcode sessions need NewRemuxManager.
 func NewManager() *Manager {
 	return &Manager{
-		sessions:      make(map[string]Session),
-		runtimes:      make(map[string]*hlsRuntime),
-		audioRuntimes: make(map[string]map[string]*hlsRuntime),
-		audioBuilders: make(map[string]func(streamID, outputDir string, seek transcode.SeekOffset) []string),
-		now:           time.Now,
+		sessions:       make(map[string]Session),
+		runtimes:       make(map[string]*hlsRuntime),
+		audioRuntimes:  make(map[string]map[string]*hlsRuntime),
+		audioBuilders:  make(map[string]func(streamID, outputDir string, seek transcode.SeekOffset) []string),
+		audioDurations: make(map[string]map[string]float64),
+		now:            time.Now,
 	}
 }
 
@@ -376,6 +381,13 @@ type CreateInput struct {
 	// nil when the keyframe probe failed (the runtime then falls back to ffmpeg's
 	// playlist — correct for short files).
 	SegmentBoundaries []float64
+	// AudioDurationsSec is each audio Stream's OWN length in seconds (audio Stream id →
+	// seconds) for a DEMUXED session, probed from the Stream's last packet. A
+	// rendition's synthesized playlist is sized from it, not from the container
+	// duration: a longer container (a subtitle or video tail) would otherwise list
+	// segments ffmpeg never writes, and the player stalls on the 404. A Stream with no
+	// entry (probe failed, multi-part Edition) falls back to the session duration.
+	AudioDurationsSec map[string]float64
 	// MaxStreams is the User's concurrent-session ceiling for THIS create (ADR-0054
 	// §2), taken from their resolved Scope; 0 means uncapped. The Service passes it
 	// down rather than the Manager reading a User's ceiling itself, because the
@@ -575,6 +587,9 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 	if rt != nil && in.BuildAudioRenditionArgs != nil {
 		m.audioBuilders[s.ID] = in.BuildAudioRenditionArgs
 		m.audioRuntimes[s.ID] = make(map[string]*hlsRuntime)
+		if len(in.AudioDurationsSec) > 0 {
+			m.audioDurations[s.ID] = in.AudioDurationsSec
+		}
 	}
 	m.mu.Unlock()
 	// started fires HERE — the single common create path Create delegates to — so a
@@ -680,6 +695,14 @@ func (m *Manager) EnsureAudioRuntime(sessionID, streamID string) (*hlsRuntime, e
 		segmentSeconds: transcode.SegmentSeconds,
 		segmentCount:   segmentCountFor(sess.DurationMs, transcode.SegmentSeconds),
 	}
+	// Size the playlist from the audio Stream's OWN length when it was probed: the
+	// container can outlast the audio (a subtitle or video tail), and a listed
+	// segment ffmpeg never writes 404s after the segment wait while the player
+	// retries it forever. The last EXTINF is the true remainder, as ffmpeg writes it.
+	if sec := m.audioDurations[sessionID][streamID]; sec > 0 {
+		rt.segmentCount = segmentCountFor(int64(math.Round(sec*1000)), transcode.SegmentSeconds)
+		rt.tailSeconds = sec - float64(rt.segmentCount-1)*float64(transcode.SegmentSeconds)
+	}
 	if m.audioRuntimes[sessionID] == nil {
 		m.audioRuntimes[sessionID] = make(map[string]*hlsRuntime)
 	}
@@ -758,6 +781,7 @@ func (m *Manager) End(id string) bool {
 	audioRts := m.audioRuntimes[id]
 	delete(m.audioRuntimes, id)
 	delete(m.audioBuilders, id)
+	delete(m.audioDurations, id)
 	// Free the transcode slot under the same lock that removed the session, so a
 	// previously-rejected transcode can take it immediately (ADR-0009). Only a
 	// transcode session ever incremented the counter, so only it decrements — and
@@ -935,6 +959,7 @@ func (m *Manager) endWhere(end func(Session) bool) int {
 			}
 			delete(m.audioRuntimes, id)
 			delete(m.audioBuilders, id)
+			delete(m.audioDurations, id)
 			if rt := m.runtimes[id]; rt != nil {
 				dead = append(dead, rt)
 				delete(m.runtimes, id)
