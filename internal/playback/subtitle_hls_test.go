@@ -61,13 +61,21 @@ func newSubService(t *testing.T) *Service {
 	return NewService(fakeSubStore{detail: subFixtureDetail()}, nil, "", Governance{})
 }
 
+// negotiatedSubs is the track list negotiation attaches to the Decision (what the
+// Service does with the Title detail before it opens the session).
+func negotiatedSubs(d store.TitleDetail) []SubtitleTrack {
+	f, _ := fileByID(d, "f1")
+	return buildSubtitleTracks(f, d.Subtitles)
+}
+
 func TestSessionSubtitleContextListsTracks(t *testing.T) {
 	svc := newSubService(t)
 	// A remux (HLS) session for File f1 of Title t1.
 	sess := svc.Sessions().Create(CreateInput{UserID: "u1", TitleID: "t1"}, Decision{
-		Tier:    TierDirectStream,
-		Edition: store.Edition{ID: "e1"},
-		File:    store.File{ID: "f1", DurationMs: 10_000},
+		Tier:      TierDirectStream,
+		Edition:   store.Edition{ID: "e1"},
+		File:      store.File{ID: "f1", DurationMs: 10_000},
+		Subtitles: negotiatedSubs(subFixtureDetail()),
 	})
 
 	ctx, err := svc.SessionSubtitleContext("u1", sess.ID)
@@ -92,6 +100,36 @@ func TestSessionSubtitleContextListsTracks(t *testing.T) {
 	}
 	if de := byID["sc-de"]; de.Kind != "image" || de.Convertible {
 		t.Errorf("sidecar German image track should be non-convertible image: %+v", de)
+	}
+}
+
+// The master's SUBTITLES group is the set the Decision offered, so the playerIndex it
+// reported (which counted that set) cannot drift: a sidecar that appears in the store
+// after negotiation does not join an open session's tracks (ADR-0067).
+func TestSessionSubtitleContextKeepsTheTracksTheDecisionOffered(t *testing.T) {
+	detail := subFixtureDetail()
+	offered := negotiatedSubs(detail)
+	later := detail
+	later.Subtitles = append(append([]store.Subtitle{}, detail.Subtitles...),
+		store.Subtitle{ID: "sc-fr", TitleID: "t1", Source: "sidecar", Kind: "text", Codec: "srt", Language: "fr"})
+	svc := NewService(fakeSubStore{detail: later}, nil, "", Governance{})
+	sess := svc.Sessions().Create(CreateInput{UserID: "u1", TitleID: "t1"}, Decision{
+		Tier:      TierDirectStream,
+		Edition:   store.Edition{ID: "e1"},
+		File:      store.File{ID: "f1", DurationMs: 10_000},
+		Subtitles: offered,
+	})
+	ctx, err := svc.SessionSubtitleContext("u1", sess.ID)
+	if err != nil {
+		t.Fatalf("SessionSubtitleContext: %v", err)
+	}
+	if len(ctx.Tracks) != len(offered) {
+		t.Errorf("session tracks = %d, want the %d the Decision offered (not the store's %d now)", len(ctx.Tracks), len(offered), len(negotiatedSubs(later)))
+	}
+	for _, tr := range ctx.Tracks {
+		if tr.ID == "sc-fr" {
+			t.Errorf("a track added after negotiation joined the session's list: %+v", tr)
+		}
 	}
 }
 

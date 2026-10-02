@@ -160,6 +160,8 @@ type audioStreamJSON struct {
 	IsDefault  bool   `json:"isDefault"`
 	Commentary bool   `json:"commentary,omitempty"`
 	Label      string `json:"label"`
+	// PlayerIndex is set only on an HLS Decision (ADR-0067); nil on the catalog.
+	PlayerIndex *int `json:"playerIndex,omitempty"`
 }
 
 // videoStreamJSON is one selectable video Stream of a File, presented for the
@@ -180,6 +182,8 @@ type videoStreamJSON struct {
 	Height    int    `json:"height,omitempty"`
 	IsDefault bool   `json:"isDefault"`
 	Label     string `json:"label"`
+	// PlayerIndex is set only on an HLS Decision (ADR-0067); nil on the catalog.
+	PlayerIndex *int `json:"playerIndex,omitempty"`
 }
 
 type fileJSON struct {
