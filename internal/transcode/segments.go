@@ -190,3 +190,81 @@ var errNoKeyframes = &probeError{"transcode: no video keyframes found"}
 type probeError struct{ msg string }
 
 func (e *probeError) Error() string { return e.msg }
+
+// audioEndWindows are how far before the container's end AudioStreamEnd starts
+// reading: a few seconds holds the last packets of any real audio codec (a seek plus
+// a few KB however long the file is), and the wider second pass catches audio that
+// stops well before a longer container does, without demuxing the whole file.
+var audioEndWindows = []float64{10, 300}
+
+// AudioStreamEnd returns the audio Stream's OWN length at the container's absolute
+// streamIndex: its last packet's pts plus duration, minus its FIRST packet's pts,
+// in seconds (a negative first pts, the encoder's priming, counts as 0). Relative to the first packet because that is how ffmpeg's hls muxer
+// counts a rendition's segments — a source whose timestamps do not start at 0
+// (MPEG-TS, late-starting audio) would otherwise list a segment that is never
+// written (KeyframeBoundaries normalizes the same way). It is the Stream's own
+// length, which a container duration over-reports whenever something else (a
+// subtitle or video tail) outlasts the audio; the Stream's DURATION tag is no
+// better, since muxers copy the container's value onto every Stream. containerSec
+// only locates the tail, so the reads are a few packets, not a demux of the file.
+func AudioStreamEnd(ctx context.Context, ffprobeBin, path string, streamIndex int, containerSec float64) (float64, error) {
+	first, _, err := audioPackets(ctx, ffprobeBin, path, streamIndex, "%+#1")
+	if err != nil {
+		return 0, err
+	}
+	// A negative first pts is the encoder's priming packet, which ffmpeg shifts to 0
+	// on output rather than counting it, so only a POSITIVE start offsets the length.
+	first = math.Max(first, 0)
+	for _, w := range audioEndWindows {
+		from := math.Max(0, containerSec-w)
+		_, end, err := audioPackets(ctx, ffprobeBin, path, streamIndex, strconv.FormatFloat(from, 'f', 3, 64)+"%")
+		if err != nil {
+			return 0, err
+		}
+		if end > first {
+			return end - first, nil
+		}
+		if from == 0 {
+			break
+		}
+	}
+	return 0, errNoAudioPackets
+}
+
+// audioPackets reads one -read_intervals window of a Stream's packets and returns
+// the first packet's pts and the latest pts+duration (both 0 when none were read).
+func audioPackets(ctx context.Context, ffprobeBin, path string, streamIndex int, interval string) (first, end float64, err error) {
+	bin := ffprobeBin
+	if bin == "" {
+		bin = "ffprobe"
+	}
+	out, err := exec.CommandContext(ctx, bin,
+		"-v", "error",
+		"-select_streams", strconv.Itoa(streamIndex),
+		"-read_intervals", interval,
+		"-show_entries", "packet=pts_time,duration_time",
+		"-of", "csv=p=0",
+		path,
+	).Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	seen := false
+	for _, line := range strings.Split(string(out), "\n") {
+		pts, dur, _ := strings.Cut(strings.TrimSpace(line), ",")
+		p, perr := strconv.ParseFloat(pts, 64)
+		if perr != nil {
+			continue
+		}
+		if !seen {
+			first, seen = p, true
+		}
+		d, _ := strconv.ParseFloat(strings.TrimSuffix(dur, ","), 64) // absent → 0
+		end = math.Max(end, p+d)
+	}
+	return first, end, nil
+}
+
+// errNoAudioPackets signals the tail read returned no packet for the Stream, so the
+// caller keeps the container-sized playlist.
+var errNoAudioPackets = &probeError{"transcode: no audio packets found"}

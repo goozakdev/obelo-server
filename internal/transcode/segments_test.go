@@ -208,3 +208,123 @@ func TestContainerKeyframesMatchFfprobe(t *testing.T) {
 		})
 	}
 }
+
+// TestAudioStreamEndIsTheAudiosOwnLength: with audio shorter than the video (so the
+// container outlasts it), AudioStreamEnd reports the audio's own end — not the
+// container's.
+func TestAudioStreamEndIsTheAudiosOwnLength(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg/ffprobe; skipped under -short")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	src := filepath.Join(t.TempDir(), "x.mkv")
+	if err := exec.Command("ffmpeg", "-y", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc=duration=16.5:size=160x120:rate=24",
+		"-f", "lavfi", "-i", "sine=duration=15.9",
+		"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", src).Run(); err != nil {
+		t.Skipf("fixture gen failed: %v", err)
+	}
+	got, err := AudioStreamEnd(context.Background(), "", src, 1, 16.5)
+	if err != nil {
+		t.Fatalf("AudioStreamEnd: %v", err)
+	}
+	if got < 15.8 || got > 16.1 {
+		t.Errorf("audio end = %.3f, want ~15.9 (the container is 16.5)", got)
+	}
+}
+
+// TestAudioStreamEndCountsSegmentsLikeFfmpeg: the length AudioStreamEnd reports sizes
+// a rendition playlist (ceil(length / SegmentSeconds) segments), so it must give the
+// count ffmpeg's hls muxer actually writes — which counts from the rendition's FIRST
+// packet. A source whose timestamps do not start at 0 (MPEG-TS's ~1.4 s start, audio
+// that begins late in an mkv) must not list one segment too many.
+func TestAudioStreamEndCountsSegmentsLikeFfmpeg(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg/ffprobe; skipped under -short")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	cases := []struct {
+		name string
+		file string
+		args []string // after the two lavfi inputs
+		in   []string // input args: video, then audio
+	}{
+		{
+			name: "mpegts start offset", file: "x.ts",
+			in: []string{"-f", "lavfi", "-i", "testsrc=duration=15:size=160x120:rate=24",
+				"-f", "lavfi", "-i", "sine=duration=14.9"},
+			args: []string{"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-f", "mpegts"},
+		},
+		{
+			// The harness's Multitrack recipe: -shortest ends the audio just before the
+			// subtitle-extended container, and the AAC priming packet has a NEGATIVE pts.
+			name: "mkv aac priming and a longer subtitle", file: "z.mkv",
+			in: []string{"-f", "lavfi", "-i", "testsrc=duration=30:size=160x120:rate=24",
+				"-f", "lavfi", "-i", "sine=duration=30", "-i", "SUBS", "-map", "0:v", "-map", "1:a", "-map", "2:s"},
+			args: []string{"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "srt", "-t", "16.001", "-shortest"},
+		},
+		{
+			name: "mkv audio starts late", file: "y.mkv",
+			in: []string{"-f", "lavfi", "-i", "testsrc=duration=16:size=160x120:rate=24",
+				"-itsoffset", "0.5", "-f", "lavfi", "-i", "sine=duration=11.7"},
+			args: []string{"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, c.file)
+			subs := filepath.Join(dir, "s.srt")
+			if err := os.WriteFile(subs, []byte("1\n00:00:10,000 --> 00:00:16,000\nhi\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			in := append([]string(nil), c.in...)
+			for i, a := range in {
+				if a == "SUBS" {
+					in[i] = subs
+				}
+			}
+			gen := append(append([]string{"-y", "-loglevel", "error"}, in...), c.args...)
+			if err := exec.Command("ffmpeg", append(gen, src)...).Run(); err != nil {
+				t.Skipf("fixture gen failed: %v", err)
+			}
+			container := probeFormatDuration(t, src)
+			got, err := AudioStreamEnd(context.Background(), "", src, 1, container)
+			if err != nil {
+				t.Fatalf("AudioStreamEnd: %v", err)
+			}
+			out := t.TempDir()
+			args := AudioRenditionArgs(AudioRenditionJob{
+				SourcePath:     src,
+				OutputDir:      out,
+				PlaylistName:   AudioRenditionPlaylist("a"),
+				SegmentPattern: AudioRenditionSegmentPattern("a"),
+			})
+			if b, err := exec.Command("ffmpeg", append([]string{"-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("rendition ffmpeg: %v\n%s", err, b)
+			}
+			written, _ := filepath.Glob(filepath.Join(out, "audio_a_*.ts"))
+			want := int(math.Ceil((got - 1e-3) / float64(SegmentSeconds)))
+			if len(written) != want {
+				t.Errorf("ffmpeg wrote %d segments, AudioStreamEnd=%.3f lists %d (container %.3f)", len(written), got, want, container)
+			}
+		})
+	}
+}
+
+func probeFormatDuration(t *testing.T, path string) float64 {
+	t.Helper()
+	out, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path).Output()
+	if err != nil {
+		t.Fatalf("ffprobe duration: %v", err)
+	}
+	d, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil {
+		t.Fatalf("parse duration %q: %v", out, err)
+	}
+	return d
+}

@@ -3,10 +3,14 @@ package playback
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/transcode"
 )
@@ -238,5 +242,134 @@ func TestSingleAudioSessionExposesNoRenditions(t *testing.T) {
 	}, dec)
 	if _, err := m.EnsureAudioRuntime(s.ID, "a1"); err != ErrNoAudioRendition {
 		t.Errorf("single-audio EnsureAudioRuntime err = %v, want ErrNoAudioRendition", err)
+	}
+}
+
+// TestAudioRenditionPlaylistSizedFromAudioStream: a demuxed rendition's playlist is
+// sized from its own audio Stream, not the (longer) container. Container 16.021 s with
+// audio ending at 15.998 s lists 4 segments — 4, 4, 4 and the true 3.998 remainder —
+// and every listed segment is served, instead of a fifth that ffmpeg never writes and
+// the player stalls on.
+func TestAudioRenditionPlaylistSizedFromAudioStream(t *testing.T) {
+	m := NewRemuxManager(&fakeRunner{}, t.TempDir())
+	dec := demuxedDecision()
+	dec.File.DurationMs = 16021
+	s := m.Create(CreateInput{
+		UserID:  "u1",
+		TitleID: "t1",
+		BuildHLSArgs: func(dir string, seek transcode.SeekOffset) []string {
+			return transcode.RemuxArgs(transcode.RemuxJob{SourcePath: dec.File.Path, OutputDir: dir, Seek: seek, VideoOnly: true})
+		},
+		BuildAudioRenditionArgs: func(streamID, dir string, seek transcode.SeekOffset) []string {
+			return transcode.AudioRenditionArgs(transcode.AudioRenditionJob{
+				SourcePath:     dec.File.Path,
+				OutputDir:      dir,
+				PlaylistName:   transcode.AudioRenditionPlaylist(streamID),
+				SegmentPattern: transcode.AudioRenditionSegmentPattern(streamID),
+			})
+		},
+		AudioDurationsSec: map[string]float64{"a2": 15.998},
+	}, dec)
+	if s.DurationMs != 16021 {
+		t.Fatalf("session DurationMs = %d, want 16021 (the container)", s.DurationMs)
+	}
+
+	rt, err := m.EnsureAudioRuntime(s.ID, "a2")
+	if err != nil {
+		t.Fatalf("EnsureAudioRuntime: %v", err)
+	}
+	body, err := rt.playlist()
+	if err != nil {
+		t.Fatalf("playlist: %v", err)
+	}
+	var extinfs, names []string
+	for _, line := range strings.Split(string(body), "\n") {
+		switch {
+		case strings.HasPrefix(line, "#EXTINF:"):
+			extinfs = append(extinfs, strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ","))
+		case strings.HasPrefix(line, "audio_a2_"):
+			names = append(names, line)
+		}
+	}
+	wantExtinf := []string{"4.000000", "4.000000", "4.000000", "3.998000"}
+	if !reflect.DeepEqual(extinfs, wantExtinf) {
+		t.Fatalf("EXTINFs = %v, want %v\n%s", extinfs, wantExtinf, body)
+	}
+	if !strings.Contains(string(body), "#EXT-X-TARGETDURATION:4\n") {
+		t.Errorf("TARGETDURATION is not 4:\n%s", body)
+	}
+	// Every listed segment is served: ffmpeg would write exactly these.
+	if err := os.MkdirAll(s.ScratchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(s.ScratchDir, n), []byte("seg"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, n := range names {
+		if _, err := rt.segment(n); err != nil {
+			t.Errorf("listed segment %s not served: %v", n, err)
+		}
+	}
+	// A stream with no probed duration keeps the container-sized playlist.
+	rt1, err := m.EnsureAudioRuntime(s.ID, "a1")
+	if err != nil {
+		t.Fatalf("EnsureAudioRuntime a1: %v", err)
+	}
+	if rt1.segmentCount != 5 {
+		t.Errorf("unprobed rendition segmentCount = %d, want 5 (container fallback)", rt1.segmentCount)
+	}
+}
+
+// TestNegotiateSizesDemuxedRenditionsFromTheAudio: the Negotiate → probe → session
+// wiring. A real multi-audio mkv whose audio ends before its video is negotiated as a
+// demuxed session; each rendition lists the segments the AUDIO fills (4 for ~15.9 s),
+// not the container's (5 for 16.5 s). Remove the probe call and this fails.
+func TestNegotiateSizesDemuxedRenditionsFromTheAudio(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: runs ffmpeg; skipped under -short")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not on PATH")
+	}
+	src := filepath.Join(t.TempDir(), "m.mkv")
+	if err := exec.Command("ffmpeg", "-y", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc=duration=16.5:size=160x120:rate=24",
+		"-f", "lavfi", "-i", "sine=duration=15.9",
+		"-f", "lavfi", "-i", "sine=frequency=880:duration=15.9",
+		"-map", "0", "-map", "1", "-map", "2",
+		"-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", src).Run(); err != nil {
+		t.Skipf("fixture gen failed: %v", err)
+	}
+	f := multiAudioMKVFile()
+	f.Path = src
+	f.DurationMs = 16500
+	f.Present = true
+	f.Streams[0].Index, f.Streams[1].Index, f.Streams[2].Index = 0, 1, 2
+	detail := store.TitleDetail{Editions: []store.Edition{{ID: "e1", Name: "1080p", Files: []store.File{f}}}}
+	detail.Title.ID = "t1"
+	svc := NewService(remuxSelStore{detail: detail}, &fakeRunner{}, t.TempDir(), Governance{})
+
+	dec, sess, unsup, busy, err := svc.Negotiate(Request{
+		UserID: "u1", TitleID: "t1", Profile: h264Profile(),
+		Constraints:   Constraints{MaxBitrate: 100_000_000, MaxResolution: "1080p"},
+		AudioStreamID: "a-ja",
+		Scope:         access.Scope{AllLibraries: true},
+	})
+	if err != nil || unsup != nil || busy != nil {
+		t.Fatalf("negotiate: err=%v unsup=%v busy=%v", err, unsup, busy)
+	}
+	if !IsDemuxed(dec) {
+		t.Fatalf("decision is not demuxed (tier %q); the fixture no longer exercises renditions", dec.Tier)
+	}
+	for _, id := range []string{"a-en", "a-ja"} {
+		rt, err := svc.Sessions().EnsureAudioRuntime(sess.ID, id)
+		if err != nil {
+			t.Fatalf("EnsureAudioRuntime %s: %v", id, err)
+		}
+		if rt.segmentCount != 4 {
+			t.Errorf("%s rendition segmentCount = %d, want 4 (audio ~15.9 s; the 16.5 s container would list 5)", id, rt.segmentCount)
+		}
 	}
 }
