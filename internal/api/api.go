@@ -486,8 +486,10 @@ func Handler(deps Deps) http.Handler {
 	// change. See stream_routes.go before "tidying" this into a query parameter; the
 	// breakage only shows on a real receiver.
 	//
-	// GET only, and the method is checked before the token so the refusal cannot be
-	// used as a validity oracle. Auth lives inside the dispatcher rather than in a
+	// GET and HEAD, plus the CORS OPTIONS preflight, and the method is checked
+	// before the token so the refusal cannot be used as a validity oracle. Keep this
+	// a plain path pattern: a method-pattern route ("GET /stream/") would 405 the
+	// OPTIONS preflight before the dispatcher could answer it, breaking Cast. Auth lives inside the dispatcher rather than in a
 	// middleware because this credential answers a dead token with an
 	// existence-hiding 404, not the 401 the bearer/cookie middlewares produce.
 	mux.HandleFunc("/stream/", handleStreamTokenSubtree(deps))
