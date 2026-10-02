@@ -161,11 +161,14 @@ func TestRelayDecisionResponseRewritesAndDropsTheSharersToken(t *testing.T) {
 	dec := playback.Decision{Relay: &playback.Relayed{
 		RemoteSessionID: "remote-9",
 		Decision: map[string]any{
-			"sessionId":            "remote-9",
-			"tier":                 "directStream",
-			"streamUrl":            "/api/v1/sessions/remote-9/hls/master.m3u8",
-			"estimatedBitrate":     float64(112023),
-			"somethingNewer":       "kept",
+			"sessionId":        "remote-9",
+			"tier":             "directStream",
+			"streamUrl":        "/api/v1/sessions/remote-9/hls/master.m3u8",
+			"estimatedBitrate": float64(112023),
+			"somethingNewer":   "kept",
+			"audioStreams": []any{
+				map[string]any{"id": "a1", "index": float64(1), "playerIndex": float64(0)},
+			},
 			"streamToken":          "the-sharers-secret",
 			"streamTokenExpiresAt": "2026-01-01T00:00:00Z",
 			"subtitles": []any{
@@ -192,6 +195,12 @@ func TestRelayDecisionResponseRewritesAndDropsTheSharersToken(t *testing.T) {
 	// a client that has.
 	if out["somethingNewer"] != "kept" || out["tier"] != "directStream" || out["estimatedBitrate"] != float64(112023) {
 		t.Errorf("the sharer's own fields did not pass through: %#v", out)
+	}
+	// playerIndex (ADR-0067) is the sharer's, in the sharer's master: it rides the relay
+	// untouched, because the relayed master is the sharer's master.
+	auds, _ := out["audioStreams"].([]any)
+	if len(auds) != 1 || auds[0].(map[string]any)["playerIndex"] != float64(0) {
+		t.Errorf("audioStreams did not pass through with playerIndex: %#v", out["audioStreams"])
 	}
 	subs, _ := out["subtitles"].([]any)
 	if len(subs) != 2 {

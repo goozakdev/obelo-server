@@ -1017,6 +1017,72 @@ func IsDemuxed(dec Decision) bool {
 	return audioStreamCount(dec.File) >= 2
 }
 
+// PlayerIndexes is the index a player that opens an HLS session's playlist gives each
+// Stream it can see (ADR-0067). Audio is keyed by Stream id and holds only the audio
+// Streams the player sees; Video is the played video's.
+type PlayerIndexes struct {
+	Audio map[string]int
+	Video int
+}
+
+// DeliverableTextSubtitles filters a Decision's Subtitle tracks to the ones an HLS
+// session delivers in-band: text tracks the server can convert to WebVTT. Each is one
+// SUBTITLES rendition in the master playlist. It is the one place that decides that,
+// shared by the master, the streamUrl choice and HLSPlayerIndexes.
+func DeliverableTextSubtitles(tracks []SubtitleTrack) []SubtitleTrack {
+	var out []SubtitleTrack
+	for _, t := range tracks {
+		if t.Kind == "text" && t.Convertible {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// HLSPlayerIndexes numbers an HLS Decision's Streams the way a player opening its
+// playlist does. The playlist is audio.MasterPlaylist's master when the Decision has
+// demuxed audio or deliverable text subtitles, else the bare video media playlist, and
+// a player numbers what it sees in playlist order: AUDIO renditions, then SUBTITLES
+// renditions, then the single video variant.
+//
+//   - Demuxed (IsDemuxed): one AUDIO rendition per audio Stream in File order, then
+//     the text subtitle renditions, then the video-only variant. Audio k is k and the
+//     video is nAudio + nText.
+//   - Otherwise the variant is muxed — the played video then the one played audio
+//     Stream — behind the text subtitle renditions (none, for the bare media
+//     playlist). The video is nText and the audio nText + 1. A remux-selected master
+//     still advertises an AUDIO group for the File's audio, but its renditions are
+//     never produced (404), and a player drops them, so nothing precedes the variant.
+//     Only the played audio Stream is in the player; the others report none.
+//
+// The container `index` is a different space (video and subtitle Streams interleave
+// there) and is never replaced by this. ok is false where no order is claimed:
+// directPlay (the player opens the File, so `index` is right) and audio-only (one
+// audio Stream is all the player sees). The layouts are held to a real ffprobe of the
+// served playlist by TestPlayerIndexesMatchWhatAPlayerSeesInEveryHLSLayout; if
+// audio.MasterPlaylist's order changes, this must change with it.
+func HLSPlayerIndexes(dec Decision) (PlayerIndexes, bool) {
+	if dec.Tier == TierDirectPlay || dec.AudioOnly {
+		return PlayerIndexes{}, false
+	}
+	nText := len(DeliverableTextSubtitles(dec.Subtitles))
+	pi := PlayerIndexes{Audio: map[string]int{}}
+	if IsDemuxed(dec) {
+		for _, st := range dec.File.Streams {
+			if st.Kind == "audio" {
+				pi.Audio[st.ID] = len(pi.Audio)
+			}
+		}
+		pi.Video = len(pi.Audio) + nText
+		return pi, true
+	}
+	pi.Video = nText
+	if dec.AudioStream.ID != "" {
+		pi.Audio[dec.AudioStream.ID] = nText + 1
+	}
+	return pi, true
+}
+
 // audioStreamCount counts the File's audio Streams — the multi-audio test that
 // gates demuxing and the audio-rendition group.
 func audioStreamCount(f store.File) int {
@@ -1623,9 +1689,10 @@ func (s *Service) HLSSegment(userID, sessionID, name string) ([]byte, error) {
 // SessionSubtitleContext is what the api layer needs to serve an HLS session's
 // in-band subtitle artifacts (ADR-0020, slice 03): the master playlist's
 // renditions, each rendition's segmented WebVTT, and the subtitle media playlist.
-// Tracks is the played File's full Subtitle-track list (the same set the decision
-// offered — embedded Streams + the Title's Sidecar/Fetched rows); the api layer
-// filters it to the deliverable text tracks for the master's SUBTITLES group.
+// Tracks is the played File's full Subtitle-track list as the decision offered it
+// (embedded Streams + the Title's Sidecar/Fetched rows), frozen in the Session at
+// negotiation; the api layer filters it to the deliverable text tracks for the
+// master's SUBTITLES group.
 // Detail lets the api layer locate + convert one track to WebVTT (reusing the
 // out-of-band conversion path). DurationMs sizes the segmented subtitle playlist
 // to the video cadence.
@@ -1661,13 +1728,12 @@ func (s *Service) SessionSubtitleContext(userID, sessionID string) (SessionSubti
 	if err != nil {
 		return SessionSubtitleContext{}, err
 	}
-	file, ok := fileByID(detail, sess.FileID)
-	if !ok {
+	if _, ok := fileByID(detail, sess.FileID); !ok {
 		return SessionSubtitleContext{}, store.ErrNotFound
 	}
 	return SessionSubtitleContext{
 		Detail:     detail,
-		Tracks:     buildSubtitleTracks(file, detail.Subtitles),
+		Tracks:     sess.Subtitles,
 		DurationMs: sess.DurationMs,
 		ScratchDir: sess.ScratchDir,
 	}, nil

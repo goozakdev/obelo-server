@@ -64,6 +64,11 @@ type Session struct {
 	// flags DEFAULT=YES — the track a native HLS player turns on unless the viewer
 	// picks another (audio-streams/03). "" for a single-audio / silent File.
 	AudioStreamID string
+	// Subtitles is the Subtitle-track list the Decision offered, frozen at negotiation.
+	// The HLS master's SUBTITLES group is built from it (SessionSubtitleContext), not
+	// from the store at fetch time, so the master can never list a different set than
+	// the one the Decision's playerIndex counted (ADR-0067).
+	Subtitles     []SubtitleTrack
 	StartPosition int64 // ms; the requested resume offset (informational this slice)
 	CreatedAt     time.Time
 	// LastSeen is refreshed on create and by Touch; the issue-08 reaper uses it as
@@ -419,6 +424,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		VideoCopy:     d.VideoCopy,
 		FMP4:          d.UsesFMP4(),
 		AudioStreamID: d.AudioStream.ID,
+		Subtitles:     d.Subtitles,
 		UserCeiling:   d.UserCeiling,
 		StartPosition: in.StartPosition,
 		CreatedAt:     now,

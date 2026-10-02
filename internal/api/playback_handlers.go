@@ -172,6 +172,9 @@ type decisionStreamJSON struct {
 	Width    int    `json:"width,omitempty"`
 	Height   int    `json:"height,omitempty"`
 	Channels int    `json:"channels,omitempty"`
+	// PlayerIndex is the Stream's index as a player opening the HLS playlist sees it
+	// (ADR-0067). Set only on an HLS Decision; `index` stays the container's.
+	PlayerIndex *int `json:"playerIndex,omitempty"`
 }
 
 // decisionSubtitleJSON is one selectable Subtitle track on a playback decision
@@ -782,6 +785,32 @@ func toDecisionResponse(sessionID, titleID string, d playback.Decision, clientSu
 			Channels: d.AudioStream.Channels,
 		}
 	}
+	// On an HLS Decision each Stream the player sees also reports the index it gives it
+	// (ADR-0067). Only the played video is in the playlist, so only it gets one, and
+	// only the played audio Stream when the variant is muxed; directPlay and audio-only
+	// Decisions leave playerIndex off.
+	if pi, ok := playback.HLSPlayerIndexes(d); ok {
+		for i := range resp.AudioStreams {
+			if n, has := pi.Audio[resp.AudioStreams[i].ID]; has {
+				resp.AudioStreams[i].PlayerIndex = &n
+			}
+		}
+		for i := range resp.VideoStreams {
+			if resp.VideoStreams[i].ID == d.VideoStream.ID {
+				n := pi.Video
+				resp.VideoStreams[i].PlayerIndex = &n
+			}
+		}
+		if resp.VideoStream != nil {
+			n := pi.Video
+			resp.VideoStream.PlayerIndex = &n
+		}
+		if resp.AudioStream != nil {
+			if n, has := pi.Audio[d.AudioStream.ID]; has {
+				resp.AudioStream.PlayerIndex = &n
+			}
+		}
+	}
 	return resp
 }
 
@@ -1284,12 +1313,7 @@ func parseSubtitleSegmentFile(file string) (subID string, index int, ok bool) {
 // WebVTT rendition (a text track we can convert). It gates whether the decision's
 // streamUrl points at a master playlist vs the bare media playlist.
 func hasDeliverableTextSubtitle(tracks []playback.SubtitleTrack) bool {
-	for _, t := range tracks {
-		if t.Kind == "text" && t.Convertible {
-			return true
-		}
-	}
-	return false
+	return len(playback.DeliverableTextSubtitles(tracks)) > 0
 }
 
 // hlsSubtitleSegmentCount is how many WebVTT segments cover a File of durationMs
@@ -1404,10 +1428,7 @@ func isSubtitleSegment(file string) bool {
 // order. Image tracks and unconvertible text carry no in-band rendition.
 func masterRenditions(tracks []playback.SubtitleTrack) []subtitle.Rendition {
 	var rs []subtitle.Rendition
-	for _, t := range tracks {
-		if t.Kind != "text" || !t.Convertible {
-			continue
-		}
+	for _, t := range playback.DeliverableTextSubtitles(tracks) {
 		rs = append(rs, subtitle.Rendition{
 			URI:      subtitlePlaylistName(t.ID),
 			Name:     subtitle.Label(t.Language, t.Forced),
