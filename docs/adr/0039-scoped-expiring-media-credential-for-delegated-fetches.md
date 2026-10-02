@@ -1,5 +1,7 @@
 # A scoped, expiring media credential for players that delegate the fetch
 
+> **Amended by [ADR-0066](./0066-cors-on-the-stream-token-subtree-only.md)** — the two routes also answer `HEAD` (as `GET`, headers only) and a CORS preflight (`OPTIONS`, answered before the token is examined, identically for every token), and every response under them carries CORS headers so a Cast receiver on a foreign origin can read it. The posture below is otherwise unchanged.
+
 A Playback session can mint a **stream token**: a 256-bit secret that authorises the media artifacts
 of that one session, expires in four hours, dies with its session, and rides in the URL **path** —
 

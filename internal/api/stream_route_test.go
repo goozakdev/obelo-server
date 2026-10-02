@@ -546,7 +546,8 @@ func TestStreamTokenRefusalsAreIndistinguishable(t *testing.T) {
 }
 
 // TestStreamTokenRoutesAreGetOnly: no method on these paths mutates anything, so
-// everything but GET is a 405 — and the method is refused BEFORE the token is
+// everything but GET, HEAD (which runs as GET) and OPTIONS (the CORS preflight,
+// stream_cors_test.go) is a 405 — and the method is refused BEFORE the token is
 // examined, so a live token and a dead one give the same answer. Otherwise the
 // difference between 405 and 404 would be a token-validity oracle that needs no
 // media at all.
@@ -564,7 +565,7 @@ func TestStreamTokenRoutesAreGetOnly(t *testing.T) {
 	for _, path := range paths {
 		for _, method := range []string{
 			http.MethodPost, http.MethodPut, http.MethodPatch,
-			http.MethodDelete, http.MethodHead, http.MethodOptions,
+			http.MethodDelete, http.MethodTrace,
 		} {
 			req, err := http.NewRequest(method, srv.URL(path), nil)
 			if err != nil {
@@ -579,8 +580,8 @@ func TestStreamTokenRoutesAreGetOnly(t *testing.T) {
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("%s %s = %d, want 405; body: %s", method, path, resp.StatusCode, body)
 			}
-			if allow := resp.Header.Get("Allow"); allow != http.MethodGet {
-				t.Errorf("%s %s Allow = %q, want GET", method, path, allow)
+			if allow := resp.Header.Get("Allow"); allow != "GET, HEAD" {
+				t.Errorf("%s %s Allow = %q, want GET, HEAD", method, path, allow)
 			}
 		}
 	}

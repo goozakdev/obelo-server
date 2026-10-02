@@ -48,7 +48,7 @@ import (
 //
 // # Posture
 //
-//   - GET only. No method on these paths mutates anything; there is no
+//   - GET and HEAD only. No method on these paths mutates anything; there is no
 //     token-authenticated progress report and no token-authenticated session
 //     delete, and there must never be one.
 //   - A bad, expired, or revoked token is a 404 with the SAME envelope a
@@ -75,7 +75,35 @@ const (
 	// written down. A fixed marker rather than a truncation: a prefix of a secret is
 	// still a search key, and there is nothing here worth debugging with.
 	redactedToken = "[redacted]"
+	// streamAllowedMethods is what the subtree answers: HEAD runs exactly as GET
+	// (headers, no body), and nothing else mutates anything.
+	streamAllowedMethods = "GET, HEAD"
 )
+
+// setStreamTokenCORS writes the CORS headers of the stream-token subtree and of
+// NO other route (ADR-0066). A Google Cast receiver is a web page on a foreign
+// origin; without these it cannot read a playlist, a segment or a refusal.
+//
+//   - The request's Origin is echoed verbatim, never "*" (Cast refuses the
+//     wildcard) and never with Allow-Credentials: these routes honour no cookie
+//     and no bearer, so a credentialed cross-origin read is impossible by
+//     construction and must stay so.
+//   - Vary: Origin is added, not set, so a cache cannot serve one origin's grant
+//     to another and an existing Vary survives.
+//   - The headers do not depend on the token, so they cannot become a validity
+//     oracle.
+//
+// The cookie-authenticated routes must NEVER get this: a browser attaches the
+// ms_media cookie ambiently, so an echoed Origin there would let any page the
+// user visits read their media cross-site.
+func setStreamTokenCORS(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	if origin := r.Header.Get("Origin"); origin != "" {
+		h.Set("Access-Control-Allow-Origin", origin)
+	}
+	h.Add("Vary", "Origin")
+	h.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+}
 
 // handleStreamTokenSubtree dispatches every route under /stream/{streamToken}/…
 // (see the file comment for why the token rides the path). It resolves the token
@@ -90,13 +118,30 @@ const (
 //	                 check.
 func handleStreamTokenSubtree(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// CORS comes first of all, before the method gate and before the token is
+		// parsed, so EVERY response of this subtree carries it — the 200, the 206, the
+		// 404 refusal, the 405 and the preflight. A receiver's script that cannot read
+		// a failure's status cannot tell a dead token from a network error.
+		setStreamTokenCORS(w, r)
+
 		// The METHOD gate runs FIRST, before the token is even looked at, and that
 		// order is load-bearing: if verification ran first, a POST bearing a live
 		// token would 405 while a POST bearing a dead one 404, and the difference
 		// between the two answers is a token-validity oracle that needs no media at
-		// all. Method-then-credential means every non-GET gets one answer.
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
+		// all. Method-then-credential means every method gets one answer, whatever
+		// the token — and that includes the CORS preflight, which is answered here,
+		// identically for a live, dead or malformed token, for the same reason.
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+		case http.MethodOptions:
+			h := w.Header()
+			h.Set("Access-Control-Allow-Methods", streamAllowedMethods)
+			h.Set("Access-Control-Allow-Headers", "Content-Type, Accept-Encoding, Range")
+			h.Set("Access-Control-Max-Age", "3600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		default:
+			w.Header().Set("Allow", streamAllowedMethods)
 			writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
 				"method not allowed", nil)
 			return

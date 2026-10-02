@@ -122,13 +122,24 @@ func serveRelayMedia(deps Deps, w http.ResponseWriter, r *http.Request, sess pla
 		writeError(w, http.StatusNotFound, codeNotFound, "session media unavailable", nil)
 		return
 	}
-	resp, err := deps.Links.RelayFetch(r.Context(), sess.RelayLinkID, r.Method, tail, r.Header)
+	// A HEAD is fetched upstream as a GET and its body dropped below: the sharer's
+	// media routes are GET-only (requireMethod), so relaying the HEAD itself would
+	// answer the viewer's HEAD with the sharer's 405 for a GET that works.
+	method := r.Method
+	if method == http.MethodHead {
+		method = http.MethodGet
+	}
+	resp, err := deps.Links.RelayFetch(r.Context(), sess.RelayLinkID, method, tail, r.Header)
 	if err != nil {
 		writeRelayFetchError(w, err)
 		return
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		// A HEAD skips the drain: beyond a relayed playlist (read below so its
+		// Content-Length is right) the upstream GET's body is never used, so close it.
+		if r.Method != http.MethodHead {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		}
 		_ = resp.Body.Close()
 	}()
 	// The fetch itself is this session's keepalive, exactly as a local manifest or
