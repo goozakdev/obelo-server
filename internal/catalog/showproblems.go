@@ -112,7 +112,7 @@ func (s *Service) ShowProblems(libraryID string) ([]ShowProblems, error) {
 
 	out := make([]ShowProblems, 0, len(shows))
 	for _, sh := range shows {
-		local, err := s.showArrangement(sh, lib)
+		local, err := s.showArrangement(sh, lib, false)
 		if err != nil {
 			return nil, err
 		}
@@ -155,10 +155,7 @@ func (s *Service) ShowProblems(libraryID string) ([]ShowProblems, error) {
 		// about it — the one file in the library that needs a human, hidden behind a
 		// screen that reports it as already fine. It keeps its own row instead
 		// (CONTEXT.md "Unreadable").
-		for _, u := range lib.unmatched {
-			if !local.folders[showFolderOf(u.Path)] {
-				continue
-			}
+		for _, u := range lib.unmatchedIn(local.folders) {
 			if u.Unreadable() {
 				p.UnreadablePaths = append(p.UnreadablePaths, u.Path)
 				continue

@@ -277,6 +277,31 @@ const (
 	maxLimit     = 100
 )
 
+// clampLimit applies the page-size rule every browse page and the search groups
+// share: unset or non-positive means defaultLimit, and nothing exceeds maxLimit.
+func clampLimit(n int) int {
+	if n <= 0 {
+		return defaultLimit
+	}
+	if n > maxLimit {
+		return maxLimit
+	}
+	return n
+}
+
+// parseCursor decodes a page cursor, nil for none; ErrBadCursor when it will not
+// decode.
+func parseCursor(raw string) (*store.TitleCursor, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	c, err := decodeCursor(raw)
+	if err != nil {
+		return nil, ErrBadCursor
+	}
+	return &c, nil
+}
+
 // ListTitles returns one page of a Library's Titles. It returns ErrNotFound for
 // an unknown Library (so the caller answers 404, not an empty 200), and
 // ErrBadCursor for an undecodable cursor.
@@ -295,26 +320,16 @@ func (s *Service) ListTitles(scope access.Scope, in ListInput) (Page, error) {
 		return Page{}, ErrNotFound
 	}
 
-	limit := in.Limit
-	if limit <= 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
+	limit := clampLimit(in.Limit)
 
 	sortKind := store.SortByTitle
 	if in.Sort == SortDateAdded {
 		sortKind = store.SortByDateAdded
 	}
 
-	var cursor *store.TitleCursor
-	if in.Cursor != "" {
-		c, err := decodeCursor(in.Cursor)
-		if err != nil {
-			return Page{}, ErrBadCursor
-		}
-		cursor = &c
+	cursor, err := parseCursor(in.Cursor)
+	if err != nil {
+		return Page{}, err
 	}
 
 	page, err := s.store.ListTitles(in.LibraryID, sortKind, cursor, limit, in.Genre, scope.StoreFilter())
@@ -1033,20 +1048,10 @@ func (s *Service) ListShows(scope access.Scope, in ListInput) (ShowsPage, error)
 	if !exists {
 		return ShowsPage{}, ErrNotFound
 	}
-	limit := in.Limit
-	if limit <= 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	var cursor *store.TitleCursor
-	if in.Cursor != "" {
-		c, err := decodeCursor(in.Cursor)
-		if err != nil {
-			return ShowsPage{}, ErrBadCursor
-		}
-		cursor = &c
+	limit := clampLimit(in.Limit)
+	cursor, err := parseCursor(in.Cursor)
+	if err != nil {
+		return ShowsPage{}, err
 	}
 	page, err := s.store.ListShows(in.LibraryID, cursor, limit, in.Genre, scope.StoreFilter())
 	if err != nil {
@@ -1107,13 +1112,22 @@ func (s *Service) Episodes(scope access.Scope, seasonID string) (store.Season, [
 	if err != nil {
 		return store.Season{}, nil, err
 	}
-	// A Season carries no library_id of its own; its Episodes (Titles) do, and a
-	// Season's Episodes all share one Library — so a single check on the first
-	// Episode hides a Season in an inaccessible Library as 404. The Season's parent
-	// Show is also rating-gated, so a direct hit on a hidden Show's Season 404s too
-	// (not just via the grid). No-op under an all-access scope.
-	if len(eps) > 0 && !scope.AllowsLibrary(eps[0].LibraryID) {
-		return store.Season{}, nil, ErrNotFound
+	// A Season carries no library_id of its own; its parent Show does. Checking the
+	// Show rather than the first Episode means a Season with no visible Episodes in
+	// an inaccessible Library is still a 404 and not a header leak. The Show is
+	// also rating-gated, so a direct hit on a hidden Show's Season 404s too (not
+	// just via the grid). No-op under an all-access scope.
+	if !scope.AllLibraries {
+		show, err := s.store.ShowByID(season.ShowID)
+		if errors.Is(err, store.ErrNotFound) {
+			return store.Season{}, nil, ErrNotFound
+		}
+		if err != nil {
+			return store.Season{}, nil, err
+		}
+		if !scope.AllowsLibrary(show.LibraryID) {
+			return store.Season{}, nil, ErrNotFound
+		}
 	}
 	if !s.showRatingAllowed(scope, season.ShowID) {
 		return store.Season{}, nil, ErrNotFound
@@ -1169,20 +1183,10 @@ func (s *Service) ListArtists(scope access.Scope, in ListInput) (ArtistsPage, er
 	if !exists {
 		return ArtistsPage{}, ErrNotFound
 	}
-	limit := in.Limit
-	if limit <= 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	var cursor *store.TitleCursor
-	if in.Cursor != "" {
-		c, err := decodeCursor(in.Cursor)
-		if err != nil {
-			return ArtistsPage{}, ErrBadCursor
-		}
-		cursor = &c
+	limit := clampLimit(in.Limit)
+	cursor, err := parseCursor(in.Cursor)
+	if err != nil {
+		return ArtistsPage{}, err
 	}
 	page, err := s.store.ListArtists(in.LibraryID, cursor, limit, in.Genre)
 	if err != nil {
@@ -1232,18 +1236,25 @@ func (s *Service) Tracks(scope access.Scope, albumID string) (store.Album, store
 	if err != nil {
 		return store.Album{}, store.Artist{}, nil, err
 	}
-	// An Album carries no library_id of its own; its Tracks (Titles) do and share
-	// one Library, so a single check on the first Track hides an Album in an
-	// inaccessible Library as 404. No-op under an all-access scope.
-	if len(tracks) > 0 && !scope.AllowsLibrary(tracks[0].LibraryID) {
-		return store.Album{}, store.Artist{}, nil, ErrNotFound
-	}
 	// The parent Artist supplies the album header's artist name/link. A missing
 	// Artist row (data integrity) degrades to an empty Artist rather than failing
 	// the whole listing.
 	artist, err := s.store.ArtistByID(album.ArtistID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.Album{}, store.Artist{}, nil, err
+	}
+	// An Album carries no library_id of its own; its Artist does (and its Tracks
+	// share it). Checking the Artist rather than the first Track means an Album
+	// with no Tracks in an inaccessible Library is still a 404, not a header leak.
+	// Without an Artist row the first Track is the fallback. No-op under an
+	// all-access scope.
+	switch {
+	case artist.ID != "":
+		if !scope.AllowsLibrary(artist.LibraryID) {
+			return store.Album{}, store.Artist{}, nil, ErrNotFound
+		}
+	case len(tracks) > 0 && !scope.AllowsLibrary(tracks[0].LibraryID):
+		return store.Album{}, store.Artist{}, nil, ErrNotFound
 	}
 	return album, artist, tracks, nil
 }
@@ -1401,12 +1412,7 @@ func (s *Service) TrackContext(titleID string) (store.TrackContext, error) {
 // per-group cap is clamped to the same sane range as a browse page. An empty
 // query returns empty results (the handler still answers 200 with empty groups).
 func (s *Service) Search(scope access.Scope, query string, limit int) (store.SearchResults, error) {
-	if limit <= 0 {
-		limit = defaultLimit
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
+	limit = clampLimit(limit)
 	// Search spans every Library, so the access filter is applied in SQL across
 	// each kind's query (filtered before rows leave the store). No-op under an
 	// all-access scope.

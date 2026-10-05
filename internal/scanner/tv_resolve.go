@@ -159,6 +159,19 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 		addUnmatched(u.Path, u.Reason)
 	}
 
+	// A Show folder with no parseable identity routes its episodes to Unmatched.
+	// Decided BEFORE assembling: probing files whose trees are then discarded
+	// would re-ffprobe them every scan (they never get a stored row, so they are
+	// never "unchanged") and mark them seen.
+	if !idOK {
+		for _, re := range arrangement.Episodes {
+			for _, rf := range re.Files {
+				addUnmatched(rf.Path, "no parseable Show identity from folder name")
+			}
+		}
+		return store.ShowTree{}, unmatched, false, nil
+	}
+
 	// Group resolved Episodes by season number. Seasons come from the numbers the
 	// resolved Episodes CLAIM, never from the folders on disk — which is what lets
 	// a Placement conjure a Season row with no folder behind it and leave a Season
@@ -217,20 +230,6 @@ func (s *Service) resolveShowFolder(ctx context.Context, sc *scanCtx, lib store.
 			EpisodeNumber: re.EpisodeNumber,
 			EpisodeLabel:  re.EpisodeLabel,
 		})
-	}
-
-	if !idOK {
-		// A Show folder with no parseable identity routes its episodes to Unmatched.
-		for _, eps := range seasonEpisodes {
-			for _, et := range eps {
-				for _, ed := range et.Editions {
-					for _, f := range ed.Files {
-						addUnmatched(f.Path, "no parseable Show identity from folder name")
-					}
-				}
-			}
-		}
-		return store.ShowTree{}, unmatched, false, nil
 	}
 
 	if len(seasonOrder) == 0 {
@@ -370,9 +369,4 @@ func episodeLabelFor(tok EpisodeToken) string {
 		return ""
 	}
 	return tok.Label
-}
-
-// unmatchedFile mirrors scanner.unmatched (the Movie helper) for TV call sites.
-func unmatchedFile(path, reason string) store.UnmatchedFile {
-	return store.UnmatchedFile{ID: uuid.NewString(), Path: path, Reason: reason}
 }

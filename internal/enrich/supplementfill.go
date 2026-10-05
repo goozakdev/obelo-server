@@ -1,5 +1,27 @@
 package enrich
 
+import (
+	"context"
+	"errors"
+	"log"
+)
+
+// lookupSupplement runs one Supplement for either chain (label is "music" or
+// "video"), returning its result and whether it should be merged. A no-match is
+// the normal "no data for this entity" outcome (ok=false, no log); a genuine
+// failure is non-fatal — it is logged and treated as no data so the lead's result
+// is preserved and the pass continues (ADR-0001).
+func lookupSupplement(ctx context.Context, src MetadataProvider, ref TitleRef, label string) (TitleMetadata, bool) {
+	meta, err := src.Lookup(ctx, ref)
+	if err != nil {
+		if !errors.Is(err, ErrNoMatch) {
+			log.Printf("obelo: enrich %s %s supplement (title %q): %v", ref.Kind, label, ref.Title, err)
+		}
+		return TitleMetadata{}, false
+	}
+	return meta, true
+}
+
 // fillFromSupplement is the ONE fill-only rule both chains compose a Supplement's
 // answer by (ADR-0002, ADR-0061). It returns meta with sup's fields taken only
 // where meta left them empty:

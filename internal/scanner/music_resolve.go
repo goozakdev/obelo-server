@@ -132,7 +132,7 @@ func (s *Service) scanMusicDirs(ctx context.Context, sc *scanCtx, lib store.Libr
 		if o, has := sc.overrides[filepath.Dir(path)]; has {
 			ov = &AlbumOverride{Album: o.Title, Year: o.Year, Key: o.IdentityKey}
 		}
-		id, ok := MusicIdentityFromTagsWithOverride(media.Tags, path, ov)
+		id, ok := MusicIdentityFromTagsWithOverride(media.Tags, libraryRelPath(lib, path), ov)
 		if !ok {
 			unmatched = append(unmatched, unmatchedFile(path, "no music identity from tags or path"))
 			continue
@@ -395,4 +395,18 @@ func musicArtworkRole(name string) string {
 		return "cover"
 	}
 	return ""
+}
+
+// libraryRelPath returns path relative to the Library root that holds it, so the
+// path fallback in parseMusicPath cannot take a folder above the root (a mount
+// point's "Media/Music") as an Artist or Album. A path under no root is returned
+// unchanged.
+func libraryRelPath(lib store.Library, path string) string {
+	for _, root := range lib.Roots {
+		rel, err := filepath.Rel(root.Path, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return rel
+		}
+	}
+	return path
 }
