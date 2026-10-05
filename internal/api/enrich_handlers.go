@@ -1162,7 +1162,7 @@ func handleLibraryExternalPreview(enrichSvc *enrich.Service, images *providerIma
 			return
 		}
 		ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-		c, err := enrichSvc.PreviewExternalForKind(r.Context(), kind, ref)
+		c, err := enrichSvc.PreviewExternalForKind(r.Context(), libraryID, kind, ref)
 		writeExternalPreview(w, images, c, err)
 	}
 }

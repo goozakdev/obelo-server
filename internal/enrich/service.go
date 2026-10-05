@@ -563,8 +563,14 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 // error) when enrichment is disabled for the kind, the id does not resolve, or the
 // provider has no title — the caller then falls back to whatever was supplied.
 // Unlike MatchTitle this reads only; it writes nothing and never touches a Title.
-func (s *Service) ResolveIdentity(ctx context.Context, ref TitleRef) (title string, year int, matched bool, err error) {
-	snap := s.snapshot()
+// The lookup goes through the given Library's snapshot, so a Library that repoints
+// its lead or switches enrichment off is asked what it would be asked everywhere
+// else.
+func (s *Service) ResolveIdentity(ctx context.Context, libraryID string, ref TitleRef) (title string, year int, matched bool, err error) {
+	snap, err := s.snapshotFor(ctx, libraryID)
+	if err != nil {
+		return "", 0, false, err
+	}
 	if !snap.enablement.enabledFor(ref.Kind) {
 		return "", 0, false, nil
 	}
@@ -1012,9 +1018,13 @@ func (s *Service) PreviewEntityExternal(ctx context.Context, entityType, entityI
 // entity KIND rather than an existing item — the Unmatched-file case, where no
 // Title exists yet to derive the kind from, so the caller (which knows the
 // Library's media kind) supplies it. Same parse/lookup/error contract as
-// PreviewTitleExternal; reads only.
-func (s *Service) PreviewExternalForKind(ctx context.Context, kind, pastedRef string) (Candidate, error) {
-	return s.previewExternal(ctx, s.snapshot(), kind, pastedRef)
+// PreviewTitleExternal; reads only. The paste is read by the given Library's lead.
+func (s *Service) PreviewExternalForKind(ctx context.Context, libraryID, kind, pastedRef string) (Candidate, error) {
+	snap, err := s.snapshotFor(ctx, libraryID)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return s.previewExternal(ctx, snap, kind, pastedRef)
 }
 
 // previewExternal is the shared core of the paste-an-id escape hatch: parse + kind-
