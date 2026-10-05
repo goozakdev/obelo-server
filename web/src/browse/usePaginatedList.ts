@@ -96,9 +96,12 @@ export function usePaginatedList<T>(
   // The accumulated items, mirrored to a ref so refresh() can read how far the
   // user has loaded (the window to re-fetch) without being a callback dependency.
   const itemsRef = useRef<T[]>(items);
-  useEffect(() => {
-    itemsRef.current = items;
-  }, [items]);
+  // Written together with the state by commitItems (never from an effect), so a
+  // refresh replayed from load's finally already sees the page just appended.
+  const commitItems = useCallback((next: T[]) => {
+    itemsRef.current = next;
+    setItems(next);
+  }, []);
 
   // getId is read through a ref so it isn't a dependency of the load callback
   // (callers usually pass an inline accessor; a changing identity must not reset
@@ -122,28 +125,21 @@ export function usePaginatedList<T>(
       try {
         const page = await fetchPage(useCursor, ctrl.signal);
         if (ctrl.signal.aborted) return;
-        // PURE UPDATER. The de-dup set is derived from `prev` on every call
-        // rather than carried in a ref, because React may invoke an updater more
-        // than once for a single update — StrictMode does it deliberately, in
-        // development only. A ref-based set made this updater order-dependent:
-        // the first invocation added the page's ids to the ref and returned the
-        // grown list, then the second invocation saw every id already "seen",
-        // appended nothing, and React kept THAT result. Every page after the
-        // first was fetched and silently dropped, so an infinite scroll walked
-        // the whole library and displayed only page one. Page one survived only
-        // because it cleared the set at the top of each invocation.
-        setItems((prev) => {
-          const base = isFirst ? [] : prev;
-          const seen = new Set(base.map((item) => getIdRef.current(item)));
-          const next = base.slice();
-          for (const item of page.items) {
-            const id = getIdRef.current(item);
-            if (seen.has(id)) continue; // no duplicates across pages
-            seen.add(id);
-            next.push(item);
-          }
-          return next;
-        });
+        // The new list is computed here from itemsRef (always the latest
+        // committed list) rather than inside a setItems updater: an updater must
+        // stay pure (StrictMode invokes it twice, and a ref-based de-dup set made
+        // every page after the first vanish), and a refresh replayed from the
+        // finally below must see this page, which a post-render effect would not.
+        const base = isFirst ? [] : itemsRef.current;
+        const seen = new Set(base.map((item) => getIdRef.current(item)));
+        const next = base.slice();
+        for (const item of page.items) {
+          const id = getIdRef.current(item);
+          if (seen.has(id)) continue; // no duplicates across pages
+          seen.add(id);
+          next.push(item);
+        }
+        commitItems(next);
         cursorRef.current = page.nextCursor;
         setCursor(page.nextCursor);
         hasMoreRef.current = page.nextCursor !== null;
@@ -165,7 +161,7 @@ export function usePaginatedList<T>(
         }
       }
     },
-    [fetchPage],
+    [fetchPage, commitItems],
   );
 
   // (Re)load page one whenever the fetcher changes. Resetting the accumulated
@@ -181,7 +177,7 @@ export function usePaginatedList<T>(
     pendingRefresh.current = false;
     lastRefreshEnd.current = 0;
     cooldownMs.current = 0;
-    setItems([]);
+    commitItems([]);
     setCursor(null);
     setHasMore(true);
     setError(null);
@@ -191,7 +187,7 @@ export function usePaginatedList<T>(
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
     };
-  }, [load]);
+  }, [load, commitItems]);
 
   const loadMore = useCallback(() => {
     if (inFlight.current || !hasMoreRef.current) return;
@@ -252,14 +248,19 @@ export function usePaginatedList<T>(
         cursor = page.nextCursor;
       } while (cursor && fresh.length < want);
       // When the walk stopped early (cursor !== null), keep the previously-loaded
-      // items PAST the refreshed window (e.g. pushed there by a new insertion), in
-      // their existing order, so nothing the user had scrolled to vanishes. When it
-      // reached the end, fresh is the whole list: anything it lacks was removed.
-      const tail =
-        cursor === null
-          ? []
-          : prev.slice(fresh.length).filter((item) => !ids.has(getIdRef.current(item)));
-      setItems(fresh.concat(tail));
+      // items that sit AFTER the last one the walk re-saw (pushed past the window
+      // by an insertion), in their existing order. Anything the walk lacks BEFORE
+      // that point was removed inside the window and drops. When it reached the
+      // end, fresh is the whole list: anything it lacks was removed.
+      let tail: T[] = [];
+      if (cursor !== null) {
+        let anchor = -1;
+        prev.forEach((item, i) => {
+          if (ids.has(getIdRef.current(item))) anchor = i;
+        });
+        tail = prev.slice(anchor + 1).filter((item) => !ids.has(getIdRef.current(item)));
+      }
+      commitItems(fresh.concat(tail));
       cooldownMs.current = (pages - 1) * REFRESH_COST_MS;
       cursorRef.current = cursor;
       setCursor(cursor);
@@ -275,7 +276,7 @@ export function usePaginatedList<T>(
         if (!ctrl.signal.aborted && pendingRefresh.current) requestRefreshRef.current();
       }
     }
-  }, [fetchPage]);
+  }, [fetchPage, commitItems]);
 
   const requestRefresh = useCallback(() => void refresh(), [refresh]);
   requestRefreshRef.current = requestRefresh;
