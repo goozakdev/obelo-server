@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -253,7 +254,9 @@ func redactStreamTokenRequest(r *http.Request) *http.Request {
 	// RawPath holds the pre-decoding form and would still carry the token; the
 	// redacted path needs no escaping, so dropping it is both correct and safe.
 	r2.URL.RawPath = ""
-	r2.RequestURI = RedactPath(r.RequestURI)
+	// Rebuilt from the redacted path rather than RedactPath(r.RequestURI): the raw
+	// target may be absolute-form or percent-encoded, which the prefix match misses.
+	r2.RequestURI = (&url.URL{Path: r2.URL.Path, RawQuery: r.URL.RawQuery}).RequestURI()
 	return r2
 }
 
