@@ -35,12 +35,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
 
@@ -178,36 +178,13 @@ func build() {
 		buildErr = err
 		return
 	}
-	out, err := os.CreateTemp("", "obelo-plugin-discord-*.wasm")
-	if err != nil {
-		buildErr = err
-		return
-	}
-	path := out.Name()
-	_ = out.Close()
-	defer os.Remove(path)
-
-	cmd := exec.Command("go", "build", "-buildmode=c-shared", "-o", path, ".")
-	cmd.Dir = dir
-	// GOFLAGS is cleared for the reason plugintest clears it: the root module's
-	// flags have nothing to do with a separate module that imports only the
-	// standard library, and inheriting them is how this build breaks on somebody
-	// else's machine.
-	//
 	// GOWORK IS OFF for plugintest's reason, restated because this one is the
 	// point: the reference plugin's home is a SIBLING REPOSITORY with no workspace
 	// around it, so anything the repository's own go.work would contribute here is
 	// a difference between this build and the author's. It is also load-bearing —
 	// without it a build of the VENDORED copy is inside the workspace, which does
 	// not `use` it, and fails outright.
-	cmd.Env = append(os.Environ(),
-		"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS=", "GOWORK=off",
-	)
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		buildErr = fmt.Errorf("go build in %s: %w\n%s", dir, err, combined)
-		return
-	}
-	pluginWasm, buildErr = os.ReadFile(path)
+	pluginWasm, buildErr = plugintest.BuildGuest(dir, true)
 }
 
 // packageDir is this package's own directory, so a test can find testdata from

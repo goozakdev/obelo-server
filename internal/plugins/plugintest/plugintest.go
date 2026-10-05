@@ -62,10 +62,21 @@ func build() {
 		buildErr = err
 		return
 	}
+	guestWasm, buildErr = BuildGuest(dir, true)
+}
+
+// BuildGuest compiles the Go module in dir to a wasip1 c-shared module and returns
+// its bytes. It is the one place a test guest is built, so the sandbox-facing build
+// flags cannot drift between the guests.
+//
+// goworkOff says whether GOWORK is turned off. It is for a guest that stands in
+// for a plugin author's project, which is not inside this repository and has no
+// workspace around it; the SDK guest lives inside the pluginsdk module and
+// resolves with or without the workspace, so it leaves GOWORK alone.
+func BuildGuest(dir string, goworkOff bool) ([]byte, error) {
 	out, err := os.CreateTemp("", "obelo-test-guest-*.wasm")
 	if err != nil {
-		buildErr = err
-		return
+		return nil, err
 	}
 	path := out.Name()
 	_ = out.Close()
@@ -86,14 +97,15 @@ func build() {
 	// test here at once. Off is also the truthful setting: this guest stands in
 	// for a plugin author's project, which is not inside this repository and has
 	// no workspace around it.
-	cmd.Env = append(os.Environ(),
-		"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS=", "GOWORK=off",
-	)
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		buildErr = fmt.Errorf("go build in %s: %w\n%s", dir, err, combined)
-		return
+	env := []string{"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS="}
+	if goworkOff {
+		env = append(env, "GOWORK=off")
 	}
-	guestWasm, buildErr = os.ReadFile(path)
+	cmd.Env = append(os.Environ(), env...)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build in %s: %w\n%s", dir, err, combined)
+	}
+	return os.ReadFile(path)
 }
 
 // guestDir finds testdata/guest beside this file, so a test can ask for the guest

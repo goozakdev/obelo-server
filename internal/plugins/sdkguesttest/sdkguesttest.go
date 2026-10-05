@@ -31,7 +31,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -64,31 +63,10 @@ func build() {
 		buildErr = err
 		return
 	}
-	out, err := os.CreateTemp("", "obelo-sdk-guest-*.wasm")
-	if err != nil {
-		buildErr = err
-		return
-	}
-	path := out.Name()
-	_ = out.Close()
-	defer os.Remove(path)
-
-	cmd := exec.Command("go", "build", "-buildmode=c-shared", "-o", path, ".")
-	cmd.Dir = dir
-	// GOFLAGS is cleared for plugintest's reason: the server module's flags have
-	// nothing to do with a module that imports only the contract and the standard
-	// library, and inheriting them is how this build breaks on somebody else's
-	// machine. GOWORK is left alone on purpose — the guest lives INSIDE the
-	// pluginsdk module, whose go.mod carries a `replace` for pluginapi, so it
-	// resolves with or without the workspace.
-	cmd.Env = append(os.Environ(),
-		"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS=",
-	)
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		buildErr = fmt.Errorf("go build in %s: %w\n%s", dir, err, combined)
-		return
-	}
-	guestWasm, buildErr = os.ReadFile(path)
+	// GOWORK is left alone on purpose — the guest lives INSIDE the pluginsdk
+	// module, whose go.mod carries a `replace` for pluginapi, so it resolves with
+	// or without the workspace.
+	guestWasm, buildErr = plugintest.BuildGuest(dir, false)
 }
 
 // GuestDir is pluginsdk/testdata/guest, found from this file rather than from the
