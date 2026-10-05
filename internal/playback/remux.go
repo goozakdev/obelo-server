@@ -417,17 +417,23 @@ func (rt *hlsRuntime) argsFor(seek transcode.SeekOffset) []string {
 // backward seek to within the current run needs no restart — the earlier segments
 // already exist); callers only realign when a wanted segment is genuinely ahead.
 func (rt *hlsRuntime) realign(target int) error {
+	return rt.realignIf(target, func(start int) bool {
+		return target < start || target-start > realignLookahead
+	})
+}
+
+// realignIf is realign with the caller's own jump rule. Callers decide to realign
+// from a snapshot taken outside rt.mu, so parallel requests (Safari's burst, a
+// retry) can all arrive wanting the same restart; needed is therefore re-evaluated
+// HERE, under the lock, against the fresh start number, and a running job it says
+// will produce the target soon is left alone — restarting it would only thrash.
+func (rt *hlsRuntime) realignIf(target int, needed func(start int) bool) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.torndown {
 		return os.ErrClosed
 	}
-	// Callers decide to realign from a snapshot taken outside rt.mu, so parallel
-	// requests (Safari's burst, a retry) can all arrive here wanting the same
-	// restart. Re-check under the lock: a job already running at the target, or
-	// within the lookahead before it, will produce the segment — restarting it
-	// would only thrash.
-	if rt.job != nil && target >= rt.startNumber && target-rt.startNumber <= realignLookahead {
+	if rt.job != nil && !needed(rt.startNumber) {
 		return nil
 	}
 	// The input-seek time for the target segment: its exact keyframe boundary for a
@@ -692,9 +698,6 @@ func (rt *hlsRuntime) gatedSegment(name, path string) ([]byte, error) {
 	// request BEFORE the current run's start is always a jump (those names were
 	// skipped by the last realign).
 	if rt.realignable {
-		rt.mu.Lock()
-		start := rt.startNumber
-		rt.mu.Unlock()
 		// A request BEFORE the current run's start is always a jump (those names were
 		// skipped by the last realign). A request AHEAD is a jump only when it is
 		// (a) beyond the near-start grace window — Safari's native player fetches a
@@ -705,12 +708,13 @@ func (rt *hlsRuntime) gatedSegment(name, path string) ([]byte, error) {
 		// its final name (the segment muxer writes in place) or as the hls muxer's
 		// in-flight .tmp means production is approaching this segment — wait, don't
 		// restart. Only a request across genuinely unproduced ground realigns.
-		jumpBack := idx < start
-		jumpAhead := idx > start && !rt.nearFrontier(start, idx, nameFmt)
-		if jumpBack || jumpAhead {
-			if err := rt.realign(idx); err != nil {
-				return nil, err
-			}
+		//
+		// The decision is made under rt.mu against the CURRENT start (realignIf):
+		// parallel requests that all read the old start must not each restart the job.
+		if err := rt.realignIf(idx, func(start int) bool {
+			return idx < start || (idx > start && !rt.nearFrontier(start, idx, nameFmt))
+		}); err != nil {
+			return nil, err
 		}
 	}
 	if !rt.gateSequential {
