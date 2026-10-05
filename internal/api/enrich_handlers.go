@@ -221,12 +221,12 @@ func handleEnrich(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, codeBadRequest, enrichModeMessage(r.URL.Query().Get("mode")), nil)
 			return
 		}
-		if mode == enrich.ModeNew && r.ContentLength > 0 {
+		if mode == enrich.ModeNew && r.ContentLength != 0 && r.Body != nil && r.Body != http.NoBody {
 			var req enrichRequest
 			// Best-effort about a malformed BODY: a body that fails to decode just
 			// leaves the default mode, exactly as an absent body does. A body that
 			// decodes fine but names a mode this build does not have is a 400.
-			if json.NewDecoder(r.Body).Decode(&req) == nil {
+			if json.NewDecoder(http.MaxBytesReader(w, r.Body, scanBodyLimit)).Decode(&req) == nil {
 				mode, ok = enrichMode(req.Mode)
 				if !ok {
 					writeError(w, http.StatusBadRequest, codeBadRequest, enrichModeMessage(req.Mode), nil)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/goozakdev/obelo-server/internal/events"
 	"github.com/goozakdev/obelo-server/internal/scanner"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -90,21 +89,7 @@ func handleTargetedScan(deps Deps, entityKind, id string) http.HandlerFunc {
 		// clears (ADR-0006 keeps this off the scanner's events-free core).
 		libID := lib.ID
 		label := sc.Label
-		done := func(scanErr error) {
-			if scanErr != nil {
-				if deps.Events != nil {
-					deps.Events.PublishScanProgress(events.ScanProgress{LibraryID: libID, Scope: label, Complete: true})
-				}
-				return
-			}
-			if deps.EnrichTrigger != nil {
-				deps.EnrichTrigger(libID)
-			}
-			markersAfterScan(deps)(libID)
-			if deps.Events != nil {
-				deps.Events.PublishLibraryUpdated(libID)
-			}
-		}
+		done := postScanDone(deps.Events, deps.EnrichTrigger, markersAfterScan(deps), libID, label)
 
 		err = deps.Scanner.StartTargetedScan(context.Background(), libID, scope, onProgress, done)
 		switch {

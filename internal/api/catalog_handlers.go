@@ -634,6 +634,55 @@ type scanRequest struct {
 	Mode string `json:"mode"`
 }
 
+// scanBodyLimit caps the optional {"mode"} body of a scan or enrich request.
+const scanBodyLimit = 4 << 10
+
+// scanModeFromRequest reads the scan mode from ?mode=full or a JSON body
+// {"mode":"full"} (either is fine); anything else is an incremental scan. The body
+// is read whenever there is one - including a chunked body, whose ContentLength is
+// -1 - and is size-capped.
+func scanModeFromRequest(w http.ResponseWriter, r *http.Request) scanner.Mode {
+	if strings.EqualFold(r.URL.Query().Get("mode"), "full") {
+		return scanner.ModeFull
+	}
+	if r.ContentLength != 0 && r.Body != nil && r.Body != http.NoBody {
+		var req scanRequest
+		// Best-effort: a malformed body just leaves the default mode.
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, scanBodyLimit)).Decode(&req) == nil && strings.EqualFold(req.Mode, "full") {
+			return scanner.ModeFull
+		}
+	}
+	return scanner.ModeIncremental
+}
+
+// postScanDone builds the done callback a scan (full or targeted) runs once it
+// settles, so the two handlers cannot drift. scopeLabel is the Targeted scan's
+// label ("" for a full scan) and rides on the terminal event. On error: a
+// terminal scanProgress so the client's "scanning..." indicator clears. On
+// success, in order: the auto-after-scan Enrichment pass, marker detection
+// (ADR-0065 section 4: after a scan completes and on no other schedule; queued
+// behind any Transcode), then a library-scoped libraryUpdated nudge so connected
+// clients refetch. broker, enrichTrigger and detectMarkers may each be nil.
+func postScanDone(broker *events.Broker, enrichTrigger, detectMarkers func(string), libID, scopeLabel string) func(error) {
+	return func(scanErr error) {
+		if scanErr != nil {
+			if broker != nil {
+				broker.PublishScanProgress(events.ScanProgress{LibraryID: libID, Scope: scopeLabel, Complete: true})
+			}
+			return
+		}
+		if enrichTrigger != nil {
+			enrichTrigger(libID)
+		}
+		if detectMarkers != nil {
+			detectMarkers(libID)
+		}
+		if broker != nil {
+			broker.PublishLibraryUpdated(libID)
+		}
+	}
+}
+
 // handleScan triggers a scan of the Library's roots (Admin) and returns 202
 // Accepted immediately — the scan runs in the BACKGROUND, not for the lifetime
 // of this request. By default it is incremental (only new/changed/absent files,
@@ -664,17 +713,7 @@ func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger fu
 			return
 		}
 
-		// Mode from ?mode=full or a JSON body {"mode":"full"} (either is fine).
-		mode := scanner.ModeIncremental
-		if strings.EqualFold(r.URL.Query().Get("mode"), "full") {
-			mode = scanner.ModeFull
-		} else if r.ContentLength > 0 {
-			var req scanRequest
-			// Best-effort: a malformed body just leaves the default mode.
-			if json.NewDecoder(r.Body).Decode(&req) == nil && strings.EqualFold(req.Mode, "full") {
-				mode = scanner.ModeFull
-			}
-		}
+		mode := scanModeFromRequest(w, r)
 
 		// While the scan walks the Library it publishes scanProgress events over the
 		// SSE Broker (ADR-0016) so a connected client shows an advancing "scanning…"
@@ -687,32 +726,7 @@ func handleScan(scan *scanner.Service, status ScanStatusReader, enrichTrigger fu
 		// Post-scan side-effects, run on the background goroutine once the scan
 		// settles (see StartScan). Kept here, not in the scanner, so the scanner
 		// stays free of any events/enrich import (ADR-0006).
-		done := func(scanErr error) {
-			if scanErr != nil {
-				// Terminal-on-error: a failed scan never reaches the Scanner's own
-				// terminal event, so emit one here so the client's "scanning…"
-				// indicator clears instead of hanging.
-				if broker != nil {
-					broker.PublishScanProgress(events.ScanProgress{LibraryID: id, Complete: true})
-				}
-				return
-			}
-			// Auto-after-scan: enqueue a background Enrichment pass (non-blocking).
-			if enrichTrigger != nil {
-				enrichTrigger(id)
-			}
-			// Marker detection (ADR-0065 §4) runs after a scan completes and on no
-			// other schedule; it is queued, and waits its turn behind any Transcode.
-			if detectMarkers != nil {
-				detectMarkers(id)
-			}
-			// The Library's contents may have changed: nudge connected clients to
-			// refetch (library-scoped, so only subscribers who can see it — and any
-			// Admin — receive it).
-			if broker != nil {
-				broker.PublishLibraryUpdated(id)
-			}
-		}
+		done := postScanDone(broker, enrichTrigger, detectMarkers, id, "")
 
 		// Dispatch the scan on a request-independent context (context.Background):
 		// the request returns 202 immediately, so the scan must outlive it. The
@@ -765,11 +779,23 @@ func toScanEvent(p scanner.Progress) events.ScanProgress {
 // It decorates the status with the Library's top-level title count (Movies / Shows
 // / Albums by kind) so the admin surface reports "N titles" in the User's sense
 // rather than the scanner's leaf Episode/Track count.
+//
+// The caller must hold the Library in their access Scope (an ungranted Library is
+// 404, the same as an unknown one), exactly as the SSE scanProgress feed is
+// library-scoped; the route wraps this in requireScope.
 func handleScanStatus(status ScanStatusReader, exists LibraryExister, counts LibraryTitleCounter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := pathParam(r.URL.Path, "/libraries/", "/scan")
 		if id == "" {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		scope, ok := mustScope(w, r)
+		if !ok {
+			return
+		}
+		if !scope.AllowsLibrary(id) {
+			writeError(w, http.StatusNotFound, codeNotFound, "library not found", nil)
 			return
 		}
 		ok, err := exists.LibraryExists(id)
@@ -1562,7 +1588,7 @@ func handleLibrarySubtree(deps Deps) http.HandlerFunc {
 				requireAdmin(requireLocalLibrary(deps, libraryIDOf(rest),
 					handleScan(deps.Scanner, deps.ScanStatus, deps.EnrichTrigger, deps.Events, markersAfterScan(deps))))(w, r)
 			case http.MethodGet:
-				handleScanStatus(deps.ScanStatus, deps.Libraries, deps.TitleCounts)(w, r)
+				requireScope(deps.Access, handleScanStatus(deps.ScanStatus, deps.Libraries, deps.TitleCounts))(w, r)
 			default:
 				w.Header().Set("Allow", "GET, POST")
 				writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
