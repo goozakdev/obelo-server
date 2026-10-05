@@ -311,8 +311,17 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Vite writes every content-hashed file under assets/. A miss there is a stale
+	// reference, never a client route: answering it with the SPA shell and a 200
+	// would hand the browser HTML for a script and cache the mistake.
+	hashed := strings.HasPrefix(name, "assets/")
+
 	f, err := h.root.Open(name)
 	if err != nil {
+		if hashed {
+			http.NotFound(w, r)
+			return
+		}
 		// No such asset → this is a client-side route; serve the SPA shell so
 		// deep links and refreshes load the app (PRD user story 37).
 		h.serveIndex(w, r)
@@ -322,6 +331,10 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
+		if hashed {
+			http.NotFound(w, r)
+			return
+		}
 		// A directory path (e.g. "/assets") is not a servable asset; fall back.
 		h.serveIndex(w, r)
 		return
@@ -335,6 +348,12 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// embed.FS files implement io.ReadSeeker; this is defensive.
 		h.serveIndex(w, r)
 		return
+	}
+	if hashed {
+		// The name carries the content hash, so the bytes behind it never change.
+		// Embedded files have no ModTime, so without this a browser would refetch
+		// the whole bundle on every page load (no Last-Modified, no ETag, no 304).
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), rs)
 }
