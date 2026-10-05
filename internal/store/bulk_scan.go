@@ -294,3 +294,51 @@ func (db *DB) TrackContextsForTitles(titleIDs []string) (map[string]TrackContext
 	}
 	return out, rows.Err()
 }
+
+// EnrichmentPending reports whether anything in the Library's tree could be due
+// for a ModeNew enrichment pass: a Title or a browse parent (Show, Season, Artist,
+// Album) that is 'pending' — a parent with no enrichment row has never been
+// enriched, which reads as pending — plus the retry_at of every 'failed' one with a
+// retry scheduled, left for the caller to judge against its clock (retryDue). It is
+// a superset of what a pass acts on, never a subset: a false "nothing pending"
+// would strand work, a true "something might be" only costs the walk it gates.
+func (db *DB) EnrichmentPending(libraryID string) (pending bool, retryAts []string, err error) {
+	const parent = `
+		SELECT CASE WHEN ee.entity_id IS NULL OR ee.enrichment_status = 'pending' THEN 1 ELSE 0 END,
+		       CASE WHEN ee.enrichment_status = 'failed' THEN ee.enrichment_retry_at ELSE '' END
+		  FROM %s x
+		  %s
+		  LEFT JOIN entity_enrichment ee ON ee.entity_type = '%s' AND ee.entity_id = x.id
+		 WHERE %s = ?
+		   AND (ee.entity_id IS NULL OR ee.enrichment_status = 'pending'
+		        OR (ee.enrichment_status = 'failed' AND ee.enrichment_retry_at <> ''))`
+	q := `
+		SELECT CASE WHEN enrichment_status = 'pending' THEN 1 ELSE 0 END,
+		       CASE WHEN enrichment_status = 'failed' THEN enrichment_retry_at ELSE '' END
+		  FROM titles WHERE library_id = ?
+		   AND (enrichment_status = 'pending'
+		        OR (enrichment_status = 'failed' AND enrichment_retry_at <> ''))
+		UNION ALL ` + fmt.Sprintf(parent, "shows", "", "show", "x.library_id") + `
+		UNION ALL ` + fmt.Sprintf(parent, "seasons", "JOIN shows p ON p.id = x.show_id", "season", "p.library_id") + `
+		UNION ALL ` + fmt.Sprintf(parent, "artists", "", "artist", "x.library_id") + `
+		UNION ALL ` + fmt.Sprintf(parent, "albums", "JOIN artists p ON p.id = x.artist_id", "album", "p.library_id")
+	rows, err := db.Query(q, libraryID, libraryID, libraryID, libraryID, libraryID)
+	if err != nil {
+		return false, nil, fmt.Errorf("store: checking pending enrichment: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var isPending int
+		var retryAt string
+		if err := rows.Scan(&isPending, &retryAt); err != nil {
+			return false, nil, fmt.Errorf("store: scanning pending enrichment: %w", err)
+		}
+		if isPending != 0 {
+			pending = true
+		}
+		if retryAt != "" {
+			retryAts = append(retryAts, retryAt)
+		}
+	}
+	return pending, retryAts, rows.Err()
+}

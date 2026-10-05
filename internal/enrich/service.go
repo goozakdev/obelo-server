@@ -508,11 +508,16 @@ func (s *Service) EnrichLibraryProgress(ctx context.Context, libraryID string, m
 	var (
 		leaves []leafWork
 	)
-	switch lib.Kind {
-	case "tv":
-		leaves, err = s.collectTVLeaves(ctx, snap, libraryID, mode)
-	case "music":
-		leaves, err = s.collectMusicLeaves(ctx, snap, libraryID, mode)
+	switch {
+	case lib.Kind == "tv" || lib.Kind == "music":
+		if s.nothingPending(snap, lib.Kind, libraryID, mode) {
+			break // the walk would touch no row; skip its query per parent
+		}
+		if lib.Kind == "tv" {
+			leaves, err = s.collectTVLeaves(ctx, snap, libraryID, mode)
+		} else {
+			leaves, err = s.collectMusicLeaves(ctx, snap, libraryID, mode)
+		}
 	default:
 		sel := store.EnrichPending
 		switch mode {
@@ -1284,7 +1289,7 @@ func (s *Service) applyEntityOverride(ctx context.Context, entityType, entityID 
 	}
 	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, ns, pin.ExternalID)
 	_, err = s.enrichParent(ctx, snap, ModeFull, entityType, entityID, ref,
-		s.assertedParentRecord(entityType, entityID), parentTrusted)
+		s.assertedParentRecord(entityType, entityID), parentTrusted, nil)
 	return err
 }
 
@@ -1783,6 +1788,41 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 	return nil
 }
 
+// pendingReader is the optional "is anything due" read behind nothingPending.
+// *store.DB satisfies it; a Store that does not is simply always walked.
+type pendingReader interface {
+	EnrichmentPending(libraryID string) (pending bool, retryAts []string, err error)
+}
+
+// nothingPending reports whether a ModeNew pass over a TV or Music Library has
+// nothing to do, so its walk (a read per Show, Season, Artist and Album) can be
+// skipped: no Title or parent is pending, and no scheduled retry has arrived. It
+// answers false (walk) whenever it cannot be sure: any other mode, a Store that
+// cannot say, a failed read, or a kind the snapshot has switched off (the walk is
+// what records those rows 'disabled').
+func (s *Service) nothingPending(snap providerSnapshot, libKind, libraryID string, mode Mode) bool {
+	if mode != ModeNew {
+		return false
+	}
+	pr, ok := s.store.(pendingReader)
+	if !ok {
+		return false
+	}
+	if (libKind == "tv" && !snap.enablement.Video) || (libKind == "music" && !snap.enablement.Music) {
+		return false
+	}
+	pending, retryAts, err := pr.EnrichmentPending(libraryID)
+	if err != nil || pending {
+		return false
+	}
+	for _, at := range retryAts {
+		if s.retryDue("failed", at) {
+			return false
+		}
+	}
+	return true
+}
+
 // collectTVLeaves walks a TV Library's Shows → Seasons → Episodes: it enriches
 // the Show and Season parents (the generic entity tables) and returns the Episode
 // leaves to enrich in phase B. The resolved Show external id is threaded down to
@@ -1803,9 +1843,10 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 		if id := strings.TrimSpace(sh.TMDBID); id != "" {
 			showRec = parentRecord{ID: id, Namespace: pluginapi.NamespaceTMDB}
 		}
+		var showRow store.EntityEnrichment
 		rec, err := s.enrichParent(ctx, snap, mode, store.EntityShow, sh.ID,
 			withExternalIDs(TitleRef{Kind: "show", Title: sh.Title, Year: sh.Year},
-				idsIn(pluginapi.NamespaceTMDB, sh.TMDBID)), showAssertedRecord(sh), parentTrusted)
+				idsIn(pluginapi.NamespaceTMDB, sh.TMDBID)), showAssertedRecord(sh), parentTrusted, &showRow)
 		if err != nil {
 			return nil, err
 		}
@@ -1813,7 +1854,14 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 			showRec = rec
 		}
 		// A pinned Show's Seasons and Episodes follow it to its provider (showPin).
-		pin := s.showPin(sh)
+		// enrichParent read the Show's row unless it returned before reading one (a
+		// disabled kind); every row read carries a Status, so an empty one is "not read".
+		var pin parentRecord
+		if showRow.Status != "" {
+			pin = showPinFrom(sh, showRow)
+		} else {
+			pin = s.showPin(sh)
+		}
 
 		seasons, err := s.store.SeasonsForShow(sh.ID)
 		if err != nil {
@@ -1823,7 +1871,7 @@ func (s *Service) collectTVLeaves(ctx context.Context, snap providerSnapshot, li
 			if _, err := s.enrichParent(ctx, snap, mode, store.EntitySeason, se.ID,
 				withExternalIDs(TitleRef{Kind: "season", SeasonNumber: se.SeasonNumber},
 					idsIn(showRec.Namespace, showRec.ID)),
-				pin, parentTrusted); err != nil {
+				pin, parentTrusted, nil); err != nil {
 				return nil, err
 			}
 			eps, err := s.store.EpisodesForSeason(se.ID)
@@ -1902,13 +1950,13 @@ func (s *Service) collectMusicLeaves(ctx context.Context, snap providerSnapshot,
 		if _, err := s.enrichParent(ctx, snap, mode, store.EntityArtist, ar.ID,
 			withExternalIDs(TitleRef{Kind: "artist", Title: ar.Name, Artist: ar.Name,
 				AlbumHints: musicAlbumHints(albums)},
-				idsIn(pluginapi.NamespaceMusicBrainz, ar.MusicbrainzID)), parentRecord{}, doubted); err != nil {
+				idsIn(pluginapi.NamespaceMusicBrainz, ar.MusicbrainzID)), parentRecord{}, doubted, nil); err != nil {
 			return nil, err
 		}
 		for _, al := range albums {
 			albumRec, err := s.enrichParent(ctx, snap, mode, store.EntityAlbum, al.ID,
 				withExternalIDs(TitleRef{Kind: "album", Title: al.Title, Album: al.Title, Year: al.Year, Artist: ar.Name},
-					idsIn(pluginapi.NamespaceMusicBrainz, al.MusicbrainzID)), parentRecord{}, parentTrusted)
+					idsIn(pluginapi.NamespaceMusicBrainz, al.MusicbrainzID)), parentRecord{}, parentTrusted, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -2503,6 +2551,10 @@ func (s *Service) recordParentFailure(entityType, entityID string, cur store.Ent
 // The record it returns carries its NAMESPACE (ADR-0060 decision 3), so a child
 // resolves under its parent's id in the parent's namespace.
 //
+// read, when non-nil, receives the parent's enrichment row as this call read it
+// (left untouched when it returned before reading one), so a caller that needs the
+// row too does not read it again.
+//
 // A parent gets the leaf's pin rule (decision 6), with ADR-0045's precedence: a
 // pinned external_id — chosen or cascaded — first, then the id its FOLDER asserts
 // (asserted: a Show's `{tmdb-…}` token; empty for every other parent). Either one
@@ -2513,13 +2565,16 @@ func (s *Service) recordParentFailure(entityType, entityID string, cur store.Ent
 // and namespace, as a parent's write always has. Only a chosen or cascaded record
 // is written back verbatim; a folder-pinned parent stores what its provider
 // answered, stamped in that provider's namespace — the folder already holds the id.
-func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, asserted parentRecord, doubted bool) (parentRecord, error) {
+func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode Mode, entityType, entityID string, ref TitleRef, asserted parentRecord, doubted bool, read *store.EntityEnrichment) (parentRecord, error) {
 	if !snap.enablement.enabledFor(ref.Kind) {
 		return parentRecord{}, s.store.SetEntityEnrichmentStatus(entityType, entityID, "disabled")
 	}
 	cur, err := s.store.EntityEnrichmentByID(entityType, entityID)
 	if err != nil {
 		return parentRecord{}, err
+	}
+	if read != nil {
+		*read = cur
 	}
 	// ModeRecheck re-asks PARENTS as well as leaves (ADR-0051). It has to: on the
 	// motivating library 365 of 730 flagged Tracks hang under an Album that is
