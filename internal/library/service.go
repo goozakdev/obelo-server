@@ -152,6 +152,11 @@ func (s *Service) prepareRoots(rawFolders []string) ([]store.LibraryRootInput, e
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
+		// The same folder listed twice is one folder; fold it before the overlap
+		// check, which would otherwise call it an overlap with itself.
+		if seen[p] {
+			continue
+		}
 		// A root that overlaps another root in the SAME request is also
 		// ambiguous (e.g. /movies and /movies/4k), so check intra-request too.
 		for _, other := range normalized {
@@ -160,10 +165,8 @@ func (s *Service) prepareRoots(rawFolders []string) ([]store.LibraryRootInput, e
 					ErrFolderOverlap, p, other)
 			}
 		}
-		if !seen[p] {
-			seen[p] = true
-			normalized = append(normalized, p)
-		}
+		seen[p] = true
+		normalized = append(normalized, p)
 	}
 	if len(normalized) == 0 {
 		return nil, nil
