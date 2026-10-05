@@ -939,20 +939,10 @@ func indexAfterNul(k string) int {
 	return 0
 }
 
-// inPlaceholders builds "?, ?, …" and the matching arg slice for an IN clause.
-// (store/access.go's placeholders takes a count; this one also carries the args.)
+// inPlaceholders is placeholders plus the matching arg slice for an IN clause.
 func inPlaceholders(ids []string) (string, []any) {
 	if len(ids) == 0 {
 		return "''", nil
 	}
-	b := make([]byte, 0, len(ids)*3)
-	args := make([]any, 0, len(ids))
-	for i, id := range ids {
-		if i > 0 {
-			b = append(b, ',', ' ')
-		}
-		b = append(b, '?')
-		args = append(args, id)
-	}
-	return string(b), args
+	return placeholders(len(ids)), toArgs(ids)
 }

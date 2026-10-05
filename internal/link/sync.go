@@ -517,6 +517,35 @@ func (s *Service) Libraries(linkID string) ([]store.Library, error) {
 	return s.mirror.LibrariesForLink(linkID)
 }
 
+// bulkLibraryReader is the mirror's one-read answer for many Links; a mirror
+// that lacks it is asked Link by Link.
+type bulkLibraryReader interface {
+	LibrariesForLinks(linkIDs []string) (map[string][]store.Library, error)
+}
+
+// LibrariesByLink lists the linked Libraries of every given Link, keyed by Link
+// id, for GET /links — one read where the mirror offers it, instead of one per
+// Link. A Link with none has no entry.
+func (s *Service) LibrariesByLink(linkIDs []string) (map[string][]store.Library, error) {
+	if s.mirror == nil {
+		return nil, nil
+	}
+	if b, ok := s.mirror.(bulkLibraryReader); ok {
+		return b.LibrariesForLinks(linkIDs)
+	}
+	out := make(map[string][]store.Library, len(linkIDs))
+	for _, id := range linkIDs {
+		libs, err := s.mirror.LibrariesForLink(id)
+		if err != nil {
+			return nil, err
+		}
+		if len(libs) > 0 {
+			out[id] = libs
+		}
+	}
+	return out, nil
+}
+
 // syncTimeout is the deadline one whole sweep gets. It is generous next to the
 // per-call one because a first pull of a thousand-episode library is many pages.
 const syncTimeout = 5 * time.Minute

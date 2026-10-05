@@ -60,6 +60,9 @@ type Store interface {
 	// omitting Missing/hidden ones AND any the access filter excludes (ungranted
 	// Library / above ceiling) — the shared grouping member-resolution read.
 	ResolveVisibleTitles(titleIDs []string, filter store.AccessFilter) (map[string]store.Title, error)
+	// CollectionVisibleSummaries answers every Collection's visible member count
+	// and first member for a viewer in one read (a Collection with none is absent).
+	CollectionVisibleSummaries(filter store.AccessFilter) (map[string]store.CollectionVisibleSummary, error)
 
 	// --- Playlists (collections-playlists 03): the User-owned, ordered,
 	// single-kind half of the domain. ---
@@ -190,6 +193,14 @@ func (s *Service) Members(scope access.Scope, id string) ([]store.Title, error) 
 		return nil, err
 	}
 	return s.ResolveMembers(scope, ids)
+}
+
+// VisibleSummaries answers, for every Collection at once, how many members the
+// viewer can see and which comes first — what a list card needs, without
+// resolving each Collection's members. It agrees with Members per Collection; a
+// Collection the viewer sees none of has no entry.
+func (s *Service) VisibleSummaries(scope access.Scope) (map[string]store.CollectionVisibleSummary, error) {
+	return s.store.CollectionVisibleSummaries(scope.StoreFilter())
 }
 
 // ResolveMembers maps an ORDERED list of member Title ids to their visible lean
