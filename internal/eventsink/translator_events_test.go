@@ -285,6 +285,10 @@ func TestSlowTranslationDoesNotDropTerminalEvents(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		broker.PublishSessionEvent(events.TypeNowPlaying, sess)
 	}
+	// Let the reader take what it can from the Broker's buffer (it is slower under
+	// -race); with the translator parked, a drain that also translated would leave
+	// the buffer full here.
+	time.Sleep(200 * time.Millisecond)
 	broker.PublishSessionEvent(events.TypeSessionEnded, sess)
 	close(look.gate)
 
