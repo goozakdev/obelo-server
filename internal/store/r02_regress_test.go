@@ -92,6 +92,76 @@ func TestOpenPathWithQueryChars(t *testing.T) {
 	}
 }
 
+// R02-03 / R02-07: an Admin display-name edit Locks "title"; the next scan must
+// not revert it, and the edited sort key strips a leading article like the
+// scanner's does.
+func TestShowRenameSurvivesRescan(t *testing.T) {
+	db := openTemp(t)
+	libID, showID, _ := seedShow(t, db)
+	name := "The Chernobyl Disaster"
+	if err := db.WriteEntityMetadata(store.EntityShow, showID, store.EntityMetadataEdit{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	var title, sortT string
+	if err := db.QueryRow(`SELECT title, sort_title FROM shows WHERE id=?`, showID).Scan(&title, &sortT); err != nil {
+		t.Fatal(err)
+	}
+	if sortT != "chernobyl disaster" {
+		t.Errorf("edited sort_title = %q, want %q", sortT, "chernobyl disaster")
+	}
+	if err := db.UpsertShowTree(store.ShowTree{Show: store.Show{
+		ID: showID, LibraryID: libID, Title: "Chernobyl", Year: 2019,
+		IdentityKey: "chernobyl|2019", SortTitle: "chernobyl",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT title, sort_title FROM shows WHERE id=?`, showID).Scan(&title, &sortT); err != nil {
+		t.Fatal(err)
+	}
+	if title != name || sortT != "chernobyl disaster" {
+		t.Errorf("after rescan title=%q sort_title=%q, want the locked edit %q", title, sortT, name)
+	}
+}
+
+func TestArtistAlbumRenameSurvivesRescan(t *testing.T) {
+	db := openTemp(t)
+	mustExec(t, db, `INSERT INTO libraries (id, name, kind) VALUES ('libm', 'Music', 'music')`)
+	tree := store.ArtistTree{
+		Artist: store.Artist{ID: "ar1", LibraryID: "libm", Name: "BoC", IdentityKey: "boc", SortName: "boc"},
+		Albums: []store.AlbumTree{{Title: "MHTRTC", Year: 1998, IdentityKey: "boc|mhtrtc", SortTitle: "mhtrtc"}},
+	}
+	if err := db.UpsertArtistTree(tree); err != nil {
+		t.Fatal(err)
+	}
+	var albumID string
+	if err := db.QueryRow(`SELECT id FROM albums WHERE artist_id='ar1'`).Scan(&albumID); err != nil {
+		t.Fatal(err)
+	}
+	artistName, albumName := "Boards of Canada", "Music Has the Right to Children"
+	if err := db.WriteEntityMetadata(store.EntityArtist, "ar1", store.EntityMetadataEdit{Name: &artistName}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WriteEntityMetadata(store.EntityAlbum, albumID, store.EntityMetadataEdit{Name: &albumName}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertArtistTree(tree); err != nil {
+		t.Fatal(err)
+	}
+	var gotArtist, gotAlbum string
+	if err := db.QueryRow(`SELECT name FROM artists WHERE id='ar1'`).Scan(&gotArtist); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT title FROM albums WHERE id=?`, albumID).Scan(&gotAlbum); err != nil {
+		t.Fatal(err)
+	}
+	if gotArtist != artistName {
+		t.Errorf("artist name after rescan = %q, want locked %q", gotArtist, artistName)
+	}
+	if gotAlbum != albumName {
+		t.Errorf("album title after rescan = %q, want locked %q", gotAlbum, albumName)
+	}
+}
+
 // R02-02: a recompute that changes nothing must not re-stamp the catalog (the
 // *_touch_au triggers would otherwise bump updated_at on every row each scan).
 func TestNoopRecomputeHiddenDoesNotBump(t *testing.T) {

@@ -183,12 +183,21 @@ func upsertShow(tx *sql.Tx, s Show) (string, error) {
 		// Existing Show: refresh descriptive fields. hidden is recomputed below.
 		// needs_review is recomputed from the parse EXCEPT on a row an Admin has
 		// dismissed (reviewed = 1), where it stays cleared (mirrors the Title rule
-		// in writeTitleRow). reviewed is never written by the scanner.
+		// in writeTitleRow). reviewed is never written by the scanner. An Admin
+		// display-name edit Locks "title" (WriteEntityMetadata); a locked Show keeps
+		// its edited title and sort key across rescans.
 		if _, err := tx.Exec(
-			`UPDATE shows SET title = ?, year = ?, sort_title = ?, tmdb_id = ?, imdb_id = ?,
+			`UPDATE shows SET
+			    title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
+			                 THEN title ELSE ? END,
+			    sort_title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
+			                 THEN sort_title ELSE ? END,
+			    year = ?, tmdb_id = ?, imdb_id = ?,
 			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
 			    hidden = 0 WHERE id = ?`,
-			s.Title, nullableYear(s.Year), s.SortTitle, s.TMDBID, s.IMDBID,
+			s.Title, s.SortTitle, nullableYear(s.Year), s.TMDBID, s.IMDBID,
 			boolToInt(s.NeedsReview), showID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating show: %w", err)

@@ -884,7 +884,7 @@ func (db *DB) WriteEntityMetadata(entityType, entityID string, edit EntityMetada
 		// so the string-built SQL is safe.
 		if _, err := tx.Exec(
 			`UPDATE `+table+` SET `+nameCol+` = ?, `+sortCol+` = ? WHERE id = ?`,
-			*edit.Name, strings.ToLower(strings.TrimSpace(*edit.Name)), entityID,
+			*edit.Name, sortKey(*edit.Name), entityID,
 		); err != nil {
 			return fmt.Errorf("store: editing entity display name: %w", err)
 		}

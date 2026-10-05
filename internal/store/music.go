@@ -172,7 +172,14 @@ func upsertArtist(tx *sql.Tx, a Artist) (string, error) {
 		return "", fmt.Errorf("store: resolving artist identity: %w", err)
 	default:
 		if _, err := tx.Exec(
-			`UPDATE artists SET name = ?, sort_name = ?, hidden = 0,
+			`UPDATE artists SET
+			     name = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'artist' AND entity_id = artists.id AND field = 'title')
+			                 THEN name ELSE ? END,
+			     sort_name = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'artist' AND entity_id = artists.id AND field = 'title')
+			                 THEN sort_name ELSE ? END,
+			     hidden = 0,
 			     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END
 			   WHERE id = ?`,
 			a.Name, a.SortName, a.MusicbrainzID, a.MusicbrainzID, artistID,
@@ -204,11 +211,18 @@ func upsertAlbum(tx *sql.Tx, artistID string, at AlbumTree) (string, error) {
 		return "", fmt.Errorf("store: resolving album: %w", err)
 	default:
 		if _, err := tx.Exec(
-			`UPDATE albums SET title = ?, year = ?, sort_title = ?, artwork_path = ?, release_type = ?, hidden = 0,
+			`UPDATE albums SET
+			     title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'album' AND entity_id = albums.id AND field = 'title')
+			                 THEN title ELSE ? END,
+			     sort_title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'album' AND entity_id = albums.id AND field = 'title')
+			                 THEN sort_title ELSE ? END,
+			     year = ?, artwork_path = ?, release_type = ?, hidden = 0,
 			     musicbrainz_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_id END,
 			     musicbrainz_release_id = CASE WHEN ? <> '' THEN ? ELSE musicbrainz_release_id END
 			   WHERE id = ?`,
-			at.Title, nullableYear(at.Year), at.SortTitle, at.ArtworkPath, at.ReleaseType,
+			at.Title, at.SortTitle, nullableYear(at.Year), at.ArtworkPath, at.ReleaseType,
 			at.MusicbrainzID, at.MusicbrainzID,
 			at.MusicbrainzReleaseID, at.MusicbrainzReleaseID, albumID,
 		); err != nil {
