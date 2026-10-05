@@ -379,3 +379,28 @@ describe("the callback screen finishing an attach", () => {
     expect(completeSignIn).not.toHaveBeenCalled();
   });
 });
+
+describe("confirming when sessionStorage is unavailable (R06-12)", () => {
+  it("still shows Confirmed and attaches with the grant held in memory", async () => {
+    const outside = { ...view, hasPassword: false };
+    api.list.mockResolvedValue(outside);
+    api.reauthPassword.mockResolvedValue({ grant: "g-mem", expiresIn: 300 });
+    api.attachPassword.mockResolvedValue(view.identities[0]);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((k: string) => {
+      if (k === "obelo.reauthGrant") throw new Error("blocked");
+    });
+    renderWithAuth(<ProfileScreen />);
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByTestId("profile-reauth-username-directory"), "bj");
+    await user.type(screen.getByTestId("profile-reauth-password-directory"), "bj-pw");
+    await user.click(screen.getByTestId("profile-reauth-submit-directory"));
+
+    await waitFor(() => expect(screen.getByTestId("profile-attach-submit-directory")).toBeEnabled());
+    await user.type(screen.getByTestId("profile-attach-username-directory"), "bj2");
+    await user.type(screen.getByTestId("profile-attach-password-directory"), "pw2");
+    await user.click(screen.getByTestId("profile-attach-submit-directory"));
+    expect(api.attachPassword).toHaveBeenCalledWith("directory", "bj2", "pw2", { reauthGrant: "g-mem" });
+    vi.restoreAllMocks();
+  });
+});

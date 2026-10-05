@@ -10,8 +10,6 @@ import BackLink, { useLibraryName } from "../browse/BackLink";
 import { useLibraryProvider } from "../browse/librariesContext";
 import LinkedMark, { linkedRowClass } from "../browse/LinkedMark";
 import DetailBackdrop from "../browse/DetailBackdrop";
-import Poster from "../browse/Poster";
-import { albumArtworkUrl } from "../browse/albumArt";
 import { useLetterJump, type LetterJumpPager } from "../browse/useLetterJump";
 import LetterJumpBar, { MIN_LETTER_JUMP_ITEMS } from "../browse/LetterJumpBar";
 import { useLayoutMode } from "../browse/browseLayout";
@@ -23,6 +21,7 @@ import EditItemDialog from "../admin/EditItemDialog";
 import { useAuth } from "../auth/session";
 import MusicShell from "./MusicShell";
 import { ReleaseTypeBadge } from "./ReleaseTypeBadge";
+import AlbumCover from "./AlbumCover";
 
 // The Artist detail screen (tv-music issue 03 / PRD user story 26): GET
 // /artists/{id}/albums rendered as the Artist header + a grid of its Albums in
@@ -48,6 +47,12 @@ const NO_ALBUMS: Album[] = [];
 
 export default function ArtistDetailScreen() {
   const { artistId = "" } = useParams();
+  // Keyed on the id so a new artist starts from a clean slate (loading state, no
+  // carried-over scan message) rather than keeping the old one on screen.
+  return <ArtistDetail key={artistId} artistId={artistId} />;
+}
+
+function ArtistDetail({ artistId }: { artistId: string }) {
   const { isAdmin } = useAuth();
   const [reloadKey, setReloadKey] = useState(0);
   const state = useAsync(
@@ -324,17 +329,7 @@ function albumToRow(album: Album): BrowseRowData {
     dataAttrs: { "data-album-id": album.id },
     thumb: (
       <div className="poster-frame album-frame">
-        {album.hasArtwork ? (
-          <img
-            className="poster poster-img"
-            data-testid="poster-img"
-            src={albumArtworkUrl(album.id, album.artworkVersion)}
-            alt={`${album.title} cover`}
-            loading="lazy"
-          />
-        ) : (
-          <Poster titleId={album.id} title={album.title} />
-        )}
+        <AlbumCover album={album} />
       </div>
     ),
     meta: albumMeta(album),
@@ -355,7 +350,7 @@ function albumMeta(album: Album): ReactNode {
 
 // AlbumTile is an album card linking to the Album detail (its track list). When
 // the Album has a local cover the tile shows it (via the album artwork endpoint);
-// otherwise <Poster> falls back to the initials placeholder. The `album-tile`
+// otherwise the initials placeholder shows. The `album-tile`
 // class squares the frame (music.css) so square cover art shows uncropped.
 function AlbumTile({ album }: { album: Album }) {
   return (
@@ -366,17 +361,7 @@ function AlbumTile({ album }: { album: Album }) {
     >
       <Link className="poster-link" to={`/music/albums/${album.id}`}>
         <div className="poster-frame">
-          {album.hasArtwork ? (
-            <img
-              className="poster poster-img"
-              data-testid="poster-img"
-              src={albumArtworkUrl(album.id, album.artworkVersion)}
-              alt={`${album.title} cover`}
-              loading="lazy"
-            />
-          ) : (
-            <Poster titleId={album.id} title={album.title} />
-          )}
+          <AlbumCover album={album} />
           {/* Pill on the artwork itself, mirroring the Show poster's
               episode-count badge (top-right, accent). */}
           <ReleaseTypeBadge releaseType={album.releaseType} />

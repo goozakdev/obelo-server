@@ -9,6 +9,7 @@ import { useAsync } from "../browse/useAsync";
 import { errorMessage } from "../screens/errorMessage";
 import BackLink from "../browse/BackLink";
 import Poster from "../browse/Poster";
+import { albumArtworkUrl } from "../browse/albumArt";
 import { useLibraryMarks, useLibraryProvider } from "../browse/librariesContext";
 import LinkedMark from "../browse/LinkedMark";
 import AddToPlaylist from "../browse/AddToPlaylist";
@@ -95,6 +96,9 @@ function TrackDetail({ title }: { title: TitleDetail }) {
   // Whether the lyrics view is open. It asks for the lyrics when it opens, not
   // when the page loads.
   const [lyricsOpen, setLyricsOpen] = useState(false);
+  // Latest-wins for Play: only the newest press may start the Queue, so a slow
+  // earlier album fetch can't land after (and replace) a later one.
+  const playSeq = useRef(0);
 
   const resuming = !watched && resumeMs > 0;
   const playable = title.editions.some((ed) => ed.files.some((f) => !f.missing));
@@ -119,13 +123,16 @@ function TrackDetail({ title }: { title: TitleDetail }) {
   // to a single-entry Queue of THIS Track so the player is never stranded (story 39).
   async function play() {
     const summary: TitleSummary = titleDetailSummary(title, watched, resumeMs);
+    const seq = ++playSeq.current;
     try {
       const albumId = title.track?.albumId;
       const entries = albumId
         ? await buildAlbumQueue(apiClient, albumId, title.id)
         : [];
+      if (seq !== playSeq.current) return;
       queue.playNow(entries.length > 0 ? entries : buildSingleQueue(summary));
     } catch {
+      if (seq !== playSeq.current) return;
       queue.playNow(buildSingleQueue(summary));
     }
   }
@@ -144,7 +151,11 @@ function TrackDetail({ title }: { title: TitleDetail }) {
     <article className="detail" data-testid="detail">
       <div className="detail-hero">
         <div className="detail-poster">
-          <Poster titleId={title.id} title={title.title} />
+          <Poster
+            titleId={title.id}
+            title={title.title}
+            src={title.track ? albumArtworkUrl(title.track.albumId) : undefined}
+          />
         </div>
         <div className="detail-info">
           {/* Track parent context: "Radiohead · OK Computer" so a Track reads in

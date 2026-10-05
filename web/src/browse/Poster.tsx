@@ -25,8 +25,10 @@ export interface PosterProps {
   version?: string | number;
   /** An explicit artwork URL to use instead of the title-keyed one — for a browse
    * PARENT (Show/Season/Artist) whose fetched image lives at its own endpoint
-   * (issue 03). When set, titleId is used only for the placeholder fallback. */
-  src?: string;
+   * (issue 03). When set, titleId is used only for the placeholder fallback.
+   * `null` means the caller KNOWS there is no artwork: the placeholder renders
+   * directly, with no request that is bound to 404. */
+  src?: string | null;
 }
 
 export function posterUrl(titleId: string, role = "poster", version?: string | number): string {
@@ -53,7 +55,7 @@ export default function Poster({ titleId, title, role = "poster", version, src }
     setFailed(false);
   }, [titleId, role, version, src]);
 
-  if (failed) {
+  if (failed || src === null) {
     return (
       <div
         className="poster poster-placeholder"

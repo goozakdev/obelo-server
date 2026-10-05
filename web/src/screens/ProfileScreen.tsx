@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type { AttachProof, ExternalIdentitiesView, SignInProvider } from "../api/types";
 import AppHeader from "../browse/AppHeader";
@@ -35,6 +35,14 @@ export default function ProfileScreen() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [error, setError] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
+  // A grant that sessionStorage refused to keep (blocked site data) lives here
+  // instead, so the User still sees "Confirmed" and can attach this once.
+  const memGrant = useRef<{ grant: string; expiresAt: number } | null>(null);
+  const liveMemGrant = () => {
+    const m = memGrant.current;
+    return m && m.expiresAt > Date.now() ? m : null;
+  };
+  const liveGrant = () => readReauthGrant() ?? liveMemGrant()?.grant ?? null;
   const [grant, setGrant] = useState<string | null>(() => readReauthGrant());
   // A change of User while the screen is open reads the kept grant again — a
   // sign-out or switch has forgotten it — so nobody is shown as confirmed on
@@ -43,6 +51,7 @@ export default function ProfileScreen() {
   const [grantUser, setGrantUser] = useState(userId);
   if (grantUser !== userId) {
     setGrantUser(userId);
+    memGrant.current = null;
     setGrant(readReauthGrant());
   }
 
@@ -52,7 +61,7 @@ export default function ProfileScreen() {
     if (grant === null) return;
     let timer: number | undefined;
     const check = () => {
-      const expiresAt = reauthGrantExpiresAt();
+      const expiresAt = reauthGrantExpiresAt() ?? liveMemGrant()?.expiresAt ?? null;
       if (expiresAt === null) {
         setGrant(null);
         return;
@@ -88,7 +97,7 @@ export default function ProfileScreen() {
   // User confirms again and nothing is sent.
   function takeProof(): AttachProof | null {
     if (hasPassword) return currentPassword ? { currentPassword } : null;
-    const live = readReauthGrant();
+    const live = liveGrant();
     if (!grant || live !== grant) {
       spent();
       setError(reauthExpiredMessage);
@@ -102,6 +111,7 @@ export default function ProfileScreen() {
   function spent() {
     setCurrentPassword("");
     setGrant(null);
+    memGrant.current = null;
     forgetReauthGrant();
   }
 
@@ -191,6 +201,7 @@ export default function ProfileScreen() {
                     onGrant={(g, expiresIn) => {
                       setError(null);
                       keepReauthGrant(g, expiresIn);
+                      memGrant.current = readReauthGrant() === g ? null : { grant: g, expiresAt: Date.now() + expiresIn * 1000 };
                       setGrant(g);
                     }}
                     onRedirect={(p) => void onRedirectReauth(p)}

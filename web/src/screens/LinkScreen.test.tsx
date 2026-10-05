@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useNavigate } from "react-router-dom";
 import { renderWithAuth } from "../test/renderWithAuth";
 import { ApiError } from "../api/client";
 
@@ -105,5 +105,28 @@ describe("LinkScreen", () => {
 
     await waitFor(() => expect(screen.getByTestId("link-error")).toBeInTheDocument());
     expect(screen.getByTestId("link-error")).toHaveTextContent("too many incorrect codes");
+  });
+});
+
+describe("LinkScreen code changes (R06-13)", () => {
+  it("approves the new code when :code changes on the mounted screen", async () => {
+    approveDeviceCode.mockResolvedValue({ device: { name: "TV", platform: "tvos" } });
+    function Hop() {
+      const nav = useNavigate();
+      return <button data-testid="hop" onClick={() => nav("/link/NEW2")} />;
+    }
+    renderWithAuth(
+      <>
+        <Hop />
+        <Routes>
+          <Route path="/link/:code?" element={<LinkScreen />} />
+        </Routes>
+      </>,
+      { initialEntries: ["/link/OLD1"] },
+    );
+    await waitFor(() => expect(approveDeviceCode).toHaveBeenCalledWith("OLD1"));
+    await userEvent.click(screen.getByTestId("hop"));
+    await waitFor(() => expect(approveDeviceCode).toHaveBeenCalledWith("NEW2"));
+    expect(approveDeviceCode).toHaveBeenCalledTimes(2);
   });
 });

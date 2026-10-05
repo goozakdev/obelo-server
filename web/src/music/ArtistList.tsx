@@ -154,7 +154,7 @@ function artistToRow(a: ArtistSummary): BrowseRowData {
     dataAttrs: { "data-artist-id": a.id },
     thumb: (
       <div className="poster-frame artist-frame">
-        <Poster titleId={a.id} title={a.name} src={a.artworkUrl} />
+        <Poster titleId={a.id} title={a.name} src={a.artworkUrl ?? null} />
       </div>
     ),
     meta: artistMeta(a),
@@ -179,7 +179,7 @@ function ArtistTile({ artist }: { artist: ArtistSummary }) {
     >
       <Link className="poster-link" to={`/music/artists/${artist.id}`}>
         <div className="poster-frame">
-          <Poster titleId={artist.id} title={artist.name} src={artist.artworkUrl} />
+          <Poster titleId={artist.id} title={artist.name} src={artist.artworkUrl ?? null} />
         </div>
         <div className="poster-caption">
           <span className="poster-title" data-testid="poster-title" title={artist.name}>

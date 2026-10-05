@@ -3,21 +3,15 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { TrackSummary } from "../api/types";
 import { useQueue } from "../player/queue/useQueue";
-import {
-  buildAlbumQueue,
-  buildSingleQueue,
-  trackToSummary,
-} from "../player/queue/buildQueue";
-import { entryFromTitle } from "../player/queue/model";
+import { trackToSummary } from "../player/queue/buildQueue";
+import { entriesFromTitles, entryFromTitle } from "../player/queue/model";
 import { usePlaybackTransport } from "../player/transport";
 import { useAsync } from "../browse/useAsync";
 import { useTargetedScan } from "../browse/useTargetedScan";
 import EntityScanMenu from "../browse/EntityScanMenu";
 import { EditIcon } from "../browse/ActionIcons";
 import BackLink from "../browse/BackLink";
-import Poster from "../browse/Poster";
 import LinkedMark, { linkedRowClass } from "../browse/LinkedMark";
-import { albumArtworkUrl } from "../browse/albumArt";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
 import EditItemDialog from "../admin/EditItemDialog";
@@ -26,6 +20,8 @@ import { formatTimecode } from "../time";
 import MusicShell from "./MusicShell";
 import { ReleaseTypeBadge } from "./ReleaseTypeBadge";
 import TrackActionsMenu from "./TrackActionsMenu";
+import AlbumCover from "./AlbumCover";
+import { useTrackPlaylists, type TrackPlaylists } from "./useTrackPlaylists";
 
 // The Album detail screen (tv-music issue 03 / PRD user story 27): GET
 // /albums/{id}/tracks rendered as the Album header + its Tracks in disc/track
@@ -36,13 +32,22 @@ import TrackActionsMenu from "./TrackActionsMenu";
 // add to queue / edit).
 //
 // Playing a Track builds the album-from-here Queue (queue/02) — the chosen Track
-// and the rest of the Album in disc/track order — and starts the persistent Now
-// Playing bar; a failed build falls back to just the chosen Track. Play next / add
+// and the rest of the Album in disc/track order, sliced from the tracks this screen
+// already holds (no second fetch) — and starts the persistent Now Playing bar. Play next / add
 // to queue drive the shared Queue directly. Lives in the music module and links
 // into /music/...; playback uses the media-agnostic shared player.
 
+// Stable empty list so `play` keeps its identity before the album has loaded.
+const NO_TRACKS: TrackSummary[] = [];
+
 export default function AlbumDetailScreen() {
   const { albumId = "" } = useParams();
+  // Keyed on the id so a new album starts from a clean slate (loading state, no
+  // carried-over notice or scan message) rather than keeping the old one on screen.
+  return <AlbumDetail key={albumId} albumId={albumId} />;
+}
+
+function AlbumDetail({ albumId }: { albumId: string }) {
   const queue = useQueue();
   const transport = usePlaybackTransport();
   const { isAdmin } = useAuth();
@@ -50,6 +55,7 @@ export default function AlbumDetailScreen() {
   // next), shown above the list; replaced by the next action.
   const [notice, setNotice] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const playlistChoices = useTrackPlaylists();
   const state = useAsync(
     (signal) => apiClient.getAlbumTracks(albumId, signal),
     [albumId, reloadKey],
@@ -71,21 +77,16 @@ export default function AlbumDetailScreen() {
     ? { to: `/music/artists/${album.artistId}`, label: album.artistName || "Artist" }
     : { to: "/", label: "Home" };
 
-  // Build the album-from-here Queue; playback begins in the persistent Now Playing
-  // bar (now-playing-bar/01), NO navigation. A transient/404 build failure falls
-  // back to a single-entry Queue of just that Track (story 39).
+  // Build the album-from-here Queue from the tracks already on screen; playback
+  // begins in the persistent Now Playing bar (now-playing-bar/01), NO navigation.
+  const tracks = state.status === "ready" ? state.data.tracks : NO_TRACKS;
   const play = useCallback(
-    async (track: TrackSummary) => {
-      try {
-        const entries = await buildAlbumQueue(apiClient, albumId, track.id);
-        queue.playNow(
-          entries.length > 0 ? entries : buildSingleQueue(trackToSummary(track)),
-        );
-      } catch {
-        queue.playNow(buildSingleQueue(trackToSummary(track)));
-      }
+    (track: TrackSummary) => {
+      const i = tracks.findIndex((t) => t.id === track.id);
+      const fromHere = i < 0 ? [track] : tracks.slice(i);
+      queue.playNow(entriesFromTitles(fromHere.map(trackToSummary)));
     },
-    [albumId, queue],
+    [tracks, queue],
   );
 
   // Insert this Track right after the now-playing entry.
@@ -127,16 +128,7 @@ export default function AlbumDetailScreen() {
         <article className="detail" data-testid="album-detail">
           <div className="detail-hero">
             <div className="detail-poster">
-              {state.data.album.hasArtwork ? (
-                <img
-                  className="poster poster-img"
-                  data-testid="poster-img"
-                  src={albumArtworkUrl(state.data.album.id, state.data.album.artworkVersion)}
-                  alt={`${state.data.album.title} cover`}
-                />
-              ) : (
-                <Poster titleId={state.data.album.id} title={state.data.album.title} />
-              )}
+              <AlbumCover album={state.data.album} lazy={false} />
               {/* Pill on the cover itself, mirroring the Show poster's
                   episode-count badge (top-right, accent). */}
               <ReleaseTypeBadge releaseType={state.data.album.releaseType} />
@@ -264,9 +256,10 @@ export default function AlbumDetailScreen() {
                     track={track}
                     artistId={state.data.album.artistId}
                     artistName={state.data.album.artistName}
+                    playlistChoices={playlistChoices}
                     isCurrent={queue.current?.title.id === track.id}
                     playing={transport.playing}
-                    onPlay={() => void play(track)}
+                    onPlay={() => play(track)}
                     onToggle={transport.toggle}
                     onPlayNext={() => playNext(track)}
                     onAddToQueue={() => addToQueue(track)}
@@ -286,6 +279,7 @@ function TrackRow({
   track,
   artistId,
   artistName,
+  playlistChoices,
   isCurrent,
   playing,
   onPlay,
@@ -297,6 +291,7 @@ function TrackRow({
   track: TrackSummary;
   artistId: string;
   artistName: string;
+  playlistChoices: TrackPlaylists;
   isCurrent: boolean;
   playing: boolean;
   onPlay: () => void;
@@ -374,6 +369,7 @@ function TrackRow({
       <TrackActionsMenu
         trackId={track.id}
         trackTitle={track.title}
+        playlistChoices={playlistChoices}
         onPlayNext={onPlayNext}
         onAddToQueue={onAddToQueue}
         onEdit={() => navigate(`/music/tracks/${track.id}`)}

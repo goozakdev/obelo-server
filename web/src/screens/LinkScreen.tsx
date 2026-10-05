@@ -36,7 +36,9 @@ export default function LinkScreen() {
   // A scanned QR must approve exactly once. Without this guard React's dev-mode
   // double-invoked effect would fire two approvals, and the second would hit an
   // already-redeemed code and report a spurious failure over the real success.
-  const attempted = useRef(false);
+  // It remembers the CODE, so a different code arriving on the mounted screen
+  // (history, typed URL) is still approved.
+  const attempted = useRef<string | null>(null);
 
   const approve = useCallback(async (code: string) => {
     setPhase({ kind: "approving" });
@@ -49,8 +51,8 @@ export default function LinkScreen() {
   }, []);
 
   useEffect(() => {
-    if (!codeFromUrl || attempted.current) return;
-    attempted.current = true;
+    if (!codeFromUrl || attempted.current === codeFromUrl) return;
+    attempted.current = codeFromUrl;
     void approve(codeFromUrl);
   }, [codeFromUrl, approve]);
 

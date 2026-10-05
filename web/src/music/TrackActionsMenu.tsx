@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import type { PlaylistSummary } from "../api/types";
+import type { TrackPlaylists } from "./useTrackPlaylists";
 
 // The per-row "three dots" actions menu on the Album track list. A click opens a
 // dropdown (same click-outside / Escape pattern as the header's NavDropdown) with:
@@ -9,8 +10,8 @@ import type { PlaylistSummary } from "../api/types";
 //   3) Add to queue      → append at the end
 //   4) Edit              → open the track view (for now)
 // Actions 2–4 are provided by the parent (they drive the shared Queue / router);
-// this component owns only the playlist listing + append, lazily fetched the first
-// time the menu opens.
+// this component owns only the append; the playlist listing is the parent's shared
+// `useTrackPlaylists` answer, which a menu asks for when it opens.
 
 // A playlist is addable from the music side when it's a music playlist OR still
 // untyped (its first item fixes the kind); a movie/tv playlist would be rejected.
@@ -21,6 +22,7 @@ function isAddable(pl: PlaylistSummary): boolean {
 export default function TrackActionsMenu({
   trackId,
   trackTitle,
+  playlistChoices,
   onPlayNext,
   onAddToQueue,
   onEdit,
@@ -28,6 +30,7 @@ export default function TrackActionsMenu({
 }: {
   trackId: string;
   trackTitle: string;
+  playlistChoices: TrackPlaylists;
   onPlayNext: () => void;
   onAddToQueue: () => void;
   onEdit: () => void;
@@ -35,7 +38,7 @@ export default function TrackActionsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [submenuOpen, setSubmenuOpen] = useState(false);
-  const [playlists, setPlaylists] = useState<PlaylistSummary[] | null>(null);
+  const { playlists, failed, ensure, retry } = playlistChoices;
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on outside click / Escape (mirrors the header NavDropdown).
@@ -55,18 +58,10 @@ export default function TrackActionsMenu({
     };
   }, [open]);
 
-  // Lazily load the caller's playlists the first time the menu opens.
+  // Ask for the caller's playlists whenever the menu opens (shared across rows).
   useEffect(() => {
-    if (!open || playlists !== null) return;
-    const ctrl = new AbortController();
-    apiClient
-      .listPlaylists(ctrl.signal)
-      .then((pls) => setPlaylists(pls))
-      .catch(() => {
-        if (!ctrl.signal.aborted) setPlaylists([]);
-      });
-    return () => ctrl.abort();
-  }, [open, playlists]);
+    if (open) ensure();
+  }, [open, ensure]);
 
   function close() {
     setOpen(false);
@@ -117,7 +112,22 @@ export default function TrackActionsMenu({
             </button>
             {submenuOpen && (
               <ul className="track-submenu" role="menu" data-testid="track-submenu">
-                {playlists === null ? (
+                {playlists === null && failed ? (
+                  <li className="track-menu-item" role="none">
+                    <span className="track-menu-empty" data-testid="track-menu-playlists-error">
+                      {"Couldn't load playlists"}
+                    </span>
+                    <button
+                      type="button"
+                      className="track-menu-button"
+                      role="menuitem"
+                      data-testid="track-menu-playlists-retry"
+                      onClick={retry}
+                    >
+                      Retry
+                    </button>
+                  </li>
+                ) : playlists === null ? (
                   <li className="track-menu-item" role="none">
                     <span className="track-menu-empty">Loading…</span>
                   </li>
