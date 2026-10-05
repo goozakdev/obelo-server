@@ -168,6 +168,10 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 			return
 		}
 		var upserts []store.SubtitleProviderUpsert
+		// A slug repeated in one PUT folds: each entry resolves against the previous
+		// entry for it, not the original row (else the last one silently wins and the
+		// validation below judges each entry in isolation).
+		resolved := map[string]store.SubtitleProviderUpsert{}
 		for _, u := range req.Providers {
 			registration, ok := deps.Plugins.SubtitleProvider(u.Slug)
 			if !ok {
@@ -181,6 +185,9 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 				APIKey:  row.APIKey,
 				BaseURL: row.BaseURL,
 			}
+			if prev, ok := resolved[u.Slug]; ok {
+				desired = prev
+			}
 			if u.Enabled != nil {
 				desired.Enabled = *u.Enabled
 			}
@@ -189,6 +196,11 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 			}
 			if u.BaseURL != nil {
 				desired.BaseURL = strings.TrimSpace(*u.BaseURL)
+				if desired.BaseURL != "" && !validBaseURL(desired.BaseURL) {
+					writeError(w, http.StatusUnprocessableEntity, codeProviderInvalidBaseURL,
+						"base URL must be an absolute http(s) URL", nil)
+					return
+				}
 			}
 			// A key-requiring provider can't be enabled with no key on file.
 			if desired.Enabled && registration.Descriptor.RequiresKey && desired.APIKey == "" {
@@ -196,6 +208,7 @@ func handleUpdateSubtitleProviders(deps Deps) http.HandlerFunc {
 					"an API key is required to enable "+registration.Descriptor.Name, nil)
 				return
 			}
+			resolved[u.Slug] = desired
 			upserts = append(upserts, desired)
 		}
 
