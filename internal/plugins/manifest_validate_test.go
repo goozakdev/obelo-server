@@ -19,6 +19,7 @@ func TestValidateManifestRefusesNonBareNetworkHosts(t *testing.T) {
 	for _, h := range []string{
 		"api.example.com:443", "https://api.example.com", "api.example.com/path",
 		"user@api.example.com", "api example.com", "api.example.com?x=1", "api.example.com#f", "[::1]:80",
+		`api.example.com\path`, "api%2eexample.com", "api.example.com%2fx",
 	} {
 		m := validManifestForTest()
 		m.Network.Hosts = []string{h}

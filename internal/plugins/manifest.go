@@ -113,9 +113,9 @@ func validateManifest(m pluginapi.Manifest) error {
 		}
 	}
 	for _, h := range m.Network.Hosts {
-		if h != normalizeHost(h) || h == "" || strings.ContainsAny(h, "/@?# \t\r\n") ||
+		if h != normalizeHost(h) || h == "" || strings.ContainsAny(h, "/\\@?#% \t\r\n") ||
 			(strings.Contains(h, ":") && net.ParseIP(h) == nil) {
-			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port, path or userinfo", h)
+			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port, path, userinfo or percent-escape", h)
 		}
 		if strings.Contains(h, "*") {
 			return fmt.Errorf("network host %q uses a wildcard; the allowlist is exact, so an operator can read it and know what this code may reach", h)

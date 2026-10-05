@@ -220,6 +220,8 @@ type ManagerStore interface {
 	SetPluginLastError(id, message string) error
 	DeletePlugin(id string) error
 	PluginSettings(pluginID string) ([]store.PluginSetting, error)
+	// AllPluginSettings is every Plugin's settings in one read, for the listing.
+	AllPluginSettings() (map[string][]store.PluginSetting, error)
 	ReplacePluginSettings(pluginID string, values []store.PluginSetting) error
 	// PluginPublishers is the pinned-key policy (issue 15). An EMPTY list is the
 	// shipped state and means nothing is verified, so it is asked on every install
@@ -600,10 +602,18 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 // response wants one row and sign-in discovery wants only ids and Provides, and
 // neither should pay for the whole Plugins screen.
 func (m *Manager) list(ctx context.Context, only string, withSettings bool) ([]Installed, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rows, err := m.rows()
 	if err != nil {
 		return nil, err
+	}
+	// A whole-screen listing reads every plugin's settings in one call; a verb's
+	// single row keeps the one-plugin read.
+	var allSettings map[string][]store.PluginSetting
+	if withSettings && only == "" {
+		allSettings = m.allSettingRows()
 	}
 	byID := make(map[string]store.PluginRow, len(rows))
 	order := make([]string, 0, len(rows))
@@ -628,6 +638,9 @@ func (m *Manager) list(ctx context.Context, only string, withSettings bool) ([]I
 	for _, id := range order {
 		if only != "" && id != only {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		row, hasRow := byID[id]
 		st, loaded := statuses[id]
@@ -662,7 +675,11 @@ func (m *Manager) list(ctx context.Context, only string, withSettings bool) ([]I
 		}
 		if len(fields) > 0 {
 			item.SettingsSchema = fields
-			values, secrets := PublicSettingValues(fields, m.settingRows(id))
+			rows := allSettings[id]
+			if only != "" {
+				rows = m.settingRows(id)
+			}
+			values, secrets := PublicSettingValues(fields, rows)
 			item.Settings = &SettingsView{Values: values, Secrets: secrets}
 		}
 		if item.Provides == nil {
@@ -1081,7 +1098,9 @@ func (m *Manager) ensureRow(id string) error {
 
 // view is one Plugin's row of List, for the response a verb answers with.
 func (m *Manager) view(ctx context.Context, id string) (Installed, error) {
-	list, err := m.list(ctx, id, true)
+	// Every caller has already committed its write by the time it asks for the
+	// view, so a client that has since gone away must not turn that into an error.
+	list, err := m.list(context.WithoutCancel(ctx), id, true)
 	if err != nil {
 		return Installed{}, err
 	}

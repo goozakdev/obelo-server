@@ -551,6 +551,20 @@ func (m *Manager) declaredFields(id string) []pluginapi.SettingsField {
 	return settingsFields(p.Manifest())
 }
 
+// allSettingRows is every Plugin's stored settings keyed by id, or none when they
+// cannot be read, degrading exactly as settingRows does.
+func (m *Manager) allSettingRows() map[string][]store.PluginSetting {
+	if m.store == nil {
+		return nil
+	}
+	rows, err := m.store.AllPluginSettings()
+	if err != nil {
+		m.logf("obelo: could not read the settings of the installed plugins: %v", err)
+		return nil
+	}
+	return rows
+}
+
 // settingRows is one Plugin's stored settings, or none when they cannot be read. A
 // listing degrades to "nothing is configured" rather than failing: the Plugins
 // screen is where an Admin goes when something is already wrong.
