@@ -242,17 +242,22 @@ type trackContextJSON struct {
 	AlbumYear   int    `json:"albumYear,omitempty"`
 	DiscNumber  int    `json:"discNumber,omitempty"`
 	TrackNumber int    `json:"trackNumber,omitempty"`
+	// AlbumArtworkVersion is the album cover's cache-bust token (the album's
+	// artworkVersion), so a Track page's cover URL reloads when the cover is
+	// re-fetched. Omitempty: absent for a local-only cover.
+	AlbumArtworkVersion string `json:"albumArtworkVersion,omitempty"`
 }
 
-func toTrackContext(c store.TrackContext) *trackContextJSON {
+func toTrackContext(c store.TrackContext, albumVersion string) *trackContextJSON {
 	return &trackContextJSON{
-		ArtistID:    c.ArtistID,
-		ArtistName:  c.ArtistName,
-		AlbumID:     c.AlbumID,
-		AlbumTitle:  c.AlbumTitle,
-		AlbumYear:   c.AlbumYear,
-		DiscNumber:  c.DiscNumber,
-		TrackNumber: c.TrackNumber,
+		ArtistID:            c.ArtistID,
+		ArtistName:          c.ArtistName,
+		AlbumID:             c.AlbumID,
+		AlbumTitle:          c.AlbumTitle,
+		AlbumYear:           c.AlbumYear,
+		DiscNumber:          c.DiscNumber,
+		TrackNumber:         c.TrackNumber,
+		AlbumArtworkVersion: albumVersion,
 	}
 }
 

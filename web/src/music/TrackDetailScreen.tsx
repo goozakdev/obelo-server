@@ -155,7 +155,7 @@ function TrackDetail({ title }: { title: TitleDetail }) {
           <Poster
             titleId={title.id}
             title={title.title}
-            src={title.track ? albumArtworkUrl(title.track.albumId) : undefined}
+            src={title.track ? albumArtworkUrl(title.track.albumId, title.track.albumArtworkVersion) : undefined}
           />
         </div>
         <div className="detail-info">

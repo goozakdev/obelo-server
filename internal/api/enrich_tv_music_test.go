@@ -615,3 +615,82 @@ func hasShow(shows []enrichedShowResp, title string) bool {
 	}
 	return false
 }
+
+// TestTrackContextCarriesTheAlbumArtworkVersion: a Track's detail and its Home
+// row both carry the album's cover cache-bust token as track.albumArtworkVersion,
+// the same token the album list advertises, so the track page's cover URL reloads
+// when the cover is re-fetched (it previously requested the bare /artwork URL).
+func TestTrackContextCarriesTheAlbumArtworkVersion(t *testing.T) {
+	t.Parallel()
+	requireMusicFixtures(t)
+	srv := testharness.New(t,
+		testharness.WithEnrichmentKey("test-key"),
+		testharness.WithMetadataProvider(tvMusicProvider()),
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("COVERBYTES"), contentType: "image/jpeg"}),
+	)
+	token := adminToken(t, srv)
+	libID := createMusicLibrary(t, srv, token, musicRoot(t))
+	scanLib(t, srv, token, libID, "")
+	enrichLib(t, srv, token, libID, "")
+
+	var list enrichedArtistsListResp
+	srv.AuthGET("/api/v1/libraries/"+libID+"/titles?limit=100", token, &list)
+	var artistID string
+	for _, a := range list.Artists {
+		if a.Name == "Radiohead" {
+			artistID = a.ID
+		}
+	}
+	var albums struct {
+		Albums []struct {
+			ID             string `json:"id"`
+			Title          string `json:"title"`
+			ArtworkVersion string `json:"artworkVersion"`
+		} `json:"albums"`
+	}
+	srv.AuthGET("/api/v1/artists/"+artistID+"/albums", token, &albums)
+	var albumID, want string
+	for _, a := range albums.Albums {
+		if a.Title == "OK Computer" {
+			albumID, want = a.ID, a.ArtworkVersion
+		}
+	}
+	if want == "" {
+		t.Fatalf("enriched OK Computer advertises no artworkVersion: %+v", albums.Albums)
+	}
+
+	tracks := albumTracks(t, srv, token, albumID)
+	var detail struct {
+		Track *struct {
+			AlbumArtworkVersion string `json:"albumArtworkVersion"`
+		} `json:"track"`
+	}
+	srv.AuthGET("/api/v1/titles/"+tracks.Tracks[0].ID, token, &detail)
+	if detail.Track == nil || detail.Track.AlbumArtworkVersion != want {
+		t.Errorf("track detail albumArtworkVersion = %+v, want %q", detail.Track, want)
+	}
+
+	var home struct {
+		RecentlyAdded []struct {
+			Kind  string `json:"kind"`
+			Track *struct {
+				AlbumID             string `json:"albumId"`
+				AlbumArtworkVersion string `json:"albumArtworkVersion"`
+			} `json:"track"`
+		} `json:"recentlyAdded"`
+	}
+	srv.AuthGET("/api/v1/home", token, &home)
+	seen := 0
+	for _, r := range home.RecentlyAdded {
+		if r.Kind != "track" || r.Track == nil || r.Track.AlbumID != albumID {
+			continue
+		}
+		seen++
+		if r.Track.AlbumArtworkVersion != want {
+			t.Errorf("home track albumArtworkVersion = %q, want %q", r.Track.AlbumArtworkVersion, want)
+		}
+	}
+	if seen == 0 {
+		t.Errorf("no OK Computer track in /home recentlyAdded: %+v", home.RecentlyAdded)
+	}
+}

@@ -1412,7 +1412,8 @@ func handleGetTitle(deps Deps) http.HandlerFunc {
 		// For a Track, attach its Artist/Album/disc/track parent context.
 		if d.Kind == "track" {
 			if c, err := svc.TrackContext(d.ID); err == nil {
-				out.Track = toTrackContext(c)
+				versions, _ := svc.EntityArtworkVersions(store.EntityAlbum, []string{c.AlbumID})
+				out.Track = toTrackContext(c, versions[c.AlbumID])
 			}
 		}
 		writeJSON(w, http.StatusOK, out)

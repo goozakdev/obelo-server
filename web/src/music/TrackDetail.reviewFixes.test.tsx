@@ -121,4 +121,14 @@ describe("R06-11 track hero artwork", () => {
     const img = await screen.findByTestId("poster-img");
     expect(img.getAttribute("src")).toBe("/api/v1/albums/al1/artwork");
   });
+
+  it("carries the album's artworkVersion so a re-fetched cover reloads", async () => {
+    getTitle.mockResolvedValue({
+      ...detail,
+      track: { ...detail.track, albumArtworkVersion: "v9" },
+    });
+    renderTrack();
+    const img = await screen.findByTestId("poster-img");
+    expect(img.getAttribute("src")).toBe("/api/v1/albums/al1/artwork?v=v9");
+  });
 });

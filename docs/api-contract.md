@@ -579,7 +579,7 @@ The full nested Title detail (`titleDetailJSON`): Editions → Files → Streams
   "cast"?: [ { "person", "role"?, "character"?, "kind"?, "personId"?, "photoVersion"? } ],
   "enrichmentStatus"?, "lockedFields"?, "identityKey"?, "displayTitle"?,
   "episode"?: { "showId", "showTitle", "showYear"?, "seasonId", "seasonNumber", "episodeNumber"?, "episodeLabel"? },
-  "track"?: { "artistId", "artistName", "albumId", "albumTitle", "albumYear"?, "discNumber"?, "trackNumber"? }
+  "track"?: { "artistId", "artistName", "albumId", "albumTitle", "albumYear"?, "discNumber"?, "trackNumber"?, "albumArtworkVersion"? }
 }
 ```
 

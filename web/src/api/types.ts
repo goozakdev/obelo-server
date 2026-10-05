@@ -1797,6 +1797,8 @@ export interface TrackContext {
   albumYear?: number;
   discNumber?: number;
   trackNumber?: number;
+  /** The album cover's cache-bust token; absent for a local-only cover. */
+  albumArtworkVersion?: string;
 }
 
 // --- Collections surface (collections-playlists-ui issue 01) ----------------

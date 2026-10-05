@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/goozakdev/obelo-server/internal/catalog"
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // GET /api/v1/home (issue 08, extended tv-music/02): the per-User computed Home
@@ -69,7 +70,7 @@ type homeResponse struct {
 	RecentlyAdded    []homeTitleJSON `json:"recentlyAdded"`
 }
 
-func toHomeTitle(t catalog.HomeTitle, linked linkedState) homeTitleJSON {
+func toHomeTitle(t catalog.HomeTitle, linked linkedState, albumVersions map[string]string) homeTitleJSON {
 	isLinked, available, server := linked.decorate(t.LibraryID)
 	j := homeTitleJSON{
 		Linked:           isLinked,
@@ -92,7 +93,7 @@ func toHomeTitle(t catalog.HomeTitle, linked linkedState) homeTitleJSON {
 		j.Episode = toEpisodeContext(*t.Episode)
 	}
 	if t.Track != nil {
-		j.Track = toTrackContext(*t.Track)
+		j.Track = toTrackContext(*t.Track, albumVersions[t.Track.AlbumID])
 	}
 	return j
 }
@@ -118,19 +119,29 @@ func handleHome(deps Deps) http.HandlerFunc {
 		// One read of the mirror state for the whole payload — three rows of up to
 		// 20 Titles each share it, rather than one lookup per row.
 		linked := loadLinkedState(deps)
+		// One bulk read of the albums' cover versions for every Track row.
+		var albumIDs []string
+		for _, row := range [][]catalog.HomeTitle{cw.Titles, un.Titles, ra.Titles} {
+			for _, t := range row {
+				if t.Track != nil {
+					albumIDs = append(albumIDs, t.Track.AlbumID)
+				}
+			}
+		}
+		albumVersions, _ := svc.EntityArtworkVersions(store.EntityAlbum, albumIDs)
 		out := homeResponse{
 			ContinueWatching: make([]homeTitleJSON, 0, len(cw.Titles)),
 			UpNext:           make([]homeTitleJSON, 0, len(un.Titles)),
 			RecentlyAdded:    make([]homeTitleJSON, 0, len(ra.Titles)),
 		}
 		for _, t := range cw.Titles {
-			out.ContinueWatching = append(out.ContinueWatching, toHomeTitle(t, linked))
+			out.ContinueWatching = append(out.ContinueWatching, toHomeTitle(t, linked, albumVersions))
 		}
 		for _, t := range un.Titles {
-			out.UpNext = append(out.UpNext, toHomeTitle(t, linked))
+			out.UpNext = append(out.UpNext, toHomeTitle(t, linked, albumVersions))
 		}
 		for _, t := range ra.Titles {
-			out.RecentlyAdded = append(out.RecentlyAdded, toHomeTitle(t, linked))
+			out.RecentlyAdded = append(out.RecentlyAdded, toHomeTitle(t, linked, albumVersions))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
