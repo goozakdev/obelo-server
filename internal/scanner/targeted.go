@@ -136,9 +136,11 @@ func (s *Service) keepUnreadable(libraryID string, unm []store.UnmatchedFile) er
 
 // scanScope is the Targeted analogue of scanRoots: it walks the scope's folders
 // (per lib.Kind), soft-deletes within scope, and recomputes hidden state. It
-// deliberately does NOT touch the Library's Unmatched list or run the override
+// deliberately does NOT rewrite the Library's Unmatched list or run the override
 // orphan-surfacing pass — both are whole-Library operations a narrow scan has no
-// business rewriting (ADR-0031); a full scan owns them.
+// business rewriting (ADR-0031); a full scan owns them. The one thing it adds to
+// that list is the files it found Unreadable (keepUnreadable), without clearing
+// or replacing any other row.
 func (s *Service) scanScope(ctx context.Context, lib store.Library, scope TargetedScope, onProgress func(Progress)) (TargetedResult, error) {
 	sc := &scanCtx{
 		mode:      ModeIncremental, // Targeted scan is always incremental (Q9: one "Scan" action)

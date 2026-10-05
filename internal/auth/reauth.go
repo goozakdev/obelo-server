@@ -162,8 +162,10 @@ func (s *Service) ReauthExternal(userID, session, providerID string, answer Exte
 }
 
 // takeReauthGrant spends raw — whoever presents it, so a grant is tried once —
-// and reports whether it was live and minted for userID on session. restore puts
-// the grant back as it was, if it is still live and has not been presented since.
+// and reports whether it was live and minted for userID on session. A grant that
+// was not live, or not this caller's, is spent all the same and restore is nil.
+// restore, for one that was taken, puts the grant back as it was if it has not
+// expired; it does not check whether anything presented the grant in between.
 func (s *Service) takeReauthGrant(raw, userID, session string) (restore func(), ok bool) {
 	if raw == "" || userID == "" || session == "" {
 		return nil, false
