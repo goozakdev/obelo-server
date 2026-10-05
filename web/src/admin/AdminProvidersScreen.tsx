@@ -105,9 +105,10 @@ export default function AdminProvidersScreen() {
   const [view, setView] = useState<MetadataProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsDraft | null>(null);
-  // Whether a provider toggle request is in flight (disables every toggle), and the
-  // last inline error for a row whose immediate save was refused.
-  const [toggling, setToggling] = useState(false);
+  // Whether ANY write (a toggle, Save settings, a dialog save, the consent re-read)
+  // is in flight — it disables every write control — and the last inline error for
+  // a row whose immediate save was refused.
+  const [busy, setBusy] = useState(false);
   const [rowError, setRowError] = useState<Record<string, string | null>>({});
   // The provider whose configuration dialog is open (null = none).
   const [editing, setEditing] = useState<MetadataProvider | null>(null);
@@ -116,11 +117,15 @@ export default function AdminProvidersScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Toggles are serialized: while one request is in flight every provider toggle
-  // is disabled, so its response (the whole view) is authoritative. The ref guards
-  // a second change event arriving before the disabled state has rendered; `alive`
-  // stops a response that lands after unmount from touching state.
-  const toggleBusy = useRef(false);
+  // Writes are serialized screen-wide (D002 extended): while one is in flight every
+  // toggle, Save settings and the dialog Save are disabled, so its response (the
+  // whole view) is authoritative and no stale response can overwrite a newer one.
+  // The ref guards a second event arriving before the disabled state has rendered;
+  // `alive` stops a response that lands after unmount from touching state. A consent
+  // decision that lands mid-write only sets `pendingReread`; the re-read is sent
+  // once the slot frees, so it can never be answered before a write it overlaps.
+  const writeBusy = useRef(false);
+  const pendingReread = useRef(false);
   const alive = useRef(true);
 
   // `keepDraft` re-reads the view without re-seeding the server-wide settings draft,
@@ -148,6 +153,37 @@ export default function AdminProvidersScreen() {
     };
   }, [load]);
 
+  // beginWrite claims the one write slot: null when a write is already in flight,
+  // otherwise a release function the caller must call when its request settles.
+  function beginWrite(): (() => void) | null {
+    if (writeBusy.current) return null;
+    writeBusy.current = true;
+    setBusy(true);
+    return () => {
+      writeBusy.current = false;
+      if (alive.current) setBusy(false);
+      if (pendingReread.current && alive.current) {
+        pendingReread.current = false;
+        void rereadAfterConsent();
+      }
+    };
+  }
+
+  // The consent decision's re-read of the view. It holds the write slot while in
+  // flight (so no write starts during it), or waits for the slot if one is taken.
+  async function rereadAfterConsent() {
+    const release = beginWrite();
+    if (!release) {
+      pendingReread.current = true;
+      return;
+    }
+    try {
+      await load(undefined, true);
+    } finally {
+      release();
+    }
+  }
+
   function patchSettings(update: (d: SettingsDraft) => SettingsDraft) {
     setSettings((prev) => (prev ? update(prev) : prev));
     setSaved(false);
@@ -157,10 +193,9 @@ export default function AdminProvidersScreen() {
   // The checkbox is driven by the loaded view, so on a refused save the view is
   // untouched and the box simply stays where it was — we only surface the error.
   async function onToggle(p: MetadataProvider, enabled: boolean) {
-    if (toggleBusy.current) return;
-    toggleBusy.current = true;
+    const release = beginWrite();
+    if (!release) return;
     setRowError((prev) => ({ ...prev, [p.slug]: null }));
-    setToggling(true);
     try {
       const next = await apiClient.updateMetadataProviders({
         providers: [{ slug: p.slug, enabled }],
@@ -169,8 +204,7 @@ export default function AdminProvidersScreen() {
     } catch (err) {
       if (alive.current) setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
     } finally {
-      toggleBusy.current = false;
-      if (alive.current) setToggling(false);
+      release();
     }
   }
 
@@ -201,6 +235,8 @@ export default function AdminProvidersScreen() {
 
   async function onSaveSettings() {
     if (!view || !settings || saving) return;
+    const release = beginWrite();
+    if (!release) return;
     setSaving(true);
     setSaveError(null);
     setSaved(false);
@@ -215,6 +251,7 @@ export default function AdminProvidersScreen() {
       setSaveError(errorMessage(err));
     } finally {
       setSaving(false);
+      release();
     }
   }
 
@@ -264,7 +301,7 @@ export default function AdminProvidersScreen() {
       {/* Re-read the settings after a consent decision: the per-kind badges below
           are the server's GATED enablement, so they change the moment this switch
           does — with no restart and no page reload. */}
-      <EnrichmentConsentControl onDecision={() => void load(undefined, true)} />
+      <EnrichmentConsentControl onDecision={() => void rereadAfterConsent()} />
 
       {KIND_GROUPS.map(({ kind, label }) => {
         const inGroup = view.providers.filter((p) => p.kinds.includes(kind));
@@ -316,7 +353,7 @@ export default function AdminProvidersScreen() {
                         aria-label={`Enable ${p.name}`}
                         checked={p.enabled}
                         onChange={(e) => void onToggle(p, e.target.checked)}
-                        disabled={toggling}
+                        disabled={busy}
                       />
                       <span
                         className="provider-name"
@@ -417,7 +454,7 @@ export default function AdminProvidersScreen() {
           type="button"
           data-testid="save-providers-button"
           onClick={() => void onSaveSettings()}
-          disabled={saving}
+          disabled={saving || busy}
         >
           {saving ? "Saving…" : "Save settings"}
         </button>
@@ -447,6 +484,8 @@ export default function AdminProvidersScreen() {
           key={editing.slug}
           provider={editing}
           musicBrainzRateLimitMs={view.musicBrainzRateLimitMs}
+          writeBusy={busy}
+          beginWrite={beginWrite}
           onSaved={onProviderSaved}
           onClose={() => setEditing(null)}
         />

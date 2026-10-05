@@ -670,4 +670,124 @@ describe("AdminProvidersScreen — review fixes", () => {
 
     expect(screen.getByTestId("metadata-language-input")).toHaveValue("fr-FR");
   });
+
+  // D002 extended: every write on the screen shares one busy slot (toggle, Save
+  // settings, dialog save) and the consent re-read waits for it.
+  function onView(slug: string): MetadataProvidersView {
+    const v = view();
+    v.providers = v.providers.map((p) => (p.slug === slug ? { ...p, enabled: true } : p));
+    return v;
+  }
+
+  it("disables Save settings while a toggle is in flight and ignores a click (toggle vs Save)", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    const lang = await screen.findByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "fr-FR");
+    await user.click(screen.getByTestId("provider-toggle-musicbrainz"));
+    expect(screen.getByTestId("save-providers-button")).toBeDisabled();
+    await user.click(screen.getByTestId("save-providers-button"));
+    expect(updateMetadataProviders).toHaveBeenCalledTimes(1);
+
+    a.resolve(onView("musicbrainz"));
+    await waitFor(() => expect(screen.getByTestId("save-providers-button")).toBeEnabled());
+  });
+
+  it("disables every toggle while Save settings is in flight (Save vs toggle)", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    const lang = await screen.findByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "fr-FR");
+    await user.click(screen.getByTestId("save-providers-button"));
+    for (const slug of ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"]) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).toBeDisabled();
+    }
+    a.resolve(view({ metadataLanguage: "fr-FR" }));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
+  });
+
+  it("disables the dialog Save while a toggle is in flight and ignores a click (toggle vs dialog save)", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(screen.getByTestId("provider-edit-tmdb"));
+    await user.type(await screen.findByTestId("provider-key-input-tmdb"), "k");
+    expect(screen.getByTestId("provider-config-save-tmdb")).toBeDisabled();
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
+    expect(updateMetadataProviders).toHaveBeenCalledTimes(1);
+
+    a.resolve(onView("musicbrainz"));
+    await waitFor(() => expect(screen.getByTestId("provider-config-save-tmdb")).toBeEnabled());
+  });
+
+  it("disables every toggle while a dialog save is in flight (dialog save vs toggle)", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-edit-tmdb"));
+    await user.type(await screen.findByTestId("provider-key-input-tmdb"), "k");
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
+    for (const slug of ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"]) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).toBeDisabled();
+    }
+    a.resolve(view());
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
+  });
+
+  it("defers the consent re-read until an in-flight toggle settles (toggle vs consent re-read)", async () => {
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    getMetadataProviders
+      .mockResolvedValueOnce(view())
+      .mockResolvedValue(onView("musicbrainz"));
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    // The decision landed mid-toggle: no re-read may be sent (it could race the write).
+    expect(getMetadataProviders).toHaveBeenCalledTimes(1);
+
+    a.resolve(onView("musicbrainz"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeEnabled());
+    expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeChecked();
+  });
+
+  it("disables writes while the consent re-read is in flight and keeps its result (re-read vs toggle)", async () => {
+    const r = deferred<MetadataProvidersView>();
+    getMetadataProviders.mockResolvedValueOnce(view()).mockReturnValueOnce(r.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("provider-toggle-tmdb")).toBeDisabled();
+    expect(screen.getByTestId("save-providers-button")).toBeDisabled();
+
+    r.resolve(onView("tmdb"));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
+    expect(screen.getByTestId("provider-toggle-tmdb")).toBeChecked();
+  });
 });

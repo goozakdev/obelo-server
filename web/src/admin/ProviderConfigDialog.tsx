@@ -34,6 +34,8 @@ export default function ProviderConfigDialog({
   musicBrainzRateLimitMs,
   onSaved,
   onClose,
+  writeBusy = false,
+  beginWrite,
 }: {
   provider: MetadataProvider;
   /** The current server-wide request throttle (ms). Every provider's dialog shows
@@ -47,6 +49,11 @@ export default function ProviderConfigDialog({
   onSaved: (view: MetadataProvidersView) => void;
   /** Close without saving (ESC, backdrop, ✕, or Cancel). */
   onClose: () => void;
+  /** Another write on the enclosing screen is in flight: Save is disabled. */
+  writeBusy?: boolean;
+  /** Claims the screen's one write slot (null = taken); the returned release must
+   * run when the save settles. Omitted = the dialog is the only writer. */
+  beginWrite?: () => (() => void) | null;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const p = provider;
@@ -107,6 +114,8 @@ export default function ProviderConfigDialog({
       onClose();
       return;
     }
+    const release = beginWrite ? beginWrite() : () => {};
+    if (!release) return;
     setSaving(true);
     setError(null);
     try {
@@ -116,6 +125,8 @@ export default function ProviderConfigDialog({
     } catch (err) {
       setError(errorMessage(err));
       setSaving(false);
+    } finally {
+      release();
     }
   }
 
@@ -336,7 +347,7 @@ export default function ProviderConfigDialog({
             type="button"
             data-testid={`provider-config-save-${p.slug}`}
             onClick={() => void onSave()}
-            disabled={saving}
+            disabled={saving || writeBusy}
           >
             {saving ? "Saving…" : "Save"}
           </button>
