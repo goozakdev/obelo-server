@@ -381,6 +381,13 @@ func (n *tsnetNode) watch(ctx context.Context, srv *tsnet.Server, done chan<- st
 				n.publish(view.toStatus(time.Now()))
 			}
 		}
+		// A bus that connects and then ends at once would otherwise be re-watched in
+		// a hot loop; wait out the same second the WatchIPNBus error path does.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
 	}
 }
 
