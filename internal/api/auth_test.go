@@ -102,6 +102,26 @@ func TestSetupHappyPath(t *testing.T) {
 	}
 }
 
+// TestSetupMissingFieldsFixedMessage: a missing username/password is a 400 with a
+// fixed client-facing message, not the service's raw error text ("auth: ...").
+func TestSetupMissingFieldsFixedMessage(t *testing.T) {
+	t.Parallel()
+	srv := testharness.New(t)
+
+	var env errorEnvelope
+	status, body := srv.JSON(http.MethodPost, "/api/v1/setup", "", map[string]any{
+		"claimToken": srv.ClaimToken(),
+		"username":   "",
+		"password":   "",
+	}, &env)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", status, body)
+	}
+	if env.Error.Message != "username and password are required" {
+		t.Errorf("message = %q, want the fixed %q", env.Error.Message, "username and password are required")
+	}
+}
+
 // TestSetupWrongToken: a wrong claim token is rejected and no Admin is created
 // (setupRequired stays true, so a subsequent correct setup still works).
 func TestSetupWrongToken(t *testing.T) {
