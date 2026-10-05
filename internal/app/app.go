@@ -1626,6 +1626,7 @@ func (a *App) runEnrichWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case req := <-a.enrichQueue:
+			a.noteEnrichStart(req.libraryID, req.mode)
 			res, err := a.runEnrichPass(ctx, req.libraryID, req.mode)
 			a.settleEnrichPass(req.libraryID, res, err, true)
 		}
