@@ -542,6 +542,25 @@ type localArrangement struct {
 type libraryFileState struct {
 	decisions map[string]store.FileDecisions
 	unmatched []store.UnmatchedFile
+	// Both are bucketed by showFolderOf once, so a Show picks its own rows out by
+	// its folders instead of every Show re-scanning the whole Library's lists.
+	unmatchedAt map[string][]int    // folder → indexes into unmatched (Library order)
+	decisionsAt map[string][]string // folder → decided paths
+}
+
+// unmatchedIn returns the Library's Unmatched rows under any of folders, in the
+// Library's own order.
+func (l libraryFileState) unmatchedIn(folders map[string]bool) []store.UnmatchedFile {
+	var idx []int
+	for folder := range folders {
+		idx = append(idx, l.unmatchedAt[folder]...)
+	}
+	sort.Ints(idx)
+	out := make([]store.UnmatchedFile, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, l.unmatched[i])
+	}
+	return out
 }
 
 func (s *Service) libraryFileState(libraryID string) (libraryFileState, error) {
@@ -555,6 +574,16 @@ func (s *Service) libraryFileState(libraryID string) (libraryFileState, error) {
 	if err != nil {
 		return out, err
 	}
+	out.unmatchedAt = map[string][]int{}
+	for i, u := range out.unmatched {
+		folder := showFolderOf(u.Path)
+		out.unmatchedAt[folder] = append(out.unmatchedAt[folder], i)
+	}
+	out.decisionsAt = map[string][]string{}
+	for path := range out.decisions {
+		folder := showFolderOf(path)
+		out.decisionsAt[folder] = append(out.decisionsAt[folder], path)
+	}
 	return out, nil
 }
 
@@ -563,20 +592,25 @@ func (s *Service) localArrangement(sh store.Show) (localArrangement, error) {
 	if err != nil {
 		return localArrangement{}, err
 	}
-	return s.showArrangement(sh, lib)
+	return s.showArrangement(sh, lib, true)
 }
 
-func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArrangement, error) {
+// showArrangement reads one Show's arrangement. withSlots loads the Show's Episode
+// slots, which only the matcher screen reads; the Needs-Fixing queue passes false
+// and skips a query per Show.
+func (s *Service) showArrangement(sh store.Show, lib libraryFileState, withSlots bool) (localArrangement, error) {
 	var out localArrangement
 
 	showFiles, err := s.store.ShowFiles(sh.ID)
 	if err != nil {
 		return out, err
 	}
-	decisions, unmatched := lib.decisions, lib.unmatched
-	out.episodes, err = s.store.ShowEpisodeSlots(sh.ID)
-	if err != nil {
-		return out, err
+	decisions := lib.decisions
+	if withSlots {
+		out.episodes, err = s.store.ShowEpisodeSlots(sh.ID)
+		if err != nil {
+			return out, err
+		}
 	}
 
 	// The Show's folders, derived exactly as Apply derives them, so the read and the
@@ -619,10 +653,7 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 	// the matcher is for (PRD user story 7).
 	reasons := map[string]string{}
 	unreadable := map[string]bool{}
-	for _, u := range unmatched {
-		if !folders[showFolderOf(u.Path)] {
-			continue
-		}
+	for _, u := range lib.unmatchedIn(folders) {
 		candidates[u.Path] = true
 		present[u.Path] = true
 		reasons[u.Path] = u.Reason
@@ -635,11 +666,10 @@ func (s *Service) showArrangement(sh store.Show, lib libraryFileState) (localArr
 	// would make a File disappear the moment the Admin took it off its Slot. It
 	// covers placed decisions too, which is what surfaces an ORPHANED Placement and
 	// a Deferred one — neither has a Title yet.
-	for path := range decisions {
-		if !folders[showFolderOf(path)] {
-			continue
+	for folder := range folders {
+		for _, path := range lib.decisionsAt[folder] {
+			candidates[path] = true
 		}
-		candidates[path] = true
 	}
 
 	paths := sortedPaths(candidates)

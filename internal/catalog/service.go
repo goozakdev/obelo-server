@@ -1107,13 +1107,22 @@ func (s *Service) Episodes(scope access.Scope, seasonID string) (store.Season, [
 	if err != nil {
 		return store.Season{}, nil, err
 	}
-	// A Season carries no library_id of its own; its Episodes (Titles) do, and a
-	// Season's Episodes all share one Library — so a single check on the first
-	// Episode hides a Season in an inaccessible Library as 404. The Season's parent
-	// Show is also rating-gated, so a direct hit on a hidden Show's Season 404s too
-	// (not just via the grid). No-op under an all-access scope.
-	if len(eps) > 0 && !scope.AllowsLibrary(eps[0].LibraryID) {
-		return store.Season{}, nil, ErrNotFound
+	// A Season carries no library_id of its own; its parent Show does. Checking the
+	// Show rather than the first Episode means a Season with no visible Episodes in
+	// an inaccessible Library is still a 404 and not a header leak. The Show is
+	// also rating-gated, so a direct hit on a hidden Show's Season 404s too (not
+	// just via the grid). No-op under an all-access scope.
+	if !scope.AllLibraries {
+		show, err := s.store.ShowByID(season.ShowID)
+		if errors.Is(err, store.ErrNotFound) {
+			return store.Season{}, nil, ErrNotFound
+		}
+		if err != nil {
+			return store.Season{}, nil, err
+		}
+		if !scope.AllowsLibrary(show.LibraryID) {
+			return store.Season{}, nil, ErrNotFound
+		}
 	}
 	if !s.showRatingAllowed(scope, season.ShowID) {
 		return store.Season{}, nil, ErrNotFound
@@ -1232,18 +1241,25 @@ func (s *Service) Tracks(scope access.Scope, albumID string) (store.Album, store
 	if err != nil {
 		return store.Album{}, store.Artist{}, nil, err
 	}
-	// An Album carries no library_id of its own; its Tracks (Titles) do and share
-	// one Library, so a single check on the first Track hides an Album in an
-	// inaccessible Library as 404. No-op under an all-access scope.
-	if len(tracks) > 0 && !scope.AllowsLibrary(tracks[0].LibraryID) {
-		return store.Album{}, store.Artist{}, nil, ErrNotFound
-	}
 	// The parent Artist supplies the album header's artist name/link. A missing
 	// Artist row (data integrity) degrades to an empty Artist rather than failing
 	// the whole listing.
 	artist, err := s.store.ArtistByID(album.ArtistID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.Album{}, store.Artist{}, nil, err
+	}
+	// An Album carries no library_id of its own; its Artist does (and its Tracks
+	// share it). Checking the Artist rather than the first Track means an Album
+	// with no Tracks in an inaccessible Library is still a 404, not a header leak.
+	// Without an Artist row the first Track is the fallback. No-op under an
+	// all-access scope.
+	switch {
+	case artist.ID != "":
+		if !scope.AllowsLibrary(artist.LibraryID) {
+			return store.Album{}, store.Artist{}, nil, ErrNotFound
+		}
+	case len(tracks) > 0 && !scope.AllowsLibrary(tracks[0].LibraryID):
+		return store.Album{}, store.Artist{}, nil, ErrNotFound
 	}
 	return album, artist, tracks, nil
 }
