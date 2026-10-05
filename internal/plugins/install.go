@@ -552,6 +552,16 @@ func (m *Manager) uninstall(ctx context.Context, id string) error {
 	bundledRow := m.rowOrigin(id) == OriginBundled
 	if m.store != nil {
 		if err := m.store.DeletePlugin(id); err != nil {
+			// The row stays, so the files must too: put them back as
+			// uninstallSignIn does, rather than orphan the trash directory.
+			if trash != "" {
+				if rerr := os.Rename(trash, dir); rerr != nil {
+					m.logf("obelo: plugin %s could not be put back after a failed uninstall: %v", id, rerr)
+				}
+			}
+			if rerr := m.rebuild(ctx); rerr != nil {
+				m.logf("obelo: plugin %s: the plugins were not re-read after a failed uninstall: %v", id, rerr)
+			}
 			return err
 		}
 		if bundledRow {
