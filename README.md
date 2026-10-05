@@ -345,7 +345,7 @@ end of the socket is an address you listed. Without the setting it uses the
 connection's real peer address and the connection's real scheme, which is always
 true and sometimes less useful.
 
-Setting it turns two things back on:
+Setting it turns three things back on:
 
 - **Per-client rate limits.** The failed-login limiter, the TV sign-in code
   quota and the limits on redirect sign-in (a Sign-in provider's "Sign in with…"
@@ -357,6 +357,14 @@ Setting it turns two things back on:
 - **The session cookie's `Secure` flag on the proxy's HTTPS.** Undeclared, Obelo
   sees a plain-HTTP request and marks the cookie accordingly. Nothing breaks — the
   cookie still travels inside your proxy's TLS — but it is not flagged.
+- **The host in the OAuth `redirect_uri`.** A Sign-in provider's "Sign in with…"
+  button tells the identity provider to return to the origin the request arrived
+  on. Obelo believes `X-Forwarded-Host` for that only from a listed proxy; from
+  anyone else it is ignored and the request's own `Host` header is used. Undeclared,
+  then, your proxy must pass the original host through (nginx:
+  `proxy_set_header Host $host;`, Apache: `ProxyPreserveHost On`), or the
+  `redirect_uri` is built from the upstream address and the identity provider
+  refuses it. Whichever you do, register that exact URI with the provider.
 
 **Only list a proxy you control.** Every host inside a range you name is allowed
 to tell Obelo what address a request came from, which means it can also *lie*
