@@ -681,6 +681,11 @@ func writeTitleSubtree(tx *sql.Tx, titleID string, tree TitleTree, written map[s
 		}
 		existing[path] = fm
 	}
+	// A partial map would hand a File a fresh id/added_at as if it were new.
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("store: reading existing files: %w", err)
+	}
 	_ = rows.Close()
 
 	// Drop the subtree (files/streams cascade off editions; extras direct).

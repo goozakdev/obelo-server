@@ -113,6 +113,12 @@ func underAny(path string, prefixes []string) bool {
 // hide real content on a spurious blip — the subtree analogue of the
 // unreachable-root guard (ADR-0008).
 func (db *DB) MarkFilesMissing(libraryID string, seenPaths map[string]bool, unresolvedDirs []string) (int, error) {
+	return db.markFilesMissing(libraryID, nil, seenPaths, unresolvedDirs)
+}
+
+// markFilesMissing is the shared body of MarkFilesMissing and MarkFilesMissingUnder:
+// scopeDirs nil means the whole Library, otherwise only Files under one of them.
+func (db *DB) markFilesMissing(libraryID string, scopeDirs []string, seenPaths map[string]bool, unresolvedDirs []string) (int, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("store: begin mark missing: %w", err)
@@ -134,9 +140,18 @@ func (db *DB) MarkFilesMissing(libraryID string, seenPaths map[string]bool, unre
 			_ = rows.Close()
 			return 0, fmt.Errorf("store: scanning present file: %w", err)
 		}
+		if scopeDirs != nil && !underAny(path, scopeDirs) {
+			continue
+		}
 		if !seenPaths[path] && !underAny(path, unresolvedDirs) {
 			toMiss = append(toMiss, id)
 		}
+	}
+	// A mid-iteration error must not commit a partial "missing" set as if it were
+	// the whole Library.
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("store: scanning present files: %w", err)
 	}
 	_ = rows.Close()
 
@@ -163,42 +178,7 @@ func (db *DB) MarkFilesMissingUnder(libraryID string, scopeDirs []string, seenPa
 	if len(scopeDirs) == 0 {
 		return 0, nil
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("store: begin mark missing under: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	rows, err := tx.Query(
-		`SELECT f.id, f.path FROM files f
-		   JOIN editions e ON f.edition_id = e.id
-		   JOIN titles   t ON e.title_id   = t.id
-		  WHERE t.library_id = ? AND f.present = 1`, libraryID)
-	if err != nil {
-		return 0, fmt.Errorf("store: scanning present files: %w", err)
-	}
-	var toMiss []string
-	for rows.Next() {
-		var id, path string
-		if err := rows.Scan(&id, &path); err != nil {
-			_ = rows.Close()
-			return 0, fmt.Errorf("store: scanning present file: %w", err)
-		}
-		if underAny(path, scopeDirs) && !seenPaths[path] && !underAny(path, unresolvedDirs) {
-			toMiss = append(toMiss, id)
-		}
-	}
-	_ = rows.Close()
-
-	for _, id := range toMiss {
-		if _, err := tx.Exec(`UPDATE files SET present = 0 WHERE id = ?`, id); err != nil {
-			return 0, fmt.Errorf("store: marking file missing: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("store: commit mark missing under: %w", err)
-	}
-	return len(toMiss), nil
+	return db.markFilesMissing(libraryID, scopeDirs, seenPaths, unresolvedDirs)
 }
 
 // RecomputeHiddenTitles sets each Title's hidden flag to reflect whether all its
