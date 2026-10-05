@@ -465,11 +465,19 @@ func (s *Service) RelayEndSession(ctx context.Context, linkID, remoteSessionID s
 	}
 	// The origin walk is the negotiation's and the sweep's (originsFor): the address
 	// that worked last first, then the rest, until one takes the request. Each gets
-	// its own bounded attempt, so one that hangs cannot use up the others'.
+	// its own bounded attempt, so one that hangs cannot use up the others': when the
+	// caller's deadline is nearer than the call timeout, each attempt gets an even
+	// share of what remains.
 	client := s.client()
 	var lastErr error
-	for _, origin := range origins {
-		actx, cancel := context.WithTimeout(ctx, s.callTimeout())
+	for i, origin := range origins {
+		budget := s.callTimeout()
+		if dl, ok := ctx.Deadline(); ok {
+			if share := time.Until(dl) / time.Duration(len(origins)-i); share < budget {
+				budget = share
+			}
+		}
+		actx, cancel := context.WithTimeout(ctx, budget)
 		lastErr = s.call(actx, client, http.MethodDelete,
 			origin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
 		cancel()

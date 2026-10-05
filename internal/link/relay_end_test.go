@@ -94,3 +94,45 @@ func TestRelayEndSessionGivesEachOriginItsOwnAttempt(t *testing.T) {
 		t.Errorf("the live origin saw %v, want one DELETE of the session", deleted)
 	}
 }
+
+// TestRelayEndSessionSplitsTheCallersDeadline: production callers cap the whole
+// call well under the per-origin timeout, so a hung first origin must not use
+// the caller's whole deadline and leave the next origin an expired context.
+func TestRelayEndSessionSplitsTheCallersDeadline(t *testing.T) {
+	release := make(chan struct{})
+	hung := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(hung.Close)
+	t.Cleanup(func() { close(release) })
+
+	var mu sync.Mutex
+	var deleted []string
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		deleted = append(deleted, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(live.Close)
+
+	st := &memStore{links: []store.Link{{
+		ID: "l1", ServerID: "sharer", ServerName: "Sharer", Origins: []string{hung.URL, live.URL},
+		ActiveOrigin: hung.URL, Token: "tok", State: store.LinkStateConnected,
+	}}}
+	svc := newService(t, st, Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := svc.RelayEndSession(ctx, "l1", "rs1"); err != nil {
+		t.Fatalf("RelayEndSession with a hung first origin under a 2s deadline: %v", err)
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Errorf("took %v, want the hung origin held to its share of the 2s deadline", took)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/sessions/rs1") {
+		t.Errorf("the live origin saw %v, want one DELETE of the session", deleted)
+	}
+}
