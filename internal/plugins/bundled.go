@@ -138,6 +138,18 @@ func InstallFiles(dir, id string, manifestRaw, module []byte) error {
 	if err := os.Rename(filepath.Join(staged, ManifestFile), filepath.Join(target, ManifestFile)); err != nil {
 		return fmt.Errorf("plugins: replacing the manifest of %s: %w", id, err)
 	}
+	// A newer build may have renamed its module, and an earlier copy may have
+	// left a signature file the new manifest no longer covers. Neither belongs to
+	// this version; the module and manifest are now in place, so sweeping the rest
+	// cannot lose anything the plugin needs.
+	if entries, err := os.ReadDir(target); err == nil {
+		for _, e := range entries {
+			if e.Name() == name || e.Name() == ManifestFile {
+				continue
+			}
+			_ = os.RemoveAll(filepath.Join(target, e.Name()))
+		}
+	}
 	return nil
 }
 
