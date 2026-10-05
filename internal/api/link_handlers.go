@@ -92,9 +92,10 @@ func toLinkLibraries(libs []store.Library) []linkLibraryJSON {
 	return out
 }
 
-// linkWithLibraries reads a Link's mirrored shelves for the wire. A read failure
-// is reported as "none": the Link itself is the answer this endpoint owes, and
-// losing the whole list because one join failed helps nobody.
+// linkWithLibraries reads one Link's mirrored shelves for the wire (the
+// single-Link responses; the list reads every Link's in one call). A read
+// failure is reported as "none": the Link itself is the answer this endpoint
+// owes, and losing the whole list because one join failed helps nobody.
 func linkWithLibraries(deps Deps, l store.Link) linkJSON {
 	libs, err := deps.Links.Libraries(l.ID)
 	if err != nil {
@@ -171,9 +172,22 @@ func handleListLinks(deps Deps) http.HandlerFunc {
 				"could not list linked servers", nil)
 			return
 		}
+		ids := make([]string, 0, len(links))
+		for _, l := range links {
+			ids = append(ids, l.ID)
+		}
+		libs, err := deps.Links.LibrariesByLink(ids)
+		if err != nil {
+			// Still "none" on the wire: the Links are the answer this endpoint owes,
+			// and losing them because the join failed helps nobody. But logged, so a
+			// transient read error is not indistinguishable, to the operator, from
+			// the sharer granting nothing.
+			log.Printf("obelo: api: reading libraries of links: %v", err)
+			libs = nil
+		}
 		out := make([]linkJSON, 0, len(links))
 		for _, l := range links {
-			out = append(out, linkWithLibraries(deps, l))
+			out = append(out, toLinkJSON(l, libs[l.ID]))
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
