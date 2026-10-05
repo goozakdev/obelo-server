@@ -4,12 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { apiClient, type ApiClient } from "../api/client";
-import { NetworkError } from "../api/errors";
-import { useOptionalFeature } from "../serverInfoContext";
+import { ApiError } from "../api/errors";
+import { appEvents } from "../events/enrichEvents";
+import { useOptionalFeature, useOptionalServerState } from "../serverInfoContext";
 import { browserDevice } from "./clientId";
 import { forgetReauthGrant } from "./reauthGrant";
 import type { LoginResult, Role, SignInProvider, User } from "../api/types";
@@ -83,9 +85,6 @@ interface AuthContextValue {
   /** Log out: revoke server-side, clear token + media cookie + local session. The
    * user stays a Known roster entry (demoted from Signed-in) for quick re-login. */
   logout(): Promise<void>;
-  /** Adopt a fresh login result directly (e.g. an auto-login right after setup,
-   * if a screen chooses to). The client has already stored the token. */
-  adopt(result: LoginResult): void;
   /** The other remembered Users for this server (excludes the active user) — the
    * switch-user surface. Each carries whether it can switch instantly (`signedIn`)
    * or must re-authenticate. */
@@ -184,6 +183,17 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   // there the flag simply reads false and the switch skips the refresh, exactly as
   // it should against a server too old to advertise the route.
   const canRefreshMediaCookie = useOptionalFeature("mediaCookieRefresh");
+  // The shared GET /server handshake, when mounted under ServerInfoProvider (null
+  // in bare unit tests). Reused for the roster key instead of a second request.
+  const handshake = useOptionalServerState();
+  // Latest session / roster key for the 401 handler, which is registered once and
+  // must not re-register on every session change.
+  const sessionRef = useRef<Session | null>(null);
+  const serverIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    sessionRef.current = session;
+    serverIdRef.current = serverId;
+  }, [session, serverId]);
 
   // Every change of hands forgets a kept re-auth grant (reauthGrant.ts): it was
   // the previous User's, from the previous session.
@@ -199,6 +209,14 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   // leaves the roster on its stored key. Persisted so a later authed load (which
   // never renders the login gates) still keys the roster correctly.
   useEffect(() => {
+    if (handshake) {
+      // Shared handshake: take the id from it once it answers, no request of our own.
+      if (handshake.status === "ready" && handshake.info?.id) {
+        saveServerId(handshake.info.id);
+        setServerId(handshake.info.id);
+      }
+      return;
+    }
     if (typeof client.getServerInfo !== "function") return;
     const controller = new AbortController();
     let active = true;
@@ -222,7 +240,7 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       active = false;
       controller.abort();
     };
-  }, [client]);
+  }, [client, handshake]);
 
   // Hydrate from storage once on mount: if a token AND a stored user exist, we
   // resume the session optimistically, then fire a lightweight authenticated
@@ -249,10 +267,20 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
   // Register THE single 401 handler: any unauthorized response anywhere clears
   // the session. The route guards observe `session === null` and redirect to
   // /login. Re-registered if the client instance changes (tests).
+  // The server has refused this User's token, so they are no longer an instant
+  // switch target: demote their roster entry too (only here, not in
+  // clearActiveSession, which keeps the retained token on purpose).
   useEffect(() => {
-    client.setUnauthorizedHandler(() => clearSession());
+    client.setUnauthorizedHandler(() => {
+      const uid = sessionRef.current?.user.id;
+      if (uid) {
+        demoteUser(window.localStorage, serverIdRef.current, uid);
+        bumpRoster();
+      }
+      clearSession();
+    });
     return () => client.setUnauthorizedHandler(undefined);
-  }, [client, clearSession]);
+  }, [client, clearSession, bumpRoster]);
 
   // Resolve the roster key (Server identity id), preferring live state but falling
   // back to storage and a one-off handshake so a login that races the mount probe
@@ -370,18 +398,6 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
     }
   }, [client, session, serverId, bumpRoster]);
 
-  const adopt = useCallback(
-    (result: LoginResult) => {
-      // The client stored the token durably by default; record a Signed-in entry.
-      forgetReauthGrant();
-      writeUser(result.user, true);
-      setSession({ token: result.token, user: result.user });
-      rememberUser(window.localStorage, serverId, result.user, result.token);
-      bumpRoster();
-    },
-    [serverId, bumpRoster],
-  );
-
   // Instant, auth-free switch to a Signed-in roster entry: adopt its retained
   // durable token + identity. The session swap re-keys the per-userId Queue/prefs
   // stores, tearing down the previous identity's active playback (ADR-0009). A
@@ -407,17 +423,22 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       // to advertise the route simply doesn't get the refresh (media falls back to
       // today's behaviour until the next real login). Best-effort — a failed refresh
       // must never break the switch (the JSON/browse path already works).
-      if (canRefreshMediaCookie && typeof client.refreshMediaCookie === "function") {
-        void client.refreshMediaCookie().catch(() => {
-          /* best-effort: leave the previous cookie rather than fail the switch */
-        });
-      }
+      const cookieRefreshed =
+        canRefreshMediaCookie && typeof client.refreshMediaCookie === "function"
+          ? client.refreshMediaCookie().catch(() => {
+              /* best-effort: leave the previous cookie rather than fail the switch */
+            })
+          : Promise.resolve();
+      // The open events stream is still authenticated as the previous User; reopen
+      // it once the cookie has flipped, so it carries the switched-in identity.
+      void cookieRefreshed.then(() => appEvents.reconnect());
       // Confirm the adopted token. A dead one 401s — the global handler clears the
       // session and the guard routes to /login — and we demote it to Known so it
-      // stops presenting as an instant switch. An offline probe is left alone.
+      // stops presenting as an instant switch. Only a refusal counts: an offline
+      // probe or a transient 5xx says nothing about the token.
       if (typeof client.verifySession === "function") {
         void client.verifySession().catch((err: unknown) => {
-          if (err instanceof NetworkError) return;
+          if (!(err instanceof ApiError && err.isUnauthorized)) return;
           demoteUser(window.localStorage, serverId, userId);
           bumpRoster();
         });
@@ -456,7 +477,6 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       startRedirectSignIn,
       completeRedirectSignIn,
       logout,
-      adopt,
       roster,
       switchTo,
       clearActiveSession: clearSession,
@@ -470,7 +490,6 @@ export function AuthProvider({ children, client = apiClient }: AuthProviderProps
       startRedirectSignIn,
       completeRedirectSignIn,
       logout,
-      adopt,
       roster,
       switchTo,
       clearSession,

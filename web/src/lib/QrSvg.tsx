@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { encodeQr, type EccLevel } from "./qr";
+import { encodeQr, QrTooLongError, type EccLevel } from "./qr";
 
 // An <svg> rendering of a QR symbol. SVG rather than a <canvas> for two reasons:
 // it is in the DOM (so a test can assert what was drawn without a pixel buffer,
@@ -44,7 +44,10 @@ export default function QrSvg({
         }
       }
       return { extent: size + QUIET_ZONE * 2, path, error: null as string | null };
-    } catch {
+    } catch (err) {
+      // Anything but "too long" is an encoder bug: let it surface rather than
+      // be reported as a length problem.
+      if (!(err instanceof QrTooLongError)) throw err;
       // Too long for a version-40 symbol. The string itself is still on screen
       // beside this, and it is the mechanism — the QR is the convenience
       // (ADR-0055, Consequences) — so this says so rather than blanking.

@@ -1,3 +1,4 @@
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/session";
 import { RequireAdmin, RequireAuth } from "./auth/guards";
@@ -5,22 +6,7 @@ import { ServerInfoProvider, useServerInfoContext } from "./serverInfoContext";
 import SetupScreen from "./screens/SetupScreen";
 import LoginScreen from "./screens/LoginScreen";
 import SignInCallbackScreen from "./screens/SignInCallbackScreen";
-import ProfileScreen from "./screens/ProfileScreen";
-import LinkScreen from "./screens/LinkScreen";
 import HomeScreen from "./screens/HomeScreen";
-import AdminScreen from "./screens/AdminScreen";
-import LibraryListScreen from "./browse/LibraryListScreen";
-import LibraryGridScreen from "./browse/LibraryGridScreen";
-import CollectionsScreen from "./browse/CollectionsScreen";
-import CollectionDetailScreen from "./browse/CollectionDetailScreen";
-import PlaylistsScreen from "./browse/PlaylistsScreen";
-import PlaylistDetailScreen from "./browse/PlaylistDetailScreen";
-import ShowDetailScreen from "./browse/ShowDetailScreen";
-import TitleDetailScreen from "./browse/TitleDetailScreen";
-import MusicLibraryScreen from "./music/MusicLibraryScreen";
-import ArtistDetailScreen from "./music/ArtistDetailScreen";
-import AlbumDetailScreen from "./music/AlbumDetailScreen";
-import TrackDetailScreen from "./music/TrackDetailScreen";
 import NowPlayingBar from "./player/NowPlayingBar";
 import MediaSessionBridge from "./player/MediaSessionBridge";
 import EnrichmentConsentGate from "./admin/EnrichmentConsentGate";
@@ -28,6 +14,26 @@ import { QueueProvider } from "./player/queue/useQueue";
 import { PlaybackTransportProvider } from "./player/transport";
 import { LibrariesProvider } from "./browse/librariesContext";
 import ScrollToTop from "./ScrollToTop";
+import { appEvents } from "./events/enrichEvents";
+
+// Route screens other than the login/setup/home shells load on demand, so a
+// first paint (and a Member, who can never open /admin) does not download and
+// parse every screen. Each import() becomes its own chunk.
+const ProfileScreen = lazy(() => import("./screens/ProfileScreen"));
+const LinkScreen = lazy(() => import("./screens/LinkScreen"));
+const AdminScreen = lazy(() => import("./screens/AdminScreen"));
+const LibraryListScreen = lazy(() => import("./browse/LibraryListScreen"));
+const LibraryGridScreen = lazy(() => import("./browse/LibraryGridScreen"));
+const CollectionsScreen = lazy(() => import("./browse/CollectionsScreen"));
+const CollectionDetailScreen = lazy(() => import("./browse/CollectionDetailScreen"));
+const PlaylistsScreen = lazy(() => import("./browse/PlaylistsScreen"));
+const PlaylistDetailScreen = lazy(() => import("./browse/PlaylistDetailScreen"));
+const ShowDetailScreen = lazy(() => import("./browse/ShowDetailScreen"));
+const TitleDetailScreen = lazy(() => import("./browse/TitleDetailScreen"));
+const MusicLibraryScreen = lazy(() => import("./music/MusicLibraryScreen"));
+const ArtistDetailScreen = lazy(() => import("./music/ArtistDetailScreen"));
+const AlbumDetailScreen = lazy(() => import("./music/AlbumDetailScreen"));
+const TrackDetailScreen = lazy(() => import("./music/TrackDetailScreen"));
 
 // App is the router root (issue 02): auth/first-run + the role gate + a minimal
 // authed landing. Browse, player, home rows, and admin screens are later issues.
@@ -72,6 +78,7 @@ export default function App() {
             shared so affordances outside the bar — e.g. an album track row's
             play/pause toggle — reflect and drive the current song. */}
         <PlaybackTransportProvider>
+        <Suspense fallback={<RouteLoading />}>
         <Routes>
           <Route path="/setup" element={<SetupGate />} />
           <Route path="/login" element={<LoginGate />} />
@@ -237,10 +244,16 @@ export default function App() {
               /login when not authenticated. Keeps bookmarks/deep links sane. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
         {/* The persistent player (ADR-0018 / now-playing-bar/01): mounted ONCE
             OUTSIDE <Routes> so it survives navigation — playback keeps going as
             the user browses. It renders nothing until a Queue is active. */}
         <NowPlayingBar />
+        {/* Holds the shared /events stream open for the whole signed-in session.
+            Each screen renders its own AppHeader (a listener), so without this the
+            stream would close and reopen on every navigation, losing any event in
+            the gap. */}
+        <EventsKeepAlive />
         {/* Media Session bridge (appletv-parity/11): mounted once, inside the
             Queue + Transport providers, so OS media keys / the lock screen /
             the browser media hub reflect and drive MUSIC playback. Renders
@@ -256,6 +269,15 @@ export default function App() {
       </ServerInfoProvider>
     </BrowserRouter>
   );
+}
+
+export function EventsKeepAlive() {
+  const { isAuthenticated } = useAuth();
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    return appEvents.subscribe(() => {});
+  }, [isAuthenticated]);
+  return null;
 }
 
 // SetupGate guards the setup screen with the live handshake: setup is only
@@ -296,6 +318,16 @@ function describe(
   state: { status: "unreachable"; message: string } | { status: "error"; code: string; message: string },
 ): string {
   return state.status === "error" ? `${state.code}: ${state.message}` : state.message;
+}
+
+function RouteLoading() {
+  return (
+    <div className="app-shell" data-testid="route-loading">
+      <main className="app-main">
+        <p className="status status-loading">Loading&hellip;</p>
+      </main>
+    </div>
+  );
 }
 
 function Connecting() {

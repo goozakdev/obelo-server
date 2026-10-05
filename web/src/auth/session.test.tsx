@@ -4,6 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./session";
 import { ApiClient } from "../api/client";
 import { ServerInfoStateProvider } from "../serverInfoContext";
+import { appEvents } from "../events/enrichEvents";
+import { getRosterEntry } from "./roster";
 import type { ServerState } from "../useServerInfo";
 import { QueueProvider, useQueue } from "../player/queue/useQueue";
 import { entryFromTitle } from "../player/queue/model";
@@ -38,6 +40,10 @@ interface Counts {
   /** POST /auth/media-cookie hits — the re-issue on an instant switch
    * (appletv-parity/12). Optional so the older tests need not thread it. */
   mediaCookie?: number;
+  /** GET /server hits (the handshake). */
+  server?: number;
+  /** Status the authed probe (GET /devices) answers with; default 200. */
+  devicesStatus?: number;
 }
 
 function makeFetch(counts: Counts): typeof fetch {
@@ -49,6 +55,7 @@ function makeFetch(counts: Counts): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
     if (url.endsWith("/api/v1/server")) {
+      counts.server = (counts.server ?? 0) + 1;
       return json({
         id: "srv-1",
         name: "Test",
@@ -73,7 +80,11 @@ function makeFetch(counts: Counts): typeof fetch {
       return new Response(null, { status: 204 });
     }
     if (url.endsWith("/api/v1/auth/logout")) return new Response(null, { status: 204 });
-    if (url.endsWith("/api/v1/devices")) return json({ devices: [] });
+    if (url.endsWith("/api/v1/devices")) {
+      const status = counts.devicesStatus ?? 200;
+      if (status !== 200) return json({ error: { code: `HTTP_${status}`, message: "no" } }, status);
+      return json({ devices: [] });
+    }
     if (url.endsWith("/api/v1/users")) {
       return json({
         users: [
@@ -274,6 +285,71 @@ describe("AuthProvider — roster switch-user", () => {
     expect(counts.mediaCookie).toBe(0);
   });
 
+  it("keeps a retained token when the confirming probe fails with a server error", async () => {
+    const counts: Counts = { login: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    renderApp(client);
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await click("login-ana-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ana"));
+
+    counts.devicesStatus = 503; // a transient proxy/server failure, not a revocation
+    await click("switch-ben");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await act(async () => {});
+
+    expect(getRosterEntry(window.localStorage, "srv-1", "u-ben")?.token).toBe("tok-ben");
+  });
+
+  it("demotes a retained token the server refuses on the confirming probe", async () => {
+    const counts: Counts = { login: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    renderApp(client);
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await click("login-ana-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ana"));
+
+    counts.devicesStatus = 401;
+    await click("switch-ben");
+    await waitFor(() => expect(getRosterEntry(window.localStorage, "srv-1", "u-ben")?.token).toBeFalsy());
+  });
+
+  it("demotes the current user's roster entry when the server revokes their token (global 401)", async () => {
+    const counts: Counts = { login: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    renderApp(client);
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    expect(getRosterEntry(window.localStorage, "srv-1", "u-ben")?.token).toBe("tok-ben");
+
+    counts.devicesStatus = 401;
+    await act(async () => {
+      await client.verifySession().catch(() => {});
+    });
+
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("none"));
+    // No longer an instant-switch target: picking it would bounce to /login.
+    expect(getRosterEntry(window.localStorage, "srv-1", "u-ben")?.token).toBeFalsy();
+  });
+
+  it("reconnects the events stream after a switch so it is not left on the previous user", async () => {
+    const reconnect = vi.spyOn(appEvents, "reconnect").mockImplementation(() => {});
+    const counts: Counts = { login: 0, mediaCookie: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    renderAppWithFeatures(client, { mediaCookieRefresh: true });
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    await click("login-ana-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ana"));
+    expect(reconnect).not.toHaveBeenCalled();
+
+    await click("switch-ben");
+    await waitFor(() => expect(counts.mediaCookie).toBe(1));
+    await waitFor(() => expect(reconnect).toHaveBeenCalledTimes(1));
+  });
+
   it("seeds Known entries from GET /users for an Admin", async () => {
     const client = new ApiClient({ fetchImpl: makeFetch({ login: 0 }) });
     renderApp(client);
@@ -287,6 +363,19 @@ describe("AuthProvider — roster switch-user", () => {
       expect(roster).toContain("ben:known");
       expect(roster).toContain("cy:known");
     });
+  });
+});
+
+describe("AuthProvider — shared handshake", () => {
+  it("takes the Server id from the shared handshake instead of fetching GET /server again", async () => {
+    const counts: Counts = { login: 0, server: 0 };
+    const client = new ApiClient({ fetchImpl: makeFetch(counts) });
+    renderAppWithFeatures(client, {});
+    await waitFor(() => expect(window.localStorage.getItem("obelo.serverId")).toBe("srv-1"));
+
+    await click("login-ben-remember");
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("ben"));
+    expect(counts.server).toBe(0);
   });
 });
 

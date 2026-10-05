@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "../auth/session";
 import type { ApiClient } from "../api/client";
+import { ServerInfoStateProvider } from "../serverInfoContext";
 
 // SetupScreen — first run (ADR-0013) plus the metadata-services decision that is
 // now a step of it (ADR-0032). The apiClient is the one seam; the router and the
@@ -51,11 +52,13 @@ function authStubClient(): ApiClient {
   } as unknown as ApiClient;
 }
 
-function renderSetup() {
+function renderSetup(refresh: () => void = () => {}) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <MemoryRouter initialEntries={["/setup"]}>
-        <AuthProvider client={authStubClient()}>{children}</AuthProvider>
+        <ServerInfoStateProvider state={{ status: "loading" }} refresh={refresh}>
+          <AuthProvider client={authStubClient()}>{children}</AuthProvider>
+        </ServerInfoStateProvider>
       </MemoryRouter>
     );
   }
@@ -206,6 +209,32 @@ describe("SetupScreen first-run metadata decision", () => {
     expect(await screen.findByTestId("setup-error")).toBeInTheDocument();
     expect(screen.queryByTestId("setup-metadata-step")).not.toBeInTheDocument();
     expect(getEnrichmentConsent).not.toHaveBeenCalled();
+  });
+
+  it("retries only the login when the admin was created but the login failed", async () => {
+    login.mockRejectedValueOnce(new Error("network blip"));
+    const user = userEvent.setup();
+    renderSetup();
+    await createAdmin(user);
+    expect(await screen.findByTestId("setup-error")).toBeInTheDocument();
+    expect(setup).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByTestId("setup-submit"));
+    await waitFor(() => expect(screen.getByTestId("setup-metadata-step")).toBeInTheDocument());
+    // The server already has its admin: setup is not asked to create another.
+    expect(setup).toHaveBeenCalledTimes(1);
+    expect(login).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-reads the server handshake once setup is finished, so setupRequired is not stale", async () => {
+    getEnrichmentConsent.mockResolvedValue({ state: "granted" });
+    const refresh = vi.fn();
+    const user = userEvent.setup();
+    renderSetup(refresh);
+    await createAdmin(user);
+
+    await waitFor(() => expect(screen.getByTestId("home")).toBeInTheDocument());
+    expect(refresh).toHaveBeenCalled();
   });
 });
 

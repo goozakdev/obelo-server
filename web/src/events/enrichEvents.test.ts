@@ -129,4 +129,58 @@ describe("appEvents hub", () => {
     b.unmount();
     expect(bus.close).toHaveBeenCalledTimes(1); // last one out closes it
   });
+
+  it("one throwing listener does not stop delivery to the others", () => {
+    const bus = captureEmit();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = vi.fn(() => {
+      throw new Error("boom");
+    });
+    const good = vi.fn();
+    const off1 = appEvents.subscribe(bad);
+    const off2 = appEvents.subscribe(good);
+    expect(() => bus.emit("libraryUpdated", { libraryId: "x" })).not.toThrow();
+    expect(good).toHaveBeenCalledTimes(1);
+    off1();
+    off2();
+  });
+
+  it("reconnect() closes the stream and opens a fresh one for the same listeners", () => {
+    const close = vi.fn();
+    const spy = vi.spyOn(apiClient, "subscribeEvents").mockImplementation(() => close);
+    const off = appEvents.subscribe(() => {});
+    expect(spy).toHaveBeenCalledTimes(1);
+    appEvents.reconnect();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+    off();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("enrichment activity across Libraries and remounts", () => {
+  it("stays active until every running Library has completed", () => {
+    const bus = captureEmit();
+    const { result } = renderHook(() => useEnrichmentActivity());
+    act(() => bus.emit("enrichProgress", { libraryId: "a", complete: false }));
+    act(() => bus.emit("enrichProgress", { libraryId: "b", complete: false }));
+    act(() => bus.emit("enrichProgress", { libraryId: "a", complete: true }));
+    expect(result.current).toBe(true); // b is still running
+    act(() => bus.emit("enrichProgress", { libraryId: "b", complete: true }));
+    expect(result.current).toBe(false);
+  });
+
+  it("a remounted indicator starts from what is already running", () => {
+    const bus = captureEmit();
+    const keep = appEvents.subscribe(() => {}); // the app shell's keep-alive
+    const first = renderHook(() => useEnrichmentActivity());
+    act(() => bus.emit("enrichProgress", { libraryId: "a", complete: false }));
+    expect(first.result.current).toBe(true);
+    first.unmount(); // navigation: the old screen's header goes away
+
+    const second = renderHook(() => useEnrichmentActivity());
+    expect(second.result.current).toBe(true);
+    second.unmount();
+    keep();
+  });
 });

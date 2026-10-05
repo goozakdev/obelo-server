@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { useAuth } from "../auth/session";
 import { USERNAME_RULE } from "../auth/usernameRule";
+import { useServerInfoRefresh } from "../serverInfoContext";
 import type { MetadataCredentialSource } from "../api/types";
 import {
   CONSENT_DECLINE_LABEL,
@@ -55,17 +56,32 @@ export default function SetupScreen() {
     MetadataCredentialSource | undefined
   >(undefined);
 
-  const finish = () => navigate("/", { replace: true });
+  // The credentials the admin was created with, once setup has succeeded. A
+  // resubmit after a failed auto-login must retry only the login: the server
+  // refuses a second setup.
+  const created = useRef<{ username: string; password: string } | null>(null);
+  const refreshServerInfo = useServerInfoRefresh();
+
+  // Re-read the handshake as the wizard ends: its `setupRequired` is now false, and
+  // a stale true would send a later /login (after a logout) back to /setup. Not
+  // earlier — SetupGate would unmount this screen mid-wizard.
+  const finish = () => {
+    refreshServerInfo();
+    navigate("/", { replace: true });
+  };
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await apiClient.setup({ claimToken, username, password });
+      if (!created.current) {
+        await apiClient.setup({ claimToken, username, password });
+        created.current = { username, password };
+      }
       // Auto-login with the just-created credentials; every call after this one is
       // authenticated as the new Admin.
-      await login(username, password);
+      await login(created.current.username, created.current.password);
     } catch (err) {
       setError(errorMessage(err));
       setSubmitting(false);

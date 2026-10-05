@@ -55,43 +55,93 @@ type Listener = (type: string, data: unknown) => void;
 class EventsHub {
   private listeners = new Set<Listener>();
   private unsubscribe: (() => void) | null = null;
+  // Libraries with an Enrichment pass in flight, kept here (not in a hook) so a
+  // header that remounts on every navigation starts from what is running rather
+  // than from "off", and so one Library finishing never hides another still going.
+  private enriching = new Set<string>();
 
   /** Register a listener, opening the shared EventSource on the first one. The
    * returned fn removes the listener and closes the stream when none remain.
    * Every event the stream delivers is fanned out to every listener verbatim;
-   * each listener filters for the types and Library it cares about. */
+   * each listener filters for the types and Library it cares about.
+   *
+   * Every screen renders its own header, so a route change unsubscribes the old
+   * screen's listeners before the new screen's subscribe; the app shell holds one
+   * listener for the signed-in lifetime (see App.tsx) so the stream is not torn
+   * down and reopened on every navigation, dropping events in the gap. */
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
+    this.open();
+    return () => {
+      this.listeners.delete(fn);
+      if (this.listeners.size === 0) this.close();
+    };
+  }
+
+  /** Drop the current stream and open a fresh one for the same listeners — for
+   * when the signed-in User changes, so the stream is not left authenticated as
+   * the previous one. */
+  reconnect(): void {
+    if (this.listeners.size === 0) return;
+    this.close();
+    this.open();
+  }
+
+  /** Whether an Enrichment pass is running, over `libraryId` or (omitted) any Library. */
+  isEnriching(libraryId?: string): boolean {
+    return libraryId ? this.enriching.has(libraryId) : this.enriching.size > 0;
+  }
+
+  private open(): void {
     // Guard: some component tests partial-mock the apiClient singleton without
     // subscribeEvents. Treat its absence as "no realtime here" — the hooks still
     // work, they just never receive events (the polling fallback covers state).
     if (!this.unsubscribe && typeof apiClient.subscribeEvents === "function") {
-      this.unsubscribe = apiClient.subscribeEvents((type, data) => {
-        for (const l of this.listeners) l(type, data);
-      });
+      this.unsubscribe = apiClient.subscribeEvents((type, data) => this.dispatch(type, data));
     }
-    return () => {
-      this.listeners.delete(fn);
-      if (this.listeners.size === 0 && this.unsubscribe) {
-        this.unsubscribe();
-        this.unsubscribe = null;
+  }
+
+  private close(): void {
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+    // A terminal event may have been missed while no stream was open.
+    this.enriching.clear();
+  }
+
+  private dispatch(type: string, data: unknown): void {
+    if (type === "enrichProgress" && data) {
+      const p = data as EnrichProgress;
+      if (p.complete) this.enriching.delete(p.libraryId);
+      else this.enriching.add(p.libraryId);
+    }
+    for (const l of this.listeners) {
+      // One listener's failure must not starve the rest (or throw inside the
+      // EventSource callback).
+      try {
+        l(type, data);
+      } catch (err) {
+        console.error("events listener failed", err);
       }
-    };
+    }
   }
 }
 
 export const appEvents = new EventsHub();
 
 /** True while an Enrichment pass is running (optionally scoped to one Library).
- * Goes false on the terminal `complete` event. Drives the header indicator. */
+ * Goes false once every running pass has sent its terminal `complete` event.
+ * Drives the header indicator. */
 export function useEnrichmentActivity(libraryId?: string): boolean {
-  const [active, setActive] = useState(false);
+  const [active, setActive] = useState(() => appEvents.isEnriching(libraryId));
   useEffect(() => {
+    setActive(appEvents.isEnriching(libraryId));
     return appEvents.subscribe((type, data) => {
       if (type !== "enrichProgress" || !data) return;
       const p = data as EnrichProgress;
       if (libraryId && p.libraryId !== libraryId) return;
-      setActive(!p.complete);
+      setActive(appEvents.isEnriching(libraryId));
     });
   }, [libraryId]);
   return active;

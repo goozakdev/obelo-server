@@ -1,18 +1,21 @@
+import { lazy, Suspense } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import AppHeader from "../browse/AppHeader";
-import AdminLibrariesScreen from "../admin/AdminLibrariesScreen";
-import AdminNeedsFixingScreen from "../admin/AdminNeedsFixingScreen";
-import AdminDevicesScreen from "../admin/AdminDevicesScreen";
-import AdminUsersScreen from "../admin/AdminUsersScreen";
-import AdminProvidersScreen from "../admin/AdminProvidersScreen";
-import AdminSubtitleProvidersScreen from "../admin/AdminSubtitleProvidersScreen";
-import AdminEventSinksScreen from "../admin/AdminEventSinksScreen";
-import AdminPluginsScreen from "../admin/AdminPluginsScreen";
-import AdminTranscodingScreen from "../admin/AdminTranscodingScreen";
-import AdminRemoteAccessScreen from "../admin/AdminRemoteAccessScreen";
-import AdminLinkedServersScreen from "../admin/AdminLinkedServersScreen";
-import ShowMatcherScreen from "../admin/ShowMatcherScreen";
 import { useOptionalFeature } from "../serverInfoContext";
+
+// Each sub-screen loads on demand: opening one tab does not fetch the others.
+const AdminLibrariesScreen = lazy(() => import("../admin/AdminLibrariesScreen"));
+const AdminNeedsFixingScreen = lazy(() => import("../admin/AdminNeedsFixingScreen"));
+const AdminDevicesScreen = lazy(() => import("../admin/AdminDevicesScreen"));
+const AdminUsersScreen = lazy(() => import("../admin/AdminUsersScreen"));
+const AdminProvidersScreen = lazy(() => import("../admin/AdminProvidersScreen"));
+const AdminSubtitleProvidersScreen = lazy(() => import("../admin/AdminSubtitleProvidersScreen"));
+const AdminEventSinksScreen = lazy(() => import("../admin/AdminEventSinksScreen"));
+const AdminPluginsScreen = lazy(() => import("../admin/AdminPluginsScreen"));
+const AdminTranscodingScreen = lazy(() => import("../admin/AdminTranscodingScreen"));
+const AdminRemoteAccessScreen = lazy(() => import("../admin/AdminRemoteAccessScreen"));
+const AdminLinkedServersScreen = lazy(() => import("../admin/AdminLinkedServersScreen"));
+const ShowMatcherScreen = lazy(() => import("../admin/ShowMatcherScreen"));
 
 // The /admin hub. Issue 06 built the libraries + scanning view; issue 07 adds the
 // attention surfaces (needs-review / Unmatched / fix-match / overrides) and the
@@ -143,6 +146,7 @@ export default function AdminScreen() {
           </nav>
 
           <div className="admin-content">
+            <Suspense fallback={<p className="status status-loading">Loading&hellip;</p>}>
             <Routes>
               <Route index element={<AdminLibrariesScreen />} />
               <Route path="needs-fixing" element={<AdminNeedsFixingScreen />} />
@@ -189,6 +193,7 @@ export default function AdminScreen() {
                 />
               )}
             </Routes>
+            </Suspense>
           </div>
         </div>
       </main>

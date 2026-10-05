@@ -177,6 +177,10 @@ import type { Lyrics } from "./types";
 /** Version prefix every route lives under (docs/api-contract.md). */
 export const API_PREFIX = "/api/v1";
 
+/** Backoff for reopening a failed events stream: base doubles per failure up to the cap. */
+const EVENTS_RETRY_BASE_MS = 1000;
+const EVENTS_RETRY_MAX_MS = 30000;
+
 /** The named SSE event types the server publishes over GET /events (ADR-0016,
  * docs/api-contract.md §"Real-time updates"). EventSource only delivers events
  * whose name has a registered listener, so a server event type only reaches the
@@ -2493,9 +2497,6 @@ export class ApiClient {
    * server event type is opt-in on the client by adding it to EVENT_TYPES. */
   subscribeEvents(onEvent: (type: string, data: unknown) => void): () => void {
     if (typeof EventSource === "undefined") return () => {};
-    const es = new EventSource(`${this.baseUrl}${API_PREFIX}/events`, {
-      withCredentials: true,
-    });
     const handle = (type: string) => (ev: MessageEvent) => {
       let data: unknown;
       try {
@@ -2505,10 +2506,39 @@ export class ApiClient {
       }
       onEvent(type, data);
     };
-    for (const type of EVENT_TYPES) {
-      es.addEventListener(type, handle(type));
-    }
-    return () => es.close();
+    let es: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
+    let stopped = false;
+    const open = () => {
+      const source = new EventSource(`${this.baseUrl}${API_PREFIX}/events`, {
+        withCredentials: true,
+      });
+      es = source;
+      for (const type of EVENT_TYPES) {
+        source.addEventListener(type, handle(type));
+      }
+      source.onopen = () => {
+        failures = 0;
+      };
+      // A browser retries a dropped connection itself, but after an HTTP error
+      // response (a proxy 502 during a restart, a 401 once the media cookie
+      // lapses) it fails the stream for good (readyState CLOSED, 2). Reopen it
+      // here with a capped backoff so live updates resume.
+      source.onerror = () => {
+        if (stopped || source.readyState !== 2) return;
+        source.close();
+        const delay = Math.min(EVENTS_RETRY_BASE_MS * 2 ** failures, EVENTS_RETRY_MAX_MS);
+        failures++;
+        retry = setTimeout(open, delay);
+      };
+    };
+    open();
+    return () => {
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      es?.close();
+    };
   }
 
   /** `GET /api/v1/settings/lyric-providers` (Admin) — the Lyric providers in the
@@ -2741,7 +2771,10 @@ export class ApiClient {
       // Global 401 path (PRD auth model): any unauthorized response clears the
       // session and routes to login. The login/setup callers opt out so their
       // own error (bad credentials / bad claim token) surfaces on the form.
-      if (err.isUnauthorized && !opts.skipUnauthorizedHandler) {
+      // Only while the token that was rejected is still the current one: a late
+      // 401 for a token the session has since replaced (a quick user switch, a
+      // re-login) must not log the new session out.
+      if (err.isUnauthorized && !opts.skipUnauthorizedHandler && this.tokenStore.get() === token) {
         this.onUnauthorized?.();
       }
       throw err;
@@ -2752,7 +2785,18 @@ export class ApiClient {
     if (res.status === 204) {
       return undefined as T;
     }
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch (cause) {
+      // A 2xx whose body is not JSON (a proxy or the SPA fallback answering with
+      // index.html) or whose read failed: surface a typed error, not a raw
+      // SyntaxError/TypeError that callers branching on ApiError/NetworkError miss.
+      if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
+      if (cause instanceof SyntaxError) {
+        throw new ApiError(res.status, "BAD_RESPONSE", "the server sent a response that is not JSON");
+      }
+      throw new NetworkError("could not read the server's response", { cause });
+    }
   }
 
   /** `GET /api/v1/titles/{id}/lyrics` — the Track's Local lyrics for the lyrics

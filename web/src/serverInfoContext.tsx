@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { apiClient, type ApiClient } from "./api/client";
-import { useServerInfo, type ServerState } from "./useServerInfo";
+import { useServerInfoHandshake, type ServerState } from "./useServerInfo";
 import type { ServerInfo } from "./api/types";
 
 // The shared handshake context (Apple TV → Web parity §4).
@@ -22,9 +22,14 @@ interface ServerInfoContextValue {
    * handshake all resolve to false. Gate capabilities on this, never on the
    * server version. */
   feature(name: string): boolean;
+  /** Re-read the handshake (e.g. after first-run setup, so `setupRequired` is not
+   * left stale for the rest of the tab). A no-op for a fixed test state. */
+  refresh(): void;
 }
 
 const ServerInfoContext = createContext<ServerInfoContextValue | null>(null);
+
+function noop() {}
 
 /** Pure flag read: present-and-true wins; everything else — an absent flag, a
  * missing or empty `features` map, an undefined handshake — is false. Kept pure
@@ -44,16 +49,18 @@ export interface ServerInfoProviderProps {
 }
 
 /** App-level provider: runs the GET /server handshake once (via {@link
- * useServerInfo}) and shares both the handshake state and the `feature()` gate
+ * useServerInfoHandshake}) and shares both the handshake state and the `feature()` gate
  * with the whole tree. Mounted above the auth scope so the first-run gates and
  * every authed screen read the one same result. */
 export function ServerInfoProvider({
   children,
   client = apiClient,
 }: ServerInfoProviderProps) {
-  const state = useServerInfo(client);
+  const { state, refresh } = useServerInfoHandshake(client);
   return (
-    <ServerInfoStateProvider state={state}>{children}</ServerInfoStateProvider>
+    <ServerInfoStateProvider state={state} refresh={refresh}>
+      {children}
+    </ServerInfoStateProvider>
   );
 }
 
@@ -62,9 +69,11 @@ export function ServerInfoProvider({
  * fetching {@link ServerInfoProvider} is a thin wrapper over this. */
 export function ServerInfoStateProvider({
   state,
+  refresh = noop,
   children,
 }: {
   state: ServerState;
+  refresh?: () => void;
   children: ReactNode;
 }) {
   const value = useMemo<ServerInfoContextValue>(
@@ -72,8 +81,9 @@ export function ServerInfoStateProvider({
       state,
       feature: (name) =>
         readFeature(state.status === "ready" ? state.info : undefined, name),
+      refresh,
     }),
-    [state],
+    [state, refresh],
   );
   return (
     <ServerInfoContext.Provider value={value}>
@@ -108,4 +118,16 @@ export function useFeature(name: string): boolean {
 export function useOptionalFeature(name: string): boolean {
   const ctx = useContext(ServerInfoContext);
   return ctx?.feature(name) ?? false;
+}
+
+/** The handshake state, or null outside a ServerInfoProvider — for components
+ * (AuthProvider) that reuse the shared handshake when there is one rather than
+ * making their own GET /server. */
+export function useOptionalServerState(): ServerState | null {
+  return useContext(ServerInfoContext)?.state ?? null;
+}
+
+/** Re-read the handshake; a no-op outside a ServerInfoProvider. */
+export function useServerInfoRefresh(): () => void {
+  return useContext(ServerInfoContext)?.refresh ?? noop;
 }
