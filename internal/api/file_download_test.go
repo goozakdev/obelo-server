@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/testharness"
@@ -46,6 +47,25 @@ func TestFileDownloadBearer(t *testing.T) {
 	}
 	if int64(len(body)) != size {
 		t.Fatalf("download body = %d bytes, want %d (full File)", len(body), size)
+	}
+}
+
+// TestFileDownloadHead: a HEAD probe (what a player or download tool sends first)
+// is answered like the GET minus the body, not a 405.
+func TestFileDownloadHead(t *testing.T) {
+	t.Parallel()
+	srv := testharness.New(t)
+	token, fileID, size := duneFile(t, srv)
+
+	status, hdr, body := srv.JSONFrom(http.MethodHead, "/api/v1/files/"+fileID+"/download", token, "", nil, nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("HEAD download status = %d, want 200; body: %s", status, body)
+	}
+	if got := hdr.Get("Content-Length"); got != strconv.FormatInt(size, 10) {
+		t.Errorf("HEAD Content-Length = %q, want %d", got, size)
+	}
+	if len(body) != 0 {
+		t.Errorf("HEAD body = %d bytes, want 0", len(body))
 	}
 }
 

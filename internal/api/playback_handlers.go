@@ -879,7 +879,7 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 			}
 			// The read-only media GET a browser reaches via <video src> — bearer OR
 			// media cookie. Ownership is still enforced inside handleSessionStream.
-			requireMethod(http.MethodGet,
+			requireGetOrHead(
 				requireAuthAllowCookie(deps.Auth, handleSessionStream(svc, id)))(w, r)
 			return
 		}
