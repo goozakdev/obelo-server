@@ -432,4 +432,35 @@ describe("confirming when sessionStorage is unavailable (R06-12)", () => {
     await user.click(screen.getByTestId("profile-attach-submit-directory"));
     expect(api.attachPassword).toHaveBeenCalledWith("directory", "bj2", "pw2", { reauthGrant: "g-new" });
   });
+  it("schedules the expiry check from the in-memory grant, not an older stored one", async () => {
+    const outside = { ...view, hasPassword: false };
+    api.list.mockResolvedValue(outside);
+    api.reauthPassword.mockResolvedValue({ grant: "g-new", expiresIn: 2 });
+    renderWithAuth(<ProfileScreen />);
+
+    const user = userEvent.setup();
+    const username = await screen.findByTestId("profile-reauth-username-directory");
+    window.sessionStorage.setItem(
+      "obelo.reauthGrant",
+      JSON.stringify({ grant: "g-old", expiresAt: Date.now() + 200_000 }),
+    );
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((k: string) => {
+      if (k === "obelo.reauthGrant") throw new Error("blocked");
+    });
+    const delays: number[] = [];
+    const realSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
+      delays.push(ms ?? 0);
+      return realSetTimeout(fn, ms, ...args);
+    }) as typeof window.setTimeout);
+    await user.type(username, "bj");
+    await user.type(screen.getByTestId("profile-reauth-password-directory"), "bj-pw");
+    await user.click(screen.getByTestId("profile-reauth-submit-directory"));
+
+    await waitFor(() => expect(screen.getByTestId("profile-attach-submit-directory")).toBeEnabled());
+    // The newest grant (in memory, ~2s) expires long before the stored one
+    // (200s); the check must be timed from it.
+    expect(delays.some((d) => d > 1000 && d <= 2000)).toBe(true);
+    expect(delays.some((d) => d > 100_000)).toBe(false);
+  });
 });

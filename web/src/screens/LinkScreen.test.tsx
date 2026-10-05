@@ -131,12 +131,10 @@ describe("LinkScreen code changes (R06-13)", () => {
   });
   it("keeps the later code's result when an earlier approval settles last", async () => {
     let finishOld!: (v: unknown) => void;
-    let failOld!: (e: unknown) => void;
     approveDeviceCode.mockImplementation((code: string) =>
       code === "OLD1"
-        ? new Promise((resolve, reject) => {
+        ? new Promise((resolve) => {
             finishOld = resolve;
-            failOld = reject;
           })
         : Promise.resolve({ device: { name: "New TV", platform: "tvos" } }),
     );
@@ -161,9 +159,37 @@ describe("LinkScreen code changes (R06-13)", () => {
       finishOld({ device: { name: "Old TV", platform: "tvos" } });
     });
     expect(screen.getByTestId("link-approved-device")).toHaveTextContent("New TV");
+  });
+  it("keeps the later code's result when an earlier approval fails last", async () => {
+    let failOld!: (e: unknown) => void;
+    approveDeviceCode.mockImplementation((code: string) =>
+      code === "OLD1"
+        ? new Promise((_resolve, reject) => {
+            failOld = reject;
+          })
+        : Promise.resolve({ device: { name: "New TV", platform: "tvos" } }),
+    );
+    function Hop() {
+      const nav = useNavigate();
+      return <button data-testid="hop" onClick={() => nav("/link/NEW2")} />;
+    }
+    renderWithAuth(
+      <>
+        <Hop />
+        <Routes>
+          <Route path="/link/:code?" element={<LinkScreen />} />
+        </Routes>
+      </>,
+      { initialEntries: ["/link/OLD1"] },
+    );
+    await waitFor(() => expect(approveDeviceCode).toHaveBeenCalledWith("OLD1"));
+    await userEvent.click(screen.getByTestId("hop"));
+    await waitFor(() => expect(screen.getByTestId("link-approved-device")).toHaveTextContent("New TV"));
+
     await act(async () => {
       failOld(new Error("late failure"));
     });
+    expect(screen.queryByTestId("link-error")).not.toBeInTheDocument();
     expect(screen.getByTestId("link-approved-device")).toHaveTextContent("New TV");
   });
 });
