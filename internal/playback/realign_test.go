@@ -675,12 +675,33 @@ func TestRealignIsANoOpForATargetTheJobAlreadyCovers(t *testing.T) {
 }
 
 // TestGatedParallelBurstAfterSeekRestartsOnce: after a seek, Safari fetches the
-// segments from the seek point in parallel, and several requests may have read the
-// OLD start before any took the lock. The first restarts the job at its target; the
-// rest sit inside the new job's near-start window and must not kill it (a second
-// restart at 104 would orphan 100..103, which then 404 and thrash). The job must end
-// positioned at the lowest target, 100. Repeated because the stale read is a race.
+// segments from the seek point in parallel, in arbitrary order. The burst
+// converges on ONE restart, at its lowest target (100): the job is launched once
+// initially and once for the burst, however the requests arrive.
 func TestGatedParallelBurstAfterSeekRestartsOnce(t *testing.T) {
+	old := realignBurstWindow
+	realignBurstWindow = 250 * time.Millisecond // wide enough that scheduling jitter cannot split the burst
+	t.Cleanup(func() { realignBurstWindow = old })
+	runGatedBurst(t, 2)
+}
+
+// TestGatedParallelBurstWithoutCoalescingEndsAtLowestTarget: with the coalescing
+// window off, requests that read the OLD start before any took the lock restart
+// the job per arrival, but the realignIf re-check keeps the rest from orphaning
+// segments: the job must still end positioned at the lowest target, 100 (a second
+// restart at 104 would otherwise orphan 100..103, which then 404 and thrash).
+func TestGatedParallelBurstWithoutCoalescingEndsAtLowestTarget(t *testing.T) {
+	old := realignBurstWindow
+	realignBurstWindow = 0
+	t.Cleanup(func() { realignBurstWindow = old })
+	runGatedBurst(t, 0)
+}
+
+// runGatedBurst releases a seven-request burst (100..106, shuffled) at a fresh
+// runtime started at 0, 20 times because arrival order is a race, and asserts the
+// job ends at 100. wantLaunches > 0 also asserts the exact launch count.
+func runGatedBurst(t *testing.T, wantLaunches int) {
+	t.Helper()
 	for round := 0; round < 20; round++ {
 		runner := &recordingRunner{}
 		dir := t.TempDir()
@@ -729,6 +750,9 @@ func TestGatedParallelBurstAfterSeekRestartsOnce(t *testing.T) {
 		rt.mu.Unlock()
 		if start != 100 {
 			t.Fatalf("round %d: job ended positioned at %d, want 100 (the lowest target; %d launches)", round, start, runner.launchCount())
+		}
+		if n := runner.launchCount(); wantLaunches > 0 && n != wantLaunches {
+			t.Fatalf("round %d: %d launches for one burst, want %d (the initial job and ONE restart at 100)", round, n, wantLaunches)
 		}
 	}
 }

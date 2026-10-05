@@ -126,7 +126,8 @@ type hlsRuntime struct {
 	job         transcode.Job
 	startNumber int // segment index the current job began producing from
 	startedAt   time.Time
-	torndown    bool // set by teardown so a late realign does not resurrect a killed session
+	torndown    bool          // set by teardown so a late realign does not resurrect a killed session
+	burst       *realignBurst // the open coalescing window for gated jumps; nil when none
 	// fellBack records that the single allowed hardware→CPU fallback has already
 	// fired (issue 03). It bounds the fallback to ONE attempt — a CPU job that then
 	// fails is an honest playback error, never another restart — and it pins every
@@ -415,7 +416,9 @@ func (rt *hlsRuntime) argsFor(seek transcode.SeekOffset) []string {
 // monotonic and the (server-owned) playlist remains coherent. A no-op when the
 // current job already starts at or before target AND is still the right job (a
 // backward seek to within the current run needs no restart — the earlier segments
-// already exist); callers only realign when a wanted segment is genuinely ahead.
+// already exist). The re-encode path's callers pre-filter with shouldRealign and
+// this re-checks the same rule under rt.mu; the gated path decides through
+// gatedRealign/realignIf instead.
 func (rt *hlsRuntime) realign(target int) error {
 	return rt.realignIf(target, func(start int) bool {
 		return target < start || target-start > realignLookahead
@@ -451,6 +454,57 @@ func (rt *hlsRuntime) realignIf(target int, needed func(start int) bool) error {
 		StartNumber:  target,
 		StartSeconds: seconds,
 	})
+}
+
+// realignBurst is an open coalescing window: the lowest target any request
+// wanted while it was open, and a channel closed once the window's restart ran.
+type realignBurst struct {
+	min  int
+	done chan struct{}
+}
+
+// gatedRealign realigns for a gated request that wants segment idx, where jump
+// says whether a job starting at start needs repositioning for target. A burst
+// after a seek arrives in arbitrary order, and restarting per arrival would kill
+// each job just after launching it (up to one restart per request). So the first
+// request needing a jump opens a short window; every request that needs one
+// meanwhile records its target, and when the window closes ONE restart is made at
+// the lowest — the rest then sit inside that job's near-start window. Requests
+// that joined re-check against the new start afterwards (a genuinely distinct seek
+// still restarts). The window never holds rt.mu while waiting, and only requests
+// that need a jump wait, so there is no new lock ordering.
+func (rt *hlsRuntime) gatedRealign(idx int, jump func(start, target int) bool) error {
+	if realignBurstWindow <= 0 {
+		return rt.realignIf(idx, func(start int) bool { return jump(start, idx) })
+	}
+	rt.mu.Lock()
+	if rt.torndown {
+		rt.mu.Unlock()
+		return os.ErrClosed
+	}
+	if rt.job != nil && !jump(rt.startNumber, idx) {
+		rt.mu.Unlock()
+		return nil
+	}
+	if b := rt.burst; b != nil {
+		if idx < b.min {
+			b.min = idx
+		}
+		rt.mu.Unlock()
+		<-b.done
+		return rt.realignIf(idx, func(start int) bool { return jump(start, idx) })
+	}
+	b := &realignBurst{min: idx, done: make(chan struct{})}
+	rt.burst = b
+	rt.mu.Unlock()
+	defer close(b.done)
+
+	time.Sleep(realignBurstWindow)
+	rt.mu.Lock()
+	target := b.min
+	rt.burst = nil
+	rt.mu.Unlock()
+	return rt.realignIf(target, func(start int) bool { return jump(start, target) })
 }
 
 // killCurrentLocked cancels + kills the current job (if any) and clears the
@@ -709,10 +763,12 @@ func (rt *hlsRuntime) gatedSegment(name, path string) ([]byte, error) {
 		// in-flight .tmp means production is approaching this segment — wait, don't
 		// restart. Only a request across genuinely unproduced ground realigns.
 		//
-		// The decision is made under rt.mu against the CURRENT start (realignIf):
-		// parallel requests that all read the old start must not each restart the job.
-		if err := rt.realignIf(idx, func(start int) bool {
-			return idx < start || (idx > start && !rt.nearFrontier(start, idx, nameFmt))
+		// The decision is made under rt.mu against the CURRENT start (realignIf),
+		// and a burst of jumps converges on one restart at its lowest target
+		// (gatedRealign): parallel requests that all read the old start must not
+		// each restart the job.
+		if err := rt.gatedRealign(idx, func(start, target int) bool {
+			return target < start || (target > start && !rt.nearFrontier(start, target, nameFmt))
 		}); err != nil {
 			return nil, err
 		}
@@ -878,6 +934,13 @@ const (
 	// genuine forward seek that warrants repositioning ffmpeg.
 	realignLookahead = 2
 )
+
+// realignBurstWindow is how long the first gated jump waits for the rest of a
+// parallel burst before restarting ffmpeg at the burst's lowest target. Long
+// enough to span a player's near-simultaneous requests, short enough to be
+// imperceptible on a genuine seek. Zero disables coalescing. A var so a test can
+// widen it.
+var realignBurstWindow = 40 * time.Millisecond
 
 // waitReadFile reads path, retrying on os.IsNotExist until the file appears or
 // timeout elapses. ffmpeg's HLS muxer writes each segment and the playlist via a
