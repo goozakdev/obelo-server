@@ -94,6 +94,19 @@ func (c *listCache[T]) put(key string, v T) {
 	c.entries[key] = listEntry[T]{value: v, storedAt: now, expiresAt: now.Add(c.ttl)}
 }
 
+// invalidate drops the entry for key so the next request re-queries the provider.
+// Called when applying (picking) or uploading a new image for a role, so the grid
+// reflects reality on the next tab open. A no-op when the cache is disabled or the
+// key is absent.
+func (c *listCache[T]) invalidate(key string) {
+	if !c.enabled() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
 // clear drops everything. Called on a provider swap: the entries are one
 // provider's answers, and serving them from its replacement would be wrong in the
 // one direction that matters — silently, and for as long as the TTL lasts.

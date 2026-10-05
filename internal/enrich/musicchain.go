@@ -160,7 +160,7 @@ func (p *MusicChainProvider) Lookup(ctx context.Context, ref TitleRef) (TitleMet
 		if s == nil {
 			continue
 		}
-		if sup, ok := p.lookup(ctx, s, sref); ok {
+		if sup, ok := lookupSupplement(ctx, s, sref, "music"); ok {
 			meta = fillFromSupplement(meta, sup)
 		}
 	}
@@ -195,19 +195,4 @@ func worthDecorating(ref TitleRef, meta TitleMetadata) bool {
 		return true
 	}
 	return acceptsTitle(local, meta.Name)
-}
-
-// lookup runs one Supplement, returning its result and whether it should be
-// merged. A no-match is the normal "no data for this entity" outcome (ok=false,
-// no log); a genuine failure is non-fatal — it is logged and treated as no data so
-// the lead's result is preserved and the pass continues (ADR-0001).
-func (p *MusicChainProvider) lookup(ctx context.Context, src MetadataProvider, ref TitleRef) (TitleMetadata, bool) {
-	meta, err := src.Lookup(ctx, ref)
-	if err != nil {
-		if !errors.Is(err, ErrNoMatch) {
-			log.Printf("obelo: enrich %s music supplement (title %q): %v", ref.Kind, ref.Title, err)
-		}
-		return TitleMetadata{}, false
-	}
-	return meta, true
 }
