@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -137,12 +139,22 @@ func levelName(level uint32) string {
 }
 
 // sanitizeLine keeps a guest from forging log structure. A message with a newline
-// in it could otherwise write a second line that looks like the server's own.
+// in it could otherwise write a second line that looks like the server's own, and
+// an escape sequence could drive an operator's terminal; every control rune and
+// the Unicode line separators become a space. Truncation lands on a rune boundary.
 func sanitizeLine(s string) string {
-	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, s)
 	if len(s) > maxLogLine {
-		s = s[:maxLogLine] + "…(truncated)"
+		cut := maxLogLine
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…(truncated)"
 	}
 	return s
 }

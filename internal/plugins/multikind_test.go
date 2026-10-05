@@ -26,8 +26,8 @@ import (
 //     chains" true rather than aspirational.
 //   - NO INTERLEAVING. Each view carries its own settings window, and settings_get
 //     answers whichever call is on the stack — so two calls overlapping inside one
-//     instance would let one read the other's secret. metaState.mu is what stops
-//     that, taken before callMu and never by a host function.
+//     instance would let one read the other's secret. callMu is what stops
+//     that, and the settings window opens only once it is held.
 //
 // These are that, driven through a real module across the real ABI. They were
 // written to CONFIRM the behaviour rather than to change it: nothing in

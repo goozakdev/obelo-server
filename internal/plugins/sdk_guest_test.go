@@ -891,12 +891,16 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 		Ref: pluginapi.SubtitleRef{Title: "Dune"}, Language: "en",
 	})
 	elapsed := time.Since(start)
+	// The queued call gives up at its own deadline (R03-01) rather than waiting
+	// for the holder, so the holder is still running here. Wait for it, so its
+	// fetch is on record before the checks below read the request log.
 	select {
 	case <-aDone:
+		t.Fatal("the holder finished before the queued call's own deadline — it never held callMu " +
+			"long enough to queue anything, so this run proves nothing")
 	default:
-		t.Fatal("the queued call returned before the one holding callMu released it — it raced the lock " +
-			"instead of queuing behind it, so this run proves nothing")
 	}
+	<-aDone
 	if err == nil {
 		t.Fatal("SearchSubtitles returned nil for a call whose own 600ms deadline had already passed while it " +
 			"queued behind the ~1s holder")

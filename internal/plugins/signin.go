@@ -49,19 +49,10 @@ const (
 // A slug already claimed is NOT registered and says so, for the reason every
 // other seam refuses one.
 func (s *Set) registerSignInProvider(reg *pluginapi.Registry, p *Plugin, entry pluginapi.ManifestProvides) {
-	if _, taken := reg.SignInProvider(p.id); taken {
-		err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
-		p.mu.Lock()
-		p.refuse(err)
-		p.mu.Unlock()
-		p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+	_, taken := reg.SignInProvider(p.id)
+	d, ok := s.claim(p, entry, taken)
+	if !ok {
 		return
-	}
-	d := descriptorFor(p.manifest, entry)
-	// The DIRECTORY is the identity, always — the same rule the sink path states.
-	d.Slug = p.id
-	if d.Name == "" {
-		d.Name = p.id
 	}
 	idToken := entry.IDToken
 	reg.RegisterSignInProvider(pluginapi.SignInProviderRegistration{Descriptor: d,
@@ -78,17 +69,8 @@ func (s *Set) registerSignInProvider(reg *pluginapi.Registry, p *Plugin, entry p
 // newSignInProvider builds the adapter this Plugin's registration hands out. It
 // refuses for a Plugin that was refused at load, naming the reason.
 func (p *Plugin) newSignInProvider(s pluginapi.Settings) (*guestSignInProvider, error) {
-	p.mu.Lock()
-	disabled, lastErr := p.disabled, p.lastError
-	p.mu.Unlock()
-	if disabled {
-		if lastErr == "" {
-			lastErr = "it is disabled"
-		}
-		return nil, fmt.Errorf("plugin %s: %s", p.id, lastErr)
-	}
-	if p.compiled == nil {
-		return nil, fmt.Errorf("plugin %s: no module is loaded", p.id)
+	if err := p.factoryGuard(); err != nil {
+		return nil, err
 	}
 	return &guestSignInProvider{p: p, settings: s}, nil
 }

@@ -25,17 +25,8 @@ import (
 // who enables a broken Plugin is told why by the settings save rather than by
 // silence.
 func (p *Plugin) newEventSink(s pluginapi.Settings) (pluginapi.EventSink, error) {
-	p.mu.Lock()
-	disabled, lastErr := p.disabled, p.lastError
-	p.mu.Unlock()
-	if disabled {
-		if lastErr == "" {
-			lastErr = "it is disabled"
-		}
-		return nil, fmt.Errorf("plugin %s: %s", p.id, lastErr)
-	}
-	if p.compiled == nil {
-		return nil, fmt.Errorf("plugin %s: no module is loaded", p.id)
+	if err := p.factoryGuard(); err != nil {
+		return nil, err
 	}
 	return &guestSink{p: p, settings: s}, nil
 }

@@ -134,11 +134,13 @@ func (r *Registry) RegisterMetadataProvider(reg MetadataProviderRegistration) {
 	if reg.Descriptor.Slug == "" {
 		panic("pluginapi: metadata provider registered with no slug")
 	}
-	if _, exists := r.MetadataProvider(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: metadata provider %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionMetadataProvider
 	r.mutate(func(s *registryState) {
+		for _, have := range s.metadataProviders {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: metadata provider %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.metadataProviders = append(s.metadataProviders, reg)
 	})
 }
@@ -182,11 +184,13 @@ func (r *Registry) RegisterSubtitleProvider(reg SubtitleProviderRegistration) {
 	if reg.New == nil {
 		panic(fmt.Sprintf("pluginapi: subtitle provider %q registered with no factory", reg.Descriptor.Slug))
 	}
-	if _, exists := r.SubtitleProvider(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: subtitle provider %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionSubtitleProvider
 	r.mutate(func(s *registryState) {
+		for _, have := range s.subtitleProviders {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: subtitle provider %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.subtitleProviders = append(s.subtitleProviders, reg)
 	})
 }
@@ -226,11 +230,13 @@ func (r *Registry) RegisterEventSink(reg EventSinkRegistration) {
 	if reg.New == nil {
 		panic(fmt.Sprintf("pluginapi: event sink %q registered with no factory", reg.Descriptor.Slug))
 	}
-	if _, exists := r.EventSink(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: event sink %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionEventSink
 	r.mutate(func(s *registryState) {
+		for _, have := range s.eventSinks {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: event sink %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.eventSinks = append(s.eventSinks, reg)
 	})
 }
@@ -268,11 +274,13 @@ func (r *Registry) RegisterWebReferenceProvider(reg WebReferenceProviderRegistra
 	if reg.New == nil {
 		panic(fmt.Sprintf("pluginapi: web reference provider %q registered with no factory", reg.Descriptor.Slug))
 	}
-	if _, exists := r.WebReferenceProvider(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: web reference provider %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionWebReferenceProvider
 	r.mutate(func(s *registryState) {
+		for _, have := range s.webReferences {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: web reference provider %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.webReferences = append(s.webReferences, reg)
 	})
 }
@@ -311,11 +319,13 @@ func (r *Registry) RegisterSignInProvider(reg SignInProviderRegistration) {
 	if reg.New == nil {
 		panic(fmt.Sprintf("pluginapi: sign-in provider %q registered with no factory", reg.Descriptor.Slug))
 	}
-	if _, exists := r.SignInProvider(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: sign-in provider %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionSignInProvider
 	r.mutate(func(s *registryState) {
+		for _, have := range s.signInProviders {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: sign-in provider %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.signInProviders = append(s.signInProviders, reg)
 	})
 }
@@ -354,11 +364,13 @@ func (r *Registry) RegisterLyricProvider(reg LyricProviderRegistration) {
 	if reg.New == nil {
 		panic(fmt.Sprintf("pluginapi: lyric provider %q registered with no factory", reg.Descriptor.Slug))
 	}
-	if _, exists := r.LyricProvider(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: lyric provider %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionLyricProvider
 	r.mutate(func(s *registryState) {
+		for _, have := range s.lyricProviders {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: lyric provider %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.lyricProviders = append(s.lyricProviders, reg)
 	})
 }
@@ -397,11 +409,13 @@ func (r *Registry) RegisterMarkerProvider(reg MarkerProviderRegistration) {
 	if reg.New == nil {
 		panic(fmt.Sprintf("pluginapi: marker provider %q registered with no factory", reg.Descriptor.Slug))
 	}
-	if _, exists := r.MarkerProvider(reg.Descriptor.Slug); exists {
-		panic(fmt.Sprintf("pluginapi: marker provider %q registered twice", reg.Descriptor.Slug))
-	}
 	reg.Descriptor.ExtensionPoint = ExtensionMarkerProvider
 	r.mutate(func(s *registryState) {
+		for _, have := range s.markerProviders {
+			if have.Descriptor.Slug == reg.Descriptor.Slug {
+				panic(fmt.Sprintf("pluginapi: marker provider %q registered twice", reg.Descriptor.Slug))
+			}
+		}
 		s.markerProviders = append(s.markerProviders, reg)
 	})
 }

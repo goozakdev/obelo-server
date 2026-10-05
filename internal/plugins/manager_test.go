@@ -39,6 +39,8 @@ type memStore struct {
 	// insertErr, when set, makes the next InsertPlugin fail — the one failure mode
 	// that has to leave nothing behind on disk.
 	insertErr error
+	// deleteErr, when set, makes DeletePlugin fail.
+	deleteErr error
 	// publishers is plugin_publishers (issue 15), keyed by lower-cased name
 	// because the real column is COLLATE NOCASE. EMPTY IS THE DEFAULT POLICY:
 	// with nothing pinned, no install is signature-checked.
@@ -170,6 +172,9 @@ func (s *memStore) SetPluginLastError(id, message string) error {
 func (s *memStore) DeletePlugin(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	delete(s.rows, id)
 	return nil
 }
@@ -597,6 +602,49 @@ func TestUninstallRemovesTheFilesAndTheRegistration(t *testing.T) {
 	}
 	// And the id is free again.
 	f.installGuest(t, "example-sink")
+}
+
+// TestUninstallThatCannotDeleteTheRowPutsTheFilesBack: a failed DeletePlugin
+// must leave the Plugin installed and working, not a row with no directory and an
+// orphaned .uninstall-* directory nothing ever cleans.
+func TestUninstallThatCannotDeleteTheRowPutsTheFilesBack(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	f.installGuest(t, "example-sink")
+	f.store.deleteErr = errors.New("disk full")
+
+	if err := f.manager.Uninstall(context.Background(), "example-sink"); err == nil {
+		t.Fatal("uninstall succeeded though the row could not be deleted")
+	}
+	entries, err := os.ReadDir(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "example-sink" {
+		t.Fatalf("plugins dir = %v, want only example-sink", entries)
+	}
+	if !contains(f.sinkSlugs(), "example-sink") {
+		t.Fatal("the Plugin is no longer registered after a failed uninstall")
+	}
+}
+
+// TestInstallRefusesAnIdAnyBuiltInSeamHolds: the duplicate check covers every
+// Extension point, not only the three the first Built-ins filled.
+func TestInstallRefusesAnIdAnyBuiltInSeamHolds(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	desc := pluginapi.Descriptor{Slug: "taken-lyric", Name: "Taken"}
+	f.registry.RegisterLyricProvider(pluginapi.LyricProviderRegistration{
+		Descriptor: desc,
+		New: func(pluginapi.Settings) (pluginapi.LyricProvider, error) {
+			return nil, errors.New("exists to be counted, not called")
+		},
+	})
+	_, err := f.manager.Install(context.Background(),
+		plugintest.ManifestJSON(t, plugintest.SinkManifest("taken-lyric")), plugintest.Guest(t), nil, plugins.SourceUpload)
+	if refusalReason(err) != plugins.ReasonDuplicate {
+		t.Fatalf("install over a Built-in lyric provider's id gave %v, want a duplicate refusal", err)
+	}
 }
 
 // TestALifecycleVerbOnAPluginThatIsNotInstalled.

@@ -333,9 +333,15 @@ func (i *instance) guestError(ctx context.Context) string {
 	if err != nil || len(packed) == 0 || packed[0] == 0 {
 		return "(no detail)"
 	}
-	buf, ok := i.mod.Memory().Read(uint32(packed[0]>>32), uint32(packed[0]))
+	ptr := uint32(packed[0] >> 32)
+	buf, ok := i.mod.Memory().Read(ptr, uint32(packed[0]))
 	if !ok {
 		return "(unreadable detail)"
 	}
-	return string(buf)
+	// last_error hands back a fresh guest buffer, like every other response. Copy
+	// it out, then give it back: a kept instance (refusalIsAnAnswer) would
+	// otherwise leak one buffer per refusal until it trapped.
+	detail := string(buf)
+	_, _ = i.free.Call(ctx, uint64(ptr))
+	return detail
 }

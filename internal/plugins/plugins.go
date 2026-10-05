@@ -782,6 +782,9 @@ var ErrDisabled = errors.New("plugin is disabled")
 type callPolicy struct {
 	// budget bounds the call. Zero means the Plugin's default.
 	budget time.Duration
+	// metaSettings, when set, is what settings_get answers for exactly this call.
+	// Set for a Metadata provider; published after callMu is taken.
+	metaSettings *pluginapi.Settings
 	// refusalIsAnAnswer says a guest that ran to completion and cleanly answered
 	// an error — errGuestRefused — has ANSWERED this call rather than failed it:
 	// the instance is kept and no strike is counted. The error itself still
@@ -903,9 +906,21 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 			return fmt.Errorf("plugin %s: %w: %w", p.id, errQueuedPastDeadline, callCtx.Err())
 		}
 	} else {
-		p.callMu <- struct{}{}
+		// The caller's own ctx still ends the wait: a cancelled request or a
+		// shutdown must not sit behind every queued call, each up to its budget.
+		select {
+		case p.callMu <- struct{}{}:
+		case <-ctx.Done():
+			return fmt.Errorf("plugin %s: %w: %w", p.id, errQueuedPastDeadline, ctx.Err())
+		}
 	}
 	defer func() { <-p.callMu }()
+	if policy.metaSettings != nil {
+		// Published only once callMu is held, so a guest answering settings_get for
+		// ANOTHER call on this Plugin never sees this call's secret.
+		p.setCallSettings(policy.metaSettings)
+		defer p.setCallSettings(nil)
+	}
 
 	if p.compiled == nil {
 		return fmt.Errorf("%w: the module was never loaded", ErrDisabled)
@@ -1179,6 +1194,50 @@ func (s *Set) Register(reg *pluginapi.Registry) {
 	}
 }
 
+// factoryGuard is what every seam's factory checks before it builds an adapter:
+// a Plugin that was refused or disabled, or has no module, refuses naming why, so
+// a chain is composed WITHOUT a broken source rather than with one that fails
+// every call (ADR-0001: the builder skips a factory that refuses).
+func (p *Plugin) factoryGuard() error {
+	p.mu.Lock()
+	disabled, lastErr := p.disabled, p.lastError
+	p.mu.Unlock()
+	if disabled {
+		if lastErr == "" {
+			lastErr = "it is disabled"
+		}
+		return fmt.Errorf("plugin %s: %s", p.id, lastErr)
+	}
+	if p.compiled == nil {
+		return fmt.Errorf("plugin %s: no module is loaded", p.id)
+	}
+	return nil
+}
+
+// claim is the head of every seam's registration. taken says the registry already
+// holds this Plugin's id for the seam; the Plugin is then refused and ok is false,
+// because shadowing a Built-in would move an Admin's API key onto code the
+// maintainer did not write. Otherwise it returns the Descriptor to register,
+// stamped with the DIRECTORY as the identity, always: a Plugin refused before its
+// manifest could be parsed has no id of its own, and one whose manifest disagreed
+// with its directory was refused for saying so.
+func (s *Set) claim(p *Plugin, entry pluginapi.ManifestProvides, taken bool) (pluginapi.Descriptor, bool) {
+	if taken {
+		err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
+		p.mu.Lock()
+		p.refuse(err)
+		p.mu.Unlock()
+		p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+		return pluginapi.Descriptor{}, false
+	}
+	d := descriptorFor(p.manifest, entry)
+	d.Slug = p.id
+	if d.Name == "" {
+		d.Name = p.id
+	}
+	return d, true
+}
+
 func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 	provides := p.manifest.Provides
 	if len(provides) == 0 {
@@ -1227,21 +1286,10 @@ func (s *Set) registerOne(reg *pluginapi.Registry, p *Plugin) {
 			p.logf("obelo: plugin %s provides %s, which this build does not load yet", p.id, entry.Kind)
 			continue
 		}
-		if _, taken := reg.EventSink(p.id); taken {
-			err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
-			p.mu.Lock()
-			p.refuse(err)
-			p.mu.Unlock()
-			p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+		_, taken := reg.EventSink(p.id)
+		d, ok := s.claim(p, entry, taken)
+		if !ok {
 			continue
-		}
-		d := descriptorFor(p.manifest, entry)
-		// The DIRECTORY is the identity, always. A Plugin refused before its
-		// manifest could be parsed has no id of its own, and one whose manifest
-		// disagreed with its directory was refused for saying so.
-		d.Slug = p.id
-		if d.Name == "" {
-			d.Name = p.id
 		}
 		reg.RegisterEventSink(pluginapi.EventSinkRegistration{Descriptor: d, New: p.newEventSink})
 	}
