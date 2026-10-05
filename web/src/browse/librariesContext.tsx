@@ -49,7 +49,12 @@ export function LibrariesProvider({ children }: { children: ReactNode }) {
   // every login for a decoration. A read that fails degrades to a bare badge.
   const libraries = state.status === "ready" ? state.data : null;
   useEffect(() => {
-    if (!isAdmin || !libraries || !libraries.some((l) => l.linked)) return;
+    if (!isAdmin || !libraries || !libraries.some((l) => l.linked)) {
+      // Drop names fetched under a previous token/role: /links is Admin-only, so
+      // a Member signing in after an Admin must not keep seeing them.
+      setProviders((prev) => (Object.keys(prev).length > 0 ? {} : prev));
+      return;
+    }
     const ctrl = new AbortController();
     void (async () => {
       try {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient, ApiError } from "../api/client";
 import type { CollectionDetail } from "../api/types";
@@ -54,20 +54,34 @@ export default function CollectionDetailScreen() {
           setState({ status: "not-found" });
           return;
         }
+        // A failed background refetch keeps the ready view; only a user-visible
+        // (non-silent) load turns into the error state.
+        if (opts.silent) return;
         setState({ status: "error", message: errorMessage(err) });
       }
     },
     [id],
   );
 
+  // The in-flight silent reload, so a newer mutation (or unmount) can cancel it
+  // before its stale document lands over the newer state.
+  const reloadCtrl = useRef<AbortController | null>(null);
   useEffect(() => {
     const ctrl = new AbortController();
     void load(ctrl.signal);
-    return () => ctrl.abort();
+    return () => {
+      ctrl.abort();
+      reloadCtrl.current?.abort();
+    };
   }, [load]);
 
   // Silent refetch after a curation write (poster/count/membership reflect truth).
-  const reload = useCallback(() => void load(undefined, { silent: true }), [load]);
+  const reload = useCallback(() => {
+    reloadCtrl.current?.abort();
+    const ctrl = new AbortController();
+    reloadCtrl.current = ctrl;
+    void load(ctrl.signal, { silent: true });
+  }, [load]);
 
   return (
     <div className="app-shell" data-testid="collection-detail-screen">

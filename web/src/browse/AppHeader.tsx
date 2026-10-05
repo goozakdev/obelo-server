@@ -215,8 +215,14 @@ function UserMenu({
 
   async function onLogout() {
     setLoggingOut(true);
-    await logout();
-    navigate("/login", { replace: true });
+    try {
+      await logout();
+    } catch {
+      // logout() rethrows a network failure; the local session is already gone,
+      // so still leave the page rather than reject unhandled.
+    } finally {
+      navigate("/login", { replace: true });
+    }
   }
 
   return (

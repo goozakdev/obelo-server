@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { TitleSummary } from "../api/types";
 import Poster from "./Poster";
@@ -32,7 +32,9 @@ export interface PosterTileProps {
   action?: ReactNode;
 }
 
-export default function PosterTile({ title, action }: PosterTileProps) {
+// Memoized: a page append or refresh re-renders the grid, and unchanged titles
+// (stable item objects across a loadMore) skip their card entirely.
+export default memo(function PosterTile({ title, action }: PosterTileProps) {
   // Per-Title poster cache-bust: key the artwork URL on this Title's
   // artworkVersion — an opaque token the server changes ONLY when the served
   // poster bytes could have (a re-fetched image, a rescanned local file), not on
@@ -101,4 +103,4 @@ export default function PosterTile({ title, action }: PosterTileProps) {
       {action && <div className="poster-action">{action}</div>}
     </li>
   );
-}
+});

@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from "react";
+import { memo, type ReactNode, type RefObject } from "react";
 import { Link } from "react-router-dom";
 import type { LinkedMarks } from "../api/types";
 import type { LayoutMode } from "./browseLayout";
@@ -92,20 +92,30 @@ export default function BrowseList<T>({
     >
       {mode === "tile"
         ? items.map((item) => renderTile(item))
-        : items.map((item) => (
-            <BrowseRow key={toRow(item).key} mode={mode} row={toRow(item)} />
-          ))}
+        : items.map((item) => {
+            const row = toRow(item);
+            return <BrowseRow key={row.key} mode={mode} item={item} row={row} />;
+          })}
     </ul>
   );
 }
 
-function BrowseRow({
-  mode,
-  row,
-}: {
+interface BrowseRowProps {
   mode: Exclude<LayoutMode, "tile">;
+  /** Only here so memo can compare on the item's identity (see below). */
+  item: unknown;
   row: BrowseRowData;
-}) {
+}
+
+// Memoized on mode + the item's identity (the row is derived from the item by a
+// pure toRow), so a page append re-renders only the new rows, not every loaded
+// one. `row` is a fresh object each parent render and is deliberately left out.
+const BrowseRow = memo(
+  BrowseRowView,
+  (prev, next) => prev.mode === next.mode && prev.item === next.item,
+);
+
+function BrowseRowView({ mode, row }: BrowseRowProps) {
   return (
     <li
       className={linkedRowClass(

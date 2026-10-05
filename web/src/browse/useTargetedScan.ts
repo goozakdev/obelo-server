@@ -21,6 +21,10 @@ import { errorMessage } from "../screens/errorMessage";
  * reads as a transient toast-like note rather than sticking around. */
 const MESSAGE_LINGER_MS = 6000;
 
+/** How long a scan may stay "scanning" with no terminal event (SSE down) before
+ * the controller gives up waiting and re-enables the trigger (ms). */
+const SCAN_TIMEOUT_MS = 5 * 60 * 1000;
+
 export interface TargetedScanController {
   /** True from the moment a scan is triggered until its terminal event lands. */
   scanning: boolean;
@@ -57,9 +61,14 @@ export function useTargetedScan(onScanned: () => void): TargetedScanController {
     setMessage(text);
     clearTimer.current = setTimeout(() => setMessage(null), MESSAGE_LINGER_MS);
   }, []);
+  // The give-up timer for a scan whose terminal event never arrives, and any
+  // terminal events seen before the 202 said which Library is ours.
+  const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const earlyTerminals = useRef<ScanProgress[]>([]);
   useEffect(
     () => () => {
       if (clearTimer.current) clearTimeout(clearTimer.current);
+      if (scanTimer.current) clearTimeout(scanTimer.current);
     },
     [],
   );
@@ -68,12 +77,11 @@ export function useTargetedScan(onScanned: () => void): TargetedScanController {
   // Library learned from the 202; if that response hasn't landed yet (a tiny
   // no-change scan can finish first), a null libraryId means "accept the next
   // terminal event" — we only get here while OUR scan is the one in flight.
-  useEffect(() => {
-    return appEvents.subscribe((type, data) => {
-      if (type !== "scanProgress" || !data || !scanningRef.current) return;
-      const p = data as ScanProgress;
-      if (!p.complete) return;
-      if (libraryIdRef.current !== null && p.libraryId !== libraryIdRef.current) return;
+  const settle = useCallback(
+    (p: ScanProgress) => {
+      if (scanTimer.current) clearTimeout(scanTimer.current);
+      scanTimer.current = null;
+      earlyTerminals.current = [];
       setScanning(false);
       const added = p.added ?? 0;
       const removed = p.removed ?? 0;
@@ -83,19 +91,50 @@ export function useTargetedScan(onScanned: () => void): TargetedScanController {
           : `Scan complete — added ${added} · removed ${removed}`,
       );
       onScannedRef.current();
+    },
+    [flash],
+  );
+  useEffect(() => {
+    return appEvents.subscribe((type, data) => {
+      if (type !== "scanProgress" || !data || !scanningRef.current) return;
+      const p = data as ScanProgress;
+      if (!p.complete) return;
+      // Until the 202 names our Library we can't tell whose terminal event this
+      // is: hold it and let the 202 handler claim a match.
+      if (libraryIdRef.current === null) {
+        earlyTerminals.current.push(p);
+        return;
+      }
+      if (p.libraryId !== libraryIdRef.current) return;
+      settle(p);
     });
-  }, [flash]);
+  }, [settle]);
 
   const scan = useCallback(
     (entityType: TargetedScanEntity, id: string) => {
       setScanning(true);
       setMessage(null);
       libraryIdRef.current = null;
+      earlyTerminals.current = [];
+      // If the SSE stream is down no terminal event ever arrives; don't leave the
+      // Scan item disabled forever.
+      if (scanTimer.current) clearTimeout(scanTimer.current);
+      scanTimer.current = setTimeout(() => {
+        scanTimer.current = null;
+        setScanning(false);
+        flash("Scan is taking longer than expected — check back shortly");
+      }, SCAN_TIMEOUT_MS);
       apiClient.scanEntity(entityType, id).then(
         (status) => {
           libraryIdRef.current = status.libraryId;
+          // A tiny no-change scan can finish before this response lands.
+          const early = earlyTerminals.current.find((p) => p.libraryId === status.libraryId);
+          earlyTerminals.current = [];
+          if (early && scanningRef.current) settle(early);
         },
         (err: unknown) => {
+          if (scanTimer.current) clearTimeout(scanTimer.current);
+          scanTimer.current = null;
           setScanning(false);
           flash(
             err instanceof ApiError && err.code === "NO_FILES"
@@ -105,7 +144,7 @@ export function useTargetedScan(onScanned: () => void): TargetedScanController {
         },
       );
     },
-    [flash],
+    [flash, settle],
   );
 
   return { scanning, message, scan };

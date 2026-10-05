@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
-import { apiClient } from "../api/client";
-import { useAsync } from "./useAsync";
+import { useLibraries } from "./librariesContext";
 import AppHeader from "./AppHeader";
 import LinkedMark, { linkedRowClass } from "./LinkedMark";
 
@@ -25,7 +24,8 @@ import LinkedMark, { linkedRowClass } from "./LinkedMark";
 // "unreachable" sentence belongs, and the player already says it.
 
 export default function LibraryListScreen() {
-  const state = useAsync((signal) => apiClient.listLibraries(signal), []);
+  // The app-wide list LibrariesProvider already holds — no second GET /libraries.
+  const state = useLibraries();
 
   return (
     <div className="app-shell" data-testid="library-list-screen">

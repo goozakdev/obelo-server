@@ -16,6 +16,13 @@ export default function DetailBackdrop({ src }: { src?: string }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  // A new src (e.g. a background re-pick bumping artworkVersion) gets a fresh try
+  // and a fresh fade-in, even if the previous one failed.
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [src]);
+
   // Drive the veil from window scroll via a CSS variable, rAF-coalesced so a
   // scroll burst costs one style write per frame.
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, ApiError } from "../api/client";
 import type { PlaylistDetail } from "../api/types";
@@ -48,6 +48,7 @@ export default function PlaylistDetailScreen() {
   // and the PRIOR order is restored (see onMove).
   const [reordering, setReordering] = useState(false);
   const [reorderError, setReorderError] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal, opts: { silent?: boolean } = {}) => {
@@ -64,23 +65,34 @@ export default function PlaylistDetailScreen() {
           setState({ status: "not-found" });
           return;
         }
+        // A failed background refetch keeps the ready view; only a user-visible
+        // (non-silent) load turns into the error state.
+        if (opts.silent) return;
         setState({ status: "error", message: errorMessage(err) });
       }
     },
     [id],
   );
 
+  // The in-flight silent reload, so a newer mutation (or unmount) can cancel it
+  // before its stale document lands over the newer state.
+  const reloadCtrl = useRef<AbortController | null>(null);
   useEffect(() => {
     const ctrl = new AbortController();
     void load(ctrl.signal);
-    return () => ctrl.abort();
+    return () => {
+      ctrl.abort();
+      reloadCtrl.current?.abort();
+    };
   }, [load]);
 
   // Silent refetch after a remove (membership/count/order reflect server truth).
-  const reload = useCallback(
-    () => void load(undefined, { silent: true }),
-    [load],
-  );
+  const reload = useCallback(() => {
+    reloadCtrl.current?.abort();
+    const ctrl = new AbortController();
+    reloadCtrl.current = ctrl;
+    void load(ctrl.signal, { silent: true });
+  }, [load]);
 
   // Build a Queue from this Playlist's ordered members and start playing at
   // `startIndex` (the header Play uses 0; a per-member Play uses that member's
@@ -89,13 +101,15 @@ export default function PlaylistDetailScreen() {
   // build leaves the detail in place (the user can retry).
   const play = useCallback(
     async (startIndex: number) => {
+      setPlayError(null);
       try {
         const entries = await buildPlaylistQueue(apiClient, id);
         if (entries.length === 0) return;
         const at = Math.min(Math.max(startIndex, 0), entries.length - 1);
         queue.playNow(entries, at);
-      } catch {
-        // Transient/notfound build failure — stay on the detail.
+      } catch (err) {
+        // Transient/notfound build failure — stay on the detail, and say so.
+        setPlayError(errorMessage(err));
       }
     },
     [id, queue],
@@ -117,6 +131,9 @@ export default function PlaylistDetailScreen() {
     if (state.status !== "ready" || reordering) return;
     const prev = state.data.members;
     if (toIndex < 0 || toIndex >= prev.length || fromIndex === toIndex) return;
+    // A silent reload still in flight would land its pre-move order over the
+    // optimistic one below.
+    reloadCtrl.current?.abort();
 
     const next = [...prev];
     const [moved] = next.splice(fromIndex, 1);
@@ -201,6 +218,17 @@ export default function PlaylistDetailScreen() {
                 </button>
               )}
             </div>
+
+            {playError && (
+              <p
+                className="status status-error"
+                data-testid="play-error"
+                role="alert"
+              >
+                <span className="dot dot-error" aria-hidden="true" />
+                {playError}
+              </p>
+            )}
 
             {reorderError && (
               <p

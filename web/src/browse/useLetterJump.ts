@@ -33,6 +33,8 @@ export interface LetterJumpPager {
   hasMore: boolean;
   loading: boolean;
   loadingMore: boolean;
+  /** Set when the last fetch failed; a pending jump gives up instead of retrying. */
+  error?: string | null;
 }
 
 export interface LetterJump {
@@ -64,7 +66,7 @@ export function useLetterJump<T>(
     setTarget(startChar);
   }, []);
 
-  const { loadMore, hasMore, loading, loadingMore } = pager;
+  const { loadMore, hasMore, loading, loadingMore, error } = pager;
 
   // Drive the jump. Re-runs as items grow / paging settles, so a target beyond
   // the loaded window resolves once the pages it needs have landed.
@@ -83,6 +85,13 @@ export function useLetterJump<T>(
     // this effect re-fire when it arrives. loadMore no-ops while a fetch is in
     // flight, and the loadingMore dependency re-runs us when it settles.
     if (hasMore) {
+      // A failed page would otherwise re-fire this effect (loadingMore flips
+      // back to false) and retry in a tight loop — give up on the jump instead;
+      // the grid's own error/Retry UI takes over.
+      if (error) {
+        setTarget(null);
+        return;
+      }
       if (!loadingMore) loadMore();
       return;
     }
@@ -90,7 +99,7 @@ export function useLetterJump<T>(
     // item so the click still moves the user to the bottom of the list.
     if (items.length > 0) scrollToChild(grid, items.length - 1);
     setTarget(null);
-  }, [target, items, hasMore, loading, loadingMore, loadMore]);
+  }, [target, items, hasMore, loading, loadingMore, error, loadMore]);
 
   return { gridRef, jumpTo };
 }

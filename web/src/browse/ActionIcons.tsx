@@ -85,54 +85,6 @@ export function TrashIcon({ className }: IconProps) {
   );
 }
 
-// The two admin-row action glyphs below are drawn on a plain 24×24 grid as
-// strokes, not on the 90-unit filled artwork grid the icons above share — a
-// hairline wrench and tick stay legible at the 1em size a row button renders at,
-// where filled silhouettes turn to mud.
-function Svg24({ children, className }: IconProps & { children: React.ReactNode }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="1em"
-      height="1em"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      role="presentation"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {children}
-    </svg>
-  );
-}
-
-/** Wrench — "Fix" (an identity or a metadata match). */
-export function WrenchIcon({ className }: IconProps) {
-  return (
-    <Svg24 className={className}>
-      {/* Head: a ring left open across the top-right. The mouth is deliberately
-          wide (~100°) — narrower gaps read as a magnifying glass once the icon
-          is down at row size. */}
-      <path d="M14.9 2.6 A5.2 5.2 0 1 0 21.4 9" />
-      {/* Handle, running from the head down to the bottom-left corner. */}
-      <path d="M12.8 11.2 L4.6 19.4" />
-    </Svg24>
-  );
-}
-
-/** Tick — "Mark reviewed". */
-export function CheckIcon({ className }: IconProps) {
-  return (
-    <Svg24 className={className}>
-      <path d="M4.5 12.8 L9.5 17.8 L19.5 6.5" />
-    </Svg24>
-  );
-}
-
 /** Three vertical dots — the overflow menu. */
 export function MoreIcon({ className }: IconProps) {
   return (

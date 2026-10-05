@@ -18,6 +18,10 @@ import { errorMessage } from "../screens/errorMessage";
 // append after the user has moved on. Double-fetch protection (in-flight /
 // hasMore guards) lives in loadMore.
 
+// Extra delay before the next refresh walk per page the last walk fetched beyond
+// the first (a one-page list is never held back).
+const REFRESH_COST_MS = 500;
+
 /** One page of results: the items plus the cursor for the next page (null when
  * this was the last page). */
 export interface Page<T> {
@@ -80,6 +84,15 @@ export function usePaginatedList<T>(
   const hasMoreRef = useRef(true);
   const inFlight = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // refresh() bookkeeping: a refresh asked for while the list was busy (or still
+  // cooling down from a deep walk) is remembered here and replayed, so the LAST
+  // request always lands; cooldownMs is how long after a walk to hold the next
+  // one, scaled by how many pages that walk cost.
+  const pendingRefresh = useRef(false);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRefreshEnd = useRef(0);
+  const cooldownMs = useRef(0);
+  const requestRefreshRef = useRef<() => void>(() => {});
   // The accumulated items, mirrored to a ref so refresh() can read how far the
   // user has loaded (the window to re-fetch) without being a callback dependency.
   const itemsRef = useRef<T[]>(items);
@@ -146,7 +159,10 @@ export function usePaginatedList<T>(
         // Only clear in-flight if WE are still the current operation. A reset /
         // refresh that superseded this request has already installed its own
         // controller and set inFlight; a superseded request must not clobber it.
-        if (abortRef.current === ctrl) inFlight.current = false;
+        if (abortRef.current === ctrl) {
+          inFlight.current = false;
+          if (!ctrl.signal.aborted && pendingRefresh.current) requestRefreshRef.current();
+        }
       }
     },
     [fetchPage],
@@ -162,12 +178,19 @@ export function usePaginatedList<T>(
     // sole operation again — clear the guard (the aborted request's finally is
     // controller-gated and won't clobber the load below).
     inFlight.current = false;
+    pendingRefresh.current = false;
+    lastRefreshEnd.current = 0;
+    cooldownMs.current = 0;
     setItems([]);
     setCursor(null);
     setHasMore(true);
     setError(null);
     void load(null);
-    return () => abortRef.current?.abort();
+    return () => {
+      abortRef.current?.abort();
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    };
   }, [load]);
 
   const loadMore = useCallback(() => {
@@ -182,13 +205,30 @@ export function usePaginatedList<T>(
   // refresh re-fetches the loaded window (page one onward, until it has covered
   // at least the items currently held or reached the end) and merges the result
   // into the list by id, in server order, WITHOUT a blanking setItems([]). It
-  // single-flights against load/loadMore via the same inFlight guard, so a busy
-  // grid simply skips this tick (a later progress event or the terminal
-  // libraryUpdated nudge refreshes once things settle). Silent: no loading flag,
-  // and a failed refresh leaves the existing list intact (it's a background
-  // live-update, not a user action).
+  // single-flights against load/loadMore via the same inFlight guard; a request
+  // that arrives while busy is remembered (pendingRefresh) and replayed when the
+  // in-flight fetch settles, so the terminal libraryUpdated nudge is never lost.
+  // A deep walk (many pages) also holds the next one for a cooldown proportional
+  // to its cost, so a 400ms scan tick can't keep the server walking forever.
+  // Silent: no loading flag, and a failed refresh leaves the existing list intact
+  // (it's a background live-update, not a user action).
   const refresh = useCallback(async () => {
-    if (inFlight.current) return;
+    if (inFlight.current) {
+      pendingRefresh.current = true;
+      return;
+    }
+    const wait = lastRefreshEnd.current + cooldownMs.current - Date.now();
+    if (wait > 0) {
+      pendingRefresh.current = true;
+      if (!refreshTimer.current) {
+        refreshTimer.current = setTimeout(() => {
+          refreshTimer.current = null;
+          if (pendingRefresh.current && !inFlight.current) requestRefreshRef.current();
+        }, wait);
+      }
+      return;
+    }
+    pendingRefresh.current = false;
     inFlight.current = true;
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -198,9 +238,11 @@ export function usePaginatedList<T>(
       const fresh: T[] = [];
       const ids = new Set<string>();
       let cursor: string | null = null;
+      let pages = 0;
       do {
         const page = await fetchPage(cursor, ctrl.signal);
         if (ctrl.signal.aborted) return;
+        pages++;
         for (const item of page.items) {
           const id = getIdRef.current(item);
           if (ids.has(id)) continue; // de-dup within the refreshed window
@@ -209,12 +251,16 @@ export function usePaginatedList<T>(
         }
         cursor = page.nextCursor;
       } while (cursor && fresh.length < want);
-      // Keep any previously-loaded items the refreshed window didn't re-cover
-      // (e.g. an item pushed just past the window by a new insertion), in their
-      // existing order, so nothing the user had scrolled to vanishes.
-      const tail = prev.filter((item) => !ids.has(getIdRef.current(item)));
-      for (const item of tail) ids.add(getIdRef.current(item));
+      // When the walk stopped early (cursor !== null), keep the previously-loaded
+      // items PAST the refreshed window (e.g. pushed there by a new insertion), in
+      // their existing order, so nothing the user had scrolled to vanishes. When it
+      // reached the end, fresh is the whole list: anything it lacks was removed.
+      const tail =
+        cursor === null
+          ? []
+          : prev.slice(fresh.length).filter((item) => !ids.has(getIdRef.current(item)));
       setItems(fresh.concat(tail));
+      cooldownMs.current = (pages - 1) * REFRESH_COST_MS;
       cursorRef.current = cursor;
       setCursor(cursor);
       hasMoreRef.current = cursor !== null;
@@ -223,9 +269,16 @@ export function usePaginatedList<T>(
       if (ctrl.signal.aborted || isAbort(err)) return;
       // Swallow: a background refresh that fails leaves the list as-is.
     } finally {
-      if (abortRef.current === ctrl) inFlight.current = false;
+      if (abortRef.current === ctrl) {
+        inFlight.current = false;
+        lastRefreshEnd.current = Date.now();
+        if (!ctrl.signal.aborted && pendingRefresh.current) requestRefreshRef.current();
+      }
     }
   }, [fetchPage]);
+
+  const requestRefresh = useCallback(() => void refresh(), [refresh]);
+  requestRefreshRef.current = requestRefresh;
 
   return {
     items,
@@ -235,7 +288,7 @@ export function usePaginatedList<T>(
     error,
     loadMore,
     retry,
-    refresh: useCallback(() => void refresh(), [refresh]),
+    refresh: requestRefresh,
   };
 }
 

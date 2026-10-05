@@ -158,10 +158,6 @@ function Detail({
   const [resumeMs, setResumeMs] = useState(title.resumePositionMs);
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
-  // Local overview + lockedFields, seeded from the server and rewritten from the
-  // detail the metadata-edit / lock-release endpoints return, so an Admin's edit
-  // (and its Locked badge) appears instantly without a full refetch.
-  const [overview, setOverview] = useState(title.overview);
   // Local needs-review flag so an Admin's "Mark reviewed" hides the notice at once
   // (the server makes the dismissal stick across rescans).
   const [needsReview, setNeedsReview] = useState(title.needsReview);
@@ -330,7 +326,6 @@ function Detail({
               title={title}
               onUpdated={(d) => {
                 setTitle(d);
-                setOverview(d.overview);
               }}
             />
           ),
@@ -345,7 +340,6 @@ function Detail({
               initialQuery={title.title}
               onApplied={(d) => {
                 setTitle(d);
-                setOverview(d.overview);
                 setWatched(d.watched);
                 setResumeMs(d.resumePositionMs);
               }}
@@ -386,17 +380,14 @@ function Detail({
                   pick={async (r, url) => {
                     const d = await apiClient.pickTitleArtwork(title.id, r, url);
                     setTitle(d);
-                    setOverview(d.overview);
                   }}
                   release={async (field) => {
                     const d = await apiClient.releaseLock(title.id, field);
                     setTitle(d);
-                    setOverview(d.overview);
                   }}
                   upload={async (r, file) => {
                     const d = await apiClient.uploadTitleArtwork(title.id, r, file);
                     setTitle(d);
-                    setOverview(d.overview);
                   }}
                 />
               ),
@@ -679,9 +670,9 @@ function Detail({
               {title.tagline}
             </p>
           )}
-          {overview && (
+          {title.overview && (
             <p className="detail-overview" data-testid="detail-overview">
-              {overview}
+              {title.overview}
             </p>
           )}
 

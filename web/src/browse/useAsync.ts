@@ -28,31 +28,48 @@ export function useAsync<T>(
   deps: ReadonlyArray<unknown>,
   opts?: { keepPreviousData?: boolean },
 ): AsyncState<T> {
-  const [state, setState] = useState<AsyncState<T>>({ status: "loading" });
+  // The state is tagged with the deps it was produced for. The loading switch
+  // happens inside an effect, so for one render after a deps change the stored
+  // state still belongs to the PREVIOUS key; comparing tags lets us report
+  // loading (or, with keepPreviousData, the old data) on that very render.
+  const [snap, setSnap] = useState<{ deps: ReadonlyArray<unknown>; state: AsyncState<T> }>({
+    deps,
+    state: LOADING,
+  });
   const keepPrevious = opts?.keepPreviousData ?? false;
 
   useEffect(() => {
     const ctrl = new AbortController();
-    setState((prev) =>
-      keepPrevious && prev.status === "ready" ? prev : { status: "loading" },
-    );
+    setSnap((prev) => ({
+      deps,
+      state: keepPrevious && prev.state.status === "ready" ? prev.state : LOADING,
+    }));
     // async/await with a single try/catch keeps the rejection handled within one
     // continuation — a .then().catch() chain leaves the intermediate derived
     // promise transiently unhandled, which strict rejection detectors flag.
     void (async () => {
       try {
         const data = await fn(ctrl.signal);
-        if (!ctrl.signal.aborted) setState({ status: "ready", data });
+        if (!ctrl.signal.aborted) setSnap({ deps, state: { status: "ready", data } });
       } catch (err) {
         if (ctrl.signal.aborted || isAbort(err)) return;
-        setState({ status: "error", message: errorMessage(err) });
+        setSnap({ deps, state: { status: "error", message: errorMessage(err) } });
       }
     })();
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return state;
+  if (!sameDeps(snap.deps, deps)) {
+    return keepPrevious && snap.state.status === "ready" ? snap.state : LOADING;
+  }
+  return snap.state;
+}
+
+const LOADING: AsyncState<never> = { status: "loading" };
+
+function sameDeps(a: ReadonlyArray<unknown>, b: ReadonlyArray<unknown>): boolean {
+  return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 }
 
 function isAbort(err: unknown): boolean {

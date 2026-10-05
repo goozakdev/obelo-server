@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Credit } from "../api/types";
-import { personPhotoUrl } from "./Poster";
+import { initials, personPhotoUrl } from "./Poster";
 
 // The Movie (and, later, Show) detail cast section: a horizontally-scrolling row
 // of fixed-width cast cards in billing order (cast-photos/01). Each card shows the
@@ -90,13 +90,4 @@ function CastAvatar({
       onError={() => setFailed(true)}
     />
   );
-}
-
-// initials derives a 1-2 letter placeholder label from a person's name, matching
-// Poster's placeholder idiom.
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 }

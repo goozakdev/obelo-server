@@ -177,12 +177,14 @@ export default function ShowDetailScreen() {
   // which already carries the single-Episode fallback (story 39).
   const playFromStart = useCallback(async () => {
     if (!startSeason) return;
+    setQueueError(null);
     try {
       const { episodes } = await apiClient.getSeasonEpisodes(startSeason.id);
       const first = episodes[0];
       if (first) await play(first, startSeason.id);
-    } catch {
-      // Couldn't load the start Season's Episodes — nothing to start.
+    } catch (err) {
+      // Couldn't load the start Season's Episodes — nothing to start; say so.
+      setQueueError(errorMessage(err));
     }
   }, [startSeason, play]);
 
@@ -503,6 +505,7 @@ export default function ShowDetailScreen() {
               <SeasonBlock
                 key={activeSeason.id}
                 season={activeSeason}
+                reloadKey={reloadKey}
                 onPlay={(episode) => void play(episode, activeSeason.id)}
                 onPlayNext={playNext}
                 onAddToQueue={addToQueue}
@@ -778,20 +781,25 @@ function ShowOverflowMenu({
 // huge request and each season's list paints as it arrives.
 function SeasonBlock({
   season,
+  reloadKey,
   onPlay,
   onPlayNext,
   onAddToQueue,
   onEdit,
 }: {
   season: Season;
+  reloadKey: number;
   onPlay: (episode: EpisodeSummary) => void;
   onPlayNext: (episode: EpisodeSummary) => void;
   onAddToQueue: (episode: EpisodeSummary) => void;
   onEdit: (episode: EpisodeSummary) => void;
 }) {
+  // reloadKey: a Targeted scan or Admin edit refetches the seasons document, so the
+  // open Season's episodes must refetch too — kept on screen meanwhile.
   const state = useAsync<SeasonEpisodes>(
     (signal) => apiClient.getSeasonEpisodes(season.id, signal),
-    [season.id],
+    [season.id, reloadKey],
+    { keepPreviousData: true },
   );
 
   return (
@@ -861,6 +869,10 @@ function EpisodeRow({
   onEdit: () => void;
 }) {
   const resuming = !episode.watched && episode.resumePositionMs > 0;
+  // A still that fails to load falls back to the same ▶ placeholder as a missing
+  // one, instead of leaving an empty thumbnail button. Re-armed if the URL changes.
+  const [stillFailed, setStillFailed] = useState(false);
+  useEffect(() => setStillFailed(false), [episode.stillUrl]);
   return (
     <li
       className={linkedRowClass("episode-tile", episode)}
@@ -876,16 +888,14 @@ function EpisodeRow({
         aria-label={`Play ${episode.title}`}
         onClick={onPlay}
       >
-        {episode.stillUrl ? (
+        {episode.stillUrl && !stillFailed ? (
           <img
             className="episode-still"
             data-testid="episode-still"
             src={episode.stillUrl}
             alt=""
             loading="lazy"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
+            onError={() => setStillFailed(true)}
           />
         ) : (
           <span className="episode-still episode-still-placeholder" aria-hidden="true">
