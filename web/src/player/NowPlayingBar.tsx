@@ -8,6 +8,10 @@ import {
 } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { apiClient } from "../api/client";
+// The player negotiates on its first render — before the async auth hydrate — so the
+// per-user Playback preference is keyed off the auth layer's SYNCHRONOUS id, which
+// reads BOTH storage tiers (a session-only login lives in sessionStorage).
+import { persistedUserId } from "../auth/session";
 import { useAsync } from "../browse/useAsync";
 import { episodeContextLabel } from "../browse/episodeLabel";
 import Poster from "../browse/Poster";
@@ -18,6 +22,7 @@ import {
   applySubtitleSelection,
   defaultTrackId,
   deliverableTextTrackIndex,
+  matchTextTrackId,
   orderedImageTracks,
   orderedTextTracks,
   preferredSubtitleLang,
@@ -74,22 +79,6 @@ function isHlsTier(tier: string): boolean {
   return tier === "directStream" || tier === "transcode";
 }
 
-/** Read the logged-in user's id SYNCHRONOUSLY from the same storage the auth layer
- * hydrates from (mirrors usePlaybackPrefs). The player negotiates on its first
- * render — before the async auth hydrate — so the per-user Playback preference must
- * be keyed off a value available NOW, or a configured Title would negotiate Auto
- * once, then re-negotiate once auth lands. Anon (`null`) gets its own bucket. */
-function persistedUserId(): string | null {
-  try {
-    const raw = window.localStorage.getItem("obelo.user");
-    if (!raw) return null;
-    const u = JSON.parse(raw) as { id?: unknown };
-    return typeof u?.id === "string" ? u.id : null;
-  } catch {
-    return null;
-  }
-}
-
 /** A friendly noun for a Title's media kind (used as the label's degraded fallback
  * when the detail fetch fails). */
 function kindLabel(kind: string): string {
@@ -113,6 +102,9 @@ function isVideoKind(kind: string): boolean {
 
 /** How far the ±10s skip buttons jump (video only). */
 const SKIP_SECONDS = 10;
+
+/** How long the `seeked` events of one scrub must go quiet before it is reported. */
+const SEEK_REPORT_DEBOUNCE_MS = 300;
 
 /** How much the ↑/↓ volume keyboard shortcuts nudge the volume (0–1). */
 const VOLUME_STEP = 0.05;
@@ -476,6 +468,10 @@ export default function NowPlayingBar() {
   const queue = useQueue();
   const location = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Read by the stage's window keydown handler: an Esc that closes the drawer must
+  // not ALSO collapse the stage (both listeners see the same keydown).
+  const drawerOpenRef = useRef(drawerOpen);
+  drawerOpenRef.current = drawerOpen;
 
   // Whether the current entry should auto-play. On the bar's FIRST render a present
   // current entry is a RESTORED Queue (hydrated from sessionStorage on reload): it
@@ -562,6 +558,7 @@ export default function NowPlayingBar() {
     }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape" || surfaceRef.current !== "stage") return;
+      if (drawerOpenRef.current) return; // that Esc closes the drawer, not the stage
       // In fullscreen, let the browser's Esc just exit fullscreen (staying on the
       // stage); only a WINDOWED-stage Esc collapses to the mini player. At keydown
       // time the fullscreen exit hasn't happened yet, so this still reads as set.
@@ -1031,6 +1028,8 @@ function CurrentPlayer({
   const shortcutRef = useRef<(e: KeyboardEvent) => void>(() => {});
   shortcutRef.current = (e: KeyboardEvent) => {
     if (!video || surface !== "stage") return;
+    // A focused control (the Up Next card) already handled this key.
+    if (e.defaultPrevented) return;
     const el = e.target as HTMLElement | null;
     const tag = el?.tagName;
     if (el?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
@@ -1047,7 +1046,7 @@ function CurrentPlayer({
     switch (e.key) {
       case " ":
         // A focused button/link already activates on Space — don't double-toggle.
-        if (tag === "BUTTON" || tag === "A") return;
+        if (tag === "BUTTON" || tag === "A" || el?.getAttribute("role") === "button") return;
         e.preventDefault(); // no page scroll
         togglePlay();
         break;
@@ -1172,6 +1171,9 @@ function CurrentPlayer({
   // The element is already gone, so the report is the last position read.
   const unmountedRef = useRef(false);
   useEffect(() => {
+    // Re-armed on every setup: StrictMode's dev double-mount runs the cleanup once
+    // at mount, which would otherwise leave this true for the core's whole life.
+    unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
       session.end(positionMs());
@@ -1183,15 +1185,20 @@ function CurrentPlayer({
 
   // Skip an entry the server can't play (404 Missing / unplayable): once for this
   // mount (the core is re-keyed per entry, so this fires at most once per entry).
+  // ONLY those refusals of the FIRST negotiation: a network failure, a linked-server
+  // outage, or a failed mid-play re-negotiation (an escalation or recovery, after the
+  // stream was ready) shows its honest error instead of cascading through the Queue.
   // At the end of the Queue there's nowhere to go, so the honest state shows.
   const skippedRef = useRef(false);
+  const everReadyRef = useRef(false);
   useEffect(() => {
-    if (skippedRef.current) return;
-    if (status.kind === "error" || status.kind === "unsupported") {
+    if (status.kind === "ready") everReadyRef.current = true;
+    if (skippedRef.current || everReadyRef.current) return;
+    if (status.kind === "unsupported" || (status.kind === "error" && status.missing)) {
       skippedRef.current = true;
       if (queue.hasNext) queue.next();
     }
-  }, [status.kind, queue]);
+  }, [status, queue]);
 
   // Surfaced HLS-attach failure (hls.js unsupported AND no native HLS).
   const [hlsError, setHlsError] = useState<string | null>(null);
@@ -1210,11 +1217,13 @@ function CurrentPlayer({
   // resume there — reusing the same pending-seek/resume machinery a burn/audio
   // escalation uses. Held in a ref so the attach effect's onSessionLost closure
   // stays stable (the effect must not re-run — and re-attach — on every render).
-  const recoverRef = useRef<() => void>(() => {});
+  // Returns false when it declined (throttled), so the HLS layer restarts its load
+  // instead of leaving hls.js stopped with nothing left to recover it.
+  const recoverRef = useRef<() => boolean>(() => true);
   recoverRef.current = () => {
     const now = Date.now();
-    if (recoveringRef.current) return; // a re-negotiation is already in flight
-    if (now - lastRecoverAtRef.current < RECOVER_MIN_INTERVAL_MS) return;
+    if (recoveringRef.current) return true; // a re-negotiation is already in flight
+    if (now - lastRecoverAtRef.current < RECOVER_MIN_INTERVAL_MS) return false;
     recoveringRef.current = true;
     lastRecoverAtRef.current = now;
     // Resume the fresh stream where the viewer was, and keep playing if they were —
@@ -1222,7 +1231,9 @@ function CurrentPlayer({
     pendingSeekMsRef.current = positionMs();
     resumeAfterSeekRef.current = !videoRef.current?.paused;
     seekedRef.current = false;
+    setPlaying(false); // the old element goes away without a `pause` event
     session.recover(positionMs());
+    return true;
   };
   useEffect(() => {
     if (!streamUrl || !tier || !isHlsTier(tier)) return;
@@ -1231,7 +1242,10 @@ function CurrentPlayer({
     setHlsError(null);
     let attachment: HlsAttachment | null = null;
     let cancelled = false;
-    void attachHls(v, streamUrl, { onSessionLost: () => recoverRef.current() })
+    void attachHls(v, streamUrl, {
+      onSessionLost: () => recoverRef.current(),
+      onFatal: (reason) => setHlsError(`Playback stopped: ${reason}`),
+    })
       .then((a) => {
         if (cancelled) {
           a.detach();
@@ -1307,10 +1321,16 @@ function CurrentPlayer({
   >("idle");
   const [candidates, setCandidates] = useState<SubtitleCandidate[]>([]);
   const [fetchingId, setFetchingId] = useState<string | null>(null);
+  // A stored TEXT Subtitle preference seeds the selection (the resolver deliberately
+  // emits nothing for a text track — it renders locally — so nothing else applies
+  // it); no match falls back to the forced default.
+  const storedSub = storedPref?.subtitle ?? null;
   useEffect(() => {
     if (subsInitRef.current || status.kind !== "ready") return;
     subsInitRef.current = true;
-    setSelectedSubId(defaultTrackId(textTracks));
+    const stored = storedSub ? matchTextTrackId(textTracks, storedSub) : null;
+    setSelectedSubId(stored ?? defaultTrackId(textTracks));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.kind, textTracks]);
 
   // Apply the selection whenever it changes (or the element (re)mounts / the HLS
@@ -1352,6 +1372,7 @@ function CurrentPlayer({
       pendingSeekMsRef.current = positionMs();
       resumeAfterSeekRef.current = !videoRef.current?.paused;
       seekedRef.current = false;
+      setPlaying(false); // the old element goes away without a `pause` event
       session.selectBurnSubtitle(image.id, positionMs());
       return;
     }
@@ -1360,6 +1381,7 @@ function CurrentPlayer({
       pendingSeekMsRef.current = positionMs();
       resumeAfterSeekRef.current = !videoRef.current?.paused;
       seekedRef.current = false;
+      setPlaying(false); // the old element goes away without a `pause` event
       session.selectBurnSubtitle(null, positionMs());
     }
     setSelectedSubId(id);
@@ -1466,6 +1488,7 @@ function CurrentPlayer({
     pendingSeekMsRef.current = positionMs();
     resumeAfterSeekRef.current = !videoRef.current?.paused;
     seekedRef.current = false;
+    setPlaying(false); // the old element goes away without a `pause` event
     session.selectAudioStream(id, positionMs());
   }
 
@@ -1508,6 +1531,7 @@ function CurrentPlayer({
     pendingSeekMsRef.current = positionMs();
     resumeAfterSeekRef.current = !videoRef.current?.paused;
     seekedRef.current = false;
+    setPlaying(false); // the old element goes away without a `pause` event
     session.selectVideoStream(id, positionMs());
   }
 
@@ -1556,15 +1580,37 @@ function CurrentPlayer({
   // the retry succeeds and "video started paused after a slow negotiation" heals
   // on the first click instead of demanding the user find the play button. The
   // refusal is also logged so the state is diagnosable.
+  //
+  // ONE handler on `click` + `keydown` in the BUBBLE phase (both grant activation):
+  // the gesture's own target runs first, so a click on the bar's Play button toggles
+  // through togglePlay and the retry then finds the element already playing — a
+  // capture-phase pointerdown retry ran BEFORE that click and made the button's
+  // toggle pause it again. When it fires, or the element starts playing by any
+  // route, or this core unmounts, BOTH listeners are removed (a leftover one would
+  // later resume a deliberate pause, or play a detached element).
+  const disarmRetryRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => disarmRetryRef.current?.(), []);
   function playOrDefer(v: HTMLVideoElement, what: string) {
     v.play()?.catch((err) => {
       // eslint-disable-next-line no-console
       console.error(`[player] ${what} was blocked (will retry on the next interaction):`, err);
+      if (!v.isConnected) return; // the core unmounted while play() was pending
+      disarmRetryRef.current?.();
+      const disarm = () => {
+        document.removeEventListener("click", retry);
+        document.removeEventListener("keydown", retry);
+        v.removeEventListener("play", disarm);
+        disarmRetryRef.current = null;
+      };
       const retry = () => {
+        disarm();
+        if (!v.isConnected || !v.paused) return;
         void v.play()?.catch(() => {});
       };
-      document.addEventListener("pointerdown", retry, { once: true, capture: true });
-      document.addEventListener("keydown", retry, { once: true, capture: true });
+      document.addEventListener("click", retry);
+      document.addEventListener("keydown", retry);
+      v.addEventListener("play", disarm);
+      disarmRetryRef.current = disarm;
     });
   }
   function onDurationChange() {
@@ -1587,8 +1633,21 @@ function CurrentPlayer({
     session.stopReporting();
     session.report(positionMs(), "paused");
   }
+  // A scrub (dragging the seek bar) completes dozens of seeks a second: report the
+  // position once, when the burst settles, instead of one POST per `seeked`.
+  const seekReportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (seekReportTimerRef.current != null) clearTimeout(seekReportTimerRef.current);
+    },
+    [],
+  );
   function onSeeked() {
-    session.report(positionMs(), videoRef.current?.paused ? "paused" : "playing");
+    if (seekReportTimerRef.current != null) clearTimeout(seekReportTimerRef.current);
+    seekReportTimerRef.current = setTimeout(() => {
+      seekReportTimerRef.current = null;
+      session.report(positionMs(), videoRef.current?.paused ? "paused" : "playing");
+    }, SEEK_REPORT_DEBOUNCE_MS);
   }
   // Play the Queue's next Episode from the Watched-point Credits (ADR-0065 §6).
   // The report at `fromMs` must land before the advance: the advance unmounts this
@@ -1629,7 +1688,9 @@ function CurrentPlayer({
     // Natural-end advance branches on Repeat mode (slice 04). Under repeat-one the
     // SAME entry replays: the store DOESN'T move (advance() would be a no-op), so we
     // re-seek and re-play THIS element directly — the store never re-keys this core.
-    if (queue.repeat === "one" && v) {
+    // Repeat is MUSIC-only (the video UI has no control for it), but the mode carries
+    // over from a prior music Queue — so a video must neither loop nor wrap.
+    if (!video && queue.repeat === "one" && v) {
       session.report(finalMs, "paused"); // count the completed pass (Watched threshold)
       v.currentTime = 0;
       setCurrentTime(0);
@@ -1641,8 +1702,12 @@ function CurrentPlayer({
     session.report(finalMs, "paused");
     // Otherwise advance the store's pointer: repeat-all wraps the last entry to the
     // first, off stops cleanly at the end (a no-op). A pointer change re-keys this
-    // core → ends this session, negotiates the next.
-    queue.advance();
+    // core → ends this session, negotiates the next. A video only ever steps forward.
+    if (video) {
+      if (queue.hasNext) queue.next();
+    } else {
+      queue.advance();
+    }
   }
 
   function togglePlay() {
@@ -1680,11 +1745,11 @@ function CurrentPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transport.registerPosition]);
 
-  // Seek to an absolute position (seconds), clamped to the media bounds, and fire
-  // a progress report so resume position + Watch state stay accurate — reusing the
-  // same session.report() path onSeeked uses (jsdom doesn't emit a `seeked` event
-  // for a programmatic currentTime set, so we report directly here). Drives both
-  // the progress-bar click/drag and the ±10s buttons.
+  // Seek to an absolute position (seconds), clamped to the media bounds. The
+  // progress report that keeps resume position + Watch state accurate comes from the
+  // element's `seeked` event (onSeeked, debounced) — NOT from here, or a drag would
+  // POST once per change on top of once per seek. Drives both the progress-bar
+  // click/drag and the ±10s buttons.
   function seekTo(seconds: number) {
     const v = videoRef.current;
     if (!v) return;
@@ -1693,7 +1758,6 @@ function CurrentPlayer({
     const clamped = Math.min(Math.max(seconds, 0), upper);
     v.currentTime = clamped;
     setCurrentTime(clamped);
-    session.report(Math.floor(clamped * 1000), v.paused ? "paused" : "playing");
   }
   // Seek to a Marker's end (ms) for its Skip, short of the File's own end
   // (skipTargetMs). Uses the live element duration, falling back to state.

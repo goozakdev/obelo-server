@@ -133,6 +133,8 @@ describe("NowPlayingBar — progress bar + time labels", () => {
     reportProgress.mockClear();
     fireEvent.change(screen.getByTestId("now-playing-progress"), { target: { value: "42" } });
     expect(video.currentTime).toBeCloseTo(42, 1);
+    // The report rides the element's `seeked` event (R04-09), not the change.
+    fireEvent.seeked(video);
     await waitFor(() =>
       expect(reportProgress).toHaveBeenCalledWith(
         "sess-1",
@@ -152,6 +154,8 @@ describe("NowPlayingBar — ±10s skip (video only)", () => {
     expect(video.currentTime).toBeCloseTo(60, 1);
     fireEvent.click(screen.getByTestId("now-playing-skip-back"));
     expect(video.currentTime).toBeCloseTo(50, 1);
+    // The report rides the element's `seeked` event (R04-09), not the click.
+    fireEvent.seeked(video);
     await waitFor(() => expect(reportProgress).toHaveBeenCalled());
   });
 

@@ -121,8 +121,10 @@ export async function buildAlbumQueue(
  * appends the rest as it resolves (`enqueue`); the store satisfies this
  * structurally, and a fake records the calls in tests. */
 export interface QueueSink {
-  playNow: (entries: QueueEntry[], startIndex?: number) => void;
-  enqueue: (entries: QueueEntry[]) => void;
+  /** May return the play context's token; the lazy tail hands it back to `enqueue` so
+   * a newer play context (or a clear) is never appended to. */
+  playNow: (entries: QueueEntry[], startIndex?: number) => number | void;
+  enqueue: (entries: QueueEntry[], context?: number) => void;
 }
 
 /** The chosen Episode's Show/Season parent context (from its `TitleDetail.episode`
@@ -194,8 +196,8 @@ export async function buildShowQueue(
   if (entries.length > 0 && opts?.headStreams) {
     entries[0] = { ...entries[0], ...cleanStreams(opts.headStreams) };
   }
-  sink.playNow(entries);
-  return { tail: resolveShowTail(client, ctx, sink, signal) };
+  const context = sink.playNow(entries);
+  return { tail: resolveShowTail(client, ctx, sink, signal, context ?? undefined) };
 }
 
 /** Append the Seasons AFTER the chosen one, in order, as each resolves. A
@@ -206,6 +208,7 @@ async function resolveShowTail(
   ctx: ShowQueueContext,
   sink: QueueSink,
   signal?: AbortSignal,
+  context?: number,
 ): Promise<void> {
   try {
     const { seasons } = await client.getShowSeasons(ctx.showId, signal);
@@ -214,7 +217,11 @@ async function resolveShowTail(
     for (const season of following) {
       const { episodes } = await client.getSeasonEpisodes(season.id, signal);
       if (episodes.length > 0) {
-        sink.enqueue(withShowId(entriesFromTitles(episodes.map(episodeToSummary)), ctx.showId));
+        const entries = withShowId(entriesFromTitles(episodes.map(episodeToSummary)), ctx.showId);
+        // Only pass the token when the sink issued one (a fake sink's call shape
+        // stays `enqueue(entries)`).
+        if (context === undefined) sink.enqueue(entries);
+        else sink.enqueue(entries, context);
       }
     }
   } catch {

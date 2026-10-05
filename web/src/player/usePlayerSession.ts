@@ -51,7 +51,7 @@ export type PlayerStatus =
   | { kind: "ready"; decision: PlaybackDecision }
   | { kind: "busy"; suggestedMaxBitrate?: number; retrying: boolean; message: string }
   | { kind: "unsupported"; reason: string; message: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; missing?: boolean };
 
 export interface PlayerSession {
   status: PlayerStatus;
@@ -328,8 +328,11 @@ export function usePlayerSession(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const getPositionRef = useRef<() => number>(() => 0);
   const endedRef = useRef(false);
-  // Aborts the in-flight negotiation when a retry supersedes it or we unmount.
-  const negotiateCtrlRef = useRef<AbortController | null>(null);
+  // Identifies the latest negotiation. A request is STALE once a newer one started or
+  // the hook unmounted. A stale request is never aborted — the server may already
+  // have created its session, and an aborted client would never learn the id — so
+  // its answer is awaited and, if it carries a session, that session is ended.
+  const negotiationGenRef = useRef(0);
   // True once we've spent our single automatic SERVER_BUSY retry; a further
   // busy response then waits for the user's manual retry (no infinite loop).
   const autoRetriedRef = useRef(false);
@@ -339,10 +342,10 @@ export function usePlayerSession(
   // useCallback so both the mount effect and the manual retry() share one path.
   const negotiate = useCallback(
     (overrideMaxBitrate?: number) => {
-      // Supersede any in-flight negotiation (e.g. a manual retry mid-request).
-      negotiateCtrlRef.current?.abort();
-      const ctrl = new AbortController();
-      negotiateCtrlRef.current = ctrl;
+      // Supersede any in-flight negotiation (e.g. a manual retry mid-request): its
+      // answer, when it lands, is stale (see negotiationGenRef).
+      const gen = ++negotiationGenRef.current;
+      const isStale = () => gen !== negotiationGenRef.current;
       endedRef.current = false;
       const { deviceProfile, constraints } = deriveCapabilityProfile();
       // Layer the profile: the browser-probed capability default first, then the
@@ -379,13 +382,19 @@ export function usePlayerSession(
               // Only ever true (the client omits a falsy field from the body).
               remuxSelectedOnly: remuxRef.current || undefined,
             },
-            ctrl.signal,
+            // Never aborted (see negotiationGenRef); the signal only keeps the
+            // request cancellable by the client's own machinery.
+            new AbortController().signal,
           );
-          if (ctrl.signal.aborted) return;
+          if (isStale()) {
+            // Abandoned while in flight: the server made a session nobody will use.
+            void Promise.resolve(client.endSession(decision.sessionId)).catch(() => {});
+            return;
+          }
           sessionIdRef.current = decision.sessionId;
           setStatus({ kind: "ready", decision });
         } catch (err) {
-          if (ctrl.signal.aborted || isAbort(err)) return;
+          if (isStale() || isAbort(err)) return;
           if (err instanceof ApiError && err.code === "SERVER_BUSY") {
             const suggested = suggestedBitrate(err);
             // Auto-retry ONCE at the suggested lower bitrate (where one was
@@ -427,7 +436,10 @@ export function usePlayerSession(
               return;
             }
           }
-          setStatus({ kind: "error", message: errorMessage(err) });
+          // A 404 / NOT_FOUND refusal means the Title itself is gone (Missing): the
+          // only error the player may skip past to the next Queue entry.
+          const missing = err instanceof ApiError && (err.status === 404 || err.code === "NOT_FOUND");
+          setStatus({ kind: "error", message: errorMessage(err), missing });
         }
       })();
     },
@@ -447,17 +459,24 @@ export function usePlayerSession(
     autoRetriedRef.current = false;
     setStatus({ kind: "negotiating" });
     negotiate();
-    return () => negotiateCtrlRef.current?.abort();
+    // Mark the in-flight request stale (its answer, if it carries a session, is
+    // ended rather than adopted) on unmount / title change.
+    return () => {
+      negotiationGenRef.current++;
+    };
   }, [negotiate, pendingPreference]);
 
   // Manual retry from the busy state: re-negotiate at the last suggested lower
   // bitrate (if any) so the request is a genuine step down, not the rejected one.
+  // The suggestion is read from a ref, not inside a setStatus updater: updaters must
+  // be pure (StrictMode double-invokes them, which sent two requests).
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const retry = useCallback(() => {
-    setStatus((prev) => {
-      const suggested = prev.kind === "busy" ? prev.suggestedMaxBitrate : undefined;
-      negotiate(suggested);
-      return { kind: "negotiating" };
-    });
+    const prev = statusRef.current;
+    const suggested = prev.kind === "busy" ? prev.suggestedMaxBitrate : undefined;
+    setStatus({ kind: "negotiating" });
+    negotiate(suggested);
   }, [negotiate]);
 
   const report = useCallback(

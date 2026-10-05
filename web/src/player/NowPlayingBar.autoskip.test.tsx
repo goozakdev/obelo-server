@@ -163,7 +163,11 @@ describe("NowPlayingBar — auto-skip", () => {
     setPosition(video, 30);
     await waitFor(() => expect(video.currentTime).toBe(70));
     expect(screen.queryByTestId("skip-marker")).toBeNull();
-    expect(reportProgress).toHaveBeenLastCalledWith("sess-1", expect.objectContaining({ positionMs: 70_000 }));
+    // The report rides the element's `seeked` event (R04-09), not the seek call.
+    fireEvent.seeked(video);
+    await waitFor(() =>
+      expect(reportProgress).toHaveBeenLastCalledWith("sess-1", expect.objectContaining({ positionMs: 70_000 })),
+    );
   });
 
   it("without the setting offers Skip and does not jump", async () => {

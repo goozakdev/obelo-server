@@ -61,6 +61,21 @@ export function defaultTrackId(ordered: SubtitleTrack[]): string | null {
   return forced ? forced.id : null;
 }
 
+/** The id of the first deliverable text track matching a stored Subtitle preference
+ * (language, case-insensitive, AND forced exactly — the same key the resolver matches
+ * on), or null when this Title has none. Takes the already-ordered list so a
+ * preferred-language track wins among several matches. */
+export function matchTextTrackId(
+  ordered: SubtitleTrack[],
+  pref: { language: string; forced: boolean },
+): string | null {
+  const lang = pref.language.toLowerCase();
+  const hit = ordered.find(
+    (t) => (t.language ?? "").toLowerCase() === lang && t.forced === pref.forced,
+  );
+  return hit ? hit.id : null;
+}
+
 /** The deliverable TEXT tracks of a decision in SERVER order (kind "text" with a
  * url), unsorted — the order the server lists them AND the order the HLS master
  * playlist lists its in-band SUBTITLES renditions. Used to map a selected track

@@ -40,8 +40,12 @@ export interface QueueStore {
   shuffle: boolean;
   /** Repeat mode: `off` (default stop-at-end) / `all` / `one`. Music-only in UI. */
   repeat: RepeatMode;
-  playNow: (entries: QueueEntry[], startIndex?: number) => void;
-  enqueue: (entries: QueueEntry[]) => void;
+  /** Returns the play CONTEXT's token: pass it back to {@link enqueue} to append
+   * lazily-resolved entries that belong to this play context only. */
+  playNow: (entries: QueueEntry[], startIndex?: number) => number;
+  /** With a `context` token (from {@link playNow}), the append is dropped when that
+   * context is no longer the Queue (a newer playNow or a clear happened since). */
+  enqueue: (entries: QueueEntry[], context?: number) => void;
   playNext: (entries: QueueEntry[]) => void;
   removeEntry: (entryId: string) => void;
   reorder: (entryIds: string[]) => void;
@@ -115,17 +119,27 @@ export function QueueProvider({ children, initialState }: QueueProviderProps) {
   // so they read the latest state without being re-created on every change
   // (stable identities for consumers' effects).
   const ops = useMemo(() => {
-    const playNow = (entries: QueueEntry[], startIndex = 0) =>
+    // Which play context the Queue holds: bumped by every playNow and clear, so a
+    // lazy append (the Show tail walk) can tell it has been replaced.
+    let context = 0;
+    const playNow = (entries: QueueEntry[], startIndex = 0) => {
       setState((s) => model.playNow(s, entries, startIndex));
-    const enqueue = (entries: QueueEntry[]) =>
+      return ++context;
+    };
+    const enqueue = (entries: QueueEntry[], forContext?: number) => {
+      if (forContext !== undefined && forContext !== context) return;
       setState((s) => model.enqueue(s, entries));
+    };
     const playNext = (entries: QueueEntry[]) =>
       setState((s) => model.playNext(s, entries));
     const removeEntry = (entryId: string) =>
       setState((s) => model.removeEntry(s, entryId));
     const reorder = (entryIds: string[]) =>
       setState((s) => model.reorder(s, entryIds));
-    const clear = () => setState(() => model.clear());
+    const clear = () => {
+      context++;
+      setState(() => model.clear());
+    };
     const next = () => setState((s) => model.next(s));
     const prev = () => setState((s) => model.prev(s));
     const jumpTo = (index: number) => setState((s) => model.jumpTo(s, index));

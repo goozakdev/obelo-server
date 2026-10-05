@@ -32,8 +32,14 @@ export interface AttachHlsOptions {
    * retrying the same URLs can never recover, so the caller re-negotiates a FRESH
    * session from the current position. Omitted → the seam falls back to restarting
    * the load (the pre-recovery behavior), which is correct when there is no caller
-   * that can re-negotiate. */
-  onSessionLost?: () => void;
+   * that can re-negotiate. Returning `false` means the caller declined (e.g. it
+   * re-negotiated moments ago): the seam then restarts the load rather than leave
+   * hls.js stopped. */
+  onSessionLost?: () => boolean | void;
+  /** Called when a FATAL error is one the seam gives up on (a media error that
+   * outlasted both recoveries, or an unrecoverable type): hls.js is left stopped, so
+   * the caller should say so instead of showing a frozen "playing" player. */
+  onFatal?: (reason: string) => void;
 }
 
 /** A live HLS attachment. `detach()` tears down hls.js (stops segment fetches,
@@ -237,7 +243,8 @@ export async function attachHls(
         lastNetworkFatal = now;
         if (networkFatals >= sessionLostThreshold && opts.onSessionLost) {
           networkFatals = 0;
-          opts.onSessionLost();
+          // A caller that declines (false) leaves hls.js stopped unless we restart.
+          if (opts.onSessionLost() === false) hls.startLoad();
           break;
         }
         hls.startLoad();
@@ -254,10 +261,15 @@ export async function attachHls(
           // Second strike inside the window: the hls.js-documented escalation.
           hls.swapAudioCodec();
           hls.recoverMediaError();
+        } else {
+          // Both recoveries are spent inside the window: hls.js stays stopped.
+          opts.onFatal?.(desc);
         }
         break;
       default:
-        // Unrecoverable — leave it stopped; the console line above says why.
+        // Unrecoverable — leave it stopped; the console line above says why, and
+        // the caller is told so the player doesn't look frozen "playing".
+        opts.onFatal?.(desc);
         break;
     }
   });

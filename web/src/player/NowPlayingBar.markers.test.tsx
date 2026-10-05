@@ -150,9 +150,13 @@ describe("NowPlayingBar — Skip button", () => {
     fireEvent.click(await screen.findByTestId("skip-marker"));
     expect(video.currentTime).toBe(70);
     expect(screen.queryByTestId("skip-marker")).toBeNull();
-    expect(reportProgress).toHaveBeenLastCalledWith(
-      "sess-1",
-      expect.objectContaining({ positionMs: 70_000 }),
+    // The progress report rides the element's `seeked` event (R04-09), not the click.
+    fireEvent.seeked(video);
+    await waitFor(() =>
+      expect(reportProgress).toHaveBeenLastCalledWith(
+        "sess-1",
+        expect.objectContaining({ positionMs: 70_000 }),
+      ),
     );
   });
 
@@ -162,9 +166,12 @@ describe("NowPlayingBar — Skip button", () => {
     setPosition(video, 1_350);
     fireEvent.click(await screen.findByTestId("skip-marker"));
     expect(video.currentTime).toBe(1_399.5);
-    expect(reportProgress).toHaveBeenLastCalledWith(
-      "sess-1",
-      expect.objectContaining({ positionMs: 1_399_500 }),
+    fireEvent.seeked(video);
+    await waitFor(() =>
+      expect(reportProgress).toHaveBeenLastCalledWith(
+        "sess-1",
+        expect.objectContaining({ positionMs: 1_399_500 }),
+      ),
     );
   });
 
