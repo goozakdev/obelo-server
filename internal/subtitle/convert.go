@@ -125,11 +125,11 @@ func IsTextConvertible(codec string) bool {
 func ToWebVTT(data []byte, format string) ([]byte, error) {
 	switch TextFormat(format) {
 	case "srt":
-		return srtToVTT(data), nil
+		return srtToVTT(data)
 	case "vtt":
 		return passthroughVTT(data), nil
 	case "ass":
-		return assToVTT(data), nil
+		return assToVTT(data)
 	default:
 		return nil, fmt.Errorf("subtitle: cannot convert format %q to WebVTT", format)
 	}
@@ -140,8 +140,11 @@ func ToWebVTT(data []byte, format string) ([]byte, error) {
 // comma-milliseconds to the dotted form (trimming any trailing SRT coordinates).
 // Cue text is copied verbatim (SubRip inline tags like <i>/<b> are valid in
 // WebVTT too), so the only loss is the counter and any position coordinates.
-func srtToVTT(data []byte) []byte {
-	lines := splitLines(data)
+func srtToVTT(data []byte) ([]byte, error) {
+	lines, err := splitLines(data)
+	if err != nil {
+		return nil, err
+	}
 	var b strings.Builder
 	b.WriteString(vttHeader)
 	b.WriteString("\n\n")
@@ -163,7 +166,7 @@ func srtToVTT(data []byte) []byte {
 		b.WriteString(escapeCueText(line))
 		b.WriteByte('\n')
 	}
-	return []byte(ensureTrailingNewline(collapseBlankRun(b.String())))
+	return []byte(ensureTrailingNewline(collapseBlankRun(b.String()))), nil
 }
 
 // passthroughVTT returns already-WebVTT bytes essentially unchanged, guaranteeing
@@ -194,8 +197,11 @@ var assOverrideRe = regexp.MustCompile(`\{[^}]*\}`)
 // space). Everything else — [Script Info], [V4+ Styles], Comment lines, layer,
 // style, actor, margins, effects — is discarded: this is a deliberate styling
 // downgrade (PRD), not a faithful render.
-func assToVTT(data []byte) []byte {
-	lines := splitLines(data)
+func assToVTT(data []byte) ([]byte, error) {
+	lines, err := splitLines(data)
+	if err != nil {
+		return nil, err
+	}
 	// Field indices within a Dialogue line, discovered from the Format: line of the
 	// [Events] section. ASS defaults are well-known, but the Format line is
 	// authoritative, so we honor it when present.
@@ -250,7 +256,7 @@ func assToVTT(data []byte) []byte {
 		b.WriteByte('\n')
 		wrote = true
 	}
-	return []byte(ensureTrailingNewline(b.String()))
+	return []byte(ensureTrailingNewline(b.String())), nil
 }
 
 // parseASSFormat reads an [Events] "Format:" field list and returns the 0-based
@@ -370,8 +376,9 @@ func vttTimestamp(h, m, s, frac string) string {
 
 // splitLines splits input into lines on \n, stripping a trailing \r (CRLF) and a
 // leading UTF-8 BOM on the first line, so Windows-authored and BOM-prefixed files
-// parse cleanly.
-func splitLines(data []byte) []string {
+// parse cleanly. A line past the scanner's limit is an error, not a silent
+// truncation of the track at that line.
+func splitLines(data []byte) ([]string, error) {
 	data = bytes.TrimPrefix(data, []byte("\ufeff"))
 	var out []string
 	sc := bufio.NewScanner(bytes.NewReader(data))
@@ -379,7 +386,10 @@ func splitLines(data []byte) []string {
 	for sc.Scan() {
 		out = append(out, strings.TrimRight(sc.Text(), "\r"))
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("subtitle: reading lines: %w", err)
+	}
+	return out, nil
 }
 
 // collapseBlankRun collapses any run of 2+ blank lines to a single blank line, so
