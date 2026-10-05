@@ -20,7 +20,7 @@ import {
   type QualityCapId,
 } from "./qualityLadder";
 import { orderedAudioStreams } from "./audio";
-import { preferredLang } from "./lang";
+import { preferredLang, sameLang } from "./lang";
 import { orderedVideoStreams } from "./video";
 import { resolveQualityConstraints } from "./playbackResolver";
 import { useOptionalFeature } from "../serverInfoContext";
@@ -632,7 +632,7 @@ function SubtitlesSection({
             // ports across Episodes.
             active={
               selected !== null &&
-              (sub.language ?? "").toLowerCase() === selected.language.toLowerCase() &&
+              sameLang(sub.language, selected.language) &&
               sub.forced === selected.forced
             }
             testId="subtitle-option"

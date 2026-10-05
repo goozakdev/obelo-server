@@ -207,6 +207,11 @@ describe("playbackResolver — Subtitle axis (burnSubtitleId)", () => {
     expect(resolveBurnSubtitle({ language: "en", forced: false }, subs, true)).toBe("eng-img");
   });
 
+  it("matches an untagged stored pick to an untagged track", () => {
+    const subs = [{ id: "u", forced: false, kind: "image" } as ResolverSubtitle];
+    expect(resolveBurnSubtitle({ language: "", forced: false }, subs, true)).toBe("u");
+  });
+
   it("resolvePlayback emits burnSubtitleId only when a Quality cap makes it transcode", () => {
     // The stored image sub + a downscale rung (constraints present = transcode) → burn.
     expect(

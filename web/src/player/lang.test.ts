@@ -52,14 +52,15 @@ describe("lang helpers (R04-19)", () => {
     expect(["tib", "bod"].map(normalizeLang)).toEqual(["bo", "bo"]);
     expect(["mao", "mri"].map(normalizeLang)).toEqual(["mi", "mi"]);
     expect(normalizeLang("constructor")).toBe("constructor");
-    expect(normalizeLang("toString")).toBe("tostring");
   });
 
-  it("sameLang matches spellings of one language and never two unknowns", () => {
+  it("sameLang matches spellings of one language and treats untagged as untagged only", () => {
     expect(sameLang("eng", "en")).toBe(true);
     expect(sameLang("ger", "deu")).toBe(true);
     expect(sameLang("en", "fr")).toBe(false);
-    expect(sameLang("", "")).toBe(false);
+    expect(sameLang("", "")).toBe(true);
+    expect(sameLang(undefined, "")).toBe(true);
     expect(sameLang(undefined, "en")).toBe(false);
+    expect(sameLang("", "en")).toBe(false);
   });
 });

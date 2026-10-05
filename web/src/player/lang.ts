@@ -34,11 +34,10 @@ export function normalizeLang(language: string | undefined): string {
   return Object.hasOwn(ISO_639_2_TO_1, primary) ? ISO_639_2_TO_1[primary]! : primary;
 }
 
-/** Whether two language tags name the same language (normalizeLang equal). False
- * when either is empty, so two unknowns never match. */
+/** Whether two language tags name the same language (normalizeLang equal). Two
+ * empty/undefined tags are the same (untagged = untagged); empty vs a real code is not. */
 export function sameLang(a: string | undefined, b: string | undefined): boolean {
-  const na = normalizeLang(a);
-  return na !== "" && na === normalizeLang(b);
+  return normalizeLang(a) === normalizeLang(b);
 }
 
 /** Sort rank of a track/stream language against the viewer's preference: 0 for the

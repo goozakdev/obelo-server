@@ -154,4 +154,10 @@ describe("matchTextTrackId", () => {
     expect(matchTextTrackId(tracks, { language: "en", forced: false })).toBe("full");
     expect(matchTextTrackId(tracks, { language: "fr", forced: false })).toBeNull();
   });
+
+  it("matches an untagged pick to the untagged track only", () => {
+    const tracks = [track({ id: "en", language: "en" }), track({ id: "u" })];
+    expect(matchTextTrackId(tracks, { language: "", forced: false })).toBe("u");
+    expect(matchTextTrackId([track({ id: "en", language: "en" })], { language: "", forced: false })).toBeNull();
+  });
 });

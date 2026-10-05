@@ -486,6 +486,33 @@ describe("PlaybackOptionsSheet — Subtitle axis", () => {
     expect(raw).not.toContain("s-fr");
   });
 
+  it("marks an untagged track active for a stored untagged pick, and an eng track for stored en", () => {
+    window.localStorage.setItem(
+      "obelo.playback-pref.u1.title.t1",
+      JSON.stringify({ editionName: null, qualityCap: null, subtitle: { language: "", forced: false } }),
+    );
+    const { unmount } = render(
+      <PlaybackOptionsSheet
+        title={subsDetail([...tracks, sub("s-u", { label: "Mystery" })])}
+        userId="u1" open onClose={() => {}} onPlay={() => {}}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: /Mystery/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /Français/ })).toHaveAttribute("aria-checked", "false");
+    unmount();
+    window.localStorage.setItem(
+      "obelo.playback-pref.u1.title.t1",
+      JSON.stringify({ editionName: null, qualityCap: null, subtitle: { language: "en", forced: false } }),
+    );
+    render(
+      <PlaybackOptionsSheet
+        title={subsDetail([sub("s-eng", { language: "eng", label: "Eng3" })])}
+        userId="u1" open onClose={() => {}} onPlay={() => {}}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: /Eng3/ })).toHaveAttribute("aria-checked", "true");
+  });
+
   it("opens reflecting a saved pick and commits Off over it", () => {
     window.localStorage.setItem(
       "obelo.playback-pref.u1.title.t1",
