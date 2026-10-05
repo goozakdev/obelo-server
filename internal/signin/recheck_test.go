@@ -231,7 +231,7 @@ func TestAPerPluginIntervalIsHonored(t *testing.T) {
 	f.provide("dir", dir, pluginapi.CapabilitySignInLookup)
 	f.provide("other", other, pluginapi.CapabilitySignInLookup)
 	f.mapping("dir", kidsAndAdults...)
-	if err := f.r.SetInterval("dir", 2*time.Hour); err != nil {
+	if err := f.db.SetRecheckInterval("dir", 2*time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := f.r.Interval("other"); got != DefaultRecheckInterval {

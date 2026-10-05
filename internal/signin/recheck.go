@@ -61,7 +61,6 @@ type RecheckStore interface {
 	ExternalIdentityChecks() ([]store.ExternalIdentityCheck, error)
 	ExternalIdentitiesByUser(userID string) ([]store.ExternalIdentity, error)
 	RecheckInterval(pluginID string) (time.Duration, error)
-	SetRecheckInterval(pluginID string, d time.Duration) error
 	RecordExternalCheck(pluginID, subject, username string, groups []string, refreshToken string, at time.Time) error
 	NoteExternalCheckFailure(pluginID, subject string, retryAt time.Time, unverified bool) (int, error)
 }
@@ -147,14 +146,6 @@ func (r *Rechecker) Interval(pluginID string) (time.Duration, error) {
 		return DefaultRecheckInterval, nil
 	}
 	return d, nil
-}
-
-// SetInterval stores the Admin's interval for pluginID; 0 restores the default.
-func (r *Rechecker) SetInterval(pluginID string, d time.Duration) error {
-	if _, ok := r.reg.SignInProvider(pluginID); !ok {
-		return ErrUnknownSignInProvider
-	}
-	return r.store.SetRecheckInterval(pluginID, d)
 }
 
 // Known is whether pluginID is a registered Sign-in provider.
