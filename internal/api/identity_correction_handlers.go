@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -108,8 +109,10 @@ func handleTitleIdentityCorrection(deps Deps, titleID string) http.HandlerFunc {
 		// (ADR-0060 decision 5), whatever the Library leads with.
 		if err := deps.Enrich.ApplyOverride(r.Context(), titleID, externalID, store.NamespaceTMDB); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusInternalServerError, codeInternal, "failed to re-enrich corrected item", nil)
-			return
+			// The identity change has already committed, so answering 500 would tell the
+			// Admin it failed (and invite a retry of a destructive action) and would skip
+			// the libraryUpdated event other clients refetch on. Log it, carry on.
+			log.Printf("obelo: api: wrong-item re-enrich of title %s failed after the identity change: %v", titleID, err)
 		}
 		writeReEnrichedDetail(w, deps.Catalog, deps.Events, ident.User.ID, titleID)
 	}
@@ -166,8 +169,8 @@ func handleShowIdentityCorrection(deps Deps, showID string) http.HandlerFunc {
 		if err := deps.Enrich.ApplyEntityOverride(r.Context(), store.EntityShow, showID,
 			enrich.EntityPin{ExternalID: externalID, Namespace: store.NamespaceTMDB}); err != nil &&
 			!errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusInternalServerError, codeInternal, "failed to re-enrich corrected item", nil)
-			return
+			// Best-effort, as for a Movie: the re-key already committed (see above).
+			log.Printf("obelo: api: wrong-item re-enrich of show %s failed after the identity change: %v", showID, err)
 		}
 		// "Also apply to children" (item-editing/05): after the Show pin applied (lock
 		// released), best-effort re-resolve its Episodes positionally under the corrected
