@@ -94,7 +94,7 @@ func handleDeviceCode(svc *auth.Service) http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, codeDeviceAuthBusy,
 				"too many sign-ins in progress; try again in a few minutes", nil)
 			return
-		case err != nil && strings.Contains(err.Error(), "required"):
+		case errors.Is(err, auth.ErrDeviceClientIDRequired):
 			writeError(w, http.StatusBadRequest, codeBadRequest, "device.clientId is required", nil)
 			return
 		case err != nil:
