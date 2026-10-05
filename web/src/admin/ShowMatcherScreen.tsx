@@ -202,10 +202,12 @@ function SeriesRecordPicker({
   seed: string;
   request: RepointRequest;
 }) {
-  // The season list last loaded, kept so picking a record can hand back the run
-  // that FOLLOWS it. EpisodeChooser hands over one candidate; the bulk gesture
-  // needs the rest of the season behind it.
-  const page = useRef<MatcherSlot[]>([]);
+  // The season list last loaded PER SERIES, kept so picking a record can hand back
+  // the run that FOLLOWS it. EpisodeChooser hands over one candidate; the bulk
+  // gesture needs the rest of the season behind it. Keyed by series because a slow
+  // response for a series the Admin has since backed out of must not become the
+  // run for the one they chose next.
+  const pages = useRef(new Map<string, MatcherSlot[]>());
   // One stable loader per series. EpisodeChooser refetches whenever `load` changes
   // identity, so a fresh closure per render would loop.
   const loaders = useRef(new Map<string, EpisodeChooserLoad>());
@@ -226,7 +228,7 @@ function SeriesRecordPicker({
           group = defaultGroup(listed.groups, request.group);
           slots = (await apiClient.listSeriesSlots(showId, externalId, group)).slots;
         }
-        page.current = slots;
+        pages.current.set(externalId, slots);
         return {
           seasons,
           season: group,
@@ -270,12 +272,13 @@ function SeriesRecordPicker({
           load={loaderFor(series.externalId)}
           onBack={back}
           onPick={async (candidate) => {
-            const from = page.current.findIndex(
+            const page = pages.current.get(series.externalId) ?? [];
+            const from = page.findIndex(
               (s) => s.group === candidate.season && s.slot === candidate.episode,
             );
             const run =
               from >= 0
-                ? page.current.slice(from)
+                ? page.slice(from)
                 : [
                     {
                       group: candidate.season,

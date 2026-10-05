@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { TranscodingSnapshot } from "../api/types";
@@ -45,6 +45,9 @@ export default function AdminTranscodingScreen({
   intervalMs?: number;
 } = {}) {
   const [state, setState] = useState<SnapshotState>({ status: "loading" });
+  // The poll currently on the wire, across effect runs: a new loop (intervalMs
+  // change, StrictMode) waits for it rather than overlapping it.
+  const inFlight = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     // Per-run flag: a loop from an earlier run (StrictMode, intervalMs change)
@@ -76,7 +79,12 @@ export default function AdminTranscodingScreen({
     // slow server is never hit by overlapping requests.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const loop = async () => {
-      await poll();
+      if (inFlight.current) await inFlight.current;
+      if (!live) return;
+      const mine = poll();
+      inFlight.current = mine;
+      await mine;
+      if (inFlight.current === mine) inFlight.current = null;
       if (live) timer = setTimeout(() => void loop(), intervalMs);
     };
     void loop();

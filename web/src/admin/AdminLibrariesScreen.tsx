@@ -3,6 +3,7 @@ import { Link as RouterLink } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { Library } from "../api/types";
+import { useRefreshLibraries } from "../browse/librariesContext";
 import AdminListPanel from "./AdminListPanel";
 import LibraryAdminRow from "./LibraryAdminRow";
 import AddLibraryWizard from "./AddLibraryWizard";
@@ -68,7 +69,13 @@ export default function AdminLibrariesScreen() {
     return () => ctrl.abort();
   }, [load]);
 
-  const reload = useCallback(() => void load(), [load]);
+  // Also refresh the app-wide list /libraries and the header read, which would
+  // otherwise keep showing the old set until a reload.
+  const refreshShared = useRefreshLibraries();
+  const reload = useCallback(() => {
+    void load();
+    refreshShared();
+  }, [load, refreshShared]);
 
   // Local only. `linked` is omitempty on the wire, so "not true" is the test —
   // absent means local (issue 15's LinkedMark follows the same rule).

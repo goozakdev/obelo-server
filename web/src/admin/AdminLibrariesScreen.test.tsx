@@ -50,6 +50,17 @@ vi.mock("../api/client", async () => {
 });
 
 import AdminLibrariesScreen from "./AdminLibrariesScreen";
+import { useLibraries } from "../browse/librariesContext";
+
+/** Reads the app-wide Libraries list the way /libraries and the header do. */
+function SharedListProbe() {
+  const state = useLibraries();
+  return (
+    <p data-testid="shared-libraries">
+      {state.status === "ready" ? state.data.map((l) => l.name).join(",") : state.status}
+    </p>
+  );
+}
 
 function lib(over: Partial<Library>): Library {
   return {
@@ -290,6 +301,63 @@ describe("AdminLibrariesScreen", () => {
     await waitFor(() =>
       expect(screen.getByTestId("admin-libraries-empty")).toBeInTheDocument(),
     );
+  });
+
+  it("refreshes the shared Libraries list after a create, rename and delete (R05-13)", async () => {
+    const user = userEvent.setup();
+    let server = [lib({ id: "lib1", name: "Movies" })];
+    listLibraries.mockImplementation(async () => server);
+    createLibrary.mockImplementation(async () => {
+      server = [...server, lib({ id: "libtv", name: "Shows", kind: "tv" })];
+      return server[server.length - 1];
+    });
+    updateLibrary.mockImplementation(async () => {
+      server = server.map((l) => (l.id === "lib1" ? { ...l, name: "Films" } : l));
+      return server[0];
+    });
+    deleteLibrary.mockImplementation(async () => {
+      server = server.filter((l) => l.id !== "libtv");
+    });
+
+    renderWithAuth(
+      <>
+        <AdminLibrariesScreen />
+        <SharedListProbe />
+      </>,
+      { initialEntries: ["/admin"] },
+    );
+    await waitFor(() => expect(screen.getByTestId("shared-libraries")).toHaveTextContent("Movies"));
+
+    // Create: the wizard (kind → name → path → Add).
+    await user.click(screen.getByTestId("add-library-button"));
+    await user.click(await screen.findByTestId("add-library-kind-tv"));
+    await user.click(screen.getByTestId("add-library-next"));
+    await user.type(screen.getByTestId("add-library-name-input"), "Shows");
+    await user.click(screen.getByTestId("add-library-next"));
+    await user.type(screen.getByTestId("add-library-path-input"), "/tv");
+    await user.click(screen.getByTestId("add-library-submit"));
+    await waitFor(() =>
+      expect(screen.getByTestId("shared-libraries")).toHaveTextContent("Movies,Shows"),
+    );
+
+    // Rename.
+    await user.click(screen.getAllByTestId("library-menu-toggle")[0]);
+    await user.click(screen.getByTestId("edit-library-button"));
+    const name = await screen.findByTestId("edit-library-name-input");
+    await user.clear(name);
+    await user.type(name, "Films");
+    await user.click(screen.getByTestId("edit-library-save-name"));
+    await waitFor(() =>
+      expect(screen.getByTestId("shared-libraries")).toHaveTextContent("Films,Shows"),
+    );
+    await user.click(screen.getByTestId("edit-library-close"));
+
+    // Delete.
+    await user.click(screen.getAllByTestId("library-menu-toggle")[1]);
+    await user.click(screen.getByTestId("delete-library-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    await user.click(within(dialog).getByTestId("confirm-dialog-confirm"));
+    await waitFor(() => expect(screen.getByTestId("shared-libraries")).toHaveTextContent(/^Films$/));
   });
 
   it("keeps the other rows mounted while the list reloads after a delete (R02-09)", async () => {

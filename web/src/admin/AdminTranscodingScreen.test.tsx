@@ -295,6 +295,29 @@ describe("AdminTranscodingScreen poll loops (R02-08)", () => {
     }
   });
 
+  it("makes the new loop wait for a poll still in flight when intervalMs changes", async () => {
+    let release!: () => void;
+    getTranscoding.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          release = () => r(snapshot());
+        }),
+    );
+    getTranscoding.mockResolvedValue(snapshot());
+    const { rerender } = render(<AdminTranscodingScreen intervalMs={100} />);
+    await tick(0);
+    expect(getTranscoding).toHaveBeenCalledTimes(1);
+
+    rerender(<AdminTranscodingScreen intervalMs={200} />);
+    await tick(0);
+    // Still the one request: the new loop has not overlapped it.
+    expect(getTranscoding).toHaveBeenCalledTimes(1);
+
+    release();
+    await tick(0);
+    expect(getTranscoding).toHaveBeenCalledTimes(2);
+  });
+
   it("leaves only the new loop after an intervalMs change", async () => {
     // Each read takes 10ms, so the change lands while a poll is in flight.
     getTranscoding.mockImplementation(

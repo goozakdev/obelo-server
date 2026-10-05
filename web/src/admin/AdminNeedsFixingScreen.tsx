@@ -246,7 +246,11 @@ export default function AdminNeedsFixingScreen() {
       return cur[id] === n ? cur : { ...cur, [id]: n };
     });
   }, []);
-  const counts = { ...fetchedCounts, ...queueCounts };
+  // The queue's own count wins only for the Library it is open on. A Library the
+  // Admin has left keeps its last queue count until a recount lands, and then the
+  // fetched number is the newer one.
+  const counts: Record<string, number> = { ...queueCounts, ...fetchedCounts };
+  if (queueLibraryId in queueCounts) counts[queueLibraryId] = queueCounts[queueLibraryId];
 
   return (
     <section className="admin-needs-fixing" data-testid="admin-needs-fixing">
@@ -542,10 +546,13 @@ function LibraryQueue({
 
   // Feed the selector's badge from the rows this queue is actually showing — but only
   // once every list has loaded cleanly: a partial queue's length is not a count.
+  // While a reload is in flight say nothing: the badge keeps the last full count
+  // rather than flickering to the old rows or vanishing.
   const countable = !loading && errors.length === 0;
   useEffect(() => {
+    if (loading) return;
     onCount?.(libraryId, countable ? items.length : null);
-  }, [onCount, libraryId, countable, items.length]);
+  }, [onCount, libraryId, loading, countable, items.length]);
 
   // The scan in flight, so leaving the library (or the screen) stops the polling.
   const scanCtrl = useRef<AbortController | null>(null);

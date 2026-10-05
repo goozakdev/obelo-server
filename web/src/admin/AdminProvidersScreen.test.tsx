@@ -609,6 +609,7 @@ describe("AdminProvidersScreen — review fixes", () => {
     onlyFirst.providers = onlyFirst.providers.map((p) =>
       p.slug === "musicbrainz" ? { ...p, enabled: true } : p,
     );
+    getMetadataProviders.mockResolvedValue(bothOn);
     b.resolve(bothOn);
     await waitFor(() => expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked());
     a.resolve(onlyFirst);
@@ -616,6 +617,35 @@ describe("AdminProvidersScreen — review fixes", () => {
       expect(screen.getByTestId("provider-toggle-musicbrainz")).not.toBeDisabled(),
     );
 
+    expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
+  });
+
+  it("ends on the server's state when toggles were applied in the opposite order to sending", async () => {
+    // Toggle musicbrainz, then theaudiodb; the server happens to apply the SECOND first.
+    // Each response then carries a view that is only right for the toggles applied so
+    // far, and the older request's response (which has both) lands last.
+    const withOn = (...slugs: string[]) => {
+      const v = view();
+      v.providers = v.providers.map((p) => (slugs.includes(p.slug) ? { ...p, enabled: true } : p));
+      return v;
+    };
+    getMetadataProviders.mockReset();
+    getMetadataProviders.mockResolvedValueOnce(view());
+    const first = deferred<MetadataProvidersView>();
+    const second = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
+
+    // Whatever the response order, the server now has both on.
+    getMetadataProviders.mockResolvedValue(withOn("musicbrainz", "theaudiodb"));
+    second.resolve(withOn("theaudiodb"));
+    first.resolve(withOn("musicbrainz", "theaudiodb"));
+
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeChecked());
     expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
   });
 

@@ -63,11 +63,15 @@ export function editionLine(e: AlbumEdition): string {
 export default function AlbumEditionPicker({
   albumId,
   onApplied,
+  showSummary = true,
 }: {
   albumId: string;
   /** Called with the re-enriched album detail after an edition is applied, so the
    * screen or queue row that owns this section can refresh itself. */
   onApplied?: (detail: EntityEnrichmentDetail) => void;
+  /** Render the cascade summary here. A host that reports it elsewhere (the queue
+   * does, via onApplied) turns this off so one pick is not summarised twice. */
+  showSummary?: boolean;
 }) {
   const [data, setData] = useState<AlbumEditions | null>(null);
   const [loading, setLoading] = useState(true);
@@ -155,7 +159,7 @@ export default function AlbumEditionPicker({
           The metadata provider can&rsquo;t list this album&rsquo;s editions right now.
           You can still paste a MusicBrainz release URL above to name one.
         </p>
-        {summary && (
+        {showSummary && summary && (
           <p className="status" data-testid="album-edition-cascade" role="status">
             {cascadeSummaryText(summary)}
           </p>
@@ -231,7 +235,7 @@ export default function AlbumEditionPicker({
 
       {/* What the pick actually did. One decision on behalf of N tracks, so the count
           it moved is the only thing that separates a fix from a hopeful click. */}
-      {summary && (
+      {showSummary && summary && (
         <p className="status" data-testid="album-edition-cascade" role="status">
           {cascadeSummaryText(summary)}
         </p>

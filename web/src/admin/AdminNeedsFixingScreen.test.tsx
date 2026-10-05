@@ -1116,9 +1116,13 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         "rel-b",
       ),
     );
-    expect(await screen.findByTestId("album-edition-cascade")).toHaveTextContent(
+    // The row stays here (the queue is unchanged), so the summary must appear ONCE,
+    // in the queue's slot — not also inside the edition section.
+    expect(await screen.findByTestId("needs-fixing-cascade")).toHaveTextContent(
       "16 of 16 tracks matched",
     );
+    expect(screen.queryByTestId("album-edition-cascade")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/16 of 16 tracks matched/)).toHaveLength(1);
     // Identity is untouched, and the queue goes back to the server because the
     // cascade moved rows.
     expect(fixMatch).not.toHaveBeenCalled();
@@ -1761,6 +1765,44 @@ describe("AdminNeedsFixingScreen — keeping the queue honest (R01)", () => {
         "Movies — all clear",
       ),
     );
+  });
+
+  it("R01-09 residue: a departed library's last queue count does not override a later fetched count", async () => {
+    listLibraries.mockResolvedValue([lib(), lib({ id: "lib2", name: "Shows" })]);
+    const flagged = new Map<string, number>([["lib1", 1], ["lib2", 0]]);
+    listNeedsReview.mockImplementation(async (id: string) =>
+      Array.from({ length: flagged.get(id) ?? 0 }, (_, i) => reviewItem({ id: `${id}-${i}` })),
+    );
+    render();
+    const select = await screen.findByTestId("needs-fixing-library-select");
+    await waitFor(() => expect(select).toHaveTextContent("Movies — 1 to fix"));
+
+    // Leave lib1, then something changes its queue and a recount runs.
+    await userEvent.selectOptions(select, "lib2");
+    flagged.set("lib1", 2);
+    await userEvent.click(screen.getByTestId("needs-fixing-recheck-button"));
+    emit("enrichProgress", progressEvent({ libraryId: "lib2", complete: true }));
+    await waitFor(() => expect(select).toHaveTextContent("Movies — 2 to fix"));
+  });
+
+  it("R01-11 residue: the open library's badge keeps its number while the queue reloads", async () => {
+    listNeedsReview.mockResolvedValueOnce([reviewItem()]);
+    render();
+    const select = await screen.findByTestId("needs-fixing-library-select");
+    await waitFor(() => expect(select).toHaveTextContent("Movies — 1 to fix"));
+
+    const slow = deferred<NeedsReviewItem[]>();
+    listNeedsReview.mockReturnValue(slow.promise);
+    await userEvent.click(screen.getByTestId("needs-fixing-recheck-button"));
+    emit("enrichProgress", progressEvent({ complete: true }));
+    await waitFor(() => expect(listNeedsReview).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("needs-fixing-loading")).toBeInTheDocument();
+    expect(select).toHaveTextContent("Movies — 1 to fix");
+
+    await act(async () =>
+      slow.resolve([reviewItem(), reviewItem({ id: "n2" })]),
+    );
+    await waitFor(() => expect(select).toHaveTextContent("Movies — 2 to fix"));
   });
 
   it("R01-12: two lists failing with the same message both show, without a key clash", async () => {

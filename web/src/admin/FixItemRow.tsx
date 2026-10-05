@@ -493,6 +493,8 @@ export default function FixItemRow({
       {open && item.route === "album-enrichment-override" && item.albumId !== "" && (
         <AlbumEditionPicker
           albumId={item.albumId}
+          // The queue shows the summary (once) when it is listening for one.
+          showSummary={!onCascade}
           onApplied={(detail) => {
             onCascade?.(detail.cascade ?? null);
             onResolved();

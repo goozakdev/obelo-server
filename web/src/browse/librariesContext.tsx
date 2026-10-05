@@ -1,7 +1,9 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -27,6 +29,10 @@ import { useAsync, type AsyncState } from "./useAsync";
 
 const LibrariesContext = createContext<AsyncState<Library[]> | null>(null);
 
+// Re-reads the list. A no-op outside a provider so an Admin screen that calls it
+// still renders in isolation.
+const RefreshContext = createContext<() => void>(() => {});
+
 // libraryId → the name of the Server providing it, for the linked ones. Empty on
 // the overwhelmingly common server that has never linked anything.
 const ProvidersContext = createContext<Record<string, string>>({});
@@ -34,10 +40,26 @@ const ProvidersContext = createContext<Record<string, string>>({});
 export function LibrariesProvider({ children }: { children: ReactNode }) {
   const { session, isAdmin } = useAuth();
   const token = session?.token ?? null;
-  const state = useAsync<Library[]>(
-    (signal) => (token ? apiClient.listLibraries(signal) : Promise.resolve([])),
-    [token],
+  // Bumped by refresh() so a library created, renamed or deleted in Admin shows
+  // without a reload. keepPreviousData keeps the media nav steady while it
+  // re-reads; the list is tagged with the token it was read for so a DIFFERENT
+  // session never sees the previous one's Libraries while its own load runs.
+  const [version, setVersion] = useState(0);
+  const refresh = useCallback(() => setVersion((n) => n + 1), []);
+  const raw = useAsync<{ token: string | null; libraries: Library[] }>(
+    async (signal) => ({
+      token,
+      libraries: token ? await apiClient.listLibraries(signal) : [],
+    }),
+    [token, version],
+    { keepPreviousData: true },
   );
+  const state = useMemo<AsyncState<Library[]>>(() => {
+    if (raw.status !== "ready") return raw;
+    return raw.data.token === token
+      ? { status: "ready", data: raw.data.libraries }
+      : { status: "loading" };
+  }, [raw, token]);
   const [providers, setProviders] = useState<Record<string, string>>({});
 
   // The Library JSON says only that a shelf IS linked; it never says whose it is
@@ -74,9 +96,11 @@ export function LibrariesProvider({ children }: { children: ReactNode }) {
 
   return (
     <LibrariesContext.Provider value={state}>
-      <ProvidersContext.Provider value={providers}>
-        {children}
-      </ProvidersContext.Provider>
+      <RefreshContext.Provider value={refresh}>
+        <ProvidersContext.Provider value={providers}>
+          {children}
+        </ProvidersContext.Provider>
+      </RefreshContext.Provider>
     </LibrariesContext.Provider>
   );
 }
@@ -87,6 +111,11 @@ export function useLibraries(): AsyncState<Library[]> {
   if (!ctx)
     throw new Error("useLibraries must be used within a LibrariesProvider");
   return ctx;
+}
+
+/** Re-read the shared Libraries list; call it after changing the set of Libraries. */
+export function useRefreshLibraries(): () => void {
+  return useContext(RefreshContext);
 }
 
 /** The mirror pair of a Library, for the detail screens whose own document does

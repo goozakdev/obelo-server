@@ -118,9 +118,13 @@ export default function AdminProvidersScreen() {
 
   // Toggle responses carry the whole view, and toggles of different providers can
   // be in flight together: number them, and never apply one older than the newest
-  // already applied.
+  // already applied. That ordering is only a guess at the order the server applied
+  // them in, so once overlapping toggles have all settled the view is re-read and
+  // the server's answer replaces the guess.
   const toggleSeq = useRef(0);
   const toggleApplied = useRef(0);
+  const togglesInFlight = useRef(0);
+  const togglesOverlapped = useRef(false);
 
   // `keepDraft` re-reads the view without re-seeding the server-wide settings draft,
   // so a reload (the consent decision) never reverts edits the Admin has not saved.
@@ -155,6 +159,7 @@ export default function AdminProvidersScreen() {
     setRowError((prev) => ({ ...prev, [p.slug]: null }));
     setToggling((prev) => ({ ...prev, [p.slug]: true }));
     const seq = ++toggleSeq.current;
+    if (++togglesInFlight.current > 1) togglesOverlapped.current = true;
     try {
       const next = await apiClient.updateMetadataProviders({
         providers: [{ slug: p.slug, enabled }],
@@ -167,6 +172,14 @@ export default function AdminProvidersScreen() {
       setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
     } finally {
       setToggling((prev) => ({ ...prev, [p.slug]: false }));
+      if (--togglesInFlight.current === 0 && togglesOverlapped.current) {
+        togglesOverlapped.current = false;
+        try {
+          setView(await apiClient.getMetadataProviders());
+        } catch {
+          // Keep the view the responses built; the next load corrects it.
+        }
+      }
     }
   }
 

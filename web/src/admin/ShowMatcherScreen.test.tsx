@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import type { MatcherDocument } from "../api/types";
@@ -328,6 +328,66 @@ describe("borrowing another series' records from the matcher", () => {
       slot: 1,
       record: { externalId: "77777", group: 1, slot: 1 },
     });
+  });
+});
+
+describe("borrowing records — a slow response for an earlier series", () => {
+  it("cannot supply the run for the series chosen afterwards", async () => {
+    const user = userEvent.setup();
+    getShowMatcher.mockResolvedValue(placedInSeasonFour());
+    searchEntityEnrichmentCandidates.mockResolvedValue({
+      candidates: [
+        { externalId: "A", title: "Series A", year: 1992, kind: "show" },
+        { externalId: "B", title: "Series B", year: 1997, kind: "show" },
+      ],
+      hasMore: false,
+    });
+    let releaseA!: () => void;
+    const slotsOf = (id: string) =>
+      [1, 2, 3, 4, 5].map((slot) => ({ group: 1, slot, name: `${id} ${slot}`, overview: "" }));
+    listSeriesSlots.mockImplementation(async (_show: string, id: string, group?: number) => {
+      if (group !== undefined && id === "A") {
+        // Series A's season list is the slow one; it lands after B has been chosen.
+        await new Promise<void>((r) => {
+          releaseA = r;
+        });
+      }
+      return {
+        externalId: id,
+        groups: [{ number: 1, slotCount: 5 }],
+        group: group === undefined ? undefined : { number: group },
+        slots: group === undefined ? [] : slotsOf(id),
+      };
+    });
+    applyShowMatcher.mockResolvedValue({
+      ...placedInSeasonFour(),
+      applied: { rearranged: 0, displaced: [], deferred: [] },
+    });
+
+    renderScreen();
+    await screen.findByTestId("file-matcher");
+    const seasonFour = document.querySelector(
+      '[data-testid="matcher-group"][data-group="4"]',
+    ) as HTMLElement;
+    await user.click(within(seasonFour).getByTestId("matcher-group-toggle"));
+    await user.click(screen.getByTestId("matcher-group-fill-records"));
+
+    // Choose A (the best guess), then back out while its season is still loading.
+    await user.click(await screen.findByTestId("fix-use-best-guess"));
+    await user.click(await screen.findByTestId("episode-chooser-back"));
+    // Choose B instead.
+    await user.click((await screen.findAllByTestId("fix-candidate"))[1]);
+    await user.click(screen.getByTestId("fix-use-selected"));
+    await screen.findByTestId("episode-choice-list");
+    // Now A's slow answer lands.
+    await act(async () => releaseA());
+    await user.click(screen.getAllByTestId("episode-choice")[2]);
+
+    // The run starts at the picked record (3) and fills the Season's slots in order.
+    await waitFor(() =>
+      expect(within(slotFour(1)).getByTestId("matcher-slot-name")).toHaveTextContent("B 3"),
+    );
+    expect(within(slotFour(3)).getByTestId("matcher-slot-name")).toHaveTextContent("B 5");
   });
 });
 
