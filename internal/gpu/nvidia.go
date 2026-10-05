@@ -17,6 +17,10 @@ import (
 // SampledAt stamp makes any staleness visible regardless.
 const DefaultTTL = 2 * time.Second
 
+// smiTimeout bounds one nvidia-smi run. It answers in well under a second on a
+// healthy driver; a wedged one would otherwise hold the Sample lock indefinitely.
+const smiTimeout = 5 * time.Second
+
 // nvidiaSMIQuery is the fixed --query-gpu column list, in the order parseCSV
 // expects: utilization %, VRAM used, VRAM total, encoder session count, driver
 // version. --format=csv,noheader,nounits yields a single bare, comma-separated row.
@@ -69,7 +73,12 @@ func (p *NvidiaSMIProbe) Sample(ctx context.Context) (Telemetry, bool) {
 		return p.cached, p.ok
 	}
 
-	out, err := p.run(ctx)
+	// Detached from the caller's context: the result is shared through the cache, so
+	// one client navigating away must not blank the readout for everyone, and a
+	// wedged driver must not hold the lock (and every other poll) forever.
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), smiTimeout)
+	defer cancel()
+	out, err := p.run(runCtx)
 	p.fetchedAt = now
 	p.hasCache = true
 	if err != nil {

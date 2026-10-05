@@ -123,3 +123,30 @@ func TestSampleRunErrorIsUnavailable(t *testing.T) {
 		t.Error("ok = true when the runner errored, want false (all-or-nothing null)")
 	}
 }
+
+// A caller whose request was cancelled must not poison the shared cache: the
+// query runs on its own bounded context, detached from the request's.
+func TestSampleRunsDetachedFromRequestContext(t *testing.T) {
+	var sawErr error
+	var hasDeadline bool
+	p := &NvidiaSMIProbe{
+		ttl: time.Second,
+		now: func() time.Time { return sampleTime },
+		run: func(ctx context.Context) (string, error) {
+			sawErr = ctx.Err()
+			_, hasDeadline = ctx.Deadline()
+			return "37, 1240, 8192, 2, 550.90.07", nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, ok := p.Sample(ctx); !ok {
+		t.Fatal("ok = false: a cancelled request context blanked the sample")
+	}
+	if sawErr != nil {
+		t.Errorf("runner saw a cancelled context: %v", sawErr)
+	}
+	if !hasDeadline {
+		t.Error("runner context has no deadline of its own; a wedged nvidia-smi would hang every poll")
+	}
+}
