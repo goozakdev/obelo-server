@@ -408,6 +408,10 @@ func mirrorHidden(e MirrorEntity) int {
 }
 
 // --- the eight writers ---------------------------------------------------------
+//
+// A Show, Artist or Album's name and sort key are skipped on update when an Admin
+// has Locked its "title" (WriteEntityMetadata) — the same rule the scanner's
+// upserts follow — so a mirror sync does not undo a local display-name edit.
 
 func (m *mirrorTx) writeShow(id string, isNew bool, e MirrorEntity) error {
 	d := e.Data
@@ -422,7 +426,13 @@ func (m *mirrorTx) writeShow(id string, isNew bool, e MirrorEntity) error {
 			mirrorBool(d, "needsReview"), mirrorHidden(e), mirrorStr(d, "addedAt"), e.RemoteID)
 	} else {
 		_, err = m.tx.Exec(
-			`UPDATE shows SET title = ?, year = ?, identity_key = ?, sort_title = ?,
+			`UPDATE shows SET
+			   title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
+			                 THEN title ELSE ? END, year = ?, identity_key = ?,
+			   sort_title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
+			                 THEN sort_title ELSE ? END,
 			   tmdb_id = ?, imdb_id = ?, needs_review = ?, hidden = ?, added_at = ?
 			 WHERE id = ?`,
 			mirrorStr(d, "title"), mirrorYear(d), mirrorStr(d, "identityKey"),
@@ -476,7 +486,13 @@ func (m *mirrorTx) writeArtist(id string, isNew bool, e MirrorEntity) error {
 			mirrorHidden(e), mirrorStr(d, "addedAt"), e.RemoteID)
 	} else {
 		_, err = m.tx.Exec(
-			`UPDATE artists SET name = ?, sort_name = ?, identity_key = ?, musicbrainz_id = ?,
+			`UPDATE artists SET
+			   name = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'artist' AND entity_id = artists.id AND field = 'title')
+			                 THEN name ELSE ? END,
+			   sort_name = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'artist' AND entity_id = artists.id AND field = 'title')
+			                 THEN sort_name ELSE ? END, identity_key = ?, musicbrainz_id = ?,
 			   hidden = ?, added_at = ? WHERE id = ?`,
 			mirrorStr(d, "name"), mirrorStr(d, "sortName"), mirrorStr(d, "identityKey"),
 			mirrorStr(d, "musicbrainzId"), mirrorHidden(e), mirrorStr(d, "addedAt"), id)
@@ -503,7 +519,13 @@ func (m *mirrorTx) writeAlbum(id string, isNew bool, artistID string, e MirrorEn
 			mirrorStr(d, "musicbrainzReleaseId"), mirrorHidden(e), mirrorStr(d, "addedAt"), e.RemoteID)
 	} else {
 		_, err = m.tx.Exec(
-			`UPDATE albums SET artist_id = ?, title = ?, year = ?, sort_title = ?, identity_key = ?,
+			`UPDATE albums SET artist_id = ?,
+			   title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'album' AND entity_id = albums.id AND field = 'title')
+			                 THEN title ELSE ? END, year = ?,
+			   sort_title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'album' AND entity_id = albums.id AND field = 'title')
+			                 THEN sort_title ELSE ? END, identity_key = ?,
 			   release_type = ?, musicbrainz_id = ?, musicbrainz_release_id = ?, hidden = ?,
 			   added_at = ? WHERE id = ?`,
 			artistID, mirrorStr(d, "title"), mirrorYear(d), mirrorStr(d, "sortTitle"),
