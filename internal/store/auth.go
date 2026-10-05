@@ -335,12 +335,21 @@ type TokenIdentity struct {
 
 // LookupToken resolves a token hash to its User and Device, returning
 // ErrNotFound if the token is unknown or has been revoked (its row deleted).
-// It also refreshes the Device's last-seen timestamp as a side effect.
+// It also refreshes the Device's last-seen timestamp as a side effect, at most
+// once per lastSeenTouchInterval: this runs on every authenticated request, and an
+// unconditional write would cost a WAL commit per request on the single connection.
 func (db *DB) LookupToken(tokenHash string) (TokenIdentity, error) {
-	var deviceID, userID string
+	var u User
+	var d Device
 	err := db.QueryRow(
-		`SELECT device_id, user_id FROM auth_tokens WHERE token_hash = ?`, tokenHash,
-	).Scan(&deviceID, &userID)
+		`SELECT u.id, u.username, u.role, COALESCE(u.password_hash, ''), u.created_at,
+		        d.id, d.user_id, d.client_id, d.name, d.platform, d.created_at, d.last_seen_at
+		   FROM auth_tokens t
+		   JOIN users   u ON u.id = t.user_id
+		   JOIN devices d ON d.id = t.device_id
+		  WHERE t.token_hash = ?`, tokenHash,
+	).Scan(&u.ID, &u.Username, &u.Role, &u.PasswordHash, &u.CreatedAt,
+		&d.ID, &d.UserID, &d.ClientID, &d.Name, &d.Platform, &d.CreatedAt, &d.LastSeenAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TokenIdentity{}, ErrNotFound
 	}
@@ -348,21 +357,18 @@ func (db *DB) LookupToken(tokenHash string) (TokenIdentity, error) {
 		return TokenIdentity{}, fmt.Errorf("store: looking up token: %w", err)
 	}
 
-	user, err := db.UserByID(userID)
-	if err != nil {
-		return TokenIdentity{}, err
-	}
-	device, err := db.DeviceByID(deviceID)
-	if err != nil {
-		return TokenIdentity{}, err
-	}
-
 	// Best-effort liveness touch; a failure here must not fail the request.
-	_, _ = db.Exec(`UPDATE devices SET last_seen_at = ? WHERE id = ?`,
-		time.Now().UTC().Format(time.RFC3339), deviceID)
+	now := time.Now().UTC()
+	_, _ = db.Exec(`UPDATE devices SET last_seen_at = ? WHERE id = ? AND last_seen_at < ?`,
+		now.Format(time.RFC3339), d.ID, now.Add(-lastSeenTouchInterval).Format(time.RFC3339))
 
-	return TokenIdentity{User: user, Device: device}, nil
+	return TokenIdentity{User: u, Device: d}, nil
 }
+
+// lastSeenTouchInterval is how stale a Device's last-seen may get before a token
+// lookup rewrites it.
+const lastSeenTouchInterval = time.Minute
+
 
 // DeleteToken revokes a single token by its hash (logout). It is a no-op if the
 // token is already gone.

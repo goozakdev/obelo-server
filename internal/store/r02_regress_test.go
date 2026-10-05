@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -159,6 +160,49 @@ func TestArtistAlbumRenameSurvivesRescan(t *testing.T) {
 	}
 	if gotAlbum != albumName {
 		t.Errorf("album title after rescan = %q, want locked %q", gotAlbum, albumName)
+	}
+}
+
+// R02-06: LookupToken resolves the User and Device in one read and only rewrites
+// a stale last-seen, so back-to-back requests do not each cost a write.
+func TestLookupTokenThrottlesLastSeen(t *testing.T) {
+	db := openTemp(t)
+	mustExec(t, db, `INSERT INTO users (id, username, role, password_hash) VALUES ('u1','ada','member','x')`)
+	mustExec(t, db, `INSERT INTO devices (id, user_id, client_id, name, platform, created_at, last_seen_at)
+	                 VALUES ('d1','u1','c1','Phone','ios','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	if err := db.InsertToken("hash1", "d1", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.LookupToken("nope"); err != store.ErrNotFound {
+		t.Fatalf("unknown token err = %v, want ErrNotFound", err)
+	}
+
+	got, err := db.LookupToken("hash1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.User.Username != "ada" || got.Device.Name != "Phone" {
+		t.Errorf("identity = %+v / %+v, want ada / Phone", got.User, got.Device)
+	}
+	lastSeen := func() string {
+		var s string
+		if err := db.QueryRow(`SELECT last_seen_at FROM devices WHERE id='d1'`).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	first := lastSeen()
+	if first == "2026-01-01T00:00:00Z" {
+		t.Fatalf("a stale last-seen was not refreshed")
+	}
+	// A pinned-fresh last-seen (a second ago) must be left alone by the next lookup.
+	fresh := time.Now().UTC().Add(-time.Second).Format(time.RFC3339)
+	mustExec(t, db, `UPDATE devices SET last_seen_at = ? WHERE id = 'd1'`, fresh)
+	if _, err := db.LookupToken("hash1"); err != nil {
+		t.Fatal(err)
+	}
+	if now := lastSeen(); now != fresh {
+		t.Errorf("fresh last-seen was rewritten: %q -> %q", fresh, now)
 	}
 }
 
