@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -107,6 +108,11 @@ func (s *Service) Pick(ctx context.Context, ref FetchRef, candidate Candidate, l
 		return store.Subtitle{}, err
 	}
 
+	if !knownFormat(format) {
+		return store.Subtitle{}, fmt.Errorf("subfetch: refusing unknown subtitle format %q", format)
+	}
+	format = strings.ToLower(strings.TrimSpace(format))
+
 	kind := subtitle.KindForCodec(format)
 	var (
 		outData []byte
@@ -176,7 +182,7 @@ func (s *Service) subtitleRef(ref FetchRef) SubtitleRef {
 // exactly like cacheArtwork) and re-picking overwrites in place. Returns the
 // absolute path recorded in the DB row.
 func (s *Service) cache(titleID, lang string, candidate Candidate, ext string, data []byte) (string, error) {
-	name := titleID + "-" + lang
+	name := sanitize(titleID) + "-" + sanitize(lang)
 	if candidate.Forced {
 		name += "-forced"
 	}
@@ -185,6 +191,9 @@ func (s *Service) cache(titleID, lang string, candidate Candidate, ext string, d
 	}
 	name += ext
 	path := filepath.Join(s.cacheDir, name)
+	if filepath.Dir(path) != filepath.Clean(s.cacheDir) {
+		return "", fmt.Errorf("subfetch: cache path %q escapes the subtitle cache", name)
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("subfetch: writing fetched subtitle: %w", err)
 	}
@@ -192,6 +201,22 @@ func (s *Service) cache(titleID, lang string, candidate Candidate, ext string, d
 		return abs, nil
 	}
 	return path, nil
+}
+
+// knownFormat reports whether a provider-reported format is a subtitle codec we
+// know. The format becomes the cached file's extension and the provider (and,
+// through the candidate the API echoes back, the client) controls it, so only
+// known tokens — text formats, bitmap codecs, and the MicroDVD/VobSub extensions —
+// are ever allowed to reach a filename.
+func knownFormat(format string) bool {
+	f := strings.ToLower(strings.TrimSpace(format))
+	if f == "" {
+		return false
+	}
+	if subtitle.IsTextConvertible(f) || subtitle.KindForCodec(f) == "image" {
+		return true
+	}
+	return f == "sub" || f == "idx"
 }
 
 // sanitize strips path separators from a provider id so it is safe as a filename

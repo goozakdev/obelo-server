@@ -157,3 +157,50 @@ func TestServiceSearchComputesMovieHashFromFile(t *testing.T) {
 		t.Fatalf("file size = %d, want %d", prov.lastRef.FileSize, 128*1024)
 	}
 }
+
+// TestServicePickRefusesHostileFormat: the provider-controlled format becomes the
+// cached file's extension, so a traversal token must be refused before anything
+// is written — and nothing may land outside the cache dir.
+func TestServicePickRefusesHostileFormat(t *testing.T) {
+	root := t.TempDir()
+	dir := root + "/data/subtitles"
+	if err := EnsureCacheDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"/../../../escaped", "../x", "srt/../../y", "exe;rm", ""} {
+		prov := &fakeProvider{data: []byte(sampleSRT), format: format}
+		st := &fakeStore{}
+		svc := NewService(st, dir)
+		svc.SetProvider(prov)
+		_, err := svc.Pick(context.Background(), FetchRef{TitleID: "title-1"},
+			Candidate{ID: "1", Language: "en", Format: format}, "en")
+		if err == nil {
+			t.Errorf("format %q: Pick succeeded, want refusal", format)
+		}
+		if st.called {
+			t.Errorf("format %q: store was called", format)
+		}
+	}
+	if _, err := os.Stat(root + "/escaped"); err == nil {
+		t.Fatalf("file escaped the cache dir")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Fatalf("cache dir not empty after refusals: %v", entries)
+	}
+}
+
+// TestServicePickAcceptsKnownImageFormat: the allowlist still admits a bitmap codec.
+func TestServicePickAcceptsKnownImageFormat(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewService(&fakeStore{}, dir)
+	svc.SetProvider(&fakeProvider{data: []byte("PGS"), format: "sup"})
+	sub, err := svc.Pick(context.Background(), FetchRef{TitleID: "t"},
+		Candidate{ID: "1", Format: "sup"}, "en")
+	if err != nil {
+		t.Fatalf("Pick: %v", err)
+	}
+	if sub.Kind != "image" || !strings.HasSuffix(sub.Path, ".sup") {
+		t.Fatalf("unexpected: %+v", sub)
+	}
+}
