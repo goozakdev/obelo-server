@@ -48,6 +48,11 @@ type keyRotator struct {
 	// planted) is never clobbered — BYOK wins, exactly as the resolver promises.
 	plantedTMDB   string
 	plantedFanart string
+	// cachedTMDB / cachedFanart are the keys the rotation cache held at startup: keys
+	// a previous process adopted. propagate promotes a matching DB key to planted
+	// once, then clears them.
+	cachedTMDB   string
+	cachedFanart string
 	// warned makes failure logging fire ONCE per failure streak (reset on success),
 	// so a persistently-down endpoint polled every N hours never turns into a log
 	// storm (ADR-0032 fail-safe: log once, fall through to bootstrap).
@@ -88,11 +93,22 @@ func newKeyRotator(cfg config.Config, db *store.DB, manager *enrich.Manager, url
 		return nil
 	}
 
+	// The durable cache holds the last keys a previous process fetched and adopted
+	// (it is written before every propagation). A DB key equal to one of them was
+	// planted by this rotator, not typed by the operator, so the provenance guard
+	// must recognise it after a restart. An unreadable cache just means no evidence.
+	var cached rotation.Cache
+	if c, found, err := rotation.LoadCache(cfg.MetadataKeysPath()); err == nil && found {
+		cached = c
+	}
+
 	return &keyRotator{
-		cfg:      cfg,
-		db:       db,
-		manager:  manager,
-		interval: cfg.KeyRotationInterval,
+		cfg:          cfg,
+		cachedTMDB:   cached.TMDB,
+		cachedFanart: cached.Fanart,
+		db:           db,
+		manager:      manager,
+		interval:     cfg.KeyRotationInterval,
 		client: rotation.Client{
 			URL:        url,
 			EncKeyB64:  encKey,
@@ -251,6 +267,16 @@ func (kr *keyRotator) propagate(rot config.RotationKeys) (bool, error) {
 	for _, r := range rows {
 		byslug[r.Slug] = r
 	}
+
+	// A key a previous process adopted is ours: without this, a restart forgets it
+	// and treats the rotated key as the operator's, so rotation dies at first reboot.
+	if kr.cachedTMDB != "" && byslug[enrich.SlugTMDB].APIKey == kr.cachedTMDB {
+		kr.plantedTMDB = kr.cachedTMDB
+	}
+	if kr.cachedFanart != "" && byslug[enrich.SlugFanartTV].APIKey == kr.cachedFanart {
+		kr.plantedFanart = kr.cachedFanart
+	}
+	kr.cachedTMDB, kr.cachedFanart = "", ""
 
 	// The rotator's two default-key ids. They are the maintainer's bundled
 	// credentials (ADR-0032), so which sources they belong to is a fact about the
