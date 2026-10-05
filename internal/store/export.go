@@ -840,6 +840,11 @@ func (db *DB) creditsForExportTitles(ids []string) (map[string][]exportCredit, e
 	return out, rows.Err()
 }
 
+// exportEntityTypes is the entity_type set decorateExportEntities reads. Every
+// index on the entity_* tables leads with entity_type, so the filter is what lets
+// them apply instead of full-scanning on each export page.
+const exportEntityTypes = `('show', 'season', 'artist', 'album')`
+
 // decorateExportEntities fills a Show's / Season's / Artist's / Album's
 // enrichment block, genres and cast. The three tables are keyed by
 // (entity_type, entity_id) and the page mixes types, so each read pulls every
@@ -854,7 +859,7 @@ func (db *DB) decorateExportEntities(keys []string, byEntity map[string]*ExportE
 
 	enr, err := db.Query(
 		`SELECT entity_type, entity_id, overview, content_rating, network, enrichment_status
-		   FROM entity_enrichment WHERE entity_id IN (`+ph+`)`, args...)
+		   FROM entity_enrichment WHERE entity_type IN `+exportEntityTypes+` AND entity_id IN (`+ph+`)`, args...)
 	if err != nil {
 		return fmt.Errorf("store: exporting entity enrichment: %w", err)
 	}
@@ -879,7 +884,8 @@ func (db *DB) decorateExportEntities(keys []string, byEntity map[string]*ExportE
 
 	gen, err := db.Query(
 		`SELECT entity_type, entity_id, genre FROM entity_genres
-		  WHERE entity_id IN (`+ph+`) ORDER BY entity_id, ord, genre`, args...)
+		  WHERE entity_type IN `+exportEntityTypes+` AND entity_id IN (`+ph+`)
+		  ORDER BY entity_id, ord, genre`, args...)
 	if err != nil {
 		return fmt.Errorf("store: exporting entity genres: %w", err)
 	}
@@ -902,7 +908,7 @@ func (db *DB) decorateExportEntities(keys []string, byEntity map[string]*ExportE
 
 	cre, err := db.Query(
 		`SELECT entity_type, entity_id, person, '' AS role, character, kind, person_ref
-		   FROM entity_credits WHERE entity_id IN (`+ph+`)
+		   FROM entity_credits WHERE entity_type IN `+exportEntityTypes+` AND entity_id IN (`+ph+`)
 		  ORDER BY entity_id, kind, ord, person`, args...)
 	if err != nil {
 		return fmt.Errorf("store: exporting entity credits: %w", err)
