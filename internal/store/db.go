@@ -11,9 +11,14 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
+
+// dsnPathEscaper escapes the characters that are significant in a SQLite file:
+// URI path ('%' first so its own escapes are not double-escaped).
+var dsnPathEscaper = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 
 // DB wraps the *sql.DB handle for the single embedded database.
 type DB struct {
@@ -27,7 +32,9 @@ func Open(path string) (*DB, error) {
 	// modernc.org/sqlite accepts PRAGMAs as connection query params via the
 	// _pragma key, applied to every pooled connection. WAL + foreign keys +
 	// a busy timeout cover the single-writer concurrency model of ADR-0007.
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)", path)
+	// The path is percent-escaped for the URI form: a data dir containing '?' or
+	// '#' would otherwise end the filename early and drop the pragmas.
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)", dsnPathEscaper.Replace(path))
 
 	sqldb, err := sql.Open("sqlite", dsn)
 	if err != nil {
