@@ -4,14 +4,15 @@ import { useEffect } from "react";
 import { apiClient } from "./api/client";
 import App from "./App";
 
-// A lazy route whose chunk fails to load (the import rejects) must be caught by the
+// A lazy route whose chunk fails to load must be caught by the
 // route boundary — inline "Reload" prompt — while the NowPlayingBar is neither
 // replaced nor remounted, so the playing media is not torn down. Moving
 // <NowPlayingBar /> inside <RouteBoundary> must fail this test.
 
 // The import resolves, but reading its default export throws the browser's dynamic-import
-// failure (a TypeError), so React.lazy rejects with the shape the boundary classifies as
-// a chunk-load failure (vitest would wrap an error thrown by the factory itself).
+// failure (a TypeError) when the lazy route renders. The boundary catches that render error,
+// which has the shape it classifies as a chunk-load failure (vitest would wrap an error
+// thrown by the factory itself).
 vi.mock("./screens/ProfileScreen", () => ({
   get default(): never {
     throw new TypeError("Failed to fetch dynamically imported module: /assets/ProfileScreen.js");
