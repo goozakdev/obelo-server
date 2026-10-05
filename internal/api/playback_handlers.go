@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/audio"
@@ -1394,20 +1395,68 @@ func wholeSubtitleVTT(ctx context.Context, sctx playback.SessionSubtitleContext,
 	if data, err := os.ReadFile(cachePath); err == nil {
 		return data, nil
 	}
-	data, err := subtitleVTT(ctx, sctx.Detail, subID)
-	if err != nil {
-		return nil, err
+	// Concurrent segment requests for one (session, track) share a single
+	// extraction. It runs detached from any one request's cancellation (a
+	// follower must not inherit the leader's abort); extractEmbeddedVTT bounds it
+	// with its own size-scaled timeout.
+	return wholeSubtitleFlight.do(cachePath, func() ([]byte, error) {
+		if data, err := os.ReadFile(cachePath); err == nil {
+			return data, nil
+		}
+		data, err := subtitleVTT(context.WithoutCancel(ctx), sctx.Detail, subID)
+		if err != nil {
+			return nil, err
+		}
+		// Best-effort cache write via a unique temp file + atomic rename, so a
+		// concurrent reader never sees a half-written file. A write failure is
+		// non-fatal — the bytes are already in hand for this request.
+		if f, err := os.CreateTemp(sctx.ScratchDir, "subfull_*.tmp"); err == nil {
+			tmp := f.Name()
+			_, werr := f.Write(data)
+			cerr := f.Close()
+			if werr == nil && cerr == nil && os.Rename(tmp, cachePath) == nil {
+				return data, nil
+			}
+			_ = os.Remove(tmp)
+		}
+		return data, nil
+	})
+}
+
+// subtitleFlight collapses concurrent calls for one key into a single run of fn;
+// the others wait and share its result.
+type subtitleFlight struct {
+	mu    sync.Mutex
+	calls map[string]*subtitleCall
+}
+
+type subtitleCall struct {
+	done chan struct{}
+	data []byte
+	err  error
+}
+
+var wholeSubtitleFlight = &subtitleFlight{calls: map[string]*subtitleCall{}}
+
+func (f *subtitleFlight) do(key string, fn func() ([]byte, error)) ([]byte, error) {
+	f.mu.Lock()
+	if c, ok := f.calls[key]; ok {
+		f.mu.Unlock()
+		<-c.done
+		return c.data, c.err
 	}
-	// Best-effort cache write via a temp file + atomic rename, so a concurrent
-	// segment request never reads a half-written file. A write failure is non-fatal
-	// — the bytes are already in hand for this request.
-	tmp := cachePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err == nil {
-		_ = os.Rename(tmp, cachePath)
-	} else {
-		_ = os.Remove(tmp)
-	}
-	return data, nil
+	c := &subtitleCall{done: make(chan struct{})}
+	f.calls[key] = c
+	f.mu.Unlock()
+
+	defer func() {
+		f.mu.Lock()
+		delete(f.calls, key)
+		f.mu.Unlock()
+		close(c.done)
+	}()
+	c.data, c.err = fn()
+	return c.data, c.err
 }
 
 // isSubtitlePlaylist / isSubtitleSegment classify a subs_ artifact by suffix (a
