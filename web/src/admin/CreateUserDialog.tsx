@@ -152,6 +152,9 @@ export default function CreateUserDialog({
   // The create succeeded but the default grants did not: the User exists, so
   // "Cancel" would be a lie. Offer Retry / Close instead.
   const grantFailed = created !== null && error !== null;
+  // Every way out (ESC, backdrop, ✕, Cancel, Close) goes through here: once the
+  // User exists the hub must reload, whichever way the dialog was dismissed.
+  const dismiss = created ? onCreated : onClose;
 
   return (
     <dialog
@@ -161,11 +164,11 @@ export default function CreateUserDialog({
       onCancel={(e) => {
         // ESC fires a native cancel; never while a call is in flight.
         e.preventDefault();
-        if (!submitting) onClose();
+        if (!submitting) dismiss();
       }}
-      onClose={onClose}
+      onClose={dismiss}
       onClick={(e) => {
-        if (e.target === dialogRef.current && !submitting) onClose();
+        if (e.target === dialogRef.current && !submitting) dismiss();
       }}
     >
       <form className="library-dialog-panel" onSubmit={onSubmit}>
@@ -176,7 +179,7 @@ export default function CreateUserDialog({
             type="button"
             data-testid="create-user-close-x"
             aria-label="Close"
-            onClick={onClose}
+            onClick={dismiss}
             disabled={submitting}
           >
             ✕
@@ -280,7 +283,7 @@ export default function CreateUserDialog({
                 className="button-secondary"
                 type="button"
                 data-testid="create-user-close"
-                onClick={onCreated}
+                onClick={dismiss}
                 disabled={submitting}
               >
                 Close
@@ -301,7 +304,7 @@ export default function CreateUserDialog({
                 className="button-secondary"
                 type="button"
                 data-testid="create-user-cancel"
-                onClick={onClose}
+                onClick={dismiss}
                 disabled={submitting}
               >
                 Cancel

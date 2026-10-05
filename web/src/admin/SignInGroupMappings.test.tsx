@@ -29,12 +29,19 @@ beforeEach(() => {
   client.listLibraries.mockResolvedValue([{ id: "l1", name: "Movies", kind: "movie", rootFolders: [] }]);
 });
 
+// The Users screen fetches the provider list once and hands it down; do the same
+// from whatever the test stubbed.
+async function renderMappings() {
+  const view = await client.getSignInProviders().catch(() => null);
+  return render(<SignInGroupMappings view={view} />);
+}
+
 describe("SignInGroupMappings", () => {
   it("renders nothing when there is no Sign-in provider", async () => {
     client.getSignInProviders.mockResolvedValue({ providers: [], redirect: [] });
     let container!: HTMLElement;
     await act(async () => {
-      ({ container } = render(<SignInGroupMappings />));
+      ({ container } = await renderMappings());
     });
     expect(container).toBeEmptyDOMElement();
   });
@@ -46,7 +53,7 @@ describe("SignInGroupMappings", () => {
       ...empty,
       rules: [{ group: "family", role: "member", libraryIds: ["l1"] }],
     });
-    render(<SignInGroupMappings />);
+    await renderMappings();
 
     expect(await screen.findByTestId("group-mapping-sign-in-only-dir")).toBeInTheDocument();
     await userEvent.click(screen.getByTestId("group-mapping-add-dir"));
@@ -73,7 +80,7 @@ describe("SignInGroupMappings", () => {
       failing: { since: new Date().toISOString(), reason: "unreachable" },
     });
     client.resyncSignInProvider.mockResolvedValue({ checked: 2, remapped: 0, failed: 1, revoked: 0 });
-    render(<SignInGroupMappings />);
+    await renderMappings();
 
     expect(await screen.findByTestId("group-mapping-failing-oidc")).toHaveTextContent("unreachable");
     expect(screen.queryByTestId("group-mapping-sign-in-only-oidc")).not.toBeInTheDocument();
@@ -91,7 +98,7 @@ describe("SignInGroupMappings", () => {
       ],
     });
     client.getGroupMapping.mockResolvedValue(empty);
-    render(<SignInGroupMappings />);
+    await renderMappings();
 
     expect(await screen.findByTestId("group-mapping-oidc")).toBeInTheDocument();
     expect(screen.queryByTestId("group-mapping-oauth")).not.toBeInTheDocument();
@@ -104,7 +111,7 @@ describe("SignInGroupMappings", () => {
     });
     let container!: HTMLElement;
     await act(async () => {
-      ({ container } = render(<SignInGroupMappings />));
+      ({ container } = await renderMappings());
     });
     expect(container).toBeEmptyDOMElement();
     expect(client.getGroupMapping).not.toHaveBeenCalled();
@@ -116,9 +123,34 @@ describe("SignInGroupMappings", () => {
       redirect: [{ id: "oauth", name: "Some OAuth", verified: false, configured: false }],
     });
     client.getGroupMapping.mockResolvedValue(empty);
-    render(<SignInGroupMappings />);
+    await renderMappings();
 
     expect(await screen.findByTestId("group-mapping-dir")).toBeInTheDocument();
     expect(screen.queryByTestId("group-mapping-oauth")).not.toBeInTheDocument();
+  });
+
+  it("refuses a non-numeric re-check interval instead of sending NaN (R02-19)", async () => {
+    client.getSignInProviders.mockResolvedValue({
+      providers: [],
+      redirect: [{ id: "oidc", name: "OpenID Connect", verified: true, configured: true }],
+    });
+    client.getGroupMapping.mockResolvedValue({ ...empty, recheck: true });
+    await renderMappings();
+
+    await userEvent.type(await screen.findByTestId("group-mapping-interval-oidc"), "1d");
+    await userEvent.click(screen.getByTestId("group-mapping-save-oidc"));
+
+    expect(await screen.findByTestId("group-mapping-error-oidc")).toHaveTextContent(
+      /whole number of hours/i,
+    );
+    expect(client.setGroupMapping).not.toHaveBeenCalled();
+  });
+
+  it("does not list Libraries when there is no provider to map (R02-10)", async () => {
+    client.getSignInProviders.mockResolvedValue({ providers: [], redirect: [] });
+    await act(async () => {
+      await renderMappings();
+    });
+    expect(client.listLibraries).not.toHaveBeenCalled();
   });
 });

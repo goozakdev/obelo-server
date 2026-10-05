@@ -47,7 +47,18 @@ export default function ConfirmDialog({
         e.preventDefault();
         if (!busy) onCancel();
       }}
-      onClose={onCancel}
+      onClose={() => {
+        // A second ESC with no user activation in between is not cancelable, so the
+        // browser closes the dialog natively even though the first was swallowed.
+        // While busy, put it back rather than leave the action's outcome (a refusal)
+        // landing in a dialog nobody can see.
+        if (busy) {
+          const dialog = dialogRef.current;
+          if (dialog && !dialog.open) dialog.showModal();
+          return;
+        }
+        onCancel();
+      }}
       onClick={(e) => {
         if (e.target === dialogRef.current && !busy) onCancel();
       }}

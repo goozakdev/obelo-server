@@ -160,3 +160,74 @@ describe("EntityEnrichmentOverridePicker — a pasted reference", () => {
     expect(row).toHaveAttribute("aria-pressed", "false");
   });
 });
+
+describe("EntityEnrichmentOverridePicker — search paging and the tracklist toggle", () => {
+  beforeEach(() => {
+    listAlbumEditions.mockReset();
+    searchEntityEnrichmentCandidates.mockReset();
+    applyEntityEnrichmentOverride.mockReset();
+  });
+
+  it("pages Show more with the query that produced the list, not the edited box (R02-05)", async () => {
+    searchEntityEnrichmentCandidates
+      .mockResolvedValueOnce({
+        candidates: [{ externalId: "a1", title: "Foo", kind: "artist", source: "musicbrainz" }],
+        hasMore: true,
+      })
+      .mockResolvedValue({
+        candidates: [{ externalId: "a2", title: "Foo 2", kind: "artist", source: "musicbrainz" }],
+        hasMore: false,
+      });
+    render(
+      <EntityEnrichmentOverridePicker entityType="artists" entityId="ar1" onApplied={vi.fn()} />,
+    );
+
+    const input = screen.getByTestId("entity-enrichment-search-input");
+    await userEvent.type(input, "foo");
+    await userEvent.click(screen.getByTestId("entity-enrichment-search-button"));
+    await screen.findByTestId("entity-enrichment-candidate");
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "bar");
+    await userEvent.click(screen.getByTestId("entity-enrichment-show-more"));
+
+    await waitFor(() => expect(searchEntityEnrichmentCandidates).toHaveBeenCalledTimes(2));
+    expect(searchEntityEnrichmentCandidates).toHaveBeenLastCalledWith(
+      "artists",
+      "ar1",
+      "foo",
+      expect.objectContaining({ page: 1 }),
+    );
+  });
+
+  it("opens the tracklist from the keyboard without changing the selection (R02-02)", async () => {
+    searchEntityEnrichmentCandidates.mockResolvedValue({
+      candidates: [
+        {
+          externalId: "al-1",
+          title: "Album",
+          kind: "album",
+          source: "musicbrainz",
+          tracklist: [{ position: 1, title: "Opener" }],
+        },
+      ],
+      hasMore: false,
+    });
+    render(
+      <EntityEnrichmentOverridePicker entityType="shows" entityId="s1" onApplied={vi.fn()} />,
+    );
+
+    await userEvent.type(screen.getByTestId("entity-enrichment-search-input"), "album");
+    await userEvent.click(screen.getByTestId("entity-enrichment-search-button"));
+    const toggle = await screen.findByTestId("entity-enrichment-tracklist-toggle");
+
+    toggle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(screen.getByTestId("entity-enrichment-tracklist")).toBeInTheDocument();
+    expect(screen.getByTestId("entity-enrichment-candidate")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+});

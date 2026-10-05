@@ -313,7 +313,7 @@ export default function LibraryAdminRow({
                     className="row-menu-button"
                     role="menuitem"
                     data-testid="refresh-missing-button"
-                    disabled={scanRunning}
+                    disabled={scanRunning || refreshing}
                     onClick={() => {
                       setMenuOpen(false);
                       void onRefresh("missing");
@@ -328,7 +328,7 @@ export default function LibraryAdminRow({
                     className="row-menu-button"
                     role="menuitem"
                     data-testid="refresh-all-button"
-                    disabled={scanRunning}
+                    disabled={scanRunning || refreshing}
                     onClick={() => {
                       setMenuOpen(false);
                       setRefreshError(null);
@@ -400,10 +400,8 @@ export default function LibraryAdminRow({
           confirmLabel="Refresh all"
           busyLabel="Starting…"
           busy={refreshing}
-          onConfirm={() => {
-            setConfirmingRefreshAll(false);
-            void onRefresh("full");
-          }}
+          // Stays up, busy, until the POST settles (any refusal then shows on the row).
+          onConfirm={() => void onRefresh("full").finally(() => setConfirmingRefreshAll(false))}
           onCancel={() => setConfirmingRefreshAll(false)}
         />
       )}

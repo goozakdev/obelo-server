@@ -556,3 +556,32 @@ describe("AdminLinkedServersScreen — the tab", () => {
     expect(listLinks).not.toHaveBeenCalled();
   });
 });
+
+describe("AdminLinkedServersScreen — a burst of nudges (R02-06)", () => {
+  it("settles on the newest answer when an older GET resolves last", async () => {
+    listLinks.mockResolvedValueOnce([link()]);
+    renderWithAuth(<AdminLinkedServersScreen />);
+    await screen.findByTestId("link-row");
+
+    let resolveStale!: (v: Link[]) => void;
+    listLinks.mockReturnValueOnce(
+      new Promise<Link[]>((res) => {
+        resolveStale = res;
+      }),
+    );
+    listLinks.mockResolvedValueOnce([link({ state: "unreachable", lastError: "refused" })]);
+    await act(async () => {
+      emit?.("linkState", { linkId: "link1" });
+      emit?.("linkState", { linkId: "link1" });
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("link-state-chip")).toHaveTextContent("Unreachable"),
+    );
+
+    await act(async () => {
+      resolveStale([link()]);
+    });
+
+    expect(screen.getByTestId("link-state-chip")).toHaveTextContent("Unreachable");
+  });
+});

@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import { formatAgo } from "../time";
-import type { GroupMappingRule, GroupMappingView, Library, SignInProvider } from "../api/types";
+import type {
+  GroupMappingRule,
+  GroupMappingView,
+  Library,
+  SignInProvider,
+  SignInProvidersView,
+} from "../api/types";
 
 // Each Sign-in provider's Group mapping (ADR-0063 decision 4): which of its
 // groups give which role and which Libraries. The server re-applies it at every
@@ -13,22 +19,21 @@ import type { GroupMappingRule, GroupMappingView, Library, SignInProvider } from
 // Like the other sign-in cards it appears only when there is a configured provider,
 // and a list that will not load is the same absence.
 
-export default function SignInGroupMappings() {
-  const [providers, setProviders] = useState<SignInProvider[] | null>(null);
+export default function SignInGroupMappings({ view }: { view: SignInProvidersView | null }) {
   const [libraries, setLibraries] = useState<Library[]>([]);
+  const providers = useMemo(() => {
+    if (!view) return [];
+    const all = [...(view.providers ?? []), ...(view.redirect ?? []).filter((p) => p.configured)];
+    const seen = new Set<string>();
+    return all.filter((p) => !seen.has(p.id) && seen.add(p.id));
+  }, [view]);
+  const any = providers.length > 0;
 
+  // Library names are only needed once there is a provider to map for.
   useEffect(() => {
+    if (!any) return;
     let live = true;
     (async () => {
-      try {
-        const view = await apiClient.getSignInProviders();
-        const all = [...(view.providers ?? []), ...(view.redirect ?? []).filter((p) => p.configured)];
-        const seen = new Set<string>();
-        const unique = all.filter((p) => !seen.has(p.id) && seen.add(p.id));
-        if (live) setProviders(unique);
-      } catch {
-        // Left absent: see above.
-      }
       try {
         const libs = await apiClient.listLibraries();
         if (live) setLibraries(libs ?? []);
@@ -39,9 +44,9 @@ export default function SignInGroupMappings() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [any]);
 
-  if (!providers || providers.length === 0) return null;
+  if (!any) return null;
 
   return (
     <>
@@ -88,11 +93,17 @@ function GroupMappingCard({ provider, libraries }: { provider: SignInProvider; l
   }
 
   async function save() {
+    const text = hours.trim();
+    if (text !== "" && !/^\d+$/.test(text)) {
+      setError("Re-check interval must be a whole number of hours.");
+      setNote(null);
+      return;
+    }
     setBusy(true);
     setError(null);
     setNote(null);
     try {
-      const every = hours.trim() === "" ? 0 : Number(hours);
+      const every = text === "" ? 0 : Number(text);
       show(await apiClient.setGroupMapping(provider.id, rules, every));
       setNote("Saved. It applies at each person's next sign-in or re-check.");
     } catch (err) {

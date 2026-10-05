@@ -49,7 +49,9 @@ export default function AdminLibrariesScreen() {
   const [scanAllSignal, setScanAllSignal] = useState(0);
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    setState({ status: "loading" });
+    // A reload keeps the list on screen: swapping in "loading" would unmount every
+    // row (losing its scan poller and inline state) for each edit, add or delete.
+    setState((cur) => (cur.status === "ready" ? cur : { status: "loading" }));
     try {
       const libraries = await apiClient.listLibraries(signal);
       if (signal?.aborted) return;

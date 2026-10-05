@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { appEvents } from "../events/enrichEvents";
@@ -91,14 +91,17 @@ export default function AdminLinkedServersScreen() {
   const [links, setLinks] = useState<Link[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Overlapping loads (a burst of nudges): only the newest may land.
+  const loadSeq = useRef(0);
   const load = useCallback(async (signal?: AbortSignal) => {
+    const seq = ++loadSeq.current;
     try {
       const next = await apiClient.listLinks(signal);
-      if (signal?.aborted) return;
+      if (signal?.aborted || seq !== loadSeq.current) return;
       setLinks(next);
       setLoadError(null);
     } catch (err) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || seq !== loadSeq.current) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
       setLoadError(errorMessage(err));
     }

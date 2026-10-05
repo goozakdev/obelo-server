@@ -213,6 +213,43 @@ describe("AdminTranscodingScreen", () => {
     expect(err).toHaveTextContent(/could not read transcoding status/i);
   });
 
+  it("flags the last snapshot as stale when a later poll fails (R02-08)", async () => {
+    getTranscoding
+      .mockResolvedValueOnce(snapshot({ active: "nvenc" }))
+      .mockRejectedValue(new ApiError(503, "UNAVAILABLE", "server not answering"));
+    renderWithAuth(<AdminTranscodingScreen intervalMs={20} />, {
+      initialEntries: ["/admin/transcoding"],
+    });
+
+    const stale = await screen.findByTestId("transcoding-stale");
+    expect(stale).toHaveTextContent(/server not answering/i);
+    // The last reading stays visible, but is no longer presented as live.
+    expect(screen.getByTestId("transcoding-active")).toHaveAttribute("data-backend", "nvenc");
+  });
+
+  it("clears the stale note when a poll succeeds again (R02-08)", async () => {
+    getTranscoding
+      .mockResolvedValueOnce(snapshot())
+      .mockRejectedValueOnce(new ApiError(503, "UNAVAILABLE", "blip"))
+      .mockResolvedValue(snapshot());
+    renderWithAuth(<AdminTranscodingScreen intervalMs={20} />, {
+      initialEntries: ["/admin/transcoding"],
+    });
+
+    await screen.findByTestId("transcoding-stale");
+    await waitFor(() => expect(screen.queryByTestId("transcoding-stale")).toBeNull());
+  });
+
+  it("does not start a new poll while the previous one is still in flight (R02-08)", async () => {
+    getTranscoding.mockReturnValue(new Promise(() => {}));
+    renderWithAuth(<AdminTranscodingScreen intervalMs={10} />, {
+      initialEntries: ["/admin/transcoding"],
+    });
+
+    await new Promise((r) => setTimeout(r, 80));
+    expect(getTranscoding).toHaveBeenCalledTimes(1);
+  });
+
   it("polls the endpoint repeatedly while mounted and stops on unmount", async () => {
     getTranscoding.mockResolvedValue(snapshot());
     const { unmount } = renderWithAuth(

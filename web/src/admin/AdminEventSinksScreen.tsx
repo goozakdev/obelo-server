@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../api/client";
-import { errorMessage } from "../screens/errorMessage";
 import type {
   EventSink,
   EventSinkCounters,
@@ -9,6 +7,7 @@ import type {
   UpdateEventSinksInput,
 } from "../api/types";
 import MaskedKeyInput from "./MaskedKeyInput";
+import { useDraftSave } from "./useDraftSave";
 import EventsControl from "./EventsControl";
 
 // The Event Sinks admin screen (ADR-0057 decision 6, plugin-system/05 and /06).
@@ -116,42 +115,12 @@ function SinkCounters({ slug, counters }: { slug: string; counters: EventSinkCou
 }
 
 export default function AdminEventSinksScreen() {
-  const [view, setView] = useState<EventSinksView | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const v = await apiClient.getEventSinks();
-      setView(v);
-      setDraft(draftFromView(v));
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function onSave() {
-    if (!view || !draft) return;
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const updated = await apiClient.updateEventSinks(buildPayload(view, draft));
-      setView(updated);
-      setDraft(draftFromView(updated));
-      setSaved(true);
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setSaving(false);
-    }
-  }
+  const { view, draft, setDraft, error, saving, saved, save: onSave } = useDraftSave({
+    fetchView: () => apiClient.getEventSinks(),
+    update: (payload: UpdateEventSinksInput) => apiClient.updateEventSinks(payload),
+    draftFromView,
+    buildPayload,
+  });
 
   if (error && !view) {
     return (

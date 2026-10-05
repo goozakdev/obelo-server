@@ -292,6 +292,32 @@ describe("AdminLibrariesScreen", () => {
     );
   });
 
+  it("keeps the other rows mounted while the list reloads after a delete (R02-09)", async () => {
+    const user = userEvent.setup();
+    listLibraries
+      .mockResolvedValueOnce([
+        lib({ id: "lib1", name: "Movies" }),
+        lib({ id: "lib2", name: "Shows", kind: "show" }),
+      ])
+      .mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    deleteLibrary.mockResolvedValue(undefined);
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() => expect(screen.getAllByTestId("admin-library-row")).toHaveLength(2));
+    const movies = screen.getAllByTestId("admin-library-row")[0];
+    await waitFor(() => expect(getScanStatus).toHaveBeenCalledTimes(2));
+
+    await user.click(screen.getAllByTestId("library-menu-toggle")[1]);
+    await user.click(screen.getByTestId("delete-library-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    await user.click(within(dialog).getByTestId("confirm-dialog-confirm"));
+
+    await waitFor(() => expect(screen.getAllByTestId("admin-library-row")).toHaveLength(1));
+    // Same DOM node, and no second status read: the survivor was never remounted.
+    expect(screen.getByTestId("admin-library-row")).toBe(movies);
+    expect(getScanStatus).toHaveBeenCalledTimes(2);
+  });
+
   it("Cancel on the delete confirmation keeps the library", async () => {
     const user = userEvent.setup();
     listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
@@ -388,6 +414,35 @@ describe("AdminLibrariesScreen", () => {
     await waitFor(() =>
       expect(enrichLibrary).toHaveBeenCalledWith("lib1", { mode: "full" }),
     );
+  });
+
+  it("keeps the refresh-all dialog busy until the POST resolves, and disables the refresh items meanwhile (R02-16)", async () => {
+    const user = userEvent.setup();
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Movies" })]);
+    let finish!: (v: unknown) => void;
+    enrichLibrary.mockReturnValue(
+      new Promise((res) => {
+        finish = res;
+      }),
+    );
+
+    renderWithAuth(<AdminLibrariesScreen />, { initialEntries: ["/admin"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-library-row")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    await user.click(screen.getByTestId("refresh-all-button"));
+    const dialog = await screen.findByTestId("confirm-dialog");
+    await user.click(within(dialog).getByTestId("confirm-dialog-confirm"));
+
+    expect(within(screen.getByTestId("confirm-dialog")).getByTestId("confirm-dialog-confirm")).toHaveTextContent("Starting…");
+    await user.click(screen.getByTestId("library-menu-toggle"));
+    expect(screen.getByTestId("refresh-missing-button")).toBeDisabled();
+    expect(screen.getByTestId("refresh-all-button")).toBeDisabled();
+
+    finish({ libraryId: "lib1", running: true, started: true });
+    await waitFor(() => expect(screen.queryByTestId("confirm-dialog")).toBeNull());
   });
 
   it("Cancel on the refresh-all confirmation calls nothing", async () => {

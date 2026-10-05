@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import type { EnrichmentConsentState, MetadataCredentialSource } from "../api/types";
+import { METADATA_SERVICES } from "./metadataConsentCopy";
 
 // The Admin settings toggle for first-run Enrichment consent (ADR-0032) — the
 // always-available counterpart to the first-run prompt. It reads the current
@@ -41,8 +42,13 @@ export default function EnrichmentConsentControl({
       .then((c) => {
         setState(c.state);
         setCredentialSource(c.credentialSource);
+        setError(null);
       })
-      .catch(() => setError("Couldn't load the enrichment consent setting."));
+      .catch(() => {
+        // A StrictMode remount aborts the first read; that is not a failure.
+        if (ctrl.signal.aborted) return;
+        setError("Couldn't load the enrichment consent setting.");
+      });
     return () => ctrl.abort();
   }, []);
 
@@ -74,7 +80,7 @@ export default function EnrichmentConsentControl({
           onChange={(e) => void onToggle(e.target.checked)}
           disabled={saving || state === null}
         />{" "}
-        Allow Obelo to contact TMDB and fanart.tv for posters, descriptions,
+        Allow Obelo to contact {METADATA_SERVICES} for posters, descriptions,
         cast, and artwork
       </label>
       <p className="field-hint" data-testid="enrichment-consent-state" data-state={state ?? "loading"}>
@@ -109,12 +115,12 @@ function credentialSourceHint(source?: MetadataCredentialSource): string {
   switch (source) {
     case "bootstrap":
     case "rotation":
-      return "Currently using the default TMDB / fanart.tv keys bundled with this build, which are shared by every official install. Enter your own below to use your own accounts — your keys always win.";
+      return `Currently using the default ${METADATA_SERVICES} keys bundled with this build, which are shared by every official install. Enter your own below to use your own accounts — your keys always win.`;
     case "operator":
       return "Currently using the API key you supplied below, so requests go out under your own account.";
     case "none":
       return "No metadata API keys are configured — this build bundles none. Add your own below before enrichment can fetch anything.";
     default:
-      return "You can supply your own TMDB / fanart.tv API keys in the provider rows below.";
+      return `You can supply your own ${METADATA_SERVICES} API keys in the provider rows below.`;
   }
 }

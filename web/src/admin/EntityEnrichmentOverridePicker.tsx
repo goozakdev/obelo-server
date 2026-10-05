@@ -1,12 +1,12 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   CascadeSummary,
   EnrichmentCandidate,
   EntityEnrichmentDetail,
 } from "../api/types";
-import { errorMessage } from "../screens/errorMessage";
 import AlbumEditionPicker from "./AlbumEditionPicker";
+import { CandidateRow, useCandidateSearch } from "./enrichmentCandidates";
 
 // Edit-item unified "Search" tab on a browse PARENT — Show / Artist / Album
 // (item-editing/02, ADR-0019). The parent analogue of EnrichmentOverridePicker:
@@ -54,85 +54,57 @@ export default function EntityEnrichmentOverridePicker({
     cascade: boolean,
   ) => Promise<EntityEnrichmentDetail>;
 }) {
-  const [query, setQuery] = useState(initialQuery ?? "");
-  const [artist, setArtist] = useState(artistScope ?? "");
-  const [candidates, setCandidates] = useState<EnrichmentCandidate[] | null>(null);
-  const [selected, setSelected] = useState<EnrichmentCandidate | null>(null);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [applying, setApplying] = useState<"update" | "replace" | null>(null);
+  const {
+    query,
+    setQuery,
+    artist,
+    setArtist,
+    candidates,
+    selected,
+    setSelected,
+    hasMore,
+    searching,
+    applying,
+    error,
+    submit,
+    showMore,
+    apply,
+  } = useCandidateSearch({
+    initialQuery,
+    artistScope,
+    search: (q, opts) =>
+      apiClient.searchEntityEnrichmentCandidates(entityType, entityId, q, opts),
+  });
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // "Also apply to children" (item-editing/05): a Show/Artist/Album always HAS
   // children, so the option is always offered on this parent picker. It applies to
   // whichever button (Update → cascaded Fix info, Replace → cascaded Wrong item).
   const [cascade, setCascade] = useState(false);
   const [summary, setSummary] = useState<CascadeSummary | null>(null);
 
-  async function runSearch(nextPage: number, append: boolean) {
-    const q = query.trim();
-    if (q === "") return;
-    setSearching(true);
-    setError(null);
-    try {
-      const res = await apiClient.searchEntityEnrichmentCandidates(entityType, entityId, q, {
-        artist,
-        page: nextPage,
-      });
-      setCandidates((prev) =>
-        append && prev ? [...prev, ...res.candidates] : res.candidates,
-      );
-      // A pasted URL/id the lead resolved auto-selects its one record.
-      if (res.resolvedRef) setSelected(res.candidates[0] ?? null);
-      setHasMore(res.hasMore ?? false);
-      setPage(nextPage);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (searching) return;
-    const q = query.trim();
-    if (q === "") return;
-    setSelected(null);
-    void runSearch(0, false);
-  }
-
-  async function doApply(mode: "update" | "replace") {
-    if (applying || !selected) return;
-    setApplying(mode);
-    setError(null);
-    try {
-      const detail =
+  function doApply(mode: "update" | "replace") {
+    return apply(
+      mode,
+      (c) =>
         mode === "replace" && onReplace
-          ? await onReplace(selected, cascade)
-          : await apiClient.applyEntityEnrichmentOverride(
+          ? onReplace(c, cascade)
+          : apiClient.applyEntityEnrichmentOverride(
               entityType,
               entityId,
-              selected.externalId,
+              c.externalId,
               // The namespace the pick was found in (ADR-0060 decision 5).
-              selected.source,
+              c.source,
               cascade,
               // The EDITION, when the Admin pasted a /release/ URL (ADR-0052). A
               // search hit carries none, and applying one CLEARS any edition the
               // album had — which is right: they just named a less specific thing.
-              selected.releaseId,
-            );
-      onApplied(detail);
-      setSummary(detail.cascade ?? null);
-      setCandidates(null);
-      setSelected(null);
-      setQuery("");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setApplying(null);
-    }
+              c.releaseId,
+            ),
+      (detail) => {
+        onApplied(detail);
+        setSummary(detail.cascade ?? null);
+      },
+    );
   }
 
   const toggle = (id: string) => setExpandedId(expandedId === id ? null : id);
@@ -226,14 +198,21 @@ export default function EntityEnrichmentOverridePicker({
             data-testid="entity-enrichment-candidate-list"
           >
             {candidates.map((c) => (
-              <EntityCandidateRow
+              <CandidateRow
                 key={c.externalId}
+                testIdPrefix="entity-enrichment"
                 c={c}
                 selected={selected?.externalId === c.externalId}
-                expanded={expandedId === c.externalId}
                 onSelect={() => setSelected(c)}
-                onToggle={() => toggle(c.externalId)}
-              />
+              >
+                {c.tracklist && c.tracklist.length > 0 && (
+                  <Tracklist
+                    tracklist={c.tracklist}
+                    expanded={expandedId === c.externalId}
+                    onToggle={() => toggle(c.externalId)}
+                  />
+                )}
+              </CandidateRow>
             ))}
           </ul>
           {hasMore && (
@@ -242,7 +221,7 @@ export default function EntityEnrichmentOverridePicker({
               data-testid="entity-enrichment-show-more"
               type="button"
               disabled={searching}
-              onClick={() => void runSearch(page + 1, true)}
+              onClick={showMore}
             >
               {searching ? "Loading…" : "Show more"}
             </button>
@@ -296,87 +275,40 @@ export default function EntityEnrichmentOverridePicker({
   );
 }
 
-// EntityCandidateRow renders one selectable parent candidate card with the type
-// badge and an expandable album tracklist preview. Clicking the row selects it;
-// the tracklist toggle is isolated (it doesn't change the selection).
-function EntityCandidateRow({
-  c,
-  selected,
+// Tracklist is an album candidate's expandable tracklist preview. The toggle is
+// isolated: it doesn't change the row's selection (click or keyboard).
+function Tracklist({
+  tracklist,
   expanded,
-  onSelect,
   onToggle,
 }: {
-  c: EnrichmentCandidate;
-  selected: boolean;
+  tracklist: NonNullable<EnrichmentCandidate["tracklist"]>;
   expanded: boolean;
-  onSelect: () => void;
   onToggle: () => void;
 }) {
-  const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onSelect();
-    }
-  };
   return (
-    <li
-      className={`enrichment-candidate card${selected ? " is-selected" : ""}`}
-      data-testid="entity-enrichment-candidate"
-      data-external-id={c.externalId}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      onClick={onSelect}
-      onKeyDown={onKeyDown}
-    >
-      {c.thumbnailUrl && (
-        <img className="enrichment-candidate-thumb" src={c.thumbnailUrl} alt="" loading="lazy" />
+    <>
+      <button
+        className="nav-link enrichment-tracklist-toggle"
+        data-testid="entity-enrichment-tracklist-toggle"
+        type="button"
+        onClick={(e) => {
+          // The tracklist toggle must not also select/deselect the row.
+          e.stopPropagation();
+          onToggle();
+        }}
+      >
+        {expanded ? "Hide tracklist" : `Preview ${tracklist.length} tracks`}
+      </button>
+      {expanded && (
+        <ol className="enrichment-tracklist" data-testid="entity-enrichment-tracklist">
+          {tracklist.map((t) => (
+            <li key={`${t.disc ?? 1}-${t.position}`}>
+              {t.position}. {t.title}
+            </li>
+          ))}
+        </ol>
       )}
-      <div className="enrichment-candidate-body">
-        <span
-          className="enrichment-candidate-title"
-          data-testid="entity-enrichment-candidate-title"
-        >
-          {c.title}
-          {c.year ? ` (${c.year})` : ""}
-        </span>
-        {c.typeLabel && (
-          <span
-            className="enrichment-candidate-type"
-            data-testid="entity-enrichment-candidate-type"
-          >
-            {c.typeLabel}
-          </span>
-        )}
-        {c.disambiguation && (
-          <span className="enrichment-candidate-hint">{c.disambiguation}</span>
-        )}
-        {c.tracklist && c.tracklist.length > 0 && (
-          <>
-            <button
-              className="nav-link enrichment-tracklist-toggle"
-              data-testid="entity-enrichment-tracklist-toggle"
-              type="button"
-              onClick={(e) => {
-                // The tracklist toggle must not also select/deselect the row.
-                e.stopPropagation();
-                onToggle();
-              }}
-            >
-              {expanded ? "Hide tracklist" : `Preview ${c.tracklist.length} tracks`}
-            </button>
-            {expanded && (
-              <ol className="enrichment-tracklist" data-testid="entity-enrichment-tracklist">
-                {c.tracklist.map((t) => (
-                  <li key={`${t.disc ?? 1}-${t.position}`}>
-                    {t.position}. {t.title}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </>
-        )}
-      </div>
-    </li>
+    </>
   );
 }

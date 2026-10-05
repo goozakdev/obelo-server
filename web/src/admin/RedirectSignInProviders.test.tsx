@@ -19,12 +19,19 @@ beforeEach(() => {
   client.getSignInProviders.mockReset();
 });
 
+// The Users screen fetches the provider list once and hands it down; do the same
+// from whatever the test stubbed.
+async function renderRedirect() {
+  const view = await client.getSignInProviders().catch(() => null);
+  return render(<RedirectSignInProviders view={view} />);
+}
+
 describe("RedirectSignInProviders", () => {
   it("renders nothing when there is no redirect-flow provider", async () => {
     client.getSignInProviders.mockResolvedValue({ providers: [], redirect: [] });
     let container!: HTMLElement;
     await act(async () => {
-      ({ container } = render(<RedirectSignInProviders />));
+      ({ container } = await renderRedirect());
     });
     expect(container).toBeEmptyDOMElement();
   });
@@ -37,7 +44,7 @@ describe("RedirectSignInProviders", () => {
         { id: "oauth", name: "Some OAuth", verified: false, configured: true },
       ],
     });
-    render(<RedirectSignInProviders />);
+    await renderRedirect();
 
     expect(await screen.findByTestId("redirect-sign-in-unverified-oauth")).toHaveTextContent(
       "Identity not independently verified",
@@ -54,7 +61,7 @@ describe("RedirectSignInProviders", () => {
         { id: "oauth", name: "Some OAuth", verified: false, configured: true },
       ],
     });
-    render(<RedirectSignInProviders />);
+    await renderRedirect();
 
     expect(await screen.findByTestId("redirect-sign-in-oauth")).toBeInTheDocument();
     expect(screen.queryByTestId("redirect-sign-in-oidc")).not.toBeInTheDocument();
@@ -67,7 +74,7 @@ describe("RedirectSignInProviders", () => {
     });
     let container!: HTMLElement;
     await act(async () => {
-      ({ container } = render(<RedirectSignInProviders />));
+      ({ container } = await renderRedirect());
     });
     expect(container).toBeEmptyDOMElement();
   });

@@ -272,6 +272,7 @@ function PluginSettingsControl({
       {field.type === "secret" ? (
         <MaskedKeyInput
           slug={`${pluginId}-${field.key}`}
+          id={id}
           hasKey={secretOnFile}
           value={secretDraft}
           cleared={secretCleared}

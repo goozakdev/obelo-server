@@ -183,6 +183,26 @@ describe("AdminUsersScreen — the roster list", () => {
     expect(await screen.findByTestId("group-mapping-oidc")).toBeInTheDocument();
   });
 
+  it("reads the sign-in providers once for all three sign-in cards (R02-10)", async () => {
+    listUsers.mockResolvedValue([usr({ id: "u1", username: "operator", role: "admin" })]);
+    getSignInProviders.mockResolvedValue({
+      providers: [{ id: "dir", name: "Directory" }],
+      redirect: [{ id: "oidc", name: "OpenID Connect", verified: true, configured: true }],
+    });
+    getGroupMapping.mockResolvedValue({
+      rules: [],
+      recheck: false,
+      intervalHours: 24,
+      defaultInterval: true,
+    });
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+
+    expect(await screen.findByTestId("sign-in-order")).toBeInTheDocument();
+    expect(await screen.findByTestId("redirect-sign-in")).toBeInTheDocument();
+    expect(await screen.findByTestId("group-mapping-oidc")).toBeInTheDocument();
+    expect(getSignInProviders).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a clean empty state with no users", async () => {
     listUsers.mockResolvedValue([]);
     renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });

@@ -1,7 +1,6 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { apiClient } from "../api/client";
 import type { EnrichmentCandidate, TitleDetail } from "../api/types";
-import { errorMessage } from "../screens/errorMessage";
+import { CandidateRow, useCandidateSearch } from "./enrichmentCandidates";
 
 // Edit-item unified "Search" tab for a leaf Title (Movie/Episode/Track — ADR-0019).
 // The Admin types ONE input that accepts a search term, a provider URL, or a bare
@@ -50,76 +49,43 @@ export default function EnrichmentOverridePicker({
    * ONLY (Episode/Track have no identity-correction endpoint). */
   onReplace?: (candidate: EnrichmentCandidate) => Promise<TitleDetail>;
 }) {
-  const [query, setQuery] = useState(initialQuery ?? "");
-  const [artist, setArtist] = useState(artistScope ?? "");
-  const [candidates, setCandidates] = useState<EnrichmentCandidate[] | null>(null);
-  const [selected, setSelected] = useState<EnrichmentCandidate | null>(null);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [applying, setApplying] = useState<"update" | "replace" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    query,
+    setQuery,
+    artist,
+    setArtist,
+    candidates,
+    selected,
+    setSelected,
+    hasMore,
+    searching,
+    applying,
+    error,
+    submit,
+    showMore,
+    apply,
+  } = useCandidateSearch({
+    initialQuery,
+    artistScope,
+    search: (q, opts) => apiClient.searchEnrichmentCandidates(titleId, q, opts),
+  });
 
-  // runSearch fetches one page. append=false replaces (a fresh search), append=true
-  // adds the next page for "show more".
-  async function runSearch(nextPage: number, append: boolean) {
-    const q = query.trim();
-    if (q === "") return;
-    setSearching(true);
-    setError(null);
-    try {
-      const res = await apiClient.searchEnrichmentCandidates(titleId, q, {
-        artist,
-        page: nextPage,
-      });
-      setCandidates((prev) =>
-        append && prev ? [...prev, ...res.candidates] : res.candidates,
-      );
-      // A pasted URL/id the lead resolved auto-selects its one record.
-      if (res.resolvedRef) setSelected(res.candidates[0] ?? null);
-      setHasMore(res.hasMore ?? false);
-      setPage(nextPage);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  // The single input: the server reads a URL/id and searches for a term.
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (searching) return;
-    const q = query.trim();
-    if (q === "") return;
-    setSelected(null);
-    void runSearch(0, false);
-  }
-
-  async function doApply(mode: "update" | "replace") {
-    if (applying || !selected) return;
-    setApplying(mode);
-    setError(null);
-    try {
-      const detail =
+  // Update re-points the record; Replace (when offered) is the identity correction.
+  // Either way the page gets the re-enriched Title detail.
+  function doApply(mode: "update" | "replace") {
+    return apply(
+      mode,
+      (c) =>
         mode === "replace" && onReplace
-          ? await onReplace(selected)
-          : await apiClient.applyEnrichmentOverride(
+          ? onReplace(c)
+          : apiClient.applyEnrichmentOverride(
               titleId,
-              selected.externalId,
+              c.externalId,
               // The namespace the pick was found in (ADR-0060 decision 5).
-              selected.source,
-            );
-      onApplied(detail);
-      // Reflect the newly-applied change and clear the working state.
-      setCandidates(null);
-      setSelected(null);
-      setQuery("");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setApplying(null);
-    }
+              c.source,
+            ),
+      onApplied,
+    );
   }
 
   return (
@@ -179,6 +145,7 @@ export default function EnrichmentOverridePicker({
             {candidates.map((c) => (
               <CandidateRow
                 key={c.externalId}
+                testIdPrefix="enrichment"
                 c={c}
                 selected={selected?.externalId === c.externalId}
                 onSelect={() => setSelected(c)}
@@ -191,7 +158,7 @@ export default function EnrichmentOverridePicker({
               data-testid="enrichment-show-more"
               type="button"
               disabled={searching}
-              onClick={() => void runSearch(page + 1, true)}
+              onClick={showMore}
             >
               {searching ? "Loading…" : "Show more"}
             </button>
@@ -238,55 +205,5 @@ export default function EnrichmentOverridePicker({
         </p>
       )}
     </section>
-  );
-}
-
-// CandidateRow renders one selectable candidate card (thumbnail, title/year, type
-// badge, hint). Clicking the row selects it (highlighted); applying happens at the
-// bottom via Update/Replace.
-function CandidateRow({
-  c,
-  selected,
-  onSelect,
-}: {
-  c: EnrichmentCandidate;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const onKeyDown = (e: KeyboardEvent<HTMLLIElement>) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onSelect();
-    }
-  };
-  return (
-    <li
-      className={`enrichment-candidate card${selected ? " is-selected" : ""}`}
-      data-testid="enrichment-candidate"
-      data-external-id={c.externalId}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      onClick={onSelect}
-      onKeyDown={onKeyDown}
-    >
-      {c.thumbnailUrl && (
-        <img className="enrichment-candidate-thumb" src={c.thumbnailUrl} alt="" loading="lazy" />
-      )}
-      <div className="enrichment-candidate-body">
-        <span className="enrichment-candidate-title" data-testid="enrichment-candidate-title">
-          {c.title}
-          {c.year ? ` (${c.year})` : ""}
-        </span>
-        {c.typeLabel && (
-          <span className="enrichment-candidate-type" data-testid="enrichment-candidate-type">
-            {c.typeLabel}
-          </span>
-        )}
-        {c.disambiguation && (
-          <span className="enrichment-candidate-hint">{c.disambiguation}</span>
-        )}
-      </div>
-    </li>
   );
 }

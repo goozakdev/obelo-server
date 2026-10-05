@@ -588,3 +588,51 @@ describe("Metadata Providers tab in the Admin hub", () => {
     expect(getMetadataProviders).not.toHaveBeenCalled();
   });
 });
+
+describe("AdminProvidersScreen — review fixes", () => {
+  it("keeps the newest toggle result when an older response lands last (R02-07)", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const a = deferred<MetadataProvidersView>();
+    const b = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
+
+    const bothOn = view();
+    bothOn.providers = bothOn.providers.map((p) =>
+      p.slug === "musicbrainz" || p.slug === "theaudiodb" ? { ...p, enabled: true } : p,
+    );
+    const onlyFirst = view();
+    onlyFirst.providers = onlyFirst.providers.map((p) =>
+      p.slug === "musicbrainz" ? { ...p, enabled: true } : p,
+    );
+    b.resolve(bothOn);
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked());
+    a.resolve(onlyFirst);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-toggle-musicbrainz")).not.toBeDisabled(),
+    );
+
+    expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
+  });
+
+  it("does not revert unsaved settings edits when the consent decision reloads (R02-12)", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    const lang = await screen.findByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "fr-FR");
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+
+    expect(screen.getByTestId("metadata-language-input")).toHaveValue("fr-FR");
+  });
+});

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import { useAuth } from "../auth/session";
 import { errorMessage } from "../screens/errorMessage";
-import type { AdminUser } from "../api/types";
+import type { AdminUser, SignInProvidersView } from "../api/types";
 import AdminListPanel from "./AdminListPanel";
 import UserAdminRow from "./UserAdminRow";
 import CreateUserDialog from "./CreateUserDialog";
@@ -48,6 +48,9 @@ export default function AdminUsersScreen() {
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // The Sign-in providers, fetched ONCE for the three cards below that all read it.
+  // null = not loaded or would not load: each card then renders nothing.
+  const [signInProviders, setSignInProviders] = useState<SignInProvidersView | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setState({ status: "loading" });
@@ -66,6 +69,19 @@ export default function AdminUsersScreen() {
     void load(ctrl.signal);
     return () => ctrl.abort();
   }, [load]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    apiClient
+      .getSignInProviders(ctrl.signal)
+      .then((v) => {
+        if (!ctrl.signal.aborted) setSignInProviders(v);
+      })
+      .catch(() => {
+        // Left absent: a list that will not load is the same as none.
+      });
+    return () => ctrl.abort();
+  }, []);
 
   const reload = useCallback(() => void load(), [load]);
 
@@ -155,9 +171,9 @@ export default function AdminUsersScreen() {
         )}
       </AdminListPanel>
 
-      <SignInProviderOrder />
-      <RedirectSignInProviders />
-      <SignInGroupMappings />
+      <SignInProviderOrder view={signInProviders} />
+      <RedirectSignInProviders view={signInProviders} />
+      <SignInGroupMappings view={signInProviders} />
 
       {addOpen && (
         <CreateUserDialog

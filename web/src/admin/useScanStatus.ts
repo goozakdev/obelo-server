@@ -47,6 +47,9 @@ export function useScanStatus(
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
+  // False once the effect is torn down, so a read still in flight when the row
+  // unmounts can't restart the interval after the cleanup's stop().
+  const liveRef = useRef(false);
 
   const stop = useCallback(() => {
     if (timerRef.current !== null) {
@@ -61,12 +64,12 @@ export function useScanStatus(
     if (!enabledRef.current) return;
     try {
       const next = await apiClient.getScanStatus(libraryId);
-      if (!enabledRef.current) return;
+      if (!enabledRef.current || !liveRef.current) return;
       setStatus(next);
       setError(null);
       if (next.state !== "running") stop();
     } catch (err) {
-      if (!enabledRef.current) return;
+      if (!enabledRef.current || !liveRef.current) return;
       // A failed status read shouldn't spin forever: surface it and stop polling.
       setError(errorMessage(err));
       stop();
@@ -94,13 +97,13 @@ export function useScanStatus(
       if (!enabledRef.current) return;
       try {
         const next = await apiClient.getScanStatus(libraryId);
-        if (!enabledRef.current) return;
+        if (!enabledRef.current || !liveRef.current) return;
         setStatus(next);
         setError(null);
         if (next.state === "running") ensurePolling();
         else stop();
       } catch (err) {
-        if (!enabledRef.current) return;
+        if (!enabledRef.current || !liveRef.current) return;
         setError(errorMessage(err));
         stop();
       }
@@ -115,8 +118,12 @@ export function useScanStatus(
       stop();
       return;
     }
+    liveRef.current = true;
     refresh();
-    return () => stop();
+    return () => {
+      liveRef.current = false;
+      stop();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId, enabled]);
 

@@ -12,7 +12,13 @@ import type { LyricProvider } from "../api/types";
 // it was. A list that will not load is the same absence, never an error on a
 // screen that is about something else.
 
-export default function LyricProviderOrder() {
+export default function LyricProviderOrder({
+  refreshKey,
+}: {
+  /** Changes whenever the installed plugins might have, so the order refetches
+   * after an install, enable, disable or uninstall made on the same screen. */
+  refreshKey?: unknown;
+}) {
   const [providers, setProviders] = useState<LyricProvider[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +36,7 @@ export default function LyricProviderOrder() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [refreshKey]);
 
   if (!providers || providers.length < 2) return null;
 

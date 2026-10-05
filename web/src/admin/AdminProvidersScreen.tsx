@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type {
@@ -116,13 +116,21 @@ export default function AdminProvidersScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
+  // Toggle responses carry the whole view, and toggles of different providers can
+  // be in flight together: number them, and never apply one older than the newest
+  // already applied.
+  const toggleSeq = useRef(0);
+  const toggleApplied = useRef(0);
+
+  // `keepDraft` re-reads the view without re-seeding the server-wide settings draft,
+  // so a reload (the consent decision) never reverts edits the Admin has not saved.
+  const load = useCallback(async (signal?: AbortSignal, keepDraft = false) => {
     setLoadError(null);
     try {
       const v = await apiClient.getMetadataProviders(signal);
       if (signal?.aborted) return;
       setView(v);
-      setSettings(settingsDraftFromView(v));
+      if (!keepDraft) setSettings(settingsDraftFromView(v));
     } catch (err) {
       if (signal?.aborted) return;
       setLoadError(errorMessage(err));
@@ -146,11 +154,15 @@ export default function AdminProvidersScreen() {
   async function onToggle(p: MetadataProvider, enabled: boolean) {
     setRowError((prev) => ({ ...prev, [p.slug]: null }));
     setToggling((prev) => ({ ...prev, [p.slug]: true }));
+    const seq = ++toggleSeq.current;
     try {
       const next = await apiClient.updateMetadataProviders({
         providers: [{ slug: p.slug, enabled }],
       });
-      setView(next);
+      if (seq > toggleApplied.current) {
+        toggleApplied.current = seq;
+        setView(next);
+      }
     } catch (err) {
       setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
     } finally {
@@ -248,7 +260,7 @@ export default function AdminProvidersScreen() {
       {/* Re-read the settings after a consent decision: the per-kind badges below
           are the server's GATED enablement, so they change the moment this switch
           does — with no restart and no page reload. */}
-      <EnrichmentConsentControl onDecision={() => void load()} />
+      <EnrichmentConsentControl onDecision={() => void load(undefined, true)} />
 
       {KIND_GROUPS.map(({ kind, label }) => {
         const inGroup = view.providers.filter((p) => p.kinds.includes(kind));

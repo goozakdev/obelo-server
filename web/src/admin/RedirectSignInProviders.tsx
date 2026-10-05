@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-import { apiClient } from "../api/client";
-import type { RedirectSignInProvider } from "../api/types";
+import type { SignInProvidersView } from "../api/types";
 
 // The redirect-flow Sign-in providers (ADR-0063 decision 2), and what the server
 // can say about the identity each one hands back. A provider that issues ID
@@ -12,25 +10,10 @@ import type { RedirectSignInProvider } from "../api/types";
 // (a provider not yet configured is not shown), and a list that will not load is
 // the same absence.
 
-export default function RedirectSignInProviders() {
-  const [providers, setProviders] = useState<RedirectSignInProvider[] | null>(null);
+export default function RedirectSignInProviders({ view }: { view: SignInProvidersView | null }) {
+  const providers = (view?.redirect ?? []).filter((p) => p.configured);
 
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const view = await apiClient.getSignInProviders();
-        if (live) setProviders((view.redirect ?? []).filter((p) => p.configured));
-      } catch {
-        // Left absent: see above.
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  if (!providers || providers.length === 0) return null;
+  if (providers.length === 0) return null;
 
   return (
     <div className="provider-card" data-testid="redirect-sign-in">

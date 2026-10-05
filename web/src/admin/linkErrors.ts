@@ -107,6 +107,14 @@ export function linkErrorMessage(err: unknown, invite = ""): string {
       );
 
     case "LINK_UNREACHABLE": {
+      // No invite means a Sync: nothing was pasted, so there is nothing to call
+      // right or wrong about one.
+      if (invite === "") {
+        return (
+          "Could not reach their server at the addresses on file — their machine " +
+          `did not answer. The server reported: ${err.message}`
+        );
+      }
       const origins = inviteOrigins(invite);
       const tried = origins.length
         ? ` Tried, in order: ${origins.join(", ")}.`

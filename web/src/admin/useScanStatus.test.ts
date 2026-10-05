@@ -128,4 +128,24 @@ describe("useScanStatus", () => {
     await flush();
     expect(getScanStatus).toHaveBeenCalledTimes(calls);
   });
+
+  it("does not start polling when the initial read lands after unmount (R02-01)", async () => {
+    let resolve!: (s: ScanStatus) => void;
+    getScanStatus.mockImplementationOnce(
+      () => new Promise<ScanStatus>((r) => (resolve = r)),
+    );
+    const { unmount } = renderHook(() => useScanStatus("lib1", { intervalMs: 1000 }));
+    unmount();
+    await act(async () => {
+      resolve(status({ state: "running" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const calls = getScanStatus.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    await flush();
+    expect(getScanStatus).toHaveBeenCalledTimes(calls);
+  });
 });

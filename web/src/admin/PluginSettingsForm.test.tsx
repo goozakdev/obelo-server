@@ -91,6 +91,16 @@ describe("a plugin's manifest-declared settings form", () => {
     expect(screen.getByText("An absolute address.")).toBeTruthy();
   });
 
+  it("associates a secret field's label with its input (R02-20)", () => {
+    render(<PluginSettingsForm plugin={plugin()} disabled={false} onSaved={vi.fn()} />);
+
+    // getByLabelText follows <label for>; it must land on the masked input, and the
+    // input's accessible name must be the field's label rather than a slug.
+    const input = screen.getByLabelText(/Access token/);
+    expect(input).toBe(screen.getByTestId("provider-key-input-example-source-token"));
+    expect(input).not.toHaveAttribute("aria-label");
+  });
+
   it("shows a declared default for a field that has never been saved", () => {
     const p = plugin({
       settingsSchema: [

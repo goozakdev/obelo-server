@@ -144,7 +144,16 @@ export default function ProviderConfigDialog({
       ref={dialogRef}
       className="library-dialog provider-config-dialog"
       data-testid={`provider-config-dialog-${p.slug}`}
-      onClose={onClose}
+      onClose={() => {
+        // ESC while a save is in flight: the backdrop and Cancel are blocked then,
+        // so put the natively-closed dialog back rather than orphan the save.
+        if (saving) {
+          const dialog = dialogRef.current;
+          if (dialog && !dialog.open) dialog.showModal();
+          return;
+        }
+        onClose();
+      }}
       onClick={(e) => {
         if (e.target === dialogRef.current && !saving) onClose();
       }}

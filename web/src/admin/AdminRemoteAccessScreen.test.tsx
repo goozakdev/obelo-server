@@ -815,3 +815,39 @@ describe("Remote access tab in the Admin hub", () => {
     expect(getTailnet).not.toHaveBeenCalled();
   });
 });
+
+describe("AdminRemoteAccessScreen — a burst of nudges (R02-06)", () => {
+  it("settles on the newest answer when an older GET resolves last", async () => {
+    getTailnet.mockResolvedValueOnce(view());
+    renderWithAuth(<AdminRemoteAccessScreen />, {
+      initialEntries: ["/admin/remote-access"],
+      features: { tailscale: true },
+    });
+    await screen.findByTestId("remote-access-state");
+
+    let resolveStale!: (v: TailnetSettingsView) => void;
+    getTailnet.mockReturnValueOnce(
+      new Promise<TailnetSettingsView>((res) => {
+        resolveStale = res;
+      }),
+    );
+    getTailnet.mockResolvedValueOnce(
+      view({ state: "running", fqdn: "obelo.tail1a2b.ts.net" }, { enabled: true }),
+    );
+    await act(async () => {
+      emit?.("tailscaleState", {});
+      emit?.("tailscaleState", {});
+    });
+    expect(await screen.findByTestId("tailnet-address")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveStale(view({ state: "starting" }, { enabled: true }));
+    });
+
+    expect(screen.getByTestId("tailnet-address")).toBeInTheDocument();
+    expect(screen.getByTestId("remote-access-state")).not.toHaveAttribute(
+      "data-state",
+      "connecting",
+    );
+  });
+});

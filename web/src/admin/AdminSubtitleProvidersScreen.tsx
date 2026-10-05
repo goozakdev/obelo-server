@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type {
@@ -9,6 +9,7 @@ import type {
   UpdateSubtitleProvidersInput,
 } from "../api/types";
 import MaskedKeyInput from "./MaskedKeyInput";
+import { useDraftSave } from "./useDraftSave";
 
 // The Subtitle Providers admin screen (subtitles/05, ADR-0021). The exact shape of
 // the Metadata Providers screen, scoped to the subtitle-fetch provider surface: an
@@ -71,43 +72,13 @@ function buildPayload(view: SubtitleProvidersView, draft: Draft): UpdateSubtitle
 }
 
 export default function AdminSubtitleProvidersScreen() {
-  const [view, setView] = useState<SubtitleProvidersView | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const { view, draft, setDraft, error, saving, saved, save: onSave } = useDraftSave({
+    fetchView: () => apiClient.getSubtitleProviders(),
+    update: (payload: UpdateSubtitleProvidersInput) => apiClient.updateSubtitleProviders(payload),
+    draftFromView,
+    buildPayload,
+  });
   const [tests, setTests] = useState<Record<string, TestProviderResult | "pending">>({});
-
-  const load = useCallback(async () => {
-    try {
-      const v = await apiClient.getSubtitleProviders();
-      setView(v);
-      setDraft(draftFromView(v));
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function onSave() {
-    if (!view || !draft) return;
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const updated = await apiClient.updateSubtitleProviders(buildPayload(view, draft));
-      setView(updated);
-      setDraft(draftFromView(updated));
-      setSaved(true);
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function onTest(p: SubtitleProvider) {
     if (!draft) return;

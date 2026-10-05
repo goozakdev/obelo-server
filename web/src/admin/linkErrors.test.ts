@@ -123,6 +123,13 @@ describe("linkErrorMessage — one code, one next move", () => {
     expect(msg).not.toMatch(/tried, in order/i);
   });
 
+  it("LINK_UNREACHABLE from a sync, where no invite is involved, never mentions one (R02-18)", () => {
+    const msg = linkErrorMessage(apiError("LINK_UNREACHABLE", 503, "timeout"));
+    expect(msg).toMatch(/could not reach their server/i);
+    expect(msg).not.toMatch(/invite/i);
+    expect(msg).toContain("timeout");
+  });
+
   it("LINK_SERVER_MISMATCH explains it is a DIFFERENT household's invite", () => {
     const msg = linkErrorMessage(apiError("LINK_SERVER_MISMATCH", 409), INVITE);
     expect(msg).toMatch(/different server/i);

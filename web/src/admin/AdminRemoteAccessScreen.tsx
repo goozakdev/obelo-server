@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { appEvents } from "../events/enrichEvents";
 import { errorMessage } from "../screens/errorMessage";
@@ -187,15 +187,19 @@ export default function AdminRemoteAccessScreen() {
     setDraft((cur) => cur ?? draftFrom(next));
   }, []);
 
+  // A burst of nudges fires overlapping GETs; only the newest one may land, or a
+  // slower earlier answer would put a stale phase back on screen.
+  const loadSeq = useRef(0);
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      const seq = ++loadSeq.current;
       try {
         const next = await apiClient.getTailnet(signal);
-        if (signal?.aborted) return;
+        if (signal?.aborted || seq !== loadSeq.current) return;
         adopt(next);
         setLoadError(null);
       } catch (err) {
-        if (signal?.aborted) return;
+        if (signal?.aborted || seq !== loadSeq.current) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
         setLoadError(errorMessage(err));
       }

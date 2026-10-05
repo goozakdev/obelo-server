@@ -13,6 +13,7 @@ import { useState } from "react";
 
 export default function MaskedKeyInput({
   slug,
+  id,
   hasKey,
   value,
   cleared,
@@ -21,6 +22,9 @@ export default function MaskedKeyInput({
   disabled,
 }: {
   slug: string;
+  /** The input's id, for a visible `<label htmlFor>` to point at. When given, that
+   * label names the field; otherwise it falls back to an aria-label from `slug`. */
+  id?: string;
   /** Whether a key is currently on file (from the server; never the value). */
   hasKey: boolean;
   /** The key the Admin is typing now ("" = not typing → unchanged on save). */
@@ -40,6 +44,7 @@ export default function MaskedKeyInput({
     <div className="masked-key" data-testid={`provider-key-${slug}`}>
       <input
         className="field-input masked-key-input"
+        id={id}
         data-testid={`provider-key-input-${slug}`}
         type={reveal ? "text" : "password"}
         value={value}
@@ -48,7 +53,7 @@ export default function MaskedKeyInput({
         spellCheck={false}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        aria-label={`API key for ${slug}`}
+        aria-label={id ? undefined : `API key for ${slug}`}
       />
       <button
         className="nav-link masked-key-reveal"

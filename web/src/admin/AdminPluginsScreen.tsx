@@ -255,28 +255,36 @@ export default function AdminPluginsScreen() {
   const packageRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
-    try {
-      setView(await apiClient.getPlugins());
-    } catch (e) {
-      setLoadError(errorMessage(e));
-    }
     // The catalog and the pinned keys are loaded SEPARATELY and swallow their own
     // failures. Neither is what this screen is for, and a server that cannot
     // answer about either must still let an Admin install and uninstall a plugin —
     // the same reason an unreachable catalog is a note rather than an error one
-    // level down.
-    try {
-      const got = await apiClient.getPluginCatalog();
-      setCatalog(got);
-      setCatalogUrl(got.url);
-    } catch {
-      setCatalog(null);
-    }
-    try {
-      setPublishers(await apiClient.getPluginPublishers());
-    } catch {
-      setPublishers(null);
-    }
+    // level down. The three run side by side: none waits on another.
+    await Promise.allSettled([
+      (async () => {
+        try {
+          setView(await apiClient.getPlugins());
+        } catch (e) {
+          setLoadError(errorMessage(e));
+        }
+      })(),
+      (async () => {
+        try {
+          const got = await apiClient.getPluginCatalog();
+          setCatalog(got);
+          setCatalogUrl(got.url);
+        } catch {
+          setCatalog(null);
+        }
+      })(),
+      (async () => {
+        try {
+          setPublishers(await apiClient.getPluginPublishers());
+        } catch {
+          setPublishers(null);
+        }
+      })(),
+    ]);
   }, []);
 
   useEffect(() => {
@@ -291,22 +299,35 @@ export default function AdminPluginsScreen() {
     }
   }, [view, editingId]);
 
-  // run wraps every verb identically: clear the last outcome, call, and take the
-  // WHOLE list back from the response. Every endpoint answers with the full list
-  // for exactly this reason — the screen never has to reconcile, and it can never
-  // show an action's result against a stale row.
-  async function run(action: () => Promise<InstalledPluginsView>, message: string) {
+  // runAction wraps every verb identically: clear the last outcome, call, hand the
+  // response to `take`, and report whether it worked — callers clear their inputs
+  // only on success, so a refusal never wipes what the Admin pasted.
+  async function runAction<T>(
+    action: () => Promise<T>,
+    take: (result: T) => void,
+    message: string | ((result: T) => string),
+  ): Promise<boolean> {
     setBusy(true);
     setActionError(null);
     setNotice(null);
     try {
-      setView(await action());
-      setNotice(message);
+      const result = await action();
+      take(result);
+      setNotice(typeof message === "function" ? message(result) : message);
+      return true;
     } catch (e) {
       setActionError(errorMessage(e));
+      return false;
     } finally {
       setBusy(false);
     }
+  }
+
+  // run takes the WHOLE list back from the response. Every endpoint answers with
+  // the full list for exactly this reason — the screen never has to reconcile, and
+  // it can never show an action's result against a stale row.
+  function run(action: () => Promise<InstalledPluginsView>, message: string) {
+    return runAction(action, setView, message);
   }
 
   // A Sign-in provider is never uninstalled on one click: the server is asked
@@ -372,8 +393,9 @@ export default function AdminPluginsScreen() {
     // The signature, if the plugin has one, is inside the package. Whether THIS
     // server needs one is a question only the server can answer, from the keys
     // its Admin pinned.
-    await run(() => apiClient.installPlugin(pkg), "Installed.");
-    if (packageRef.current) packageRef.current.value = "";
+    if (await run(() => apiClient.installPlugin(pkg), "Installed.")) {
+      if (packageRef.current) packageRef.current.value = "";
+    }
   }
 
   async function onInstallFromURL() {
@@ -383,8 +405,9 @@ export default function AdminPluginsScreen() {
       setNotice(null);
       return;
     }
-    await run(() => apiClient.installPluginFromURL({ url: target }), "Installed.");
-    setUrl("");
+    if (await run(() => apiClient.installPluginFromURL({ url: target }), "Installed.")) {
+      setUrl("");
+    }
   }
 
   // Installing a catalog entry IS installing a URL. There is no catalog-specific
@@ -402,37 +425,19 @@ export default function AdminPluginsScreen() {
   // Saving the catalog address answers with a freshly fetched view, so an address
   // that does not answer says so at once rather than on the next page load.
   async function onSaveCatalog() {
-    setBusy(true);
-    setActionError(null);
-    setNotice(null);
-    try {
-      const got = await apiClient.setPluginCatalog({ url: catalogUrl.trim() });
-      setCatalog(got);
-      setCatalogUrl(got.url);
-      if (!got.url) setTab("installed");
-      setNotice(got.url ? "Catalog saved." : "Catalog cleared.");
-    } catch (e) {
-      setActionError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
+    await runAction(
+      () => apiClient.setPluginCatalog({ url: catalogUrl.trim() }),
+      (got) => {
+        setCatalog(got);
+        setCatalogUrl(got.url);
+        if (!got.url) setTab("installed");
+      },
+      (got) => (got.url ? "Catalog saved." : "Catalog cleared."),
+    );
   }
 
-  async function runPublishers(
-    action: () => Promise<PluginPublishersView>,
-    message: string,
-  ) {
-    setBusy(true);
-    setActionError(null);
-    setNotice(null);
-    try {
-      setPublishers(await action());
-      setNotice(message);
-    } catch (e) {
-      setActionError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
+  function runPublishers(action: () => Promise<PluginPublishersView>, message: string) {
+    return runAction(action, setPublishers, message);
   }
 
   async function onPinPublisher() {
@@ -443,12 +448,14 @@ export default function AdminPluginsScreen() {
       setNotice(null);
       return;
     }
-    await runPublishers(
+    const pinned = await runPublishers(
       () => apiClient.pinPluginPublisher({ publisher: name, publicKey: key }),
       `Pinned ${name}.`,
     );
-    setPublisherName("");
-    setPublisherKey("");
+    if (pinned) {
+      setPublisherName("");
+      setPublisherKey("");
+    }
   }
 
   if (loadError && !view) {
@@ -585,7 +592,10 @@ export default function AdminPluginsScreen() {
               confirming && void onConfirmUninstall(confirming.id, confirming.preview)
             }
             onCancelUninstall={() => setConfirming(null)}
-            onClose={() => setEditingId(null)}
+            onClose={() => {
+              setEditingId(null);
+              setConfirming(null);
+            }}
             actionError={actionError}
             notice={notice}
           />
@@ -606,7 +616,7 @@ export default function AdminPluginsScreen() {
           </>
         )}
 
-        <LyricProviderOrder />
+        <LyricProviderOrder refreshKey={view} />
 
         <div className="provider-card" data-testid="plugin-install-upload">
           <div className="provider-head">

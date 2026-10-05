@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
-import type { SignInProvider } from "../api/types";
+import type { SignInProvider, SignInProvidersView } from "../api/types";
 
 // The order the login form asks the password-flow Sign-in providers in (ADR-0063
 // decision 6). The Local password is always tried first; then each provider here,
@@ -12,25 +12,16 @@ import type { SignInProvider } from "../api/types";
 // screen is exactly what it was. A list that will not load is the same absence,
 // never an error on a screen that is about something else.
 
-export default function SignInProviderOrder() {
+export default function SignInProviderOrder({ view }: { view: SignInProvidersView | null }) {
+  // Seeded from the one list the Users screen fetched (null = it would not load);
+  // a reorder replaces it with the server's answer.
   const [providers, setProviders] = useState<SignInProvider[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const view = await apiClient.getSignInProviders();
-        if (live) setProviders(view.providers ?? []);
-      } catch {
-        // Left absent: see above.
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, []);
+    setProviders(view ? (view.providers ?? []) : null);
+  }, [view]);
 
   if (!providers || providers.length === 0) return null;
 
@@ -42,8 +33,8 @@ export default function SignInProviderOrder() {
     setBusy(true);
     setError(null);
     try {
-      const view = await apiClient.setSignInProviderOrder(next.map((x) => x.id));
-      setProviders(view.providers ?? []);
+      const res = await apiClient.setSignInProviderOrder(next.map((x) => x.id));
+      setProviders(res.providers ?? []);
     } catch (err) {
       setError(errorMessage(err));
     } finally {

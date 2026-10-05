@@ -22,7 +22,7 @@ export const TRANSCODING_POLL_INTERVAL_MS = 4000;
 type SnapshotState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; snapshot: TranscodingSnapshot };
+  | { status: "ready"; snapshot: TranscodingSnapshot; staleError: string | null };
 
 /** Human labels for the backend vocabulary; unknown values fall through verbatim. */
 const BACKEND_LABELS: Record<string, string> = {
@@ -52,27 +52,36 @@ export default function AdminTranscodingScreen({
 
     // One poll: on success show the snapshot (clearing any prior error); on
     // failure surface the message but keep polling, so a transient blip recovers
-    // on the next tick rather than freezing the panel.
+    // on the next tick rather than freezing the panel. After a first success the
+    // last snapshot stays up but is flagged stale, so it is never passed off as
+    // live.
     const poll = async () => {
       try {
         const snapshot = await apiClient.getTranscoding();
         if (!mountedRef.current) return;
-        setState({ status: "ready", snapshot });
+        setState({ status: "ready", snapshot, staleError: null });
       } catch (err) {
         if (!mountedRef.current) return;
+        const message = errorMessage(err);
         setState((cur) =>
           cur.status === "ready"
-            ? cur
-            : { status: "error", message: errorMessage(err) },
+            ? { ...cur, staleError: message }
+            : { status: "error", message },
         );
       }
     };
 
-    void poll();
-    const timer = setInterval(() => void poll(), intervalMs);
+    // The next poll is scheduled only once the previous one has settled, so a
+    // slow server is never hit by overlapping requests.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const loop = async () => {
+      await poll();
+      if (mountedRef.current) timer = setTimeout(() => void loop(), intervalMs);
+    };
+    void loop();
     return () => {
       mountedRef.current = false;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [intervalMs]);
 
@@ -97,6 +106,16 @@ export default function AdminTranscodingScreen({
       )}
       {state.status === "ready" && (
         <>
+          {state.staleError && (
+            <p
+              className="status status-error"
+              data-testid="transcoding-stale"
+              role="alert"
+            >
+              <span className="dot dot-error" aria-hidden="true" />
+              Couldn&apos;t refresh — showing the last reading. {state.staleError}
+            </p>
+          )}
           <BackendPanel backend={state.snapshot.backend} />
           <LoadPanel load={state.snapshot.load} />
           <GpuPanel gpu={state.snapshot.gpu} />

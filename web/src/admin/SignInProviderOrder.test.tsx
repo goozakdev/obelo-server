@@ -25,12 +25,19 @@ beforeEach(() => {
   for (const fn of Object.values(client)) fn.mockReset();
 });
 
+// The Users screen fetches the provider list once and hands it down; do the same
+// from whatever the test stubbed.
+async function renderOrder() {
+  const view = await client.getSignInProviders().catch(() => null);
+  return render(<SignInProviderOrder view={view} />);
+}
+
 describe("SignInProviderOrder", () => {
   it("renders nothing when no password-flow Sign-in provider is installed", async () => {
     client.getSignInProviders.mockResolvedValue({ providers: [] });
     let container!: HTMLElement;
     await act(async () => {
-      ({ container } = render(<SignInProviderOrder />));
+      ({ container } = await renderOrder());
     });
     expect(client.getSignInProviders).toHaveBeenCalled();
     expect(container).toBeEmptyDOMElement();
@@ -39,7 +46,7 @@ describe("SignInProviderOrder", () => {
   it("moves a provider up and saves the whole order", async () => {
     client.getSignInProviders.mockResolvedValue({ providers: [a, b] });
     client.setSignInProviderOrder.mockResolvedValue({ providers: [b, a] });
-    render(<SignInProviderOrder />);
+    await renderOrder();
 
     await userEvent.click(await screen.findByTestId("sign-in-order-up-dir-b"));
 
@@ -53,7 +60,7 @@ describe("SignInProviderOrder", () => {
   it("shows the server's refusal", async () => {
     client.getSignInProviders.mockResolvedValue({ providers: [a, b] });
     client.setSignInProviderOrder.mockRejectedValue(new Error("not a password sign-in provider"));
-    render(<SignInProviderOrder />);
+    await renderOrder();
 
     await userEvent.click(await screen.findByTestId("sign-in-order-down-dir-a"));
 
