@@ -140,12 +140,12 @@ func (s *Service) Watchlist(ownerUserID string) (store.Playlist, error) {
 // the "movie" kind, and a later cross-kind add is ErrKindMismatch). ErrUnknownTitle
 // for an unknown Title. Duplicates are allowed (a Title may be on the Watchlist more
 // than once, each its own item).
-func (s *Service) AppendToWatchlist(ownerUserID, titleID string) (string, error) {
+func (s *Service) AppendToWatchlist(scope access.Scope, ownerUserID, titleID string) (string, error) {
 	wl, err := s.Watchlist(ownerUserID)
 	if err != nil {
 		return "", err
 	}
-	return s.AppendPlaylistItem(ownerUserID, wl.ID, titleID)
+	return s.AppendPlaylistItem(scope, ownerUserID, wl.ID, titleID)
 }
 
 // AppendPlaylistItem appends a Title to the END of one of ownerUserID's Playlists
@@ -153,12 +153,22 @@ func (s *Service) AppendToWatchlist(ownerUserID, titleID string) (string, error)
 // fixes the Playlist kind (Movie→movie, Episode→tv, Track→music); a subsequent add
 // whose Title maps to a different kind is rejected with ErrKindMismatch and the
 // Playlist kind is left unchanged. ErrNotFound for an unknown/foreign Playlist;
-// ErrUnknownTitle for an unknown Title. Duplicates are allowed (a Title may be
-// appended more than once, each its own item).
-func (s *Service) AppendPlaylistItem(ownerUserID, id, titleID string) (string, error) {
+// ErrUnknownTitle for an unknown Title - and for one the caller's access scope
+// cannot see (an ungranted Library or above the Rating ceiling), so the answer
+// cannot be used to probe whether a hidden Title exists or what kind it is.
+// Duplicates are allowed (a Title may be appended more than once, each its own
+// item).
+func (s *Service) AppendPlaylistItem(scope access.Scope, ownerUserID, id, titleID string) (string, error) {
 	p, err := s.getOwned(ownerUserID, id)
 	if err != nil {
 		return "", err // ErrNotFound flows through (incl. non-owner)
+	}
+	visible, err := s.store.ResolveVisibleTitles([]string{titleID}, scope.StoreFilter())
+	if err != nil {
+		return "", err
+	}
+	if _, ok := visible[titleID]; !ok {
+		return "", ErrUnknownTitle
 	}
 	titleKind, err := s.store.TitleKind(titleID)
 	if errors.Is(err, store.ErrUnknownTitle) {

@@ -388,3 +388,33 @@ func TestPlaylistOrderingOwnership404(t *testing.T) {
 		t.Errorf("owner order after intruder attempts = %v, want unchanged [A,B]", got)
 	}
 }
+
+// TestPlaylistAppendOutOfScopeTitle: a Member cannot append (or probe the
+// existence/kind of) a Title in a Library they were not granted — it answers the
+// same 422 UNKNOWN_TITLE an unknown id does, for Playlists and the Watchlist, and
+// no item row is written.
+func TestPlaylistAppendOutOfScopeTitle(t *testing.T) {
+	t.Parallel()
+	requireFixtures(t)
+	srv, admin, _, list := scanMovies(t)
+	dune := findTitle(t, list, "Dune")
+
+	srv.CreateUser(admin, "outsider", "outsiderpass1", "member") // no Library grants
+	member := srv.LoginAs("outsider", "outsiderpass1")
+
+	plID := createPlaylist(t, srv, member, "Probe")
+	st, env := appendPlaylistItem(t, srv, member, plID, dune)
+	if st != http.StatusUnprocessableEntity || env.Error.Code != "UNKNOWN_TITLE" {
+		t.Errorf("playlist append of out-of-scope title = %d/%s, want 422/UNKNOWN_TITLE", st, env.Error.Code)
+	}
+	var wlErr errorEnvelope
+	if st, body := srv.JSON(http.MethodPost, "/api/v1/watchlist/items", member, map[string]any{"titleId": dune}, &wlErr); st != http.StatusUnprocessableEntity || wlErr.Error.Code != "UNKNOWN_TITLE" {
+		t.Errorf("watchlist append of out-of-scope title = %d/%s, want 422/UNKNOWN_TITLE; body: %s", st, wlErr.Error.Code, body)
+	}
+
+	// The Admin (all Libraries) can still append it.
+	adminPl := createPlaylist(t, srv, admin, "Admin")
+	if st, env := appendPlaylistItem(t, srv, admin, adminPl, dune); st != http.StatusNoContent {
+		t.Errorf("admin append = %d/%s, want 204", st, env.Error.Code)
+	}
+}

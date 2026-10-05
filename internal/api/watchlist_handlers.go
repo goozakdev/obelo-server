@@ -55,7 +55,7 @@ func handleWatchlistSubtree(deps Deps) http.HandlerFunc {
 
 		// /items — append a Title.
 		if rest == "items" {
-			requireMethod(http.MethodPost, handleAppendWatchlistItem(deps.Organize))(w, r)
+			requireMethod(http.MethodPost, requireScope(deps.Access, handleAppendWatchlistItem(deps.Organize)))(w, r)
 			return
 		}
 
@@ -104,11 +104,15 @@ func handleAppendWatchlistItem(svc *organize.Service) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
 			return
 		}
+		scope, ok := mustScope(w, r)
+		if !ok {
+			return
+		}
 		var req playlistItemRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		_, err := svc.AppendToWatchlist(ident.User.ID, req.TitleID)
+		_, err := svc.AppendToWatchlist(scope, ident.User.ID, req.TitleID)
 		switch {
 		case errors.Is(err, organize.ErrUnknownTitle):
 			writeError(w, http.StatusUnprocessableEntity, codeUnknownTitle,
