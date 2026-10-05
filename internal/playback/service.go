@@ -1944,17 +1944,19 @@ func (s *Service) HLSAudioSegment(userID, sessionID, streamID, name string) ([]b
 }
 
 // audioRuntimeFor resolves the owner-checked, validated lazy rendition runtime for
-// (session, audio Stream): it confirms the session is a demuxed multi-audio HLS
-// session that carries streamID (else ErrNoAudioRendition → 404), then ensures the
-// runtime. Validating against the File's audio Streams keeps an arbitrary id from
-// spinning up an ffmpeg job.
+// (session, audio Stream): it confirms the session is the caller's HLS session
+// (ErrSessionNotFound / ErrNotHLS, as SessionAudioContext does) and that it is a
+// demuxed multi-audio session carrying streamID (else ErrNoAudioRendition → 404),
+// then ensures the runtime. The validation is answered from the Manager's own
+// per-session state: this runs for every audio segment, and loading the Title tree
+// and probing the video traits (SessionAudioContext) each time would stall playback.
 func (s *Service) audioRuntimeFor(userID, sessionID, streamID string) (*hlsRuntime, error) {
-	sctx, err := s.SessionAudioContext(userID, sessionID)
-	if err != nil {
-		return nil, err
+	sess, ok := s.sessions.Get(sessionID)
+	if !ok || sess.UserID != userID {
+		return nil, ErrSessionNotFound
 	}
-	if !sctx.Demuxed || !audioContextHasStream(sctx, streamID) {
-		return nil, ErrNoAudioRendition
+	if sess.Tier == TierDirectPlay {
+		return nil, ErrNotHLS
 	}
 	return s.sessions.EnsureAudioRuntime(sessionID, streamID)
 }

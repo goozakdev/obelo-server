@@ -235,7 +235,11 @@ type Manager struct {
 	// audioDurations is each demuxed session's per-audio-Stream length in seconds
 	// (CreateInput.AudioDurationsSec), sizing the rendition playlists.
 	audioDurations map[string]map[string]float64
-	now            func() time.Time // injectable clock; defaults to time.Now
+	// audioStreams is each demuxed session's set of audio Stream ids (taken from the
+	// played File at Create), so a rendition request is validated without a catalog
+	// read. A session absent here exposes no renditions.
+	audioStreams map[string]map[string]bool
+	now          func() time.Time // injectable clock; defaults to time.Now
 	// observer, when set, is notified of session lifecycle transitions (started/
 	// nowPlaying/ended). It is the seam app.New wires to the realtime Broker so
 	// playback imports no events package; nil (the default, and every playback unit
@@ -271,6 +275,7 @@ func NewManager() *Manager {
 		audioRuntimes:  make(map[string]map[string]*hlsRuntime),
 		audioBuilders:  make(map[string]func(streamID, outputDir string, seek transcode.SeekOffset) []string),
 		audioDurations: make(map[string]map[string]float64),
+		audioStreams:   make(map[string]map[string]bool),
 		now:            time.Now,
 	}
 }
@@ -611,6 +616,13 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 	if rt != nil && in.BuildAudioRenditionArgs != nil {
 		m.audioBuilders[s.ID] = in.BuildAudioRenditionArgs
 		m.audioRuntimes[s.ID] = make(map[string]*hlsRuntime)
+		ids := make(map[string]bool)
+		for _, st := range d.File.Streams {
+			if st.Kind == "audio" {
+				ids[st.ID] = true
+			}
+		}
+		m.audioStreams[s.ID] = ids
 		if len(in.AudioDurationsSec) > 0 {
 			m.audioDurations[s.ID] = in.AudioDurationsSec
 		}
@@ -668,13 +680,16 @@ var ErrNoAudioRendition = errors.New("playback: no audio rendition for stream")
 // false, no realignment — an audio encode is faster than realtime, so the whole
 // rendition is produced up front and a seek reads an already-written segment). It
 // returns ErrNoAudioRendition when the session is not a demuxed multi-audio HLS
-// session (no builder registered) — the Service has already validated that streamID
-// names a real audio Stream of the played File before calling.
+// session (no builder registered) or streamID names no audio Stream of the played
+// File, so an arbitrary id can never spin up an ffmpeg job.
 func (m *Manager) EnsureAudioRuntime(sessionID, streamID string) (*hlsRuntime, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	build, ok := m.audioBuilders[sessionID]
 	if !ok || build == nil {
+		return nil, ErrNoAudioRendition
+	}
+	if !m.audioStreams[sessionID][streamID] {
 		return nil, ErrNoAudioRendition
 	}
 	if rt, ok := m.audioRuntimes[sessionID][streamID]; ok {
@@ -806,6 +821,7 @@ func (m *Manager) End(id string) bool {
 	delete(m.audioRuntimes, id)
 	delete(m.audioBuilders, id)
 	delete(m.audioDurations, id)
+	delete(m.audioStreams, id)
 	// Free the transcode slot under the same lock that removed the session, so a
 	// previously-rejected transcode can take it immediately (ADR-0009). Only a
 	// transcode session ever incremented the counter, so only it decrements — and
@@ -984,6 +1000,7 @@ func (m *Manager) endWhere(end func(Session) bool) int {
 			delete(m.audioRuntimes, id)
 			delete(m.audioBuilders, id)
 			delete(m.audioDurations, id)
+			delete(m.audioStreams, id)
 			if rt := m.runtimes[id]; rt != nil {
 				dead = append(dead, rt)
 				delete(m.runtimes, id)

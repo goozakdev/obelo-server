@@ -647,8 +647,10 @@ func TestEnsureStartedAfterTeardownLeavesNoScratchDir(t *testing.T) {
 func TestRealignIsANoOpForATargetTheJobAlreadyCovers(t *testing.T) {
 	runner := &recordingRunner{}
 	rt := &hlsRuntime{
-		runner:         runner,
-		buildArgs:      func(seek transcode.SeekOffset) []string { return []string{"-start_number", strconv.Itoa(seek.StartNumber), filepath.Join(t.TempDir(), "index.m3u8")} },
+		runner: runner,
+		buildArgs: func(seek transcode.SeekOffset) []string {
+			return []string{"-start_number", strconv.Itoa(seek.StartNumber), filepath.Join(t.TempDir(), "index.m3u8")}
+		},
 		scratchDir:     t.TempDir(),
 		segmentSeconds: transcode.SegmentSeconds,
 	}

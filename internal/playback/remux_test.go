@@ -2,6 +2,7 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -371,5 +372,45 @@ func TestNegotiateSizesDemuxedRenditionsFromTheAudio(t *testing.T) {
 		if rt.segmentCount != 4 {
 			t.Errorf("%s rendition segmentCount = %d, want 4 (audio ~15.9 s; the 16.5 s container would list 5)", id, rt.segmentCount)
 		}
+	}
+}
+
+// deadStore fails every Title read, standing in for a catalog the per-segment audio
+// path must not touch.
+type deadStore struct{ ceilingStore }
+
+func (deadStore) TitleByID(string) (store.TitleDetail, error) {
+	return store.TitleDetail{}, errors.New("catalog read on the audio segment path")
+}
+
+// TestAudioRenditionValidationNeedsNoCatalogRead: every 4 s audio segment resolves
+// its rendition, so that must be answered from the Manager's own per-session state —
+// a Title-tree read plus an ffprobe per segment stalls playback on a slow mount.
+// Ownership, the direct-play gate and the stream-id check all still hold.
+func TestAudioRenditionValidationNeedsNoCatalogRead(t *testing.T) {
+	svc := NewService(deadStore{}, &fakeRunner{}, t.TempDir(), Governance{})
+	dec := demuxedDecision()
+	s := svc.Sessions().Create(CreateInput{
+		UserID: "u1", TitleID: "t1",
+		BuildHLSArgs: func(dir string, seek transcode.SeekOffset) []string { return nil },
+		BuildAudioRenditionArgs: func(streamID, dir string, seek transcode.SeekOffset) []string {
+			return nil
+		},
+	}, dec)
+	if _, err := svc.audioRuntimeFor("u1", s.ID, "a2"); err != nil {
+		t.Fatalf("audioRuntimeFor: %v (it must not read the catalog)", err)
+	}
+	if _, err := svc.audioRuntimeFor("u1", s.ID, "nope"); !errors.Is(err, ErrNoAudioRendition) {
+		t.Errorf("unknown stream id err = %v, want ErrNoAudioRendition", err)
+	}
+	if _, err := svc.audioRuntimeFor("u1", s.ID, "v1"); !errors.Is(err, ErrNoAudioRendition) {
+		t.Errorf("a video stream id err = %v, want ErrNoAudioRendition", err)
+	}
+	if _, err := svc.audioRuntimeFor("u2", s.ID, "a2"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("foreign user err = %v, want ErrSessionNotFound", err)
+	}
+	direct := svc.Sessions().Create(CreateInput{UserID: "u1", TitleID: "t1"}, Decision{Tier: TierDirectPlay, Edition: dec.Edition, File: dec.File})
+	if _, err := svc.audioRuntimeFor("u1", direct.ID, "a2"); !errors.Is(err, ErrNotHLS) {
+		t.Errorf("direct-play session err = %v, want ErrNotHLS", err)
 	}
 }
