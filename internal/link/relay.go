@@ -444,6 +444,10 @@ func timedOut(err error) bool {
 // here (ADR-0054 §3).
 var relayRequestHeaders = []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"}
 
+// The playback Service ends a refused relay's remote session by type-asserting
+// this off its Relayer; a drifted signature would silently turn that off.
+var _ playback.RelayEnder = (*Service)(nil)
+
 // RelayEndSession ends the sharer's session when the local one ends (a clean
 // DELETE, or the idle reaper). Best effort and logged: this side has already let
 // go, and the sharer's own reaper is the backstop.
@@ -459,15 +463,16 @@ func (s *Service) RelayEndSession(ctx context.Context, linkID, remoteSessionID s
 	if len(origins) == 0 || l.Token == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.callTimeout())
-	defer cancel()
 	// The origin walk is the negotiation's and the sweep's (originsFor): the address
-	// that worked last first, then the rest, until one takes the request.
+	// that worked last first, then the rest, until one takes the request. Each gets
+	// its own bounded attempt, so one that hangs cannot use up the others'.
 	client := s.client()
 	var lastErr error
 	for _, origin := range origins {
-		lastErr = s.call(ctx, client, http.MethodDelete,
+		actx, cancel := context.WithTimeout(ctx, s.callTimeout())
+		lastErr = s.call(actx, client, http.MethodDelete,
 			origin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
+		cancel()
 		if lastErr == nil {
 			return nil
 		}

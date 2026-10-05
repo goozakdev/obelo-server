@@ -523,6 +523,8 @@ type bulkLibraryReader interface {
 	LibrariesForLinks(linkIDs []string) (map[string][]store.Library, error)
 }
 
+var _ bulkLibraryReader = (*store.DB)(nil)
+
 // LibrariesByLink lists the linked Libraries of every given Link, keyed by Link
 // id, for GET /links — one read where the mirror offers it, instead of one per
 // Link. A Link with none has no entry.

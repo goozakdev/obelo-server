@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -55,5 +56,41 @@ func TestRelayEndSessionWalksTheListedOrigins(t *testing.T) {
 		if len(got) != 1 || !strings.HasPrefix(got[0], "DELETE ") || !strings.HasSuffix(got[0], "/sessions/rs1") {
 			t.Errorf("%s: the live origin saw %v, want one DELETE of the session", c.name, got)
 		}
+	}
+}
+
+// TestRelayEndSessionGivesEachOriginItsOwnAttempt: an origin that accepts the
+// connection and never answers uses up its own attempt, not the next one's. The
+// session is still ended on the origin that does answer.
+func TestRelayEndSessionGivesEachOriginItsOwnAttempt(t *testing.T) {
+	release := make(chan struct{})
+	hung := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(hung.Close)
+	t.Cleanup(func() { close(release) })
+
+	var mu sync.Mutex
+	var deleted []string
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		deleted = append(deleted, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(live.Close)
+
+	st := &memStore{links: []store.Link{{
+		ID: "l1", ServerID: "sharer", ServerName: "Sharer", Origins: []string{hung.URL, live.URL},
+		ActiveOrigin: hung.URL, Token: "tok", State: store.LinkStateConnected,
+	}}}
+	svc := newService(t, st, Options{Timeout: 300 * time.Millisecond})
+	if err := svc.RelayEndSession(context.Background(), "l1", "rs1"); err != nil {
+		t.Fatalf("RelayEndSession with a hung first origin: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/sessions/rs1") {
+		t.Errorf("the live origin saw %v, want one DELETE of the session", deleted)
 	}
 }
