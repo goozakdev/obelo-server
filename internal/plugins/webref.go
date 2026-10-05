@@ -29,19 +29,10 @@ const exportWebReferenceLinks = "web_reference_links"
 // registration to reg. A slug already claimed is NOT registered and says so, for
 // the reason every other seam refuses one.
 func (s *Set) registerWebReferenceProvider(reg *pluginapi.Registry, p *Plugin, entry pluginapi.ManifestProvides) {
-	if _, taken := reg.WebReferenceProvider(p.id); taken {
-		err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
-		p.mu.Lock()
-		p.refuse(err)
-		p.mu.Unlock()
-		p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+	_, taken := reg.WebReferenceProvider(p.id)
+	d, ok := s.claim(p, entry, taken)
+	if !ok {
 		return
-	}
-	d := descriptorFor(p.manifest, entry)
-	// The DIRECTORY is the identity, always — the same rule the sink path states.
-	d.Slug = p.id
-	if d.Name == "" {
-		d.Name = p.id
 	}
 	if len(d.Kinds) == 0 {
 		// A provider serves the kinds it declared (Descriptor.Serves), so one that
@@ -56,17 +47,8 @@ func (s *Set) registerWebReferenceProvider(reg *pluginapi.Registry, p *Plugin, e
 // Plugin registers with. It refuses for a Plugin that was refused at load,
 // naming the reason.
 func (p *Plugin) newWebReferenceProvider(s pluginapi.Settings) (pluginapi.WebReferenceProvider, error) {
-	p.mu.Lock()
-	disabled, lastErr := p.disabled, p.lastError
-	p.mu.Unlock()
-	if disabled {
-		if lastErr == "" {
-			lastErr = "it is disabled"
-		}
-		return nil, fmt.Errorf("plugin %s: %s", p.id, lastErr)
-	}
-	if p.compiled == nil {
-		return nil, fmt.Errorf("plugin %s: no module is loaded", p.id)
+	if err := p.factoryGuard(); err != nil {
+		return nil, err
 	}
 	return &guestWebReferenceProvider{p: p, settings: s}, nil
 }

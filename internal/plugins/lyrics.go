@@ -28,19 +28,10 @@ const exportLyricProviderLyrics = "lyric_provider_lyrics"
 // slug already claimed is NOT registered and says so, for the reason every other
 // seam refuses one.
 func (s *Set) registerLyricProvider(reg *pluginapi.Registry, p *Plugin, entry pluginapi.ManifestProvides) {
-	if _, taken := reg.LyricProvider(p.id); taken {
-		err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
-		p.mu.Lock()
-		p.refuse(err)
-		p.mu.Unlock()
-		p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+	_, taken := reg.LyricProvider(p.id)
+	d, ok := s.claim(p, entry, taken)
+	if !ok {
 		return
-	}
-	d := descriptorFor(p.manifest, entry)
-	// The DIRECTORY is the identity, always — the same rule the sink path states.
-	d.Slug = p.id
-	if d.Name == "" {
-		d.Name = p.id
 	}
 	if !d.Serves(pluginapi.KindMusic) {
 		// A provider serves the kinds it declared (Descriptor.Serves), and only
@@ -55,17 +46,8 @@ func (s *Set) registerLyricProvider(reg *pluginapi.Registry, p *Plugin, entry pl
 // newLyricProvider is the pluginapi.LyricProviderFactory this Plugin registers
 // with. It refuses for a Plugin that was refused at load, naming the reason.
 func (p *Plugin) newLyricProvider(s pluginapi.Settings) (pluginapi.LyricProvider, error) {
-	p.mu.Lock()
-	disabled, lastErr := p.disabled, p.lastError
-	p.mu.Unlock()
-	if disabled {
-		if lastErr == "" {
-			lastErr = "it is disabled"
-		}
-		return nil, fmt.Errorf("plugin %s: %s", p.id, lastErr)
-	}
-	if p.compiled == nil {
-		return nil, fmt.Errorf("plugin %s: no module is loaded", p.id)
+	if err := p.factoryGuard(); err != nil {
+		return nil, err
 	}
 	return &guestLyricProvider{p: p, settings: s}, nil
 }

@@ -3,7 +3,6 @@ package plugins
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -84,21 +83,10 @@ type metaState struct {
 // belongs on the settings screen with the sentence that says why it is not
 // working, not in a second list nothing else reads.
 func (s *Set) registerMetadataProvider(reg *pluginapi.Registry, p *Plugin, entry pluginapi.ManifestProvides) {
-	if _, taken := reg.MetadataProvider(p.id); taken {
-		// Shadowing a Built-in would move an Admin's API key onto code the
-		// maintainer did not write, so the id is refused rather than resolved.
-		err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
-		p.mu.Lock()
-		p.refuse(err)
-		p.mu.Unlock()
-		p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+	_, taken := reg.MetadataProvider(p.id)
+	d, ok := s.claim(p, entry, taken)
+	if !ok {
 		return
-	}
-	d := descriptorFor(p.manifest, entry)
-	// The DIRECTORY is the identity, always — see registerOne.
-	d.Slug = p.id
-	if d.Name == "" {
-		d.Name = p.id
 	}
 	reg.RegisterMetadataProvider(pluginapi.MetadataProviderRegistration{
 		Descriptor: d,
@@ -111,17 +99,8 @@ func (s *Set) registerMetadataProvider(reg *pluginapi.Registry, p *Plugin, entry
 // reason, so a chain is composed WITHOUT a broken source rather than with one that
 // fails every call (ADR-0001: the builder skips a factory that refuses).
 func (p *Plugin) newMetadataProvider(s pluginapi.Settings) (pluginapi.MetadataProvider, error) {
-	p.mu.Lock()
-	disabled, lastErr := p.disabled, p.lastError
-	p.mu.Unlock()
-	if disabled {
-		if lastErr == "" {
-			lastErr = "it is disabled"
-		}
-		return nil, fmt.Errorf("plugin %s: %s", p.id, lastErr)
-	}
-	if p.compiled == nil {
-		return nil, fmt.Errorf("plugin %s: no module is loaded", p.id)
+	if err := p.factoryGuard(); err != nil {
+		return nil, err
 	}
 	return &guestProvider{p: p, settings: s}, nil
 }

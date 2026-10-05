@@ -40,19 +40,10 @@ const (
 // — is NOT registered and says so, for the reason a sink is not: an Admin's API
 // key must never move onto code the maintainer did not write.
 func (s *Set) registerSubtitleProvider(reg *pluginapi.Registry, p *Plugin, entry pluginapi.ManifestProvides) {
-	if _, taken := reg.SubtitleProvider(p.id); taken {
-		err := fmt.Errorf("the id %q is already claimed by another Plugin on this server", p.id)
-		p.mu.Lock()
-		p.refuse(err)
-		p.mu.Unlock()
-		p.logf("obelo: plugin %s was not registered: %v", p.id, err)
+	_, taken := reg.SubtitleProvider(p.id)
+	d, ok := s.claim(p, entry, taken)
+	if !ok {
 		return
-	}
-	d := descriptorFor(p.manifest, entry)
-	// The DIRECTORY is the identity, always — the same rule the sink path states.
-	d.Slug = p.id
-	if d.Name == "" {
-		d.Name = p.id
 	}
 	reg.RegisterSubtitleProvider(pluginapi.SubtitleProviderRegistration{Descriptor: d, New: p.newSubtitleProvider})
 }
@@ -62,17 +53,8 @@ func (s *Set) registerSubtitleProvider(reg *pluginapi.Registry, p *Plugin, entry
 // reason, so an Admin who enables a broken Plugin is told why by the settings
 // save rather than by a search that quietly finds nothing.
 func (p *Plugin) newSubtitleProvider(s pluginapi.Settings) (pluginapi.SubtitleProvider, error) {
-	p.mu.Lock()
-	disabled, lastErr := p.disabled, p.lastError
-	p.mu.Unlock()
-	if disabled {
-		if lastErr == "" {
-			lastErr = "it is disabled"
-		}
-		return nil, fmt.Errorf("plugin %s: %s", p.id, lastErr)
-	}
-	if p.compiled == nil {
-		return nil, fmt.Errorf("plugin %s: no module is loaded", p.id)
+	if err := p.factoryGuard(); err != nil {
+		return nil, err
 	}
 	return &guestSubtitleProvider{p: p, settings: s}, nil
 }
