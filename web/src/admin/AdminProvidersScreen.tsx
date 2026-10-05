@@ -105,9 +105,9 @@ export default function AdminProvidersScreen() {
   const [view, setView] = useState<MetadataProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsDraft | null>(null);
-  // Per-provider enable-toggle state: which slug's toggle is in flight, and the
+  // Whether a provider toggle request is in flight (disables every toggle), and the
   // last inline error for a row whose immediate save was refused.
-  const [toggling, setToggling] = useState<Record<string, boolean>>({});
+  const [toggling, setToggling] = useState(false);
   const [rowError, setRowError] = useState<Record<string, string | null>>({});
   // The provider whose configuration dialog is open (null = none).
   const [editing, setEditing] = useState<MetadataProvider | null>(null);
@@ -116,15 +116,12 @@ export default function AdminProvidersScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Toggle responses carry the whole view, and toggles of different providers can
-  // be in flight together: number them, and never apply one older than the newest
-  // already applied. That ordering is only a guess at the order the server applied
-  // them in, so once overlapping toggles have all settled the view is re-read and
-  // the server's answer replaces the guess.
-  const toggleSeq = useRef(0);
-  const toggleApplied = useRef(0);
-  const togglesInFlight = useRef(0);
-  const togglesOverlapped = useRef(false);
+  // Toggles are serialized: while one request is in flight every provider toggle
+  // is disabled, so its response (the whole view) is authoritative. The ref guards
+  // a second change event arriving before the disabled state has rendered; `alive`
+  // stops a response that lands after unmount from touching state.
+  const toggleBusy = useRef(false);
+  const alive = useRef(true);
 
   // `keepDraft` re-reads the view without re-seeding the server-wide settings draft,
   // so a reload (the consent decision) never reverts edits the Admin has not saved.
@@ -143,8 +140,12 @@ export default function AdminProvidersScreen() {
 
   useEffect(() => {
     const ctrl = new AbortController();
+    alive.current = true;
     void load(ctrl.signal);
-    return () => ctrl.abort();
+    return () => {
+      alive.current = false;
+      ctrl.abort();
+    };
   }, [load]);
 
   function patchSettings(update: (d: SettingsDraft) => SettingsDraft) {
@@ -156,42 +157,20 @@ export default function AdminProvidersScreen() {
   // The checkbox is driven by the loaded view, so on a refused save the view is
   // untouched and the box simply stays where it was — we only surface the error.
   async function onToggle(p: MetadataProvider, enabled: boolean) {
+    if (toggleBusy.current) return;
+    toggleBusy.current = true;
     setRowError((prev) => ({ ...prev, [p.slug]: null }));
-    setToggling((prev) => ({ ...prev, [p.slug]: true }));
-    const seq = ++toggleSeq.current;
-    const startedAlone = togglesInFlight.current === 0;
-    if (++togglesInFlight.current > 1) togglesOverlapped.current = true;
+    setToggling(true);
     try {
       const next = await apiClient.updateMetadataProviders({
         providers: [{ slug: p.slug, enabled }],
       });
-      if (seq > toggleApplied.current) {
-        toggleApplied.current = seq;
-        setView(next);
-        // Sent last and alone throughout: its answer is the server's state, nothing to re-read.
-        if (startedAlone && seq === toggleSeq.current && togglesInFlight.current === 1) {
-          togglesOverlapped.current = false;
-        }
-      }
+      if (alive.current) setView(next);
     } catch (err) {
-      setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
+      if (alive.current) setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
     } finally {
-      setToggling((prev) => ({ ...prev, [p.slug]: false }));
-      if (--togglesInFlight.current === 0 && togglesOverlapped.current) {
-        const sentAt = toggleSeq.current;
-        try {
-          const fresh = await apiClient.getMetadataProviders();
-          // A toggle sent after this read was is newer than it; its own result stands,
-          // or, if it fails, its settling re-reads (the flag stays set until one lands).
-          if (toggleSeq.current === sentAt) {
-            togglesOverlapped.current = false;
-            setView(fresh);
-          }
-        } catch {
-          // Keep the view the responses built; the next load corrects it.
-          togglesOverlapped.current = false;
-        }
-      }
+      toggleBusy.current = false;
+      if (alive.current) setToggling(false);
     }
   }
 
@@ -337,7 +316,7 @@ export default function AdminProvidersScreen() {
                         aria-label={`Enable ${p.name}`}
                         checked={p.enabled}
                         onChange={(e) => void onToggle(p, e.target.checked)}
-                        disabled={toggling[p.slug]}
+                        disabled={toggling}
                       />
                       <span
                         className="provider-name"

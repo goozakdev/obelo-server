@@ -590,143 +590,68 @@ describe("Metadata Providers tab in the Admin hub", () => {
 });
 
 describe("AdminProvidersScreen — review fixes", () => {
-  it("keeps the newest toggle result when an older response lands last (R02-07)", async () => {
+  it("disables every provider toggle while one toggle is in flight and applies its response (D002)", async () => {
     getMetadataProviders.mockResolvedValue(view());
     const a = deferred<MetadataProvidersView>();
-    const b = deferred<MetadataProvidersView>();
-    updateMetadataProviders.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
     const user = userEvent.setup();
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
 
     await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
-    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
 
-    const bothOn = view();
-    bothOn.providers = bothOn.providers.map((p) =>
-      p.slug === "musicbrainz" || p.slug === "theaudiodb" ? { ...p, enabled: true } : p,
-    );
-    const onlyFirst = view();
-    onlyFirst.providers = onlyFirst.providers.map((p) =>
+    for (const slug of ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"]) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).toBeDisabled();
+    }
+    const on = view();
+    on.providers = on.providers.map((p) =>
       p.slug === "musicbrainz" ? { ...p, enabled: true } : p,
     );
-    getMetadataProviders.mockResolvedValue(bothOn);
-    b.resolve(bothOn);
-    await waitFor(() => expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked());
-    a.resolve(onlyFirst);
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-toggle-musicbrainz")).not.toBeDisabled(),
-    );
-
-    expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
-  });
-
-  it("ends on the server's state when toggles were applied in the opposite order to sending", async () => {
-    // Toggle musicbrainz, then theaudiodb; the server happens to apply the SECOND first.
-    // Each response then carries a view that is only right for the toggles applied so
-    // far, and the older request's response (which has both) lands last.
-    const withOn = (...slugs: string[]) => {
-      const v = view();
-      v.providers = v.providers.map((p) => (slugs.includes(p.slug) ? { ...p, enabled: true } : p));
-      return v;
-    };
-    getMetadataProviders.mockReset();
-    getMetadataProviders.mockResolvedValueOnce(view());
-    const first = deferred<MetadataProvidersView>();
-    const second = deferred<MetadataProvidersView>();
-    updateMetadataProviders.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    const user = userEvent.setup();
-    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
-
-    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
-    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
-
-    // Whatever the response order, the server now has both on.
-    getMetadataProviders.mockResolvedValue(withOn("musicbrainz", "theaudiodb"));
-    second.resolve(withOn("theaudiodb"));
-    first.resolve(withOn("musicbrainz", "theaudiodb"));
-
+    a.resolve(on);
     await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeChecked());
-    expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
+    for (const slug of ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"]) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).not.toBeDisabled();
+    }
   });
 
-  it("keeps a toggle made while the post-overlap re-read is in flight", async () => {
-    const withOn = (...slugs: string[]) => {
-      const v = view();
-      v.providers = v.providers.map((p) => (slugs.includes(p.slug) ? { ...p, enabled: true } : p));
-      return v;
-    };
-    getMetadataProviders.mockReset();
-    getMetadataProviders.mockResolvedValueOnce(view());
-    const first = deferred<MetadataProvidersView>();
-    const second = deferred<MetadataProvidersView>();
-    const third = deferred<MetadataProvidersView>();
-    const reread = deferred<MetadataProvidersView>();
-    updateMetadataProviders
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
-      .mockReturnValueOnce(third.promise);
+  it("a second click during a toggle does nothing", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
     const user = userEvent.setup();
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
 
     await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
     await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
-    // The re-read is taken before the third toggle reaches the server.
-    getMetadataProviders.mockReturnValueOnce(reread.promise);
-    first.resolve(withOn("musicbrainz"));
-    second.resolve(withOn("musicbrainz", "theaudiodb"));
-    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
 
-    await user.click(screen.getByTestId("provider-toggle-fanarttv"));
-    third.resolve(withOn("musicbrainz", "theaudiodb", "fanarttv"));
-    await waitFor(() => expect(screen.getByTestId("provider-toggle-fanarttv")).toBeChecked());
-    reread.resolve(withOn("musicbrainz", "theaudiodb"));
+    expect(updateMetadataProviders).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("provider-toggle-theaudiodb")).not.toBeChecked();
+    a.resolve(view());
     await waitFor(() =>
-      expect(screen.getByTestId("provider-toggle-fanarttv")).not.toBeDisabled(),
+      expect(screen.getByTestId("provider-toggle-theaudiodb")).not.toBeDisabled(),
     );
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(screen.getByTestId("provider-toggle-fanarttv")).toBeChecked();
+    expect(updateMetadataProviders).toHaveBeenCalledTimes(1);
   });
 
-  it("re-reads once the last toggle settles when the one that superseded the re-read fails", async () => {
-    const withOn = (...slugs: string[]) => {
-      const v = view();
-      v.providers = v.providers.map((p) => (slugs.includes(p.slug) ? { ...p, enabled: true } : p));
-      return v;
-    };
-    getMetadataProviders.mockReset();
-    getMetadataProviders.mockResolvedValueOnce(view());
-    const first = deferred<MetadataProvidersView>();
-    const second = deferred<MetadataProvidersView>();
-    let failThird: (e: Error) => void = () => {};
-    const third = new Promise<MetadataProvidersView>((_, rej) => {
-      failThird = rej;
-    });
-    const reread = deferred<MetadataProvidersView>();
-    updateMetadataProviders
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
-      .mockReturnValueOnce(third);
+  it("a failed toggle rolls back, shows the error and re-enables every toggle", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    let fail: (e: Error) => void = () => {};
+    updateMetadataProviders.mockReturnValueOnce(
+      new Promise<MetadataProvidersView>((_, rej) => {
+        fail = rej;
+      }),
+    );
     const user = userEvent.setup();
     renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
 
     await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
-    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
-    getMetadataProviders.mockReturnValueOnce(reread.promise);
-    first.resolve(withOn("musicbrainz"));
-    // The send-order guess: this response lacks nothing the server will end with.
-    second.resolve(withOn("theaudiodb"));
-    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("provider-toggle-fanarttv")).toBeDisabled();
+    fail(new Error("boom"));
 
-    // A third toggle supersedes the re-read, then fails.
-    await user.click(screen.getByTestId("provider-toggle-fanarttv"));
-    reread.resolve(withOn("musicbrainz", "theaudiodb"));
-    getMetadataProviders.mockResolvedValue(withOn("musicbrainz", "theaudiodb"));
-    failThird(new Error("boom"));
-
-    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(3));
-    await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeChecked());
-    expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
+    expect(await screen.findByTestId("provider-row-error-musicbrainz")).toHaveTextContent(/boom/);
+    expect(screen.getByTestId("provider-toggle-musicbrainz")).not.toBeChecked();
+    for (const slug of ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"]) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).not.toBeDisabled();
+    }
   });
 
   it("does not revert unsaved settings edits when the consent decision reloads (R02-12)", async () => {
