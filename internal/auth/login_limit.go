@@ -112,7 +112,7 @@ func (e *LoginThrottledError) Unwrap() error { return ErrTooManyLoginAttempts }
 func (s *Service) refuseLogin(username, clientIP string) error {
 	now := s.now()
 	userOK, userRetry := s.loginUserFails.allow(loginUserKey(username), now)
-	ipOK, ipRetry := s.loginIPFails.allow(clientIP, now)
+	ipOK, ipRetry := s.loginIPFails.allow(sourceKey(clientIP), now)
 	if userOK && ipOK {
 		return nil
 	}
@@ -144,7 +144,7 @@ func kdfAbandoned(err error) bool {
 func (s *Service) chargeLoginFailure(username, clientIP string) {
 	now := s.now()
 	s.loginUserFails.charge(loginUserKey(username), now)
-	s.loginIPFails.charge(clientIP, now)
+	s.loginIPFails.charge(sourceKey(clientIP), now)
 }
 
 // loginUserKey is what the per-username counter keys on: the typed username as

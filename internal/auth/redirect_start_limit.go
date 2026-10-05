@@ -64,7 +64,7 @@ func newRedirectStartLimiter() *fixedWindowLimiter {
 // over its limit, or is new while the limit holds redirectStartSources others.
 func (s *Service) ChargeRedirectStart(clientIP string) error {
 	now := s.now()
-	key := redirectStartKey(clientIP)
+	key := sourceKey(clientIP)
 	if ok, retryAfter := s.redirectStarts.allow(key, now); !ok {
 		return &RedirectStartThrottledError{RetryAfter: retryAfter}
 	}
@@ -72,11 +72,12 @@ func (s *Service) ChargeRedirectStart(clientIP string) error {
 	return nil
 }
 
-// redirectStartKey is the source a start is counted against: an IPv4 address
-// as it is, and an IPv6 address by its /64, which one client is handed whole and
-// may start from any address in — as internal/signin counts sign-ins in flight.
+// sourceKey is the source a request is counted against by every per-source limiter
+// here (login, device start, link redeem, redirect start): an IPv4 address as it
+// is, and an IPv6 address by its /64, which one client is handed whole and may send
+// from any address in — as internal/signin counts sign-ins in flight.
 // An IPv4-mapped IPv6 address is the IPv4 address it maps.
-func redirectStartKey(clientIP string) string {
+func sourceKey(clientIP string) string {
 	addr, err := netip.ParseAddr(clientIP)
 	if err != nil {
 		return clientIP
