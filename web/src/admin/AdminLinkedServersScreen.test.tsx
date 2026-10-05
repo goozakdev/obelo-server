@@ -289,6 +289,23 @@ describe("AdminLinkedServersScreen — the walkthrough", () => {
     await waitFor(() => expect(listLinks).toHaveBeenCalledTimes(2));
   });
 
+  it("Sync now refreshes the shared Library list once it succeeds, not when it fails", async () => {
+    listLinks.mockResolvedValue([link()]);
+    syncLink.mockResolvedValueOnce(undefined);
+    syncLink.mockRejectedValueOnce(new ApiError(503, "LINK_UNREACHABLE", "connection refused"));
+    const user = userEvent.setup();
+    renderWithAuth(<AdminLinkedServersScreen />);
+
+    const row = await screen.findByTestId("link-row");
+    await user.click(within(row).getByTestId("link-sync"));
+    await waitFor(() => expect(refreshLibraries).toHaveBeenCalledTimes(1));
+
+    await user.click(await screen.findByTestId("link-sync"));
+    await waitFor(() => expect(syncLink).toHaveBeenCalledTimes(2));
+    await screen.findByTestId("link-action-error");
+    expect(refreshLibraries).toHaveBeenCalledTimes(1);
+  });
+
   it("re-keys a revoked Link with a fresh invite, in the same kind of textarea", async () => {
     listLinks.mockResolvedValue([link({ state: "revoked" })]);
     rekeyLink.mockResolvedValue(link());

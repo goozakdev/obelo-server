@@ -688,6 +688,47 @@ describe("AdminProvidersScreen — review fixes", () => {
     expect(screen.getByTestId("provider-toggle-fanarttv")).toBeChecked();
   });
 
+  it("re-reads once the last toggle settles when the one that superseded the re-read fails", async () => {
+    const withOn = (...slugs: string[]) => {
+      const v = view();
+      v.providers = v.providers.map((p) => (slugs.includes(p.slug) ? { ...p, enabled: true } : p));
+      return v;
+    };
+    getMetadataProviders.mockReset();
+    getMetadataProviders.mockResolvedValueOnce(view());
+    const first = deferred<MetadataProvidersView>();
+    const second = deferred<MetadataProvidersView>();
+    let failThird: (e: Error) => void = () => {};
+    const third = new Promise<MetadataProvidersView>((_, rej) => {
+      failThird = rej;
+    });
+    const reread = deferred<MetadataProvidersView>();
+    updateMetadataProviders
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
+    getMetadataProviders.mockReturnValueOnce(reread.promise);
+    first.resolve(withOn("musicbrainz"));
+    // The send-order guess: this response lacks nothing the server will end with.
+    second.resolve(withOn("theaudiodb"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+
+    // A third toggle supersedes the re-read, then fails.
+    await user.click(screen.getByTestId("provider-toggle-fanarttv"));
+    reread.resolve(withOn("musicbrainz", "theaudiodb"));
+    getMetadataProviders.mockResolvedValue(withOn("musicbrainz", "theaudiodb"));
+    failThird(new Error("boom"));
+
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeChecked());
+    expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
+  });
+
   it("does not revert unsaved settings edits when the consent decision reloads (R02-12)", async () => {
     getMetadataProviders.mockResolvedValue(view());
     const user = userEvent.setup();

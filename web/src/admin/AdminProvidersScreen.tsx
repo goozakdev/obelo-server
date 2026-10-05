@@ -159,6 +159,7 @@ export default function AdminProvidersScreen() {
     setRowError((prev) => ({ ...prev, [p.slug]: null }));
     setToggling((prev) => ({ ...prev, [p.slug]: true }));
     const seq = ++toggleSeq.current;
+    const startedAlone = togglesInFlight.current === 0;
     if (++togglesInFlight.current > 1) togglesOverlapped.current = true;
     try {
       const next = await apiClient.updateMetadataProviders({
@@ -167,20 +168,28 @@ export default function AdminProvidersScreen() {
       if (seq > toggleApplied.current) {
         toggleApplied.current = seq;
         setView(next);
+        // Sent last and alone throughout: its answer is the server's state, nothing to re-read.
+        if (startedAlone && seq === toggleSeq.current && togglesInFlight.current === 1) {
+          togglesOverlapped.current = false;
+        }
       }
     } catch (err) {
       setRowError((prev) => ({ ...prev, [p.slug]: errorMessage(err) }));
     } finally {
       setToggling((prev) => ({ ...prev, [p.slug]: false }));
       if (--togglesInFlight.current === 0 && togglesOverlapped.current) {
-        togglesOverlapped.current = false;
         const sentAt = toggleSeq.current;
         try {
           const fresh = await apiClient.getMetadataProviders();
-          // A toggle sent after this read was is newer than it; its own result stands.
-          if (toggleSeq.current === sentAt) setView(fresh);
+          // A toggle sent after this read was is newer than it; its own result stands,
+          // or, if it fails, its settling re-reads (the flag stays set until one lands).
+          if (toggleSeq.current === sentAt) {
+            togglesOverlapped.current = false;
+            setView(fresh);
+          }
         } catch {
           // Keep the view the responses built; the next load corrects it.
+          togglesOverlapped.current = false;
         }
       }
     }

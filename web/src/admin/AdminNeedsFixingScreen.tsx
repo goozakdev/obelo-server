@@ -245,18 +245,19 @@ export default function AdminNeedsFixingScreen() {
         const { [id]: _drop, ...rest } = cur;
         return rest;
       }
-      if (cur[id] === n) return cur;
+      // Stamp every report, equal or not: an unchanged number is still a newer
+      // observation than a recount taken since the last one.
       queueStamps.current[id] = nextCountStamp();
       return { ...cur, [id]: n };
     });
   }, []);
-  // The queue's own count wins for the Library it is open on. For one the Admin has
-  // left, whichever count was taken LAST wins: a row fixed there is newer than the
-  // mount-time fetch, and a recount after it is newer than the row fixes.
+  // Whichever count was taken LAST wins, open Library or not: a row fixed is newer
+  // than the mount-time fetch, a recount after it is newer than the row fixes, and a
+  // reopened queue's previous visit is older than a recount until it reports again.
   const counts: Record<string, number> = { ...fetchedCounts };
   for (const [id, n] of Object.entries(queueCounts)) {
     const fetchedAt = fetchedStamps.current[id];
-    if (id === queueLibraryId || !(id in fetchedCounts) || queueStamps.current[id] > fetchedAt) {
+    if (!(id in fetchedCounts) || queueStamps.current[id] > fetchedAt) {
       counts[id] = n;
     }
   }

@@ -1809,6 +1809,63 @@ describe("AdminNeedsFixingScreen — keeping the queue honest (R01)", () => {
     expect(select).toHaveTextContent("Shows — 1 to fix");
   });
 
+  it("R01-09 residue: an equal-valued newer queue report still beats an in-between recount", async () => {
+    listLibraries.mockResolvedValue([lib(), lib({ id: "lib2", name: "Shows" })]);
+    const flagged = new Map<string, number>([["lib1", 0], ["lib2", 3]]);
+    listNeedsReview.mockImplementation(async (id: string) =>
+      Array.from({ length: flagged.get(id) ?? 0 }, (_, i) => reviewItem({ id: `${id}-${i}` })),
+    );
+    render();
+    const select = await screen.findByTestId("needs-fixing-library-select");
+    await waitFor(() => expect(select).toHaveTextContent("Shows — 3 to fix"));
+
+    // Shows' queue reports 3, then the Admin leaves.
+    await userEvent.selectOptions(select, "lib2");
+    await waitFor(() => expect(screen.getAllByTestId("fix-item")).toHaveLength(3));
+    await userEvent.selectOptions(select, "lib1");
+
+    // A recount elsewhere reads Shows as 5.
+    flagged.set("lib2", 5);
+    await userEvent.click(screen.getByTestId("needs-fixing-recheck-button"));
+    emit("enrichProgress", progressEvent({ libraryId: "lib1", complete: true }));
+    await waitFor(() => expect(select).toHaveTextContent("Shows — 5 to fix"));
+
+    // The server is back to 3; reopening Shows, its queue reports 3 again.
+    flagged.set("lib2", 3);
+    await userEvent.selectOptions(select, "lib2");
+    await waitFor(() => expect(screen.getAllByTestId("fix-item")).toHaveLength(3));
+    await userEvent.selectOptions(select, "lib1");
+    await waitFor(() => expect(screen.queryByTestId("needs-fixing-loading")).toBeNull());
+    expect(select).toHaveTextContent("Shows — 3 to fix");
+  });
+
+  it("R01-09 residue: reopening a library shows the newest count while its queue loads", async () => {
+    listLibraries.mockResolvedValue([lib(), lib({ id: "lib2", name: "Shows" })]);
+    const flagged = new Map<string, number>([["lib1", 0], ["lib2", 3]]);
+    listNeedsReview.mockImplementation(async (id: string) =>
+      Array.from({ length: flagged.get(id) ?? 0 }, (_, i) => reviewItem({ id: `${id}-${i}` })),
+    );
+    render();
+    const select = await screen.findByTestId("needs-fixing-library-select");
+    await waitFor(() => expect(select).toHaveTextContent("Shows — 3 to fix"));
+    await userEvent.selectOptions(select, "lib2");
+    await waitFor(() => expect(screen.getAllByTestId("fix-item")).toHaveLength(3));
+    await userEvent.selectOptions(select, "lib1");
+
+    flagged.set("lib2", 5);
+    await userEvent.click(screen.getByTestId("needs-fixing-recheck-button"));
+    emit("enrichProgress", progressEvent({ libraryId: "lib1", complete: true }));
+    await waitFor(() => expect(select).toHaveTextContent("Shows — 5 to fix"));
+
+    // Reopen Shows with a queue that has not answered yet: the recount is the newest.
+    const slow = deferred<NeedsReviewItem[]>();
+    listNeedsReview.mockReturnValue(slow.promise);
+    await userEvent.selectOptions(select, "lib2");
+    await waitFor(() => expect(screen.getByTestId("needs-fixing-loading")).toBeInTheDocument());
+    expect(select).toHaveTextContent("Shows — 5 to fix");
+    await act(async () => slow.resolve([]));
+  });
+
   it("R01-11 residue: the open library's badge keeps its number while the queue reloads", async () => {
     listNeedsReview.mockResolvedValueOnce([reviewItem()]);
     render();

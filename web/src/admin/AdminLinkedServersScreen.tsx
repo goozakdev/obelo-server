@@ -318,6 +318,8 @@ function LinkRow({ link, onChanged }: { link: Link; onChanged: () => void }) {
     setActionError(null);
     try {
       await apiClient.syncLink(link.id);
+      // A sweep can add newly granted mirror Libraries or hide revoked ones.
+      refreshLibraries();
     } catch (err) {
       // A failed sweep is reported as the failure it was; the row's state has
       // been recorded server-side either way, so the refetch below is still
