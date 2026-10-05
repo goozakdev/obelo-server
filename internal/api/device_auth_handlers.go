@@ -262,3 +262,26 @@ func externalBaseURL(r *http.Request) string {
 	}
 	return scheme + "://" + host
 }
+
+// redirectBaseURL is externalBaseURL for a URL that is handed to a THIRD PARTY,
+// an OAuth redirect_uri registered with an identity provider, rather than back to
+// the caller that sent the request. externalBaseURL's reason for trusting an
+// ungated X-Forwarded-Host (it only shapes a string returned to the forger) does
+// not hold there: the forged host would be stored as the callback of a pending
+// sign-in. So X-Forwarded-Host is honoured only from a peer on the trusted-proxy
+// allowlist (forwarded.go); anyone else gets the Host header the socket was
+// actually asked for.
+func redirectBaseURL(r *http.Request) string {
+	o, ok := requestOriginFrom(r.Context())
+	if !ok {
+		o = resolveOrigin(r, nil)
+	}
+	if o.TrustedPeer {
+		return externalBaseURL(r)
+	}
+	scheme := "http"
+	if o.HTTPS {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}

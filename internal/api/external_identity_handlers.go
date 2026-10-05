@@ -247,7 +247,7 @@ func handleAttachRedirectStart(deps Deps) http.HandlerFunc {
 			return
 		}
 		started, err := deps.SignInRedirect.StartAttach(r.Context(), req.Provider,
-			externalBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
+			redirectBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
 		writeRedirectStart(w, r, started, err)
 	}
 }
@@ -350,7 +350,7 @@ func handleReauthRedirectStart(deps Deps) http.HandlerFunc {
 			return
 		}
 		started, err := deps.SignInRedirect.StartReauth(r.Context(), req.Provider,
-			externalBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
+			redirectBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
 		writeRedirectStart(w, r, started, err)
 	}
 }
