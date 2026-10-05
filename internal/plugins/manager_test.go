@@ -628,6 +628,25 @@ func TestUninstallThatCannotDeleteTheRowPutsTheFilesBack(t *testing.T) {
 	}
 }
 
+// TestInstallRefusesAnIdAnyBuiltInSeamHolds: the duplicate check covers every
+// Extension point, not only the three the first Built-ins filled.
+func TestInstallRefusesAnIdAnyBuiltInSeamHolds(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	desc := pluginapi.Descriptor{Slug: "taken-lyric", Name: "Taken"}
+	f.registry.RegisterLyricProvider(pluginapi.LyricProviderRegistration{
+		Descriptor: desc,
+		New: func(pluginapi.Settings) (pluginapi.LyricProvider, error) {
+			return nil, errors.New("exists to be counted, not called")
+		},
+	})
+	_, err := f.manager.Install(context.Background(),
+		plugintest.ManifestJSON(t, plugintest.SinkManifest("taken-lyric")), plugintest.Guest(t), nil, plugins.SourceUpload)
+	if refusalReason(err) != plugins.ReasonDuplicate {
+		t.Fatalf("install over a Built-in lyric provider's id gave %v, want a duplicate refusal", err)
+	}
+}
+
 // TestALifecycleVerbOnAPluginThatIsNotInstalled.
 func TestALifecycleVerbOnAPluginThatIsNotInstalled(t *testing.T) {
 	plugins.Parallel(t)

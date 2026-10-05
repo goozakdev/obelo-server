@@ -883,7 +883,11 @@ func (m *Manager) checkDuplicate(id string) error {
 		_, sink := m.registry.EventSink(id)
 		_, meta := m.registry.MetadataProvider(id)
 		_, sub := m.registry.SubtitleProvider(id)
-		if sink || meta || sub {
+		_, signIn := m.registry.SignInProvider(id)
+		_, lyric := m.registry.LyricProvider(id)
+		_, marker := m.registry.MarkerProvider(id)
+		_, webRef := m.registry.WebReferenceProvider(id)
+		if sink || meta || sub || signIn || lyric || marker || webRef {
 			return refuse(ReasonDuplicate,
 				"the id %q is already claimed by a plugin this server ships; the plugin must choose another id", id)
 		}
