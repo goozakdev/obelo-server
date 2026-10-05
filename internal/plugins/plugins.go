@@ -782,6 +782,9 @@ var ErrDisabled = errors.New("plugin is disabled")
 type callPolicy struct {
 	// budget bounds the call. Zero means the Plugin's default.
 	budget time.Duration
+	// metaSettings, when set, is what settings_get answers for exactly this call.
+	// Set for a Metadata provider; published after callMu is taken.
+	metaSettings *pluginapi.Settings
 	// refusalIsAnAnswer says a guest that ran to completion and cleanly answered
 	// an error — errGuestRefused — has ANSWERED this call rather than failed it:
 	// the instance is kept and no strike is counted. The error itself still
@@ -903,9 +906,21 @@ func (p *Plugin) callGuestUnder(ctx context.Context, policy callPolicy, export s
 			return fmt.Errorf("plugin %s: %w: %w", p.id, errQueuedPastDeadline, callCtx.Err())
 		}
 	} else {
-		p.callMu <- struct{}{}
+		// The caller's own ctx still ends the wait: a cancelled request or a
+		// shutdown must not sit behind every queued call, each up to its budget.
+		select {
+		case p.callMu <- struct{}{}:
+		case <-ctx.Done():
+			return fmt.Errorf("plugin %s: %w: %w", p.id, errQueuedPastDeadline, ctx.Err())
+		}
 	}
 	defer func() { <-p.callMu }()
+	if policy.metaSettings != nil {
+		// Published only once callMu is held, so a guest answering settings_get for
+		// ANOTHER call on this Plugin never sees this call's secret.
+		p.setCallSettings(policy.metaSettings)
+		defer p.setCallSettings(nil)
+	}
 
 	if p.compiled == nil {
 		return fmt.Errorf("%w: the module was never loaded", ErrDisabled)

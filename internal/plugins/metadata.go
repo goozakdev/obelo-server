@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -64,21 +63,16 @@ const (
 
 // metaState is the per-call state settings_get reads.
 //
-// TWO things, and they are not the same lock.
-//
-//   - mu ORDERS two metadata calls into one Plugin. It is taken before callGuest
-//     takes callMu and is never taken by a host function, so there is no path on
-//     which a host function running re-entrantly inside a guest call can block on
-//     it. It exists because a Plugin can be built twice from one registration —
-//     fanart.tv is composed into both chains today — and the second build's
-//     Settings must not overwrite the first's while the first call is queued.
-//   - settings is read by settings_get under the PLUGIN's mu (the one host
-//     functions already use), because that is the lock a host function may take.
+// settings is read by settings_get under the PLUGIN's mu (the one host functions
+// already use), because that is the lock a host function may take. It is set by
+// callGuestUnder while callMu is held, which is what orders two metadata calls
+// into one Plugin: a Plugin can be built twice from one registration — fanart.tv
+// is composed into both chains today — and the second build's Settings must not
+// overwrite the first's mid-call.
 //
 // A nil settings is "no call is in flight", and settings_get answers a zero
 // Settings for it rather than the last call's secret.
 type metaState struct {
-	mu       sync.Mutex
 	settings *pluginapi.Settings
 }
 
@@ -271,19 +265,10 @@ func (g *guestProvider) ParseExternalRef(ctx context.Context, req pluginapi.Exte
 // --- the call ------------------------------------------------------------------
 
 // call makes one call into the guest with this provider's Settings visible to
-// settings_get for exactly its duration.
-//
-// The lock ordering is metaState.mu → callMu, always, and nothing ever takes them
-// the other way round: a host function takes neither (it takes Plugin.mu), so the
-// re-entrant call a guest makes from inside http_fetch or settings_get cannot
-// deadlock against either.
+// settings_get for exactly its duration. callMu alone orders two metadata calls
+// into one Plugin, and callGuestUnder publishes the Settings only once it holds
+// callMu, so a queued call's secret is never answered to another call's guest.
 func (g *guestProvider) call(ctx context.Context, export string, req, out any) error {
-	g.p.meta.mu.Lock()
-	defer g.p.meta.mu.Unlock()
-
-	g.p.setCallSettings(&g.settings)
-	defer g.p.setCallSettings(nil)
-
 	// addrsOf is the Event sink's: the operator's own configured host is reachable
 	// beside the manifest allowlist, because an author cannot know which mirror an
 	// operator points their base-URL override at (ADR-0058 decision 5, as amended
@@ -303,6 +288,7 @@ func (g *guestProvider) call(ctx context.Context, export string, req, out any) e
 	return g.p.callGuestUnder(ctx, callPolicy{
 		budget:            g.p.metaCallBudget,
 		refusalIsAnAnswer: true,
+		metaSettings:      &g.settings,
 	}, export, addrsOf(g.settings), func(context.Context) any { return req }, out)
 }
 
