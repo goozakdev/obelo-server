@@ -30,7 +30,9 @@ import (
 // GroupMappingStore persists the Admin's mappings. *store.DB satisfies it.
 type GroupMappingStore interface {
 	GroupMapping(pluginID string) ([]store.GroupMappingRule, error)
-	SetGroupMapping(pluginID string, rules []store.GroupMappingRule) error
+	// SetGroupMappingAndInterval writes the rules and the re-check interval in
+	// one transaction, so a PUT is all-or-nothing.
+	SetGroupMappingAndInterval(pluginID string, rules []store.GroupMappingRule, interval time.Duration) error
 }
 
 // maxRecheckIntervalHours bounds the Admin's interval: a month.
@@ -93,16 +95,12 @@ func handleGroupMapping(deps Deps, id string) http.HandlerFunc {
 				writeError(w, http.StatusBadRequest, codeBadRequest, msg, nil)
 				return
 			}
-			if err := deps.GroupMappings.SetGroupMapping(id, rules); err != nil {
+			if err := deps.GroupMappings.SetGroupMappingAndInterval(id, rules, time.Duration(req.IntervalHours)*time.Hour); err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					writeError(w, http.StatusBadRequest, codeBadRequest, "a rule grants a library that does not exist", nil)
 					return
 				}
 				writeError(w, http.StatusInternalServerError, codeInternal, "the group mapping could not be saved", nil)
-				return
-			}
-			if err := deps.SignInRecheck.SetInterval(id, time.Duration(req.IntervalHours)*time.Hour); err != nil {
-				writeError(w, http.StatusInternalServerError, codeInternal, "the re-check interval could not be saved", nil)
 				return
 			}
 		default:

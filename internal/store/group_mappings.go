@@ -75,6 +75,39 @@ func (db *DB) SetGroupMapping(pluginID string, rules []GroupMappingRule) error {
 		return fmt.Errorf("store: setting group mapping: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := setGroupMappingTx(tx, pluginID, rules); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetGroupMappingAndInterval is SetGroupMapping plus the Admin's re-check
+// interval (SetRecheckInterval's semantics: 0 removes the override), in one
+// transaction — a refused mapping leaves the interval as it was, and a failed
+// interval leaves the mapping, so the PUT is all-or-nothing.
+func (db *DB) SetGroupMappingAndInterval(pluginID string, rules []GroupMappingRule, interval time.Duration) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: setting group mapping: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := setGroupMappingTx(tx, pluginID, rules); err != nil {
+		return err
+	}
+	if seconds := int64(interval / time.Second); seconds <= 0 {
+		if _, err := tx.Exec(`DELETE FROM sign_in_recheck_intervals WHERE plugin_id = ?`, pluginID); err != nil {
+			return fmt.Errorf("store: clearing re-check interval: %w", err)
+		}
+	} else if _, err := tx.Exec(
+		`INSERT INTO sign_in_recheck_intervals (plugin_id, seconds) VALUES (?, ?)
+		 ON CONFLICT (plugin_id) DO UPDATE SET seconds = excluded.seconds`, pluginID, seconds); err != nil {
+		return fmt.Errorf("store: setting re-check interval: %w", err)
+	}
+	return tx.Commit()
+}
+
+// setGroupMappingTx replaces pluginID's mapping inside tx; the caller commits.
+func setGroupMappingTx(tx *sql.Tx, pluginID string, rules []GroupMappingRule) error {
 	if _, err := tx.Exec(`DELETE FROM group_mappings WHERE plugin_id = ?`, pluginID); err != nil {
 		return fmt.Errorf("store: setting group mapping: %w", err)
 	}
@@ -100,7 +133,7 @@ func (db *DB) SetGroupMapping(pluginID string, rules []GroupMappingRule) error {
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // RecheckInterval is the Admin's override of how often pluginID's identities
