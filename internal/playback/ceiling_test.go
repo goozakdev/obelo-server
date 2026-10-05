@@ -316,6 +316,52 @@ func TestRelayNegotiateAtTheStreamLimitNeverOpensARemoteSession(t *testing.T) {
 	}
 }
 
+// racingRelay takes the User's last stream slot while the sharer is being asked,
+// which is the window the pre-check cannot close, and records the ends it is sent.
+type racingRelay struct {
+	*markerRelay
+	svc  *Service
+	mu   sync.Mutex
+	ends []string
+}
+
+func (r *racingRelay) RelayNegotiate(ctx context.Context, req RelayRequest) (RelayAnswer, error) {
+	r.svc.Sessions().Create(CreateInput{UserID: "u1", TitleID: "other"}, Decision{Tier: TierDirectPlay})
+	return r.markerRelay.RelayNegotiate(ctx, req)
+}
+
+func (r *racingRelay) RelayEndSession(_ context.Context, linkID, remoteSessionID string) error {
+	r.mu.Lock()
+	r.ends = append(r.ends, linkID+"/"+remoteSessionID)
+	r.mu.Unlock()
+	return nil
+}
+
+// TestRefusedRelayedPlayEndsTheRemoteSession: the stream limit is re-checked when
+// the local session is created, and a slot taken since the pre-check refuses a play
+// the sharer has already opened a session for; that session must be ended.
+func TestRefusedRelayedPlayEndsTheRemoteSession(t *testing.T) {
+	f := mp4File(1080, 6_000_000)
+	f.Path = ""
+	st := relayMarkerStore{&markerStore{ceilingStore: ceilingStore{detail: titleWith(store.Edition{ID: "e1", Files: []store.File{f}})}}}
+	svc := NewService(st, nil, "", Governance{})
+	r := &racingRelay{markerRelay: &markerRelay{}, svc: svc}
+	svc.SetRelay(r)
+	_, _, _, _, err := svc.Negotiate(Request{
+		UserID: "u1", TitleID: "t1", Profile: uhdProfile(),
+		Constraints: Constraints{MaxResolution: "2160p", MaxBitrate: 100_000_000},
+		Scope:       access.Scope{AllLibraries: true, MaxStreams: 1},
+	})
+	if !errors.Is(err, ErrStreamLimit) {
+		t.Fatalf("negotiate err = %v, want ErrStreamLimit", err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.ends) != 1 || r.ends[0] != "l1/rs1" {
+		t.Errorf("remote sessions ended = %v, want [l1/rs1]", r.ends)
+	}
+}
+
 // TestCheckStreamLimitIsAdvisory: the pre-check reports the same counts
 // CreateGoverned would, mints nothing, and never refuses an uncapped User.
 func TestCheckStreamLimitIsAdvisory(t *testing.T) {
