@@ -157,10 +157,12 @@ func (db *DB) WriteEntityEnrichment(entityType, entityID string, e EntityEnrichm
 	// Read current scalars so a Locked field is preserved verbatim (locked ?
 	// current : new). An absent row reads as empty, so a first enrich overlays all.
 	var cur EntityEnrichmentWrite
-	_ = tx.QueryRow(
+	if err := tx.QueryRow(
 		`SELECT overview, content_rating, network FROM entity_enrichment
 		   WHERE entity_type = ? AND entity_id = ?`, entityType, entityID,
-	).Scan(&cur.Overview, &cur.ContentRating, &cur.Network)
+	).Scan(&cur.Overview, &cur.ContentRating, &cur.Network); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("store: reading current entity enrichment: %w", err)
+	}
 	pick := func(field, newVal, curVal string) string {
 		if locks[field] {
 			return curVal
