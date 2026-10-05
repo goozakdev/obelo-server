@@ -290,9 +290,6 @@ type ExternalIdentityCheck struct {
 	CheckFailures int
 }
 
-// sqliteTime is the layout datetime('now') writes.
-const sqliteTime = "2006-01-02 15:04:05"
-
 // ExternalIdentityChecks lists every External identity, oldest first.
 func (db *DB) ExternalIdentityChecks() ([]ExternalIdentityCheck, error) {
 	rows, err := db.Query(
@@ -316,9 +313,9 @@ func (db *DB) ExternalIdentityChecks() ([]ExternalIdentityCheck, error) {
 		if err := json.Unmarshal([]byte(groups), &c.Groups); err != nil {
 			return nil, fmt.Errorf("store: decoding external identity groups: %w", err)
 		}
-		c.LastSeenAt, _ = time.ParseInLocation(sqliteTime, seen, time.UTC)
+		c.LastSeenAt, _ = time.ParseInLocation(sqliteDateTime, seen, time.UTC)
 		if retryAt != "" {
-			c.RetryAt, _ = time.ParseInLocation(sqliteTime, retryAt, time.UTC)
+			c.RetryAt, _ = time.ParseInLocation(sqliteDateTime, retryAt, time.UTC)
 		}
 		out = append(out, c)
 	}
@@ -355,7 +352,7 @@ func (db *DB) RecordExternalCheck(pluginID, subject, username string, groups []s
 		        refresh_token = CASE WHEN ? = '' THEN refresh_token ELSE ? END,
 		        last_seen_at = ?, retry_at = '', check_failures = 0
 		  WHERE plugin_id = ? AND subject = ?`,
-		username, username, g, refreshToken, refreshToken, at.UTC().Format(sqliteTime), pluginID, subject)
+		username, username, g, refreshToken, refreshToken, at.UTC().Format(sqliteDateTime), pluginID, subject)
 	if err != nil {
 		return fmt.Errorf("store: recording external re-check: %w", err)
 	}
@@ -377,7 +374,7 @@ func (db *DB) NoteExternalCheckFailure(pluginID, subject string, retryAt time.Ti
 	err := db.QueryRow(
 		`UPDATE external_identities SET retry_at = ?, check_failures = check_failures + ?
 		  WHERE plugin_id = ? AND subject = ? RETURNING check_failures`,
-		retryAt.UTC().Format(sqliteTime), add, pluginID, subject).Scan(&n)
+		retryAt.UTC().Format(sqliteDateTime), add, pluginID, subject).Scan(&n)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}

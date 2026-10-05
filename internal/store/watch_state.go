@@ -174,17 +174,12 @@ func (db *DB) WatchStatesForTitles(userID string, titleIDs []string) (map[string
 	// Build a (?, ?, ...) IN-list; the set is bounded by a single browse page.
 	args := make([]any, 0, len(titleIDs)+1)
 	args = append(args, userID)
-	placeholders := make([]byte, 0, len(titleIDs)*2)
-	for i, id := range titleIDs {
-		if i > 0 {
-			placeholders = append(placeholders, ',')
-		}
-		placeholders = append(placeholders, '?')
+	for _, id := range titleIDs {
 		args = append(args, id)
 	}
 	rows, err := db.Query(
 		`SELECT title_id, resume_position_ms, watched, updated_at
-		   FROM watch_state WHERE user_id = ? AND title_id IN (`+string(placeholders)+`)`,
+		   FROM watch_state WHERE user_id = ? AND title_id IN (`+placeholders(len(titleIDs))+`)`,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading watch states: %w", err)
@@ -297,19 +292,14 @@ func (db *DB) titleDurations(titleIDs []string) (map[string]int64, error) {
 		return out, nil
 	}
 	args := make([]any, len(titleIDs))
-	placeholders := make([]byte, 0, len(titleIDs)*2)
 	for i, id := range titleIDs {
-		if i > 0 {
-			placeholders = append(placeholders, ',')
-		}
-		placeholders = append(placeholders, '?')
 		args[i] = id
 	}
 	rows, err := db.Query(
 		`SELECT ed.title_id, ed.id, f.present, f.part_ordinal, f.duration_ms
 		   FROM editions ed
 		   JOIN files f ON f.edition_id = ed.id
-		  WHERE ed.title_id IN (`+string(placeholders)+`)
+		  WHERE ed.title_id IN (`+placeholders(len(titleIDs))+`)
 		  ORDER BY ed.title_id, ed.id, f.part_ordinal, f.path`,
 		args...)
 	if err != nil {

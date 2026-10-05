@@ -173,7 +173,7 @@ func (db *DB) CollidingFilePaths(titleIDs []string) (map[string][]string, error)
 	if len(titleIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(titleIDs)), ",")
+	ph := placeholders(len(titleIDs))
 	args := make([]any, len(titleIDs))
 	for i, id := range titleIDs {
 		args[i] = id
@@ -181,7 +181,7 @@ func (db *DB) CollidingFilePaths(titleIDs []string) (map[string][]string, error)
 	rows, err := db.Query(
 		`SELECT e.title_id, e.id, f.path, f.part_ordinal
 		   FROM editions e JOIN files f ON f.edition_id = e.id
-		  WHERE e.title_id IN (`+placeholders+`) AND f.present = 1
+		  WHERE e.title_id IN (`+ph+`) AND f.present = 1
 		  ORDER BY e.title_id, e.id, f.part_ordinal, f.path`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading colliding files: %w", err)

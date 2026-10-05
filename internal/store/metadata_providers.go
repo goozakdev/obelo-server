@@ -173,11 +173,6 @@ func (db *DB) SetEnrichmentBehavior(autoEnrichAfterScan bool, enrichIntervalSeco
 	return nil
 }
 
-// sqliteDatetimeLayout is the text format SQLite's datetime('now') writes (UTC,
-// no zone suffix). The consent timestamp is stored with it and parsed back with
-// the same layout, treated as UTC.
-const sqliteDatetimeLayout = "2006-01-02 15:04:05"
-
 // EnrichmentConsent is the persisted first-run Enrichment consent decision
 // (ADR-0032), read from the singleton metadata_settings row. Decided distinguishes
 // "the operator has answered" from the undecided default (a NULL granted column):
@@ -228,7 +223,7 @@ func (db *DB) EnrichmentConsent() (EnrichmentConsent, error) {
 		out.Granted = granted.Bool
 	}
 	if at.Valid {
-		if t, perr := time.Parse(sqliteDatetimeLayout, at.String); perr == nil {
+		if t, perr := time.Parse(sqliteDateTime, at.String); perr == nil {
 			out.At = t.UTC()
 		}
 	}

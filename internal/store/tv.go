@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 )
@@ -338,10 +337,8 @@ func (db *DB) UnwatchedEpisodeCounts(userID string, showIDs []string) (map[strin
 	}
 	// Parameter order matches the SQL: the IN (...) Show ids first, then the
 	// userID used by the NOT EXISTS watch_state correlation.
-	placeholders := make([]string, len(showIDs))
 	args := make([]any, 0, len(showIDs)+1)
-	for i, id := range showIDs {
-		placeholders[i] = "?"
+	for _, id := range showIDs {
 		args = append(args, id)
 	}
 	args = append(args, userID)
@@ -350,7 +347,7 @@ func (db *DB) UnwatchedEpisodeCounts(userID string, showIDs []string) (map[strin
 		   FROM shows sh
 		   JOIN seasons s ON s.show_id = sh.id AND s.hidden = 0
 		   JOIN titles  t ON t.season_id = s.id AND t.kind = 'episode' AND t.hidden = 0
-		  WHERE sh.id IN (`+strings.Join(placeholders, ",")+`)
+		  WHERE sh.id IN (`+placeholders(len(showIDs))+`)
 		    AND NOT EXISTS (
 		          SELECT 1 FROM watch_state wt
 		           WHERE wt.user_id = ? AND wt.title_id = t.id AND wt.watched = 1

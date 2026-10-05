@@ -404,7 +404,7 @@ func (db *DB) EntityEnrichmentForMany(entityType string, ids []string) (map[stri
 	if len(ids) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	ph := placeholders(len(ids))
 	args := make([]any, 0, len(ids)+1)
 	args = append(args, entityType)
 	for _, id := range ids {
@@ -412,7 +412,7 @@ func (db *DB) EntityEnrichmentForMany(entityType string, ids []string) (map[stri
 	}
 	rows, err := db.Query(
 		`SELECT entity_id, overview, content_rating, network, enrichment_status, enrichment_source
-		   FROM entity_enrichment WHERE entity_type = ? AND entity_id IN (`+placeholders+`)`, args...)
+		   FROM entity_enrichment WHERE entity_type = ? AND entity_id IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading entity enrichment: %w", err)
 	}
@@ -431,7 +431,7 @@ func (db *DB) EntityEnrichmentForMany(entityType string, ids []string) (map[stri
 	// Genres in one more query, appended onto the rows gathered above.
 	grows, err := db.Query(
 		`SELECT entity_id, genre FROM entity_genres
-		   WHERE entity_type = ? AND entity_id IN (`+placeholders+`) ORDER BY entity_id, ord, genre`, args...)
+		   WHERE entity_type = ? AND entity_id IN (`+ph+`) ORDER BY entity_id, ord, genre`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading entity genres: %w", err)
 	}
@@ -570,7 +570,7 @@ func (db *DB) EntityArtworkRolesForMany(entityType string, ids []string) (map[st
 	if len(ids) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	ph := placeholders(len(ids))
 	oneSide := make([]any, 0, len(ids)+1)
 	oneSide = append(oneSide, entityType)
 	for _, id := range ids {
@@ -579,10 +579,10 @@ func (db *DB) EntityArtworkRolesForMany(entityType string, ids []string) (map[st
 	args := append(append([]any{}, oneSide...), oneSide...)
 	rows, err := db.Query(
 		`SELECT entity_id, role FROM entity_artwork
-		   WHERE entity_type = ? AND entity_id IN (`+placeholders+`)
+		   WHERE entity_type = ? AND entity_id IN (`+ph+`)
 		 UNION
 		 SELECT entity_id, role FROM linked_entity_artwork
-		   WHERE entity_type = ? AND entity_id IN (`+placeholders+`)`, args...)
+		   WHERE entity_type = ? AND entity_id IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading entity artwork roles: %w", err)
 	}
@@ -612,7 +612,7 @@ func (db *DB) EntityArtworkVersionsForMany(entityType string, ids []string) (map
 	if len(ids) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	ph := placeholders(len(ids))
 	oneSide := make([]any, 0, len(ids)+1)
 	oneSide = append(oneSide, entityType)
 	for _, id := range ids {
@@ -627,10 +627,10 @@ func (db *DB) EntityArtworkVersionsForMany(entityType string, ids []string) (map
 	rows, err := db.Query(
 		`SELECT entity_id, MAX(v) FROM (
 		     SELECT entity_id, added_at AS v FROM entity_artwork
-		       WHERE entity_type = ? AND entity_id IN (`+placeholders+`)
+		       WHERE entity_type = ? AND entity_id IN (`+ph+`)
 		     UNION ALL
 		     SELECT entity_id, version AS v FROM linked_entity_artwork
-		       WHERE entity_type = ? AND entity_id IN (`+placeholders+`)
+		       WHERE entity_type = ? AND entity_id IN (`+ph+`)
 		 ) GROUP BY entity_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading entity artwork versions: %w", err)
@@ -1045,23 +1045,7 @@ func (db *DB) ReleaseEntityFieldLock(entityType, entityID, field string) error {
 // ListAllShows returns every visible Show of a TV Library (no pagination), for an
 // Enrichment pass to walk the whole library. Hidden Shows are skipped (ADR-0008).
 func (db *DB) ListAllShows(libraryID string) ([]Show, error) {
-	rows, err := db.Query(
-		`SELECT id, library_id, title, year, identity_key, sort_title,
-		        tmdb_id, imdb_id, needs_review, hidden, added_at
-		   FROM shows WHERE library_id = ? AND hidden = 0 ORDER BY sort_title, id`, libraryID)
-	if err != nil {
-		return nil, fmt.Errorf("store: listing all shows: %w", err)
-	}
-	defer rows.Close()
-	var out []Show
-	for rows.Next() {
-		s, err := scanShow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
+	return db.ShowsByLibrary(libraryID)
 }
 
 // ListAllArtists returns every visible Artist of a Music Library (no pagination),
