@@ -546,6 +546,33 @@ type libraryFileState struct {
 	// its folders instead of every Show re-scanning the whole Library's lists.
 	unmatchedAt map[string][]int    // folder → indexes into unmatched (Library order)
 	decisionsAt map[string][]string // folder → decided paths
+	// showFiles is every Show's Files (ShowFiles) by Show id, when the caller asked
+	// for them in one read; nil means each Show reads its own.
+	showFiles map[string][]store.ShowFile
+}
+
+// showFilesByLibrary is the optional bulk read behind libraryFileState.showFiles.
+// *store.DB satisfies it; a Store that does not leaves each Show reading its own.
+type showFilesByLibrary interface {
+	ShowFilesByLibrary(libraryID string) (map[string][]store.ShowFile, error)
+}
+
+// withShowFiles loads every Show's Files in one read, for a caller that visits all
+// the Shows of the Library (the Needs-Fixing queue).
+func (s *Service) withShowFiles(lib libraryFileState, libraryID string) (libraryFileState, error) {
+	b, ok := s.store.(showFilesByLibrary)
+	if !ok {
+		return lib, nil
+	}
+	files, err := b.ShowFilesByLibrary(libraryID)
+	if err != nil {
+		return lib, err
+	}
+	if files == nil {
+		files = map[string][]store.ShowFile{}
+	}
+	lib.showFiles = files
+	return lib, nil
 }
 
 // unmatchedIn returns the Library's Unmatched rows under any of folders, in the
@@ -601,8 +628,11 @@ func (s *Service) localArrangement(sh store.Show) (localArrangement, error) {
 func (s *Service) showArrangement(sh store.Show, lib libraryFileState, withSlots bool) (localArrangement, error) {
 	var out localArrangement
 
-	showFiles, err := s.store.ShowFiles(sh.ID)
-	if err != nil {
+	var showFiles []store.ShowFile
+	var err error
+	if lib.showFiles != nil {
+		showFiles = lib.showFiles[sh.ID] // a Show with no Files has no entry
+	} else if showFiles, err = s.store.ShowFiles(sh.ID); err != nil {
 		return out, err
 	}
 	decisions := lib.decisions

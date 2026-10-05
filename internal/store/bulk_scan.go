@@ -183,3 +183,36 @@ func (db *DB) AddUnmatched(libraryID string, files []UnmatchedFile) error {
 	}
 	return nil
 }
+
+// ShowFilesByLibrary is ShowFiles for every Show of the Library at once, keyed by
+// Show id, each list in ShowFiles' own order (path, then identity key). The
+// Needs-Fixing queue reads it once instead of once per Show.
+func (db *DB) ShowFilesByLibrary(libraryID string) (map[string][]ShowFile, error) {
+	rows, err := db.Query(
+		`SELECT s.show_id, f.path, f.present, f.duration_ms, t.id, t.identity_key,
+		        t.season_number, t.episode_number
+		   FROM files f
+		   JOIN editions e ON e.id = f.edition_id
+		   JOIN titles   t ON t.id = e.title_id
+		   JOIN seasons  s ON s.id = t.season_id
+		   JOIN shows   sh ON sh.id = s.show_id
+		  WHERE sh.library_id = ?
+		  ORDER BY s.show_id, f.path, t.identity_key`, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing show files by library: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]ShowFile{}
+	for rows.Next() {
+		var showID string
+		var sf ShowFile
+		var present int
+		if err := rows.Scan(&showID, &sf.Path, &present, &sf.DurationMs, &sf.TitleID,
+			&sf.IdentityKey, &sf.SeasonNumber, &sf.EpisodeNumber); err != nil {
+			return nil, fmt.Errorf("store: scanning show file: %w", err)
+		}
+		sf.Present = present != 0
+		out[showID] = append(out[showID], sf)
+	}
+	return out, rows.Err()
+}
