@@ -6,10 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/audio"
@@ -1363,7 +1361,7 @@ func handleSessionSubtitleHLS(deps Deps, sessionID, file string) http.HandlerFun
 			writeHLSSubtitle(w, file, data, true)
 		case isSubtitleSegment(file):
 			subID, index, _ := parseSubtitleSegmentFile(file)
-			full, err := wholeSubtitleVTT(r.Context(), sctx, subID)
+			cues, err := subtitleSegmentCues(r.Context(), sctx, subID)
 			switch {
 			case errors.Is(err, errSubtitleNotText), errors.Is(err, errSubtitleNotFound):
 				writeError(w, http.StatusNotFound, codeNotFound, "subtitle not found", nil)
@@ -1372,7 +1370,7 @@ func handleSessionSubtitleHLS(deps Deps, sessionID, file string) http.HandlerFun
 				writeError(w, http.StatusInternalServerError, codeInternal, "failed to render subtitle", nil)
 				return
 			}
-			writeHLSSubtitle(w, file, subtitle.SegmentVTT(full, index, hlsSegmentSeconds), false)
+			writeHLSSubtitle(w, file, cues.Segment(index, hlsSegmentSeconds), false)
 		default:
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 		}
@@ -1391,19 +1389,20 @@ func wholeSubtitleVTT(ctx context.Context, sctx playback.SessionSubtitleContext,
 	if sctx.ScratchDir == "" {
 		return subtitleVTT(ctx, sctx.Detail, subID)
 	}
-	cachePath := filepath.Join(sctx.ScratchDir, "subfull_"+subID+".vtt")
+	cachePath := subtitleCachePath(sctx.ScratchDir, subID)
 	if data, err := os.ReadFile(cachePath); err == nil {
 		return data, nil
 	}
 	// Concurrent segment requests for one (session, track) share a single
 	// extraction. It runs detached from any one request's cancellation (a
-	// follower must not inherit the leader's abort); extractEmbeddedVTT bounds it
-	// with its own size-scaled timeout.
-	return wholeSubtitleFlight.do(cachePath, func() ([]byte, error) {
+	// follower must not inherit the first caller's abort) but is cancelled when
+	// the last waiter leaves; extractEmbeddedVTT bounds it with its own
+	// size-scaled timeout.
+	return wholeSubtitleFlight.do(ctx, cachePath, func(ctx context.Context) ([]byte, error) {
 		if data, err := os.ReadFile(cachePath); err == nil {
 			return data, nil
 		}
-		data, err := subtitleVTT(context.WithoutCancel(ctx), sctx.Detail, subID)
+		data, err := subtitleVTT(ctx, sctx.Detail, subID)
 		if err != nil {
 			return nil, err
 		}
@@ -1421,42 +1420,6 @@ func wholeSubtitleVTT(ctx context.Context, sctx playback.SessionSubtitleContext,
 		}
 		return data, nil
 	})
-}
-
-// subtitleFlight collapses concurrent calls for one key into a single run of fn;
-// the others wait and share its result.
-type subtitleFlight struct {
-	mu    sync.Mutex
-	calls map[string]*subtitleCall
-}
-
-type subtitleCall struct {
-	done chan struct{}
-	data []byte
-	err  error
-}
-
-var wholeSubtitleFlight = &subtitleFlight{calls: map[string]*subtitleCall{}}
-
-func (f *subtitleFlight) do(key string, fn func() ([]byte, error)) ([]byte, error) {
-	f.mu.Lock()
-	if c, ok := f.calls[key]; ok {
-		f.mu.Unlock()
-		<-c.done
-		return c.data, c.err
-	}
-	c := &subtitleCall{done: make(chan struct{})}
-	f.calls[key] = c
-	f.mu.Unlock()
-
-	defer func() {
-		f.mu.Lock()
-		delete(f.calls, key)
-		f.mu.Unlock()
-		close(c.done)
-	}()
-	c.data, c.err = fn()
-	return c.data, c.err
 }
 
 // isSubtitlePlaylist / isSubtitleSegment classify a subs_ artifact by suffix (a
