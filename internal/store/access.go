@@ -1,7 +1,5 @@
 package store
 
-import "strings"
-
 // AccessFilter is the persistence-side access predicate the cross-library browse
 // reads (search, the Home rows) apply: the visible Library set and the maturity
 // ceiling. It is the store projection of a User's access scope — the access
@@ -37,20 +35,8 @@ func (f AccessFilter) libraryClause(libraryCol string) (string, []any) {
 	if len(f.LibraryIDs) == 0 {
 		return " AND 1 = 0", nil // no Libraries visible → match nothing
 	}
-	var b strings.Builder
-	b.WriteString(" AND ")
-	b.WriteString(libraryCol)
-	b.WriteString(" IN (")
-	args := make([]any, 0, len(f.LibraryIDs))
-	for i, id := range f.LibraryIDs {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('?')
-		args = append(args, id)
-	}
-	b.WriteByte(')')
-	return b.String(), args
+	return " AND " + libraryCol + " IN (" + placeholders(len(f.LibraryIDs)) + ")",
+		toArgs(f.LibraryIDs)
 }
 
 // titleRatingClause returns an ANDable fragment (leading " AND ") excluding rows
