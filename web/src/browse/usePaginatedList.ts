@@ -247,20 +247,13 @@ export function usePaginatedList<T>(
         }
         cursor = page.nextCursor;
       } while (cursor && fresh.length < want);
-      // When the walk stopped early (cursor !== null), keep the previously-loaded
-      // items that sit AFTER the last one the walk re-saw (pushed past the window
-      // by an insertion), in their existing order. Anything the walk lacks BEFORE
-      // that point was removed inside the window and drops. When it reached the
-      // end, fresh is the whole list: anything it lacks was removed.
-      let tail: T[] = [];
-      if (cursor !== null) {
-        let anchor = -1;
-        prev.forEach((item, i) => {
-          if (ids.has(getIdRef.current(item))) anchor = i;
-        });
-        tail = prev.slice(anchor + 1).filter((item) => !ids.has(getIdRef.current(item)));
-      }
-      commitItems(fresh.concat(tail));
+      // The refreshed pages REPLACE the list and the cursor continues from where
+      // the walk stopped. The walk always covers at least what was loaded, so the
+      // list never shrinks; an item pushed past the window by an insertion is the
+      // next page's head and returns on the next loadMore. Anything the walk lacks
+      // inside the window was removed and drops.
+      commitItems(fresh);
+      setError(null); // a refresh that lands supersedes an earlier loadMore failure
       cooldownMs.current = (pages - 1) * REFRESH_COST_MS;
       cursorRef.current = cursor;
       setCursor(cursor);

@@ -27,9 +27,11 @@ describe("usePaginatedList refresh (review)", () => {
     await waitFor(() => expect(result.current.items.map(getId)).toEqual(["a", "c"]));
   });
 
-  it("keeps loaded items past the window when the walk really stopped early", async () => {
-    // 3 pages of 2; the user has loaded 2 (a,b). A new x lands at the head, so a
-    // 2-item window walk is [x,a] and stops with a next cursor; b must survive.
+  // D005: an early-stopped walk replaces the list; the cursor continues from it.
+  it("replaces the list on an early stop and loadMore yields the pushed-out item next", async () => {
+    // 3 pages of 2; the user has loaded 4 (a-d). A new x lands at the head, so a
+    // 4-item window walk is [x,a,b,c] and stops with a next cursor; d is the next
+    // page's head, not a kept tail.
     let all = ["a", "b", "c", "d", "e", "f"];
     const fetchPage = (cursor: string | null) => {
       const start = cursor === null ? 0 : Number(cursor);
@@ -47,8 +49,40 @@ describe("usePaginatedList refresh (review)", () => {
     await act(async () => {
       result.current.refresh();
     });
-    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["x", "a", "b", "c", "d"]));
+    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["x", "a", "b", "c"]));
     expect(result.current.hasMore).toBe(true);
+    await act(async () => {
+      result.current.loadMore();
+    });
+    await waitFor(() =>
+      expect(result.current.items.map(getId)).toEqual(["x", "a", "b", "c", "d", "e"]),
+    );
+  });
+
+  it("does not keep a deleted tail item or grow the list on repeated early-stopped refreshes", async () => {
+    let all = ["a", "b", "c", "d", "e", "f"];
+    const fetchPage = (cursor: string | null) => {
+      const start = cursor === null ? 0 : Number(cursor);
+      return Promise.resolve(
+        page(all.slice(start, start + 2), start + 2 < all.length ? String(start + 2) : null),
+      );
+    };
+    const { result } = renderHook(() => usePaginatedList(fetchPage, getId));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.items.length).toBe(4));
+    all = ["a", "b", "c", "e", "f"]; // d (the loaded tail) is deleted
+    await act(async () => {
+      result.current.refresh();
+    });
+    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["a", "b", "c", "e"]));
+    await act(async () => {
+      result.current.refresh();
+    });
+    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["a", "b", "c", "e"]));
+    expect(result.current.items).toHaveLength(4);
   });
 
   it("still drops an item deleted inside the window on an early stop", async () => {
@@ -102,7 +136,9 @@ describe("usePaginatedList refresh (review)", () => {
 
   it("keeps the page a loadMore just appended when a refresh was replayed after it", async () => {
     let releasePage2: () => void = () => {};
+    let fetchCalls = 0;
     const fetchPage = (cursor: string | null) => {
+      fetchCalls++;
       if (cursor === "2") {
         return new Promise<Page<Item>>((resolve) => {
           releasePage2 = () => resolve(page(["c", "d"], null));
@@ -119,8 +155,31 @@ describe("usePaginatedList refresh (review)", () => {
       result.current.refresh();
     });
     await act(async () => {
-      releasePage2();
+      releasePage2(); // loadMore lands; the replayed refresh starts and holds on page 2
     });
-    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["a", "b", "c", "d"]));
+    expect(result.current.items.map(getId)).toEqual(["a", "b", "c", "d"]);
+    await act(async () => {
+      releasePage2(); // let the replayed refresh complete
+    });
+    await waitFor(() => expect(fetchCalls).toBe(4));
+    expect(result.current.items.map(getId)).toEqual(["a", "b", "c", "d"]);
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it("clears a failed loadMore's error when the pending refresh succeeds", async () => {
+    let failNext = false;
+    const fetchPage = (cursor: string | null) => {
+      if (cursor === "2" && failNext) return Promise.reject(new Error("boom"));
+      return Promise.resolve(page(["a", "b"], "2"));
+    };
+    const { result } = renderHook(() => usePaginatedList(fetchPage, getId));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    failNext = true;
+    await act(async () => {
+      result.current.loadMore();
+      result.current.refresh(); // skipped while loadMore is in flight, replayed after
+    });
+    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["a", "b"]));
+    await waitFor(() => expect(result.current.error).toBeNull());
   });
 });
