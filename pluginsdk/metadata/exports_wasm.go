@@ -9,8 +9,8 @@ import (
 	"github.com/goozakdev/obelo-server/pluginsdk"
 )
 
-// The eight exports of the Metadata provider Extension point. Every one has the
-// same five lines — decode, dispatch, encode — which is exactly why they are
+// The eight exports of the Metadata provider Extension point. Every one is the
+// same decode, dispatch, encode — [dispatch] — which is exactly why they are
 // here and not in seven plugins.
 //
 // # The context
@@ -45,23 +45,31 @@ func callCtx() (context.Context, context.CancelFunc) {
 	return pluginsdk.CallContext(pluginsdk.Sandbox().Settings().CallRemainingMillis)
 }
 
+// dispatch is the tail every export shares: decode the request, build the call
+// ctx, call the served method, and answer with its response or with the failure
+// the ABI reserves for a Go error. request completes "the request is not ..."
+// and label prefixes the error, so each export keeps its own sentence.
+func dispatch[Req, Resp any](ptr, n uint32, request, label string, call func(context.Context, Req) (Resp, error)) uint64 {
+	var req Req
+	if !pluginsdk.TakeRequest(ptr, n, &req) {
+		return pluginsdk.Fail("the request is not " + request)
+	}
+	ctx, cancel := callCtx()
+	defer cancel()
+	resp, err := call(ctx, req)
+	if err != nil {
+		return pluginsdk.Fail(label + ": " + err.Error())
+	}
+	return pluginsdk.Reply(resp)
+}
+
 //go:wasmexport metadata_lookup
 func metadataLookup(ptr, n uint32) uint64 {
 	p := served
 	if p == nil {
 		return noProvider()
 	}
-	var req pluginapi.LookupRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not a LookupRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := p.Lookup(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("lookup: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "a LookupRequest", "lookup", p.Lookup)
 }
 
 //go:wasmexport metadata_search
@@ -70,17 +78,7 @@ func metadataSearch(ptr, n uint32) uint64 {
 	if p == nil {
 		return noProvider()
 	}
-	var req pluginapi.SearchRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not a SearchRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := p.Search(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("search: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "a SearchRequest", "search", p.Search)
 }
 
 //go:wasmexport metadata_artwork_candidates
@@ -89,17 +87,7 @@ func metadataArtworkCandidates(ptr, n uint32) uint64 {
 	if p == nil {
 		return noProvider()
 	}
-	var req pluginapi.ArtworkCandidatesRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not an ArtworkCandidatesRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := p.ArtworkCandidates(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("artwork candidates: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "an ArtworkCandidatesRequest", "artwork candidates", p.ArtworkCandidates)
 }
 
 //go:wasmexport metadata_series_seasons
@@ -111,17 +99,7 @@ func metadataSeriesSeasons(ptr, n uint32) uint64 {
 			Detail:  unimplemented("episode-list"),
 		})
 	}
-	var req pluginapi.SeriesSeasonsRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not a SeriesSeasonsRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := lister.SeriesSeasons(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("series seasons: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "a SeriesSeasonsRequest", "series seasons", lister.SeriesSeasons)
 }
 
 //go:wasmexport metadata_season_episodes
@@ -133,17 +111,7 @@ func metadataSeasonEpisodes(ptr, n uint32) uint64 {
 			Detail:  unimplemented("episode-list"),
 		})
 	}
-	var req pluginapi.SeasonEpisodesRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not a SeasonEpisodesRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := lister.SeasonEpisodes(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("season episodes: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "a SeasonEpisodesRequest", "season episodes", lister.SeasonEpisodes)
 }
 
 // metadata_album_tracklist answers OutcomeUnavailable — not the OutcomeNoMatch
@@ -166,17 +134,7 @@ func metadataAlbumTracklist(ptr, n uint32) uint64 {
 			Detail:  unimplemented("album-tracklist"),
 		})
 	}
-	var req pluginapi.TracklistRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not a TracklistRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := lister.AlbumTracklist(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("album tracklist: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "a TracklistRequest", "album tracklist", lister.AlbumTracklist)
 }
 
 //go:wasmexport metadata_release_editions
@@ -188,17 +146,7 @@ func metadataReleaseEditions(ptr, n uint32) uint64 {
 			Detail:  unimplemented("album-tracklist"),
 		})
 	}
-	var req pluginapi.ReleaseEditionsRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not a ReleaseEditionsRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := lister.ReleaseGroupEditions(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("release editions: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "a ReleaseEditionsRequest", "release editions", lister.ReleaseGroupEditions)
 }
 
 //go:wasmexport metadata_external_ref
@@ -210,17 +158,7 @@ func metadataExternalRef(ptr, n uint32) uint64 {
 			Detail:  unimplemented("external-ref"),
 		})
 	}
-	var req pluginapi.ExternalRefRequest
-	if !pluginsdk.TakeRequest(ptr, n, &req) {
-		return pluginsdk.Fail("the request is not an ExternalRefRequest")
-	}
-	ctx, cancel := callCtx()
-	defer cancel()
-	resp, err := parser.ParseExternalRef(ctx, req)
-	if err != nil {
-		return pluginsdk.Fail("external ref: " + err.Error())
-	}
-	return pluginsdk.Reply(resp)
+	return dispatch(ptr, n, "an ExternalRefRequest", "external ref", parser.ParseExternalRef)
 }
 
 // noProvider is what every call answers when init() never reached Serve. It is a
