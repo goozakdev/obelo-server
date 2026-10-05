@@ -45,6 +45,12 @@ func TestRelayTailAllowed(t *testing.T) {
 		{"sessions/remote-9/hls/nested/000.ts", false},
 		{"sessions/remote-9/../../libraries", false},
 		{"libraries", false},
+		// A double-encoded traversal reaches here as a literal %2E%2E%2F (the
+		// router decoded once); the sharer would decode it again.
+		{"sessions/remote-9/hls/%2E%2E%2F%2E%2E%2Fusers", false},
+		{"sessions/remote-9/hls/%2e%2e", false},
+		{"sessions/remote-9/hls/000.ts?x=1", false},
+		{"sessions/remote-9/hls/a\\b.ts", false},
 		{"users", false},
 		{"", false},
 	}
