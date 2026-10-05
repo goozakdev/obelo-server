@@ -369,7 +369,6 @@ func (db *DB) LookupToken(tokenHash string) (TokenIdentity, error) {
 // lookup rewrites it.
 const lastSeenTouchInterval = time.Minute
 
-
 // DeleteToken revokes a single token by its hash (logout). It is a no-op if the
 // token is already gone.
 func (db *DB) DeleteToken(tokenHash string) error {
