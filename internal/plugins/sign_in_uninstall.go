@@ -145,7 +145,7 @@ func (m *Manager) uninstallSignIn(ctx context.Context, id string, others, confir
 // every OTHER installed one — enabled or not, and whether or not the host has
 // stopped calling it: an identity at any of them is still a way in.
 func (m *Manager) signInProviders(ctx context.Context, id string) (others []string, signIn bool, err error) {
-	list, err := m.List(ctx)
+	list, err := m.list(ctx, "", false)
 	if err != nil {
 		return nil, false, err
 	}

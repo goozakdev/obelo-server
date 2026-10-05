@@ -472,7 +472,7 @@ func (m *Manager) SetEnabled(ctx context.Context, id string, enabled bool) (Inst
 		return Installed{}, err
 	}
 	m.logf("obelo: plugin %s is now %s", id, enabledWord(enabled))
-	return m.view(id)
+	return m.view(ctx, id)
 }
 
 // Reenable forgets a Plugin's recorded failure and gives it another chance.
@@ -494,9 +494,6 @@ func (m *Manager) Reenable(ctx context.Context, id string) (Installed, error) {
 	if err := m.ensureRow(id); err != nil {
 		return Installed{}, err
 	}
-	if p := m.plugin(id); p != nil {
-		p.Reenable()
-	}
 	if m.store != nil {
 		if err := m.store.SetPluginLastError(id, ""); err != nil {
 			return Installed{}, err
@@ -506,7 +503,7 @@ func (m *Manager) Reenable(ctx context.Context, id string) (Installed, error) {
 		return Installed{}, err
 	}
 	m.logf("obelo: plugin %s was re-enabled by an admin", id)
-	return m.view(id)
+	return m.view(ctx, id)
 }
 
 // Uninstall unloads the module, deletes the files and deletes the rows.
@@ -595,6 +592,15 @@ func (m *Manager) uninstall(ctx context.Context, id string) error {
 // and it must not vanish from the screen because it did not come through the
 // upload form.
 func (m *Manager) List(ctx context.Context) ([]Installed, error) {
+	return m.list(ctx, "", true)
+}
+
+// list is List, optionally narrowed. A non-empty only builds the item for that id
+// alone, and withSettings false skips the per-Plugin settings read: a verb's
+// response wants one row and sign-in discovery wants only ids and Provides, and
+// neither should pay for the whole Plugins screen.
+func (m *Manager) list(ctx context.Context, only string, withSettings bool) ([]Installed, error) {
+	_ = ctx
 	rows, err := m.rows()
 	if err != nil {
 		return nil, err
@@ -606,9 +612,11 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 		order = append(order, r.ID)
 	}
 	statuses := map[string]Status{}
+	loadedPlugins := map[string]*Plugin{}
 	for _, p := range m.Plugins().Plugins() {
 		st := p.Status()
 		statuses[st.ID] = st
+		loadedPlugins[p.ID()] = p
 		if _, ok := byID[st.ID]; !ok {
 			order = append(order, st.ID)
 		}
@@ -618,6 +626,9 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 
 	out := make([]Installed, 0, len(order))
 	for _, id := range order {
+		if only != "" && id != only {
+			continue
+		}
 		row, hasRow := byID[id]
 		st, loaded := statuses[id]
 		item := Installed{
@@ -635,16 +646,21 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 			KeyID:       row.KeyID,
 			Origin:      originOf(row.Origin),
 		}
-		if p := m.plugin(id); p != nil && len(p.Manifest().Provides) > 0 {
-			item.Provides = providesOf(p.Manifest())
+		plug := loadedPlugins[id]
+		if plug != nil && len(plug.Manifest().Provides) > 0 {
+			item.Provides = providesOf(plug.Manifest())
 			if item.APIVersion == 0 {
-				item.APIVersion = p.Manifest().APIVersion
+				item.APIVersion = plug.Manifest().APIVersion
 			}
 		}
 		// The declared settings schema comes from the MANIFEST ON DISK, never from
 		// the row: the row remembers what an Admin decided, and what a Plugin asks to
 		// be configured with is the author's, changing with the file whenever it does.
-		if fields := m.declaredFields(id); len(fields) > 0 {
+		var fields []pluginapi.SettingsField
+		if withSettings && plug != nil {
+			fields = settingsFields(plug.Manifest())
+		}
+		if len(fields) > 0 {
 			item.SettingsSchema = fields
 			values, secrets := PublicSettingValues(fields, m.settingRows(id))
 			item.Settings = &SettingsView{Values: values, Secrets: secrets}
@@ -666,7 +682,11 @@ func (m *Manager) List(ctx context.Context) ([]Installed, error) {
 	// because a declined plugin is not a second kind of thing and does not belong
 	// in a second list.
 	if declined := m.declinedRows(out); len(declined) > 0 {
-		out = append(out, declined...)
+		for _, d := range declined {
+			if only == "" || d.ID == only {
+				out = append(out, d)
+			}
+		}
 		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	}
 	return out, nil
@@ -835,7 +855,7 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 		return Installed{}, err
 	}
 	m.logf("obelo: plugin %s (%s %s) was installed from %s", man.ID, man.Name, man.Version, source)
-	return m.view(man.ID)
+	return m.view(ctx, man.ID)
 }
 
 // --- Refusals ------------------------------------------------------------------
@@ -1060,8 +1080,8 @@ func (m *Manager) ensureRow(id string) error {
 }
 
 // view is one Plugin's row of List, for the response a verb answers with.
-func (m *Manager) view(id string) (Installed, error) {
-	list, err := m.List(context.Background())
+func (m *Manager) view(ctx context.Context, id string) (Installed, error) {
+	list, err := m.list(ctx, id, true)
 	if err != nil {
 		return Installed{}, err
 	}

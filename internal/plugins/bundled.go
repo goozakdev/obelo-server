@@ -193,7 +193,7 @@ func (m *Manager) ReinstallShipped(ctx context.Context, id string) (Installed, e
 		return Installed{}, err
 	}
 	m.logf("obelo: the shipped version of plugin %s was reinstalled by an admin", id)
-	return m.view(id)
+	return m.view(ctx, id)
 }
 
 // rowOrigin is where the plugin with this id came from, "" when it has no row.

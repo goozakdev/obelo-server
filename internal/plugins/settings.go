@@ -497,7 +497,6 @@ func (m *Manager) applySettings(set *Set) {
 func (m *Manager) SaveSettings(ctx context.Context, id string, submitted map[string]json.RawMessage) (Installed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_ = ctx
 
 	if err := m.mustBeInstalled(id); err != nil {
 		return Installed{}, err
@@ -537,7 +536,7 @@ func (m *Manager) SaveSettings(ctx context.Context, id string, submitted map[str
 	}
 	p.SetSettingValues(SettingValues(fields, rows))
 	m.logf("obelo: plugin %s: settings saved (%d of %d declared fields hold a value)", id, len(rows), len(fields))
-	return m.view(id)
+	return m.view(ctx, id)
 }
 
 // declaredFields is one Plugin's declared settings schema, from the manifest on
