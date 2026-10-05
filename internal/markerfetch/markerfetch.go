@@ -148,7 +148,12 @@ func (s *Service) Close() {
 // Serving reports whether any Marker provider would be asked now: one installed,
 // enabled, and serving video. Fetched Markers are served only while one is.
 func (s *Service) Serving() bool {
-	return len(s.build()) > 0
+	for _, r := range s.reg.MarkerProviders() {
+		if len(r.Descriptor.Kinds) == 0 || r.Descriptor.Serves(pluginapi.KindVideo) {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchFile is Fetch for the File fileID of the Title titleID — a Movie or an
@@ -249,6 +254,12 @@ func (s *Service) Fetch(ctx context.Context, it Item) error {
 			case <-ctx.Done():
 				return nil
 			}
+		}
+		// An asking that finished between the read above and the claim has already
+		// answered; asking again would put the question twice.
+		if q, asked, err := s.store.MarkerFetchQuestion(it.Path); err != nil || (asked && q == question) {
+			s.release(it.Path, done)
+			return err
 		}
 		ms, settled := s.ask(ctx, it, req, providers)
 		if ctx.Err() != nil {
