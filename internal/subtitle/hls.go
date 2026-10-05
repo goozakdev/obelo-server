@@ -137,13 +137,30 @@ func SubtitleMediaPlaylist(count, segSeconds int, nameFor func(i int) string) []
 // seek into any segment shows the cue active at that moment. The output is always
 // a valid WebVTT document even when no cue overlaps (header only).
 func SegmentVTT(full []byte, index, segSeconds int) []byte {
+	return ParseSegmentCues(full).Segment(index, segSeconds)
+}
+
+// SegmentCues is a whole-file WebVTT parsed once, so a caller serving many
+// segments of the same subtitle can keep it and pay the split/parse a single time
+// rather than once per segment request (a 2-hour title at 6s segments is ~1200).
+type SegmentCues struct {
+	cues []cue
+}
+
+// ParseSegmentCues parses full once for repeated Segment calls.
+func ParseSegmentCues(full []byte) SegmentCues {
+	return SegmentCues{cues: parseCues(full)}
+}
+
+// Segment is SegmentVTT over the already-parsed cues.
+func (sc SegmentCues) Segment(index, segSeconds int) []byte {
 	winStart := float64(index * segSeconds)
 	winEnd := float64((index + 1) * segSeconds)
 
 	var b strings.Builder
 	b.WriteString("WEBVTT\n")
 	fmt.Fprintf(&b, "X-TIMESTAMP-MAP=MPEGTS:%d,LOCAL:00:00:00.000\n", HLSTimestampMapMPEGTS)
-	for _, c := range parseCues(full) {
+	for _, c := range sc.cues {
 		// Half-open overlap: the cue is active somewhere inside the window.
 		if c.end > winStart && c.start < winEnd {
 			b.WriteString("\n")
@@ -161,8 +178,10 @@ func SegmentVTT(full []byte, index, segSeconds int) []byte {
 // playlist). Exported so the unified master builder reuses the identical escaping
 // for AUDIO rendition labels.
 func HLSAttrEscape(s string) string {
-	return strings.NewReplacer(`"`, "", "\n", " ", "\r", " ").Replace(s)
+	return hlsAttrReplacer.Replace(s)
 }
+
+var hlsAttrReplacer = strings.NewReplacer(`"`, "", "\n", " ", "\r", " ")
 
 // cue is one parsed WebVTT cue: its start/end in seconds (for the segment-overlap
 // test) and the verbatim block text (the timing line — with its absolute times

@@ -148,3 +148,19 @@ func TestRenditionLinesEmpty(t *testing.T) {
 		t.Errorf("RenditionLines(nil) = %q, want empty", lines)
 	}
 }
+
+// Parsing once and slicing per segment must match the per-call SegmentVTT.
+func TestParsedSegmentCuesMatchSegmentVTT(t *testing.T) {
+	cues := ParseSegmentCues([]byte(sampleVTT))
+	for i := 0; i < 4; i++ {
+		if got, want := string(cues.Segment(i, 4)), string(SegmentVTT([]byte(sampleVTT), i, 4)); got != want {
+			t.Errorf("segment %d: parsed-once output differs:\n%s\nvs\n%s", i, got, want)
+		}
+	}
+}
+
+func TestHLSAttrEscapeStripsQuotesAndBreaks(t *testing.T) {
+	if got := HLSAttrEscape("a\"b\nc\rd"); got != "ab c d" {
+		t.Errorf("HLSAttrEscape = %q, want %q", got, "ab c d")
+	}
+}
