@@ -52,6 +52,9 @@ type memStore struct {
 	// Admin uninstalled, which the boot-time re-assert leaves alone. Empty is
 	// every server that has never removed one.
 	declined map[string]bool
+	// singleSettingsReads and allSettingsReads count PluginSettings and
+	// AllPluginSettings calls, so a test can assert how a listing reads them.
+	singleSettingsReads, allSettingsReads int
 }
 
 func newMemStore() *memStore {
@@ -91,9 +94,21 @@ func (s *memStore) UndeclinePlugin(id string) (bool, error) {
 	return had, nil
 }
 
+func (s *memStore) AllPluginSettings() (map[string][]store.PluginSetting, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allSettingsReads++
+	out := make(map[string][]store.PluginSetting, len(s.settings))
+	for id, rows := range s.settings {
+		out[id] = append([]store.PluginSetting(nil), rows...)
+	}
+	return out, nil
+}
+
 func (s *memStore) PluginSettings(pluginID string) ([]store.PluginSetting, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.singleSettingsReads++
 	out := make([]store.PluginSetting, len(s.settings[pluginID]))
 	copy(out, s.settings[pluginID])
 	return out, nil
@@ -810,5 +825,56 @@ func assertPluginsDirEmpty(t *testing.T, dir string) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("%s holds %v, want nothing", dir, names)
+	}
+}
+
+// TestListReadsEveryPluginsSettingsInOneStoreCall: the Plugins screen lists every
+// plugin, and a settings read per plugin is a query per row.
+func TestListReadsEveryPluginsSettingsInOneStoreCall(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	for _, id := range []string{"settings-one", "settings-two", "settings-three"} {
+		m := plugintest.SinkManifest(id)
+		m.Settings.Fields = []pluginapi.SettingsField{{Key: "region", Type: pluginapi.FieldString}}
+		if _, err := f.manager.Install(context.Background(),
+			plugintest.ManifestJSON(t, m), plugintest.Guest(t), nil, plugins.SourceUpload); err != nil {
+			t.Fatalf("installing %s: %v", id, err)
+		}
+	}
+	f.store.mu.Lock()
+	f.store.settings["settings-two"] = []store.PluginSetting{{Key: "region", Value: `"eu"`}}
+	f.store.singleSettingsReads, f.store.allSettingsReads = 0, 0
+	f.store.mu.Unlock()
+
+	list, err := f.manager.List(context.Background())
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	f.store.mu.Lock()
+	single, all := f.store.singleSettingsReads, f.store.allSettingsReads
+	f.store.mu.Unlock()
+	if single != 0 || all != 1 {
+		t.Errorf("List made %d per-plugin and %d bulk settings reads, want 0 and 1", single, all)
+	}
+	for _, it := range list {
+		if it.Settings == nil {
+			t.Fatalf("%s listed with no settings view", it.ID)
+		}
+		if it.ID == "settings-two" && it.Settings.Values["region"] != "eu" {
+			t.Errorf("settings-two lists region = %v, want eu", it.Settings.Values["region"])
+		}
+	}
+}
+
+// TestListHonoursACancelledContext: a listing for a caller that has already gone
+// away does not go on to read the store.
+func TestListHonoursACancelledContext(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	f.installGuest(t, "example-sink")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := f.manager.List(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("List with a cancelled ctx = %v, want context.Canceled", err)
 	}
 }
