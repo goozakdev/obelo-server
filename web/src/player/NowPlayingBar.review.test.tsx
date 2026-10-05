@@ -565,9 +565,9 @@ describe("the blocked-autoplay retry is spent only by a key that grants activati
 });
 
 describe("a burned image subtitle suppresses only same-language text tracks", () => {
-  const burnSubs = (textTracks: object[]) =>
+  const burnSubs = (textTracks: object[], burnedLang = "en") =>
     [
-      { id: "img-en", source: "embedded", kind: "image", language: "en", forced: false, label: "English", url: undefined },
+      { id: "img-en", source: "embedded", kind: "image", language: burnedLang, forced: false, label: "English", url: undefined },
       ...textTracks,
     ] as PlaybackDecision["subtitles"];
   const txt = (id: string, language: string, forced: boolean) => ({
@@ -579,7 +579,7 @@ describe("a burned image subtitle suppresses only same-language text tracks", ()
     label: id,
     url: `/s/${id}.vtt`,
   });
-  async function lastTextTrackIndex(subs: PlaybackDecision["subtitles"], title: string) {
+  async function lastTextTrackIndex(subs: PlaybackDecision["subtitles"], title: string, prefLang = "en") {
     const setTextTrack = vi.fn();
     attachHls.mockReset().mockResolvedValue({ mode: "hls.js", detach: vi.fn(), setTextTrack });
     startPlayback.mockResolvedValue(decisionOf({ tier: "transcode", subtitles: subs }));
@@ -588,7 +588,7 @@ describe("a burned image subtitle suppresses only same-language text tracks", ()
       window.localStorage,
       "u1",
       { kind: "title", id: title },
-      { ...AUTO_PREFERENCE, aacStereo: true, subtitle: { language: "en", forced: false } },
+      { ...AUTO_PREFERENCE, aacStereo: true, subtitle: { language: prefLang, forced: false } },
     );
     seedAndRender([entryFromTitle(summary(title))]);
     await waitFor(() => expect(setTextTrack).toHaveBeenCalled());
@@ -604,6 +604,15 @@ describe("a burned image subtitle suppresses only same-language text tracks", ()
 
   it("a forced track in the burned language is held back (no doubled captions)", async () => {
     const idx = await lastTextTrackIndex(burnSubs([txt("txt-en", "en", true), txt("txt-fr", "fr", false)]), "tburn-f2");
+    expect(idx).toBeNull();
+  });
+
+  it("matches the burned language across ISO 639-1 / 639-2 spellings (eng burned, en text)", async () => {
+    const idx = await lastTextTrackIndex(
+      burnSubs([txt("txt-en", "en", true), txt("txt-fr", "fr", false)], "eng"),
+      "tburn-f3",
+      "eng", // the stored preference names the burned track's own spelling
+    );
     expect(idx).toBeNull();
   });
 });

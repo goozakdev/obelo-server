@@ -31,7 +31,7 @@ import {
   initialAudioId,
   orderedAudioStreams,
 } from "./audio";
-import { kindLabel, preferredLang } from "./lang";
+import { kindLabel, normalizeLang, preferredLang, sameLang } from "./lang";
 import { initialVideoId, orderedVideoStreams } from "./video";
 import type {
   AudioStream,
@@ -708,6 +708,8 @@ export default function NowPlayingBar() {
     d.y = d.baseY + (e.clientY - d.startY);
     if (d.el) d.el.style.transform = `translate(${d.x}px, ${d.y}px)`;
   }
+  // Also the pointercancel handler: the box already sits where the cancelled drag left it,
+  // so commit that rather than let the next drag start from the stale offset and jump.
   function onPipPointerUp(e: ReactPointerEvent) {
     const d = dragRef.current;
     dragRef.current = null;
@@ -1451,9 +1453,9 @@ function CurrentPlayer({
     let eligible = textTracks;
     if (session.burnSubtitleId != null) {
       const burned = imageTracks.find((t) => t.id === session.burnSubtitleId);
-      const burnedLang = (burned?.language ?? "").toLowerCase();
-      if (!burnedLang) return;
-      eligible = textTracks.filter((t) => (t.language ?? "").toLowerCase() !== burnedLang);
+      const burnedLang = burned?.language;
+      if (!normalizeLang(burnedLang)) return;
+      eligible = textTracks.filter((t) => !sameLang(t.language, burnedLang));
     }
     const stored = storedSub ? matchTextTrackId(eligible, storedSub) : null;
     setSelectedSubId(stored ?? defaultTrackId(eligible));
@@ -1953,6 +1955,7 @@ function CurrentPlayer({
             onPointerDown={video && surface === "pip" ? onPipPointerDown : undefined}
             onPointerMove={video && surface === "pip" ? onPipPointerMove : undefined}
             onPointerUp={video && surface === "pip" ? onPipPointerUp : undefined}
+            onPointerCancel={video && surface === "pip" ? onPipPointerUp : undefined}
           >
             <video
               ref={videoRef}

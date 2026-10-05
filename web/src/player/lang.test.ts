@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { kindLabel, langRank, preferredLang } from "./lang";
+import { kindLabel, langRank, normalizeLang, preferredLang, sameLang } from "./lang";
 import { orderedAudioStreams, preferredAudioLang } from "./audio";
 import { orderedImageTracks, orderedTextTracks } from "./subtitles";
 
@@ -34,5 +34,23 @@ describe("lang helpers (R04-19)", () => {
     expect(orderedImageTracks([sub("a", "fr", "image"), sub("b", "en", "image")], "en").map((t) => t.id)).toEqual(["b", "a"]);
     const aud = (id: string, language: string) => ({ id, language, isDefault: false, label: id }) as never;
     expect(orderedAudioStreams([aud("a", "fr"), aud("b", "en")], "en").map((s) => s.id)).toEqual(["b", "a"]);
+  });
+
+  it("normalizeLang folds region tags and ISO 639-2 (bibliographic and terminologic) to 639-1", () => {
+    expect(normalizeLang("EN-us")).toBe("en");
+    expect(normalizeLang("eng")).toBe("en");
+    expect(["ger", "deu", "de"].map(normalizeLang)).toEqual(["de", "de", "de"]);
+    expect(["fre", "fra", "fr"].map(normalizeLang)).toEqual(["fr", "fr", "fr"]);
+    expect(["chi", "zho", "cze", "ces", "dut", "nld"].map(normalizeLang)).toEqual(["zh", "zh", "cs", "cs", "nl", "nl"]);
+    expect(normalizeLang("xyz")).toBe("xyz"); // unknown passes through
+    expect(normalizeLang(undefined)).toBe("");
+  });
+
+  it("sameLang matches spellings of one language and never two unknowns", () => {
+    expect(sameLang("eng", "en")).toBe(true);
+    expect(sameLang("ger", "deu")).toBe(true);
+    expect(sameLang("en", "fr")).toBe(false);
+    expect(sameLang("", "")).toBe(false);
+    expect(sameLang(undefined, "en")).toBe(false);
   });
 });

@@ -183,6 +183,24 @@ describe("enrichment activity across Libraries and remounts", () => {
     second.unmount();
     keep();
   });
+
+  it("the very first render of a remounted indicator already shows what is running", () => {
+    const bus = captureEmit();
+    const keep = appEvents.subscribe(() => {});
+    act(() => bus.emit("enrichProgress", { libraryId: "a", complete: false }));
+    // The effect re-reads the hub right after mount, so result.current alone would
+    // hide a wrong initial state; record every rendered value instead.
+    const frames: boolean[] = [];
+    const { unmount } = renderHook(() => {
+      const v = useEnrichmentActivity();
+      frames.push(v);
+      return v;
+    });
+    expect(frames[0]).toBe(true);
+    unmount();
+    act(() => bus.emit("enrichProgress", { libraryId: "a", complete: true }));
+    keep();
+  });
 });
 
 describe("enrichment indicator across a stream reset", () => {

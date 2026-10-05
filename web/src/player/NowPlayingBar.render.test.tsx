@@ -216,4 +216,26 @@ describe("R04-14 — a PiP drag does not re-render the player core", () => {
     );
     expect(screen.getByTestId("now-playing-stage").style.transform).toBe("translate(60px, -20px)");
   });
+
+  it("a cancelled drag commits where the box was left, so the next drag does not jump", async () => {
+    renderWithAuth(<Harness titles={[summary("t1")]} />, { initialEntries: ["/"] });
+    fireEvent.click(screen.getByTestId("do-play"));
+    await screen.findByTestId("player-video");
+    fireEvent.click(await screen.findByTestId("now-playing-collapse"));
+    const stage = await screen.findByTestId("now-playing-stage");
+    await waitFor(() => expect(stage).toHaveAttribute("data-surface", "pip"));
+    await act(async () => {});
+    const handle = stage.querySelector(".now-playing-surface-media")!;
+
+    fireEvent.pointerDown(handle, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 160, clientY: 80, pointerId: 1 });
+    expect(stage.style.transform).toBe("translate(60px, -20px)");
+    fireEvent.pointerCancel(handle, { pointerId: 1 }); // e.g. the browser took the gesture
+
+    // The next drag starts from the box's real position (60,-20), not the stale 0,0.
+    fireEvent.pointerDown(handle, { clientX: 200, clientY: 200, pointerId: 2 });
+    fireEvent.pointerMove(handle, { clientX: 210, clientY: 200, pointerId: 2 });
+    expect(stage.style.transform).toBe("translate(70px, -20px)");
+    fireEvent.pointerUp(handle, { pointerId: 2 });
+  });
 });
