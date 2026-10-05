@@ -3,9 +3,11 @@ package app
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/config"
 	"github.com/goozakdev/obelo-server/internal/enrich"
+	"github.com/goozakdev/obelo-server/internal/rotation"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -175,4 +177,60 @@ func providerKey(t *testing.T, db *store.DB, slug string) string {
 		}
 	}
 	return ""
+}
+
+// TestRotatorRecognisesKeyAdoptedByPreviousProcess: provenance is in memory, so a
+// restart used to forget that the DB's rotated key R1 was the rotator's own and
+// treat it as an operator key, and rotation then stopped after the first reboot.
+// The durable rotation cache (written before every adoption) is the evidence the
+// key is ours.
+func TestRotatorRecognisesKeyAdoptedByPreviousProcess(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// The previous process adopted R1: it is in the cache and in the DB row.
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.KeyRotationURL = "https://rotate.example/v1/keys"
+	if err := rotation.SaveCache(cfg.MetadataKeysPath(), rotation.Cache{
+		TMDB: "rot-R1", FetchedAt: time.Now(), V: rotation.SupportedVersion,
+	}); err != nil {
+		t.Fatalf("save cache: %v", err)
+	}
+	if err := db.UpsertMetadataProvider(store.MetadataProviderUpsert{
+		Slug: enrich.SlugTMDB, Enabled: true, APIKey: "rot-R1", BaseURL: "https://tmdb.example",
+	}); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	kr := newKeyRotator(cfg, db, nil, "", "enc")
+	if kr == nil {
+		t.Fatal("rotator unexpectedly off")
+	}
+	changed, err := kr.propagate(config.RotationKeys{TMDB: "rot-R2"})
+	if err != nil {
+		t.Fatalf("propagate: %v", err)
+	}
+	if !changed {
+		t.Fatal("rotated key R2 was not adopted after a restart")
+	}
+	if got := providerKey(t, db, enrich.SlugTMDB); got != "rot-R2" {
+		t.Fatalf("stored key = %q, want rot-R2", got)
+	}
+
+	// An operator's own key (not in the cache) must still win after a restart.
+	if err := db.UpsertMetadataProvider(store.MetadataProviderUpsert{
+		Slug: enrich.SlugTMDB, Enabled: true, APIKey: "ui-key", BaseURL: "https://tmdb.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	kr2 := newKeyRotator(cfg, db, nil, "", "enc")
+	if changed, _ := kr2.propagate(config.RotationKeys{TMDB: "rot-R3"}); changed {
+		t.Fatal("rotation clobbered an operator key after restart")
+	}
 }

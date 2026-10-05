@@ -107,8 +107,8 @@ func New(s pluginapi.Settings) (pluginapi.EventSink, error) {
 }
 
 // Deliver posts one event and returns nil once the target has accepted it. A
-// non-2xx or a transport failure is retried a bounded number of times inside the
-// context's deadline; exhaustion returns the last error, which the host counts as
+// 5xx, 408, 429 or a transport failure is retried a bounded number of times inside
+// the context's deadline (any other non-2xx is a refusal and is not); exhaustion returns the last error, which the host counts as
 // a delivery failure and does not retry again.
 //
 // The event id travels unchanged through every attempt, so a receiver that saw
@@ -135,6 +135,12 @@ func (s *Sink) Deliver(ctx context.Context, ev pluginapi.SinkEvent) error {
 			// A cancelled or expired deadline is the host saying stop, not a blip:
 			// retrying it would only burn the budget the next event needs.
 			if ctx.Err() != nil {
+				break
+			}
+			// A receiver that refused for good (400, 401, 404, 410, ...) will refuse
+			// again; retrying it only multiplies load on a misconfigured target.
+			var refusal *permanentRefusal
+			if errors.As(err, &refusal) {
 				break
 			}
 			continue
@@ -168,10 +174,21 @@ func (s *Sink) post(ctx context.Context, body []byte, signature string, ev plugi
 	defer resp.Body.Close()
 	detail, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("webhook: target answered %d: %s", resp.StatusCode, bytes.TrimSpace(detail))
+		err := fmt.Errorf("webhook: target answered %d: %s", resp.StatusCode, bytes.TrimSpace(detail))
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+			resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests {
+			return &permanentRefusal{err}
+		}
+		return err
 	}
 	return nil
 }
+
+// permanentRefusal marks a 4xx answer (other than 408 and 429, which ask for a
+// retry) that Deliver must not retry.
+type permanentRefusal struct{ error }
+
+func (p *permanentRefusal) Unwrap() error { return p.error }
 
 // Sign is the signature a receiver recomputes: lowercase hex HMAC-SHA256 over the
 // exact bytes of the request body, under the configured secret. Exported because

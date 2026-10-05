@@ -243,3 +243,57 @@ func TestSupportedEventTypesIsTheWholeCuratedSet(t *testing.T) {
 			SupportedEventTypes(), pluginapi.AllEventTypes())
 	}
 }
+
+// gatedLookup parks EventTitleRef until released, standing in for a slow database
+// while the translator is mid-translation.
+type gatedLookup struct {
+	stubLookup
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func (g *gatedLookup) EventTitleRef(id string) (store.EventRef, error) {
+	select {
+	case g.entered <- struct{}{}:
+	default:
+	}
+	<-g.gate
+	return store.EventRef{ID: id, Name: "Dune", Kind: "movie"}, nil
+}
+
+// TestSlowTranslationDoesNotDropTerminalEvents: the Broker's per-subscriber buffer
+// is small and nowPlaying ticks arrive on it constantly, so a translator busy in a
+// lookup must not let a burst of ticks push a sessionEnded out of the buffer.
+func TestSlowTranslationDoesNotDropTerminalEvents(t *testing.T) {
+	sink := &recordingSink{entered: make(chan struct{}, 1)}
+	m := managerSubscribedTo(t, sink, pluginapi.EventPlaybackStarted, pluginapi.EventPlaybackStopped)
+	look := &gatedLookup{gate: make(chan struct{}), entered: make(chan struct{}, 1)}
+	tr := NewTranslator(m.Dispatcher(), look)
+
+	broker := events.NewBroker()
+	defer broker.Close()
+	tr.Start(broker)
+	defer tr.Stop()
+
+	sess := events.SessionEvent{SessionID: "sess-1", UserID: "user-1", DeviceID: "dev-1", TitleID: "title-1"}
+	broker.PublishSessionEvent(events.TypeSessionStarted, sess)
+	select {
+	case <-look.entered: // the translator is now parked inside the lookup
+	case <-time.After(5 * time.Second):
+		t.Fatal("the translator never reached the lookup")
+	}
+	for i := 0; i < 200; i++ {
+		broker.PublishSessionEvent(events.TypeNowPlaying, sess)
+	}
+	// Let the reader take what it can from the Broker's buffer (it is slower under
+	// -race); with the translator parked, a drain that also translated would leave
+	// the buffer full here.
+	time.Sleep(200 * time.Millisecond)
+	broker.PublishSessionEvent(events.TypeSessionEnded, sess)
+	close(look.gate)
+
+	got := awaitEvents(t, sink, 2)
+	if got[1].Type != pluginapi.EventPlaybackStopped {
+		t.Fatalf("types = %q, %q; want started then stopped", got[0].Type, got[1].Type)
+	}
+}

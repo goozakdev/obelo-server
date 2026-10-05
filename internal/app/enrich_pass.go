@@ -174,14 +174,29 @@ func (a *App) markEnrichInFlight(req enrichRequest, exclusive bool) bool {
 	if st.inFlight == 0 {
 		st.settled = make(chan struct{})
 		st.progress = enrich.Progress{LibraryID: req.libraryID}
+		// An idle Library's first pass is the one that will run next. A pass queued
+		// behind a running one must not relabel it; the worker records its own mode
+		// when it dequeues it (noteEnrichStart).
+		st.mode = req.mode
+		st.startedAt = time.Now().UTC()
 	}
 	st.inFlight++
-	st.mode = req.mode
-	st.startedAt = time.Now().UTC()
 	if req.done != nil {
 		st.done = append(st.done, req.done)
 	}
 	return true
+}
+
+// noteEnrichStart records the mode and start time of the pass the worker has just
+// dequeued, so the status describes the pass actually running rather than the one
+// most recently queued.
+func (a *App) noteEnrichStart(libraryID string, mode enrich.Mode) {
+	a.enrichMu.Lock()
+	defer a.enrichMu.Unlock()
+	if st := a.enrichPasses[libraryID]; st != nil {
+		st.mode = mode
+		st.startedAt = time.Now().UTC()
+	}
 }
 
 // noteEnrichProgress records a running pass's latest snapshot, so a page that
@@ -214,6 +229,10 @@ func (a *App) settleEnrichPass(libraryID string, res enrich.Result, err error, r
 		st.last = &summary
 		st.lastMode = st.mode
 		st.lastFinishedAt = time.Now().UTC()
+	}
+	if !recordLast && st.inFlight == 0 {
+		// A refusal that never ran must not leave its mode/start on the status.
+		st.mode, st.startedAt = 0, time.Time{}
 	}
 	var (
 		callbacks []func(enrich.Result, error)

@@ -420,3 +420,74 @@ func TestCloseEndsAnAskingInFlight(t *testing.T) {
 		t.Errorf("the provider was asked %d times, want once: nothing is asked after Close", hung.asked)
 	}
 }
+
+// TestServingExcludesAProviderWhoseFactoryRefuses: a Plugin auto-disabled or
+// refused at load stays registered but its factory refuses, so it is not asked
+// and does not count as serving.
+func TestServingExcludesAProviderWhoseFactoryRefuses(t *testing.T) {
+	reg := pluginapi.NewRegistry()
+	reg.RegisterMarkerProvider(pluginapi.MarkerProviderRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "off"},
+		New: func(pluginapi.Settings) (pluginapi.MarkerProvider, error) {
+			return nil, errors.New("disabled")
+		},
+	})
+	if markerfetch.New(newMemStore(), reg).Serving() {
+		t.Fatal("Serving = true with only a provider whose factory refuses")
+	}
+
+	reg.RegisterMarkerProvider(pluginapi.MarkerProviderRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "on"},
+		New: func(pluginapi.Settings) (pluginapi.MarkerProvider, error) {
+			return &fakeProvider{slug: "on"}, nil
+		},
+	})
+	if !markerfetch.New(newMemStore(), reg).Serving() {
+		t.Fatal("Serving = false with a working video provider registered")
+	}
+
+	music := pluginapi.NewRegistry()
+	register(music, []string{pluginapi.KindMusic}, &fakeProvider{slug: "music"})
+	if markerfetch.New(newMemStore(), music).Serving() {
+		t.Fatal("Serving = true with only a music provider")
+	}
+}
+
+// staleReadStore reports the first MarkerFetchQuestion as unasked even though the
+// answer is already stored, standing in for another lead finishing between the
+// caller's read and its claim.
+type staleReadStore struct {
+	*memStore
+	once sync.Once
+}
+
+func (s *staleReadStore) MarkerFetchQuestion(path string) (string, bool, error) {
+	stale := false
+	s.once.Do(func() { stale = true })
+	if stale {
+		return "", false, nil
+	}
+	return s.memStore.MarkerFetchQuestion(path)
+}
+
+// TestLeadRechecksTheQuestionAfterClaiming: a lead that read "unasked" and then
+// won the claim must look again — the previous lead has answered, and asking every
+// provider a second time would only rewrite the same answer.
+func TestLeadRechecksTheQuestionAfterClaiming(t *testing.T) {
+	mem, reg := newMemStore(), pluginapi.NewRegistry()
+	p := &fakeProvider{slug: "p"}
+	register(reg, nil, p)
+	it := episode()
+	fetch(t, mem, reg, it) // the "other lead": asks once and stores the answer
+	if p.calls != 1 {
+		t.Fatalf("setup: calls = %d, want 1", p.calls)
+	}
+
+	stale := &staleReadStore{memStore: mem}
+	if err := markerfetch.New(stale, reg).Fetch(context.Background(), it); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("provider asked %d times, want 1 (the answer was already stored)", p.calls)
+	}
+}

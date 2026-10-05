@@ -80,6 +80,11 @@ var ErrRedirectBlocked = errors.New("safefetch: redirect blocked")
 // not be. The residual risk is smaller than the one closed here: it needs the
 // attacker to control the resolver's answers, not merely a Location header.
 //
+// Re-assessed and still NOT done (review R06-03): the dial-time check would also
+// have to cover the transports behind Guard, which this package does not own (it
+// copies a caller's client and shares its Transport), so it cannot be applied here
+// without changing every caller's wiring.
+//
 // A PLUGIN's fetches do not carry this limitation. There the first hop is checked
 // too, bar the operator's own host, so internal/plugins puts the check on the
 // dialer (checkDialedAddress) and every other dial is judged by the address it
@@ -97,11 +102,43 @@ func CheckRedirect(req *http.Request, via []*http.Request) error {
 		return ErrRedirectBlocked
 	}
 	for _, a := range addrs {
-		if IsInternalIP(a.IP) {
+		if IsInternalIP(a.IP) || nonRoutableForRedirect(a.IP) {
 			return ErrRedirectBlocked
 		}
 	}
 	return nil
+}
+
+// redirectOnlyDenied are ranges a redirect hop must not land in but IsInternalIP
+// (shared with the plugin host) deliberately does not cover: 0.0.0.0/8 ("this
+// network", which some stacks route to loopback), 100.64.0.0/10 (the CGNAT space
+// Tailscale hands its nodes) and 240.0.0.0/4 (reserved, incl. broadcast).
+//
+// The Tailnet this server runs is a userspace tsnet node: its peers are dialled
+// through the node itself (link.Dialer), never through the OS stack and never
+// through a safefetch client, so no legitimate fetch needs 100.x here. On a host
+// that ALSO runs Tailscale, though, the OS stack does route 100.x, and a provider
+// redirect into it would reach the operator's tailnet peers; that is the case this
+// closes. The first hop is still unchecked by design (see CheckRedirect).
+var redirectOnlyDenied = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, c := range []string{"0.0.0.0/8", "100.64.0.0/10", "240.0.0.0/4"} {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic("safefetch: bad CIDR " + c)
+		}
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+func nonRoutableForRedirect(ip net.IP) bool {
+	for _, n := range redirectOnlyDenied {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsInternalIP reports whether ip is somewhere a redirect must not take us: the

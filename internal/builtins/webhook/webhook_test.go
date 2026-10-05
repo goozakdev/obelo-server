@@ -163,6 +163,41 @@ func TestDeliverGivesUpAfterABoundedBurst(t *testing.T) {
 	}
 }
 
+// TestDeliverDoesNotRetryAPermanentRefusal: a 4xx other than 408/429 is the
+// receiver saying no, not a blip; retrying only triples the load on a
+// misconfigured target. 408 and 429 are the two 4xx that do mean "try again".
+func TestDeliverDoesNotRetryAPermanentRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   int32
+	}{
+		{http.StatusBadRequest, 1},
+		{http.StatusUnauthorized, 1},
+		{http.StatusNotFound, 1},
+		{http.StatusGone, 1},
+		{http.StatusRequestTimeout, maxAttempts},
+		{http.StatusTooManyRequests, maxAttempts},
+		{http.StatusServiceUnavailable, maxAttempts},
+	} {
+		var calls atomic.Int32
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(tc.status)
+		}))
+		sink, err := New(pluginapi.Settings{URL: target.URL, Secret: "topsecret"})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if err := sink.Deliver(context.Background(), testEvent()); err == nil {
+			t.Errorf("status %d: Deliver returned nil", tc.status)
+		}
+		if got := calls.Load(); got != tc.want {
+			t.Errorf("status %d: attempts = %d, want %d", tc.status, got, tc.want)
+		}
+		target.Close()
+	}
+}
+
 // TestDeliverHonorsTheHostDeadline: the host sets the deadline, and a target that
 // never answers must not hold the call past it. This is what makes a hanging
 // webhook cost one worker rather than the server's responsiveness.

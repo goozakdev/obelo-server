@@ -178,3 +178,17 @@ func TestToWebVTT_UnknownFormatErrors(t *testing.T) {
 		t.Error("expected an error converting an image format to WebVTT")
 	}
 }
+
+// A line past the scanner's 4 MiB limit used to truncate the track silently at
+// that line; the conversion must fail instead.
+func TestToWebVTT_OverlongLineIsAnError(t *testing.T) {
+	long := strings.Repeat("x", 5*1024*1024)
+	for _, tc := range []struct{ format, body string }{
+		{"srt", "1\n00:00:01,000 --> 00:00:02,000\n" + long + "\n"},
+		{"ass", "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:02.00,D,,0,0,0,," + long + "\n"},
+	} {
+		if _, err := ToWebVTT([]byte(tc.body), tc.format); err == nil {
+			t.Errorf("%s: converting a 5 MiB line succeeded, want an error", tc.format)
+		}
+	}
+}

@@ -299,6 +299,33 @@ func TestTailnetListenerFollowsTheNode(t *testing.T) {
 	eventually(t, "the listener to go when the node does", func() bool { return !serving(tn) })
 }
 
+// TestTailnetListenerRebindsAfterServeExitsUnderneathIt: when the node closes the
+// listener while it is still Running (so no state transition arrives), Serve
+// returns on its own. The supervisor must notice and rebind rather than keep a
+// dead server it believes is bound.
+func TestTailnetListenerRebindsAfterServeExitsUnderneathIt(t *testing.T) {
+	node := &fakeNode{}
+	tn := newTestListener(t, node, func() {})
+	tn.start()
+	node.set(tailnet.StateRunning)
+	tn.Wake()
+	eventually(t, "the listener to bind", func() bool { return serving(tn) })
+
+	tn.mu.Lock()
+	dead := tn.srv
+	tn.mu.Unlock()
+	_ = dead.Close() // the node tore the listener down; state stays Running
+
+	eventually(t, "the supervisor to rebind", func() bool {
+		tn.mu.Lock()
+		defer tn.mu.Unlock()
+		return tn.srv != nil && tn.srv != dead
+	})
+	if got := node.listenCount(); got != 2 {
+		t.Errorf("Listen called %d time(s), want 2 (initial bind plus the rebind)", got)
+	}
+}
+
 // TestTailnetListenerIgnoresStatesThatAreNotRunning: a node that is starting,
 // waiting on a human, or whose key has lapsed has no reachable address. Binding
 // then would produce a listener nothing can route to and a log line claiming the

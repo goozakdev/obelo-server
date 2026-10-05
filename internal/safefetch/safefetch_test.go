@@ -41,6 +41,11 @@ func TestCheckRedirectPolicy(t *testing.T) {
 		{"link-local (cloud metadata)", "http://169.254.169.254/latest/meta-data/", 1, true},
 		{"unspecified", "http://0.0.0.0/", 1, true},
 		{"multicast", "http://224.0.0.1/", 1, true},
+		{"CGNAT / tailnet range", "http://100.64.0.1/", 1, true},
+		{"CGNAT upper edge", "http://100.127.255.254/", 1, true},
+		{"just outside CGNAT", "http://100.128.0.1/", 1, false},
+		{"0.0.0.0/8 this-network", "http://0.1.2.3/", 1, true},
+		{"reserved 240/4", "http://240.0.0.1/", 1, true},
 		{"non-http scheme", "file:///etc/passwd", 1, true},
 		{"unresolvable host fails closed", "http:///cover.jpg", 1, true},
 	} {

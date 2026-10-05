@@ -301,12 +301,14 @@ func (m *Manager) Subscribe(f func()) {
 // the operator will read as "your button is broken" when the truth is "the
 // coordination server is unreachable".
 func (m *Manager) Apply(ctx context.Context) error {
+	// The settings are read under the lock so two racing callers apply in the order
+	// the rows were written, not the order their snapshots happened to be taken.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	s, err := m.store.TailnetSettings()
 	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
 		return nil
 	}

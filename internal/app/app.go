@@ -101,6 +101,10 @@ type App struct {
 	// enrichMu.
 	enrichMu     sync.Mutex
 	enrichPasses map[string]*enrichPassState
+	// relayEnds tracks the courtesy "end the shared session" calls a session end
+	// fires on the sharing Server, so Close waits for them (each is bounded by
+	// relayEndTimeout) before the link Service and DB they use go away.
+	relayEnds *sync.WaitGroup
 	// enrichReschedule wakes the scheduled-enrich goroutine so a saved
 	// EnrichInterval change applies promptly (enabling from 0, or shrinking a long
 	// interval, takes effect immediately rather than on the next tick). Buffered
@@ -686,6 +690,17 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	if err != nil {
 		log.Printf("obelo: installed plugins were not loaded: %v", err)
 	}
+	// Everything built from here on that holds a goroutine, a subscription or a wasm
+	// runtime registers its undo, so a boot failure releases it (newest first) rather
+	// than leaking it past an embedder or harness that outlives the failed New.
+	var undo []func()
+	abort := func() {
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
+		}
+		_ = db.Close()
+	}
+	undo = append(undo, func() { _ = installed.Close(context.Background()) })
 	// The Admin's enable switch lives in the plugins table (issue 10) and is read
 	// HERE, before anything is registered: a Plugin an Admin switched off is not
 	// registered at all, so nothing downstream can reach it — which is what makes
@@ -733,7 +748,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		fetcher = enrich.HTTPArtworkFetcher{}
 	}
 	if err := enrich.EnsureCacheDir(cfg.ArtworkCacheDir()); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, err
 	}
 	enrichSvc := enrich.NewService(db, provider, fetcher, enablement, cfg.ArtworkCacheDir(), cfg.ArtworkCandidateCacheTTL)
@@ -762,7 +777,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// only when empty.
 	seedInput := seedInputFromConfig(cfg, rotKeys)
 	if _, err := enrich.SeedIfEmpty(db, seedInput); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, fmt.Errorf("app: seeding metadata provider settings: %w", err)
 	}
 
@@ -784,7 +799,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// and its config-derived enablement for the existing enrichment tests.
 	if o.metadataProvider == nil {
 		if err := providerManager.Reload(context.Background()); err != nil {
-			_ = db.Close()
+			abort()
 			return nil, fmt.Errorf("app: applying metadata provider settings: %w", err)
 		}
 		// Per-Library Enrichment policy (ADR-0027): now that the global config is
@@ -810,7 +825,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// DB-backed settings (seeded once from config), so a "search online" hot-swaps
 	// with no restart and a disabled server does zero outbound work.
 	if err := subfetch.EnsureCacheDir(cfg.SubtitleCacheDir()); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, err
 	}
 	subFetchSvc := subfetch.NewService(db, cfg.SubtitleCacheDir())
@@ -819,7 +834,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		OpenSubtitlesBaseURL: cfg.OpenSubtitlesBaseURL,
 		AutoFetchLang:        cfg.SubtitleAutoFetchLang,
 	}); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, fmt.Errorf("app: seeding subtitle provider settings: %w", err)
 	}
 	subtitleBuild := subfetch.BuilderFor(registry)
@@ -828,7 +843,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	}
 	subtitleManager := subfetch.NewManager(db, subFetchSvc, subtitleBuild)
 	if err := subtitleManager.Reload(context.Background()); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, fmt.Errorf("app: applying subtitle provider settings: %w", err)
 	}
 
@@ -836,6 +851,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// /events stream. Created unconditionally (cheap) so /events always works; the
 	// producers below publish onto it.
 	broker := events.NewBroker()
+	undo = append(undo, broker.Close)
 
 	// Event sinks (ADR-0057 decision 6): the operator's outbound integrations. The
 	// translator subscribes to the Broker exactly as an Admin's browser does and
@@ -847,12 +863,14 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Managers. A read failure here is a boot failure for the same reason theirs is:
 	// the settings the operator saved are not optional state.
 	sinkManager := eventsink.NewManager(db, registry, eventsink.NewDispatcher())
+	undo = append(undo, sinkManager.Dispatcher().Close)
 	if err := sinkManager.Reload(context.Background()); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, fmt.Errorf("app: applying event sink settings: %w", err)
 	}
 	sinkTranslator := eventsink.NewTranslator(sinkManager.Dispatcher(), db)
 	sinkTranslator.Start(broker)
+	undo = append(undo, sinkTranslator.Stop)
 
 	// Installing a Plugin without a restart (issue 10). The Manager owns the
 	// lifecycle the loader deliberately does not: the files, the rows, the Admin's
@@ -910,6 +928,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Service itself cannot be built until the Tailnet manager exists further down.
 	// The closure reads the variable when a session ends, by which time it is set.
 	var linkSvc *link.Service
+	relayEnds := &sync.WaitGroup{}
 
 	// Session lifecycle → realtime (issue 03): translate the Playback Manager's
 	// observer transitions into the Broker's Admin-only session events. Wired via
@@ -948,7 +967,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			// sharer's own reaper is the backstop.
 			if e.RelayLinkID != "" && e.RemoteSessionID != "" {
 				linkID, remoteID := e.RelayLinkID, e.RemoteSessionID
+				relayEnds.Add(1)
 				go func() {
+					defer relayEnds.Done()
 					ctx, cancel := context.WithTimeout(context.Background(), relayEndTimeout)
 					defer cancel()
 					if err := linkSvc.RelayEndSession(ctx, linkID, remoteID); err != nil {
@@ -982,7 +1003,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		HTTPSEnabled: cfg.TailnetHTTPSEnabled,
 		ServerName:   identity.Name,
 	}); err != nil {
-		_ = db.Close()
+		abort()
 		return nil, fmt.Errorf("app: seeding tailnet settings: %w", err)
 	}
 	// The state machine every path funnels through. It is built unconditionally
@@ -1045,6 +1066,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	runEnrichWorker := !o.noEnrichWorker
 
 	app := &App{
+		relayEnds:        relayEnds,
 		Config:           cfg,
 		Identity:         identity,
 		DB:               db,
@@ -1626,6 +1648,7 @@ func (a *App) runEnrichWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case req := <-a.enrichQueue:
+			a.noteEnrichStart(req.libraryID, req.mode)
 			res, err := a.runEnrichPass(ctx, req.libraryID, req.mode)
 			a.settleEnrichPass(req.libraryID, res, err, true)
 		}
@@ -1790,6 +1813,11 @@ func (a *App) Close() error {
 	// segments into a directory that whoever owns the data dir may be deleting.
 	if a.Playback != nil {
 		a.Playback.EndAllSessions()
+	}
+	// EndAllSessions fires the observer, which spawns the relay-end calls; let them
+	// finish (bounded by relayEndTimeout) before the link Service and DB go away.
+	if a.relayEnds != nil {
+		a.relayEnds.Wait()
 	}
 	// Stop the per-Link sync goroutines and their outbound subscriptions before the
 	// Broker goes, for the Tailnet's reason: a transition published into a closed

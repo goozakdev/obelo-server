@@ -250,6 +250,12 @@ func (s *Service) Fetch(ctx context.Context, it Item) error {
 				return nil
 			}
 		}
+		// An asking that finished between the read above and the claim has already
+		// answered; asking again would put the question twice.
+		if q, asked, err := s.store.MarkerFetchQuestion(it.Path); err != nil || (asked && q == question) {
+			s.release(it.Path, done)
+			return err
+		}
 		ms, settled := s.ask(ctx, it, req, providers)
 		if ctx.Err() != nil {
 			// Abandoned (the Server is shutting down): nothing was answered.
