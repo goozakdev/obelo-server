@@ -144,6 +144,11 @@ export default function ProviderConfigDialog({
       ref={dialogRef}
       className="library-dialog provider-config-dialog"
       data-testid={`provider-config-dialog-${p.slug}`}
+      onCancel={(e) => {
+        // The first ESC fires a cancelable `cancel`: swallow it while saving so the
+        // dialog never closes at all (no flicker, no focus reset). Idle, let it close.
+        if (saving) e.preventDefault();
+      }}
       onClose={() => {
         // ESC while a save is in flight: the backdrop and Cancel are blocked then,
         // so put the natively-closed dialog back rather than orphan the save.

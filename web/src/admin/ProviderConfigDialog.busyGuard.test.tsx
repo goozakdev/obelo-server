@@ -97,3 +97,31 @@ describe("ProviderConfigDialog — a native close while saving (R02-15)", () => 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ProviderConfigDialog — the first ESC while saving", () => {
+  function pressEscape(): Event {
+    const dialog = screen.getByTestId("provider-config-dialog-omdb") as HTMLDialogElement;
+    const cancel = new Event("cancel", { cancelable: true });
+    act(() => {
+      dialog.dispatchEvent(cancel);
+    });
+    return cancel;
+  }
+
+  it("is swallowed, so the dialog never closes and re-opens", async () => {
+    updateMetadataProviders.mockReturnValue(new Promise(() => {}));
+    renderDialog(vi.fn());
+    const rate = await screen.findByTestId("musicbrainz-rate-limit-input");
+    await userEvent.clear(rate);
+    await userEvent.type(rate, "250");
+    await userEvent.click(screen.getByTestId("provider-config-save-omdb"));
+
+    expect(pressEscape().defaultPrevented).toBe(true);
+  });
+
+  it("is left alone when idle", () => {
+    renderDialog(vi.fn());
+
+    expect(pressEscape().defaultPrevented).toBe(false);
+  });
+});

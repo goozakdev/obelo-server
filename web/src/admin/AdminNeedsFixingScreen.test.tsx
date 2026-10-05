@@ -1785,6 +1785,30 @@ describe("AdminNeedsFixingScreen — keeping the queue honest (R01)", () => {
     await waitFor(() => expect(select).toHaveTextContent("Movies — 2 to fix"));
   });
 
+  it("R01-09 residue: a departed library's badge keeps its post-fix count, not the one from screen load", async () => {
+    listLibraries.mockResolvedValue([lib(), lib({ id: "lib2", name: "Shows" })]);
+    const flagged = new Map<string, number>([["lib1", 0], ["lib2", 3]]);
+    listNeedsReview.mockImplementation(async (id: string) =>
+      Array.from({ length: flagged.get(id) ?? 0 }, (_, i) => reviewItem({ id: `${id}-${i}` })),
+    );
+    render();
+    const select = await screen.findByTestId("needs-fixing-library-select");
+    // lib2's badge comes from the mount-time fetch while lib1 is open.
+    await waitFor(() => expect(select).toHaveTextContent("Shows — 3 to fix"));
+
+    // Open lib2 and fix two rows there.
+    await userEvent.selectOptions(select, "lib2");
+    await waitFor(() => expect(screen.getAllByTestId("fix-item")).toHaveLength(3));
+    flagged.set("lib2", 1);
+    await userEvent.click(screen.getAllByTestId("fix-item-dismiss")[0]);
+    await waitFor(() => expect(select).toHaveTextContent("Shows — 1 to fix"));
+
+    // Leaving lib2 must not send its badge back to the older number.
+    await userEvent.selectOptions(select, "lib1");
+    await waitFor(() => expect(screen.queryByTestId("needs-fixing-loading")).toBeNull());
+    expect(select).toHaveTextContent("Shows — 1 to fix");
+  });
+
   it("R01-11 residue: the open library's badge keeps its number while the queue reloads", async () => {
     listNeedsReview.mockResolvedValueOnce([reviewItem()]);
     render();

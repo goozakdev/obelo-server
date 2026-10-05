@@ -28,6 +28,7 @@ const {
   deleteLink,
   updateLibrary,
   subscribeEvents,
+  refreshLibraries,
 } = vi.hoisted(() => ({
   listLinks: vi.fn(),
   createLink: vi.fn(),
@@ -36,6 +37,7 @@ const {
   deleteLink: vi.fn(),
   updateLibrary: vi.fn(),
   subscribeEvents: vi.fn(),
+  refreshLibraries: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -52,6 +54,12 @@ vi.mock("../api/client", async () => {
       subscribeEvents: (...a: unknown[]) => subscribeEvents(...a),
     },
   };
+});
+
+vi.mock("../browse/librariesContext", async () => {
+  const actual =
+    await vi.importActual<typeof import("../browse/librariesContext")>("../browse/librariesContext");
+  return { ...actual, useRefreshLibraries: () => refreshLibraries };
 });
 
 import AdminLinkedServersScreen, {
@@ -92,6 +100,7 @@ beforeEach(() => {
   deleteLink.mockReset();
   updateLibrary.mockReset();
   subscribeEvents.mockReset();
+  refreshLibraries.mockReset();
   emit = null;
   subscribeEvents.mockImplementation((fn: (type: string, data: unknown) => void) => {
     emit = fn;
@@ -179,6 +188,8 @@ describe("AdminLinkedServersScreen — the walkthrough", () => {
 
     // And the list refetched, so the new Link is a row.
     await waitFor(() => expect(screen.getByTestId("link-row")).toBeInTheDocument());
+    // The mirror Libraries joined the shared list too.
+    expect(refreshLibraries).toHaveBeenCalledTimes(1);
   });
 
   it("says so plainly when the sharer granted nothing", async () => {
@@ -341,6 +352,8 @@ describe("AdminLinkedServersScreen — the walkthrough", () => {
 
     expect(deleteLink).toHaveBeenCalledWith("link1");
     await waitFor(() => expect(screen.getByTestId("links-empty")).toBeInTheDocument());
+    // The mirror Libraries are gone from the shared list too.
+    expect(refreshLibraries).toHaveBeenCalledTimes(1);
   });
 
   it("shows the paste refusal on the paste box and keeps the string typed", async () => {
@@ -434,6 +447,8 @@ describe("AdminLinkedServersScreen — renaming a linked library", () => {
     );
     expect(screen.getByTestId("link-libraries")).toHaveTextContent("Sam's music");
     expect(screen.queryByTestId("link-library-rename-input")).toBeNull();
+    // The shared Libraries list shows the mirror under its new name too.
+    expect(refreshLibraries).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the grant shortcut on the line", async () => {

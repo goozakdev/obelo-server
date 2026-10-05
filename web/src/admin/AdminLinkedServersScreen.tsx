@@ -3,6 +3,7 @@ import { Link as RouterLink } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { isAbort } from "../api/errors";
 import { appEvents } from "../events/enrichEvents";
+import { useRefreshLibraries } from "../browse/librariesContext";
 import { errorMessage } from "../screens/errorMessage";
 import { formatAgo, formatDateTime } from "../time";
 import type { Link, LinkedLibrary } from "../api/types";
@@ -180,6 +181,7 @@ function LinkAServerPanel({ onLinked }: { onLinked: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Link | null>(null);
+  const refreshLibraries = useRefreshLibraries();
 
   async function onSubmit() {
     const trimmed = invite.trim();
@@ -192,6 +194,7 @@ function LinkAServerPanel({ onLinked }: { onLinked: () => void }) {
       setResult(link);
       setInvite("");
       onLinked();
+      refreshLibraries();
     } catch (err) {
       setError(linkErrorMessage(err, trimmed));
     } finally {
@@ -298,6 +301,7 @@ function LinkResult({ link }: { link: Link }) {
 // --- One Link ---------------------------------------------------------------
 
 function LinkRow({ link, onChanged }: { link: Link; onChanged: () => void }) {
+  const refreshLibraries = useRefreshLibraries();
   const [busy, setBusy] = useState<null | "sync" | "unlink">(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [rekeying, setRekeying] = useState(false);
@@ -350,6 +354,7 @@ function LinkRow({ link, onChanged }: { link: Link; onChanged: () => void }) {
       await apiClient.deleteLink(link.id);
       setConfirmUnlink(false);
       onChanged();
+      refreshLibraries();
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -552,6 +557,7 @@ function LinkLibraryItem({
   const [name, setName] = useState(library.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const refreshLibraries = useRefreshLibraries();
 
   const trimmed = name.trim();
   const dirty = trimmed !== "" && trimmed !== library.name;
@@ -564,6 +570,7 @@ function LinkLibraryItem({
       await apiClient.updateLibrary(library.id, { name: trimmed });
       setRenaming(false);
       onRenamed();
+      refreshLibraries();
     } catch (err) {
       // Keep the field open with what was typed: a refused rename is worth
       // another try, and retyping it would be the second insult.

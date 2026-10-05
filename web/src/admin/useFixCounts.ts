@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { apiClient } from "../api/client";
 import { buildFixItems } from "./needsFixing";
 
@@ -31,6 +31,13 @@ import { buildFixItems } from "./needsFixing";
 /** Open-problem counts keyed by Library id. A missing key means "not counted". */
 export type FixCounts = Record<string, number>;
 
+let countStamp = 0;
+/** A number that only goes up, shared by everything that produces a count, so two
+ * counts of one Library can be ordered by when each was taken. */
+export function nextCountStamp(): number {
+  return ++countStamp;
+}
+
 /**
  * @param libraryIds the Libraries to count.
  * @param reloadToken bump it to re-count. The badge is a snapshot taken at mount,
@@ -40,11 +47,15 @@ export type FixCounts = Record<string, number>;
  * @param skipId a Library the caller counts itself, so it is not fetched here. Read
  *   when a count starts, not a trigger: switching the queue to another Library must
  *   not re-count them all.
+ * @param stamps filled with each Library's {@link nextCountStamp} as of the moment
+ *   its landed count was taken, for a caller that holds a second source of counts
+ *   and needs to know which of the two is newer.
  */
 export function useFixCounts(
   libraryIds: string[],
   reloadToken = 0,
   skipId = "",
+  stamps?: MutableRefObject<Record<string, number>>,
 ): FixCounts {
   const [counts, setCounts] = useState<FixCounts>({});
   const skipRef = useRef(skipId);
@@ -60,6 +71,7 @@ export function useFixCounts(
 
     void Promise.all(
       ids.map(async (id) => {
+        const stamp = nextCountStamp();
         try {
           const [unmatched, needsReview, enrichment, overrides, showProblems] =
             await Promise.all([
@@ -77,6 +89,7 @@ export function useFixCounts(
             showProblems,
           }).length;
           if (!ctrl.signal.aborted) {
+            if (stamps) stamps.current[id] = stamp;
             setCounts((cur) => ({ ...cur, [id]: total }));
           }
         } catch {

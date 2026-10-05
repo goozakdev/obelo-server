@@ -649,6 +649,45 @@ describe("AdminProvidersScreen — review fixes", () => {
     expect(screen.getByTestId("provider-toggle-theaudiodb")).toBeChecked();
   });
 
+  it("keeps a toggle made while the post-overlap re-read is in flight", async () => {
+    const withOn = (...slugs: string[]) => {
+      const v = view();
+      v.providers = v.providers.map((p) => (slugs.includes(p.slug) ? { ...p, enabled: true } : p));
+      return v;
+    };
+    getMetadataProviders.mockReset();
+    getMetadataProviders.mockResolvedValueOnce(view());
+    const first = deferred<MetadataProvidersView>();
+    const second = deferred<MetadataProvidersView>();
+    const third = deferred<MetadataProvidersView>();
+    const reread = deferred<MetadataProvidersView>();
+    updateMetadataProviders
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise);
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(screen.getByTestId("provider-toggle-theaudiodb"));
+    // The re-read is taken before the third toggle reaches the server.
+    getMetadataProviders.mockReturnValueOnce(reread.promise);
+    first.resolve(withOn("musicbrainz"));
+    second.resolve(withOn("musicbrainz", "theaudiodb"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+
+    await user.click(screen.getByTestId("provider-toggle-fanarttv"));
+    third.resolve(withOn("musicbrainz", "theaudiodb", "fanarttv"));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-fanarttv")).toBeChecked());
+    reread.resolve(withOn("musicbrainz", "theaudiodb"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-toggle-fanarttv")).not.toBeDisabled(),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(screen.getByTestId("provider-toggle-fanarttv")).toBeChecked();
+  });
+
   it("does not revert unsaved settings edits when the consent decision reloads (R02-12)", async () => {
     getMetadataProviders.mockResolvedValue(view());
     const user = userEvent.setup();

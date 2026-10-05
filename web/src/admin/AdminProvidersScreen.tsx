@@ -174,8 +174,11 @@ export default function AdminProvidersScreen() {
       setToggling((prev) => ({ ...prev, [p.slug]: false }));
       if (--togglesInFlight.current === 0 && togglesOverlapped.current) {
         togglesOverlapped.current = false;
+        const sentAt = toggleSeq.current;
         try {
-          setView(await apiClient.getMetadataProviders());
+          const fresh = await apiClient.getMetadataProviders();
+          // A toggle sent after this read was is newer than it; its own result stands.
+          if (toggleSeq.current === sentAt) setView(fresh);
         } catch {
           // Keep the view the responses built; the next load corrects it.
         }

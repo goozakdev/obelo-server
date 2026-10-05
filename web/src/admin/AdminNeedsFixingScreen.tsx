@@ -15,7 +15,7 @@ import type {
 import { useAsync } from "../browse/useAsync";
 import { appEvents, type EnrichProgress } from "../events/enrichEvents";
 import { useNeedsReview } from "./useNeedsReview";
-import { useFixCounts } from "./useFixCounts";
+import { nextCountStamp, useFixCounts } from "./useFixCounts";
 import { SCAN_POLL_INTERVAL_MS } from "./useScanStatus";
 import { cascadeSummaryText } from "./cascadeSummary";
 import AdminListPanel from "./AdminListPanel";
@@ -234,8 +234,10 @@ export default function AdminNeedsFixingScreen() {
   // so the badge hook skips it rather than fetching them a second time. `selected` is
   // still "" on the render the ids first arrive, so fall back to the default pick.
   const queueLibraryId = selected !== "" ? selected : (localLibs[0]?.id ?? "");
-  const fetchedCounts = useFixCounts(libraryIds, reloadToken, queueLibraryId);
+  const fetchedStamps = useRef<Record<string, number>>({});
+  const fetchedCounts = useFixCounts(libraryIds, reloadToken, queueLibraryId, fetchedStamps);
   const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
+  const queueStamps = useRef<Record<string, number>>({});
   const reportQueueCount = useCallback((id: string, n: number | null) => {
     setQueueCounts((cur) => {
       if (n === null) {
@@ -243,14 +245,21 @@ export default function AdminNeedsFixingScreen() {
         const { [id]: _drop, ...rest } = cur;
         return rest;
       }
-      return cur[id] === n ? cur : { ...cur, [id]: n };
+      if (cur[id] === n) return cur;
+      queueStamps.current[id] = nextCountStamp();
+      return { ...cur, [id]: n };
     });
   }, []);
-  // The queue's own count wins only for the Library it is open on. A Library the
-  // Admin has left keeps its last queue count until a recount lands, and then the
-  // fetched number is the newer one.
-  const counts: Record<string, number> = { ...queueCounts, ...fetchedCounts };
-  if (queueLibraryId in queueCounts) counts[queueLibraryId] = queueCounts[queueLibraryId];
+  // The queue's own count wins for the Library it is open on. For one the Admin has
+  // left, whichever count was taken LAST wins: a row fixed there is newer than the
+  // mount-time fetch, and a recount after it is newer than the row fixes.
+  const counts: Record<string, number> = { ...fetchedCounts };
+  for (const [id, n] of Object.entries(queueCounts)) {
+    const fetchedAt = fetchedStamps.current[id];
+    if (id === queueLibraryId || !(id in fetchedCounts) || queueStamps.current[id] > fetchedAt) {
+      counts[id] = n;
+    }
+  }
 
   return (
     <section className="admin-needs-fixing" data-testid="admin-needs-fixing">
