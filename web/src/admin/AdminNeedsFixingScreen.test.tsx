@@ -45,6 +45,7 @@ const {
   reviewShowEpisodes,
   deleteOverride,
   scanLibrary,
+  getScanStatus,
   enrichLibrary,
   getEnrichPassState,
   subscribeEvents,
@@ -67,6 +68,7 @@ const {
   reviewShowEpisodes: vi.fn(),
   deleteOverride: vi.fn(),
   scanLibrary: vi.fn(),
+  getScanStatus: vi.fn(),
   enrichLibrary: vi.fn(),
   getEnrichPassState: vi.fn(),
   subscribeEvents: vi.fn(),
@@ -98,6 +100,7 @@ vi.mock("../api/client", async () => {
       reviewShowEpisodes: (...a: unknown[]) => reviewShowEpisodes(...a),
       deleteOverride: (...a: unknown[]) => deleteOverride(...a),
       scanLibrary: (...a: unknown[]) => scanLibrary(...a),
+      getScanStatus: (...a: unknown[]) => getScanStatus(...a),
       enrichLibrary: (...a: unknown[]) => enrichLibrary(...a),
       getEnrichPassState: (...a: unknown[]) => getEnrichPassState(...a),
       subscribeEvents: (...a: unknown[]) => subscribeEvents(...a),
@@ -262,6 +265,7 @@ beforeEach(() => {
     reviewShowEpisodes,
     deleteOverride,
     scanLibrary,
+    getScanStatus,
     enrichLibrary,
     getEnrichPassState,
     subscribeEvents,
@@ -291,6 +295,7 @@ beforeEach(() => {
   applyEnrichmentOverride.mockResolvedValue({});
   deleteOverride.mockResolvedValue(undefined);
   scanLibrary.mockResolvedValue({ state: "idle" });
+  getScanStatus.mockResolvedValue({ state: "idle" });
   enrichLibrary.mockResolvedValue(passState({ running: true, started: true }));
   getEnrichPassState.mockResolvedValue(passState());
   searchEnrichmentCandidates.mockResolvedValue({ candidates: [], hasMore: false });
@@ -1011,7 +1016,7 @@ describe("AdminNeedsFixingScreen — one row per Album", () => {
         undefined,
       ),
     );
-    const summary = await screen.findByTestId("fix-item-cascade");
+    const summary = await screen.findByTestId("needs-fixing-cascade");
     expect(summary).toHaveTextContent("12 of 14 tracks matched");
     expect(summary).toHaveTextContent("2 still need attention");
     // Identity is untouched — this is a metadata pin, so no re-file and no rescan.
@@ -1659,5 +1664,154 @@ describe("AdminNeedsFixingScreen — linked libraries are not fixable here", () 
     );
     // No picker, because there is nothing on this side to pick.
     expect(screen.queryByTestId("needs-fixing-library-select")).not.toBeInTheDocument();
+  });
+});
+
+// A promise the test settles by hand, so it can order two responses.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe("AdminNeedsFixingScreen — keeping the queue honest (R01)", () => {
+  it("R01-01: a rescan keeps its banner and re-reads the lists only once the scan settles", async () => {
+    listNeedsReview.mockResolvedValue([reviewItem()]);
+    searchLibraryEnrichmentCandidates.mockResolvedValue({
+      candidates: [candidate({ source: "tmdb" })],
+      hasMore: false,
+    });
+    render();
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
+    await screen.findByTestId("needs-fixing-rescan");
+
+    // The scan is only ACKNOWLEDGED (202) when scanLibrary resolves.
+    scanLibrary.mockResolvedValue({ state: "running" });
+    const settle = deferred<{ state: string }>();
+    getScanStatus.mockReturnValue(settle.promise);
+    await waitFor(() => expect(listUnmatched).toHaveBeenCalled());
+    const before = listUnmatched.mock.calls.length;
+
+    await userEvent.click(screen.getByTestId("needs-fixing-rescan-button"));
+    // The first poll comes one SCAN_POLL_INTERVAL_MS after the ack.
+    await waitFor(() => expect(getScanStatus).toHaveBeenCalled(), { timeout: 4000 });
+    expect(listUnmatched.mock.calls.length).toBe(before);
+    expect(screen.getByTestId("needs-fixing-rescan")).toBeInTheDocument();
+
+    await act(async () => settle.resolve({ state: "idle" }));
+    await waitFor(() => expect(listUnmatched.mock.calls.length).toBeGreaterThan(before));
+    await waitFor(() =>
+      expect(screen.queryByTestId("needs-fixing-rescan")).not.toBeInTheDocument(),
+    );
+}, 10_000);
+
+  it("R01-02: a finished re-check re-reads the needs-review list too", async () => {
+    listNeedsReview.mockResolvedValueOnce([reviewItem({ enrichmentStatus: "unmatched" })]);
+    render();
+    expect(await screen.findByTestId("fix-item-matched")).toHaveTextContent("Not matched");
+
+    // The pass matched it server-side; only a re-read of THIS list shows that.
+    listNeedsReview.mockResolvedValue([
+      reviewItem({ enrichmentStatus: "matched", enrichedTitle: "Arrival", releaseDate: "2016-11-11" }),
+    ]);
+    await userEvent.click(screen.getByTestId("needs-fixing-recheck-button"));
+    emit("enrichProgress", progressEvent({ total: 1, matched: 1, done: 1, complete: true }));
+    await waitFor(() =>
+      expect(screen.getByTestId("fix-item-matched")).toHaveTextContent("Arrival (2016)"),
+    );
+  });
+
+  it("R01-03: a slow earlier reload cannot overwrite a newer one", async () => {
+    listNeedsReview.mockResolvedValue([reviewItem()]);
+    listUnmatched.mockResolvedValueOnce([]);
+    render();
+    await screen.findByTestId("needs-fixing-list");
+
+    const first = deferred<UnmatchedFile[]>();
+    const second = deferred<UnmatchedFile[]>();
+    listUnmatched.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await userEvent.click(screen.getByTestId("fix-item-dismiss"));
+    await waitFor(() => expect(listUnmatched).toHaveBeenCalledTimes(2));
+    await userEvent.click(await screen.findByTestId("fix-item-dismiss"));
+    await waitFor(() => expect(listUnmatched).toHaveBeenCalledTimes(3));
+
+    await act(async () => second.resolve([]));
+    await act(async () => first.resolve([unmatchedFile()]));
+    await waitFor(() => expect(screen.getAllByTestId("fix-item")).toHaveLength(1));
+  });
+
+  it("R01-09/11: the badge follows row fixes, and the selected library is not fetched twice", async () => {
+    listNeedsReview.mockResolvedValueOnce([reviewItem()]);
+    render();
+    await waitFor(() =>
+      expect(screen.getByTestId("needs-fixing-library-select")).toHaveTextContent(
+        "Movies — 1 to fix",
+      ),
+    );
+    // One library, one set of reads: the queue's own, not a second set for the badge.
+    expect(listNeedsReview).toHaveBeenCalledTimes(1);
+
+    listNeedsReview.mockResolvedValue([]);
+    await userEvent.click(screen.getByTestId("fix-item-dismiss"));
+    await waitFor(() =>
+      expect(screen.getByTestId("needs-fixing-library-select")).toHaveTextContent(
+        "Movies — all clear",
+      ),
+    );
+  });
+
+  it("R01-12: two lists failing with the same message both show, without a key clash", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    listUnmatched.mockRejectedValue(new Error("boom"));
+    listOverrides.mockRejectedValue(new Error("boom"));
+    render();
+    await waitFor(() => expect(screen.getAllByTestId("needs-fixing-error")).toHaveLength(2));
+    const keyWarnings = spy.mock.calls.filter((c) => String(c[0]).includes("same key"));
+    spy.mockRestore();
+    expect(keyWarnings).toHaveLength(0);
+  });
+
+  it("R01-10: the album cascade summary outlives the row it was produced on", async () => {
+    listLibraries.mockResolvedValue([lib({ id: "lib1", name: "Music", kind: "music" })]);
+    const track = (id: string) =>
+      enrichmentItem({
+        id,
+        kind: "track",
+        title: `Track ${id}`,
+        showTitle: "",
+        showId: "",
+        seasonNumber: 0,
+        episodeNumber: 0,
+        artistName: "James Horner",
+        albumTitle: "Braveheart",
+        albumId: "al-bh",
+        path: `/media/music/${id}.flac`,
+        enrichmentStatus: "unmatched",
+        enrichmentReason: "album-unmatched",
+      });
+    listEnrichmentAttention.mockResolvedValueOnce([track("1"), track("2")]);
+    searchEntityEnrichmentCandidates.mockResolvedValue({
+      candidates: [candidate({ externalId: "mbid-bh", source: "musicbrainz" })],
+      hasMore: false,
+    });
+    applyEntityEnrichmentOverride.mockResolvedValue({
+      entityType: "albums",
+      entityId: "al-bh",
+      cascade: { updated: 2, attention: 0 },
+    });
+    render();
+
+    await userEvent.click(await screen.findByTestId("fix-item-toggle"));
+    // The whole album matched, so the re-read queue no longer has the row.
+    listEnrichmentAttention.mockResolvedValue([]);
+    await userEvent.click(await screen.findByTestId("fix-use-best-guess"));
+
+    await screen.findByTestId("needs-fixing-empty");
+    expect(await screen.findByTestId("needs-fixing-cascade")).toHaveTextContent(
+      "2 of 2 tracks matched",
+    );
   });
 });

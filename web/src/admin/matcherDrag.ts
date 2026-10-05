@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 // Dragging on the file matcher, on POINTER events rather than HTML5
 // drag-and-drop.
@@ -72,16 +72,53 @@ const DRAG_THRESHOLD_PX = 6;
 
 export interface DragState {
   path: string;
-  x: number;
-  y: number;
+}
+
+/** Where the pointer is, held outside React state: it changes on every pointermove,
+ * and putting it in state re-rendered the whole matcher per frame (O(slots x files)
+ * work each time on a long show). Only the ghost subscribes to it. */
+export interface DragPosition {
+  get(): { x: number; y: number };
+  set(x: number, y: number): void;
+  subscribe(listener: () => void): () => void;
+}
+
+function createDragPosition(): DragPosition {
+  let current = { x: 0, y: 0 };
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    set(x, y) {
+      current = { x, y };
+      listeners.forEach((l) => l());
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+/** Read a {@link DragPosition}, re-rendering only the caller when it moves. */
+export function useDragPosition(position: DragPosition): { x: number; y: number } {
+  return useSyncExternalStore(position.subscribe, position.get);
 }
 
 /** Pointer dragging for the matcher. `onDrop` receives the same `DropTarget` the
  * click path builds, so the two paths share every rule below this line. */
 export function useDragPlacement(onDrop: (path: string, target: DropTarget) => void) {
+  // `drag` changes only when a drag starts or ends; the pointer position lives in
+  // `ghost`. The setState below bails out when the path is unchanged.
   const [drag, setDrag] = useState<DragState | null>(null);
+  const ghostRef = useRef<DragPosition | null>(null);
+  if (ghostRef.current === null) ghostRef.current = createDragPosition();
+  const ghost = ghostRef.current;
   const stepRef = useRef(0);
   const frameRef = useRef<number | null>(null);
+  // Tears down the gesture in flight (its window listeners), so an unmount mid-drag
+  // — Apply, navigation — neither fires a drop into a dead tree nor leaks them.
+  const endActive = useRef<(() => void) | null>(null);
+  useEffect(() => () => endActive.current?.(), []);
 
   // Auto-scroll runs on its own frame loop rather than on pointermove, so a
   // finger held still at the edge of the screen keeps scrolling instead of
@@ -112,6 +149,7 @@ export function useDragPlacement(onDrop: (path: string, target: DropTarget) => v
   const startDrag = useCallback(
     (path: string, event: { clientX: number; clientY: number; button?: number }) => {
       if (event.button !== undefined && event.button !== 0) return;
+      endActive.current?.();
       const startX = event.clientX;
       const startY = event.clientY;
       let moved = false;
@@ -127,7 +165,8 @@ export function useDragPlacement(onDrop: (path: string, target: DropTarget) => v
         // selection. (The cards also carry `touch-action: none`.)
         if (ev.cancelable) ev.preventDefault();
         stepRef.current = autoScrollStep(ev.clientY, window.innerHeight || 0);
-        setDrag({ path, x: ev.clientX, y: ev.clientY });
+        ghost.set(ev.clientX, ev.clientY);
+        setDrag((cur) => (cur?.path === path ? cur : { path }));
       };
 
       const finish = (ev: PointerEvent) => {
@@ -144,6 +183,7 @@ export function useDragPlacement(onDrop: (path: string, target: DropTarget) => v
       const onCancel = () => cleanup();
 
       function cleanup() {
+        endActive.current = null;
         stepRef.current = 0;
         setDrag(null);
         window.removeEventListener("pointermove", onMove);
@@ -151,12 +191,13 @@ export function useDragPlacement(onDrop: (path: string, target: DropTarget) => v
         window.removeEventListener("pointercancel", onCancel);
       }
 
+      endActive.current = cleanup;
       window.addEventListener("pointermove", onMove, { passive: false });
       window.addEventListener("pointerup", finish);
       window.addEventListener("pointercancel", onCancel);
     },
-    [onDrop],
+    [onDrop, ghost],
   );
 
-  return { drag, startDrag };
+  return { drag, ghost, startDrag };
 }

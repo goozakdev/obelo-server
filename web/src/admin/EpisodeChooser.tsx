@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { EpisodeCandidate, SeasonSummary } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 
@@ -68,20 +68,28 @@ export default function EpisodeChooser({
   const [applying, setApplying] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Only the newest request may write: a slower earlier one (a `load` whose identity
+  // changed under an in-flight request) must not land after, and overwrite, it. Bumped
+  // on unmount too, so a closed chooser is never written to.
+  const latest = useRef(0);
+
   const load = useCallback(
     async (which?: number) => {
+      const mine = ++latest.current;
       setLoading(true);
       setError(null);
       try {
         const res = await loadPage(which);
+        if (mine !== latest.current) return;
         // The season list comes back only on the first request; keep it thereafter.
         if (res.seasons) setSeasons(res.seasons);
         setSeason(res.season);
         setEpisodes(res.episodes);
       } catch (err) {
+        if (mine !== latest.current) return;
         setError(errorMessage(err));
       } finally {
-        setLoading(false);
+        if (mine === latest.current) setLoading(false);
       }
     },
     [loadPage],
@@ -89,6 +97,9 @@ export default function EpisodeChooser({
 
   useEffect(() => {
     void load();
+    return () => {
+      latest.current++;
+    };
   }, [load]);
 
   async function pick(candidate: EpisodeCandidate) {

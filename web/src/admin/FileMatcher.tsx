@@ -23,7 +23,9 @@ import {
   arrangementFromFiles,
   changedPaths,
   displaceAt,
+  filesAtIndexed,
   filesAtSlot,
+  indexSlots,
   homeGroupOf,
   ignoreFile,
   isShared,
@@ -38,6 +40,7 @@ import {
   type Arrangement,
   type ArrangedFile,
   type PlaceMode,
+  type SlotIndex,
 } from "./matcherArrangement";
 import {
   basename,
@@ -56,7 +59,12 @@ import {
   toApplySlots,
   type PinDrafts,
 } from "./matcherPins";
-import { useDragPlacement, type DropTarget } from "./matcherDrag";
+import {
+  useDragPlacement,
+  useDragPosition,
+  type DragPosition,
+  type DropTarget,
+} from "./matcherDrag";
 import type { MatcherLabels } from "./matcherLabels";
 
 // The file matcher: one container's Files laid against its Slots, rearranged by
@@ -179,6 +187,8 @@ export default function FileMatcher({
     seedNotes(matcher.groups),
   );
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set<number>());
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
   const [extraSlots, setExtraSlots] = useState<Map<number, number[]>>(() => new Map());
   const [extraGroups, setExtraGroups] = useState<number[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -202,7 +212,15 @@ export default function FileMatcher({
     setBase(next);
     setArr(next);
     setSlotsByGroup(seedSlots(matcher.groups));
-    setGroupNotes(seedNotes(matcher.groups));
+    const notes = seedNotes(matcher.groups);
+    setGroupNotes(notes);
+    // The re-read document (Apply's answer) reports only the default group's records
+    // as loaded, but the Admin's expanded groups stay open. Without their records
+    // every Slot would read "no title" and the title comparison would go silent, and
+    // only collapsing then re-expanding each group would bring them back.
+    for (const g of expandedRef.current) {
+      if (!notes.get(g)?.loaded) fetchGroupRef.current(g);
+    }
     setSelection(null);
     setPending(null);
     setPins(NO_PINS);
@@ -217,6 +235,10 @@ export default function FileMatcher({
       (slotsByGroup.get(position.group) ?? []).find((s) => s.slot === position.slot)?.record,
     [slotsByGroup],
   );
+
+  // Slot -> Files, once per arrangement, so rendering a Slot is a lookup and not a scan
+  // of every File.
+  const slotIndex = useMemo(() => indexSlots(arr), [arr]);
 
   const changes = useMemo(() => changedPaths(base, arr), [base, arr]);
   const repointed = useMemo(() => changedSlots(pins), [pins]);
@@ -287,7 +309,7 @@ export default function FileMatcher({
     [arr, place],
   );
 
-  const { drag, startDrag } = useDragPlacement(handleDrop);
+  const { drag, ghost, startDrag } = useDragPlacement(handleDrop);
 
   /** The click half of the equivalence: a selected File plus a click on any drop
    * target performs exactly the drop that dragging it there would. */
@@ -312,21 +334,14 @@ export default function FileMatcher({
 
   // --- Groups --------------------------------------------------------------
 
-  const toggleGroup = useCallback(
+  // One group's provider records, fetched and kept. Shared by the expand click and by
+  // the re-read of the groups that were already open when a new document arrived.
+  const fetchGroup = useCallback(
     (group: number) => {
-      setExpanded((current) => {
-        const next = new Set(current);
-        if (next.has(group)) next.delete(group);
-        else next.add(group);
-        return next;
-      });
-      // Provider records load ON EXPAND and are then kept. The first response was
-      // complete for everything local, so the counts, the unassigned Files and the
-      // Slots local Files claim were already right before this call — and stay
-      // right if it fails.
-      const note = groupNotes.get(group);
-      if (!loadGroup || note?.loaded || note?.loading) return;
-      setGroupNotes((notes) => new Map(notes).set(group, { ...(note ?? emptyNote()), loading: true }));
+      if (!loadGroup) return;
+      setGroupNotes((notes) =>
+        new Map(notes).set(group, { ...(notes.get(group) ?? emptyNote()), loading: true }),
+      );
       void loadGroup(group)
         .then((loaded) => {
           if (loaded) {
@@ -352,7 +367,28 @@ export default function FileMatcher({
           );
         });
     },
-    [groupNotes, loadGroup],
+    [loadGroup],
+  );
+  const fetchGroupRef = useRef(fetchGroup);
+  fetchGroupRef.current = fetchGroup;
+
+  const toggleGroup = useCallback(
+    (group: number) => {
+      setExpanded((current) => {
+        const next = new Set(current);
+        if (next.has(group)) next.delete(group);
+        else next.add(group);
+        return next;
+      });
+      // Provider records load ON EXPAND and are then kept. The first response was
+      // complete for everything local, so the counts, the unassigned Files and the
+      // Slots local Files claim were already right before this call — and stay
+      // right if it fails.
+      const note = groupNotes.get(group);
+      if (!loadGroup || note?.loaded || note?.loading) return;
+      fetchGroup(group);
+    },
+    [groupNotes, loadGroup, fetchGroup],
   );
 
   // --- Records -------------------------------------------------------------
@@ -764,6 +800,7 @@ export default function FileMatcher({
           group={group}
           labels={labels}
           arrangement={arr}
+          slotIndex={slotIndex}
           expanded={expanded.has(group)}
           note={groupNotes.get(group)}
           providerSlotCount={providerCounts.get(group) ?? 0}
@@ -848,17 +885,24 @@ export default function FileMatcher({
         )}
       </section>
 
-      {drag && (
-        <div
-          className="matcher-drag-ghost"
-          data-testid="matcher-drag-ghost"
-          style={{ left: drag.x, top: drag.y }}
-          aria-hidden="true"
-        >
-          {basename(drag.path)}
-        </div>
-      )}
+      {drag && <DragGhost path={drag.path} position={ghost} />}
     </section>
+  );
+}
+
+/** The element that follows the pointer. It subscribes to the pointer position itself,
+ * so a drag frame re-renders only this, not the whole matcher beneath it. */
+function DragGhost({ path, position }: { path: string; position: DragPosition }) {
+  const { x, y } = useDragPosition(position);
+  return (
+    <div
+      className="matcher-drag-ghost"
+      data-testid="matcher-drag-ghost"
+      style={{ left: x, top: y }}
+      aria-hidden="true"
+    >
+      {basename(path)}
+    </div>
   );
 }
 
@@ -969,6 +1013,7 @@ function GroupSection({
   group,
   labels,
   arrangement,
+  slotIndex,
   expanded,
   note,
   providerSlotCount,
@@ -998,6 +1043,7 @@ function GroupSection({
   group: number;
   labels: MatcherLabels;
   arrangement: Arrangement;
+  slotIndex: SlotIndex;
   expanded: boolean;
   note?: GroupNote;
   providerSlotCount: number;
@@ -1039,9 +1085,11 @@ function GroupSection({
   const highest = ordered.length > 0 ? ordered[ordered.length - 1] : 0;
   // Only a Slot with a File can be repointed: a record decorates something, and an
   // empty Slot has nothing to decorate and no Title to carry the record.
-  const filled = ordered
-    .map((slot) => ({ group, slot }))
-    .filter((position) => filesAtSlot(arrangement, position).length > 0);
+  const filled = expanded
+    ? ordered
+        .map((slot) => ({ group, slot }))
+        .filter((position) => filesAtIndexed(slotIndex, position).length > 0)
+    : [];
 
   return (
     <section className="matcher-group" data-testid="matcher-group" data-group={group}>
@@ -1141,7 +1189,7 @@ function GroupSection({
                   onRepoint={onRepoint}
                   onRemoveSlot={onRemoveSlot}
                   onClearRecord={onClearRecord}
-                  arrangement={arrangement}
+                  parts={filesAtIndexed(slotIndex, { group, slot })}
                   labels={labels}
                   containerTitle={containerTitle}
                   selection={selection}
@@ -1201,7 +1249,7 @@ function SlotCard({
   onRepoint,
   onRemoveSlot,
   onClearRecord,
-  arrangement,
+  parts,
   labels,
   containerTitle,
   selection,
@@ -1227,7 +1275,8 @@ function SlotCard({
   onRepoint: (group: number, targets: SlotPosition[]) => void;
   onRemoveSlot: (position: SlotPosition) => void;
   onClearRecord: (position: SlotPosition) => void;
-  arrangement: Arrangement;
+  /** The Files on this Slot, in part order. */
+  parts: ArrangedFile[];
   labels: MatcherLabels;
   containerTitle: string;
   selection: Selection | null;
@@ -1240,7 +1289,6 @@ function SlotCard({
   onResolvePending: (how: "displace" | "merge") => void;
   onCancelPending: () => void;
 }) {
-  const parts = filesAtSlot(arrangement, position);
   // The numbers disagree on BOTH sides or neither: the Slot's own code is
   // highlighted exactly when one of the Files on it claims a different position.
   const mismatch = parts.some((f) => comparePosition(f.parsed, position).differs);
@@ -1548,8 +1596,15 @@ function PartRow({
   const numbers = comparePosition(file.parsed, position);
   const titles = compareTitles(slotName, file.path, containerTitle);
   const shared = isShared(file);
-  const label = splitContainerPrefix(file.path, containerTitle);
-  const marks = markFilename(label.rest, file.path, containerTitle);
+  // Filename tokenizing is regex work; it only depends on the path and the title.
+  const label = useMemo(
+    () => splitContainerPrefix(file.path, containerTitle),
+    [file.path, containerTitle],
+  );
+  const marks = useMemo(
+    () => markFilename(label.rest, file.path, containerTitle),
+    [label, file.path, containerTitle],
+  );
 
   return (
     <div

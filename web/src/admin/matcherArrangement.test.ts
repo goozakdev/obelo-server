@@ -5,9 +5,11 @@ import {
   arrangementFromFiles,
   changedPaths,
   displaceAt,
+  filesAtIndexed,
   filesAtSlot,
   groupHintForPath,
   homeGroupOf,
+  indexSlots,
   ignoreFile,
   isShared,
   movePartBefore,
@@ -222,5 +224,37 @@ describe("arrangeParts", () => {
       { path: A, state: "placed", placements: [{ group: 3, slot: 2, ordinal: 1 }] },
       { path: B, state: "placed", placements: [{ group: 3, slot: 2, ordinal: 2 }] },
     ]);
+  });
+});
+
+describe("indexSlots (R01-05)", () => {
+  it("answers exactly what filesAtSlot answers, for every slot, parts in order", () => {
+    const P1 = "/tv/Show/Season 03/Show - S03E01 - Part 1.mkv";
+    const P2 = "/tv/Show/Season 03/Show - S03E01 - Part 2.mkv";
+    const arr = arrangementFromFiles([
+      file({ path: P2, placements: [{ group: 3, slot: 1, ordinal: 2 }] }),
+      file({ path: P1, placements: [{ group: 3, slot: 1, ordinal: 1 }] }),
+      file({
+        path: A,
+        placements: [
+          { group: 3, slot: 1, ordinal: 3 },
+          { group: 3, slot: 2, ordinal: 1 },
+        ],
+      }),
+      file({ path: B, state: "unassigned", placements: [] }),
+      file({ path: LOOSE, state: "ignored", placements: [{ group: 3, slot: 9, ordinal: 1 }] }),
+    ]);
+    const index = indexSlots(arr);
+    for (const position of [
+      { group: 3, slot: 1 },
+      { group: 3, slot: 2 },
+      { group: 3, slot: 9 },
+      { group: 4, slot: 1 },
+    ]) {
+      expect(filesAtIndexed(index, position).map((f) => f.path)).toEqual(
+        filesAtSlot(arr, position).map((f) => f.path),
+      );
+    }
+    expect(filesAtIndexed(index, { group: 3, slot: 1 }).map((f) => f.path)).toEqual([P1, P2, A]);
   });
 });

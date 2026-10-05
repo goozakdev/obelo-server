@@ -220,6 +220,22 @@ describe("AlbumEditionPicker", () => {
     );
   });
 
+  it("R01-10: a failed re-read after a successful apply keeps the summary, not 'unavailable'", async () => {
+    listAlbumEditions
+      .mockResolvedValueOnce(editions())
+      .mockRejectedValueOnce(new Error("provider hiccup"));
+    applyEntityEnrichmentOverride.mockResolvedValue(detail());
+    render(<AlbumEditionPicker albumId="al1" />);
+
+    const rows = await screen.findAllByTestId("album-edition");
+    await userEvent.click(within(rows[1]).getByTestId("album-edition-use"));
+
+    expect(await screen.findByTestId("album-edition-cascade")).toHaveTextContent(
+      "14 of 16 tracks matched",
+    );
+    expect(screen.queryByTestId("album-editions-unavailable")).not.toBeInTheDocument();
+  });
+
   it("re-reads the list after applying, so the marker moves onto the picked row", async () => {
     // Without the re-read the section would still be describing the state before the
     // click — the Admin's own choice still labelled somebody else's guess.

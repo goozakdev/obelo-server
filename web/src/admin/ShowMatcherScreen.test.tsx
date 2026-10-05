@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import type { MatcherDocument } from "../api/types";
 
 // The TV adapter. FileMatcher's own tests use a made-up kind precisely so that
@@ -335,3 +335,36 @@ const slotFour = (slot: number) =>
   document.querySelector(
     `[data-testid="matcher-slot"][data-group="4"][data-slot="${slot}"]`,
   ) as HTMLElement;
+
+describe("ShowMatcherScreen — switching shows (R01-13)", () => {
+  it("drops the old show's document while the new one loads", async () => {
+    const user = userEvent.setup();
+    getShowMatcher.mockResolvedValueOnce(doc());
+    let resolveNext!: (d: MatcherDocument) => void;
+    getShowMatcher.mockReturnValueOnce(new Promise<MatcherDocument>((r) => (resolveNext = r)));
+    render(
+      <MemoryRouter initialEntries={["/admin/shows/show1/matcher"]}>
+        <Routes>
+          <Route
+            path="/admin/shows/:showId/matcher"
+            element={
+              <>
+                <Link to="/admin/shows/show2/matcher">other</Link>
+                <ShowMatcherScreen />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("file-matcher");
+
+    await user.click(screen.getByText("other"));
+    // Show 1's arrangement must not stay up under show 2's apply closure.
+    expect(await screen.findByTestId("show-matcher-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("file-matcher")).not.toBeInTheDocument();
+
+    resolveNext(doc({ containerId: "show2", title: "Second Show" }));
+    expect(await screen.findByTestId("show-matcher-title")).toHaveTextContent("Second Show");
+  });
+});

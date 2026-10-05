@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { buildFixItems } from "./needsFixing";
 
@@ -20,7 +20,9 @@ import { buildFixItems } from "./needsFixing";
 // adding one to save a badge is not worth the API surface). That is fine here and
 // nowhere else: this is an Admin screen on a household server with a handful of
 // Libraries, the reads are already the ones the queue makes, and it runs exactly
-// once per mount.
+// once per mount. The Library the queue is open on is the exception: the queue
+// already holds those five lists, so the caller passes its id as `skipId` and
+// supplies that one count itself.
 //
 // Every part of it is best-effort. A Library whose counts fail to load is simply
 // absent from the map and renders with no badge — a failed count must never stop
@@ -35,9 +37,18 @@ export type FixCounts = Record<string, number>;
  *   and an action that CHANGES the queue — a recheck pass (ADR-0051) — would
  *   otherwise leave a stale number sitting next to a queue that has just moved,
  *   which is worse than no badge at all.
+ * @param skipId a Library the caller counts itself, so it is not fetched here. Read
+ *   when a count starts, not a trigger: switching the queue to another Library must
+ *   not re-count them all.
  */
-export function useFixCounts(libraryIds: string[], reloadToken = 0): FixCounts {
+export function useFixCounts(
+  libraryIds: string[],
+  reloadToken = 0,
+  skipId = "",
+): FixCounts {
   const [counts, setCounts] = useState<FixCounts>({});
+  const skipRef = useRef(skipId);
+  skipRef.current = skipId;
   // Depend on the ids' identity, not the array's: the caller rebuilds the array on
   // every render, and re-running this effect per render would loop the network.
   const key = libraryIds.join(",");
@@ -45,7 +56,7 @@ export function useFixCounts(libraryIds: string[], reloadToken = 0): FixCounts {
   useEffect(() => {
     if (key === "") return;
     const ctrl = new AbortController();
-    const ids = key.split(",");
+    const ids = key.split(",").filter((id) => id !== skipRef.current);
 
     void Promise.all(
       ids.map(async (id) => {
@@ -69,7 +80,16 @@ export function useFixCounts(libraryIds: string[], reloadToken = 0): FixCounts {
             setCounts((cur) => ({ ...cur, [id]: total }));
           }
         } catch {
-          // Best-effort: no badge for this Library, and no error anywhere else.
+          // Best-effort: no badge for this Library, and no error anywhere else. A
+          // recount that fails drops the old number too — "not counted" means no
+          // badge, not a stale one.
+          if (!ctrl.signal.aborted) {
+            setCounts((cur) => {
+              if (!(id in cur)) return cur;
+              const { [id]: _drop, ...rest } = cur;
+              return rest;
+            });
+          }
         }
       }),
     );

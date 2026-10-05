@@ -29,8 +29,10 @@ export interface NeedsReviewState {
   reload: () => void;
 }
 
-/** Load `libraryId`'s needs-review items (all kinds), refetchable after a fix. */
-export function useNeedsReview(libraryId: string): NeedsReviewState {
+/** Load `libraryId`'s needs-review items (all kinds), refetchable after a fix.
+ * `reloadToken` re-reads the list when it changes, for the screen's "the server moved
+ * underneath you" signal (a finished Re-check pass). */
+export function useNeedsReview(libraryId: string, reloadToken = 0): NeedsReviewState {
   const [items, setItems] = useState<NeedsReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export function useNeedsReview(libraryId: string): NeedsReviewState {
     } finally {
       if (!ctrl.signal.aborted) setLoading(false);
     }
-  }, [libraryId]);
+  }, [libraryId, reloadToken]);
 
   useEffect(() => {
     void load();

@@ -133,3 +133,27 @@ describe("EpisodeChooser", () => {
     );
   });
 });
+
+describe("EpisodeChooser — stale loads (R01-06)", () => {
+  it("ignores a slow earlier load once a newer one has landed", async () => {
+    let resolveOld!: (p: EpisodeChooserPage) => void;
+    const oldLoad = vi.fn(
+      () => new Promise<EpisodeChooserPage>((r) => (resolveOld = r)),
+    );
+    const newLoad = vi.fn().mockResolvedValue(
+      page({
+        season: 4,
+        episodes: [{ season: 4, episode: 1, name: "Newer" }],
+      }),
+    );
+    const props = { seriesTitle: "Series", onPick: vi.fn(), onBack: vi.fn() };
+    const { rerender } = render(<EpisodeChooser {...props} load={oldLoad} />);
+    rerender(<EpisodeChooser {...props} load={newLoad} />);
+    await screen.findByText(/Newer/);
+
+    resolveOld(page({ season: 3 }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/Sideshow/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Newer/)).toBeInTheDocument();
+  });
+});

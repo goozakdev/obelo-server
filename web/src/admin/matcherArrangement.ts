@@ -111,6 +111,43 @@ export function filesAtSlot(arr: Arrangement, target: SlotPosition): ArrangedFil
   );
 }
 
+/** Every Slot's Files, keyed by position, built in ONE pass over the arrangement.
+ * `filesAtSlot` scans every File per call, so a screen that asks per Slot per render
+ * pays Slots x Files; this answers the same question (same members, same part order)
+ * for the whole screen at once. Rebuild it only when the arrangement changes. */
+export type SlotIndex = Map<string, ArrangedFile[]>;
+
+const slotKey = (p: SlotPosition) => `${p.group}:${p.slot}`;
+
+export function indexSlots(arr: Arrangement): SlotIndex {
+  const out: SlotIndex = new Map();
+  for (const f of arr.values()) {
+    if (f.state !== "placed") continue;
+    for (const p of f.placements) {
+      const key = slotKey(p);
+      const list = out.get(key);
+      if (list) {
+        if (!list.includes(f)) list.push(f);
+      } else {
+        out.set(key, [f]);
+      }
+    }
+  }
+  for (const [key, list] of out) {
+    const [group, slot] = key.split(":").map(Number);
+    const target = { group, slot };
+    list.sort((a, b) => ordinalAt(a, target) - ordinalAt(b, target) || a.path.localeCompare(b.path));
+  }
+  return out;
+}
+
+/** The Files on one Slot, read from a prebuilt {@link SlotIndex}. */
+export function filesAtIndexed(index: SlotIndex, target: SlotPosition): ArrangedFile[] {
+  return index.get(slotKey(target)) ?? NO_FILES;
+}
+
+const NO_FILES: ArrangedFile[] = [];
+
 export function ordinalAt(file: ArrangedFile, target: SlotPosition): number {
   return file.placements.find((p) => samePosition(p, target))?.ordinal ?? 1;
 }

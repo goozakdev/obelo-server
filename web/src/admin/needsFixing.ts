@@ -6,6 +6,7 @@ import type {
   UnmatchedFile,
 } from "../api/types";
 import { API_PREFIX } from "../api/client";
+import { basename } from "./matcherCompare";
 import { folderOf, matcherPath } from "./paths";
 
 // The row model behind the Admin "Needs Fixing" queue.
@@ -645,11 +646,10 @@ export function buildFixItems(input: {
       // a flagged Episode's path at answering "which file?".
       if (p.path !== "") row.path = p.path;
     }
+    // A row built from flagged Episodes has no year of its own; the Show's lookup does.
+    const known = shows.get(p.showId);
+    if (known !== undefined && known.year === 0) known.year = p.year;
     if (p.orphaned > 0) orphanRows.push(orphanedPlacementRow(p));
-  }
-  for (const p of showProblems) {
-    const row = shows.get(p.showId);
-    if (row !== undefined && row.year === 0) row.year = p.year;
   }
 
   const showRows: FixItem[] = [];
@@ -1020,7 +1020,7 @@ function showRowClauses(c: ShowRowCounts): string[] {
 }
 
 /** Join clauses into one readable sentence. */
-export function joinClauses(clauses: string[]): string {
+function joinClauses(clauses: string[]): string {
   if (clauses.length === 0) return "";
   if (clauses.length === 1) return clauses[0];
   return `${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}`;
@@ -1230,7 +1230,7 @@ function orphanedPlacementRow(p: ShowProblems): FixItem {
 /** The filename without its directory or extension — what a never-identified file
  * is called, since it has no title. */
 export function fileStem(path: string): string {
-  const base = path.slice(folderOf(path).length).replace(/^[/\\]+/, "");
+  const base = basename(path);
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(0, dot) : base;
 }

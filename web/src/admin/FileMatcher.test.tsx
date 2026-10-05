@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -1291,5 +1292,55 @@ describe("a file that could not be read", () => {
     });
     const tray = screen.getByTestId("matcher-unsorted");
     expect(within(tray).getByTestId("matcher-file-unreadable")).toBeInTheDocument();
+  });
+});
+
+describe("an apply that leaves the screen open (R01-04)", () => {
+  it("re-fetches the titles of every season the Admin had expanded", async () => {
+    const user = userEvent.setup();
+    const first = doc();
+    // The re-read document the PUT answers with: only the default group is loaded, so
+    // volume 3 comes back with no records at all.
+    const reread: MatcherDocument = {
+      ...doc(),
+      groups: [group({ number: 3, slotCount: 2, slotsLoaded: false, fileCount: 2, placedCount: 2 })],
+      applied: { rearranged: 1, displaced: [B], deferred: [] },
+    };
+    const apply = vi.fn().mockResolvedValue(reread);
+    const volume3 = group({
+      number: 3,
+      slotCount: 2,
+      slotsLoaded: true,
+      slots: [
+        { group: 3, slot: 1, name: "Holiday Nights" },
+        { group: 3, slot: 2, name: "Sins of the Father" },
+      ],
+    });
+    const loadThree = vi.fn(async (n: number) => (n === 3 ? volume3 : null));
+
+    function Owner() {
+      const [matcher, setMatcher] = useState(first);
+      return (
+        <FileMatcher
+          matcher={matcher}
+          labels={labels}
+          loadGroup={loadThree}
+          apply={apply}
+          onApplied={setMatcher}
+          onClose={vi.fn()}
+        />
+      );
+    }
+    render(<Owner />);
+    await user.click(groupToggle(3));
+    expect(within(slotEl(3, 1)).getByTestId("matcher-slot-name")).toHaveTextContent("Holiday Nights");
+    await user.click(within(partEl(A)).getByTestId("matcher-part-unassign"));
+    await user.click(screen.getByTestId("matcher-apply"));
+
+    await screen.findByTestId("matcher-applied");
+    // Still expanded, and its titles must still be there.
+    await waitFor(() =>
+      expect(within(slotEl(3, 1)).getByTestId("matcher-slot-name")).toHaveTextContent("Holiday Nights"),
+    );
   });
 });

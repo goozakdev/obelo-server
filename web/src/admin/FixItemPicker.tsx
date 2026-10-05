@@ -95,6 +95,12 @@ export default function FixItemPicker({
   const [selected, setSelected] = useState<EnrichmentCandidate | null>(null);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  // The search that produced the list on screen. "Show more" pages THIS, and the
+  // empty state names it, rather than whatever the boxes say after the Admin has
+  // started typing a different one without pressing Search.
+  const [submitted, setSubmitted] = useState<{ term: string; scope: FixSearchScope } | null>(
+    null,
+  );
   const [searching, setSearching] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,13 +123,13 @@ export default function FixItemPicker({
   }, [artist, album]);
 
   const runSearch = useCallback(
-    async (q: string, nextPage: number, append: boolean) => {
-      const term = q.trim();
+    async (term: string, termScope: FixSearchScope, nextPage: number, append: boolean) => {
       if (term === "") return;
       setSearching(true);
       setError(null);
       try {
-        const res = await search(term, nextPage, scope());
+        const res = await search(term, nextPage, termScope);
+        setSubmitted({ term, scope: termScope });
         setCandidates((prev) => (append && prev ? [...prev, ...res.candidates] : res.candidates));
         // A pasted URL/id the lead resolved auto-selects its one record.
         if (res.resolvedRef) setSelected(res.candidates[0] ?? null);
@@ -135,7 +141,7 @@ export default function FixItemPicker({
         setSearching(false);
       }
     },
-    [search, scope],
+    [search],
   );
 
   // Open with the answer already on screen where we can guess it. A seed that is
@@ -145,8 +151,8 @@ export default function FixItemPicker({
     autoSearched.current = true;
     const term = seed.trim();
     if (term === "") return;
-    void runSearch(term, 0, false);
-  }, [seed, runSearch]);
+    void runSearch(term, scope(), 0, false);
+  }, [seed, runSearch, scope]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -154,7 +160,7 @@ export default function FixItemPicker({
     const q = query.trim();
     if (q === "") return;
     setSelected(null);
-    void runSearch(q, 0, false);
+    void runSearch(q, scope(), 0, false);
   }
 
   async function apply(candidate: EnrichmentCandidate) {
@@ -233,7 +239,7 @@ export default function FixItemPicker({
 
       {candidates !== null && candidates.length === 0 && (
         <p className="status" data-testid="fix-picker-no-candidates">
-          No matches for &ldquo;{query}&rdquo;. Try a different spelling, or paste the
+          No matches for &ldquo;{submitted?.term ?? query}&rdquo;. Try a different spelling, or paste the
           record&rsquo;s provider URL below.
         </p>
       )}
@@ -326,7 +332,9 @@ export default function FixItemPicker({
               type="button"
               data-testid="fix-picker-show-more"
               disabled={searching || applying}
-              onClick={() => void runSearch(query, page + 1, true)}
+              onClick={() =>
+                submitted && void runSearch(submitted.term, submitted.scope, page + 1, true)
+              }
             >
               {searching ? "Loading…" : "Show more"}
             </button>

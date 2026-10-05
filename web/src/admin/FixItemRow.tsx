@@ -5,8 +5,8 @@ import type { CascadeSummary, EnrichmentCandidate } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import Poster, { initials } from "../browse/Poster";
 import AlbumEditionPicker from "./AlbumEditionPicker";
-import { cascadeSummaryText } from "./cascadeSummary";
 import FixItemPicker, { type FixSearchScope } from "./FixItemPicker";
+import { basename } from "./matcherCompare";
 import { kindLabel, type FixItem } from "./needsFixing";
 
 // One row of the Needs-Fixing queue. Every row — whatever went wrong — answers the
@@ -42,6 +42,7 @@ export default function FixItemRow({
   libraryId,
   onResolved,
   onIdentityCorrected,
+  onCascade,
   compact = false,
   onPickerOpenChange,
 }: {
@@ -52,6 +53,10 @@ export default function FixItemRow({
   /** Called after an identity correction, which only takes effect on the next scan
    * — the screen collects these and offers ONE rescan rather than scanning per row. */
   onIdentityCorrected: () => void;
+  /** Called with what an album cascade reported. The QUEUE shows it, not the row: a
+   * pick that matched every track removes the row, and the count — the proof one
+   * pick did the work of fourteen — would unmount with it. */
+  onCascade?: (summary: CascadeSummary | null) => void;
   /** Render as a DISCLOSED row — a track under the Album row that collapsed it
    * (album-resolves-its-tracks/18). It drops the facts its parent already states one
    * line above (the artwork and the `Artist › Album` breadcrumb) and the kind badge
@@ -70,9 +75,6 @@ export default function FixItemRow({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // What the album cascade reported, kept on the row after the picker closes — the
-  // row's proof that one pick did the work of fourteen.
-  const [cascade, setCascade] = useState<CascadeSummary | null>(null);
   // The track rows a collapsed Album row stands for. Collapsed by default: the
   // whole point of the row is that the pile is one decision, and opening eighteen
   // sub-rows by default would put the pile straight back.
@@ -147,7 +149,7 @@ export default function FixItemRow({
       // A searched candidate carries none, which clears any edition previously named.
       candidate.releaseId,
     );
-    setCascade(detail.cascade ?? null);
+    onCascade?.(detail.cascade ?? null);
   }
 
   async function onApply(candidate: EnrichmentCandidate) {
@@ -333,7 +335,7 @@ export default function FixItemRow({
           is the name. */}
       {item.path !== "" && (
         <code className="fix-item-path" data-testid="fix-item-path" title={item.path}>
-          {compact ? fileName(item.path) : item.path}
+          {compact ? basename(item.path) || item.path : item.path}
         </code>
       )}
       {item.path === "" && (
@@ -409,15 +411,6 @@ export default function FixItemRow({
         </p>
       )}
 
-      {/* What the cascade did. The row asked for ONE decision on behalf of many
-          tracks, so the count it moved is the only thing that distinguishes a fix
-          from a hopeful click. */}
-      {cascade && (
-        <p className="status" data-testid="fix-item-cascade" role="status">
-          {cascadeSummaryText(cascade)}
-        </p>
-      )}
-
       {/* The rows this one collapsed. Collapsed by default — the pile being one
           decision is the point — but never hidden: the cascade declines a track the
           release's list cannot place, and that track's own picker is one click away
@@ -472,6 +465,7 @@ export default function FixItemRow({
                   libraryId={libraryId}
                   onResolved={onResolved}
                   onIdentityCorrected={onIdentityCorrected}
+                  onCascade={onCascade}
                   compact
                   onPickerOpenChange={(isOpen) =>
                     setOpenChildKey((cur) =>
@@ -497,7 +491,13 @@ export default function FixItemRow({
           pressing of the right album is this?" — and on the population that motivated
           this feature the album was already right and only the pressing was wrong. */}
       {open && item.route === "album-enrichment-override" && item.albumId !== "" && (
-        <AlbumEditionPicker albumId={item.albumId} onApplied={() => onResolved()} />
+        <AlbumEditionPicker
+          albumId={item.albumId}
+          onApplied={(detail) => {
+            onCascade?.(detail.cascade ?? null);
+            onResolved();
+          }}
+        />
       )}
 
       {open && canFix && (
@@ -516,12 +516,3 @@ export default function FixItemRow({
   );
 }
 
-/** The last segment of a path — `05 Whisper Your Name.flac` out of the whole
- * thing. Splits on both separators because a Windows library's paths arrive with
- * backslashes, and falls back to the whole string rather than returning "" for a
- * path that ends in a separator. */
-function fileName(path: string): string {
-  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  const name = cut === -1 ? path : path.slice(cut + 1);
-  return name === "" ? path : name;
-}

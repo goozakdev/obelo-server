@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { EntityMetadataEditInput } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
@@ -123,6 +123,16 @@ export default function EntityMetadataEditor({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  // The fields are seeded from props once, but the props move: Release re-enriches
+  // the entity and its server-side values come back. Re-seed on each, or save() diffs
+  // fresh props against stale inputs and silently re-locks the old hand-edited value.
+  useEffect(() => setName(displayName), [displayName]);
+  useEffect(() => setOv(overview ?? ""), [overview]);
+  useEffect(() => setRating(contentRating ?? ""), [contentRating]);
+  useEffect(() => setNet(network ?? ""), [network]);
+  const genresKey = (genres ?? []).join(", ");
+  useEffect(() => setGs(genresKey), [genresKey]);
+
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
@@ -138,9 +148,8 @@ export default function EntityMetadataEditor({
     }
   }
 
-  const save = () =>
-    run(() => {
-      const edit: EntityMetadataEditInput = {};
+  const save = () => {
+    const edit: EntityMetadataEditInput = {};
       if (cfg.fields.includes("title") && name !== displayName) edit.title = name;
       if (cfg.fields.includes("overview") && ov !== (overview ?? "")) edit.overview = ov;
       if (cfg.fields.includes("contentRating") && rating !== (contentRating ?? "")) edit.contentRating = rating;
@@ -149,8 +158,10 @@ export default function EntityMetadataEditor({
         const next = gs.split(",").map((g) => g.trim()).filter(Boolean);
         if (next.join(", ") !== (genres ?? []).join(", ")) edit.genres = next;
       }
-      return apiClient.editEntityMetadata(entityType, entityId, edit);
-    });
+    // Nothing changed: there is nothing to lock, and "Saved." would be a claim.
+    if (Object.keys(edit).length === 0) return;
+    return run(() => apiClient.editEntityMetadata(entityType, entityId, edit));
+  };
 
   const release = (field: string) =>
     run(() => apiClient.releaseEntityLock(entityType, entityId, field));

@@ -226,7 +226,7 @@ function tokenSpans(text: string): { token: string; start: number; end: number }
 }
 
 /** What stands in for the container's name at the front of a filename. */
-export const ELISION = "…";
+const ELISION = "…";
 
 /** Words a title carries at the front and a filename may not (or the other way
  * round). Matches the backend's sort key and the browse letter-jump. */
@@ -254,16 +254,11 @@ function leadingArticles(tokens: string[], other: string[]): number {
  * The prefix is found by the same token rules the title comparison uses, so an
  * abbreviated one (`Parks.and.Rec` for *Parks and Recreation*) goes too, and the
  * cut then runs on to the position, taking the separators and stray punctuation
- * between them with it — everything up to `S03E01`, and nothing after. */
-export function elideContainerPrefix(path: string, containerTitle: string): string {
-  const { elided, rest } = splitContainerPrefix(path, containerTitle);
-  return elided + rest;
-}
-
-/** The same label, cut where the elision ends, so the two halves can be given
- * different weight: the stand-in is identical on every File in the container and
- * is there only to say "a name was here", while `rest` is the half being read.
- * `elided` is "" when nothing was cut. */
+ * between them with it — everything up to `S03E01`, and nothing after.
+ *
+ * Returned in two halves so they can be given different weight: the stand-in is
+ * identical on every File in the container and is there only to say "a name was
+ * here", while `rest` is the half being read. `elided` is "" when nothing was cut. */
 export function splitContainerPrefix(
   path: string,
   containerTitle: string,

@@ -5,7 +5,6 @@ import {
   comparePosition,
   comparableTitle,
   markFilename,
-  elideContainerPrefix,
   splitContainerPrefix,
   titleFromFilename,
 } from "./matcherCompare";
@@ -19,6 +18,12 @@ import {
 // highlighting — and then misses the row that actually disagrees.
 
 const SHOW = "Parks and Recreation";
+
+// The label as one string — the two halves of splitContainerPrefix put back together.
+const elideContainerPrefix = (path: string, containerTitle: string) => {
+  const { elided, rest } = splitContainerPrefix(path, containerTitle);
+  return elided + rest;
+};
 
 describe("titleFromFilename", () => {
   it("keeps the episode title and drops the show prefix, the numbers and the extension", () => {

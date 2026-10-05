@@ -78,8 +78,10 @@ export default function AlbumEditionPicker({
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CascadeSummary | null>(null);
 
+  // `quiet` is the re-read after an apply: the pick has already succeeded, so a
+  // listing that then fails must not flip a working section to "unavailable".
   const load = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, quiet = false) => {
       setLoading(true);
       try {
         const res = await apiClient.listAlbumEditions(albumId, signal);
@@ -90,7 +92,7 @@ export default function AlbumEditionPicker({
         // being unmounted, or StrictMode's double-mount discarding its first effect.
         // Reporting it as "unavailable" would race the live read and could leave the
         // section claiming the source is down while its answer sits in state.
-        if (signal?.aborted) return;
+        if (signal?.aborted || quiet) return;
         // Unconfigured, disabled, or unreachable — all the same to this section, and
         // all of them degrade to the escape hatch rather than to an error page.
         setData(null);
@@ -136,7 +138,7 @@ export default function AlbumEditionPicker({
       // Re-read so the "in use" marker moves onto the row they just picked, and says
       // "your choice" rather than "best guess". Without this the section would still
       // be describing the state before the click.
-      await load();
+      await load(undefined, true);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -153,6 +155,11 @@ export default function AlbumEditionPicker({
           The metadata provider can&rsquo;t list this album&rsquo;s editions right now.
           You can still paste a MusicBrainz release URL above to name one.
         </p>
+        {summary && (
+          <p className="status" data-testid="album-edition-cascade" role="status">
+            {cascadeSummaryText(summary)}
+          </p>
+        )}
       </section>
     );
   }

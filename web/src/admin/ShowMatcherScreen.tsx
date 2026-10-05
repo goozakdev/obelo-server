@@ -69,10 +69,15 @@ export default function ShowMatcherScreen() {
     (signal) => apiClient.getShowMatcher(showId, undefined, signal),
     [showId],
   );
-  const [doc, setDoc] = useState<MatcherDocument | null>(null);
+  const [held, setDoc] = useState<MatcherDocument | null>(null);
   useEffect(() => {
     if (initial.status === "ready") setDoc(initial.data);
   }, [initial]);
+  // Only ever render the document that belongs to THIS route's show. The route
+  // component is reused when :showId changes, and `held` still holds the previous
+  // show's arrangement until the new load lands — while `apply`/`loadGroup` already
+  // point at the new show, which would PUT one show's arrangement to another.
+  const doc = held !== null && held.containerId === showId ? held : null;
 
   const loadGroup = useCallback(
     async (group: number): Promise<MatcherGroup | null> => {
@@ -107,6 +112,7 @@ export default function ShowMatcherScreen() {
 
   return (
     <FileMatcher
+      key={showId}
       matcher={doc}
       labels={tvMatcherLabels}
       loadGroup={loadGroup}

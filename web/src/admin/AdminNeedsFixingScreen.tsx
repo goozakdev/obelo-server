@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import { formatDate } from "../time";
 import type {
+  CascadeSummary,
   EnrichmentAttentionTitle,
   EnrichPassProgress,
   EnrichPassSummary,
   Library,
   MatchOverride,
-  NeedsReviewItem,
   ShowProblems,
   UnmatchedFile,
 } from "../api/types";
@@ -16,6 +16,8 @@ import { useAsync } from "../browse/useAsync";
 import { appEvents, type EnrichProgress } from "../events/enrichEvents";
 import { useNeedsReview } from "./useNeedsReview";
 import { useFixCounts } from "./useFixCounts";
+import { SCAN_POLL_INTERVAL_MS } from "./useScanStatus";
+import { cascadeSummaryText } from "./cascadeSummary";
 import AdminListPanel from "./AdminListPanel";
 import FixItemRow from "./FixItemRow";
 import {
@@ -228,7 +230,23 @@ export default function AdminNeedsFixingScreen() {
   // Admin has to click through each Library to find out. Best-effort — an
   // uncountable Library just shows no number.
   const libraryIds = useMemo(() => localLibs.map((l) => l.id), [localLibs]);
-  const counts = useFixCounts(libraryIds, reloadToken);
+  // The Library the queue is showing counts ITSELF — it already holds the five lists —
+  // so the badge hook skips it rather than fetching them a second time. `selected` is
+  // still "" on the render the ids first arrive, so fall back to the default pick.
+  const queueLibraryId = selected !== "" ? selected : (localLibs[0]?.id ?? "");
+  const fetchedCounts = useFixCounts(libraryIds, reloadToken, queueLibraryId);
+  const [queueCounts, setQueueCounts] = useState<Record<string, number>>({});
+  const reportQueueCount = useCallback((id: string, n: number | null) => {
+    setQueueCounts((cur) => {
+      if (n === null) {
+        if (!(id in cur)) return cur;
+        const { [id]: _drop, ...rest } = cur;
+        return rest;
+      }
+      return cur[id] === n ? cur : { ...cur, [id]: n };
+    });
+  }, []);
+  const counts = { ...fetchedCounts, ...queueCounts };
 
   return (
     <section className="admin-needs-fixing" data-testid="admin-needs-fixing">
@@ -324,6 +342,7 @@ export default function AdminNeedsFixingScreen() {
               key={selected}
               libraryId={selected}
               reloadToken={reloadToken}
+              onCount={reportQueueCount}
             />
           )}
         </>
@@ -343,11 +362,15 @@ export default function AdminNeedsFixingScreen() {
 function LibraryQueue({
   libraryId,
   reloadToken = 0,
+  onCount,
 }: {
   libraryId: string;
   reloadToken?: number;
+  /** Told this Library's row count whenever it is fully loaded (null when it is not
+   * countable), so the selector's badge tracks the queue instead of a snapshot. */
+  onCount?: (libraryId: string, count: number | null) => void;
 }) {
-  const needsReview = useNeedsReview(libraryId);
+  const needsReview = useNeedsReview(libraryId, reloadToken);
 
   const [unmatched, setUnmatched] = useState<UnmatchedFile[]>([]);
   const [unmatchedState, setUnmatchedState] = useState<"loading" | "error" | "ready">("loading");
@@ -376,6 +399,10 @@ function LibraryQueue({
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [correctionsOpen, setCorrectionsOpen] = useState(false);
+  // The last album cascade's counts. Kept here, not on the row: a fully successful
+  // pick removes the row, and its summary — the proof one pick did the work of
+  // fourteen — must not go with it.
+  const [cascade, setCascade] = useState<CascadeSummary | null>(null);
 
   const loadUnmatched = useCallback(
     async (signal?: AbortSignal) => {
@@ -445,22 +472,30 @@ function LibraryQueue({
     [libraryId, reloadToken],
   );
 
-  useEffect(() => {
+  // One controller for the four loads in flight. A new load aborts the previous one,
+  // so a slow earlier response can never land after — and overwrite — a newer one,
+  // and an unmount cancels whatever is outstanding.
+  const loadCtrl = useRef<AbortController | null>(null);
+  const loadAll = useCallback(() => {
+    loadCtrl.current?.abort();
     const ctrl = new AbortController();
+    loadCtrl.current = ctrl;
     void loadUnmatched(ctrl.signal);
     void loadOverrides(ctrl.signal);
     void loadEnrichment(ctrl.signal);
     void loadShowProblems(ctrl.signal);
-    return () => ctrl.abort();
   }, [loadUnmatched, loadOverrides, loadEnrichment, loadShowProblems]);
 
+  useEffect(() => {
+    loadAll();
+    return () => loadCtrl.current?.abort();
+  }, [loadAll]);
+
+  const reloadNeedsReview = needsReview.reload;
   const reloadAll = useCallback(() => {
-    void loadUnmatched();
-    void loadOverrides();
-    void loadEnrichment();
-    void loadShowProblems();
-    needsReview.reload();
-  }, [loadUnmatched, loadOverrides, loadEnrichment, loadShowProblems, needsReview]);
+    loadAll();
+    reloadNeedsReview();
+  }, [loadAll, reloadNeedsReview]);
 
   const loading =
     needsReview.loading ||
@@ -471,17 +506,17 @@ function LibraryQueue({
   // A failure in any one list is reported, but never blanks the others: three of the
   // four problems staying fixable beats an all-or-nothing screen.
   const errors = [
-    needsReview.error,
-    unmatchedError,
-    overridesError,
-    enrichmentError,
-  ].filter((e): e is string => e !== null);
+    { source: "needs-review", message: needsReview.error },
+    { source: "unmatched", message: unmatchedError },
+    { source: "overrides", message: overridesError },
+    { source: "enrichment", message: enrichmentError },
+  ].filter((e): e is { source: string; message: string } => e.message !== null);
 
   const items: FixItem[] = useMemo(
     () =>
       buildFixItems({
         unmatched,
-        needsReview: needsReview.items as NeedsReviewItem[],
+        needsReview: needsReview.items,
         enrichment,
         overrides,
         showProblems,
@@ -505,17 +540,45 @@ function LibraryQueue({
 
   const settled = overrides.filter((o) => !o.orphaned);
 
+  // Feed the selector's badge from the rows this queue is actually showing — but only
+  // once every list has loaded cleanly: a partial queue's length is not a count.
+  const countable = !loading && errors.length === 0;
+  useEffect(() => {
+    onCount?.(libraryId, countable ? items.length : null);
+  }, [onCount, libraryId, countable, items.length]);
+
+  // The scan in flight, so leaving the library (or the screen) stops the polling.
+  const scanCtrl = useRef<AbortController | null>(null);
+  useEffect(() => () => scanCtrl.current?.abort(), []);
+
+  // scanLibrary only ACKNOWLEDGES a background scan (202); nothing has been re-filed
+  // when it resolves. So follow the scan to its end and re-read the lists then —
+  // reloading at once shows the corrected rows still there and wipes the banner, which
+  // reads as "the fix failed". A scan that already finished (idle) reloads straight away.
   async function rescan() {
+    scanCtrl.current?.abort();
+    const ctrl = new AbortController();
+    scanCtrl.current = ctrl;
     setScanning(true);
     setScanError(null);
     try {
-      await apiClient.scanLibrary(libraryId);
+      let status = await apiClient.scanLibrary(libraryId);
+      while (status.state === "running") {
+        await new Promise((r) => setTimeout(r, SCAN_POLL_INTERVAL_MS));
+        if (ctrl.signal.aborted) return;
+        status = await apiClient.getScanStatus(libraryId, ctrl.signal);
+      }
+      if (ctrl.signal.aborted) return;
+      if (status.state === "error") {
+        setScanError(status.errorMessage ?? "The scan failed.");
+        return;
+      }
       setPendingRescan(0);
       reloadAll();
     } catch (err) {
-      setScanError(errorMessage(err));
+      if (!ctrl.signal.aborted) setScanError(errorMessage(err));
     } finally {
-      setScanning(false);
+      if (!ctrl.signal.aborted) setScanning(false);
     }
   }
 
@@ -527,9 +590,9 @@ function LibraryQueue({
         countTestId="needs-fixing-count"
       >
         {errors.map((e) => (
-          <p className="status status-error" key={e} data-testid="needs-fixing-error" role="alert">
+          <p className="status status-error" key={e.source} data-testid="needs-fixing-error" role="alert">
             <span className="dot dot-error" aria-hidden="true" />
-            {e}
+            {e.message}
           </p>
         ))}
 
@@ -611,9 +674,16 @@ function LibraryQueue({
                 libraryId={libraryId}
                 onResolved={reloadAll}
                 onIdentityCorrected={() => setPendingRescan((n) => n + 1)}
+                onCascade={setCascade}
               />
             ))}
           </ul>
+        )}
+
+        {cascade && (
+          <p className="status" data-testid="needs-fixing-cascade" role="status">
+            {cascadeSummaryText(cascade)}
+          </p>
         )}
       </AdminListPanel>
 
