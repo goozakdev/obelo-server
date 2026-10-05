@@ -1283,7 +1283,13 @@ const ArtworkCandidateLimit = 24
 // is (nil, nil); an unreachable provider surfaces its error to the handler. Reads
 // only — picking an image is a separate, explicit write.
 func (s *Service) ArtworkCandidates(ctx context.Context, ref TitleRef, role string) ([]ArtworkCandidate, error) {
-	snap := s.snapshot()
+	return s.artworkCandidatesIn(ctx, s.snapshot(), ref, role)
+}
+
+// artworkCandidatesIn is ArtworkCandidates against a given snapshot. The item-scoped
+// pickers pass their Library's snapshot, so a Library whose policy repoints the
+// lead or switches enrichment off is asked (or not asked) the way its passes are.
+func (s *Service) artworkCandidatesIn(ctx context.Context, snap providerSnapshot, ref TitleRef, role string) ([]ArtworkCandidate, error) {
 	if !snap.enablement.enabledFor(ref.Kind) {
 		return nil, ErrSearchUnavailable
 	}
@@ -1316,7 +1322,11 @@ func (s *Service) ListTitleArtworkCandidates(ctx context.Context, titleID, role 
 	if cached, ok := s.candidates.get(key); ok {
 		return cached, nil
 	}
-	cands, err := s.ArtworkCandidates(ctx, refFor(t), role)
+	snap, err := s.snapshotFor(ctx, t.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	cands, err := s.artworkCandidatesIn(ctx, snap, refFor(t), role)
 	if err != nil {
 		return nil, err // never cache an error/unavailable outcome
 	}
@@ -1337,9 +1347,13 @@ func (s *Service) ListEntityArtworkCandidates(ctx context.Context, entityType, e
 	if cached, ok := s.candidates.get(key); ok {
 		return cached, nil
 	}
+	snap, err := s.entitySnapshot(ctx, entityType, entityID)
+	if err != nil {
+		return nil, err
+	}
 	rec := storedParentRecord(cur)
 	ref := refWithPinnedEntityID(TitleRef{Kind: entityKind(entityType)}, rec.Namespace, rec.ID)
-	cands, err := s.ArtworkCandidates(ctx, ref, role)
+	cands, err := s.artworkCandidatesIn(ctx, snap, ref, role)
 	if err != nil {
 		return nil, err // never cache an error/unavailable outcome
 	}

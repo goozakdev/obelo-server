@@ -81,13 +81,17 @@ type AlbumEditions struct {
 // CascadeEntity), because an edition is a refinement of the album's record and not a
 // second kind of pin — one apply path, one cascade, one summary.
 func (s *Service) AlbumEditions(ctx context.Context, albumID string) (AlbumEditions, error) {
-	lister, err := s.albumEditionLister()
-	if err != nil {
-		return AlbumEditions{}, err
-	}
 	al, err := s.store.AlbumByID(albumID)
 	if err != nil {
 		return AlbumEditions{}, err // ErrNotFound flows through
+	}
+	snap, err := s.snapshotFor(ctx, al.LibraryID)
+	if err != nil {
+		return AlbumEditions{}, err
+	}
+	lister, err := albumEditionLister(snap)
+	if err != nil {
+		return AlbumEditions{}, err
 	}
 	// The release-group the album is matched to, resolved exactly as the tracklist
 	// tier resolves it: the Admin's/pass's record first, the FILES' release-group
@@ -150,13 +154,12 @@ func (s *Service) editions(ctx context.Context, lister AlbumEditionLister, rgID 
 	return eds, nil
 }
 
-// albumEditionLister resolves the configured provider to the optional
+// albumEditionLister resolves a Library's provider snapshot to the optional
 // AlbumEditionLister capability, gated on MUSIC enrichment being on at all (an
 // album's editions are a music notion). A provider that doesn't implement it is
 // ErrSearchUnavailable — the same "not now" every other provider-backed list gives,
 // and the signal the UI degrades to the paste box on.
-func (s *Service) albumEditionLister() (AlbumEditionLister, error) {
-	snap := s.snapshot()
+func albumEditionLister(snap providerSnapshot) (AlbumEditionLister, error) {
 	if !snap.enablement.enabledFor("album") {
 		return nil, ErrSearchUnavailable
 	}

@@ -194,8 +194,40 @@ func (s *Service) cascadeAlbumTracks(ctx context.Context, albumID, albumExternal
 	if err != nil {
 		return CascadeSummary{}, err
 	}
-	cand := s.findAlbumCandidate(ctx, al.Title, 0, albumExternalID)
+	snap, err := s.snapshotFor(ctx, al.LibraryID)
+	if err != nil {
+		return CascadeSummary{}, err
+	}
+	cand := s.findAlbumCandidate(ctx, snap, al.Title, 0, albumExternalID)
+	if cand == nil && strings.TrimSpace(albumExternalID) != "" {
+		// The search did not surface the release-group the Admin pinned (a pasted
+		// id, a local title that differs from the source's, a common title cut off
+		// by the result cap). The pin itself is the fact: read its tracklist by id,
+		// as the pass does, rather than declaring every Track album-unmatched.
+		cand = s.pinnedAlbumCandidate(ctx, snap, al, albumExternalID)
+	}
 	return s.mapAlbumTracks(ctx, albumID, cand)
+}
+
+// pinnedAlbumCandidate builds the cascade's candidate for an Album pinned to
+// releaseGroupID from a direct tracklist read, or nil when none can be read
+// (best-effort, like findAlbumCandidate: the cascade then routes the tracks to
+// attention).
+func (s *Service) pinnedAlbumCandidate(ctx context.Context, snap providerSnapshot, al store.Album, releaseGroupID string) *Candidate {
+	tracks, err := s.store.TracksForAlbum(al.ID)
+	if err != nil {
+		return nil
+	}
+	rgID := strings.TrimSpace(releaseGroupID)
+	res, err := s.albumTracklistFor(ctx, snap, TracklistRequest{
+		ReleaseGroupID:  rgID,
+		ReleaseID:       al.MusicbrainzReleaseID,
+		LocalTrackCount: len(tracks),
+	}, "")
+	if err != nil {
+		return nil
+	}
+	return &Candidate{ExternalID: rgID, Title: al.Title, Kind: "album", Tracklist: res.Tracks}
 }
 
 // cascadeArtistAlbums maps the Artist's albums by title(+year) onto the corrected
@@ -205,6 +237,10 @@ func (s *Service) cascadeAlbumTracks(ctx context.Context, albumID, albumExternal
 // override/lock is skipped entirely (its tracks too — the child's correction wins).
 func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (CascadeSummary, error) {
 	albums, err := s.store.AlbumsForArtist(artistID)
+	if err != nil {
+		return CascadeSummary{}, err
+	}
+	snap, err := s.entitySnapshot(ctx, store.EntityArtist, artistID)
 	if err != nil {
 		return CascadeSummary{}, err
 	}
@@ -218,7 +254,7 @@ func (s *Service) cascadeArtistAlbums(ctx context.Context, artistID string) (Cas
 		if skip {
 			continue
 		}
-		cand := s.findAlbumCandidate(ctx, al.Title, al.Year, "")
+		cand := s.findAlbumCandidate(ctx, snap, al.Title, al.Year, "")
 		if cand == nil {
 			// No release-group matched this album by title(+year): route its tracks to
 			// the attention list so the Admin can hand-fix them.
@@ -397,8 +433,8 @@ func (s *Service) routeAlbumTracksToAttention(albumID string) (int, error) {
 // otherwise (the artist recursion) it matches by title, confirming the year when both
 // sides carry one. A blank query / unavailable provider / no hit is a nil result — the
 // cascade then routes the album's tracks to attention (best-effort, never a hard fail).
-func (s *Service) findAlbumCandidate(ctx context.Context, title string, year int, wantExternalID string) *Candidate {
-	cands, err := s.SearchCandidates(ctx, "album", title, SearchOptions{})
+func (s *Service) findAlbumCandidate(ctx context.Context, snap providerSnapshot, title string, year int, wantExternalID string) *Candidate {
+	cands, err := s.searchIn(ctx, snap, "album", title, SearchOptions{})
 	if err != nil {
 		return nil
 	}
@@ -487,7 +523,11 @@ func (s *Service) chosenEditionTracklist(ctx context.Context, albumID, releaseGr
 	if err != nil {
 		return albumTracklistResult{}, false
 	}
-	res, err := s.albumTracklistFor(ctx, s.snapshot(), TracklistRequest{
+	snap, err := s.snapshotFor(ctx, al.LibraryID)
+	if err != nil {
+		return albumTracklistResult{}, false
+	}
+	res, err := s.albumTracklistFor(ctx, snap, TracklistRequest{
 		ReleaseGroupID:  rgID,
 		ReleaseID:       al.MusicbrainzReleaseID,
 		LocalTrackCount: localCount,
