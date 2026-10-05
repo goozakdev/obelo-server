@@ -100,16 +100,42 @@ func (t *Translator) Start(broker *events.Broker) {
 
 // run drains the subscription until the Broker closes the channel (Stop, or the
 // Broker itself shutting down).
+//
+// Draining and translating are separate goroutines. The Broker's per-subscriber
+// buffer is small and drops when full, and translating can block on a database
+// lookup, so a translator that did both would let a burst of nowPlaying ticks
+// push a scan completion or a sessionEnded out of that buffer. The reader never
+// blocks: it discards nowPlaying (never an event) and hands the rest to a deeper
+// queue the worker empties at its own pace.
 func (t *Translator) run(ch <-chan events.Event) {
 	defer close(t.done)
+	work := make(chan events.Event, translatorQueueDepth)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for e := range work {
+			if ev, ok := t.translate(e); ok {
+				t.disp.Publish(ev)
+			}
+		}
+	}()
 	for e := range ch {
-		ev, ok := t.translate(e)
-		if !ok {
+		if e.Type == events.TypeNowPlaying {
 			continue
 		}
-		t.disp.Publish(ev)
+		select {
+		case work <- e:
+		default:
+			// Only reachable when the database has stalled for a very long time.
+		}
 	}
+	close(work)
+	<-workerDone
 }
+
+// translatorQueueDepth is how many Broker events may wait for the translator's
+// worker. Terminal events are rare next to ticks, so this is generous.
+const translatorQueueDepth = 1024
 
 // Stop ends the subscription and waits for the goroutine to unwind. Idempotent,
 // and a no-op on a Translator that was never started.
