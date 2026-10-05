@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -510,14 +509,14 @@ func (db *DB) TitleEnrichmentForMany(ids []string) (map[string]Title, error) {
 	if len(ids) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	ph := placeholders(len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
 	rows, err := db.Query(
 		`SELECT id, overview, enriched_title, enrichment_status FROM titles
-		   WHERE id IN (`+placeholders+`)`, args...)
+		   WHERE id IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading title enrichment: %w", err)
 	}
@@ -540,14 +539,14 @@ func (db *DB) GenresForTitles(titleIDs []string) (map[string][]string, error) {
 	if len(titleIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(titleIDs)), ",")
+	ph := placeholders(len(titleIDs))
 	args := make([]any, len(titleIDs))
 	for i, id := range titleIDs {
 		args[i] = id
 	}
 	rows, err := db.Query(
 		`SELECT title_id, genre FROM title_genres
-		   WHERE title_id IN (`+placeholders+`) ORDER BY title_id, ord, genre`, args...)
+		   WHERE title_id IN (`+ph+`) ORDER BY title_id, ord, genre`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading genres: %w", err)
 	}
@@ -583,7 +582,7 @@ func (db *DB) ArtworkVersionsForTitles(titleIDs []string) (map[string]string, er
 	if len(titleIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(titleIDs)), ",")
+	ph := placeholders(len(titleIDs))
 	args := make([]any, len(titleIDs))
 	for i, id := range titleIDs {
 		args[i] = id
@@ -591,10 +590,10 @@ func (db *DB) ArtworkVersionsForTitles(titleIDs []string) (map[string]string, er
 	rows, err := db.Query(
 		`SELECT title_id, MAX(v) FROM (
 		     SELECT title_id, added_at AS v FROM artwork
-		       WHERE title_id IN (`+placeholders+`)
+		       WHERE title_id IN (`+ph+`)
 		     UNION ALL
 		     SELECT entity_id AS title_id, version AS v FROM linked_entity_artwork
-		       WHERE entity_type = 'title' AND entity_id IN (`+placeholders+`)
+		       WHERE entity_type = 'title' AND entity_id IN (`+ph+`)
 		 ) GROUP BY title_id`, append(append([]any{}, args...), args...)...)
 	if err != nil {
 		return nil, fmt.Errorf("store: bulk reading artwork versions: %w", err)

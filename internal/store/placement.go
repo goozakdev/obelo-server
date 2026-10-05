@@ -759,32 +759,72 @@ func replaceFileDecisionsTx(tx *sql.Tx, set FileDecisionSet) error {
 // it implies land in the same commit. A Season emptied by a reassignment
 // disappears here, and one conjured by an assignment appears, with no folder on
 // disk either way (ADR-0044).
-func recomputeHiddenTitlesTx(tx *sql.Tx, libraryID string) error {
+//
+// Each UPDATE writes only the rows whose hidden value actually changes: the
+// *_touch_au triggers bump updated_at on every UPDATE, so rewriting an unchanged
+// row would re-stamp the whole catalog (and re-export it to every linked peer)
+// on every scan. They take an execer so the public RecomputeHidden* wrappers
+// share the same SQL.
+func recomputeHiddenTitlesTx(tx execer, libraryID string) error {
 	if _, err := tx.Exec(
 		`UPDATE titles SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM editions e JOIN files f ON f.edition_id = e.id
-		             WHERE e.title_id = titles.id AND f.present = 1) > 0
+		     WHEN EXISTS (SELECT 1 FROM editions e JOIN files f ON f.edition_id = e.id
+		                   WHERE e.title_id = titles.id AND f.present = 1)
 		     THEN 0 ELSE 1 END
-		   WHERE library_id = ?`, libraryID); err != nil {
+		   WHERE library_id = ?
+		     AND hidden IS NOT (CASE
+		       WHEN EXISTS (SELECT 1 FROM editions e JOIN files f ON f.edition_id = e.id
+		                     WHERE e.title_id = titles.id AND f.present = 1)
+		       THEN 0 ELSE 1 END)`, libraryID); err != nil {
 		return fmt.Errorf("store: recomputing hidden titles: %w", err)
 	}
 	return nil
 }
 
-func recomputeHiddenShowsTx(tx *sql.Tx, libraryID string) error {
+func recomputeHiddenShowsTx(tx execer, libraryID string) error {
 	if _, err := tx.Exec(
 		`UPDATE seasons SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM titles t WHERE t.season_id = seasons.id AND t.hidden = 0) > 0
+		     WHEN EXISTS (SELECT 1 FROM titles t WHERE t.season_id = seasons.id AND t.hidden = 0)
 		     THEN 0 ELSE 1 END
-		   WHERE show_id IN (SELECT id FROM shows WHERE library_id = ?)`, libraryID); err != nil {
+		   WHERE show_id IN (SELECT id FROM shows WHERE library_id = ?)
+		     AND hidden IS NOT (CASE
+		       WHEN EXISTS (SELECT 1 FROM titles t WHERE t.season_id = seasons.id AND t.hidden = 0)
+		       THEN 0 ELSE 1 END)`, libraryID); err != nil {
 		return fmt.Errorf("store: recomputing hidden seasons: %w", err)
 	}
 	if _, err := tx.Exec(
 		`UPDATE shows SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM seasons s WHERE s.show_id = shows.id AND s.hidden = 0) > 0
+		     WHEN EXISTS (SELECT 1 FROM seasons s WHERE s.show_id = shows.id AND s.hidden = 0)
 		     THEN 0 ELSE 1 END
-		   WHERE library_id = ?`, libraryID); err != nil {
+		   WHERE library_id = ?
+		     AND hidden IS NOT (CASE
+		       WHEN EXISTS (SELECT 1 FROM seasons s WHERE s.show_id = shows.id AND s.hidden = 0)
+		       THEN 0 ELSE 1 END)`, libraryID); err != nil {
 		return fmt.Errorf("store: recomputing hidden shows: %w", err)
+	}
+	return nil
+}
+
+func recomputeHiddenArtistsTx(tx execer, libraryID string) error {
+	if _, err := tx.Exec(
+		`UPDATE albums SET hidden = CASE
+		     WHEN EXISTS (SELECT 1 FROM titles t WHERE t.album_id = albums.id AND t.hidden = 0)
+		     THEN 0 ELSE 1 END
+		   WHERE artist_id IN (SELECT id FROM artists WHERE library_id = ?)
+		     AND hidden IS NOT (CASE
+		       WHEN EXISTS (SELECT 1 FROM titles t WHERE t.album_id = albums.id AND t.hidden = 0)
+		       THEN 0 ELSE 1 END)`, libraryID); err != nil {
+		return fmt.Errorf("store: recomputing hidden albums: %w", err)
+	}
+	if _, err := tx.Exec(
+		`UPDATE artists SET hidden = CASE
+		     WHEN EXISTS (SELECT 1 FROM albums a WHERE a.artist_id = artists.id AND a.hidden = 0)
+		     THEN 0 ELSE 1 END
+		   WHERE library_id = ?
+		     AND hidden IS NOT (CASE
+		       WHEN EXISTS (SELECT 1 FROM albums a WHERE a.artist_id = artists.id AND a.hidden = 0)
+		       THEN 0 ELSE 1 END)`, libraryID); err != nil {
+		return fmt.Errorf("store: recomputing hidden artists: %w", err)
 	}
 	return nil
 }

@@ -70,7 +70,14 @@ func (db *DB) SaveWatchState(userID, titleID string, resumeMs int64, watched, pl
 	// Millisecond-precision timestamp (strftime %f) so Continue Watching's
 	// most-recently-played ordering is stable even for two writes in the same
 	// second — datetime('now') is only second-granular, which would tie.
-	_, err := db.Exec(
+	// One transaction for the played Title and its co-File siblings, so a failure
+	// partway through never leaves the siblings out of sync with the played one.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: saving watch state: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(
 		`INSERT INTO watch_state (id, user_id, title_id, resume_position_ms, watched, played_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?,
 		         CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END,
@@ -90,8 +97,11 @@ func (db *DB) SaveWatchState(userID, titleID string, resumeMs int64, watched, pl
 	// one Episode propagates the SAME resume + watched + played_at to its co-File
 	// sibling(s), so "watching it marks both" and both share the anchor's recency.
 	// A Movie / single Episode has no co-File sibling, so this is a no-op for them.
-	if err := db.propagateToSiblingEpisodes(userID, titleID, resumeMs, watched, played); err != nil {
+	if err := propagateToSiblingEpisodes(tx, userID, titleID, resumeMs, watched, played); err != nil {
 		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: saving watch state: %w", err)
 	}
 	return nil
 }
@@ -103,8 +113,8 @@ func (db *DB) SaveWatchState(userID, titleID string, resumeMs int64, watched, pl
 // Movies and single-file Episodes have no such sibling, so nothing is written.
 // played carries through unchanged so a playback write stamps the siblings'
 // played_at too (a manual mark leaves it), mirroring SaveWatchState.
-func (db *DB) propagateToSiblingEpisodes(userID, titleID string, resumeMs int64, watched, played bool) error {
-	rows, err := db.Query(
+func propagateToSiblingEpisodes(tx *sql.Tx, userID, titleID string, resumeMs int64, watched, played bool) error {
+	rows, err := tx.Query(
 		`SELECT DISTINCT t2.id
 		   FROM titles t1
 		   JOIN editions e1 ON e1.title_id = t1.id
@@ -112,7 +122,8 @@ func (db *DB) propagateToSiblingEpisodes(userID, titleID string, resumeMs int64,
 		   JOIN files    f2 ON f2.path = f1.path
 		   JOIN editions e2 ON e2.id = f2.edition_id
 		   JOIN titles   t2 ON t2.id = e2.title_id
-		  WHERE t1.id = ? AND t2.id <> ? AND t2.kind = 'episode'`,
+		  WHERE t1.id = ? AND t2.id <> ? AND t2.kind = 'episode'
+		    AND f1.path <> ''`,
 		titleID, titleID)
 	if err != nil {
 		return fmt.Errorf("store: finding sibling episodes: %w", err)
@@ -129,8 +140,11 @@ func (db *DB) propagateToSiblingEpisodes(userID, titleID string, resumeMs int64,
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	// Close before writing: the Tx holds the single connection, and the cursor
+	// must be drained (it is) before further statements on it.
+	rows.Close()
 	for _, sib := range siblings {
-		if _, err := db.Exec(
+		if _, err := tx.Exec(
 			`INSERT INTO watch_state (id, user_id, title_id, resume_position_ms, watched, played_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?,
 			         CASE WHEN ? = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END,
@@ -160,17 +174,12 @@ func (db *DB) WatchStatesForTitles(userID string, titleIDs []string) (map[string
 	// Build a (?, ?, ...) IN-list; the set is bounded by a single browse page.
 	args := make([]any, 0, len(titleIDs)+1)
 	args = append(args, userID)
-	placeholders := make([]byte, 0, len(titleIDs)*2)
-	for i, id := range titleIDs {
-		if i > 0 {
-			placeholders = append(placeholders, ',')
-		}
-		placeholders = append(placeholders, '?')
+	for _, id := range titleIDs {
 		args = append(args, id)
 	}
 	rows, err := db.Query(
 		`SELECT title_id, resume_position_ms, watched, updated_at
-		   FROM watch_state WHERE user_id = ? AND title_id IN (`+string(placeholders)+`)`,
+		   FROM watch_state WHERE user_id = ? AND title_id IN (`+placeholders(len(titleIDs))+`)`,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading watch states: %w", err)
@@ -220,10 +229,7 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 	rows, err := db.Query(
 		`SELECT t.id, t.library_id, t.kind, t.title, t.year, t.identity_key, t.sort_title,
 		        t.added_at, `+recordExternalIDs("t.")+`, t.needs_review, t.ambiguous, t.hidden,
-		        w.resume_position_ms, w.updated_at,
-		        (SELECT MAX(f.duration_ms) FROM editions ed
-		           JOIN files f ON f.edition_id = ed.id
-		          WHERE ed.title_id = t.id) AS duration_ms
+		        w.resume_position_ms, w.updated_at
 		   FROM watch_state w
 		   JOIN titles t ON t.id = w.title_id
 		  WHERE w.user_id = ? AND w.resume_position_ms > 0 AND w.watched = 0 AND t.hidden = 0
@@ -243,10 +249,9 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 		var needsReview, ambiguous, hidden int
 		var resume int64
 		var updatedAt string
-		var durationMs sql.NullInt64
 		if err := rows.Scan(&t.ID, &t.LibraryID, &t.Kind, &t.Title, &year, &t.IdentityKey,
 			&t.SortTitle, &t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
-			&resume, &updatedAt, &durationMs); err != nil {
+			&resume, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: scanning continue watching: %w", err)
 		}
 		if year.Valid {
@@ -256,12 +261,82 @@ func (db *DB) ContinueWatching(userID string, limit int, filter AccessFilter) ([
 		t.Ambiguous = ambiguous != 0
 		t.Hidden = hidden != 0
 		row := ContinueWatchingRow{Title: t, ResumePositionMs: resume, UpdatedAt: updatedAt}
-		if durationMs.Valid {
-			row.DurationMs = durationMs.Int64
-		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Close before the follow-up query: the cursor holds the single connection.
+	rows.Close()
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	durations, err := db.titleDurations(ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].DurationMs = durations[out[i].ID]
+	}
+	return out, nil
+}
+
+// titleDurations returns each Title's playable duration, the measure the resume
+// position is recorded against: the Edition's TotalDurationMs (the sum of the
+// parts it plays, not one part's length), the longest across the Title's
+// Editions. A Title with no File, or no probed duration, is absent / 0.
+func (db *DB) titleDurations(titleIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(titleIDs))
+	if len(titleIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(titleIDs))
+	for i, id := range titleIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		`SELECT ed.title_id, ed.id, f.present, f.part_ordinal, f.duration_ms
+		   FROM editions ed
+		   JOIN files f ON f.edition_id = ed.id
+		  WHERE ed.title_id IN (`+placeholders(len(titleIDs))+`)
+		  ORDER BY ed.title_id, ed.id, f.part_ordinal, f.path`,
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading title durations: %w", err)
+	}
+	defer rows.Close()
+	var curTitle, curEdition string
+	var cur Edition
+	flush := func() {
+		if curEdition == "" {
+			return
+		}
+		if d := cur.TotalDurationMs(); d > out[curTitle] {
+			out[curTitle] = d
+		}
+	}
+	for rows.Next() {
+		var titleID, editionID string
+		var f File
+		var present int
+		var duration sql.NullInt64
+		if err := rows.Scan(&titleID, &editionID, &present, &f.PartOrdinal, &duration); err != nil {
+			return nil, fmt.Errorf("store: scanning title durations: %w", err)
+		}
+		if editionID != curEdition {
+			flush()
+			curTitle, curEdition, cur = titleID, editionID, Edition{}
+		}
+		f.Present = present != 0
+		f.DurationMs = duration.Int64
+		cur.Files = append(cur.Files, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	flush()
+	return out, nil
 }
 
 // ContinueWatchingRow is one Continue Watching entry: the Title plus the resume
@@ -270,9 +345,9 @@ type ContinueWatchingRow struct {
 	Title
 	ResumePositionMs int64
 	UpdatedAt        string
-	// DurationMs is the Title's playable duration (MAX file duration_ms across its
-	// Editions — the same measure the resume position was recorded against, and the
-	// same one ResumePoint reports). 0 when unknown (no File / duration not probed).
+	// DurationMs is the Title's playable duration (the longest Edition's
+	// TotalDurationMs, the sum of its parts — the same measure the resume
+	// position was recorded against, and the same one ResumePoint reports). 0 when unknown (no File / duration not probed).
 	// With ResumePositionMs it drives the card's progress bar; it is NOT used to
 	// re-derive the 2%/90% band, which stays enforced at write time.
 	DurationMs int64
@@ -502,9 +577,9 @@ type ResumePoint struct {
 	// unwatched) → the detail page offers Continue + Restart; false when the resume
 	// point is a fresh next Episode → a single Play.
 	InProgress bool
-	// DurationMs is the resume-point Episode's playable duration (MAX file
-	// duration_ms across its Editions — the same measure the resume position was
-	// recorded against). 0 when unknown (no File / duration not probed). The detail
+	// DurationMs is the resume-point Episode's playable duration (the longest
+	// Edition's TotalDurationMs, the sum of its parts — the same measure the
+	// resume position was recorded against). 0 when unknown (no File / duration not probed). The detail
 	// page uses it with ResumePositionMs to draw the Continue progress bar and the
 	// minutes-remaining label; it is only meaningful in the in-progress mode.
 	DurationMs int64
@@ -533,17 +608,13 @@ func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoi
 	var needsReview, ambiguous, hidden int
 	var wResume, anchorResume sql.NullInt64
 	var anchorWatched sql.NullInt64
-	var durationMs sql.NullInt64
 	err := db.QueryRow(
 		`WITH `+resumePointCTE(" AND sh.id = ?", rateClause)+`
 		 SELECT id, library_id, kind, title, year, identity_key, sort_title, added_at,
 		        tmdb_id, imdb_id, needs_review, ambiguous, hidden,
 		        season_id, season_number, episode_number, episode_label,
 		        overview, enrichment_status, enriched_title,
-		        w_resume, anchor_resume, anchor_watched,
-		        (SELECT MAX(f.duration_ms) FROM editions ed
-		           JOIN files f ON f.edition_id = ed.id
-		          WHERE ed.title_id = picks.id) AS duration_ms
+		        w_resume, anchor_resume, anchor_watched
 		   FROM picks
 		  WHERE pick_rn = 1`+libClause,
 		args...,
@@ -551,7 +622,7 @@ func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoi
 		&t.AddedAt, &t.TMDBID, &t.IMDBID, &needsReview, &ambiguous, &hidden,
 		&rp.SeasonID, &t.SeasonNumber, &t.EpisodeNumber, &t.EpisodeLabel,
 		&t.Overview, &t.EnrichmentStatus, &t.EnrichedTitle,
-		&wResume, &anchorResume, &anchorWatched, &durationMs)
+		&wResume, &anchorResume, &anchorWatched)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ResumePoint{}, false, nil
 	}
@@ -574,9 +645,11 @@ func (db *DB) ResumePoint(userID, showID string, filter AccessFilter) (ResumePoi
 	if rp.InProgress {
 		rp.ResumePositionMs = wResume.Int64
 	}
-	if durationMs.Valid {
-		rp.DurationMs = durationMs.Int64
+	durations, err := db.titleDurations([]string{t.ID})
+	if err != nil {
+		return ResumePoint{}, false, err
 	}
+	rp.DurationMs = durations[t.ID]
 	return rp, true, nil
 }
 

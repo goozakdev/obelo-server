@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // Admin-curated, shared Collections (collections-playlists 01). A Collection is
@@ -234,8 +233,7 @@ func (db *DB) ResolveVisibleTitles(titleIDs []string, filter AccessFilter) (map[
 	if len(titleIDs) == 0 {
 		return out, nil
 	}
-	placeholders := strings.Repeat("?,", len(titleIDs))
-	placeholders = placeholders[:len(placeholders)-1]
+	ph := placeholders(len(titleIDs))
 	args := make([]any, 0, len(titleIDs))
 	for _, id := range titleIDs {
 		args = append(args, id)
@@ -246,7 +244,7 @@ func (db *DB) ResolveVisibleTitles(titleIDs []string, filter AccessFilter) (map[
 	args = append(args, accessArgs...)
 	rows, err := db.Query(
 		`SELECT `+enrichedTitleColumns+` FROM titles
-		  WHERE hidden = 0 AND id IN (`+placeholders+`)`+accessClause, args...)
+		  WHERE hidden = 0 AND id IN (`+ph+`)`+accessClause, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: resolving visible titles: %w", err)
 	}

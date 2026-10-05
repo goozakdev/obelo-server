@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 )
@@ -183,12 +182,21 @@ func upsertShow(tx *sql.Tx, s Show) (string, error) {
 		// Existing Show: refresh descriptive fields. hidden is recomputed below.
 		// needs_review is recomputed from the parse EXCEPT on a row an Admin has
 		// dismissed (reviewed = 1), where it stays cleared (mirrors the Title rule
-		// in writeTitleRow). reviewed is never written by the scanner.
+		// in writeTitleRow). reviewed is never written by the scanner. An Admin
+		// display-name edit Locks "title" (WriteEntityMetadata); a locked Show keeps
+		// its edited title and sort key across rescans.
 		if _, err := tx.Exec(
-			`UPDATE shows SET title = ?, year = ?, sort_title = ?, tmdb_id = ?, imdb_id = ?,
+			`UPDATE shows SET
+			    title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
+			                 THEN title ELSE ? END,
+			    sort_title = CASE WHEN EXISTS (SELECT 1 FROM entity_field_locks
+			                               WHERE entity_type = 'show' AND entity_id = shows.id AND field = 'title')
+			                 THEN sort_title ELSE ? END,
+			    year = ?, tmdb_id = ?, imdb_id = ?,
 			    needs_review = CASE WHEN reviewed = 1 THEN 0 ELSE ? END,
 			    hidden = 0 WHERE id = ?`,
-			s.Title, nullableYear(s.Year), s.SortTitle, s.TMDBID, s.IMDBID,
+			s.Title, s.SortTitle, nullableYear(s.Year), s.TMDBID, s.IMDBID,
 			boolToInt(s.NeedsReview), showID,
 		); err != nil {
 			return "", fmt.Errorf("store: updating show: %w", err)
@@ -329,10 +337,8 @@ func (db *DB) UnwatchedEpisodeCounts(userID string, showIDs []string) (map[strin
 	}
 	// Parameter order matches the SQL: the IN (...) Show ids first, then the
 	// userID used by the NOT EXISTS watch_state correlation.
-	placeholders := make([]string, len(showIDs))
 	args := make([]any, 0, len(showIDs)+1)
-	for i, id := range showIDs {
-		placeholders[i] = "?"
+	for _, id := range showIDs {
 		args = append(args, id)
 	}
 	args = append(args, userID)
@@ -341,7 +347,7 @@ func (db *DB) UnwatchedEpisodeCounts(userID string, showIDs []string) (map[strin
 		   FROM shows sh
 		   JOIN seasons s ON s.show_id = sh.id AND s.hidden = 0
 		   JOIN titles  t ON t.season_id = s.id AND t.kind = 'episode' AND t.hidden = 0
-		  WHERE sh.id IN (`+strings.Join(placeholders, ",")+`)
+		  WHERE sh.id IN (`+placeholders(len(showIDs))+`)
 		    AND NOT EXISTS (
 		          SELECT 1 FROM watch_state wt
 		           WHERE wt.user_id = ? AND wt.title_id = t.id AND wt.watched = 1
@@ -509,21 +515,7 @@ func (db *DB) EpisodeContextForTitle(titleID string) (EpisodeContext, error) {
 // with no visible Season is hidden — so a Show whose every file went Missing
 // drops out of the grid but stays fetchable (ADR-0008).
 func (db *DB) RecomputeHiddenShows(libraryID string) error {
-	if _, err := db.Exec(
-		`UPDATE seasons SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM titles t WHERE t.season_id = seasons.id AND t.hidden = 0) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE show_id IN (SELECT id FROM shows WHERE library_id = ?)`, libraryID); err != nil {
-		return fmt.Errorf("store: recomputing hidden seasons: %w", err)
-	}
-	if _, err := db.Exec(
-		`UPDATE shows SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM seasons s WHERE s.show_id = shows.id AND s.hidden = 0) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE library_id = ?`, libraryID); err != nil {
-		return fmt.Errorf("store: recomputing hidden shows: %w", err)
-	}
-	return nil
+	return recomputeHiddenShowsTx(db.DB, libraryID)
 }
 
 func scanShow(s scanner) (Show, error) {

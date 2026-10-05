@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 // fixcontext.go answers the question every Admin "Needs Fixing" row has to answer
@@ -71,7 +70,7 @@ func (db *DB) TitleFixContexts(ids []string) (map[string]FixContext, error) {
 	if len(ids) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	ph := placeholders(len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
@@ -91,7 +90,7 @@ func (db *DB) TitleFixContexts(ids []string) (map[string]FixContext, error) {
 		   LEFT JOIN shows   sh ON sh.id = se.show_id
 		   LEFT JOIN albums  al ON al.id = t.album_id
 		   LEFT JOIN artists ar ON ar.id = al.artist_id
-		  WHERE t.id IN (`+placeholders+`)`, args...)
+		  WHERE t.id IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading title fix contexts: %w", err)
 	}
@@ -129,7 +128,7 @@ func (db *DB) ShowFixContexts(ids []string) (map[string]FixContext, error) {
 	if len(ids) == 0 {
 		return out, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	ph := placeholders(len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
@@ -150,7 +149,7 @@ func (db *DB) ShowFixContexts(ids []string) (map[string]FixContext, error) {
 		   FROM shows sh
 		   LEFT JOIN entity_enrichment ee
 		          ON ee.entity_type = 'show' AND ee.entity_id = sh.id
-		  WHERE sh.id IN (`+placeholders+`)`, args...)
+		  WHERE sh.id IN (`+ph+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading show fix contexts: %w", err)
 	}
