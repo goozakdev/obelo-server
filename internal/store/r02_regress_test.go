@@ -206,6 +206,33 @@ func TestLookupTokenThrottlesLastSeen(t *testing.T) {
 	}
 }
 
+// R02-10: the disk probe runs after the cursor is closed, so it never holds the
+// single DB connection (a probe that itself reads the DB would otherwise block).
+func TestPruneOrphanedMarkersProbesWithoutHoldingTheConnection(t *testing.T) {
+	db, _ := markerFixture(t)
+	const orphan = "/media/Old (1990)/Old (1990).mkv"
+	if err := db.ReplaceLocalMarkers(orphan, []store.Marker{{Kind: "intro", StartMs: 1, EndMs: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := db.PruneOrphanedMarkers(func(string) bool {
+			var n int
+			_ = db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&n)
+			return true
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("PruneOrphanedMarkers blocked: the probe ran while the cursor held the connection")
+	}
+}
+
 // R02-02: a recompute that changes nothing must not re-stamp the catalog (the
 // *_touch_au triggers would otherwise bump updated_at on every row each scan).
 func TestNoopRecomputeHiddenDoesNotBump(t *testing.T) {
