@@ -1034,6 +1034,13 @@ func (s *Service) previewExternal(ctx context.Context, snap providerSnapshot, ki
 	if err != nil {
 		return Candidate{}, err
 	}
+	return s.previewParsed(ctx, snap, kind, parsed)
+}
+
+// previewParsed is previewExternal after the parse, for a caller that already
+// holds the parsed reference (findIn) and must not pay a second parse — a plugin
+// round-trip — for the same paste.
+func (s *Service) previewParsed(ctx context.Context, snap providerSnapshot, kind string, parsed ExternalRef) (Candidate, error) {
 	externalID, releaseMBID := parsed.ExternalID, parsed.ReleaseID
 	if !snap.enablement.enabledFor(kind) {
 		return Candidate{}, ErrSearchUnavailable
@@ -2684,12 +2691,46 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 		log.Printf("obelo: enrich artwork %q (%s): skipping SVG %s (raster images only)", ar.Role, key, ar.URL)
 		return "", false
 	}
-	name := key + "-" + ar.Role + extensionFor(contentType)
-	if err := os.WriteFile(filepath.Join(s.cacheDir, name), data, 0o644); err != nil {
+	ext := extensionFor(contentType)
+	name := key + "-" + ar.Role + ext
+	// Written to a temp file and renamed into place, so a concurrent serve of the
+	// role's image never reads a half-written one.
+	if err := writeFileAtomic(filepath.Join(s.cacheDir, name), data); err != nil {
 		log.Printf("obelo: enrich artwork %q (%s): write failed: %v", ar.Role, key, err)
 		return "", false
 	}
+	// The name carries the format, so a role whose image switched format (jpg to
+	// png) would otherwise leave its old file orphaned in the cache.
+	for _, other := range []string{".jpg", ".png", ".webp", ".gif"} {
+		if other != ext {
+			_ = os.Remove(filepath.Join(s.cacheDir, key+"-"+ar.Role+other))
+		}
+	}
 	return name, true
+}
+
+// writeFileAtomic writes data to path via a temp file in the same directory and a
+// rename, so readers see the old file or the new one, never a truncated one.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".artwork-*")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 // withEpisodePin redirects a lookup reference onto the provider episode an Admin

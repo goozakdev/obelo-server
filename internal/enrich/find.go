@@ -93,10 +93,10 @@ func looksLikeLink(query string) bool {
 // continuation of a search.
 func (s *Service) findIn(ctx context.Context, snap providerSnapshot, kind, query string, opts SearchOptions) (CandidateSearch, error) {
 	if strings.TrimSpace(query) != "" && opts.Offset == 0 {
-		_, err := s.externalRef(ctx, snap, kind, query)
+		parsed, err := s.externalRef(ctx, snap, kind, query)
 		switch {
 		case err == nil:
-			c, err := s.previewExternal(ctx, snap, kind, query)
+			c, err := s.previewParsed(ctx, snap, kind, parsed)
 			switch {
 			case err == nil:
 				return CandidateSearch{Candidates: []Candidate{c}, ResolvedRef: true}, nil

@@ -3,6 +3,7 @@ package enrich
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -46,6 +47,82 @@ func TestCascadeAlbumReadsPinnedGroupWhenSearchMissesIt(t *testing.T) {
 	}
 	if rec := trackRow(t, db, "t1").MusicbrainzID; rec != "rec-fit-1" {
 		t.Errorf("track pinned %q, want rec-fit-1", rec)
+	}
+}
+
+// parseCountingProvider answers a paste and counts how often it is asked to parse.
+type parseCountingProvider struct {
+	parses int
+}
+
+func (p *parseCountingProvider) Lookup(context.Context, TitleRef) (TitleMetadata, error) {
+	return TitleMetadata{Matched: true, Name: "Heat", Year: 1995, ExternalID: "949"}, nil
+}
+
+func (p *parseCountingProvider) Search(context.Context, string, string, SearchOptions) ([]Candidate, error) {
+	return nil, ErrSearchUnavailable
+}
+
+func (p *parseCountingProvider) ArtworkCandidates(context.Context, TitleRef, string) ([]ArtworkCandidate, error) {
+	return nil, nil
+}
+
+func (p *parseCountingProvider) ParseExternalRef(_ context.Context, _, pasted string) (ExternalRef, error) {
+	p.parses++
+	return ExternalRef{ExternalID: pasted, Namespace: "tmdb"}, nil
+}
+
+// R04-14: a pasted id is parsed once (a plugin round-trip), not once by findIn
+// and again by previewExternal.
+func TestFindParsesAPastedRefOnce(t *testing.T) {
+	prov := &parseCountingProvider{}
+	svc := NewService(nil, prov, noArtwork{}, Enablement{Video: true, Music: true}, t.TempDir(), 0)
+
+	got, err := svc.findIn(context.Background(), svc.snapshot(), "movie", "949", SearchOptions{})
+	if err != nil {
+		t.Fatalf("findIn: %v", err)
+	}
+	if !got.ResolvedRef || len(got.Candidates) != 1 {
+		t.Fatalf("result = %+v, want one resolved candidate", got)
+	}
+	if prov.parses != 1 {
+		t.Errorf("ParseExternalRef called %d times, want 1", prov.parses)
+	}
+}
+
+type formatFetcher struct{ contentType string }
+
+func (f *formatFetcher) Fetch(context.Context, string) ([]byte, string, error) {
+	return []byte("image-bytes"), f.contentType, nil
+}
+
+// R04-13: a role whose image switches format leaves exactly one file, and the
+// write leaves no temp file behind.
+func TestCacheArtworkReplacesAFormatChange(t *testing.T) {
+	dir := t.TempDir()
+	f := &formatFetcher{contentType: "image/jpeg"}
+	svc := NewService(nil, CompositeProvider{}, f, Enablement{}, dir, 0)
+	ar := ArtworkRef{Role: "poster", URL: "http://x/p"}
+
+	first, ok := svc.cacheArtwork(context.Background(), "k1", ar)
+	if !ok || first != "k1-poster.jpg" {
+		t.Fatalf("first = %q, %v", first, ok)
+	}
+	f.contentType = "image/png"
+	second, ok := svc.cacheArtwork(context.Background(), "k1", ar)
+	if !ok || second != "k1-poster.png" {
+		t.Fatalf("second = %q, %v", second, ok)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "k1-poster.png" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("cache dir = %v, want only k1-poster.png", names)
 	}
 }
 
