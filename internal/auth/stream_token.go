@@ -70,17 +70,13 @@ type StreamTokenGrant struct {
 // package knows nothing about Playback sessions, and the ownership check plus its
 // 404-not-403 posture belongs with the handler that can see them.
 //
-// It sweeps expired rows first, on the same request-time trigger
-// StartDeviceAuth sweeps device-auth rows: no background goroutine to own, and
-// the only moment the table's size can matter is the moment a row is added.
+// It does not sweep expired rows: that is SweepStreamTokens' job, run by the
+// app's periodic loop, so a mint costs one INSERT rather than a table-wide DELETE.
 func (s *Service) MintStreamToken(sessionID, userID string) (StreamTokenGrant, error) {
 	if sessionID == "" || userID == "" {
 		return StreamTokenGrant{}, errors.New("auth: sessionId and userId are required to mint a stream token")
 	}
 	now := s.now()
-	if err := s.store.DeleteExpiredStreamTokens(formatTime(now)); err != nil {
-		return StreamTokenGrant{}, err
-	}
 	raw, err := newStreamToken()
 	if err != nil {
 		return StreamTokenGrant{}, err
@@ -156,9 +152,8 @@ func (s *Service) RevokeStreamTokens(sessionID string) error {
 	return s.store.DeleteStreamTokensForSession(sessionID)
 }
 
-// SweepStreamTokens removes aged-out rows. Mint already does this; the method
-// exists so a caller with no reason to mint (a maintenance path, a test) can
-// drive the sweep without inventing one.
+// SweepStreamTokens removes aged-out rows. The app's periodic loop calls it; mint
+// no longer does.
 func (s *Service) SweepStreamTokens() error {
 	return s.store.DeleteExpiredStreamTokens(formatTime(s.now()))
 }
