@@ -50,12 +50,20 @@ func TestStoredFilesByLibraryWithAPathUnderTwoTitles(t *testing.T) {
 	db := ambiguousFixture(t)
 	path := "/m/Range/S01E01-E02.mkv"
 	for i, id := range []string{"t1", "t2"} {
-		f := store.File{ID: "f" + id, Path: path, Streams: []store.Stream{
+		// The upsert keeps one row per path, so each Title is written at its own path and
+		// the second row is then pointed at the first's: two files rows, two Editions,
+		// one path, each with its own Stream.
+		f := store.File{ID: "f" + id, Path: "/m/Range/" + id + ".mkv", Streams: []store.Stream{
 			{ID: "s-" + id, Index: 0, Kind: "video", Codec: "h264"},
 		}}
 		if err := db.UpsertTitleTree(ambiguousTree(id, id+"|k", id, false, []store.File{f})); err != nil {
 			t.Fatalf("upsert %d: %v", i, err)
 		}
+	}
+	mustExec(t, db, `UPDATE files SET path = ? WHERE id IN ('ft1', 'ft2')`, path)
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM files WHERE path = ?`, path).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("files rows at the shared path = %d (%v), want the two the case needs", rows, err)
 	}
 	got, err := db.StoredFilesByLibrary("libmov")
 	if err != nil {

@@ -61,3 +61,40 @@ func TestMirrorSyncHonoursALockedName(t *testing.T) {
 		t.Errorf("a locked Show's sort_title = %q (%v), want it kept off the feed's", sortKey, err)
 	}
 }
+
+// The lock is per-entity and per-field: a Show, Artist or Album nobody renamed
+// keeps following the sharer's feed — names and sort keys — on a re-sync.
+func TestMirrorSyncFollowsTheFeedForAnUnlockedName(t *testing.T) {
+	db := openTemp(t)
+	_, lib := mirrorLibrary(t, db, "movie")
+
+	feed := func(show, artist, album string) []store.MirrorEntity {
+		return []store.MirrorEntity{
+			{Type: store.ExportShow, RemoteID: "sh1", Data: map[string]any{
+				"title": show, "sortTitle": "s " + show, "identityKey": "show-1"}},
+			{Type: store.ExportArtist, RemoteID: "ar1", Data: map[string]any{
+				"name": artist, "sortName": "s " + artist, "identityKey": "artist-1"}},
+			{Type: store.ExportAlbum, RemoteID: "al1", ParentID: "ar1", Data: map[string]any{
+				"title": album, "sortTitle": "s " + album, "identityKey": "album-1"}},
+		}
+	}
+	if err := db.ApplyMirror(lib.ID, feed("Show A", "Artist A", "Album A"), true); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if err := db.ApplyMirror(lib.ID, feed("Show B", "Artist B", "Album B"), true); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	for _, c := range []struct{ query, want string }{
+		{`SELECT title FROM shows`, "Show B"},
+		{`SELECT sort_title FROM shows`, "s Show B"},
+		{`SELECT name FROM artists`, "Artist B"},
+		{`SELECT sort_name FROM artists`, "s Artist B"},
+		{`SELECT title FROM albums`, "Album B"},
+		{`SELECT sort_title FROM albums`, "s Album B"},
+	} {
+		var got string
+		if err := db.QueryRow(c.query).Scan(&got); err != nil || got != c.want {
+			t.Errorf("%s = %q (%v) after a re-sync, want the feed's %q", c.query, got, err, c.want)
+		}
+	}
+}
