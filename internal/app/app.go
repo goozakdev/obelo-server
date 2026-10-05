@@ -101,6 +101,10 @@ type App struct {
 	// enrichMu.
 	enrichMu     sync.Mutex
 	enrichPasses map[string]*enrichPassState
+	// relayEnds tracks the courtesy "end the shared session" calls a session end
+	// fires on the sharing Server, so Close waits for them (each is bounded by
+	// relayEndTimeout) before the link Service and DB they use go away.
+	relayEnds *sync.WaitGroup
 	// enrichReschedule wakes the scheduled-enrich goroutine so a saved
 	// EnrichInterval change applies promptly (enabling from 0, or shrinking a long
 	// interval, takes effect immediately rather than on the next tick). Buffered
@@ -924,6 +928,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Service itself cannot be built until the Tailnet manager exists further down.
 	// The closure reads the variable when a session ends, by which time it is set.
 	var linkSvc *link.Service
+	relayEnds := &sync.WaitGroup{}
 
 	// Session lifecycle → realtime (issue 03): translate the Playback Manager's
 	// observer transitions into the Broker's Admin-only session events. Wired via
@@ -962,7 +967,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			// sharer's own reaper is the backstop.
 			if e.RelayLinkID != "" && e.RemoteSessionID != "" {
 				linkID, remoteID := e.RelayLinkID, e.RemoteSessionID
+				relayEnds.Add(1)
 				go func() {
+					defer relayEnds.Done()
 					ctx, cancel := context.WithTimeout(context.Background(), relayEndTimeout)
 					defer cancel()
 					if err := linkSvc.RelayEndSession(ctx, linkID, remoteID); err != nil {
@@ -1059,6 +1066,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	runEnrichWorker := !o.noEnrichWorker
 
 	app := &App{
+		relayEnds:        relayEnds,
 		Config:           cfg,
 		Identity:         identity,
 		DB:               db,
@@ -1805,6 +1813,11 @@ func (a *App) Close() error {
 	// segments into a directory that whoever owns the data dir may be deleting.
 	if a.Playback != nil {
 		a.Playback.EndAllSessions()
+	}
+	// EndAllSessions fires the observer, which spawns the relay-end calls; let them
+	// finish (bounded by relayEndTimeout) before the link Service and DB go away.
+	if a.relayEnds != nil {
+		a.relayEnds.Wait()
 	}
 	// Stop the per-Link sync goroutines and their outbound subscriptions before the
 	// Broker goes, for the Tailnet's reason: a transition published into a closed
