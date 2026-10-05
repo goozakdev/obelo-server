@@ -365,6 +365,13 @@ Setting it turns three things back on:
   `proxy_set_header Host $host;`, Apache: `ProxyPreserveHost On`), or the
   `redirect_uri` is built from the upstream address and the identity provider
   refuses it. Whichever you do, register that exact URI with the provider.
+- **The host in a TV's device-flow QR code and verification address.** A TV
+  signing in with a code is shown a QR code and a link to this server, built from
+  the origin its request arrived on. Obelo believes `X-Forwarded-Host` and
+  `X-Forwarded-Proto` for that only from a listed proxy; from anyone else they are
+  ignored and the request's own `Host` is used. Undeclared, then, your proxy must
+  pass the original host through (the same `Host` settings as above), or the
+  phone beside the TV is sent to the upstream address.
 
 **Only list a proxy you control.** Every host inside a range you name is allowed
 to tell Obelo what address a request came from, which means it can also *lie*
