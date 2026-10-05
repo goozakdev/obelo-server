@@ -207,18 +207,7 @@ func (db *DB) MarkFilesMissingUnder(libraryID string, scopeDirs []string, seenPa
 // (hidden=1) so it drops out of browse but stays fetchable by id (ADR-0008).
 // Run after MarkFilesMissing + the upsert pass so the file present-states are final.
 func (db *DB) RecomputeHiddenTitles(libraryID string) error {
-	// A Title is hidden when it has zero present Files. The correlated subquery
-	// counts present files per title; 0 ⇒ hidden.
-	_, err := db.Exec(
-		`UPDATE titles SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM editions e JOIN files f ON f.edition_id = e.id
-		             WHERE e.title_id = titles.id AND f.present = 1) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE library_id = ?`, libraryID)
-	if err != nil {
-		return fmt.Errorf("store: recomputing hidden titles: %w", err)
-	}
-	return nil
+	return recomputeHiddenTitlesTx(db.DB, libraryID)
 }
 
 // --- Match overrides --------------------------------------------------------

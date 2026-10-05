@@ -522,21 +522,7 @@ func (db *DB) AlbumArtworkByID(albumID string) (Artwork, error) {
 // drops out of the list but stays fetchable (ADR-0008). Mirrors
 // RecomputeHiddenShows.
 func (db *DB) RecomputeHiddenArtists(libraryID string) error {
-	if _, err := db.Exec(
-		`UPDATE albums SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM titles t WHERE t.album_id = albums.id AND t.hidden = 0) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE artist_id IN (SELECT id FROM artists WHERE library_id = ?)`, libraryID); err != nil {
-		return fmt.Errorf("store: recomputing hidden albums: %w", err)
-	}
-	if _, err := db.Exec(
-		`UPDATE artists SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM albums a WHERE a.artist_id = artists.id AND a.hidden = 0) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE library_id = ?`, libraryID); err != nil {
-		return fmt.Errorf("store: recomputing hidden artists: %w", err)
-	}
-	return nil
+	return recomputeHiddenArtistsTx(db.DB, libraryID)
 }
 
 func scanArtist(s scanner) (Artist, error) {

@@ -91,3 +91,29 @@ func TestOpenPathWithQueryChars(t *testing.T) {
 		t.Errorf("foreign_keys pragma = %d (err %v), want 1", fk, err)
 	}
 }
+
+// R02-02: a recompute that changes nothing must not re-stamp the catalog (the
+// *_touch_au triggers would otherwise bump updated_at on every row each scan).
+func TestNoopRecomputeHiddenDoesNotBump(t *testing.T) {
+	db := openTemp(t)
+	libID, showID, _ := seedShow(t, db)
+	var ep string
+	if err := db.QueryRow(`SELECT id FROM titles WHERE library_id=?`, libID).Scan(&ep); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	wasT := stamp(t, db, "titles", ep)
+	wasS := stamp(t, db, "shows", showID)
+	if err := db.RecomputeHiddenTitles(libID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecomputeHiddenShows(libID); err != nil {
+		t.Fatal(err)
+	}
+	if now := stamp(t, db, "titles", ep); now != wasT {
+		t.Errorf("no-op RecomputeHiddenTitles bumped title %q -> %q", wasT, now)
+	}
+	if now := stamp(t, db, "shows", showID); now != wasS {
+		t.Errorf("no-op RecomputeHiddenShows bumped show %q -> %q", wasS, now)
+	}
+}

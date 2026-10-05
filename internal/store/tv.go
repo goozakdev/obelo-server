@@ -509,21 +509,7 @@ func (db *DB) EpisodeContextForTitle(titleID string) (EpisodeContext, error) {
 // with no visible Season is hidden — so a Show whose every file went Missing
 // drops out of the grid but stays fetchable (ADR-0008).
 func (db *DB) RecomputeHiddenShows(libraryID string) error {
-	if _, err := db.Exec(
-		`UPDATE seasons SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM titles t WHERE t.season_id = seasons.id AND t.hidden = 0) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE show_id IN (SELECT id FROM shows WHERE library_id = ?)`, libraryID); err != nil {
-		return fmt.Errorf("store: recomputing hidden seasons: %w", err)
-	}
-	if _, err := db.Exec(
-		`UPDATE shows SET hidden = CASE
-		     WHEN (SELECT COUNT(*) FROM seasons s WHERE s.show_id = shows.id AND s.hidden = 0) > 0
-		     THEN 0 ELSE 1 END
-		   WHERE library_id = ?`, libraryID); err != nil {
-		return fmt.Errorf("store: recomputing hidden shows: %w", err)
-	}
-	return nil
+	return recomputeHiddenShowsTx(db.DB, libraryID)
 }
 
 func scanShow(s scanner) (Show, error) {
