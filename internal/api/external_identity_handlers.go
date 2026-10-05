@@ -247,7 +247,8 @@ func handleAttachRedirectStart(deps Deps) http.HandlerFunc {
 			writeRedirectStart(w, r, signin.Started{}, err)
 			return
 		}
-		if err := deps.Auth.CheckReauth(r.Context(), id.User.ID, id.Token, req.proof(), clientIP(r)); err != nil {
+		refund, err := deps.Auth.CheckReauthRefundable(r.Context(), id.User.ID, id.Token, req.proof(), clientIP(r))
+		if err != nil {
 			if !writeProofError(w, err) {
 				writeAttachError(w, err)
 			}
@@ -255,6 +256,11 @@ func handleAttachRedirectStart(deps Deps) http.HandlerFunc {
 		}
 		started, err := deps.SignInRedirect.StartAttach(r.Context(), req.Provider,
 			redirectBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
+		if err != nil {
+			// The provider failed, not the proof: hand the single-use grant back so the
+			// retry does not need another trip through an identity provider.
+			refund()
+		}
 		writeRedirectStart(w, r, started, err)
 	}
 }

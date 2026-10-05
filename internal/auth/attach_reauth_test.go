@@ -277,3 +277,36 @@ func TestAReauthIsOnlyThroughAnIdentityTheUserHolds(t *testing.T) {
 		t.Fatalf("its grant: %v", err)
 	}
 }
+
+// TestARefundedReauthGrantIsGoodAgainUntilItsOwnExpiry: the attach start spends
+// the grant before it calls the provider, so a provider failure hands it back.
+// The refund restores the grant as it was: it does not extend its life, and one
+// that has since expired stays expired.
+func TestARefundedReauthGrantIsGoodAgainUntilItsOwnExpiry(t *testing.T) {
+	svc, clock, _ := newFixture(t)
+	ada, session := outsideOnly(t, svc)
+	ctx := context.Background()
+
+	g, err := svc.ReauthWithPassword(ctx, ada, session, "dir", "ada", "pw", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refund, err := svc.CheckReauthRefundable(ctx, ada, session, auth.Reauth{Grant: g.Grant}, "")
+	if err != nil {
+		t.Fatalf("first use: %v", err)
+	}
+	if err := svc.CheckReauth(ctx, ada, session, auth.Reauth{Grant: g.Grant}, ""); !errors.Is(err, auth.ErrReauthRequired) {
+		t.Fatalf("a spent grant err = %v, want ErrReauthRequired", err)
+	}
+	refund()
+	clock.advance(auth.ReauthGrantTTL - time.Second)
+	refund, err = svc.CheckReauthRefundable(ctx, ada, session, auth.Reauth{Grant: g.Grant}, "")
+	if err != nil {
+		t.Fatalf("a refunded grant was refused: %v", err)
+	}
+	refund()
+	clock.advance(time.Second)
+	if err := svc.CheckReauth(ctx, ada, session, auth.Reauth{Grant: g.Grant}, ""); !errors.Is(err, auth.ErrReauthRequired) {
+		t.Errorf("a refunded grant past its original expiry err = %v, want ErrReauthRequired", err)
+	}
+}
