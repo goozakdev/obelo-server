@@ -627,3 +627,57 @@ func TestStatusCarriesTheOBSERVEDHTTPSBind(t *testing.T) {
 		t.Errorf("after the node stopped: status = {bound:%v error:%q}, want both cleared", st.HTTPSBound, st.HTTPSError)
 	}
 }
+
+// gatedStore parks the first settings read until released and records the most
+// reads ever in flight at once.
+type gatedStore struct {
+	*memStore
+	gate     chan struct{}
+	first    sync.Once
+	inflight atomic.Int32
+	maxSeen  atomic.Int32
+}
+
+func (g *gatedStore) TailnetSettings() (store.TailnetSettings, error) {
+	n := g.inflight.Add(1)
+	defer g.inflight.Add(-1)
+	for {
+		m := g.maxSeen.Load()
+		if n <= m || g.maxSeen.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	g.first.Do(func() { <-g.gate })
+	return g.memStore.TailnetSettings()
+}
+
+// TestConcurrentAppliesReadSettingsInOrder: Apply reads the persisted settings
+// under the Manager's lock, so two racing Connect/Disconnect calls cannot apply
+// in the reverse order from their writes (the later Apply acting on a snapshot
+// read before the earlier one's).
+func TestConcurrentAppliesReadSettingsInOrder(t *testing.T) {
+	g := &gatedStore{
+		memStore: &memStore{settings: store.TailnetSettings{Hostname: "obelo"}},
+		gate:     make(chan struct{}),
+	}
+	m := tailnet.NewManager(g, &tailnet.Fake{}, tailnet.ManagerOptions{
+		StateDir: filepath.Join(t.TempDir(), "tailscale"),
+		AuthKey:  func() string { return "" },
+	})
+	t.Cleanup(func() { _ = m.Close() })
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = m.Apply(context.Background())
+		}()
+	}
+	time.Sleep(100 * time.Millisecond) // let both reach the store
+	close(g.gate)
+	wg.Wait()
+	if got := g.maxSeen.Load(); got != 1 {
+		t.Fatalf("%d settings reads were in flight at once, want them serialized under the lock", got)
+	}
+}
