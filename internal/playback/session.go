@@ -521,7 +521,7 @@ func (m *Manager) CreateGoverned(in CreateInput, d Decision) (Session, error) {
 		case reencodeVideo:
 			rt.ownsPlaylist = true
 			rt.realignable = true
-			rt.segmentCount = segmentCountFor(d.File.DurationMs, transcode.SegmentSeconds)
+			rt.segmentCount = segmentCountFor(sessionDurationMs(d), transcode.SegmentSeconds)
 		case copyVideo && len(in.SegmentBoundaries) > 1:
 			rt.ownsPlaylist = true
 			rt.boundaries = in.SegmentBoundaries
