@@ -66,9 +66,12 @@ const MaxSignatureBytes = 8 << 10
 // it is the whole specification: an implementation in another language reproduces
 // this function and nothing else.
 func Message(manifest, module []byte) []byte {
-	manifestSum := sha256.Sum256(manifest)
-	moduleSum := sha256.Sum256(module)
+	return messageOf(sha256.Sum256(manifest), sha256.Sum256(module))
+}
 
+// messageOf is Message over digests already computed, so Verify hashes a module
+// of up to 64 MiB once rather than twice.
+func messageOf(manifestSum, moduleSum [sha256.Size]byte) []byte {
 	msg := make([]byte, 0, len(pluginapi.SignatureDomain)+len(manifestSum)+len(moduleSum))
 	msg = append(msg, pluginapi.SignatureDomain...)
 	msg = append(msg, manifestSum[:]...)
@@ -251,11 +254,12 @@ func Verify(sig pluginapi.Signature, pub ed25519.PublicKey, manifest, module []b
 		return fmt.Errorf("signing: the signature names the algorithm %q, and only %s is verified here",
 			sig.Algorithm, pluginapi.SignatureAlgorithmEd25519)
 	}
-	if want := Digest(manifest); !strings.EqualFold(sig.ManifestSHA256, want) {
+	manifestSum, moduleSum := sha256.Sum256(manifest), sha256.Sum256(module)
+	if want := hex.EncodeToString(manifestSum[:]); !strings.EqualFold(sig.ManifestSHA256, want) {
 		return fmt.Errorf("%w: the manifest hashes to %s and the signature names %s",
 			ErrDigestMismatch, want, sig.ManifestSHA256)
 	}
-	if want := Digest(module); !strings.EqualFold(sig.ModuleSHA256, want) {
+	if want := hex.EncodeToString(moduleSum[:]); !strings.EqualFold(sig.ModuleSHA256, want) {
 		return fmt.Errorf("%w: the module hashes to %s and the signature names %s",
 			ErrDigestMismatch, want, sig.ModuleSHA256)
 	}
@@ -267,7 +271,7 @@ func Verify(sig pluginapi.Signature, pub ed25519.PublicKey, manifest, module []b
 		return fmt.Errorf("%w: an ed25519 signature is %d bytes and this one is %d",
 			ErrBadSignature, ed25519.SignatureSize, len(raw))
 	}
-	if !ed25519.Verify(pub, Message(manifest, module), raw) {
+	if !ed25519.Verify(pub, messageOf(manifestSum, moduleSum), raw) {
 		return ErrBadSignature
 	}
 	return nil
