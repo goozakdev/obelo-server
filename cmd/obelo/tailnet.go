@@ -320,7 +320,27 @@ func (t *tailnetListener) bind() {
 			!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			log.Printf("obelo: tailnet: WARNING — the Tailnet listener stopped: %v", err)
 		}
+		t.serveExited(srv, false)
 	}()
+}
+
+// serveExited runs when a listener's Serve has returned. If that server is still
+// the one reconcile believes is bound, the node closed the listener underneath it
+// while still Running (no state transition will say so), so forget it and wake the
+// supervisor to bind again. A server unbind/Shutdown already cleared is not the
+// current one and is left alone.
+func (t *tailnetListener) serveExited(srv *http.Server, tls bool) {
+	t.mu.Lock()
+	cleared := false
+	if tls && t.tlsSrv == srv {
+		t.tlsSrv, cleared = nil, true
+	} else if !tls && t.srv == srv {
+		t.srv, cleared = nil, true
+	}
+	t.mu.Unlock()
+	if cleared {
+		t.Wake()
+	}
 }
 
 // unbind drops the listener because the node went away. See the type comment for
@@ -382,6 +402,7 @@ func (t *tailnetListener) bindTLS(status tailnet.Status) error {
 			!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			log.Printf("obelo: tailnet: WARNING — the Tailnet HTTPS listener stopped: %v; plain HTTP on the Tailnet is unaffected", err)
 		}
+		t.serveExited(srv, true)
 	}()
 	return nil
 }
