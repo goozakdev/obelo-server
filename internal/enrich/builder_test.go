@@ -313,7 +313,7 @@ func TestServiceSetProviderSwap(t *testing.T) {
 	svc := NewService(nil, first, nil, Enablement{Video: true}, "", 0)
 
 	ref := TitleRef{Kind: "movie", Title: "x"}
-	name, _, matched, err := svc.ResolveIdentity(context.Background(), ref)
+	name, _, matched, err := svc.ResolveIdentity(context.Background(), "", ref)
 	if err != nil || !matched || name != "First" {
 		t.Fatalf("before swap: got (%q, matched=%v, err=%v), want First", name, matched, err)
 	}
@@ -321,7 +321,7 @@ func TestServiceSetProviderSwap(t *testing.T) {
 	// Swap in a different provider (same Service instance).
 	svc.SetProvider(second, Enablement{Video: true})
 
-	name, _, matched, err = svc.ResolveIdentity(context.Background(), ref)
+	name, _, matched, err = svc.ResolveIdentity(context.Background(), "", ref)
 	if err != nil || !matched || name != "Second" {
 		t.Fatalf("after swap: got (%q, matched=%v, err=%v), want Second", name, matched, err)
 	}
@@ -331,7 +331,7 @@ func TestServiceSetProviderSwap(t *testing.T) {
 
 	// Swapping enablement off makes the same kind report disabled (no lookup).
 	svc.SetProvider(second, Enablement{})
-	_, _, matched, err = svc.ResolveIdentity(context.Background(), ref)
+	_, _, matched, err = svc.ResolveIdentity(context.Background(), "", ref)
 	if err != nil || matched {
 		t.Fatalf("after disabling: matched=%v err=%v, want not matched", matched, err)
 	}

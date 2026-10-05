@@ -84,7 +84,7 @@ func handleTitleIdentityCorrection(deps Deps, titleID string) http.HandlerFunc {
 			return
 		}
 
-		title, year, ok := resolveCorrectedIdentity(r, deps.Enrich, "movie", externalID, req.Title, req.Year)
+		title, year, ok := resolveCorrectedIdentity(r, deps.Enrich, libraryID, "movie", externalID, req.Title, req.Year)
 		if !ok {
 			writeError(w, http.StatusBadRequest, codeBadRequest,
 				"a corrected title is required (none supplied and the provider could not resolve one)", nil)
@@ -145,7 +145,7 @@ func handleShowIdentityCorrection(deps Deps, showID string) http.HandlerFunc {
 			return
 		}
 
-		title, year, ok := resolveCorrectedIdentity(r, deps.Enrich, "show", externalID, req.Title, req.Year)
+		title, year, ok := resolveCorrectedIdentity(r, deps.Enrich, libraryID, "show", externalID, req.Title, req.Year)
 		if !ok {
 			writeError(w, http.StatusBadRequest, codeBadRequest,
 				"a corrected title is required (none supplied and the provider could not resolve one)", nil)
@@ -185,10 +185,10 @@ func handleShowIdentityCorrection(deps Deps, showID string) http.HandlerFunc {
 // authoritative provider is asked to resolve them from the external id (mirroring
 // handleFixMatch's by-id fill). ok is false only when no title could be determined
 // at all — the correction cannot key an identity without one.
-func resolveCorrectedIdentity(r *http.Request, enr *enrich.Service, kind, externalID, title string, year int) (string, int, bool) {
+func resolveCorrectedIdentity(r *http.Request, enr *enrich.Service, libraryID, kind, externalID, title string, year int) (string, int, bool) {
 	title = strings.TrimSpace(title)
 	if title == "" && enr != nil {
-		if t, y, matched, err := enr.ResolveIdentity(r.Context(), enrich.TitleRef{Kind: kind, TMDBID: externalID}); err == nil && matched {
+		if t, y, matched, err := enr.ResolveIdentity(r.Context(), libraryID, enrich.TitleRef{Kind: kind, TMDBID: externalID}); err == nil && matched {
 			title = t
 			if year == 0 {
 				year = y

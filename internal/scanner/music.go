@@ -117,7 +117,7 @@ var albumFolderYearRe = regexp.MustCompile(`^(.*?)[\s_]*\((19\d{2}|20\d{2})\)\s*
 // article ("And The X" → "the x" → "x"), mirroring how "& The X" normalizes.
 func artistIdentityKey(albumArtist string) string {
 	name := stripAndWords(normalizeTitle(albumArtist))
-	return "artist:" + stripLeadingArticle(name)
+	return "artist:" + sortTitle(name)
 }
 
 // stripAndWords drops every standalone "and" word from an already-normalized
@@ -472,6 +472,14 @@ func parseMusicPath(path string) (artist, album string, year int, title string, 
 		if n := parseLeadingInt(strings.TrimSpace(m[0])); n > 0 {
 			track = n
 		}
+	}
+
+	// A library-relative path one folder below the root (Artist/song.mp3) has no
+	// album folder: that single folder is the Artist, and the Album is left to the
+	// tags or the default. (An absolute path's "/" is no Library root, so it is not
+	// read this way.)
+	if filepath.Dir(dir) == "." && dir != "." {
+		return strings.TrimSpace(dir), "", 0, title, track
 	}
 
 	albumFolder := filepath.Base(dir)

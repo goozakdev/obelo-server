@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/goozakdev/obelo-server/internal/store"
 )
 
 // Identity is the deterministic, offline-derived identity of a Movie (ADR-0002,
@@ -184,23 +186,9 @@ func normalizeTitle(title string) string {
 
 // sortTitle is the case-insensitive ordering key for a title. A leading English
 // article ("The ", "A ", "An ") is stripped so, e.g., "The Matrix" sorts under M,
-// next to "Matrix Reloaded", rather than bunching every "The …" title under T.
+// next to "Matrix Reloaded", rather than bunching every "The …" title under T. The
+// rule lives in store.SortTitle, so a scanned Title and a re-keyed one never
+// disagree about it.
 func sortTitle(title string) string {
-	return stripLeadingArticle(strings.ToLower(strings.TrimSpace(title)))
-}
-
-// sortArticles are leading words dropped from a sort key, longest first so a more
-// specific prefix wins. Each includes its trailing space, so a bare article and
-// words that merely begin with those letters (e.g. "theater") are untouched.
-var sortArticles = []string{"the ", "an ", "a "}
-
-// stripLeadingArticle drops a leading English article from an already-lower-cased,
-// trimmed sort key so article-prefixed titles order by the following word.
-func stripLeadingArticle(s string) string {
-	for _, article := range sortArticles {
-		if strings.HasPrefix(s, article) {
-			return strings.TrimSpace(s[len(article):])
-		}
-	}
-	return s
+	return store.SortTitle(title)
 }

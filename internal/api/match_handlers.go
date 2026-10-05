@@ -82,7 +82,7 @@ func handleFixMatch(svc *match.Service, enr *enrich.Service, cat *catalog.Servic
 			kind = "" // Music identity is its tags, not a provider id — skip the lookup.
 		}
 		if kind != "" && enr != nil && strings.TrimSpace(req.Title) == "" && (req.TMDBID != "" || req.IMDBID != "") {
-			if title, year, ok, err := enr.ResolveIdentity(r.Context(), enrich.TitleRef{
+			if title, year, ok, err := enr.ResolveIdentity(r.Context(), id, enrich.TitleRef{
 				Kind: kind, TMDBID: req.TMDBID, IMDBID: req.IMDBID,
 			}); err == nil && ok {
 				req.Title = title

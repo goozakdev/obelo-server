@@ -243,7 +243,16 @@ func showAssertedRecord(sh store.Show) parentRecord {
 // provider the Show does. Were they left with the lead, a TMDB-pinned Show in an
 // AniDB-led Library would hand AniDB a TMDB series id for every one of them.
 func (s *Service) showPin(sh store.Show) parentRecord {
-	if e, err := s.store.EntityEnrichmentByID(store.EntityShow, sh.ID); err == nil && e.ExternalIDOrigin.Locked() {
+	e, err := s.store.EntityEnrichmentByID(store.EntityShow, sh.ID)
+	if err != nil {
+		return showAssertedRecord(sh)
+	}
+	return showPinFrom(sh, e)
+}
+
+// showPinFrom is showPin over a Show's enrichment row the caller already holds.
+func showPinFrom(sh store.Show, e store.EntityEnrichment) parentRecord {
+	if e.ExternalIDOrigin.Locked() {
 		if rec := storedParentRecord(e); rec.ID != "" {
 			return rec
 		}

@@ -109,6 +109,10 @@ func (s *Service) ShowProblems(libraryID string) ([]ShowProblems, error) {
 	if err != nil {
 		return nil, err
 	}
+	lib, err = s.withShowFiles(lib, libraryID)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make([]ShowProblems, 0, len(shows))
 	for _, sh := range shows {

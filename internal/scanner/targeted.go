@@ -118,6 +118,22 @@ func (s *Service) runTargetedScan(ctx context.Context, lib store.Library, scope 
 	return nil
 }
 
+// keepUnreadable adds the Unreadable rows among unm to the Library's Unmatched list
+// (see UnmatchedAdder).
+func (s *Service) keepUnreadable(libraryID string, unm []store.UnmatchedFile) error {
+	adder, ok := s.store.(UnmatchedAdder)
+	if !ok {
+		return nil
+	}
+	var rows []store.UnmatchedFile
+	for _, u := range unm {
+		if u.Unreadable() {
+			rows = append(rows, u)
+		}
+	}
+	return adder.AddUnmatched(libraryID, rows)
+}
+
 // scanScope is the Targeted analogue of scanRoots: it walks the scope's folders
 // (per lib.Kind), soft-deletes within scope, and recomputes hidden state. It
 // deliberately does NOT touch the Library's Unmatched list or run the override
@@ -230,15 +246,22 @@ func (s *Service) scanScope(ctx context.Context, lib store.Library, scope Target
 			}
 			var (
 				tree store.TitleTree
+				unm  []store.UnmatchedFile
 				ok   bool
 				err  error
 			)
 			if r.isDir {
-				tree, _, ok, err = s.resolveFolder(ctx, sc, lib, r.path)
+				tree, unm, ok, err = s.resolveFolder(ctx, sc, lib, r.path)
 			} else {
-				tree, _, ok, err = s.resolveBareFile(ctx, sc, lib, r.path)
+				tree, unm, ok, err = s.resolveBareFile(ctx, sc, lib, r.path)
 			}
 			if err != nil {
+				return TargetedResult{}, err
+			}
+			// The Unmatched list is a whole-Library thing a full scan rewrites, but a
+			// file this scan found unreadable is news only this scan has: keep it,
+			// without touching the rest of the list.
+			if err := s.keepUnreadable(lib.ID, unm); err != nil {
 				return TargetedResult{}, err
 			}
 			if !ok {

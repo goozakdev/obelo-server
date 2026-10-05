@@ -49,9 +49,24 @@ func (s *Service) recordLocalMarkers(sc *scanCtx, path string, media MediaInfo) 
 		return nil
 	}
 	if spans := sc.edlMarkers(path, media.DurationMs); len(spans) > 0 {
+		sc.noteLocalMarkers(path, true, toStoreMarkers(spans))
 		return ms.ReplaceEDLMarkers(path, toStoreMarkers(spans))
 	}
-	return ms.ReplaceLocalMarkers(path, toStoreMarkers(markers.FromChapters(media.Chapters, media.DurationMs)))
+	chapters := toStoreMarkers(markers.FromChapters(media.Chapters, media.DurationMs))
+	sc.noteLocalMarkers(path, false, chapters)
+	return ms.ReplaceLocalMarkers(path, chapters)
+}
+
+// noteLocalMarkers keeps the preloaded Local Markers exact after a write.
+func (sc *scanCtx) noteLocalMarkers(path string, fromEDL bool, ms []store.Marker) {
+	if sc.localMarkers == nil {
+		return
+	}
+	if len(ms) == 0 {
+		delete(sc.localMarkers, path)
+		return
+	}
+	sc.localMarkers[path] = store.LocalMarkerState{FromEDL: fromEDL, Markers: ms}
 }
 
 // refreshEDLMarkers re-reads the `.edl` of an unchanged (not re-probed) File.
@@ -66,9 +81,19 @@ func (s *Service) refreshEDLMarkers(sc *scanCtx, path string, durationMs int64) 
 	}
 	spans := sc.edlMarkers(path, durationMs)
 	if len(spans) == 0 {
+		if sc.localMarkers != nil {
+			return sc.localMarkers[path].FromEDL, nil
+		}
 		return ms.LocalMarkersFromEDL(path)
 	}
-	return false, ms.ReplaceEDLMarkers(path, toStoreMarkers(spans))
+	want := toStoreMarkers(spans)
+	// An `.edl` that still says what is stored is not written again: a no-op scan
+	// would otherwise open a write transaction per File that has one.
+	if st, ok := sc.localMarkers[path]; ok && st.FromEDL && store.SameMarkerSpans(st.Markers, want) {
+		return false, nil
+	}
+	sc.noteLocalMarkers(path, true, want)
+	return false, ms.ReplaceEDLMarkers(path, want)
 }
 
 // pruneOrphanedMarkers removes what is kept about paths that are gone.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -113,6 +114,11 @@ func TestCacheArtworkReplacesAFormatChange(t *testing.T) {
 	if !ok || second != "k1-poster.png" {
 		t.Fatalf("second = %q, %v", second, ok)
 	}
+	// The old-format file survives until the caller has persisted the new name.
+	if _, err := os.Stat(filepath.Join(dir, first)); err != nil {
+		t.Fatalf("old-format file removed before the new path was persisted: %v", err)
+	}
+	svc.pruneArtworkFormats(second)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -171,5 +177,32 @@ func TestEntityArtworkCandidatesUseTheLibrarySnapshot(t *testing.T) {
 
 	if _, err := svc.ListEntityArtworkCandidates(context.Background(), store.EntityAlbum, "al1", "cover"); !errors.Is(err, ErrSearchUnavailable) {
 		t.Errorf("ListEntityArtworkCandidates err = %v, want ErrSearchUnavailable for a Library with enrichment off", err)
+	}
+}
+
+// R04-07: ResolveIdentity reads through the given Library's snapshot, not the
+// global one — a Library with enrichment off makes no provider call.
+func TestResolveIdentityUsesTheLibrarySnapshot(t *testing.T) {
+	global := &stubProvider{meta: TitleMetadata{Matched: true, Name: "Global"}}
+	lib := &stubProvider{meta: TitleMetadata{Matched: true, Name: "Library"}}
+	svc := NewService(nil, global, nil, Enablement{Video: true}, "", 0)
+	svc.resolveLibrary = func(_ context.Context, id string) (providerSnapshot, error) {
+		if id == "off" {
+			return providerSnapshot{provider: lib}, nil
+		}
+		return providerSnapshot{provider: lib, enablement: Enablement{Video: true}}, nil
+	}
+	ref := TitleRef{Kind: "movie", TMDBID: "1"}
+
+	name, _, matched, err := svc.ResolveIdentity(context.Background(), "on", ref)
+	if err != nil || !matched || name != "Library" {
+		t.Fatalf("on: got (%q, %v, %v), want Library", name, matched, err)
+	}
+	_, _, matched, err = svc.ResolveIdentity(context.Background(), "off", ref)
+	if err != nil || matched {
+		t.Fatalf("off: matched=%v err=%v, want not matched", matched, err)
+	}
+	if global.calls != 0 || lib.calls != 1 {
+		t.Errorf("calls = global:%d library:%d, want 0 and 1", global.calls, lib.calls)
 	}
 }

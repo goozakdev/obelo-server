@@ -279,6 +279,58 @@ type scanCtx struct {
 	// `.edl` names in it (see namesIn).
 	edlDir   string
 	edlNames []string
+	// stored and localMarkers are the Library's stored Files (with Streams) and Local
+	// Markers, read once up front by an incremental full scan (BulkReader) so an
+	// unchanged File costs no query of its own. Nil means "not preloaded": the lookup
+	// falls back to the per-path call. localMarkers is kept exact as the scan writes
+	// Markers, so a File seen twice reads what the first visit stored.
+	stored       map[string]store.File
+	localMarkers map[string]store.LocalMarkerState
+}
+
+// BulkReader is the set-at-a-time read side of an incremental scan. *store.DB
+// satisfies it. It is OPTIONAL, like MarkerStore: a fake Store that does not
+// implement it is read one path at a time, as before.
+type BulkReader interface {
+	StoredFilesByLibrary(libraryID string) (map[string]store.File, error)
+	LocalMarkersByLibrary(libraryID string) (map[string]store.LocalMarkerState, error)
+}
+
+// UnmatchedAdder adds rows to the Unmatched list without rewriting it. *store.DB
+// satisfies it; OPTIONAL, so a Targeted scan against a Store without it just does
+// not record what it found unreadable.
+type UnmatchedAdder interface {
+	AddUnmatched(libraryID string, files []store.UnmatchedFile) error
+}
+
+// preload reads the Library's stored Files and Local Markers in bulk when the
+// Store can, for an incremental scan to reuse.
+func (s *Service) preload(sc *scanCtx, libraryID string) error {
+	br, ok := s.store.(BulkReader)
+	if !ok {
+		return nil
+	}
+	stored, err := br.StoredFilesByLibrary(libraryID)
+	if err != nil {
+		return err
+	}
+	local, err := br.LocalMarkersByLibrary(libraryID)
+	if err != nil {
+		return err
+	}
+	sc.stored, sc.localMarkers = stored, local
+	return nil
+}
+
+// storedFile is LoadStoredFile through the preload when there is one.
+func (s *Service) storedFile(sc *scanCtx, path string) (store.File, error) {
+	if sc.stored != nil {
+		if f, ok := sc.stored[path]; ok {
+			return f, nil
+		}
+		return store.File{}, store.ErrNotFound
+	}
+	return s.store.LoadStoredFile(path)
 }
 
 // Scan performs an incremental synchronous scan of the Library's roots
@@ -401,6 +453,9 @@ func (s *Service) scanRoots(ctx context.Context, lib store.Library, mode Mode, o
 			return Result{}, err
 		}
 		sc.snapshots = snaps
+		if err := s.preload(sc, lib.ID); err != nil {
+			return Result{}, err
+		}
 	}
 	overrides, err := s.store.MatchOverridesByLibrary(lib.ID)
 	if err != nil {
@@ -970,7 +1025,7 @@ func (s *Service) assembleTitle(
 		// Incremental skip: an unchanged file reuses its stored row+streams and is
 		// NOT re-ffprobed (the expensive step — skipping it is the whole point).
 		if sc.unchanged(cf.path, size, mtime) {
-			if stored, err := s.store.LoadStoredFile(cf.path); err == nil {
+			if stored, err := s.storedFile(sc, cf.path); err == nil {
 				reprobe, err := s.refreshEDLMarkers(sc, cf.path, stored.DurationMs)
 				if err != nil {
 					return store.TitleTree{}, err
