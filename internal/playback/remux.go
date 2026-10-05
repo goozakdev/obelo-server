@@ -405,6 +405,14 @@ func (rt *hlsRuntime) realign(target int) error {
 	if rt.torndown {
 		return os.ErrClosed
 	}
+	// Callers decide to realign from a snapshot taken outside rt.mu, so parallel
+	// requests (Safari's burst, a retry) can all arrive here wanting the same
+	// restart. Re-check under the lock: a job already running at the target, or
+	// within the lookahead before it, will produce the segment — restarting it
+	// would only thrash.
+	if rt.job != nil && target >= rt.startNumber && target-rt.startNumber <= realignLookahead {
+		return nil
+	}
 	// The input-seek time for the target segment: its exact keyframe boundary for a
 	// boundaries-based video COPY (whose segments fall on the source's irregular
 	// keyframes — the tiny epsilon keeps the demuxer's keyframe-at-or-before seek ON

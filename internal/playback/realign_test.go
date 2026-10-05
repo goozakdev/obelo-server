@@ -583,3 +583,34 @@ func TestRealignAfterTeardownDoesNotResurrect(t *testing.T) {
 		t.Errorf("launches changed after teardown realign: %d → %d", before, runner.launchCount())
 	}
 }
+
+// TestRealignIsANoOpForATargetTheJobAlreadyCovers: parallel requests that each saw
+// the old start and decided to realign must not each restart ffmpeg. Once the job
+// is started at the target (or within the lookahead past it) a further realign
+// leaves it running; a genuinely different target still restarts it.
+func TestRealignIsANoOpForATargetTheJobAlreadyCovers(t *testing.T) {
+	runner := &recordingRunner{}
+	rt := &hlsRuntime{
+		runner:         runner,
+		buildArgs:      func(seek transcode.SeekOffset) []string { return []string{"-start_number", strconv.Itoa(seek.StartNumber), filepath.Join(t.TempDir(), "index.m3u8")} },
+		scratchDir:     t.TempDir(),
+		segmentSeconds: transcode.SegmentSeconds,
+	}
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatalf("EnsureStarted: %v", err)
+	}
+	for _, target := range []int{50, 50, 51, 52} {
+		if err := rt.realign(target); err != nil {
+			t.Fatalf("realign(%d): %v", target, err)
+		}
+	}
+	if n := runner.launchCount(); n != 2 {
+		t.Errorf("launches = %d, want 2 (initial + one realign to 50)", n)
+	}
+	if err := rt.realign(80); err != nil {
+		t.Fatalf("realign(80): %v", err)
+	}
+	if n := runner.launchCount(); n != 3 {
+		t.Errorf("launches after a distinct target = %d, want 3", n)
+	}
+}
