@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -97,6 +98,9 @@ func toLinkLibraries(libs []store.Library) []linkLibraryJSON {
 func linkWithLibraries(deps Deps, l store.Link) linkJSON {
 	libs, err := deps.Links.Libraries(l.ID)
 	if err != nil {
+		// Still "none" on the wire, but logged: a transient read error must not be
+		// indistinguishable, to the operator, from the sharer granting nothing.
+		log.Printf("obelo: api: reading libraries of link %s: %v", l.ID, err)
 		libs = nil
 	}
 	return toLinkJSON(l, libs)
