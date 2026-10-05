@@ -117,7 +117,7 @@ var albumFolderYearRe = regexp.MustCompile(`^(.*?)[\s_]*\((19\d{2}|20\d{2})\)\s*
 // article ("And The X" → "the x" → "x"), mirroring how "& The X" normalizes.
 func artistIdentityKey(albumArtist string) string {
 	name := stripAndWords(normalizeTitle(albumArtist))
-	return "artist:" + stripLeadingArticle(name)
+	return "artist:" + sortTitle(name)
 }
 
 // stripAndWords drops every standalone "and" word from an already-normalized

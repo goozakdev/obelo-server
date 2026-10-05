@@ -44,7 +44,7 @@ func (db *DB) RekeyTitleIdentity(titleID, title string, year int, tmdbID, identi
 		     enrichment_status = 'pending', enrichment_source = '', `+clearEnrichmentRetry+`,
 		     `+clearEnrichmentReason+`
 		   WHERE id = ?`,
-		title, nullableYear(year), sortKey(title), identityKey, tmdbID, titleID,
+		title, nullableYear(year), SortTitle(title), identityKey, tmdbID, titleID,
 	)
 	if err != nil {
 		return fmt.Errorf("store: rekeying title identity: %w", err)
@@ -77,7 +77,7 @@ func (db *DB) RekeyShowIdentity(showID, title string, year int, tmdbID, identity
 		     title = ?, year = ?, sort_title = ?, identity_key = ?,
 		     tmdb_id = ?, imdb_id = ''
 		   WHERE id = ?`,
-		title, nullableYear(year), sortKey(title), identityKey, tmdbID, showID,
+		title, nullableYear(year), SortTitle(title), identityKey, tmdbID, showID,
 	)
 	if err != nil {
 		return fmt.Errorf("store: rekeying show identity: %w", err)
@@ -176,14 +176,15 @@ func (db *DB) AnyFilePathForShow(showID string) (string, error) {
 	return path, nil
 }
 
-// sortKey is a lightweight sort-title for a re-keyed row (lower-cased title). A
-// subsequent scan recomputes the canonical sort_title; this only keeps the live
-// row's browse ordering sane in the interim.
-func sortKey(title string) string {
+// SortTitle is the case-insensitive ordering key for a title. A leading English
+// article ("the "/"an "/"a ") is stripped so article-prefixed titles sort by the
+// following word (e.g. "The Matrix" files under M); each article includes its
+// trailing space, so words that merely begin with those letters ("theater") are
+// untouched. The scanner calls it for every scanned row, and a re-keyed row uses
+// it as its interim key until the next scan recomputes the canonical one, so the
+// two can never drift.
+func SortTitle(title string) string {
 	s := strings.ToLower(strings.TrimSpace(title))
-	// Mirror the scanner's sortTitle: strip a leading article ("the "/"an "/"a ")
-	// so article-prefixed titles sort by the following word (e.g. "The Matrix"
-	// files under M). Longest prefix first so "an" wins over "a".
 	for _, article := range []string{"the ", "an ", "a "} {
 		if strings.HasPrefix(s, article) {
 			return strings.TrimSpace(s[len(article):])
@@ -191,3 +192,6 @@ func sortKey(title string) string {
 	}
 	return s
 }
+
+// sortKey is SortTitle under the name the store's other writers use.
+func sortKey(title string) string { return SortTitle(title) }
