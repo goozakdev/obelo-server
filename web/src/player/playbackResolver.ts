@@ -1,5 +1,6 @@
 import type { DeviceProfile, PlaybackConstraints, StartPlaybackOptions } from "../api/types";
 import type { PlaybackPreference, SubtitlePreference } from "./playbackPreference";
+import { sameLang } from "./lang";
 import { rungById, rungConstraints, sourceHeightForSelection } from "./qualityLadder";
 
 // The Playback resolver (appletv-web-parity §1) — the web equivalent of the TV's
@@ -164,7 +165,7 @@ export function resolveBurnSubtitle(
 
 /** Match a stored subtitle preference (language + forced) to THIS Title's Subtitle
  * tracks — the by-language keying that ports a Show's choice across Episodes whose
- * tracks carry different ids. Case-insensitive on language; `forced` must match
+ * tracks carry different ids. Language matches by normalised code (en = eng, case-insensitive); `forced` must match
  * exactly (a forced and a full track in one language stay distinct). The FIRST track
  * satisfying both wins when several share the key. undefined when none matches — the
  * preference then adds no request field (the Title lacks that language). */
@@ -172,9 +173,8 @@ function matchSubtitle(
   subtitle: SubtitlePreference,
   subtitles: ResolverSubtitle[],
 ): ResolverSubtitle | undefined {
-  const lang = subtitle.language.toLowerCase();
   return subtitles.find(
-    (s) => (s.language ?? "").toLowerCase() === lang && s.forced === subtitle.forced,
+    (s) => sameLang(s.language, subtitle.language) && s.forced === subtitle.forced,
   );
 }
 

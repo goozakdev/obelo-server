@@ -46,6 +46,15 @@ describe("lang helpers (R04-19)", () => {
     expect(normalizeLang(undefined)).toBe("");
   });
 
+  it("normalizeLang maps the extra bibliographic codes and ignores inherited properties", () => {
+    expect(["alb", "sqi"].map(normalizeLang)).toEqual(["sq", "sq"]);
+    expect(["bur", "mya"].map(normalizeLang)).toEqual(["my", "my"]);
+    expect(["tib", "bod"].map(normalizeLang)).toEqual(["bo", "bo"]);
+    expect(["mao", "mri"].map(normalizeLang)).toEqual(["mi", "mi"]);
+    expect(normalizeLang("constructor")).toBe("constructor");
+    expect(normalizeLang("toString")).toBe("tostring");
+  });
+
   it("sameLang matches spellings of one language and never two unknowns", () => {
     expect(sameLang("eng", "en")).toBe(true);
     expect(sameLang("ger", "deu")).toBe(true);

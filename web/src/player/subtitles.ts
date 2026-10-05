@@ -1,5 +1,5 @@
 import type { SubtitleTrack } from "../api/types";
-import { langRank } from "./lang";
+import { langRank, sameLang } from "./lang";
 
 // Client-side text-subtitle selection helpers for the captions menu (ADR-0020,
 // subtitles/02). Text-track selection never touches the server: the player lists
@@ -49,17 +49,14 @@ export function defaultTrackId(ordered: SubtitleTrack[]): string | null {
 }
 
 /** The id of the first deliverable text track matching a stored Subtitle preference
- * (language, case-insensitive, AND forced exactly — the same key the resolver matches
+ * (language by normalised code, AND forced exactly — the same key the resolver matches
  * on), or null when this Title has none. Takes the already-ordered list so a
  * preferred-language track wins among several matches. */
 export function matchTextTrackId(
   ordered: SubtitleTrack[],
   pref: { language: string; forced: boolean },
 ): string | null {
-  const lang = pref.language.toLowerCase();
-  const hit = ordered.find(
-    (t) => (t.language ?? "").toLowerCase() === lang && t.forced === pref.forced,
-  );
+  const hit = ordered.find((t) => sameLang(t.language, pref.language) && t.forced === pref.forced);
   return hit ? hit.id : null;
 }
 

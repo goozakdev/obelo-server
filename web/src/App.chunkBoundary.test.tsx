@@ -9,9 +9,14 @@ import App from "./App";
 // replaced nor remounted, so the playing media is not torn down. Moving
 // <NowPlayingBar /> inside <RouteBoundary> must fail this test.
 
-vi.mock("./screens/ProfileScreen", () => {
-  throw new Error("Failed to fetch dynamically imported module");
-});
+// The import resolves, but reading its default export throws the browser's dynamic-import
+// failure (a TypeError), so React.lazy rejects with the shape the boundary classifies as
+// a chunk-load failure (vitest would wrap an error thrown by the factory itself).
+vi.mock("./screens/ProfileScreen", () => ({
+  get default(): never {
+    throw new TypeError("Failed to fetch dynamically imported module: /assets/ProfileScreen.js");
+  },
+}));
 
 const barLifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }));
 vi.mock("./player/NowPlayingBar", () => ({
@@ -60,6 +65,7 @@ describe("App chunk-load failure", () => {
   it("shows the Reload prompt and keeps the NowPlayingBar mounted (never remounted)", async () => {
     render(<App />);
     const prompt = await screen.findByTestId("chunk-error");
+    expect(prompt).toHaveTextContent(/this page failed to load/i);
     expect(prompt).toHaveTextContent(/reload/i);
     await waitFor(() => expect(screen.getByTestId("now-playing-stub")).toBeInTheDocument());
     expect(barLifecycle.mounts).toBe(1);

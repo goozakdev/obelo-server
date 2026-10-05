@@ -22,6 +22,7 @@ const ISO_639_2_TO_1: Record<string, string> = {
   may: "ms", nld: "nl", dut: "nl", nor: "no", nob: "nb", nno: "nn", pol: "pl", por: "pt",
   ron: "ro", rum: "ro", rus: "ru", slk: "sk", slo: "sk", slv: "sl", srp: "sr", swe: "sv",
   tha: "th", tur: "tr", ukr: "uk", vie: "vi", cym: "cy", wel: "cy", kat: "ka", geo: "ka",
+  alb: "sq", sqi: "sq", bur: "my", mya: "my", tib: "bo", bod: "bo", mao: "mi", mri: "mi",
 };
 
 /** A language tag reduced to one comparable key: lower-cased, region/script dropped
@@ -30,7 +31,7 @@ const ISO_639_2_TO_1: Record<string, string> = {
  * an empty/unknown tag. */
 export function normalizeLang(language: string | undefined): string {
   const primary = (language ?? "").trim().toLowerCase().split(/[-_]/)[0] ?? "";
-  return ISO_639_2_TO_1[primary] ?? primary;
+  return Object.hasOwn(ISO_639_2_TO_1, primary) ? ISO_639_2_TO_1[primary]! : primary;
 }
 
 /** Whether two language tags name the same language (normalizeLang equal). False

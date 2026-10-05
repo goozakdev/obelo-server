@@ -5,6 +5,7 @@ import {
   defaultTrackId,
   deliverableTextTrackIndex,
   deliverableTextTracks,
+  matchTextTrackId,
   orderedImageTracks,
   orderedTextTracks,
 } from "./subtitles";
@@ -141,5 +142,16 @@ describe("deliverableTextTracks / deliverableTextTrackIndex (in-band HLS mapping
     expect(deliverableTextTrackIndex(tracks, null)).toBeNull();
     expect(deliverableTextTrackIndex(tracks, "img-de")).toBeNull();
     expect(deliverableTextTrackIndex(tracks, "nope")).toBeNull();
+  });
+});
+
+describe("matchTextTrackId", () => {
+  it("matches a stored 2-letter language to a 3-letter tagged track, forced exact", () => {
+    const tracks = [
+      track({ id: "forced", language: "eng", forced: true }),
+      track({ id: "full", language: "eng" }),
+    ];
+    expect(matchTextTrackId(tracks, { language: "en", forced: false })).toBe("full");
+    expect(matchTextTrackId(tracks, { language: "fr", forced: false })).toBeNull();
   });
 });
