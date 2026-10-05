@@ -22,7 +22,8 @@ func (db *DB) StoredFilesByLibrary(libraryID string) (map[string]File, error) {
 		   FROM files f
 		   JOIN editions e ON f.edition_id = e.id
 		   JOIN titles   t ON e.title_id   = t.id
-		  WHERE t.library_id = ?`, libraryID)
+		  WHERE t.library_id = ?
+		  ORDER BY f.rowid`, libraryID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing stored files: %w", err)
 	}
@@ -39,6 +40,11 @@ func (db *DB) StoredFilesByLibrary(libraryID string) (map[string]File, error) {
 			return nil, fmt.Errorf("store: scanning stored file: %w", err)
 		}
 		f.Present = present != 0
+		// A multi-episode file is one path under several Editions' rows. LoadStoredFile
+		// answers the first; so does this, with that row's own Streams.
+		if _, dup := out[f.Path]; dup {
+			continue
+		}
 		out[f.Path] = f
 		byID[f.ID] = f.Path
 	}

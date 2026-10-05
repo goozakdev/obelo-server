@@ -44,6 +44,35 @@ func TestStoredFilesByLibraryMatchesLoadStoredFile(t *testing.T) {
 	}
 }
 
+// A multi-episode file is one path under two Titles (two files rows): the bulk read
+// answers one row with its own Streams, as LoadStoredFile does, not both merged.
+func TestStoredFilesByLibraryWithAPathUnderTwoTitles(t *testing.T) {
+	db := ambiguousFixture(t)
+	path := "/m/Range/S01E01-E02.mkv"
+	for i, id := range []string{"t1", "t2"} {
+		f := store.File{ID: "f" + id, Path: path, Streams: []store.Stream{
+			{ID: "s-" + id, Index: 0, Kind: "video", Codec: "h264"},
+		}}
+		if err := db.UpsertTitleTree(ambiguousTree(id, id+"|k", id, false, []store.File{f})); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	got, err := db.StoredFilesByLibrary("libmov")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := db.LoadStoredFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got[path], want) {
+		t.Errorf("bulk = %+v, per-path = %+v", got[path], want)
+	}
+	if len(got[path].Streams) != 1 {
+		t.Errorf("streams = %d, want the one row's 1", len(got[path].Streams))
+	}
+}
+
 func TestLocalMarkersByLibrary(t *testing.T) {
 	db, path := markerFixture(t)
 	want := []store.Marker{
