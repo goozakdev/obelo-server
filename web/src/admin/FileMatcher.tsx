@@ -18,6 +18,7 @@ import type {
   SlotPosition,
 } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
+import { useDismiss } from "../lib/useDismiss";
 import {
   arrangeParts,
   arrangementFromFiles,
@@ -1479,21 +1480,7 @@ function SlotActionsMenu({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    function onDocPointer(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(ref, open, () => setOpen(false));
 
   return (
     <div className="row-menu matcher-slot-menu" ref={ref}>

@@ -1173,6 +1173,19 @@ describe("repointing a slot's record", () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
+  it("closes the kebab on an outside click but not on a click inside it", async () => {
+    const user = userEvent.setup();
+    setupRepoint();
+    await user.click(groupToggle(3));
+    await openSlotMenu(user, 3, 1);
+
+    await user.click(screen.getByTestId("matcher-slot-menu"));
+    expect(screen.getByTestId("matcher-slot-menu")).toBeInTheDocument();
+
+    await user.click(document.body);
+    expect(screen.queryByTestId("matcher-slot-menu")).toBeNull();
+  });
+
   it("clears a record back to the container's own", async () => {
     const user = userEvent.setup();
     const { apply } = setupRepoint();

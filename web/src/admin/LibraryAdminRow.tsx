@@ -6,6 +6,7 @@ import { LibraryKindIcon } from "../browse/kindIcons";
 import { isLinked } from "../browse/LinkedMark";
 import { useScanStatus } from "./useScanStatus";
 import ConfirmDialog from "./ConfirmDialog";
+import { useDismiss } from "../lib/useDismiss";
 
 // One Library row in the redesigned admin hub: its kind icon + name on the left,
 // and a right-hand action cluster — a "three dots" (⋮) menu alongside a compact
@@ -184,24 +185,8 @@ export default function LibraryAdminRow({
     }
   }
 
-  // Close the actions menu on outside click / Escape (mirrors EpisodeActionsMenu).
-  useEffect(() => {
-    if (!menuOpen) return;
-    function onDocPointer(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
+  // Close the actions menu on outside click / Escape.
+  useDismiss(menuRef, menuOpen, () => setMenuOpen(false));
 
   return (
     <li

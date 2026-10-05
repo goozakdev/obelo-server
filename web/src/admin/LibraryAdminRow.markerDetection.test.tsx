@@ -97,4 +97,22 @@ describe("LibraryAdminRow — marker detection toggle", () => {
     expect(item).toHaveAttribute("aria-checked", "false");
     expect(item).toBeDisabled();
   });
+
+  it("closes the actions menu on an outside click and on Escape, not on an inside click", async () => {
+    const user = userEvent.setup();
+    renderRow(lib("tv"));
+    const toggle = screen.getByTestId("library-menu-toggle");
+
+    await user.click(toggle);
+    await user.click(screen.getByTestId("library-menu"));
+    expect(screen.getByTestId("library-menu")).toBeInTheDocument();
+
+    await user.click(document.body);
+    expect(screen.queryByTestId("library-menu")).toBeNull();
+
+    await user.click(toggle);
+    expect(screen.getByTestId("library-menu")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("library-menu")).toBeNull();
+  });
 });
