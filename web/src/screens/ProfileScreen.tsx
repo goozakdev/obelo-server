@@ -42,7 +42,9 @@ export default function ProfileScreen() {
     const m = memGrant.current;
     return m && m.expiresAt > Date.now() ? m : null;
   };
-  const liveGrant = () => readReauthGrant() ?? liveMemGrant()?.grant ?? null;
+  // The in-memory grant is only ever the NEWEST one (it is set when storage
+  // refused it), so it beats whatever older grant storage still holds.
+  const liveGrant = () => liveMemGrant()?.grant ?? readReauthGrant();
   const [grant, setGrant] = useState<string | null>(() => readReauthGrant());
   // A change of User while the screen is open reads the kept grant again — a
   // sign-out or switch has forgotten it — so nobody is shown as confirmed on
@@ -61,7 +63,7 @@ export default function ProfileScreen() {
     if (grant === null) return;
     let timer: number | undefined;
     const check = () => {
-      const expiresAt = reauthGrantExpiresAt() ?? liveMemGrant()?.expiresAt ?? null;
+      const expiresAt = liveMemGrant()?.expiresAt ?? reauthGrantExpiresAt();
       if (expiresAt === null) {
         setGrant(null);
         return;

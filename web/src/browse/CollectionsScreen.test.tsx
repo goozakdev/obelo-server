@@ -87,6 +87,18 @@ describe("CollectionsScreen", () => {
     );
   });
 
+  it("renders the placeholder with no <img> request for a Collection without a poster (R05-11)", async () => {
+    listCollections.mockResolvedValue([
+      { id: "c2", name: "Solo Pick", description: "", memberCount: 1 },
+    ]);
+    renderList();
+
+    const tile = await screen.findByTestId("collection-tile");
+    expect(within(tile).queryByTestId("poster-img")).toBeNull();
+    expect(tile.querySelector("img")).toBeNull();
+    expect(within(tile).getByTestId("poster-placeholder")).toHaveTextContent("SP");
+  });
+
   it("links each card to its Collection detail", async () => {
     listCollections.mockResolvedValue([
       { id: "c1", name: "A24 Films", description: "", memberCount: 3 },

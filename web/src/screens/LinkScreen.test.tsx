@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route, Routes, useNavigate } from "react-router-dom";
 import { renderWithAuth } from "../test/renderWithAuth";
@@ -128,5 +128,42 @@ describe("LinkScreen code changes (R06-13)", () => {
     await userEvent.click(screen.getByTestId("hop"));
     await waitFor(() => expect(approveDeviceCode).toHaveBeenCalledWith("NEW2"));
     expect(approveDeviceCode).toHaveBeenCalledTimes(2);
+  });
+  it("keeps the later code's result when an earlier approval settles last", async () => {
+    let finishOld!: (v: unknown) => void;
+    let failOld!: (e: unknown) => void;
+    approveDeviceCode.mockImplementation((code: string) =>
+      code === "OLD1"
+        ? new Promise((resolve, reject) => {
+            finishOld = resolve;
+            failOld = reject;
+          })
+        : Promise.resolve({ device: { name: "New TV", platform: "tvos" } }),
+    );
+    function Hop() {
+      const nav = useNavigate();
+      return <button data-testid="hop" onClick={() => nav("/link/NEW2")} />;
+    }
+    renderWithAuth(
+      <>
+        <Hop />
+        <Routes>
+          <Route path="/link/:code?" element={<LinkScreen />} />
+        </Routes>
+      </>,
+      { initialEntries: ["/link/OLD1"] },
+    );
+    await waitFor(() => expect(approveDeviceCode).toHaveBeenCalledWith("OLD1"));
+    await userEvent.click(screen.getByTestId("hop"));
+    await waitFor(() => expect(screen.getByTestId("link-approved-device")).toHaveTextContent("New TV"));
+
+    await act(async () => {
+      finishOld({ device: { name: "Old TV", platform: "tvos" } });
+    });
+    expect(screen.getByTestId("link-approved-device")).toHaveTextContent("New TV");
+    await act(async () => {
+      failOld(new Error("late failure"));
+    });
+    expect(screen.getByTestId("link-approved-device")).toHaveTextContent("New TV");
   });
 });

@@ -40,12 +40,19 @@ export default function LinkScreen() {
   // (history, typed URL) is still approved.
   const attempted = useRef<string | null>(null);
 
+  // Latest wins: a slow approval of an earlier code must not overwrite what the
+  // screen shows for a later one.
+  const latest = useRef(0);
+
   const approve = useCallback(async (code: string) => {
+    const mine = ++latest.current;
     setPhase({ kind: "approving" });
     try {
       const res = await apiClient.approveDeviceCode(code);
+      if (mine !== latest.current) return;
       setPhase({ kind: "approved", deviceName: res.device.name });
     } catch (err) {
+      if (mine !== latest.current) return;
       setPhase({ kind: "failed", message: errorMessage(err) });
     }
   }, []);

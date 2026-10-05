@@ -168,18 +168,32 @@ describe("usePaginatedList refresh (review)", () => {
 
   it("clears a failed loadMore's error when the pending refresh succeeds", async () => {
     let failNext = false;
-    const fetchPage = (cursor: string | null) => {
-      if (cursor === "2" && failNext) return Promise.reject(new Error("boom"));
-      return Promise.resolve(page(["a", "b"], "2"));
+    let holdRefresh: Promise<void> | null = null;
+    const fetchPage = async (cursor: string | null) => {
+      if (cursor === "2" && failNext) throw new Error("boom");
+      if (cursor === null && holdRefresh) await holdRefresh; // the replayed refresh walk
+      return page(["a", "b"], "2");
     };
     const { result } = renderHook(() => usePaginatedList(fetchPage, getId));
     await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeNull();
+
     failNext = true;
+    let releaseRefresh!: () => void;
+    holdRefresh = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
     await act(async () => {
       result.current.loadMore();
       result.current.refresh(); // skipped while loadMore is in flight, replayed after
     });
-    await waitFor(() => expect(result.current.items.map(getId)).toEqual(["a", "b"]));
+    // The failure is on screen while the replayed refresh is still in flight.
+    await waitFor(() => expect(result.current.error).toBe("boom"));
+
+    await act(async () => {
+      releaseRefresh();
+    });
     await waitFor(() => expect(result.current.error).toBeNull());
+    expect(result.current.items.map(getId)).toEqual(["a", "b"]);
   });
 });

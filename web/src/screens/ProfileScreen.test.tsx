@@ -62,6 +62,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   Object.defineProperty(window, "location", { configurable: true, value: realLocation });
 });
 
@@ -401,6 +402,34 @@ describe("confirming when sessionStorage is unavailable (R06-12)", () => {
     await user.type(screen.getByTestId("profile-attach-password-directory"), "pw2");
     await user.click(screen.getByTestId("profile-attach-submit-directory"));
     expect(api.attachPassword).toHaveBeenCalledWith("directory", "bj2", "pw2", { reauthGrant: "g-mem" });
-    vi.restoreAllMocks();
+  });
+
+  it("prefers the newest in-memory grant over an older one still kept in storage", async () => {
+    const outside = { ...view, hasPassword: false };
+    api.list.mockResolvedValue(outside);
+    api.reauthPassword.mockResolvedValue({ grant: "g-new", expiresIn: 300 });
+    api.attachPassword.mockResolvedValue(view.identities[0]);
+    renderWithAuth(<ProfileScreen />);
+
+    const user = userEvent.setup();
+    const username = await screen.findByTestId("profile-reauth-username-directory");
+    // An earlier confirmation (another tab) lands in storage while this one is
+    // open; the new one then cannot be kept.
+    window.sessionStorage.setItem(
+      "obelo.reauthGrant",
+      JSON.stringify({ grant: "g-old", expiresAt: Date.now() + 200_000 }),
+    );
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((k: string) => {
+      if (k === "obelo.reauthGrant") throw new Error("blocked");
+    });
+    await user.type(username, "bj");
+    await user.type(screen.getByTestId("profile-reauth-password-directory"), "bj-pw");
+    await user.click(screen.getByTestId("profile-reauth-submit-directory"));
+
+    await waitFor(() => expect(screen.getByTestId("profile-attach-submit-directory")).toBeEnabled());
+    await user.type(screen.getByTestId("profile-attach-username-directory"), "bj2");
+    await user.type(screen.getByTestId("profile-attach-password-directory"), "pw2");
+    await user.click(screen.getByTestId("profile-attach-submit-directory"));
+    expect(api.attachPassword).toHaveBeenCalledWith("directory", "bj2", "pw2", { reauthGrant: "g-new" });
   });
 });
