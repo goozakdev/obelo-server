@@ -18,3 +18,16 @@ func TestSortTitleIsTheStoresRule(t *testing.T) {
 		t.Errorf("sortTitle(The Matrix) = %q, want matrix", got)
 	}
 }
+
+// A single folder level above an untagged file is the Artist, not the Album
+// (refuter-09): "Artist/song.mp3" has no album folder to read.
+func TestMusicPathFallbackOneLevelIsTheArtist(t *testing.T) {
+	artist, album, _, title, _ := parseMusicPath("Artist/01 - Song.mp3")
+	if artist != "Artist" || album != "" || title != "Song" {
+		t.Errorf("artist=%q album=%q title=%q, want Artist / no album / Song", artist, album, title)
+	}
+	artist, album, _, _, _ = parseMusicPath("Artist/Album (1999)/01 - Song.mp3")
+	if artist != "Artist" || album != "Album" {
+		t.Errorf("two-level: artist=%q album=%q", artist, album)
+	}
+}

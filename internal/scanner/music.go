@@ -474,6 +474,14 @@ func parseMusicPath(path string) (artist, album string, year int, title string, 
 		}
 	}
 
+	// A library-relative path one folder below the root (Artist/song.mp3) has no
+	// album folder: that single folder is the Artist, and the Album is left to the
+	// tags or the default. (An absolute path's "/" is no Library root, so it is not
+	// read this way.)
+	if filepath.Dir(dir) == "." && dir != "." {
+		return strings.TrimSpace(dir), "", 0, title, track
+	}
+
 	albumFolder := filepath.Base(dir)
 	if albumFolder != "." && albumFolder != string(filepath.Separator) {
 		if m := albumFolderYearRe.FindStringSubmatch(albumFolder); m != nil {
