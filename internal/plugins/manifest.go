@@ -3,6 +3,7 @@ package plugins
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,7 +69,12 @@ func validateManifest(m pluginapi.Manifest) error {
 	if len(m.Provides) == 0 {
 		return fmt.Errorf("the manifest provides nothing; a Plugin that fills no Extension point cannot be registered")
 	}
+	seenKind := map[pluginapi.ExtensionPoint]bool{}
 	for _, p := range m.Provides {
+		if seenKind[p.Kind] {
+			return fmt.Errorf("the manifest provides %s twice; one Plugin fills an extension point once", p.Kind)
+		}
+		seenKind[p.Kind] = true
 		switch p.Kind {
 		case pluginapi.ExtensionEventSink, pluginapi.ExtensionMetadataProvider, pluginapi.ExtensionSubtitleProvider,
 			pluginapi.ExtensionWebReferenceProvider, pluginapi.ExtensionSignInProvider, pluginapi.ExtensionLyricProvider,
@@ -107,8 +113,9 @@ func validateManifest(m pluginapi.Manifest) error {
 		}
 	}
 	for _, h := range m.Network.Hosts {
-		if h != normalizeHost(h) || h == "" {
-			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port or path", h)
+		if h != normalizeHost(h) || h == "" || strings.ContainsAny(h, "/@?# \t\r\n") ||
+			(strings.Contains(h, ":") && net.ParseIP(h) == nil) {
+			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port, path or userinfo", h)
 		}
 		if strings.Contains(h, "*") {
 			return fmt.Errorf("network host %q uses a wildcard; the allowlist is exact, so an operator can read it and know what this code may reach", h)
