@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/store"
@@ -113,6 +114,11 @@ func TestCacheArtworkReplacesAFormatChange(t *testing.T) {
 	if !ok || second != "k1-poster.png" {
 		t.Fatalf("second = %q, %v", second, ok)
 	}
+	// The old-format file survives until the caller has persisted the new name.
+	if _, err := os.Stat(filepath.Join(dir, first)); err != nil {
+		t.Fatalf("old-format file removed before the new path was persisted: %v", err)
+	}
+	svc.pruneArtworkFormats(second)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -1384,6 +1384,7 @@ func (s *Service) PickTitleArtwork(ctx context.Context, titleID, role, imageURL 
 	if err := s.store.PickTitleArtwork(titleID, role, path, uuid.NewString()); err != nil {
 		return err
 	}
+	s.pruneArtworkFormats(path)
 	s.candidates.invalidate(titleCandidateKey(titleID, role))
 	return nil
 }
@@ -1399,6 +1400,7 @@ func (s *Service) PickEntityArtwork(ctx context.Context, entityType, entityID, r
 	if err := s.store.PickEntityArtwork(entityType, entityID, role, path, uuid.NewString()); err != nil {
 		return err
 	}
+	s.pruneArtworkFormats(path)
 	s.candidates.invalidate(entityCandidateKey(entityType, entityID, role))
 	return nil
 }
@@ -1763,6 +1765,9 @@ func (s *Service) processLeaf(ctx context.Context, snap providerSnapshot, lw lea
 		ReplaceRecord: replacesRecord(t, ns, meta.ExternalID),
 	}, locks); err != nil {
 		return err
+	}
+	for _, a := range fetched {
+		s.pruneArtworkFormats(a.Path)
 	}
 	res.Matched++
 	return nil
@@ -2614,6 +2619,9 @@ func (s *Service) enrichParent(ctx context.Context, snap providerSnapshot, mode 
 	}, locks); err != nil {
 		return parentRecord{}, err
 	}
+	for _, a := range fetched {
+		s.pruneArtworkFormats(a.Path)
+	}
 	return rec, nil
 }
 
@@ -2654,7 +2662,9 @@ func (s *Service) fetchCastHeadshots(ctx context.Context, cast []Credit) {
 		}
 		if err := s.store.UpsertPersonArtwork(c.PersonRef, personProfileRole, path); err != nil {
 			log.Printf("obelo: enrich person headshot %q: store failed: %v", c.PersonRef, err)
+			continue
 		}
+		s.pruneArtworkFormats(path)
 	}
 }
 
@@ -2699,14 +2709,22 @@ func (s *Service) cacheArtwork(ctx context.Context, key string, ar ArtworkRef) (
 		log.Printf("obelo: enrich artwork %q (%s): write failed: %v", ar.Role, key, err)
 		return "", false
 	}
-	// The name carries the format, so a role whose image switched format (jpg to
-	// png) would otherwise leave its old file orphaned in the cache.
+	return name, true
+}
+
+// pruneArtworkFormats removes the other-format siblings of a cached artwork file.
+// The name carries the format, so a role whose image switched format (jpg to png)
+// would otherwise leave its old file orphaned in the cache. It runs only AFTER the
+// caller has persisted the new name: pruned earlier, a failed DB write would leave
+// the row pointing at a file that no longer exists.
+func (s *Service) pruneArtworkFormats(name string) {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
 	for _, other := range []string{".jpg", ".png", ".webp", ".gif"} {
 		if other != ext {
-			_ = os.Remove(filepath.Join(s.cacheDir, key+"-"+ar.Role+other))
+			_ = os.Remove(filepath.Join(s.cacheDir, base+other))
 		}
 	}
-	return name, true
 }
 
 // writeFileAtomic writes data to path via a temp file in the same directory and a
