@@ -240,6 +240,13 @@ func handleAttachRedirectStart(deps Deps) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
+		// Refuse a provider that cannot be started BEFORE the proof is checked:
+		// CheckReauth spends a password-less User's single-use grant, which a typo'd
+		// or not-yet-configured provider id must not burn.
+		if err := redirectProviderStartable(deps.SignInRedirect, req.Provider); err != nil {
+			writeRedirectStart(w, r, signin.Started{}, err)
+			return
+		}
 		if err := deps.Auth.CheckReauth(r.Context(), id.User.ID, id.Token, req.proof(), clientIP(r)); err != nil {
 			if !writeProofError(w, err) {
 				writeAttachError(w, err)
@@ -247,9 +254,23 @@ func handleAttachRedirectStart(deps Deps) http.HandlerFunc {
 			return
 		}
 		started, err := deps.SignInRedirect.StartAttach(r.Context(), req.Provider,
-			externalBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
+			redirectBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
 		writeRedirectStart(w, r, started, err)
 	}
+}
+
+// redirectProviderStartable reports why a redirect provider cannot be started
+// (the errors StartAttach itself would give), or nil when it can.
+func redirectProviderStartable(redirects *signin.Redirects, providerID string) error {
+	for _, p := range redirects.Providers() {
+		if p.ID == providerID {
+			if !p.Configured {
+				return signin.ErrRedirectNotConfigured
+			}
+			return nil
+		}
+	}
+	return signin.ErrUnknownRedirectProvider
 }
 
 type attachRedirectCallbackRequest struct {
@@ -350,7 +371,7 @@ func handleReauthRedirectStart(deps Deps) http.HandlerFunc {
 			return
 		}
 		started, err := deps.SignInRedirect.StartReauth(r.Context(), req.Provider,
-			externalBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
+			redirectBaseURL(r)+signInCallbackPath, clientIP(r), id.User.ID)
 		writeRedirectStart(w, r, started, err)
 	}
 }

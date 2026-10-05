@@ -48,7 +48,7 @@ const relayRoutePrefix = "/relay/"
 func handleRelaySubtree(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", http.MethodGet)
+			w.Header().Set("Allow", "GET, HEAD")
 			writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed, "method not allowed", nil)
 			return
 		}
@@ -87,6 +87,13 @@ func handleRelaySubtree(deps Deps) http.HandlerFunc {
 // because the credential this request would be spent under is the household's.
 func relayTailAllowed(sess playback.Session, tail string) bool {
 	if tail == "" || strings.Contains(tail, "..") {
+		return false
+	}
+	// The tail is the router's DECODED path and is sent upstream raw, where the
+	// sharer decodes it again. Every legitimate tail is plain ASCII path elements,
+	// so a surviving '%' (a double-encoded "%2E%2E%2F") or any character that would
+	// re-shape the upstream URL is refused outright.
+	if strings.ContainsAny(tail, "%?#\\") {
 		return false
 	}
 	sessionRoot := "sessions/" + sess.RemoteSessionID

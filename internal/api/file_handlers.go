@@ -52,7 +52,7 @@ func handleFileSubtree(deps Deps) http.HandlerFunc {
 			// that requireAuthAllowQueryToken attached) and outside the leaf, so the
 			// Scope is resolved once per request and the handler never talks to the
 			// access service itself — the same wiring every other read route uses.
-			requireMethod(http.MethodGet,
+			requireGetOrHead(
 				requireAuthAllowQueryToken(deps.Auth,
 					requireScope(deps.Access, handleFileDownload(deps.Catalog, id))))(w, r)
 			return

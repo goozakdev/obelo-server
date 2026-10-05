@@ -428,6 +428,21 @@ func requireMethod(method string, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// requireGetOrHead is requireMethod for a read-only media leaf: it admits GET and
+// HEAD (http.ServeContent answers a HEAD with the headers and no body, which is
+// what a player or download tool probes with) and advertises both in Allow.
+func requireGetOrHead(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
+				"method not allowed", nil)
+			return
+		}
+		h(w, r)
+	}
+}
+
 // writeError serializes the standard error envelope with the given HTTP status.
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	writeJSON(w, status, errorBody{Error: errorPayload{

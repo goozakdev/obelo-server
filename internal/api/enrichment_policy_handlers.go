@@ -199,10 +199,11 @@ func handleGetEnrichmentPolicy(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
-		if _, ok := loadLibrary(w, deps, id); !ok {
+		lib, ok := loadLibrary(w, deps, id)
+		if !ok {
 			return
 		}
-		resp, err := buildEnrichmentPolicyResponse(r.Context(), deps, id)
+		resp, err := buildEnrichmentPolicyResponse(r.Context(), deps, lib)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to read enrichment policy", nil)
 			return
@@ -230,46 +231,29 @@ func handleUpdateEnrichmentPolicy(deps Deps) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if req.EnrichEnabled.Present {
-			// Value nil ⇒ clear to inherit (stored NULL); non-nil ⇒ deliberate override.
-			if err := deps.EnrichmentPolicy.SetLibraryEnrichEnabled(id, req.EnrichEnabled.Value); err != nil {
-				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
-				return
-			}
+		// Validate EVERYTHING before writing anything, so a 422 never leaves the keys
+		// that preceded the bad one persisted (the writes below are independent, and
+		// map iteration order is unspecified).
+		//
+		// A blank language is meaningless as an override (it can't localize anything)
+		// and would blur "inherit" vs. "deliberately none" - normalize it to a clear.
+		lang := req.MetadataLanguage.Value
+		if lang != nil && strings.TrimSpace(*lang) == "" {
+			lang = nil
 		}
-		if req.MetadataLanguage.Present {
-			// A blank language is meaningless as an override (it can't localize anything)
-			// and would blur "inherit" vs. "deliberately none" — normalize it to a clear.
-			lang := req.MetadataLanguage.Value
-			if lang != nil && strings.TrimSpace(*lang) == "" {
-				lang = nil
-			}
-			if err := deps.EnrichmentPolicy.SetLibraryMetadataLanguage(id, lang); err != nil {
-				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
-				return
-			}
+		// A blank slug clears the pointer back to inherit the kind default.
+		slug := req.AuthoritativeProvider.Value
+		if slug != nil && strings.TrimSpace(*slug) == "" {
+			slug = nil
 		}
-		if req.AuthoritativeProvider.Present {
-			// A blank slug clears the pointer back to inherit the kind default.
-			slug := req.AuthoritativeProvider.Value
-			if slug != nil && strings.TrimSpace(*slug) == "" {
-				slug = nil
-			}
-			// Constrain the pointer's domain to USABLE Full providers of the Library's
-			// kind (ADR-0027): reject an unknown, artwork-only, wrong-kind, or unkeyed
-			// slug so a Library is never pointed at a source that can't lead.
-			if slug != nil && !authoritativeSelectable(deps, lib.Kind, *slug) {
-				writeError(w, http.StatusUnprocessableEntity, codeProviderNotAuthoritative,
-					"provider is not a usable authoritative for this library", nil)
-				return
-			}
-			if err := deps.EnrichmentPolicy.SetLibraryAuthoritativeProvider(id, slug); err != nil {
-				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
-				return
-			}
+		// Constrain the pointer's domain to USABLE Full providers of the Library's
+		// kind (ADR-0027): reject an unknown, artwork-only, wrong-kind, or unkeyed
+		// slug so a Library is never pointed at a source that can't lead.
+		if req.AuthoritativeProvider.Present && slug != nil && !authoritativeSelectable(deps, lib.Kind, *slug) {
+			writeError(w, http.StatusUnprocessableEntity, codeProviderNotAuthoritative,
+				"provider is not a usable authoritative for this library", nil)
+			return
 		}
-		// Validate every override slug BEFORE writing any, so one bad slug never leaves
-		// a partially-applied update (map iteration order is unspecified).
 		for slug := range req.ProviderOverrides {
 			if !supplementSelectable(deps, lib.Kind, slug) {
 				writeError(w, http.StatusUnprocessableEntity, codeProviderNotAuthoritative,
@@ -277,8 +261,28 @@ func handleUpdateEnrichmentPolicy(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
+
+		if req.EnrichEnabled.Present {
+			// Value nil => clear to inherit (stored NULL); non-nil => deliberate override.
+			if err := deps.EnrichmentPolicy.SetLibraryEnrichEnabled(id, req.EnrichEnabled.Value); err != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
+				return
+			}
+		}
+		if req.MetadataLanguage.Present {
+			if err := deps.EnrichmentPolicy.SetLibraryMetadataLanguage(id, lang); err != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
+				return
+			}
+		}
+		if req.AuthoritativeProvider.Present {
+			if err := deps.EnrichmentPolicy.SetLibraryAuthoritativeProvider(id, slug); err != nil {
+				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
+				return
+			}
+		}
 		for slug, enabled := range req.ProviderOverrides {
-			// enabled nil ⇒ clear to inherit (row deleted); non-nil ⇒ forced on/off.
+			// enabled nil => clear to inherit (row deleted); non-nil => forced on/off.
 			if err := deps.EnrichmentPolicy.SetLibraryProviderOverride(id, slug, enabled); err != nil {
 				writeError(w, http.StatusInternalServerError, codeInternal, "failed to save enrichment policy", nil)
 				return
@@ -290,7 +294,7 @@ func handleUpdateEnrichmentPolicy(deps Deps) http.HandlerFunc {
 		if deps.ReEnrichLibrary != nil {
 			deps.ReEnrichLibrary(id)
 		}
-		resp, err := buildEnrichmentPolicyResponse(r.Context(), deps, id)
+		resp, err := buildEnrichmentPolicyResponse(r.Context(), deps, lib)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to read enrichment policy", nil)
 			return
@@ -367,12 +371,9 @@ func providerRef(deps Deps, slug string) providerRefJSON {
 // enablement, the effective + inherited Authoritative provider, any fallback, and
 // the authoritative candidate list. The resolver may be nil in a unit test that
 // only exercises persistence — the derived fields then stay zero.
-func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, id string) (enrichmentPolicyResponse, error) {
+func buildEnrichmentPolicyResponse(ctx context.Context, deps Deps, lib store.Library) (enrichmentPolicyResponse, error) {
+	id := lib.ID
 	policy, err := deps.EnrichmentPolicy.LibraryEnrichmentPolicy(id)
-	if err != nil {
-		return enrichmentPolicyResponse{}, err
-	}
-	lib, err := deps.EnrichmentPolicy.LibraryByID(id)
 	if err != nil {
 		return enrichmentPolicyResponse{}, err
 	}

@@ -29,6 +29,11 @@ import (
 // channel yields.
 func handleEvents(broker *events.Broker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if broker == nil {
+			// Deps.Events may be nil (a narrow wiring): no realtime feed to offer.
+			writeError(w, http.StatusServiceUnavailable, codeServiceUnavailable, "events unavailable", nil)
+			return
+		}
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			writeError(w, http.StatusInternalServerError, codeInternal, "streaming unsupported", nil)

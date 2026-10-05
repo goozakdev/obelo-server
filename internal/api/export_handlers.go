@@ -172,9 +172,9 @@ func handleLibraryExport(deps Deps, libraryID string) http.HandlerFunc {
 		// A Library this Server itself mirrored from somebody else is never
 		// re-shared: the owner of the files decided who sees them, and a hop later
 		// that decision would be made by somebody they never met (ADR-0054 §4,
-		// ADR-0056 §7). `libraries.source` does not exist yet — issue 07 adds it —
-		// so this is the hook issue 07/11 fills in; nil means nothing is linked,
-		// which is true of every Server until then.
+		// ADR-0056 §7). Deps.LinkedLibrary is wired by the composition root
+		// (app.go) from the Library's mirror source; nil (a narrow test wiring)
+		// means nothing is linked.
 		if deps.LinkedLibrary != nil && deps.LinkedLibrary(libraryID) {
 			notFound(w)
 			return

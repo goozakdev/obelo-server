@@ -130,6 +130,15 @@ func TestLibraryGrantsHideUngrantedLibrary(t *testing.T) {
 		t.Errorf("member ungranted lib2 titles = %d, want 404", st)
 	}
 
+	// Scan status is Scope-checked too: granted 200, ungranted 404 (not a
+	// 200 confirming the Library exists and leaking its title count).
+	if st, _ := srv.AuthGET("/api/v1/libraries/"+lib1+"/scan", member, nil); st != http.StatusOK {
+		t.Errorf("member granted lib1 scan status = %d, want 200", st)
+	}
+	if st, _ := srv.AuthGET("/api/v1/libraries/"+lib2+"/scan", member, nil); st != http.StatusNotFound {
+		t.Errorf("member ungranted lib2 scan status = %d, want 404", st)
+	}
+
 	// Detail: a granted Title 200; the ungranted-Library copy 404 for the member,
 	// 200 for the admin. Artwork + playback on the ungranted Title also 404.
 	var l2admin titlesListResp

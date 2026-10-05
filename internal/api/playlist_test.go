@@ -441,12 +441,13 @@ func playlistCardIDs(ls playlistsListResp) []string {
 func TestPlaylistUserDeleteCascade(t *testing.T) {
 	t.Parallel()
 	requireFixtures(t)
-	srv, admin, _, list := scanMovies(t)
+	srv, admin, lib, list := scanMovies(t)
 	dune := findTitle(t, list, "Dune")
 	blade := findTitle(t, list, "Blade Runner")
 
 	memberID := srv.CreateUser(admin, "doomed", "doomedpass12", "member")
 	member := srv.LoginAs("doomed", "doomedpass12")
+	grantLibraries(t, srv, admin, memberID, lib) // append requires the Title be in scope
 	plID := createPlaylist(t, srv, member, "Queue")
 	if st, _ := appendPlaylistItem(t, srv, member, plID, dune); st != http.StatusNoContent {
 		t.Fatal("append dune failed")

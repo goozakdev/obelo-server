@@ -183,6 +183,9 @@ func handleUpdateEventSinks(deps Deps) http.HandlerFunc {
 			return
 		}
 		var upserts []store.EventSinkUpsert
+		// A slug repeated in one PUT folds: each entry resolves against the previous
+		// entry for it, not the original row.
+		resolved := map[string]store.EventSinkUpsert{}
 		for _, u := range req.Sinks {
 			registration, ok := deps.Plugins.EventSink(u.Slug)
 			if !ok {
@@ -196,6 +199,9 @@ func handleUpdateEventSinks(deps Deps) http.HandlerFunc {
 				Secret:  row.Secret,
 				URL:     row.URL,
 				Events:  row.Events,
+			}
+			if prev, ok := resolved[u.Slug]; ok {
+				desired = prev
 			}
 			if u.Enabled != nil {
 				desired.Enabled = *u.Enabled
@@ -232,6 +238,7 @@ func handleUpdateEventSinks(deps Deps) http.HandlerFunc {
 					"a signing secret is required to enable "+registration.Descriptor.Name, nil)
 				return
 			}
+			resolved[u.Slug] = desired
 			upserts = append(upserts, desired)
 		}
 

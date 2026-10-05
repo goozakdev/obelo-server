@@ -62,6 +62,10 @@ type requestOrigin struct {
 	ClientIP string
 	// HTTPS decides the media cookie's Secure flag (cookie.go).
 	HTTPS bool
+	// TrustedPeer is true when the immediate peer is inside the operator's
+	// OBELO_TRUSTED_PROXIES allowlist, i.e. when its X-Forwarded-* claims may be
+	// believed (redirectBaseURL reads it).
+	TrustedPeer bool
 }
 
 // resolveRequestOrigin is the middleware that performs the trust decision once
@@ -86,6 +90,7 @@ func resolveOrigin(r *http.Request, trusted trustedProxies) requestOrigin {
 	if len(trusted) == 0 || !trusted.has(parseHostAddr(peer)) {
 		return o
 	}
+	o.TrustedPeer = true
 
 	if ip, ok := forwardedFor(r, trusted); ok {
 		o.ClientIP = ip

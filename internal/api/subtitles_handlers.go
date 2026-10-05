@@ -37,10 +37,26 @@ import (
 // transcode.FFmpeg / scanner.FFprobe (which the whole app already relies on).
 var subtitleFFmpegBinary = ""
 
-// subtitleExtractTimeout bounds the embedded-extraction ffmpeg run. Extracting a
-// text subtitle track is near-instant (no decode/re-encode), so a generous cap
-// only guards against a pathological/corrupt input hanging the request.
+// subtitleExtractTimeout is the floor of the embedded-extraction ffmpeg budget.
+// Extracting a text subtitle track needs no decode/re-encode, but ffmpeg must
+// still demux (read) the whole container, so the budget grows with the File's
+// size (see subtitleExtractBudget); the cap only guards against a
+// pathological/corrupt input hanging the request.
 const subtitleExtractTimeout = 30 * time.Second
+
+// subtitleExtractBytesPerSec is the slow-storage read rate the size-scaled
+// budget assumes (a conservative HDD/NAS figure).
+const subtitleExtractBytesPerSec = 20 << 20
+
+// subtitleExtractBudget returns the extraction timeout for the file at path:
+// the base floor plus the time to read the whole file at the assumed rate.
+func subtitleExtractBudget(path string) time.Duration {
+	d := subtitleExtractTimeout
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		d += time.Duration(fi.Size()/subtitleExtractBytesPerSec) * time.Second
+	}
+	return d
+}
 
 // subtitleVTTURL is the out-of-band delivery URL for a text track — the value the
 // decision's subtitle entry carries and the client fetches into a <track>. It is
@@ -234,7 +250,7 @@ func subtitleOriginal(ctx context.Context, d store.TitleDetail, subID, format st
 // is an error the caller renders as a 500 (the track was advertised, so this is a
 // genuine server-side failure, not a 404).
 func extractEmbeddedVTT(ctx context.Context, path string, index int) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, subtitleExtractTimeout)
+	ctx, cancel := context.WithTimeout(ctx, subtitleExtractBudget(path))
 	defer cancel()
 
 	bin := subtitleFFmpegBinary
@@ -270,7 +286,7 @@ func extractEmbeddedVTT(ctx context.Context, path string, index int) ([]byte, er
 // styling is lost (the whole point of ADR-0033's original-format delivery). Same
 // timeout/error posture as extractEmbeddedVTT.
 func extractEmbeddedOriginal(ctx context.Context, path string, index int, format string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, subtitleExtractTimeout)
+	ctx, cancel := context.WithTimeout(ctx, subtitleExtractBudget(path))
 	defer cancel()
 
 	bin := subtitleFFmpegBinary

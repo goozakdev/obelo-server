@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -38,25 +39,35 @@ func LogRequests(h http.Handler) http.Handler {
 		start := time.Now()
 		lw := &accessLogWriter{ResponseWriter: w}
 		h.ServeHTTP(lw, r)
-		// RequestURI rather than URL.Path: it is the raw request line, so it is what
-		// a naive logger would reach for, and routing it through RedactPath here is
-		// the point of this function. Nothing prints the query string.
+		// Redact from the PARSED path, not RequestURI: the raw request line can
+		// carry the stream route in forms the router accepts but a string-prefix
+		// match misses (absolute-form "GET http://host/api/v1/stream/…", or a
+		// percent-encoded "/api/v1/%73tream/…"). The query string is never logged.
 		log.Printf("obelo: http: %s %s %d %dB %s",
-			r.Method, RedactPath(pathOnly(r.RequestURI)), lw.statusCode(), lw.written, time.Since(start).Round(time.Millisecond))
+			r.Method, loggedPath(r), lw.statusCode(), lw.written, time.Since(start).Round(time.Millisecond))
 	})
 }
 
-// pathOnly strips the query string from a request-target. The query is never
+// loggedPath is the request path as written to the access log: the decoded path
+// (the form the router matched on) run through RedactPath, with control characters
+// (a decoded %0A) replaced so a crafted path cannot forge or split a log line. The query string is never
 // logged: ?token= on the direct-file download is the account credential, and no
 // other query parameter this server accepts is worth the risk of an exception
 // that someone later widens.
-func pathOnly(requestURI string) string {
-	for i := 0; i < len(requestURI); i++ {
-		if requestURI[i] == '?' {
-			return requestURI[:i]
+func loggedPath(r *http.Request) string {
+	p := r.URL.Path
+	if p == "" {
+		p = r.RequestURI
+		if i := strings.IndexByte(p, '?'); i >= 0 {
+			p = p[:i]
 		}
 	}
-	return requestURI
+	return strings.Map(func(c rune) rune {
+		if c < 0x20 || c == 0x7f {
+			return '_'
+		}
+		return c
+	}, RedactPath(p))
 }
 
 // accessLogWriter records the status and byte count of a response without

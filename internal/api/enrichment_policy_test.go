@@ -324,6 +324,35 @@ func TestEnrichmentPolicyAuthoritativePointer(t *testing.T) {
 	}
 }
 
+// TestEnrichmentPolicyRejectedPutWritesNothing: a PUT that fails validation (a bad
+// authoritative provider) must not leave the keys that preceded it persisted.
+func TestEnrichmentPolicyRejectedPutWritesNothing(t *testing.T) {
+	t.Parallel()
+	requireFixtures(t)
+	prov := &fakeProvider{fn: func(enrich.TitleRef) (enrich.TitleMetadata, error) { return richMeta(), nil }}
+	srv := testharness.New(t,
+		testharness.WithProviderBuilder(countingBuilder(prov)),
+		testharness.WithEnrichmentKey("tmdb-key"),
+		testharness.WithArtworkFetcher(&fakeFetcher{data: []byte("x")}),
+	)
+	token := adminToken(t, srv)
+	libID := createMovieLibrary(t, srv, token, fixtureRoot(t))
+
+	putPolicy(t, srv, token, libID, map[string]any{
+		"enrichEnabled":         false,
+		"metadataLanguage":      "fr-FR",
+		"authoritativeProvider": "fanarttv", // artwork-only: 422
+	}, http.StatusUnprocessableEntity)
+
+	v := getPolicy(t, srv, token, libID)
+	if v.EnrichEnabled != nil {
+		t.Errorf("enrichEnabled = %v after a rejected PUT, want null (nothing written)", *v.EnrichEnabled)
+	}
+	if v.MetadataLanguage != nil {
+		t.Errorf("metadataLanguage = %q after a rejected PUT, want null (nothing written)", *v.MetadataLanguage)
+	}
+}
+
 func hasCandidate(cands []struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`

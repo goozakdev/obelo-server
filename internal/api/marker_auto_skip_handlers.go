@@ -30,15 +30,19 @@ type markerAutoSkipJSON struct {
 }
 
 func (a markerAutoSkipJSON) kinds() []string {
+	// A fixed order, so the same toggles are persisted identically on every save.
 	var out []string
-	for kind, on := range map[string]bool{
-		markers.KindIntro:   a.Intro,
-		markers.KindRecap:   a.Recap,
-		markers.KindCredits: a.Credits,
-		markers.KindPreview: a.Preview,
+	for _, k := range []struct {
+		kind string
+		on   bool
+	}{
+		{markers.KindIntro, a.Intro},
+		{markers.KindRecap, a.Recap},
+		{markers.KindCredits, a.Credits},
+		{markers.KindPreview, a.Preview},
 	} {
-		if on {
-			out = append(out, kind)
+		if k.on {
+			out = append(out, k.kind)
 		}
 	}
 	return out

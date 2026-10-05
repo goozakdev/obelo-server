@@ -138,7 +138,7 @@ func handlePlaylistSubtree(deps Deps) http.HandlerFunc {
 			}
 			switch r.Method {
 			case http.MethodPost:
-				handleAppendPlaylistItem(deps.Organize, id)(w, r)
+				requireScope(deps.Access, handleAppendPlaylistItem(deps.Organize, id))(w, r)
 			case http.MethodPut:
 				requireScope(deps.Access, handleReorderPlaylistItems(deps, id))(w, r)
 			default:
@@ -318,6 +318,8 @@ type playlistItemRequest struct {
 	TitleID string `json:"titleId"`
 }
 
+// handleAppendPlaylistItem is wrapped in requireScope: the titleId is judged
+// against what the caller can SEE, so an out-of-scope id answers like an unknown one.
 func handleAppendPlaylistItem(svc *organize.Service, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ident, ok := identityFrom(r.Context())
@@ -325,11 +327,15 @@ func handleAppendPlaylistItem(svc *organize.Service, id string) http.HandlerFunc
 			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
 			return
 		}
+		scope, ok := mustScope(w, r)
+		if !ok {
+			return
+		}
 		var req playlistItemRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		_, err := svc.AppendPlaylistItem(ident.User.ID, id, req.TitleID)
+		_, err := svc.AppendPlaylistItem(scope, ident.User.ID, id, req.TitleID)
 		switch {
 		case errors.Is(err, organize.ErrNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "playlist not found", nil)

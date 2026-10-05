@@ -117,7 +117,7 @@ func handleRedirectSignInStart(deps Deps) http.HandlerFunc {
 				"too many sign-ins started from this address; wait and try again", nil)
 			return
 		}
-		started, err := deps.SignInRedirect.Start(r.Context(), req.Provider, externalBaseURL(r)+signInCallbackPath, clientIP(r))
+		started, err := deps.SignInRedirect.Start(r.Context(), req.Provider, redirectBaseURL(r)+signInCallbackPath, clientIP(r))
 		writeRedirectStart(w, r, started, err)
 	}
 }

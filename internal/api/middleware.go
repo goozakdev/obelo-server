@@ -15,28 +15,7 @@ import (
 // the standard 401 envelope — handlers behind this never see an unauthenticated
 // request.
 func requireAuth(svc *auth.Service, h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		raw, ok := bearerToken(r)
-		if !ok {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, codeUnauthorized,
-				"missing or malformed Authorization header", nil)
-			return
-		}
-		id, err := svc.Authenticate(raw)
-		if err != nil {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, codeUnauthorized,
-				"invalid or revoked token", nil)
-			return
-		}
-		ctx := withIdentity(r.Context(), identity{
-			User:   id.User,
-			Device: id.Device,
-			Token:  raw,
-		})
-		h(w, r.WithContext(ctx))
-	}
+	return authWith(svc, bearerToken, "missing or malformed Authorization header", h)
 }
 
 // requireAuthAllowCookie is the media-auth middleware. It authenticates EITHER
@@ -69,31 +48,12 @@ func requireAuth(svc *auth.Service, h http.HandlerFunc) http.HandlerFunc {
 // request, cookie-borne auth revokes immediately on logout/device-delete exactly
 // like the bearer path (ADR-0015).
 func requireAuthAllowCookie(svc *auth.Service, h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		raw, ok := bearerToken(r)
-		if !ok {
-			raw, ok = mediaCookieToken(r)
+	return authWith(svc, func(r *http.Request) (string, bool) {
+		if raw, ok := bearerToken(r); ok {
+			return raw, true
 		}
-		if !ok {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, codeUnauthorized,
-				"missing bearer token or media cookie", nil)
-			return
-		}
-		id, err := svc.Authenticate(raw)
-		if err != nil {
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, codeUnauthorized,
-				"invalid or revoked token", nil)
-			return
-		}
-		ctx := withIdentity(r.Context(), identity{
-			User:   id.User,
-			Device: id.Device,
-			Token:  raw,
-		})
-		h(w, r.WithContext(ctx))
-	}
+		return mediaCookieToken(r)
+	}, "missing bearer token or media cookie", h)
 }
 
 // requireAuthAllowQueryToken authenticates EITHER the bearer header OR a
@@ -110,15 +70,25 @@ func requireAuthAllowCookie(svc *auth.Service, h http.HandlerFunc) http.HandlerF
 // ADR-0015), and NO other endpoint honors a query token. The bearer header wins
 // when both are present.
 func requireAuthAllowQueryToken(svc *auth.Service, h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		raw, ok := bearerToken(r)
-		if !ok {
-			raw, ok = queryToken(r)
+	return authWith(svc, func(r *http.Request) (string, bool) {
+		if raw, ok := bearerToken(r); ok {
+			return raw, true
 		}
+		return queryToken(r)
+	}, "missing bearer token or token query parameter", h)
+}
+
+// authWith is the one authentication path the three require* wrappers share: it
+// pulls the credential with extract (the only thing that differs between them),
+// validates it with auth.Service.Authenticate, and attaches the identity. missing
+// is the 401 message for an absent credential; a present-but-bad one is always
+// "invalid or revoked token".
+func authWith(svc *auth.Service, extract func(*http.Request) (string, bool), missing string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, ok := extract(r)
 		if !ok {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, codeUnauthorized,
-				"missing bearer token or token query parameter", nil)
+			writeError(w, http.StatusUnauthorized, codeUnauthorized, missing, nil)
 			return
 		}
 		id, err := svc.Authenticate(raw)
