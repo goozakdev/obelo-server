@@ -49,6 +49,10 @@ export interface ScanProgress {
   removed?: number;
 }
 
+/** Synthetic event type the hub itself fans out when it drops its running set
+ * (the stream closed or reconnected), so indicators re-read it. */
+const STREAM_RESET = "streamReset";
+
 /** A raw event off the SSE stream: its name plus the parsed JSON payload. */
 type Listener = (type: string, data: unknown) => void;
 
@@ -107,7 +111,10 @@ class EventsHub {
       this.unsubscribe = null;
     }
     // A terminal event may have been missed while no stream was open.
+    if (this.enriching.size === 0) return;
     this.enriching.clear();
+    // Mounted subscribers (a reconnect keeps them) re-read what is running.
+    this.dispatch(STREAM_RESET, null);
   }
 
   private dispatch(type: string, data: unknown): void {
@@ -138,6 +145,10 @@ export function useEnrichmentActivity(libraryId?: string): boolean {
   useEffect(() => {
     setActive(appEvents.isEnriching(libraryId));
     return appEvents.subscribe((type, data) => {
+      if (type === STREAM_RESET) {
+        setActive(appEvents.isEnriching(libraryId));
+        return;
+      }
       if (type !== "enrichProgress" || !data) return;
       const p = data as EnrichProgress;
       if (libraryId && p.libraryId !== libraryId) return;

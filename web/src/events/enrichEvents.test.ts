@@ -184,3 +184,14 @@ describe("enrichment activity across Libraries and remounts", () => {
     keep();
   });
 });
+
+describe("enrichment indicator across a stream reset", () => {
+  it("a mounted indicator clears when reconnect() drops the running set", () => {
+    const bus = captureEmit();
+    const { result } = renderHook(() => useEnrichmentActivity());
+    act(() => bus.emit("enrichProgress", { libraryId: "a", complete: false }));
+    expect(result.current).toBe(true);
+    act(() => appEvents.reconnect());
+    expect(result.current).toBe(false);
+  });
+});

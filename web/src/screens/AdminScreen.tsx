@@ -1,7 +1,8 @@
 import { lazy, Suspense } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import AppHeader from "../browse/AppHeader";
 import { useOptionalFeature } from "../serverInfoContext";
+import { ChunkErrorBoundary } from "../lib/chunkRecovery";
 
 // Each sub-screen loads on demand: opening one tab does not fetch the others.
 const AdminLibrariesScreen = lazy(() => import("../admin/AdminLibrariesScreen"));
@@ -40,6 +41,7 @@ const ShowMatcherScreen = lazy(() => import("../admin/ShowMatcherScreen"));
 // admin-tabs nav below provides the sub-navigation.
 
 export default function AdminScreen() {
+  const { pathname } = useLocation();
   // Remote access (ADR-0043) is compiled in only under `-tags tailscale`, and a
   // build without it says so in the handshake. ABSENT AND FALSE MUST LOOK THE
   // SAME: no tab, no route, and therefore no fetch — a build without the feature
@@ -146,6 +148,7 @@ export default function AdminScreen() {
           </nav>
 
           <div className="admin-content">
+            <ChunkErrorBoundary resetKey={pathname}>
             <Suspense fallback={<p className="status status-loading">Loading&hellip;</p>}>
             <Routes>
               <Route index element={<AdminLibrariesScreen />} />
@@ -194,6 +197,7 @@ export default function AdminScreen() {
               )}
             </Routes>
             </Suspense>
+            </ChunkErrorBoundary>
           </div>
         </div>
       </main>

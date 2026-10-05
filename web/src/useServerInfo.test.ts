@@ -87,3 +87,73 @@ describe("useServerInfoHandshake", () => {
     expect(result.current.state.status).toBe("ready");
   });
 });
+
+describe("useServerInfoHandshake re-read retry", () => {
+  it("retries a failed refresh() with backoff after the first success, bounded", async () => {
+    const getServerInfo = vi
+      .fn()
+      .mockResolvedValueOnce({ ...info, setupRequired: true })
+      .mockRejectedValueOnce(new NetworkError("blip"))
+      .mockResolvedValueOnce(info);
+    const client = clientWith(getServerInfo);
+    const { result } = renderHook(() => useServerInfoHandshake(client));
+    await act(async () => {});
+    act(() => result.current.refresh());
+    await act(async () => {});
+    expect(getServerInfo).toHaveBeenCalledTimes(2);
+    // Still showing the last good handshake while the retry is pending.
+    expect(result.current.state).toMatchObject({ status: "ready", info: { setupRequired: true } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(getServerInfo).toHaveBeenCalledTimes(3);
+    expect(result.current.state).toMatchObject({ status: "ready", info: { setupRequired: false } });
+  });
+
+  it("gives up after a bounded number of failed re-reads", async () => {
+    const getServerInfo = vi
+      .fn()
+      .mockResolvedValueOnce(info)
+      .mockRejectedValue(new NetworkError("down"));
+    const client = clientWith(getServerInfo);
+    const { result } = renderHook(() => useServerInfoHandshake(client));
+    await act(async () => {});
+    act(() => result.current.refresh());
+    // Step through the backoff (1s, 2s, 4s, 8s, 16s) one timer at a time.
+    for (let i = 0; i < 12; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+    }
+    // 1 first load + 1 refresh + 5 bounded retries.
+    expect(getServerInfo).toHaveBeenCalledTimes(7);
+    expect(result.current.state.status).toBe("ready");
+  });
+
+  it("refresh() starts a fresh retry budget after the bounded retries are spent", async () => {
+    const getServerInfo = vi
+      .fn()
+      .mockResolvedValueOnce(info)
+      .mockRejectedValue(new NetworkError("down"));
+    const client = clientWith(getServerInfo);
+    const { result } = renderHook(() => useServerInfoHandshake(client));
+    await act(async () => {});
+    act(() => result.current.refresh());
+    for (let i = 0; i < 12; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+    }
+    expect(getServerInfo).toHaveBeenCalledTimes(7); // budget spent
+
+    act(() => result.current.refresh());
+    for (let i = 0; i < 12; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+    }
+    // The second refresh + 5 new bounded retries, not a single attempt.
+    expect(getServerInfo).toHaveBeenCalledTimes(13);
+  });
+});

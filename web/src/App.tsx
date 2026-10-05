@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/session";
 import { RequireAdmin, RequireAuth } from "./auth/guards";
 import { ServerInfoProvider, useServerInfoContext } from "./serverInfoContext";
@@ -15,6 +15,7 @@ import { PlaybackTransportProvider } from "./player/transport";
 import { LibrariesProvider } from "./browse/librariesContext";
 import ScrollToTop from "./ScrollToTop";
 import { appEvents } from "./events/enrichEvents";
+import { ChunkErrorBoundary } from "./lib/chunkRecovery";
 
 // Route screens other than the login/setup/home shells load on demand, so a
 // first paint (and a Member, who can never open /admin) does not download and
@@ -78,6 +79,7 @@ export default function App() {
             shared so affordances outside the bar — e.g. an album track row's
             play/pause toggle — reflect and drive the current song. */}
         <PlaybackTransportProvider>
+        <RouteBoundary>
         <Suspense fallback={<RouteLoading />}>
         <Routes>
           <Route path="/setup" element={<SetupGate />} />
@@ -245,6 +247,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>
+        </RouteBoundary>
         {/* The persistent player (ADR-0018 / now-playing-bar/01): mounted ONCE
             OUTSIDE <Routes> so it survives navigation — playback keeps going as
             the user browses. It renders nothing until a Queue is active. */}
@@ -269,6 +272,14 @@ export default function App() {
       </ServerInfoProvider>
     </BrowserRouter>
   );
+}
+
+// A failed lazy chunk (or a render error) shows an inline reload prompt here, so
+// the NowPlayingBar and the other app-shell siblings stay mounted; navigating to
+// another route clears it.
+function RouteBoundary({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  return <ChunkErrorBoundary resetKey={pathname}>{children}</ChunkErrorBoundary>;
 }
 
 export function EventsKeepAlive() {
