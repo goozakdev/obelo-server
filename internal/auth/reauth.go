@@ -67,37 +67,48 @@ type reauthGrants struct {
 // userID, and spends a grant it presents. nil means yes; ErrReauthRequired
 // means no; a `remote` User is ErrForbidden, since it may not attach at all.
 func (s *Service) CheckReauth(ctx context.Context, userID, session string, proof Reauth, clientIP string) error {
+	_, err := s.CheckReauthRefundable(ctx, userID, session, proof, clientIP)
+	return err
+}
+
+// CheckReauthRefundable is CheckReauth for a caller that may fail for a reason
+// that is not the caller's fault after the proof is accepted. refund puts a spent
+// grant back, with its original expiry; it does nothing for a password proof or
+// a refused one, and is always safe to call.
+func (s *Service) CheckReauthRefundable(ctx context.Context, userID, session string, proof Reauth, clientIP string) (refund func(), err error) {
+	refund = func() {}
 	user, err := s.store.UserByID(userID)
 	if errors.Is(err, store.ErrNotFound) {
-		return ErrUserNotFound
+		return refund, ErrUserNotFound
 	}
 	if err != nil {
-		return err
+		return refund, err
 	}
 	if user.Role == RoleRemote {
-		return ErrForbidden
+		return refund, ErrForbidden
 	}
 	if user.PasswordHash == "" {
-		if !s.takeReauthGrant(proof.Grant, user.ID, session) {
-			return ErrReauthRequired
+		restore, ok := s.takeReauthGrant(proof.Grant, user.ID, session)
+		if !ok {
+			return refund, ErrReauthRequired
 		}
-		return nil
+		return restore, nil
 	}
 	if proof.LocalPassword == "" {
-		return ErrReauthRequired
+		return refund, ErrReauthRequired
 	}
 	if err := s.refuseLogin(user.Username, clientIP); err != nil {
-		return err
+		return refund, err
 	}
 	verr := VerifyPasswordContext(ctx, user.PasswordHash, proof.LocalPassword)
 	if kdfAbandoned(verr) {
-		return verr
+		return refund, verr
 	}
 	if verr != nil {
 		s.chargeLoginFailure(user.Username, clientIP)
-		return ErrReauthRequired
+		return refund, ErrReauthRequired
 	}
-	return nil
+	return refund, nil
 }
 
 // ReauthWithPassword re-authenticates userID through a password-flow identity
@@ -151,15 +162,29 @@ func (s *Service) ReauthExternal(userID, session, providerID string, answer Exte
 }
 
 // takeReauthGrant spends raw — whoever presents it, so a grant is tried once —
-// and reports whether it was live and minted for userID on session.
-func (s *Service) takeReauthGrant(raw, userID, session string) bool {
+// and reports whether it was live and minted for userID on session. restore puts
+// the grant back as it was, if it is still live and has not been presented since.
+func (s *Service) takeReauthGrant(raw, userID, session string) (restore func(), ok bool) {
 	if raw == "" || userID == "" || session == "" {
-		return false
+		return nil, false
 	}
 	key := hashToken(raw)
 	s.reauth.mu.Lock()
-	g, ok := s.reauth.grants[key]
+	g, found := s.reauth.grants[key]
 	delete(s.reauth.grants, key)
 	s.reauth.mu.Unlock()
-	return ok && g.userID == userID && g.session == hashToken(session) && s.now().Before(g.expires)
+	if !found || g.userID != userID || g.session != hashToken(session) || !s.now().Before(g.expires) {
+		return nil, false
+	}
+	return func() {
+		if !s.now().Before(g.expires) {
+			return
+		}
+		s.reauth.mu.Lock()
+		defer s.reauth.mu.Unlock()
+		if s.reauth.grants == nil {
+			s.reauth.grants = map[string]reauthGrant{}
+		}
+		s.reauth.grants[key] = g
+	}, true
 }

@@ -177,6 +177,10 @@ type App struct {
 	recheckCancel context.CancelFunc
 	recheckDone   chan struct{}
 
+	// tokenSweepDone closes when the stream-token sweeper exits; it runs under the
+	// re-check's context, so recheckCancel stops it too.
+	tokenSweepDone chan struct{}
+
 	cancel          context.CancelFunc
 	schedDone       chan struct{}
 	reaperDone      chan struct{}
@@ -1330,6 +1334,15 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		signInRecheck.Run(recheckCtx, signInRecheckTick)
 	}()
 
+	// Stream-token expiry sweep. Started unconditionally and under the re-check's
+	// context: mint no longer deletes expired rows, and the session-end revocation
+	// misses tokens whose session died with a crash.
+	app.tokenSweepDone = make(chan struct{})
+	go func() {
+		defer close(app.tokenSweepDone)
+		sweepEvery(recheckCtx, streamTokenSweepInterval, authSvc.SweepStreamTokens)
+	}()
+
 	// An ENABLED Tailnet node connects at boot (ADR-0043). This is the whole point
 	// of persisting the desire rather than treating connect as a live-only action:
 	// otherwise a power cut strands the operator outside a house they cannot reach,
@@ -1375,6 +1388,28 @@ const signInRecheckTick = 5 * time.Minute
 // operation with an error naming the build, which is what lets the caller wire the
 // same code in both builds.
 func (a *App) Tailnet() *tailnet.Manager { return a.tailnetMgr }
+
+// streamTokenSweepInterval is how often expired stream-token rows are deleted.
+// A token's TTL is four hours and an expired one authorises nothing, so the
+// sweep only bounds table growth and need not be prompt.
+const streamTokenSweepInterval = 10 * time.Minute
+
+// sweepEvery runs fn once at start and then on every tick until ctx is
+// cancelled. A failure is logged and the loop keeps going.
+func sweepEvery(ctx context.Context, every time.Duration, fn func() error) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		if err := fn(); err != nil {
+			log.Printf("obelo: sweeping expired stream tokens: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
 
 func (a *App) runSessionReaper(ctx context.Context, idle, every time.Duration) {
 	defer close(a.reaperDone)
@@ -1776,6 +1811,9 @@ func (a *App) Close() error {
 	if a.recheckCancel != nil {
 		a.recheckCancel()
 		<-a.recheckDone
+		if a.tokenSweepDone != nil {
+			<-a.tokenSweepDone
+		}
 		a.recheckCancel = nil
 	}
 	if a.cancel != nil {

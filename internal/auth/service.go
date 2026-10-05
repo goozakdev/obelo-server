@@ -123,6 +123,11 @@ var (
 	ErrUsernameTaken = errors.New("auth: username already taken")
 	ErrLastAdmin     = errors.New("auth: cannot remove the last admin")
 	ErrInvalidUser   = errors.New("auth: invalid user input")
+	// ErrCredentialsRequired: setup was given an empty username or password.
+	ErrCredentialsRequired = errors.New("auth: username and password are required")
+	// ErrDeviceClientIDRequired: a sign-in or device-authorization start named no
+	// device.clientId.
+	ErrDeviceClientIDRequired = errors.New("auth: device.clientId is required")
 	// ErrRoleChange: a role change would cross the `remote` boundary (ADR-0054) —
 	// promoting a linked Server to a person, or demoting a person to one. A remote
 	// User is created remote and dies remote (→ 422 ROLE_CHANGE).
@@ -287,7 +292,7 @@ func (s *Service) Setup(ctx context.Context, claimToken, username, password stri
 	}
 	username = localUsername(username)
 	if username == "" || password == "" {
-		return store.User{}, fmt.Errorf("auth: username and password are required")
+		return store.User{}, ErrCredentialsRequired
 	}
 	username, ok := normalizeUsername(username)
 	if !ok {
@@ -299,7 +304,7 @@ func (s *Service) Setup(ctx context.Context, claimToken, username, password stri
 		return store.User{}, err
 	}
 	user, err := s.store.CreateAdmin(uuid.NewString(), username, hash)
-	if errors.Is(err, store.ErrUsernameHeld) {
+	if errors.Is(err, store.ErrUsernameHeld) || isUniqueViolation(err) {
 		// Only a racing insert, since there were no Users a moment ago.
 		return store.User{}, ErrUsernameTaken
 	}
@@ -345,7 +350,7 @@ type DeviceInput struct {
 // its passwords correctly never meets the limiter at all.
 func (s *Service) Login(ctx context.Context, username, password string, dev DeviceInput, clientIP string) (LoginResult, error) {
 	if dev.ClientID == "" {
-		return LoginResult{}, fmt.Errorf("auth: device.clientId is required")
+		return LoginResult{}, ErrDeviceClientIDRequired
 	}
 
 	// Before the user lookup, before the KDF, before anything that could differ

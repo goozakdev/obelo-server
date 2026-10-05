@@ -94,7 +94,7 @@ func handleDeviceCode(svc *auth.Service) http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, codeDeviceAuthBusy,
 				"too many sign-ins in progress; try again in a few minutes", nil)
 			return
-		case err != nil && strings.Contains(err.Error(), "required"):
+		case errors.Is(err, auth.ErrDeviceClientIDRequired):
 			writeError(w, http.StatusBadRequest, codeBadRequest, "device.clientId is required", nil)
 			return
 		case err != nil:
@@ -244,17 +244,18 @@ func externalBaseURL(r *http.Request) string {
 	// A reverse proxy rewrites Host to the upstream; X-Forwarded-Host carries the
 	// original. First hop of the chain, like X-Forwarded-Proto.
 	//
-	// This one is NOT gated on the trusted-proxy allowlist, unlike the scheme above
-	// (forwarded.go), and the asymmetry is deliberate rather than an omission.
-	// X-Forwarded-Proto steers a security attribute — the cookie's Secure flag —
-	// for a session belonging to whoever authenticates. This header only decides
-	// what URL we hand back to the very caller that sent it, in a response only
-	// that caller sees, and that caller then displays whatever it likes on a
-	// television regardless of what we said. Forging it buys the forger a string
-	// they already controlled. Gating it would meanwhile break the reverse-proxy
-	// deployment's QR code for every operator who has not yet set
-	// OBELO_TRUSTED_PROXIES, which is a real regression bought with no security.
-	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+	// Believed only from a peer on the trusted-proxy allowlist (forwarded.go), like
+	// the scheme above and for the same reason: the URL is not only handed back to
+	// the caller. redirectBaseURL registers it with an identity provider as a
+	// callback, so an ungated header would let any caller steer a stored redirect_uri
+	// (R01-13, D008). Anyone else gets the Host header the socket was actually asked
+	// for, so a proxy the operator has not listed in OBELO_TRUSTED_PROXIES must pass
+	// the original Host through.
+	o, ok := requestOriginFrom(r.Context())
+	if !ok {
+		o = resolveOrigin(r, nil)
+	}
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" && o.TrustedPeer {
 		if i := strings.IndexByte(fwd, ','); i >= 0 {
 			fwd = fwd[:i]
 		}
@@ -264,24 +265,9 @@ func externalBaseURL(r *http.Request) string {
 }
 
 // redirectBaseURL is externalBaseURL for a URL that is handed to a THIRD PARTY,
-// an OAuth redirect_uri registered with an identity provider, rather than back to
-// the caller that sent the request. externalBaseURL's reason for trusting an
-// ungated X-Forwarded-Host (it only shapes a string returned to the forger) does
-// not hold there: the forged host would be stored as the callback of a pending
-// sign-in. So X-Forwarded-Host is honoured only from a peer on the trusted-proxy
-// allowlist (forwarded.go); anyone else gets the Host header the socket was
-// actually asked for.
+// an OAuth redirect_uri registered with an identity provider. Both honour
+// X-Forwarded-Host only from a trusted peer, so the two are the same rule; the
+// name keeps the call sites saying which of the two uses they are.
 func redirectBaseURL(r *http.Request) string {
-	o, ok := requestOriginFrom(r.Context())
-	if !ok {
-		o = resolveOrigin(r, nil)
-	}
-	if o.TrustedPeer {
-		return externalBaseURL(r)
-	}
-	scheme := "http"
-	if o.HTTPS {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host
+	return externalBaseURL(r)
 }

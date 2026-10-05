@@ -281,25 +281,30 @@ func TestStreamTokensAreDistinct(t *testing.T) {
 	}
 }
 
-// TestMintSweepsExpiredStreamTokens: the reaper runs on the same trigger device
-// auth's does — before each mint — so an abandoned server that never ended its
-// sessions cleanly does not accumulate rows forever.
-func TestMintSweepsExpiredStreamTokens(t *testing.T) {
+// TestMintDoesNotSweepTheTable: a mint is a hot-path request and must not run a
+// table-wide DELETE; expiry is the periodic sweeper's job (SweepStreamTokens,
+// driven by the app's reaper loop).
+func TestMintDoesNotSweepTheTable(t *testing.T) {
 	svc, clock, admin, db := newStreamFixture(t)
 	stale := mustMint(t, svc, sessionA, admin.ID)
 
 	clock.advance(stale.ExpiresIn + time.Minute)
 	if n := countStreamTokens(t, db, sessionA); n != 1 {
-		t.Fatalf("rows before the sweep = %d, want 1", n)
+		t.Fatalf("rows before the mint = %d, want 1", n)
 	}
 
-	// Minting for an unrelated session still sweeps the whole table.
 	fresh := mustMint(t, svc, sessionB, admin.ID)
+	if n := countStreamTokens(t, db, sessionA); n != 1 {
+		t.Errorf("expired rows after a mint = %d, want 1 (the sweeper owns expiry)", n)
+	}
+	if err := svc.SweepStreamTokens(); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
 	if n := countStreamTokens(t, db, sessionA); n != 0 {
-		t.Errorf("expired rows left after a mint = %d, want 0", n)
+		t.Errorf("expired rows after the sweep = %d, want 0", n)
 	}
 	if _, ok := svc.VerifyStreamToken(fresh.Token, sessionB); !ok {
-		t.Error("the sweep took the token it had just minted")
+		t.Error("the sweep took a live token")
 	}
 }
 

@@ -2,7 +2,6 @@ package auth
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -232,7 +231,7 @@ type DeviceAuthStart struct {
 // none; those callers then share one bucket, which is stricter, not looser.
 func (s *Service) StartDeviceAuth(dev DeviceInput, clientIP string) (DeviceAuthStart, error) {
 	if dev.ClientID == "" {
-		return DeviceAuthStart{}, fmt.Errorf("auth: device.clientId is required")
+		return DeviceAuthStart{}, ErrDeviceClientIDRequired
 	}
 	now := s.now()
 	nowStr := formatTime(now)

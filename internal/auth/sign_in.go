@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -150,7 +149,7 @@ func (s *Service) signInExternally(ctx context.Context, username, password strin
 // same session a login does.
 func (s *Service) SignInExternal(providerID string, answer ExternalAnswer, dev DeviceInput) (LoginResult, error) {
 	if dev.ClientID == "" {
-		return LoginResult{}, fmt.Errorf("auth: device.clientId is required")
+		return LoginResult{}, ErrDeviceClientIDRequired
 	}
 	user, err := s.resolveExternalIdentity(providerID, answer)
 	if err != nil {

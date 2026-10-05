@@ -505,11 +505,10 @@ func TestVerificationURIMatchesTheRequestHost(t *testing.T) {
 // origin the TV actually used, so a QR built from r.Host alone would send the
 // phone to an internal address it cannot reach.
 //
-// The proxy is declared (WithTrustedProxies), which is what the scheme half now
-// requires: X-Forwarded-Proto is read only from a listed peer (ADR-0041). The
-// HOST half is not gated — see externalBaseURL for why forging it only changes a
-// string the forger already controlled — so an undeclared proxy still gets the
-// right host here, with an http:// scheme it fixes by declaring itself.
+// The proxy is declared (WithTrustedProxies), which both halves require:
+// X-Forwarded-Proto and X-Forwarded-Host are read only from a listed peer
+// (ADR-0041, D008; the undeclared case is TestExternalBaseURLHonoursForwardedHost
+// OnlyFromTrustedPeer).
 func TestVerificationURIHonoursForwardedHeaders(t *testing.T) {
 	t.Parallel()
 	srv := testharness.New(t, testharness.WithTrustedProxies("127.0.0.1/32", "::1/128"))

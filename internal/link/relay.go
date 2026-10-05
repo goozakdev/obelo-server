@@ -455,21 +455,24 @@ func (s *Service) RelayEndSession(ctx context.Context, linkID, remoteSessionID s
 	if err != nil {
 		return err
 	}
-	// The same origin choice relayFetch makes: the one that last answered, else the
-	// first the invite listed.
-	origin := l.ActiveOrigin
-	if origin == "" {
-		if origins := originsFor(l); len(origins) > 0 {
-			origin = origins[0]
-		}
-	}
-	if origin == "" || l.Token == "" {
+	origins := originsFor(l)
+	if len(origins) == 0 || l.Token == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.callTimeout())
 	defer cancel()
-	return s.call(ctx, s.client(), http.MethodDelete,
-		origin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
+	// The origin walk is the negotiation's and the sweep's (originsFor): the address
+	// that worked last first, then the rest, until one takes the request.
+	client := s.client()
+	var lastErr error
+	for _, origin := range origins {
+		lastErr = s.call(ctx, client, http.MethodDelete,
+			origin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 // --- markers ------------------------------------------------------------------

@@ -81,13 +81,7 @@ func handleSetup(svc *auth.Service) http.HandlerFunc {
 			// Setup counts no Users, so only a racing insert holds the name.
 			writeError(w, http.StatusBadRequest, codeBadRequest, "username is already taken", nil)
 			return
-		// auth exports no sentinel for these two (internal/auth is outside this
-		// package's remit), so they are still classified by text - but the client
-		// only ever sees a fixed message, never the raw driver/service error.
-		case err != nil && strings.Contains(err.Error(), "UNIQUE"):
-			writeError(w, http.StatusBadRequest, codeBadRequest, "username is already taken", nil)
-			return
-		case err != nil && strings.Contains(err.Error(), "required"):
+		case errors.Is(err, auth.ErrCredentialsRequired):
 			writeError(w, http.StatusBadRequest, codeBadRequest, "username and password are required", nil)
 			return
 		case err != nil:

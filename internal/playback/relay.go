@@ -190,15 +190,45 @@ func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decisio
 		// there, against the `remote` User.
 		MaxStreams: req.Scope.MaxStreams,
 	}, dec)
-	var limit *StreamLimitError
-	if errors.As(err, &limit) {
-		return Decision{}, Session{}, nil, nil, limit
-	}
 	if err != nil {
+		// The sharer has already opened its session and no local one will ever end it
+		// (the observer that does is keyed off a local session), so end it here rather
+		// than leave it to the sharer's idle reaper.
+		s.endRemoteSession(dec.Relay)
+		var limit *StreamLimitError
+		if errors.As(err, &limit) {
+			return Decision{}, Session{}, nil, nil, limit
+		}
 		return Decision{}, Session{}, nil, nil, err
 	}
 	s.askRelayMarkers(dec.Relay, sess.DurationMs)
 	return dec, sess, nil, nil, nil
+}
+
+// RelayEnder ends the session the sharer opened. *link.Service satisfies it. It
+// is type-asserted off the Relayer, like RelayMarkerFetcher, so a Relayer without
+// it leaves the sharer's own reaper as the backstop.
+type RelayEnder interface {
+	RelayEndSession(ctx context.Context, linkID, remoteSessionID string) error
+}
+
+// relayEndWait bounds the end of a remote session whose local counterpart was
+// refused; the sharer's idle reaper is the backstop if it does not land.
+const relayEndWait = 5 * time.Second
+
+// endRemoteSession ends the sharer's session for a relay Decision that never got
+// a local Session. Best effort and logged.
+func (s *Service) endRemoteSession(r *Relayed) {
+	r.markers.stop()
+	ender, ok := s.relay.(RelayEnder)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), relayEndWait)
+	defer cancel()
+	if err := ender.RelayEndSession(ctx, r.LinkID, r.RemoteSessionID); err != nil {
+		log.Printf("obelo: playback: ending the shared session %s after a local refusal: %v", r.RemoteSessionID, err)
+	}
 }
 
 // relayLocalEdition maps the sharer's Edition id onto this Server's, or "" when
