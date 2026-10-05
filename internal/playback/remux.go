@@ -113,8 +113,10 @@ type hlsRuntime struct {
 	// under the video job or a sibling rendition.
 	sharedScratch bool
 
-	once     sync.Once
-	startErr error
+	// startMu serializes EnsureStarted; started latches the first SUCCESSFUL
+	// launch (a failed one is retried by the next request). Guarded by startMu.
+	startMu sync.Mutex
+	started bool
 
 	// mu guards the mutable job state below: the running job, its cancel func, and
 	// the segment index it was started to produce from (startNumber). Realign and
@@ -152,21 +154,36 @@ type hlsRuntime struct {
 	jobDone chan struct{}
 }
 
-// EnsureStarted lazily launches the ffmpeg job exactly once at the from-the-top
-// offset: it creates the scratch directory and starts ffmpeg writing the HLS
-// playlist + segments into it. Subsequent calls are no-ops (returning the first
-// launch's error, if any). The job runs in the background; the api layer then
-// serves the playlist and segments out of the scratch dir as ffmpeg produces them.
-// A later forward seek may supersede this job via realign.
+// EnsureStarted lazily launches the ffmpeg job at the from-the-top offset: it
+// creates the scratch directory and starts ffmpeg writing the HLS playlist +
+// segments into it. Once a launch has succeeded, subsequent calls are no-ops. A
+// launch that FAILS (a transient spawn error, a mount blip) is not cached: the next
+// call retries it. The job runs in the background; the api layer then serves the
+// playlist and segments out of the scratch dir as ffmpeg produces them. A later
+// forward seek may supersede this job via realign.
 func (rt *hlsRuntime) EnsureStarted() error {
-	rt.once.Do(func() {
-		if err := os.MkdirAll(rt.scratchDir, 0o755); err != nil {
-			rt.startErr = err
-			return
-		}
-		rt.startErr = rt.launchInitial()
-	})
-	return rt.startErr
+	rt.startMu.Lock()
+	defer rt.startMu.Unlock()
+	if rt.started {
+		return nil
+	}
+	// The directory is created under rt.mu, after the torn-down check, so a teardown
+	// that already ran (and removed the dir) is not undone by a late first request.
+	rt.mu.Lock()
+	if rt.torndown {
+		rt.mu.Unlock()
+		return os.ErrClosed
+	}
+	err := os.MkdirAll(rt.scratchDir, 0o755)
+	rt.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := rt.launchInitial(); err != nil {
+		return err
+	}
+	rt.started = true
+	return nil
 }
 
 // launchInitial performs the very first ffmpeg launch and applies the single

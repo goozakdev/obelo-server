@@ -2,6 +2,7 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -581,6 +582,61 @@ func TestRealignAfterTeardownDoesNotResurrect(t *testing.T) {
 	}
 	if runner.launchCount() != before {
 		t.Errorf("launches changed after teardown realign: %d → %d", before, runner.launchCount())
+	}
+}
+
+// flakyRunner refuses its first fails Start calls, then behaves like a recordingRunner.
+type flakyRunner struct {
+	recordingRunner
+	fails int
+}
+
+func (r *flakyRunner) Start(ctx context.Context, args []string) (transcode.Job, error) {
+	r.mu.Lock()
+	if r.fails > 0 {
+		r.fails--
+		r.mu.Unlock()
+		return nil, errors.New("spawn failed")
+	}
+	r.mu.Unlock()
+	return r.recordingRunner.Start(ctx, args)
+}
+
+// TestEnsureStartedRetriesAfterATransientFailure: a launch that fails (EMFILE, a
+// mount blip) must not be cached for the session's lifetime; the next request retries.
+func TestEnsureStartedRetriesAfterATransientFailure(t *testing.T) {
+	runner := &flakyRunner{fails: 1}
+	rt := &hlsRuntime{
+		runner:     runner,
+		buildArgs:  func(seek transcode.SeekOffset) []string { return []string{"x"} },
+		scratchDir: filepath.Join(t.TempDir(), "sess"),
+	}
+	if err := rt.EnsureStarted(); err == nil {
+		t.Fatal("first EnsureStarted succeeded, want the spawn error")
+	}
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatalf("second EnsureStarted: %v (a transient failure was cached)", err)
+	}
+	if err := rt.EnsureStarted(); err != nil || runner.launchCount() != 1 {
+		t.Errorf("third EnsureStarted err=%v launches=%d, want nil and exactly 1 launch", err, runner.launchCount())
+	}
+}
+
+// TestEnsureStartedAfterTeardownLeavesNoScratchDir: a late first request on a
+// runtime teardown already removed must not re-create the scratch directory.
+func TestEnsureStartedAfterTeardownLeavesNoScratchDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sess")
+	rt := &hlsRuntime{
+		runner:     &recordingRunner{},
+		buildArgs:  func(seek transcode.SeekOffset) []string { return []string{"x"} },
+		scratchDir: dir,
+	}
+	rt.teardown()
+	if err := rt.EnsureStarted(); err == nil {
+		t.Error("EnsureStarted on a torn-down runtime succeeded")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("scratch dir exists after teardown + EnsureStarted (stat err = %v)", err)
 	}
 }
 
