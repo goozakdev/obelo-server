@@ -2,6 +2,7 @@ package plugins_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -876,5 +877,32 @@ func TestListHonoursACancelledContext(t *testing.T) {
 	cancel()
 	if _, err := f.manager.List(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("List with a cancelled ctx = %v, want context.Canceled", err)
+	}
+}
+
+// TestAVerbWhoseWriteCommittedReportsSuccessEvenIfTheClientHasGone: the view a
+// verb returns is built after its write, and a cancelled ctx must not turn a
+// committed save into an error the caller would retry.
+func TestAVerbWhoseWriteCommittedReportsSuccessEvenIfTheClientHasGone(t *testing.T) {
+	plugins.Parallel(t)
+	f := newManagerFixture(t)
+	m := plugintest.SinkManifest("settings-gone")
+	m.Settings.Fields = []pluginapi.SettingsField{{Key: "region", Type: pluginapi.FieldString}}
+	if _, err := f.manager.Install(context.Background(),
+		plugintest.ManifestJSON(t, m), plugintest.Guest(t), nil, plugins.SourceUpload); err != nil {
+		t.Fatalf("installing: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	view, err := f.manager.SaveSettings(ctx, "settings-gone",
+		map[string]json.RawMessage{"region": json.RawMessage(`"eu"`)})
+	if err != nil {
+		t.Fatalf("SaveSettings with a gone client = %v, want success: the write committed", err)
+	}
+	if view.Settings == nil || view.Settings.Values["region"] != "eu" {
+		t.Errorf("view = %+v, want the saved region", view.Settings)
+	}
+	if got, _ := f.store.PluginSettings("settings-gone"); len(got) != 1 {
+		t.Errorf("stored rows = %+v, want the committed one", got)
 	}
 }

@@ -814,7 +814,10 @@ func TestASinkDeliveryQueuedBehindAnotherIsToldTheRemainingTimeAfterTheWait(t *t
 // own last fetch, which only a surviving Pacer remembers.
 func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.T) {
 	plugins.Parallel(t)
-	const callerDeadline = 600 * time.Millisecond
+	// Short on purpose: the holder stays parked for all of B's wait, and that wait
+	// lands between A's fetch and C's. The pacing assertion below needs the gap a
+	// dropped Pacer would leave (about this long) to sit far under rateLimit.
+	const callerDeadline = 150 * time.Millisecond
 	const subtitleBudget = 6 * time.Second
 	const rateLimit = 1 * time.Second
 
@@ -895,18 +898,12 @@ func TestAQueuedCallWithAnAlreadyExpiredCallerDeadlineIsNeverInvoked(t *testing.
 	})
 	elapsed := time.Since(start)
 	// The queued call gives up at its own deadline (R03-01) rather than waiting
-	// for the holder, so the holder is still running here. Wait for it, so its
-	// fetch is on record before the checks below read the request log.
-	select {
-	case <-aDone:
-		t.Fatal("the holder finished before the queued call's own deadline — it never held callMu " +
-			"long enough to queue anything, so this run proves nothing")
-	default:
-	}
+	// for the holder, which is parked in its fetch and so still runs here. Release
+	// it and wait, so its fetch is on record before the checks below read the log.
 	close(releaseHolder)
 	<-aDone
 	if err == nil {
-		t.Fatal("SearchSubtitles returned nil for a call whose own 600ms deadline had already passed while it " +
+		t.Fatal("SearchSubtitles returned nil for a call whose own deadline had already passed while it " +
 			"queued behind the holder")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {

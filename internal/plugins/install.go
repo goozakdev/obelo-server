@@ -1098,7 +1098,9 @@ func (m *Manager) ensureRow(id string) error {
 
 // view is one Plugin's row of List, for the response a verb answers with.
 func (m *Manager) view(ctx context.Context, id string) (Installed, error) {
-	list, err := m.list(ctx, id, true)
+	// Every caller has already committed its write by the time it asks for the
+	// view, so a client that has since gone away must not turn that into an error.
+	list, err := m.list(context.WithoutCancel(ctx), id, true)
 	if err != nil {
 		return Installed{}, err
 	}
