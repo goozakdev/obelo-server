@@ -148,12 +148,7 @@ func (s *Service) Close() {
 // Serving reports whether any Marker provider would be asked now: one installed,
 // enabled, and serving video. Fetched Markers are served only while one is.
 func (s *Service) Serving() bool {
-	for _, r := range s.reg.MarkerProviders() {
-		if len(r.Descriptor.Kinds) == 0 || r.Descriptor.Serves(pluginapi.KindVideo) {
-			return true
-		}
-	}
-	return false
+	return len(s.build()) > 0
 }
 
 // FetchFile is Fetch for the File fileID of the Title titleID — a Movie or an

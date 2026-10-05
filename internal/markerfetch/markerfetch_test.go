@@ -421,25 +421,29 @@ func TestCloseEndsAnAskingInFlight(t *testing.T) {
 	}
 }
 
-// TestServingDoesNotBuildProviders: Serving runs on every read that holds a
-// fetched Marker, so it counts the registrations that would be asked rather than
-// instantiating each provider (a wasm Plugin's factory is real work).
-func TestServingDoesNotBuildProviders(t *testing.T) {
+// TestServingExcludesAProviderWhoseFactoryRefuses: a Plugin auto-disabled or
+// refused at load stays registered but its factory refuses, so it is not asked
+// and does not count as serving.
+func TestServingExcludesAProviderWhoseFactoryRefuses(t *testing.T) {
 	reg := pluginapi.NewRegistry()
-	built := 0
 	reg.RegisterMarkerProvider(pluginapi.MarkerProviderRegistration{
-		Descriptor: pluginapi.Descriptor{Slug: "video"},
+		Descriptor: pluginapi.Descriptor{Slug: "off"},
 		New: func(pluginapi.Settings) (pluginapi.MarkerProvider, error) {
-			built++
-			return &fakeProvider{slug: "video"}, nil
+			return nil, errors.New("disabled")
 		},
 	})
-	svc := markerfetch.New(newMemStore(), reg)
-	if !svc.Serving() {
-		t.Fatal("Serving = false with a video provider registered")
+	if markerfetch.New(newMemStore(), reg).Serving() {
+		t.Fatal("Serving = true with only a provider whose factory refuses")
 	}
-	if built != 0 {
-		t.Fatalf("Serving built %d provider(s), want 0", built)
+
+	reg.RegisterMarkerProvider(pluginapi.MarkerProviderRegistration{
+		Descriptor: pluginapi.Descriptor{Slug: "on"},
+		New: func(pluginapi.Settings) (pluginapi.MarkerProvider, error) {
+			return &fakeProvider{slug: "on"}, nil
+		},
+	})
+	if !markerfetch.New(newMemStore(), reg).Serving() {
+		t.Fatal("Serving = false with a working video provider registered")
 	}
 
 	music := pluginapi.NewRegistry()
