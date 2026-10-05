@@ -487,7 +487,10 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	explicitAudio := req.AudioStreamID != ""
 	audioID := req.AudioStreamID
 	if !explicitAudio {
-		if rememberedID, ok := s.resolveRememberedAudio(req.UserID, detail, dec.File); ok {
+		// A remembered pick that resolves to the Stream the Decision already plays
+		// changes nothing: escalating would remux a File whose first track plays anyway
+		// just because that track carries no default disposition.
+		if rememberedID, ok := s.resolveRememberedAudio(req.UserID, detail, dec.File); ok && rememberedID != dec.AudioStream.ID {
 			audioID = rememberedID
 		}
 	}

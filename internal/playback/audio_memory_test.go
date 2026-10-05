@@ -3,6 +3,7 @@ package playback
 import (
 	"testing"
 
+	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/store"
 )
 
@@ -95,5 +96,51 @@ func TestAudioMemoryOfNormalizesLanguage(t *testing.T) {
 	streams := []store.Stream{{ID: "a-ja", Kind: "audio", Channels: 6, Language: "jpn", Title: "Commentary", Commentary: true}}
 	if got, ok := resolveRememberedAudioStream(streams, mem); !ok || got.ID != "a-ja" {
 		t.Fatalf("cross-spelling resolve = %+v (ok=%v), want a-ja", got, ok)
+	}
+}
+
+// memAudioStore is a ceilingStore whose Title memory holds one remembered pick.
+type memAudioStore struct {
+	ceilingStore
+	title store.RememberedAudio
+}
+
+func (s memAudioStore) RememberedAudioForTitle(string, string) (store.RememberedAudio, bool, error) {
+	return s.title, true, nil
+}
+func (memAudioStore) SaveRememberedAudioForTitle(string, string, store.RememberedAudio) error {
+	return nil
+}
+func (memAudioStore) RememberedAudioForShow(string, string) (store.RememberedAudio, bool, error) {
+	return store.RememberedAudio{}, false, nil
+}
+func (memAudioStore) SaveRememberedAudioForShow(string, string, store.RememberedAudio) error {
+	return nil
+}
+func (memAudioStore) ShowIDForTitle(string) (string, bool, error) { return "", false, nil }
+
+// TestRememberedAudioMatchingTheDefaultPickDoesNotEscalate: a File with no default
+// audio disposition plays its first track, and a remembered pick that resolves to
+// that same Stream changes nothing — it must not turn a direct play into a remux.
+func TestRememberedAudioMatchingTheDefaultPickDoesNotEscalate(t *testing.T) {
+	f := mp4File(1080, 6_000_000)
+	f.Streams = []store.Stream{
+		{ID: "v1", Kind: "video", Codec: "h264", Height: 1080, IsDefault: true},
+		{ID: "a1", Kind: "audio", Codec: "aac", Channels: 2, Language: "en"},
+		{ID: "a2", Kind: "audio", Codec: "aac", Channels: 2, Language: "ja"},
+	}
+	detail := titleWith(store.Edition{ID: "hd", Name: "1080p", Files: []store.File{f}})
+	st := memAudioStore{ceilingStore: ceilingStore{detail: detail}, title: audioMemoryOf(f.Streams[1])}
+	svc := NewService(st, nil, "", Governance{})
+	dec, _, unsup, busy, err := svc.Negotiate(Request{
+		UserID: "u1", TitleID: "t1", Profile: uhdProfile(),
+		Constraints: Constraints{MaxResolution: "1080p", MaxBitrate: 100_000_000},
+		Scope:       access.Scope{AllLibraries: true},
+	})
+	if err != nil || unsup != nil || busy != nil {
+		t.Fatalf("negotiate: err=%v unsup=%v busy=%v", err, unsup, busy)
+	}
+	if dec.Tier != TierDirectPlay {
+		t.Errorf("tier = %q, want directPlay (the remembered track is the one already playing)", dec.Tier)
 	}
 }
