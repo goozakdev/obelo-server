@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 )
@@ -213,6 +214,83 @@ func (db *DB) ShowFilesByLibrary(libraryID string) (map[string][]ShowFile, error
 		}
 		sf.Present = present != 0
 		out[showID] = append(out[showID], sf)
+	}
+	return out, rows.Err()
+}
+
+// EpisodeContextsForTitles is EpisodeContextForTitle for a page of Titles at once,
+// keyed by Title id. A Title that is not an Episode is absent (where the per-Title
+// read answers ErrNotFound). The Home rows read it once rather than once per card.
+func (db *DB) EpisodeContextsForTitles(titleIDs []string) (map[string]EpisodeContext, error) {
+	out := map[string]EpisodeContext{}
+	if len(titleIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(titleIDs))
+	for i, id := range titleIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		`SELECT t.id, t.episode_number, t.episode_label,
+		        s.id, s.season_number, sh.id, sh.title, sh.year
+		   FROM titles t
+		   JOIN seasons s ON s.id = t.season_id
+		   JOIN shows   sh ON sh.id = s.show_id
+		  WHERE t.id IN (`+placeholders(len(titleIDs))+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: bulk reading episode contexts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var c EpisodeContext
+		var year sql.NullInt64
+		if err := rows.Scan(&id, &c.EpisodeNumber, &c.EpisodeLabel, &c.SeasonID,
+			&c.SeasonNumber, &c.ShowID, &c.ShowTitle, &year); err != nil {
+			return nil, fmt.Errorf("store: scanning episode context: %w", err)
+		}
+		if year.Valid {
+			c.ShowYear = int(year.Int64)
+		}
+		out[id] = c
+	}
+	return out, rows.Err()
+}
+
+// TrackContextsForTitles is TrackContextForTitle for a page of Titles at once,
+// keyed by Title id; a Title that is not a Track is absent.
+func (db *DB) TrackContextsForTitles(titleIDs []string) (map[string]TrackContext, error) {
+	out := map[string]TrackContext{}
+	if len(titleIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(titleIDs))
+	for i, id := range titleIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		`SELECT t.id, t.disc_number, t.track_number,
+		        al.id, al.title, al.year, ar.id, ar.name
+		   FROM titles t
+		   JOIN albums  al ON al.id = t.album_id
+		   JOIN artists ar ON ar.id = al.artist_id
+		  WHERE t.id IN (`+placeholders(len(titleIDs))+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: bulk reading track contexts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var c TrackContext
+		var year sql.NullInt64
+		if err := rows.Scan(&id, &c.DiscNumber, &c.TrackNumber, &c.AlbumID,
+			&c.AlbumTitle, &year, &c.ArtistID, &c.ArtistName); err != nil {
+			return nil, fmt.Errorf("store: scanning track context: %w", err)
+		}
+		if year.Valid {
+			c.AlbumYear = int(year.Int64)
+		}
+		out[id] = c
 	}
 	return out, rows.Err()
 }

@@ -936,7 +936,6 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 	continueWatching.Titles = make([]HomeTitle, 0, len(cw))
 	for _, r := range cw {
 		ht := HomeTitle{Title: r.Title, ResumePositionMs: r.ResumePositionMs, DurationMs: r.DurationMs}
-		s.attachEpisodeContext(&ht)
 		continueWatching.Titles = append(continueWatching.Titles, ht)
 	}
 
@@ -946,9 +945,8 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 	}
 	upNext.Titles = make([]HomeTitle, 0, len(un))
 	for _, r := range un {
+		// Up Next is always an Episode; its parent context is attached below.
 		ht := HomeTitle{Title: r.Title}
-		// Up Next is always an Episode; attach its parent context to label it.
-		s.attachEpisodeContext(&ht)
 		upNext.Titles = append(upNext.Titles, ht)
 	}
 
@@ -959,7 +957,6 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 	recentlyAdded.Titles = make([]HomeTitle, 0, len(ra))
 	for _, t := range ra {
 		ht := HomeTitle{Title: t}
-		s.attachEpisodeContext(&ht)
 		recentlyAdded.Titles = append(recentlyAdded.Titles, ht)
 	}
 
@@ -967,6 +964,7 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 	// in two bulk reads — the Home queries use the lean Title projection, so this
 	// is how enrichment reaches the Home surface (issue 03).
 	rows := []*HomeRow{&continueWatching, &upNext, &recentlyAdded}
+	s.attachHomeContexts(rows)
 	var ids []string
 	for _, row := range rows {
 		for i := range row.Titles {
@@ -986,6 +984,58 @@ func (s *Service) Home(scope access.Scope, userID string, limit int) (continueWa
 		}
 	}
 	return continueWatching, upNext, recentlyAdded, nil
+}
+
+// homeContextReader is the optional bulk read behind attachHomeContexts. *store.DB
+// satisfies it; a Store that does not is read one Title at a time.
+type homeContextReader interface {
+	EpisodeContextsForTitles(titleIDs []string) (map[string]store.EpisodeContext, error)
+	TrackContextsForTitles(titleIDs []string) (map[string]store.TrackContext, error)
+}
+
+// attachHomeContexts fills the Show/Season/episode parent context of every Episode
+// card and the Artist/Album context of every Track card across the rows (a Movie
+// is left untouched, Episode and Track stay nil), in two bulk reads. A read that
+// misses or fails is treated as "no context" rather than a fatal error — the row
+// still renders as a bare title rather than failing the whole Home payload.
+func (s *Service) attachHomeContexts(rows []*HomeRow) {
+	br, ok := s.store.(homeContextReader)
+	if !ok {
+		for _, row := range rows {
+			for i := range row.Titles {
+				s.attachEpisodeContext(&row.Titles[i])
+			}
+		}
+		return
+	}
+	var episodeIDs, trackIDs []string
+	for _, row := range rows {
+		for _, ht := range row.Titles {
+			switch ht.Kind {
+			case "episode":
+				episodeIDs = append(episodeIDs, ht.ID)
+			case "track":
+				trackIDs = append(trackIDs, ht.ID)
+			}
+		}
+	}
+	episodes, _ := br.EpisodeContextsForTitles(episodeIDs)
+	tracks, _ := br.TrackContextsForTitles(trackIDs)
+	for _, row := range rows {
+		for i := range row.Titles {
+			ht := &row.Titles[i]
+			switch ht.Kind {
+			case "episode":
+				if c, ok := episodes[ht.ID]; ok {
+					ht.Episode = &c
+				}
+			case "track":
+				if c, ok := tracks[ht.ID]; ok {
+					ht.Track = &c
+				}
+			}
+		}
+	}
 }
 
 // attachEpisodeContext fills ht.Episode with the Show/Season/episode parent
