@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderWithAuth } from "../test/renderWithAuth";
 import { ApiError } from "../api/errors";
@@ -267,6 +268,47 @@ describe("AdminTranscodingScreen", () => {
     // Give the (now-cleared) interval a few periods; no further calls land.
     await new Promise((r) => setTimeout(r, 80));
     expect(getTranscoding.mock.calls.length).toBe(after);
+  });
+});
+
+describe("AdminTranscodingScreen poll loops (R02-08)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const tick = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+
+  it("runs exactly one poll loop under StrictMode's double effect", async () => {
+    getTranscoding.mockResolvedValue(snapshot());
+    render(
+      <StrictMode>
+        <AdminTranscodingScreen intervalMs={100} />
+      </StrictMode>,
+    );
+    await tick(0);
+    for (let i = 0; i < 6; i++) {
+      const before = getTranscoding.mock.calls.length;
+      await tick(100);
+      expect(getTranscoding.mock.calls.length - before).toBe(1);
+    }
+  });
+
+  it("leaves only the new loop after an intervalMs change", async () => {
+    // Each read takes 10ms, so the change lands while a poll is in flight.
+    getTranscoding.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(snapshot()), 10)),
+    );
+    const { rerender } = render(<AdminTranscodingScreen intervalMs={100} />);
+    await tick(115);
+    rerender(<AdminTranscodingScreen intervalMs={200} />);
+    await tick(10); // the new loop's first read settles; its timer is now armed
+    for (let i = 0; i < 5; i++) {
+      const before = getTranscoding.mock.calls.length;
+      await tick(210); // 200ms interval + the 10ms read
+      expect(getTranscoding.mock.calls.length - before).toBe(1);
+    }
   });
 });
 

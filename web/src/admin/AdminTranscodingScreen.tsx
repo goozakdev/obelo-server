@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiClient } from "../api/client";
 import { errorMessage } from "../screens/errorMessage";
 import type { TranscodingSnapshot } from "../api/types";
@@ -45,10 +45,11 @@ export default function AdminTranscodingScreen({
   intervalMs?: number;
 } = {}) {
   const [state, setState] = useState<SnapshotState>({ status: "loading" });
-  const mountedRef = useRef(true);
 
   useEffect(() => {
-    mountedRef.current = true;
+    // Per-run flag: a loop from an earlier run (StrictMode, intervalMs change)
+    // must stay stopped even though a later run is live.
+    let live = true;
 
     // One poll: on success show the snapshot (clearing any prior error); on
     // failure surface the message but keep polling, so a transient blip recovers
@@ -58,10 +59,10 @@ export default function AdminTranscodingScreen({
     const poll = async () => {
       try {
         const snapshot = await apiClient.getTranscoding();
-        if (!mountedRef.current) return;
+        if (!live) return;
         setState({ status: "ready", snapshot, staleError: null });
       } catch (err) {
-        if (!mountedRef.current) return;
+        if (!live) return;
         const message = errorMessage(err);
         setState((cur) =>
           cur.status === "ready"
@@ -76,11 +77,11 @@ export default function AdminTranscodingScreen({
     let timer: ReturnType<typeof setTimeout> | undefined;
     const loop = async () => {
       await poll();
-      if (mountedRef.current) timer = setTimeout(() => void loop(), intervalMs);
+      if (live) timer = setTimeout(() => void loop(), intervalMs);
     };
     void loop();
     return () => {
-      mountedRef.current = false;
+      live = false;
       clearTimeout(timer);
     };
   }, [intervalMs]);
