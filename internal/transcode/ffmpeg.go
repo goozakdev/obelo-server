@@ -317,7 +317,7 @@ func RemuxArgs(job RemuxJob) []string {
 	if job.Seek.mustEncodeCopiedAudio() && !job.VideoOnly {
 		args = append(args, "-c:v", "copy", "-c:a", audioEncoderAAC)
 		if ch := encodedAudioChannels(0, job.AudioSourceChannels); ch > 0 {
-			args = append(args, "-ac", itoa(ch))
+			args = append(args, "-ac", strconv.Itoa(ch))
 		}
 	} else {
 		args = append(args, "-c", "copy")
@@ -368,7 +368,7 @@ func segmentMuxerArgs(outputDir string, times []float64, startNumber int) []stri
 		"-segment_list", join(outputDir, PlaylistName),
 		"-segment_list_type", "m3u8",
 		"-segment_list_size", "0",
-		"-segment_start_number", itoa(startNumber),
+		"-segment_start_number", strconv.Itoa(startNumber),
 	}
 	if len(parts) > 0 {
 		args = append(args, "-segment_times", strings.Join(parts, ","))
@@ -386,7 +386,7 @@ func videoMapSpec(idx *int) string {
 	if idx != nil {
 		n = *idx
 	}
-	return "0:v:" + itoa(n)
+	return "0:v:" + strconv.Itoa(n)
 }
 
 // remuxMapArgs builds the explicit `-map` flags for a MUXED remux (the video and its
@@ -403,7 +403,7 @@ func remuxMapArgs(videoIdx, audioIdx *int) []string {
 	}
 	args := []string{"-map", videoMapSpec(videoIdx)}
 	if audioIdx != nil {
-		return append(args, "-map", "0:a:"+itoa(*audioIdx))
+		return append(args, "-map", "0:a:"+strconv.Itoa(*audioIdx))
 	}
 	return append(args, "-map", "0:a")
 }
@@ -443,7 +443,7 @@ func hlsOutputArgsNamed(outputDir, playlistName, segmentPattern string, startNum
 func hlsOutputArgsTyped(outputDir, playlistName, segmentPattern, fmp4Init string, startNumber int) []string {
 	args := []string{
 		"-f", "hls",
-		"-hls_time", itoa(SegmentSeconds),
+		"-hls_time", strconv.Itoa(SegmentSeconds),
 		"-hls_playlist_type", "vod",
 		"-hls_flags", "independent_segments+temp_file",
 	}
@@ -465,7 +465,7 @@ func hlsOutputArgsTyped(outputDir, playlistName, segmentPattern, fmp4Init string
 	}
 	return append(args,
 		"-hls_segment_filename", join(outputDir, segmentPattern),
-		"-start_number", itoa(startNumber),
+		"-start_number", strconv.Itoa(startNumber),
 		join(outputDir, playlistName),
 	)
 }
@@ -633,7 +633,7 @@ func videoFilterChain(be backend, maxHeight int) string {
 // the aspect ratio, guarded by min(H,ih) so a source already at/below H is left
 // untouched (never upscale). ih is the input height.
 func cpuScaleFilter(maxHeight int) string {
-	return "scale=-2:'min(" + itoa(maxHeight) + ",ih)'"
+	return "scale=-2:'min(" + strconv.Itoa(maxHeight) + ",ih)'"
 }
 
 // videoBackend maps the chosen Accel to its backend descriptor. It is the single
@@ -794,12 +794,12 @@ func qsvBackend() backend {
 // only sets a height cap when the source is TALLER, so no min() upscale guard is
 // needed (the CPU path keeps one as belt-and-suspenders for its expression form).
 func vaapiScaleFilter(maxHeight int) string {
-	return "scale_vaapi=-2:" + itoa(maxHeight)
+	return "scale_vaapi=-2:" + strconv.Itoa(maxHeight)
 }
 
 // qsvScaleFilter is vaapiScaleFilter's QSV-domain analogue (scale_qsv).
 func qsvScaleFilter(maxHeight int) string {
-	return "scale_qsv=-2:" + itoa(maxHeight)
+	return "scale_qsv=-2:" + strconv.Itoa(maxHeight)
 }
 
 // vtScaleFilter is vaapiScaleFilter's VideoToolbox-domain analogue (scale_vt),
@@ -809,7 +809,7 @@ func qsvScaleFilter(maxHeight int) string {
 // videoToolboxBackend). scale_vt needs ffmpeg 6.0+; an older ffmpeg fails the
 // filter graph and ADR-0009's per-session fallback drops that stream to CPU.
 func vtScaleFilter(maxHeight int) string {
-	return "scale_vt=-2:" + itoa(maxHeight)
+	return "scale_vt=-2:" + strconv.Itoa(maxHeight)
 }
 
 // cudaScaleFilter is vaapiScaleFilter's CUDA-domain analogue (scale_cuda), used
@@ -827,7 +827,7 @@ func vtScaleFilter(maxHeight int) string {
 // (scale_cuda's `passthrough` default) and a real p010→nv12 conversion only where
 // one is needed.
 func cudaScaleFilter(maxHeight int) string {
-	return "scale_cuda=-2:" + itoa(maxHeight) + ":format=nv12"
+	return "scale_cuda=-2:" + strconv.Itoa(maxHeight) + ":format=nv12"
 }
 
 // IsHardware reports whether Accel a selects a hardware video encoder rather than
@@ -864,7 +864,7 @@ func cpuBackend() backend {
 // then starts exactly at N*SegmentSeconds, so a job restarted at that input offset
 // regenerates exactly that segment under the same name. It is a var (not a const)
 // because it is derived from SegmentSeconds via itoa.
-var forceKeyFramesExpr = "expr:gte(t,n_forced*" + itoa(SegmentSeconds) + ")"
+var forceKeyFramesExpr = "expr:gte(t,n_forced*" + strconv.Itoa(SegmentSeconds) + ")"
 
 // TranscodeJob describes one transcode operation: re-encode (or selectively
 // copy) the source File's video + audio into a single HLS rendition fitting the
@@ -1088,7 +1088,7 @@ func (b BurnSubtitle) isSidecar() bool { return b.SidecarPath != "" }
 func overlayGraph(b BurnSubtitle, maxHeight int, videoLabel string) string {
 	sub := "[1:s]"
 	if !b.isSidecar() {
-		sub = "[0:s:" + itoa(b.StreamIndex) + "]"
+		sub = "[0:s:" + strconv.Itoa(b.StreamIndex) + "]"
 	}
 	graph := videoLabel + sub + "overlay"
 	if maxHeight > 0 {
@@ -1107,7 +1107,7 @@ func overlayVideoLabel(idx *int) string {
 	if idx == nil {
 		return "[0:v]"
 	}
-	return "[0:v:" + itoa(*idx) + "]"
+	return "[0:v:" + strconv.Itoa(*idx) + "]"
 }
 
 // TranscodeArgs builds the PURE ffmpeg argument vector for a transcode job — no
@@ -1205,11 +1205,11 @@ func TranscodeArgs(job TranscodeJob) []string {
 			// Bitrate cap as -b:v + -maxrate at the cap, -bufsize at 2x. Every wired
 			// backend accepts -b:v (VideoToolbox honors it as the target bitrate); the
 			// descriptor could override these per backend if one ever needed to.
-			b := itoa64(job.Video.MaxBitrate)
+			b := strconv.FormatInt(job.Video.MaxBitrate, 10)
 			args = append(args,
 				"-b:v", b,
 				"-maxrate", b,
-				"-bufsize", itoa64(job.Video.MaxBitrate*2),
+				"-bufsize", strconv.FormatInt(job.Video.MaxBitrate*2, 10),
 			)
 		}
 	}
@@ -1248,7 +1248,7 @@ func TranscodeArgs(job TranscodeJob) []string {
 		// never the sidecar). A non-burn job adds a -map only when a specific Stream is
 		// selected (multi-audio); single-audio keeps ffmpeg's implicit selection.
 		if idx := job.AudioStreamIndex; idx != nil {
-			args = append(args, "-map", "0:a:"+itoa(*idx))
+			args = append(args, "-map", "0:a:"+strconv.Itoa(*idx))
 		} else if burning || job.VideoStreamIndex != nil {
 			// The video was mapped explicitly (a burn's [v], or a pinned multi-video
 			// Stream), which disables implicit audio selection — so map all source audio
@@ -1263,7 +1263,7 @@ func TranscodeArgs(job TranscodeJob) []string {
 		} else {
 			args = append(args, "-c:a", audioEncoderAAC)
 			if ch := encodedAudioChannels(job.Audio.MaxChannels, job.Audio.SourceChannels); ch > 0 {
-				args = append(args, "-ac", itoa(ch))
+				args = append(args, "-ac", strconv.Itoa(ch))
 			}
 		}
 	}
@@ -1336,7 +1336,7 @@ func AudioRenditionArgs(job AudioRenditionJob) []string {
 	args = append(args, job.Seek.inputSeekArgs()...)
 	args = append(args, inputArgs(job.ConcatListPath, job.SourcePath)...)
 	// Audio-only: drop video, map exactly the chosen audio Stream.
-	args = append(args, "-vn", "-map", "0:a:"+itoa(job.AudioStreamIndex))
+	args = append(args, "-vn", "-map", "0:a:"+strconv.Itoa(job.AudioStreamIndex))
 	// A realigned rendition has the same mid-stream-entry problem as the muxed paths
 	// (mustEncodeCopiedAudio) — and more acutely, since audio is ALL this job emits:
 	// a copied rendition entered past its decoder config is silent for its whole run.
@@ -1345,7 +1345,7 @@ func AudioRenditionArgs(job AudioRenditionJob) []string {
 	} else {
 		args = append(args, "-c:a", audioEncoderAAC)
 		if ch := encodedAudioChannels(job.MaxChannels, job.SourceChannels); ch > 0 {
-			args = append(args, "-ac", itoa(ch))
+			args = append(args, "-ac", strconv.Itoa(ch))
 		}
 	}
 	args = append(args, job.Seek.outputOffsetArgs()...)
@@ -1591,35 +1591,4 @@ func join(dir, name string) string {
 		return dir + name
 	}
 	return dir + "/" + name
-}
-
-// itoa is a tiny int→string for the arg builder (avoids importing strconv just
-// for the segment-duration flag).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
-
-// itoa64 is itoa for int64 bitrate flags (always non-negative here).
-func itoa64(n int64) string {
-	if n <= 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

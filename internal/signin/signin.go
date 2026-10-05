@@ -189,15 +189,5 @@ func Judge(resp pluginapi.SignInPasswordResponse, typed string) (auth.ExternalAn
 	if username == "" {
 		return auth.ExternalAnswer{}, false
 	}
-	var groups []string
-	seen := map[string]bool{}
-	for _, g := range resp.Identity.Groups {
-		g = strings.TrimSpace(g)
-		if g == "" || seen[g] {
-			continue
-		}
-		seen[g] = true
-		groups = append(groups, g)
-	}
-	return auth.ExternalAnswer{Subject: subject, Username: username, Groups: groups}, true
+	return auth.ExternalAnswer{Subject: subject, Username: username, Groups: tidyGroups(resp.Identity.Groups)}, true
 }

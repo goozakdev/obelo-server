@@ -185,11 +185,11 @@ func (s *Service) MintLinkInvite(userID string) (LinkInvite, error) {
 // why unknown, expired and spent are one answer.
 func (s *Service) RedeemLinkInvite(code, serverID, serverName, clientIP string) (LoginResult, error) {
 	now := s.now()
-	if ok, retryAfter := s.linkRedeemFails.allow(clientIP, now); !ok {
+	if ok, retryAfter := s.linkRedeemFails.allow(sourceKey(clientIP), now); !ok {
 		return LoginResult{}, &LinkRedeemThrottledError{RetryAfter: retryAfter}
 	}
 	if code == "" || serverID == "" {
-		s.linkRedeemFails.charge(clientIP, now)
+		s.linkRedeemFails.charge(sourceKey(clientIP), now)
 		return LoginResult{}, ErrInvalidInvite
 	}
 
@@ -198,7 +198,7 @@ func (s *Service) RedeemLinkInvite(code, serverID, serverName, clientIP string) 
 	// expired invite and a spent one are indistinguishable from here on.
 	inv, err := s.store.RedeemLinkInvite(hashToken(code), formatTime(now))
 	if errors.Is(err, store.ErrNotFound) {
-		s.linkRedeemFails.charge(clientIP, now)
+		s.linkRedeemFails.charge(sourceKey(clientIP), now)
 		return LoginResult{}, ErrInvalidInvite
 	}
 	if err != nil {

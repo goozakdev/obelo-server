@@ -244,7 +244,7 @@ func (s *Service) StartDeviceAuth(dev DeviceInput, clientIP string) (DeviceAuthS
 	// the problem it caused. It also means the pool's occupancy is only ever
 	// reported to callers who are within their own budget, so filling the space is
 	// not a way to watch it fill.
-	if ok, retryAfter := s.deviceStartQuota.allow(clientIP, now); !ok {
+	if ok, retryAfter := s.deviceStartQuota.allow(sourceKey(clientIP), now); !ok {
 		return DeviceAuthStart{}, &DeviceAuthThrottledError{RetryAfter: retryAfter}
 	}
 
@@ -291,7 +291,7 @@ func (s *Service) StartDeviceAuth(dev DeviceInput, clientIP string) (DeviceAuthS
 		// refused by the global cap or lost to a store error got no code and holds no
 		// slot, so charging it would let one flood spend a bystander's quota — and
 		// behind a proxy every caller is a bystander sharing one key.
-		s.deviceStartQuota.charge(clientIP, now)
+		s.deviceStartQuota.charge(sourceKey(clientIP), now)
 		return DeviceAuthStart{
 			DeviceCode: deviceCode,
 			UserCode:   userCode,

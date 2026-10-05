@@ -1,7 +1,9 @@
 package playback
 
 import (
+	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/goozakdev/obelo-server/internal/access"
@@ -268,6 +270,72 @@ func TestNegotiateUncappedStreamsNeverRefuses(t *testing.T) {
 	}
 	if n := svc.Sessions().Count(); n != 5 {
 		t.Errorf("sessions = %d, want 5 (uncapped)", n)
+	}
+}
+
+// countingRelay is a sharer that answers every play and counts how often it was asked.
+type countingRelay struct {
+	*markerRelay
+	mu     sync.Mutex
+	opened int
+}
+
+func (r *countingRelay) RelayNegotiate(ctx context.Context, req RelayRequest) (RelayAnswer, error) {
+	r.mu.Lock()
+	r.opened++
+	r.mu.Unlock()
+	return r.markerRelay.RelayNegotiate(ctx, req)
+}
+
+// TestRelayNegotiateAtTheStreamLimitNeverOpensARemoteSession: a relayed play this
+// Server is going to refuse locally must be refused BEFORE the sharer is asked, or
+// the session the sharer opened has no local session to end it and runs until its
+// idle reaper fires.
+func TestRelayNegotiateAtTheStreamLimitNeverOpensARemoteSession(t *testing.T) {
+	f := mp4File(1080, 6_000_000)
+	f.Path = ""
+	st := relayMarkerStore{&markerStore{ceilingStore: ceilingStore{detail: titleWith(store.Edition{ID: "e1", Files: []store.File{f}})}}}
+	svc := NewService(st, nil, "", Governance{})
+	r := &countingRelay{markerRelay: &markerRelay{}}
+	svc.SetRelay(r)
+	req := Request{
+		UserID: "u1", TitleID: "t1", Profile: uhdProfile(),
+		Constraints: Constraints{MaxResolution: "2160p", MaxBitrate: 100_000_000},
+		Scope:       access.Scope{AllLibraries: true, MaxStreams: 1},
+	}
+	mustNegotiate(t, svc, req)
+	if r.opened != 1 {
+		t.Fatalf("sharer asked %d times for the first play, want 1", r.opened)
+	}
+	_, _, _, _, err := svc.Negotiate(req)
+	if !errors.Is(err, ErrStreamLimit) {
+		t.Fatalf("second negotiate err = %v, want ErrStreamLimit", err)
+	}
+	if r.opened != 1 {
+		t.Errorf("sharer asked %d times, want 1 (the refused play must not open a remote session)", r.opened)
+	}
+}
+
+// TestCheckStreamLimitIsAdvisory: the pre-check reports the same counts
+// CreateGoverned would, mints nothing, and never refuses an uncapped User.
+func TestCheckStreamLimitIsAdvisory(t *testing.T) {
+	m := NewRemuxManager(&fakeRunner{}, t.TempDir())
+	if err := m.CheckStreamLimit("u1", 1); err != nil {
+		t.Fatalf("empty manager refused: %v", err)
+	}
+	m.Create(CreateInput{UserID: "u1", TitleID: "t1"}, Decision{Tier: TierDirectPlay})
+	var limit *StreamLimitError
+	if err := m.CheckStreamLimit("u1", 1); !errors.As(err, &limit) || limit.Active != 1 || limit.Limit != 1 {
+		t.Fatalf("at the limit: err = %v, want StreamLimitError 1 of 1", err)
+	}
+	if err := m.CheckStreamLimit("u1", 0); err != nil {
+		t.Errorf("uncapped User refused: %v", err)
+	}
+	if err := m.CheckStreamLimit("u2", 1); err != nil {
+		t.Errorf("another User refused: %v", err)
+	}
+	if n := m.Count(); n != 1 {
+		t.Errorf("sessions = %d, want 1 (the check mints none)", n)
 	}
 }
 

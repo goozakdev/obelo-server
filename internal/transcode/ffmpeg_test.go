@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -313,7 +314,7 @@ func TestTranscodeArgsAccelVideoToolbox(t *testing.T) {
 	}
 	// LOAD-BEARING: segment-boundary keyframe forcing is preserved on the HW path.
 	kf := valueOf(args, "-force_key_frames")
-	if !strings.Contains(kf, "n_forced") || !strings.Contains(kf, itoa(SegmentSeconds)) {
+	if !strings.Contains(kf, "n_forced") || !strings.Contains(kf, strconv.Itoa(SegmentSeconds)) {
 		t.Errorf("-force_key_frames = %q, want the segment-boundary expr on the HW path; args: %v", kf, args)
 	}
 	// Audio re-encode unchanged.
@@ -336,7 +337,7 @@ func assertCapAndKeyframes(t *testing.T, args []string, backend string) {
 		t.Errorf("%s: missing -b:v/-maxrate 4000000 + -bufsize 8000000 rate-control; args: %v", backend, args)
 	}
 	kf := valueOf(args, "-force_key_frames")
-	if !strings.Contains(kf, "n_forced") || !strings.Contains(kf, itoa(SegmentSeconds)) {
+	if !strings.Contains(kf, "n_forced") || !strings.Contains(kf, strconv.Itoa(SegmentSeconds)) {
 		t.Errorf("%s: -force_key_frames = %q, want the segment-boundary expr (load-bearing for seek realignment); args: %v", backend, kf, args)
 	}
 	// Audio + HLS delivery are backend-independent: unchanged on every HW path.
@@ -1019,7 +1020,7 @@ func TestTranscodeArgsForcesSegmentKeyframes(t *testing.T) {
 	if kf == "" {
 		t.Fatalf("missing -force_key_frames on a re-encoding transcode; args: %v", args)
 	}
-	if !strings.Contains(kf, "n_forced") || !strings.Contains(kf, itoa(SegmentSeconds)) {
+	if !strings.Contains(kf, "n_forced") || !strings.Contains(kf, strconv.Itoa(SegmentSeconds)) {
 		t.Errorf("-force_key_frames = %q, want an expr keyed to %d-second boundaries; args: %v", kf, SegmentSeconds, args)
 	}
 }

@@ -455,13 +455,21 @@ func (s *Service) RelayEndSession(ctx context.Context, linkID, remoteSessionID s
 	if err != nil {
 		return err
 	}
-	if l.ActiveOrigin == "" || l.Token == "" {
+	// The same origin choice relayFetch makes: the one that last answered, else the
+	// first the invite listed.
+	origin := l.ActiveOrigin
+	if origin == "" {
+		if origins := originsFor(l); len(origins) > 0 {
+			origin = origins[0]
+		}
+	}
+	if origin == "" || l.Token == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.callTimeout())
 	defer cancel()
 	return s.call(ctx, s.client(), http.MethodDelete,
-		l.ActiveOrigin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
+		origin+apiPrefix+"/sessions/"+url.PathEscape(remoteSessionID), l.Token)
 }
 
 // --- markers ------------------------------------------------------------------
@@ -568,11 +576,25 @@ func (s *Service) RelayArtwork(ctx context.Context, kind, entityID, role string)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%w: %s answered %d for artwork", ErrUnreachable, l.ServerName, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRelayArtworkBytes))
+	data, err := readArtwork(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrUnreachable, err)
+		return "", err
 	}
 	return writeCachedArtwork(s.artworkDir, base, resp.Header.Get("Content-Type"), data)
+}
+
+// readArtwork reads an image body up to the cache's cap. One byte past the cap is
+// read to tell "exactly at the limit" from "truncated": a longer image is refused
+// (ErrArtworkAbsent) rather than cached cut short and corrupt.
+func readArtwork(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxRelayArtworkBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
+	}
+	if len(data) > maxRelayArtworkBytes {
+		return nil, ErrArtworkAbsent
+	}
+	return data, nil
 }
 
 // relayLibraryOf resolves the Library behind a mirrored entity id.
@@ -642,8 +664,10 @@ func cachedArtwork(dir, base string, stamp time.Time) (string, bool) {
 		}
 		if !stamp.IsZero() && info.ModTime().Before(stamp) {
 			// The mirror has applied a change to this entity since these bytes were
-			// fetched — the poster may be one of the things that changed.
-			return "", false
+			// fetched — the poster may be one of the things that changed. Keep
+			// looking: the sharer may have swapped the image TYPE, so a fresher file
+			// can sit under another extension.
+			continue
 		}
 		return path, true
 	}
@@ -661,6 +685,13 @@ func writeCachedArtwork(dir, base, contentType string, data []byte) (string, err
 		return "", err
 	}
 	path := filepath.Join(dir, base+relayArtworkExtension(contentType))
+	// A re-fetch that changes the image type must not leave the old type behind for
+	// the lookup to find first.
+	for _, ext := range relayArtworkExtensions {
+		if other := filepath.Join(dir, base+ext); other != path {
+			_ = os.Remove(other)
+		}
+	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		_ = os.Remove(tmp)

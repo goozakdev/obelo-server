@@ -284,14 +284,14 @@ func negotiateStreams(profile DeviceProfile, constraints Constraints, ed store.E
 	if cap := resolutionHeight(support.MaxResolution); cap > 0 && height > cap {
 		return Decision{}, &Unsupported{
 			Reason: ReasonResolution,
-			Detail: "video height " + itoa(height) + " exceeds device " + videoCodec + " ceiling " + support.MaxResolution,
+			Detail: "video height " + strconv.Itoa(height) + " exceeds device " + videoCodec + " ceiling " + support.MaxResolution,
 		}
 	}
 	// Session resolution cap (the per-request network/quality limit).
 	if cap := resolutionHeight(constraints.MaxResolution); cap > 0 && height > cap {
 		return Decision{}, &Unsupported{
 			Reason: ReasonResolution,
-			Detail: "video height " + itoa(height) + " exceeds constraint maxResolution " + constraints.MaxResolution,
+			Detail: "video height " + strconv.Itoa(height) + " exceeds constraint maxResolution " + constraints.MaxResolution,
 		}
 	}
 
@@ -1210,28 +1210,4 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
-}
-
-// itoa is a tiny local int→string for error details (avoids importing strconv
-// just for messages).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

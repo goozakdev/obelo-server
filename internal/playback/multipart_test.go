@@ -293,3 +293,24 @@ func TestJoinPartBoundariesSpansEveryPart(t *testing.T) {
 		}
 	}
 }
+
+// TestReencodePlaylistSpansEveryPart: a video re-encode of a multi-part Edition
+// sizes its synthesized playlist from the whole work, not part 1 — ffmpeg is fed
+// the concat of every part, so a part-1-sized playlist ends playback early.
+func TestReencodePlaylistSpansEveryPart(t *testing.T) {
+	m := NewRemuxManager(&fakeRunner{}, t.TempDir())
+	ed := twoPartEdition()
+	dec := Decision{Tier: TierTranscode, Edition: ed, File: ed.Files[0]}
+	s := m.Create(CreateInput{
+		UserID: "u1", TitleID: "t1",
+		BuildHLSArgs: func(dir string, seek transcode.SeekOffset) []string { return nil },
+	}, dec)
+	rt, ok := m.remuxRuntimeFor(s.ID)
+	if !ok {
+		t.Fatal("no runtime for the transcode session")
+	}
+	want := segmentCountFor(ed.TotalDurationMs(), transcode.SegmentSeconds)
+	if rt.segmentCount != want {
+		t.Errorf("segmentCount = %d, want %d (the whole Edition, not part 1)", rt.segmentCount, want)
+	}
+}

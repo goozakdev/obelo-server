@@ -487,7 +487,10 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	explicitAudio := req.AudioStreamID != ""
 	audioID := req.AudioStreamID
 	if !explicitAudio {
-		if rememberedID, ok := s.resolveRememberedAudio(req.UserID, detail, dec.File); ok {
+		// A remembered pick that resolves to the Stream the Decision already plays
+		// changes nothing: escalating would remux a File whose first track plays anyway
+		// just because that track carries no default disposition.
+		if rememberedID, ok := s.resolveRememberedAudio(req.UserID, detail, dec.File); ok && rememberedID != dec.AudioStream.ID {
 			audioID = rememberedID
 		}
 	}
@@ -578,6 +581,14 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// is best-effort — a failure leaves boundaries nil and the runtime falls back to
 	// ffmpeg's playlist (correct for short files). Skipped for a re-encode (uniform
 	// segments) and audio-only.
+	//
+	// The User's stream limit is checked first (advisory; CreateGoverned stays
+	// authoritative) so a refused play does not pay for the probes below. The
+	// transcode cap needs no such pre-check: only a video-ENCODING transcode is
+	// metered, and that tier runs neither probe.
+	if err := s.sessions.CheckStreamLimit(req.UserID, req.Scope.MaxStreams); err != nil {
+		return Decision{}, Session{}, nil, nil, err
+	}
 	var boundaries []float64
 	if !dec.AudioOnly && (dec.VideoCopy || dec.Tier == TierDirectStream) {
 		// A MULTI-PART Edition is copied from every part as one concatenated input, so
@@ -1936,17 +1947,19 @@ func (s *Service) HLSAudioSegment(userID, sessionID, streamID, name string) ([]b
 }
 
 // audioRuntimeFor resolves the owner-checked, validated lazy rendition runtime for
-// (session, audio Stream): it confirms the session is a demuxed multi-audio HLS
-// session that carries streamID (else ErrNoAudioRendition → 404), then ensures the
-// runtime. Validating against the File's audio Streams keeps an arbitrary id from
-// spinning up an ffmpeg job.
+// (session, audio Stream): it confirms the session is the caller's HLS session
+// (ErrSessionNotFound / ErrNotHLS, as SessionAudioContext does) and that it is a
+// demuxed multi-audio session carrying streamID (else ErrNoAudioRendition → 404),
+// then ensures the runtime. The validation is answered from the Manager's own
+// per-session state: this runs for every audio segment, and loading the Title tree
+// and probing the video traits (SessionAudioContext) each time would stall playback.
 func (s *Service) audioRuntimeFor(userID, sessionID, streamID string) (*hlsRuntime, error) {
-	sctx, err := s.SessionAudioContext(userID, sessionID)
-	if err != nil {
-		return nil, err
+	sess, ok := s.sessions.Get(sessionID)
+	if !ok || sess.UserID != userID {
+		return nil, ErrSessionNotFound
 	}
-	if !sctx.Demuxed || !audioContextHasStream(sctx, streamID) {
-		return nil, ErrNoAudioRendition
+	if sess.Tier == TierDirectPlay {
+		return nil, ErrNotHLS
 	}
 	return s.sessions.EnsureAudioRuntime(sessionID, streamID)
 }

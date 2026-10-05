@@ -132,6 +132,13 @@ func (s *Service) relayed(libraryID string) bool {
 // ceiling, so the request that leaves is the strictest of what the client asked
 // for and what this Server allows — and the sharer applies its own on top.
 func (s *Service) negotiateRelay(req Request, detail store.TitleDetail) (Decision, Session, *Unsupported, *ServerBusy, error) {
+	// Refuse at the stream limit BEFORE asking the sharer: once it has opened a
+	// session, a local refusal leaves nothing here to end it, and it would run on the
+	// friend's server until its idle reaper fires. CreateGoverned below stays the
+	// authoritative check.
+	if err := s.sessions.CheckStreamLimit(req.UserID, req.Scope.MaxStreams); err != nil {
+		return Decision{}, Session{}, nil, nil, err
+	}
 	ans, err := s.relay.RelayNegotiate(context.Background(), RelayRequest{
 		LibraryID:         detail.LibraryID,
 		TitleID:           detail.ID,

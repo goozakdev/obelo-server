@@ -76,7 +76,26 @@ func SegmentBoundaries(keyframes []float64, duration, hlsTime float64) []float64
 // > 0, is the caller's known File duration. A probe error is returned so the caller
 // can fall back to serving ffmpeg's own playlist.
 func KeyframeBoundaries(ctx context.Context, ffprobeBin, path string, hlsTime, durationSec float64) ([]float64, error) {
-	keyframes, err := containerKeyframes(path)
+	// The index read is plain file I/O that cannot be cancelled, so run it aside and
+	// stop waiting when ctx ends — a hung network mount must not hold the caller past
+	// its deadline. The abandoned read finishes (or errors) on its own.
+	type indexRead struct {
+		keyframes []float64
+		err       error
+	}
+	read := make(chan indexRead, 1)
+	go func() {
+		kf, err := containerKeyframes(path)
+		read <- indexRead{kf, err}
+	}()
+	var keyframes []float64
+	var err error
+	select {
+	case r := <-read:
+		keyframes, err = r.keyframes, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		keyframes, err = ffprobeKeyframeScan(ctx, ffprobeBin, path)
 		if err != nil {

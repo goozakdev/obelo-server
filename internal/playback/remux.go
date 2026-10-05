@@ -113,8 +113,10 @@ type hlsRuntime struct {
 	// under the video job or a sibling rendition.
 	sharedScratch bool
 
-	once     sync.Once
-	startErr error
+	// startMu serializes EnsureStarted; started latches the first SUCCESSFUL
+	// launch (a failed one is retried by the next request). Guarded by startMu.
+	startMu sync.Mutex
+	started bool
 
 	// mu guards the mutable job state below: the running job, its cancel func, and
 	// the segment index it was started to produce from (startNumber). Realign and
@@ -152,21 +154,36 @@ type hlsRuntime struct {
 	jobDone chan struct{}
 }
 
-// EnsureStarted lazily launches the ffmpeg job exactly once at the from-the-top
-// offset: it creates the scratch directory and starts ffmpeg writing the HLS
-// playlist + segments into it. Subsequent calls are no-ops (returning the first
-// launch's error, if any). The job runs in the background; the api layer then
-// serves the playlist and segments out of the scratch dir as ffmpeg produces them.
-// A later forward seek may supersede this job via realign.
+// EnsureStarted lazily launches the ffmpeg job at the from-the-top offset: it
+// creates the scratch directory and starts ffmpeg writing the HLS playlist +
+// segments into it. Once a launch has succeeded, subsequent calls are no-ops. A
+// launch that FAILS (a transient spawn error, a mount blip) is not cached: the next
+// call retries it. The job runs in the background; the api layer then serves the
+// playlist and segments out of the scratch dir as ffmpeg produces them. A later
+// forward seek may supersede this job via realign.
 func (rt *hlsRuntime) EnsureStarted() error {
-	rt.once.Do(func() {
-		if err := os.MkdirAll(rt.scratchDir, 0o755); err != nil {
-			rt.startErr = err
-			return
-		}
-		rt.startErr = rt.launchInitial()
-	})
-	return rt.startErr
+	rt.startMu.Lock()
+	defer rt.startMu.Unlock()
+	if rt.started {
+		return nil
+	}
+	// The directory is created under rt.mu, after the torn-down check, so a teardown
+	// that already ran (and removed the dir) is not undone by a late first request.
+	rt.mu.Lock()
+	if rt.torndown {
+		rt.mu.Unlock()
+		return os.ErrClosed
+	}
+	err := os.MkdirAll(rt.scratchDir, 0o755)
+	rt.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := rt.launchInitial(); err != nil {
+		return err
+	}
+	rt.started = true
+	return nil
 }
 
 // launchInitial performs the very first ffmpeg launch and applies the single
@@ -400,10 +417,24 @@ func (rt *hlsRuntime) argsFor(seek transcode.SeekOffset) []string {
 // backward seek to within the current run needs no restart — the earlier segments
 // already exist); callers only realign when a wanted segment is genuinely ahead.
 func (rt *hlsRuntime) realign(target int) error {
+	return rt.realignIf(target, func(start int) bool {
+		return target < start || target-start > realignLookahead
+	})
+}
+
+// realignIf is realign with the caller's own jump rule. Callers decide to realign
+// from a snapshot taken outside rt.mu, so parallel requests (Safari's burst, a
+// retry) can all arrive wanting the same restart; needed is therefore re-evaluated
+// HERE, under the lock, against the fresh start number, and a running job it says
+// will produce the target soon is left alone — restarting it would only thrash.
+func (rt *hlsRuntime) realignIf(target int, needed func(start int) bool) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.torndown {
 		return os.ErrClosed
+	}
+	if rt.job != nil && !needed(rt.startNumber) {
+		return nil
 	}
 	// The input-seek time for the target segment: its exact keyframe boundary for a
 	// boundaries-based video COPY (whose segments fall on the source's irregular
@@ -667,9 +698,6 @@ func (rt *hlsRuntime) gatedSegment(name, path string) ([]byte, error) {
 	// request BEFORE the current run's start is always a jump (those names were
 	// skipped by the last realign).
 	if rt.realignable {
-		rt.mu.Lock()
-		start := rt.startNumber
-		rt.mu.Unlock()
 		// A request BEFORE the current run's start is always a jump (those names were
 		// skipped by the last realign). A request AHEAD is a jump only when it is
 		// (a) beyond the near-start grace window — Safari's native player fetches a
@@ -680,12 +708,13 @@ func (rt *hlsRuntime) gatedSegment(name, path string) ([]byte, error) {
 		// its final name (the segment muxer writes in place) or as the hls muxer's
 		// in-flight .tmp means production is approaching this segment — wait, don't
 		// restart. Only a request across genuinely unproduced ground realigns.
-		jumpBack := idx < start
-		jumpAhead := idx > start && !rt.nearFrontier(start, idx, nameFmt)
-		if jumpBack || jumpAhead {
-			if err := rt.realign(idx); err != nil {
-				return nil, err
-			}
+		//
+		// The decision is made under rt.mu against the CURRENT start (realignIf):
+		// parallel requests that all read the old start must not each restart the job.
+		if err := rt.realignIf(idx, func(start int) bool {
+			return idx < start || (idx > start && !rt.nearFrontier(start, idx, nameFmt))
+		}); err != nil {
+			return nil, err
 		}
 	}
 	if !rt.gateSequential {

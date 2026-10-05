@@ -2,6 +2,7 @@ package playback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/store"
 	"github.com/goozakdev/obelo-server/internal/transcode"
@@ -581,5 +583,152 @@ func TestRealignAfterTeardownDoesNotResurrect(t *testing.T) {
 	}
 	if runner.launchCount() != before {
 		t.Errorf("launches changed after teardown realign: %d → %d", before, runner.launchCount())
+	}
+}
+
+// flakyRunner refuses its first fails Start calls, then behaves like a recordingRunner.
+type flakyRunner struct {
+	recordingRunner
+	fails int
+}
+
+func (r *flakyRunner) Start(ctx context.Context, args []string) (transcode.Job, error) {
+	r.mu.Lock()
+	if r.fails > 0 {
+		r.fails--
+		r.mu.Unlock()
+		return nil, errors.New("spawn failed")
+	}
+	r.mu.Unlock()
+	return r.recordingRunner.Start(ctx, args)
+}
+
+// TestEnsureStartedRetriesAfterATransientFailure: a launch that fails (EMFILE, a
+// mount blip) must not be cached for the session's lifetime; the next request retries.
+func TestEnsureStartedRetriesAfterATransientFailure(t *testing.T) {
+	runner := &flakyRunner{fails: 1}
+	rt := &hlsRuntime{
+		runner:     runner,
+		buildArgs:  func(seek transcode.SeekOffset) []string { return []string{"x"} },
+		scratchDir: filepath.Join(t.TempDir(), "sess"),
+	}
+	if err := rt.EnsureStarted(); err == nil {
+		t.Fatal("first EnsureStarted succeeded, want the spawn error")
+	}
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatalf("second EnsureStarted: %v (a transient failure was cached)", err)
+	}
+	if err := rt.EnsureStarted(); err != nil || runner.launchCount() != 1 {
+		t.Errorf("third EnsureStarted err=%v launches=%d, want nil and exactly 1 launch", err, runner.launchCount())
+	}
+}
+
+// TestEnsureStartedAfterTeardownLeavesNoScratchDir: a late first request on a
+// runtime teardown already removed must not re-create the scratch directory.
+func TestEnsureStartedAfterTeardownLeavesNoScratchDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sess")
+	rt := &hlsRuntime{
+		runner:     &recordingRunner{},
+		buildArgs:  func(seek transcode.SeekOffset) []string { return []string{"x"} },
+		scratchDir: dir,
+	}
+	rt.teardown()
+	if err := rt.EnsureStarted(); err == nil {
+		t.Error("EnsureStarted on a torn-down runtime succeeded")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("scratch dir exists after teardown + EnsureStarted (stat err = %v)", err)
+	}
+}
+
+// TestRealignIsANoOpForATargetTheJobAlreadyCovers: parallel requests that each saw
+// the old start and decided to realign must not each restart ffmpeg. Once the job
+// is started at the target (or within the lookahead past it) a further realign
+// leaves it running; a genuinely different target still restarts it.
+func TestRealignIsANoOpForATargetTheJobAlreadyCovers(t *testing.T) {
+	runner := &recordingRunner{}
+	rt := &hlsRuntime{
+		runner: runner,
+		buildArgs: func(seek transcode.SeekOffset) []string {
+			return []string{"-start_number", strconv.Itoa(seek.StartNumber), filepath.Join(t.TempDir(), "index.m3u8")}
+		},
+		scratchDir:     t.TempDir(),
+		segmentSeconds: transcode.SegmentSeconds,
+	}
+	if err := rt.EnsureStarted(); err != nil {
+		t.Fatalf("EnsureStarted: %v", err)
+	}
+	for _, target := range []int{50, 50, 51, 52} {
+		if err := rt.realign(target); err != nil {
+			t.Fatalf("realign(%d): %v", target, err)
+		}
+	}
+	if n := runner.launchCount(); n != 2 {
+		t.Errorf("launches = %d, want 2 (initial + one realign to 50)", n)
+	}
+	if err := rt.realign(80); err != nil {
+		t.Fatalf("realign(80): %v", err)
+	}
+	if n := runner.launchCount(); n != 3 {
+		t.Errorf("launches after a distinct target = %d, want 3", n)
+	}
+}
+
+// TestGatedParallelBurstAfterSeekRestartsOnce: after a seek, Safari fetches the
+// segments from the seek point in parallel, and several requests may have read the
+// OLD start before any took the lock. The first restarts the job at its target; the
+// rest sit inside the new job's near-start window and must not kill it (a second
+// restart at 104 would orphan 100..103, which then 404 and thrash). The job must end
+// positioned at the lowest target, 100. Repeated because the stale read is a race.
+func TestGatedParallelBurstAfterSeekRestartsOnce(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		runner := &recordingRunner{}
+		dir := t.TempDir()
+		rt := &hlsRuntime{
+			runner: runner,
+			buildArgs: func(seek transcode.SeekOffset) []string {
+				return []string{"-start_number", strconv.Itoa(seek.StartNumber), filepath.Join(dir, "index.m3u8")}
+			},
+			scratchDir:     dir,
+			ownsPlaylist:   true,
+			realignable:    true,
+			segNameFmt:     transcode.SegmentPattern,
+			segmentCount:   1600,
+			segmentSeconds: transcode.SegmentSeconds,
+		}
+		if err := rt.EnsureStarted(); err != nil {
+			t.Fatalf("EnsureStarted: %v", err)
+		}
+		// All seven requests are released together so several read the old start
+		// (0) before any takes the lock. The segments appear only afterwards, so
+		// no request's frontier check is helped by a predecessor on disk.
+		release := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, idx := range []int{104, 100, 106, 101, 105, 102, 103} {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				name := fmt.Sprintf(transcode.SegmentPattern, idx)
+				<-release
+				if _, err := rt.gatedSegment(name, filepath.Join(dir, name)); err != nil {
+					t.Errorf("gatedSegment(%d): %v", idx, err)
+				}
+			}(idx)
+		}
+		close(release)
+		time.Sleep(50 * time.Millisecond)
+		for i := 100; i <= 106; i++ {
+			name := fmt.Sprintf(transcode.SegmentPattern, i)
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("ts"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wg.Wait()
+		rt.mu.Lock()
+		start := rt.startNumber
+		rt.mu.Unlock()
+		if start != 100 {
+			t.Fatalf("round %d: job ended positioned at %d, want 100 (the lowest target; %d launches)", round, start, runner.launchCount())
+		}
 	}
 }
