@@ -217,13 +217,6 @@ func pad2(n int) string {
 	return s
 }
 
-// isAudioFolderName / isSeasonOrSpecials helps the resolver decide whether a
-// subfolder under a Show is a Season folder. Kept here next to ParseSeasonFolder.
-func isSeasonOrSpecials(name string) bool {
-	_, ok := ParseSeasonFolder(name)
-	return ok
-}
-
 // stripKnownExt is a thin wrapper for clarity in tv resolution (extension off).
 func stripKnownExt(name string) string {
 	return strings.TrimSuffix(name, filepath.Ext(name))

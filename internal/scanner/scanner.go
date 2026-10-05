@@ -259,6 +259,16 @@ type scanCtx struct {
 	// off its Slot has to be a recorded Unassigned decision rather than no row.
 	decisions map[string]store.FileDecisions
 	probes    int // ffprobe invocations (instrumentation/tests)
+	// lastProbe remembers the most recent probe, so a range file (S01E05-E06) —
+	// whose Episodes share one path and are assembled back to back — is probed and
+	// has its Markers recorded once rather than once per Episode. One entry, not a
+	// map: it bounds what the scan holds.
+	lastProbe struct {
+		path  string
+		media MediaInfo
+		err   error
+		set   bool
+	}
 	// unresolved are directories whose contents could not be read this walk (a
 	// transient network-FS read failure that outlasted retries). The soft-delete
 	// pass skips anything beneath them: an unreadable subtree is not evidence of
@@ -784,10 +794,10 @@ func (s *Service) resolveFolder(ctx context.Context, sc *scanCtx, lib store.Libr
 	if !idOK {
 		var unm []store.UnmatchedFile
 		for _, cf := range mains {
-			unm = append(unm, unmatched(cf.path, "no parseable identity from folder name"))
+			unm = append(unm, unmatchedFile(cf.path, "no parseable identity from folder name"))
 		}
 		for _, cf := range extras {
-			unm = append(unm, unmatched(cf.path, "extra with no identifiable parent title"))
+			unm = append(unm, unmatchedFile(cf.path, "extra with no identifiable parent title"))
 		}
 		return store.TitleTree{}, unm, false, nil
 	}
@@ -798,13 +808,27 @@ func (s *Service) resolveFolder(ctx context.Context, sc *scanCtx, lib store.Libr
 	if len(mains) == 0 {
 		var unm []store.UnmatchedFile
 		for _, cf := range extras {
-			unm = append(unm, unmatched(cf.path, "extra with no main video in folder"))
+			unm = append(unm, unmatchedFile(cf.path, "extra with no main video in folder"))
 		}
 		return store.TitleTree{}, unm, false, nil
 	}
 
 	tree, err := s.assembleTitle(ctx, sc, lib, id, mains, extras, artwork, artworkOrder)
 	if err != nil {
+		// Mains ffprobe refused are listed as Unreadable rather than aborting the
+		// scan (which would skip the unmatched replace, soft-delete and hidden
+		// recompute for every later run too). Extras have no Title to attach to.
+		var ue *UnreadableError
+		if errors.As(err, &ue) {
+			var unm []store.UnmatchedFile
+			for _, p := range ue.Paths {
+				unm = append(unm, unreadableFile(p, ue.Error()))
+			}
+			for _, cf := range extras {
+				unm = append(unm, unmatchedFile(cf.path, "extra with no readable main video in folder"))
+			}
+			return store.TitleTree{}, unm, false, nil
+		}
 		return store.TitleTree{}, nil, false, err
 	}
 	tree.Subtitles = buildSidecarSubtitles(folder, sidecars)
@@ -833,7 +857,7 @@ func (s *Service) resolveBareFile(ctx context.Context, sc *scanCtx, lib store.Li
 		ok = true
 	}
 	if !ok {
-		return store.TitleTree{}, []store.UnmatchedFile{unmatched(path, "no parseable identity from file name")}, false, nil
+		return store.TitleTree{}, []store.UnmatchedFile{unmatchedFile(path, "no parseable identity from file name")}, false, nil
 	}
 	cf := classifiedFile{path: path, name: name, part: partNumber(name)}
 	tree, err := s.assembleTitle(ctx, sc, lib, id, []classifiedFile{cf}, nil, nil, nil)
@@ -845,7 +869,7 @@ func (s *Service) resolveBareFile(ctx context.Context, sc *scanCtx, lib store.Li
 		if errors.As(err, &ue) {
 			return store.TitleTree{}, []store.UnmatchedFile{unreadableFile(path, ue.Error())}, false, nil
 		}
-		return store.TitleTree{}, []store.UnmatchedFile{unmatched(path, "could not probe file: "+err.Error())}, false, nil
+		return store.TitleTree{}, []store.UnmatchedFile{unmatchedFile(path, "could not probe file: "+err.Error())}, false, nil
 	}
 	return tree, nil, true, nil
 }
@@ -869,11 +893,18 @@ type probedFile struct {
 
 // fileMtime returns a file's modification time as RFC3339 UTC, "" on error.
 func fileMtime(path string) string {
+	_, mtime := statFile(path)
+	return mtime
+}
+
+// statFile returns a file's size and mtime (as fileMtime formats it) from ONE
+// stat, for the per-file loop that needs both. (0, "") on error.
+func statFile(path string) (size int64, mtime string) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return ""
+		return 0, ""
 	}
-	return info.ModTime().UTC().Format(time.RFC3339Nano)
+	return info.Size(), info.ModTime().UTC().Format(time.RFC3339Nano)
 }
 
 // unchanged reports whether the file at path matches its prior snapshot on
@@ -888,6 +919,19 @@ func (sc *scanCtx) unchanged(path string, size int64, mtime string) bool {
 		return false // new file
 	}
 	return snap.Present && snap.Mtime == mtime && snap.SizeBytes == size
+}
+
+// probeMain probes a main video, or replays the previous answer when path is the
+// one probed last (repeat=true). A failure is replayed too, so a broken range
+// file is not retried per Episode.
+func (s *Service) probeMain(ctx context.Context, sc *scanCtx, path string) (media MediaInfo, repeat bool, err error) {
+	if lp := &sc.lastProbe; lp.set && lp.path == path {
+		return lp.media, true, lp.err
+	}
+	sc.probes++
+	media, err = s.prober.Probe(ctx, path)
+	sc.lastProbe.path, sc.lastProbe.media, sc.lastProbe.err, sc.lastProbe.set = path, media, err, true
+	return media, false, err
 }
 
 // editionGroup gathers the probed files that share one Edition identity.
@@ -921,8 +965,7 @@ func (s *Service) assembleTitle(
 	var unreadable []string
 	var unreadableDetail string
 	for _, cf := range mains {
-		size := fileSize(cf.path)
-		mtime := fileMtime(cf.path)
+		size, mtime := statFile(cf.path)
 
 		// Incremental skip: an unchanged file reuses its stored row+streams and is
 		// NOT re-ffprobed (the expensive step — skipping it is the whole point).
@@ -945,8 +988,7 @@ func (s *Service) assembleTitle(
 			// its Markers came from did.
 		}
 
-		sc.probes++
-		media, err := s.prober.Probe(ctx, cf.path)
+		media, repeat, err := s.probeMain(ctx, sc, cf.path)
 		if err != nil {
 			// One unprobeable main in a multi-file folder is dropped here; a Title
 			// that ends up with NO probeable main at all fails below, carrying these
@@ -957,8 +999,10 @@ func (s *Service) assembleTitle(
 			}
 			continue
 		}
-		if err := s.recordLocalMarkers(sc, cf.path, media); err != nil {
-			return store.TitleTree{}, err
+		if !repeat {
+			if err := s.recordLocalMarkers(sc, cf.path, media); err != nil {
+				return store.TitleTree{}, err
+			}
 		}
 		sc.seen[cf.path] = true
 		video, _ := media.PrimaryVideo()
@@ -1171,7 +1215,9 @@ func rekeyStreams(fileID string, streams []store.Stream) []store.Stream {
 	return out
 }
 
-func unmatched(path, reason string) store.UnmatchedFile {
+// unmatchedFile is the Unmatched row for a file whose identity could not be
+// determined — the one constructor for every kind of library (Movie, TV, Music).
+func unmatchedFile(path, reason string) store.UnmatchedFile {
 	return store.UnmatchedFile{
 		ID: uuid.NewString(), Path: path,
 		Kind: store.UnmatchedUnidentified, Reason: reason,

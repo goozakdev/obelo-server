@@ -14,18 +14,17 @@ import (
 // extra, junk, artwork, or a sidecar subtitle. The folder name carries identity
 // (identity.go); the filename carries only this detail.
 
-// mediaExtensions is the recognized-media allowlist (naming-convention.md).
-// Anything not on it is ignored entirely. Video and audio share one centralized
-// allowlist: video for Movie/TV, audio (`.flac .mp3 .m4a .ogg .opus .wav`) for
-// the Music kind (issue tv-music/03).
-var mediaExtensions = map[string]bool{
+// videoExtensions is the recognized-video allowlist (naming-convention.md) for
+// the Movie and TV kinds. Anything not on it (or on audioExtensions, for Music)
+// is ignored entirely. Audio files are deliberately NOT here: a `theme.mp3` in a
+// Movie or Show folder is not a main video.
+var videoExtensions = map[string]bool{
 	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true,
 	".mov": true, ".ts": true, ".webm": true,
-	".flac": true, ".mp3": true, ".m4a": true, ".ogg": true, ".opus": true, ".wav": true,
 }
 
-// audioExtensions is the subset of the allowlist that is audio — the recognized
-// media in a Music Library. A Music scan only files audio files (a stray video
+// audioExtensions is the audio allowlist (`.flac .mp3 .m4a .ogg .opus .wav`,
+// issue tv-music/03) — the recognized media in a Music Library. A Music scan only files audio files (a stray video
 // in a Music Library is ignored, like a stray non-media file).
 var audioExtensions = map[string]bool{
 	".flac": true, ".mp3": true, ".m4a": true, ".ogg": true, ".opus": true, ".wav": true,
@@ -100,7 +99,7 @@ var qualityTokenRe = regexp.MustCompile(`(?i)\b(\d{3,4}p|2160p|1080p|720p|480p|b
 
 // isMedia reports whether name has a recognized media (video) extension.
 func isMedia(name string) bool {
-	return mediaExtensions[strings.ToLower(filepath.Ext(name))]
+	return videoExtensions[strings.ToLower(filepath.Ext(name))]
 }
 
 // isHidden reports whether a directory entry is a hidden/dotfile that must never
