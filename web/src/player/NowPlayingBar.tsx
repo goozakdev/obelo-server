@@ -1026,6 +1026,9 @@ function CurrentPlayer({
   // once yet always calling into current state; we bail when a form control is
   // focused so the seek / volume sliders keep their own arrow + space behavior.
   const shortcutRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  // The key event the blocked-autoplay retry already answered with play() (it runs on
+  // `document`, before this `window` handler): Space/k must not toggle it back off.
+  const retriedKeyRef = useRef<KeyboardEvent | null>(null);
   shortcutRef.current = (e: KeyboardEvent) => {
     if (!video || surface !== "stage") return;
     // A focused control (the Up Next card) already handled this key.
@@ -1048,12 +1051,12 @@ function CurrentPlayer({
         // A focused button/link already activates on Space — don't double-toggle.
         if (tag === "BUTTON" || tag === "A" || el?.getAttribute("role") === "button") return;
         e.preventDefault(); // no page scroll
-        togglePlay();
+        if (retriedKeyRef.current !== e) togglePlay();
         break;
       case "k":
       case "K":
         e.preventDefault();
-        togglePlay();
+        if (retriedKeyRef.current !== e) togglePlay();
         break;
       case "ArrowLeft":
       case "j":
@@ -1328,6 +1331,9 @@ function CurrentPlayer({
   useEffect(() => {
     if (subsInitRef.current || status.kind !== "ready") return;
     subsInitRef.current = true;
+    // A burned-in image sub is already the caption; seeding a text track too would
+    // show captions twice.
+    if (session.burnSubtitleId != null) return;
     const stored = storedSub ? matchTextTrackId(textTracks, storedSub) : null;
     setSelectedSubId(stored ?? defaultTrackId(textTracks));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1581,13 +1587,16 @@ function CurrentPlayer({
   // on the first click instead of demanding the user find the play button. The
   // refusal is also logged so the state is diagnosable.
   //
-  // ONE handler on `click` + `keydown` in the BUBBLE phase (both grant activation):
-  // the gesture's own target runs first, so a click on the bar's Play button toggles
-  // through togglePlay and the retry then finds the element already playing — a
-  // capture-phase pointerdown retry ran BEFORE that click and made the button's
-  // toggle pause it again. When it fires, or the element starts playing by any
-  // route, or this core unmounts, BOTH listeners are removed (a leftover one would
-  // later resume a deliberate pause, or play a detached element).
+  // ONE handler on `click` + `keydown` in the BUBBLE phase (both grant activation).
+  // A click on the bar's Play button runs its own toggle first (target before
+  // `document`), so the retry then finds the element already playing — a capture-phase
+  // pointerdown retry ran BEFORE that click and made the toggle pause it again. A
+  // keydown is the reverse: `document` runs BEFORE the stage's `window` shortcuts, so
+  // the retry plays and tags the event (retriedKeyRef) for Space/k to skip its toggle;
+  // a keydown on a focused button/link is left alone (its own click is the gesture).
+  // When it fires, or the element starts playing by any route, or this core
+  // unmounts, BOTH listeners are removed (a leftover one would later resume a
+  // deliberate pause, or play a detached element).
   const disarmRetryRef = useRef<(() => void) | null>(null);
   useEffect(() => () => disarmRetryRef.current?.(), []);
   function playOrDefer(v: HTMLVideoElement, what: string) {
@@ -1602,7 +1611,18 @@ function CurrentPlayer({
         v.removeEventListener("play", disarm);
         disarmRetryRef.current = null;
       };
-      const retry = () => {
+      const retry = (e: Event) => {
+        if (e.type === "keydown") {
+          const t = e.target as HTMLElement | null;
+          const ke = e as KeyboardEvent;
+          if (
+            (ke.key === " " || ke.key === "Enter") &&
+            (t?.tagName === "BUTTON" || t?.tagName === "A" || t?.getAttribute?.("role") === "button")
+          ) {
+            return;
+          }
+          retriedKeyRef.current = ke;
+        }
         disarm();
         if (!v.isConnected || !v.paused) return;
         void v.play()?.catch(() => {});

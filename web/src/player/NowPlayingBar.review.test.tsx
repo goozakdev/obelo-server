@@ -267,6 +267,80 @@ describe("R04-03 — the blocked-autoplay retry", () => {
   });
 });
 
+describe("R04-03 — Space/k after a blocked autoplay start playback", () => {
+  // jsdom's play()/pause() do not move `paused`; track it so a retry-then-toggle
+  // (play, then pause) is observable as a final paused state.
+  async function blockedStage() {
+    const video = await (async () => {
+      let paused = true;
+      playSpy.mockReset().mockRejectedValueOnce(new DOMException("blocked", "NotAllowedError")).mockImplementation(() => {
+        paused = false;
+        return Promise.resolve(undefined);
+      });
+      vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {
+        paused = true;
+      });
+      vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockImplementation(() => paused);
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      return playToStage([summary("t1")]);
+    })();
+    await act(async () => {
+      fireEvent.loadedMetadata(video);
+    });
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+    return video;
+  }
+
+  it.each([" ", "k"])("%j on the stage leaves the element playing", async (key) => {
+    const video = await blockedStage();
+    await act(async () => {
+      fireEvent.keyDown(document.body, { key });
+    });
+    expect(video.paused).toBe(false);
+  });
+
+  it("a Space on a focused button is left to the button's own click", async () => {
+    const video = await blockedStage();
+    const btn = screen.getByTestId("now-playing-collapse");
+    await act(async () => {
+      fireEvent.keyDown(btn, { key: " " });
+    });
+    expect(playSpy).toHaveBeenCalledTimes(1); // retry still armed, not spent
+    expect(video.paused).toBe(true);
+  });
+});
+
+describe("R04-02 — a stored image-subtitle burn preference without details at mount", () => {
+  const subs = [
+    { id: "img-en", source: "embedded", kind: "image", language: "en", forced: false, label: "English", url: undefined },
+    { id: "txt-en", source: "embedded", kind: "text", language: "en", forced: false, label: "English text", url: "/s/en.vtt" },
+  ] as PlaybackDecision["subtitles"];
+  // A title id of its own: the detail fetch is cached per id across tests, and a warm
+  // cache is exactly the case where the preference is NOT pending at mount.
+  function setup() {
+    startPlayback.mockResolvedValue(decisionOf({ tier: "transcode", subtitles: subs }));
+    getTitle.mockResolvedValue({ id: "tburn", kind: "movie", title: "Dune", editions: [], subtitles: subs });
+    savePreference(
+      window.localStorage,
+      "u1",
+      { kind: "title", id: "tburn" },
+      { ...AUTO_PREFERENCE, aacStereo: true, subtitle: { language: "en", forced: false } },
+    );
+    seedAndRender([entryFromTitle(summary("tburn"))]);
+  }
+
+  it("the first negotiation carries burnSubtitleId, and no same-language text track is ALSO selected", async () => {
+    const setTextTrack = vi.fn();
+    attachHls.mockReset().mockResolvedValue({ mode: "hls.js", detach: vi.fn(), setTextTrack });
+    setup();
+    await waitFor(() => expect(setTextTrack).toHaveBeenCalled());
+    expect((startPlayback.mock.calls[0][1] as { burnSubtitleId?: string }).burnSubtitleId).toBe("img-en");
+    // The burn already carries the English captions: no in-band text rendition on
+    // (a second caption layer would show the same line twice).
+    expect(setTextTrack.mock.calls.every((c) => c[0] === null)).toBe(true);
+  });
+});
+
 describe("R04-04 — auto-skip only for an entry the server cannot play", () => {
   function twoEntries() {
     return [entryFromTitle(summary("t1")), entryFromTitle(summary("t2"))];

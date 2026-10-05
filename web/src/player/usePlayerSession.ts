@@ -294,6 +294,20 @@ export function usePlayerSession(
     preference?.burnSubtitleId ?? null,
   );
   const burnRef = useRef<string | null>(preference?.burnSubtitleId ?? null);
+  // A preference that mounted `pending` (the Subtitle axis waits for the detail) has
+  // no burn id to seed from at mount; the resolved one is claimed once, as soon as the
+  // preference stops pending, so the stored image-subtitle choice reaches the first
+  // negotiation. The state half is seeded DURING render (React re-renders before
+  // commit) so no render shows a ready session with the burn still unset; the ref half
+  // is claimed by the negotiate effect below.
+  const [burnSeeded, setBurnSeeded] = useState(!pendingPreference);
+  if (!burnSeeded && !pendingPreference) {
+    setBurnSeeded(true);
+    if (preference?.burnSubtitleId) setBurnSubtitleId(preference.burnSubtitleId);
+  }
+  const burnSeededRef = useRef(!pendingPreference);
+  const resolvedBurnRef = useRef(preference?.burnSubtitleId);
+  resolvedBurnRef.current = preference?.burnSubtitleId;
   // The audio Stream the last negotiation requested (audio-streams/04), or null for
   // the server-resolved default. State so the Audio menu re-renders on an escalation;
   // mirrored into audioRef so negotiate reads it without being a dependency. Carried
@@ -456,6 +470,10 @@ export function usePlayerSession(
   // unmount/title change.
   useEffect(() => {
     if (pendingPreference) return;
+    if (!burnSeededRef.current) {
+      burnSeededRef.current = true;
+      if (resolvedBurnRef.current) burnRef.current = resolvedBurnRef.current;
+    }
     autoRetriedRef.current = false;
     setStatus({ kind: "negotiating" });
     negotiate();
