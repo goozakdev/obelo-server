@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/session";
 import { useFeature } from "../serverInfoContext";
@@ -8,6 +8,7 @@ import { MusicIcon, FilmIcon, TvIcon } from "./kindIcons";
 import LinkedMark from "./LinkedMark";
 import MarkerAutoSkipMenu from "../player/MarkerAutoSkipMenu";
 import type { Library } from "../api/types";
+import { useDismiss } from "../lib/useDismiss";
 
 // The shared authed header: app title (links to the landing) on the left, the
 // main nav centered, and the current user menu pinned right. The header is
@@ -197,21 +198,7 @@ function UserMenu({
     }
   }
 
-  useEffect(() => {
-    if (!open) return;
-    function onDocPointer(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(ref, open, () => setOpen(false));
 
   async function onLogout() {
     setLoggingOut(true);
@@ -398,21 +385,7 @@ function LibraryDropdown({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    function onDocPointer(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(ref, open, () => setOpen(false));
 
   return (
     <div className="nav-dropdown" ref={ref}>

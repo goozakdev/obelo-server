@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from "react";
+import { memo, useCallback, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { ShowSummary } from "../api/types";
@@ -145,7 +145,7 @@ function showToRow(s: ShowSummary): BrowseRowData {
     dataAttrs: { "data-show-id": s.id },
     thumb: (
       <div className="poster-frame">
-        <Poster titleId={s.id} title={s.title} src={s.posterUrl} />
+        <Poster titleId={s.id} title={s.title} src={s.posterUrl ?? null} />
       </div>
     ),
     meta: showMeta(s),
@@ -174,7 +174,7 @@ function showMeta(s: ShowSummary): ReactNode {
 // Show has no artwork — Show artwork is a later slice). The poster-tile / -title
 // / -img / -placeholder testids match PosterTile so the browse specs select it
 // the same way.
-function ShowTile({ show }: { show: ShowSummary }) {
+const ShowTile = memo(function ShowTile({ show }: { show: ShowSummary }) {
   return (
     <li
       className={linkedRowClass("poster-tile", show)}
@@ -183,7 +183,7 @@ function ShowTile({ show }: { show: ShowSummary }) {
     >
       <Link className="poster-link" to={`/shows/${show.id}`}>
         <div className="poster-frame">
-          <Poster titleId={show.id} title={show.title} src={show.posterUrl} />
+          <Poster titleId={show.id} title={show.title} src={show.posterUrl ?? null} />
           {show.needsReview && (
             <span className="badge badge-unwatched" data-testid="badge-needs-review">
               Needs review
@@ -209,4 +209,4 @@ function ShowTile({ show }: { show: ShowSummary }) {
       </Link>
     </li>
   );
-}
+});

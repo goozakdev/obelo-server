@@ -6,7 +6,7 @@ import { errorMessage } from "../screens/errorMessage";
 import Poster, { initials } from "../browse/Poster";
 import AlbumEditionPicker from "./AlbumEditionPicker";
 import FixItemPicker, { type FixSearchScope } from "./FixItemPicker";
-import { basename } from "./matcherCompare";
+import { basename } from "./paths";
 import { kindLabel, type FixItem } from "./needsFixing";
 
 // One row of the Needs-Fixing queue. Every row — whatever went wrong — answers the

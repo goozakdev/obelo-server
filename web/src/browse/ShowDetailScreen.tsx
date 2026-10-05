@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type {
@@ -26,7 +26,8 @@ import EpisodeActionsMenu from "./EpisodeActionsMenu";
 import TitleLogo from "./TitleLogo";
 import CastStrip from "./CastStrip";
 import DetailBackdrop from "./DetailBackdrop";
-import { EditIcon, MoreIcon } from "./ActionIcons";
+import { EditIcon } from "./ActionIcons";
+import OverflowPopover from "./OverflowPopover";
 import EntityEnrichmentOverridePicker from "../admin/EntityEnrichmentOverridePicker";
 import EntityMetadataEditor, { entityArtworkTabs } from "../admin/EntityMetadataEditor";
 import EditItemDialog from "../admin/EditItemDialog";
@@ -672,49 +673,10 @@ function ShowOverflowMenu({
   /** Present only for an Admin: the file matcher for this Show (ADR-0044). */
   matcherPath?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  // Close on an outside click or Escape while open (a lightweight popover; no portal).
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  // Run an item's action, then close the menu.
-  const pick = (fn: () => void) => () => {
-    fn();
-    setOpen(false);
-  };
-
   return (
-    <div className="overflow-menu" ref={wrapRef}>
-      <button
-        className="icon-button"
-        type="button"
-        data-testid="overflow-menu-button"
-        title="More actions"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <MoreIcon />
-      </button>
-
-      {open && (
-        <div className="overflow-menu-list" role="menu" data-testid="overflow-menu">
+    <OverflowPopover>
+      {({ close, pick }) => (
+        <>
           <button
             className="overflow-menu-item add-to-queue"
             type="button"
@@ -740,7 +702,7 @@ function ShowOverflowMenu({
               data-testid="sort-episodes-item"
               to={matcherPath}
               title="Lay this show's files against its episode slots and fix the arrangement"
-              onClick={() => setOpen(false)}
+              onClick={() => close()}
             >
               Sort episodes&hellip;
             </Link>
@@ -770,9 +732,9 @@ function ShowOverflowMenu({
               Detect markers now
             </button>
           )}
-        </div>
+        </>
       )}
-    </div>
+    </OverflowPopover>
   );
 }
 

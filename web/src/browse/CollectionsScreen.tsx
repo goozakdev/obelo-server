@@ -104,7 +104,7 @@ export default function CollectionsScreen() {
                     <Poster
                       titleId={c.id}
                       title={c.name}
-                      src={c.posterUrl}
+                      src={c.posterUrl ?? null}
                     />
                   </div>
                   <div className="poster-caption">

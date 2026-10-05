@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { MoreIcon } from "./ActionIcons";
+import OverflowPopover from "./OverflowPopover";
 
 // A minimal ⋯ kebab holding a single Admin "Scan" action — the Targeted scan
 // (ADR-0030) for a detail page that has no other overflow menu (Album / Artist).
@@ -17,43 +16,10 @@ export default function EntityScanMenu({
   /** The entity noun for the item's tooltip, e.g. "album" / "artist". */
   label: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  // Close on an outside click or Escape while open (a lightweight popover; no portal).
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   return (
-    <div className="overflow-menu" ref={wrapRef}>
-      <button
-        className="icon-button"
-        type="button"
-        data-testid="overflow-menu-button"
-        title="More actions"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <MoreIcon />
-      </button>
-
-      {open && (
-        <div className="overflow-menu-list" role="menu" data-testid="overflow-menu">
+    <OverflowPopover>
+      {({ pick }) => (
+        <>
           <button
             className="overflow-menu-item scan-item"
             type="button"
@@ -61,15 +27,12 @@ export default function EntityScanMenu({
             data-testid="scan-item"
             disabled={scanning}
             title={`Re-scan this ${label}'s folder for added or changed files`}
-            onClick={() => {
-              onScan();
-              setOpen(false);
-            }}
+            onClick={pick(onScan)}
           >
             {scanning ? "Scanning…" : "Scan"}
           </button>
-        </div>
+        </>
       )}
-    </div>
+    </OverflowPopover>
   );
 }

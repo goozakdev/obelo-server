@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiClient, ApiError } from "../api/client";
+import { isAbort } from "../api/errors";
 import type { PlaylistDetail } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import { useQueue } from "../player/queue/useQueue";
@@ -412,8 +413,4 @@ function RemoveItemControl({
       )}
     </>
   );
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }

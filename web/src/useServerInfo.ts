@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient, type ApiClient } from "./api/client";
-import { ApiError, NetworkError } from "./api/errors";
+import { ApiError, NetworkError, isAbort } from "./api/errors";
 import type { ServerInfo } from "./api/types";
 
 export type ServerState =
@@ -74,7 +74,7 @@ export function useServerInfoHandshake(client: ApiClient = apiClient): {
       })
       .catch((err: unknown) => {
         if (!active) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (isAbort(err)) return;
         if (err instanceof NetworkError) {
           fail({ status: "unreachable", message: err.message });
         } else if (err instanceof ApiError) {

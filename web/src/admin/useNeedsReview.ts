@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
+import { isAbort } from "../api/errors";
 import type { NeedsReviewItem } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 
@@ -64,8 +65,4 @@ export function useNeedsReview(libraryId: string, reloadToken = 0): NeedsReviewS
   const reload = useCallback(() => void load(), [load]);
 
   return { items, loading, error, reload };
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }

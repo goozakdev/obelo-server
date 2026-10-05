@@ -102,3 +102,22 @@ describe("ApiClient.subscribeEvents reconnect", () => {
     expect(all[1].closed).toBe(true);
   });
 });
+
+describe("ApiClient.reportProgress keepalive", () => {
+  it("forwards keepalive to fetch for a report that must outlive the page", async () => {
+    const fetchImpl = vi.fn(
+      async (..._args: unknown[]) =>
+        new Response(JSON.stringify({ watched: false }), { status: 200 }),
+    );
+    const client = new ApiClient({
+      tokenStore: memoryTokenStore("tok"),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await client.reportProgress("s1", { positionMs: 5, state: "paused" }, undefined, {
+      keepalive: true,
+    });
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({ keepalive: true });
+    await client.reportProgress("s1", { positionMs: 6, state: "playing" });
+    expect(fetchImpl.mock.calls[1][1]).not.toHaveProperty("keepalive", true);
+  });
+});

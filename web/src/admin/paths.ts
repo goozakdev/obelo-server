@@ -14,6 +14,13 @@ export function folderOf(filePath: string): string {
   return idx > 0 ? trimmed.slice(0, idx) : trimmed;
 }
 
+/** Split a path into its last segment, tolerating both separators. */
+export function basename(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+}
+
 /** In-app route to the file matcher for one Show (ADR-0044).
  *
  * Shared because two surfaces reach it — the Needs-Fixing queue's collapsed Show

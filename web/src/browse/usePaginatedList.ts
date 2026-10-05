@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isAbort } from "../api/errors";
 import { errorMessage } from "../screens/errorMessage";
 
 // The generic cursor-paginated-list data hook. It drives infinite scroll over
@@ -50,11 +51,14 @@ export interface PaginatedListState<T> {
   loadMore: () => void;
   /** Retry after an error (re-fetches the page that failed). */
   retry: () => void;
-  /** Re-fetch the currently-loaded window IN PLACE and merge it by id, without
-   * clearing the list first: existing items update in place (so React reuses
-   * their DOM by key — no remount, no flicker), newly-appearing items slot into
-   * server order, and removed items drop out. Silent (no loading flag) and a
-   * no-op while another fetch is in flight. Drives live updates while a Library
+  /** Re-fetch the currently-loaded window IN PLACE, without clearing the list
+   * first: the refreshed pages REPLACE the loaded list (server order, so existing
+   * items update in place and React reuses their DOM by key — no remount, no
+   * flicker; new items slot in and removed items drop out) and the cursor
+   * continues from where the walk stopped, so no stale tail is kept (D005). An
+   * item pushed past the walked window reappears on the next loadMore. Silent (no
+   * loading flag); a request made while another fetch is in flight is replayed
+   * when that fetch settles. Drives live updates while a Library
    * is scanning/enriching (realtime-events web slice) — distinct from the
    * destructive reset a new fetcher identity triggers (a different list). */
   refresh: () => void;
@@ -199,8 +203,9 @@ export function usePaginatedList<T>(
   }, [load]);
 
   // refresh re-fetches the loaded window (page one onward, until it has covered
-  // at least the items currently held or reached the end) and merges the result
-  // into the list by id, in server order, WITHOUT a blanking setItems([]). It
+  // at least the items currently held or reached the end) and REPLACES the loaded
+  // list with the walked pages, in server order, WITHOUT a blanking setItems([]);
+  // the cursor continues from where the walk stopped, no stale tail kept (D005). It
   // single-flights against load/loadMore via the same inFlight guard; a request
   // that arrives while busy is remembered (pendingRefresh) and replayed when the
   // in-flight fetch settles, so the terminal libraryUpdated nudge is never lost.
@@ -284,8 +289,4 @@ export function usePaginatedList<T>(
     retry,
     refresh: requestRefresh,
   };
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }

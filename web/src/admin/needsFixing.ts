@@ -6,8 +6,7 @@ import type {
   UnmatchedFile,
 } from "../api/types";
 import { API_PREFIX } from "../api/client";
-import { basename } from "./matcherCompare";
-import { folderOf, matcherPath } from "./paths";
+import { basename, folderOf, matcherPath } from "./paths";
 
 // The row model behind the Admin "Needs Fixing" queue.
 //

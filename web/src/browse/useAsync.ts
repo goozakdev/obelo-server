@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isAbort } from "../api/errors";
 import { errorMessage } from "../screens/errorMessage";
 
 // A tiny load-once async hook for the browse screens (library list, title
@@ -70,8 +71,4 @@ const LOADING: AsyncState<never> = { status: "loading" };
 
 function sameDeps(a: ReadonlyArray<unknown>, b: ReadonlyArray<unknown>): boolean {
   return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }

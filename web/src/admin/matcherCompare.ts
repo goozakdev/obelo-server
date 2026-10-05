@@ -29,6 +29,8 @@
 // Nothing here is named after a season or an episode: the Album matcher compares a
 // track filename against a track title by exactly these rules.
 
+import { basename } from "./paths";
+
 /** Tokens that mean "everything after me is technical, not the title". A real
  * filename puts the title BEFORE its release tags, so the first one of these ends
  * the title — which is what makes a release group (`x264-GRP`, `[SPARKS]`)
@@ -73,13 +75,6 @@ const POSITION_RES = [
   /^season$/,
   /^episode$/,
 ];
-
-/** Split a path into its last segment, tolerating both separators. */
-export function basename(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, "");
-  const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
-}
 
 /** Break a string into comparable lowercase word tokens: every separator a release
  * name uses (dots, underscores, hyphens, brackets, apostrophes) is a break, and

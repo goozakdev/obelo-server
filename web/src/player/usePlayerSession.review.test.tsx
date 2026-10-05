@@ -78,3 +78,19 @@ describe("usePlayerSession — retry (R04-17)", () => {
     expect(startPlayback.mock.calls.length - before).toBe(1);
   });
 });
+
+describe("usePlayerSession — page unload (R04-16)", () => {
+  it("sends the final beforeunload report with keepalive so it survives the unload", async () => {
+    startPlayback.mockResolvedValue(decisionOf("s1"));
+    const { result } = renderHook(() => usePlayerSession(fakeClient, "t1", 0));
+    await waitFor(() => expect(result.current.status.kind).toBe("ready"));
+    reportProgress.mockClear();
+    window.dispatchEvent(new Event("beforeunload"));
+    expect(reportProgress).toHaveBeenCalledWith(
+      "s1",
+      { positionMs: 0, state: "paused" },
+      undefined,
+      { keepalive: true },
+    );
+  });
+});

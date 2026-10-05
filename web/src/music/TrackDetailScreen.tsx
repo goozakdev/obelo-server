@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { TitleDetail, TitleSummary } from "../api/types";
@@ -13,7 +13,8 @@ import { albumArtworkUrl } from "../browse/albumArt";
 import { useLibraryMarks, useLibraryProvider } from "../browse/librariesContext";
 import LinkedMark from "../browse/LinkedMark";
 import AddToPlaylist from "../browse/AddToPlaylist";
-import { EditIcon, MoreIcon } from "../browse/ActionIcons";
+import { EditIcon } from "../browse/ActionIcons";
+import OverflowPopover from "../browse/OverflowPopover";
 import EnrichmentOverridePicker from "../admin/EnrichmentOverridePicker";
 import EditItemDialog from "../admin/EditItemDialog";
 import { useAuth } from "../auth/session";
@@ -325,51 +326,16 @@ function TrackOverflowMenu({
   onAddToQueue: () => void;
   onPlayNext: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   return (
-    <div className="overflow-menu" ref={wrapRef}>
-      <button
-        className="icon-button"
-        type="button"
-        data-testid="overflow-menu-button"
-        title="More actions"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <MoreIcon />
-      </button>
-
-      {open && (
-        <div className="overflow-menu-list" role="menu" data-testid="overflow-menu">
+    <OverflowPopover>
+      {({ pick }) => (
+        <>
           <button
             className="overflow-menu-item"
             type="button"
             role="menuitem"
             data-testid="play-next-button"
-            onClick={() => {
-              onPlayNext();
-              setOpen(false);
-            }}
+            onClick={pick(onPlayNext)}
           >
             Play next
           </button>
@@ -378,15 +344,12 @@ function TrackOverflowMenu({
             type="button"
             role="menuitem"
             data-testid="add-to-queue-button"
-            onClick={() => {
-              onAddToQueue();
-              setOpen(false);
-            }}
+            onClick={pick(onAddToQueue)}
           >
             Add to queue
           </button>
-        </div>
+        </>
       )}
-    </div>
+    </OverflowPopover>
   );
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { basename } from "./paths";
 import {
-  basename,
   compareTitles,
   comparePosition,
   comparableTitle,

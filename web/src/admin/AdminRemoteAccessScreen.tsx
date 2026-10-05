@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
+import { isAbort } from "../api/errors";
 import { appEvents } from "../events/enrichEvents";
 import { errorMessage } from "../screens/errorMessage";
 import { formatDate } from "../time";
@@ -200,7 +201,7 @@ export default function AdminRemoteAccessScreen() {
         setLoadError(null);
       } catch (err) {
         if (signal?.aborted || seq !== loadSeq.current) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (isAbort(err)) return;
         setLoadError(errorMessage(err));
       }
     },

@@ -42,8 +42,8 @@ import {
   type PlaceMode,
   type SlotIndex,
 } from "./matcherArrangement";
+import { basename } from "./paths";
 import {
-  basename,
   compareTitles,
   comparePosition,
   markFilename,

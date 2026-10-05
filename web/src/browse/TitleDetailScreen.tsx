@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type {
@@ -35,7 +35,6 @@ import {
   WatchlistIcon,
   WatchedIcon,
   EditIcon,
-  MoreIcon,
 } from "./ActionIcons";
 import EnrichmentOverridePicker from "../admin/EnrichmentOverridePicker";
 import EditItemDialog from "../admin/EditItemDialog";
@@ -47,6 +46,7 @@ import { downloadVlcPlaylist } from "./openInVlc";
 import PlaybackOptionsSheet, {
   type StreamSelection,
 } from "../player/PlaybackOptionsSheet";
+import OverflowPopover from "./OverflowPopover";
 
 // The Title detail page (issue 03 / PRD user stories 12–13): GET /titles/{id}
 // rendered as summary/year/artwork + the Editions → Files (quality/version
@@ -937,49 +937,10 @@ function OverflowMenu({
   onScan?: () => void;
   scanning: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  // Close on an outside click or Escape while open (a lightweight popover; no portal).
-  useEffect(() => {
-    if (!open) return;
-    function onDocDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  // Run an item's action, then close the menu.
-  const pick = (fn: () => void) => () => {
-    fn();
-    setOpen(false);
-  };
-
   return (
-    <div className="overflow-menu" ref={wrapRef}>
-      <button
-        className="icon-button"
-        type="button"
-        data-testid="overflow-menu-button"
-        title="More actions"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <MoreIcon />
-      </button>
-
-      {open && (
-        <div className="overflow-menu-list" role="menu" data-testid="overflow-menu">
+    <OverflowPopover>
+      {({ pick }) => (
+        <>
           <button
             className="overflow-menu-item add-to-queue"
             type="button"
@@ -1034,9 +995,9 @@ function OverflowMenu({
               {scanning ? "Scanning…" : "Scan"}
             </button>
           )}
-        </div>
+        </>
       )}
-    </div>
+    </OverflowPopover>
   );
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import type { PlaylistSummary } from "../api/types";
 import type { TrackPlaylists } from "./useTrackPlaylists";
+import { useDismiss } from "../lib/useDismiss";
 
 // The per-row "three dots" actions menu on the Album track list. A click opens a
 // dropdown (same click-outside / Escape pattern as the header's NavDropdown) with:
@@ -42,21 +43,7 @@ export default function TrackActionsMenu({
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on outside click / Escape (mirrors the header NavDropdown).
-  useEffect(() => {
-    if (!open) return;
-    function onDocPointer(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) close();
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") close();
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(ref, open, close);
 
   // Ask for the caller's playlists whenever the menu opens (shared across rows).
   useEffect(() => {

@@ -62,3 +62,9 @@ export async function parseErrorEnvelope(res: Response): Promise<ApiError> {
 
   return new ApiError(res.status, code, message, details);
 }
+
+// isAbort reports whether err is the DOMException a fetch (or an aborted
+// signal) rejects with, so callers can drop a cancelled request silently.
+export function isAbort(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}

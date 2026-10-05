@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useDismiss } from "../lib/useDismiss";
 
 // The per-row "three dots" actions menu on the Show detail episode list. A click
 // opens a dropdown (same click-outside / Escape pattern as the music
@@ -25,21 +26,7 @@ export default function EpisodeActionsMenu({
   const ref = useRef<HTMLDivElement>(null);
 
   // Close on outside click / Escape (mirrors the music TrackActionsMenu).
-  useEffect(() => {
-    if (!open) return;
-    function onDocPointer(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(ref, open, () => setOpen(false));
 
   return (
     <div className="row-menu" ref={ref}>

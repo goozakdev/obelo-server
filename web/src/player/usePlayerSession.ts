@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../api/client";
-import { ApiError } from "../api/errors";
+import { ApiError, isAbort } from "../api/errors";
 import type {
   DeviceProfile,
   PlaybackConstraints,
@@ -657,11 +657,19 @@ export function usePlayerSession(
     const onUnload = () => {
       const sid = sessionIdRef.current;
       if (!sid || endedRef.current) return;
-      report(getPositionRef.current(), "paused");
+      // keepalive lets the request finish after the page is gone.
+      void Promise.resolve(
+        client.reportProgress(
+          sid,
+          { positionMs: getPositionRef.current(), state: "paused" },
+          undefined,
+          { keepalive: true },
+        ),
+      ).catch(() => {});
     };
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
-  }, [report]);
+  }, [client]);
 
   // On unmount (route change away from the player), clear the interval. The
   // The Now Playing bar calls end() in its own unmount effect with the final position;
@@ -686,8 +694,4 @@ export function usePlayerSession(
     selectVideoStream,
     recover,
   };
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }

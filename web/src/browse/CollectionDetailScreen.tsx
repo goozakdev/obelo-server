@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient, ApiError } from "../api/client";
+import { isAbort } from "../api/errors";
 import type { CollectionDetail } from "../api/types";
 import { useAuth } from "../auth/session";
 import { errorMessage } from "../screens/errorMessage";
@@ -439,8 +440,4 @@ function RemoveMemberControl({
       )}
     </>
   );
-}
-
-function isAbort(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
 }

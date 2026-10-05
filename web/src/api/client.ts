@@ -1,4 +1,4 @@
-import { ApiError, NetworkError, parseErrorEnvelope } from "./errors";
+import { ApiError, NetworkError, isAbort, parseErrorEnvelope } from "./errors";
 import { webTokenStore, supportsRetention, type TokenStore } from "./token";
 import {
   normalizeAlbumTracks,
@@ -228,6 +228,9 @@ interface RequestOptions {
    * "bad credentials" to show on the form, not "session expired, go to login"
    * (we are already there). */
   skipUnauthorizedHandler?: boolean;
+  /** Let the request outlive the page (fetch `keepalive`) — for a final report sent
+   * while the tab unloads. */
+  keepalive?: boolean;
 }
 
 /** enrichmentSearchParams builds the Edit-item search query string from the query
@@ -2360,10 +2363,11 @@ export class ApiClient {
     sessionId: string,
     report: { positionMs: number; state: PlaybackState; audioStreamId?: string },
     signal?: AbortSignal,
+    options?: { keepalive?: boolean },
   ): Promise<WatchStateResult> {
     const res = await this.request<WatchStateResult>(
       `/sessions/${encodeURIComponent(sessionId)}/progress`,
-      { method: "POST", body: report, signal },
+      { method: "POST", body: report, signal, keepalive: options?.keepalive },
     );
     return normalizeWatchState(res);
   }
@@ -2756,11 +2760,12 @@ export class ApiClient {
         headers,
         body,
         signal: opts.signal,
+        keepalive: opts.keepalive,
       });
     } catch (cause) {
       // fetch only rejects on network-level failures (server down, DNS,
       // aborted). HTTP error statuses still resolve and are handled below.
-      if (cause instanceof DOMException && cause.name === "AbortError") {
+      if (isAbort(cause)) {
         throw cause;
       }
       throw new NetworkError("could not reach the server", { cause });
@@ -2791,7 +2796,7 @@ export class ApiClient {
       // A 2xx whose body is not JSON (a proxy or the SPA fallback answering with
       // index.html) or whose read failed: surface a typed error, not a raw
       // SyntaxError/TypeError that callers branching on ApiError/NetworkError miss.
-      if (cause instanceof DOMException && cause.name === "AbortError") throw cause;
+      if (isAbort(cause)) throw cause;
       if (cause instanceof SyntaxError) {
         throw new ApiError(res.status, "BAD_RESPONSE", "the server sent a response that is not JSON");
       }
