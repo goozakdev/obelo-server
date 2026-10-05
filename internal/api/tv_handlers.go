@@ -436,22 +436,18 @@ func handleListShows(deps Deps, libraryID string) http.HandlerFunc {
 		// watched affordance, issue tv-music/04) via one bulk read. The grid runs
 		// behind requireAuth, so the identity is present; if it is somehow absent we
 		// still render the grid (counts simply omitted).
+		ids := make([]string, 0, len(page.Shows))
+		for _, s := range page.Shows {
+			ids = append(ids, s.ID)
+		}
 		counts := map[string]int{}
 		if ident, ok := identityFrom(r.Context()); ok {
-			ids := make([]string, 0, len(page.Shows))
-			for _, s := range page.Shows {
-				ids = append(ids, s.ID)
-			}
 			if c, err := svc.UnwatchedEpisodeCounts(ident.User.ID, ids); err == nil {
 				counts = c
 			}
 		}
 		// Enrichment for the page in two bulk reads (no N+1): the descriptive
 		// fields + which artwork roles each Show has fetched.
-		ids := make([]string, 0, len(page.Shows))
-		for _, s := range page.Shows {
-			ids = append(ids, s.ID)
-		}
 		enr, _ := svc.EntityEnrichmentForMany(store.EntityShow, ids)
 		roles, _ := svc.EntityArtworkRoles(store.EntityShow, ids)
 		versions, _ := svc.EntityArtworkVersions(store.EntityShow, ids)

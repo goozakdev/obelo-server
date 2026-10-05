@@ -607,6 +607,7 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			RemuxSelectedOnly: req.RemuxSelectedOnly,
 			Scope:             scope,
 		})
+		refusal := relayRefusalOf(err)
 		switch {
 		case errors.Is(err, playback.ErrTitleNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "title not found", nil)
@@ -657,13 +658,12 @@ func handlePlayback(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, codeLinkUnreachable,
 				"the sharing server could not be reached", nil)
 			return
-		case relayRefusalOf(err) != nil:
+		case refusal != nil:
 			// The sharer answered, and its answer is the one the client needs: a
 			// SERVER_BUSY with the bitrate to retry at, a STREAM_LIMIT with its counts, a
 			// TRANSCODE_REQUIRED with its reason. It passes through verbatim (ADR-0056
 			// §5) — this Server knows nothing that would improve it.
-			ref := relayRefusalOf(err)
-			writeError(w, relayRefusalStatus(ref), relayRefusalCode(ref), ref.Message, ref.Details)
+			writeError(w, relayRefusalStatus(refusal), relayRefusalCode(refusal), refusal.Message, refusal.Details)
 			return
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, codeInternal, "playback negotiation failed", nil)
