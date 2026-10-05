@@ -3,8 +3,7 @@ import type {
   PlaybackConstraints,
   VideoCodecSupport,
 } from "../api/types";
-import { preferredSubtitleLang } from "./subtitles";
-import { preferredAudioLang } from "./audio";
+import { preferredLang } from "./lang";
 import { canPlayHlsNatively } from "./nativeHls";
 
 // Derive the Capability profile from the ACTUAL browser, not a hand-written
@@ -172,11 +171,11 @@ export function deriveCapabilityProfile(): {
       // default disposition → first, ADR-0023) so the delivered audio matches the
       // viewer's usual language absent a remembered pick; the client sorts the Audio
       // menu by the same value (audio-streams/04).
-      preferredAudioLang: preferredAudioLang() || undefined,
+      preferredAudioLang: preferredLang() || undefined,
       // The viewer's preferred subtitle language (browser locale). The server uses
       // it only to sort/label the track menu (no persistent per-User preference
       // this slice); the client sorts by the same value (ADR-0020).
-      preferredSubtitleLang: preferredSubtitleLang() || undefined,
+      preferredSubtitleLang: preferredLang() || undefined,
     },
   };
 }

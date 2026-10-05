@@ -19,7 +19,8 @@ import {
   sourceHeightForSelection,
   type QualityCapId,
 } from "./qualityLadder";
-import { orderedAudioStreams, preferredAudioLang } from "./audio";
+import { orderedAudioStreams } from "./audio";
+import { preferredLang } from "./lang";
 import { orderedVideoStreams } from "./video";
 import { resolveQualityConstraints } from "./playbackResolver";
 import { useOptionalFeature } from "../serverInfoContext";
@@ -413,7 +414,7 @@ function AudioSection({
   onSelect: (audioStreamId: string | null) => void;
 }) {
   if (streams.length === 0) return null;
-  const ordered = orderedAudioStreams(streams, preferredAudioLang());
+  const ordered = orderedAudioStreams(streams, preferredLang());
   return (
     <section className="playback-options-section" data-testid="audio-section">
       <h3 className="section-title playback-options-section-title">Audio</h3>

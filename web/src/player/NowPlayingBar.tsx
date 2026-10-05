@@ -25,14 +25,13 @@ import {
   matchTextTrackId,
   orderedImageTracks,
   orderedTextTracks,
-  preferredSubtitleLang,
 } from "./subtitles";
 import {
   audioRenditionIndex,
   initialAudioId,
   orderedAudioStreams,
-  preferredAudioLang,
 } from "./audio";
+import { kindLabel, preferredLang } from "./lang";
 import { initialVideoId, orderedVideoStreams } from "./video";
 import type {
   AudioStream,
@@ -46,10 +45,15 @@ import { resolvePlayback } from "./playbackResolver";
 import { useOptionalFeature } from "../serverInfoContext";
 import { usePlaybackTransport } from "./transport";
 import QueuePanel from "./QueuePanel";
-import SkipMarkerButton, { CREDITS_REPORT_TIMEOUT_MS, skipTargetMs } from "./SkipMarkerButton";
+import SkipMarkerButton, {
+  CREDITS_REPORT_TIMEOUT_MS,
+  skipTargetMs,
+  type SkipMarkerButtonProps,
+} from "./SkipMarkerButton";
 import { useQueue } from "./queue/useQueue";
 import type { QueueEntry } from "./queue/model";
 import { formatTimecode } from "../time";
+import { createMediaTimeStore, useMediaTime, type MediaTimeStore } from "./mediaTime";
 
 // The Now Playing bar (now-playing-bar/01): the persistent, shell-owned player.
 // Mounted ONCE in App outside <Routes>, so it survives navigation — playback keeps
@@ -79,25 +83,32 @@ function isHlsTier(tier: string): boolean {
   return tier === "directStream" || tier === "transcode";
 }
 
-/** A friendly noun for a Title's media kind (used as the label's degraded fallback
- * when the detail fetch fails). */
-function kindLabel(kind: string): string {
-  switch (kind) {
-    case "movie":
-      return "Movie";
-    case "episode":
-      return "Episode";
-    case "track":
-      return "Track";
-    default:
-      return kind;
-  }
-}
-
 /** A Track is audio-only (no video surface); everything else (Movie/Episode) shows
  * the inline video stage. */
 function isVideoKind(kind: string): boolean {
   return kind !== "track";
+}
+
+/** Keys that never grant user activation (HTML "activation triggering input event":
+ * a keydown that is neither Escape nor a user-agent-reserved shortcut). A bare
+ * modifier or an IME/dead key is not a gesture either. */
+const NON_ACTIVATING_KEYS = new Set([
+  "Escape",
+  "Shift",
+  "Control",
+  "Alt",
+  "AltGraph",
+  "Meta",
+  "CapsLock",
+  "Dead",
+  "Unidentified",
+  "Process",
+]);
+
+/** Whether a keydown counts as user activation for the blocked-autoplay retry. */
+function grantsActivation(e: KeyboardEvent): boolean {
+  if (NON_ACTIVATING_KEYS.has(e.key)) return false;
+  return !(e.ctrlKey || e.metaKey); // ⌘/Ctrl chords belong to the browser/OS
 }
 
 /** How far the ±10s skip buttons jump (video only). */
@@ -529,14 +540,42 @@ export default function NowPlayingBar() {
   // Whether we currently hold a pushed (non-content) history entry for the stage.
   const pushedHistoryRef = useRef(false);
   // The entry id the surface was last reconciled against (see the render-phase
-  // reconcile below the early return).
-  const surfaceEntryRef = useRef<string | null>(null);
+  // reconcile below). STATE, not a ref: a ref written in the render phase survives
+  // StrictMode's discarded first render while the setSurface queued beside it does
+  // not, so the reconcile would never run and a Play would never open the stage.
+  const [surfaceEntryId, setSurfaceEntryId] = useState<string | null>(null);
   // Custom PiP offset (a pointer drag nudges the corner box), held here too so a
   // dragged-out pip keeps its position across an advance.
   const [pipOffset, setPipOffset] = useState<{ x: number; y: number } | null>(null);
-  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(
-    null,
-  );
+  // The drag in progress: the pointer's start + the offset it began from, the surface
+  // element the transform is written to, and the latest offset (committed on release).
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+    el: HTMLElement | null;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // Reconcile the surface to the current entry, in the RENDER phase so there's no
+  // one-frame flash (the sanctioned "adjust state when a prop changes" pattern). A
+  // video KEEPS an existing stage/pip surface across an entry change — this is what
+  // continues an auto-advanced Episode in the SAME view the previous one ended in;
+  // coming from bar-only it opens the stage for a user-initiated entry (a Play /
+  // advance → autoPlay) and stays hidden for a cold reload-restored paused one.
+  // Audio (a Track) is always bar-only. Declared before the early return so the hook
+  // order stays stable.
+  if (entry && surfaceEntryId !== entry.entryId) {
+    const autoPlayEntry = entry.entryId !== initialEntryId.current;
+    setSurfaceEntryId(entry.entryId);
+    setSurface((cur) => {
+      if (!video) return "bar-only";
+      if (cur === "stage" || cur === "pip") return cur;
+      return autoPlayEntry ? "stage" : "bar-only";
+    });
+  }
 
   // Opening the immersive stage pushes a single non-content history entry (same
   // URL, so react-router never sees a navigation) — this is what lets the browser
@@ -644,25 +683,36 @@ export default function NowPlayingBar() {
   }
 
   // Custom PiP is a MOVABLE corner box: a pointer drag on the window nudges it by an
-  // offset applied as a transform. Kept deliberately minimal (no bounds math).
+  // offset applied as a transform. Kept deliberately minimal (no bounds math). The
+  // transform is written straight to the element while dragging (no React render per
+  // pointermove, which re-rendered the whole player) and committed to state on release.
   function onPipPointerDown(e: ReactPointerEvent) {
     if (surface !== "pip") return;
+    const baseX = pipOffset?.x ?? 0;
+    const baseY = pipOffset?.y ?? 0;
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
-      baseX: pipOffset?.x ?? 0,
-      baseY: pipOffset?.y ?? 0,
+      baseX,
+      baseY,
+      el: e.currentTarget.closest<HTMLElement>(".now-playing-surface"),
+      x: baseX,
+      y: baseY,
     };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   }
   function onPipPointerMove(e: ReactPointerEvent) {
     const d = dragRef.current;
     if (!d) return;
-    setPipOffset({ x: d.baseX + (e.clientX - d.startX), y: d.baseY + (e.clientY - d.startY) });
+    d.x = d.baseX + (e.clientX - d.startX);
+    d.y = d.baseY + (e.clientY - d.startY);
+    if (d.el) d.el.style.transform = `translate(${d.x}px, ${d.y}px)`;
   }
   function onPipPointerUp(e: ReactPointerEvent) {
+    const d = dragRef.current;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (d && (d.x !== d.baseX || d.y !== d.baseY)) setPipOffset({ x: d.x, y: d.y });
   }
 
   // The bar is absent when nothing is queued and on the unauthenticated routes
@@ -672,22 +722,6 @@ export default function NowPlayingBar() {
   if (!entry || onAuthRoute) return null;
 
   const autoPlay = entry.entryId !== initialEntryId.current;
-
-  // Reconcile the surface to the current entry, in the RENDER phase so there's no
-  // one-frame flash (the sanctioned "adjust state when a prop changes" pattern). A
-  // video KEEPS an existing stage/pip surface across an entry change — this is what
-  // continues an auto-advanced Episode in the SAME view the previous one ended in;
-  // coming from bar-only it opens the stage for a user-initiated entry (a Play /
-  // advance → autoPlay) and stays hidden for a cold reload-restored paused one.
-  // Audio (a Track) is always bar-only.
-  if (surfaceEntryRef.current !== entry.entryId) {
-    surfaceEntryRef.current = entry.entryId;
-    setSurface((cur) => {
-      if (!video) return "bar-only";
-      if (cur === "stage" || cur === "pip") return cur;
-      return autoPlay ? "stage" : "bar-only";
-    });
-  }
 
   return (
     <>
@@ -809,6 +843,102 @@ function UpNextCard({
   );
 }
 
+/** The end-of-episode "Up Next" overlay (a card in the last 30s of a STAGED video that
+ * has a next Queue entry), owning the time subscription so the player core is not
+ * re-rendered by playback ticks. It re-renders once a second inside the last 30s
+ * only; elsewhere its value is a constant 0. A click plays the next entry at once;
+ * Esc dismisses the card for THIS entry (the dismissal resets naturally when the core
+ * re-keys onto the next entry). Gated to the stage — the immersive viewing surface —
+ * so it never intrudes while the user is browsing with the pip, and it rides inside
+ * .now-playing-bar so it survives fullscreen. */
+function UpNextOverlay({
+  store,
+  active,
+  entry,
+  onPlay,
+}: {
+  store: MediaTimeStore;
+  active: boolean;
+  entry: QueueEntry | undefined;
+  onPlay: () => void;
+}) {
+  // Whole seconds left, but only inside the final 30s (0 = not showing) — so the
+  // snapshot, and with it this component, stays put for the rest of the runtime.
+  const secondsLeft = useMediaTime(store, (t) => {
+    const left = t.duration > 0 ? Math.ceil(t.duration - t.currentTime) : 0;
+    return left > 0 && left <= 30 ? left : 0;
+  });
+  const [dismissed, setDismissed] = useState(false);
+  const show = active && !!entry && !dismissed && secondsLeft > 0;
+
+  // Esc dismisses the card. Registered in the CAPTURE phase so it runs BEFORE the
+  // bar's stage-collapse keydown (a bubble-phase window listener) — stopPropagation
+  // then keeps that Esc from also collapsing the stage to pip, so a single Esc just
+  // hides the card. Only armed while the card is up; once hidden, Esc collapses the
+  // stage as usual.
+  useEffect(() => {
+    if (!show) return;
+    function onEscCapture(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      setDismissed(true);
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    window.addEventListener("keydown", onEscCapture, true);
+    return () => window.removeEventListener("keydown", onEscCapture, true);
+  }, [show]);
+
+  if (!show || !entry) return null;
+  return <UpNextCard entry={entry} secondsLeft={secondsLeft} onPlay={onPlay} />;
+}
+
+/** The seekable progress bar: elapsed on the left, remaining (as −m:ss) on the right,
+ * a range input to click/drag-seek in between. Owns the time subscription. */
+function ProgressBar({
+  store,
+  onSeek,
+}: {
+  store: MediaTimeStore;
+  onSeek: (seconds: number) => void;
+}) {
+  const currentTime = useMediaTime(store, (t) => t.currentTime);
+  const duration = useMediaTime(store, (t) => t.duration);
+  const elapsedLabel = formatTimecode(currentTime * 1000);
+  const remainingSeconds = duration > 0 ? Math.max(duration - currentTime, 0) : 0;
+  const remainingLabel = `-${formatTimecode(remainingSeconds * 1000)}`;
+  return (
+    <div className="now-playing-progress">
+      <span className="now-playing-time" data-testid="now-playing-elapsed">
+        {elapsedLabel}
+      </span>
+      <input
+        className="now-playing-seek"
+        type="range"
+        min={0}
+        max={duration > 0 ? duration : 0}
+        step={0.1}
+        data-testid="now-playing-progress"
+        aria-label="Seek"
+        value={Math.min(currentTime, duration > 0 ? duration : currentTime)}
+        onChange={(e) => onSeek(Number(e.target.value))}
+      />
+      <span className="now-playing-time" data-testid="now-playing-remaining">
+        {remainingLabel}
+      </span>
+    </div>
+  );
+}
+
+/** SkipMarkerButton fed the live position, so the position subscription lives here
+ * and not in the player core. */
+function TimedSkipMarkerButton({
+  store,
+  ...props
+}: { store: MediaTimeStore } & Omit<SkipMarkerButtonProps, "positionMs">) {
+  const currentTime = useMediaTime(store, (t) => t.currentTime);
+  return <SkipMarkerButton {...props} positionMs={Math.floor(currentTime * 1000)} />;
+}
+
 /** Owns the one media element + Playback session for the current entry, plus the
  * bar's now-playing label and transport. Relocated from the retired PlayerScreen's
  * PlayerCore; behavior (negotiate/HLS/resume/report/end/skip) is unchanged. */
@@ -866,21 +996,28 @@ function CurrentPlayer({
   // the source height) so the first request already carries the overrides (no
   // start-then-re-negotiate). An Episode without a threaded showId, or a detail that
   // failed to load, degrades to Auto / Direct Play rather than blocking.
-  const userId = persistedUserId();
   // Force Remux (issue 07) is FLAG-GATED end to end: even a stored `remuxSelectedOnly`
   // preference must not reach the wire unless the server advertises the feature (a
   // server without the route rejects the unknown request field). Optional so a
   // bare test mount (no provider) degrades to off, exactly like an absent flag.
   const remuxAllowed = useOptionalFeature("remuxSelectedOnly");
-  const prefTitle =
-    entry.title.kind === "episode"
-      ? entry.showId
-        ? { id: titleId, kind: "episode", episode: { showId: entry.showId } }
-        : null
-      : { id: titleId, kind: entry.title.kind };
-  const storedPref = prefTitle
-    ? loadPreferenceForTitle(window.localStorage, userId, prefTitle)
-    : null;
+  // Read from storage ONCE per Title (the core is keyed by entry): this component
+  // re-renders on state changes, and each render used to repeat two synchronous
+  // localStorage reads + JSON.parse. The stored preference is only consumed as the
+  // negotiation / caption seed, so it need not track later storage writes.
+  const showId = entry.showId;
+  const kind = entry.title.kind;
+  const storedPref = useMemo(() => {
+    const prefTitle =
+      kind === "episode"
+        ? showId
+          ? { id: titleId, kind: "episode", episode: { showId } }
+          : null
+        : { id: titleId, kind };
+    return prefTitle
+      ? loadPreferenceForTitle(window.localStorage, persistedUserId(), prefTitle)
+      : null;
+  }, [titleId, kind, showId]);
   // Only the axes that resolve AGAINST the detail (the Edition name→id map, the
   // Quality source height, the Subtitle burn decision) make the negotiation wait
   // (`pending`) for it. The AAC-stereo toggle (issue 06) is detail-free — a pure flag
@@ -965,11 +1102,12 @@ function CurrentPlayer({
   const autoStartedRef = useRef(false);
   // Reflects the real media element state so the play/pause button is honest.
   const [playing, setPlaying] = useState(false);
-  // Track the element's real position + duration (from timeupdate / metadata /
+  // The element's real position + duration (from timeupdate / metadata /
   // durationchange) so the progress bar and time labels reflect actual playback,
-  // same philosophy as `playing` — honest media state, not a guess.
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  // same philosophy as `playing` — honest media state, not a guess. Held in a store
+  // the time-dependent children subscribe to, NOT in this component's state: a
+  // ~4 Hz timeupdate must not re-render the whole core (R04-08).
+  const [timeStore] = useState(createMediaTimeStore);
 
   // Per-user volume + mute (localStorage), applied to the element below.
   const prefs = usePlaybackPrefs();
@@ -980,42 +1118,9 @@ function CurrentPlayer({
   // continues in the same view when the Queue advances. This core just renders into
   // the surface the bar hands it and reports user surface changes back up.
 
-  // ── End-of-episode "Up Next" card ─────────────────────────────────────────────
-  // In the last 30s of a STAGED video that has a next Queue entry, preview it in a
-  // small bottom-right card (thumbnail + title + series, an "Up Next:" lead and a
-  // live countdown). A click plays it immediately; Esc dismisses the card for THIS
-  // entry (the dismissal resets naturally when the core re-keys onto the next entry).
-  // Gated to the stage — the immersive viewing surface — so it never intrudes while
-  // the user is browsing with the pip, and it rides inside .now-playing-bar so it
-  // survives fullscreen.
+  // The Queue's next entry — previewed by the end-of-episode Up Next card
+  // (UpNextOverlay) and the Credits Skip's "Next episode".
   const nextEntry = queue.upNext[0];
-  const secondsLeft = duration > 0 ? Math.ceil(duration - currentTime) : 0;
-  const [upNextDismissed, setUpNextDismissed] = useState(false);
-  const showUpNext =
-    video &&
-    surface === "stage" &&
-    !!nextEntry &&
-    !upNextDismissed &&
-    duration > 0 &&
-    secondsLeft > 0 &&
-    secondsLeft <= 30;
-
-  // Esc dismisses the card. Registered in the CAPTURE phase so it runs BEFORE the
-  // bar's stage-collapse keydown (a bubble-phase window listener) — stopPropagation
-  // then keeps that Esc from also collapsing the stage to pip, so a single Esc just
-  // hides the card. Only armed while the card is up; once hidden, Esc collapses the
-  // stage as usual.
-  useEffect(() => {
-    if (!showUpNext) return;
-    function onEscCapture(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      setUpNextDismissed(true);
-      e.stopPropagation();
-      e.preventDefault();
-    }
-    window.addEventListener("keydown", onEscCapture, true);
-    return () => window.removeEventListener("keydown", onEscCapture, true);
-  }, [showUpNext]);
 
   // ── Keyboard playback shortcuts (immersive stage / fullscreen only) ───────────
   // Space/k play/pause, ←/→ + j/l skip ∓10s, ↑/↓ volume, 0–9 seek to N0%, , / .
@@ -1168,6 +1273,17 @@ function CurrentPlayer({
     if (v) lastPositionMsRef.current = Math.floor(v.currentTime * 1000);
     return lastPositionMsRef.current;
   };
+  // Capture where the viewer is before an escalating re-negotiation (burn-in / audio
+  // or video switch / vanished-session recovery) restarts the stream: the fresh
+  // <video> seeks to the returned position (ms) and resumes playing if this one was.
+  function captureResume(): number {
+    const ms = positionMs();
+    pendingSeekMsRef.current = ms;
+    resumeAfterSeekRef.current = !videoRef.current?.paused;
+    seekedRef.current = false;
+    setPlaying(false); // the old element goes away without a `pause` event
+    return ms;
+  }
 
   // End the session (final report + DELETE) when this core unmounts (a queue
   // advance re-keying it, or the Queue emptying so the bar unmounts). Runs once.
@@ -1231,11 +1347,7 @@ function CurrentPlayer({
     lastRecoverAtRef.current = now;
     // Resume the fresh stream where the viewer was, and keep playing if they were —
     // onLoadedMetadata consumes these exactly as it does after a burn/audio switch.
-    pendingSeekMsRef.current = positionMs();
-    resumeAfterSeekRef.current = !videoRef.current?.paused;
-    seekedRef.current = false;
-    setPlaying(false); // the old element goes away without a `pause` event
-    session.recover(positionMs());
+    session.recover(captureResume());
     return true;
   };
   useEffect(() => {
@@ -1286,7 +1398,7 @@ function CurrentPlayer({
   // preferred language (client-sent + sorted client-side). Image tracks and
   // unconvertible text are excluded by orderedTextTracks. Stable per session
   // (the decision doesn't change once ready), so the <track> list never churns.
-  const preferredLang = useMemo(() => preferredSubtitleLang(), []);
+  const viewerLang = useMemo(() => preferredLang(), []);
   const negotiatedSubs: SubtitleTrack[] =
     status.kind === "ready" ? status.decision.subtitles : [];
   // Subtitles fetched mid-session via "search online" (subtitles/05). They aren't in
@@ -1300,15 +1412,15 @@ function CurrentPlayer({
     [negotiatedSubs, fetchedTracks],
   );
   const textTracks = useMemo(
-    () => orderedTextTracks(decisionSubs, preferredLang),
-    [decisionSubs, preferredLang],
+    () => orderedTextTracks(decisionSubs, viewerLang),
+    [decisionSubs, viewerLang],
   );
   // The IMAGE tracks (PGS/VOBSUB/DVD, embedded or sidecar). Selecting one BURNS it
   // into the video via a fresh transcode negotiation (subtitles/04); they are never
   // auto-displayed. Kept beside the text tracks so the one captions menu lists both.
   const imageTracks = useMemo(
-    () => orderedImageTracks(decisionSubs, preferredLang),
-    [decisionSubs, preferredLang],
+    () => orderedImageTracks(decisionSubs, viewerLang),
+    [decisionSubs, viewerLang],
   );
   // The selected text-track id, or null for "off". Defaults OFF unless a track is
   // forced (auto-display). Initialized once per session when the decision lands.
@@ -1331,11 +1443,20 @@ function CurrentPlayer({
   useEffect(() => {
     if (subsInitRef.current || status.kind !== "ready") return;
     subsInitRef.current = true;
-    // A burned-in image sub is already the caption; seeding a text track too would
-    // show captions twice.
-    if (session.burnSubtitleId != null) return;
-    const stored = storedSub ? matchTextTrackId(textTracks, storedSub) : null;
-    setSelectedSubId(stored ?? defaultTrackId(textTracks));
+    // A burned-in image sub is already the caption: seeding a text track of the SAME
+    // language too would show captions twice, so only those are held back. Other
+    // languages stay eligible — notably a forced track (foreign-dialogue-only subs)
+    // is still the default beside a burned full track. When the burned track's
+    // language is unknown nothing can be told apart, so no text track is seeded.
+    let eligible = textTracks;
+    if (session.burnSubtitleId != null) {
+      const burned = imageTracks.find((t) => t.id === session.burnSubtitleId);
+      const burnedLang = (burned?.language ?? "").toLowerCase();
+      if (!burnedLang) return;
+      eligible = textTracks.filter((t) => (t.language ?? "").toLowerCase() !== burnedLang);
+    }
+    const stored = storedSub ? matchTextTrackId(eligible, storedSub) : null;
+    setSelectedSubId(stored ?? defaultTrackId(eligible));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.kind, textTracks]);
 
@@ -1375,20 +1496,12 @@ function CurrentPlayer({
     if (image) {
       // Burn-in: fresh negotiation. The new stream should resume from here.
       setSelectedSubId(null);
-      pendingSeekMsRef.current = positionMs();
-      resumeAfterSeekRef.current = !videoRef.current?.paused;
-      seekedRef.current = false;
-      setPlaying(false); // the old element goes away without a `pause` event
-      session.selectBurnSubtitle(image.id, positionMs());
+      session.selectBurnSubtitle(image.id, captureResume());
       return;
     }
     // Text track or Off (client-side selection).
     if (session.burnSubtitleId != null) {
-      pendingSeekMsRef.current = positionMs();
-      resumeAfterSeekRef.current = !videoRef.current?.paused;
-      seekedRef.current = false;
-      setPlaying(false); // the old element goes away without a `pause` event
-      session.selectBurnSubtitle(null, positionMs());
+      session.selectBurnSubtitle(null, captureResume());
     }
     setSelectedSubId(id);
   }
@@ -1400,7 +1513,7 @@ function CurrentPlayer({
     setSearchState("searching");
     setCandidates([]);
     try {
-      const found = await apiClient.searchSubtitles(titleId, preferredLang || "en");
+      const found = await apiClient.searchSubtitles(titleId, viewerLang || "en");
       setCandidates(found);
       setSearchState(found.length ? "results" : "empty");
     } catch {
@@ -1414,7 +1527,7 @@ function CurrentPlayer({
   async function pickCandidate(c: SubtitleCandidate) {
     setFetchingId(c.id);
     try {
-      const track = await apiClient.fetchSubtitle(titleId, c.language || preferredLang || "en", c);
+      const track = await apiClient.fetchSubtitle(titleId, c.language || viewerLang || "en", c);
       setFetchedTracks((prev) =>
         prev.some((t) => t.id === track.id) ? prev : [...prev, track],
       );
@@ -1437,15 +1550,14 @@ function CurrentPlayer({
   // File is demuxed, so switching is IN-BAND and instant (no restart); on direct
   // play a non-default pick escalates ONCE via a fresh negotiation (the session's
   // one audio restart), after which switching is in-band too.
-  const preferredAudio = useMemo(() => preferredAudioLang(), []);
   // Server order (NOT the re-sorted menu) — the master playlist advertises the
   // in-band AUDIO renditions in this order, so it maps a pick to a rendition index.
   const negotiatedAudio: AudioStream[] =
     status.kind === "ready" ? status.decision.audioStreams : [];
   // The menu list (preferred-language first, then default, then by label).
   const audioStreams = useMemo(
-    () => orderedAudioStreams(negotiatedAudio, preferredAudio),
-    [negotiatedAudio, preferredAudio],
+    () => orderedAudioStreams(negotiatedAudio, viewerLang),
+    [negotiatedAudio, viewerLang],
   );
   // The active audio Stream id — the one playing. Initialized (per session) to the
   // server-resolved Stream; an in-band pick updates it instantly, a direct-play
@@ -1491,11 +1603,7 @@ function CurrentPlayer({
     }
     // Direct play: the one escalating switch. Capture the live position so the
     // remuxed stream resumes where the viewer was.
-    pendingSeekMsRef.current = positionMs();
-    resumeAfterSeekRef.current = !videoRef.current?.paused;
-    seekedRef.current = false;
-    setPlaying(false); // the old element goes away without a `pause` event
-    session.selectAudioStream(id, positionMs());
+    session.selectAudioStream(id, captureResume());
   }
 
   // ── Video menu (video Streams, selectable-video/03, ADR-0025) ──────────────
@@ -1534,11 +1642,7 @@ function CurrentPlayer({
     if (id === selectedVideoId) return;
     // Capture the live position so the re-negotiated stream resumes where the viewer
     // was (the same seek-restore the burn/audio switches use).
-    pendingSeekMsRef.current = positionMs();
-    resumeAfterSeekRef.current = !videoRef.current?.paused;
-    seekedRef.current = false;
-    setPlaying(false); // the old element goes away without a `pause` event
-    session.selectVideoStream(id, positionMs());
+    session.selectVideoStream(id, captureResume());
   }
 
   function onLoadedMetadata() {
@@ -1548,7 +1652,7 @@ function CurrentPlayer({
     // loaded metadata — the native TextTrack may not have existed on the first
     // apply, so this guarantees a forced/selected track actually shows.
     applySubtitleSelection(v, selectedSubId);
-    if (Number.isFinite(v.duration)) setDuration(v.duration);
+    if (Number.isFinite(v.duration)) timeStore.set({ duration: v.duration });
     // Seek once to the resume point — the entry's original resume on first load, or
     // the live position captured when a burn-in re-negotiation restarted the stream.
     if (!seekedRef.current) {
@@ -1558,7 +1662,7 @@ function CurrentPlayer({
       if (targetMs > 0) {
         seekedRef.current = true;
         v.currentTime = targetMs / 1000;
-        setCurrentTime(v.currentTime);
+        timeStore.set({ currentTime: v.currentTime });
       }
       // A mid-play escalation (burn-in / audio switch) restarted the stream: resume
       // playback EXPLICITLY if the viewer was playing. The element's autoplay
@@ -1615,6 +1719,11 @@ function CurrentPlayer({
         if (e.type === "keydown") {
           const t = e.target as HTMLElement | null;
           const ke = e as KeyboardEvent;
+          // Only a key that GRANTS user activation can resume playback; Escape, a
+          // bare modifier and a browser-reserved chord don't, so they leave the retry
+          // armed for the next real gesture instead of spending it on a play() the
+          // browser would refuse.
+          if (!grantsActivation(ke)) return;
           if (
             (ke.key === " " || ke.key === "Enter") &&
             (t?.tagName === "BUTTON" || t?.tagName === "A" || t?.getAttribute?.("role") === "button")
@@ -1635,12 +1744,12 @@ function CurrentPlayer({
   }
   function onDurationChange() {
     const v = videoRef.current;
-    if (v && Number.isFinite(v.duration)) setDuration(v.duration);
+    if (v && Number.isFinite(v.duration)) timeStore.set({ duration: v.duration });
   }
   function onTimeUpdate() {
     const v = videoRef.current;
     if (!v) return;
-    setCurrentTime(v.currentTime);
+    timeStore.set({ currentTime: v.currentTime });
     lastPositionMsRef.current = Math.floor(v.currentTime * 1000);
   }
   function onPlay() {
@@ -1713,7 +1822,7 @@ function CurrentPlayer({
     if (!video && queue.repeat === "one" && v) {
       session.report(finalMs, "paused"); // count the completed pass (Watched threshold)
       v.currentTime = 0;
-      setCurrentTime(0);
+      timeStore.set({ currentTime: 0 });
       void v.play().catch(() => {});
       return; // playing again — onPlay resumes reporting; stay on this entry
     }
@@ -1773,17 +1882,17 @@ function CurrentPlayer({
   function seekTo(seconds: number) {
     const v = videoRef.current;
     if (!v) return;
-    const max = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : duration;
+    const max = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : timeStore.get().duration;
     const upper = max > 0 ? max : seconds;
     const clamped = Math.min(Math.max(seconds, 0), upper);
     v.currentTime = clamped;
-    setCurrentTime(clamped);
+    timeStore.set({ currentTime: clamped });
   }
   // Seek to a Marker's end (ms) for its Skip, short of the File's own end
   // (skipTargetMs). Uses the live element duration, falling back to state.
   function skipTo(endMs: number) {
     const v = videoRef.current;
-    const d = v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : duration;
+    const d = v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : timeStore.get().duration;
     seekTo(skipTargetMs(endMs, d * 1000) / 1000);
   }
   function skip(deltaSeconds: number) {
@@ -1803,7 +1912,7 @@ function CurrentPlayer({
   // (0 = start … 9 = 90%). Uses the live element duration, falling back to state.
   function seekToFraction(fraction: number) {
     const v = videoRef.current;
-    const d = v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : duration;
+    const d = v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : timeStore.get().duration;
     if (d > 0) seekTo(d * fraction);
   }
   // Step one frame in `direction` (±1), but only while paused (the , / . shortcuts).
@@ -1812,11 +1921,6 @@ function CurrentPlayer({
     if (!v || !v.paused) return;
     seekTo(v.currentTime + direction * FRAME_SECONDS);
   }
-
-  // Time labels: elapsed on the left, remaining (as −m:ss) on the right.
-  const elapsedLabel = formatTimecode(currentTime * 1000);
-  const remainingSeconds = duration > 0 ? Math.max(duration - currentTime, 0) : 0;
-  const remainingLabel = `-${formatTimecode(remainingSeconds * 1000)}`;
 
   const hls = tier != null && isHlsTier(tier);
 
@@ -1945,9 +2049,9 @@ function CurrentPlayer({
               Watched-point Credits plays the Queue's next Episode, reporting a
               position inside the Credits first so the Title counts as watched. */}
           {video && (
-            <SkipMarkerButton
+            <TimedSkipMarkerButton
+              store={timeStore}
               sessionId={status.decision.sessionId}
-              positionMs={Math.floor(currentTime * 1000)}
               onSkip={skipTo}
               onNextEpisode={nextEntry?.title.kind === "episode" ? playNextEpisode : undefined}
               showButton={surface === "stage"}
@@ -1966,9 +2070,12 @@ function CurrentPlayer({
       {/* End-of-episode Up Next card — fixed bottom-right, inside the bar so it
           survives fullscreen. Clicking it plays the next entry now (a manual skip →
           queue.next). */}
-      {showUpNext && nextEntry && (
-        <UpNextCard entry={nextEntry} secondsLeft={secondsLeft} onPlay={() => queue.next()} />
-      )}
+      <UpNextOverlay
+        store={timeStore}
+        active={video && surface === "stage"}
+        entry={nextEntry}
+        onPlay={() => queue.next()}
+      />
 
       <div className="now-playing-inner">
         {/* Left: thumbnail + now-playing label. */}
@@ -2124,27 +2231,7 @@ function CurrentPlayer({
               remaining on the right, a range input to click/drag-seek in between.
               Rendered once the element is ready for both music and video. Sits
               inside the centre so it spans only the controls' width. */}
-          {status.kind === "ready" && (
-            <div className="now-playing-progress">
-              <span className="now-playing-time" data-testid="now-playing-elapsed">
-                {elapsedLabel}
-              </span>
-              <input
-                className="now-playing-seek"
-                type="range"
-                min={0}
-                max={duration > 0 ? duration : 0}
-                step={0.1}
-                data-testid="now-playing-progress"
-                aria-label="Seek"
-                value={Math.min(currentTime, duration > 0 ? duration : currentTime)}
-                onChange={(e) => seekTo(Number(e.target.value))}
-              />
-              <span className="now-playing-time" data-testid="now-playing-remaining">
-                {remainingLabel}
-              </span>
-            </div>
-          )}
+          {status.kind === "ready" && <ProgressBar store={timeStore} onSeek={seekTo} />}
         </div>
 
         {/* Right: volume (icon toggles mute, slider sets level), the video surface

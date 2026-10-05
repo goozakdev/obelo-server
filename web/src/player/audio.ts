@@ -1,4 +1,5 @@
 import type { AudioStream, DecisionStream } from "../api/types";
+import { langRank, preferredLang } from "./lang";
 
 // Client-side audio-Stream selection helpers for the player's Audio menu
 // (audio-streams/04, ADR-0022) — the audio parallel of subtitles.ts. The player
@@ -7,16 +8,10 @@ import type { AudioStream, DecisionStream } from "../api/types";
 // pick to the in-band AUDIO rendition index. Unlike subtitles, audio is never
 // "off": every Stream is selectable and exactly one is always playing.
 
-/** The viewer's preferred audio language as an ISO-639-1 primary subtag, derived
- * from the browser (navigator.language, e.g. "en-US" → "en"). This is the
- * `preferredAudioLang` the capability profile sends AND the key the Audio menu
- * orders by, so the menu order matches what the server was told (which resolved
- * the delivered default). "" when unknown. */
-export function preferredAudioLang(): string {
-  if (typeof navigator === "undefined") return "";
-  const lang = navigator.language || (navigator.languages && navigator.languages[0]) || "";
-  return lang.split(/[-_]/)[0]?.toLowerCase() ?? "";
-}
+/** The viewer's preferred audio language — the same value as the subtitle one (see
+ * lang.ts). Kept as a named alias for the capability profile's `preferredAudioLang`
+ * field and the Audio menu's ordering call sites. */
+export const preferredAudioLang = preferredLang;
 
 /** The audio Streams ordered for the Audio menu: the preferred language first,
  * then the File's default disposition, then alphabetically by label. Never filters
@@ -27,11 +22,9 @@ export function orderedAudioStreams(
   streams: AudioStream[],
   preferred: string,
 ): AudioStream[] {
-  const pref = preferred.toLowerCase();
   return [...streams].sort((a, b) => {
-    const ap = (a.language ?? "").toLowerCase() === pref && pref !== "" ? 0 : 1;
-    const bp = (b.language ?? "").toLowerCase() === pref && pref !== "" ? 0 : 1;
-    if (ap !== bp) return ap - bp;
+    const byLang = langRank(a.language, preferred) - langRank(b.language, preferred);
+    if (byLang !== 0) return byLang;
     if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
     return a.label.localeCompare(b.label);
   });

@@ -536,3 +536,74 @@ describe("R04-21 — Space on the focused Up Next card does not also toggle play
     expect(playSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("the blocked-autoplay retry is spent only by a key that grants activation", () => {
+  async function blockedAutoplay() {
+    playSpy.mockReset().mockRejectedValueOnce(new DOMException("blocked", "NotAllowedError")).mockResolvedValue(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const video = await playToStage([summary("t1")]);
+    await act(async () => {
+      fireEvent.loadedMetadata(video);
+    });
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+  }
+
+  it("Escape, a bare modifier and a Ctrl chord leave it armed for the next real gesture", async () => {
+    await blockedAutoplay();
+    await act(async () => {
+      fireEvent.keyDown(document.body, { key: "Shift" });
+      fireEvent.keyDown(document.body, { key: "Control", ctrlKey: true });
+      fireEvent.keyDown(document.body, { key: "c", ctrlKey: true });
+      fireEvent.keyDown(document.body, { key: "Escape" });
+    });
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(document.body);
+    });
+    expect(playSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("a burned image subtitle suppresses only same-language text tracks", () => {
+  const burnSubs = (textTracks: object[]) =>
+    [
+      { id: "img-en", source: "embedded", kind: "image", language: "en", forced: false, label: "English", url: undefined },
+      ...textTracks,
+    ] as PlaybackDecision["subtitles"];
+  const txt = (id: string, language: string, forced: boolean) => ({
+    id,
+    source: "embedded",
+    kind: "text",
+    language,
+    forced,
+    label: id,
+    url: `/s/${id}.vtt`,
+  });
+  async function lastTextTrackIndex(subs: PlaybackDecision["subtitles"], title: string) {
+    const setTextTrack = vi.fn();
+    attachHls.mockReset().mockResolvedValue({ mode: "hls.js", detach: vi.fn(), setTextTrack });
+    startPlayback.mockResolvedValue(decisionOf({ tier: "transcode", subtitles: subs }));
+    getTitle.mockResolvedValue({ id: title, kind: "movie", title: "Dune", editions: [], subtitles: subs });
+    savePreference(
+      window.localStorage,
+      "u1",
+      { kind: "title", id: title },
+      { ...AUTO_PREFERENCE, aacStereo: true, subtitle: { language: "en", forced: false } },
+    );
+    seedAndRender([entryFromTitle(summary(title))]);
+    await waitFor(() => expect(setTextTrack).toHaveBeenCalled());
+    await act(async () => {});
+    return setTextTrack.mock.calls[setTextTrack.mock.calls.length - 1][0];
+  }
+
+  it("a forced foreign-language track is still the default beside the burned track", async () => {
+    // Deliverable (server) order: [en, fr-forced] → the forced French track is index 1.
+    const idx = await lastTextTrackIndex(burnSubs([txt("txt-en", "en", false), txt("txt-fr", "fr", true)]), "tburn-f1");
+    expect(idx).toBe(1);
+  });
+
+  it("a forced track in the burned language is held back (no doubled captions)", async () => {
+    const idx = await lastTextTrackIndex(burnSubs([txt("txt-en", "en", true), txt("txt-fr", "fr", false)]), "tburn-f2");
+    expect(idx).toBeNull();
+  });
+});

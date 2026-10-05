@@ -1,7 +1,14 @@
-import { useState, type DragEvent as ReactDragEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import Poster from "../browse/Poster";
 import type { QueueStore } from "./queue/useQueue";
 import type { QueueEntry } from "./queue/model";
+import { kindLabel } from "./lang";
 
 // The Queue panel (queue/03, redesigned): the Queue made inspectable and editable.
 // Extracted from the retired PlayerScreen (now-playing-bar/01) so the persistent Now
@@ -18,22 +25,6 @@ import type { QueueEntry } from "./queue/model";
 // DataTransfer, so it works headlessly and needs no serialization) and a drop builds
 // the FULL permutation handed to `queue.reorder` — which preserves the current entry
 // by id, so what's playing is never disturbed; only "what plays next" changes.
-
-/** A friendly noun for a Title's media kind, for the queue panel's entry rows. */
-function kindLabel(kind: string): string {
-  switch (kind) {
-    case "movie":
-      return "Movie";
-    case "episode":
-      return "Episode";
-    case "track":
-      return "Track";
-    case "show":
-      return "Show";
-    default:
-      return kind;
-  }
-}
 
 /** Trash-can glyph (per the redesign spec) for the per-entry remove action, tinted
  * by `currentColor` and sized to the font via CSS. Replaces the old "Remove" link. */
@@ -96,18 +87,30 @@ function CloseIcon() {
   );
 }
 
+/** Alt+ArrowUp / Alt+ArrowDown on a focused row (not on a control inside it) moves it. */
+function onRowKeyDown(e: ReactKeyboardEvent<HTMLLIElement>, onMove: (delta: -1 | 1) => void) {
+  if (e.target !== e.currentTarget || !e.altKey) return;
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+  e.preventDefault();
+  onMove(e.key === "ArrowUp" ? -1 : 1);
+}
+
 /** One rendered Queue entry row (shared by the Now Playing card and the Up Next
  * list). Up-next rows get a drag handle and become drag sources/targets; the current
- * row is fixed at the top and only offers remove. */
+ * row is fixed at the top and only offers remove. An up-next row is focusable and
+ * moves one place with Alt+ArrowUp / Alt+ArrowDown (`onMove`) — the keyboard path for
+ * what drag and drop does. */
 function EntryRow({
   entry,
   isCurrent,
   onRemove,
+  onMove,
   drag,
 }: {
   entry: QueueEntry;
   isCurrent: boolean;
   onRemove: () => void;
+  onMove?: (delta: -1 | 1) => void;
   drag?: {
     isDragging: boolean;
     isDragOver: boolean;
@@ -131,6 +134,9 @@ function EntryRow({
       data-title-id={entry.title.id}
       aria-current={isCurrent ? "true" : undefined}
       draggable={drag ? true : undefined}
+      tabIndex={onMove ? 0 : undefined}
+      aria-keyshortcuts={onMove ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+      onKeyDown={onMove ? (e) => onRowKeyDown(e, onMove) : undefined}
       onDragStart={drag?.onDragStart}
       onDragEnd={drag?.onDragEnd}
       onDragOver={drag?.onDragOver}
@@ -233,6 +239,31 @@ export default function QueuePanel({
     resetDrag();
   }
 
+  // Keyboard reorder: move an up-next entry one place (-1 up, +1 down) within the
+  // up-next region (never above the now-playing entry), then keep focus on its row —
+  // React re-orders the DOM nodes, which can drop focus.
+  const listRef = useRef<HTMLOListElement | null>(null);
+  const focusAfterMoveRef = useRef<string | null>(null);
+  function moveEntry(entryId: string, delta: -1 | 1) {
+    const ids = entries.map((e) => e.entryId);
+    const from = ids.indexOf(entryId);
+    const to = from + delta;
+    if (from < 0 || to <= index || to >= ids.length) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, entryId);
+    focusAfterMoveRef.current = entryId;
+    queue.reorder(ids);
+  }
+  useEffect(() => {
+    const id = focusAfterMoveRef.current;
+    if (id == null) return;
+    focusAfterMoveRef.current = null;
+    const rows = listRef.current?.querySelectorAll<HTMLElement>("[data-entry-id]");
+    for (const row of rows ?? []) {
+      if (row.dataset.entryId === id && document.activeElement !== row) row.focus();
+    }
+  }, [entries]);
+
   function dragProps(entryId: string) {
     return {
       isDragging: draggingId === entryId,
@@ -317,6 +348,7 @@ export default function QueuePanel({
             <ol
               className="queue-section-list queue-upnext-list"
               data-testid="queue-panel-list"
+              ref={listRef}
               onDragOver={(e) => {
                 if (draggingId) e.preventDefault();
               }}
@@ -334,6 +366,7 @@ export default function QueuePanel({
                   entry={entry}
                   isCurrent={false}
                   onRemove={() => queue.removeEntry(entry.entryId)}
+                  onMove={(delta) => moveEntry(entry.entryId, delta)}
                   drag={dragProps(entry.entryId)}
                 />
               ))}

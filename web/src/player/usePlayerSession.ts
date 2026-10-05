@@ -544,6 +544,23 @@ export function usePlayerSession(
     [client, stopReporting],
   );
 
+  // The shared tail of every escalating restart (burn / audio / video switch and
+  // vanished-session recovery): end the current session cleanly (final report +
+  // DELETE), record where the fresh stream resumes, give it its own automatic
+  // SERVER_BUSY retry (the previous attempt is spent/irrelevant), and re-negotiate.
+  // `apply` records the switch's own pick between the end and the negotiate.
+  const restartAt = useCallback(
+    (positionMs: number, apply?: () => void) => {
+      end(positionMs);
+      apply?.();
+      resumeRef.current = Math.max(0, Math.floor(positionMs));
+      autoRetriedRef.current = false;
+      setStatus({ kind: "negotiating" });
+      negotiate();
+    },
+    [end, negotiate],
+  );
+
   // Select/clear a burned-in IMAGE subtitle (subtitles/04). It is a FRESH
   // negotiation: end the current session cleanly (final report + DELETE), record
   // the new burn + resume position, and re-negotiate. Selecting an image sub
@@ -553,17 +570,12 @@ export function usePlayerSession(
   const selectBurnSubtitle = useCallback(
     (id: string | null, positionMs: number) => {
       if (burnRef.current === id) return;
-      end(positionMs);
-      burnRef.current = id;
-      setBurnSubtitleId(id);
-      resumeRef.current = Math.max(0, Math.floor(positionMs));
-      // A burn switch is a fresh negotiation, so it gets its own automatic
-      // SERVER_BUSY retry (the previous session's attempt is spent/irrelevant).
-      autoRetriedRef.current = false;
-      setStatus({ kind: "negotiating" });
-      negotiate();
+      restartAt(positionMs, () => {
+        burnRef.current = id;
+        setBurnSubtitleId(id);
+      });
     },
-    [end, negotiate],
+    [restartAt],
   );
 
   // Select a non-default audio Stream on a DIRECT-PLAY session (audio-streams/04) —
@@ -576,17 +588,12 @@ export function usePlayerSession(
   const selectAudioStream = useCallback(
     (id: string, positionMs: number) => {
       if (audioRef.current === id) return;
-      end(positionMs);
-      audioRef.current = id;
-      setAudioStreamId(id);
-      resumeRef.current = Math.max(0, Math.floor(positionMs));
-      // A fresh negotiation gets its own automatic SERVER_BUSY retry (the previous
-      // session's attempt is spent/irrelevant).
-      autoRetriedRef.current = false;
-      setStatus({ kind: "negotiating" });
-      negotiate();
+      restartAt(positionMs, () => {
+        audioRef.current = id;
+        setAudioStreamId(id);
+      });
     },
-    [end, negotiate],
+    [restartAt],
   );
 
   // Record an in-band audio pick made client-side on the HLS tiers (audio-streams/04).
@@ -621,17 +628,12 @@ export function usePlayerSession(
   const selectVideoStream = useCallback(
     (id: string, positionMs: number) => {
       if (videoStreamRef.current === id) return;
-      end(positionMs);
-      videoStreamRef.current = id;
-      setVideoStreamId(id);
-      resumeRef.current = Math.max(0, Math.floor(positionMs));
-      // A fresh negotiation gets its own automatic SERVER_BUSY retry (the previous
-      // session's attempt is spent/irrelevant).
-      autoRetriedRef.current = false;
-      setStatus({ kind: "negotiating" });
-      negotiate();
+      restartAt(positionMs, () => {
+        videoStreamRef.current = id;
+        setVideoStreamId(id);
+      });
     },
-    [end, negotiate],
+    [restartAt],
   );
 
   // Recover a vanished session (reaped after a long pause, or dropped on a server
@@ -642,15 +644,8 @@ export function usePlayerSession(
   // already-gone session (a 404 it swallows); negotiate() re-arms endedRef and
   // mints the new session + streamUrl the component re-attaches to.
   const recover = useCallback(
-    (positionMs: number) => {
-      end(positionMs);
-      resumeRef.current = Math.max(0, Math.floor(positionMs));
-      // A fresh negotiation gets its own automatic SERVER_BUSY retry.
-      autoRetriedRef.current = false;
-      setStatus({ kind: "negotiating" });
-      negotiate();
-    },
-    [end, negotiate],
+    (positionMs: number) => restartAt(positionMs),
+    [restartAt],
   );
 
   // Best-effort final report on a hard page unload (close/refresh): the

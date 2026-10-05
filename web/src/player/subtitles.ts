@@ -1,19 +1,10 @@
 import type { SubtitleTrack } from "../api/types";
+import { langRank } from "./lang";
 
 // Client-side text-subtitle selection helpers for the captions menu (ADR-0020,
 // subtitles/02). Text-track selection never touches the server: the player lists
 // the decision's deliverable text tracks, orders them by the viewer's preferred
 // language, auto-displays a forced track, and toggles the native <track> mode.
-
-/** The viewer's preferred subtitle language as an ISO-639-1 primary subtag,
- * derived from the browser (navigator.language, e.g. "en-US" → "en"). This is the
- * `preferredSubtitleLang` the capability profile sends AND the key the menu sorts
- * by, so the menu order matches what the server was told. "" when unknown. */
-export function preferredSubtitleLang(): string {
-  if (typeof navigator === "undefined") return "";
-  const lang = navigator.language || (navigator.languages && navigator.languages[0]) || "";
-  return lang.split(/[-_]/)[0]?.toLowerCase() ?? "";
-}
 
 /** The DELIVERABLE text tracks of a decision (kind "text" with an out-of-band
  * url), ordered for the captions menu: the preferred language first, then forced
@@ -23,12 +14,10 @@ export function orderedTextTracks(
   tracks: SubtitleTrack[],
   preferred: string,
 ): SubtitleTrack[] {
-  const pref = preferred.toLowerCase();
   const text = tracks.filter((t) => t.kind === "text" && !!t.url);
   return [...text].sort((a, b) => {
-    const ap = (a.language ?? "").toLowerCase() === pref && pref !== "" ? 0 : 1;
-    const bp = (b.language ?? "").toLowerCase() === pref && pref !== "" ? 0 : 1;
-    if (ap !== bp) return ap - bp;
+    const byLang = langRank(a.language, preferred) - langRank(b.language, preferred);
+    if (byLang !== 0) return byLang;
     if (a.forced !== b.forced) return a.forced ? -1 : 1;
     return a.label.localeCompare(b.label);
   });
@@ -43,12 +32,10 @@ export function orderedImageTracks(
   tracks: SubtitleTrack[],
   preferred: string,
 ): SubtitleTrack[] {
-  const pref = preferred.toLowerCase();
   const image = tracks.filter((t) => t.kind === "image");
   return [...image].sort((a, b) => {
-    const ap = (a.language ?? "").toLowerCase() === pref && pref !== "" ? 0 : 1;
-    const bp = (b.language ?? "").toLowerCase() === pref && pref !== "" ? 0 : 1;
-    if (ap !== bp) return ap - bp;
+    const byLang = langRank(a.language, preferred) - langRank(b.language, preferred);
+    if (byLang !== 0) return byLang;
     return a.label.localeCompare(b.label);
   });
 }
