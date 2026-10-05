@@ -17,6 +17,14 @@ describe("lang helpers (R04-19)", () => {
     expect(langRank(undefined, "")).toBe(1);
   });
 
+  it("langRank treats 3-letter and 2-letter codes of one language as the same", () => {
+    expect(langRank("eng", "en")).toBe(0);
+    expect(langRank("en", "eng")).toBe(0);
+    expect(langRank("ger", "deu")).toBe(0);
+    expect(langRank("en-US", "en")).toBe(0);
+    expect(langRank("fra", "en")).toBe(1);
+  });
+
   it("kindLabel names the media kinds and passes unknown kinds through", () => {
     expect(["movie", "episode", "track", "show", "other"].map(kindLabel)).toEqual([
       "Movie",

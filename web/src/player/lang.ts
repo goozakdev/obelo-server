@@ -42,10 +42,11 @@ export function sameLang(a: string | undefined, b: string | undefined): boolean 
 
 /** Sort rank of a track/stream language against the viewer's preference: 0 for the
  * preferred language, 1 otherwise (so `langRank(a) - langRank(b)` sorts preferred
- * first). Nothing is preferred when `preferred` is "". Case-insensitive. */
+ * first). Nothing is preferred when `preferred` is "". Compared by normalizeLang, so
+ * case, region and 639-2/639-1 forms (eng/en) all match. */
 export function langRank(language: string | undefined, preferred: string): 0 | 1 {
-  const pref = preferred.toLowerCase();
-  return pref !== "" && (language ?? "").toLowerCase() === pref ? 0 : 1;
+  const pref = normalizeLang(preferred);
+  return pref !== "" && normalizeLang(language) === pref ? 0 : 1;
 }
 
 /** A friendly noun for a Title's media kind (the now-playing label's degraded
