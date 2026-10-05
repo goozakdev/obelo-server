@@ -181,7 +181,7 @@ type App struct {
 	// re-check's context, so recheckCancel stops it too.
 	tokenSweepDone chan struct{}
 
-	cancel         context.CancelFunc
+	cancel          context.CancelFunc
 	schedDone       chan struct{}
 	reaperDone      chan struct{}
 	enrichDone      chan struct{}
