@@ -151,20 +151,27 @@ func (db *DB) PruneOrphanedMarkers(gone func(path string) bool) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("store: listing orphaned markers: %w", err)
 	}
-	var paths []string
+	// Collect the candidates and close the cursor before probing: gone stats the
+	// disk, which can be slow on a network mount, and an open cursor holds the
+	// single DB connection for the whole loop.
+	var candidates []string
 	for rows.Next() {
 		var p string
 		if err := rows.Scan(&p); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("store: scanning orphaned marker path: %w", err)
 		}
-		if gone(p) {
-			paths = append(paths, p)
-		}
+		candidates = append(candidates, p)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, err
+	}
+	var paths []string
+	for _, p := range candidates {
+		if gone(p) {
+			paths = append(paths, p)
+		}
 	}
 	for _, p := range paths {
 		tx, err := db.Begin()
