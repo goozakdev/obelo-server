@@ -557,6 +557,10 @@ type showFilesByLibrary interface {
 	ShowFilesByLibrary(libraryID string) (map[string][]store.ShowFile, error)
 }
 
+// A rename or signature drift in the store must fail the build, not quietly put
+// every Show back on its own read.
+var _ showFilesByLibrary = (*store.DB)(nil)
+
 // withShowFiles loads every Show's Files in one read, for a caller that visits all
 // the Shows of the Library (the Needs-Fixing queue).
 func (s *Service) withShowFiles(lib libraryFileState, libraryID string) (libraryFileState, error) {

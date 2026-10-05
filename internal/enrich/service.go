@@ -1794,6 +1794,8 @@ type pendingReader interface {
 	EnrichmentPending(libraryID string) (pending bool, retryAts []string, err error)
 }
 
+var _ pendingReader = (*store.DB)(nil)
+
 // nothingPending reports whether a ModeNew pass over a TV or Music Library has
 // nothing to do, so its walk (a read per Show, Season, Artist and Album) can be
 // skipped: no Title or parent is pending, and no scheduled retry has arrived. It

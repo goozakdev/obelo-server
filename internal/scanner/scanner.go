@@ -296,12 +296,16 @@ type BulkReader interface {
 	LocalMarkersByLibrary(libraryID string) (map[string]store.LocalMarkerState, error)
 }
 
+var _ BulkReader = (*store.DB)(nil)
+
 // UnmatchedAdder adds rows to the Unmatched list without rewriting it. *store.DB
 // satisfies it; OPTIONAL, so a Targeted scan against a Store without it just does
 // not record what it found unreadable.
 type UnmatchedAdder interface {
 	AddUnmatched(libraryID string, files []store.UnmatchedFile) error
 }
+
+var _ UnmatchedAdder = (*store.DB)(nil)
 
 // preload reads the Library's stored Files and Local Markers in bulk when the
 // Store can, for an incremental scan to reuse.

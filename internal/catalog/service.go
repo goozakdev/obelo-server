@@ -993,6 +993,8 @@ type homeContextReader interface {
 	TrackContextsForTitles(titleIDs []string) (map[string]store.TrackContext, error)
 }
 
+var _ homeContextReader = (*store.DB)(nil)
+
 // attachHomeContexts fills the Show/Season/episode parent context of every Episode
 // card and the Artist/Album context of every Track card across the rows (a Movie
 // is left untouched, Episode and Track stay nil), in two bulk reads. A read that
