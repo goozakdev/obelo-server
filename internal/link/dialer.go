@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goozakdev/obelo-server/internal/tailnet"
@@ -66,6 +67,13 @@ type Dialer struct {
 	// Net is the operating-system dialer. Nil uses a default with a bounded
 	// connect timeout.
 	Net *net.Dialer
+
+	// mu guards the clients below. They are built lazily and kept: a relayed play
+	// makes one call per segment, and a client (its own Transport) per call would pay
+	// a fresh TCP+TLS handshake each time and strand an idle connection for 30 s.
+	mu      sync.Mutex
+	clients map[time.Duration]*http.Client
+	stream  *http.Client
 }
 
 // defaultDialTimeout bounds a single connect attempt. It is short because it is
@@ -137,7 +145,8 @@ func (d *Dialer) osDialer() *net.Dialer {
 	return &net.Dialer{Timeout: defaultDialTimeout}
 }
 
-// HTTPClient builds the client this Server talks to one peer with.
+// HTTPClient returns the client this Server talks to one peer with, for a
+// per-call timeout (0 for the default). One client is built per timeout and reused.
 //
 // Redirects are REFUSED rather than followed. Every call this package makes is
 // to a known path on an origin the operator was handed, and a redirect could
@@ -149,6 +158,23 @@ func (d *Dialer) HTTPClient(timeout time.Duration) *http.Client {
 	if timeout <= 0 {
 		timeout = defaultRequestTimeout
 	}
+	if d == nil {
+		return d.newHTTPClient(timeout)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if c, ok := d.clients[timeout]; ok {
+		return c
+	}
+	if d.clients == nil {
+		d.clients = make(map[time.Duration]*http.Client)
+	}
+	c := d.newHTTPClient(timeout)
+	d.clients[timeout] = c
+	return c
+}
+
+func (d *Dialer) newHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -177,6 +203,18 @@ func (d *Dialer) HTTPClient(timeout time.Duration) *http.Client {
 // HEADERS — so an origin that accepts a connection and then says nothing is still
 // abandoned rather than held forever.
 func (d *Dialer) StreamClient() *http.Client {
+	if d == nil {
+		return d.newStreamClient()
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stream == nil {
+		d.stream = d.newStreamClient()
+	}
+	return d.stream
+}
+
+func (d *Dialer) newStreamClient() *http.Client {
 	return &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse

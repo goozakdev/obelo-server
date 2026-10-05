@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/tailnet"
 )
@@ -179,5 +180,24 @@ func TestATailnetDialThatFailsFallsBackToTheOS(t *testing.T) {
 	// nowhere, NOT the scripted tailnet error.
 	if errors.Is(err, node.DialErr) {
 		t.Error("the tailnet error was returned; the OS dialer was never tried")
+	}
+}
+
+// TestClientsAreBuiltOncePerDialer: a relayed play makes one call per segment, so a
+// transport built per call pays a TCP+TLS handshake per 4 s segment and strands an
+// idle connection for 30 s each. The same Dialer must hand back the same client.
+func TestClientsAreBuiltOncePerDialer(t *testing.T) {
+	d := &Dialer{}
+	if d.StreamClient() != d.StreamClient() {
+		t.Error("StreamClient built a new client on the second call")
+	}
+	if d.HTTPClient(0) != d.HTTPClient(0) {
+		t.Error("HTTPClient built a new client for the same timeout")
+	}
+	if d.HTTPClient(0) == d.HTTPClient(time.Minute) {
+		t.Error("HTTPClient shared a client across different timeouts")
+	}
+	if d.StreamClient() == d.HTTPClient(0) {
+		t.Error("the stream client and the request client are the same client")
 	}
 }
