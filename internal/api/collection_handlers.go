@@ -270,22 +270,24 @@ func handleListCollections(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list collections", nil)
 			return
 		}
+		// THIS viewer's visible membership gives each card its count + poster — both
+		// per-viewer (a restricted member never contributes) — read for every
+		// Collection at once.
+		visible, err := deps.Organize.VisibleSummaries(scope)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal, "failed to list collections", nil)
+			return
+		}
 		out := collectionsListJSON{Collections: make([]collectionSummaryJSON, 0, len(cols))}
 		for _, c := range cols {
-			// Resolve THIS viewer's visible membership to compute the card's count +
-			// poster — both are per-viewer (a restricted member never contributes).
-			members, err := deps.Organize.Members(scope, c.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, codeInternal, "failed to list collections", nil)
-				return
-			}
+			v := visible[c.ID]
 			// Zero-visible hiding (headline correctness property): a non-Admin viewer
 			// who can see NONE of a Collection's members must not even learn it exists,
 			// so it is dropped from their list (never an empty card that leaks "a
 			// restricted Collection exists"). An Admin is exempt — they always see
 			// every Collection, including genuinely empty ones, so management is not
 			// broken (issue line 18: "Admin sees every member and every Collection").
-			if len(members) == 0 && !scope.IsAdmin {
+			if v.Count == 0 && !scope.IsAdmin {
 				continue
 			}
 			summary := collectionSummaryJSON{
@@ -294,10 +296,10 @@ func handleListCollections(deps Deps) http.HandlerFunc {
 				Description: c.Description,
 				CreatedAt:   formatTimestamp(c.CreatedAt),
 				UpdatedAt:   formatTimestamp(c.UpdatedAt),
-				MemberCount: len(members),
+				MemberCount: v.Count,
 			}
-			if len(members) > 0 {
-				summary.PosterURL = APIPrefix + "/titles/" + members[0].ID + "/artwork/poster"
+			if v.Count > 0 {
+				summary.PosterURL = APIPrefix + "/titles/" + v.FirstTitleID + "/artwork/poster"
 			}
 			out.Collections = append(out.Collections, summary)
 		}
