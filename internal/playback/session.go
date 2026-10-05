@@ -331,6 +331,30 @@ func (e *StreamLimitError) Error() string { return ErrStreamLimit.Error() }
 // sentinel and only reach for the type when they want the counts.
 func (e *StreamLimitError) Unwrap() error { return ErrStreamLimit }
 
+// CheckStreamLimit reports whether userID is already at maxStreams, as the
+// *StreamLimitError CreateGoverned would return, without creating anything. It is
+// ADVISORY — it lets a caller refuse before doing expensive work (probing a File,
+// asking a sharer to open a session) whose result a refusal would throw away;
+// CreateGoverned's own check, under the insertion lock, stays authoritative. 0
+// (uncapped) never refuses.
+func (m *Manager) CheckStreamLimit(userID string, maxStreams int) error {
+	if maxStreams <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := 0
+	for _, existing := range m.sessions {
+		if existing.UserID == userID {
+			active++
+		}
+	}
+	if active >= maxStreams {
+		return &StreamLimitError{Active: active, Limit: maxStreams}
+	}
+	return nil
+}
+
 // CreateInput is what Create needs beyond the negotiated Decision: who owns the
 // session and where they want to start.
 type CreateInput struct {

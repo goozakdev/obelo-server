@@ -578,6 +578,14 @@ func (s *Service) Negotiate(req Request) (Decision, Session, *Unsupported, *Serv
 	// is best-effort — a failure leaves boundaries nil and the runtime falls back to
 	// ffmpeg's playlist (correct for short files). Skipped for a re-encode (uniform
 	// segments) and audio-only.
+	//
+	// The User's stream limit is checked first (advisory; CreateGoverned stays
+	// authoritative) so a refused play does not pay for the probes below. The
+	// transcode cap needs no such pre-check: only a video-ENCODING transcode is
+	// metered, and that tier runs neither probe.
+	if err := s.sessions.CheckStreamLimit(req.UserID, req.Scope.MaxStreams); err != nil {
+		return Decision{}, Session{}, nil, nil, err
+	}
 	var boundaries []float64
 	if !dec.AudioOnly && (dec.VideoCopy || dec.Tier == TierDirectStream) {
 		// A MULTI-PART Edition is copied from every part as one concatenated input, so
