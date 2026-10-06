@@ -119,7 +119,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-// flushMicrotasks drains the promise queue inside act, so a "no further request"
+// flushMicrotasks drains promise continuations ONLY (inside act) — it does not run
+// timers, so a request scheduled by setTimeout is not covered. A "no further request"
 // assertion made after it covers every continuation already queued — no wall-clock
 // wait. (A re-read is sent synchronously when the write slot frees, so it would
 // already be visible by then; the drain also lets the load's setState settle.)

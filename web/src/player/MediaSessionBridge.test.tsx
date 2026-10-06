@@ -180,6 +180,24 @@ describe("MediaSessionBridge", () => {
     );
   });
 
+  it("follows a track moved to another album when the cover is re-read", async () => {
+    const detail = trackDetail("t1", "Paranoid Android", "Radiohead", "OK Computer");
+    getTitle.mockResolvedValueOnce({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("t1", "Paranoid Android"))]);
+    await waitFor(() =>
+      expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v1" }]),
+    );
+
+    getTitle.mockResolvedValue({
+      ...detail,
+      track: { ...detail.track!, albumId: "al-moved", albumArtworkVersion: "w1" },
+    });
+    await burstThenQuiet("lib1", 1);
+    await waitFor(() =>
+      expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-moved/artwork?v=w1" }]),
+    );
+  });
+
   it("re-reads once per settled scan burst, not once per tick", async () => {
     const detail = trackDetail("t1", "Paranoid Android", "Radiohead", "OK Computer");
     getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
@@ -228,8 +246,9 @@ describe("MediaSessionBridge", () => {
     seedAndRender([entryFromTitle(trackSummary("t1", "Paranoid Android"))]);
     await waitFor(() => expect(session.metadata?.artist).toBe("Radiohead"));
 
-    act(() => events.emit("libraryUpdated", { libraryId: "other" }));
-    await act(async () => {});
+    // A full burst-then-quiet for the OTHER library: without the filter this arms the
+    // debounce and a second read WOULD happen once it settles.
+    await burstThenQuiet("other", 1);
     expect(getTitle).toHaveBeenCalledTimes(1);
   });
 

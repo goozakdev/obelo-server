@@ -224,6 +224,25 @@ describe("NowPlayingBar — now-playing label (from getTitle)", () => {
     );
   });
 
+  it("follows a track moved to another album when the cover is re-read", async () => {
+    const detail = { ...trackDetail("tr1", "Paranoid Android", "Radiohead"), libraryId: "lib1" };
+    getTitle.mockResolvedValueOnce({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("tr1", "Paranoid Android"))]);
+    const thumb = (await screen.findByTestId("now-playing-bar")).querySelector(".now-playing-thumb");
+    await waitFor(() =>
+      expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al1/artwork?v=v1"),
+    );
+
+    getTitle.mockResolvedValue({
+      ...detail,
+      track: { ...detail.track!, albumId: "al2", albumArtworkVersion: "w1" },
+    });
+    await burstThenQuiet("lib1", 1);
+    await waitFor(() =>
+      expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al2/artwork?v=w1"),
+    );
+  });
+
   it("re-reads once per settled enrich burst for a track", async () => {
     const detail = { ...trackDetail("tr1", "Paranoid Android", "Radiohead"), libraryId: "lib1" };
     getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
