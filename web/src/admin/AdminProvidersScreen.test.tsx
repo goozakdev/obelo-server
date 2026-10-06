@@ -790,4 +790,123 @@ describe("AdminProvidersScreen — review fixes", () => {
     await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
     expect(screen.getByTestId("provider-toggle-tmdb")).toBeChecked();
   });
+
+  const ALL_SLUGS = ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"];
+
+  it("a failed Save settings shows the error and leaves nothing disabled", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    updateMetadataProviders.mockRejectedValueOnce(new Error("settings boom"));
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    const lang = await screen.findByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "fr-FR");
+    await user.click(screen.getByTestId("save-providers-button"));
+
+    expect(await screen.findByTestId("save-providers-error")).toHaveTextContent(/settings boom/);
+    expect(screen.getByTestId("save-providers-button")).toBeEnabled();
+    for (const slug of ALL_SLUGS) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).toBeEnabled();
+    }
+  });
+
+  it("a failed dialog save shows the error and leaves nothing disabled", async () => {
+    getMetadataProviders.mockResolvedValue(view());
+    updateMetadataProviders.mockRejectedValueOnce(new Error("dialog boom"));
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-edit-tmdb"));
+    await user.type(await screen.findByTestId("provider-key-input-tmdb"), "k");
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
+
+    expect(await screen.findByTestId("provider-config-error-tmdb")).toHaveTextContent(
+      /dialog boom/,
+    );
+    expect(screen.getByTestId("provider-config-save-tmdb")).toBeEnabled();
+    expect(screen.getByTestId("save-providers-button")).toBeEnabled();
+    for (const slug of ALL_SLUGS) {
+      expect(screen.getByTestId(`provider-toggle-${slug}`)).toBeEnabled();
+    }
+  });
+
+  it("sends no re-read after unmount when one was pending behind a toggle", async () => {
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    getMetadataProviders.mockResolvedValue(view());
+    const user = userEvent.setup();
+    const { unmount } = renderWithAuth(<AdminProvidersScreen />, {
+      initialEntries: ["/admin/providers"],
+    });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    expect(getMetadataProviders).toHaveBeenCalledTimes(1);
+
+    unmount();
+    a.resolve(onView("musicbrainz"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getMetadataProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("two consent decisions during one toggle produce exactly one re-read", async () => {
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    getMetadataProviders.mockResolvedValueOnce(view()).mockResolvedValue(onView("musicbrainz"));
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    await user.click(screen.getByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    expect(getMetadataProviders).toHaveBeenCalledTimes(1);
+
+    a.resolve(onView("musicbrainz"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeEnabled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getMetadataProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("a decision landing during the re-read itself produces exactly one more re-read", async () => {
+    const r = deferred<MetadataProvidersView>();
+    getMetadataProviders
+      .mockResolvedValueOnce(view())
+      .mockReturnValueOnce(r.promise)
+      .mockResolvedValue(view());
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    await user.click(screen.getByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    // The first re-read is still in flight: the second decision must wait for it.
+    expect(getMetadataProviders).toHaveBeenCalledTimes(2);
+
+    r.resolve(view());
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
+    await new Promise((res) => setTimeout(res, 20));
+    expect(getMetadataProviders).toHaveBeenCalledTimes(3);
+  });
 });
