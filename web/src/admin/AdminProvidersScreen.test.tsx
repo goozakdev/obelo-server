@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { renderWithAuth } from "../test/renderWithAuth";
@@ -117,6 +117,16 @@ function deferred<T>() {
     resolve = res;
   });
   return { promise, resolve };
+}
+
+// flushMicrotasks drains the promise queue inside act, so a "no further request"
+// assertion made after it covers every continuation already queued — no wall-clock
+// wait. (A re-read is sent synchronously when the write slot frees, so it would
+// already be visible by then; the drain also lets the load's setState settle.)
+async function flushMicrotasks() {
+  await act(async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  });
 }
 
 beforeEach(() => {
@@ -645,6 +655,11 @@ describe("AdminProvidersScreen — review fixes", () => {
 
     await user.click(await screen.findByTestId("provider-toggle-musicbrainz"));
     expect(screen.getByTestId("provider-toggle-fanarttv")).toBeDisabled();
+    // Open a dialog with a key typed so its Save is only held back by the toggle.
+    await user.click(screen.getByTestId("provider-edit-tmdb"));
+    await user.type(await screen.findByTestId("provider-key-input-tmdb"), "k");
+    expect(screen.getByTestId("save-providers-button")).toBeDisabled();
+    expect(screen.getByTestId("provider-config-save-tmdb")).toBeDisabled();
     fail(new Error("boom"));
 
     expect(await screen.findByTestId("provider-row-error-musicbrainz")).toHaveTextContent(/boom/);
@@ -652,6 +667,8 @@ describe("AdminProvidersScreen — review fixes", () => {
     for (const slug of ["tmdb", "musicbrainz", "fanarttv", "theaudiodb"]) {
       expect(screen.getByTestId(`provider-toggle-${slug}`)).not.toBeDisabled();
     }
+    expect(screen.getByTestId("save-providers-button")).toBeEnabled();
+    expect(screen.getByTestId("provider-config-save-tmdb")).toBeEnabled();
   });
 
   it("does not revert unsaved settings edits when the consent decision reloads (R02-12)", async () => {
@@ -850,7 +867,7 @@ describe("AdminProvidersScreen — review fixes", () => {
 
     unmount();
     a.resolve(onView("musicbrainz"));
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMicrotasks();
     expect(getMetadataProviders).toHaveBeenCalledTimes(1);
   });
 
@@ -877,7 +894,7 @@ describe("AdminProvidersScreen — review fixes", () => {
     a.resolve(onView("musicbrainz"));
     await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByTestId("provider-toggle-musicbrainz")).toBeEnabled());
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMicrotasks();
     expect(getMetadataProviders).toHaveBeenCalledTimes(2);
   });
 
@@ -906,7 +923,57 @@ describe("AdminProvidersScreen — review fixes", () => {
     r.resolve(view());
     await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
-    await new Promise((res) => setTimeout(res, 20));
+    await flushMicrotasks();
     expect(getMetadataProviders).toHaveBeenCalledTimes(3);
+  });
+
+  it("a consent decision during Save settings produces exactly one re-read after it settles", async () => {
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    getMetadataProviders.mockResolvedValueOnce(view()).mockResolvedValue(view());
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    const lang = await screen.findByTestId("metadata-language-input");
+    await user.clear(lang);
+    await user.type(lang, "fr-FR");
+    await user.click(screen.getByTestId("save-providers-button"));
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    // The decision landed mid-save: no re-read may race the write.
+    expect(getMetadataProviders).toHaveBeenCalledTimes(1);
+
+    a.resolve(view({ metadataLanguage: "fr-FR" }));
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
+    await flushMicrotasks();
+    expect(getMetadataProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("a consent decision during a dialog save produces exactly one re-read after it settles", async () => {
+    const a = deferred<MetadataProvidersView>();
+    updateMetadataProviders.mockReturnValueOnce(a.promise);
+    getMetadataProviders.mockResolvedValueOnce(view()).mockResolvedValue(view());
+    const user = userEvent.setup();
+    renderWithAuth(<AdminProvidersScreen />, { initialEntries: ["/admin/providers"] });
+
+    await user.click(await screen.findByTestId("provider-edit-tmdb"));
+    await user.type(await screen.findByTestId("provider-key-input-tmdb"), "k");
+    await user.click(screen.getByTestId("provider-config-save-tmdb"));
+    await user.click(await screen.findByTestId("enrichment-consent-toggle"));
+    await waitFor(() => expect(setEnrichmentConsent).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("enrichment-consent-toggle")).not.toBeDisabled(),
+    );
+    expect(getMetadataProviders).toHaveBeenCalledTimes(1);
+
+    a.resolve(view());
+    await waitFor(() => expect(getMetadataProviders).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("provider-toggle-tmdb")).toBeEnabled());
+    await flushMicrotasks();
+    expect(getMetadataProviders).toHaveBeenCalledTimes(2);
   });
 });
