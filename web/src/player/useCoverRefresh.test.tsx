@@ -31,13 +31,50 @@ afterEach(() => {
 });
 
 describe("useCoverRefresh", () => {
-  it("re-reads once after the quiet period and returns the fresh cover", async () => {
+  it("re-reads once after a burst settles and returns the fresh cover", async () => {
     getTitle.mockResolvedValue(detail("al1", "v2"));
     const { result } = renderHook(() => useCoverRefresh("t1", "lib", true));
-    act(() => live.fire());
+    expect(result.current).toBeUndefined();
+    // A scan/enrich burst: each tick re-arms the debounce instead of queueing a read.
+    for (let i = 0; i < 5; i++) {
+      act(() => live.fire());
+      await act(() => vi.advanceTimersByTimeAsync(COVER_REFRESH_QUIET_MS - 1));
+      expect(getTitle).not.toHaveBeenCalled();
+    }
     await act(() => vi.advanceTimersByTimeAsync(COVER_REFRESH_QUIET_MS));
     expect(getTitle).toHaveBeenCalledTimes(1);
-    expect(result.current).toEqual({ titleId: "t1", albumId: "al1", version: "v2" });
+    expect(result.current).toMatchObject({ albumId: "al1", version: "v2" });
+  });
+
+  it("never returns another entry's fresh cover, even for one render", async () => {
+    getTitle.mockResolvedValue(detail("al1", "v2"));
+    const seen: Record<string, unknown[]> = { t1: [], t2: [] };
+    const { rerender } = renderHook(
+      ({ id }) => {
+        const r = useCoverRefresh(id, "lib", true);
+        seen[id].push(r);
+        return r;
+      },
+      { initialProps: { id: "t1" } },
+    );
+    act(() => live.fire());
+    await act(() => vi.advanceTimersByTimeAsync(COVER_REFRESH_QUIET_MS));
+    rerender({ id: "t2" });
+    expect(seen.t2.length).toBeGreaterThan(0);
+    expect(seen.t2.every((r) => r === undefined)).toBe(true);
+  });
+
+  it("drops the fresh cover on leaving a track, so returning to it shows none", async () => {
+    getTitle.mockResolvedValue(detail("al1", "v2"));
+    const { result, rerender } = renderHook(({ id }) => useCoverRefresh(id, "lib", true), {
+      initialProps: { id: "t1" },
+    });
+    act(() => live.fire());
+    await act(() => vi.advanceTimersByTimeAsync(COVER_REFRESH_QUIET_MS));
+    expect(result.current).toBeDefined();
+    rerender({ id: "t2" });
+    rerender({ id: "t1" });
+    expect(result.current).toBeUndefined();
   });
 
   it("clears a pending debounce timer when the queue entry changes", async () => {
