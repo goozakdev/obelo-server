@@ -868,6 +868,13 @@ describe("AdminProvidersScreen — review fixes", () => {
     unmount();
     a.resolve(onView("musicbrainz"));
     await flushMicrotasks();
+    // A re-read deferred through a timer would slip past the microtask drain, so
+    // also let one macrotask turn pass (timers fire in order: a 0 ms timer set while
+    // draining runs before this one) and drain again.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    await flushMicrotasks();
     expect(getMetadataProviders).toHaveBeenCalledTimes(1);
   });
 
