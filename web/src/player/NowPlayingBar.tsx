@@ -119,6 +119,10 @@ const SKIP_SECONDS = 10;
 /** How long the `seeked` events of one scrub must go quiet before it is reported. */
 const SEEK_REPORT_DEBOUNCE_MS = 300;
 
+/** How long the library's change signal must go quiet before the playing track's
+ * cover version is re-read (a scan/enrich burst ticks every ~100 ms). */
+const COVER_REFRESH_QUIET_MS = 2_000;
+
 /** How much the ↑/↓ volume keyboard shortcuts nudge the volume (0–1). */
 const VOLUME_STEP = 0.05;
 
@@ -1269,19 +1273,34 @@ function CurrentPlayer({
   // grids use) re-reads just the album's artwork version, leaving `detail` untouched.
   const [freshArt, setFreshArt] = useState<{ titleId: string; version?: string } | null>(null);
   const artRefreshCtrl = useRef<AbortController | null>(null);
-  useEffect(() => () => artRefreshCtrl.current?.abort(), [titleId]);
+  const artRefreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(
+    () => () => {
+      clearTimeout(artRefreshTimer.current);
+      artRefreshCtrl.current?.abort();
+    },
+    [titleId],
+  );
+  // The signal fires on every scan/enrich tick, so it only arms a trailing debounce:
+  // one re-read after the burst has been quiet for COVER_REFRESH_QUIET_MS. Only a Track
+  // with an album has a cover to refresh.
+  const hasAlbumArt = detail?.kind === "track" && detail.track != null;
   const refreshAlbumArt = useCallback(() => {
-    artRefreshCtrl.current?.abort();
-    const ctrl = new AbortController();
-    artRefreshCtrl.current = ctrl;
-    apiClient
-      .getTitle(titleId, ctrl.signal)
-      .then((d) => {
-        if (!ctrl.signal.aborted)
-          setFreshArt({ titleId, version: d?.track?.albumArtworkVersion });
-      })
-      .catch(() => {}); // keep the version already shown
-  }, [titleId]);
+    if (!hasAlbumArt) return;
+    clearTimeout(artRefreshTimer.current);
+    artRefreshTimer.current = setTimeout(() => {
+      artRefreshCtrl.current?.abort();
+      const ctrl = new AbortController();
+      artRefreshCtrl.current = ctrl;
+      apiClient
+        .getTitle(titleId, ctrl.signal)
+        .then((d) => {
+          if (!ctrl.signal.aborted)
+            setFreshArt({ titleId, version: d?.track?.albumArtworkVersion });
+        })
+        .catch(() => {}); // keep the version already shown
+    }, COVER_REFRESH_QUIET_MS);
+  }, [titleId, hasAlbumArt]);
   useLibraryLiveRefresh(detail?.libraryId ?? "", refreshAlbumArt);
   const albumArtVersion =
     freshArt && freshArt.titleId === titleId ? freshArt.version : detail?.track?.albumArtworkVersion;

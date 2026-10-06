@@ -136,6 +136,25 @@ function PlayHarness({ entry }: { entry: QueueEntry }) {
   );
 }
 
+/** Emits `ticks` enrich ticks 100 ms apart, then lets the burst go quiet (the bar
+ * refetches once it has), on fake timers that are restored afterwards. */
+async function burstThenQuiet(libraryId: string, ticks: number) {
+  vi.useFakeTimers();
+  try {
+    for (let i = 0; i < ticks; i++) {
+      act(() => events.emit("enrichProgress", { libraryId, complete: false }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 beforeEach(() => {
   window.sessionStorage.clear();
   getTitle.mockReset().mockResolvedValue(movieDetail("t1", "Dune"));
@@ -149,6 +168,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.sessionStorage.clear();
 });
@@ -198,10 +218,30 @@ describe("NowPlayingBar — now-playing label (from getTitle)", () => {
     );
 
     getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v2" } });
-    act(() => events.emit("libraryUpdated", { libraryId: "lib1" }));
+    await burstThenQuiet("lib1", 1);
     await waitFor(() =>
       expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al1/artwork?v=v2"),
     );
+  });
+
+  it("re-reads once per settled enrich burst for a track", async () => {
+    const detail = { ...trackDetail("tr1", "Paranoid Android", "Radiohead"), libraryId: "lib1" };
+    getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("tr1", "Paranoid Android"))]);
+    await screen.findByText("Radiohead");
+    const before = getTitle.mock.calls.length;
+    await burstThenQuiet("lib1", 100); // a 10 s burst of ticks 100 ms apart
+    expect(getTitle.mock.calls.length - before).toBe(1);
+  });
+
+  it("does not re-read the title on a library burst while a movie plays", async () => {
+    getTitle.mockResolvedValue({ ...movieDetail("t1", "Dune"), libraryId: "lib1" });
+    seedAndRender([entryFromTitle(movieSummary("t1", "Dune"))]);
+    await screen.findByText("Dune");
+    await waitFor(() => expect(startPlayback).toHaveBeenCalled());
+    const before = getTitle.mock.calls.length;
+    await burstThenQuiet("lib1", 100);
+    expect(getTitle.mock.calls.length - before).toBe(0);
   });
 
   it("shows Show · SxxExx for a TV Episode", async () => {

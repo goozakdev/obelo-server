@@ -28,6 +28,10 @@ function isTrackKind(kind: string): boolean {
   return kind === "track";
 }
 
+/** How long the library's change signal must go quiet before the playing track's
+ * cover version is re-read (a scan/enrich burst ticks every ~100 ms). */
+const COVER_REFRESH_QUIET_MS = 2_000;
+
 export default function MediaSessionBridge() {
   const queue = useQueue();
   const transport = usePlaybackTransport();
@@ -52,20 +56,37 @@ export default function MediaSessionBridge() {
   // the browse grids use) re-reads just the album's artwork version.
   const [fresh, setFresh] = useState<{ titleId: string; version?: string } | null>(null);
   const refreshCtrl = useRef<AbortController | null>(null);
-  useEffect(() => () => refreshCtrl.current?.abort(), [musicTitleId]);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Leaving a track drops its refreshed version too, so coming back to it shows the
+  // freshly read detail rather than a cover that may have been re-picked since.
+  useEffect(
+    () => () => {
+      clearTimeout(refreshTimer.current);
+      refreshCtrl.current?.abort();
+      setFresh(null);
+    },
+    [musicTitleId],
+  );
+  // The signal fires on every scan/enrich tick, so it only arms a trailing debounce:
+  // one re-read after the burst has been quiet for COVER_REFRESH_QUIET_MS. Only a Track
+  // with an album has a cover to refresh.
+  const hasAlbumArt = detail?.track != null;
   const refreshArtwork = useCallback(() => {
-    if (!musicTitleId) return;
-    refreshCtrl.current?.abort();
-    const ctrl = new AbortController();
-    refreshCtrl.current = ctrl;
-    apiClient
-      .getTitle(musicTitleId, ctrl.signal)
-      .then((d) => {
-        if (!ctrl.signal.aborted)
-          setFresh({ titleId: musicTitleId, version: d?.track?.albumArtworkVersion });
-      })
-      .catch(() => {}); // keep the version already shown
-  }, [musicTitleId]);
+    if (!musicTitleId || !hasAlbumArt) return;
+    clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      refreshCtrl.current?.abort();
+      const ctrl = new AbortController();
+      refreshCtrl.current = ctrl;
+      apiClient
+        .getTitle(musicTitleId, ctrl.signal)
+        .then((d) => {
+          if (!ctrl.signal.aborted)
+            setFresh({ titleId: musicTitleId, version: d?.track?.albumArtworkVersion });
+        })
+        .catch(() => {}); // keep the version already shown
+    }, COVER_REFRESH_QUIET_MS);
+  }, [musicTitleId, hasAlbumArt]);
   useLibraryLiveRefresh(detail?.libraryId ?? "", refreshArtwork);
   const artworkVersion =
     fresh && fresh.titleId === musicTitleId ? fresh.version : detail?.track?.albumArtworkVersion;

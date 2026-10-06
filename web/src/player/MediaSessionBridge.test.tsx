@@ -105,6 +105,25 @@ function seedAndRender(entries: QueueEntry[], currentIndex = 0) {
   );
 }
 
+/** Emits `ticks` library progress ticks 100 ms apart, then lets the burst go quiet
+ * (the bridge refetches once it has), on fake timers that are restored afterwards. */
+async function burstThenQuiet(libraryId: string, ticks: number) {
+  vi.useFakeTimers();
+  try {
+    for (let i = 0; i < ticks; i++) {
+      act(() => events.emit("scanProgress", { libraryId, complete: false }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
@@ -118,6 +137,7 @@ afterEach(() => {
   // Unmount BEFORE unstubbing: afterEach hooks run in reverse order, so without this
   // a late effect can construct MediaMetadata after the stub is gone.
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator as unknown as Record<string, unknown>, "mediaSession");
 });
@@ -154,9 +174,51 @@ describe("MediaSessionBridge", () => {
 
     // The cover is re-picked while the same track plays; the Library nudge refreshes it.
     getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v2" } });
-    act(() => events.emit("libraryUpdated", { libraryId: "lib1" }));
+    await burstThenQuiet("lib1", 1);
     await waitFor(() =>
       expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v2" }]),
+    );
+  });
+
+  it("re-reads once per settled scan burst, not once per tick", async () => {
+    const detail = trackDetail("t1", "Paranoid Android", "Radiohead", "OK Computer");
+    getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("t1", "Paranoid Android"))]);
+    await waitFor(() => expect(session.metadata?.artist).toBe("Radiohead"));
+    const before = getTitle.mock.calls.length;
+
+    await burstThenQuiet("lib1", 100); // a 10 s burst of ticks 100 ms apart
+    expect(getTitle.mock.calls.length - before).toBe(1);
+  });
+
+  it("does not keep a refreshed cover version when coming back to the track", async () => {
+    let t1Version = "v1";
+    getTitle.mockImplementation((id: string) => {
+      if (id === "t1") {
+        const d = trackDetail("t1", "Song One", "The Band", "First");
+        return Promise.resolve({ ...d, track: { ...d.track!, albumArtworkVersion: t1Version } });
+      }
+      return Promise.resolve(trackDetail("t2", "Song Two", "The Band", "Second"));
+    });
+    seedAndRender([
+      entryFromTitle(trackSummary("t1", "Song One")),
+      entryFromTitle(trackSummary("t2", "Song Two")),
+    ]);
+    await waitFor(() => expect(session.metadata?.title).toBe("Song One"));
+
+    t1Version = "v2"; // re-picked while A plays; the live signal refreshes it
+    await burstThenQuiet("lib1", 1);
+    await waitFor(() =>
+      expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v2" }]),
+    );
+
+    act(() => session.fire("nexttrack"));
+    await waitFor(() => expect(session.metadata?.title).toBe("Song Two"));
+    t1Version = "v3"; // re-picked again while A was not playing
+    act(() => session.fire("previoustrack"));
+    await waitFor(() => expect(session.metadata?.title).toBe("Song One"));
+    await waitFor(() =>
+      expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v3" }]),
     );
   });
 
