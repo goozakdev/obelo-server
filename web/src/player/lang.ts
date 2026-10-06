@@ -25,12 +25,18 @@ const ISO_639_2_TO_1: Record<string, string> = {
   alb: "sq", sqi: "sq", bur: "my", mya: "my", tib: "bo", bod: "bo", mao: "mi", mri: "mi",
 };
 
+// Deprecated ISO 639-1 codes → their current form (mirrors legacyISO1 in
+// internal/subtitle/subtitle.go), so an old tag compares equal to the modern one.
+const LEGACY_ISO_639_1: Record<string, string> = { iw: "he", in: "id" };
+
 /** A language tag reduced to one comparable key: lower-cased, region/script dropped
  * ("en-US" → "en"), and a 3-letter ISO 639-2 code (either the bibliographic or the
- * terminologic form: ger/deu, fre/fra) mapped to its 2-letter ISO 639-1 form. "" for
+ * terminologic form: ger/deu, fre/fra) mapped to its 2-letter ISO 639-1 form, and a
+ * deprecated 2-letter code (iw, in) to its current one (he, id). "" for
  * an empty/unknown tag. */
 export function normalizeLang(language: string | undefined): string {
   const primary = (language ?? "").trim().toLowerCase().split(/[-_]/)[0] ?? "";
+  if (Object.hasOwn(LEGACY_ISO_639_1, primary)) return LEGACY_ISO_639_1[primary]!;
   return Object.hasOwn(ISO_639_2_TO_1, primary) ? ISO_639_2_TO_1[primary]! : primary;
 }
 

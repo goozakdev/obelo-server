@@ -54,6 +54,13 @@ describe("lang helpers (R04-19)", () => {
     expect(normalizeLang(undefined)).toBe("");
   });
 
+  it("normalizeLang folds deprecated ISO 639-1 codes the way the server does (iw→he, in→id)", () => {
+    expect(["iw", "IW-IL", "heb", "he"].map(normalizeLang)).toEqual(["he", "he", "he", "he"]);
+    expect(["in", "in_ID", "ind", "id"].map(normalizeLang)).toEqual(["id", "id", "id", "id"]);
+    expect(sameLang("iw", "he")).toBe(true);
+    expect(langRank("in", "id")).toBe(0);
+  });
+
   it("normalizeLang maps the extra bibliographic codes and ignores inherited properties", () => {
     expect(["alb", "sqi"].map(normalizeLang)).toEqual(["sq", "sq"]);
     expect(["bur", "mya"].map(normalizeLang)).toEqual(["my", "my"]);
