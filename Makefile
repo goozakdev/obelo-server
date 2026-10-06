@@ -622,8 +622,8 @@ check-web:
 	  echo "       running is exactly the shape CLAUDE.md records as having rotted."; \
 	  echo "       Install the toolchain once with:  cd $(WEB_DIR) && npm ci"; \
 	  exit 1; }
-	@[ ! -e $(WEB_DIR)/node_modules/node_modules ] || { \
-	  echo "ERROR: $(WEB_DIR)/node_modules/node_modules exists (a self-link) and breaks module resolution; remove it with:  rm $(WEB_DIR)/node_modules/node_modules"; \
+	@{ [ ! -e $(WEB_DIR)/node_modules/node_modules ] && [ ! -L $(WEB_DIR)/node_modules/node_modules ]; } || { \
+	  echo "ERROR: $(WEB_DIR)/node_modules/node_modules exists (usually a stray self-link) and breaks module resolution; remove it with:  rm -rf $(WEB_DIR)/node_modules/node_modules"; \
 	  exit 1; }
 	cd $(WEB_DIR) && npm run typecheck
 	cd $(WEB_DIR) && npm test
