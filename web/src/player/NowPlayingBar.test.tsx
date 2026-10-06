@@ -24,6 +24,9 @@ const { getTitle, startPlayback, reportProgress, endSession } = vi.hoisted(() =>
 }));
 
 const { attachHls } = vi.hoisted(() => ({ attachHls: vi.fn() }));
+const { events } = vi.hoisted(() => ({
+  events: { emit: (_type: string, _data: unknown) => {} },
+}));
 vi.mock("./hls", () => ({
   attachHls: (...a: unknown[]) => attachHls(...a),
 }));
@@ -34,6 +37,10 @@ vi.mock("../api/client", async () => {
     ...actual,
     apiClient: {
       getTitle: (...a: unknown[]) => getTitle(...a),
+      subscribeEvents: (cb: (type: string, data: unknown) => void) => {
+        events.emit = cb;
+        return () => {};
+      },
       startPlayback: (...a: unknown[]) => startPlayback(...a),
       reportProgress: (...a: unknown[]) => reportProgress(...a),
       endSession: (...a: unknown[]) => endSession(...a),
@@ -178,6 +185,22 @@ describe("NowPlayingBar — now-playing label (from getTitle)", () => {
     const thumb = (await screen.findByTestId("now-playing-bar")).querySelector(".now-playing-thumb");
     await waitFor(() =>
       expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al1/artwork?v=v9"),
+    );
+  });
+
+  it("re-reads the album cover version when its Library signals a change mid-track", async () => {
+    const detail = { ...trackDetail("tr1", "Paranoid Android", "Radiohead"), libraryId: "lib1" };
+    getTitle.mockResolvedValueOnce({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("tr1", "Paranoid Android"))]);
+    const thumb = (await screen.findByTestId("now-playing-bar")).querySelector(".now-playing-thumb");
+    await waitFor(() =>
+      expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al1/artwork?v=v1"),
+    );
+
+    getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v2" } });
+    act(() => events.emit("libraryUpdated", { libraryId: "lib1" }));
+    await waitFor(() =>
+      expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al1/artwork?v=v2"),
     );
   });
 

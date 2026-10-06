@@ -1,6 +1,8 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
 import { albumArtworkUrl } from "../browse/albumArt";
 import { useAsync } from "../browse/useAsync";
+import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import { usePlaybackTransport } from "./transport";
 import { useQueue } from "./queue/useQueue";
 import { useMediaSession, type MediaSessionTrack } from "./useMediaSession";
@@ -45,6 +47,29 @@ export default function MediaSessionBridge() {
   );
   const detail = detailState.status === "ready" ? detailState.data : null;
 
+  // The detail is read once per track, so a cover re-picked while this track plays
+  // would only show from the next one. The Library's live-refresh signal (the one
+  // the browse grids use) re-reads just the album's artwork version.
+  const [fresh, setFresh] = useState<{ titleId: string; version?: string } | null>(null);
+  const refreshCtrl = useRef<AbortController | null>(null);
+  useEffect(() => () => refreshCtrl.current?.abort(), [musicTitleId]);
+  const refreshArtwork = useCallback(() => {
+    if (!musicTitleId) return;
+    refreshCtrl.current?.abort();
+    const ctrl = new AbortController();
+    refreshCtrl.current = ctrl;
+    apiClient
+      .getTitle(musicTitleId, ctrl.signal)
+      .then((d) => {
+        if (!ctrl.signal.aborted)
+          setFresh({ titleId: musicTitleId, version: d?.track?.albumArtworkVersion });
+      })
+      .catch(() => {}); // keep the version already shown
+  }, [musicTitleId]);
+  useLibraryLiveRefresh(detail?.libraryId ?? "", refreshArtwork);
+  const artworkVersion =
+    fresh && fresh.titleId === musicTitleId ? fresh.version : detail?.track?.albumArtworkVersion;
+
   const track: MediaSessionTrack | null =
     music && entry
       ? {
@@ -52,7 +77,7 @@ export default function MediaSessionBridge() {
           artist: detail?.track?.artistName ?? "",
           album: detail?.track?.albumTitle ?? "",
           artworkSrc: detail?.track
-            ? albumArtworkUrl(detail.track.albumId, detail.track.albumArtworkVersion)
+            ? albumArtworkUrl(detail.track.albumId, artworkVersion)
             : undefined,
         }
       : null;

@@ -149,7 +149,11 @@ function EntryRow({
         </span>
       )}
       <div className="queue-entry-poster">
-        <Poster titleId={entry.title.id} title={entry.title.title} />
+        <Poster
+          titleId={entry.title.id}
+          title={entry.title.title}
+          version={entry.title.artworkVersion}
+        />
       </div>
       <div className="queue-entry-info">
         <span className="queue-entry-title" data-testid="queue-entry-title">

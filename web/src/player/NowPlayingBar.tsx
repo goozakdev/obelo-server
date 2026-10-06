@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import { apiClient } from "../api/client";
 // reads BOTH storage tiers (a session-only login lives in sessionStorage).
 import { persistedUserId } from "../auth/session";
 import { useAsync } from "../browse/useAsync";
+import { useLibraryLiveRefresh } from "../events/enrichEvents";
 import { episodeContextLabel } from "../browse/episodeLabel";
 import Poster from "../browse/Poster";
 import { albumArtworkUrl } from "../browse/albumArt";
@@ -1262,9 +1264,30 @@ function CurrentPlayer({
   // not the track-keyed poster — so the bar shows the album art of the song
   // playing. Falls back to the placeholder if the album has no cover (404).
   // Video (Movie/Episode) keeps its own title poster.
+  // The detail is read once per track, so a cover re-picked while it plays would only
+  // show from the next track: the Library's live-refresh signal (the one the browse
+  // grids use) re-reads just the album's artwork version, leaving `detail` untouched.
+  const [freshArt, setFreshArt] = useState<{ titleId: string; version?: string } | null>(null);
+  const artRefreshCtrl = useRef<AbortController | null>(null);
+  useEffect(() => () => artRefreshCtrl.current?.abort(), [titleId]);
+  const refreshAlbumArt = useCallback(() => {
+    artRefreshCtrl.current?.abort();
+    const ctrl = new AbortController();
+    artRefreshCtrl.current = ctrl;
+    apiClient
+      .getTitle(titleId, ctrl.signal)
+      .then((d) => {
+        if (!ctrl.signal.aborted)
+          setFreshArt({ titleId, version: d?.track?.albumArtworkVersion });
+      })
+      .catch(() => {}); // keep the version already shown
+  }, [titleId]);
+  useLibraryLiveRefresh(detail?.libraryId ?? "", refreshAlbumArt);
+  const albumArtVersion =
+    freshArt && freshArt.titleId === titleId ? freshArt.version : detail?.track?.albumArtworkVersion;
   const albumArtSrc =
     detail?.kind === "track" && detail.track
-      ? albumArtworkUrl(detail.track.albumId, detail.track.albumArtworkVersion)
+      ? albumArtworkUrl(detail.track.albumId, albumArtVersion)
       : undefined;
 
   // The last position read off the element, for when it is gone: React detaches

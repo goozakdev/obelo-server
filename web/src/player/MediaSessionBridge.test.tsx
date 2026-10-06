@@ -14,13 +14,22 @@ import { PlaybackTransportProvider } from "./transport";
 // mirrors a music Track, updates on advance, and stays clear for a video entry
 // (music-only) — the bridge-specific behaviour on top of the hook's own unit test.
 
-const { getTitle } = vi.hoisted(() => ({ getTitle: vi.fn() }));
+const { getTitle, events } = vi.hoisted(() => ({
+  getTitle: vi.fn(),
+  events: { emit: (_type: string, _data: unknown) => {} },
+}));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
   return {
     ...actual,
-    apiClient: { getTitle: (...a: unknown[]) => getTitle(...a) },
+    apiClient: {
+      getTitle: (...a: unknown[]) => getTitle(...a),
+      subscribeEvents: (cb: (type: string, data: unknown) => void) => {
+        events.emit = cb;
+        return () => {};
+      },
+    },
   };
 });
 
@@ -79,6 +88,7 @@ function trackDetail(id: string, name: string, artist: string, album: string): P
     id,
     kind: "track",
     title: name,
+    libraryId: "lib1",
     track: { artistId: "ar1", artistName: artist, albumId: `al-${id}`, albumTitle: album },
   };
 }
@@ -132,6 +142,33 @@ describe("MediaSessionBridge", () => {
 
     await waitFor(() => expect(session.metadata?.artist).toBe("Radiohead"));
     expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v9" }]);
+  });
+
+  it("re-reads the album cover version when its Library signals a change mid-track", async () => {
+    const detail = trackDetail("t1", "Paranoid Android", "Radiohead", "OK Computer");
+    getTitle.mockResolvedValueOnce({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("t1", "Paranoid Android"))]);
+    await waitFor(() =>
+      expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v1" }]),
+    );
+
+    // The cover is re-picked while the same track plays; the Library nudge refreshes it.
+    getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v2" } });
+    act(() => events.emit("libraryUpdated", { libraryId: "lib1" }));
+    await waitFor(() =>
+      expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v2" }]),
+    );
+  });
+
+  it("ignores another Library's change signal", async () => {
+    const detail = trackDetail("t1", "Paranoid Android", "Radiohead", "OK Computer");
+    getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v1" } });
+    seedAndRender([entryFromTitle(trackSummary("t1", "Paranoid Android"))]);
+    await waitFor(() => expect(session.metadata?.artist).toBe("Radiohead"));
+
+    act(() => events.emit("libraryUpdated", { libraryId: "other" }));
+    await act(async () => {});
+    expect(getTitle).toHaveBeenCalledTimes(1);
   });
 
   it("advances the Queue when the OS nexttrack control fires, updating metadata", async () => {
