@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, waitFor } from "@testing-library/react";
+import { act, cleanup, waitFor } from "@testing-library/react";
 import { renderWithAuth } from "../test/renderWithAuth";
 import type { TitleDetail, TitleSummary } from "../api/types";
 import { entryFromTitle, type QueueEntry, type QueueState } from "./queue/model";
@@ -103,6 +103,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount BEFORE unstubbing: afterEach hooks run in reverse order, so without this
+  // a late effect can construct MediaMetadata after the stub is gone.
+  cleanup();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(navigator as unknown as Record<string, unknown>, "mediaSession");
 });
