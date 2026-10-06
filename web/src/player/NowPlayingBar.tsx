@@ -1264,7 +1264,7 @@ function CurrentPlayer({
   // Video (Movie/Episode) keeps its own title poster.
   const albumArtSrc =
     detail?.kind === "track" && detail.track
-      ? albumArtworkUrl(detail.track.albumId)
+      ? albumArtworkUrl(detail.track.albumId, detail.track.albumArtworkVersion)
       : undefined;
 
   // The last position read off the element, for when it is gone: React detaches

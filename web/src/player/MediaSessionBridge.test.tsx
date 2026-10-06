@@ -29,7 +29,7 @@ import MediaSessionBridge from "./MediaSessionBridge";
 // A minimal fake of `navigator.mediaSession` + the `MediaMetadata` constructor
 // (jsdom implements neither), enough to observe what the bridge sets.
 interface FakeMediaSession {
-  metadata: { title?: string; artist?: string; album?: string } | null;
+  metadata: { title?: string; artist?: string; album?: string; artwork?: { src: string }[] } | null;
   playbackState: string;
   setActionHandler: (action: string, handler: (() => void) | null) => void;
   handlers: Map<string, (() => void) | null>;
@@ -49,10 +49,12 @@ class FakeMediaMetadata {
   title: string;
   artist: string;
   album: string;
-  constructor(init: { title?: string; artist?: string; album?: string }) {
+  artwork: { src: string }[];
+  constructor(init: { title?: string; artist?: string; album?: string; artwork?: { src: string }[] }) {
     this.title = init.title ?? "";
     this.artist = init.artist ?? "";
     this.album = init.album ?? "";
+    this.artwork = init.artwork ?? [];
   }
 }
 
@@ -118,6 +120,18 @@ describe("MediaSessionBridge", () => {
     await waitFor(() => expect(session.metadata?.artist).toBe("Radiohead"));
     expect(session.metadata?.title).toBe("Paranoid Android");
     expect(session.metadata?.album).toBe("OK Computer");
+  });
+
+  it("cache-busts the OS cover with the album's artworkVersion", async () => {
+    const detail = trackDetail("t1", "Paranoid Android", "Radiohead", "OK Computer");
+    getTitle.mockResolvedValue({
+      ...detail,
+      track: { ...detail.track!, albumArtworkVersion: "v9" },
+    });
+    seedAndRender([entryFromTitle(trackSummary("t1", "Paranoid Android"))]);
+
+    await waitFor(() => expect(session.metadata?.artist).toBe("Radiohead"));
+    expect(session.metadata?.artwork).toEqual([{ src: "/api/v1/albums/al-t1/artwork?v=v9" }]);
   });
 
   it("advances the Queue when the OS nexttrack control fires, updating metadata", async () => {

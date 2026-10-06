@@ -171,6 +171,16 @@ describe("NowPlayingBar — now-playing label (from getTitle)", () => {
     expect(await screen.findByTestId("now-playing-context")).toHaveTextContent("Radiohead");
   });
 
+  it("cache-busts a Track's album cover with the album's artworkVersion", async () => {
+    const detail = trackDetail("tr1", "Paranoid Android", "Radiohead");
+    getTitle.mockResolvedValue({ ...detail, track: { ...detail.track!, albumArtworkVersion: "v9" } });
+    seedAndRender([entryFromTitle(trackSummary("tr1", "Paranoid Android"))]);
+    const thumb = (await screen.findByTestId("now-playing-bar")).querySelector(".now-playing-thumb");
+    await waitFor(() =>
+      expect(thumb?.querySelector("img")).toHaveAttribute("src", "/api/v1/albums/al1/artwork?v=v9"),
+    );
+  });
+
   it("shows Show · SxxExx for a TV Episode", async () => {
     getTitle.mockResolvedValue(episodeDetail("ep1", "System"));
     seedAndRender([entryFromTitle({ ...movieSummary("ep1", "System"), kind: "episode" })]);

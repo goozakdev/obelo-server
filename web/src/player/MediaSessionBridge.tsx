@@ -52,7 +52,7 @@ export default function MediaSessionBridge() {
           artist: detail?.track?.artistName ?? "",
           album: detail?.track?.albumTitle ?? "",
           artworkSrc: detail?.track
-            ? albumArtworkUrl(detail.track.albumId)
+            ? albumArtworkUrl(detail.track.albumId, detail.track.albumArtworkVersion)
             : undefined,
         }
       : null;

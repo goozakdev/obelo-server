@@ -694,3 +694,70 @@ func TestTrackContextCarriesTheAlbumArtworkVersion(t *testing.T) {
 		t.Errorf("no OK Computer track in /home recentlyAdded: %+v", home.RecentlyAdded)
 	}
 }
+
+// TestTrackContextOmitsTheAlbumArtworkVersionWithoutArtwork: a Track whose album
+// has no fetched cover (a scan with no enrichment) carries NO albumArtworkVersion
+// key at all, on its detail and on its Home row, so the client keeps the bare,
+// stable cover URL rather than a `?v=` with an empty token.
+func TestTrackContextOmitsTheAlbumArtworkVersionWithoutArtwork(t *testing.T) {
+	t.Parallel()
+	requireMusicFixtures(t)
+	srv := testharness.New(t)
+	token := adminToken(t, srv)
+	libID := createMusicLibrary(t, srv, token, musicRoot(t))
+	scanLib(t, srv, token, libID, "")
+
+	var list enrichedArtistsListResp
+	srv.AuthGET("/api/v1/libraries/"+libID+"/titles?limit=100", token, &list)
+	var artistID string
+	for _, a := range list.Artists {
+		if a.Name == "Radiohead" {
+			artistID = a.ID
+		}
+	}
+	var albums struct {
+		Albums []struct {
+			ID             string `json:"id"`
+			Title          string `json:"title"`
+			ArtworkVersion string `json:"artworkVersion"`
+		} `json:"albums"`
+	}
+	srv.AuthGET("/api/v1/artists/"+artistID+"/albums", token, &albums)
+	if len(albums.Albums) == 0 || albums.Albums[0].ArtworkVersion != "" {
+		t.Fatalf("unenriched album should advertise no artworkVersion: %+v", albums.Albums)
+	}
+	albumID := albums.Albums[0].ID
+	tracks := albumTracks(t, srv, token, albumID)
+
+	var detail struct {
+		Track map[string]any `json:"track"`
+	}
+	srv.AuthGET("/api/v1/titles/"+tracks.Tracks[0].ID, token, &detail)
+	if detail.Track == nil || detail.Track["albumId"] != albumID {
+		t.Fatalf("track detail has no track context for album %s: %+v", albumID, detail.Track)
+	}
+	if v, ok := detail.Track["albumArtworkVersion"]; ok {
+		t.Errorf("track detail albumArtworkVersion present (%v), want omitted", v)
+	}
+
+	var home struct {
+		RecentlyAdded []struct {
+			Kind  string         `json:"kind"`
+			Track map[string]any `json:"track"`
+		} `json:"recentlyAdded"`
+	}
+	srv.AuthGET("/api/v1/home", token, &home)
+	seen := 0
+	for _, r := range home.RecentlyAdded {
+		if r.Kind != "track" || r.Track["albumId"] != albumID {
+			continue
+		}
+		seen++
+		if v, ok := r.Track["albumArtworkVersion"]; ok {
+			t.Errorf("home track albumArtworkVersion present (%v), want omitted", v)
+		}
+	}
+	if seen == 0 {
+		t.Errorf("no track of album %s in /home recentlyAdded: %+v", albumID, home.RecentlyAdded)
+	}
+}
