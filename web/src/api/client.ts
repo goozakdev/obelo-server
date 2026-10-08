@@ -1734,11 +1734,28 @@ export class ApiClient {
     });
   }
 
+  /** `PUT /api/v1/users/{id}/onlineSourceAccess` (Admin) — REPLACE a Member's whole
+   * Online source grant set with `sourceIds` (the full desired set, not a delta).
+   * 204 No Content on success. Refused with 422: `RATING_CEILING_SET` (the User
+   * holds a Rating ceiling), `ADMIN_GRANT`, `REMOTE_GRANT`, `UNKNOWN_SOURCE`; an
+   * unknown user is 404. */
+  setOnlineSourceAccess(
+    id: string,
+    sourceIds: string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.request<void>(
+      `/users/${encodeURIComponent(id)}/onlineSourceAccess`,
+      { method: "PUT", body: { sourceIds }, signal },
+    );
+  }
+
   /** `PUT /api/v1/users/{id}/ratingCeiling` (Admin) — set or clear a Member's
    * Rating ceiling (access-control-admin-ui issue 03). A maturity-rung label
    * (e.g. "PG-13") caps the Member at or below it (across both movie and TV
    * ratings, by the server's shared rank); `null` clears the cap (uncapped). 204
-   * No Content on success. The refusals are NOT swallowed, so the row branches on
+   * No Content on success (200 when setting it removed the Member's Online source
+   * grants, which the dialog has already named before the save). The refusals are NOT swallowed, so the row branches on
    * them for a readable inline message: 422 `ADMIN_CEILING` (the target is an
    * Admin — implicitly all-access, so a cap is meaningless) and 422
    * `UNKNOWN_RATING` (the label isn't a known rung); an unknown user is 404. */

@@ -34,6 +34,9 @@ const {
   getUser,
   getSignInProviders,
   getGroupMapping,
+  getOnlineSources,
+  setOnlineSourceAccess,
+  setRatingCeiling,
 } = vi.hoisted(() => ({
   listUsers: vi.fn(),
   createUser: vi.fn(),
@@ -43,6 +46,9 @@ const {
   getUser: vi.fn(),
   getSignInProviders: vi.fn(),
   getGroupMapping: vi.fn(),
+  getOnlineSources: vi.fn(),
+  setOnlineSourceAccess: vi.fn(),
+  setRatingCeiling: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -58,6 +64,9 @@ vi.mock("../api/client", async () => {
       getUser: (...a: unknown[]) => getUser(...a),
       getSignInProviders: (...a: unknown[]) => getSignInProviders(...a),
       getGroupMapping: (...a: unknown[]) => getGroupMapping(...a),
+      getOnlineSources: (...a: unknown[]) => getOnlineSources(...a),
+      setOnlineSourceAccess: (...a: unknown[]) => setOnlineSourceAccess(...a),
+      setRatingCeiling: (...a: unknown[]) => setRatingCeiling(...a),
     },
   };
 });
@@ -95,6 +104,12 @@ beforeEach(() => {
   getUser.mockReset();
   getSignInProviders.mockReset();
   getGroupMapping.mockReset();
+  getOnlineSources.mockReset();
+  setOnlineSourceAccess.mockReset();
+  setRatingCeiling.mockReset();
+  getOnlineSources.mockResolvedValue([]);
+  setOnlineSourceAccess.mockResolvedValue(undefined);
+  setRatingCeiling.mockResolvedValue(undefined);
   getSignInProviders.mockResolvedValue({ providers: [], redirect: [] });
   listLibraries.mockResolvedValue(ALL_LIBS);
   setLibraryAccess.mockResolvedValue(undefined);
@@ -582,6 +597,7 @@ describe("AdminUsersScreen — editing a user", () => {
       role: "member",
       libraryIds: ["l1"],
       ratingCeiling: "PG",
+      onlineSourceIds: [],
     });
 
     renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
@@ -607,6 +623,7 @@ describe("AdminUsersScreen — editing a user", () => {
       role: "member",
       libraryIds: [],
       ratingCeiling: "",
+      onlineSourceIds: [],
     });
     deleteUser.mockResolvedValue(undefined);
 
@@ -629,6 +646,114 @@ describe("AdminUsersScreen — editing a user", () => {
     await waitFor(() =>
       expect(screen.getByTestId("admin-users-empty")).toBeInTheDocument(),
     );
+  });
+});
+
+describe("AdminUsersScreen — online sources in the Edit dialog", () => {
+  const SOURCES = [
+    { id: "tube", name: "Test Tube", iconUrl: null },
+    { id: "archive", name: "Old Archive", iconUrl: null },
+  ];
+
+  async function openEditor(over: { ratingCeiling?: string; onlineSourceIds?: string[] }) {
+    const user = userEvent.setup();
+    listUsers.mockResolvedValue([usr({ id: "u2", username: "ada" })]);
+    getOnlineSources.mockResolvedValue(SOURCES);
+    getUser.mockResolvedValue({
+      id: "u2",
+      username: "ada",
+      role: "member",
+      libraryIds: [],
+      ratingCeiling: over.ratingCeiling ?? "",
+      onlineSourceIds: over.onlineSourceIds ?? [],
+      maxResolution: "",
+      maxBitrate: 0,
+      maxStreams: 0,
+    });
+    renderWithAuth(<AdminUsersScreen />, { initialEntries: ["/admin/users"] });
+    await waitFor(() =>
+      expect(screen.getByTestId("admin-user-row")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("edit-user-button"));
+    await screen.findByTestId("online-source-checklist");
+    return user;
+  }
+
+  it("names the sources a rating ceiling will remove before it is confirmed", async () => {
+    const user = await openEditor({ onlineSourceIds: ["tube", "archive"] });
+
+    await user.selectOptions(screen.getByTestId("rating-ceiling-select"), "PG");
+    expect(screen.getByTestId("ceiling-removes-sources")).toHaveTextContent(
+      "Test Tube, Old Archive",
+    );
+
+    await user.click(screen.getByTestId("edit-user-save"));
+    const confirm = await screen.findByTestId("confirm-dialog");
+    expect(confirm).toHaveTextContent("Test Tube, Old Archive");
+    // Nothing is sent until the Admin confirms.
+    expect(setRatingCeiling).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("confirm-dialog-cancel"));
+    expect(setRatingCeiling).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("edit-user-save"));
+    await user.click(await screen.findByTestId("confirm-dialog-confirm"));
+    await waitFor(() => expect(setRatingCeiling).toHaveBeenCalledWith("u2", "PG"));
+    // The server drops the grants with the ceiling; no separate grant call is made.
+    expect(setOnlineSourceAccess).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing when the ceiling removes no source", async () => {
+    const user = await openEditor({ onlineSourceIds: [] });
+
+    await user.selectOptions(screen.getByTestId("rating-ceiling-select"), "PG");
+    expect(screen.queryByTestId("ceiling-removes-sources")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() => expect(setRatingCeiling).toHaveBeenCalledWith("u2", "PG"));
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+  });
+
+  it("disables and explains the checklist for a User with a rating ceiling", async () => {
+    const user = await openEditor({ ratingCeiling: "PG" });
+
+    expect(screen.getByTestId("online-source-checkbox-tube")).toBeDisabled();
+    expect(screen.getByTestId("online-sources-capped")).toHaveTextContent(
+      /rating ceiling/i,
+    );
+
+    // Clearing the ceiling here lifts it again, before anything is saved.
+    await user.selectOptions(screen.getByTestId("rating-ceiling-select"), "");
+    expect(screen.getByTestId("online-source-checkbox-tube")).toBeEnabled();
+    expect(screen.queryByTestId("online-sources-capped")).not.toBeInTheDocument();
+  });
+
+  it("shows a grant to a disabled source as such and lets the Admin untick it", async () => {
+    const user = await openEditor({ onlineSourceIds: ["tube", "gone"] });
+
+    const held = screen.getByTestId("online-source-checkbox-gone");
+    expect(held).toBeChecked();
+    expect(screen.getByTestId("online-source-checklist")).toHaveTextContent(
+      "gone (disabled)",
+    );
+    await user.click(held);
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() =>
+      expect(setOnlineSourceAccess).toHaveBeenCalledWith("u2", ["tube"]),
+    );
+  });
+
+  it("grants the ticked sources as the full set", async () => {
+    const user = await openEditor({ onlineSourceIds: ["tube"] });
+
+    await user.click(screen.getByTestId("online-source-checkbox-archive"));
+    await user.click(screen.getByTestId("edit-user-save"));
+
+    await waitFor(() =>
+      expect(setOnlineSourceAccess).toHaveBeenCalledWith("u2", ["tube", "archive"]),
+    );
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
   });
 });
 

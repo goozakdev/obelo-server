@@ -1133,6 +1133,19 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 			log.Printf("obelo: revoking stream tokens for ended online session %s: %v", sessionID, err)
 		}
 	})
+	// A live session outlasts neither the grant that opened it nor the role it was
+	// opened under (Q19): the API ends them on a grant change, and a Group mapping
+	// that moves a User's role does here.
+	onlineSvc.SetAccess(func(userID, sourceID string) bool {
+		view, err := accessSvc.OnlineSourcesFor(userID)
+		return err == nil && view.Allows(sourceID)
+	})
+	authSvc.SetOnAccessChange(func(userID string) { onlineSvc.Revalidate(userID) })
+	pluginManager.SetOnUsersDeleted(func(ids []string) {
+		for _, id := range ids {
+			onlineSvc.Revalidate(id)
+		}
+	})
 
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the

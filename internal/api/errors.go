@@ -215,6 +215,13 @@ const (
 	// an Admin, and naming a Library that does not exist.
 	codeAdminGrant     = "ADMIN_GRANT"
 	codeUnknownLibrary = "UNKNOWN_LIBRARY"
+	// Online-source grants (PUT /users/{id}/onlineSourceAccess), 422 beside the shared
+	// ADMIN_GRANT: the target is a linked Server, which never sees a source; the target
+	// holds a Rating ceiling, which a source has no ratings to apply; or an id is not
+	// an enabled source (the whole set is rejected, the prior set kept).
+	codeRemoteGrant      = "REMOTE_GRANT"
+	codeRatingCeilingSet = "RATING_CEILING_SET"
+	codeUnknownSource    = "UNKNOWN_SOURCE"
 	// codeLinkedGrant (422): the target of a grant is a `remote` User (a linked
 	// Server) and the set names a Library that itself arrived over a Link. A
 	// mirror is never re-shared onward (ADR-0054 §4, ADR-0056 §7) — the owner of

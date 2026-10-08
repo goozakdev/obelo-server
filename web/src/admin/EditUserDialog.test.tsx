@@ -81,6 +81,7 @@ function detail(over: Partial<UserDetail>): UserDetail {
     maxResolution: "",
     maxBitrate: 0,
     maxStreams: 0,
+    onlineSourceIds: [],
     ...over,
   };
 }

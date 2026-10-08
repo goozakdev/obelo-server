@@ -86,6 +86,12 @@ func onlineVariantRefusal(profile DeviceProfile, c Constraints, v pluginapi.Onli
 	if cap := resolutionHeight(c.MaxResolution); cap > 0 && (height == 0 || height > cap) {
 		return &Unsupported{Reason: ReasonResolution, Detail: "resolution " + v.Resolution + " exceeds the cap " + c.MaxResolution}
 	}
+	// A variant states no bitrate, so untouched bytes cannot be shown to be under a
+	// bitrate cap. Under one the item is encoded held to it, or refused without ffmpeg:
+	// the ceiling must not be one a Plugin can step around by saying nothing.
+	if c.MaxBitrate > 0 {
+		return &Unsupported{Reason: ReasonBitrate, Detail: "the variant's bitrate is unknown and the bitrate cap is set"}
+	}
 	return nil
 }
 

@@ -129,6 +129,13 @@ func (m *Manager) uninstallSignIn(ctx context.Context, id string, others, confir
 		putBack()
 		return err
 	}
+	if m.onUsersDeleted != nil {
+		ids := make([]string, 0, len(users))
+		for _, u := range users {
+			ids = append(ids, u.ID)
+		}
+		m.onUsersDeleted(ids)
+	}
 	if bundledRow {
 		m.declineIfUninstalled(id)
 	}
@@ -140,6 +147,11 @@ func (m *Manager) uninstallSignIn(ctx context.Context, id string, others, confir
 	m.logf("obelo: plugin %s was uninstalled; %d users with no other sign-in path were deleted", id, len(users))
 	return nil
 }
+
+// SetOnUsersDeleted installs the callback told the ids of the Users an uninstall
+// of a Sign-in provider deleted, so what is live for them (an Online source
+// session) ends with them.
+func (m *Manager) SetOnUsersDeleted(f func(userIDs []string)) { m.onUsersDeleted = f }
 
 // signInProviders reports whether id is a Sign-in provider, and the ids of
 // every OTHER installed one — enabled or not, and whether or not the host has

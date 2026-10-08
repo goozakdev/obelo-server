@@ -99,8 +99,17 @@ func (s *Service) SyncGroupMappingChanged(userID string) (bool, error) {
 		libs = append(libs, lid)
 	}
 	sort.Strings(libs)
-	return s.store.ApplyMappedAccess(userID, role, libs)
+	changed, err := s.store.ApplyMappedAccess(userID, role, libs)
+	if changed && err == nil && s.onAccessChange != nil {
+		s.onAccessChange(userID)
+	}
+	return changed, err
 }
+
+// SetOnAccessChange installs the callback told the id of a User whose role or
+// granted Libraries a Group mapping moved, so what is live for them can be
+// re-judged (an Admin made a Member loses their Online source sessions).
+func (s *Service) SetOnAccessChange(f func(userID string)) { s.onAccessChange = f }
 
 // RevokeSessions ends every session userID holds, on every Device: what a
 // provider saying the identity is gone or disabled costs (ADR-0063 decision 4),

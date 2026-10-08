@@ -147,6 +147,25 @@ type setLibraryAccessRequest struct {
 	LibraryIDs []string `json:"libraryIds"`
 }
 
+// setOnlineSourceAccessRequest is the body of PUT /users/{id}/onlineSourceAccess:
+// the full desired set of granted Online source ids (replace-set, not a delta).
+type setOnlineSourceAccessRequest struct {
+	SourceIDs []string `json:"sourceIds"`
+}
+
+// removedOnlineSourcesResponse is the 200 body of PUT /users/{id}/ratingCeiling when
+// setting the ceiling took Online source grants from the User: each source by id and
+// name, so the Admin's confirmation can say which. With nothing removed the answer is
+// the plain 204.
+type removedOnlineSourcesResponse struct {
+	Removed []onlineSourceRefJSON `json:"removedOnlineSources"`
+}
+
+type onlineSourceRefJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // setRatingCeilingRequest is the body of PUT /users/{id}/ratingCeiling: the
 // canonical ceiling label, or null/"" to clear it (uncapped).
 type setRatingCeilingRequest struct {
@@ -183,6 +202,9 @@ type userDetailJSON struct {
 	MaxResolution string   `json:"maxResolution"`
 	MaxBitrate    int64    `json:"maxBitrate"`
 	MaxStreams    int      `json:"maxStreams"`
+	// OnlineSourceIDs are the Online sources granted to a Member; empty for an Admin
+	// (who sees every enabled source by role) and for a User holding a Rating ceiling.
+	OnlineSourceIDs []string `json:"onlineSourceIds"`
 }
 
 // handleUserSubtree dispatches the single-User endpoints under "/users/":
@@ -191,6 +213,7 @@ type userDetailJSON struct {
 //	DELETE /users/{id}                → delete a User (last-Admin guarded)
 //	PUT    /users/{id}/password       → reset a User's password
 //	PUT    /users/{id}/libraryAccess  → replace a Member's granted Libraries
+//	PUT    /users/{id}/onlineSourceAccess → replace a Member's granted Online sources
 //	PUT    /users/{id}/ratingCeiling  → set/clear a Member's Rating ceiling
 //	PUT    /users/{id}/playbackCeiling → set/clear a Member's Playback ceiling
 //	POST   /users/{id}/invite         → mint a one-time link invite (remote only)
@@ -217,12 +240,20 @@ func handleUserSubtree(deps Deps) http.HandlerFunc {
 			requireMethod(http.MethodPut, handleSetLibraryAccess(deps.Access, id))(w, r)
 			return
 		}
+		if id, ok := strings.CutSuffix(rest, "/onlineSourceAccess"); ok {
+			if id == "" || strings.Contains(id, "/") {
+				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+				return
+			}
+			requireMethod(http.MethodPut, handleSetOnlineSourceAccess(deps, id))(w, r)
+			return
+		}
 		if id, ok := strings.CutSuffix(rest, "/ratingCeiling"); ok {
 			if id == "" || strings.Contains(id, "/") {
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 				return
 			}
-			requireMethod(http.MethodPut, handleSetRatingCeiling(deps.Access, id))(w, r)
+			requireMethod(http.MethodPut, handleSetRatingCeiling(deps, id))(w, r)
 			return
 		}
 		if id, ok := strings.CutSuffix(rest, "/playbackCeiling"); ok {
@@ -292,15 +323,25 @@ func handleGetUser(deps Deps, id string) http.HandlerFunc {
 				"failed to get user", nil)
 			return
 		}
+		sources, err := deps.Access.OnlineSourceAccess(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to get user", nil)
+			return
+		}
+		if sources == nil {
+			sources = []string{}
+		}
 		writeJSON(w, http.StatusOK, userDetailJSON{
-			ID:            user.ID,
-			Username:      user.Username,
-			Role:          user.Role,
-			LibraryIDs:    grants,
-			RatingCeiling: ceiling,
-			MaxResolution: play.MaxResolution,
-			MaxBitrate:    play.MaxBitrate,
-			MaxStreams:    play.MaxStreams,
+			ID:              user.ID,
+			Username:        user.Username,
+			Role:            user.Role,
+			LibraryIDs:      grants,
+			RatingCeiling:   ceiling,
+			MaxResolution:   play.MaxResolution,
+			MaxBitrate:      play.MaxBitrate,
+			MaxStreams:      play.MaxStreams,
+			OnlineSourceIDs: sources,
 		})
 	}
 }
@@ -349,13 +390,16 @@ func handleSetPlaybackCeiling(svc *access.Service, id string) http.HandlerFunc {
 
 // handleSetRatingCeiling sets or clears a Member's Rating ceiling (Admin scope).
 // rating "" (or null) clears it; an unknown label or an Admin target is rejected.
-func handleSetRatingCeiling(svc *access.Service, id string) http.HandlerFunc {
+// Setting one removes the User's Online source grants and ends their live sessions
+// on those sources (ADR-0068 Q17, Q19); the 200 body names each source removed, and a
+// ceiling that removed none is the plain 204.
+func handleSetRatingCeiling(deps Deps, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req setRatingCeilingRequest
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		err := svc.SetRatingCeiling(id, req.Rating)
+		removed, err := deps.Access.SetRatingCeilingRemovingSources(id, req.Rating)
 		switch {
 		case errors.Is(err, access.ErrUserNotFound):
 			writeError(w, http.StatusNotFound, codeNotFound, "user not found", nil)
@@ -372,6 +416,77 @@ func handleSetRatingCeiling(svc *access.Service, id string) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal,
 				"failed to set rating ceiling", nil)
 			return
+		}
+		if deps.Online != nil {
+			deps.Online.Revalidate(id)
+		}
+		if len(removed) == 0 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		names := map[string]string{}
+		if deps.Online != nil {
+			for _, s := range deps.Online.Sources() {
+				names[s.ID] = s.Name
+			}
+		}
+		out := removedOnlineSourcesResponse{Removed: make([]onlineSourceRefJSON, 0, len(removed))}
+		for _, sid := range removed {
+			name := names[sid]
+			if name == "" {
+				name = sid // switched off or uninstalled since: the id is all there is
+			}
+			out.Removed = append(out.Removed, onlineSourceRefJSON{ID: sid, Name: name})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// handleSetOnlineSourceAccess replaces a Member's granted Online sources (Admin
+// scope), as handleSetLibraryAccess does for Libraries. A User holding a Rating
+// ceiling, an Admin, a linked Server and an id that is not an enabled source are each
+// refused with the prior set unchanged; a grant taken away ends that User's live
+// sessions on the source (Q19).
+func handleSetOnlineSourceAccess(deps Deps, id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req setOnlineSourceAccessRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		enabled := map[string]bool{}
+		if deps.Online != nil {
+			for _, s := range deps.Online.Sources() {
+				enabled[s.ID] = true
+			}
+		}
+		err := deps.Access.SetOnlineSourceAccess(id, req.SourceIDs, func(sid string) bool { return enabled[sid] })
+		switch {
+		case errors.Is(err, access.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, codeNotFound, "user not found", nil)
+			return
+		case errors.Is(err, access.ErrAdminSourceGrant):
+			writeError(w, http.StatusUnprocessableEntity, codeAdminGrant,
+				"cannot grant online sources to an admin (admins see every enabled source)", nil)
+			return
+		case errors.Is(err, access.ErrRemoteSourceGrant):
+			writeError(w, http.StatusUnprocessableEntity, codeRemoteGrant,
+				"online sources are never shared with a linked server", nil)
+			return
+		case errors.Is(err, access.ErrRatingCappedSourceGrant):
+			writeError(w, http.StatusUnprocessableEntity, codeRatingCeilingSet,
+				"this user has a rating ceiling, and a source's items carry no ratings to apply it to, so it can't be granted", nil)
+			return
+		case errors.Is(err, access.ErrUnknownSource):
+			writeError(w, http.StatusUnprocessableEntity, codeUnknownSource,
+				"grant set names an online source that is not enabled", nil)
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, codeInternal,
+				"failed to set online source access", nil)
+			return
+		}
+		if deps.Online != nil {
+			deps.Online.Revalidate(id)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}

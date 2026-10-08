@@ -16,11 +16,11 @@ import (
 // The two fixtures in testdata pin both ends of an upgrade. 0001_init_frozen.sql
 // is 0001_init.sql as databases in the field were built from it; the embedded
 // 0001 must never drift from it, since an existing database never runs it again.
-// schema_after_0002.sql is the whole schema written as one file: a database
+// schema_current.sql is the whole schema written as one file: a database
 // that runs every migration, fresh or upgraded, must end with exactly it.
 const (
 	frozenInitFixture   = "testdata/0001_init_frozen.sql"
-	wantSchemaFixture   = "testdata/schema_after_0002.sql"
+	wantSchemaFixture   = "testdata/schema_current.sql"
 	schemaMigrationsDDL = `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,

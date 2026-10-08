@@ -136,7 +136,10 @@ type Service struct {
 	// cache holds rows() and row() answers for cacheTTL, keyed per source.
 	cache map[cacheKey]cacheEntry
 	onEnd func(sessionID string)
-	now   func() time.Time
+	// mayPlay says whether a User may still see a source (the grant, the Rating
+	// ceiling and the role, resolved fresh). Nil means no check: Revalidate ends nothing.
+	mayPlay func(userID, sourceID string) bool
+	now     func() time.Time
 
 	// The first-URL judgment on a variant's media (check.go).
 	transcoder  *Transcoder
@@ -178,6 +181,35 @@ func New(reg *pluginapi.Registry, client *http.Client) *Service {
 // the client, the idle reaper or shutdown. The composition root uses it to revoke
 // the session's stream tokens, as it does for a Title's.
 func (s *Service) SetOnEnd(f func(sessionID string)) { s.onEnd = f }
+
+// SetAccess installs the check Revalidate asks: whether a User may still see a source.
+func (s *Service) SetAccess(f func(userID, sourceID string) bool) { s.mayPlay = f }
+
+// Revalidate ends, at once, every live session userID holds on a source they may no
+// longer see: a grant removed, a Rating ceiling set (which removes grants), or an
+// Admin made a Member (ADR-0068 Q19). Their other sessions, and every other User's,
+// are untouched. It returns how many it ended.
+func (s *Service) Revalidate(userID string) int {
+	if s.mayPlay == nil {
+		return 0
+	}
+	type held struct{ id, source string }
+	var mine []held
+	s.mu.Lock()
+	for id, sess := range s.sessions {
+		if sess.UserID == userID {
+			mine = append(mine, held{id, sess.SourceID})
+		}
+	}
+	s.mu.Unlock()
+	ended := 0
+	for _, h := range mine {
+		if !s.mayPlay(userID, h.source) && s.End(h.id) {
+			ended++
+		}
+	}
+	return ended
+}
 
 // Sources lists the enabled sources in registration order, each as the tile its
 // Plugin's name makes. It reads the registry and calls no Plugin: a source whose
@@ -567,6 +599,20 @@ type Session struct {
 
 	// run is the ffmpeg encode of a transcoded session, nil for a relay.
 	run *run
+
+	// ctx is cancelled when the session ends, so a relay in flight stops with it.
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// Context is cancelled when the session ends, by whatever means. A relay of its
+// bytes is bound to it, so ending a session stops the response already open and
+// not only the next request.
+func (s Session) Context() context.Context {
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
 }
 
 // PlayInput is one request to play an item.
@@ -635,16 +681,24 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 	if itemTitle == "" {
 		itemTitle = in.ItemID
 	}
+	sctx, cancel := context.WithCancel(context.Background())
 	sess := &Session{
 		ID: id, UserID: in.UserID, SourceID: in.SourceID, ItemID: in.ItemID,
 		SourceName: sourceName, ItemTitle: itemTitle,
 		Variant: plan.Variant, Transcoded: plan.Transcode, StartedAt: now, LastSeen: now, run: r,
+		ctx: sctx, cancel: cancel,
 	}
 	s.mu.Lock()
 	s.sessions[sess.ID] = sess
 	s.mu.Unlock()
 	if r != nil {
 		go s.watch(sess.ID, r)
+	}
+	// Access may have been lost while resolve() and the encode start ran, when there
+	// was no session yet for a revocation to end. Judged again now that there is one.
+	if s.mayPlay != nil && !s.mayPlay(in.UserID, in.SourceID) {
+		s.End(sess.ID)
+		return Session{}, nil, ErrNoSource
 	}
 	return *sess, nil, nil
 }
@@ -692,6 +746,9 @@ func (s *Service) End(id string) bool {
 	sess, ok := s.sessions[id]
 	delete(s.sessions, id)
 	s.mu.Unlock()
+	if ok && sess.cancel != nil {
+		sess.cancel()
+	}
 	if ok && sess.run != nil {
 		sess.run.stop()
 	}

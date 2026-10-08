@@ -46,11 +46,15 @@ type onlineMedia struct {
 	mu    sync.Mutex
 	hits  map[string]int
 	refer string
+	// slowStarted is closed when /slow.mp4 begins to trickle; slowEnded when its
+	// handler returns, which it does once the Server drops the upstream request.
+	slowStarted, slowEnded chan struct{}
+	slowOnce               sync.Once
 }
 
 func newOnlineMedia(t *testing.T) *onlineMedia {
 	t.Helper()
-	m := &onlineMedia{hits: map[string]int{}}
+	m := &onlineMedia{hits: map[string]int{}, slowStarted: make(chan struct{}), slowEnded: make(chan struct{})}
 	m.body = make([]byte, 300_000)
 	for i := range m.body {
 		m.body[i] = byte(i * 7)
@@ -66,6 +70,24 @@ func newOnlineMedia(t *testing.T) *onlineMedia {
 		case r.URL.Path == "/v1.mp4":
 			w.Header().Set("Content-Type", "video/mp4")
 			http.ServeContent(w, r, "v1.mp4", time.Time{}, bytes.NewReader(m.body))
+		case r.URL.Path == "/slow.mp4":
+			// A response that never finishes: a kilobyte every 20ms until the Server
+			// drops the request.
+			defer close(m.slowEnded)
+			w.Header().Set("Content-Type", "video/mp4")
+			w.WriteHeader(http.StatusOK)
+			m.slowOnce.Do(func() { close(m.slowStarted) })
+			for {
+				if _, err := w.Write(make([]byte, 1024)); err != nil {
+					return
+				}
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(20 * time.Millisecond):
+				}
+			}
 		case r.URL.Path == "/redirect.mp4":
 			http.Redirect(w, r, m.srv.URL+"/v1.mp4", http.StatusFound)
 		case strings.HasPrefix(r.URL.Path, "/thumb/"):
@@ -135,6 +157,8 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 			return []map[string]any{mp4("1080p", "/v1.mp4")}
 		case "redir":
 			return []map[string]any{mp4("720p", "/redirect.mp4")}
+		case "slow":
+			return []map[string]any{mp4("720p", "/slow.mp4")}
 		case "split":
 			return []map[string]any{{
 				"kind": "split", "videoUrl": media.srv.URL + "/v.mp4", "audioUrl": media.srv.URL + "/a.m4a",
@@ -597,9 +621,10 @@ func adminUserID(t *testing.T, srv *testharness.Server, admin string) string {
 	return ""
 }
 
-// TestMembersAndRemoteCallersSeeNoOnlineSources: until grants land, every Online
-// endpoint is Admin-only — a Member and a Remote-role caller each get an empty tile
-// list and a 404 from rows, thumbnail and playback, and the Plugin is never called.
+// TestMembersAndRemoteCallersSeeNoOnlineSources: a Member holding no grant and a
+// Remote-role caller each get an empty tile list and a 404 from rows, thumbnail and
+// playback, and the Plugin is never called (online_source_access_test.go covers the
+// granted Member).
 func TestMembersAndRemoteCallersSeeNoOnlineSources(t *testing.T) {
 	t.Parallel()
 	srv, admin, src, _ := onlineServer(t)

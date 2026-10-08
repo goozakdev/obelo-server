@@ -144,6 +144,10 @@ var ErrLastLocalPasswordAdmin = fmt.Errorf("%w holding a local password", ErrLas
 type Service struct {
 	store Store
 
+	// onAccessChange, when set, is told the id of a User whose role or granted
+	// Libraries a Group mapping just moved (SetOnAccessChange).
+	onAccessChange func(userID string)
+
 	// claimToken is the one-time bootstrap secret (ADR-0013). It is held only in
 	// memory: regenerated fresh on each boot while zero Users exist, and cleared
 	// once the first Admin is created. Because it is never persisted, a restart
@@ -715,6 +719,11 @@ func (s *Service) DeleteUser(id string) error {
 			return ErrLastAdmin
 		}
 		return err
+	}
+	// What was live for them is judged again, and a User who no longer exists may see
+	// nothing: their Online source sessions end with them.
+	if s.onAccessChange != nil {
+		s.onAccessChange(id)
 	}
 	return nil
 }

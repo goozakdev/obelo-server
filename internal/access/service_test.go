@@ -48,6 +48,14 @@ func (f *fakeStore) RatingCeilingForUser(userID string) (string, error) {
 	return f.ceilings[userID], nil
 }
 
+func (f *fakeStore) OnlineSourceAccessForUser(string) ([]string, error) { return nil, nil }
+
+func (f *fakeStore) ReplaceOnlineSourceAccess(string, []string) error { return nil }
+
+func (f *fakeStore) SetRatingCeilingRemovingSourceGrants(userID, label string) ([]string, error) {
+	return nil, f.SetRatingCeiling(userID, label)
+}
+
 func (f *fakeStore) SetRatingCeiling(userID, label string) error {
 	if _, ok := f.users[userID]; !ok {
 		return store.ErrNotFound

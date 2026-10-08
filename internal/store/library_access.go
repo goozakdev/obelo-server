@@ -89,24 +89,11 @@ func (db *DB) RatingCeilingForUser(userID string) (string, error) {
 }
 
 // SetRatingCeiling stores a User's ceiling label, or clears it to NULL (uncapped)
-// when label is "". ErrNotFound for an unknown User.
+// when label is "". A set ceiling also removes the User's Online source grants
+// (SetRatingCeilingRemovingSourceGrants). ErrNotFound for an unknown User.
 func (db *DB) SetRatingCeiling(userID, label string) error {
-	var val any
-	if label != "" {
-		val = label
-	}
-	res, err := db.Exec(`UPDATE users SET rating_ceiling = ? WHERE id = ?`, val, userID)
-	if err != nil {
-		return fmt.Errorf("store: setting rating ceiling: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: setting rating ceiling: %w", err)
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := db.SetRatingCeilingRemovingSourceGrants(userID, label)
+	return err
 }
 
 // PlaybackCeiling is a User's cap on HOW a Title may play (CONTEXT.md "Playback

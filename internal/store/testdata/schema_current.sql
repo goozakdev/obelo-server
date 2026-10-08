@@ -1468,3 +1468,10 @@ CREATE TABLE user_marker_auto_skip (
     kind    TEXT NOT NULL CHECK (kind IN ('intro', 'recap', 'credits', 'preview')),
     PRIMARY KEY (user_id, kind)
 );
+
+CREATE TABLE user_online_source_access (
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    UNIQUE (user_id, source_id)
+);
+CREATE INDEX idx_user_online_source_access_user ON user_online_source_access(user_id);

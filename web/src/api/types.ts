@@ -106,6 +106,8 @@ export interface UserDetailRaw {
   /** Playback ceiling: concurrent Playback sessions, or absent/`null`/0 = no
    * limit. */
   maxStreams?: number | null;
+  /** The Online sources granted to this Member (ids); absent/empty = none. */
+  onlineSourceIds?: string[] | null;
 }
 
 /** A User's full detail with its `omitempty` holes filled (`libraryIds` → [],
@@ -126,6 +128,8 @@ export interface UserDetail {
   maxResolution: string;
   maxBitrate: number;
   maxStreams: number;
+  /** The Online sources granted to this Member, holes filled to []. */
+  onlineSourceIds: string[];
 }
 
 /** Request body for `PUT /api/v1/users/{id}/playbackCeiling` (Admin). It is the

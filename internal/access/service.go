@@ -14,6 +14,7 @@ package access
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/goozakdev/obelo-server/internal/store"
 )
@@ -56,6 +57,20 @@ var (
 	// ErrInvalidCeiling: a Playback-ceiling dimension is negative — neither a cap
 	// nor the zero value that means uncapped (→ 400).
 	ErrInvalidCeiling = errors.New("access: playback ceiling must not be negative")
+	// ErrAdminSourceGrant: an Online source cannot be granted to an Admin — an Admin
+	// sees every enabled source by role (→ 422).
+	ErrAdminSourceGrant = errors.New("access: cannot grant online sources to an admin")
+	// ErrRemoteSourceGrant: a linked Server (Remote role) never sees an Online source,
+	// so none can be granted to one (→ 422).
+	ErrRemoteSourceGrant = errors.New("access: cannot grant online sources to a remote user")
+	// ErrRatingCappedSourceGrant: the User holds a Rating ceiling. The "unrated is
+	// visible" rule would expose every item of a source to them and a Plugin's own
+	// per-item ratings are not trusted, so a capped User holds no source grant
+	// (ADR-0068 Q3; → 422).
+	ErrRatingCappedSourceGrant = errors.New("access: cannot grant online sources to a user with a rating ceiling")
+	// ErrUnknownSource: a source id in the grant set is not an enabled Online source;
+	// the whole set is rejected and the prior one kept (→ 422).
+	ErrUnknownSource = errors.New("access: unknown online source in grant set")
 )
 
 // Store is the persistence the resolver reads. *store.DB satisfies it. It is a
@@ -81,6 +96,15 @@ type Store interface {
 	// LinkedLibraryIDs returns the ids of every Library that is a mirror of
 	// another household's (ADR-0056 §1); empty on a Server that has never linked.
 	LinkedLibraryIDs() ([]string, error)
+	// OnlineSourceAccessForUser returns the Online source ids granted to a User.
+	OnlineSourceAccessForUser(userID string) ([]string, error)
+	// ReplaceOnlineSourceAccess sets a User's granted sources to exactly sourceIDs,
+	// atomically; store.ErrRatingCapped (prior set kept) for a non-empty set when the
+	// User holds a Rating ceiling, store.ErrNotFound for an unknown User.
+	ReplaceOnlineSourceAccess(userID string, sourceIDs []string) error
+	// SetRatingCeilingRemovingSourceGrants is SetRatingCeiling that also deletes the
+	// User's source grants when the ceiling is set, in one step, returning their ids.
+	SetRatingCeilingRemovingSourceGrants(userID, label string) ([]string, error)
 }
 
 // Scope is a User's resolved access over the catalog (the PRD's "AccessScope").
@@ -255,26 +279,35 @@ func (s *Service) RatingCeiling(userID string) (string, error) {
 // Admins are all-access), and a label that is not on the maturity ladder
 // (ErrUnknownRating).
 func (s *Service) SetRatingCeiling(userID, label string) error {
+	_, err := s.SetRatingCeilingRemovingSources(userID, label)
+	return err
+}
+
+// SetRatingCeilingRemovingSources is SetRatingCeiling that also answers the ids of
+// the Online sources it took from the User: setting a ceiling removes their grants
+// in the same step (ADR-0068 Q17); clearing one restores none.
+func (s *Service) SetRatingCeilingRemovingSources(userID, label string) ([]string, error) {
 	u, err := s.store.UserByID(userID)
 	if errors.Is(err, store.ErrNotFound) {
-		return ErrUserNotFound
+		return nil, ErrUserNotFound
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if u.Role == roleAdmin {
-		return ErrAdminCeiling
+		return nil, ErrAdminCeiling
 	}
 	if label != "" && !isLadderLabel(label) {
-		return ErrUnknownRating
+		return nil, ErrUnknownRating
 	}
-	if err := s.store.SetRatingCeiling(userID, label); err != nil {
+	removed, err := s.store.SetRatingCeilingRemovingSourceGrants(userID, label)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return ErrUserNotFound
+			return nil, ErrUserNotFound
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return removed, nil
 }
 
 // PlaybackCeiling returns a User's stored Playback ceiling (zero fields =
@@ -374,4 +407,110 @@ func (s *Service) SetLibraryAccess(userID string, libraryIDs []string) error {
 		return err
 	}
 	return nil
+}
+
+// OnlineSourceAccess returns the Online source ids granted to a User, for the Admin
+// user-management view. Empty for an Admin (who sees every enabled source by role).
+func (s *Service) OnlineSourceAccess(userID string) ([]string, error) {
+	return s.store.OnlineSourceAccessForUser(userID)
+}
+
+// SetOnlineSourceAccess replaces a Member's granted Online sources with exactly
+// sourceIDs. exists says whether an id names an enabled source. It rejects an unknown
+// User (ErrUserNotFound), an Admin (ErrAdminSourceGrant), a linked Server
+// (ErrRemoteSourceGrant), a User holding a Rating ceiling
+// (ErrRatingCappedSourceGrant) and a source that is neither enabled nor already held
+// by the User (ErrUnknownSource); every
+// refusal leaves the prior set unchanged. An empty set always clears.
+func (s *Service) SetOnlineSourceAccess(userID string, sourceIDs []string, exists func(sourceID string) bool) error {
+	u, err := s.store.UserByID(userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return err
+	}
+	switch u.Role {
+	case roleAdmin:
+		return ErrAdminSourceGrant
+	case roleRemote:
+		return ErrRemoteSourceGrant
+	}
+	// A grant to a source since switched off is kept (it applies again when the source
+	// is back), so the set may name one the User already holds; any other id must be
+	// enabled. Leaving a held id out of the set removes it.
+	held, err := s.store.OnlineSourceAccessForUser(userID)
+	if err != nil {
+		return err
+	}
+	for _, id := range sourceIDs {
+		if exists(id) || slices.Contains(held, id) {
+			continue
+		}
+		return ErrUnknownSource
+	}
+	if err := s.store.ReplaceOnlineSourceAccess(userID, sourceIDs); err != nil {
+		switch {
+		case errors.Is(err, store.ErrRatingCapped):
+			return ErrRatingCappedSourceGrant
+		case errors.Is(err, store.ErrNotFound):
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// OnlineSources is which Online sources one User may see (ADR-0068 Q3).
+type OnlineSources struct {
+	// All is true for an Admin: every enabled source, no grant needed.
+	All bool
+	// IDs is the granted set when !All.
+	IDs []string
+}
+
+// Allows reports whether the User may see the source.
+func (o OnlineSources) Allows(sourceID string) bool {
+	if o.All {
+		return true
+	}
+	for _, id := range o.IDs {
+		if id == sourceID {
+			return true
+		}
+	}
+	return false
+}
+
+// OnlineSourcesFor resolves which Online sources a User may see: all of them for an
+// Admin; none for a linked Server (Remote role), whatever a stray grant row says; and
+// for a Member exactly their grants, or none while they hold a Rating ceiling, so a
+// grant that should not exist buys nothing. An unknown User sees none. A failed read
+// fails closed with the error.
+func (s *Service) OnlineSourcesFor(userID string) (OnlineSources, error) {
+	u, err := s.store.UserByID(userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return OnlineSources{}, nil
+	}
+	if err != nil {
+		return OnlineSources{}, err
+	}
+	switch u.Role {
+	case roleAdmin:
+		return OnlineSources{All: true}, nil
+	case roleRemote:
+		return OnlineSources{}, nil
+	}
+	ceiling, err := s.store.RatingCeilingForUser(userID)
+	if err != nil {
+		return OnlineSources{}, err
+	}
+	if ceiling != "" {
+		return OnlineSources{}, nil
+	}
+	ids, err := s.store.OnlineSourceAccessForUser(userID)
+	if err != nil {
+		return OnlineSources{}, err
+	}
+	return OnlineSources{IDs: ids}, nil
 }

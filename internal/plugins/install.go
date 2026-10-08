@@ -310,6 +310,10 @@ type ManagerConfig struct {
 // registry is swapped in one store, so the Plugins screen and the delivery path
 // never wait behind a download.
 type Manager struct {
+	// onUsersDeleted, when set, is told the ids of the Users a Sign-in provider's
+	// uninstall deleted, after the deleting transaction committed.
+	onUsersDeleted func(userIDs []string)
+
 	dir      string
 	registry *pluginapi.Registry
 	store    ManagerStore

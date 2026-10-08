@@ -399,6 +399,7 @@ export function normalizeUserDetail(raw: UserDetailRaw): UserDetail {
     maxResolution: raw.maxResolution ?? "",
     maxBitrate: raw.maxBitrate ?? 0,
     maxStreams: raw.maxStreams ?? 0,
+    onlineSourceIds: raw.onlineSourceIds ?? [],
   };
 }
 

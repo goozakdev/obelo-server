@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goozakdev/obelo-server/internal/access"
 	"github.com/goozakdev/obelo-server/internal/onlinesource"
 	"github.com/goozakdev/obelo-server/internal/playback"
 )
@@ -26,10 +28,11 @@ import (
 // client that does not call them sees no tiles and no Plugin is called to draw the
 // home screen.
 //
-// INTERIM ACCESS RULE, until per-User grants land: every one of these is
-// Admin-only. A non-Admin and any Remote-role caller gets an empty tile list and a
-// 404 from everything else, so a capped Member or a linked server cannot see a
-// source before grants exist. The 404 hides existence, as it does for a Library.
+// ACCESS (ADR-0068 Q3): an Admin sees every enabled source; a Member sees the ones
+// granted to them (PUT /users/{id}/onlineSourceAccess), none while they hold a
+// Rating ceiling; a Remote-role caller (a linked server) sees none. Anyone else gets
+// an empty tile list and a 404 from everything else, which hides existence as it
+// does for a Library.
 
 const (
 	onlineSourcesPrefix = "/onlineSources/"
@@ -39,13 +42,27 @@ const (
 	codeSourceUnavailable = "SOURCE_UNAVAILABLE"
 )
 
-// onlineAllowed reports whether the caller may see Online sources at all.
-func onlineAllowed(deps Deps, r *http.Request) bool {
+// onlineView is which sources the caller may see. A caller it cannot resolve sees
+// none (fail closed).
+func onlineView(deps Deps, r *http.Request) access.OnlineSources {
 	if deps.Online == nil {
-		return false
+		return access.OnlineSources{}
 	}
 	id, ok := identityFrom(r.Context())
-	return ok && id.User.Role == "admin"
+	if !ok {
+		return access.OnlineSources{}
+	}
+	view, err := deps.Access.OnlineSourcesFor(id.User.ID)
+	if err != nil {
+		log.Printf("obelo: api: resolving online source access: %v", err)
+		return access.OnlineSources{}
+	}
+	return view
+}
+
+// onlineAllowed reports whether the caller may see the source.
+func onlineAllowed(deps Deps, r *http.Request, sourceID string) bool {
+	return onlineView(deps, r).Allows(sourceID)
 }
 
 type onlineSourceJSON struct {
@@ -60,8 +77,12 @@ type onlineSourceJSON struct {
 func handleOnlineSources(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		out := []onlineSourceJSON{}
-		if onlineAllowed(deps, r) {
+		view := onlineView(deps, r)
+		if deps.Online != nil {
 			for _, s := range deps.Online.Sources() {
+				if !view.Allows(s.ID) {
+					continue
+				}
 				item := onlineSourceJSON{ID: s.ID, Name: s.Name}
 				if s.HasIcon {
 					u := APIPrefix + onlineSourcesPrefix + s.ID + "/icon"
@@ -141,7 +162,7 @@ func onlineThumbnailURL(sourceID, itemID string) string {
 // the Plugin's rows().
 func handleOnlineRows(deps Deps, sourceID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !onlineAllowed(deps, r) {
+		if !onlineAllowed(deps, r, sourceID) {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
@@ -178,7 +199,7 @@ func onlineItemsJSON(sourceID string, in []onlinesource.Item) []onlineItemJSON {
 // absent on the last page.
 func handleOnlineRow(deps Deps, sourceID, rowID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !onlineAllowed(deps, r) {
+		if !onlineAllowed(deps, r, sourceID) {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
@@ -199,7 +220,7 @@ func handleOnlineRow(deps Deps, sourceID, rowID string) http.HandlerFunc {
 // memory for this response and never written anywhere.
 func handleOnlineThumbnail(deps Deps, sourceID, itemID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !onlineAllowed(deps, r) {
+		if !onlineAllowed(deps, r, sourceID) {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
@@ -222,7 +243,7 @@ func handleOnlineThumbnail(deps Deps, sourceID, itemID string) http.HandlerFunc 
 // the source gets the 404 a missing one does.
 func handleOnlineIcon(deps Deps, sourceID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !onlineAllowed(deps, r) {
+		if !onlineAllowed(deps, r, sourceID) {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
@@ -263,7 +284,7 @@ type onlinePlaybackResponse struct {
 // Playback ceiling, and open a session whose stream URL carries a stream token.
 func handleOnlinePlayback(deps Deps, sourceID, itemID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !onlineAllowed(deps, r) {
+		if !onlineAllowed(deps, r, sourceID) {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
@@ -417,7 +438,12 @@ func serveOnlineEncoded(deps Deps, w http.ResponseWriter, r *http.Request, sess 
 // from the session and goes no further than the fetch.
 func serveOnlineStream(deps Deps, w http.ResponseWriter, r *http.Request, sess onlinesource.Session) {
 	deps.Online.Touch(sess.ID)
-	resp, err := deps.Online.OpenMedia(r.Context(), sess, r.Header.Get("Range"), r.Header.Get("If-Range"))
+	// The fetch and the copy stop when the client goes AND when the session ends, so
+	// a revoked grant cuts the response already open, not only the next request.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	defer context.AfterFunc(sess.Context(), cancel)()
+	resp, err := deps.Online.OpenMedia(ctx, sess, r.Header.Get("Range"), r.Header.Get("If-Range"))
 	if err != nil {
 		writeOnlineFailure(w, err)
 		return

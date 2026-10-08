@@ -5,7 +5,14 @@ import { formatDateTime } from "../time";
 import QrSvg from "../lib/QrSvg";
 import { tailnetAddress } from "./AdminRemoteAccessScreen";
 import LinkedMark from "../browse/LinkedMark";
-import type { LinkInvite, Library, User, UserDetail } from "../api/types";
+import ConfirmDialog from "./ConfirmDialog";
+import type {
+  LinkInvite,
+  Library,
+  OnlineSource,
+  User,
+  UserDetail,
+} from "../api/types";
 
 // The Edit-User dialog: everything an Admin can change about an existing User,
 // in one modal (same chrome as the Library dialogs) —
@@ -29,7 +36,9 @@ import type { LinkInvite, Library, User, UserDetail } from "../api/types";
 //
 // ONE SAVE, not four. The dialog collects every edit and "Save changes" applies
 // only the dirty ones, in order: password → library access → rating ceiling →
-// playback ceiling. Each
+// online source access → playback ceiling. A rating ceiling takes a Member's
+// online source grants away (ADR-0068 Q17), so choosing one first shows which, in a
+// confirmation, before anything is sent. Each
 // leg is an idempotent PUT (the access call is a REPLACE-set of the full ticked
 // list, not a delta), so if a later leg fails the earlier ones simply stand and
 // pressing Save again re-applies the whole set safely. A refused save is NOT
@@ -115,6 +124,12 @@ export default function EditUserDialog({
   // The edits in progress.
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [ceiling, setCeiling] = useState("");
+  // The enabled Online sources (best-effort: none listed, no section) and which of
+  // them are ticked for this User.
+  const [sources, setSources] = useState<OnlineSource[]>([]);
+  const [sourcesChecked, setSourcesChecked] = useState<Set<string>>(new Set());
+  // Set while the Admin is shown which sources a Rating ceiling will take away.
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [password, setPassword] = useState("");
   // The Playback ceiling's three knobs, held as the strings their inputs carry.
   const [maxResolution, setMaxResolution] = useState("");
@@ -174,6 +189,7 @@ export default function EditUserDialog({
           ),
         );
         setCeiling(d.ratingCeiling);
+        setSourcesChecked(new Set(d.onlineSourceIds));
         setMaxResolution(d.maxResolution);
         setMaxBitrate(bitsToMbps(d.maxBitrate));
         setMaxStreams(d.maxStreams > 0 ? String(d.maxStreams) : "");
@@ -187,6 +203,25 @@ export default function EditUserDialog({
       cancelled = true;
     };
   }, [isAdmin, isRemote, user.id, reloadKey]);
+
+  // The enabled Online sources, for the grant checklist. Best-effort like the
+  // MagicDNS pre-fill: a Server without the endpoint, or one that will not answer,
+  // just leaves the section out. A linked Server is never granted a source.
+  useEffect(() => {
+    if (isAdmin || isRemote) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiClient.getOnlineSources();
+        if (!cancelled && Array.isArray(list)) setSources(list);
+      } catch {
+        // No sources, no section.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, isRemote, user.id]);
 
   // Pre-fill the MagicDNS origin. Best-effort in every direction: a build with
   // no Tailnet support answers 503, a node that is not running has no `fqdn`,
@@ -282,10 +317,46 @@ export default function EditUserDialog({
     (maxResolution !== detail.maxResolution ||
       mbpsToBits(maxBitrate) !== detail.maxBitrate ||
       toStreams(maxStreams) !== detail.maxStreams);
-  const dirty = password.length > 0 || accessDirty || ceilingDirty || playbackDirty;
+  // A User with ANY Rating ceiling cannot be granted a source (ADR-0068 Q3): the
+  // "unrated is visible" rule would show them everything. The checklist follows the
+  // ceiling as it is chosen here, not only as it is stored.
+  const capped = ceiling !== "";
+  // A grant to a source since switched off is kept by the server and shown here as
+  // such, so the Admin can see it and untick it (leaving it out of the set removes it).
+  const heldDisabled =
+    detail === null
+      ? []
+      : detail.onlineSourceIds.filter((id) => !sources.some((s) => s.id === id));
+  const sourceName = (id: string) =>
+    sources.find((s) => s.id === id)?.name ?? `${id} (disabled)`;
+  // Setting a ceiling on a User who holds grants takes them away (Q17); the Admin is
+  // shown the names before the save goes.
+  const removedByCeiling =
+    detail !== null && ceilingDirty && capped ? detail.onlineSourceIds.map(sourceName) : [];
+  const sourcesDirty =
+    detail !== null && !capped && !sameSet(sourcesChecked, detail.onlineSourceIds);
+  const dirty =
+    password.length > 0 || accessDirty || ceilingDirty || sourcesDirty || playbackDirty;
 
-  async function onSave() {
+  function toggleSource(sourceId: string) {
+    setSourcesChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceId)) next.delete(sourceId);
+      else next.add(sourceId);
+      return next;
+    });
+  }
+
+  function onSave() {
     if (saving || !dirty) return;
+    if (removedByCeiling.length > 0) {
+      setConfirmingRemoval(true);
+      return;
+    }
+    void performSave();
+  }
+
+  async function performSave() {
     setSaving(true);
     setSaveError(null);
     try {
@@ -299,6 +370,11 @@ export default function EditUserDialog({
       if (ceilingDirty) {
         // The empty option ("No limit") clears the ceiling — send `null`, not "".
         await apiClient.setRatingCeiling(user.id, ceiling === "" ? null : ceiling);
+      }
+      if (sourcesDirty) {
+        // After the ceiling leg, so clearing a ceiling and ticking a source in one
+        // save grants against an uncapped User.
+        await apiClient.setOnlineSourceAccess(user.id, [...sourcesChecked]);
       }
       if (playbackDirty) {
         // The WHOLE ceiling every time (a replace, like the grant set): an emptied
@@ -603,6 +679,56 @@ export default function EditUserDialog({
                       </option>
                     ))}
                   </select>
+                  {removedByCeiling.length > 0 && (
+                    <p className="field-hint" data-testid="ceiling-removes-sources">
+                      Saving this ceiling removes access to these online sources:{" "}
+                      {removedByCeiling.join(", ")}. Removing the ceiling later does
+                      not bring them back.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {!loading && !loadError && detail && !isRemote &&
+                (sources.length > 0 || heldDisabled.length > 0) && (
+                <div className="field" data-testid="online-source-access">
+                  <span className="field-label">Online sources</span>
+                  <ul className="library-checklist" data-testid="online-source-checklist">
+                    {sources.map((s) => (
+                      <li key={s.id} className="library-checklist-item">
+                        <label>
+                          <input
+                            type="checkbox"
+                            data-testid={`online-source-checkbox-${s.id}`}
+                            checked={!capped && sourcesChecked.has(s.id)}
+                            onChange={() => toggleSource(s.id)}
+                            disabled={saving || capped}
+                          />{" "}
+                          {s.name}
+                        </label>
+                      </li>
+                    ))}
+                    {heldDisabled.map((id) => (
+                      <li key={id} className="library-checklist-item">
+                        <label>
+                          <input
+                            type="checkbox"
+                            data-testid={`online-source-checkbox-${id}`}
+                            checked={!capped && sourcesChecked.has(id)}
+                            onChange={() => toggleSource(id)}
+                            disabled={saving || capped}
+                          />{" "}
+                          {sourceName(id)}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                  {capped && (
+                    <p className="field-hint" data-testid="online-sources-capped">
+                      A user with a rating ceiling can&rsquo;t be granted online
+                      sources: they carry no ratings to apply it to.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -704,6 +830,21 @@ export default function EditUserDialog({
             </button>
           </div>
         </footer>
+
+        {confirmingRemoval && (
+          <ConfirmDialog
+            title="Remove online source access"
+            message={`Setting a rating ceiling on “${user.username}” removes their access to: ${removedByCeiling.join(", ")}. Removing the ceiling later does not bring it back, and any of these they are playing stops now.`}
+            confirmLabel="Set ceiling"
+            busyLabel="Saving…"
+            busy={saving}
+            onConfirm={() => {
+              setConfirmingRemoval(false);
+              void performSave();
+            }}
+            onCancel={() => setConfirmingRemoval(false)}
+          />
+        )}
       </div>
     </dialog>
   );
