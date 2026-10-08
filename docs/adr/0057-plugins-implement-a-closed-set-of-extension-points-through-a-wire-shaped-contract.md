@@ -27,6 +27,13 @@ Plugin asking.
 > decision deferred, delegating credential-checking — never identity, never session issuance —
 > to a source the operator controls. The set still grows by ADR, not by a Plugin asking.
 
+> **Superseded in part (Online source provider, 2026-10-07):** the set grows again. An
+> **Online source provider** joins it ([ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md)): a Plugin that lets a User browse and
+> watch a remote source live while the Server keeps none of it.
+>
+> Its `row(id, cursor)` pages by opaque cursor, a deliberate departure from decision 2's
+> "paging is offset-based": remote sources page by tokens, not offsets.
+
 **2. The contract is wire-shaped from day one.** Plain structs that round-trip through JSON;
 no interfaces, callbacks or streams in a signature; every call takes a context with a
 deadline; byte payloads come back whole and size-capped; paging is offset-based. Outcomes

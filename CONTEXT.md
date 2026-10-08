@@ -384,11 +384,11 @@ _Avoid_: Proxy (true of the bytes, but a proxy implies transparency and this sid
 ## Plugins
 
 **Plugin**:
-A unit of code that implements one or more Extension points and *provides* a Metadata provider, a Subtitle provider, an Event sink, a Sign-in provider, a Web reference provider, a Lyric provider, or a Marker provider ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). The word names the code, not the source: TMDB is a Metadata provider; the TMDB Plugin is what talks to it. Every Plugin, Built-in or Installed, goes through the same contract, and the host — never the Plugin — decides whether to believe what it returns. A Plugin decorates a Title the Scanner already filed; it never decides what a file *is*.
+A unit of code that implements one or more Extension points and *provides* a Metadata provider, a Subtitle provider, an Event sink, a Sign-in provider, a Web reference provider, a Lyric provider, a Marker provider, or an Online source provider ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)). The word names the code, not the source: TMDB is a Metadata provider; the TMDB Plugin is what talks to it. Every Plugin, Built-in or Installed, goes through the same contract, and the host — never the Plugin — decides whether to believe what it returns. A Plugin decorates a Title the Scanner already filed; it never decides what a file *is*.
 _Avoid_: Extension (too broad; collides with browser and file extensions), Add-on, Scraper, Agent (Plex/Kodi), Provider (that is what a Plugin provides).
 
 **Extension point**:
-One of the closed set of seams a Plugin may implement: Metadata provider, Subtitle provider, Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)), Sign-in provider, Web reference provider, Lyric provider, Marker provider. Identity (what a file *is*) and transcoding are deliberately not among them. The set grows by decision, not by a Plugin asking.
+One of the closed set of seams a Plugin may implement: Metadata provider, Subtitle provider, Event sink ([ADR-0057](./docs/adr/0057-plugins-implement-a-closed-set-of-extension-points-through-a-wire-shaped-contract.md)), Sign-in provider, Web reference provider, Lyric provider, Marker provider, Online source provider. Identity (what a file *is*) and transcoding are deliberately not among them. The set grows by decision, not by a Plugin asking.
 _Avoid_: Hook (the Broker's word), Slot (a transcode slot is something else), Interface (the Go word for the seam, not the domain concept).
 
 **Built-in**:
@@ -438,3 +438,19 @@ _Avoid_: Intro provider, Segment provider.
 **Marker detection**:
 The Server's own work of finding Intros and Credits by comparing the sound of a Show's episodes with each other. Runs only when nothing is transcoding, gives way the moment something starts, and never counts against the transcode cap. Not a Plugin: it needs the media itself ([ADR-0065](./docs/adr/0065-markers-are-local-detected-or-fetched-and-detection-is-a-core-feature.md)).
 _Avoid_: Fingerprinting (the technique, not the job), Intro detection (it finds Credits too), Analysis.
+
+**Online source**:
+Something outside the household a person can browse and watch from without any of it becoming the Server's — YouTube is one. It appears as one tile on the home screen for each User it is granted to, and opening it shows its Online rows and its own search. It is not a Library and touches nothing in the catalog: never in global search, Collections, Playlists or the Home rows, never shared over a Link, and nothing of it is kept — no listing, no watch state, no resume position. A User with a Rating ceiling is never granted one, because nobody in the household chose what is in it. ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
+_Avoid_: Channel (a YouTube channel is a row here), Remote source (Remote is a role), Streaming service, Virtual library, Section.
+
+**Online source provider**:
+A Plugin that provides an Online source: it lists the source's Online rows, searches it, and turns an Online item into something the Server can play. The Server, never the Plugin, decides how it plays and who may see it. Configured once for the whole Server, never per User. ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
+_Avoid_: Content provider, Channel plugin.
+
+**Online row**:
+One named, ordered list of Online items on an Online source's page, chosen by the Plugin ("Trending", one channel's uploads). ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
+_Avoid_: Home row (those are the catalog's computed views), Shelf, Feed.
+
+**Online item**:
+One playable thing in an Online source — a single video. Never a Title: it has no identity on this Server, and asking for it again is asking the source again. ([ADR-0068](./docs/adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md))
+_Avoid_: Title, Video (names today's only kind, not the concept), Remote item.

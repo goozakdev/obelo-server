@@ -1,5 +1,12 @@
 # Fully self-hosted, no vendor account or relay
 
+> **Amended by [ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md)** — the optional
+> Online source. A remote content source (YouTube, PeerTube, the Internet Archive) that a Plugin
+> lets a User browse and watch qualifies under the same exemption ACME and the tailnet took:
+> optional, off by default, and the Server runs fully without it. The only bytes it leaves are
+> those in flight in the transcode cache, cleaned at session end; there is no catalog data and no
+> per-User state. It never becomes a dependency a boot or a catalog waits on.
+
 > **Amended by [ADR-0043](./0043-tailnet-remote-access-via-embedded-tsnet.md)** — the optional
 > tailnet path. It does not weaken the rule; it writes down the reading that lets a tailnet sit
 > inside it, because the sentence below already lists **VPN** as one of the operator's own

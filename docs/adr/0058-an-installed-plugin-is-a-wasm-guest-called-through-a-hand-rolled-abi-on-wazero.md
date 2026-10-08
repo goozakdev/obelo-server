@@ -11,6 +11,19 @@ own Go module, ships nothing, and is throwaway. See
 [PRD](../../.scratch/plugin-system/PRD.md) ("Phase 2 leaning") and
 `.scratch/plugin-system/issues/08-spike-the-transport-and-write-adr-0058.md`.
 
+> **Amended in part (Online source provider, 2026-10-07):** [ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md) changes three
+> things here. A Plugin package may carry an optional `icon.png`, covered by the signature when
+> present. The manifest network allowlist gains a domain-suffix form (for example
+> `.googlevideo.com`) usable for media hosts. And for an Online source the Server, not the
+> guest, fetches media: it checks the first resolved URL, then ffmpeg fetches directly under
+> `-protocol_whitelist https,tls,tcp,crypto`.
+>
+> **Residual risk:** only the first resolved URL gets the https, allowlist and private-address
+> check. Redirects and HLS/DASH hops that ffmpeg follows are not re-checked, so the
+> loopback/RFC1918 refusal of decision 5 does NOT cover Online item media after the first URL
+> on the ffmpeg path, and a rebinding DNS answer can defeat the first check too. A relayed play
+> fetches through `safefetch`, so there every redirect is still checked.
+
 ## Decisions
 
 **1. An Installed plugin is a WebAssembly module, run by `github.com/tetratelabs/wazero`.**
@@ -307,6 +320,9 @@ half-loaded and never discovers the mismatch mid-enrichment.
 > archive itself is capped at their sum plus 1 MiB), nothing is written under a name the archive
 > carries, and the archive is not kept — the manifest is still stored byte for byte.
 >
+> **Amended in part (Online source provider, 2026-10-07):** "the three expected files" gains an
+> optional fourth member, `icon.png`, per [ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md).
+>
 > **Amended (plugin-system issue 19, 2026-09-17):** "every reader picks the new value up on its next
 > read" was true of the subtitle builder, the sink Manager and the settings handlers, and NOT of the
 > enrichment catalog, which copied the Metadata provider Descriptors into a slice at construction
@@ -520,6 +536,10 @@ module is the same trade this project has made every previous time.
 > manifest: it travels inside the Plugin package as `plugin.sig.json`. What it covers is unchanged —
 > the manifest and module bytes, not the zip — so where it is carried adds nothing to the trust
 > decision, which is still the pinned keys alone. A package without one is unsigned.
+>
+> **Amended in part (Online source provider, 2026-10-07):** [ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md) lets a package carry an
+> optional `icon.png`; the signature then also covers it. The covered bytes above describe a package
+> without one.
 >
 > **A catalog URL.** A server may be pointed at a JSON index (`CatalogIndex` / `CatalogEntry`,
 > new wire types in `pluginapi/v1`), empty by default, and **this project publishes none**
