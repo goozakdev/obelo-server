@@ -83,6 +83,8 @@ or a manifest hop may point at an https address on the LAN, and ffmpeg will fetc
 first-URL check itself is made on the Server's own DNS lookup and ffmpeg resolves again, so a
 rebinding DNS answer can pass the check and still send ffmpeg to the LAN.
 
+> **Amended (settings URL, 2026-10-08):** the host of the URL an Admin enters in an Online source's settings is also allowed — for the Plugin's own fetches, as ADR-0058 already allows an operator-typed host, and as an exact media host for the first-URL check, still https-only and never private or loopback. This lets a Plugin such as a PeerTube source target the instance the Admin chose without listing every instance in its manifest.
+
 **10. A resolved URL is re-resolved once, on failure.** `resolve()` runs once per playback
 session. On a 403 or 410 from the media host the Server re-resolves once and continues from
 the current position: a relay makes a new upstream request, and ffmpeg restarts at the

@@ -167,11 +167,20 @@ func MarkerManifest(id, sourceURL string) pluginapi.Manifest {
 	return m
 }
 
+// OnlineSourceDefaultURL is the manifest's default endpoint for the SDK guest as an
+// Online source provider: a host that exists nowhere, so a test reaches the guest's
+// source only through the URL an Admin enters.
+const OnlineSourceDefaultURL = "https://videos.example.test"
+
 // OnlineSourceManifest is the manifest of the SDK guest as an Online source
-// provider whose source is sourceURL: plugintest's document, naming this compiled
-// module.
-func OnlineSourceManifest(id, sourceURL string) pluginapi.Manifest {
-	m := plugintest.OnlineSourceManifest(id, "SDK Source ("+id+")", sourceURL)
+// provider: plugintest's document, naming this compiled module, with a default
+// endpoint nothing listens on (OnlineSourceDefaultURL) listed in network.hosts and
+// one declared `instance` URL field, the Admin-entered endpoint a test points at its
+// own server with Plugin.SetSettingValues.
+func OnlineSourceManifest(id string) pluginapi.Manifest {
+	m := plugintest.OnlineSourceManifest(id, "SDK Source ("+id+")", OnlineSourceDefaultURL)
+	m.Network.Hosts = []string{"videos.example.test"}
+	m.Settings.Fields = []pluginapi.SettingsField{{Key: "instance", Type: pluginapi.FieldURL, Label: "Instance"}}
 	m.Description = "An Online source provider built with the Obelo Go SDK, compiled from source by the test suite."
 	return m
 }

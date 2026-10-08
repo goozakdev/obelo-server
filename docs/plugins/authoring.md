@@ -276,25 +276,33 @@ the row has no more.
   client, and serves the bytes from its own origin. They are never written to disk.
 - **The query.** The host trims the search query, cuts it to **200** characters and
   never sends you an empty one.
-- **The row call.** A `rowId` outside the id rules, or an empty or over-long
+- **The row call.** A `rowId` outside the id rules (the ids `.` and `..` are
+  refused too), or an empty or over-long
   cursor, is refused before you are called.
-- **Time.** Each call has 30 seconds, including any wait for a free slot.
+- **Time.** Each call has **10 seconds** (the default call budget), including any
+  wait for a free slot behind another call into your module.
 - **Failure.** An error is a source that is not responding: the User sees
-  "{source} isn't responding" and a retry. Nothing is remembered about it.
+  "{source} isn't responding" and a retry. Nothing is remembered about it. A call
+  you ran to completion and cleanly refused (you answered `0` with a sentence in
+  `last_error()`) costs you nothing: you keep your instance and your tile, so a
+  source that is down or slow never takes itself off the server. A trap, a spin
+  past the deadline or an answer that is not the contract's shape is **a strike**,
+  and three in a row disable the Plugin.
   *No* variants from `online_source_resolve` is a source that no longer has the
   item.
 
 ### Caching
 
 `rows` and `row` answers are cached **in memory for 5 minutes**, per source (and,
-for `row`, per row and cursor), and shared across Users — so do not put anything
+for `row`, per row and cursor), and shared across Users (the cache is bounded at 512 entries; the one nearest to
+expiry goes first) — so do not put anything
 User-specific in them; you cannot, since you are never told who is asking.
 **`search` is never cached**: the same query twice is two calls. The cache is
 cleared when an Admin saves the source's settings or installs, upgrades, enables or
 removes the Plugin, and by a restart. Nothing else is kept: no watch state, no
 resume position, no history, no Continue Watching, and **no per-User state at all**
-— your settings are server-wide, entered once by the Admin (an instance, a key, a
-region), and there is no per-User account or OAuth in this version.
+— your settings are server-wide, entered once by the Admin (the URL of the instance to
+use, a key, a region), and there is no per-User account or OAuth in this version.
 
 ### Variants, and how the host plays them
 
@@ -337,12 +345,26 @@ source has one: it is the cheap path, and the only one checked hop by hop.
 
 **The first-URL check and the allowlist.** Before anything is played the host
 judges every URL a variant names for the media: `https`, no credentials in it, a
-host your `network.hosts` licenses — exactly, or under a
+host licensed by your `network.hosts` — an exact entry (list the host of your
+`defaultUrl` there too; it is not added for you), or a
 [domain-suffix entry](#the-domain-suffix-form-for-media-hosts) such as
-`.googlevideo.com` — and no address it resolves to that is loopback, private,
+`.googlevideo.com` — **or** the host of the URL the Admin entered for the source,
+as an exact host — and no address it resolves to that is loopback, private,
 link-local or otherwise not public. A variant that fails is dropped; if none is
-left the source shows as not responding. Your own `http_fetch` calls stay on the
-exact list (plus the host of your settings URL).
+left the source shows as not responding. Your own `http_fetch` calls reach the
+exact `network.hosts` entries, plus the Admin-entered URL's host and port (as for
+any operator-typed host, even a private one).
+
+**The Admin-entered URL.** An Online source has no fixed URL box of its own: the
+URL an Admin enters is the value of the **first `url`-typed field your manifest
+declares** (name it `instance`, say). A `default` on that field never counts as
+entered, and neither does a saved value equal to it, so a host you put in a default
+must still be listed in `network.hosts`. While it is set, the host hands it to you as
+`Settings.URL` on every call (read it with `Host.Settings()`); unset, `Settings.URL`
+is your `defaultUrl`. A save takes effect on the next call. This lets a source such
+as a PeerTube client target the instance the Admin chose without listing every
+instance in the manifest. It is https-only as a media host (an `http://` URL is
+never one) and never reaches a private or loopback address for media.
 
 **Two residual risks, accepted and worth knowing** (set out in full
 [under the manifest](#what-the-host-checks-on-an-online-sources-media-urls-and-what-it-does-not)).
@@ -530,7 +552,8 @@ exact — and the manifest is refused at load if one is malformed (`.com`, `.`,
 Every URL a variant names for the media (a muxed `url`, a split variant's
 `videoUrl` and `audioUrl`, a manifest `url`) is judged by the host before anything
 is played: it must be **https**, its host must match your `network.hosts` (exact or
-suffix), and the host must not resolve to a loopback, private, link-local or
+suffix) or be the host of the https URL the Admin entered for the source
+([§2a](#2a-the-online-source-provider)), and the host must not resolve to a loopback, private, link-local or
 otherwise non-public address. A variant that fails is dropped; if none is left the
 source shows as not responding.
 
@@ -1630,6 +1653,7 @@ Every call into your module runs under a budget:
 | Seam | Budget | Raise it? |
 | --- | --- | --- |
 | Metadata provider | **30 seconds** | `callBudgetMillis` on your `provides` entry, up to **120 s** |
+| Online source provider | 10 seconds, including the wait for the call slot | no |
 | Event sink | 10 seconds, inside a 15-second delivery budget | no |
 | Subtitle provider | 10 seconds | `callBudgetMillis` on your `provides` entry, up to **120 s** |
 
@@ -1673,7 +1697,7 @@ module came back.
 | What you do | What the host sees | What it costs |
 | --- | --- | --- |
 | Answer `unavailable` with a detail | a successful call | nothing. The item takes the host's backoff and is tried again |
-| Answer `0` with a sentence in `last_error()` — **Metadata provider** | a call you ran to completion and refused | nothing against the Plugin. The item is parked `failed`, your sentence is on the Plugins screen, you keep your instance and you keep serving |
+| Answer `0` with a sentence in `last_error()` — **Metadata provider / Online source provider** | a call you ran to completion and refused | nothing against the Plugin. A Metadata item is parked `failed`; an Online source has no item to park and its page shows "isn't responding". Your sentence is on the Plugins screen, you keep your instance and you keep serving |
 | Answer `0` with a sentence — **Event sink / Subtitle provider** | a failed call | **a strike.** Your instance is dropped and three in a row disable you |
 | Trap, spin past the deadline, or answer something that is not the contract's shape | a broken module | **a strike**, always, for every seam |
 
@@ -1697,7 +1721,7 @@ So, for a **Metadata provider**, the whole of the advice is three lines:
 Two things not to read into this. A clean error does **not** clear a run of
 strikes either — it is not a success, so two traps followed by a refusal followed
 by a third trap still disables you. And the exemption is for the **Metadata
-provider seam only**: a sink's refusal has no item to park and no second place to
+provider and Online source provider seams only**: a sink's refusal has no item to park and no second place to
 be seen, so the Plugin's own status is the only record a receiver that can never
 be written to will ever get.
 

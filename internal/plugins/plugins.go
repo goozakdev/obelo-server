@@ -615,7 +615,8 @@ func (p *Plugin) allows(host string) bool {
 
 // MediaHostAllowed reports whether the Plugin id's manifest licenses host as the
 // host of a media URL (ADR-0068 decision 9): an exact entry, or a domain-suffix
-// entry (".example.com"). It reads the manifest on disk, as every allowlist check
+// entry (".example.com"), or the host of the https URL the Admin entered for the
+// source. It reads the manifest on disk, as every allowlist check
 // does, never anything a guest said.
 func (s *Set) MediaHostAllowed(id, host string) bool {
 	if s == nil {
@@ -623,7 +624,7 @@ func (s *Set) MediaHostAllowed(id, host string) bool {
 	}
 	for _, p := range s.plugins {
 		if p.id == id {
-			return hostMatchesAllowlist(p.manifest.Network.Hosts, host)
+			return hostMatchesAllowlist(p.manifest.Network.Hosts, host) || p.enteredMediaHost(host)
 		}
 	}
 	return false

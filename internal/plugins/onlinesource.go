@@ -2,9 +2,11 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -20,7 +22,12 @@ import (
 // plugin are held to exactly the same rule by exactly the same code.
 //
 // A source is a remote service, so its calls run under the ordinary fetch policy:
-// the manifest's allowlist, plus the host of the URL the Settings carry.
+// the manifest's allowlist, plus the host of the URL the Admin entered.
+//
+// An Online source has no fixed-settings table (an Event sink's `event_sinks` row, a
+// Metadata provider's `metadata_providers` row), so the URL an Admin enters for it
+// is the value of the manifest's first declared `url` field. enteredURL reads it at
+// CALL time, so a settings save takes effect without a rebuild.
 
 // The Extension point's four contract calls, as guest exports, with the seam in the
 // name for the reason web_reference_links has.
@@ -62,6 +69,52 @@ type guestOnlineSourceProvider struct {
 
 var _ pluginapi.OnlineSourceProvider = (*guestOnlineSourceProvider)(nil)
 
+// enteredURL is the URL an Admin entered for this Plugin: the stored value of the
+// FIRST `url` field its manifest declares, "" when that field is unset. A value the
+// manifest itself supplies as the field's `default` is the author's choice and not
+// the Admin's (SettingValues fills defaults in), so it never counts: it gets the
+// allowlist and private-address checks like any other target (addrsOf's rule). The
+// one case this cannot tell apart is an Admin saving exactly the default, which is
+// likewise not treated as entered.
+func (p *Plugin) enteredURL() string {
+	for _, f := range p.manifest.Settings.Fields {
+		if f.Type != pluginapi.FieldURL {
+			continue
+		}
+		v, _ := p.settingValues()[f.Key].(string)
+		var def string
+		if len(f.Default) > 0 {
+			_ = json.Unmarshal(f.Default, &def)
+		}
+		if v == "" || v == def {
+			return ""
+		}
+		return v
+	}
+	return ""
+}
+
+// enteredMediaHost reports whether host is the host of the URL an Admin entered, and
+// that URL is https: an exact media host for the first-URL check (ADR-0068 decision
+// 9). It does not widen the address check, which still refuses a private one.
+func (p *Plugin) enteredMediaHost(host string) bool {
+	u, err := url.Parse(p.enteredURL())
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return false
+	}
+	return normalizeHost(u.Hostname()) == normalizeHost(host)
+}
+
+// current is the Settings of a call made now: the build's, with the Admin's URL as
+// the entered one when there is one.
+func (g *guestOnlineSourceProvider) current() pluginapi.Settings {
+	s := g.settings
+	if u := g.p.enteredURL(); u != "" {
+		s.URL, s.URLEntered = u, true
+	}
+	return s
+}
+
 // Icon is the source's tile image: the icon.png the Plugin's package carried,
 // stored beside its manifest at install, or nil when it had none. The file is
 // checked again as it is read, because the directory is on disk and a hand-placed
@@ -89,11 +142,12 @@ func (g *guestOnlineSourceProvider) Icon() []byte {
 // reachable beside the manifest allowlist, as it is for a Marker provider.
 func (g *guestOnlineSourceProvider) Rows(ctx context.Context, req pluginapi.OnlineRowsRequest) (pluginapi.OnlineRowsResponse, error) {
 	var resp pluginapi.OnlineRowsResponse
+	cur := g.current()
 	buildReq := func(callCtx context.Context) any {
-		return pluginapi.OnlineRowsCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+		return pluginapi.OnlineRowsCall{Request: req, Settings: g.p.withSettingValues(cur, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout, queueInBudget: true, refusalIsAnAnswer: true}
-	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceRows, addrsOf(g.settings), buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceRows, addrsOf(cur), buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.OnlineRowsResponse{}, err
 		}
@@ -106,11 +160,12 @@ func (g *guestOnlineSourceProvider) Rows(ctx context.Context, req pluginapi.Onli
 // Rows.
 func (g *guestOnlineSourceProvider) Row(ctx context.Context, req pluginapi.OnlineRowRequest) (pluginapi.OnlineRowResponse, error) {
 	var resp pluginapi.OnlineRowResponse
+	cur := g.current()
 	buildReq := func(callCtx context.Context) any {
-		return pluginapi.OnlineRowCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+		return pluginapi.OnlineRowCall{Request: req, Settings: g.p.withSettingValues(cur, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout, queueInBudget: true, refusalIsAnAnswer: true}
-	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceRow, addrsOf(g.settings), buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceRow, addrsOf(cur), buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.OnlineRowResponse{}, err
 		}
@@ -123,11 +178,12 @@ func (g *guestOnlineSourceProvider) Row(ctx context.Context, req pluginapi.Onlin
 // of Rows.
 func (g *guestOnlineSourceProvider) Search(ctx context.Context, req pluginapi.OnlineSearchRequest) (pluginapi.OnlineSearchResponse, error) {
 	var resp pluginapi.OnlineSearchResponse
+	cur := g.current()
 	buildReq := func(callCtx context.Context) any {
-		return pluginapi.OnlineSearchCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+		return pluginapi.OnlineSearchCall{Request: req, Settings: g.p.withSettingValues(cur, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout, queueInBudget: true, refusalIsAnAnswer: true}
-	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceSearch, addrsOf(g.settings), buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceSearch, addrsOf(cur), buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.OnlineSearchResponse{}, err
 		}
@@ -140,11 +196,12 @@ func (g *guestOnlineSourceProvider) Search(ctx context.Context, req pluginapi.On
 // Rows.
 func (g *guestOnlineSourceProvider) Resolve(ctx context.Context, req pluginapi.OnlineResolveRequest) (pluginapi.OnlineResolveResponse, error) {
 	var resp pluginapi.OnlineResolveResponse
+	cur := g.current()
 	buildReq := func(callCtx context.Context) any {
-		return pluginapi.OnlineResolveCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+		return pluginapi.OnlineResolveCall{Request: req, Settings: g.p.withSettingValues(cur, callCtx)}
 	}
 	policy := callPolicy{budget: g.p.opts.CallTimeout, queueInBudget: true, refusalIsAnAnswer: true}
-	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceResolve, addrsOf(g.settings), buildReq, &resp); err != nil {
+	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceResolve, addrsOf(cur), buildReq, &resp); err != nil {
 		if errors.Is(err, ErrDisabled) {
 			return pluginapi.OnlineResolveResponse{}, err
 		}

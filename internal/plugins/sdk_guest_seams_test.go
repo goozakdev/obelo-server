@@ -176,7 +176,7 @@ func TestASDKBuiltGuestAnswersAsAnOnlineSourceProvider(t *testing.T) {
 	defer source.Close()
 
 	dataDir := t.TempDir()
-	sdkguesttest.Install(t, dataDir, sdkguesttest.OnlineSourceManifest("sdk-online", source.URL))
+	sdkguesttest.Install(t, dataDir, sdkguesttest.OnlineSourceManifest("sdk-online"))
 	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
 	reg := pluginapi.NewRegistry()
 	set.Register(reg)
@@ -184,7 +184,13 @@ func TestASDKBuiltGuestAnswersAsAnOnlineSourceProvider(t *testing.T) {
 	if !ok {
 		t.Fatal("the Set registered no Online source provider for sdk-online")
 	}
-	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL, URLEntered: true})
+	// The Settings the host builds in production: the default URL, never "entered".
+	// The Admin's own URL is the manifest's declared `instance` field, saved to the
+	// Plugin; it is what reaches the guest as Settings.URL and the fetch policy.
+	for _, p := range set.Plugins() {
+		p.SetSettingValues(map[string]any{"instance": source.URL})
+	}
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL})
 	if err != nil {
 		t.Fatalf("building the provider: %v", err)
 	}

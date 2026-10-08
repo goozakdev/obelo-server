@@ -27,8 +27,10 @@
 //
 // An Online source provider's settings ride WITH the call, so the dispatcher
 // publishes them and Host.Settings answers them for the call's duration. They are
-// server-wide: there is no per-User variant. Settings.URL is the operator's
-// source, which the call may reach beside the manifest's hosts.
+// server-wide: there is no per-User variant. Settings.URL is the URL the Admin
+// entered for the source (the manifest's first declared `url` field), else the
+// manifest's default. The call may reach the manifest's network.hosts exactly, plus
+// the host of an entered URL, which is also an exact media host (https only).
 package onlinesource
 
 import pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
