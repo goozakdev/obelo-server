@@ -24,6 +24,14 @@ const (
 	MarkersPath = "/markers"
 )
 
+// The paths the Online source provider asks the operator's source for.
+const (
+	ShelvesPath = "/shelves"
+	ShelfPath   = "/shelf"
+	FindPath    = "/find"
+	StreamPath  = "/stream"
+)
+
 // sdk-sample:begin webref
 
 // References links an item's IMDb id. It needs no Host: the call is a pure
@@ -140,6 +148,106 @@ func (m *Markers) Markers(ctx context.Context, req pluginapi.MarkersRequest) (pl
 }
 
 // sdk-sample:end markers
+
+// sdk-sample:begin onlinesource
+
+// Videos is an Online source provider over a video site's JSON API at the
+// operator's URL. It maps the site's shelves, search and streams onto the
+// contract's rows, search and variants; it never fetches a media URL — it only
+// names it, and the host does the playing.
+type Videos struct {
+	host pluginsdk.Host
+}
+
+// NewVideos builds the provider on a Host.
+func NewVideos(h pluginsdk.Host) *Videos { return &Videos{host: h} }
+
+// video is how the site spells one video.
+type video struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Thumb   string `json:"thumb"`
+	Seconds int64  `json:"seconds"`
+}
+
+func items(vs []video) []pluginapi.OnlineItem {
+	var out []pluginapi.OnlineItem
+	for _, v := range vs {
+		out = append(out, pluginapi.OnlineItem{ID: v.ID, Title: v.Title, ThumbnailURL: v.Thumb, DurationMs: v.Seconds * 1000})
+	}
+	return out
+}
+
+// Rows answers the site's shelves, each with its first page and the cursor for the
+// next.
+func (v *Videos) Rows(ctx context.Context, _ pluginapi.OnlineRowsRequest) (pluginapi.OnlineRowsResponse, error) {
+	var out struct {
+		Shelves []struct {
+			ID     string  `json:"id"`
+			Title  string  `json:"title"`
+			Videos []video `json:"videos"`
+			More   string  `json:"more"`
+		} `json:"shelves"`
+	}
+	if err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+ShelvesPath, nil, &out); err != nil {
+		return pluginapi.OnlineRowsResponse{}, err
+	}
+	var resp pluginapi.OnlineRowsResponse
+	for _, s := range out.Shelves {
+		resp.Rows = append(resp.Rows, pluginapi.OnlineRow{ID: s.ID, Label: s.Title, Items: items(s.Videos), NextCursor: s.More})
+	}
+	return resp, nil
+}
+
+// Row answers the page of one shelf after the cursor the last answer named.
+func (v *Videos) Row(ctx context.Context, req pluginapi.OnlineRowRequest) (pluginapi.OnlineRowResponse, error) {
+	var out struct {
+		Videos []video `json:"videos"`
+		More   string  `json:"more"`
+	}
+	q := url.Values{"shelf": {req.RowID}, "after": {req.Cursor}}
+	if err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+ShelfPath, q, &out); err != nil {
+		return pluginapi.OnlineRowResponse{}, err
+	}
+	return pluginapi.OnlineRowResponse{Items: items(out.Videos), NextCursor: out.More}, nil
+}
+
+// Search answers the videos matching the query, best first, in one page.
+func (v *Videos) Search(ctx context.Context, req pluginapi.OnlineSearchRequest) (pluginapi.OnlineSearchResponse, error) {
+	var out struct {
+		Videos []video `json:"videos"`
+	}
+	if err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+FindPath, url.Values{"q": {req.Query}}, &out); err != nil {
+		return pluginapi.OnlineSearchResponse{}, err
+	}
+	return pluginapi.OnlineSearchResponse{Items: items(out.Videos)}, nil
+}
+
+// Resolve answers the one muxed file the site streams the video from. A video the
+// site no longer has (404) is no variants, not a failure.
+func (v *Videos) Resolve(ctx context.Context, req pluginapi.OnlineResolveRequest) (pluginapi.OnlineResolveResponse, error) {
+	var out struct {
+		File   string `json:"file"`
+		Height int    `json:"height"`
+	}
+	err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+StreamPath, url.Values{"id": {req.ItemID}}, &out)
+	var fe *pluginsdk.FetchError
+	if errors.As(err, &fe) && fe.IsNotFound() {
+		return pluginapi.OnlineResolveResponse{}, nil
+	}
+	if err != nil {
+		return pluginapi.OnlineResolveResponse{}, err
+	}
+	return pluginapi.OnlineResolveResponse{Variants: []pluginapi.OnlineVariant{{
+		Kind:       pluginapi.OnlineVariantMuxed,
+		URL:        out.File,
+		Container:  "mp4",
+		Codecs:     []string{"h264", "aac"},
+		Resolution: strconv.Itoa(out.Height) + "p",
+	}}}, nil
+}
+
+// sdk-sample:end onlinesource
 
 // sdk-sample:begin password
 

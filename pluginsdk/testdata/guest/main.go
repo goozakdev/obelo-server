@@ -31,6 +31,7 @@ import (
 	"github.com/goozakdev/obelo-server/pluginsdk/lyric"
 	"github.com/goozakdev/obelo-server/pluginsdk/marker"
 	"github.com/goozakdev/obelo-server/pluginsdk/metadata"
+	"github.com/goozakdev/obelo-server/pluginsdk/onlinesource"
 	"github.com/goozakdev/obelo-server/pluginsdk/signin"
 	"github.com/goozakdev/obelo-server/pluginsdk/sink"
 	"github.com/goozakdev/obelo-server/pluginsdk/subtitle"
@@ -83,6 +84,7 @@ func init() {
 	webref.Serve(testprovider.References{})
 	lyric.Serve(testprovider.NewLyrics(pluginsdk.Sandbox()))
 	marker.Serve(testprovider.NewMarkers(pluginsdk.Sandbox()))
+	onlinesource.Serve(testprovider.NewVideos(pluginsdk.Sandbox()))
 	signin.ServePassword(testprovider.NewDirectory(pluginsdk.Sandbox()))
 }
 

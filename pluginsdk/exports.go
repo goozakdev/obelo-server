@@ -2,7 +2,7 @@ package pluginsdk
 
 // The guest export names, one per contract call, COPIED from the host
 // (internal/plugins/guest.go, metadata.go, subtitle.go, signin.go, webref.go,
-// lyrics.go, markers.go).
+// lyrics.go, markers.go, onlinesource.go).
 //
 // They are copied and not imported, because this module may not import the
 // server — that is the point of the module split. A copy is a thing that drifts,
@@ -59,6 +59,12 @@ const (
 	ExportWebReferenceLinks     = "web_reference_links"
 	ExportLyricProviderLyrics   = "lyric_provider_lyrics"
 	ExportMarkerProviderMarkers = "marker_provider_markers"
+
+	// The Online source provider Extension point's four calls.
+	ExportOnlineSourceRows    = "online_source_rows"
+	ExportOnlineSourceRow     = "online_source_row"
+	ExportOnlineSourceSearch  = "online_source_search"
+	ExportOnlineSourceResolve = "online_source_resolve"
 )
 
 // HostModule is the namespace the six host functions are imported from. A module
@@ -111,6 +117,11 @@ func SignInRedirectExports() []string {
 // order.
 func SignInRecheckExports() []string {
 	return []string{ExportSignInLookup, ExportSignInRefresh}
+}
+
+// OnlineSourceExports is every Online source provider export, in contract order.
+func OnlineSourceExports() []string {
+	return []string{ExportOnlineSourceRows, ExportOnlineSourceRow, ExportOnlineSourceSearch, ExportOnlineSourceResolve}
 }
 
 // ABIExports is the plumbing every module provides, in the order the host looks

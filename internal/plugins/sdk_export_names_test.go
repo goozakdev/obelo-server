@@ -69,6 +69,14 @@ func TestTheSDKsSignInRecheckExportNamesAreTheHosts(t *testing.T) {
 	assertSameList(t, "the Sign-in provider re-check exports", host, pluginsdk.SignInRecheckExports())
 }
 
+// TestTheSDKsOnlineSourceExportNamesAreTheHosts is the same for the Online source
+// provider's four calls, in contract order.
+func TestTheSDKsOnlineSourceExportNamesAreTheHosts(t *testing.T) {
+	parallel(t)
+	host := []string{exportOnlineSourceRows, exportOnlineSourceRow, exportOnlineSourceSearch, exportOnlineSourceResolve}
+	assertSameList(t, "the Online source provider exports", host, pluginsdk.OnlineSourceExports())
+}
+
 // TestTheSDKsOneCallExportNamesAreTheHosts is the same for every Extension
 // point whose contract is one call — the password flow's, a Web reference
 // provider's, a Lyric provider's and a Marker provider's.

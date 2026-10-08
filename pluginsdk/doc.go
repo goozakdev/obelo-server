@@ -22,7 +22,7 @@
 //     last_error, the six //go:wasmimport declarations, the packed-i64 return
 //     convention and the JSON marshalling, once instead of once per plugin.
 //   - The dispatchers — metadata.Serve, sink.Serve, subtitle.Serve,
-//     webref.Serve, lyric.Serve, marker.Serve, signin.ServePassword and
+//     webref.Serve, lyric.Serve, marker.Serve, onlinesource.Serve, signin.ServePassword and
 //     signin.ServeRedirect — which own the //go:wasmexport functions, decode the
 //     request, call a value that implements the contract's Go interface, and
 //     encode the answer.

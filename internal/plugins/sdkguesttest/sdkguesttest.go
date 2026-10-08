@@ -167,6 +167,15 @@ func MarkerManifest(id, sourceURL string) pluginapi.Manifest {
 	return m
 }
 
+// OnlineSourceManifest is the manifest of the SDK guest as an Online source
+// provider whose source is sourceURL: plugintest's document, naming this compiled
+// module.
+func OnlineSourceManifest(id, sourceURL string) pluginapi.Manifest {
+	m := plugintest.OnlineSourceManifest(id, "SDK Source ("+id+")", sourceURL)
+	m.Description = "An Online source provider built with the Obelo Go SDK, compiled from source by the test suite."
+	return m
+}
+
 // SignInManifest is the manifest of the SDK guest as a password-flow Sign-in
 // provider that also answers lookup(subject): a directory reached over HTTP at
 // directoryURL, which is the one declared setting, `directory`, and the one host

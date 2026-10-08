@@ -1057,6 +1057,44 @@ Bytes are **streamed, never buffered to disk**: status, content type, `Content-L
 
 **This Server pays bandwidth, never CPU.** A relay Decision skips the local HLS runtime and the transcode meter entirely, so it holds no slot against the transcode cap ([ADR-0009](./adr/0009-transcode-governance.md)) — the encode is the sharer's, which is the point: they are the ones sharing with a stranger, so the budget that protects them must be theirs.
 
+### 3.12 Online sources — [Public]
+
+[ADR-0068](./adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md). A source is a Plugin the Admin enabled (see the [authoring guide](./plugins/authoring.md#2a-the-online-source-provider)); everything here is live and in memory — nothing is stored, no watch state is kept, and a source is never part of `GET /home`, `GET /search` or any Collection or Playlist. A client that never calls these routes sees no tiles, and **no Plugin is called to draw the home screen**.
+
+**Who may see a source.** An Admin sees every enabled source. A Member sees the sources granted to them (`PUT /users/{id}/onlineSourceAccess`) and **none while they hold a Rating ceiling**. A `remote` caller (a linked Server) sees none. Anyone who may not see a source gets `GET /onlineSources` without its tile and **`404 NOT_FOUND` `"resource not found"` from every other route** — the same answer an unknown or switched-off source gets, so existence is hidden. A grant is judged on every request, so removing one takes effect on the next call (and ends live sessions, below).
+
+| Endpoint | Auth | Notes |
+| --- | --- | --- |
+| `GET /onlineSources` | bearer only | → `200` `{ "sources": [ { "id", "name", "iconUrl" } ] }` — the caller's tiles, in registration order, `[]` for none. `iconUrl` is the Server's own path to the tile image, `null` when the package carried no `icon.png`. Reads the registry; **calls no Plugin**. |
+| `GET /onlineSources/{id}/icon` | bearer **or media cookie** | The tile image, `image/png`, `nosniff`, `Cache-Control: private, max-age=300`. `404` when the source has no icon, is unknown/off, or is not the caller's. Calls no Plugin. |
+| `GET /onlineSources/{id}/rows` | bearer only | → `200` `{ "rows": [ { "id", "label", "items": [ item ], "nextCursor": null \| "…" } ] }`. The only route that runs the Plugin's `rows()`; answered from a 5-minute in-memory cache shared across Users. At most 50 rows of 100 items. |
+| `GET /onlineSources/{id}/rows/{rowId}?cursor=` | bearer only | → `200` `{ "items": [ item ], "nextCursor"?: "…" }` (`nextCursor` absent on the last page): the page after `cursor`, the opaque token an earlier answer named. At most 100 items; cached 5 minutes per source, row and cursor. A `rowId` the host would not have issued, or a missing/empty/over-2048-byte `cursor`, is `404 NOT_FOUND` **before** any Plugin call. |
+| `GET /onlineSources/{id}/search?q=` | bearer only | → `200` `{ "items": [ item ] }`, best first, at most 100, **never cached** (the same query twice runs `search()` twice). `q` is trimmed and cut to 200 characters; a blank `q` is `200` `{ "items": [] }` with no Plugin call. Source page only: there is no global search over sources. |
+| `GET /onlineSources/{id}/items/{itemId}/thumbnail` | bearer **or media cookie** | The item's thumbnail, fetched by the Server and proxied (the client never sees the source's URL): `Content-Type` is what the bytes are, `nosniff`, `Cache-Control: private, max-age=300`. Only an item a recent page of that source named has one — anything else is `404`. A thumbnail that is not a raster image, is over 4 MiB, or fails to fetch is `502 SOURCE_UNAVAILABLE`. Held in memory for the response, never written to disk. |
+| `POST /onlineSources/{id}/items/{itemId}/playback` | bearer only | Same body as `POST /titles/{id}/playback` (`deviceProfile`, `constraints`; the rest is ignored), clamped to the caller's Playback ceiling. Runs `resolve()` **once**, opens a session. → `200` `{ "sessionId", "streamUrl", "format" }`: `format` `"progressive"` (the source's bytes relayed untouched — play with a `<video>`) or `"hls"` (ffmpeg's output — play with an HLS player). `streamUrl` carries a stream token. |
+
+An **item** is `{ "id", "title", "thumbnailUrl", "durationMs", "description"?, "publishedAt"? }`; `thumbnailUrl` is the Server's own thumbnail path above, never the source's. Ids are URL-safe (letters, digits, `.` `_` `~` `-`).
+
+**Playing.** `streamUrl` is `/api/v1/stream/{streamToken}/stream` (progressive) or `/api/v1/stream/{streamToken}/hls/index.m3u8` (hls), served exactly like a Title's [stream-token routes](#session-lifecycle) — no bearer, no cookie. The session is the User's: `POST /sessions/{id}/progress` is its keepalive (it records **nothing**, whatever the position says, and answers an empty progress body; for a session that has *ended* with a reason it answers `410 SOURCE_GONE` with that reason as the message — see below — and anyone but the session's own User gets `404`) and `DELETE /sessions/{id}` ends it (`204`) and revokes its token; another User's id is `404`. An idle session is reaped. A session ends at once when the User loses the source (grant removed, a Rating ceiling set, demotion to Member) or is deleted; for the first three it leaves a note, readable for 10 minutes by the User only, `"You no longer have access to {source}"`. The session appears on the Admin sessions page labelled with the source and the item's title, and emits **no** Event sink events.
+
+**Expiring URLs.** `resolve()` runs once per session. If the media host answers `403` or `410` the Server re-resolves **once** and continues: a relay asks the new URL for the same `Range`, an ffmpeg session restarts at the position it had reached. The new URL passes the same checks. A session does not change path (relay or HLS) in flight.
+
+**Bitrate.** A variant states no bitrate, so only an Admin-set Playback ceiling `maxBitrate` sends it to ffmpeg (or `501 TRANSCODE_REQUIRED` without ffmpeg); a `maxBitrate` the client sends in `constraints` is ignored for that decision and only bounds an encode.
+
+**Errors** (beyond the shared envelope):
+
+| Status | Code | When |
+| --- | --- | --- |
+| `404` | `NOT_FOUND` | Unknown, switched-off or ungranted source (including a `remote` caller); an item or row the source never offered; a source whose `resolve()` answered no variants. One body for all, so none of them can be told apart. |
+| `410` | `SOURCE_GONE` | The session ended and says why. On the stream route (relay or HLS): the media host refused the URL (`403`/`410`) and the **one** re-resolve could not replace it, or refused again after it (`"this video is no longer available"`). On `POST /sessions/{id}/progress` of an ended session: the note it left — `"This video is no longer available from {source}"` or `"You no longer have access to {source}"` — for 10 minutes. The player shows the message in place of the video. |
+| `502` | `SOURCE_UNAVAILABLE` | The source (its Plugin, or the host serving its media or thumbnail) failed, timed out or refused: `"the source is not responding"`. Also when every variant `resolve()` returned failed the Server's media-URL check (https, the manifest's allowlist, a public address). Retryable; a client shows "{source} isn't responding" with a retry. |
+| `501` | `TRANSCODE_REQUIRED` | The client cannot play any variant as is (or one is over the Playback ceiling) **and the Server has no ffmpeg**. `details: { "reason", "detail" }` as for a Title. |
+| `503` | `SERVER_BUSY` | The variant needs ffmpeg and the transcode cap ([ADR-0009](./adr/0009-transcode-governance.md)) is full. `details: { "retryable": true, "suggestedMaxBitrate" }`. |
+| `401` | `UNAUTHORIZED` | No usable credential (the cookie is honoured only where the table says). |
+| `405` | `METHOD_NOT_ALLOWED` | A wrong method on a known route. |
+
+`UNKNOWN_SOURCE` is **not** emitted by these routes: it belongs to `PUT /users/{id}/onlineSourceAccess` (above), where it means the set named a source that does not exist.
+
 ### Sign-in providers — the redirect flow
 
 [ADR-0063](./adr/0063-a-sign-in-provider-proves-who-someone-is-and-the-server-decides-what-that-is-worth.md) decisions 2 and 8. A redirect-flow Sign-in provider (capability `redirect-sign-in`) sends the browser to an outside identity provider and back. The server owns the whole round trip — `state`, the PKCE verifier (S256), the nonce, the callback, and a cookie binding the callback to the browser that started it — and the Plugin supplies only the authorize URL and the code exchange. **Web-only:** a TV or an iPad signs in through the device authorization grant (§3.1), approved from a browser signed in this way; the grant needs nothing new.

@@ -150,6 +150,91 @@ func TestASDKBuiltGuestAnswersAsAMarkerProvider(t *testing.T) {
 	}
 }
 
+// TestASDKBuiltGuestAnswersAsAnOnlineSourceProvider: all four calls cross the real
+// ABI. The guest asks the site at the URL the Settings carry for the shelves, a
+// shelf's next page by the cursor it named, a search, and a video's stream, and
+// answers each in the contract's shapes; a video the site lacks is no variants.
+func TestASDKBuiltGuestAnswersAsAnOnlineSourceProvider(t *testing.T) {
+	plugins.Parallel(t)
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/shelves":
+			_, _ = w.Write([]byte(`{"shelves":[{"id":"new","title":"New","more":"p2","videos":[` +
+				`{"id":"v1","title":"One","thumb":"https://cdn.example.test/1.jpg","seconds":61}]}]}`))
+		case r.URL.Path == "/shelf" && q.Get("shelf") == "new" && q.Get("after") == "p2":
+			_, _ = w.Write([]byte(`{"videos":[{"id":"v2","title":"Two","thumb":"https://cdn.example.test/2.jpg","seconds":5}]}`))
+		case r.URL.Path == "/find" && q.Get("q") == "cats":
+			_, _ = w.Write([]byte(`{"videos":[{"id":"v3","title":"Cats","thumb":"https://cdn.example.test/3.jpg","seconds":9}]}`))
+		case r.URL.Path == "/stream" && q.Get("id") == "v1":
+			_, _ = w.Write([]byte(`{"file":"https://media.example.test/v1.mp4","height":720}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer source.Close()
+
+	dataDir := t.TempDir()
+	sdkguesttest.Install(t, dataDir, sdkguesttest.OnlineSourceManifest("sdk-online", source.URL))
+	set := loadWith(t, dataDir, &logSink{}, plugins.Options{})
+	reg := pluginapi.NewRegistry()
+	set.Register(reg)
+	registration, ok := reg.OnlineSourceProvider("sdk-online")
+	if !ok {
+		t.Fatal("the Set registered no Online source provider for sdk-online")
+	}
+	provider, err := registration.New(pluginapi.Settings{Enabled: true, URL: registration.Descriptor.DefaultURL, URLEntered: true})
+	if err != nil {
+		t.Fatalf("building the provider: %v", err)
+	}
+	ctx := context.Background()
+
+	rows, err := provider.Rows(ctx, pluginapi.OnlineRowsRequest{})
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	wantRows := []pluginapi.OnlineRow{{ID: "new", Label: "New", NextCursor: "p2", Items: []pluginapi.OnlineItem{
+		{ID: "v1", Title: "One", ThumbnailURL: "https://cdn.example.test/1.jpg", DurationMs: 61000}}}}
+	if !reflect.DeepEqual(rows.Rows, wantRows) {
+		t.Fatalf("rows = %+v, want %+v", rows.Rows, wantRows)
+	}
+
+	page, err := provider.Row(ctx, pluginapi.OnlineRowRequest{RowID: "new", Cursor: "p2"})
+	if err != nil {
+		t.Fatalf("Row: %v", err)
+	}
+	wantPage := pluginapi.OnlineRowResponse{Items: []pluginapi.OnlineItem{
+		{ID: "v2", Title: "Two", ThumbnailURL: "https://cdn.example.test/2.jpg", DurationMs: 5000}}}
+	if !reflect.DeepEqual(page, wantPage) {
+		t.Fatalf("row page = %+v, want %+v", page, wantPage)
+	}
+
+	found, err := provider.Search(ctx, pluginapi.OnlineSearchRequest{Query: "cats"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	wantFound := []pluginapi.OnlineItem{{ID: "v3", Title: "Cats", ThumbnailURL: "https://cdn.example.test/3.jpg", DurationMs: 9000}}
+	if !reflect.DeepEqual(found.Items, wantFound) {
+		t.Fatalf("search = %+v, want %+v", found.Items, wantFound)
+	}
+
+	resolved, err := provider.Resolve(ctx, pluginapi.OnlineResolveRequest{ItemID: "v1"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	wantVariants := []pluginapi.OnlineVariant{{Kind: pluginapi.OnlineVariantMuxed, URL: "https://media.example.test/v1.mp4",
+		Container: "mp4", Codecs: []string{"h264", "aac"}, Resolution: "720p"}}
+	if !reflect.DeepEqual(resolved.Variants, wantVariants) {
+		t.Fatalf("variants = %+v, want %+v", resolved.Variants, wantVariants)
+	}
+
+	gone, err := provider.Resolve(ctx, pluginapi.OnlineResolveRequest{ItemID: "missing"})
+	if err != nil || len(gone.Variants) != 0 {
+		t.Fatalf("a video the site lacks = %+v, %v; want no variants and no error", gone, err)
+	}
+}
+
 // directoryTransport is an HTTP directory, without a network: POST /login with
 // a JSON username and password answers the person or 401, and GET
 // /users/<subject> answers the person, or 404 for one it no longer knows.

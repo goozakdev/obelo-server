@@ -81,7 +81,7 @@ unchanged here.
 
 The set of seams a Plugin may fill is **closed**. It grows by decision, not by
 declaration — a manifest naming any other kind is refused at load. Today there
-are seven.
+are eight.
 
 | Extension point | `kind` | What it is asked |
 | --- | --- | --- |
@@ -91,6 +91,7 @@ are seven.
 | **Web reference provider** | `web-reference-provider` | "Where can a person read about the item these ids name?" (No network at all.) |
 | **Lyric provider** | `lyric-provider` | "What are this track's words?" |
 | **Marker provider** | `marker-provider` | "Where are this File's Intro, Recap, Credits and Preview?" |
+| **Online source provider** | `online-source-provider` | "What does this source show, what matches this search, and where does this video play from?" ([§2a](#2a-the-online-source-provider)) |
 | **Sign-in provider** | `sign-in-provider` | "Is this who they say they are?" — by password, or by a redirect to an identity provider. |
 
 Your manifest's `provides` list says which you fill, and **one module may fill more
@@ -122,6 +123,10 @@ Then, per seam:
 | Web reference provider | `web_reference_links(ptr, len) -> i64` | yes |
 | Lyric provider | `lyric_provider_lyrics(ptr, len) -> i64` | yes |
 | Marker provider | `marker_provider_markers(ptr, len) -> i64` | yes |
+| Online source provider | `online_source_rows(ptr, len) -> i64` | yes |
+| | `online_source_row(ptr, len) -> i64` | yes |
+| | `online_source_search(ptr, len) -> i64` | yes |
+| | `online_source_resolve(ptr, len) -> i64` | yes |
 | Sign-in provider | `sign_in_password(ptr, len) -> i64` | behind capability `password-sign-in` |
 | | `sign_in_authorize_url(ptr, len) -> i64` / `sign_in_exchange(ptr, len) -> i64` | behind capability `redirect-sign-in` |
 | | `sign_in_lookup(ptr, len) -> i64` | behind capability `sign-in-lookup` |
@@ -220,6 +225,159 @@ And one a Subtitle provider author gets wrong:
 - **The host states `maxBytes` on the way in and re-checks it on the way out.**
   Answering with more is refused whole and counted against you — see
   [the rules](#10-the-rules-you-must-not-break).
+
+---
+
+## 2a. The Online source provider
+
+An Online source provider lets a User browse and watch something outside the
+household — a PeerTube instance, the Internet Archive — without any of it becoming
+part of the catalog
+([ADR-0068](../adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md)).
+**You resolve; the host plays.** You only ever supply data and URLs. The host
+decides what is kept, who may see it, whether to relay a file or have ffmpeg read
+it, and it never shows a client your upstream address — a client is handed a stream
+token.
+
+Declare `"kind": "online-source-provider"` and export the four calls. A call is a
+JSON envelope `{ "request": …, "settings": … }` (`settings` is the usual
+[settings object](#6-how-settings-reach-the-guest)) and your answer is the plain
+response, **not** enveloped. The Go types are `OnlineRowsCall`, `OnlineRowCall`,
+`OnlineSearchCall` and `OnlineResolveCall` in `pluginapi/v1/onlinesource.go`.
+
+| Export | `request` | Answer |
+| --- | --- | --- |
+| `online_source_rows` | `{}` | `{ "rows": [ { "id", "label", "items": [ item… ], "nextCursor"? } ] }` |
+| `online_source_row` | `{ "rowId", "cursor" }` | `{ "items": [ item… ], "nextCursor"? }` |
+| `online_source_search` | `{ "query" }` | `{ "items": [ item… ] }` — best first, one page, no cursor |
+| `online_source_resolve` | `{ "itemId", "hints": { "maxHeight"? } }` | `{ "variants": [ variant… ] }` |
+
+An **item** is one playable video: `{ "id", "title", "thumbnailUrl", "durationMs",
+"description"?, "publishedAt"? }` (`publishedAt` is RFC 3339). A channel or a
+playlist is a row, not an item. `nextCursor` is an opaque token of yours: the host
+never reads it, only hands it back to `online_source_row`, and an empty one means
+the row has no more.
+
+### What the host does with your answer
+
+- **Caps.** Per answer, at most **50 rows**, **100 items** in a row, **100 items**
+  in a row page or a search. More are cut off the end.
+- **Truncation.** A row label is cut to **100** characters, an item title to
+  **200**, a description to **2000**. The entry is kept. A `nextCursor` longer than
+  **2048** bytes is not truncated (that would corrupt it): it is dropped, which
+  ends the paging.
+- **Drops.** A row is dropped for an `id` outside letters, digits and `.` `_` `~`
+  `-` (or empty, or over 256 characters, or one already seen), or a blank label.
+  An item is dropped for the same `id` rules, a blank title, a `thumbnailUrl` that
+  is not `https`, a negative `durationMs` (a `durationMs` that is not a number
+  reads as negative), or a `publishedAt` that is not RFC 3339. Its siblings are
+  kept; a very long duration is not malformed.
+- **Thumbnails.** The host fetches `thumbnailUrl` itself, through its guarded
+  client, and serves the bytes from its own origin. They are never written to disk.
+- **The query.** The host trims the search query, cuts it to **200** characters and
+  never sends you an empty one.
+- **The row call.** A `rowId` outside the id rules, or an empty or over-long
+  cursor, is refused before you are called.
+- **Time.** Each call has 30 seconds, including any wait for a free slot.
+- **Failure.** An error is a source that is not responding: the User sees
+  "{source} isn't responding" and a retry. Nothing is remembered about it.
+  *No* variants from `online_source_resolve` is a source that no longer has the
+  item.
+
+### Caching
+
+`rows` and `row` answers are cached **in memory for 5 minutes**, per source (and,
+for `row`, per row and cursor), and shared across Users — so do not put anything
+User-specific in them; you cannot, since you are never told who is asking.
+**`search` is never cached**: the same query twice is two calls. The cache is
+cleared when an Admin saves the source's settings or installs, upgrades, enables or
+removes the Plugin, and by a restart. Nothing else is kept: no watch state, no
+resume position, no history, no Continue Watching, and **no per-User state at all**
+— your settings are server-wide, entered once by the Admin (an instance, a key, a
+region), and there is no per-User account or OAuth in this version.
+
+### Variants, and how the host plays them
+
+`online_source_resolve` runs **once per playback session** and returns the ways to
+play the item. `hints.maxHeight` is the tallest picture, in pixels, the host will
+play for this User (0 when it states none), so you can leave out what could not be
+used. A variant is:
+
+```json
+{ "kind": "muxed", "url": "https://media.example.test/v1.mp4",
+  "container": "mp4", "codecs": ["h264", "aac"], "resolution": "720p",
+  "headers": { "referer": "https://example.test/" } }
+```
+
+| `kind` | Names | Meaning |
+| --- | --- | --- |
+| `muxed` (or empty) | `url` | audio and video in one file |
+| `split` | `videoUrl`, `audioUrl` | the picture and the sound at two URLs |
+| `manifest` | `url` | an HLS or DASH manifest (`container` `hls` or `dash`) |
+
+`container` is named as a client profile names it (`mp4`, `webm`), `codecs` lists
+video first, and `resolution` is the picture height as a token (`720p`), empty when
+unknown. `headers` are request headers the media host needs; only `referer`,
+`user-agent`, `origin` and `accept-language` are ever sent, whatever else you name.
+
+**Relay or ffmpeg.** The host *relays* a `muxed` variant — fetching the bytes
+itself and passing them on untouched — when the client's device profile can play
+its container and codecs at its stated height, and nothing in the User's
+**Playback ceiling** forbids it: the tallest such variant wins. A variant that
+states no height cannot be held to a resolution cap, so under one it is not
+relayed; and since a variant states no bitrate, it is not relayed when the Admin
+has set a Playback ceiling **bitrate** for the User. A bitrate the client merely
+asks for (the web player always sends one) does not stop a relay; it only bounds
+an encode once ffmpeg is used. Otherwise the host hands the **best variant of any shape** to ffmpeg,
+which encodes it to HLS for the client: the tallest within the ceiling, else the
+smallest above it, scaled down to the ceiling. ffmpeg runs under the same
+transcode cap as a Title, so a full server answers `SERVER_BUSY`; with no ffmpeg
+the User gets "a transcode would be required". Offer a `muxed` variant whenever the
+source has one: it is the cheap path, and the only one checked hop by hop.
+
+**The first-URL check and the allowlist.** Before anything is played the host
+judges every URL a variant names for the media: `https`, no credentials in it, a
+host your `network.hosts` licenses — exactly, or under a
+[domain-suffix entry](#the-domain-suffix-form-for-media-hosts) such as
+`.googlevideo.com` — and no address it resolves to that is loopback, private,
+link-local or otherwise not public. A variant that fails is dropped; if none is
+left the source shows as not responding. Your own `http_fetch` calls stay on the
+exact list (plus the host of your settings URL).
+
+**Two residual risks, accepted and worth knowing** (set out in full
+[under the manifest](#what-the-host-checks-on-an-online-sources-media-urls-and-what-it-does-not)).
+On the ffmpeg path only the *first* URL is checked, so (1) **a redirect or a
+manifest hop** after it can reach an `https` address on the household's network,
+and (2) a **DNS-rebinding** answer can pass the first check and still send ffmpeg
+to the LAN. ffmpeg is given `-protocol_whitelist https,tls,tcp,crypto` and
+`-tls_verify 1`, which keeps it to `https`. The relay path has neither risk: it
+checks every redirect for `https` and a public address.
+
+**Expiring URLs.** Media URLs often expire. If the media host answers `403` or
+`410`, the host re-resolves **once** per session (it calls `online_source_resolve`
+again for the same item). The new variant passes the same first-URL check, and a
+session never changes path in flight: a relayed session asks the new URL for the
+same byte range, an ffmpeg session restarts ffmpeg on the new URL and carries on
+from the end of what was already encoded. If the re-resolve fails, or the media
+host refuses again, the session ends and the player is told "This video is no
+longer available from {source}". There is no timed refresh, so answer with URLs as
+fresh as your source can give
+([ADR-0068](../adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md)
+decision 10).
+
+### The tile icon
+
+A source may carry a tile image: an optional, **signed** `icon.png` at the root of
+the package (see [the package](#the-package-is-strict) and §7a). It must be a real
+PNG, **square**, at most **1024 pixels** a side and **64 KiB**; the server serves
+it from its own origin, and a source without one gets a generic tile showing its
+name.
+
+### Not here
+
+Online items have no Markers, lyrics or subtitles, never appear in a Playlist,
+Collection or the global search, and emit no Event sink events. Search exists only
+on the source's own page.
 
 ---
 
@@ -448,7 +606,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.17",
+  "version": "1.1.18",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -1719,6 +1877,7 @@ comes with either. The packages:
 | `pluginsdk/sink`, `pluginsdk/subtitle` | The same for the other two seams: `deliver`, and the two subtitle exports. |
 | `pluginsdk/signin` | `ServePassword(p)` — a Sign-in provider's password flow: `sign_in_password`, in front of `pluginapi.SignInProvider`. `ServeRedirect(p)` — its redirect flow: `sign_in_authorize_url` and `sign_in_exchange`, in front of `pluginapi.SignInRedirectProvider`. And the re-check's `sign_in_refresh` and `sign_in_lookup` when the provider you served also implements `pluginapi.SignInRefreshProvider` or `pluginapi.SignInLookupProvider`. |
 | `pluginsdk/webref`, `pluginsdk/lyric`, `pluginsdk/marker` | `Serve(p)` — the one export of the Web reference, Lyric and Marker provider seams, in front of the contract's own interface. See [below](#filling-the-other-extension-points). |
+| `pluginsdk/onlinesource` | `Serve(p)` — the four exports of the Online source provider seam (`online_source_rows`, `online_source_row`, `online_source_search`, `online_source_resolve`), in front of `pluginapi.OnlineSourceProvider`. See [§2a](#2a-the-online-source-provider). |
 | `pluginsdk/sdktest` | An in-memory `Host` for NATIVE tests: a routing table of `http.Handler`s, a captured log, an in-memory kv and fixed settings. |
 
 ### Your `main.go`
@@ -1872,10 +2031,11 @@ host looks up only the exports the seams in your manifest's `provides` need.
 | Web reference provider | `webref.Serve(p)` | `pluginapi.WebReferenceProvider` |
 | Lyric provider | `lyric.Serve(p)` | `pluginapi.LyricProvider` |
 | Marker provider | `marker.Serve(p)` | `pluginapi.MarkerProvider` |
+| Online source provider | `onlinesource.Serve(p)` | `pluginapi.OnlineSourceProvider` |
 | Sign-in provider, password flow | `signin.ServePassword(p)` | `pluginapi.SignInProvider`, and `pluginapi.SignInLookupProvider` for `sign-in-lookup` |
 | Sign-in provider, redirect flow | `signin.ServeRedirect(p)` | `pluginapi.SignInRedirectProvider`, and `pluginapi.SignInRefreshProvider` / `pluginapi.SignInLookupProvider` for the re-check |
 
-The SDK's own test guest fills four of them beside its Metadata provider:
+The SDK's own test guest fills five of them beside its Metadata provider:
 
 <!-- sdk-sample: guest/main.go serve-seams -->
 ```go
@@ -1883,6 +2043,7 @@ func init() {
 	webref.Serve(testprovider.References{})
 	lyric.Serve(testprovider.NewLyrics(pluginsdk.Sandbox()))
 	marker.Serve(testprovider.NewMarkers(pluginsdk.Sandbox()))
+	onlinesource.Serve(testprovider.NewVideos(pluginsdk.Sandbox()))
 	signin.ServePassword(testprovider.NewDirectory(pluginsdk.Sandbox()))
 }
 ```
@@ -2032,6 +2193,115 @@ func (m *Markers) Markers(ctx context.Context, req pluginapi.MarkersRequest) (pl
 		})
 	}
 	return resp, nil
+}
+```
+
+#### Online source provider
+
+An Online source provider is asked four things: the source's rows, one row's next
+page, a search, and how to play one video. The whole contract, with the caps, the
+drop rules and how the host plays what you resolve, is [§2a](#2a-the-online-source-provider);
+this is the SDK's shape of it. A source that is down is an error, and a video the
+source no longer has is an empty `Variants`, not an error. The example maps a
+video site's JSON onto the contract and only ever *names* a media URL: it never
+fetches one.
+
+<!-- sdk-sample: seams.go onlinesource -->
+```go
+// Videos is an Online source provider over a video site's JSON API at the
+// operator's URL. It maps the site's shelves, search and streams onto the
+// contract's rows, search and variants; it never fetches a media URL — it only
+// names it, and the host does the playing.
+type Videos struct {
+	host pluginsdk.Host
+}
+
+// NewVideos builds the provider on a Host.
+func NewVideos(h pluginsdk.Host) *Videos { return &Videos{host: h} }
+
+// video is how the site spells one video.
+type video struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Thumb   string `json:"thumb"`
+	Seconds int64  `json:"seconds"`
+}
+
+func items(vs []video) []pluginapi.OnlineItem {
+	var out []pluginapi.OnlineItem
+	for _, v := range vs {
+		out = append(out, pluginapi.OnlineItem{ID: v.ID, Title: v.Title, ThumbnailURL: v.Thumb, DurationMs: v.Seconds * 1000})
+	}
+	return out
+}
+
+// Rows answers the site's shelves, each with its first page and the cursor for the
+// next.
+func (v *Videos) Rows(ctx context.Context, _ pluginapi.OnlineRowsRequest) (pluginapi.OnlineRowsResponse, error) {
+	var out struct {
+		Shelves []struct {
+			ID     string  `json:"id"`
+			Title  string  `json:"title"`
+			Videos []video `json:"videos"`
+			More   string  `json:"more"`
+		} `json:"shelves"`
+	}
+	if err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+ShelvesPath, nil, &out); err != nil {
+		return pluginapi.OnlineRowsResponse{}, err
+	}
+	var resp pluginapi.OnlineRowsResponse
+	for _, s := range out.Shelves {
+		resp.Rows = append(resp.Rows, pluginapi.OnlineRow{ID: s.ID, Label: s.Title, Items: items(s.Videos), NextCursor: s.More})
+	}
+	return resp, nil
+}
+
+// Row answers the page of one shelf after the cursor the last answer named.
+func (v *Videos) Row(ctx context.Context, req pluginapi.OnlineRowRequest) (pluginapi.OnlineRowResponse, error) {
+	var out struct {
+		Videos []video `json:"videos"`
+		More   string  `json:"more"`
+	}
+	q := url.Values{"shelf": {req.RowID}, "after": {req.Cursor}}
+	if err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+ShelfPath, q, &out); err != nil {
+		return pluginapi.OnlineRowResponse{}, err
+	}
+	return pluginapi.OnlineRowResponse{Items: items(out.Videos), NextCursor: out.More}, nil
+}
+
+// Search answers the videos matching the query, best first, in one page.
+func (v *Videos) Search(ctx context.Context, req pluginapi.OnlineSearchRequest) (pluginapi.OnlineSearchResponse, error) {
+	var out struct {
+		Videos []video `json:"videos"`
+	}
+	if err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+FindPath, url.Values{"q": {req.Query}}, &out); err != nil {
+		return pluginapi.OnlineSearchResponse{}, err
+	}
+	return pluginapi.OnlineSearchResponse{Items: items(out.Videos)}, nil
+}
+
+// Resolve answers the one muxed file the site streams the video from. A video the
+// site no longer has (404) is no variants, not a failure.
+func (v *Videos) Resolve(ctx context.Context, req pluginapi.OnlineResolveRequest) (pluginapi.OnlineResolveResponse, error) {
+	var out struct {
+		File   string `json:"file"`
+		Height int    `json:"height"`
+	}
+	err := pluginsdk.GetJSON(ctx, v.host, baseOf(v.host.Settings().URL)+StreamPath, url.Values{"id": {req.ItemID}}, &out)
+	var fe *pluginsdk.FetchError
+	if errors.As(err, &fe) && fe.IsNotFound() {
+		return pluginapi.OnlineResolveResponse{}, nil
+	}
+	if err != nil {
+		return pluginapi.OnlineResolveResponse{}, err
+	}
+	return pluginapi.OnlineResolveResponse{Variants: []pluginapi.OnlineVariant{{
+		Kind:       pluginapi.OnlineVariantMuxed,
+		URL:        out.File,
+		Container:  "mp4",
+		Codecs:     []string{"h264", "aac"},
+		Resolution: strconv.Itoa(out.Height) + "p",
+	}}}, nil
 }
 ```
 
