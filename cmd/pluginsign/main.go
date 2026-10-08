@@ -4,10 +4,11 @@
 //
 //	pluginsign keygen  -out publisher.key
 //	pluginsign sign    -key publisher.key -publisher "Example Publisher" \
-//	                   -manifest manifest.json -module plugin.wasm -out plugin.sig.json
+//	                   -manifest manifest.json -module plugin.wasm [-icon icon.png] \
+//	                   -out plugin.sig.json
 //	pluginsign verify  -sig plugin.sig.json -pub <base64> \
 //	                   -manifest manifest.json -module plugin.wasm
-//	pluginsign pack    -manifest manifest.json -module plugin.wasm \
+//	pluginsign pack    -manifest manifest.json -module plugin.wasm [-icon icon.png] \
 //	                   [-signature plugin.sig.json] [-out <id>-<version>.zip]
 //	pluginsign verify  -package plugin.zip -pub <base64>
 //
@@ -44,6 +45,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/goozakdev/obelo-server/internal/plugins"
@@ -59,18 +61,25 @@ const usage = `pluginsign — sign an Obelo plugin, and check one.
       stderr. The public key is what an operator pins on their server; the
       private key never leaves your machine and nothing here ever uploads it.
 
-  pluginsign sign -key FILE -publisher NAME -manifest FILE -module FILE [-out FILE]
+  pluginsign sign -key FILE -publisher NAME -manifest FILE -module FILE [-icon FILE] [-out FILE]
       Write the detached signature document (` + pluginapi.SignatureFile + `) covering
       those exact bytes. Put it in the package with pack -signature FILE.
-      Re-sign whenever EITHER file changes: the signature covers
-      both, and a manifest edited by one byte is a different manifest.
+      Re-sign whenever ANY covered file changes: the signature covers the
+      manifest and the module, and an icon when there is one, and a manifest
+      edited by one byte is a different manifest.
 
-  pluginsign pack -manifest FILE -module FILE [-signature FILE] [-out FILE]
+  pluginsign pack -manifest FILE -module FILE [-icon FILE] [-signature FILE] [-out FILE]
       Build the Plugin package a server installs: a .zip holding the manifest,
-      the module and, when given, the signature, at its root. The default output
-      is <id>-<version>.zip. It refuses anything a server would refuse to unpack.
+      the module and, when present, the icon and the signature, at its root.
+      The default output is <id>-<version>.zip. It refuses anything a server
+      would refuse to unpack.
 
-  pluginsign verify -sig FILE -pub BASE64|-key FILE -manifest FILE -module FILE
+  The icon (a square PNG of at most 64 KiB, an Online source's tile image) is
+  ` + plugins.IconFile + ` beside the manifest when -icon is not given; sign, pack and
+  verify all use it when it exists, so they cover the same bytes. A source with no
+  icon file simply has none.
+
+  pluginsign verify -sig FILE -pub BASE64|-key FILE -manifest FILE -module FILE [-icon FILE]
   pluginsign verify -package FILE -pub BASE64|-key FILE
       Check a signature the way a server checks it -- against loose files, or
       against the signature inside a package. Exit 0 if it verifies.
@@ -157,6 +166,7 @@ func runSign(args []string, stdout, stderr io.Writer) error {
 	publisher := fs.String("publisher", "", "the publisher name a server pins your key against")
 	manifestPath := fs.String("manifest", "manifest.json", "the plugin's manifest.json")
 	modulePath := fs.String("module", "plugin.wasm", "the plugin's WebAssembly module")
+	iconPath := fs.String("icon", "", "the tile icon to cover (default: icon.png beside the manifest, when it exists)")
 	out := fs.String("out", pluginapi.SignatureFile, `file to write the signature to ("-" = stdout)`)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -176,7 +186,11 @@ func runSign(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("reading the module: %w", err)
 	}
-	sig, err := signing.Sign(priv, *publisher, manifest, module)
+	icon, err := readIcon(*iconPath, *manifestPath)
+	if err != nil {
+		return err
+	}
+	sig, err := signing.SignWithIcon(priv, *publisher, manifest, module, icon)
 	if err != nil {
 		return err
 	}
@@ -187,8 +201,8 @@ func runSign(args []string, stdout, stderr io.Writer) error {
 	if err := writeOut(*out, doc, 0o644, stdout); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "signed %s and %s as %q (key id %s)\n",
-		*manifestPath, *modulePath, sig.Publisher, sig.KeyID)
+	fmt.Fprintf(stderr, "signed %s and %s%s as %q (key id %s)\n",
+		*manifestPath, *modulePath, iconNote(icon), sig.Publisher, sig.KeyID)
 	fmt.Fprintf(stderr, "put this file in the package with: pluginsign pack -signature <this file> (it travels as %s)\n", pluginapi.SignatureFile)
 	return nil
 }
@@ -200,6 +214,7 @@ func runPack(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	manifestPath := fs.String("manifest", "manifest.json", "the plugin's manifest.json")
 	modulePath := fs.String("module", "plugin.wasm", "the plugin's WebAssembly module")
+	iconPath := fs.String("icon", "", "the tile icon to include (default: icon.png beside the manifest, when it exists)")
 	sigPath := fs.String("signature", "", "the detached signature to include (optional)")
 	out := fs.String("out", "", `file to write the package to (default <id>-<version>.zip, "-" = stdout)`)
 	if err := fs.Parse(args); err != nil {
@@ -219,9 +234,13 @@ func runPack(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("reading the signature: %w", err)
 		}
 	}
-	// PackPackage checks its own output with the routine a server unpacks with, so
-	// a package this writes is one a server will take.
-	archive, err := plugins.PackPackage(manifest, module, sig)
+	icon, err := readIcon(*iconPath, *manifestPath)
+	if err != nil {
+		return err
+	}
+	// PackPackageWithIcon checks its own output with the routine a server unpacks
+	// with, so a package this writes is one a server will take.
+	archive, err := plugins.PackPackageWithIcon(manifest, module, sig, icon)
 	if err != nil {
 		return err
 	}
@@ -239,7 +258,7 @@ func runPack(args []string, stdout, stderr io.Writer) error {
 	if err := writeOut(target, archive, 0o644, stdout); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "packed %s and %s into %s (%d bytes)\n", *manifestPath, *modulePath, target, len(archive))
+	fmt.Fprintf(stderr, "packed %s and %s%s into %s (%d bytes)\n", *manifestPath, *modulePath, iconNote(icon), target, len(archive))
 	return nil
 }
 
@@ -254,6 +273,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 	keyPath := fs.String("key", "", "a private key file to derive the public key from, instead of -pub")
 	manifestPath := fs.String("manifest", "manifest.json", "the plugin's manifest.json")
 	modulePath := fs.String("module", "plugin.wasm", "the plugin's WebAssembly module")
+	iconPath := fs.String("icon", "", "the tile icon the signature covers (default: icon.png beside the manifest, when it exists)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -267,7 +287,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 		switch f.Name {
 		case "package":
 			packageGiven = true
-		case "sig", "manifest", "module":
+		case "sig", "manifest", "module", "icon":
 			conflicts = append(conflicts, "-"+f.Name)
 		}
 	})
@@ -299,7 +319,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("give -pub (the public key an operator would pin) or -key (a private key to derive it from)")
 	}
 
-	var sigRaw, manifest, module []byte
+	var sigRaw, manifest, module, icon []byte
 	var err error
 	if packageGiven {
 		archive, err := os.ReadFile(*packagePath)
@@ -313,7 +333,7 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 		if len(pkg.Signature) == 0 {
 			return fmt.Errorf("the package holds no %s, so there is nothing to verify", pluginapi.SignatureFile)
 		}
-		sigRaw, manifest, module = pkg.Signature, pkg.Manifest, pkg.Module
+		sigRaw, manifest, module, icon = pkg.Signature, pkg.Manifest, pkg.Module, pkg.Icon
 	} else {
 		if sigRaw, err = os.ReadFile(*sigPath); err != nil {
 			return fmt.Errorf("reading the signature: %w", err)
@@ -324,12 +344,15 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 		if module, err = os.ReadFile(*modulePath); err != nil {
 			return fmt.Errorf("reading the module: %w", err)
 		}
+		if icon, err = readIcon(*iconPath, *manifestPath); err != nil {
+			return err
+		}
 	}
 	sig, err := signing.Parse(sigRaw)
 	if err != nil {
 		return err
 	}
-	if err := signing.Verify(sig, pub, manifest, module); err != nil {
+	if err := signing.VerifyWithIcon(sig, pub, manifest, module, icon); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "ok: signed by %q (key id %s)\n", sig.Publisher, sig.KeyID)
@@ -337,6 +360,35 @@ func runVerify(args []string, stdout, stderr io.Writer) error {
 }
 
 // --- small helpers -------------------------------------------------------------
+
+// readIcon is the tile icon sign, pack and verify agree on: the file named by -icon,
+// else icon.png beside the manifest when there is one, else none. An icon named
+// explicitly that cannot be read is an error; a missing default is not.
+func readIcon(iconPath, manifestPath string) ([]byte, error) {
+	if iconPath != "" {
+		icon, err := os.ReadFile(iconPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading the icon: %w", err)
+		}
+		return icon, nil
+	}
+	icon, err := os.ReadFile(filepath.Join(filepath.Dir(manifestPath), plugins.IconFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading the icon: %w", err)
+	}
+	return icon, nil
+}
+
+// iconNote is the part of a progress line that says an icon was involved.
+func iconNote(icon []byte) string {
+	if icon == nil {
+		return ""
+	}
+	return " and " + plugins.IconFile
+}
 
 func readPrivateKey(path string) (ed25519.PrivateKey, error) {
 	raw, err := os.ReadFile(path)

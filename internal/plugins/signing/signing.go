@@ -23,6 +23,10 @@
 // install writes them to disk byte for byte and never re-encodes them, so what
 // was signed and what is stored are the same bytes forever.
 //
+// A package that carries an optional icon.png (ADR-0068) appends a third raw
+// digest, sha256(icon bytes). A package with no icon signs exactly the message
+// above, so every signature made before icons existed still verifies.
+//
 // This is also why the signature is DETACHED. A signature field inside the
 // manifest would change the manifest, which would change what the signature
 // covers. See pluginapi/v1/signature.go.
@@ -66,16 +70,29 @@ const MaxSignatureBytes = 8 << 10
 // it is the whole specification: an implementation in another language reproduces
 // this function and nothing else.
 func Message(manifest, module []byte) []byte {
-	return messageOf(sha256.Sum256(manifest), sha256.Sum256(module))
+	return MessageWithIcon(manifest, module, nil)
 }
 
-// messageOf is Message over digests already computed, so Verify hashes a module
-// of up to 64 MiB once rather than twice.
-func messageOf(manifestSum, moduleSum [sha256.Size]byte) []byte {
-	msg := make([]byte, 0, len(pluginapi.SignatureDomain)+len(manifestSum)+len(moduleSum))
+// MessageWithIcon is Message for a package that may carry an icon.png (ADR-0068).
+// With no icon it is exactly Message, byte for byte, so every signature made before
+// icons existed still verifies; with one, the icon's raw 32-byte digest is appended,
+// which makes it a different (112-byte) message, so an icon cannot be added, swapped
+// or removed from a signed package without breaking the signature.
+func MessageWithIcon(manifest, module, icon []byte) []byte {
+	return messageOf(sha256.Sum256(manifest), sha256.Sum256(module), icon)
+}
+
+// messageOf is MessageWithIcon over digests already computed, so Verify hashes a
+// module of up to 64 MiB once rather than twice.
+func messageOf(manifestSum, moduleSum [sha256.Size]byte, icon []byte) []byte {
+	msg := make([]byte, 0, len(pluginapi.SignatureDomain)+len(manifestSum)+len(moduleSum)+sha256.Size)
 	msg = append(msg, pluginapi.SignatureDomain...)
 	msg = append(msg, manifestSum[:]...)
 	msg = append(msg, moduleSum[:]...)
+	if len(icon) > 0 {
+		iconSum := sha256.Sum256(icon)
+		msg = append(msg, iconSum[:]...)
+	}
 	return msg
 }
 
@@ -171,6 +188,12 @@ func decodeKeyMaterial(encoded string) ([]byte, error) {
 // that the bytes were signed by the key IT HAS PINNED AGAINST THAT NAME. The name
 // is the lookup, the key is the proof.
 func Sign(priv ed25519.PrivateKey, publisher string, manifest, module []byte) (pluginapi.Signature, error) {
+	return SignWithIcon(priv, publisher, manifest, module, nil)
+}
+
+// SignWithIcon is Sign over a package that may carry an icon.png: a non-empty icon
+// is covered by the signature, a nil one gives exactly the signature Sign does.
+func SignWithIcon(priv ed25519.PrivateKey, publisher string, manifest, module, icon []byte) (pluginapi.Signature, error) {
 	if len(priv) != ed25519.PrivateKeySize {
 		return pluginapi.Signature{}, fmt.Errorf("signing: the private key is %d bytes, not %d",
 			len(priv), ed25519.PrivateKeySize)
@@ -181,7 +204,7 @@ func Sign(priv ed25519.PrivateKey, publisher string, manifest, module []byte) (p
 	if len(manifest) == 0 || len(module) == 0 {
 		return pluginapi.Signature{}, errors.New("signing: a signature covers a manifest AND a module, and one of them is empty")
 	}
-	sig := ed25519.Sign(priv, Message(manifest, module))
+	sig := ed25519.Sign(priv, MessageWithIcon(manifest, module, icon))
 	return pluginapi.Signature{
 		Publisher:      strings.TrimSpace(publisher),
 		KeyID:          KeyID(priv.Public().(ed25519.PublicKey)),
@@ -247,6 +270,13 @@ var ErrBadSignature = errors.New("signing: the signature does not verify under t
 // says. Verifying the signature first would collapse both cases into "invalid
 // signature" and lose the one an operator can actually act on.
 func Verify(sig pluginapi.Signature, pub ed25519.PublicKey, manifest, module []byte) error {
+	return VerifyWithIcon(sig, pub, manifest, module, nil)
+}
+
+// VerifyWithIcon is Verify over a package that may carry an icon.png. The icon is
+// part of the signed message when there is one, so a swapped, added or removed icon
+// is ErrBadSignature: the document carries no digest of it to compare first.
+func VerifyWithIcon(sig pluginapi.Signature, pub ed25519.PublicKey, manifest, module, icon []byte) error {
 	if len(pub) != ed25519.PublicKeySize {
 		return fmt.Errorf("signing: the public key is %d bytes, not %d", len(pub), ed25519.PublicKeySize)
 	}
@@ -271,7 +301,7 @@ func Verify(sig pluginapi.Signature, pub ed25519.PublicKey, manifest, module []b
 		return fmt.Errorf("%w: an ed25519 signature is %d bytes and this one is %d",
 			ErrBadSignature, ed25519.SignatureSize, len(raw))
 	}
-	if !ed25519.Verify(pub, messageOf(manifestSum, moduleSum), raw) {
+	if !ed25519.Verify(pub, messageOf(manifestSum, moduleSum, icon), raw) {
 		return ErrBadSignature
 	}
 	return nil

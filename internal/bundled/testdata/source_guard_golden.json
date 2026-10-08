@@ -1,38 +1,38 @@
 {
   "anidb": {
-    "version": "1.0.14",
-    "hash": "8228d7c7c18d82154be8d034a6e1e67abb6c712c17fa72eeb371a53c0273db1e"
+    "version": "1.0.15",
+    "hash": "8388e02bd67d96fd9a1186b2ef24b83bd7fca66fd6f3e44b5be59667a4e7ab77"
   },
   "fanarttv": {
-    "version": "1.0.14",
-    "hash": "aaa7392a71a05944588ac8109118fd5fca3bbaab4371f28376ca66ae46000591"
+    "version": "1.0.15",
+    "hash": "85ef82572d84bdfa31ddf0da637dea09142c997ab46723894e5df367d865508d"
   },
   "musicbrainz": {
-    "version": "1.1.13",
-    "hash": "bb0bcfa5b05a268cf24816244158e70378067a9226549f13abce8dc7ca6c44ee"
+    "version": "1.1.14",
+    "hash": "7c9f17ded6cc310adb5e58433d034cddf416539fcad43f6bf2ba40675d21e545"
   },
   "oidc": {
-    "version": "1.0.10",
-    "hash": "a8b125f72c15b7e9fd605153d497ff7d3bbb91077d2e16b10d5158743fd7d937"
+    "version": "1.0.11",
+    "hash": "168a58857b1441b9ab937d3f6a62ba6676cecbadee103b6edf7679f5d0785f08"
   },
   "omdb": {
-    "version": "1.0.13",
-    "hash": "cd390e0be7e7c5fa02ff5573426f3455f448ed583b3e60065f85679be25970bc"
+    "version": "1.0.14",
+    "hash": "1d56483aa2560a8b6621feb2bcf7dc657da66c7dbeab5906b788fddcfc3b30e4"
   },
   "opensubtitles": {
-    "version": "1.0.13",
-    "hash": "73cca6a3f9700f4b169ce7420dc9034c22c4b674c636c5113a88b545f7d6e5ed"
+    "version": "1.0.14",
+    "hash": "d61e92889af4110ff84d545c31cf177df7f24c0869edb4a416ec4bb7af423e73"
   },
   "theaudiodb": {
-    "version": "1.0.13",
-    "hash": "f5f67dd4ec62565bcd204c1472ba8debe6607d754d00a81f46a56b3d8cbe3586"
+    "version": "1.0.14",
+    "hash": "99223b159dec8d6cf258ddf2a88f20202526ebbd17e45fd96c520e696d6d27df"
   },
   "thetvdb": {
-    "version": "1.0.13",
-    "hash": "b27dca007694b1c0b8bdaa48595cdbcdf72f4ef19bf7037005adc740755d3984"
+    "version": "1.0.14",
+    "hash": "445ae9676515134212f858b293f83aa388e251b92201556616f93140e0c4d76c"
   },
   "tmdb": {
-    "version": "1.0.13",
-    "hash": "bc60e28a2704008b7959bdc5f2fbd5de9ab0063b5c1f9745c271bdb46ca48f36"
+    "version": "1.0.14",
+    "hash": "2cdd9b6093322ebc58048d26b22dd725ab71d33a7a5010cac5f1ec5e7a62d0b3"
   }
 }

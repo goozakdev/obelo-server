@@ -400,12 +400,12 @@ func (m *Manager) Close(ctx context.Context) error {
 func (m *Manager) Install(ctx context.Context, manifestRaw, module, signatureRaw []byte, source string) (Installed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.install(ctx, manifestRaw, module, signatureRaw, source)
+	return m.install(ctx, manifestRaw, module, signatureRaw, nil, source)
 }
 
 // InstallPackage installs a Plugin package (package.go): the zip is unpacked in
 // memory, its layout refused if it is anything but the manifest, the module and an
-// optional signature, and the three files go through the same install as every
+// optional signature and icon, and the files go through the same install as every
 // other path. The archive itself is not kept.
 func (m *Manager) InstallPackage(ctx context.Context, archive []byte, source string) (Installed, error) {
 	m.mu.Lock()
@@ -418,7 +418,7 @@ func (m *Manager) installPackage(ctx context.Context, archive []byte, source str
 	if err != nil {
 		return Installed{}, err
 	}
-	return m.install(ctx, pkg.Manifest, pkg.Module, pkg.Signature, source)
+	return m.install(ctx, pkg.Manifest, pkg.Module, pkg.Signature, pkg.Icon, source)
 }
 
 // InstallFromURL fetches a Plugin package from an absolute URL — ONE request —
@@ -772,8 +772,9 @@ func (m *Manager) rebuild(ctx context.Context) error {
 }
 
 // install is Install with the lock already held, so InstallFromURL can fetch and
-// install as one indivisible act.
-func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw []byte, source string) (Installed, error) {
+// install as one indivisible act. icon is the package's optional icon.png, already
+// checked by UnpackPackage, or nil.
+func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw, icon []byte, source string) (Installed, error) {
 	man, err := decodeManifest(manifestRaw)
 	if err != nil {
 		return Installed{}, err
@@ -793,7 +794,7 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 	// manifest bytes and the module bytes are in hand and nothing has yet touched
 	// the disk or the database. A server with no publisher keys pinned answers
 	// "nobody asked" and this costs one query (signature.go).
-	signedBy, err := m.checkSignature(man, manifestRaw, module, signatureRaw)
+	signedBy, err := m.checkSignature(man, manifestRaw, module, signatureRaw, icon)
 	if err != nil {
 		return Installed{}, err
 	}
@@ -828,6 +829,13 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 	// claim that anything was verified; the row's publisher column is.
 	if err := writeSignature(staged, signatureRaw); err != nil {
 		return Installed{}, err
+	}
+	// The icon, when the package carried one, is the source's tile image; it is
+	// served from here and from nowhere else.
+	if len(icon) > 0 {
+		if err := os.WriteFile(filepath.Join(staged, IconFile), icon, 0o644); err != nil {
+			return Installed{}, fmt.Errorf("plugins: writing the icon for %s: %w", man.ID, err)
+		}
 	}
 
 	// COMPILE IT WHERE IT CANNOT BE FOUND. loadOne does everything boot does —

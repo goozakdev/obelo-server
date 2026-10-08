@@ -400,7 +400,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.13",
+  "version": "1.1.14",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",
@@ -980,13 +980,17 @@ Three things about that command:
 
 Then, one file: the **Plugin package**, a zip holding `manifest.json`, the module
 the manifest names (`plugin.wasm` unless it says otherwise) and, optionally,
-`plugin.sig.json` (§7a) — **at the root of the zip and nothing else**. The pack
-step builds it, and refuses anything the server would refuse:
+`plugin.sig.json` (§7a) and, for an Online source, `icon.png` — **at the root of
+the zip and nothing else**. The pack step builds it, and refuses anything the
+server would refuse:
 
 ```sh
 go run ./cmd/pluginsign pack -manifest manifest.json -module plugin.wasm \
   [-signature plugin.sig.json] -out obelo-discord-0.1.0.zip
 ```
+
+`pack` includes an `icon.png` that sits beside `manifest.json` (or the file named
+by `-icon`) and leaves it out when there is none.
 
 Two ways to install it:
 
@@ -1028,7 +1032,14 @@ Only these are accepted, all at the root of the zip:
 
 - `manifest.json`;
 - the module the manifest names (its `module` field, else `plugin.wasm`);
-- optionally `plugin.sig.json`.
+- optionally `plugin.sig.json`;
+- optionally `icon.png`: an Online source's tile image
+  ([ADR-0068](../adr/0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md)).
+  It must be a real **PNG**, **square**, at most **1024 pixels** a side and
+  **64 KiB** once unpacked, and is checked at install. The Server serves it from its
+  own origin (the tile image never loads from a third-party host); a source with no
+  icon gets a generic tile showing its name. When present the signature covers it
+  (§7a), so an icon swapped after signing fails verification.
 
 Anything else is refused with a sentence naming what was found and what was
 expected: a folder wrapping the files (zipping the *folder* instead of its
@@ -1038,8 +1049,9 @@ compression method other than stored/deflate. There is no tolerance for a single
 wrapping folder — `pluginsign pack` produces the right shape, so use it.
 
 Each member is capped on what it **decompresses** to, whatever its header claims:
-64 MiB for the module, 256 KiB for the manifest, and the signature cap for the
-signature. The whole archive is capped at the sum of the three plus 1 MiB. Larger is
+64 MiB for the module, 256 KiB for the manifest, the signature cap for the
+signature and 64 KiB for the icon. The whole archive is capped at the sum of the
+first three plus 1 MiB. Larger is
 refused, never truncated.
 
 You can also just **place the files by hand** at
@@ -1053,7 +1065,7 @@ restart, which is what the layout on disk is.
 | 422 | `PLUGIN_INVALID_MANIFEST` | the manifest is not valid JSON, or makes a claim the host refuses |
 | 422 | `PLUGIN_API_VERSION` | the message names which side to upgrade |
 | 409 | `PLUGIN_DUPLICATE` | the id is already claimed — by an Installed plugin or a Built-in |
-| 422 | `PLUGIN_INVALID_PACKAGE` | the file is not a zip, or holds anything but the manifest, the module and an optional signature at its root, or a member unpacks past its cap |
+| 422 | `PLUGIN_INVALID_PACKAGE` | the file is not a zip, or holds anything but the manifest, the module, an optional signature and an optional `icon.png` at its root, or an icon that is not a square PNG within the cap, or a member unpacks past its cap |
 | 422 | `PLUGIN_INVALID_MODULE` | no module, or one that will not compile or instantiate |
 | 422 | `PLUGIN_SOURCE_REFUSED` | the URL was not fetchable under the rules above |
 | 422 | `PLUGIN_SIGNATURE` | the server has publisher keys pinned and yours does not satisfy them (§7a) |
@@ -1080,6 +1092,13 @@ message = "obelo-plugin-v1\n" ‖ sha256(manifest bytes) ‖ sha256(module bytes
 
 16 bytes of separator and two raw 32-byte digests, concatenated with no separator
 and no length prefix: 80 bytes, signed with ed25519.
+
+A package that carries an `icon.png` appends a third raw digest,
+`‖ sha256(icon bytes)` (112 bytes), so the icon is covered too: swapping, adding or
+removing it after signing fails verification. A package with no icon signs exactly
+the 80 bytes above, so every signature made before icons existed still verifies.
+`pluginsign sign` and `pack` both pick up an `icon.png` beside the manifest (or
+`-icon FILE`), so they cover the same bytes.
 
 **There is no canonical form of the manifest and there does not need to be one.**
 An install writes your `manifest.json` to disk **byte for byte** as you shipped it

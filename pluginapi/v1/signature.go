@@ -20,11 +20,18 @@ package v1
 // Not the manifest's "canonical form" — the manifest has no canonical form and
 // needs none, because the bytes ARE the object. The signed message is:
 //
-//	SignatureDomain || sha256(manifest bytes) || sha256(module bytes)
+//	SignatureDomain || sha256(manifest bytes) || sha256(module bytes) [|| sha256(icon.png bytes)]
 //
 // — the domain separator string, then the two 32-byte digests, concatenated with
 // no separator and no length prefix, signed with ed25519 over that 80-byte
-// message. The digests also appear in the document as lower-case hex, so a reader
+// message. A package that carries an optional icon.png (ADR-0068) appends a third
+// raw 32-byte digest, sha256 of the icon's bytes, making the message 112 bytes; a
+// package with no icon signs exactly the 80 bytes, so every signature made before
+// icons existed still verifies. The document has NO icon field: the icon is covered
+// only through the signed message, so a verifier hashes the icon it holds (or
+// appends nothing when the package has none) and a swapped, added or removed icon
+// is a signature that does not verify, not a digest mismatch. The manifest and module digests
+// also appear in the document as lower-case hex, so a reader
 // can see which artifacts a signature claims to cover without holding them, and a
 // verifier checks them against the real bytes before it checks the signature: a
 // document whose digests do not match what arrived is refused as a mismatch

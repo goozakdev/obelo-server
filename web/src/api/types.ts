@@ -3303,7 +3303,8 @@ export interface MarkerDetection {
 }
 
 /** One tile on Home: an enabled Online source (ADR-0068), by the name its Plugin
- * gave it. `iconUrl` is null until the source icon lands. */
+ * gave it. `iconUrl` is the Server's own path to the tile image, or null when the
+ * package carried no icon (the client draws a generic tile with the name). */
 export interface OnlineSource {
   id: string;
   name: string;

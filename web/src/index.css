@@ -6338,6 +6338,28 @@ textarea.metadata-input {
   gap: 0.75rem;
 }
 
+.online-source-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.online-source-tile-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.4rem;
+  object-fit: cover;
+  flex: none;
+}
+
+.online-source-tile-generic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
 .now-playing-online-video {
   width: min(22rem, 40vw);
   max-height: 8rem;

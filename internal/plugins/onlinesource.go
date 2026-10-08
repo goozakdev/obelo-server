@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 
 	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
 )
@@ -56,6 +59,25 @@ type guestOnlineSourceProvider struct {
 }
 
 var _ pluginapi.OnlineSourceProvider = (*guestOnlineSourceProvider)(nil)
+
+// Icon is the source's tile image: the icon.png the Plugin's package carried,
+// stored beside its manifest at install, or nil when it had none. The file is
+// checked again as it is read, because the directory is on disk and a hand-placed
+// or damaged icon.png must never reach a User as an image the install check
+// would have refused. The host's onlinesource service reads it through an optional
+// interface, so this is not part of the pluginapi contract.
+func (g *guestOnlineSourceProvider) Icon() []byte {
+	f, err := os.Open(filepath.Join(g.p.dir, IconFile))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	icon, err := io.ReadAll(io.LimitReader(f, MaxIconBytes+1))
+	if err != nil || len(icon) > MaxIconBytes || checkIcon(icon) != nil {
+		return nil
+	}
+	return icon
+}
 
 // Rows asks the guest for the source's rows.
 //

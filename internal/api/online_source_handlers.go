@@ -15,6 +15,7 @@ import (
 // Online sources (ADR-0068, .scratch/online-sources issue 01).
 //
 //	GET  /onlineSources                                the tile list, from the registry
+//	GET  /onlineSources/{id}/icon                      the tile image from the Plugin's package (bearer OR cookie)
 //	GET  /onlineSources/{id}/rows                      the source page (runs rows())
 //	GET  /onlineSources/{id}/items/{itemId}/thumbnail  Server-proxied bytes (bearer OR cookie)
 //	POST /onlineSources/{id}/items/{itemId}/playback   resolve() once, open a session
@@ -48,7 +49,8 @@ func onlineAllowed(deps Deps, r *http.Request) bool {
 type onlineSourceJSON struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// IconURL is null until the source tile icon lands.
+	// IconURL is the Server's own path to the tile image, or null when the package
+	// carried no icon.png (the client draws a generic tile with the name).
 	IconURL *string `json:"iconUrl"`
 }
 
@@ -58,7 +60,12 @@ func handleOnlineSources(deps Deps) http.HandlerFunc {
 		out := []onlineSourceJSON{}
 		if onlineAllowed(deps, r) {
 			for _, s := range deps.Online.Sources() {
-				out = append(out, onlineSourceJSON{ID: s.ID, Name: s.Name})
+				item := onlineSourceJSON{ID: s.ID, Name: s.Name}
+				if s.HasIcon {
+					u := APIPrefix + onlineSourcesPrefix + s.ID + "/icon"
+					item.IconURL = &u
+				}
+				out = append(out, item)
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sources": out})
@@ -83,7 +90,8 @@ type onlineRowJSON struct {
 
 // handleOnlineSourceSubtree dispatches /onlineSources/{id}/…, applying auth PER
 // LEAF because the thumbnail leaf alone also accepts the media cookie (a browser
-// <img> cannot send an Authorization header), as the Title artwork leaf does.
+// <img> cannot send an Authorization header), as the Title artwork leaf does. The
+// source icon leaf is the same kind of media GET.
 func handleOnlineSourceSubtree(deps Deps) http.HandlerFunc {
 	notFound := func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
@@ -93,6 +101,8 @@ func handleOnlineSourceSubtree(deps Deps) http.HandlerFunc {
 		switch {
 		case len(parts) == 2 && parts[1] == "rows":
 			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineRows(deps, parts[0])))(w, r)
+		case len(parts) == 2 && parts[1] == "icon":
+			requireMethod(http.MethodGet, requireAuthAllowCookie(deps.Auth, handleOnlineIcon(deps, parts[0])))(w, r)
 		case len(parts) == 4 && parts[1] == "items" && parts[3] == "thumbnail":
 			requireMethod(http.MethodGet,
 				requireAuthAllowCookie(deps.Auth, handleOnlineThumbnail(deps, parts[0], parts[2])))(w, r)
@@ -166,6 +176,29 @@ func handleOnlineThumbnail(deps Deps, sourceID, itemID string) http.HandlerFunc 
 		}
 		h := w.Header()
 		h.Set("Content-Type", contentType)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Cache-Control", "private, max-age=300")
+		h.Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = w.Write(body)
+	}
+}
+
+// handleOnlineIcon serves the source's tile image from the Plugin's own package, on
+// the same access rule as everything else about a source: a caller who may not see
+// the source gets the 404 a missing one does.
+func handleOnlineIcon(deps Deps, sourceID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !onlineAllowed(deps, r) {
+			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		body, err := deps.Online.Icon(sourceID)
+		if err != nil {
+			writeOnlineFailure(w, err)
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", "image/png")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cache-Control", "private, max-age=300")
 		h.Set("Content-Length", strconv.Itoa(len(body)))

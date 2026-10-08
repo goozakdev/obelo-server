@@ -58,11 +58,19 @@ const (
 	maxIDLen = 256
 )
 
-// Source is one tile: an enabled source, by the name its Plugin gave it.
+// Source is one tile: an enabled source, by the name its Plugin gave it. HasIcon
+// is true when its package carried an icon.png the Server can serve as the tile
+// image; without one the client draws a generic tile showing Name.
 type Source struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	HasIcon bool
 }
+
+// iconProvider is what a Plugin that carries a tile icon offers beyond the
+// pluginapi contract. The icon lives in the Plugin's package, not in anything it
+// answers, so a Built-in or a package without one simply does not implement it.
+type iconProvider interface{ Icon() []byte }
 
 // Item is an Online item as a client is shown it. The thumbnail is not here: the
 // api layer points a client at the Server's own proxy for it.
@@ -136,16 +144,40 @@ func (s *Service) SetOnEnd(f func(sessionID string)) { s.onEnd = f }
 func (s *Service) Sources() []Source {
 	var out []Source
 	for _, r := range s.reg.OnlineSourceProviders() {
-		if _, err := r.New(settingsFor(r)); err != nil {
+		p, err := r.New(settingsFor(r))
+		if err != nil {
 			continue
 		}
 		name := r.Descriptor.Name
 		if name == "" {
 			name = r.Descriptor.Slug
 		}
-		out = append(out, Source{ID: r.Descriptor.Slug, Name: name})
+		out = append(out, Source{ID: r.Descriptor.Slug, Name: name, HasIcon: iconOf(p) != nil})
 	}
 	return out
+}
+
+// iconOf is the provider's tile icon, or nil when it has none.
+func iconOf(p pluginapi.OnlineSourceProvider) []byte {
+	if ip, ok := p.(iconProvider); ok {
+		return ip.Icon()
+	}
+	return nil
+}
+
+// Icon returns the source's tile icon (PNG bytes). A source that is not enabled and
+// working, or has no icon, is ErrNoSource: both are one 404 to a client. It calls no
+// Plugin, only reads the file the install stored.
+func (s *Service) Icon(sourceID string) ([]byte, error) {
+	p, _, err := s.provider(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	icon := iconOf(p)
+	if icon == nil {
+		return nil, ErrNoSource
+	}
+	return icon, nil
 }
 
 func settingsFor(r pluginapi.OnlineSourceProviderRegistration) pluginapi.Settings {

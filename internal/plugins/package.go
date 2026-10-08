@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"image"
+	_ "image/png" // registers the PNG decoder image.DecodeConfig reads the icon header with
 	"io"
 	"io/fs"
 	"sort"
@@ -14,11 +16,12 @@ import (
 
 // A Plugin package is the one file an Admin hands this server to install a Plugin:
 // a zip holding, at its root and nothing else, the manifest, the module the
-// manifest names, and optionally the detached signature.
+// manifest names, and optionally the detached signature and a tile icon.
 //
 //	manifest.json
 //	plugin.wasm        (or whatever the manifest's `module` says)
 //	plugin.sig.json    (optional)
+//	icon.png           (optional; an Online source's tile image, ADR-0068)
 //
 // # Why the layout is this strict
 //
@@ -27,9 +30,9 @@ import (
 // directory it is extracted into, and a few kilobytes that decompress into
 // gigabytes. Neither is defended against by being clever. The package is read
 // ENTIRELY IN MEMORY and nothing in it is ever written under the name it carries —
-// the three members go to fixed names in a directory this server chose — and every
+// the members go to fixed names in a directory this server chose — and every
 // member is read through a cap on the DECOMPRESSED bytes, never trusting the size
-// the archive's own header claims. Anything that is not one of the three expected
+// the archive's own header claims. Anything that is not one of the expected
 // files is refused, by name, with a sentence saying what was found and what was
 // expected: a wrapping folder, a __MACOSX directory, a directory entry, a symlink,
 // a duplicate, an unknown file, an encrypted member or an exotic compression method.
@@ -41,19 +44,37 @@ import (
 // A single wrapping folder is NOT tolerated. Being lenient about it would mean two
 // package shapes to describe and test, and `pluginsign pack` produces the right one.
 //
-// The signature covers the manifest and module bytes (ADR-0058), not the archive,
-// so where it travels adds nothing to the trust decision; that is decided by the
-// keys an Admin pinned.
+// The signature covers the manifest and module bytes (ADR-0058), and the icon when
+// the package carries one (ADR-0068), not the archive, so where it travels adds
+// nothing to the trust decision; that is decided by the keys an Admin pinned.
+//
+// The icon is checked at unpack, so a bad one is refused wherever a package is read
+// (upload, URL, `pluginsign pack`): a real PNG, square, at most MaxIconBytes and at
+// most maxIconSide on a side. It is served to Users from this server's own origin
+// and never from anywhere else.
 
-// MaxPackageBytes caps a Plugin package, uploaded or fetched: the three members'
+// MaxPackageBytes caps a Plugin package, uploaded or fetched: the members'
 // own caps plus a megabyte for the zip framing. Larger is refused, never truncated.
 const MaxPackageBytes = MaxManifestBytes + MaxModuleBytes + MaxSignatureBytes + (1 << 20)
 
-// Package is the three files a Plugin package unpacks to.
+// IconFile is the optional tile image a package may carry beside the manifest.
+const IconFile = "icon.png"
+
+// MaxIconBytes caps the icon once unpacked: 64 KiB, the cap ADR-0068 sets. The
+// archive's 1 MiB of framing allowance already has room for it.
+const MaxIconBytes = 64 << 10
+
+// maxIconSide bounds a tile icon's width and height. A few kilobytes of PNG can
+// declare a canvas of billions of pixels that a browser would try to allocate; a
+// tile is drawn at a few dozen.
+const maxIconSide = 1024
+
+// Package is the files a Plugin package unpacks to.
 type Package struct {
 	Manifest  []byte
 	Module    []byte
 	Signature []byte // nil when the package carried none
+	Icon      []byte // nil when the package carried none
 }
 
 // UnpackPackage checks a Plugin package's layout and returns its contents. Every
@@ -94,12 +115,12 @@ func UnpackPackage(archive []byte) (Package, error) {
 	}
 
 	modName := moduleFile(man)
-	expected := map[string]bool{ManifestFile: true, modName: true, pluginapi.SignatureFile: true}
+	expected := map[string]bool{ManifestFile: true, modName: true, pluginapi.SignatureFile: true, IconFile: true}
 	for name := range byName {
 		if !expected[name] {
 			return Package{}, refuse(ReasonPackage,
-				"the plugin package holds %q, which is not part of a plugin; a package holds only %s, %s and optionally %s",
-				name, ManifestFile, modName, pluginapi.SignatureFile)
+				"the plugin package holds %q, which is not part of a plugin; a package holds only %s, %s and optionally %s and %s",
+				name, ManifestFile, modName, pluginapi.SignatureFile, IconFile)
 		}
 	}
 	modf, ok := byName[modName]
@@ -122,7 +143,37 @@ func UnpackPackage(archive []byte) (Package, error) {
 			pkg.Signature = sig
 		}
 	}
+	if icf, ok := byName[IconFile]; ok {
+		icon, err := readMember(icf, MaxIconBytes, "icon")
+		if err != nil {
+			return Package{}, err
+		}
+		if err := checkIcon(icon); err != nil {
+			return Package{}, err
+		}
+		pkg.Icon = icon
+	}
 	return pkg, nil
+}
+
+// checkIcon refuses an icon that is empty, is not a PNG, or is not square. The
+// size cap was applied as it was read. Only the header is decoded: the bytes are
+// served as they came, never re-encoded.
+func checkIcon(icon []byte) error {
+	if len(icon) == 0 {
+		return refuse(ReasonPackage, "the plugin package's %s is empty; it must be a square PNG of at most %d KiB", IconFile, MaxIconBytes>>10)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(icon))
+	if err != nil || format != "png" {
+		return refuse(ReasonPackage, "the plugin package's %s is not a PNG; the tile icon must be a square PNG of at most %d KiB", IconFile, MaxIconBytes>>10)
+	}
+	if cfg.Width != cfg.Height {
+		return refuse(ReasonPackage, "the plugin package's %s is %d by %d pixels; the tile icon must be square", IconFile, cfg.Width, cfg.Height)
+	}
+	if cfg.Width > maxIconSide {
+		return refuse(ReasonPackage, "the plugin package's %s is %d pixels on a side; the tile icon may be at most %d", IconFile, cfg.Width, maxIconSide)
+	}
+	return nil
 }
 
 // PackPackage builds a Plugin package from a manifest, its module and an optional
@@ -130,6 +181,12 @@ func UnpackPackage(archive []byte) (Package, error) {
 // output with it, so a package this makes always installs. The output is
 // deterministic: the same inputs give the same bytes.
 func PackPackage(manifestRaw, module, signatureRaw []byte) ([]byte, error) {
+	return PackPackageWithIcon(manifestRaw, module, signatureRaw, nil)
+}
+
+// PackPackageWithIcon is PackPackage with an optional icon.png; a nil icon gives
+// exactly the package PackPackage does.
+func PackPackageWithIcon(manifestRaw, module, signatureRaw, icon []byte) ([]byte, error) {
 	man, err := decodeManifest(manifestRaw)
 	if err != nil {
 		return nil, err
@@ -148,6 +205,12 @@ func PackPackage(manifestRaw, module, signatureRaw []byte) ([]byte, error) {
 			name string
 			body []byte
 		}{pluginapi.SignatureFile, signatureRaw})
+	}
+	if icon != nil {
+		members = append(members, struct {
+			name string
+			body []byte
+		}{IconFile, icon})
 	}
 	for _, m := range members {
 		w, err := zw.CreateHeader(&zip.FileHeader{Name: m.name, Method: zip.Deflate})

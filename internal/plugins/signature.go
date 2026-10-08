@@ -69,7 +69,11 @@ type signer struct {
 // when none did. It is NOT parsed unless it matters: a server with nothing pinned
 // does not refuse an install because a signature file happened to be malformed,
 // because it was not going to read it anyway.
-func (m *Manager) checkSignature(man pluginapi.Manifest, manifestRaw, module, signatureRaw []byte) (signer, error) {
+//
+// icon is the package's optional icon.png, or nil. When present the signature must
+// cover it (signing.MessageWithIcon), so an icon swapped, added or removed after
+// signing fails here.
+func (m *Manager) checkSignature(man pluginapi.Manifest, manifestRaw, module, signatureRaw, icon []byte) (signer, error) {
 	pinned, err := m.pinnedPublishers()
 	if err != nil {
 		return signer{}, err
@@ -116,7 +120,7 @@ func (m *Manager) checkSignature(man pluginapi.Manifest, manifestRaw, module, si
 			"the key pinned for %q on this server cannot be read (%v), so nothing can be verified against it",
 			key.Publisher, err)
 	}
-	switch err := signing.Verify(sig, pub, manifestRaw, module); {
+	switch err := signing.VerifyWithIcon(sig, pub, manifestRaw, module, icon); {
 	case err == nil:
 	case errors.Is(err, signing.ErrDigestMismatch):
 		return signer{}, refuse(ReasonSignature,
@@ -124,9 +128,18 @@ func (m *Manager) checkSignature(man pluginapi.Manifest, manifestRaw, module, si
 				"the manifest or the module has changed since it was signed",
 			man.ID, sig.Publisher)
 	default:
+		// An icon is covered and the document carries no digest of it to compare
+		// first, so a swapped or added icon arrives here like a forged signature.
+		// When the package has one, say so, or the Admin is left suspecting the key.
+		if len(icon) == 0 {
+			return signer{}, refuse(ReasonSignature,
+				"%s claims to be published by %q, but its signature does not verify against that publisher's pinned key",
+				man.ID, sig.Publisher)
+		}
 		return signer{}, refuse(ReasonSignature,
-			"%s claims to be published by %q, but its signature does not verify against that publisher's pinned key",
-			man.ID, sig.Publisher)
+			"%s claims to be published by %q, but its signature does not verify against that publisher's pinned key; "+
+				"the signature covers the package's %s, so one swapped or added since signing fails here",
+			man.ID, sig.Publisher, IconFile)
 	}
 	return signer{Publisher: key.Publisher, KeyID: key.KeyID}, nil
 }

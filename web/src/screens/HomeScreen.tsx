@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { apiClient } from "../api/client";
-import type { TitleSummary } from "../api/types";
+import type { OnlineSource, TitleSummary } from "../api/types";
 import { useAsync } from "../browse/useAsync";
 import AppHeader from "../browse/AppHeader";
 import PosterTile from "../browse/PosterTile";
@@ -94,13 +95,40 @@ function OnlineSourceTiles() {
       <ul className="home-online-sources">
         {sources.data.map((s) => (
           <li key={s.id}>
-            <Link className="nav-link" to={`/online/${encodeURIComponent(s.id)}`} data-testid="online-source-tile">
-              {s.name}
-            </Link>
+            <OnlineSourceTile source={s} />
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+// One source tile: the icon from the Server's own path (a browser <img> carries the
+// media cookie), or a generic tile when the package had none or the image will not
+// load. The source's name is always shown, so the tile reads the same either way.
+function OnlineSourceTile({ source }: { source: OnlineSource }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <Link
+      className="nav-link online-source-tile"
+      to={`/online/${encodeURIComponent(source.id)}`}
+      data-testid="online-source-tile"
+    >
+      {source.iconUrl && !broken ? (
+        <img
+          src={source.iconUrl}
+          alt=""
+          className="online-source-tile-icon"
+          data-testid="online-source-tile-icon"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <span className="online-source-tile-icon online-source-tile-generic" data-testid="online-source-tile-generic" aria-hidden="true">
+          {source.name.trim().charAt(0).toUpperCase()}
+        </span>
+      )}
+      <span className="online-source-tile-name">{source.name}</span>
+    </Link>
   );
 }
 
