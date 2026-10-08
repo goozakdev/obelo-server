@@ -74,6 +74,10 @@ type VideoCodecSupport struct {
 type Constraints struct {
 	// MaxBitrate caps the File's overall bitrate in bits/sec (0 = no cap).
 	MaxBitrate int64
+	// CeilingBitrate is the User's Playback ceiling bitrate when one was clamped into
+	// MaxBitrate (0 = none). Only an Online negotiation reads it, to tell an Admin's
+	// cap from a bitrate the client merely asked for.
+	CeilingBitrate int64
 	// MaxResolution caps the playable resolution across all codecs (e.g. "1080p").
 	// Empty = no cap.
 	MaxResolution string

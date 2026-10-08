@@ -42,5 +42,6 @@ func clampToCeiling(c Constraints, s access.Scope) (Constraints, bool) {
 // source play (internal/onlinesource) has no Title to negotiate, but the User's
 // Playback ceiling binds it exactly as it binds one.
 func ClampToCeiling(c Constraints, s access.Scope) (Constraints, bool) {
+	c.CeilingBitrate = max(s.MaxBitrate, 0)
 	return clampToCeiling(c, s)
 }

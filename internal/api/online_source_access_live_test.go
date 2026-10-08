@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,6 +106,118 @@ func TestRevokingAGrantCutsTheRelayAlreadyOpen(t *testing.T) {
 				t.Fatal("the upstream request was not dropped")
 			}
 		})
+	}
+}
+
+// TestRevokingAGrantCutsALargeRelayFarShortOfTheWholeBody: a 128 MiB upstream
+// (generated as it is sent, so the test holds none of it) read slowly by the client
+// is cut mid-copy by a revocation: the client gets a small fraction of the body, and
+// the upstream request is dropped promptly rather than drained.
+func TestRevokingAGrantCutsALargeRelayFarShortOfTheWholeBody(t *testing.T) {
+	t.Parallel()
+	srv, admin, _, _, media := onlineAccessServerFull(t, nil)
+	kidID := srv.CreateUser(admin, "kid", "memberpass123", "member")
+	mustGrantSources(t, srv, admin, kidID, onlineSlug, otherSlug)
+	kid := srv.LoginAs("kid", "memberpass123")
+	st, play, raw := playOn(t, srv, kid, onlineSlug, "big", canPlayMP4(nil))
+	if st != http.StatusOK || play.Format != "progressive" {
+		t.Fatalf("play = %d %s", st, raw)
+	}
+	resp, err := http.Get(srv.URL(play.StreamURL))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("opening the stream: %v %v", err, resp)
+	}
+	defer resp.Body.Close()
+
+	// A slow reader: 16 KiB every 10ms, about 1.6 MB/s.
+	var received atomic.Int64
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		buf := make([]byte, 16<<10)
+		for {
+			n, err := resp.Body.Read(buf)
+			received.Add(int64(n))
+			if err != nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	select {
+	case <-media.bigStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the upstream never started")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := received.Load(); got == 0 || got >= bigBody {
+		t.Fatalf("received %d bytes before the revocation, want some but not all", got)
+	}
+
+	mustGrantSources(t, srv, admin, kidID, otherSlug)
+	select {
+	case <-ended:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the client kept receiving after the grant was revoked")
+	}
+	select {
+	case <-media.bigEnded:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the upstream request was not cancelled")
+	}
+	if got := received.Load(); got > bigBody/8 {
+		t.Fatalf("client received %d of %d bytes, want far less after a mid-copy revocation", got, bigBody)
+	}
+	if got := media.bigSent.Load(); got > bigBody/2 {
+		t.Fatalf("upstream wrote %d of %d bytes, want the copy cut well short", got, bigBody)
+	}
+}
+
+// TestAMemberWithNoCeilingSendingTheWebPlayersBitrateStillGetsTheRelay: the web player
+// always asks for 100 Mbit/s; for a muxed variant it can play that is not a bitrate
+// ceiling, so the bytes are relayed and ffmpeg is not started.
+func TestAMemberWithNoCeilingSendingTheWebPlayersBitrateStillGetsTheRelay(t *testing.T) {
+	t.Parallel()
+	srv, admin, runner, _, _ := onlineAccessServerFull(t, nil)
+	kidID := srv.CreateUser(admin, "kid", "memberpass123", "member")
+	mustGrantSources(t, srv, admin, kidID, onlineSlug)
+	kid := srv.LoginAs("kid", "memberpass123")
+	st, play, raw := playOn(t, srv, kid, onlineSlug, onlineItemMP4,
+		canPlayMP4(map[string]any{"maxBitrate": 100000000, "maxResolution": "1080p"}))
+	if st != http.StatusOK || play.Format != "progressive" {
+		t.Fatalf("play = %d %s, want a progressive relay", st, raw)
+	}
+	runner.jmu.Lock()
+	defer runner.jmu.Unlock()
+	if len(runner.jobs) != 0 {
+		t.Fatalf("ffmpeg started %d times for a relayed play, want 0", len(runner.jobs))
+	}
+}
+
+// TestRevokingAGrantTellsThePlayerOnItsNextKeepalive: the stream just stops when the
+// grant goes, so the keepalive after it says why (410 SOURCE_GONE with an
+// access-removed message), to the session's own User only.
+func TestRevokingAGrantTellsThePlayerOnItsNextKeepalive(t *testing.T) {
+	t.Parallel()
+	srv, admin, _, _, _ := onlineAccessServerFull(t, nil)
+	kidID := srv.CreateUser(admin, "kid", "memberpass123", "member")
+	mustGrantSources(t, srv, admin, kidID, onlineSlug, otherSlug)
+	kid := srv.LoginAs("kid", "memberpass123")
+	st, play, raw := playOn(t, srv, kid, onlineSlug, onlineItemMP4, canPlayMP4(nil))
+	if st != http.StatusOK {
+		t.Fatalf("play = %d %s", st, raw)
+	}
+	mustGrantSources(t, srv, admin, kidID, otherSlug)
+
+	var env errorEnvelope
+	st, body := srv.JSON(http.MethodPost, "/api/v1/sessions/"+play.SessionID+"/progress", kid,
+		map[string]any{"positionMs": 1, "state": "playing"}, &env)
+	if st != http.StatusGone || env.Error.Code != "SOURCE_GONE" || env.Error.Message != "You no longer have access to "+onlineName {
+		t.Fatalf("keepalive after the revocation = %d %s, want 410 SOURCE_GONE with the access-removed message", st, body)
+	}
+	if st, body = srv.JSON(http.MethodPost, "/api/v1/sessions/"+play.SessionID+"/progress", admin,
+		map[string]any{"positionMs": 1, "state": "playing"}, nil); st != http.StatusNotFound {
+		t.Fatalf("another User's keepalive = %d %s, want 404", st, body)
 	}
 }
 

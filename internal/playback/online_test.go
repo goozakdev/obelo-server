@@ -164,3 +164,43 @@ func TestPlanOnlineChoosesTheTallestVariantWithinTheCeiling(t *testing.T) {
 		t.Fatalf("variants with no usable URL = %v, want noFile", why)
 	}
 }
+
+// TestOnlineBitrateRuleOnlyTheCeilingForcesFFmpeg: a variant states no bitrate, so
+// only an Admin-set Playback ceiling bitrate keeps it off the relay; a bitrate the
+// client merely asked for is ignored for it (the web player always sends one).
+func TestOnlineBitrateRuleOnlyTheCeilingForcesFFmpeg(t *testing.T) {
+	variants := []pluginapi.OnlineVariant{mp4("720p")}
+
+	// A client constraint only (an Admin, no ceiling): relayed.
+	c, bound := ClampToCeiling(Constraints{MaxBitrate: 100_000_000}, access.Scope{})
+	if bound {
+		t.Fatal("no ceiling bound the request")
+	}
+	plan, why := PlanOnline(onlineProfile(), c, variants, true)
+	if why != nil || plan.Transcode {
+		t.Fatalf("client bitrate only = %+v (%v), want the muxed variant relayed", plan, why)
+	}
+	if _, why = ChooseOnlineVariant(onlineProfile(), c, variants); why != nil {
+		t.Fatalf("ChooseOnlineVariant under a client bitrate only = %v, want playable", why)
+	}
+
+	// A bitrate ceiling (a Member): ffmpeg held to it, or refused without ffmpeg.
+	c, bound = ClampToCeiling(Constraints{MaxBitrate: 100_000_000}, access.Scope{MaxBitrate: 4_000_000})
+	if !bound {
+		t.Fatal("the bitrate ceiling did not bind")
+	}
+	plan, why = PlanOnline(onlineProfile(), c, variants, true)
+	if why != nil || !plan.Transcode || plan.MaxBitrate != 4_000_000 {
+		t.Fatalf("under a bitrate ceiling = %+v (%v), want ffmpeg at 4 Mbit/s", plan, why)
+	}
+	if _, why = PlanOnline(onlineProfile(), c, variants, false); why == nil || why.Reason != ReasonBitrate {
+		t.Fatalf("under a bitrate ceiling without ffmpeg = %v, want the bitrate refusal", why)
+	}
+
+	// A ceiling looser than the client's own ask still counts as a ceiling.
+	c, _ = ClampToCeiling(Constraints{MaxBitrate: 2_000_000}, access.Scope{MaxBitrate: 8_000_000})
+	plan, why = PlanOnline(onlineProfile(), c, variants, true)
+	if why != nil || !plan.Transcode || plan.MaxBitrate != 2_000_000 {
+		t.Fatalf("looser ceiling = %+v (%v), want ffmpeg held to the stricter 2 Mbit/s", plan, why)
+	}
+}

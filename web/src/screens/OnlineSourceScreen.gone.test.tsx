@@ -107,6 +107,22 @@ describe("OnlineSourceScreen: a session whose media is no longer available", () 
     expect(screen.queryByTestId("player-video")).toBeNull();
   });
 
+  it("shows the access-removed message when the keepalive says the grant was revoked", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByTestId("online-item-play-v1"));
+    const video = await screen.findByTestId("player-video");
+
+    reportProgress.mockRejectedValue(
+      new ApiError(410, "SOURCE_GONE", "You no longer have access to Test Tube"),
+    );
+    fireEvent.error(video);
+
+    expect(await screen.findByTestId("online-player-error")).toHaveTextContent(
+      "You no longer have access to Test Tube",
+    );
+    expect(screen.queryByTestId("player-video")).toBeNull();
+  });
+
   it("leaves the player alone when the stream failed but the session is still live", async () => {
     renderPage();
     fireEvent.click(await screen.findByTestId("online-item-play-v1"));

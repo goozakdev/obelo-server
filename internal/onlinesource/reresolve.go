@@ -76,11 +76,19 @@ func (s *Service) HasGone(sessionID string) bool {
 // that sees the stream stop always finds it. A session already ended by other means
 // (the User stopped it, access was revoked) while the re-resolve ran leaves no note.
 func (s *Service) endGone(sess Session) error {
-	name := sess.SourceName
+	if s.leaveNote(sess, "This video is no longer available from "+sess.SourceName) {
+		s.End(sess.ID)
+	}
+	return ErrGone
+}
+
+// leaveNote records message as what sess's player reads once it has ended, and says
+// whether sess was still live to leave one.
+func (s *Service) leaveNote(sess Session, message string) bool {
 	s.mu.Lock()
 	if _, live := s.sessions[sess.ID]; !live {
 		s.mu.Unlock()
-		return ErrGone
+		return false
 	}
 	if s.gone == nil {
 		s.gone = map[string]goneNote{}
@@ -101,10 +109,9 @@ func (s *Service) endGone(sess Session) error {
 		}
 		delete(s.gone, oldest)
 	}
-	s.gone[sess.ID] = goneNote{userID: sess.UserID, message: "This video is no longer available from " + name, at: now}
+	s.gone[sess.ID] = goneNote{userID: sess.UserID, message: message, at: now}
 	s.mu.Unlock()
-	s.End(sess.ID)
-	return ErrGone
+	return true
 }
 
 // resolveVariants calls resolve() for an item and returns the variants that pass the

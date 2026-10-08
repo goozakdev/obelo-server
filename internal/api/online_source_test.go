@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,11 +52,21 @@ type onlineMedia struct {
 	// handler returns, which it does once the Server drops the upstream request.
 	slowStarted, slowEnded chan struct{}
 	slowOnce               sync.Once
+	// /big.mp4 is bigBody bytes generated as they are sent, never held in memory:
+	// bigStarted closes when it starts, bigEnded when its handler returns, and bigSent
+	// counts the bytes the handler managed to write.
+	bigStarted, bigEnded chan struct{}
+	bigOnce              sync.Once
+	bigSent              atomic.Int64
 }
+
+// bigBody is the size of /big.mp4: well over what a buffering relay would hold.
+const bigBody = 128 << 20
 
 func newOnlineMedia(t *testing.T) *onlineMedia {
 	t.Helper()
-	m := &onlineMedia{hits: map[string]int{}, slowStarted: make(chan struct{}), slowEnded: make(chan struct{})}
+	m := &onlineMedia{hits: map[string]int{}, slowStarted: make(chan struct{}), slowEnded: make(chan struct{}),
+		bigStarted: make(chan struct{}), bigEnded: make(chan struct{})}
 	m.body = make([]byte, 300_000)
 	for i := range m.body {
 		m.body[i] = byte(i * 7)
@@ -96,6 +107,22 @@ func newOnlineMedia(t *testing.T) *onlineMedia {
 				case <-r.Context().Done():
 					return
 				case <-time.After(20 * time.Millisecond):
+				}
+			}
+		case r.URL.Path == "/big.mp4":
+			// A large file the upstream sends as fast as the Server takes it, until
+			// the Server drops the request.
+			defer close(m.bigEnded)
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Length", strconv.Itoa(bigBody))
+			w.WriteHeader(http.StatusOK)
+			m.bigOnce.Do(func() { close(m.bigStarted) })
+			chunk := make([]byte, 64<<10)
+			for sent := 0; sent < bigBody; sent += len(chunk) {
+				n, err := w.Write(chunk)
+				m.bigSent.Add(int64(n))
+				if err != nil {
+					return
 				}
 			}
 		case r.URL.Path == "/redirect.mp4":
@@ -186,6 +213,8 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 			return []map[string]any{mp4("720p", "/redirect.mp4")}
 		case "slow":
 			return []map[string]any{mp4("720p", "/slow.mp4")}
+		case "big":
+			return []map[string]any{mp4("720p", "/big.mp4")}
 		case "expiring":
 			return []map[string]any{mp4("720p", "/expiring.mp4")}
 		case "dead":

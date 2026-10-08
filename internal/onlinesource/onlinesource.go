@@ -200,18 +200,22 @@ func (s *Service) Revalidate(userID string) int {
 	if s.mayPlay == nil {
 		return 0
 	}
-	type held struct{ id, source string }
-	var mine []held
+	var mine []Session
 	s.mu.Lock()
-	for id, sess := range s.sessions {
+	for _, sess := range s.sessions {
 		if sess.UserID == userID {
-			mine = append(mine, held{id, sess.SourceID})
+			mine = append(mine, *sess)
 		}
 	}
 	s.mu.Unlock()
 	ended := 0
 	for _, h := range mine {
-		if !s.mayPlay(userID, h.source) && s.End(h.id) {
+		if s.mayPlay(userID, h.SourceID) {
+			continue
+		}
+		// The note first, so a player that sees the stream stop finds why.
+		s.leaveNote(h, "You no longer have access to "+h.SourceName)
+		if s.End(h.ID) {
 			ended++
 		}
 	}

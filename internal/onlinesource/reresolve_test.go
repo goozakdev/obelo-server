@@ -506,10 +506,10 @@ func TestAnFFmpegSessionRestartsAtThePositionOnA403Or410(t *testing.T) {
 			if rig.slots.heldNow() != 1 {
 				t.Fatalf("%d cap slots held after the restart, want 1", rig.slots.heldNow())
 			}
+			// waitRuns returns when the second Start is recorded, a moment before the
+			// restart installs the new run on the session, so cleanup is polled for.
 			rig.svc.End(sess.ID)
-			if rig.slots.heldNow() != 0 || len(scratchEntries(t, rig.scratch)) != 0 {
-				t.Fatalf("ending left %d slots and %v behind", rig.slots.heldNow(), scratchEntries(t, rig.scratch))
-			}
+			rig.waitEnded(t, sess.ID)
 		})
 	}
 }
