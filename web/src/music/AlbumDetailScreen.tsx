@@ -54,6 +54,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   // A transient confirmation for the row actions (added to playlist / queue / play
   // next), shown above the list; replaced by the next action.
   const [notice, setNotice] = useState<string | null>(null);
+  // Why the last queue add was refused (Online items and Titles never share a Queue).
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const playlistChoices = useTrackPlaylists();
   const state = useAsync(
@@ -92,8 +94,9 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   // Insert this Track right after the now-playing entry.
   const playNext = useCallback(
     (track: TrackSummary) => {
-      queue.playNext([entryFromTitle(trackToSummary(track))]);
-      setNotice(`“${track.title}” will play next.`);
+      const refused = queue.playNext([entryFromTitle(trackToSummary(track))]);
+      setRefusal(refused);
+      setNotice(refused ? null : `“${track.title}” will play next.`);
     },
     [queue],
   );
@@ -101,8 +104,9 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   // Append this Track at the end of the Queue.
   const addToQueue = useCallback(
     (track: TrackSummary) => {
-      queue.enqueue([entryFromTitle(trackToSummary(track))]);
-      setNotice(`Added “${track.title}” to the queue.`);
+      const refused = queue.enqueue([entryFromTitle(trackToSummary(track))]);
+      setRefusal(refused);
+      setNotice(refused ? null : `Added “${track.title}” to the queue.`);
     },
     [queue],
   );
@@ -244,6 +248,11 @@ function AlbumDetail({ albumId }: { albumId: string }) {
             </p>
           ) : (
             <section className="track-listing">
+              {refusal && (
+                <p className="status status-error" data-testid="queue-refusal" role="alert">
+                  {refusal}
+                </p>
+              )}
               {notice && (
                 <p className="track-notice" role="status" data-testid="track-notice">
                   {notice}

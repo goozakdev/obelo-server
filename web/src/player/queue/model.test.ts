@@ -8,6 +8,8 @@ import {
   emptyQueue,
   enqueue,
   entriesFromTitles,
+  entryFromOnlineItem,
+  mixedQueueRefusal,
   hasNext,
   hasPrev,
   jumpTo,
@@ -386,6 +388,46 @@ describe("Queue model", () => {
       const fresh = playNow(prior, entries(["x", "y"]), 0);
       expect(fresh.repeat).toBe("all"); // repeat is a persistent preference
       expect(fresh.authoredOrder).toBeNull(); // a new context starts un-shuffled
+    });
+  });
+  describe("Online items and Titles never share a Queue (ADR-0068)", () => {
+    const online = () =>
+      entryFromOnlineItem({
+        sourceId: "tube",
+        sourceName: "Test Tube",
+        itemId: "v1",
+        title: "A talk",
+        thumbnailUrl: "/t.jpg",
+        durationMs: 61_000,
+      });
+
+    it("playing an Online item over queued Titles leaves exactly that one entry", () => {
+      const titles = playNow(emptyQueue(), entries(["a", "b", "c"]), 1);
+      const only = online();
+      const state = playNow(titles, [only], 0);
+      expect(state.entries).toEqual([only]);
+      expect(currentEntry(state)).toBe(only);
+    });
+
+    it("refuses to enqueue or play-next a Title onto an Online item", () => {
+      const held = playNow(emptyQueue(), [online()], 0);
+      expect(enqueue(held, entries(["a"]))).toBe(held);
+      expect(playNext(held, entries(["a"]))).toBe(held);
+      expect(mixedQueueRefusal(held, entries(["a"]))).toMatch(/online/i);
+    });
+
+    it("refuses to enqueue or play-next an Online item onto Titles", () => {
+      const held = playNow(emptyQueue(), entries(["a", "b"]), 0);
+      expect(enqueue(held, [online()])).toBe(held);
+      expect(playNext(held, [online()])).toBe(held);
+      expect(mixedQueueRefusal(held, [online()])).toMatch(/online/i);
+    });
+
+    it("allows Titles onto Titles and anything into an empty Queue", () => {
+      const held = playNow(emptyQueue(), entries(["a"]), 0);
+      expect(mixedQueueRefusal(held, entries(["b"]))).toBeNull();
+      expect(mixedQueueRefusal(emptyQueue(), [online()])).toBeNull();
+      expect(enqueue(emptyQueue(), [online()]).entries).toHaveLength(1);
     });
   });
 });

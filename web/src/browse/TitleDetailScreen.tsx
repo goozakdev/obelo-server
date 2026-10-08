@@ -167,6 +167,8 @@ function Detail({
   // after appending / inserting this Title, so enqueueing gives feedback without
   // leaving the page.
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  // Why the last queue add was refused (Online items and Titles never share a Queue).
+  const [queueRefusal, setQueueRefusal] = useState<string | null>(null);
   // "Add to watchlist" (watchlist 01): busy + inline result of the POST that adds
   // this Title to the User's system Watchlist.
   const [watchlisting, setWatchlisting] = useState(false);
@@ -263,12 +265,14 @@ function Detail({
   // the now-playing entry via `playNext`. Both carry the LIVE watch state so a
   // queued entry resumes from the right spot.
   function addToQueue() {
-    queue.enqueue([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
-    setQueueNotice("Added to the end of the queue.");
+    const refusal = queue.enqueue([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
+    setQueueRefusal(refusal);
+    setQueueNotice(refusal ? null : "Added to the end of the queue.");
   }
   function playNextInQueue() {
-    queue.playNext([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
-    setQueueNotice("Playing next.");
+    const refusal = queue.playNext([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
+    setQueueRefusal(refusal);
+    setQueueNotice(refusal ? null : "Playing next.");
   }
 
   // "Add to watchlist" (watchlist 01): POST this Title to the User's system
@@ -584,6 +588,11 @@ function Detail({
           {/* Inline results for the toolbar actions (queue append/insert, watchlist
               add, and the watched-toggle failure), kept below the row so a click
               gives feedback without leaving the page. */}
+          {queueRefusal && (
+            <p className="status status-error" data-testid="queue-refusal" role="alert">
+              {queueRefusal}
+            </p>
+          )}
           {queueNotice && (
             <p className="status status-ok" data-testid="queue-notice" role="status">
               {queueNotice}

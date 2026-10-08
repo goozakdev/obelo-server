@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -45,8 +46,10 @@ export interface QueueStore {
   playNow: (entries: QueueEntry[], startIndex?: number) => number;
   /** With a `context` token (from {@link playNow}), the append is dropped when that
    * context is no longer the Queue (a newer playNow or a clear happened since). */
-  enqueue: (entries: QueueEntry[], context?: number) => void;
-  playNext: (entries: QueueEntry[]) => void;
+  enqueue: (entries: QueueEntry[], context?: number) => string | null;
+  /** Both adds return the reason they were refused (Online items and Titles never
+   * share a Queue, ADR-0068), or null when the entries were added. */
+  playNext: (entries: QueueEntry[]) => string | null;
   removeEntry: (entryId: string) => void;
   reorder: (entryIds: string[]) => void;
   clear: () => void;
@@ -118,6 +121,8 @@ export function QueueProvider({ children, initialState }: QueueProviderProps) {
   // The imperative operations commit a new model state via a functional update,
   // so they read the latest state without being re-created on every change
   // (stable identities for consumers' effects).
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const ops = useMemo(() => {
     // Which play context the Queue holds: bumped by every playNow and clear, so a
     // lazy append (the Show tail walk) can tell it has been replaced.
@@ -127,11 +132,16 @@ export function QueueProvider({ children, initialState }: QueueProviderProps) {
       return ++context;
     };
     const enqueue = (entries: QueueEntry[], forContext?: number) => {
-      if (forContext !== undefined && forContext !== context) return;
-      setState((s) => model.enqueue(s, entries));
+      if (forContext !== undefined && forContext !== context) return null;
+      const refusal = model.mixedQueueRefusal(stateRef.current, entries);
+      if (!refusal) setState((s) => model.enqueue(s, entries));
+      return refusal;
     };
-    const playNext = (entries: QueueEntry[]) =>
-      setState((s) => model.playNext(s, entries));
+    const playNext = (entries: QueueEntry[]) => {
+      const refusal = model.mixedQueueRefusal(stateRef.current, entries);
+      if (!refusal) setState((s) => model.playNext(s, entries));
+      return refusal;
+    };
     const removeEntry = (entryId: string) =>
       setState((s) => model.removeEntry(s, entryId));
     const reorder = (entryIds: string[]) =>

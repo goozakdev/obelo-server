@@ -1,9 +1,10 @@
+import { useEffect } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, waitFor, fireEvent } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import { renderWithAuth } from "../test/renderWithAuth";
 import type { TitleDetail } from "../api/types";
-import { entryFromTitle, type QueueState } from "../player/queue/model";
+import { entryFromOnlineItem, entryFromTitle, type QueueState } from "../player/queue/model";
 import { saveQueue } from "../player/queue/persist";
 import type { TitleSummary } from "../api/types";
 
@@ -209,5 +210,46 @@ describe("TitleDetailScreen — Add to queue / Play next", () => {
     await waitFor(() => expect(probeTitleIds()).toEqual(["a", "m1", "b"]));
     // The now-playing entry didn't move.
     expect(screen.getAllByTestId("probe-entry")[0]).toHaveAttribute("data-current", "true");
+  });
+  it("refuses a Title while an Online item is queued, in the error style", async () => {
+    // An Online item is never persisted, so seed it into the live store.
+    function SeedOnline() {
+      const q = useQueue();
+      useEffect(() => {
+        q.playNow([
+          entryFromOnlineItem({
+            sourceId: "tube",
+            sourceName: "Test Tube",
+            itemId: "v1",
+            title: "A talk",
+            thumbnailUrl: "/t.jpg",
+            durationMs: 1000,
+          }),
+        ]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      return null;
+    }
+    renderWithAuth(
+      <>
+        <Routes>
+          <Route path="/titles/:titleId" element={<TitleDetailScreen />} />
+        </Routes>
+        <SeedOnline />
+        <QueueProbe />
+      </>,
+      { initialEntries: ["/titles/m1"] },
+    );
+    await screen.findByTestId("detail");
+
+    openMenu();
+    fireEvent.click(screen.getByTestId("add-to-queue-button"));
+
+    const refusal = await screen.findByTestId("queue-refusal");
+    expect(refusal).toHaveTextContent(/online item is playing/i);
+    expect(refusal).toHaveClass("status-error");
+    expect(refusal).not.toHaveClass("status-ok");
+    expect(screen.queryByTestId("queue-notice")).toBeNull();
+    expect(probeTitleIds()).toEqual(["online:tube:v1"]);
   });
 });

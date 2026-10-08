@@ -94,6 +94,8 @@ function TrackDetail({ title }: { title: TitleDetail }) {
   const [toggleError, setToggleError] = useState<string | null>(null);
   // Inline confirmation for the Queue affordances (queue/03).
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
+  // Why the last queue add was refused (Online items and Titles never share a Queue).
+  const [queueRefusal, setQueueRefusal] = useState<string | null>(null);
   // Whether the lyrics view is open. It asks for the lyrics when it opens, not
   // when the page loads.
   const [lyricsOpen, setLyricsOpen] = useState(false);
@@ -140,12 +142,14 @@ function TrackDetail({ title }: { title: TitleDetail }) {
 
   // "Add to queue" / "Play next" (stories 21–23, 29) carrying the LIVE watch state.
   function addToQueue() {
-    queue.enqueue([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
-    setQueueNotice("Added to the end of the queue.");
+    const refusal = queue.enqueue([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
+    setQueueRefusal(refusal);
+    setQueueNotice(refusal ? null : "Added to the end of the queue.");
   }
   function playNextInQueue() {
-    queue.playNext([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
-    setQueueNotice("Playing next.");
+    const refusal = queue.playNext([entryFromTitle(titleDetailSummary(title, watched, resumeMs))]);
+    setQueueRefusal(refusal);
+    setQueueNotice(refusal ? null : "Playing next.");
   }
 
   return (
@@ -269,6 +273,11 @@ function TrackDetail({ title }: { title: TitleDetail }) {
             {/* Overflow / kebab: the queue actions (queue/03). */}
             <TrackOverflowMenu onAddToQueue={addToQueue} onPlayNext={playNextInQueue} />
           </div>
+          {queueRefusal && (
+            <p className="status status-error" data-testid="queue-refusal" role="alert">
+              {queueRefusal}
+            </p>
+          )}
           {queueNotice && (
             <p className="status status-ok" data-testid="queue-notice" role="status">
               {queueNotice}

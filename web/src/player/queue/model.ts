@@ -157,11 +157,30 @@ export function playNow(
   };
 }
 
+/** Why adding `entries` to the Queue is refused, or null when it is allowed.
+ * Online items and Titles are never mixed in one Queue (ADR-0068): an Online item
+ * is played alone, so adding either kind (or a second Online item) to a Queue
+ * holding one is refused. */
+export function mixedQueueRefusal(
+  state: QueueState,
+  entries: QueueEntry[],
+): string | null {
+  if (state.entries.length === 0 || entries.length === 0) return null;
+  if (state.entries.some((e) => e.online)) {
+    return "An online item is playing, and nothing can be queued behind it. Stop it first.";
+  }
+  if (entries.some((e) => e.online)) {
+    return "Online items can't be added to a queue of titles. Play the item on its own instead.";
+  }
+  return null;
+}
+
 /** Append `entries` to the END of the Queue (cross-Album/Show, cross-kind, and
- * duplicates are all allowed — stories 22, 29). Appending into an empty Queue
+ * duplicates are all allowed — stories 22, 29 — except that Online items and Titles
+ * never share a Queue: see {@link mixedQueueRefusal}). Appending into an empty Queue
  * makes the first appended entry the now-playing one. */
 export function enqueue(state: QueueState, entries: QueueEntry[]): QueueState {
-  if (entries.length === 0) return state;
+  if (entries.length === 0 || mixedQueueRefusal(state, entries)) return state;
   const wasEmpty = state.entries.length === 0;
   return {
     ...state,
@@ -180,7 +199,7 @@ export function enqueue(state: QueueState, entries: QueueEntry[]): QueueState {
  * empty Queue this is just {@link playNow}. The current pointer is untouched, so
  * the playing Title is not disturbed. */
 export function playNext(state: QueueState, entries: QueueEntry[]): QueueState {
-  if (entries.length === 0) return state;
+  if (entries.length === 0 || mixedQueueRefusal(state, entries)) return state;
   if (state.entries.length === 0) return playNow(state, entries, 0);
   const at = state.currentIndex + 1;
   return {

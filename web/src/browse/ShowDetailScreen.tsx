@@ -199,8 +199,9 @@ export default function ShowDetailScreen() {
     try {
       const entries = await buildFullShowEntries(apiClient, showId);
       if (entries.length === 0) return;
-      queue.enqueue(entries);
-      setQueueNotice("Added the series to the end of the queue.");
+      const refusal = queue.enqueue(entries);
+      if (refusal) setQueueError(refusal);
+      else setQueueNotice("Added the series to the end of the queue.");
     } catch (err) {
       setQueueError(errorMessage(err));
     }
@@ -212,8 +213,9 @@ export default function ShowDetailScreen() {
     try {
       const entries = await buildFullShowEntries(apiClient, showId);
       if (entries.length === 0) return;
-      queue.playNext(entries);
-      setQueueNotice("Playing the series next.");
+      const refusal = queue.playNext(entries);
+      if (refusal) setQueueError(refusal);
+      else setQueueNotice("Playing the series next.");
     } catch (err) {
       setQueueError(errorMessage(err));
     }
@@ -222,7 +224,8 @@ export default function ShowDetailScreen() {
   // Insert this Episode right after the now-playing entry ("Play next").
   const playNext = useCallback(
     (episode: EpisodeSummary) => {
-      queue.playNext([entryFromTitle(episodeToSummary(episode))]);
+      const refusal = queue.playNext([entryFromTitle(episodeToSummary(episode))]);
+      if (refusal) setQueueError(refusal);
     },
     [queue],
   );
@@ -230,7 +233,8 @@ export default function ShowDetailScreen() {
   // Append this Episode at the end of the Queue ("Add to queue").
   const addToQueue = useCallback(
     (episode: EpisodeSummary) => {
-      queue.enqueue([entryFromTitle(episodeToSummary(episode))]);
+      const refusal = queue.enqueue([entryFromTitle(episodeToSummary(episode))]);
+      if (refusal) setQueueError(refusal);
     },
     [queue],
   );
