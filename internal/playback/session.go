@@ -256,8 +256,10 @@ type Manager struct {
 	scratchRoot string
 
 	// transcodeCap is the global concurrent-transcode cap (ADR-0009 governance).
-	// activeTranscodes counts live TierTranscode sessions ONLY — directPlay and
-	// directStream (remux) never increment it, so they are never blocked. A cap of
+	// activeTranscodes counts live video-encoding TierTranscode sessions and the
+	// slots ReserveTranscode hands an Online item's ffmpeg encode — directPlay,
+	// directStream (remux) and video-copy never increment it, so they are never
+	// blocked. A cap of
 	// 0 (or negative) means unlimited: the metering still counts for observability
 	// but Create never rejects. The counter is incremented atomically with map
 	// insertion in Create and decremented when a transcode session leaves via
@@ -844,6 +846,28 @@ func (m *Manager) End(id string) bool {
 	// above already left), so a DELETE on an unknown/ended id emits nothing.
 	m.notify(endedEvent(s))
 	return true
+}
+
+// ReserveTranscode takes one slot of the concurrent-transcode cap for a transcode
+// that is not a Title session: an Online item's ffmpeg run (ADR-0068). It is the
+// same cap, counted in the same place, so a full cap refuses an Online encode and a
+// Title encode alike. At the cap it returns ErrTranscodeCapFull and holds nothing.
+// The release func frees the slot, at most once.
+func (m *Manager) ReserveTranscode() (release func(), err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.transcodeCap > 0 && m.activeTranscodes >= m.transcodeCap {
+		return nil, ErrTranscodeCapFull
+	}
+	m.activeTranscodes++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			m.releaseTranscodeSlot()
+		})
+	}, nil
 }
 
 // releaseTranscodeSlot decrements the active-transcode counter, never below

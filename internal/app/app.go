@@ -296,6 +296,25 @@ type options struct {
 	// the https and private-address redirect policy. A test supplies the client that
 	// trusts its fake https media host.
 	onlineSourceClient *http.Client
+	// onlineSourceRunner replaces the ffmpeg Runner an Online item's encode runs
+	// under, and onlineSourceMediaExempt lists the host:port addresses whose
+	// private-address check the first-URL judgment skips. TESTS ONLY: the suite's
+	// fake media host is a loopback httptest server and its encode must not spawn
+	// the real ffmpeg at an address with a self-signed certificate.
+	onlineSourceRunner      transcode.Runner
+	onlineSourceMediaExempt []string
+}
+
+// WithOnlineSourceRunner sets the Runner Online ffmpeg encodes run under (tests).
+func WithOnlineSourceRunner(r transcode.Runner) Option {
+	return func(o *options) { o.onlineSourceRunner = r }
+}
+
+// WithOnlineSourceMediaExemptAt skips the private-address check of the first-URL
+// judgment for these host:port addresses (tests). https and the manifest allowlist
+// still apply to them.
+func WithOnlineSourceMediaExemptAt(addrs ...string) Option {
+	return func(o *options) { o.onlineSourceMediaExempt = append(o.onlineSourceMediaExempt, addrs...) }
 }
 
 // WithOnlineSourceClient sets the HTTP client the Online source relay fetches
@@ -1078,6 +1097,27 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Online sources (ADR-0068): played from a session of their own, whose end
 	// revokes its stream token as a Title session's does.
 	onlineSvc := onlinesource.New(registry, o.onlineSourceClient)
+	// The first URL of a variant must be on the Plugin's manifest allowlist, read
+	// from the Set the Manager holds NOW so an install or removal is seen at once.
+	onlineSvc.SetMediaHostPolicy(func(sourceID, host string) bool {
+		return pluginManager.Plugins().MediaHostAllowed(sourceID, host)
+	})
+	onlineSvc.ExemptMediaAddrs(o.onlineSourceMediaExempt...)
+	// A variant the client cannot take as is is encoded by ffmpeg, under the same
+	// transcode cap and cache as a Title's; without ffmpeg it is refused as a Title
+	// that needs a transcode is.
+	if ffmpegAvailability.Available {
+		var onlineRunner transcode.Runner = transcode.FFmpeg{Binary: ffmpegAvailability.Binary}
+		if o.onlineSourceRunner != nil {
+			onlineRunner = o.onlineSourceRunner
+		}
+		onlineSvc.SetTranscoder(onlinesource.Transcoder{
+			Runner:      onlineRunner,
+			ScratchRoot: scratchRoot,
+			Accel:       backendResolution.Accel,
+			Reserve:     playbackSvc.Sessions().ReserveTranscode,
+		})
+	}
 	onlineSvc.SetOnEnd(func(sessionID string) {
 		if err := authSvc.RevokeStreamTokens(sessionID); err != nil {
 			log.Printf("obelo: revoking stream tokens for ended online session %s: %v", sessionID, err)

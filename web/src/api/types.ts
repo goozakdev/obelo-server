@@ -3335,4 +3335,7 @@ export interface OnlineRow {
 export interface OnlinePlayback {
   sessionId: string;
   streamUrl: string;
+  /** "progressive" is a file a `<video>` plays directly; "hls" is a playlist the
+   * server's ffmpeg encodes (absent reads as progressive). */
+  format?: "progressive" | "hls";
 }

@@ -4,6 +4,7 @@ import { ApiError, isAbort } from "../api/errors";
 import type { OnlinePlayback } from "../api/types";
 import { errorMessage } from "../screens/errorMessage";
 import { deriveCapabilityProfile } from "./capabilities";
+import { attachHls } from "./hls";
 import { useQueue } from "./queue/useQueue";
 import type { OnlineQueueItem } from "./queue/model";
 
@@ -15,8 +16,8 @@ import type { OnlineQueueItem } from "./queue/model";
 // An Online item is deliberately a smaller thing than a Title: no resume
 // position, no watch state, no Markers, lyrics, subtitles or Up Next, and no
 // stream picks — the server relays one variant the browser can play as-is, or
-// says it cannot. The stream URL carries a stream token, so the <video> needs no
-// header or cookie. Progress reports exist only as the session keepalive; the
+// encodes it with ffmpeg and serves HLS, or says it cannot. The stream URL carries
+// a stream token, so the <video> needs no header or cookie. Progress reports exist only as the session keepalive; the
 // server records nothing from them.
 
 const KEEPALIVE_MS = 12_000;
@@ -71,6 +72,13 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
           });
           return;
         }
+        if (err instanceof ApiError && err.code === "SERVER_BUSY") {
+          setStatus({
+            kind: "error",
+            message: `${item.sourceName} can't be played right now — the server is busy transcoding. Try again in a moment.`,
+          });
+          return;
+        }
         if (err instanceof ApiError && err.code === "SOURCE_UNAVAILABLE") {
           setStatus({ kind: "error", message: `${item.sourceName} isn't responding.` });
           return;
@@ -85,6 +93,30 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
       if (sessionId) void Promise.resolve(apiClient.endSession(sessionId)).catch(() => {});
     };
   }, [item.sourceId, item.itemId, item.sourceName]);
+
+  // An encoded item is an HLS playlist: hls.js (or native HLS) is attached to the
+  // element, which then carries no src of its own.
+  useEffect(() => {
+    if (status.kind !== "ready" || status.playback.format !== "hls") return;
+    const v = videoRef.current;
+    if (!v) return;
+    let cancelled = false;
+    let attachment: { detach(): void } | null = null;
+    void attachHls(v, status.playback.streamUrl, {
+      onFatal: (reason) => setStatus({ kind: "error", message: `Playback stopped: ${reason}` }),
+    })
+      .then((a) => {
+        if (cancelled) a.detach();
+        else attachment = a;
+      })
+      .catch((err) => {
+        if (!cancelled) setStatus({ kind: "error", message: errorMessage(err) });
+      });
+    return () => {
+      cancelled = true;
+      attachment?.detach();
+    };
+  }, [status]);
 
   return (
     <div className="now-playing-inner now-playing-online" data-testid="online-player">
@@ -118,7 +150,7 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
             className="player-video now-playing-online-video"
             data-testid="player-video"
             data-stream-url={status.playback.streamUrl}
-            src={status.playback.streamUrl}
+            src={status.playback.format === "hls" ? undefined : status.playback.streamUrl}
             controls
             autoPlay
             playsInline

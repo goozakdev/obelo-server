@@ -35,6 +35,19 @@ func onlineSourceWireCases() []wireCase {
 				`"codecs":["h264","aac"],"resolution":"720p","headers":{"Referer":"https://media.example/"}}]}`,
 		},
 		{
+			name: "OnlineResolveResponse split and manifest",
+			value: OnlineResolveResponse{Variants: []OnlineVariant{
+				{
+					Kind: OnlineVariantSplit, VideoURL: "https://media.example/v.mp4", AudioURL: "https://media.example/a.m4a",
+					Container: "mp4", Codecs: []string{"h264", "aac"}, Resolution: "1080p",
+				},
+				{Kind: OnlineVariantManifest, URL: "https://media.example/master.m3u8", Container: "hls", Resolution: "720p"},
+			}},
+			golden: `{"variants":[{"kind":"split","videoUrl":"https://media.example/v.mp4",` +
+				`"audioUrl":"https://media.example/a.m4a","container":"mp4","codecs":["h264","aac"],"resolution":"1080p"},` +
+				`{"kind":"manifest","url":"https://media.example/master.m3u8","container":"hls","resolution":"720p"}]}`,
+		},
+		{
 			name:   "OnlineResolveResponse miss",
 			value:  OnlineResolveResponse{},
 			golden: `{}`,

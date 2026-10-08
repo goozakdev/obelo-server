@@ -639,9 +639,10 @@ func contractTypes() []typeSpec {
 		},
 		{
 			value: pluginapi.OnlineVariant{},
-			doc: "One way to play an item: a muxed file at an https url, its container and codecs, an optional " +
-				"resolution token such as '720p', and the request headers the media host requires. The host " +
-				"relays a variant the client can play and never shows the url to a client.",
+			doc: "One way to play an item: a muxed file at an https url, a split variant with a video url and an " +
+				"audio url, or an HLS or DASH manifest url; its container and codecs, an optional resolution " +
+				"token such as '720p', and the request headers the media host requires. The host relays a muxed " +
+				"variant the client can play and has ffmpeg read any other; it never shows a url to a client.",
 		},
 		{
 			value: pluginapi.OnlineResolveResponse{},

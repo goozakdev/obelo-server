@@ -114,6 +114,12 @@ func validateManifest(m pluginapi.Manifest) error {
 		}
 	}
 	for _, h := range m.Network.Hosts {
+		if isSuffixEntry(h) {
+			if err := validateSuffixHost(h); err != nil {
+				return err
+			}
+			continue
+		}
 		if h != normalizeHost(h) || h == "" || strings.ContainsAny(h, "/\\@?#% \t\r\n") ||
 			(strings.Contains(h, ":") && net.ParseIP(h) == nil) {
 			return fmt.Errorf("network host %q must be a bare lowercase host name with no scheme, port, path, userinfo or percent-escape", h)
@@ -123,6 +129,62 @@ func validateManifest(m pluginapi.Manifest) error {
 		}
 	}
 	return nil
+}
+
+// isSuffixEntry says an allowlist entry is the domain-suffix form: it begins with
+// a dot (".googlevideo.com").
+func isSuffixEntry(h string) bool { return strings.HasPrefix(h, ".") }
+
+// validateSuffixHost checks the domain-suffix form of a network host (ADR-0068
+// decision 9): a dot and then a domain of at least two lower-case labels, so a
+// suffix can never be a bare top-level domain (".com") or an address (".127.0.0.1").
+// It covers the hosts UNDER the domain, never the domain itself; an author who
+// needs the apex lists it beside the suffix.
+func validateSuffixHost(h string) error {
+	bad := fmt.Errorf("network host %q is not a valid domain suffix: write a dot and a domain of two or more lowercase labels, such as \".googlevideo.com\"", h)
+	labels := strings.Split(strings.TrimPrefix(h, "."), ".")
+	if len(labels) < 2 {
+		return bad
+	}
+	for _, l := range labels {
+		if l == "" || l[0] == '-' || l[len(l)-1] == '-' {
+			return bad
+		}
+		for _, r := range l {
+			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+				return bad
+			}
+		}
+	}
+	// A numeric last label is an IP-address-like name, never a domain.
+	if last := labels[len(labels)-1]; strings.Trim(last, "0123456789") == "" {
+		return bad
+	}
+	return nil
+}
+
+// hostMatchesAllowlist reports whether host, as the host of a media URL, is
+// covered by entries: an exact entry, or a suffix entry (".example.com") whose
+// domain host is under. Case-insensitive, port and trailing dot ignored by
+// normalizeHost. "example.com.evil.net" and "notexample.com" are not under
+// ".example.com", and nor is "example.com" itself.
+func hostMatchesAllowlist(entries []string, host string) bool {
+	host = normalizeHost(host)
+	if host == "" {
+		return false
+	}
+	for _, e := range entries {
+		if isSuffixEntry(e) {
+			if strings.HasSuffix(host, normalizeHost(e)) {
+				return true
+			}
+			continue
+		}
+		if normalizeHost(e) == host {
+			return true
+		}
+	}
+	return false
 }
 
 // validateIDToken checks a redirect provider's idToken declaration against its

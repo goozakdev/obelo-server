@@ -1359,13 +1359,21 @@ func planVideoFor(profile DeviceProfile, constraints Constraints, dec Decision) 
 	if dec.Burn != nil {
 		clientSupportsSource = false
 	}
-	h264, _ := profile.videoCodec(transcode.VideoCodecH264)
 	// The copy cap is the source codec's ceiling (a HEVC-capable client may take 4K
 	// HEVC even though it only decodes h264 to 1080p); the re-encode cap is the h264
 	// ceiling (we always output h264 when re-encoding). minPositive treats 0 as "no cap".
 	copyMaxHeight := minPositive(resolutionHeight(constraints.MaxResolution), resolutionHeight(srcSupport.MaxResolution))
-	reencodeMaxHeight := minPositive(resolutionHeight(constraints.MaxResolution), resolutionHeight(h264.MaxResolution))
+	reencodeMaxHeight := reencodeCapHeight(profile, constraints)
 	return transcode.PlanVideo(srcVideoCodec, srcHeight, f.Bitrate, clientSupportsSource, copyMaxHeight, reencodeMaxHeight, constraints.MaxBitrate)
+}
+
+// reencodeCapHeight is the tallest picture a re-encode may produce for this client:
+// the request's cap and the device's h264 ceiling (the encode is always h264),
+// whichever is tighter; 0 is no cap. A Title's transcode plan and an Online item's
+// ffmpeg plan both use it.
+func reencodeCapHeight(profile DeviceProfile, constraints Constraints) int {
+	h264, _ := profile.videoCodec(transcode.VideoCodecH264)
+	return minPositive(resolutionHeight(constraints.MaxResolution), resolutionHeight(h264.MaxResolution))
 }
 
 // transcodeArgsBuilder binds a transcode plan to a specific encode backend and

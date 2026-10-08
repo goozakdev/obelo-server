@@ -196,7 +196,17 @@ func handleStreamTokenSubtree(deps Deps) http.HandlerFunc {
 		// the session must be the token's own User's.
 		if deps.Online != nil {
 			if sess, ok := deps.Online.Session(sessionID); ok {
-				if artifact != streamProgressiveArtifact || sess.UserID != user.ID {
+				if sess.UserID != user.ID {
+					refuseStreamToken(w)
+					return
+				}
+				// A relayed session has the one progressive artifact; an encoded one
+				// has its playlist and segments, under hls/.
+				if file, isHLS := strings.CutPrefix(artifact, streamHLSArtifactPrefix); isHLS && sess.Transcoded {
+					serveOnlineEncoded(deps, w, r, sess, file)
+					return
+				}
+				if artifact != streamProgressiveArtifact || sess.Transcoded {
 					refuseStreamToken(w)
 					return
 				}

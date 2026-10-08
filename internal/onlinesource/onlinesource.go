@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -103,6 +104,12 @@ type Service struct {
 	thumbs map[string]map[string]string
 	onEnd  func(sessionID string)
 	now    func() time.Time
+
+	// The first-URL judgment on a variant's media (check.go).
+	transcoder  *Transcoder
+	mediaAllow  func(sourceID, host string) bool
+	lookup      func(ctx context.Context, host string) ([]net.IP, error)
+	exemptAddrs map[string]bool
 }
 
 // New returns a Service over the sources registered in reg. client carries the
@@ -129,6 +136,7 @@ func New(reg *pluginapi.Registry, client *http.Client) *Service {
 		sessions: map[string]*Session{},
 		thumbs:   map[string]map[string]string{},
 		now:      time.Now,
+		lookup:   lookupIPs,
 	}
 }
 
@@ -291,11 +299,17 @@ type Session struct {
 	UserID   string
 	SourceID string
 	ItemID   string
-	// Variant is what is relayed. Its URL is the upstream address and never leaves
+	// Variant is what is played. Its URLs are the upstream addresses and never leave
 	// the Server.
-	Variant   pluginapi.OnlineVariant
-	StartedAt time.Time
-	LastSeen  time.Time
+	Variant pluginapi.OnlineVariant
+	// Transcoded is true when ffmpeg encodes the variant into HLS (C), false when its
+	// bytes are relayed (B).
+	Transcoded bool
+	StartedAt  time.Time
+	LastSeen   time.Time
+
+	// run is the ffmpeg encode of a transcoded session, nil for a relay.
+	run *run
 }
 
 // PlayInput is one request to play an item.
@@ -328,27 +342,44 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 		log.Printf("obelo: online source %s: resolve %s: %v", in.SourceID, in.ItemID, err)
 		return Session{}, nil, ErrUnavailable
 	}
-	var variants []pluginapi.OnlineVariant
-	for _, v := range resp.Variants {
-		if isHTTPS(v.URL) {
-			variants = append(variants, v)
-		}
-	}
-	if len(variants) == 0 {
+	if len(resp.Variants) == 0 {
 		return Session{}, nil, ErrNoItem
 	}
-	chosen, unsup := playback.ChooseOnlineVariant(in.Profile, in.Constraints, variants)
+	// The host's judgment on the first URL of every variant, for both paths: one the
+	// Plugin could not have meant for the Server to fetch is not a variant.
+	var variants []pluginapi.OnlineVariant
+	for _, v := range resp.Variants {
+		if err := s.checkVariant(ctx, in.SourceID, v); err != nil {
+			log.Printf("obelo: online source %s: item %s: variant dropped: %v", in.SourceID, in.ItemID, err)
+			continue
+		}
+		variants = append(variants, v)
+	}
+	if len(variants) == 0 {
+		return Session{}, nil, ErrUnavailable
+	}
+	plan, unsup := playback.PlanOnline(in.Profile, in.Constraints, variants, s.transcoder != nil)
 	if unsup != nil {
 		return Session{}, unsup, nil
 	}
+	id := uuid.NewString()
+	var r *run
+	if plan.Transcode {
+		if r, err = s.startEncode(id, plan.Variant, plan); err != nil {
+			return Session{}, nil, err
+		}
+	}
 	now := s.now()
 	sess := &Session{
-		ID: uuid.NewString(), UserID: in.UserID, SourceID: in.SourceID, ItemID: in.ItemID,
-		Variant: chosen, StartedAt: now, LastSeen: now,
+		ID: id, UserID: in.UserID, SourceID: in.SourceID, ItemID: in.ItemID,
+		Variant: plan.Variant, Transcoded: plan.Transcode, StartedAt: now, LastSeen: now, run: r,
 	}
 	s.mu.Lock()
 	s.sessions[sess.ID] = sess
 	s.mu.Unlock()
+	if r != nil {
+		go s.watch(sess.ID, r)
+	}
 	return *sess, nil, nil
 }
 
@@ -375,9 +406,12 @@ func (s *Service) Touch(id string) {
 // End ends a session, reporting whether there was one.
 func (s *Service) End(id string) bool {
 	s.mu.Lock()
-	_, ok := s.sessions[id]
+	sess, ok := s.sessions[id]
 	delete(s.sessions, id)
 	s.mu.Unlock()
+	if ok && sess.run != nil {
+		sess.run.stop()
+	}
 	if ok && s.onEnd != nil {
 		s.onEnd(id)
 	}

@@ -141,6 +141,14 @@ func nonRoutableForRedirect(ip net.IP) bool {
 	return false
 }
 
+// IsBlockedAddress reports whether ip is an address a third-party URL must not
+// resolve to: IsInternalIP plus the redirect-only ranges (this-network, CGNAT,
+// reserved). It is the judgment CheckRedirect applies to a hop, exported for a
+// caller that applies it to a FIRST URL a Plugin supplied (Online source media).
+func IsBlockedAddress(ip net.IP) bool {
+	return IsInternalIP(ip) || nonRoutableForRedirect(ip)
+}
+
 // IsInternalIP reports whether ip is somewhere a redirect must not take us: the
 // loopback, RFC1918/ULA private space, link-local (which includes the cloud
 // metadata address 169.254.169.254), the unspecified address, and multicast.

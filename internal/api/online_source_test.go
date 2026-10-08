@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/goozakdev/obelo-server/internal/plugins/plugintest"
 	"github.com/goozakdev/obelo-server/internal/testharness"
+	"github.com/goozakdev/obelo-server/internal/transcode"
 )
 
 // Black-box tests for the Online source provider Extension point (ADR-0068, issue
@@ -94,6 +96,7 @@ type onlineSource struct {
 	mu       sync.Mutex
 	rowsCall []map[string]any
 	resolved []string
+	hints    []map[string]any
 	rows     func() []map[string]any
 	variants func(itemID string) []map[string]any
 }
@@ -130,6 +133,19 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 			return []map[string]any{mp4("1080p", "/v1.mp4")}
 		case "redir":
 			return []map[string]any{mp4("720p", "/redirect.mp4")}
+		case "split":
+			return []map[string]any{{
+				"kind": "split", "videoUrl": media.srv.URL + "/v.mp4", "audioUrl": media.srv.URL + "/a.m4a",
+				"container": "mp4", "codecs": []string{"h264", "aac"}, "resolution": "1080p",
+				"headers": map[string]string{"Referer": "https://tube.example/", "User-Agent": "Tube/1"},
+			}}
+		case "manifest":
+			return []map[string]any{{"kind": "manifest", "url": media.srv.URL + "/master.m3u8", "container": "hls", "resolution": "720p"}}
+		case "plainhttp":
+			return []map[string]any{{"url": "http://" + media.srv.Listener.Addr().String() + "/v1.mp4", "container": "mp4", "codecs": []string{"h264", "aac"}, "resolution": "720p"}}
+		case "offlist":
+			// A host the manifest does not allowlist: the same server by name, not by address.
+			return []map[string]any{{"url": strings.Replace(media.srv.URL, "127.0.0.1", "localhost", 1) + "/v1.mp4", "container": "mp4", "codecs": []string{"h264", "aac"}, "resolution": "720p"}}
 		}
 		return nil
 	}
@@ -146,6 +162,8 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 		case "/resolve":
 			id, _ := call["request"].(map[string]any)["itemId"].(string)
 			s.resolved = append(s.resolved, id)
+			hints, _ := call["request"].(map[string]any)["hints"].(map[string]any)
+			s.hints = append(s.hints, hints)
 			_ = json.NewEncoder(w).Encode(map[string]any{"variants": s.variants(id)})
 		default:
 			http.NotFound(w, r)
@@ -163,18 +181,68 @@ func (s *onlineSource) calls() int {
 
 // onlineServer installs the test Plugin, boots a server that relays through the
 // media host's client, and returns it with an Admin token.
-func onlineServer(t *testing.T) (*testharness.Server, string, *onlineSource, *onlineMedia) {
+func onlineServer(t *testing.T, opts ...testharness.Option) (*testharness.Server, string, *onlineSource, *onlineMedia) {
+	t.Helper()
+	srv, admin, src, media, _ := onlineServerWithRunner(t, true, opts...)
+	return srv, admin, src, media
+}
+
+// onlineServerWithRunner is onlineServer, also returning the fake ffmpeg an Online
+// encode runs under. The manifest allowlists the media host (a loopback address,
+// whose private-address check the harness is told to skip for exactly that
+// host:port), and the Server believes it has an ffmpeg unless opts say otherwise.
+func onlineServerWithRunner(t *testing.T, exemptMedia bool, opts ...testharness.Option) (*testharness.Server, string, *onlineSource, *onlineMedia, *fakeOnlineFFmpeg) {
 	t.Helper()
 	media := newOnlineMedia(t)
 	src := newOnlineSource(t, media)
+	runner := &fakeOnlineFFmpeg{}
 	dataDir := t.TempDir()
-	plugintest.Install(t, dataDir, plugintest.OnlineSourceManifest(onlineSlug, onlineName, src.srv.URL))
-	srv := testharness.New(t,
+	manifest := plugintest.OnlineSourceManifest(onlineSlug, onlineName, src.srv.URL)
+	manifest.Network.Hosts = []string{"127.0.0.1"}
+	plugintest.Install(t, dataDir, manifest)
+	all := append([]testharness.Option{
 		testharness.WithDataDir(dataDir),
 		testharness.WithPluginFetchesExemptAt(src.srv.Listener.Addr().String()),
 		testharness.WithOnlineSourceClient(media.srv.Client()),
-	)
-	return srv, adminToken(t, srv), src, media
+		testharness.WithOnlineSourceRunner(runner),
+		testharness.WithFFmpegAvailability(true),
+	}, opts...)
+	if exemptMedia {
+		all = append(all, testharness.WithOnlineSourceMediaExemptAt(media.srv.Listener.Addr().String()))
+	}
+	srv := testharness.New(t, all...)
+	return srv, adminToken(t, srv), src, media, runner
+}
+
+// fakeOnlineFFmpeg stands in for ffmpeg: it records every run's arguments and
+// writes a playlist and a segment where the real one would, and runs until killed.
+type fakeOnlineFFmpeg struct {
+	mu   sync.Mutex
+	runs [][]string
+}
+
+type fakeOnlineJob struct {
+	done chan struct{}
+	once sync.Once
+}
+
+func (j *fakeOnlineJob) Wait() error { <-j.done; return nil }
+func (j *fakeOnlineJob) Kill() error { j.once.Do(func() { close(j.done) }); return nil }
+
+func (f *fakeOnlineFFmpeg) Start(_ context.Context, args []string) (transcode.Job, error) {
+	f.mu.Lock()
+	f.runs = append(f.runs, args)
+	f.mu.Unlock()
+	out := args[len(args)-1]
+	_ = os.WriteFile(out, []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:4.0,\nsegment000.ts\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(filepath.Dir(out), "segment000.ts"), []byte("fake-ts-bytes"), 0o644)
+	return &fakeOnlineJob{done: make(chan struct{})}, nil
+}
+
+func (f *fakeOnlineFFmpeg) argv() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]string(nil), f.runs...)
 }
 
 type onlineSourcesResp struct {
@@ -204,6 +272,7 @@ type onlineRowsResp struct {
 type onlinePlayResp struct {
 	SessionID string `json:"sessionId"`
 	StreamURL string `json:"streamUrl"`
+	Format    string `json:"format"`
 }
 
 // canPlayMP4 is the Capability profile of a client that plays h264/aac in mp4.
@@ -432,7 +501,9 @@ func TestAMuxedVariantIsRelayedByteForByteThroughAStreamToken(t *testing.T) {
 // refusal a Title gives — and no session is opened.
 func TestThePlaybackCeilingAppliesToAnOnlineItem(t *testing.T) {
 	t.Parallel()
-	srv, admin, _, _ := onlineServer(t)
+	// A Server with no ffmpeg: what it cannot relay it cannot play. With one, the
+	// same variants are encoded (TestAnOnlineItemTheClientCannotRelayIsEncodedByFFmpeg).
+	srv, admin, _, _ := onlineServer(t, testharness.WithFFmpegAvailability(false))
 
 	var env errorEnvelope
 	status, _ := srv.JSON(http.MethodPost, onlineBase+"/"+onlineSlug+"/items/tall/playback", admin,
@@ -640,5 +711,210 @@ func TestSettingsTheAdminEntersReachThePluginCall(t *testing.T) {
 	values, _ := settings["values"].(map[string]any)
 	if values["region"] != "eu-west" {
 		t.Fatalf("the rows call carried settings %v, want region eu-west", settings)
+	}
+}
+
+// transcodeCache is every file under the Server's transcode cache directory.
+func transcodeCache(t *testing.T, srv *testharness.Server) []string {
+	t.Helper()
+	root := filepath.Join(srv.DataDir, "transcode")
+	var out []string
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			rel, _ := filepath.Rel(root, p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	return out
+}
+
+const onlineWhitelist = "-protocol_whitelist https,tls,tcp,crypto"
+
+// TestAnOnlineItemTheClientCannotRelayIsEncodedByFFmpeg: a split variant, a manifest,
+// and a variant above the User's resolution cap each come back as an HLS stream
+// token URL; ffmpeg ran once with the whitelist on every input, the variant's
+// headers and the cap; the playlist and a segment are served through the token; the
+// client never learns an upstream address; and the Plugin was told the cap.
+func TestAnOnlineItemTheClientCannotRelayIsEncodedByFFmpeg(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		item       string
+		constraint map[string]any
+		inputs     int
+		want       []string
+	}{
+		"split":        {"split", nil, 2, []string{"-user_agent Tube/1", "Referer: https://tube.example/", "-map 0:v:0 -map 1:a:0?", "/v.mp4", "/a.m4a"}},
+		"manifest":     {"manifest", nil, 1, []string{"/master.m3u8"}},
+		"over-ceiling": {"tall", map[string]any{"maxResolution": "720p", "maxBitrate": 2_000_000}, 1, []string{"min(720,ih)", "-maxrate 2000000", "/v1.mp4"}},
+		// The first URL passed the check; where it redirects is ffmpeg's business and
+		// is not looked at (ADR-0068 decision 9, the accepted residual risk).
+		"redirecting first URL": {"redir", map[string]any{"maxResolution": "480p"}, 1, []string{"/redirect.mp4"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, admin, src, media, runner := onlineServerWithRunner(t, true)
+			status, play, raw := playOnline(t, srv, admin, tc.item, canPlayMP4(tc.constraint))
+			if status != http.StatusOK || play.Format != "hls" {
+				t.Fatalf("playback start = %d format %q; body: %s", status, play.Format, raw)
+			}
+			if !strings.HasPrefix(play.StreamURL, "/api/v1/stream/") || !strings.HasSuffix(play.StreamURL, "/hls/index.m3u8") ||
+				strings.Contains(string(raw), media.srv.URL) || strings.Contains(string(raw), "127.0.0.1") {
+				t.Fatalf("playback start = %s, want an HLS stream-token URL that never names the upstream", raw)
+			}
+			runs := runner.argv()
+			if len(runs) != 1 {
+				t.Fatalf("ffmpeg ran %d times, want once", len(runs))
+			}
+			args := strings.Join(runs[0], " ")
+			if n := strings.Count(args, onlineWhitelist); n != tc.inputs {
+				t.Errorf("%d inputs carry %q, want %d; args: %s", n, onlineWhitelist, tc.inputs, args)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(args, want) {
+					t.Errorf("ffmpeg args lack %q: %s", want, args)
+				}
+			}
+			if strings.Contains(args, "min(") && tc.constraint == nil {
+				t.Errorf("an uncapped play got a scale cap: %s", args)
+			}
+			if n := media.hitCount("/redirect.mp4") + media.hitCount("/v1.mp4"); n != 0 {
+				t.Errorf("the Server fetched the media itself %d times; ffmpeg reads it", n)
+			}
+
+			resp, body := getBytes(t, srv, play.StreamURL, nil)
+			if resp.StatusCode != http.StatusOK || !strings.HasPrefix(string(body), "#EXTM3U") ||
+				resp.Header.Get("Content-Type") != "application/vnd.apple.mpegurl" {
+				t.Fatalf("playlist = %d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+			}
+			seg := strings.TrimSuffix(play.StreamURL, "index.m3u8") + "segment000.ts"
+			if resp, body = getBytes(t, srv, seg, nil); resp.StatusCode != http.StatusOK || string(body) != "fake-ts-bytes" {
+				t.Fatalf("segment = %d %q", resp.StatusCode, body)
+			}
+			for _, bad := range []string{"secret.txt", "..%2Findex.m3u8", "segment0.ts"} {
+				if resp, _ = getBytes(t, srv, strings.TrimSuffix(play.StreamURL, "index.m3u8")+bad, nil); resp.StatusCode == http.StatusOK {
+					t.Errorf("hls/%s was served", bad)
+				}
+			}
+			// The progressive artifact belongs to a relayed session alone.
+			if resp, _ = getBytes(t, srv, strings.TrimSuffix(play.StreamURL, "hls/index.m3u8")+"stream", nil); resp.StatusCode != http.StatusNotFound {
+				t.Errorf("progressive artifact of an encoded session = %d, want 404", resp.StatusCode)
+			}
+
+			src.mu.Lock()
+			defer src.mu.Unlock()
+			if tc.constraint != nil && (len(src.hints) != 1 || src.hints[0]["maxHeight"] != float64(720) && tc.item == "tall") {
+				t.Errorf("resolve() hints = %v, want the cap", src.hints)
+			}
+		})
+	}
+}
+
+// TestACapabilityHintReachesResolve: the User's resolution cap is told to the Plugin
+// so it can offer a variant that fits.
+func TestACapabilityHintReachesResolve(t *testing.T) {
+	t.Parallel()
+	srv, admin, src, _ := onlineServer(t)
+	if status, _, raw := playOnline(t, srv, admin, onlineItemMP4, canPlayMP4(map[string]any{"maxResolution": "720p"})); status != http.StatusOK {
+		t.Fatalf("playback start = %d; body: %s", status, raw)
+	}
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	if len(src.hints) != 1 || src.hints[0]["maxHeight"] != float64(720) {
+		t.Fatalf("resolve() hints = %v, want maxHeight 720", src.hints)
+	}
+}
+
+// TestAnEncodedSessionLeavesNoSegmentsInTheCacheWhenItEnds: Q2. While it lives the
+// cache holds the playlist and segments; after the client stops it, they are gone;
+// a relayed play never put anything there.
+func TestAnEncodedSessionLeavesNoSegmentsInTheCacheWhenItEnds(t *testing.T) {
+	t.Parallel()
+	srv, admin, _, _, _ := onlineServerWithRunner(t, true)
+
+	if st, relay, raw := playOnline(t, srv, admin, onlineItemMP4, canPlayMP4(nil)); st != http.StatusOK {
+		t.Fatalf("relay playback = %d; body: %s", st, raw)
+	} else if got := transcodeCache(t, srv); len(got) != 0 {
+		t.Fatalf("a relayed play wrote to the cache: %v (session %s)", got, relay.SessionID)
+	}
+
+	status, play, raw := playOnline(t, srv, admin, "split", canPlayMP4(nil))
+	if status != http.StatusOK {
+		t.Fatalf("playback start = %d; body: %s", status, raw)
+	}
+	if got := transcodeCache(t, srv); len(got) != 2 {
+		t.Fatalf("cache while playing = %v, want the playlist and one segment", got)
+	}
+	if st, body := srv.JSON(http.MethodDelete, "/api/v1/sessions/"+play.SessionID, admin, nil, nil); st != http.StatusNoContent {
+		t.Fatalf("ending the session = %d; body: %s", st, body)
+	}
+	if got := transcodeCache(t, srv); len(got) != 0 {
+		t.Fatalf("segments left in the cache after the session ended: %v", got)
+	}
+	if resp, _ := getBytes(t, srv, play.StreamURL, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("playlist after the session ended = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestTheTranscodeCapRejectsAnOnlineEncodeAsItDoesATitle: with a cap of 1 the second
+// encode is 503 SERVER_BUSY with the Title shape (retryable, a suggested bitrate);
+// ending the first frees the slot; a relay is never metered.
+func TestTheTranscodeCapRejectsAnOnlineEncodeAsItDoesATitle(t *testing.T) {
+	t.Parallel()
+	srv, admin, _, _, runner := onlineServerWithRunner(t, true, testharness.WithTranscodeCap(1))
+
+	status, first, raw := playOnline(t, srv, admin, "split", canPlayMP4(nil))
+	if status != http.StatusOK {
+		t.Fatalf("first encode = %d; body: %s", status, raw)
+	}
+	var env errorEnvelope
+	status, _ = srv.JSON(http.MethodPost, onlineBase+"/"+onlineSlug+"/items/manifest/playback", admin,
+		canPlayMP4(map[string]any{"maxBitrate": 4_000_000}), &env)
+	if status != http.StatusServiceUnavailable || env.Error.Code != "SERVER_BUSY" ||
+		env.Error.Details["retryable"] != true || env.Error.Details["suggestedMaxBitrate"] != float64(2_000_000) {
+		t.Fatalf("second encode = %d %s %v, want 503 SERVER_BUSY retryable with half the asked bitrate", status, env.Error.Code, env.Error.Details)
+	}
+	if n := len(runner.argv()); n != 1 {
+		t.Fatalf("ffmpeg ran %d times, want 1: a refused encode starts nothing", n)
+	}
+	if status, _, raw = playOnline(t, srv, admin, onlineItemMP4, canPlayMP4(nil)); status != http.StatusOK {
+		t.Fatalf("a relay at a full cap = %d, want it unmetered; body: %s", status, raw)
+	}
+	if st, _ := srv.JSON(http.MethodDelete, "/api/v1/sessions/"+first.SessionID, admin, nil, nil); st != http.StatusNoContent {
+		t.Fatalf("ending the first encode = %d", st)
+	}
+	if status, _, raw = playOnline(t, srv, admin, "manifest", canPlayMP4(nil)); status != http.StatusOK {
+		t.Fatalf("encode after the slot was freed = %d; body: %s", status, raw)
+	}
+}
+
+// TestTheFirstURLIsJudgedBeforeAnythingIsPlayed: a plain-http URL, a host off the
+// manifest allowlist, and an allowlisted host that resolves to loopback each leave
+// the source "not responding" and start no encode, on the relay path and the
+// ffmpeg path alike.
+func TestTheFirstURLIsJudgedBeforeAnythingIsPlayed(t *testing.T) {
+	t.Parallel()
+	srv, admin, _, _, runner := onlineServerWithRunner(t, true)
+	for _, item := range []string{"plainhttp", "offlist"} {
+		for _, constraint := range []map[string]any{nil, {"maxResolution": "480p"}} {
+			var env errorEnvelope
+			status, _ := srv.JSON(http.MethodPost, onlineBase+"/"+onlineSlug+"/items/"+item+"/playback", admin, canPlayMP4(constraint), &env)
+			if status != http.StatusBadGateway || env.Error.Code != "SOURCE_UNAVAILABLE" {
+				t.Errorf("%s (%v) = %d %s, want 502 SOURCE_UNAVAILABLE", item, constraint, status, env.Error.Code)
+			}
+		}
+	}
+
+	// The allowlisted media host IS loopback here, and this Server is not told to
+	// overlook that.
+	srv2, admin2, _, _, runner2 := onlineServerWithRunner(t, false)
+	for _, item := range []string{onlineItemMP4, "split"} {
+		var env errorEnvelope
+		status, _ := srv2.JSON(http.MethodPost, onlineBase+"/"+onlineSlug+"/items/"+item+"/playback", admin2, canPlayMP4(nil), &env)
+		if status != http.StatusBadGateway || env.Error.Code != "SOURCE_UNAVAILABLE" {
+			t.Errorf("loopback media %s = %d %s, want 502 SOURCE_UNAVAILABLE", item, status, env.Error.Code)
+		}
+	}
+	if len(runner.argv())+len(runner2.argv()) != 0 {
+		t.Fatalf("a refused first URL still started ffmpeg")
 	}
 }

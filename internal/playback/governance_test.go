@@ -463,3 +463,42 @@ func TestAKilledReencodeStopsCountingAtOnce(t *testing.T) {
 		t.Errorf("local transcodes = %d once the re-encoding job was killed, want 0", n)
 	}
 }
+
+// TestReserveTranscodeSharesTheCapWithTitles: an Online ffmpeg play takes a slot of
+// the same cap a Title transcode does, is rejected at the limit without queuing, and
+// frees the slot on release (once, however often release is called).
+func TestReserveTranscodeSharesTheCapWithTitles(t *testing.T) {
+	m := NewManager()
+	m.SetTranscodeCap(2)
+	if _, err := m.CreateGoverned(CreateInput{UserID: "u1"}, transcodeDecision("a")); err != nil {
+		t.Fatal(err)
+	}
+	release, err := m.ReserveTranscode()
+	if err != nil {
+		t.Fatalf("reserve with a free slot: %v", err)
+	}
+	if got := m.ActiveTranscodes(); got != 2 {
+		t.Fatalf("active = %d, want 2", got)
+	}
+	if _, err := m.ReserveTranscode(); !errors.Is(err, ErrTranscodeCapFull) {
+		t.Fatalf("reserve at the cap = %v, want ErrTranscodeCapFull", err)
+	}
+	if _, err := m.CreateGoverned(CreateInput{UserID: "u2"}, transcodeDecision("b")); !errors.Is(err, ErrTranscodeCapFull) {
+		t.Fatalf("a Title transcode beside a reserved slot = %v, want ErrTranscodeCapFull", err)
+	}
+	release()
+	release()
+	if got := m.ActiveTranscodes(); got != 1 {
+		t.Fatalf("active after releasing twice = %d, want 1", got)
+	}
+	if _, err := m.ReserveTranscode(); err != nil {
+		t.Fatalf("reserve after a release: %v", err)
+	}
+
+	unlimited := NewManager()
+	for i := 0; i < 5; i++ {
+		if _, err := unlimited.ReserveTranscode(); err != nil {
+			t.Fatalf("an uncapped Manager refused reservation %d: %v", i, err)
+		}
+	}
+}

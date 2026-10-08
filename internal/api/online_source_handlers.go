@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/goozakdev/obelo-server/internal/onlinesource"
 	"github.com/goozakdev/obelo-server/internal/playback"
@@ -206,9 +207,22 @@ func handleOnlineIcon(deps Deps, sourceID string) http.HandlerFunc {
 	}
 }
 
+// The two ways an Online item reaches a client: the source's bytes relayed
+// untouched, one progressive file; or ffmpeg's output, an HLS playlist.
+const (
+	onlineFormatProgressive = "progressive"
+	onlineFormatHLS         = "hls"
+	// onlineHLSPlaylist is the one entry point of an encoded session; its segments
+	// are named relative to it.
+	onlineHLSPlaylist = "index.m3u8"
+)
+
 type onlinePlaybackResponse struct {
 	SessionID string `json:"sessionId"`
 	StreamURL string `json:"streamUrl"`
+	// Format is "progressive" (a file a <video> plays directly) or "hls" (a playlist
+	// an HLS-capable player plays).
+	Format string `json:"format"`
 }
 
 // handleOnlinePlayback serves POST /onlineSources/{id}/items/{itemId}/playback:
@@ -234,6 +248,14 @@ func handleOnlinePlayback(deps Deps, sourceID, itemID string) http.HandlerFunc {
 			UserID: id.User.ID, SourceID: sourceID, ItemID: itemID,
 			Profile: req.DeviceProfile.toDomain(), Constraints: constraints,
 		})
+		if errors.Is(err, onlinesource.ErrBusy) {
+			// 503 SERVER_BUSY, exactly as for a Title at the transcode cap (ADR-0009).
+			busy := playback.OnlineServerBusy(constraints)
+			writeError(w, http.StatusServiceUnavailable, codeServerBusy,
+				"server is at its transcode capacity; retry at a lower bitrate",
+				map[string]any{"retryable": true, "suggestedMaxBitrate": busy.SuggestedMaxBitrate})
+			return
+		}
 		if err != nil {
 			writeOnlineFailure(w, err)
 			return
@@ -253,10 +275,16 @@ func handleOnlinePlayback(deps Deps, sourceID, itemID string) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, codeInternal, "failed to start playback", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, onlinePlaybackResponse{
+		out := onlinePlaybackResponse{
 			SessionID: sess.ID,
 			StreamURL: APIPrefix + streamRoutePrefix + grant.Token + "/" + streamProgressiveArtifact,
-		})
+			Format:    onlineFormatProgressive,
+		}
+		if sess.Transcoded {
+			out.StreamURL = APIPrefix + streamRoutePrefix + grant.Token + "/" + streamHLSArtifactPrefix + onlineHLSPlaylist
+			out.Format = onlineFormatHLS
+		}
+		writeJSON(w, http.StatusOK, out)
 	}
 }
 
@@ -324,6 +352,31 @@ func handleOnlineEnd(deps Deps, sessionID string) http.HandlerFunc {
 		deps.Online.End(sessionID)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// serveOnlineEncoded serves one file of an ffmpeg-encoded session (its playlist or a
+// segment) to a stream-token request. The playlist is live while ffmpeg runs, so
+// nothing is cached.
+func serveOnlineEncoded(deps Deps, w http.ResponseWriter, r *http.Request, sess onlinesource.Session, name string) {
+	deps.Online.Touch(sess.ID)
+	f, err := deps.Online.OpenEncoded(r.Context(), sess.ID, name)
+	if err != nil {
+		if errors.Is(err, onlinesource.ErrNoSession) {
+			refuseStreamToken(w)
+			return
+		}
+		writeOnlineFailure(w, err)
+		return
+	}
+	defer f.Close()
+	h := w.Header()
+	if strings.HasSuffix(name, ".m3u8") {
+		h.Set("Content-Type", "application/vnd.apple.mpegurl")
+	} else {
+		h.Set("Content-Type", "video/mp2t")
+	}
+	h.Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, name, time.Time{}, f)
 }
 
 // serveOnlineStream relays an Online session's bytes to a stream-token request.

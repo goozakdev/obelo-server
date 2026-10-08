@@ -457,6 +457,20 @@ func WithOnlineSourceClient(c *http.Client) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithOnlineSourceClient(c)) }
 }
 
+// WithOnlineSourceRunner sets the Runner an Online item's ffmpeg encode runs under,
+// so a test can see the arguments and write the output without a real ffmpeg
+// reading a fake https host.
+func WithOnlineSourceRunner(r transcode.Runner) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithOnlineSourceRunner(r)) }
+}
+
+// WithOnlineSourceMediaExemptAt skips the private-address check on the first URL of
+// a variant for these host:port addresses, so the suite can serve media from a
+// loopback httptest server. https and the manifest allowlist still apply.
+func WithOnlineSourceMediaExemptAt(addrs ...string) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithOnlineSourceMediaExemptAt(addrs...)) }
+}
+
 // silentAnalyzer is the harness default Analyzer: it hears nothing at all.
 type silentAnalyzer struct{}
 

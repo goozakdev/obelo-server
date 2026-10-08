@@ -103,3 +103,92 @@ func looksLikeAudio(codec string) bool {
 // ResolutionHeight maps a resolution token ("720p") to its pixel height, 0 when
 // the token is empty or unknown.
 func ResolutionHeight(token string) int { return resolutionHeight(token) }
+
+// OnlinePlan is how the Server will play an Online item: relay the bytes of a muxed
+// variant the client can play as is, or have ffmpeg read the variant and encode it
+// for the client.
+type OnlinePlan struct {
+	Variant pluginapi.OnlineVariant
+	// Transcode is true for ffmpeg, false for the relay.
+	Transcode bool
+	// MaxHeight and MaxBitrate bound the encode: the constraints the caller already
+	// clamped to the User's Playback ceiling. 0 is no bound.
+	MaxHeight  int
+	MaxBitrate int64
+}
+
+// PlanOnline chooses between the relay (B) and ffmpeg (C). A muxed variant the
+// client can play untouched is relayed. Otherwise, when ffmpeg is there to be had,
+// the best variant of ANY shape goes to it: the tallest within the ceiling, else
+// the smallest above it, scaled down to the ceiling by the encode. With no ffmpeg
+// the answer is the refusal ChooseOnlineVariant gives, which the api layer renders
+// as a Title's "a transcode would be required".
+//
+// Governance (the transcode cap, ADR-0009) is not decided here: it is a question of
+// how many are running, which the caller asks of the session Manager.
+func PlanOnline(profile DeviceProfile, constraints Constraints, variants []pluginapi.OnlineVariant, canTranscode bool) (OnlinePlan, *Unsupported) {
+	relay, refusal := ChooseOnlineVariant(profile, constraints, variants)
+	if refusal == nil {
+		return OnlinePlan{Variant: relay}, nil
+	}
+	if !canTranscode {
+		return OnlinePlan{}, refusal
+	}
+	capHeight := reencodeCapHeight(profile, constraints)
+	var best pluginapi.OnlineVariant
+	found := false
+	for _, v := range variants {
+		if !hasOnlineSource(v) {
+			continue
+		}
+		if !found || betterForTranscode(v, best, capHeight) {
+			best, found = v, true
+		}
+	}
+	if !found {
+		return OnlinePlan{}, refusal
+	}
+	return OnlinePlan{Variant: best, Transcode: true, MaxHeight: capHeight, MaxBitrate: constraints.MaxBitrate}, nil
+}
+
+// OnlineServerBusy is the rejection an Online ffmpeg play gets at a full transcode
+// cap, the same ServerBusy a Title gets. There is no estimate to halve for a remote
+// variant, so the suggestion starts from the bitrate the client asked to be held to
+// (the floor when it asked for none).
+func OnlineServerBusy(c Constraints) *ServerBusy {
+	return &ServerBusy{SuggestedMaxBitrate: suggestBusyBitrate(0, c.MaxBitrate)}
+}
+
+// hasOnlineSource says v names what its shape needs to be read.
+func hasOnlineSource(v pluginapi.OnlineVariant) bool {
+	switch v.Kind {
+	case "", pluginapi.OnlineVariantMuxed, pluginapi.OnlineVariantManifest:
+		return v.URL != ""
+	case pluginapi.OnlineVariantSplit:
+		return v.VideoURL != "" && v.AudioURL != ""
+	}
+	return false
+}
+
+// betterForTranscode reports whether v beats cur as the source of an encode under
+// capHeight (0 = none): any variant within the cap beats one above it, the tallest
+// within wins, and above the cap the smallest wins since it is the least to decode.
+// An unstated height counts as the smallest within the cap. The first of equals is
+// kept.
+func betterForTranscode(v, cur pluginapi.OnlineVariant, capHeight int) bool {
+	hv, hc := resolutionHeight(v.Resolution), resolutionHeight(cur.Resolution)
+	if capHeight <= 0 {
+		return hv > hc
+	}
+	vIn, cIn := hv <= capHeight, hc <= capHeight
+	switch {
+	case vIn && !cIn:
+		return true
+	case !vIn && cIn:
+		return false
+	case vIn:
+		return hv > hc
+	default:
+		return hv < hc
+	}
+}

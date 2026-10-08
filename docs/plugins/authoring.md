@@ -348,6 +348,54 @@ makes no outbound requests at all.
 The host checks this list **from the file on disk, on every fetch**. Nothing your
 guest says at call time can widen it.
 
+#### The domain-suffix form, for media hosts
+
+An Online source provider hands the host media URLs, and a media host often has a
+name you cannot list in advance (`rr3---sn-abc.googlevideo.com`). For those one
+entry may be a **domain suffix**: a dot, then a domain of two or more lowercase
+labels.
+
+```json
+"network": { "hosts": ["api.example.test", ".googlevideo.com"] }
+```
+
+`.googlevideo.com` covers every host *under* that domain, at any depth
+(`a.b.googlevideo.com`), and nothing that merely ends in the same letters
+(`notgooglevideo.com`, `googlevideo.com.evil.net`). It does not cover
+`googlevideo.com` itself; list the bare name beside it if you need it. A suffix
+entry licenses the host of a **media URL only** — your own `http_fetch` calls stay
+exact — and the manifest is refused at load if one is malformed (`.com`, `.`,
+`..a.com`, an address such as `.127.0.0.1`).
+
+#### What the host checks on an Online source's media URLs, and what it does not
+
+Every URL a variant names for the media (a muxed `url`, a split variant's
+`videoUrl` and `audioUrl`, a manifest `url`) is judged by the host before anything
+is played: it must be **https**, its host must match your `network.hosts` (exact or
+suffix), and the host must not resolve to a loopback, private, link-local or
+otherwise non-public address. A variant that fails is dropped; if none is left the
+source shows as not responding.
+
+When the host *relays* a muxed variant, it fetches the bytes itself and checks every
+redirect the same way. When it hands a variant to **ffmpeg** (a split variant, a
+manifest, a format the client cannot play, or a picture above the User's Playback
+ceiling), ffmpeg fetches directly, with `-protocol_whitelist https,tls,tcp,crypto`
+on every input, which blocks `file:`, plain `http:`, `data:`, `rtmp:`, `udp:`,
+`concat:` and `pipe:`. On that path **only the first URL is checked**, and two risks
+remain that the project has accepted and you should know about:
+
+- **A later https hop can reach a LAN address.** After the first URL, a redirect or a
+  manifest hop (an HLS or DASH segment) is not checked again, so a media host that
+  redirects, or a manifest that points at an https address on the household's
+  network, will be fetched by ffmpeg.
+- **DNS rebinding of the first URL can defeat the address check.** The check uses the
+  Server's own DNS lookup and ffmpeg resolves the name again, so a resolver that
+  answers a public address to the one and a private address to the other gets
+  through.
+
+Neither is something your Plugin can close. Offer a muxed variant where the source
+has one: that is the path that is checked hop by hop.
+
 ### Declare a probe (Metadata providers)
 
 The providers screen has a **Test connection** button, and what it does is run one
@@ -400,7 +448,7 @@ for a plugin that paces itself:
 {
   "id": "musicbrainz",
   "name": "MusicBrainz",
-  "version": "1.1.14",
+  "version": "1.1.15",
   "apiVersion": 1,
   "description": "Authoritative open music encyclopedia: artists, albums, and tracks. No API key required.",
   "docsUrl": "https://musicbrainz.org/doc/MusicBrainz_API",

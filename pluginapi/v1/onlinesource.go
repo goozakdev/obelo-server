@@ -16,10 +16,16 @@ import "context"
 //
 // Nothing here is persisted. An answer is used for the call that asked for it.
 
-// OnlineVariantMuxed is the one variant shape this version of the contract
-// carries: audio and video in a single file at a single URL. Split and manifest
-// variants arrive additively, as their own Kind values.
-const OnlineVariantMuxed = "muxed"
+// The shapes a variant takes (OnlineVariant.Kind). A muxed variant is audio and
+// video in a single file at a single URL; the host relays it when the client can
+// play it as is. A split variant carries the picture and the sound at two URLs, and
+// a manifest variant is an HLS or DASH manifest; neither can be relayed as a
+// single file, so the host has ffmpeg read them.
+const (
+	OnlineVariantMuxed    = "muxed"
+	OnlineVariantSplit    = "split"
+	OnlineVariantManifest = "manifest"
+)
 
 // OnlineItem is one playable video in an Online row. The only item kind is a
 // single video; a channel or a playlist is a row, not an item.
@@ -69,14 +75,20 @@ type OnlineResolveRequest struct {
 
 // OnlineVariant is one way to play an item.
 type OnlineVariant struct {
-	// Kind is OnlineVariantMuxed; empty reads as muxed.
+	// Kind is OnlineVariantMuxed, OnlineVariantSplit or OnlineVariantManifest;
+	// empty reads as muxed.
 	Kind string `json:"kind,omitempty"`
-	// URL is an https URL of the media file.
-	URL string `json:"url"`
+	// URL is an https URL of the media file (muxed) or of the manifest (manifest).
+	URL string `json:"url,omitempty"`
+	// VideoURL and AudioURL are the https URLs of a split variant's picture and
+	// sound.
+	VideoURL string `json:"videoUrl,omitempty"`
+	AudioURL string `json:"audioUrl,omitempty"`
 	// Container names the file's container as a client profile does ("mp4",
-	// "webm"), and Codecs its codecs ("h264", "aac"), video first.
+	// "webm"; "hls" or "dash" for a manifest), and Codecs its codecs ("h264",
+	// "aac"), video first.
 	Container string   `json:"container"`
-	Codecs    []string `json:"codecs"`
+	Codecs    []string `json:"codecs,omitempty"`
 	// Resolution is the picture height as a token ("720p"), empty when unknown.
 	Resolution string `json:"resolution,omitempty"`
 	// Headers are request headers the media host requires (referer, user agent).

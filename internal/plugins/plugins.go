@@ -613,6 +613,22 @@ func (p *Plugin) allows(host string) bool {
 	return ok
 }
 
+// MediaHostAllowed reports whether the Plugin id's manifest licenses host as the
+// host of a media URL (ADR-0068 decision 9): an exact entry, or a domain-suffix
+// entry (".example.com"). It reads the manifest on disk, as every allowlist check
+// does, never anything a guest said.
+func (s *Set) MediaHostAllowed(id, host string) bool {
+	if s == nil {
+		return false
+	}
+	for _, p := range s.plugins {
+		if p.id == id {
+			return hostMatchesAllowlist(p.manifest.Network.Hosts, host)
+		}
+	}
+	return false
+}
+
 // operatorAddrs are the host and port (addrsOf) of each URL the Admin typed for
 // this Plugin, valid only while a call is in flight.
 func (p *Plugin) operatorAddrs() []string {
@@ -1112,6 +1128,11 @@ func loadOne(ctx context.Context, dir, dirName string, opts Options) *Plugin {
 	}
 	p.manifest = m
 	for _, h := range m.Network.Hosts {
+		// A suffix entry (".example.com") licenses media hosts only (MediaHostAllowed);
+		// the Plugin's own fetches stay exact.
+		if isSuffixEntry(h) {
+			continue
+		}
 		p.hosts[normalizeHost(h)] = struct{}{}
 	}
 	// Again, now that there is a manifest to read them off: the budget and the
