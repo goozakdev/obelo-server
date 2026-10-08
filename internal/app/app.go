@@ -923,6 +923,9 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	// Reload, in this order — providers, subtitles, sinks — so nothing is left
 	// composed from Plugins that are no longer there. Only then is the old Set
 	// closed, which app.Close does in the same order for the same reason.
+	// The Online source service is built further down; the Manager only calls
+	// OnChange after boot, by which time the variable is set.
+	var onlineSvc *onlinesource.Service
 	pluginManager := plugins.NewManager(plugins.ManagerConfig{
 		Dir:      filepath.Join(cfg.DataDir, plugins.DirName),
 		Registry: registry,
@@ -954,6 +957,13 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 				return err
 			}
 			return sinkManager.Reload(ctx)
+		},
+		// An Online source's cached rows were answered under the settings and the
+		// build that were in force then.
+		OnChange: func(pluginID string) {
+			if onlineSvc != nil {
+				onlineSvc.ClearCache(pluginID)
+			}
 		},
 		AllowPrivateSources: o.pluginSourcesMayBePrivate,
 	})
@@ -1096,7 +1106,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 	// Online sources (ADR-0068): played from a session of their own, whose end
 	// revokes its stream token as a Title session's does.
-	onlineSvc := onlinesource.New(registry, o.onlineSourceClient)
+	onlineSvc = onlinesource.New(registry, o.onlineSourceClient)
 	// The first URL of a variant must be on the Plugin's manifest allowlist, read
 	// from the Set the Manager holds NOW so an install or removal is seen at once.
 	onlineSvc.SetMediaHostPolicy(func(sourceID, host string) bool {

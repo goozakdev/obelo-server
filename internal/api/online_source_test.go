@@ -95,9 +95,11 @@ type onlineSource struct {
 	srv      *httptest.Server
 	mu       sync.Mutex
 	rowsCall []map[string]any
+	rowCalls []map[string]any
 	resolved []string
 	hints    []map[string]any
 	rows     func() []map[string]any
+	row      func(rowID, cursor string) map[string]any
 	variants func(itemID string) []map[string]any
 }
 
@@ -159,6 +161,12 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 		case "/rows":
 			s.rowsCall = append(s.rowsCall, call)
 			_ = json.NewEncoder(w).Encode(map[string]any{"rows": s.rows()})
+		case "/row":
+			req, _ := call["request"].(map[string]any)
+			s.rowCalls = append(s.rowCalls, req)
+			rowID, _ := req["rowId"].(string)
+			cursor, _ := req["cursor"].(string)
+			_ = json.NewEncoder(w).Encode(s.row(rowID, cursor))
 		case "/resolve":
 			id, _ := call["request"].(map[string]any)["itemId"].(string)
 			s.resolved = append(s.resolved, id)
@@ -176,7 +184,7 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 func (s *onlineSource) calls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.rowsCall) + len(s.resolved)
+	return len(s.rowsCall) + len(s.rowCalls) + len(s.resolved)
 }
 
 // onlineServer installs the test Plugin, boots a server that relays through the

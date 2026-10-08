@@ -30,6 +30,10 @@ func (f *fakeProvider) Rows(context.Context, pluginapi.OnlineRowsRequest) (plugi
 	return pluginapi.OnlineRowsResponse{}, nil
 }
 
+func (f *fakeProvider) Row(context.Context, pluginapi.OnlineRowRequest) (pluginapi.OnlineRowResponse, error) {
+	return pluginapi.OnlineRowResponse{}, nil
+}
+
 func (f *fakeProvider) Resolve(_ context.Context, req pluginapi.OnlineResolveRequest) (pluginapi.OnlineResolveResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

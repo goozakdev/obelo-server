@@ -163,7 +163,9 @@ import type {
   DeviceProfile,
   Lyrics,
   OnlinePlayback,
+  OnlineItem,
   OnlineRow,
+  OnlineRowPage,
   OnlineSource,
   PlaybackConstraints,
 } from "./types";
@@ -705,6 +707,22 @@ export class ApiClient {
       { signal },
     );
     return res.rows ?? [];
+  }
+
+  /** `GET /api/v1/onlineSources/{id}/rows/{rowId}?cursor=` — the next page of one
+   * row, by the opaque cursor an earlier answer named. `nextCursor` comes back
+   * null on the last page (the server omits it). */
+  async getOnlineRowPage(
+    sourceId: string,
+    rowId: string,
+    cursor: string,
+    signal?: AbortSignal,
+  ): Promise<{ items: OnlineItem[]; nextCursor: string | null }> {
+    const res = await this.request<OnlineRowPage>(
+      `/onlineSources/${encodeURIComponent(sourceId)}/rows/${encodeURIComponent(rowId)}?cursor=${encodeURIComponent(cursor)}`,
+      { signal },
+    );
+    return { items: res.items ?? [], nextCursor: res.nextCursor ?? null };
   }
 
   /** `POST /api/v1/onlineSources/{id}/items/{itemId}/playback` — resolve the item

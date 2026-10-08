@@ -18,6 +18,7 @@ import (
 //	GET  /onlineSources                                the tile list, from the registry
 //	GET  /onlineSources/{id}/icon                      the tile image from the Plugin's package (bearer OR cookie)
 //	GET  /onlineSources/{id}/rows                      the source page (runs rows())
+//	GET  /onlineSources/{id}/rows/{rowId}?cursor=      the next page of one row (runs row())
 //	GET  /onlineSources/{id}/items/{itemId}/thumbnail  Server-proxied bytes (bearer OR cookie)
 //	POST /onlineSources/{id}/items/{itemId}/playback   resolve() once, open a session
 //
@@ -102,6 +103,8 @@ func handleOnlineSourceSubtree(deps Deps) http.HandlerFunc {
 		switch {
 		case len(parts) == 2 && parts[1] == "rows":
 			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineRows(deps, parts[0])))(w, r)
+		case len(parts) == 3 && parts[1] == "rows":
+			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineRow(deps, parts[0], parts[2])))(w, r)
 		case len(parts) == 2 && parts[1] == "icon":
 			requireMethod(http.MethodGet, requireAuthAllowCookie(deps.Auth, handleOnlineIcon(deps, parts[0])))(w, r)
 		case len(parts) == 4 && parts[1] == "items" && parts[3] == "thumbnail":
@@ -149,16 +152,46 @@ func handleOnlineRows(deps Deps, sourceID string) http.HandlerFunc {
 		}
 		out := make([]onlineRowJSON, 0, len(rows))
 		for _, row := range rows {
-			items := make([]onlineItemJSON, 0, len(row.Items))
-			for _, it := range row.Items {
-				items = append(items, onlineItemJSON{
-					ID: it.ID, Title: it.Title, ThumbnailURL: onlineThumbnailURL(sourceID, it.ID),
-					DurationMs: it.DurationMs, Description: it.Description, PublishedAt: it.PublishedAt,
-				})
+			j := onlineRowJSON{ID: row.ID, Label: row.Label, Items: onlineItemsJSON(sourceID, row.Items)}
+			if row.NextCursor != "" {
+				j.NextCursor = &row.NextCursor
 			}
-			out = append(out, onlineRowJSON{ID: row.ID, Label: row.Label, Items: items})
+			out = append(out, j)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"rows": out})
+	}
+}
+
+func onlineItemsJSON(sourceID string, in []onlinesource.Item) []onlineItemJSON {
+	items := make([]onlineItemJSON, 0, len(in))
+	for _, it := range in {
+		items = append(items, onlineItemJSON{
+			ID: it.ID, Title: it.Title, ThumbnailURL: onlineThumbnailURL(sourceID, it.ID),
+			DurationMs: it.DurationMs, Description: it.Description, PublishedAt: it.PublishedAt,
+		})
+	}
+	return items
+}
+
+// handleOnlineRow serves GET /onlineSources/{id}/rows/{rowId}?cursor=: the next
+// page of one row, by the opaque cursor an earlier answer named. nextCursor is
+// absent on the last page.
+func handleOnlineRow(deps Deps, sourceID, rowID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !onlineAllowed(deps, r) {
+			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		page, err := deps.Online.Row(r.Context(), sourceID, rowID, r.URL.Query().Get("cursor"))
+		if err != nil {
+			writeOnlineFailure(w, err)
+			return
+		}
+		out := struct {
+			Items      []onlineItemJSON `json:"items"`
+			NextCursor string           `json:"nextCursor,omitempty"`
+		}{Items: onlineItemsJSON(sourceID, page.Items), NextCursor: page.NextCursor}
+		writeJSON(w, http.StatusOK, out)
 	}
 }
 

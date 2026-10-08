@@ -619,7 +619,22 @@ func contractTypes() []typeSpec {
 		},
 		{
 			value: pluginapi.OnlineRow{},
-			doc:   "One labelled shelf of an Online source's page: its id, its label and its items.",
+			doc: "One labelled shelf of an Online source's page: its id, its label, its items and, when the row " +
+				"has more, the opaque nextCursor that asks row() for the next page.",
+		},
+		{
+			value: pluginapi.OnlineRowRequest{},
+			doc: "Asks an Online source provider for the page of one row after a cursor: the rowId and the opaque " +
+				"cursor the previous answer named. The host never reads a cursor, only hands it back.",
+		},
+		{
+			value: pluginapi.OnlineRowResponse{},
+			doc:   "What an Online source provider answers to row(): one more page of items and, when there is another, its nextCursor; none on the last page.",
+		},
+		{
+			value: pluginapi.OnlineRowCall{},
+			doc: "What the host hands an INSTALLED Online source provider for a row() call: the request and the " +
+				"Settings the host resolved. The response is un-enveloped — a plain OnlineRowResponse.",
 		},
 		{
 			value: pluginapi.OnlineRowsRequest{},

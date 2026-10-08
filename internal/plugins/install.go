@@ -277,6 +277,11 @@ type ManagerConfig struct {
 	// before the old Set is closed, which is the ordering that keeps an in-flight
 	// delivery from trapping on a runtime being torn down underneath it.
 	Reload func(context.Context) error
+	// OnChange, when set, hears that what a Plugin answers may have changed: with its
+	// id after its declared settings are saved, and with "" after a rebuild-and-swap
+	// (an install, upgrade, switch or removal), which may have replaced any of them.
+	// The Online source service clears its cached rows on it.
+	OnChange func(pluginID string)
 	// Client fetches a pasted URL. Nil means safefetch.Client; whatever is passed
 	// is GUARDED, so the redirect policy cannot be wired away.
 	Client *http.Client
@@ -311,6 +316,7 @@ type Manager struct {
 	loader   Options
 	base     func(*pluginapi.Registry)
 	reload   func(context.Context) error
+	onChange func(pluginID string)
 	client   *http.Client
 	logf     func(string, ...any)
 	bundled  BundledSource
@@ -337,6 +343,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		loader:              cfg.Loader.withDefaults(),
 		base:                cfg.Base,
 		reload:              cfg.Reload,
+		onChange:            cfg.OnChange,
 		client:              safefetch.Guard(cfg.Client),
 		logf:                cfg.Logf,
 		bundled:             cfg.Bundled,
@@ -764,6 +771,9 @@ func (m *Manager) rebuild(ctx context.Context) error {
 	var reloadErr error
 	if m.reload != nil {
 		reloadErr = m.reload(ctx)
+	}
+	if m.onChange != nil {
+		m.onChange("")
 	}
 	if previous != nil && previous != next {
 		_ = previous.Close(ctx)

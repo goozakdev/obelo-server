@@ -22,10 +22,11 @@ import (
 // A source is a remote service, so its calls run under the ordinary fetch policy:
 // the manifest's allowlist, plus the host of the URL the Settings carry.
 
-// The Extension point's two contract calls, as guest exports, with the seam in the
+// The Extension point's three contract calls, as guest exports, with the seam in the
 // name for the reason web_reference_links has.
 const (
 	exportOnlineSourceRows    = "online_source_rows"
+	exportOnlineSourceRow     = "online_source_row"
 	exportOnlineSourceResolve = "online_source_resolve"
 )
 
@@ -96,6 +97,23 @@ func (g *guestOnlineSourceProvider) Rows(ctx context.Context, req pluginapi.Onli
 			return pluginapi.OnlineRowsResponse{}, err
 		}
 		return pluginapi.OnlineRowsResponse{}, fmt.Errorf("plugin %s: rows: %w", g.p.id, err)
+	}
+	return resp, nil
+}
+
+// Row asks the guest for the next page of one row, under the budget and policy of
+// Rows.
+func (g *guestOnlineSourceProvider) Row(ctx context.Context, req pluginapi.OnlineRowRequest) (pluginapi.OnlineRowResponse, error) {
+	var resp pluginapi.OnlineRowResponse
+	buildReq := func(callCtx context.Context) any {
+		return pluginapi.OnlineRowCall{Request: req, Settings: g.p.withSettingValues(g.settings, callCtx)}
+	}
+	policy := callPolicy{budget: g.p.opts.CallTimeout, queueInBudget: true}
+	if err := g.p.callGuestUnder(ctx, policy, exportOnlineSourceRow, addrsOf(g.settings), buildReq, &resp); err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return pluginapi.OnlineRowResponse{}, err
+		}
+		return pluginapi.OnlineRowResponse{}, fmt.Errorf("plugin %s: row %q: %w", g.p.id, req.RowID, err)
 	}
 	return resp, nil
 }

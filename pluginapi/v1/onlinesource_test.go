@@ -1,6 +1,10 @@
 package v1
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"testing"
+)
 
 // onlineSourceWireCases pins the documents of the Online source provider
 // Extension point: a rows answer, a resolve request and its muxed answer, a miss,
@@ -19,6 +23,40 @@ func onlineSourceWireCases() []wireCase {
 			golden: `{"rows":[{"id":"recent","label":"Recently added","items":[{"id":"v1","title":"A talk",` +
 				`"thumbnailUrl":"https://media.example/v1.jpg","durationMs":61000,"description":"About things",` +
 				`"publishedAt":"2026-09-01T00:00:00Z"}]}]}`,
+		},
+		{
+			name: "OnlineRowsResponse paged",
+			value: OnlineRowsResponse{Rows: []OnlineRow{{
+				ID: "recent", Label: "Recently added", NextCursor: "c2",
+				Items: []OnlineItem{{ID: "v1", Title: "A talk", ThumbnailURL: "https://media.example/v1.jpg"}},
+			}}},
+			golden: `{"rows":[{"id":"recent","label":"Recently added","items":[{"id":"v1","title":"A talk",` +
+				`"thumbnailUrl":"https://media.example/v1.jpg","durationMs":0}],"nextCursor":"c2"}]}`,
+		},
+		{
+			name:   "OnlineRowRequest",
+			value:  OnlineRowRequest{RowID: "recent", Cursor: "c2"},
+			golden: `{"rowId":"recent","cursor":"c2"}`,
+		},
+		{
+			name: "OnlineRowResponse",
+			value: OnlineRowResponse{
+				Items:      []OnlineItem{{ID: "v2", Title: "Another", ThumbnailURL: "https://media.example/v2.jpg", DurationMs: 5}},
+				NextCursor: "c3",
+			},
+			golden: `{"items":[{"id":"v2","title":"Another","thumbnailUrl":"https://media.example/v2.jpg",` +
+				`"durationMs":5}],"nextCursor":"c3"}`,
+		},
+		{
+			name:   "OnlineRowResponse last page",
+			value:  OnlineRowResponse{Items: []OnlineItem{}},
+			golden: `{"items":[]}`,
+		},
+		{
+			name:  "OnlineRowCall",
+			value: OnlineRowCall{Request: OnlineRowRequest{RowID: "recent", Cursor: "c2"}, Settings: Settings{Enabled: true}},
+			golden: `{"request":{"rowId":"recent","cursor":"c2"},` +
+				`"settings":{"enabled":true}}`,
 		},
 		{
 			name:   "OnlineResolveRequest",
@@ -116,5 +154,24 @@ func TestRegistryHoldsOnlineSourceProviders(t *testing.T) {
 			}()
 			reg.RegisterOnlineSourceProvider(tc.reg)
 		})
+	}
+}
+
+// TestAnOnlineItemWithANonNumericDurationDecodesAsNegative: one item's bad
+// durationMs must not fail the whole answer; it reads as a negative duration the
+// host drops, and the sibling decodes untouched.
+func TestAnOnlineItemWithANonNumericDurationDecodesAsNegative(t *testing.T) {
+	var resp OnlineRowResponse
+	doc := `{"items":[{"id":"a","title":"A","durationMs":"soon"},{"id":"b","title":"B","durationMs":-5},` +
+		`{"id":"c","title":"C","durationMs":172800000},{"id":"d","title":"D"},{"id":"e","title":"E","durationMs":1e30}]}`
+	if err := json.Unmarshal([]byte(doc), &resp); err != nil {
+		t.Fatalf("decoding failed over a bad sibling: %v", err)
+	}
+	var got []int64
+	for _, it := range resp.Items {
+		got = append(got, it.DurationMs)
+	}
+	if want := []int64{-1, -1, 172800000, 0, -1}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("durations = %v, want %v", got, want)
 	}
 }

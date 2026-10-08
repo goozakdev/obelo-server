@@ -2001,15 +2001,17 @@ func signInRefresh(ptr, n uint32) uint64 {
 // The Online source provider seam.
 // =============================================================================
 //
-// Appended like the Marker provider half, with two calls instead of one. The
+// Appended like the Marker provider half, with three calls instead of one. The
 // WHOLE call envelope (request and settings, so a test can see what the Admin
-// entered) is POSTed as JSON to the source at `<settings.url>/rows` or
-// `<settings.url>/resolve`, and whatever the source answers is this Plugin's
+// entered) is POSTed as JSON to the source at `<settings.url>/rows`,
+// `<settings.url>/row` or `<settings.url>/resolve`, and whatever the source answers is this Plugin's
 // answer, verbatim. The test's source decides every row, item and variant, and
 // records every envelope.
 //
 //	online_source_rows(ptr u32, len u32) -> i64      an OnlineRowsCall in,
 //	                                                 an OnlineRowsResponse out
+//	online_source_row(ptr u32, len u32) -> i64       an OnlineRowCall in,
+//	                                                 an OnlineRowResponse out
 //	online_source_resolve(ptr u32, len u32) -> i64   an OnlineResolveCall in,
 //	                                                 an OnlineResolveResponse out
 
@@ -2021,6 +2023,9 @@ type onlineSourceCall struct {
 
 //go:wasmexport online_source_rows
 func onlineSourceRows(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/rows") }
+
+//go:wasmexport online_source_row
+func onlineSourceRow(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/row") }
 
 //go:wasmexport online_source_resolve
 func onlineSourceResolve(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/resolve") }

@@ -3340,7 +3340,15 @@ export interface OnlineRow {
   id: string;
   label: string;
   items: OnlineItem[];
+  /** The opaque token that asks for the row's next page; null when it has no more. */
   nextCursor: string | null;
+}
+
+/** One more page of an Online row (`GET /onlineSources/{id}/rows/{rowId}?cursor=`).
+ * `nextCursor` is absent on the last page. */
+export interface OnlineRowPage {
+  items: OnlineItem[];
+  nextCursor?: string | null;
 }
 
 /** What starting an Online item answers: a session and a stream-token URL (the

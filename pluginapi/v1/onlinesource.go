@@ -1,12 +1,18 @@
 package v1
 
-import "context"
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"math"
+)
 
 // The Online source provider Extension point (ADR-0068, behind ADR-0057): a Plugin
 // that lets a User browse and watch something outside the household — a PeerTube
 // instance, the Internet Archive — without any of it becoming part of the
-// catalog. Two request-response calls: rows() answers the source's Online rows,
-// and resolve() turns one Online item into the URL(s) it plays from.
+// catalog. Three request-response calls: rows() answers the source's Online rows,
+// row() answers the next page of one row by an opaque cursor, and resolve() turns
+// one Online item into the URL(s) it plays from.
 //
 // The Plugin RESOLVES; the host PLAYS. A Plugin only ever supplies URLs and data.
 // The host decides whether to fetch, how to play and who may see: it relays a
@@ -43,11 +49,38 @@ type OnlineItem struct {
 	PublishedAt string `json:"publishedAt,omitempty"`
 }
 
+// UnmarshalJSON reads an item whose durationMs is not a JSON number as a NEGATIVE
+// duration instead of failing the whole answer, so the host can drop that one item
+// as malformed and keep its valid siblings.
+func (it *OnlineItem) UnmarshalJSON(b []byte) error {
+	type plain OnlineItem
+	aux := struct {
+		*plain
+		DurationMs json.RawMessage `json:"durationMs"`
+	}{plain: (*plain)(it)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	it.DurationMs = 0
+	if raw := bytes.TrimSpace(aux.DurationMs); len(raw) > 0 && string(raw) != "null" {
+		var f float64
+		if err := json.Unmarshal(raw, &f); err != nil || f < 0 || f >= math.MaxInt64 {
+			it.DurationMs = -1
+		} else {
+			it.DurationMs = int64(f)
+		}
+	}
+	return nil
+}
+
 // OnlineRow is one labelled shelf of an Online source's page.
 type OnlineRow struct {
 	ID    string       `json:"id"`
 	Label string       `json:"label"`
 	Items []OnlineItem `json:"items"`
+	// NextCursor is the opaque token that asks row() for the page after these
+	// items; empty when the row has no more.
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 // OnlineRowsRequest asks for the source's rows. It carries nothing today; it is a
@@ -57,6 +90,21 @@ type OnlineRowsRequest struct{}
 // OnlineRowsResponse is the source page: its rows, in the order to show them.
 type OnlineRowsResponse struct {
 	Rows []OnlineRow `json:"rows"`
+}
+
+// OnlineRowRequest asks for the page of one row after Cursor, the token the
+// previous answer (rows() or row()) named. The cursor is the Plugin's own: the
+// host never reads it, only hands it back.
+type OnlineRowRequest struct {
+	RowID  string `json:"rowId"`
+	Cursor string `json:"cursor"`
+}
+
+// OnlineRowResponse is one more page of a row: its items, and the cursor for the
+// page after them, empty on the last.
+type OnlineRowResponse struct {
+	Items      []OnlineItem `json:"items"`
+	NextCursor string       `json:"nextCursor,omitempty"`
 }
 
 // OnlineHints are what the host tells a Plugin about the client that will play an
@@ -106,6 +154,7 @@ type OnlineResolveResponse struct {
 // not responding and plays nothing.
 type OnlineSourceProvider interface {
 	Rows(ctx context.Context, req OnlineRowsRequest) (OnlineRowsResponse, error)
+	Row(ctx context.Context, req OnlineRowRequest) (OnlineRowResponse, error)
 	Resolve(ctx context.Context, req OnlineResolveRequest) (OnlineResolveResponse, error)
 }
 
@@ -130,6 +179,13 @@ type OnlineSourceProviderRegistration struct {
 type OnlineRowsCall struct {
 	Request  OnlineRowsRequest `json:"request"`
 	Settings Settings          `json:"settings"`
+}
+
+// OnlineRowCall is OnlineRowsCall for a row() call; its response is a plain
+// OnlineRowResponse.
+type OnlineRowCall struct {
+	Request  OnlineRowRequest `json:"request"`
+	Settings Settings         `json:"settings"`
 }
 
 // OnlineResolveCall is OnlineRowsCall for a resolve() call; its response is a

@@ -535,6 +535,9 @@ func (m *Manager) SaveSettings(ctx context.Context, id string, submitted map[str
 		return Installed{}, err
 	}
 	p.SetSettingValues(SettingValues(fields, rows))
+	if m.onChange != nil {
+		m.onChange(id)
+	}
 	m.logf("obelo: plugin %s: settings saved (%d of %d declared fields hold a value)", id, len(rows), len(fields))
 	return m.view(ctx, id)
 }

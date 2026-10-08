@@ -16,6 +16,7 @@
 package onlinesource
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -58,6 +59,21 @@ const (
 	thumbnailTimeout = 20 * time.Second
 	// maxIDLen bounds a row or item id.
 	maxIDLen = 256
+	// The caps on what a Plugin may hand a User. Over-length text is truncated to
+	// the cap (counted in characters) and the entry kept; over-many rows or items
+	// are cut to the cap.
+	maxRows         = 50
+	maxItemsPerRow  = 100
+	maxPageItems    = 100
+	maxLabelLen     = 100
+	maxTitleLen     = 200
+	maxDescLen      = 2000
+	maxCursorLen    = 2048
+	cacheTTL        = 5 * time.Minute
+	maxCacheEntries = 512
+	// maxThumbsPerSource bounds the item → thumbnail URL map of one source.
+	// Four of the largest answers a Plugin may give, so one answer never evicts itself.
+	maxThumbsPerSource = 4 * maxRows * maxItemsPerRow
 )
 
 // Source is one tile: an enabled source, by the name its Plugin gave it. HasIcon
@@ -89,6 +105,14 @@ type Row struct {
 	ID    string
 	Label string
 	Items []Item
+	// NextCursor asks Row for the page after Items; empty when there is none.
+	NextCursor string
+}
+
+// Page is one more page of a row.
+type Page struct {
+	Items      []Item
+	NextCursor string
 }
 
 // Service lists sources, serves their pages and plays their items.
@@ -98,17 +122,21 @@ type Service struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
-	// thumbs maps source → item → the https thumbnail URL the source's last page
+	// thumbs maps source → item → the https thumbnail URL the source's last pages
 	// named. It is what lets the thumbnail route take an item id and no URL, so a
-	// client can never aim the proxy at an address of its choosing. A restart
+	// client can never aim the proxy at an address of its choosing. It outlives the
+	// rows cache (a page left open still loads its images) and is held to
+	// maxThumbsPerSource per source by evicting the least recently used; a restart
 	// clears it, and the next page repopulates it.
-	thumbs map[string]map[string]string
-	// titles is thumbs' twin for item titles: what lets a session be labelled with
+	//
+	// The same entry carries the item's title: what lets a session be labelled with
 	// the title of the item it plays (the sessions page), though resolve() is asked
-	// for an id alone. Memory only, cleared by a restart like thumbs.
-	titles map[string]map[string]string
-	onEnd  func(sessionID string)
-	now    func() time.Time
+	// for an id alone. It shares the thumbnails' bound and refresh.
+	thumbs map[string]*thumbLRU
+	// cache holds rows() and row() answers for cacheTTL, keyed per source.
+	cache map[cacheKey]cacheEntry
+	onEnd func(sessionID string)
+	now   func() time.Time
 
 	// The first-URL judgment on a variant's media (check.go).
 	transcoder  *Transcoder
@@ -139,8 +167,8 @@ func New(reg *pluginapi.Registry, client *http.Client) *Service {
 	return &Service{
 		reg: reg, client: guarded,
 		sessions: map[string]*Session{},
-		thumbs:   map[string]map[string]string{},
-		titles:   map[string]map[string]string{},
+		thumbs:   map[string]*thumbLRU{},
+		cache:    map[cacheKey]cacheEntry{},
 		now:      time.Now,
 		lookup:   lookupIPs,
 	}
@@ -212,12 +240,158 @@ func (s *Service) provider(sourceID string) (pluginapi.OnlineSourceProvider, plu
 	return p, r, nil
 }
 
+// cacheKey names one cached answer: a source's rows(), or one row() page. The
+// source is always part of it, so one source's rows can never be served as
+// another's.
+type cacheKey struct {
+	source, row, cursor string
+	list                bool
+}
+
+type cacheEntry struct {
+	rows    []Row
+	page    Page
+	expires time.Time
+	// thumbs are the thumbnail URLs the answer's items named, so serving it from
+	// the cache can refresh them.
+	thumbs map[string]itemRef
+}
+
+// itemRef is what the host remembers of an item a page named: the thumbnail address
+// the proxy fetches and the title a session of it is labelled with.
+type itemRef struct {
+	url, title string
+}
+
+// thumbEntry is one remembered item.
+type thumbEntry struct {
+	id string
+	itemRef
+}
+
+// thumbLRU is one source's item → thumbnail URL map in least-recently-used order:
+// the front is the most recently named or fetched.
+type thumbLRU struct {
+	items map[string]*list.Element
+	order *list.List
+}
+
+// cached is the unexpired answer under key, if any.
+func (s *Service) cached(key cacheKey) (cacheEntry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.cache[key]
+	if !ok || !s.now().Before(e.expires) {
+		return cacheEntry{}, false
+	}
+	return e, true
+}
+
+// remember keeps an answer for cacheTTL, along with the thumbnails its items named.
+// Expired answers and thumbnails are pruned here, and the cache is held to
+// maxCacheEntries by evicting the entry nearest to expiry.
+func (s *Service) remember(key cacheKey, e cacheEntry, thumbs map[string]itemRef) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	e.expires = now.Add(cacheTTL)
+	for k, old := range s.cache {
+		if !now.Before(old.expires) {
+			delete(s.cache, k)
+		}
+	}
+	if _, replacing := s.cache[key]; !replacing && len(s.cache) >= maxCacheEntries {
+		var oldest cacheKey
+		var oldestAt time.Time
+		for k, old := range s.cache {
+			if oldestAt.IsZero() || old.expires.Before(oldestAt) {
+				oldest, oldestAt = k, old.expires
+			}
+		}
+		delete(s.cache, oldest)
+	}
+	e.thumbs = thumbs
+	s.cache[key] = e
+	s.touchThumbsLocked(key.source, thumbs)
+}
+
+// touchThumbs registers or refreshes the thumbnails of an answer served from the
+// cache, so a page that is still cached can always load its images.
+func (s *Service) touchThumbs(source string, thumbs map[string]itemRef) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.touchThumbsLocked(source, thumbs)
+}
+
+// touchThumbsLocked moves every thumbnail of an answer to the front of the source's
+// LRU, then evicts from the back. The cap is several whole answers, and the
+// answer's own entries are at the front, so it can never evict itself.
+func (s *Service) touchThumbsLocked(source string, thumbs map[string]itemRef) {
+	l := s.thumbs[source]
+	if l == nil {
+		l = &thumbLRU{items: map[string]*list.Element{}, order: list.New()}
+		s.thumbs[source] = l
+	}
+	for id, ref := range thumbs {
+		if el, ok := l.items[id]; ok {
+			el.Value = thumbEntry{id: id, itemRef: ref}
+			l.order.MoveToFront(el)
+		} else {
+			l.items[id] = l.order.PushFront(thumbEntry{id: id, itemRef: ref})
+		}
+	}
+	for l.order.Len() > maxThumbsPerSource {
+		back := l.order.Back()
+		delete(l.items, back.Value.(thumbEntry).id)
+		l.order.Remove(back)
+	}
+}
+
+// itemRefOf is what a source's page named for an item, marking it recently used.
+func (s *Service) itemRefOf(source, item string) itemRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.thumbs[source]
+	if l == nil {
+		return itemRef{}
+	}
+	el, ok := l.items[item]
+	if !ok {
+		return itemRef{}
+	}
+	l.order.MoveToFront(el)
+	return el.Value.(thumbEntry).itemRef
+}
+
+// thumbURL is the thumbnail address a source's page named for an item.
+func (s *Service) thumbURL(source, item string) string { return s.itemRefOf(source, item).url }
+
+// ClearCache forgets the cached rows of one source, or of every source for "", so
+// the next page is asked of the Plugin afresh. The Plugin Manager calls it when a
+// source's Admin settings are saved or its Plugin is installed, upgraded, enabled
+// or removed. Thumbnail entries stay: an open page still needs them.
+func (s *Service) ClearCache(sourceID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.cache {
+		if sourceID == "" || k.source == sourceID {
+			delete(s.cache, k)
+		}
+	}
+}
+
 // Rows asks the source for its page and returns what survives the host's judgment.
-// A Plugin that fails is ErrUnavailable.
+// The answer is cached for five minutes per source and shared across Users. A
+// Plugin that fails is ErrUnavailable.
 func (s *Service) Rows(ctx context.Context, sourceID string) ([]Row, error) {
 	p, _, err := s.provider(sourceID)
 	if err != nil {
 		return nil, err
+	}
+	key := cacheKey{source: sourceID, list: true}
+	if e, ok := s.cached(key); ok {
+		s.touchThumbs(sourceID, e.thumbs)
+		return e.rows, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
@@ -227,42 +401,108 @@ func (s *Service) Rows(ctx context.Context, sourceID string) ([]Row, error) {
 		return nil, ErrUnavailable
 	}
 
-	rows := make([]Row, 0, len(resp.Rows))
-	thumbs := map[string]string{}
-	titles := map[string]string{}
+	rows := make([]Row, 0, min(len(resp.Rows), maxRows))
+	thumbs := map[string]itemRef{}
+	seen := map[string]bool{}
 	for _, r := range resp.Rows {
-		if !urlSafeID(r.ID) || strings.TrimSpace(r.Label) == "" {
+		if len(rows) == maxRows {
+			break
+		}
+		if !urlSafeID(r.ID) || seen[r.ID] || strings.TrimSpace(r.Label) == "" {
 			continue
 		}
-		row := Row{ID: r.ID, Label: r.Label, Items: []Item{}}
-		for _, it := range r.Items {
-			if !urlSafeID(it.ID) || strings.TrimSpace(it.Title) == "" || !isHTTPS(it.ThumbnailURL) {
+		seen[r.ID] = true
+		rows = append(rows, Row{
+			ID: r.ID, Label: truncate(r.Label, maxLabelLen),
+			Items: cleanItems(r.Items, maxItemsPerRow, thumbs), NextCursor: cleanCursor(r.NextCursor),
+		})
+	}
+	s.remember(key, cacheEntry{rows: rows}, thumbs)
+	return rows, nil
+}
+
+// Row returns the page of one row after cursor, the token an earlier answer named.
+// A row id or cursor the host would not have handed out is ErrNoItem, before any
+// Plugin call. The answer is cached like Rows', per source, row and cursor.
+func (s *Service) Row(ctx context.Context, sourceID, rowID, cursor string) (Page, error) {
+	p, _, err := s.provider(sourceID)
+	if err != nil {
+		return Page{}, err
+	}
+	if !urlSafeID(rowID) || cursor == "" || len(cursor) > maxCursorLen {
+		return Page{}, ErrNoItem
+	}
+	key := cacheKey{source: sourceID, row: rowID, cursor: cursor}
+	if e, ok := s.cached(key); ok {
+		s.touchThumbs(sourceID, e.thumbs)
+		return e.page, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	resp, err := p.Row(ctx, pluginapi.OnlineRowRequest{RowID: rowID, Cursor: cursor})
+	if err != nil {
+		log.Printf("obelo: online source %s: row %s: %v", sourceID, rowID, err)
+		return Page{}, ErrUnavailable
+	}
+	thumbs := map[string]itemRef{}
+	page := Page{Items: cleanItems(resp.Items, maxPageItems, thumbs), NextCursor: cleanCursor(resp.NextCursor)}
+	s.remember(key, cacheEntry{page: page}, thumbs)
+	return page, nil
+}
+
+// cleanItems is the host's judgment on a Plugin's items. Malformed ones are dropped
+// (an id outside the URL-safe set or repeated in the row, no title, a thumbnail
+// that is not https, a negative duration, a publish date that is not RFC 3339), the
+// rest are kept up to limit with over-length text truncated, and the thumbnail URL
+// of each kept item is recorded in thumbs. A very long duration is not malformed.
+func cleanItems(in []pluginapi.OnlineItem, limit int, thumbs map[string]itemRef) []Item {
+	out := make([]Item, 0, min(len(in), limit))
+	seen := map[string]bool{}
+	for _, it := range in {
+		if len(out) == limit {
+			break
+		}
+		if !urlSafeID(it.ID) || seen[it.ID] || strings.TrimSpace(it.Title) == "" ||
+			!isHTTPS(it.ThumbnailURL) || it.DurationMs < 0 {
+			continue
+		}
+		if it.PublishedAt != "" {
+			if _, err := time.Parse(time.RFC3339, it.PublishedAt); err != nil {
 				continue
 			}
-			row.Items = append(row.Items, Item{
-				ID: it.ID, Title: it.Title, DurationMs: it.DurationMs,
-				Description: it.Description, PublishedAt: it.PublishedAt,
-			})
-			thumbs[it.ID] = it.ThumbnailURL
-			titles[it.ID] = it.Title
 		}
-		rows = append(rows, row)
+		seen[it.ID] = true
+		out = append(out, Item{
+			ID: it.ID, Title: truncate(it.Title, maxTitleLen), DurationMs: it.DurationMs,
+			Description: truncate(it.Description, maxDescLen), PublishedAt: it.PublishedAt,
+		})
+		thumbs[it.ID] = itemRef{url: it.ThumbnailURL, title: truncate(it.Title, maxTitleLen)}
 	}
-	s.mu.Lock()
-	for id, u := range thumbs {
-		if s.thumbs[sourceID] == nil {
-			s.thumbs[sourceID] = map[string]string{}
+	return out
+}
+
+// cleanCursor passes a Plugin's cursor on, or ends the paging for one the host
+// would not hand back.
+func cleanCursor(c string) string {
+	if len(c) > maxCursorLen {
+		return ""
+	}
+	return c
+}
+
+// truncate cuts s to at most n characters.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := 0
+	for pos := range s {
+		if i == n {
+			return s[:pos]
 		}
-		s.thumbs[sourceID][id] = u
+		i++
 	}
-	for id, title := range titles {
-		if s.titles[sourceID] == nil {
-			s.titles[sourceID] = map[string]string{}
-		}
-		s.titles[sourceID][id] = title
-	}
-	s.mu.Unlock()
-	return rows, nil
+	return s
 }
 
 // Thumbnail fetches an item's thumbnail from its source through the guarded client
@@ -273,9 +513,7 @@ func (s *Service) Thumbnail(ctx context.Context, sourceID, itemID string) ([]byt
 	if _, _, err := s.provider(sourceID); err != nil {
 		return nil, "", err
 	}
-	s.mu.Lock()
-	target := s.thumbs[sourceID][itemID]
-	s.mu.Unlock()
+	target := s.thumbURL(sourceID, itemID)
 	if target == "" {
 		return nil, "", ErrNoItem
 	}
@@ -393,9 +631,7 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 	if sourceName == "" {
 		sourceName = reg.Descriptor.Slug
 	}
-	s.mu.Lock()
-	itemTitle := s.titles[in.SourceID][in.ItemID]
-	s.mu.Unlock()
+	itemTitle := s.itemRefOf(in.SourceID, in.ItemID).title
 	if itemTitle == "" {
 		itemTitle = in.ItemID
 	}
