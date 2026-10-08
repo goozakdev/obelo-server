@@ -29,6 +29,7 @@ const CollectionsScreen = lazy(() => import("./browse/CollectionsScreen"));
 const CollectionDetailScreen = lazy(() => import("./browse/CollectionDetailScreen"));
 const PlaylistsScreen = lazy(() => import("./browse/PlaylistsScreen"));
 const PlaylistDetailScreen = lazy(() => import("./browse/PlaylistDetailScreen"));
+const OnlineSourceScreen = lazy(() => import("./screens/OnlineSourceScreen"));
 const ShowDetailScreen = lazy(() => import("./browse/ShowDetailScreen"));
 const TitleDetailScreen = lazy(() => import("./browse/TitleDetailScreen"));
 const MusicLibraryScreen = lazy(() => import("./music/MusicLibraryScreen"));
@@ -220,6 +221,15 @@ export default function App() {
             element={
               <RequireAuth>
                 <TrackDetailScreen />
+              </RequireAuth>
+            }
+          />
+          {/* An Online source's page (ADR-0068): reached from its Home tile. */}
+          <Route
+            path="/online/:sourceId"
+            element={
+              <RequireAuth>
+                <OnlineSourceScreen />
               </RequireAuth>
             }
           />

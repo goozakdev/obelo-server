@@ -12,6 +12,19 @@ import type { TitleSummary } from "../../api/types";
 // INVARIANT: `currentIndex` is always a valid index into a non-empty `entries`,
 // or -1 iff `entries` is empty. Every operation re-establishes this.
 
+/** An Online item (ADR-0068) riding the Queue in place of a Title: the source and
+ * item to start, and the little the bar shows. It has no Title behind it — no
+ * detail to fetch, no resume position, no watch state. */
+export interface OnlineQueueItem {
+  sourceId: string;
+  sourceName: string;
+  itemId: string;
+  title: string;
+  /** The Server's thumbnail proxy URL (same-origin). */
+  thumbnailUrl: string;
+  durationMs: number;
+}
+
 /** One occurrence of a Title in the Queue. `entryId` is a CLIENT-generated unique
  * id so the same Title can appear more than once and a specific occurrence is
  * addressable (reorder/remove by id, mirroring playlist_items' per-item id but
@@ -37,6 +50,12 @@ export interface QueueEntry {
    * without any stale value resurrecting. Absent = Auto (omit the id → server memory). */
   audioStreamId?: string;
   videoStreamId?: string;
+  /** Set on an entry that is an Online item rather than a Title (ADR-0068). The
+   * Queue then holds that one entry alone: Online items and Titles are never
+   * mixed, and playing one replaces the Queue. `title` is a placeholder summary so
+   * the entry stays a well-formed QueueEntry; the player branches on this field and
+   * never reads it as a Title. */
+  online?: OnlineQueueItem;
 }
 
 /** The three states of Repeat mode (music only — see CONTEXT.md): `off` stops
@@ -80,6 +99,27 @@ export function newEntryId(): string {
 /** Wrap a Title in a fresh Queue entry (new client-generated `entryId`). */
 export function entryFromTitle(title: TitleSummary): QueueEntry {
   return { entryId: newEntryId(), title };
+}
+
+/** Wrap an Online item as a Queue entry. The placeholder `title` carries an id no
+ * Title can have (so nothing keyed by Title id can match it) and no resume
+ * position, and the entry is never persisted (see saveQueue). */
+export function entryFromOnlineItem(item: OnlineQueueItem): QueueEntry {
+  return {
+    entryId: newEntryId(),
+    online: item,
+    title: {
+      id: `online:${item.sourceId}:${item.itemId}`,
+      kind: "movie",
+      title: item.title,
+      year: 0,
+      needsReview: false,
+      ambiguous: false,
+      resumePositionMs: 0,
+      watched: false,
+      genres: [],
+    },
+  };
 }
 
 /** Wrap an ordered list of Titles as Queue entries (preserving order). The build

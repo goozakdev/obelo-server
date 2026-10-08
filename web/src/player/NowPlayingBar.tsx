@@ -19,6 +19,7 @@ import { albumArtworkUrl } from "../browse/albumArt";
 import { attachHls, type HlsAttachment } from "./hls";
 import { useCoverRefresh } from "./useCoverRefresh";
 import { usePlayerSession, type PlayerPreference } from "./usePlayerSession";
+import OnlinePlayer from "./OnlinePlayer";
 import {
   applySubtitleSelection,
   defaultTrackId,
@@ -531,7 +532,8 @@ export default function NowPlayingBar() {
   // popstate landed on the freshly-mounted instance — which read it as a Back and
   // collapsed the new stage to pip. With the history entry owned here, there is no
   // per-advance push/pop churn, so nothing collapses the next episode's stage.)
-  const video = entry ? isVideoKind(entry.title.kind) : false;
+  // An Online item (ADR-0068) has its own small core and no stage/pip surface.
+  const video = entry && !entry.online ? isVideoKind(entry.title.kind) : false;
   const [surface, setSurface] = useState<VideoSurface>("bar-only");
   const surfaceRef = useRef(surface);
   surfaceRef.current = surface;
@@ -744,20 +746,24 @@ export default function NowPlayingBar() {
             ending the prior session (its unmount effect) before the next negotiates.
             The surface (above) is held OUTSIDE this key, so it persists across the
             re-mount and the video continues in the same view. */}
-        <CurrentPlayer
-          key={entry.entryId}
-          entry={entry}
-          autoPlay={autoPlay}
-          surface={surface}
-          setSurface={setSurface}
-          pipOffset={pipOffset}
-          onPipPointerDown={onPipPointerDown}
-          onPipPointerMove={onPipPointerMove}
-          onPipPointerUp={onPipPointerUp}
-          toggleFullscreen={toggleFullscreen}
-          collapseStage={collapseStage}
-          onOpenQueue={() => setDrawerOpen(true)}
-        />
+        {entry.online ? (
+          <OnlinePlayer key={entry.entryId} item={entry.online} />
+        ) : (
+          <CurrentPlayer
+            key={entry.entryId}
+            entry={entry}
+            autoPlay={autoPlay}
+            surface={surface}
+            setSurface={setSurface}
+            pipOffset={pipOffset}
+            onPipPointerDown={onPipPointerDown}
+            onPipPointerMove={onPipPointerMove}
+            onPipPointerUp={onPipPointerUp}
+            toggleFullscreen={toggleFullscreen}
+            collapseStage={collapseStage}
+            onOpenQueue={() => setDrawerOpen(true)}
+          />
+        )}
       </div>
       {drawerOpen && (
         <div

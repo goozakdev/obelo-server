@@ -191,6 +191,20 @@ func handleStreamTokenSubtree(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		// An Online source session (ADR-0068) is relayed from its source's media host,
+		// not served from a File here. Its one artifact is the progressive stream, and
+		// the session must be the token's own User's.
+		if deps.Online != nil {
+			if sess, ok := deps.Online.Session(sessionID); ok {
+				if artifact != streamProgressiveArtifact || sess.UserID != user.ID {
+					refuseStreamToken(w)
+					return
+				}
+				serveOnlineStream(deps, w, r, sess)
+				return
+			}
+		}
+
 		if artifact == streamProgressiveArtifact {
 			// Progressive direct play. http.ServeContent still owns Range/206/If-Range
 			// exactly as on the bearer path — an AirPlay receiver range-seeks, and this

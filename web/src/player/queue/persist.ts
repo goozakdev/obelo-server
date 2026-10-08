@@ -67,8 +67,11 @@ export function loadQueue(storage: Storage, userId: string | null): QueueState {
  * the in-memory Queue still works, it just won't survive a reload. */
 export function saveQueue(storage: Storage, userId: string | null, state: QueueState): void {
   try {
-    if (state.entries.length === 0) storage.removeItem(queueStorageKey(userId));
-    else storage.setItem(queueStorageKey(userId), JSON.stringify(state));
+    // An Online item is never persisted (ADR-0068: nothing about it survives): its
+    // session is gone after a reload, so a restored entry could only fail to play.
+    if (state.entries.length === 0 || state.entries.some((e) => e.online)) {
+      storage.removeItem(queueStorageKey(userId));
+    } else storage.setItem(queueStorageKey(userId), JSON.stringify(state));
   } catch {
     // ignore — persistence is best-effort.
   }

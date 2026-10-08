@@ -159,7 +159,14 @@ import type {
   AttachProof,
   ReauthGrant,
 } from "./types";
-import type { Lyrics } from "./types";
+import type {
+  DeviceProfile,
+  Lyrics,
+  OnlinePlayback,
+  OnlineRow,
+  OnlineSource,
+  PlaybackConstraints,
+} from "./types";
 
 // ApiClient is the SINGLE place in the app that talks HTTP to /api/v1
 // (PRD: "the one seam"). Components and hooks call its typed methods; they must
@@ -677,6 +684,42 @@ export class ApiClient {
   async getHome(signal?: AbortSignal): Promise<HomeRows> {
     const res = await this.request<HomeResponseRaw>("/home", { signal });
     return normalizeHome(res);
+  }
+
+  // --- Online sources (ADR-0068) -------------------------------------------
+
+  /** `GET /api/v1/onlineSources` — the tile list: one entry per enabled source.
+   * Served from the registry, so it never calls a Plugin; a caller who may not see
+   * sources gets an empty list. Its own endpoint, never part of {@link getHome}. */
+  async getOnlineSources(signal?: AbortSignal): Promise<OnlineSource[]> {
+    const res = await this.request<{ sources?: OnlineSource[] }>("/onlineSources", { signal });
+    return res.sources ?? [];
+  }
+
+  /** `GET /api/v1/onlineSources/{id}/rows` — a source's page. The only call that
+   * runs the Plugin, so it can fail with a 502 `SOURCE_UNAVAILABLE` the page turns
+   * into "{source} isn't responding" and a retry. */
+  async getOnlineRows(sourceId: string, signal?: AbortSignal): Promise<OnlineRow[]> {
+    const res = await this.request<{ rows?: OnlineRow[] }>(
+      `/onlineSources/${encodeURIComponent(sourceId)}/rows`,
+      { signal },
+    );
+    return res.rows ?? [];
+  }
+
+  /** `POST /api/v1/onlineSources/{id}/items/{itemId}/playback` — resolve the item
+   * once and open an Online session. Errors surface as the typed ApiError the
+   * player branches on (501 `TRANSCODE_REQUIRED` when no variant plays as-is). */
+  startOnlinePlayback(
+    sourceId: string,
+    itemId: string,
+    opts: { deviceProfile: DeviceProfile; constraints: PlaybackConstraints },
+    signal?: AbortSignal,
+  ): Promise<OnlinePlayback> {
+    return this.request<OnlinePlayback>(
+      `/onlineSources/${encodeURIComponent(sourceId)}/items/${encodeURIComponent(itemId)}/playback`,
+      { method: "POST", body: { deviceProfile: opts.deviceProfile, constraints: opts.constraints }, signal },
+    );
   }
 
   // --- Collections surface (collections-playlists-ui issue 01) -----------

@@ -1996,3 +1996,57 @@ func signInRefresh(ptr, n uint32) uint64 {
 	resp.RefreshToken = call.Request.RefreshToken
 	return reply(resp)
 }
+
+// =============================================================================
+// The Online source provider seam.
+// =============================================================================
+//
+// Appended like the Marker provider half, with two calls instead of one. The
+// WHOLE call envelope (request and settings, so a test can see what the Admin
+// entered) is POSTed as JSON to the source at `<settings.url>/rows` or
+// `<settings.url>/resolve`, and whatever the source answers is this Plugin's
+// answer, verbatim. The test's source decides every row, item and variant, and
+// records every envelope.
+//
+//	online_source_rows(ptr u32, len u32) -> i64      an OnlineRowsCall in,
+//	                                                 an OnlineRowsResponse out
+//	online_source_resolve(ptr u32, len u32) -> i64   an OnlineResolveCall in,
+//	                                                 an OnlineResolveResponse out
+
+type onlineSourceCall struct {
+	Settings struct {
+		URL string `json:"url"`
+	} `json:"settings"`
+}
+
+//go:wasmexport online_source_rows
+func onlineSourceRows(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/rows") }
+
+//go:wasmexport online_source_resolve
+func onlineSourceResolve(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/resolve") }
+
+func onlineSourceRelay(ptr, n uint32, path string) uint64 {
+	buf, ok := pinned[ptr]
+	if !ok || uint32(len(buf)) < n {
+		return fail("the host passed a pointer this guest did not allocate")
+	}
+	var call onlineSourceCall
+	if err := json.Unmarshal(buf[:n], &call); err != nil {
+		return fail("the request is not an Online source call: " + err.Error())
+	}
+	resp := fetch(fetchRequest{
+		Method:  "POST",
+		URL:     call.Settings.URL + path,
+		Headers: []header{{Name: "Content-Type", Value: "application/json"}},
+		Body:    json.RawMessage(buf[:n]),
+	})
+	switch {
+	case resp.Refused != "":
+		return fail("the source was refused: " + resp.Refused)
+	case resp.Error != "":
+		return fail("the source could not be reached: " + resp.Error)
+	case resp.Status != 200:
+		return fail("the source answered " + itoa(resp.Status))
+	}
+	return reply(json.RawMessage(resp.Body))
+}

@@ -37,3 +37,10 @@ func clampToCeiling(c Constraints, s access.Scope) (Constraints, bool) {
 	}
 	return c, bound
 }
+
+// ClampToCeiling is clampToCeiling for a caller outside this package: an Online
+// source play (internal/onlinesource) has no Title to negotiate, but the User's
+// Playback ceiling binds it exactly as it binds one.
+func ClampToCeiling(c Constraints, s access.Scope) (Constraints, bool) {
+	return clampToCeiling(c, s)
+}

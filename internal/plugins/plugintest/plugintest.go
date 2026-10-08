@@ -329,6 +329,34 @@ func MarkerManifest(id, sourceURL string) pluginapi.Manifest {
 	}
 }
 
+// OnlineSourceManifest is the manifest of an Installed Online source provider
+// whose source is sourceURL: the guest POSTs each call envelope to
+// <sourceURL>/rows or <sourceURL>/resolve and answers whatever comes back (see the
+// guest's online_source_rows). The source is the manifest's default URL, which is
+// the host a call may reach, so it declares no network hosts of its own and no
+// secret. It declares one setting of its own, `region`, so a test can see what an
+// Admin entered reach the call.
+func OnlineSourceManifest(id, name, sourceURL string) pluginapi.Manifest {
+	return pluginapi.Manifest{
+		ID:         id,
+		Name:       name,
+		Version:    "1.0.0",
+		APIVersion: pluginapi.APIVersion,
+		Provides: []pluginapi.ManifestProvides{{
+			Kind: pluginapi.ExtensionOnlineSourceProvider,
+		}},
+		Settings: pluginapi.ManifestSettings{
+			DefaultURL: sourceURL,
+			Fields: []pluginapi.SettingsField{{
+				Key:   "region",
+				Type:  pluginapi.FieldString,
+				Label: "Region",
+			}},
+		},
+		Description: "An Installed Online source provider, built from source by the test suite.",
+	}
+}
+
 // EverySettingsFieldType is one declared settings field of every type the contract
 // defines, in AllSettingsFieldTypes order, with the labels, help, defaults, options
 // and bounds a real manifest would carry.

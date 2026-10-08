@@ -14,7 +14,8 @@
         "web-reference-provider",
         "sign-in-provider",
         "lyric-provider",
-        "marker-provider"
+        "marker-provider",
+        "online-source-provider"
       ]
     },
     "Capability": {
@@ -1971,6 +1972,183 @@
       "properties": {
         "request": {
           "$ref": "#/$defs/SignInRefreshRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "OnlineItem": {
+      "type": "object",
+      "description": "One playable video in an Online row: id, title, thumbnailUrl (an https URL the host fetches and proxies), durationMs, and an optional description and publishedAt (RFC 3339). The host drops an item whose id is empty or outside letters, digits and . _ ~ -.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "thumbnailUrl": {
+          "type": "string"
+        },
+        "durationMs": {
+          "type": "integer"
+        },
+        "description": {
+          "type": "string"
+        },
+        "publishedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "thumbnailUrl",
+        "durationMs"
+      ]
+    },
+    "OnlineRow": {
+      "type": "object",
+      "description": "One labelled shelf of an Online source's page: its id, its label and its items.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OnlineItem"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "items"
+      ]
+    },
+    "OnlineRowsRequest": {
+      "type": "object",
+      "description": "Asks an Online source provider for the source's rows. It carries nothing yet.",
+      "properties": {}
+    },
+    "OnlineRowsResponse": {
+      "type": "object",
+      "description": "What an Online source provider answers to rows(): the source page's rows, in display order.",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OnlineRow"
+          }
+        }
+      },
+      "required": [
+        "rows"
+      ]
+    },
+    "OnlineHints": {
+      "type": "object",
+      "description": "What the host tells a Plugin about the client that will play an item: maxHeight, the tallest picture in pixels it will play; 0 when none.",
+      "properties": {
+        "maxHeight": {
+          "type": "integer"
+        }
+      }
+    },
+    "OnlineResolveRequest": {
+      "type": "object",
+      "description": "Asks an Online source provider how to play one item: the itemId and the capability hints.",
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "hints": {
+          "$ref": "#/$defs/OnlineHints"
+        }
+      },
+      "required": [
+        "itemId",
+        "hints"
+      ]
+    },
+    "OnlineVariant": {
+      "type": "object",
+      "description": "One way to play an item: a muxed file at an https url, its container and codecs, an optional resolution token such as '720p', and the request headers the media host requires. The host relays a variant the client can play and never shows the url to a client.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "container": {
+          "type": "string"
+        },
+        "codecs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "url",
+        "container",
+        "codecs"
+      ]
+    },
+    "OnlineResolveResponse": {
+      "type": "object",
+      "description": "What an Online source provider answers to resolve(): the item's playable variants; none is an item the source no longer has.",
+      "properties": {
+        "variants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OnlineVariant"
+          }
+        }
+      }
+    },
+    "OnlineRowsCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Online source provider for a rows() call: the request a Built-in would receive and the Settings the host resolved, travelling together as a Subtitle provider's do. The response is un-enveloped — a plain OnlineRowsResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/OnlineRowsRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
+    "OnlineResolveCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Online source provider for a resolve() call: the request and the Settings the host resolved. The response is un-enveloped — a plain OnlineResolveResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/OnlineResolveRequest"
         },
         "settings": {
           "$ref": "#/$defs/Settings"

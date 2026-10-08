@@ -3301,3 +3301,37 @@ export interface MarkerDetection {
    * whatever `enabled` says. */
   available: boolean;
 }
+
+/** One tile on Home: an enabled Online source (ADR-0068), by the name its Plugin
+ * gave it. `iconUrl` is null until the source icon lands. */
+export interface OnlineSource {
+  id: string;
+  name: string;
+  iconUrl: string | null;
+}
+
+/** One playable video in an Online row. `thumbnailUrl` is the Server's own proxy
+ * (same-origin, media-cookie authenticated), never the source's address. */
+export interface OnlineItem {
+  id: string;
+  title: string;
+  thumbnailUrl: string;
+  durationMs: number;
+  description?: string;
+  publishedAt?: string;
+}
+
+/** One labelled shelf of an Online source's page. */
+export interface OnlineRow {
+  id: string;
+  label: string;
+  items: OnlineItem[];
+  nextCursor: string | null;
+}
+
+/** What starting an Online item answers: a session and a stream-token URL (the
+ * token is the credential, so the `<video>` needs no header or cookie). */
+export interface OnlinePlayback {
+  sessionId: string;
+  streamUrl: string;
+}

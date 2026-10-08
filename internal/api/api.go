@@ -23,6 +23,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/lyricfetch"
 	"github.com/goozakdev/obelo-server/internal/markerfetch"
 	"github.com/goozakdev/obelo-server/internal/match"
+	"github.com/goozakdev/obelo-server/internal/onlinesource"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
 	"github.com/goozakdev/obelo-server/internal/scanner"
@@ -238,6 +239,11 @@ type Deps struct {
 	// /sessions/{id}/markers serves the stored Markers alone.
 	MarkerFetch *markerfetch.Service
 
+	// Online lists the Online sources, serves their pages and relays their media
+	// (internal/onlinesource, ADR-0068). Nil in narrow tests, where every
+	// /onlineSources route reads as "no source is enabled".
+	Online *onlinesource.Service
+
 	// EventSinks is the DB-backed Event sink settings store (Admin-scope
 	// /settings/event-sinks). *store.DB satisfies it. May be nil in narrow tests,
 	// which then read as "no sink has ever been configured".
@@ -430,6 +436,12 @@ func Handler(deps Deps) http.Handler {
 	// artwork GET must also accept the media cookie (browser <img>), while every
 	// other leaf stays bearer-only.
 	mux.HandleFunc("/titles/", handleTitleSubtree(deps))
+
+	// The Online source routes (ADR-0068): the tile list, and /onlineSources/{id}/…
+	// for a source's page, thumbnails and playback. Their own endpoints, never part
+	// of the home response.
+	mux.HandleFunc("/onlineSources", requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineSources(deps))))
+	mux.HandleFunc(onlineSourcesPrefix, handleOnlineSourceSubtree(deps))
 
 	// TV browse hierarchy (issue tv-music/01), both authenticated GETs:
 	//   GET /shows/{id}/seasons   → a Show's Seasons (ordered, hidden excluded)

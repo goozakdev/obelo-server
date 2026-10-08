@@ -870,6 +870,12 @@ func handleSessionSubtree(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 			return
 		}
+		// An Online source session (ADR-0068) is not a Title session: its keepalive
+		// and its end are answered by its own handlers, which touch no watch state.
+		if h, ok := onlineSessionRoute(deps, rest); ok {
+			h(w, r)
+			return
+		}
 		if id, ok := strings.CutSuffix(rest, "/stream"); ok {
 			if id == "" || strings.Contains(id, "/") {
 				writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)

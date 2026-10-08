@@ -41,6 +41,7 @@ export default function HomeScreen() {
 
         {home.status === "ready" && (
           <>
+            <OnlineSourceTiles />
             <HomeRow
               testId="home-continue-watching"
               heading="Continue Watching"
@@ -76,6 +77,30 @@ export default function HomeScreen() {
         )}
       </main>
     </div>
+  );
+}
+
+// One tile per enabled Online source (ADR-0068), from its own endpoint — the Home
+// response never carries sources, and listing them calls no Plugin. It renders
+// nothing while loading, on failure, and when the caller has no source to show (a
+// Member, or a server with none enabled), so Home is exactly what it was for them;
+// a failure here must never cost the Home screen its own rows.
+function OnlineSourceTiles() {
+  const sources = useAsync((signal) => apiClient.getOnlineSources(signal), []);
+  if (sources.status !== "ready" || sources.data.length === 0) return null;
+  return (
+    <section className="home-row" data-testid="home-online-sources">
+      <h2 className="section-title">Online</h2>
+      <ul className="home-online-sources">
+        {sources.data.map((s) => (
+          <li key={s.id}>
+            <Link className="nav-link" to={`/online/${encodeURIComponent(s.id)}`} data-testid="online-source-tile">
+              {s.name}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

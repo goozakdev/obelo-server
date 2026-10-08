@@ -45,6 +45,7 @@ type registryState struct {
 	signInProviders   []SignInProviderRegistration
 	lyricProviders    []LyricProviderRegistration
 	markerProviders   []MarkerProviderRegistration
+	onlineSources     []OnlineSourceProviderRegistration
 }
 
 // NewRegistry returns an empty Registry. Nothing is registered until the
@@ -82,6 +83,7 @@ func (r *Registry) mutate(f func(*registryState)) {
 		signInProviders:   append([]SignInProviderRegistration(nil), cur.signInProviders...),
 		lyricProviders:    append([]LyricProviderRegistration(nil), cur.lyricProviders...),
 		markerProviders:   append([]MarkerProviderRegistration(nil), cur.markerProviders...),
+		onlineSources:     append([]OnlineSourceProviderRegistration(nil), cur.onlineSources...),
 	}
 	f(next)
 	r.state.Store(next)
@@ -441,4 +443,47 @@ func (r *Registry) MarkerProvider(slug string) (MarkerProviderRegistration, bool
 		}
 	}
 	return MarkerProviderRegistration{}, false
+}
+
+// RegisterOnlineSourceProvider adds one Online source provider Plugin, under the
+// same rules as a Marker provider: registration order is preserved — it is the
+// order the tiles are listed in — and a malformed or duplicate registration
+// PANICS at the composition root.
+func (r *Registry) RegisterOnlineSourceProvider(reg OnlineSourceProviderRegistration) {
+	if reg.Descriptor.Slug == "" {
+		panic("pluginapi: online source provider registered with no slug")
+	}
+	if reg.New == nil {
+		panic(fmt.Sprintf("pluginapi: online source provider %q registered with no factory", reg.Descriptor.Slug))
+	}
+	if _, exists := r.OnlineSourceProvider(reg.Descriptor.Slug); exists {
+		panic(fmt.Sprintf("pluginapi: online source provider %q registered twice", reg.Descriptor.Slug))
+	}
+	reg.Descriptor.ExtensionPoint = ExtensionOnlineSourceProvider
+	r.mutate(func(s *registryState) {
+		s.onlineSources = append(s.onlineSources, reg)
+	})
+}
+
+// OnlineSourceProviders returns the registered Online source providers in
+// registration order, as a copy.
+func (r *Registry) OnlineSourceProviders() []OnlineSourceProviderRegistration {
+	if r == nil {
+		return nil
+	}
+	cur := r.load()
+	out := make([]OnlineSourceProviderRegistration, len(cur.onlineSources))
+	copy(out, cur.onlineSources)
+	return out
+}
+
+// OnlineSourceProvider returns the registration for a slug, or ok=false for a slug
+// no Plugin claimed.
+func (r *Registry) OnlineSourceProvider(slug string) (OnlineSourceProviderRegistration, bool) {
+	for _, reg := range r.load().onlineSources {
+		if reg.Descriptor.Slug == slug {
+			return reg, true
+		}
+	}
+	return OnlineSourceProviderRegistration{}, false
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/goozakdev/obelo-server/internal/markerdetect"
 	"github.com/goozakdev/obelo-server/internal/markerfetch"
 	"github.com/goozakdev/obelo-server/internal/match"
+	"github.com/goozakdev/obelo-server/internal/onlinesource"
 	"github.com/goozakdev/obelo-server/internal/organize"
 	"github.com/goozakdev/obelo-server/internal/playback"
 	"github.com/goozakdev/obelo-server/internal/plugins"
@@ -66,6 +67,10 @@ type App struct {
 	Catalog  *catalog.Service
 	Match    *match.Service
 	Playback *playback.Service
+	// Online is the Online source provider's host half (ADR-0068): the tiles, the
+	// pages, the thumbnail proxy and the relayed plays. Nothing it holds survives a
+	// restart.
+	Online   *onlinesource.Service
 	Enrich   *enrich.Service
 	Organize *organize.Service
 	SubFetch *subfetch.Service
@@ -286,6 +291,18 @@ type options struct {
 	// do not each spawn decoders; a detection test injects a recording one, or the
 	// real one.
 	markerAnalyzer markerdetect.Analyzer
+	// onlineSourceClient carries the Online source relay's upstream fetches
+	// (thumbnails and relayed media). nil is production: a default transport, under
+	// the https and private-address redirect policy. A test supplies the client that
+	// trusts its fake https media host.
+	onlineSourceClient *http.Client
+}
+
+// WithOnlineSourceClient sets the HTTP client the Online source relay fetches
+// upstream bytes with (tests). The redirect policy is applied on top of it, so a
+// client cannot be given one that follows a redirect into a private address.
+func WithOnlineSourceClient(c *http.Client) Option {
+	return func(o *options) { o.onlineSourceClient = c }
 }
 
 // WithMarkerAnalyzer overrides how Marker detection listens to a File (tests).
@@ -1058,6 +1075,15 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 	markerFetch := markerfetch.New(db, registry)
 	playbackSvc.SetFetchedMarkersServed(markerFetch.Serving)
 
+	// Online sources (ADR-0068): played from a session of their own, whose end
+	// revokes its stream token as a Title session's does.
+	onlineSvc := onlinesource.New(registry, o.onlineSourceClient)
+	onlineSvc.SetOnEnd(func(sessionID string) {
+		if err := authSvc.RevokeStreamTokens(sessionID); err != nil {
+			log.Printf("obelo: revoking stream tokens for ended online session %s: %v", sessionID, err)
+		}
+	})
+
 	// Enrichment triggering (external-metadata-enrichment issue 02, made runtime-
 	// configurable by enrichment-runtime-settings). Auto-after-scan and the
 	// scheduled enrich both feed one worker via enrichQueue; the worker AND the
@@ -1080,6 +1106,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 		Catalog:          catalogSvc,
 		Match:            matchSvc,
 		Playback:         playbackSvc,
+		Online:           onlineSvc,
 		Enrich:           enrichSvc,
 		Organize:         organizeSvc,
 		SubFetch:         subFetchSvc,
@@ -1217,6 +1244,7 @@ func New(cfg config.Config, opts ...Option) (*App, error) {
 
 		// Marker providers: asked when a session first reads its File's Markers.
 		MarkerFetch: markerFetch,
+		Online:      onlineSvc,
 
 		// Tailnet remote access (ADR-0043): the persisted settings + the state machine.
 		TailnetSettings: db,
@@ -1421,6 +1449,7 @@ func (a *App) runSessionReaper(ctx context.Context, idle, every time.Duration) {
 			return
 		case <-ticker.C:
 			a.Playback.ReapIdle(idle)
+			a.Online.Reap(idle)
 		}
 	}
 }
@@ -1851,6 +1880,9 @@ func (a *App) Close() error {
 	// segments into a directory that whoever owns the data dir may be deleting.
 	if a.Playback != nil {
 		a.Playback.EndAllSessions()
+	}
+	if a.Online != nil {
+		a.Online.EndAll()
 	}
 	// EndAllSessions fires the observer, which spawns the relay-end calls; let them
 	// finish (bounded by relayEndTimeout) before the link Service and DB go away.

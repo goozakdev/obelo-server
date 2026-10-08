@@ -449,6 +449,14 @@ func WithMarkerAnalyzer(a markerdetect.Analyzer) Option {
 	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithMarkerAnalyzer(a)) }
 }
 
+// WithOnlineSourceClient sets the client the Online source relay fetches thumbnails
+// and media with, so a test can point it at a fake https host whose certificate it
+// trusts. The relay's https-only, private-address redirect policy still applies on
+// top of it.
+func WithOnlineSourceClient(c *http.Client) Option {
+	return func(b *builder) { b.appOpts = append(b.appOpts, app.WithOnlineSourceClient(c)) }
+}
+
 // silentAnalyzer is the harness default Analyzer: it hears nothing at all.
 type silentAnalyzer struct{}
 

@@ -34,6 +34,10 @@ const (
 	// ExtensionMarkerProvider looks up where a Movie's or an Episode's Intro,
 	// Recap, Credits and Preview are, as measured on a recording of stated length.
 	ExtensionMarkerProvider ExtensionPoint = "marker-provider"
+	// ExtensionOnlineSourceProvider lists an Online source's rows and resolves one
+	// of its items to playable URLs; the host plays it and keeps none of it
+	// (ADR-0068).
+	ExtensionOnlineSourceProvider ExtensionPoint = "online-source-provider"
 )
 
 // Capability names an OPTIONAL operation a Plugin declares it implements, so the

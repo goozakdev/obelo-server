@@ -42,6 +42,7 @@ func contractEnums() []enumSpec {
 				string(pluginapi.ExtensionSignInProvider),
 				string(pluginapi.ExtensionLyricProvider),
 				string(pluginapi.ExtensionMarkerProvider),
+				string(pluginapi.ExtensionOnlineSourceProvider),
 			},
 		},
 		{
@@ -609,6 +610,53 @@ func contractTypes() []typeSpec {
 			doc: "What the host hands an INSTALLED redirect-flow Sign-in provider that declares sign-in-refresh " +
 				"for one refresh: the request and the resolved Settings. The response is un-enveloped — a plain " +
 				"SignInRefreshResponse.",
+		},
+		{
+			value: pluginapi.OnlineItem{},
+			doc: "One playable video in an Online row: id, title, thumbnailUrl (an https URL the host fetches " +
+				"and proxies), durationMs, and an optional description and publishedAt (RFC 3339). The host drops " +
+				"an item whose id is empty or outside letters, digits and . _ ~ -.",
+		},
+		{
+			value: pluginapi.OnlineRow{},
+			doc:   "One labelled shelf of an Online source's page: its id, its label and its items.",
+		},
+		{
+			value: pluginapi.OnlineRowsRequest{},
+			doc:   "Asks an Online source provider for the source's rows. It carries nothing yet.",
+		},
+		{
+			value: pluginapi.OnlineRowsResponse{},
+			doc:   "What an Online source provider answers to rows(): the source page's rows, in display order.",
+		},
+		{
+			value: pluginapi.OnlineHints{},
+			doc:   "What the host tells a Plugin about the client that will play an item: maxHeight, the tallest picture in pixels it will play; 0 when none.",
+		},
+		{
+			value: pluginapi.OnlineResolveRequest{},
+			doc:   "Asks an Online source provider how to play one item: the itemId and the capability hints.",
+		},
+		{
+			value: pluginapi.OnlineVariant{},
+			doc: "One way to play an item: a muxed file at an https url, its container and codecs, an optional " +
+				"resolution token such as '720p', and the request headers the media host requires. The host " +
+				"relays a variant the client can play and never shows the url to a client.",
+		},
+		{
+			value: pluginapi.OnlineResolveResponse{},
+			doc:   "What an Online source provider answers to resolve(): the item's playable variants; none is an item the source no longer has.",
+		},
+		{
+			value: pluginapi.OnlineRowsCall{},
+			doc: "What the host hands an INSTALLED Online source provider for a rows() call: the request a " +
+				"Built-in would receive and the Settings the host resolved, travelling together as a Subtitle " +
+				"provider's do. The response is un-enveloped — a plain OnlineRowsResponse.",
+		},
+		{
+			value: pluginapi.OnlineResolveCall{},
+			doc: "What the host hands an INSTALLED Online source provider for a resolve() call: the request and " +
+				"the Settings the host resolved. The response is un-enveloped — a plain OnlineResolveResponse.",
 		},
 		{
 			value: pluginapi.SinkDeliverRequest{},
