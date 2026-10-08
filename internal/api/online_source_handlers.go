@@ -41,6 +41,10 @@ const (
 	// media, failed or refused. Distinct from NOT_FOUND so a client can offer the
 	// retry the source page's "isn't responding" state shows.
 	codeSourceUnavailable = "SOURCE_UNAVAILABLE"
+	// codeSourceGone (410): the media host refused a session's URL and the one
+	// re-resolve could not replace it; the session has ended. The player shows the
+	// message ("This video is no longer available from {source}").
+	codeSourceGone = "SOURCE_GONE"
 )
 
 // onlineView is which sources the caller may see. A caller it cannot resolve sees
@@ -151,6 +155,8 @@ func writeOnlineFailure(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
 	case errors.Is(err, onlinesource.ErrUnavailable):
 		writeError(w, http.StatusBadGateway, codeSourceUnavailable, "the source is not responding", nil)
+	case errors.Is(err, onlinesource.ErrGone):
+		writeError(w, http.StatusGone, codeSourceGone, "this video is no longer available", nil)
 	default:
 		log.Printf("obelo: api: online source: %v", err)
 		writeError(w, http.StatusInternalServerError, codeInternal, "online source request failed", nil)
@@ -376,6 +382,9 @@ func onlineSessionRoute(deps Deps, rest string) (http.HandlerFunc, bool) {
 		if _, live := deps.Online.Session(id); live {
 			return requireMethod(http.MethodPost, requireAuth(deps.Auth, handleOnlineProgress(deps, id))), true
 		}
+		if deps.Online.HasGone(id) {
+			return requireMethod(http.MethodPost, requireAuth(deps.Auth, handleOnlineGone(deps, id))), true
+		}
 		return nil, false
 	}
 	if !strings.Contains(rest, "/") {
@@ -415,6 +424,25 @@ func handleOnlineProgress(deps Deps, sessionID string) http.HandlerFunc {
 		}
 		deps.Online.Touch(sessionID)
 		writeJSON(w, http.StatusOK, progressResponse{})
+	}
+}
+
+// handleOnlineGone answers the keepalive of a session that ended because its media
+// was no longer available: 410 with the message the player shows. Anyone but the
+// session's own User gets the 404 an unknown session does.
+func handleOnlineGone(deps Deps, sessionID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := identityFrom(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, codeUnauthorized, "not authenticated", nil)
+			return
+		}
+		msg, gone := deps.Online.Gone(sessionID, id.User.ID)
+		if !gone {
+			writeError(w, http.StatusNotFound, codeNotFound, "session not found", nil)
+			return
+		}
+		writeError(w, http.StatusGone, codeSourceGone, msg, nil)
 	}
 }
 

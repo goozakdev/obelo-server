@@ -7,6 +7,29 @@ import (
 
 const onlineWhitelist = "https,tls,tcp,crypto"
 
+// TestAMediaRefusalIsRememberedAfterTheStderrTailScrollsPast: the tail keeps 8 KB, but
+// the refusal ffmpeg printed once (even split across two writes) stays known; 404 and
+// 429 are not refusals.
+func TestAMediaRefusalIsRememberedAfterTheStderrTailScrollsPast(t *testing.T) {
+	var b tailBuffer
+	_, _ = b.Write([]byte("[http @ 0x1] HTTP er"))
+	_, _ = b.Write([]byte("ror 403 Forbidden\n"))
+	_, _ = b.Write([]byte(strings.Repeat("later output line\n", 2000)))
+	if strings.Contains(b.String(), "403") {
+		t.Fatal("the line did not scroll out of the tail; the test proves nothing")
+	}
+	if !b.refused {
+		t.Fatal("the refusal was lost when the tail scrolled")
+	}
+	for _, line := range []string{"HTTP error 404 Not Found", "HTTP error 429 Too Many Requests", "Server returned 4XX Client Error"} {
+		var c tailBuffer
+		_, _ = c.Write([]byte(line + "\n"))
+		if c.refused {
+			t.Errorf("%q counted as a refusal", line)
+		}
+	}
+}
+
 // inputsOf returns, for each -i in args, the flags that precede it since the
 // previous input (its own input options) and its value.
 func inputsOf(args []string) (opts [][]string, urls []string) {
@@ -145,5 +168,38 @@ func TestOnlineArgsMapAndEncode(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(muxed, " "), "-vf") {
 		t.Errorf("an uncapped encode carries a -vf: %v", muxed)
+	}
+}
+
+// TestOnlineArgsContinueAnEncodeFromAPosition: a restart seeks each input (an input
+// option, so before its own -i), keeps the timeline, numbers the new segments after
+// the old and appends to the playlist; a fresh run does none of it.
+func TestOnlineArgsContinueAnEncodeFromAPosition(t *testing.T) {
+	inputs := []string{"https://a.example/v", "https://a.example/a"}
+	fresh := OnlineArgs(OnlineJob{Inputs: inputs, OutputDir: "/o"})
+	for _, flag := range []string{"-ss", "-output_ts_offset", "-start_number"} {
+		if strings.Contains(strings.Join(fresh, " "), flag+" ") {
+			t.Fatalf("a fresh run has %s: %v", flag, fresh)
+		}
+	}
+	if !hasPairIn(fresh, "-hls_flags", "independent_segments+temp_file+omit_endlist") {
+		t.Fatalf("a fresh run's -hls_flags changed: %v", fresh)
+	}
+
+	args := OnlineArgs(OnlineJob{Inputs: inputs, OutputDir: "/o", StartSeconds: 8, Append: true})
+	opts, _ := inputsOf(args)
+	for i, o := range opts {
+		if !hasPairIn(o, "-ss", "8") {
+			t.Fatalf("input %d has no -ss 8 of its own: %v", i, o)
+		}
+	}
+	if !hasPairIn(args, "-output_ts_offset", "8") {
+		t.Fatalf("restart lost its timeline: %v", args)
+	}
+	if strings.Contains(strings.Join(args, " "), "-start_number") {
+		t.Fatalf("restart numbers segments itself on top of append_list: %v", args)
+	}
+	if !hasPairIn(args, "-hls_flags", "independent_segments+temp_file+omit_endlist+append_list") {
+		t.Fatalf("restart does not append to the playlist: %v", args)
 	}
 }

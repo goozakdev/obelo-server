@@ -71,6 +71,15 @@ func newOnlineMedia(t *testing.T) *onlineMedia {
 		case r.URL.Path == "/v1.mp4":
 			w.Header().Set("Content-Type", "video/mp4")
 			http.ServeContent(w, r, "v1.mp4", time.Time{}, bytes.NewReader(m.body))
+		case r.URL.Path == "/expiring.mp4" && m.hitsOf(r.URL.Path) == 1:
+			// A URL that has expired by the time the player asks: refused once, then
+			// good again (the re-resolved answer names the same address).
+			w.WriteHeader(http.StatusGone)
+		case r.URL.Path == "/expiring.mp4":
+			w.Header().Set("Content-Type", "video/mp4")
+			http.ServeContent(w, r, "expiring.mp4", time.Time{}, bytes.NewReader(m.body))
+		case r.URL.Path == "/dead.mp4":
+			w.WriteHeader(http.StatusForbidden)
 		case r.URL.Path == "/slow.mp4":
 			// A response that never finishes: a kilobyte every 20ms until the Server
 			// drops the request.
@@ -100,6 +109,12 @@ func newOnlineMedia(t *testing.T) *onlineMedia {
 	}))
 	t.Cleanup(m.srv.Close)
 	return m
+}
+
+func (m *onlineMedia) hitsOf(path string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hits[path]
 }
 
 func (m *onlineMedia) hitCount(path string) int {
@@ -171,6 +186,10 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 			return []map[string]any{mp4("720p", "/redirect.mp4")}
 		case "slow":
 			return []map[string]any{mp4("720p", "/slow.mp4")}
+		case "expiring":
+			return []map[string]any{mp4("720p", "/expiring.mp4")}
+		case "dead":
+			return []map[string]any{mp4("720p", "/dead.mp4")}
 		case "split":
 			return []map[string]any{{
 				"kind": "split", "videoUrl": media.srv.URL + "/v.mp4", "audioUrl": media.srv.URL + "/a.m4a",

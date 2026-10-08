@@ -32,11 +32,22 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
   const queue = useQueue();
   const [status, setStatus] = useState<Status>({ kind: "negotiating" });
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Asks the server why the stream stopped: true after showing "no longer available".
+  const probeGoneRef = useRef<() => Promise<boolean>>(async () => false);
 
   useEffect(() => {
     let cancelled = false;
     let sessionId: string | null = null;
     let timer: ReturnType<typeof setInterval> | null = null;
+
+    // A session the server ended because its media host kept refusing the URL says so
+    // on the keepalive (410 SOURCE_GONE); the message names the source.
+    const showIfGone = (err: unknown): boolean => {
+      if (cancelled || !(err instanceof ApiError) || err.code !== "SOURCE_GONE") return false;
+      if (timer) clearInterval(timer);
+      setStatus({ kind: "error", message: err.message });
+      return true;
+    };
 
     void (async () => {
       try {
@@ -54,14 +65,22 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
         }
         sessionId = playback.sessionId;
         setStatus({ kind: "ready", playback });
-        timer = setInterval(() => {
+        const keepalive = () => {
           const v = videoRef.current;
-          void Promise.resolve(
+          return Promise.resolve(
             apiClient.reportProgress(playback.sessionId, {
               positionMs: v ? Math.floor(v.currentTime * 1000) : 0,
               state: v && !v.paused ? "playing" : "paused",
             }),
-          ).catch(() => {});
+          );
+        };
+        probeGoneRef.current = () =>
+          keepalive().then(
+            () => false,
+            (err) => showIfGone(err),
+          );
+        timer = setInterval(() => {
+          void keepalive().catch(showIfGone);
         }, KEEPALIVE_MS);
       } catch (err) {
         if (cancelled || isAbort(err)) return;
@@ -89,6 +108,7 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
 
     return () => {
       cancelled = true;
+      probeGoneRef.current = async () => false;
       if (timer) clearInterval(timer);
       if (sessionId) void Promise.resolve(apiClient.endSession(sessionId)).catch(() => {});
     };
@@ -103,7 +123,10 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
     let cancelled = false;
     let attachment: { detach(): void } | null = null;
     void attachHls(v, status.playback.streamUrl, {
-      onFatal: (reason) => setStatus({ kind: "error", message: `Playback stopped: ${reason}` }),
+      onFatal: (reason) =>
+        void probeGoneRef.current().then((gone) => {
+          if (!gone && !cancelled) setStatus({ kind: "error", message: `Playback stopped: ${reason}` });
+        }),
     })
       .then((a) => {
         if (cancelled) a.detach();
@@ -154,6 +177,7 @@ export default function OnlinePlayer({ item }: { item: OnlineQueueItem }) {
             controls
             autoPlay
             playsInline
+            onError={() => void probeGoneRef.current()}
           />
         )}
       </div>

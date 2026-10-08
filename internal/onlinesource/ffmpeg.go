@@ -111,17 +111,37 @@ func (s *Service) startEncode(sessionID string, v pluginapi.OnlineVariant, plan 
 		log.Printf("obelo: online source: starting ffmpeg: %v", redactURLsIn(err))
 		return nil, ErrUnavailable
 	}
-	return &run{dir: dir, job: j, cancel: cancel, release: release}, nil
+	return &run{dir: dir, job: j, cancel: cancel, release: sync.OnceFunc(release)}, nil
 }
 
 // watch ends the session if its ffmpeg fails. A clean exit is the encode finishing:
 // the session lives on so the player can read what was made. A failure ends the
-// session, and with it the files. It starts once the session is registered, so a
-// run that dies at once still finds the session to end.
+// session, and with it the files, unless the media host refused the URL (403/410):
+// then the session gets its one re-resolve and ffmpeg restarts where it left off
+// (restartEncode). It starts once the session is registered, so a run that dies at
+// once still finds the session to end.
 func (s *Service) watch(sessionID string, r *run) {
-	if err := r.job.Wait(); err != nil {
-		log.Printf("obelo: online source: ffmpeg for session %s: %v", sessionID, redactURLsIn(err))
-		s.End(sessionID)
+	for {
+		err := r.job.Wait()
+		refused := mediaRefused(err, r.job)
+		if err != nil {
+			log.Printf("obelo: online source: ffmpeg for session %s: %v", sessionID, redactURLsIn(err))
+		} else if refused {
+			log.Printf("obelo: online source: ffmpeg for session %s: the media host refused a URL", sessionID)
+		}
+		if !refused {
+			if err != nil {
+				s.End(sessionID)
+			} else {
+				s.finishPlaylist(sessionID, r)
+			}
+			return
+		}
+		next, ok := s.restartEncode(sessionID, r)
+		if !ok {
+			return
+		}
+		r = next
 	}
 }
 
@@ -170,11 +190,15 @@ func (s *Service) OpenEncoded(ctx context.Context, sessionID, name string) (*os.
 	for {
 		s.mu.Lock()
 		sess, ok := s.sessions[sessionID]
+		var cur *run
+		if ok {
+			cur = sess.run // a restart replaces it, under s.mu
+		}
 		s.mu.Unlock()
-		if !ok || sess.run == nil {
+		if cur == nil {
 			return nil, ErrNoSession
 		}
-		f, err := os.Open(filepath.Join(sess.run.dir, name))
+		f, err := os.Open(filepath.Join(cur.dir, name))
 		if err == nil {
 			return f, nil
 		}

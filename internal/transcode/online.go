@@ -32,13 +32,22 @@ type OnlineJob struct {
 	MaxBitrate int64
 	// Accel is the video encode backend, as for a Title.
 	Accel Accel
+	// StartSeconds and Append continue an encode that stopped: input-seek to
+	// StartSeconds and append to the playlist already in OutputDir after a
+	// discontinuity, on the same timeline. ffmpeg numbers the new segments from that
+	// playlist itself (a -start_number as well would count them twice). Zero and
+	// false are a fresh run.
+	StartSeconds float64
+	Append       bool
 }
 
 // OnlineArgs builds the ffmpeg argument vector for an Online run. Every input is
 // preceded by -protocol_whitelist (an input option applies to the next -i only, so
 // it is repeated), then the variant's request headers.
 func OnlineArgs(job OnlineJob) []string {
-	args := []string{"-nostdin", "-y"}
+	// -nostats keeps the progress lines out of the stderr tail the host reads for a
+	// refusal.
+	args := []string{"-nostdin", "-nostats", "-y"}
 	be := videoBackend(job.Accel)
 	args = append(args, be.initArgs...)
 
@@ -52,6 +61,9 @@ func OnlineArgs(job OnlineJob) []string {
 		}
 		if headers != "" {
 			args = append(args, "-headers", headers)
+		}
+		if job.StartSeconds > 0 {
+			args = append(args, "-ss", strconv.FormatFloat(job.StartSeconds, 'f', -1, 64))
 		}
 		args = append(args, "-i", in)
 	}
@@ -80,12 +92,25 @@ func OnlineArgs(job OnlineJob) []string {
 	// An EVENT playlist, not VOD: the muxer writes a VOD playlist only when it has
 	// finished the whole input, and the player must start long before that. The
 	// segments and playlist are the session's scratch and nothing else.
+	//
+	// ffmpeg never writes the playlist's ENDLIST (omit_endlist): it exits 0 after
+	// skipping segments the media host refused, and a player must not be told the
+	// stream is over before the host has judged why it stopped. The host adds
+	// ENDLIST itself when an encode ends cleanly.
+	hlsFlags := "independent_segments+temp_file+omit_endlist"
+	if job.Append {
+		hlsFlags += "+append_list"
+	}
+	if job.StartSeconds > 0 {
+		// ffmpeg rebases the output to ~0 after an input seek; keep the session's timeline.
+		args = append(args, "-output_ts_offset", strconv.FormatFloat(job.StartSeconds, 'f', -1, 64))
+	}
 	return append(args,
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(SegmentSeconds),
 		"-hls_list_size", "0",
 		"-hls_playlist_type", "event",
-		"-hls_flags", "independent_segments+temp_file",
+		"-hls_flags", hlsFlags,
 		"-hls_segment_type", "mpegts",
 		"-hls_segment_filename", join(job.OutputDir, SegmentPattern),
 		join(job.OutputDir, PlaylistName),

@@ -46,6 +46,9 @@ var (
 	ErrUnavailable = errors.New("onlinesource: the source is not responding")
 	// ErrNoSession: no live session has this id.
 	ErrNoSession = errors.New("onlinesource: no such session")
+	// ErrGone: the media host refused a session's URL (403 or 410) and the one
+	// re-resolve could not replace it, so the session has ended.
+	ErrGone = errors.New("onlinesource: this video is no longer available")
 )
 
 const (
@@ -136,6 +139,9 @@ type Service struct {
 	thumbs map[string]*thumbLRU
 	// cache holds rows() and row() answers for cacheTTL, keyed per source.
 	cache map[cacheKey]cacheEntry
+	// gone holds, for a little while, why a session ended because its media was no
+	// longer available (reresolve.go).
+	gone  map[string]goneNote
 	onEnd func(sessionID string)
 	// mayPlay says whether a User may still see a source (the grant, the Rating
 	// ceiling and the role, resolved fresh). Nil means no check: Revalidate ends nothing.
@@ -625,8 +631,19 @@ type Session struct {
 	StartedAt  time.Time
 	LastSeen   time.Time
 
-	// run is the ffmpeg encode of a transcoded session, nil for a relay.
+	// run is the ffmpeg encode of a transcoded session, nil for a relay. A restart
+	// after a re-resolve replaces it, under Service.mu.
 	run *run
+
+	// profile and constraints are what Play chose the variant under, kept so the one
+	// re-resolve chooses again the same way.
+	profile     playback.DeviceProfile
+	constraints playback.Constraints
+	// re is the session's single re-resolve (reresolve.go).
+	re *reState
+	// gen counts the recoveries of Variant. A request that was refused on an older
+	// generation than the session now has finds it already recovered.
+	gen int
 
 	// ctx is cancelled when the session ends, so a relay in flight stops with it.
 	ctx    context.Context
@@ -663,31 +680,9 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 	if err != nil {
 		return Session{}, nil, err
 	}
-	rctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	resp, err := p.Resolve(rctx, pluginapi.OnlineResolveRequest{
-		ItemID: in.ItemID,
-		Hints:  pluginapi.OnlineHints{MaxHeight: playback.ResolutionHeight(in.Constraints.MaxResolution)},
-	})
+	variants, err := s.resolveVariants(ctx, p, in.SourceID, in.ItemID, in.Constraints)
 	if err != nil {
-		log.Printf("obelo: online source %s: resolve %s: %v", in.SourceID, in.ItemID, err)
-		return Session{}, nil, ErrUnavailable
-	}
-	if len(resp.Variants) == 0 {
-		return Session{}, nil, ErrNoItem
-	}
-	// The host's judgment on the first URL of every variant, for both paths: one the
-	// Plugin could not have meant for the Server to fetch is not a variant.
-	var variants []pluginapi.OnlineVariant
-	for _, v := range resp.Variants {
-		if err := s.checkVariant(ctx, in.SourceID, v); err != nil {
-			log.Printf("obelo: online source %s: item %s: variant dropped: %v", in.SourceID, in.ItemID, err)
-			continue
-		}
-		variants = append(variants, v)
-	}
-	if len(variants) == 0 {
-		return Session{}, nil, ErrUnavailable
+		return Session{}, nil, err
 	}
 	plan, unsup := playback.PlanOnline(in.Profile, in.Constraints, variants, s.transcoder != nil)
 	if unsup != nil {
@@ -714,10 +709,13 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 		ID: id, UserID: in.UserID, SourceID: in.SourceID, ItemID: in.ItemID,
 		SourceName: sourceName, ItemTitle: itemTitle,
 		Variant: plan.Variant, Transcoded: plan.Transcode, StartedAt: now, LastSeen: now, run: r,
+		profile: in.Profile, constraints: in.Constraints, re: &reState{},
 		ctx: sctx, cancel: cancel,
 	}
 	s.mu.Lock()
 	s.sessions[sess.ID] = sess
+	// Taken before watch starts: a restart rewrites run and Variant under s.mu.
+	snapshot := *sess
 	s.mu.Unlock()
 	if r != nil {
 		go s.watch(sess.ID, r)
@@ -728,7 +726,7 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 		s.End(sess.ID)
 		return Session{}, nil, ErrNoSource
 	}
-	return *sess, nil, nil
+	return snapshot, nil, nil
 }
 
 // Session returns a live session by id.
@@ -773,12 +771,16 @@ func (s *Service) End(id string) bool {
 	s.mu.Lock()
 	sess, ok := s.sessions[id]
 	delete(s.sessions, id)
+	var r *run
+	if ok {
+		r = sess.run
+	}
 	s.mu.Unlock()
 	if ok && sess.cancel != nil {
 		sess.cancel()
 	}
-	if ok && sess.run != nil {
-		sess.run.stop()
+	if r != nil {
+		r.stop()
 	}
 	if ok && s.onEnd != nil {
 		s.onEnd(id)
@@ -837,8 +839,29 @@ var relayRequestHeaders = map[string]bool{
 // owns closing the body.
 //
 // Only a 200, 206 or 416 is passed on; any other answer from the media host is
-// ErrUnavailable, so a client never sees an upstream error page.
+// ErrUnavailable, so a client never sees an upstream error page. A 403 or 410 is the
+// URL having expired: the session is re-resolved once and the same Range asked of
+// the new URL, and a failure to do so, or a further refusal, is ErrGone with the
+// session ended (reresolve.go).
 func (s *Service) OpenMedia(ctx context.Context, sess Session, rangeHeader, ifRange string) (*http.Response, error) {
+	for {
+		resp, err := s.fetchMedia(ctx, sess, rangeHeader, ifRange)
+		if err != nil || (resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusGone) {
+			return resp, err
+		}
+		// The media host refused the URL (it expired): resolve again, once, and ask
+		// the new URL for the same Range. A refusal after that ends the session.
+		resp.Body.Close()
+		if sess, err = s.reresolveRelay(ctx, sess); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// fetchMedia makes one upstream request for sess's variant. Only a 200, 206, 416 or
+// a 403/410 (for OpenMedia to answer with a re-resolve) is returned; any other
+// answer is ErrUnavailable.
+func (s *Service) fetchMedia(ctx context.Context, sess Session, rangeHeader, ifRange string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sess.Variant.URL, nil)
 	if err != nil {
 		return nil, ErrUnavailable
@@ -860,7 +883,8 @@ func (s *Service) OpenMedia(ctx context.Context, sess Session, rangeHeader, ifRa
 		return nil, ErrUnavailable
 	}
 	switch resp.StatusCode {
-	case http.StatusOK, http.StatusPartialContent, http.StatusRequestedRangeNotSatisfiable:
+	case http.StatusOK, http.StatusPartialContent, http.StatusRequestedRangeNotSatisfiable,
+		http.StatusForbidden, http.StatusGone:
 		return resp, nil
 	}
 	resp.Body.Close()

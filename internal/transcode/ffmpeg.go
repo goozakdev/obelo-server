@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1486,6 +1487,24 @@ type Job interface {
 	Kill() error
 }
 
+// StderrJob is a Job that keeps the tail of ffmpeg's stderr, readable once Wait has
+// returned. An Online encode needs it because ffmpeg exits 0 after skipping HLS
+// segments the media host refused, saying so only there.
+type StderrJob interface {
+	Job
+	Stderr() string
+	// Refused is true once ffmpeg has said, anywhere in its stderr so far, that a
+	// media host answered 403 or 410 (MediaRefusalPattern). Unlike the tail it does
+	// not forget when later output scrolls the line away.
+	Refused() bool
+}
+
+// MediaRefusalPattern matches what ffmpeg says on stderr when a media host answers
+// 403 or 410 (and not 404, 429 or another 4xx, which are the source failing, not a
+// URL expiring): "HTTP error 403 Forbidden" for a segment it then skips, "Server
+// returned 403 ..." for an input it cannot open.
+var MediaRefusalPattern = regexp.MustCompile(`(?i)(server returned|http error) (403|410)\b`)
+
 // FFmpeg is the production Runner: it invokes the `ffmpeg` binary on PATH.
 // Binary names the executable so a test or deployment can point at an absolute
 // path; empty defaults to "ffmpeg". This mirrors scanner.FFprobe.
@@ -1541,6 +1560,16 @@ func (j *ffmpegJob) Wait() error {
 	return fmt.Errorf("transcode: ffmpeg exited: %w", err)
 }
 
+// Stderr is the tail of ffmpeg's stderr so far.
+func (j *ffmpegJob) Stderr() string { return j.stderr.String() }
+
+// Refused reports whether stderr has ever named a 403 or 410 from a media host.
+func (j *ffmpegJob) Refused() bool {
+	j.stderr.mu.Lock()
+	defer j.stderr.mu.Unlock()
+	return j.stderr.refused
+}
+
 func (j *ffmpegJob) Kill() error {
 	j.mu.Lock()
 	j.killed = true
@@ -1560,6 +1589,9 @@ func (j *ffmpegJob) Kill() error {
 type tailBuffer struct {
 	mu  sync.Mutex
 	buf []byte
+	// refused is sticky: set when MediaRefusalPattern is seen in the stream, however
+	// much is written after.
+	refused bool
 }
 
 const tailBufferMax = 8192
@@ -1567,6 +1599,14 @@ const tailBufferMax = 8192
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if !t.refused {
+		// Scan the join with what came before, so a line split across writes is seen.
+		prev := t.buf
+		if len(prev) > 64 {
+			prev = prev[len(prev)-64:]
+		}
+		t.refused = MediaRefusalPattern.Match(append(append([]byte(nil), prev...), p...))
+	}
 	t.buf = append(t.buf, p...)
 	if len(t.buf) > tailBufferMax {
 		t.buf = t.buf[len(t.buf)-tailBufferMax:]
