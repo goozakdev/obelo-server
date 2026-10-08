@@ -34,6 +34,7 @@ function snapshot(
   over: Partial<TranscodingSnapshot["backend"]> = {},
   loadOver: Partial<TranscodingSnapshot["load"]> = {},
   gpu: TranscodingSnapshot["gpu"] = null,
+  onlineSessions: TranscodingSnapshot["onlineSessions"] = [],
 ): TranscodingSnapshot {
   return {
     backend: {
@@ -50,6 +51,7 @@ function snapshot(
       ...loadOver,
     },
     gpu,
+    onlineSessions,
   };
 }
 
@@ -58,6 +60,50 @@ beforeEach(() => {
 });
 
 describe("AdminTranscodingScreen", () => {
+  it("lists each online session as {source} — {item title} with the path carrying it", async () => {
+    getTranscoding.mockResolvedValue(
+      snapshot({}, {}, null, [
+        {
+          sessionId: "s1",
+          source: "Test Tube",
+          title: "A talk",
+          label: "Test Tube — A talk",
+          mode: "relay",
+          startedAt: "2026-10-08T00:00:00Z",
+        },
+        {
+          sessionId: "s2",
+          source: "Test Tube",
+          title: "Split clip",
+          label: "Test Tube — Split clip",
+          mode: "ffmpeg",
+          startedAt: "2026-10-08T00:01:00Z",
+        },
+      ]),
+    );
+    renderWithAuth(<AdminTranscodingScreen />, {
+      initialEntries: ["/admin/transcoding"],
+    });
+
+    const rows = await screen.findAllByTestId("transcoding-online-session");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Test Tube — A talk");
+    expect(rows[0]).toHaveTextContent("Relayed");
+    expect(rows[1]).toHaveTextContent("Test Tube — Split clip");
+    expect(rows[1]).toHaveTextContent("Transcoding (ffmpeg)");
+    expect(screen.queryByTestId("transcoding-online-empty")).not.toBeInTheDocument();
+  });
+
+  it("says no online item is playing when there are none", async () => {
+    getTranscoding.mockResolvedValue(snapshot());
+    renderWithAuth(<AdminTranscodingScreen />, {
+      initialEntries: ["/admin/transcoding"],
+    });
+
+    expect(await screen.findByTestId("transcoding-online-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("transcoding-online-session")).not.toBeInTheDocument();
+  });
+
   it("renders the active backend, requested, and reason", async () => {
     getTranscoding.mockResolvedValue(
       snapshot({

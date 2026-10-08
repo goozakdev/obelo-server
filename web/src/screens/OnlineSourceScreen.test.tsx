@@ -127,6 +127,20 @@ describe("OnlineSourceScreen", () => {
     expect(screen.queryByTestId("now-playing-bar")).toBeNull();
   });
 
+  it("offers no playlist, collection or watchlist action on the page or in the player", async () => {
+    const affordance = /playlist|collection|watchlist/i;
+    renderPage();
+    await screen.findByTestId("online-row-recent");
+    expect(screen.queryByRole("button", { name: affordance })).toBeNull();
+    expect(screen.queryByTestId(/playlist|collection|watchlist/i)).toBeNull();
+
+    fireEvent.click(screen.getByTestId("online-item-play-v1"));
+    await screen.findByTestId("player-video");
+    expect(screen.queryByRole("button", { name: affordance })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: affordance })).toBeNull();
+    expect(screen.queryByTestId(/playlist|collection|watchlist/i)).toBeNull();
+  });
+
   it("is never persisted: a reload does not resurrect a dead session", async () => {
     renderPage();
     fireEvent.click(await screen.findByTestId("online-item-play-v1"));

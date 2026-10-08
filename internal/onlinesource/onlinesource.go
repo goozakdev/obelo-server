@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,10 @@ type Service struct {
 	// client can never aim the proxy at an address of its choosing. A restart
 	// clears it, and the next page repopulates it.
 	thumbs map[string]map[string]string
+	// titles is thumbs' twin for item titles: what lets a session be labelled with
+	// the title of the item it plays (the sessions page), though resolve() is asked
+	// for an id alone. Memory only, cleared by a restart like thumbs.
+	titles map[string]map[string]string
 	onEnd  func(sessionID string)
 	now    func() time.Time
 
@@ -135,6 +140,7 @@ func New(reg *pluginapi.Registry, client *http.Client) *Service {
 		reg: reg, client: guarded,
 		sessions: map[string]*Session{},
 		thumbs:   map[string]map[string]string{},
+		titles:   map[string]map[string]string{},
 		now:      time.Now,
 		lookup:   lookupIPs,
 	}
@@ -223,6 +229,7 @@ func (s *Service) Rows(ctx context.Context, sourceID string) ([]Row, error) {
 
 	rows := make([]Row, 0, len(resp.Rows))
 	thumbs := map[string]string{}
+	titles := map[string]string{}
 	for _, r := range resp.Rows {
 		if !urlSafeID(r.ID) || strings.TrimSpace(r.Label) == "" {
 			continue
@@ -237,6 +244,7 @@ func (s *Service) Rows(ctx context.Context, sourceID string) ([]Row, error) {
 				Description: it.Description, PublishedAt: it.PublishedAt,
 			})
 			thumbs[it.ID] = it.ThumbnailURL
+			titles[it.ID] = it.Title
 		}
 		rows = append(rows, row)
 	}
@@ -246,6 +254,12 @@ func (s *Service) Rows(ctx context.Context, sourceID string) ([]Row, error) {
 			s.thumbs[sourceID] = map[string]string{}
 		}
 		s.thumbs[sourceID][id] = u
+	}
+	for id, title := range titles {
+		if s.titles[sourceID] == nil {
+			s.titles[sourceID] = map[string]string{}
+		}
+		s.titles[sourceID][id] = title
 	}
 	s.mu.Unlock()
 	return rows, nil
@@ -299,6 +313,11 @@ type Session struct {
 	UserID   string
 	SourceID string
 	ItemID   string
+	// SourceName and ItemTitle are what the sessions page calls the play: the
+	// source's name and the item's title as its page last showed it (the id when it
+	// never did).
+	SourceName string
+	ItemTitle  string
 	// Variant is what is played. Its URLs are the upstream addresses and never leave
 	// the Server.
 	Variant pluginapi.OnlineVariant
@@ -328,7 +347,7 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 	if !urlSafeID(in.ItemID) {
 		return Session{}, nil, ErrNoItem
 	}
-	p, _, err := s.provider(in.SourceID)
+	p, reg, err := s.provider(in.SourceID)
 	if err != nil {
 		return Session{}, nil, err
 	}
@@ -370,8 +389,19 @@ func (s *Service) Play(ctx context.Context, in PlayInput) (Session, *playback.Un
 		}
 	}
 	now := s.now()
+	sourceName := reg.Descriptor.Name
+	if sourceName == "" {
+		sourceName = reg.Descriptor.Slug
+	}
+	s.mu.Lock()
+	itemTitle := s.titles[in.SourceID][in.ItemID]
+	s.mu.Unlock()
+	if itemTitle == "" {
+		itemTitle = in.ItemID
+	}
 	sess := &Session{
 		ID: id, UserID: in.UserID, SourceID: in.SourceID, ItemID: in.ItemID,
+		SourceName: sourceName, ItemTitle: itemTitle,
 		Variant: plan.Variant, Transcoded: plan.Transcode, StartedAt: now, LastSeen: now, run: r,
 	}
 	s.mu.Lock()
@@ -392,6 +422,23 @@ func (s *Service) Session(id string) (Session, bool) {
 		return Session{}, false
 	}
 	return *sess, true
+}
+
+// Sessions lists the live sessions, oldest first.
+func (s *Service) Sessions() []Session {
+	s.mu.Lock()
+	out := make([]Session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		out = append(out, *sess)
+	}
+	s.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.Before(out[j].StartedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
 }
 
 // Touch marks a session as just used, which keeps the idle reaper off it.

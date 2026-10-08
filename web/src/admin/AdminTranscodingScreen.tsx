@@ -128,6 +128,7 @@ export default function AdminTranscodingScreen({
           <BackendPanel backend={state.snapshot.backend} />
           <LoadPanel load={state.snapshot.load} />
           <GpuPanel gpu={state.snapshot.gpu} />
+          <OnlineSessionsPanel sessions={state.snapshot.onlineSessions} />
         </>
       )}
     </section>
@@ -205,6 +206,49 @@ function LoadPanel({ load }: { load: TranscodingSnapshot["load"] }) {
           ? "The server is at its transcode cap and is rejecting new transcodes."
           : "Full transcodes running now. Direct play and direct stream carry no load."}
       </p>
+    </div>
+  );
+}
+
+/** The live plays of Online items (ADR-0068), one line each as "{source} — {item
+ * title}". Only the ffmpeg ones are counted in the load above; a relay passes the
+ * bytes through untouched and says so. */
+function OnlineSessionsPanel({
+  sessions,
+}: {
+  sessions: TranscodingSnapshot["onlineSessions"];
+}) {
+  return (
+    <div className="transcoding-panel card" data-testid="transcoding-online">
+      <div className="transcoding-headline">
+        <span className="transcoding-label">Online sessions</span>
+      </div>
+      {sessions.length === 0 ? (
+        <p
+          className="transcoding-load-note"
+          data-testid="transcoding-online-empty"
+        >
+          No online items are playing.
+        </p>
+      ) : (
+        <ul className="transcoding-detail">
+          {sessions.map((s) => (
+            <li
+              key={s.sessionId}
+              className="transcoding-detail-row"
+              data-testid="transcoding-online-session"
+            >
+              <span data-testid="transcoding-online-label">{s.label}</span>
+              <span
+                className="transcoding-load-note"
+                data-testid="transcoding-online-mode"
+              >
+                {s.mode === "ffmpeg" ? "Transcoding (ffmpeg)" : "Relayed"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

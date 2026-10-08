@@ -2792,6 +2792,19 @@ export interface TranscodingSnapshot {
   backend: TranscodingBackend;
   load: TranscodingLoad;
   gpu: TranscodingGpu | null;
+  /** Live plays of Online items (ADR-0068), each labelled "{source} — {item
+   * title}" by the server. `mode` is "relay" (bytes passed through) or "ffmpeg"
+   * (encoded, counted in `load`). Empty when none is playing. */
+  onlineSessions: TranscodingOnlineSession[];
+}
+
+export interface TranscodingOnlineSession {
+  sessionId: string;
+  source: string;
+  title: string;
+  label: string;
+  mode: "relay" | "ffmpeg";
+  startedAt: string;
 }
 
 // --- Tailnet remote access (ADR-0043) ---------------------------------------

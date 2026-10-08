@@ -19,6 +19,22 @@ type transcodingResponse struct {
 	// (non-NVENC active backend, nvidia-smi absent, probe error) — one all-or-nothing
 	// state, deliberately without an unavailable-reason (ADR-0029).
 	GPU *gpuBlock `json:"gpu"`
+	// OnlineSessions are the live plays of Online items (ADR-0068 decision 6), always
+	// an array. They carry no User and no position: who is watching is not this
+	// page's business, and an Online play has no position the Server keeps.
+	OnlineSessions []onlineSessionBlock `json:"onlineSessions"`
+}
+
+// onlineSessionBlock is one live Online play. Label is "{source} — {item title}",
+// composed here so every client labels a play alike; Mode says which path carries
+// the bytes: "relay" (untouched) or "ffmpeg" (encoded, and counted in Load).
+type onlineSessionBlock struct {
+	SessionID string `json:"sessionId"`
+	Source    string `json:"source"`
+	Title     string `json:"title"`
+	Label     string `json:"label"`
+	Mode      string `json:"mode"`
+	StartedAt string `json:"startedAt"`
 }
 
 // backendBlock projects the setup-time transcode.Resolution (ADR-0009): the
@@ -75,9 +91,33 @@ func handleTranscoding(deps Deps) http.HandlerFunc {
 				Cap:        load.Cap,
 				AtCapacity: load.Cap > 0 && load.Active >= load.Cap,
 			},
-			GPU: gpuTelemetry(r, deps.Backend.Accel, deps.GPU),
+			GPU:            gpuTelemetry(r, deps.Backend.Accel, deps.GPU),
+			OnlineSessions: onlineSessions(deps),
 		})
 	}
+}
+
+// onlineSessions projects the live Online sessions for the page.
+func onlineSessions(deps Deps) []onlineSessionBlock {
+	out := []onlineSessionBlock{}
+	if deps.Online == nil {
+		return out
+	}
+	for _, s := range deps.Online.Sessions() {
+		mode := "relay"
+		if s.Transcoded {
+			mode = "ffmpeg"
+		}
+		out = append(out, onlineSessionBlock{
+			SessionID: s.ID,
+			Source:    s.SourceName,
+			Title:     s.ItemTitle,
+			Label:     s.SourceName + " — " + s.ItemTitle,
+			Mode:      mode,
+			StartedAt: s.StartedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return out
 }
 
 // gpuTelemetry projects a best-effort GPU sample, or nil for the one uniform

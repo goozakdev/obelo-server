@@ -1110,6 +1110,43 @@ func (s *Server) CountWatchRowsForUser(userID string) (watchState, audioMemory, 
 	return watchState, audioMemory, videoMemory
 }
 
+// UserOwnedRowCounts returns, for every table that has a user_id column, how many
+// rows it holds. It is a direct-DB seam for the claim that an action wrote nothing
+// per-User (watch state, memory, history, anything added later): a test snapshots
+// it before and after and compares, so a new per-User table is covered the day it
+// exists rather than the day someone remembers to list it.
+func (s *Server) UserOwnedRowCounts() map[string]int {
+	s.t.Helper()
+	rows, err := s.app.DB.Query(
+		`SELECT m.name FROM sqlite_master m
+		  WHERE m.type = 'table'
+		    AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) WHERE name = 'user_id')`)
+	if err != nil {
+		s.t.Fatalf("testharness: listing per-User tables: %v", err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			s.t.Fatalf("testharness: reading a table name: %v", err)
+		}
+		tables = append(tables, name)
+	}
+	if err := rows.Err(); err != nil {
+		s.t.Fatalf("testharness: listing per-User tables: %v", err)
+	}
+	rows.Close()
+	out := make(map[string]int, len(tables))
+	for _, name := range tables {
+		var n int
+		if err := s.app.DB.QueryRow(`SELECT COUNT(*) FROM "` + name + `"`).Scan(&n); err != nil {
+			s.t.Fatalf("testharness: counting %s: %v", name, err)
+		}
+		out[name] = n
+	}
+	return out
+}
+
 // RefreshRotationKeys forces one synchronous key-rotation poll (ADR-0032): fetch
 // the stub endpoint, decrypt, cache, propagate the default key into the running
 // provider, and rebuild it. It is the deterministic driver for the rotation
