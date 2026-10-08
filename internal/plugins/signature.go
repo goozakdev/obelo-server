@@ -57,9 +57,19 @@ func samePublisher(a, b string) bool {
 // signer is the outcome of the policy: who signed, verified, or nothing at all.
 // An empty Publisher means "no verification happened" and is never "unsigned" —
 // the two are different and only the first is something this server knows.
+//
+// Publisher and KeyID are the pinned-verification record and are set only when a
+// pinned key verified. SignerName, SignerKey and SignerKeyID are the trust-on-first-
+// install record (ADR-0069): set on every server whenever a signature verified,
+// against the pinned key when one is pinned and the document's own key otherwise.
+// Empty means no recorded key, which is never "unsigned".
 type signer struct {
 	Publisher string
 	KeyID     string
+
+	SignerName  string
+	SignerKey   string
+	SignerKeyID string
 }
 
 // checkSignature applies the policy to one install. It returns what should be
@@ -79,10 +89,11 @@ func (m *Manager) checkSignature(man pluginapi.Manifest, manifestRaw, module, si
 		return signer{}, err
 	}
 	if len(pinned) == 0 {
-		// The default policy. Nothing is checked, nothing is recorded, and the
+		// The default policy. Nothing is refused, nothing is pinned-verified, and the
 		// signature file (if any) is still stored beside the manifest so that an
-		// operator who pins a key later can check it by hand.
-		return signer{}, nil
+		// operator who pins a key later can check it by hand. A signature that
+		// verifies under the key it carries is recorded for later (ADR-0069).
+		return selfSigned(manifestRaw, module, signatureRaw, icon), nil
 	}
 
 	if len(signatureRaw) == 0 {
@@ -141,7 +152,32 @@ func (m *Manager) checkSignature(man pluginapi.Manifest, manifestRaw, module, si
 				"the signature covers the package's %s, so one swapped or added since signing fails here",
 			man.ID, sig.Publisher, IconFile)
 	}
-	return signer{Publisher: key.Publisher, KeyID: key.KeyID}, nil
+	return signer{
+		Publisher: key.Publisher, KeyID: key.KeyID,
+		SignerName: key.Publisher, SignerKey: signing.EncodeKey(pub), SignerKeyID: signing.KeyID(pub),
+	}, nil
+}
+
+// selfSigned is the trust-on-first-install record for a server with nothing
+// pinned: the signer named by a document that verifies under the public key it
+// carries. Anything else — no signature, an unreadable one, none carrying a key, a
+// key that does not verify it — records nothing and refuses nothing, exactly as an
+// unpinned server always treated a signature it could not use.
+func selfSigned(manifestRaw, module, signatureRaw, icon []byte) signer {
+	if len(signatureRaw) == 0 {
+		return signer{}
+	}
+	sig, err := signing.Parse(signatureRaw)
+	if err != nil || sig.PublicKey == "" {
+		return signer{}
+	}
+	pub, err := signing.ParsePublicKey(sig.PublicKey)
+	if err != nil || signing.VerifyWithIcon(sig, pub, manifestRaw, module, icon) != nil {
+		return signer{}
+	}
+	return signer{
+		SignerName: strings.TrimSpace(sig.Publisher), SignerKey: signing.EncodeKey(pub), SignerKeyID: signing.KeyID(pub),
+	}
 }
 
 // PinPublisher adds or replaces a publisher's key.

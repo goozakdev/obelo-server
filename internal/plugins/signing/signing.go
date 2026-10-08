@@ -205,9 +205,11 @@ func SignWithIcon(priv ed25519.PrivateKey, publisher string, manifest, module, i
 		return pluginapi.Signature{}, errors.New("signing: a signature covers a manifest AND a module, and one of them is empty")
 	}
 	sig := ed25519.Sign(priv, MessageWithIcon(manifest, module, icon))
+	pub := priv.Public().(ed25519.PublicKey)
 	return pluginapi.Signature{
 		Publisher:      strings.TrimSpace(publisher),
-		KeyID:          KeyID(priv.Public().(ed25519.PublicKey)),
+		KeyID:          KeyID(pub),
+		PublicKey:      EncodeKey(pub),
 		Algorithm:      pluginapi.SignatureAlgorithmEd25519,
 		ManifestSHA256: Digest(manifest),
 		ModuleSHA256:   Digest(module),

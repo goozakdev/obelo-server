@@ -1,7 +1,7 @@
 {
   "id": "oidc",
   "name": "OpenID Connect",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "apiVersion": 1,
   "description": "Sign in through an OpenID Connect identity provider you run, such as Authentik, Keycloak or Authelia. The server verifies every ID token against the issuer you type here.",
   "docsUrl": "https://openid.net/specs/openid-connect-core-1_0.html",

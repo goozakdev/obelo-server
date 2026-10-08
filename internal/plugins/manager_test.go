@@ -244,6 +244,16 @@ func (s *memStore) SetPluginSigner(id, publisher, keyID string) error {
 	return nil
 }
 
+func (s *memStore) SetPluginSignerKey(id, name, key, keyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.rows[id]; ok {
+		r.SignerName, r.SignerKey, r.SignerKeyID = name, key, keyID
+		s.rows[id] = r
+	}
+	return nil
+}
+
 func (s *memStore) PluginCatalogURL() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -233,6 +233,9 @@ type ManagerStore interface {
 	// SetPluginSigner records who signed, and is called only after a signature has
 	// verified against a pinned key.
 	SetPluginSigner(id, publisher, keyID string) error
+	// SetPluginSignerKey records the signer's public key on every signed install,
+	// pinned or not (trust on first install, ADR-0069).
+	SetPluginSignerKey(id, name, key, keyID string) error
 	// PluginCatalogURL / SetPluginCatalogURL are the operator's chosen index —
 	// empty by default, and empty means this server browses no catalog at all.
 	PluginCatalogURL() (string, error)
@@ -887,6 +890,13 @@ func (m *Manager) install(ctx context.Context, manifestRaw, module, signatureRaw
 				// The Plugin IS installed and its signature DID verify; failing the whole
 				// install over a display column would throw away the thing that worked.
 				m.logf("obelo: plugin %s was installed but its publisher could not be recorded: %v", man.ID, err)
+			}
+		}
+		if signedBy.SignerKey != "" {
+			if err := m.store.SetPluginSignerKey(man.ID, signedBy.SignerName, signedBy.SignerKey, signedBy.SignerKeyID); err != nil {
+				// Same reasoning as above: the install worked, and an unrecorded key only
+				// means this plugin reads as having none.
+				m.logf("obelo: plugin %s was installed but its signing key could not be recorded: %v", man.ID, err)
 			}
 		}
 	}

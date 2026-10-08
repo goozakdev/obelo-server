@@ -109,6 +109,19 @@ func (db *DB) SetPluginSigner(id, publisher, keyID string) error {
 	return nil
 }
 
+// SetPluginSignerKey records the trust-on-first-install signer of a plugin: the
+// name, public key and key id of whoever signed the package, whether or not any key
+// is pinned (ADR-0069). It is separate from SetPluginSigner, which stays pinned-only.
+func (db *DB) SetPluginSignerKey(id, name, key, keyID string) error {
+	_, err := db.Exec(
+		`UPDATE plugins SET signer_name = ?, signer_key = ?, signer_key_id = ? WHERE id = ?`,
+		name, key, keyID, id)
+	if err != nil {
+		return fmt.Errorf("store: recording the signing key of plugin %q: %w", id, err)
+	}
+	return nil
+}
+
 // PluginCatalogURL is the index an Admin pointed this server at, or "" for the
 // shipped default, which is none.
 //

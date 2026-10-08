@@ -1352,6 +1352,9 @@
         "keyId": {
           "type": "string"
         },
+        "publicKey": {
+          "type": "string"
+        },
         "algorithm": {
           "type": "string"
         },

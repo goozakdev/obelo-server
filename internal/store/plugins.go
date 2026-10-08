@@ -35,6 +35,17 @@ type PluginRow struct {
 	// a screen must read them that way rather than as "unsigned".
 	Publisher string
 	KeyID     string
+	// SignerName, SignerKey and SignerKeyID are the trust-on-first-install record
+	// (ADR-0069): the publisher name, base64 ed25519 public key and key id of whoever
+	// signed this Plugin's package, recorded on EVERY server whenever the signature
+	// verified (against the document's own key, or the pinned key when one is
+	// pinned). They are separate from Publisher/KeyID above, which stay pinned-only.
+	// Empty means no recorded key — a Plugin installed unsigned, with a signature
+	// that did not verify, or before this record existed; nothing may tell those
+	// apart.
+	SignerName  string
+	SignerKey   string
+	SignerKeyID string
 	// Origin is who put this plugin here: "bundled" for one the server shipped
 	// (ADR-0059), "admin" for one a person uploaded or pasted a URL for. It is the
 	// fact the boot-time re-assert turns on — a bundled row's files are replaced
@@ -63,7 +74,7 @@ type PluginInsert struct {
 func (db *DB) Plugins() ([]PluginRow, error) {
 	rows, err := db.Query(
 		`SELECT id, name, version, api_version, provides, enabled, last_error, source, installed_at,
-		        publisher, key_id, origin
+		        publisher, key_id, origin, signer_name, signer_key, signer_key_id
 		   FROM plugins ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing plugins: %w", err)
@@ -76,11 +87,16 @@ func (db *DB) Plugins() ([]PluginRow, error) {
 			r         PluginRow
 			provides  string
 			lastError sql.NullString
+			sigName   sql.NullString
+			sigKey    sql.NullString
+			sigKeyID  sql.NullString
 		)
 		if err := rows.Scan(&r.ID, &r.Name, &r.Version, &r.APIVersion, &provides,
-			&r.Enabled, &lastError, &r.Source, &r.InstalledAt, &r.Publisher, &r.KeyID, &r.Origin); err != nil {
+			&r.Enabled, &lastError, &r.Source, &r.InstalledAt, &r.Publisher, &r.KeyID, &r.Origin,
+			&sigName, &sigKey, &sigKeyID); err != nil {
 			return nil, fmt.Errorf("store: scanning plugin: %w", err)
 		}
+		r.SignerName, r.SignerKey, r.SignerKeyID = sigName.String, sigKey.String, sigKeyID.String
 		r.LastError = lastError.String
 		r.Provides = decodeProvides(provides)
 		out = append(out, r)

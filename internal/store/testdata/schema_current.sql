@@ -1169,7 +1169,12 @@ CREATE TABLE plugins (
     source       TEXT NOT NULL DEFAULT '',
     enabled      INTEGER NOT NULL DEFAULT 1,
     last_error   TEXT,
-    installed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    installed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- signer_* are the trust-on-first-install record (ADR-0069): who signed the
+    -- package, whenever the signature verified. NULL = no recorded key.
+    signer_name   TEXT,
+    signer_key    TEXT,
+    signer_key_id TEXT
 );
 
 CREATE TABLE plugin_settings (

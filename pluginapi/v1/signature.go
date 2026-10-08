@@ -87,6 +87,13 @@ type Signature struct {
 	// comparing what a server has pinned against what a publisher advertises. It is
 	// DIAGNOSTIC: verification uses the pinned key's bytes and never this string.
 	KeyID string `json:"keyId,omitempty"`
+	// PublicKey is the base64 ed25519 public key that made Signature, so a server
+	// with nothing pinned can record WHO signed and recognise the same signer on a
+	// later install (trust on first install, ADR-0069). It is optional and
+	// additive: older documents carry none. The signed message does not cover it —
+	// the signature itself is what proves it, and a key that does not verify the
+	// signature is ignored.
+	PublicKey string `json:"publicKey,omitempty"`
 	// Algorithm is the signature algorithm. SignatureAlgorithmEd25519 is the only
 	// value this version defines.
 	Algorithm string `json:"algorithm"`
