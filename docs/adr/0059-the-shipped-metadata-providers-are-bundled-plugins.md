@@ -224,3 +224,14 @@ taking that lock.
 - `go install .../cmd/obelo@latest` stops working once the repo holds nested modules joined by
   `replace`; nobody installs the server that way (ADR-0006: Docker first), and it is recorded
   here so nobody wonders.
+
+> **Amended (plugin upgrade, 2026-10-08):** boot-time replacement continues, except that it never downgrades an Obelo-signed upgraded copy. An Admin can now
+> upgrade an uploaded plugin, or a Bundled one, with a higher-version package ([ADR-0069](./0069-an-uploaded-plugin-is-upgraded-in-place-under-the-key-it-was-first-installed-with.md)). Settings with the same key and
+> type are kept, the rest are dropped or deleted and listed. A Plugin with a recorded signer key
+> may be upgraded only by a package verifying under it. On a release build a Bundled plugin is
+> signed with an Obelo release key, which boot records for bundled-origin rows whose bytes verify,
+> so any upload over a bundled-origin row must verify under that key whether or not a key was
+> recorded, keeps its bundled origin, and is replaced at boot only by a strictly newer shipped
+> version, never downgraded. On a development build Bundled plugins are unsigned and have no
+> recorded key: an upload upgrade of one is an ordinary no-key upgrade, always previewed with an
+> author-cannot-be-confirmed warning, and makes it an Admin-origin plugin, which boot leaves alone.

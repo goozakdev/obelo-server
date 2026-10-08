@@ -323,6 +323,16 @@ half-loaded and never discovers the mismatch mid-enrichment.
 > **Amended in part (Online source provider, 2026-10-07):** "the three expected files" gains an
 > optional fourth member, `icon.png`, per [ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md).
 >
+> **Superseded in part (plugin upgrade, 2026-10-08):** a duplicate id is no longer always refused
+> ([ADR-0069](./0069-an-uploaded-plugin-is-upgraded-in-place-under-the-key-it-was-first-installed-with.md)).
+> A package with the same id and a strictly higher version is a Plugin upgrade that replaces the
+> Installed plugin in place; settings with the same key and type are kept, the rest are dropped or
+> deleted and listed. A Plugin with a recorded signer key may be upgraded only by a package that
+> verifies under that key. A Plugin with no recorded key (unsigned, installed before the key was
+> recorded, or Bundled on a development build, since release builds sign Bundled plugins) may be
+> upgraded by any package, always through the preview, with a warning that the author cannot be
+> confirmed. The same or a lower version is still refused.
+>
 > **Amended (plugin-system issue 19, 2026-09-17):** "every reader picks the new value up on its next
 > read" was true of the subtitle builder, the sink Manager and the settings handlers, and NOT of the
 > enrichment catalog, which copied the Metadata provider Descriptors into a slice at construction
@@ -540,6 +550,9 @@ module is the same trade this project has made every previous time.
 > **Amended in part (Online source provider, 2026-10-07):** [ADR-0068](./0068-an-online-source-is-browsed-and-played-live-and-the-server-keeps-none-of-it.md) lets a package carry an
 > optional `icon.png`; the signature then also covers it. The covered bytes above describe a package
 > without one.
+>
+> **Amended in part (plugin upgrade, 2026-10-08):** a signer's key now matters beyond pinning: every
+> signed install records it, and a later upgrade must verify under it ([ADR-0069](./0069-an-uploaded-plugin-is-upgraded-in-place-under-the-key-it-was-first-installed-with.md)).
 >
 > **A catalog URL.** A server may be pointed at a JSON index (`CatalogIndex` / `CatalogEntry`,
 > new wire types in `pluginapi/v1`), empty by default, and **this project publishes none**
