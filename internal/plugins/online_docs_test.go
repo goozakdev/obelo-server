@@ -44,3 +44,61 @@ func TestTheOnlineFFmpegResidualRisksAreNamedWhereAnAuthorAndADeciderRead(t *tes
 		}
 	}
 }
+
+// TestTheGuidesMinimalOnlineSourceManifestIsOneTheServerAccepts: §2a shows a
+// complete minimal manifest for an Online source, marked `<!-- online-manifest -->`.
+// An author copies it, so it must pass the same decode-and-validate the installer
+// runs, and it must declare what the section says it declares.
+func TestTheGuidesMinimalOnlineSourceManifestIsOneTheServerAccepts(t *testing.T) {
+	parallel(t)
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this test's own source")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "plugins", "authoring.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	var body []string
+	found := false
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "<!-- online-manifest -->" {
+			continue
+		}
+		if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "```") {
+			t.Fatalf("line %d: the online-manifest marker is not followed by a fenced block", i+1)
+		}
+		for _, b := range lines[i+2:] {
+			if strings.HasPrefix(b, "```") {
+				found = true
+				break
+			}
+			body = append(body, b)
+		}
+		break
+	}
+	if !found {
+		t.Fatal("authoring.md carries no <!-- online-manifest --> block")
+	}
+	m, err := decodeManifest([]byte(strings.Join(body, "\n")))
+	if err != nil {
+		t.Fatalf("the guide's minimal Online source manifest is refused: %v", err)
+	}
+	if len(m.Provides) != 1 || m.Provides[0].Kind != "online-source-provider" {
+		t.Errorf("provides = %+v, want exactly one online-source-provider", m.Provides)
+	}
+	if m.Settings.DefaultURL == "" || len(m.Network.Hosts) == 0 {
+		t.Errorf("the manifest should carry a defaultUrl and network.hosts: %+v", m)
+	}
+	var urlField bool
+	for _, f := range settingsFields(m) {
+		if f.Key == "instance" && f.Type == "url" {
+			urlField = true
+		}
+	}
+	if !urlField {
+		t.Error("the manifest should declare a url-typed `instance` settings field")
+	}
+}

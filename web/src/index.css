@@ -6290,6 +6290,23 @@ textarea.metadata-input {
 /* --- Online sources (ADR-0068) -------------------------------------------- */
 /* A source's items are videos with landscape thumbnails, so the poster card's
    2:3 frame is widened to 16:9 and each card made wider; the cards are buttons. */
+/* The source page's search box: a `.field-input` beside an `.auth-submit`, laid
+   in one row (the input flexes; the button drops `.auth-submit`'s top margin). */
+.online-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 32rem;
+  margin: 0.75rem 0 1.25rem;
+}
+.online-search .field-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+.online-search .auth-submit {
+  margin-top: 0;
+}
 .online-thumb {
   aspect-ratio: 16 / 9;
 }

@@ -87,14 +87,14 @@ export default function OnlineSourceScreen() {
         <form className="online-search" role="search" data-testid="online-search-form" onSubmit={submitSearch}>
           <input
             type="search"
-            className="online-search-input"
+            className="field-input online-search-input"
             data-testid="online-search-input"
             aria-label={`Search ${sourceName}`}
             placeholder={`Search ${sourceName}`}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <button type="submit" className="nav-link" data-testid="online-search-submit">
+          <button type="submit" className="auth-submit" data-testid="online-search-submit">
             Search
           </button>
         </form>

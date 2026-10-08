@@ -298,7 +298,7 @@ for `row`, per row and cursor), and shared across Users (the cache is bounded at
 expiry goes first) — so do not put anything
 User-specific in them; you cannot, since you are never told who is asking.
 **`search` is never cached**: the same query twice is two calls. The cache is
-cleared when an Admin saves the source's settings or installs, upgrades, enables or
+cleared when an Admin saves the source's settings or installs, enables or
 removes the Plugin, and by a restart. Nothing else is kept: no watch state, no
 resume position, no history, no Continue Watching, and **no per-User state at all**
 — your settings are server-wide, entered once by the Admin (the URL of the instance to
@@ -1299,6 +1299,13 @@ restart, which is what the layout on disk is.
 | 422 | `PLUGIN_SOURCE_REFUSED` | the URL was not fetchable under the rules above |
 | 422 | `PLUGIN_SIGNATURE` | the server has publisher keys pinned and yours does not satisfy them (§7a) |
 | 413 | — | the `package` part over the archive cap, or an upload body over the request limit |
+
+**There is no in-place upgrade for an uploaded plugin.** Uploading a new `version` of
+an id that is already installed is the 409 above; the host never compares versions.
+To move to a new build, uninstall the plugin and install the new package. Uninstalling
+discards the Admin's settings, secrets and stored data for it, so they must be entered
+again. Only a Bundled plugin (one the server ships) is replaced, and only when the
+server itself is upgraded.
 
 ---
 
@@ -2326,6 +2333,118 @@ func (v *Videos) Resolve(ctx context.Context, req pluginapi.OnlineResolveRequest
 		Codecs:     []string{"h264", "aac"},
 		Resolution: strconv.Itoa(out.Height) + "p",
 	}}}, nil
+}
+```
+
+That example is quoted from a file in the SDK, so on its own it does not compile: it
+leans on its imports, four path constants and `baseOf`. Put these in the same package
+beside it, and it builds as written:
+
+```go
+import (
+	"context"
+	"errors"
+	"net/url"
+	"strconv"
+	"strings"
+
+	pluginapi "github.com/goozakdev/obelo-server/pluginapi/v1"
+	"github.com/goozakdev/obelo-server/pluginsdk"
+)
+
+// The paths this example asks the operator's site for.
+const (
+	ShelvesPath = "/shelves"
+	ShelfPath   = "/shelf"
+	FindPath    = "/find"
+	StreamPath  = "/stream"
+)
+
+// baseOf is the Admin's URL without a trailing slash, so a path constant joins it
+// cleanly.
+func baseOf(target string) string { return strings.TrimSuffix(target, "/") }
+```
+
+and serve it from a `main.go` of the same shape as above (`init()`, not `main()`):
+
+```go
+package main
+
+import (
+	"github.com/goozakdev/obelo-server/pluginsdk"
+	"github.com/goozakdev/obelo-server/pluginsdk/onlinesource"
+)
+
+func main() {}
+
+func init() { onlinesource.Serve(NewVideos(pluginsdk.Sandbox())) }
+```
+
+#### A plugin outside the Obelo tree: `go.mod` and the build
+
+Neither `pluginapi` nor `pluginsdk` is published, so a plugin in its own repository
+points at a checkout of this one with `replace` lines. Both modules need one — the SDK
+requires the contract, and its own `replace` for it is relative to the checkout, which
+is why a plugin cannot rely on it:
+
+```
+module example.test/my-source
+
+go 1.26
+
+require (
+	github.com/goozakdev/obelo-server/pluginapi v0.0.0
+	github.com/goozakdev/obelo-server/pluginsdk v0.0.0
+)
+
+replace github.com/goozakdev/obelo-server/pluginapi => /path/to/obelo-server/pluginapi
+
+replace github.com/goozakdev/obelo-server/pluginsdk => /path/to/obelo-server/pluginsdk
+```
+
+Build with **`GOWORK=off`**, so a `go.work` file in a parent directory cannot change
+what resolves, and keep the rest of §7's command:
+
+```sh
+GOWORK=off GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 GOFLAGS= \
+  go build -buildmode=c-shared -o plugin.wasm .
+```
+
+#### The manifest for it
+
+The smallest complete manifest for the example above. The first `url`-typed
+field (`instance`) is where the Admin enters the site; until they do, your calls see
+`defaultUrl` as `Settings.URL`, and afterwards the value they saved (see
+[the Admin-entered URL](#what-the-host-checks-on-an-online-sources-media-urls-and-what-it-does-not)).
+`network.hosts` names the site you fetch from; the media hosts it hands back go there
+too, exact or as a `.suffix`.
+
+<!-- online-manifest -->
+```json
+{
+  "id": "my-videos",
+  "name": "My Videos",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "Browse and play the videos of a video site.",
+  "provides": [
+    { "kind": "online-source-provider" }
+  ],
+  "network": {
+    "hosts": ["videos.example.test"]
+  },
+  "settings": {
+    "requiresSecret": false,
+    "defaultUrl": "https://videos.example.test",
+    "fields": [
+      {
+        "key": "instance",
+        "type": "url",
+        "label": "Site URL",
+        "help": "Where the video site lives."
+      }
+    ]
+  }
 }
 ```
 

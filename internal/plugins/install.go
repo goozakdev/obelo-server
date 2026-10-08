@@ -279,7 +279,7 @@ type ManagerConfig struct {
 	Reload func(context.Context) error
 	// OnChange, when set, hears that what a Plugin answers may have changed: with its
 	// id after its declared settings are saved, and with "" after a rebuild-and-swap
-	// (an install, upgrade, switch or removal), which may have replaced any of them.
+	// (an install, a boot-time replacement of a Bundled plugin, a switch or a removal), which may have replaced any of them.
 	// The Online source service clears its cached rows on it.
 	OnChange func(pluginID string)
 	// Client fetches a pasted URL. Nil means safefetch.Client; whatever is passed
