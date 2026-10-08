@@ -34,6 +34,10 @@ func (f *fakeProvider) Row(context.Context, pluginapi.OnlineRowRequest) (plugina
 	return pluginapi.OnlineRowResponse{}, nil
 }
 
+func (f *fakeProvider) Search(context.Context, pluginapi.OnlineSearchRequest) (pluginapi.OnlineSearchResponse, error) {
+	return pluginapi.OnlineSearchResponse{}, nil
+}
+
 func (f *fakeProvider) Resolve(_ context.Context, req pluginapi.OnlineResolveRequest) (pluginapi.OnlineResolveResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

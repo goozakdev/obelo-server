@@ -2001,10 +2001,10 @@ func signInRefresh(ptr, n uint32) uint64 {
 // The Online source provider seam.
 // =============================================================================
 //
-// Appended like the Marker provider half, with three calls instead of one. The
+// Appended like the Marker provider half, with four calls instead of one. The
 // WHOLE call envelope (request and settings, so a test can see what the Admin
 // entered) is POSTed as JSON to the source at `<settings.url>/rows`,
-// `<settings.url>/row` or `<settings.url>/resolve`, and whatever the source answers is this Plugin's
+// `<settings.url>/row`, `<settings.url>/search` or `<settings.url>/resolve`, and whatever the source answers is this Plugin's
 // answer, verbatim. The test's source decides every row, item and variant, and
 // records every envelope.
 //
@@ -2012,10 +2012,15 @@ func signInRefresh(ptr, n uint32) uint64 {
 //	                                                 an OnlineRowsResponse out
 //	online_source_row(ptr u32, len u32) -> i64       an OnlineRowCall in,
 //	                                                 an OnlineRowResponse out
+//	online_source_search(ptr u32, len u32) -> i64    an OnlineSearchCall in,
+//	                                                 an OnlineSearchResponse out
 //	online_source_resolve(ptr u32, len u32) -> i64   an OnlineResolveCall in,
 //	                                                 an OnlineResolveResponse out
 
 type onlineSourceCall struct {
+	Request struct {
+		Query string `json:"query"`
+	} `json:"request"`
 	Settings struct {
 		URL string `json:"url"`
 	} `json:"settings"`
@@ -2026,6 +2031,9 @@ func onlineSourceRows(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "
 
 //go:wasmexport online_source_row
 func onlineSourceRow(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/row") }
+
+//go:wasmexport online_source_search
+func onlineSourceSearch(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/search") }
 
 //go:wasmexport online_source_resolve
 func onlineSourceResolve(ptr, n uint32) uint64 { return onlineSourceRelay(ptr, n, "/resolve") }
@@ -2038,6 +2046,9 @@ func onlineSourceRelay(ptr, n uint32, path string) uint64 {
 	var call onlineSourceCall
 	if err := json.Unmarshal(buf[:n], &call); err != nil {
 		return fail("the request is not an Online source call: " + err.Error())
+	}
+	if call.Request.Query == "obelo-trap" {
+		panic("this plugin traps on a search for obelo-trap, on purpose")
 	}
 	resp := fetch(fetchRequest{
 		Method:  "POST",

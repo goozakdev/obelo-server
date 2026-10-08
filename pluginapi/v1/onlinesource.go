@@ -10,9 +10,10 @@ import (
 // The Online source provider Extension point (ADR-0068, behind ADR-0057): a Plugin
 // that lets a User browse and watch something outside the household — a PeerTube
 // instance, the Internet Archive — without any of it becoming part of the
-// catalog. Three request-response calls: rows() answers the source's Online rows,
-// row() answers the next page of one row by an opaque cursor, and resolve() turns
-// one Online item into the URL(s) it plays from.
+// catalog. Four request-response calls: rows() answers the source's Online rows,
+// row() answers the next page of one row by an opaque cursor, search() answers the
+// items matching a query typed on the source's page, and resolve() turns one
+// Online item into the URL(s) it plays from.
 //
 // The Plugin RESOLVES; the host PLAYS. A Plugin only ever supplies URLs and data.
 // The host decides whether to fetch, how to play and who may see: it relays a
@@ -107,6 +108,18 @@ type OnlineRowResponse struct {
 	NextCursor string       `json:"nextCursor,omitempty"`
 }
 
+// OnlineSearchRequest asks for the items matching Query, as typed on the source's
+// page. The host trims it and never sends an empty one.
+type OnlineSearchRequest struct {
+	Query string `json:"query"`
+}
+
+// OnlineSearchResponse is the matching items, best first. There is no cursor: a
+// search is one page, and the host caps it as it caps a row page.
+type OnlineSearchResponse struct {
+	Items []OnlineItem `json:"items"`
+}
+
 // OnlineHints are what the host tells a Plugin about the client that will play an
 // item, so it can offer a variant that client can use.
 type OnlineHints struct {
@@ -155,6 +168,7 @@ type OnlineResolveResponse struct {
 type OnlineSourceProvider interface {
 	Rows(ctx context.Context, req OnlineRowsRequest) (OnlineRowsResponse, error)
 	Row(ctx context.Context, req OnlineRowRequest) (OnlineRowResponse, error)
+	Search(ctx context.Context, req OnlineSearchRequest) (OnlineSearchResponse, error)
 	Resolve(ctx context.Context, req OnlineResolveRequest) (OnlineResolveResponse, error)
 }
 
@@ -186,6 +200,13 @@ type OnlineRowsCall struct {
 type OnlineRowCall struct {
 	Request  OnlineRowRequest `json:"request"`
 	Settings Settings         `json:"settings"`
+}
+
+// OnlineSearchCall is OnlineRowsCall for a search() call; its response is a plain
+// OnlineSearchResponse.
+type OnlineSearchCall struct {
+	Request  OnlineSearchRequest `json:"request"`
+	Settings Settings            `json:"settings"`
 }
 
 // OnlineResolveCall is OnlineRowsCall for a resolve() call; its response is a

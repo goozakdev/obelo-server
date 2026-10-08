@@ -69,6 +69,7 @@ const (
 	maxTitleLen     = 200
 	maxDescLen      = 2000
 	maxCursorLen    = 2048
+	maxQueryLen     = 200
 	cacheTTL        = 5 * time.Minute
 	maxCacheEntries = 512
 	// maxThumbsPerSource bounds the item → thumbnail URL map of one source.
@@ -480,6 +481,33 @@ func (s *Service) Row(ctx context.Context, sourceID, rowID, cursor string) (Page
 	page := Page{Items: cleanItems(resp.Items, maxPageItems, thumbs), NextCursor: cleanCursor(resp.NextCursor)}
 	s.remember(key, cacheEntry{page: page}, thumbs)
 	return page, nil
+}
+
+// Search asks the source for the items matching query, typed on its page. The query
+// is trimmed and cut to maxQueryLen characters; a blank one is no items and no
+// Plugin call. The answer gets the judgment a row page does, but is never cached: the
+// same query twice is two Plugin calls. A Plugin that fails is ErrUnavailable.
+func (s *Service) Search(ctx context.Context, sourceID, query string) ([]Item, error) {
+	p, _, err := s.provider(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	query = truncate(strings.TrimSpace(query), maxQueryLen)
+	if query == "" {
+		return []Item{}, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	resp, err := p.Search(ctx, pluginapi.OnlineSearchRequest{Query: query})
+	if err != nil {
+		log.Printf("obelo: online source %s: search: %v", sourceID, err)
+		return nil, ErrUnavailable
+	}
+	thumbs := map[string]itemRef{}
+	items := cleanItems(resp.Items, maxPageItems, thumbs)
+	// The thumbnails are remembered so the results' images load, but the answer is not.
+	s.touchThumbs(sourceID, thumbs)
+	return items, nil
 }
 
 // cleanItems is the host's judgment on a Plugin's items. Malformed ones are dropped

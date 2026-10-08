@@ -806,8 +806,9 @@ type callPolicy struct {
 	// the instance is kept and no strike is counted. The error itself still
 	// travels to the caller unchanged.
 	//
-	// True for a Metadata provider and for nothing else (ADR-0058 decision 7 as
-	// amended 2026-09-18, ADR-0059). A provider's error is a claim about the
+	// True for a Metadata provider (ADR-0058 decision 7 as amended 2026-09-18,
+	// ADR-0059) and for an Online source provider, whose source being down or slow
+	// must not take its tile off the server (ADR-0068; only a trap or a spin does). A provider's error is a claim about the
 	// SOURCE — a rejected key, a document it cannot parse — which parks one item
 	// under ADR-0048 and says nothing about whether the module works, so three
 	// lookups against a 401 do not take the whole provider off the server. A

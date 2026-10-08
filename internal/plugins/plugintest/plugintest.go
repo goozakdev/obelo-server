@@ -331,7 +331,7 @@ func MarkerManifest(id, sourceURL string) pluginapi.Manifest {
 
 // OnlineSourceManifest is the manifest of an Installed Online source provider
 // whose source is sourceURL: the guest POSTs each call envelope to
-// <sourceURL>/rows, <sourceURL>/row or <sourceURL>/resolve and answers whatever comes back (see the
+// <sourceURL>/rows, <sourceURL>/row, <sourceURL>/search or <sourceURL>/resolve and answers whatever comes back (see the
 // guest's online_source_rows). The source is the manifest's default URL, which is
 // the host a call may reach, so it declares no network hosts of its own and no
 // secret. It declares one setting of its own, `region`, so a test can see what an

@@ -59,6 +59,21 @@ func onlineSourceWireCases() []wireCase {
 				`"settings":{"enabled":true}}`,
 		},
 		{
+			name:   "OnlineSearchRequest",
+			value:  OnlineSearchRequest{Query: "cats"},
+			golden: `{"query":"cats"}`,
+		},
+		{
+			name:   "OnlineSearchResponse",
+			value:  OnlineSearchResponse{Items: []OnlineItem{{ID: "v2", Title: "Cats", ThumbnailURL: "https://media.example/v2.jpg", DurationMs: 5}}},
+			golden: `{"items":[{"id":"v2","title":"Cats","thumbnailUrl":"https://media.example/v2.jpg","durationMs":5}]}`,
+		},
+		{
+			name:   "OnlineSearchCall",
+			value:  OnlineSearchCall{Request: OnlineSearchRequest{Query: "cats"}, Settings: Settings{Enabled: true}},
+			golden: `{"request":{"query":"cats"},"settings":{"enabled":true}}`,
+		},
+		{
 			name:   "OnlineResolveRequest",
 			value:  OnlineResolveRequest{ItemID: "v1", Hints: OnlineHints{MaxHeight: 1080}},
 			golden: `{"itemId":"v1","hints":{"maxHeight":1080}}`,

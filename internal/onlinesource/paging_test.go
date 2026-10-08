@@ -22,10 +22,12 @@ type pagedProvider struct {
 	mu        sync.Mutex
 	rows      func() []pluginapi.OnlineRow
 	row       func(req pluginapi.OnlineRowRequest) pluginapi.OnlineRowResponse
+	search    func(req pluginapi.OnlineSearchRequest) pluginapi.OnlineSearchResponse
 	fail      error
 	variants  []pluginapi.OnlineVariant
 	rowsCalls int
 	rowCalls  []pluginapi.OnlineRowRequest
+	searches  []pluginapi.OnlineSearchRequest
 }
 
 func (p *pagedProvider) Rows(context.Context, pluginapi.OnlineRowsRequest) (pluginapi.OnlineRowsResponse, error) {
@@ -46,6 +48,16 @@ func (p *pagedProvider) Row(_ context.Context, req pluginapi.OnlineRowRequest) (
 		return pluginapi.OnlineRowResponse{}, p.fail
 	}
 	return p.row(req), nil
+}
+
+func (p *pagedProvider) Search(_ context.Context, req pluginapi.OnlineSearchRequest) (pluginapi.OnlineSearchResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.searches = append(p.searches, req)
+	if p.fail != nil {
+		return pluginapi.OnlineSearchResponse{}, p.fail
+	}
+	return p.search(req), nil
 }
 
 func (p *pagedProvider) Resolve(context.Context, pluginapi.OnlineResolveRequest) (pluginapi.OnlineResolveResponse, error) {

@@ -2088,6 +2088,49 @@
         "settings"
       ]
     },
+    "OnlineSearchRequest": {
+      "type": "object",
+      "description": "Asks an Online source provider for the items matching a query typed on the source's page. The host trims the query and never sends an empty one.",
+      "properties": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "OnlineSearchResponse": {
+      "type": "object",
+      "description": "What an Online source provider answers to search(): the matching items, best first, in one page with no cursor.",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OnlineItem"
+          }
+        }
+      },
+      "required": [
+        "items"
+      ]
+    },
+    "OnlineSearchCall": {
+      "type": "object",
+      "description": "What the host hands an INSTALLED Online source provider for a search() call: the request and the Settings the host resolved. The response is un-enveloped — a plain OnlineSearchResponse.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/OnlineSearchRequest"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "request",
+        "settings"
+      ]
+    },
     "OnlineRowsRequest": {
       "type": "object",
       "description": "Asks an Online source provider for the source's rows. It carries nothing yet.",

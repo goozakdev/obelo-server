@@ -725,6 +725,18 @@ export class ApiClient {
     return { items: res.items ?? [], nextCursor: res.nextCursor ?? null };
   }
 
+  /** `GET /api/v1/onlineSources/{id}/search?q=` — the items the source finds for a
+   * query, for the source page only (never global search). Every call runs the
+   * Plugin; nothing is cached. Fails with a 502 `SOURCE_UNAVAILABLE` the page turns
+   * into "{source} isn't responding". */
+  async searchOnlineItems(sourceId: string, query: string, signal?: AbortSignal): Promise<OnlineItem[]> {
+    const res = await this.request<{ items?: OnlineItem[] }>(
+      `/onlineSources/${encodeURIComponent(sourceId)}/search?q=${encodeURIComponent(query)}`,
+      { signal },
+    );
+    return res.items ?? [];
+  }
+
   /** `POST /api/v1/onlineSources/{id}/items/{itemId}/playback` — resolve the item
    * once and open an Online session. Errors surface as the typed ApiError the
    * player branches on (501 `TRANSCODE_REQUIRED` when no variant plays as-is). */

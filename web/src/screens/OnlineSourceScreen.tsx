@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import type { OnlineItem, OnlineRow, OnlineSource } from "../api/types";
@@ -15,11 +15,27 @@ import { formatTimecode } from "../time";
 //
 // The source's name comes from the tile list (cheap, never calls a Plugin), so the
 // failure message can name the source even when the rows call is what failed.
+//
+// A search box sits under the name (this page only, never global search). A
+// submitted query replaces the rows with the source's results, each submit asks the
+// Plugin afresh, and a failure says the same "isn't responding" in place of the
+// results while the box stays usable. A blank submit returns to the rows.
+
+type SearchState =
+  | { status: "idle" }
+  | { status: "loading"; query: string }
+  | { status: "error"; query: string }
+  | { status: "ready"; query: string; items: OnlineItem[] };
 
 export default function OnlineSourceScreen() {
   const { sourceId = "" } = useParams<{ sourceId: string }>();
   const queue = useQueue();
   const [attempt, setAttempt] = useState(0);
+  const [search, setSearch] = useState<SearchState>({ status: "idle" });
+  const [draft, setDraft] = useState("");
+  // Only the latest submit may land: an older one still in flight is aborted.
+  const searchAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => searchAbort.current?.abort(), []);
   const sources = useAsync((signal) => apiClient.getOnlineSources(signal), []);
   const rows = useAsync((signal) => apiClient.getOnlineRows(sourceId, signal), [sourceId, attempt]);
 
@@ -27,6 +43,25 @@ export default function OnlineSourceScreen() {
     sources.status === "ready"
       ? (sources.data.find((s: OnlineSource) => s.id === sourceId)?.name ?? sourceId)
       : sourceId;
+
+  async function submitSearch(e: FormEvent) {
+    e.preventDefault();
+    searchAbort.current?.abort();
+    const query = draft.trim();
+    if (query === "") {
+      setSearch({ status: "idle" });
+      return;
+    }
+    const controller = new AbortController();
+    searchAbort.current = controller;
+    setSearch({ status: "loading", query });
+    try {
+      const items = await apiClient.searchOnlineItems(sourceId, query, controller.signal);
+      if (!controller.signal.aborted) setSearch({ status: "ready", query, items });
+    } catch {
+      if (!controller.signal.aborted) setSearch({ status: "error", query });
+    }
+  }
 
   function play(item: OnlineItem) {
     queue.playNow([
@@ -49,13 +84,30 @@ export default function OnlineSourceScreen() {
           {sourceName}
         </h2>
 
-        {rows.status === "loading" && (
+        <form className="online-search" role="search" data-testid="online-search-form" onSubmit={submitSearch}>
+          <input
+            type="search"
+            className="online-search-input"
+            data-testid="online-search-input"
+            aria-label={`Search ${sourceName}`}
+            placeholder={`Search ${sourceName}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button type="submit" className="nav-link" data-testid="online-search-submit">
+            Search
+          </button>
+        </form>
+
+        {search.status !== "idle" && <SearchResults sourceName={sourceName} search={search} onPlay={play} />}
+
+        {search.status === "idle" && rows.status === "loading" && (
           <p className="status status-loading" data-testid="online-source-loading">
             Loading {sourceName}&hellip;
           </p>
         )}
 
-        {rows.status === "error" && (
+        {search.status === "idle" && rows.status === "error" && (
           <div className="status status-error" role="alert" data-testid="online-source-error">
             <span className="dot dot-error" aria-hidden="true" />
             {sourceName} isn&rsquo;t responding.{" "}
@@ -70,13 +122,14 @@ export default function OnlineSourceScreen() {
           </div>
         )}
 
-        {rows.status === "ready" && rows.data.length === 0 && (
+        {search.status === "idle" && rows.status === "ready" && rows.data.length === 0 && (
           <p className="status status-loading" data-testid="online-source-empty">
             {sourceName} has nothing to show right now.
           </p>
         )}
 
-        {rows.status === "ready" &&
+        {search.status === "idle" &&
+          rows.status === "ready" &&
           rows.data.map((row) => (
             <OnlineRowSection
               key={`${sourceId}-${attempt}-${row.id}`}
@@ -88,6 +141,79 @@ export default function OnlineSourceScreen() {
           ))}
       </main>
     </div>
+  );
+}
+
+// What a submitted query shows in place of the rows: loading, the source's
+// "isn't responding" message, "nothing matched", or the results.
+function SearchResults({
+  sourceName,
+  search,
+  onPlay,
+}: {
+  sourceName: string;
+  search: Exclude<SearchState, { status: "idle" }>;
+  onPlay: (item: OnlineItem) => void;
+}) {
+  if (search.status === "loading") {
+    return (
+      <p className="status status-loading" data-testid="online-search-loading">
+        Searching {sourceName}&hellip;
+      </p>
+    );
+  }
+  if (search.status === "error") {
+    return (
+      <div className="status status-error" role="alert" data-testid="online-search-error">
+        <span className="dot dot-error" aria-hidden="true" />
+        {sourceName} isn&rsquo;t responding.
+      </div>
+    );
+  }
+  if (search.items.length === 0) {
+    return (
+      <p className="status status-loading" data-testid="online-search-empty">
+        {sourceName} found nothing for &ldquo;{search.query}&rdquo;.
+      </p>
+    );
+  }
+  return (
+    <section className="home-row" data-testid="online-search-results">
+      <h3 className="section-title">Results for &ldquo;{search.query}&rdquo;</h3>
+      <ul className="poster-grid poster-row">
+        {search.items.map((item) => (
+          <OnlineItemTile key={item.id} item={item} onPlay={onPlay} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// One Online item: a button that plays it.
+function OnlineItemTile({ item, onPlay }: { item: OnlineItem; onPlay: (item: OnlineItem) => void }) {
+  return (
+    <li className="poster-tile online-item" data-testid="online-item">
+      <button
+        type="button"
+        className="poster-link online-item-play"
+        data-testid={`online-item-play-${item.id}`}
+        onClick={() => onPlay(item)}
+      >
+        <div className="poster-frame online-thumb">
+          <img src={item.thumbnailUrl} alt="" className="poster-img" loading="lazy" />
+        </div>
+        <div className="poster-caption">
+          <span className="poster-title" data-testid="online-item-title">
+            {item.title}
+          </span>
+          <span className="poster-year">{formatTimecode(item.durationMs)}</span>
+          {item.description && <span className="online-item-description">{item.description}</span>}
+          {item.publishedAt && (
+            <span className="online-item-published">{new Date(item.publishedAt).toLocaleDateString()}</span>
+          )}
+        </div>
+      </button>
+    </li>
   );
 }
 
@@ -145,28 +271,7 @@ function OnlineRowSection({
       <h3 className="section-title">{row.label}</h3>
       <ul className="poster-grid poster-row">
         {[...row.items, ...extra].map((item) => (
-          <li className="poster-tile online-item" key={item.id} data-testid="online-item">
-            <button
-              type="button"
-              className="poster-link online-item-play"
-              data-testid={`online-item-play-${item.id}`}
-              onClick={() => onPlay(item)}
-            >
-              <div className="poster-frame online-thumb">
-                <img src={item.thumbnailUrl} alt="" className="poster-img" loading="lazy" />
-              </div>
-              <div className="poster-caption">
-                <span className="poster-title" data-testid="online-item-title">
-                  {item.title}
-                </span>
-                <span className="poster-year">{formatTimecode(item.durationMs)}</span>
-                {item.description && <span className="online-item-description">{item.description}</span>}
-                {item.publishedAt && (
-                  <span className="online-item-published">{new Date(item.publishedAt).toLocaleDateString()}</span>
-                )}
-              </div>
-            </button>
-          </li>
+          <OnlineItemTile key={item.id} item={item} onPlay={onPlay} />
         ))}
       </ul>
       {failed && (

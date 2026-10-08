@@ -21,6 +21,7 @@ import (
 //	GET  /onlineSources/{id}/icon                      the tile image from the Plugin's package (bearer OR cookie)
 //	GET  /onlineSources/{id}/rows                      the source page (runs rows())
 //	GET  /onlineSources/{id}/rows/{rowId}?cursor=      the next page of one row (runs row())
+//	GET  /onlineSources/{id}/search?q=                 the source page's search (runs search(), never cached)
 //	GET  /onlineSources/{id}/items/{itemId}/thumbnail  Server-proxied bytes (bearer OR cookie)
 //	POST /onlineSources/{id}/items/{itemId}/playback   resolve() once, open a session
 //
@@ -126,6 +127,8 @@ func handleOnlineSourceSubtree(deps Deps) http.HandlerFunc {
 			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineRows(deps, parts[0])))(w, r)
 		case len(parts) == 3 && parts[1] == "rows":
 			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineRow(deps, parts[0], parts[2])))(w, r)
+		case len(parts) == 2 && parts[1] == "search":
+			requireMethod(http.MethodGet, requireAuth(deps.Auth, handleOnlineSearch(deps, parts[0])))(w, r)
 		case len(parts) == 2 && parts[1] == "icon":
 			requireMethod(http.MethodGet, requireAuthAllowCookie(deps.Auth, handleOnlineIcon(deps, parts[0])))(w, r)
 		case len(parts) == 4 && parts[1] == "items" && parts[3] == "thumbnail":
@@ -213,6 +216,24 @@ func handleOnlineRow(deps Deps, sourceID, rowID string) http.HandlerFunc {
 			NextCursor string           `json:"nextCursor,omitempty"`
 		}{Items: onlineItemsJSON(sourceID, page.Items), NextCursor: page.NextCursor}
 		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// handleOnlineSearch serves GET /onlineSources/{id}/search?q=: the items the source
+// finds for the query, for the source page only. It is a live read, never cached
+// and never part of the Server's global search.
+func handleOnlineSearch(deps Deps, sourceID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !onlineAllowed(deps, r, sourceID) {
+			writeError(w, http.StatusNotFound, codeNotFound, "resource not found", nil)
+			return
+		}
+		items, err := deps.Online.Search(r.Context(), sourceID, r.URL.Query().Get("q"))
+		if err != nil {
+			writeOnlineFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": onlineItemsJSON(sourceID, items)})
 	}
 }
 

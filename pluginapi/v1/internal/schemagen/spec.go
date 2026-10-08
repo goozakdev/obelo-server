@@ -637,6 +637,19 @@ func contractTypes() []typeSpec {
 				"Settings the host resolved. The response is un-enveloped — a plain OnlineRowResponse.",
 		},
 		{
+			value: pluginapi.OnlineSearchRequest{},
+			doc:   "Asks an Online source provider for the items matching a query typed on the source's page. The host trims the query and never sends an empty one.",
+		},
+		{
+			value: pluginapi.OnlineSearchResponse{},
+			doc:   "What an Online source provider answers to search(): the matching items, best first, in one page with no cursor.",
+		},
+		{
+			value: pluginapi.OnlineSearchCall{},
+			doc: "What the host hands an INSTALLED Online source provider for a search() call: the request and the " +
+				"Settings the host resolved. The response is un-enveloped — a plain OnlineSearchResponse.",
+		},
+		{
 			value: pluginapi.OnlineRowsRequest{},
 			doc:   "Asks an Online source provider for the source's rows. It carries nothing yet.",
 		},

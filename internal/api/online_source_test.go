@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,6 +123,13 @@ type onlineSource struct {
 	hints    []map[string]any
 	rows     func() []map[string]any
 	row      func(rowID, cursor string) map[string]any
+	// search answers search(); queries records what was asked.
+	search  func(query string) []map[string]any
+	queries []string
+	// down, when set and true for a call's path, makes the source answer 500.
+	down func(path string) bool
+	// hang makes the source hold every call until the caller gives up.
+	hang     atomic.Bool
 	variants func(itemID string) []map[string]any
 }
 
@@ -148,6 +156,10 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 				{"id": "bad/id", "title": "No", "thumbnailUrl": media.srv.URL + "/thumb/x.png", "durationMs": 1},
 			},
 		}}
+	}
+	s.search = func(query string) []map[string]any {
+		return []map[string]any{{"id": "hit-" + query, "title": "Found " + query,
+			"thumbnailUrl": media.srv.URL + "/thumb/v1.png", "durationMs": 1000}}
 	}
 	s.variants = func(itemID string) []map[string]any {
 		switch itemID {
@@ -178,10 +190,26 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var call map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&call)
+		if s.hang.Load() {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
+			return
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if s.down != nil && s.down(r.URL.Path) {
+			http.Error(w, "down", http.StatusInternalServerError)
+			return
+		}
 		switch r.URL.Path {
+		case "/search":
+			req, _ := call["request"].(map[string]any)
+			query, _ := req["query"].(string)
+			s.queries = append(s.queries, query)
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": s.search(query)})
 		case "/rows":
 			s.rowsCall = append(s.rowsCall, call)
 			_ = json.NewEncoder(w).Encode(map[string]any{"rows": s.rows()})
@@ -208,7 +236,7 @@ func newOnlineSource(t *testing.T, media *onlineMedia) *onlineSource {
 func (s *onlineSource) calls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.rowsCall) + len(s.rowCalls) + len(s.resolved)
+	return len(s.rowsCall) + len(s.rowCalls) + len(s.resolved) + len(s.queries)
 }
 
 // onlineServer installs the test Plugin, boots a server that relays through the
