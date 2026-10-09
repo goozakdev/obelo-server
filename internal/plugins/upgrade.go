@@ -236,25 +236,38 @@ func (m *Manager) applyUpgrade(ctx context.Context, up uploadedPackage, plan *up
 		StagedBy: stagedBy, ConfirmedBy: confirmedBy}
 	if signedBy.Publisher != "" || bundledRelease {
 		summary.Publisher = rec.name
-		m.logf("obelo: plugin %s was upgraded from %s to %s (signed by %q, key id %s) from %s",
-			id, old.Version, man.Version, rec.name, rec.keyID, up.source)
 	} else {
 		summary.ClaimedPublisher = rec.name
-		m.logf("obelo: plugin %s was upgraded from %s to %s (signed with key id %s, which claims to be %q) from %s",
-			id, old.Version, man.Version, rec.keyID, rec.name, up.source)
 	}
-	if stagedBy != "" || confirmedBy != "" {
-		m.logf("obelo: plugin %s: the upgrade to %s was uploaded by %q and confirmed by %q", id, man.Version, stagedBy, confirmedBy)
+	// The one audit line of an applied upgrade. Keys and names only: a setting's value is
+	// never logged. A one-step upgrade is confirmed by the Admin who uploaded it.
+	confirmer := confirmedBy
+	if confirmer == "" {
+		confirmer = stagedBy
 	}
-	// Keys and reasons only: a secret's value is never logged.
-	m.logf("obelo: plugin %s: settings on upgrade: %d kept, %d added, dropped %v, deleted %v, %d added need a value",
-		id, len(mig.report.Kept), len(mig.report.Added), droppedKeys(mig.report.Dropped), mig.report.Deleted, len(mig.report.NeedsValue))
+	m.logf("obelo: plugin %s was upgraded: %s -> %s, %s, from %s; staged by %q, confirmed by %q; settings dropped %v, deleted %v",
+		id, old.Version, man.Version, authorOf(plan.preview.AuthorUnconfirmed, summary), up.source,
+		stagedBy, confirmer, droppedKeys(mig.report.Dropped), mig.report.Deleted)
 	view, err := m.view(ctx, id)
 	if err != nil {
 		return Installed{}, err
 	}
 	view.Upgrade = summary
 	return view, nil
+}
+
+// authorOf words who signed an applied upgrade for its audit line. A name without a
+// pinned key (or the Obelo key) behind it is a claim, and is worded as one.
+func authorOf(unconfirmed bool, s *UpgradeSummary) string {
+	switch {
+	case unconfirmed && s.KeyID == "":
+		return "author unconfirmed"
+	case unconfirmed:
+		return fmt.Sprintf("author unconfirmed (signed with key id %s, which claims to be %q)", s.KeyID, s.ClaimedPublisher+s.Publisher)
+	case s.Publisher != "":
+		return fmt.Sprintf("publisher %q (key id %s)", s.Publisher, s.KeyID)
+	}
+	return fmt.Sprintf("signed with key id %s, which claims to be %q", s.KeyID, s.ClaimedPublisher)
 }
 
 // asidePrefix names the directory an upgrade moves the old files to while it swaps.
