@@ -2669,6 +2669,16 @@ export interface PluginUpgradeAnswer extends InstalledPlugin {
     /** An unpinned signer's self-declared name: a claim, beside its keyId. */
     claimedPublisher?: string;
     keyId?: string;
+    /** What the upgrade did to the stored settings. Keys and reasons only. */
+    settings?: {
+      kept: string[];
+      added: string[];
+      dropped: { key: string; reason: string }[];
+      deleted: string[];
+      needsValue: string[];
+    };
+    stagedBy?: string;
+    confirmedBy?: string;
   };
 }
 
@@ -2676,6 +2686,10 @@ export interface PluginUpgradeAnswer extends InstalledPlugin {
  * (ADR-0069): nothing has changed yet, and `staged` is the token that confirms or
  * cancels it before `expiresAt`. */
 export interface PluginUpgradeStaged {
+  /** The plugin the upgrade is for; the confirm and cancel routes are per id. */
+  id: string;
+  /** Its manifest display name. */
+  name: string;
   staged: string;
   expiresAt: string;
   preview: {
@@ -2739,6 +2753,10 @@ export interface PluginCatalogEntry {
   packageUrl: string;
   description?: string;
   docsUrl?: string;
+  /** Set only when the entry offers a strictly higher version of a plugin that is
+   * installed (ADR-0069). A hint: installing it re-checks everything. */
+  updateAvailable?: boolean;
+  installedVersion?: string;
 }
 
 /** The `GET /settings/plugins/catalog` view.

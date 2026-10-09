@@ -272,6 +272,8 @@ describe("the Plugins screen", () => {
   it("does not read a staged-upgrade preview as an applied upgrade", async () => {
     client.getPlugins.mockResolvedValue(view(plugin({ version: "1.0.0" })));
     client.installPlugin.mockResolvedValue({
+      id: "example-sink",
+      name: "Example Sink",
       staged: "tok",
       expiresAt: "2026-10-08T12:10:00Z",
       preview: { from: "1.0.0", to: "1.1.0", authorUnconfirmed: false, hostsAdded: ["api.example.test"] },

@@ -64,6 +64,11 @@ func (p UpgradePreview) consentEqual(q UpgradePreview) bool {
 
 // StagedUpgrade is the answer to an upload that waits for confirmation.
 type StagedUpgrade struct {
+	// ID and Name are the plugin the upgrade is for: the confirm and cancel routes are
+	// per id, and an upload through a form that named no plugin has no other way to say.
+	// Name is the manifest's display name.
+	ID   string `json:"id"`
+	Name string `json:"name"`
 	// Staged is the token that confirms or cancels it.
 	Staged    string         `json:"staged"`
 	ExpiresAt time.Time      `json:"expiresAt"`
@@ -137,7 +142,7 @@ func (m *Manager) stageUpgrade(ctx context.Context, up uploadedPackage, plan *up
 	if err != nil {
 		return Installed{}, err
 	}
-	view.Staged = &StagedUpgrade{Staged: s.token, ExpiresAt: s.expires, Preview: plan.preview}
+	view.Staged = &StagedUpgrade{ID: up.man.ID, Name: up.man.Name, Staged: s.token, ExpiresAt: s.expires, Preview: plan.preview}
 	m.logf("obelo: plugin %s: an upgrade from %s to %s was staged by %q and waits for confirmation until %s",
 		up.man.ID, plan.preview.From, plan.preview.To, stagedBy, s.expires.Format(time.RFC3339))
 	return view, nil

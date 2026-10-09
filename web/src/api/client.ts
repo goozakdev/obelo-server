@@ -88,6 +88,7 @@ import type {
   UpdateEventSinksInput,
   InstalledPluginsView,
   InstallPluginAnswer,
+  PluginUpgradeAnswer,
   PluginUninstallPreview,
   InstallPluginFromURLInput,
   PluginCatalogView,
@@ -2136,6 +2137,33 @@ export class ApiClient {
     return this.request<InstalledPluginsView>(
       `/settings/plugins/${encodeURIComponent(id)}`,
       { method: "DELETE", body: { deleteUsers }, signal },
+    );
+  }
+
+  /** `POST /api/v1/settings/plugins/{id}/upgrade` (Admin) — apply the upgrade an
+   * upload staged. Only the token travels: what applies is what was staged. A 409
+   * `PLUGIN_UPGRADE_*` means it is gone (expired, cancelled) or no longer allowed. */
+  confirmPluginUpgrade(
+    id: string,
+    staged: string,
+    signal?: AbortSignal,
+  ): Promise<PluginUpgradeAnswer> {
+    return this.request<PluginUpgradeAnswer>(
+      `/settings/plugins/${encodeURIComponent(id)}/upgrade`,
+      { method: "POST", body: { staged }, signal },
+    );
+  }
+
+  /** `DELETE /api/v1/settings/plugins/{id}/upgrade?staged=` (Admin) — discard a
+   * staged upgrade. Returns the full list. */
+  cancelPluginUpgrade(
+    id: string,
+    staged: string,
+    signal?: AbortSignal,
+  ): Promise<InstalledPluginsView> {
+    return this.request<InstalledPluginsView>(
+      `/settings/plugins/${encodeURIComponent(id)}/upgrade?staged=${encodeURIComponent(staged)}`,
+      { method: "DELETE", signal },
     );
   }
 

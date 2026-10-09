@@ -122,6 +122,7 @@ export default function PluginDialog({
   onReinstallShipped,
   onUninstall,
   onSettingsSaved,
+  onUploadNewVersion,
   confirmation,
   onConfirmUninstall,
   onCancelUninstall,
@@ -137,6 +138,8 @@ export default function PluginDialog({
   onReinstallShipped: () => void;
   onUninstall: () => void;
   onSettingsSaved: (view: InstalledPluginsView) => void;
+  /** Hand the screen a package to install over this plugin (ADR-0069). */
+  onUploadNewVersion?: (pkg: File) => void;
   confirmation?: PluginUninstallPreview | null;
   onConfirmUninstall?: () => void;
   onCancelUninstall?: () => void;
@@ -148,6 +151,7 @@ export default function PluginDialog({
   notice?: string | null;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const packageRef = useRef<HTMLInputElement>(null);
   const { id } = plugin;
 
   useEffect(() => {
@@ -332,6 +336,31 @@ export default function PluginDialog({
             Uninstall
           </button>
           <div className="library-dialog-footer-actions">
+            {onUploadNewVersion && (
+              <>
+                <input
+                  ref={packageRef}
+                  type="file"
+                  accept=".zip,application/zip"
+                  hidden
+                  data-testid={`plugin-upgrade-file-${id}`}
+                  onChange={(e) => {
+                    const pkg = e.target.files?.[0];
+                    e.target.value = "";
+                    if (pkg) onUploadNewVersion(pkg);
+                  }}
+                />
+                <button
+                  className="button-secondary"
+                  type="button"
+                  data-testid={`plugin-upgrade-${id}`}
+                  onClick={() => packageRef.current?.click()}
+                  disabled={busy}
+                >
+                  Upload new version
+                </button>
+              </>
+            )}
             {plugin.enabled ? (
               <button
                 className="button-secondary"

@@ -160,3 +160,36 @@ func TestConfirmAndCancelRefuseAMemberAndAnUnknownOrCancelledToken(t *testing.T)
 		t.Fatalf("cancelling twice status = %d, want 404", status)
 	}
 }
+
+// The 202 body names the plugin it is about, because the confirm and cancel routes are
+// per id and the Admin may have uploaded through a form that never named one.
+func TestAStagedUpgradeAnswerNamesThePluginOnTheUploadAndFromURLRoutes(t *testing.T) {
+	t.Parallel()
+	host := newPackageHost(t)
+	srv := testharness.New(t, testharness.WithPluginSourcesFromPrivateAddresses())
+	token := adminToken(t, srv)
+	_, priv, _ := signing.GenerateKey()
+	if status, body := uploadPackage(t, srv, token, signedPackage(t, "up-sink", "1.0.0", priv)); status != http.StatusCreated {
+		t.Fatalf("first install status = %d; body: %s", status, body)
+	}
+	wantName := plugintest.SinkManifest("up-sink").Name
+
+	check := func(route string, status int, body []byte) {
+		t.Helper()
+		if status != http.StatusAccepted {
+			t.Fatalf("%s: status = %d, want 202; body: %s", route, status, body)
+		}
+		var got struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil || got.ID != "up-sink" || got.Name != wantName || wantName == "" {
+			t.Fatalf("%s: id/name = %q/%q (%v), want up-sink/%q; body: %s", route, got.ID, got.Name, err, wantName, body)
+		}
+	}
+	status, body := uploadPackage(t, srv, token, wideningPackage(t, "up-sink", "1.1.0", priv))
+	check("upload", status, body)
+	url := host.serve("wide.zip", wideningPackage(t, "up-sink", "1.2.0", priv))
+	status, body = postFromURL(t, srv, token, url)
+	check("from-url", status, body)
+}

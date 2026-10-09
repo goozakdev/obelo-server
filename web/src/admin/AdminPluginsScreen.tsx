@@ -5,6 +5,7 @@ import { errorMessage } from "../screens/errorMessage";
 import { EditIcon } from "../browse/ActionIcons";
 import AdminListPanel from "./AdminListPanel";
 import PluginDialog, { providesLabel } from "./PluginDialog";
+import PluginUpgradeDialog from "./PluginUpgradeDialog";
 import LyricProviderOrder from "./LyricProviderOrder";
 import type {
   InstalledPlugin,
@@ -15,6 +16,8 @@ import type {
   PluginPublishersView,
   PluginUninstallPreview,
   PluginUninstallUser,
+  PluginUpgradeAnswer,
+  PluginUpgradeStaged,
 } from "../api/types";
 
 // The Plugins admin screen (ADR-0058, plugin-system/10): where an Admin puts code
@@ -59,6 +62,37 @@ import type {
 // has to be confirmed against the server's list first (ADR-0063 decision 10).
 function isSignInProvider(plugin: InstalledPlugin): boolean {
   return plugin.provides.includes("sign-in-provider");
+}
+
+// upgradedMessage is the one-line summary of an applied upgrade, with what it did to
+// the stored settings. Keys and reasons only: no value is ever in the answer.
+function upgradedMessage(a: PluginUpgradeAnswer): string {
+  const s = a.upgrade.settings;
+  const parts: string[] = [];
+  if (s) {
+    if (s.kept.length) parts.push(`kept ${s.kept.join(", ")}`);
+    if (s.added.length) parts.push(`added ${s.added.join(", ")}`);
+    if (s.dropped.length) parts.push(`dropped ${s.dropped.map((d) => `${d.key} (${d.reason})`).join(", ")}`);
+    if (s.deleted.length) parts.push(`deleted ${s.deleted.join(", ")}`);
+    if (s.needsValue.length) parts.push(`needs a value: ${s.needsValue.join(", ")}`);
+  }
+  return (
+    `Upgraded ${a.name} from ${a.upgrade.from} to ${a.upgrade.to}.` +
+    (parts.length ? ` Settings: ${parts.join("; ")}.` : "")
+  );
+}
+
+// refusalMessage is the server's sentence plus, for a refused upgrade that would
+// orphan records, the counts it sent.
+function refusalMessage(e: unknown): string {
+  const base = errorMessage(e);
+  if (!(e instanceof ApiError) || e.code !== "PLUGIN_UPGRADE_DEPENDENTS" || !e.details) return base;
+  const d = e.details;
+  const counts: string[] = [];
+  if (typeof d.identities === "number") counts.push(`${d.identities} sign-in identities`);
+  if (typeof d.users === "number") counts.push(`${d.users} users who sign in only through it`);
+  if (typeof d.grants === "number") counts.push(`${d.grants} online source grants`);
+  return counts.length ? `${base} (${counts.join(", ")})` : base;
 }
 
 // PluginRow is one line of the Installed tab's list (plugins-list-dialog D1):
@@ -177,6 +211,15 @@ function CatalogBrowser({
                     v{entry.version}
                   </span>
                 )}
+                {entry.updateAvailable && (
+                  <span
+                    className="plugin-version"
+                    data-testid={`catalog-update-available-${entry.id}`}
+                  >
+                    Update available
+                    {entry.installedVersion ? ` (installed v${entry.installedVersion})` : ""}
+                  </span>
+                )}
               </div>
               {entry.description && (
                 <p className="provider-desc">{entry.description}</p>
@@ -204,7 +247,17 @@ function CatalogBrowser({
                 </div>
               </dl>
               <div className="admin-actions">
-                {installed.has(entry.id) ? (
+                {installed.has(entry.id) && entry.updateAvailable ? (
+                  <button
+                    className="auth-submit"
+                    type="button"
+                    data-testid={`catalog-update-${entry.id}`}
+                    onClick={() => onInstall(entry)}
+                    disabled={busy}
+                  >
+                    {busy ? "Working…" : "Update"}
+                  </button>
+                ) : installed.has(entry.id) ? (
                   <span
                     className="admin-section-note"
                     data-testid={`catalog-installed-${entry.id}`}
@@ -248,6 +301,14 @@ export default function AdminPluginsScreen() {
   // moment that id stops being in the list: a successful uninstall (D4) is the
   // ordinary way that happens, and this covers it without a special case.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // An upgrade an upload staged and the Admin has yet to confirm or cancel. `gone` is
+  // set once the server says it no longer holds it.
+  const [staged, setStaged] = useState<{
+    answer: PluginUpgradeStaged;
+    gone: boolean;
+    refused?: boolean;
+    error: string | null;
+  } | null>(null);
   const [url, setUrl] = useState("");
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [catalogUrl, setCatalogUrl] = useState("");
@@ -317,7 +378,7 @@ export default function AdminPluginsScreen() {
       setNotice(typeof message === "function" ? message(result) : message);
       return true;
     } catch (e) {
-      setActionError(errorMessage(e));
+      setActionError(refusalMessage(e));
       return false;
     } finally {
       setBusy(false);
@@ -331,9 +392,9 @@ export default function AdminPluginsScreen() {
     return runAction(action, setView, message);
   }
 
-  // An install answers with the list, except an in-place upgrade (ADR-0069), which
-  // answers with the one plugin and a summary: take the list back by asking for it,
-  // and say what was upgraded. The full upgrade UI is a later issue.
+  // An install answers with the list, except an in-place upgrade (ADR-0069): 200 with
+  // the one plugin and a summary (take the list back by asking for it), or 202 with a
+  // preview that waits in a dialog until the Admin confirms or cancels it.
   function runInstall(call: () => Promise<InstallPluginAnswer>, message: string) {
     return runAction(
       async () => {
@@ -347,16 +408,58 @@ export default function AdminPluginsScreen() {
       },
       (r) => {
         if (r.list) setView(r.list);
+        if (r.staged) setStaged({ answer: r.staged, gone: false, error: null });
       },
       (r) =>
         r.staged
-          ? `The upgrade from ${r.staged.preview.from} to ${r.staged.preview.to} needs confirmation and has not been applied. ` +
-            "The confirmation screen is not available yet."
+          ? `The upgrade of ${r.staged.name} from ${r.staged.preview.from} to ${r.staged.preview.to} needs confirmation and has not been applied.`
           : r.upgraded
-          ? `Upgraded ${r.upgraded.name} from ${r.upgraded.upgrade.from} to ${r.upgraded.upgrade.to}.` +
-            (r.list ? "" : " Refresh the page to see it.")
+          ? upgradedMessage(r.upgraded) + (r.list ? "" : " Refresh the page to see it.")
           : message,
     );
+  }
+
+  async function onConfirmUpgrade() {
+    if (!staged) return;
+    const { id, staged: token } = staged.answer;
+    setBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      const done = await apiClient.confirmPluginUpgrade(id, token);
+      const list = await apiClient.getPlugins().catch(() => null);
+      if (list) setView(list);
+      setStaged(null);
+      setNotice(upgradedMessage(done) + (list ? "" : " Refresh the page to see it."));
+    } catch (e) {
+      // Only PLUGIN_UPGRADE_STAGED means the server no longer holds it. Any other
+      // refusal (dependents, publisher, version) is shown as the server's sentence
+      // and the upgrade stays staged, so Cancel must still discard it for real.
+      const gone = e instanceof ApiError && e.code === "PLUGIN_UPGRADE_STAGED";
+      const refused = !gone && e instanceof ApiError && e.code.startsWith("PLUGIN_UPGRADE_");
+      setStaged({ answer: staged.answer, gone, refused, error: refusalMessage(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCancelUpgrade() {
+    if (!staged) return;
+    const { id, staged: token } = staged.answer;
+    const wasGone = staged.gone;
+    setStaged(null);
+    if (wasGone) return;
+    setBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      setView(await apiClient.cancelPluginUpgrade(id, token));
+      setNotice("Upgrade cancelled. Nothing was changed.");
+    } catch (e) {
+      setActionError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   // A Sign-in provider is never uninstalled on one click: the server is asked
@@ -424,6 +527,24 @@ export default function AdminPluginsScreen() {
     // its Admin pinned.
     if (await runInstall(() => apiClient.installPlugin(pkg), "Installed.")) {
       if (packageRef.current) packageRef.current.value = "";
+    }
+  }
+
+  // "Upload new version" is the ordinary upload, and the server decides by the
+  // package's own id: say so when that is not the plugin the Admin pressed it for.
+  async function onUploadNewVersion(pkg: File, row: InstalledPlugin) {
+    const before = new Set(view?.plugins.map((p) => p.id));
+    const seen: { answer: InstallPluginAnswer | null } = { answer: null };
+    const ok = await runInstall(async () => (seen.answer = await apiClient.installPlugin(pkg)), "Installed.");
+    const got = seen.answer;
+    if (!ok || !got) return;
+    if ("plugins" in got) {
+      const fresh = got.plugins.find((p) => !before.has(p.id));
+      if (fresh && fresh.id !== row.id) {
+        setNotice(`This package is ${fresh.name} (${fresh.id}), not ${row.name}; it was installed as a new plugin.`);
+      }
+    } else if ("upgrade" in got && got.id !== row.id) {
+      setNotice(`This package is ${got.name} (${got.id}), not ${row.name}; it upgraded ${got.name} instead.`);
     }
   }
 
@@ -515,6 +636,19 @@ export default function AdminPluginsScreen() {
   return (
     <div className="admin-section admin-plugins" data-testid="plugins-screen">
       <h2 className="admin-section-title">Plugins</h2>
+
+      {staged && (
+        <PluginUpgradeDialog
+          staged={staged.answer}
+          busy={busy}
+          gone={staged.gone}
+          refused={staged.refused ?? false}
+          error={staged.error}
+          onConfirm={() => void onConfirmUpgrade()}
+          onCancel={() => void onCancelUpgrade()}
+        />
+      )}
+
       <p className="admin-section-note">
         Add a source or an integration this server did not ship with. A plugin runs
         in a sandbox with no filesystem and no network of its own — its only way out
@@ -615,6 +749,7 @@ export default function AdminPluginsScreen() {
             }
             onUninstall={() => void onUninstall(editingPlugin)}
             onSettingsSaved={setView}
+            onUploadNewVersion={(pkg) => void onUploadNewVersion(pkg, editingPlugin)}
             confirmation={confirming?.id === editingPlugin.id ? confirming.preview : null}
             onConfirmUninstall={() =>
               confirming && void onConfirmUninstall(confirming.id, confirming.preview)
