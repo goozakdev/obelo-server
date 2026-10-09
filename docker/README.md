@@ -174,6 +174,39 @@ That is a speed bump, not secrecy — anyone holding an official image can decod
 them back out, which is precisely why the rotation Worker exists. The secret mounts
 protect the **build host and its cache**, not the shipped artifact.
 
+#### The Obelo release signing key (Bundled plugins)
+
+Official images also sign every **Bundled** plugin with an Obelo release key
+([ADR-0069](../docs/adr/0069-an-uploaded-plugin-is-upgraded-in-place-under-the-key-it-was-first-installed-with.md)),
+so that an Admin's upload can upgrade a shipped plugin only when it is signed by the
+same key. Two more BuildKit secrets, added to the command above:
+
+```sh
+export OBELO_RELEASE_SIGNING_KEY=<base64 ed25519 PRIVATE key>   # CI secret only
+export OBELO_RELEASE_PUBLIC_KEY=<the matching base64 PUBLIC key>
+
+  --secret id=release_sign_key,env=OBELO_RELEASE_SIGNING_KEY \
+  --secret id=release_pub_key,env=OBELO_RELEASE_PUBLIC_KEY \
+```
+
+- `release_sign_key` is mounted in the `sign-plugins` stage only. It writes
+  `modules/<id>.sig.json` beside each Bundled module (publisher `Obelo`). The private
+  key is never in the tree, a `-X` flag, the binary or a layer.
+- `release_pub_key` is compiled into the binary (`-X ...internal/bundled.releasePublicKey`)
+  and **is what makes the build a release build**: boot installs a Bundled module only if
+  it verifies under that key, and records the key as the signer.
+- **The guard.** `go run ./internal/bundled/cmd/checksigned` (also
+  `make check-bundled-signatures`, run by `make plugins`, `make build-release`,
+  `make check-release` and the Dockerfile's `build` stage) **fails the build** when a
+  public key is being compiled in and any embedded Bundled module has no signature that
+  verifies under it. It passes when no public key is set.
+- With **both unset** (an ordinary `docker build` or `make build`) the Bundled plugins
+  ship unsigned with no recorded key and no error; an upload over one is then an ordinary
+  no-key upgrade, with the preview.
+- **Do not set the public key without the private one**: the guard fails the build, which
+  is the point. A changed key also needs a bumped `CACHE_EPOCH`, like every other
+  injected secret. Rotating the Obelo key itself is not designed in this version.
+
 ### Publishing an official image
 
 Run these five checks **before** `docker push`. Each one covers a failure that

@@ -1293,19 +1293,110 @@ restart, which is what the layout on disk is.
 | --- | --- | --- |
 | 422 | `PLUGIN_INVALID_MANIFEST` | the manifest is not valid JSON, or makes a claim the host refuses |
 | 422 | `PLUGIN_API_VERSION` | the message names which side to upgrade |
-| 409 | `PLUGIN_DUPLICATE` | the id is already claimed — by an Installed plugin or a Built-in |
+| 409 | `PLUGIN_DUPLICATE` | the id is claimed by a Built-in (code compiled into the server), or by an Installed plugin whose files or record are too damaged to compare against. An ordinary Installed plugin is never a duplicate: a package under its id is an upgrade (below) |
+| 409 | `PLUGIN_UPGRADE_VERSION` | the id is installed and this package is not a strictly higher semantic version (same, lower, or either side not `MAJOR.MINOR.PATCH`) |
+| 409 | `PLUGIN_UPGRADE_PUBLISHER` | the id is installed, and the package is not signed by the key the installed copy was first installed with (§7a). When the package is signed by a different key the message names both publishers and both key ids; when it is unsigned or its signature does not verify, it names the recorded publisher and key id only |
+| 409 | `PLUGIN_UPGRADE_DEPENDENTS` | the new version drops a Sign-in provider or Online source other records depend on; `details` carry the counts |
+| 409 | `PLUGIN_UPGRADE_STAGED` | confirming a staged upgrade that was cancelled, replaced, expired, or is no longer what was previewed |
 | 422 | `PLUGIN_INVALID_PACKAGE` | the file is not a zip, or holds anything but the manifest, the module, an optional signature and an optional `icon.png` at its root, or an icon that is not a square PNG within the cap, or a member unpacks past its cap |
-| 422 | `PLUGIN_INVALID_MODULE` | no module, or one that will not compile or instantiate |
+| 422 | `PLUGIN_INVALID_MODULE` | no module, one that will not compile, one that cannot be started, or one missing an export its `provides` / `capabilities` claim |
 | 422 | `PLUGIN_SOURCE_REFUSED` | the URL was not fetchable under the rules above |
 | 422 | `PLUGIN_SIGNATURE` | the server has publisher keys pinned and yours does not satisfy them (§7a) |
 | 413 | — | the `package` part over the archive cap, or an upload body over the request limit |
 
-**There is no in-place upgrade for an uploaded plugin.** Uploading a new `version` of
-an id that is already installed is the 409 above; the host never compares versions.
-To move to a new build, uninstall the plugin and install the new package. Uninstalling
-discards the Admin's settings, secrets and stored data for it, so they must be entered
-again. Only a Bundled plugin (one the server ships) is replaced, and only when the
-server itself is upgraded.
+### Upgrading your plugin
+
+Uploading, pasting the URL of, or choosing from a catalog a package whose `id` is
+already installed is an **upgrade**, and it replaces the plugin where it stands. The
+Admin's settings, secrets and the data your plugin stored all stay, because it is the
+same plugin. It is not "uninstall, then install".
+
+**What counts as an upgrade.** The new `version` must be strictly higher
+[semantic versioning](https://semver.org) (`1.4.0` over `1.3.2`; `2.0.0` over
+`2.0.0-rc.1`), and both versions must be semver so they can be ordered. The same
+version, a lower one, or a version that is not semver is `409 PLUGIN_UPGRADE_VERSION`
+and nothing changes. Going back to an older build is a downgrade: uninstall the plugin
+and install that one (its settings are not kept).
+
+**Sign your plugin, with the same key every time (§7a).** The first signed package a
+server installs under your id records your public key, which travels inside
+`plugin.sig.json` as `publicKey`. Every later version must verify under that recorded
+key; a package that is unsigned, or signed by a different key, is
+`409 PLUGIN_UPGRADE_PUBLISHER` (the message names the one publisher and key id the plugin is bound to). **There is no key rotation in this version.** That
+includes a publisher who pinned a new key under the same name on a server
+(`PUT /settings/plugins/publishers` replaces the pinned key): the recorded key is the
+first install's, not the pinned one, so a package signed by the new key is still
+refused. The only way to change keys is to uninstall the plugin and install the new
+one, and its settings, secrets and stored data go with the uninstall. If you ship
+unsigned, or your first install on a server was before this feature or unsigned,
+that server has no key to continue and anyone's package can upgrade the plugin; the
+Admin is always shown the preview and told the author cannot be confirmed. After such an upgrade the recorded key becomes the new package's own key.
+
+**Before anything is swapped** the new package is unpacked and the module compiled and
+instantiated once with no access to stored data or the network, under the largest call
+budget your manifest could get (so `_initialize` runs), and every export your `provides`
+and `capabilities` imply must exist; a fresh install gets the same probe. A module that
+cannot start, or lacks a claimed export, is `422 PLUGIN_INVALID_MODULE` naming it. A
+package that cannot load is refused and the old version is left running untouched.
+The swap is the same rebuild an install does: calls already in flight finish on the
+old version. There is no automatic rollback and no kept previous version; a version
+that fails repeatedly is disabled by the usual failure count.
+
+**What happens to the Admin's settings.** Each stored setting is matched by `key` against
+your new manifest's `settings` schema:
+
+| New manifest | The stored value |
+| --- | --- |
+| same key, same `type`, and the value still fits (an enum option still listed, an integer still in bounds) | **kept**, secrets included |
+| same key, different `type` | **dropped**: never converted |
+| same key, same type, but the value no longer fits (a removed enum option, narrower bounds) | **dropped** |
+| key no longer declared | **deleted** |
+| a leftover stored value for a key the old version never declared, which the new one now declares | **dropped** and reported, never revived |
+| new key | nothing stored; it reads your `default`. A required key with no default is listed as needing a value, and does not block the upgrade |
+
+The answer lists exactly which keys were kept, added, dropped (with the reason),
+deleted and still need a value. Values are never quoted, so a secret never appears in
+it. A setting with nothing stored for it is not a loss, so removing or retyping a key
+nobody ever filled in costs the Admin nothing and does not by itself ask for
+confirmation.
+
+**One step or two.** An upgrade that changes nothing the Admin has not already
+accepted applies at once. Otherwise the server checks everything, compiles the module,
+**stages** the package in memory and answers `202` with a **preview**; nothing on disk
+or in the database has changed, and the old version keeps running. An Admin confirms or
+cancels from the Plugins screen, and an unconfirmed upgrade is forgotten after ten
+minutes (or at a restart). These trigger a preview:
+
+- a **host added** to `network.hosts` (hosts removed alone do not);
+- an **extension point added**, or a **socket grant added**;
+- an **extension point removed**;
+- a stored setting that would be **dropped or deleted**;
+- **the author cannot be confirmed**: the installed copy has no recorded key.
+
+Confirming re-runs every check against the server as it is then, and applies exactly
+the bytes that were previewed; if the installed version, the package, or what the upgrade
+would change is different, the confirmation is refused (`PLUGIN_UPGRADE_STAGED`) and
+the staged upgrade discarded. Any Admin may confirm. Every applied upgrade writes one
+audit line to the server log: id, old and new version, who signed it, who staged and
+who confirmed it, and the keys of any dropped or deleted settings.
+
+**Removing an extension point is refused when something depends on it.** A version
+that drops a `sign-in-provider` while External identities (or Users whose only way in
+is that provider) exist, or an `online-source-provider` while Users hold grants of it,
+is `409 PLUGIN_UPGRADE_DEPENDENTS` with the counts. The way to remove it is to
+uninstall the plugin. Removing an extension point nothing depends on is allowed and
+listed in the preview.
+
+**Plugins the server ships (Bundled).** An official build signs the Bundled plugins with
+the Obelo release key, so an upload over a Bundled id must be signed by that key
+(`PLUGIN_UPGRADE_PUBLISHER` otherwise). An Obelo-signed upgrade **stays Bundled**.
+At boot the server replaces a Bundled plugin only with a strictly newer shipped
+version and never downgrades it, so there is no "reinstall the shipped version" way
+back after an upgrade (that verb is only for a Bundled plugin the Admin uninstalled):
+going back to an older build is a downgrade, uninstall then install. On a development
+build the Bundled plugins are unsigned, so an upload over one is an ordinary upgrade
+with no recorded key (preview shown), and the plugin becomes an Admin's own, which
+boot then leaves alone.
 
 ---
 
@@ -1354,6 +1445,7 @@ manifest and the module:
 {
   "publisher": "Example Publisher",
   "keyId": "9f86d081884c7d65",
+  "publicKey": "<base64>",
   "algorithm": "ed25519",
   "manifestSha256": "…",
   "moduleSha256": "…",
@@ -1364,6 +1456,13 @@ manifest and the module:
 - **`publisher` is the lookup, not a label.** A server finds its pinned key *by
   this name* (case-insensitively) and verifies under that key alone. Change the
   name and you are a different publisher to every server that pinned you.
+- **`publicKey` is the key that made the signature** (base64 ed25519), and
+  `pluginsign sign` writes it for you. A server with nothing pinned records it at
+  your first install, and every later version of the plugin has to verify under that
+  same key (§7, *Upgrading your plugin*). It is not covered by the signed message;
+  the signature is what proves it, and a key that does not verify the signature is
+  ignored. It is optional, so documents written before it existed still verify, but
+  such a plugin has no key to continue and is upgradable by any package.
 - **`keyId` decides nothing.** It is a short fingerprint — the first eight bytes
   of the key's SHA-256, in hex — for a human comparing what a server has pinned
   against what you advertise.
@@ -1412,7 +1511,7 @@ operator pinned.
 
 | Pinned keys on that server | What happens |
 | --- | --- |
-| none (the default) | Nothing is verified. Signed and unsigned plugins install identically, and the server records no publisher — it did not check, so it does not claim to know. |
+| none (the default) | No install is refused over its signature. Signed and unsigned plugins install identically, and the server records no *publisher* as verified: nobody pinned a key, so the name in your document is a claim. A signature that verifies under the `publicKey` it carries is still recorded, as that plugin's key (below). |
 | one or more | Every install must carry a signature naming a pinned publisher and verifying under that publisher's key. Anything else is `422 PLUGIN_SIGNATURE`, **naming the publisher the plugin claimed**. |
 
 There is no "warn only" setting. An operator who pinned a key did it to stop
@@ -1421,8 +1520,16 @@ something.
 Two consequences worth knowing as an author:
 
 - **An already-installed plugin is never re-verified.** Pinning a key is a decision
-  about future installs; re-checking what is on disk would mean your key rotation
+  about future installs; re-checking what is on disk would mean a change of pins
   silently stopping plugins that were running.
+- **Trust on first install, on every server.** Pinned or not, installing a signed
+  plugin records the signer's public key: the pinned key when one verified it, the
+  document's own `publicKey` when nothing is pinned. An upgrade must verify under that
+  recorded key, and the pinned-publisher policy still applies on top of it. This is
+  separate from the pinned list: re-pinning a publisher under a new key changes who
+  may be *installed*, not whose key an *installed* plugin continues under. **There is
+  no key rotation in this version**; a different key means uninstall and install, and
+  the settings and secrets go with the uninstall.
 - **A signature file is kept even when nothing was pinned.** It is provenance, so
   an operator who pins your key later can check what they already have. Its
   presence on disk is not a claim that anything was verified.
@@ -1456,6 +1563,12 @@ policy, the same first-hop address check, the same refusals. What a catalog serv
 is exactly the Plugin package you publish (§7), so if your plugin installs from a
 pasted URL it installs from a catalog with no further work. Its signature, if any,
 is inside the zip.
+
+A catalog entry for an id that is already installed, at a strictly higher version, is
+the way to offer an **upgrade**: the server flags it "Update available" and installing
+it is the same `from-url` call, which takes the upgrade path above (so an entry signed
+by another key still refuses). The flag is computed from the index's claimed `version`
+alone, and nothing is ever updated automatically.
 
 Everything else in an entry — name, version, publisher, what it provides — is
 **display**. The manifest inside the package decides all of them, and only a
